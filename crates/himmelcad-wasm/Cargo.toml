@@ -1,0 +1,19 @@
+[package]
+name = "himmelcad-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "WASM bridge for Weltview. Same contract as the sidecar binary."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+himmelcad-core = { path = "../himmelcad-core" }
+serde.workspace = true
+serde_json.workspace = true
+wasm-bindgen.workspace = true
+
+[lints]
+workspace = true

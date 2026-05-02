@@ -1,0 +1,21 @@
+.root {
+  background: transparent;
+  flex-shrink: 0;
+  z-index: 2;
+  transition: background var(--hc-motion-fast);
+}
+
+.root:hover,
+.root:active {
+  background: var(--hc-border-accent);
+}
+
+.vertical {
+  width: 4px;
+  cursor: col-resize;
+}
+
+.horizontal {
+  height: 4px;
+  cursor: row-resize;
+}

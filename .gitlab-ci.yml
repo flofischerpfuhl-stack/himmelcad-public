@@ -1,0 +1,102 @@
+stages:
+  - typecheck
+  - lint
+  - test
+  - build
+  - licenses
+
+variables:
+  PNPM_HOME: "$CI_PROJECT_DIR/.pnpm-store"
+  CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
+  CARGO_TERM_COLOR: "always"
+  RUST_BACKTRACE: "1"
+
+default:
+  interruptible: true
+
+.node:
+  image: node:22-bookworm
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@9.12.0 --activate
+    - pnpm config set store-dir "$PNPM_HOME"
+    - pnpm install --frozen-lockfile
+  cache:
+    key:
+      files:
+        - pnpm-lock.yaml
+    paths:
+      - .pnpm-store/
+
+.rust:
+  image: rust:1.82-bookworm
+  before_script:
+    - rustup component add rustfmt clippy
+    - rustup target add wasm32-unknown-unknown
+  cache:
+    key:
+      files:
+        - Cargo.lock
+    paths:
+      - .cargo/registry/
+      - target/
+
+node:typecheck:
+  extends: .node
+  stage: typecheck
+  script:
+    - pnpm typecheck
+
+node:lint:
+  extends: .node
+  stage: lint
+  script:
+    - pnpm lint
+    - pnpm format:check
+
+rust:fmt:
+  extends: .rust
+  stage: lint
+  script:
+    - cargo fmt --all -- --check
+
+rust:clippy:
+  extends: .rust
+  stage: lint
+  script:
+    - cargo clippy --workspace --all-targets -- -D warnings
+
+rust:test:
+  extends: .rust
+  stage: test
+  script:
+    - cargo test --workspace
+
+rust:build-sidecar:
+  extends: .rust
+  stage: build
+  script:
+    - cargo build --bin himmelcad-sidecar
+  artifacts:
+    paths:
+      - target/debug/himmelcad-sidecar
+    expire_in: 1 day
+
+rust:build-wasm:
+  extends: .rust
+  stage: build
+  script:
+    - cargo build -p himmelcad-wasm --target wasm32-unknown-unknown
+
+node:build:
+  extends: .node
+  stage: build
+  script:
+    - pnpm build
+
+licenses:cargo-deny:
+  extends: .rust
+  stage: licenses
+  script:
+    - cargo install cargo-deny --locked
+    - cargo deny check

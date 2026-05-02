@@ -1,0 +1,115 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  background: var(--hc-bg-sunken);
+  border-bottom: 1px solid var(--hc-border-subtle);
+  height: var(--hc-size-ribbon);
+  transition: height var(--hc-motion-base);
+}
+
+.collapsed {
+  height: var(--hc-size-ribbon-collapsed);
+}
+
+.tabRow {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 8px;
+  gap: 12px;
+  background: var(--hc-bg-base);
+  border-bottom: 1px solid var(--hc-border-subtle);
+}
+
+.brand {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--hc-fg-default);
+  font-size: 12px;
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+}
+
+.tab {
+  padding: 4px 12px;
+  color: var(--hc-fg-muted);
+  border-radius: var(--hc-radius-sm);
+  font-size: 12px;
+  transition: color var(--hc-motion-fast), background var(--hc-motion-fast);
+}
+
+.tab:hover {
+  color: var(--hc-fg-default);
+  background: var(--hc-hover-bg);
+}
+
+.tabActive {
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-elevated);
+}
+
+.collapseToggle {
+  color: var(--hc-fg-muted);
+  padding: 0 8px;
+  font-size: 14px;
+}
+
+.collapseToggle:hover {
+  color: var(--hc-fg-default);
+}
+
+.groupRow {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  padding: 4px 8px;
+  gap: 1px;
+  overflow-x: auto;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--hc-border-subtle);
+  padding-right: 8px;
+  margin-right: 8px;
+}
+
+.group:last-child {
+  border-right: none;
+}
+
+.groupBody {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  height: 36px;
+  color: var(--hc-fg-default);
+  border-radius: var(--hc-radius-sm);
+  font-size: 12px;
+  transition: background var(--hc-motion-fast);
+}
+
+.action:hover {
+  background: var(--hc-hover-bg);
+}
+
+.groupLabel {
+  text-align: center;
+  font-size: 10px;
+  color: var(--hc-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-top: 2px;
+}

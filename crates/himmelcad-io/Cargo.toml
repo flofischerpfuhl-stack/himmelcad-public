@@ -1,0 +1,16 @@
+[package]
+name = "himmelcad-io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Importers/exporters (LAS first). License-checked dependencies only."
+
+[dependencies]
+himmelcad-core = { path = "../himmelcad-core" }
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

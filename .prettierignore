@@ -1,0 +1,9 @@
+node_modules/
+dist/
+build/
+target/
+.vite/
+libs/
+packages/@himmelcad/data/src/generated/
+pnpm-lock.yaml
+*.min.*

@@ -1,0 +1,20 @@
+.root {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: var(--hc-size-statusbar);
+  padding: 0 12px;
+  background: var(--hc-bg-sunken);
+  color: var(--hc-fg-muted);
+  font-size: 11px;
+  border-top: 1px solid var(--hc-border-subtle);
+}
+
+.side {
+  display: flex;
+  gap: 12px;
+}
+
+.item {
+  white-space: nowrap;
+}

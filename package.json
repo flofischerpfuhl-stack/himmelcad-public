@@ -1,0 +1,37 @@
+{
+  "name": "himmelcad",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Himmelcad — 3D point-cloud-first CAD platform",
+  "license": "BUSL-1.1",
+  "repository": {
+    "type": "git",
+    "url": "https://gitlab.com/florian-fischer-group/himmelcad.git"
+  },
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter \"./packages/**\" --filter \"./apps/**\" build",
+    "dev:polyshape": "pnpm --filter @himmelcad/polyshape dev",
+    "dev:weltview": "pnpm --filter @himmelcad/weltview dev",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "pnpm -r typecheck",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "pnpm -r test",
+    "clean": "pnpm -r exec rm -rf dist build .vite *.tsbuildinfo && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "eslint": "^9.12.0",
+    "@eslint/js": "^9.12.0",
+    "typescript-eslint": "^8.8.0",
+    "eslint-plugin-react": "^7.37.1",
+    "eslint-plugin-react-hooks": "^5.0.0",
+    "eslint-plugin-import": "^2.31.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.2"
+  }
+}

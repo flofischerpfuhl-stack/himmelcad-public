@@ -1,0 +1,14 @@
+[package]
+name = "himmelcad-spatial"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Spatial indexes (octree, kd-tree) for tile streaming and snapping."
+
+[dependencies]
+glam.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

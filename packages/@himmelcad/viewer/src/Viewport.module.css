@@ -1,0 +1,31 @@
+.root {
+  position: absolute;
+  inset: 0;
+  background: var(--hc-bg-base);
+}
+
+.cursorOverlay {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 4px 10px;
+  font-family: var(--hc-font-mono);
+  font-size: 11px;
+  color: var(--hc-fg-default);
+  background: rgba(22, 22, 25, 0.7);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  pointer-events: none;
+}
+
+.cursorOverlay em {
+  color: var(--hc-fg-muted);
+  font-style: normal;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.cursorOverlayMuted {
+  color: var(--hc-fg-muted);
+}

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "useDefineForClassFields": true,
+
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@himmelcad/ui": ["packages/@himmelcad/ui/src/index.ts"],
+      "@himmelcad/ui/*": ["packages/@himmelcad/ui/src/*"],
+      "@himmelcad/viewer": ["packages/@himmelcad/viewer/src/index.ts"],
+      "@himmelcad/viewer/*": ["packages/@himmelcad/viewer/src/*"],
+      "@himmelcad/data": ["packages/@himmelcad/data/src/index.ts"],
+      "@himmelcad/data/*": ["packages/@himmelcad/data/src/*"],
+      "@himmelcad/theme": ["packages/@himmelcad/theme/src/index.ts"],
+      "@himmelcad/theme/*": ["packages/@himmelcad/theme/src/*"],
+      "@himmelcad/console": ["packages/@himmelcad/console/src/index.ts"],
+      "@himmelcad/console/*": ["packages/@himmelcad/console/src/*"]
+    }
+  }
+}

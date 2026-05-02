@@ -1,0 +1,55 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/himmelcad-core",
+    "crates/himmelcad-io",
+    "crates/himmelcad-spatial",
+    "crates/himmelcad-sidecar",
+    "crates/himmelcad-wasm",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.82"
+license = "BUSL-1.1"
+repository = "https://gitlab.com/florian-fischer-group/himmelcad"
+authors = ["Himmelcad project"]
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+rust_2018_idioms = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+anyhow = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util", "sync", "fs"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ts-rs = { version = "10", features = ["serde-compat"] }
+glam = { version = "0.29", features = ["serde"] }
+sha2 = "0.10"
+hex = "0.4"
+parking_lot = "0.12"
+bytes = "1"
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+
+[profile.dev]
+opt-level = 1

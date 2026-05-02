@@ -1,0 +1,38 @@
+Business Source License 1.1
+
+Licensor: Himmelcad project owner
+Licensed Work: Himmelcad and all source code in this repository
+Additional Use Grant: You may read, study, modify, compile, and run the
+Licensed Work for private, non-commercial use.
+Change Date: 2030-01-01
+Change License: Apache License, Version 2.0
+
+Commercial Use Limitation:
+
+You may not use the Licensed Work, or any derivative work, for commercial
+purposes without a separate commercial license from the Licensor. Commercial
+purposes include selling, renting, offering hosted access, integrating into a
+paid product or service, using it to deliver paid CAD, surveying, engineering,
+photogrammetry, digital twin, simulation, or data processing services, or
+distributing modified builds to third parties in a commercial context.
+
+Private Use:
+
+Private, non-commercial forking, modification, self-building, and local use are
+allowed under the Additional Use Grant above.
+
+Production Use:
+
+Production use by companies, public institutions, freelancers, or any other
+commercial or professional entity requires a separate commercial license unless
+explicitly permitted by the Licensor in writing.
+
+Text of Business Source License 1.1:
+
+For the official text of the Business Source License 1.1, see:
+https://mariadb.com/bsl11/
+
+This repository's `AGENTS.md` contains the operative project rules for
+dependency licensing and contribution constraints. In case of conflict between
+this summary and a separately executed commercial license, the separately
+executed commercial license controls.

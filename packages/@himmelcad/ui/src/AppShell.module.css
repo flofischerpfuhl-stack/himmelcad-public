@@ -1,0 +1,54 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background: var(--hc-bg-base);
+  color: var(--hc-fg-default);
+}
+
+.ribbonSlot {
+  flex-shrink: 0;
+}
+
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.leftPanel,
+.rightPanel {
+  background: var(--hc-bg-panel);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: var(--hc-size-panel-min);
+  border-top: 1px solid var(--hc-border-subtle);
+}
+
+.center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-top: 1px solid var(--hc-border-subtle);
+}
+
+.viewport {
+  flex: 1;
+  position: relative;
+  background: var(--hc-bg-base);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.bottomPanel {
+  background: var(--hc-bg-panel);
+  border-top: 1px solid var(--hc-border-subtle);
+  overflow: hidden;
+}
+
+.statusBarSlot {
+  flex-shrink: 0;
+}

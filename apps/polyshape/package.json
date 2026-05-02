@@ -1,0 +1,35 @@
+{
+  "name": "@himmelcad/polyshape",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Himmelcad Polyshape — desktop CAD for 3D point clouds",
+  "license": "BUSL-1.1",
+  "main": "dist/electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "dev:electron": "electron .",
+    "build": "vite build && tsc -p tsconfig.electron.json",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit"
+  },
+  "dependencies": {
+    "@himmelcad/console": "workspace:*",
+    "@himmelcad/data": "workspace:*",
+    "@himmelcad/theme": "workspace:*",
+    "@himmelcad/ui": "workspace:*",
+    "@himmelcad/viewer": "workspace:*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "three": "^0.169.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/three": "^0.169.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "electron": "^32.1.2",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8"
+  }
+}
