@@ -1,0 +1,19 @@
+.titleStatus {
+  color: var(--hc-success);
+  font-family: var(--hc-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.placeholder {
+  display: grid;
+  gap: 8px;
+  color: var(--hc-fg-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.placeholder code {
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-mono);
+}

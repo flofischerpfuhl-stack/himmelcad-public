@@ -1,15 +1,15 @@
-# Himmelcad Project Format
+# HimmelCAD Project Format
 
 ## Formats
 
-Himmelcad uses two equivalent formats:
+HimmelCAD uses two equivalent formats:
 
-- `.hcad/` — folder-based working project.
-- `.hcadx` — zipped portable bundle of the same structure.
+- `.hcad/` - folder-based working project.
+- `.hcadx` - zipped portable bundle of the same structure.
 
 The folder format is canonical during editing because it supports streaming,
 incremental writes, crash recovery, and future Git-like workflows. The bundle
-format is for sharing, archiving, upload, and Weltview publishing.
+format is for sharing, archiving, upload, and WeltView publishing.
 
 ## Folder Layout
 
@@ -73,6 +73,8 @@ Object examples:
 - selection masks,
 - mesh tiles,
 - texture tiles,
+- orthophoto/raster tiles,
+- panorama/depth panorama tiles,
 - splat tiles,
 - command result payloads.
 
@@ -111,7 +113,7 @@ The journal enables:
 - undo/redo,
 - crash recovery,
 - command replay,
-- future Chronogit semantic diffs.
+- future ChronoGit semantic diffs.
 
 ## Index Directory
 
@@ -169,6 +171,27 @@ Positions:
 - render tile positions in `f32` relative to tile origin,
 - tile origin stored in `f64`.
 
+## Heavy Geometry Storage Direction
+
+All large renderable data follows the same storage philosophy:
+
+- source/canonical metadata is immutable and content-addressed,
+- runtime tiles are precomputed at import/preprocess time,
+- indexes are rebuildable caches unless explicitly referenced as objects,
+- render buffers use local offsets and GPU-friendly formats,
+- source coordinates and semantic metadata preserve `f64` precision.
+
+Planned tile families:
+
+- point-cloud octrees,
+- mesh/surface tiles with triangle BVH sidecars,
+- tiled texture pyramids,
+- orthophoto/raster pyramids,
+- panorama/depth panorama tiles,
+- Gaussian splat trees.
+
+The exact mesh/texture/splat formats are chosen by ADR before implementation.
+
 ## Segment Storage
 
 Segmentations store filters/masks, not duplicated points.
@@ -201,7 +224,7 @@ Optional:
 
 - `index/` may be omitted because it is rebuildable.
 
-For Weltview, a `.hcadx` can be:
+For WeltView, a `.hcadx` can be:
 
 - downloaded entirely,
 - streamed by range request if server supports it,
@@ -222,7 +245,7 @@ Migration rules:
 - original objects remain until garbage collection,
 - migration must be tested with fixture projects.
 
-## Git/Chronogit Readiness
+## Git/ChronoGit Readiness
 
 The folder format is intentionally Git-friendly for semantic metadata:
 

@@ -1,0 +1,56 @@
+appId: de.himmelcad.photolab
+productName: HimmelCAD PhotoLab
+artifactName: HimmelCAD-PhotoLab-${version}-${arch}.${ext}
+directories:
+  output: release
+files:
+  - dist/electron/**
+  - dist/renderer/**
+  - build/icon.png
+  - package.json
+asar: true
+npmRebuild: false
+extraResources:
+  - from: ../../LICENSE
+    to: LICENSE.txt
+  - from: ../../LICENSES/THIRD_PARTY.md
+    to: THIRD_PARTY_NOTICES.md
+  - from: ../../target/release/himmelcad-sidecar
+    to: himmelcad-sidecar
+  - from: ../../target/release/himmelcad-portable-mvs
+    to: himmelcad-portable-mvs
+  - from: ../../vendor/colmap/linux-x64
+    to: vendor/colmap/linux-x64
+  - from: ../../vendor/brush/linux-x64
+    to: vendor/brush/linux-x64
+  - from: ../../vendor/potreeconverter/linux-x64
+    to: vendor/potreeconverter/linux-x64
+  - from: ../../vendor/photolab-models
+    to: vendor/photolab-models
+  - from: ../../vendor/dedode/dev
+    to: vendor/dedode/linux-x64
+    filter:
+      - '**/*'
+      - '!.venv/**'
+      - '!dedode-source.tar.gz'
+      - '!**/__pycache__/**'
+      - '!**/*.pyc'
+  - from: workers/dedode/dedode_worker.py
+    to: workers/dedode_worker.py
+  - from: ../../.build/photolab-runtime/linux-x64/workers/geo
+    to: workers/geo
+  - from: ../../.build/photolab-runtime/linux-x64/python
+    to: vendor/dedode/linux-x64/python
+linux:
+  icon: build/icon.png
+  maintainer: HimmelCAD <noreply@himmelcad.local>
+  synopsis: Offline photogrammetry, orthomosaics and Gaussian splats
+  description: Offline-first photogrammetry workstation with hybrid alignment, depth maps, dense point clouds, DEM, orthomosaics, meshes and Gaussian splats.
+  syncDesktopName: true
+  target:
+    - AppImage
+    - deb
+  category: Graphics
+  executableName: himmelcad-photolab
+deb:
+  compression: gz

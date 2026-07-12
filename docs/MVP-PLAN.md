@@ -1,10 +1,10 @@
-# Polyshape MVP Implementation Plan
+# Builder MVP Implementation Plan
 
 ## MVP Definition
 
 The MVP is successful when a user can:
 
-1. open Himmelcad Polyshape,
+1. open HimmelCAD Builder,
 2. create a `.hcad/` project,
 3. import multiple LAS/LAZ files at once,
 4. view them interactively as 3D point clouds,
@@ -13,7 +13,7 @@ The MVP is successful when a user can:
 7. segment a point cloud,
 8. see `extracted` and `remaining` cleanly in the entity tree,
 9. undo/redo the major operations,
-10. open the same project in a minimal read-only Weltview shell.
+10. open the same project in a minimal read-only WeltView shell.
 
 The MVP is explicitly not a throwaway prototype. It must contain the real
 architecture: Rust core, command journal, `.hcad/` storage, shared web viewer.
@@ -29,7 +29,7 @@ Pinned at the start so we never debug "works on my machine":
 - React 19.
 - Electron 32 LTS line.
 - Rust stable, current at project start, pinned via `rust-toolchain.toml`.
-- napi-rs 2.x.
+- JSON-RPC sidecar bridge over stdio for Builder.
 - wasm-bindgen current.
 - Tailwind v4 (token-based, no utility soup in components).
 - ESLint flat config, Prettier, Stylelint.
@@ -42,7 +42,7 @@ Create the monorepo skeleton:
 
 ```text
 apps/
-  polyshape/
+  builder/
     electron/
     renderer/
   weltview/
@@ -72,7 +72,7 @@ Decisions:
 
 Deliverables:
 
-- `pnpm dev:polyshape`,
+- `pnpm dev:builder`,
 - `pnpm dev:weltview`,
 - `cargo test --workspace`,
 - generated TS types from Rust contracts.
@@ -249,7 +249,7 @@ Acceptance:
 - large point clouds are interactive before all tiles are loaded,
 - zoom/orbit/pan stay responsive during streaming,
 - point budget is configurable,
-- renderer package runs unchanged in Weltview.
+- renderer package runs unchanged in WeltView.
 
 ## Workstream 7 — Mouse and Tool Model
 
@@ -272,6 +272,7 @@ Mouse mapping:
 - RMB click on selection: entity context menu,
 - RMB click on empty viewport: quick function bar,
 - RMB hold + drag: pan,
+- MMB/wheel hold + drag: additional CAD-compatible pan,
 - wheel: zoom toward cursor coordinate,
 - Esc: cancel active function.
 
@@ -322,13 +323,14 @@ This is a core MVP feature, not polish.
 
 Algorithm priority:
 
-1. Hardware/depth pick against visible rendered geometry.
-2. If depth pick is invalid or missing, raycast into currently loaded point-cloud
-   tiles and select nearest point within screen-space tolerance.
+1. Scissored hardware pick against visible rendered geometry.
+2. If hardware pick is invalid or missing, raycast/refine against currently
+   loaded point-cloud tiles and select nearest point within screen-space
+   tolerance.
 3. If still missing, interpolate a 3D point from nearest surrounding visible
    points in the ray neighborhood.
 4. If no stable result exists, show last stable coordinate with a visual
-   \"estimated\" state, not a fake precise result.
+   "estimated" state, not a fake precise result.
 
 Important constraints:
 
@@ -343,7 +345,7 @@ Data needed:
 - depth buffer or ID buffer,
 - camera matrices,
 - tile-local to world transform,
-- small spatial index per loaded tile.
+- visible-node bounds and per-tile/provider acceleration data.
 
 Acceptance:
 
@@ -468,11 +470,11 @@ The status bar reads from a dedicated `StatusService`; widgets register
 themselves and their refresh strategy. No status widget polls the renderer
 directly.
 
-## Workstream 11 — Weltview Smoke Compatibility
+## Workstream 11 — WeltView Smoke Compatibility
 
 Do not wait until later.
 
-MVP Weltview:
+MVP WeltView:
 
 - opens a `.hcadx` or dev `.hcad/` served by local dev server,
 - shows same viewer package,
@@ -481,7 +483,7 @@ MVP Weltview:
 
 Acceptance:
 
-- at least one Polyshape-created project opens read-only in browser dev mode.
+- at least one Builder-created project opens read-only in browser dev mode.
 
 ## Milestone Order
 
@@ -499,7 +501,7 @@ Acceptance:
 12. Status bar service.
 13. Segmentation with extracted/remaining derived entities.
 14. Undo/redo hardening.
-15. Weltview read-only smoke.
+15. WeltView read-only smoke.
 16. Performance pass and bug-fix sprint.
 
 ## MVP Non-Goals
@@ -507,12 +509,12 @@ Acceptance:
 - full DXF/DWG compatibility,
 - IFC import,
 - Gaussian splat generation,
-- Photolab,
+- PhotoLab,
 - background maps,
 - CRS reprojection,
 - Python scripting,
 - multi-user collaboration,
-- Chronogit UI,
-- Testflight simulations.
+- ChronoGit UI,
+- TestFlight simulations.
 
 These are intentionally excluded from the MVP but protected by the architecture.

@@ -13,12 +13,25 @@ pub enum EntityKind {
     ProjectRoot,
     Group,
     Layer,
+    Survey,
+    ImageCollection,
+    CameraImage,
+    CameraCalibration,
+    ProcessingSet,
+    AlignmentRun,
+    DepthMap,
+    GroundControlPoint,
+    Orthomosaic,
+    DigitalElevationModel,
     PointCloud,
     PointCloudSegment,
     SinglePoint,
     Polyline3D,
     Mesh,
     TexturedMesh,
+    Surface,
+    Solid,
+    Object,
     GaussianSplatCloud,
     Text,
     Axis,
@@ -57,7 +70,8 @@ impl Default for VisibilityState {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EntitySnapshot {
     pub id: EntityId,
     pub kind: EntityKind,

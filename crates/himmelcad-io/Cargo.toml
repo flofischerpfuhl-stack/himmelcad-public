@@ -8,9 +8,15 @@ description = "Importers/exporters (LAS first). License-checked dependencies onl
 
 [dependencies]
 himmelcad-core = { path = "../himmelcad-core" }
+himmelcad-spatial = { path = "../himmelcad-spatial" }
 serde.workspace = true
+serde_json.workspace = true
+nom-exif.workspace = true
+sha2.workspace = true
+hex.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+las = { version = "0.9", features = ["laz"] }
 
 [lints]
 workspace = true

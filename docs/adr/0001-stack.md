@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Accepted. Runtime bridge revised during implementation: Builder uses a
+separate sidecar process over JSON-RPC rather than an in-process NAPI module.
+The browser/WASM direction remains unchanged.
 
 ## Date
 
@@ -10,7 +12,7 @@ Accepted
 
 ## Context
 
-Himmelcad Polyshape must be a 3D point-cloud-first CAD application with very
+HimmelCAD Builder must be a 3D point-cloud-first CAD application with very
 large datasets, a precise cursor coordinate system, segmentation, and future
 support for meshes, Gaussian splats, BIM/IFC entities, browser viewing,
 semantic diffs, scripting, and simulations.
@@ -28,8 +30,8 @@ The chosen stack must keep the MVP from becoming a dead-end prototype.
 
 Use:
 
-- Electron for Polyshape desktop shell,
-- Vite browser app for Weltview,
+- Electron for Builder desktop shell,
+- Vite browser app for WeltView,
 - TypeScript + React for UI,
 - Zustand for UI mirror state,
 - CSS variables/Tailwind-style design tokens for theming,
@@ -38,9 +40,9 @@ Use:
   Potree v1 application state,
 - Rust for authoritative core,
 - separate `himmelcad-sidecar` process spoken to via JSON-RPC 2.0 over stdio
-  from Electron (crash isolation, same pattern as the later Photolab Python
+  from Electron (crash isolation, same pattern as the later PhotoLab Python
   sidecar),
-- wasm-bindgen bridge for Weltview, hosted in a Web Worker,
+- wasm-bindgen bridge for WeltView, hosted in a Web Worker,
 - `.hcad/` folder storage plus `.hcadx` bundle export,
 - BSL 1.1 for own code,
 - no GPL-family code in the product.
@@ -57,15 +59,15 @@ future scripting/inspection tools. Strong typing and mature tooling matter more
 than minimal framework size.
 
 Rust is chosen for import, indexing, spatial queries, commands, storage, and
-future geometry algorithms. The same model can compile to native NAPI for
-Polyshape and WASM for Weltview.
+future geometry algorithms. The shared model must be usable from the Builder
+sidecar and from a browser-compatible WASM surface for WeltView.
 
 The renderer is deliberately independent from Electron. This avoids a future
-rewrite for Weltview and prevents desktop-specific APIs from leaking into core
+rewrite for WeltView and prevents desktop-specific APIs from leaking into core
 viewer behavior.
 
 The data model is content-addressed and command-journaled from day one because
-undo/redo, segmentation, and Chronogit all need immutable references and
+undo/redo, segmentation, and ChronoGit all need immutable references and
 semantic history.
 
 ## Alternatives Considered
@@ -95,7 +97,7 @@ Pros:
 
 Cons:
 
-- worse reuse for Weltview,
+- worse reuse for WeltView,
 - less direct access to three.js/splat/WebGL ecosystem,
 - more custom renderer integration work.
 
@@ -136,8 +138,8 @@ modules remain useful.
 
 Positive:
 
-- MVP architecture can grow into Weltview, Photolab outputs, Chronogit, and
-  Testflight.
+- MVP architecture can grow into WeltView, PhotoLab outputs, ChronoGit, and
+  TestFlight.
 - Heavy compute lives outside the renderer and outside the Electron main
   process.
 - The same data contracts support desktop and browser.
@@ -148,7 +150,7 @@ Negative:
 
 - MVP takes longer than continuing v01.
 - Build tooling is more complex.
-- NAPI + WASM dual-target Rust requires discipline.
+- Sidecar + WASM dual-target Rust requires discipline.
 - More up-front architecture must be maintained.
 - Sidecar IPC adds a small per-call latency vs. in-process NAPI; acceptable
   because hot-path rendering does not call the sidecar per frame.

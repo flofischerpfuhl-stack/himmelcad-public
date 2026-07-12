@@ -6,7 +6,7 @@ export interface StatusBarItem {
   id: string;
   content: ReactNode;
   align?: 'left' | 'right';
-  title?: string;
+  title?: string | undefined;
 }
 
 export interface StatusBarProps {

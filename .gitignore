@@ -9,6 +9,12 @@ yarn-error.log*
 # Build artifacts
 dist/
 build/
+!apps/builder/build/
+!apps/builder/build/icon.png
+!apps/builder/build/icon.ico
+!apps/photolab/build/
+!apps/photolab/build/icon.png
+!apps/photolab/build/icon.ico
 out/
 .vite/
 .turbo/
@@ -67,3 +73,36 @@ logs/
 libs/
 !libs/README.md
 
+# Vendored sources (in vendor/) ARE committed per AGENTS.md §1.6 — they are
+# part of HimmelCAD. The exception is binary artifacts that are downloaded
+# on `pnpm install` via `scripts/fetch-vendor.mjs` (SHA-256 verified). Those
+# are gitignored to keep the repo small.
+vendor/potreeconverter/*/PotreeConverter
+vendor/potreeconverter/*/PotreeConverter.exe
+vendor/potreeconverter/*/*laszip*.so
+vendor/potreeconverter/*/*laszip*.dll
+vendor/potreeconverter/*/*.zip
+vendor/brush/*/brush_app
+vendor/brush/*/brush_app.exe
+vendor/brush/*/*.zip
+vendor/brush/*/*.tar.xz
+vendor/photolab-models/**/*.onnx
+vendor/photolab-models/**/*.pth
+vendor/photolab-models/**/*.pt
+vendor/dedode/**/*.pth
+vendor/dedode/**/*.pt
+vendor/dedode/dev/
+vendor/colmap/*/bin/
+vendor/colmap/*/include/
+vendor/colmap/*/lib/
+vendor/colmap/*/share/
+vendor/three-loader/node_modules/
+
+# Local PhotoLab reference datasets and user-supplied test archives. Curated
+# manifests, concepts and golden baselines remain committed explicitly.
+photolab/Agisoft Exampleprojects/
+photolab/*.pdf
+photolab/*.zip
+photolab/*.crdownload*
+photolab/.xdp-*
+.build/

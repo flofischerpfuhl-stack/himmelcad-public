@@ -1,0 +1,125 @@
+.root {
+  display: grid;
+  gap: 14px;
+}
+
+.section {
+  display: grid;
+  gap: 9px;
+  padding-bottom: 13px;
+  border-bottom: 1px solid var(--hc-border-default);
+}
+
+.sectionTitle {
+  color: var(--hc-fg-muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.field {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.8fr) minmax(130px, 1.2fr);
+  align-items: center;
+  gap: 9px;
+  color: var(--hc-fg-default);
+  font-size: 11px;
+}
+
+.control {
+  width: 100%;
+  min-width: 0;
+  height: 29px;
+  padding: 0 8px;
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-void);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+}
+
+.hint,
+.resolved {
+  padding: 9px 10px;
+  color: var(--hc-fg-default);
+  background: var(--hc-accent-soft);
+  border-left: 2px solid var(--hc-accent-base);
+  border-radius: var(--hc-radius-sm);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.scopeSummary {
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island-lo);
+  border-left: 2px solid var(--hc-success);
+  border-radius: var(--hc-radius-sm);
+  font-size: 10px;
+}
+
+.scopeSummary span {
+  color: var(--hc-fg-muted);
+}
+
+.scopeSummary code {
+  color: var(--hc-fg-strong);
+  font-family: var(--hc-font-mono);
+}
+
+.resolved {
+  display: grid;
+  gap: 6px;
+  background: var(--hc-bg-island-lo);
+  border-left-color: var(--hc-success);
+}
+
+.resolvedRow {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) minmax(110px, 1.1fr);
+  gap: 8px;
+}
+
+.resolvedRow span:first-child {
+  color: var(--hc-fg-muted);
+}
+
+.hash {
+  overflow: hidden;
+  color: var(--hc-fg-strong);
+  font-family: var(--hc-font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action {
+  height: 31px;
+  padding: 0 12px;
+  color: var(--hc-accent-on);
+  background: var(--hc-accent-base);
+  border: 0;
+  border-radius: var(--hc-radius-sm);
+  cursor: pointer;
+}
+
+.action:hover:not(:disabled) {
+  background: var(--hc-accent-hover);
+}
+
+.action:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.error {
+  color: var(--hc-error);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.offline {
+  color: var(--hc-success);
+  font-size: 10px;
+}

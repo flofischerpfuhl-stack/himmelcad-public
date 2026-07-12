@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@himmelcad/data": "workspace:*",
-    "@himmelcad/theme": "workspace:*"
+    "@himmelcad/theme": "workspace:*",
+    "lucide-react": "^0.460.0"
   },
   "devDependencies": {
     "typescript": "^5.6.2",

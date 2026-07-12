@@ -8,6 +8,7 @@ use crate::entity::{EntityId, EntitySnapshot, Vec3};
 /// it is also persisted as `manifest.json` (with stable key ordering for
 /// diff-friendliness).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectSnapshot {
     pub format_version: u32,
     pub project_id: String,

@@ -1,7 +1,14 @@
 import { useState } from 'react';
 
 import type { SnapResult } from '@himmelcad/data';
-import { AppShell, EntityTree, FunctionPanel, Ribbon, StatusBar } from '@himmelcad/ui';
+import {
+  AppShell,
+  EntityTree,
+  FunctionPanel,
+  Ribbon,
+  StatusBar,
+  TitleBar,
+} from '@himmelcad/ui';
 import { Viewport } from '@himmelcad/viewer';
 
 const VIEWER_TABS = [
@@ -31,6 +38,9 @@ export function App(): JSX.Element {
 
   return (
     <AppShell
+      titleBar={
+        <TitleBar appName="HimmelCAD" productLabel="WeltView" controls={null} />
+      }
       ribbon={<Ribbon tabs={VIEWER_TABS} />}
       leftPanel={<EntityTree project={null} selectedIds={new Set()} onSelect={() => undefined} />}
       rightPanel={<FunctionPanel activeFunctionId={null} />}

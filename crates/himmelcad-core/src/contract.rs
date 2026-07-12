@@ -1,10 +1,11 @@
 //! Wire contract between the Rust core and any frontend (Electron renderer or
-//! Weltview WASM). When the `ts-bindings` feature is enabled, `cargo test`
+//! WeltView WASM). When the `ts-bindings` feature is enabled, `cargo test`
 //! emits TypeScript types into `packages/@himmelcad/data/src/generated/`.
 
 use serde::{Deserialize, Serialize};
 
 use crate::entity::EntityId;
+use crate::photolab::ResolveAlignmentProfileRequest;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "payload", rename_all = "PascalCase")]
@@ -30,6 +31,7 @@ pub enum CommandRequest {
         panel: String,
         value: serde_json::Value,
     },
+    ResolvePhotolabAlignmentProfile(ResolveAlignmentProfileRequest),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

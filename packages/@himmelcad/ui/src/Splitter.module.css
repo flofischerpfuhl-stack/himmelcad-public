@@ -1,21 +1,62 @@
 .root {
-  background: transparent;
   flex-shrink: 0;
-  z-index: 2;
+  z-index: 5;
+  position: relative;
+  background: transparent;
+  /* The visible gutter is only `--hc-gap-island` (~6 px). Hit area extends
+     a few px each side via ::before so the splitter is actually grabbable
+     without pixel-precision aiming. */
+  touch-action: none;
+}
+
+.root::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: transparent;
   transition: background var(--hc-motion-fast);
 }
 
-.root:hover,
-.root:active {
+.root:hover::before,
+.root:active::before {
   background: var(--hc-border-accent);
+  opacity: 0.7;
 }
 
 .vertical {
-  width: 4px;
+  width: var(--hc-gap-island);
   cursor: col-resize;
 }
 
+/* Expand the *hit* area but keep the visible accent thin. */
+.vertical::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+}
+
+.vertical::before {
+  inset: 6px 1px;
+}
+
 .horizontal {
-  height: 4px;
+  height: var(--hc-gap-island);
   cursor: row-resize;
+}
+
+.horizontal::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -3px;
+  bottom: -3px;
+}
+
+.horizontal::before {
+  inset: 1px 6px;
 }

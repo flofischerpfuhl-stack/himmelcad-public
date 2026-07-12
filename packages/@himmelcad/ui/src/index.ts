@@ -1,5 +1,7 @@
 export { AppShell } from './AppShell.js';
 export type { AppShellProps } from './AppShell.js';
+export { TitleBar } from './TitleBar.js';
+export type { TitleBarProps, WindowControls } from './TitleBar.js';
 export { Ribbon } from './Ribbon.js';
 export type { RibbonProps, RibbonTab, RibbonGroup, RibbonAction } from './Ribbon.js';
 export { EntityTree } from './EntityTree.js';
@@ -7,6 +9,9 @@ export type { EntityTreeProps } from './EntityTree.js';
 export { FunctionPanel } from './FunctionPanel.js';
 export type { FunctionPanelProps } from './FunctionPanel.js';
 export { StatusBar } from './StatusBar.js';
-export type { StatusBarProps } from './StatusBar.js';
+export type { StatusBarProps, StatusBarItem } from './StatusBar.js';
 export { Splitter } from './Splitter.js';
+export { PanelToggles } from './PanelToggles.js';
+export { EdgeStrip } from './EdgeStrip.js';
+export type { EdgeStripProps } from './EdgeStrip.js';
 export { useLayoutStore } from './useLayoutStore.js';

@@ -1,0 +1,74 @@
+# PhotoLab DeDoDe-v2-G worker contract
+
+The Rust API is `himmelcad_sidecar::dedode_runtime`. A run receives verified
+project camera records and an explicit candidate-pair list. It never receives a
+free-form command line, database path or network URL. Images are hash-verified
+and materialized through the same project-object helper as COLMAP.
+
+## Trust and offline boundary
+
+- A release calls `DedodeRuntime::preflight` with the expected manifest digest,
+  detached signature and trusted key ID.
+- The signed manifest names an exact CPython, PyTorch and torchvision version,
+  inventories every regular file by relative path, byte length, SHA-256, source
+  and SPDX license, and maps exactly three model resources.
+- The approved models are Detector-L-v2 (`4113809d…bdc17`, 58,483,585 bytes),
+  Descriptor-G (`ef6e3f29…fee41`, 75,485,969 bytes) and DINOv2 ViT-L/14
+  (`d5383ea8…bf428`, 1,217,586,395 bytes). Full hashes live in
+  `dedode_runtime.rs` and `scripts/fetch-photolab-dedode.py`.
+- Preflight rejects unlisted files, symlinks, special files, forbidden licenses,
+  a model substitution, a runtime version mismatch or any hash/size mismatch.
+- The process has an empty inherited environment, isolated home/temp/cache,
+  Torch/Hugging Face offline flags and no runtime package/download operation.
+  The local fetch script is a developer/build action and produces an explicitly
+  untrusted runtime until release packaging signs a complete inventory.
+- Stock PyTorch wheels are dev-only because their native closure can include
+  `libgomp`. A release uses the audited no-copyleft PyTorch build required by ADR
+  0006; the manifest license allowlist rejects a stock wheel's GPL-family entry.
+
+## Quality and resource contract
+
+Detector, descriptor, weights, keypoint budget, inference dimensions, matching
+threshold and FP32 numeric mode are immutable run inputs. CPU and CUDA execute
+the same algorithm. Hardware policy may choose concurrency and the bounded
+dual-softmax block size, but it may not remove a backend or lower a quality
+parameter. Features are written image-by-image. Matching loads two feature
+arrays and processes the similarity matrix in bounded blocks, so neither the
+image count nor pair count creates an unbounded in-memory matrix.
+
+The worker atomically checkpoints completed image IDs and pair IDs. Each pair
+first becomes an isolated `pairs/########.hcdp`; only after all requested pairs
+exist is the final container atomically assembled. Rust polls cancellation every
+15 ms and force-kills the child immediately. Scratch outputs are never project
+entities until a later validating command publishes them.
+
+## Neutral `HCDEDG01` match container
+
+All integers and floats are little-endian. Strings are UTF-8.
+
+| Field | Representation |
+| --- | --- |
+| Magic | 8 bytes: `HCDEDG01` |
+| Schema | `u32`, currently `1` |
+| Pair count | `u32` |
+| Pair A ID | `u32` byte length, then bytes |
+| Pair B ID | `u32` byte length, then bytes |
+| Match count | `u32` |
+| Match | `u32 feature_a`, `u32 feature_b`, `f32 x_a`, `f32 y_a`, `f32 x_b`, `f32 y_b`, `f32 confidence` |
+
+Pair records repeat in request order. The Rust importer requires an exact pair
+set and count, finite in-image coordinates, confidence in `[0,1]`, feature
+indices below the configured budget, mutual uniqueness and end-of-file directly
+after the last record. This artifact contains candidate correspondences only.
+COLMAP/Core must perform geometric verification before observations can enter a
+track, sparse reconstruction or bundle adjustment.
+
+## Development setup
+
+Run `python3 scripts/fetch-photolab-dedode.py`. The script fetches the official
+source archive and three weight files, verifies fixed hashes and sizes, creates
+a fresh pinned Python environment and executes the worker's offline preflight.
+`--torch-channel cpu` is the default; `cu124` changes the accelerator runtime,
+not model selection or quality policy. `--smoke-inference` additionally loads
+all three pinned models and runs the complete feature/match/artifact path on the
+two upstream sample images at a bounded test resolution.

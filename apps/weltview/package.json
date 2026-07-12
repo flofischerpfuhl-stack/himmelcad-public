@@ -2,7 +2,7 @@
   "name": "@himmelcad/weltview",
   "version": "0.0.0",
   "private": true,
-  "description": "Himmelcad Weltview — read-only browser viewer",
+  "description": "HimmelCAD WeltView — read-only browser viewer",
   "license": "BUSL-1.1",
   "type": "module",
   "scripts": {

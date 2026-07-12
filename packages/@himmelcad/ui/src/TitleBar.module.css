@@ -1,0 +1,99 @@
+.root {
+  height: var(--hc-size-titlebar);
+  display: flex;
+  align-items: stretch;
+  background: var(--hc-bg-void);
+  color: var(--hc-fg-default);
+  -webkit-app-region: drag;
+  user-select: none;
+  flex-shrink: 0;
+  font-size: 12px;
+  position: relative;
+}
+
+.left,
+.center,
+.right {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.left {
+  gap: 8px;
+  padding: 0 12px;
+  flex-shrink: 0;
+}
+
+.center {
+  flex: 1;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 16px;
+}
+
+.right {
+  gap: 4px;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+
+.logo {
+  display: block;
+}
+
+.wordmark {
+  font-family: var(--hc-font-display);
+  font-size: 18px;
+  letter-spacing: 0.06em;
+  color: var(--hc-fg-strong);
+  line-height: 1;
+  margin-top: 2px;
+}
+
+.product {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--hc-fg-muted);
+  margin-left: 4px;
+  padding-left: 10px;
+  border-left: 1px solid var(--hc-border-default);
+}
+
+.project {
+  font-size: 12px;
+  color: var(--hc-fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60vw;
+}
+
+.controls {
+  display: flex;
+  height: 100%;
+  -webkit-app-region: no-drag;
+}
+
+.control {
+  width: 46px;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--hc-fg-muted);
+  background: transparent;
+  border: none;
+  transition: background var(--hc-motion-fast), color var(--hc-motion-fast);
+}
+
+.control:hover {
+  background: var(--hc-hover-bg);
+  color: var(--hc-fg-default);
+}
+
+.close:hover {
+  background: var(--hc-error);
+  color: #ffffff;
+}

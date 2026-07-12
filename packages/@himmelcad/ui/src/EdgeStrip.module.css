@@ -1,0 +1,88 @@
+.root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--hc-bg-island-lo);
+  color: var(--hc-fg-subtle);
+  border-radius: var(--hc-radius-md);
+  transition: background var(--hc-motion-fast), color var(--hc-motion-fast),
+    box-shadow var(--hc-motion-fast);
+  position: relative;
+  overflow: hidden;
+}
+
+.root:hover {
+  background: var(--hc-bg-island);
+  color: var(--hc-fg-default);
+  box-shadow: var(--hc-shadow-island);
+}
+
+.root:hover .label {
+  opacity: 1;
+}
+
+.chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.label {
+  font-family: var(--hc-font-ui);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0;
+  transition: opacity var(--hc-motion-fast);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* === LEFT / RIGHT (vertical strips) === */
+/*
+ * The body flex `gap` already adds `--hc-gap-island` (4 px) on each side of
+ * the strip. We want the gap between the strip and the viewport island to
+ * match the *expanded* inter-island gap of 12 px (4 + 4 + 4). So the strip
+ * gets an extra 8 px margin on its viewport-facing side.
+ */
+
+.left,
+.right {
+  width: 14px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+  cursor: e-resize;
+}
+
+.left {
+  margin-right: 8px;
+}
+
+.right {
+  cursor: w-resize;
+  margin-left: 8px;
+}
+
+.left .label,
+.right .label {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+.right .label {
+  transform: none;
+}
+
+/* === BOTTOM (horizontal strip) === */
+
+.bottom {
+  height: 14px;
+  flex-direction: row;
+  gap: 8px;
+  padding: 0 10px;
+  cursor: n-resize;
+  margin-top: 8px;
+}

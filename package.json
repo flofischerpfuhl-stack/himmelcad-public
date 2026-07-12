@@ -2,7 +2,8 @@
   "name": "himmelcad",
   "version": "0.0.0",
   "private": true,
-  "description": "Himmelcad — 3D point-cloud-first CAD platform",
+  "type": "module",
+  "description": "HimmelCAD — 3D point-cloud-first CAD platform",
   "license": "BUSL-1.1",
   "repository": {
     "type": "git",
@@ -14,14 +15,24 @@
   },
   "scripts": {
     "build": "pnpm -r --filter \"./packages/**\" --filter \"./apps/**\" build",
-    "dev:polyshape": "pnpm --filter @himmelcad/polyshape dev",
+    "dev:builder": "pnpm --filter @himmelcad/builder dev",
+    "dev:photolab": "pnpm --filter @himmelcad/photolab dev",
     "dev:weltview": "pnpm --filter @himmelcad/weltview dev",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "pnpm -r typecheck",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "pnpm -r test",
-    "clean": "pnpm -r exec rm -rf dist build .vite *.tsbuildinfo && rm -rf node_modules"
+    "clean": "pnpm -r exec rm -rf dist build .vite *.tsbuildinfo && rm -rf node_modules",
+    "fetch-vendor": "node scripts/fetch-vendor.mjs",
+    "fetch-photolab-models": "node scripts/fetch-photolab-models.mjs",
+    "photolab:golden:agisoft": "node scripts/photolab-agisoft-golden.mjs",
+    "photolab:e2e": "node scripts/photolab-e2e.mjs",
+    "photolab:audit:release:linux": "pnpm --filter @himmelcad/photolab stage:linux && node scripts/check-photolab-release-inventory.mjs linux-x64",
+    "photolab:audit:release:win": "pnpm --filter @himmelcad/photolab stage:win && node scripts/check-photolab-release-inventory.mjs win32-x64",
+    "photolab:check:english-ui": "node scripts/check-photolab-english-ui.mjs",
+    "branding:generate": "node scripts/generate-brand-assets.mjs",
+    "postinstall": "node scripts/fetch-vendor.mjs && node scripts/fetch-photolab-models.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",

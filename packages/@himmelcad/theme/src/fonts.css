@@ -1,0 +1,23 @@
+/**
+ * Wordmark / display fonts. The "Kamikaze" family is the carry-over from
+ * the legacy v0.1 prototype - it gives the HimmelCAD wordmark its recognizable
+ * Japanese-poster silhouette. Source files live under ./fonts/.
+ *
+ * License note: see LICENSES/THIRD_PARTY.md for upstream attribution.
+ */
+
+@font-face {
+  font-family: 'HC Wordmark';
+  src: url('./fonts/Kamikaze.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'HC Wordmark Display';
+  src: url('./fonts/Kamikaze3DGradient.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}

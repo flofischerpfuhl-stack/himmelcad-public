@@ -1,57 +1,95 @@
 /**
- * Himmelcad design tokens — derived from VS Code "Islands Dark"
+ * HimmelCAD design tokens — derived from VS Code "Islands Dark"
  * (libs/vscode-dark-islands-main). Single source of truth for color, type,
  * spacing, motion. UI components must read tokens, never hardcode hex.
+ *
+ * The "islands" aesthetic: a dark workspace void with floating, rounded
+ * panels (islands) sitting on top. Each panel has its own slightly elevated
+ * background tone, a soft hairline border, and is separated from neighbors
+ * by a small gutter that shows the void.
  */
 
 :root,
 .hc-theme-dark {
-  --hc-bg-base: #181a1d;
-  --hc-bg-panel: #181a1d;
-  --hc-bg-elevated: #2b2d30;
-  --hc-bg-sunken: #161619;
-  --hc-bg-overlay: rgba(0, 0, 0, 0.55);
+  /* Background layers, from deepest to most elevated */
+  --hc-bg-void: #101114;        /* the workspace gutter behind every island */
+  --hc-bg-island: #1a1c20;      /* default island surface (panels, viewport chrome) */
+  --hc-bg-island-hi: #1f2226;   /* slightly raised: ribbon body, hovered islands */
+  --hc-bg-island-lo: #15171a;   /* slightly recessed: console body, inactive tabs */
+  --hc-bg-overlay: rgba(8, 9, 11, 0.6);
 
-  --hc-fg-default: #bcbec4;
+  /* Legacy aliases — keep until all callsites migrate. */
+  --hc-bg-base: var(--hc-bg-void);
+  --hc-bg-panel: var(--hc-bg-island);
+  --hc-bg-elevated: var(--hc-bg-island-hi);
+  --hc-bg-sunken: var(--hc-bg-island-lo);
+
+  /* Foreground */
+  --hc-fg-default: #c9ccd2;
+  --hc-fg-strong: #f0f1f3;
   --hc-fg-muted: #7a7e85;
   --hc-fg-subtle: #4e5157;
-  --hc-fg-inverse: #ffffff;
+  --hc-fg-inverse: #0e0f12;
 
-  --hc-border-subtle: #25262a;
-  --hc-border-default: #2b2d30;
-  --hc-border-strong: #3c3f41;
+  /* Borders & dividers */
+  --hc-border-subtle: rgba(255, 255, 255, 0.04);
+  --hc-border-default: rgba(255, 255, 255, 0.08);
+  --hc-border-strong: rgba(255, 255, 255, 0.16);
   --hc-border-accent: #548af7;
 
+  /* Accent */
   --hc-accent-base: #548af7;
   --hc-accent-hover: #6d9df8;
   --hc-accent-on: #ffffff;
-  --hc-accent-soft: #25324d;
+  --hc-accent-soft: rgba(84, 138, 247, 0.18);
 
-  --hc-selection-bg: #25324d;
-  --hc-hover-bg: #25262a;
+  /* Selection / interaction */
+  --hc-selection-bg: rgba(84, 138, 247, 0.22);
+  --hc-hover-bg: rgba(255, 255, 255, 0.05);
+  --hc-press-bg: rgba(255, 255, 255, 0.09);
   --hc-focus-ring: #548af7;
 
+  /* Status */
   --hc-success: #73b00a;
   --hc-warning: #e8a33e;
   --hc-error: #f75464;
   --hc-info: #548af7;
+  --hc-debug: #7a7e85;
 
+  /* Typography */
   --hc-font-ui:
     'Inter', 'InterDisplay', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --hc-font-mono:
     'JetBrains Mono', 'JetBrainsMono', 'Fira Code', 'Cascadia Mono', Menlo,
     Consolas, monospace;
+  --hc-font-display:
+    'HC Wordmark', 'Inter', system-ui, sans-serif;
+  --hc-font-display-3d:
+    'HC Wordmark Display', 'HC Wordmark', 'Inter', system-ui, sans-serif;
 
-  --hc-size-ribbon: 96px;
-  --hc-size-ribbon-collapsed: 28px;
-  --hc-size-statusbar: 22px;
+  /* Sizes */
+  --hc-size-titlebar: 36px;
+  --hc-size-ribbon-tabs: 30px;
+  --hc-size-ribbon-body: 84px;
+  --hc-size-ribbon-collapsed: 0px;
+  --hc-size-statusbar: 24px;
   --hc-size-panel-min: 0px;
   --hc-size-panel-default: 280px;
 
-  --hc-radius-sm: 3px;
-  --hc-radius-md: 5px;
-  --hc-radius-lg: 8px;
+  /* Island geometry */
+  --hc-radius-sm: 4px;
+  --hc-radius-md: 6px;
+  --hc-radius-lg: 10px;
+  --hc-radius-island: 10px;
+  --hc-gap-island: 4px;
+  --hc-pad-workspace: 4px;
 
+  /* Shadows */
+  --hc-shadow-island: 0 1px 2px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--hc-border-default);
+  --hc-shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--hc-border-strong);
+
+  /* Motion */
   --hc-motion-fast: 90ms cubic-bezier(0.2, 0.6, 0.2, 1);
   --hc-motion-base: 160ms cubic-bezier(0.2, 0.6, 0.2, 1);
+  --hc-motion-slow: 280ms cubic-bezier(0.2, 0.6, 0.2, 1);
 }

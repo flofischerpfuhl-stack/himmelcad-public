@@ -1,0 +1,34 @@
+appId: de.himmelcad.builder
+productName: HimmelCAD Builder
+artifactName: HimmelCAD-Builder-${version}-${arch}.${ext}
+directories:
+  output: release
+files:
+  - dist/electron/**
+  - dist/renderer/**
+  - build/icon.png
+  - package.json
+asar: true
+npmRebuild: false
+extraResources:
+  - from: ../../LICENSE
+    to: LICENSE.txt
+  - from: ../../LICENSES/THIRD_PARTY.md
+    to: THIRD_PARTY_NOTICES.md
+  - from: ../../target/release/himmelcad-sidecar
+    to: himmelcad-sidecar
+  - from: ../../vendor/potreeconverter/linux-x64
+    to: vendor/potreeconverter/linux-x64
+linux:
+  icon: build/icon.png
+  maintainer: HimmelCAD <noreply@himmelcad.local>
+  synopsis: Point-cloud-first 3D CAD
+  description: Offline 3D CAD for large point clouds, geometry, measurement, and drawing.
+  syncDesktopName: true
+  target:
+    - AppImage
+    - deb
+  category: Graphics
+  executableName: himmelcad-builder
+deb:
+  compression: gz

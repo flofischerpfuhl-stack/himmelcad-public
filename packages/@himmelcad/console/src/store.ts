@@ -9,10 +9,15 @@ class ConsoleStore {
   private listeners = new Set<Listener>();
 
   push(event: LogEvent): void {
-    if (this.events.length >= RING_SIZE) {
-      this.events.shift();
+    if (event.progressKey) {
+      const idx = this.events.findIndex((e) => e.progressKey === event.progressKey);
+      if (idx !== -1) {
+        this.events = this.events.map((existing, i) => (i === idx ? event : existing));
+        for (const l of this.listeners) l();
+        return;
+      }
     }
-    this.events.push(event);
+    this.events = [...this.events.slice(Math.max(0, this.events.length - RING_SIZE + 1)), event];
     for (const l of this.listeners) l();
   }
 

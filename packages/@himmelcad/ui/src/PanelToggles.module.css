@@ -1,0 +1,25 @@
+.root {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 18px;
+  color: var(--hc-fg-subtle);
+  border-radius: var(--hc-radius-sm);
+  transition: background var(--hc-motion-fast), color var(--hc-motion-fast);
+}
+
+.btn:hover {
+  background: var(--hc-hover-bg);
+  color: var(--hc-fg-default);
+}
+
+.btnActive {
+  color: var(--hc-fg-default);
+}

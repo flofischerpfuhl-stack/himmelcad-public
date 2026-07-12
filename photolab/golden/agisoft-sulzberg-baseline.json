@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "datasetId": "agisoft-sulzberg-2026-07-06",
+  "sourceApplication": "Agisoft Metashape",
+  "projectRelativePath": "260706_Sulzberg_SUMA_UrGel",
+  "referenceFrame": {
+    "horizontalCrs": "EPSG:31468",
+    "horizontalName": "DHDN / 3-degree Gauss-Kruger zone 4",
+    "zUp": true,
+    "requiresAccurateDatumGridForWgs84Import": true
+  },
+  "images": {
+    "total": 135,
+    "aligned": 135,
+    "widthPixels": 5280,
+    "heightPixels": 3956,
+    "cameraModel": "DJI M4E",
+    "nominalFocalLengthMillimeters": 12.29,
+    "flightHeightMeters": 28,
+    "groundSamplingDistanceMeters": 0.0075
+  },
+  "alignment": {
+    "tiePoints": 156158,
+    "projections": 970914,
+    "reprojectionRmsPixels": 0.83,
+    "keyPointLimit": 80000,
+    "tiePointLimitPerMegapixel": 1000,
+    "tiePointLimit": 8000,
+    "matchingSeconds": 165,
+    "alignmentSeconds": 76,
+    "optimizationSeconds": 5
+  },
+  "calibration": {
+    "fPixels": 3719.73,
+    "cxPixels": 21.5914,
+    "cyPixels": -17.5384,
+    "k1": -0.104214,
+    "k2": -0.00895695,
+    "k3": -0.0114412,
+    "p1": -0.0000443446,
+    "p2": 0.0000838936
+  },
+  "gcps": {
+    "total": 6,
+    "controls": 4,
+    "checkpoints": 2,
+    "controlRmseMeters": {
+      "east": 0.000997943,
+      "north": 0.00220713,
+      "height": 0.00390909,
+      "horizontal": 0.00242225,
+      "spatial3d": 0.00459873
+    },
+    "checkpointRmseMeters": {
+      "east": 0.00257308,
+      "north": 0.00578291,
+      "height": 0.00784287,
+      "horizontal": 0.00632951,
+      "spatial3d": 0.0100784
+    }
+  },
+  "depth": {
+    "imageCount": 135,
+    "quality": "high",
+    "filter": "mild",
+    "maximumNeighbors": 16,
+    "runtimeSeconds": 583,
+    "peakMemoryBytes": 5025111736
+  },
+  "denseCloud": {
+    "reportPointCount": 59642494,
+    "exportedLasPointCount": 59639872,
+    "hasColor": true,
+    "hasNormals": true,
+    "hasConfidence": true,
+    "bounds": {
+      "min": [4375465.2058, 5281171.141, 693.0004],
+      "max": [4375599.2036, 5281299.1106, 725.2435]
+    }
+  },
+  "dem": {
+    "resolutionMetersPerPixel": 0.015,
+    "densityPointsPerSquareCentimeter": 0.442
+  },
+  "orthomosaic": {
+    "widthPixels": 19523,
+    "heightPixels": 19478,
+    "resolutionMetersPerPixel": 0.0075199430321273,
+    "bands": 4,
+    "overviewLevels": 7,
+    "bounds": {
+      "min": [4375461.75239552, 5281158.135],
+      "max": [4375608.564, 5281304.608426477]
+    }
+  },
+  "acceptance": {
+    "alignedImageRatioMinimum": 1.0,
+    "reprojectionRmsPixelsMaximum": 0.83,
+    "checkpointSpatial3dRmseMetersMaximum": 0.0100784,
+    "controlSpatial3dRmseMetersMaximum": 0.00459873,
+    "orthomosaicResolutionRelativeTolerance": 0.02,
+    "orthomosaicBoundsToleranceMeters": 0.05,
+    "densePointCountRelativeTolerance": 0.05
+  }
+}

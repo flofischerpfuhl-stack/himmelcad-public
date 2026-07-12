@@ -9,6 +9,7 @@ description = "Spatial indexes (octree, kd-tree) for tile streaming and snapping
 [dependencies]
 glam.workspace = true
 serde.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

@@ -1,0 +1,53 @@
+appId: de.himmelcad.photolab
+productName: HimmelCAD PhotoLab
+directories:
+  output: release
+files:
+  - dist/electron/**
+  - dist/renderer/**
+  - build/icon.ico
+  - build/icon.png
+  - package.json
+asar: true
+npmRebuild: false
+extraResources:
+  - from: ../../LICENSE
+    to: LICENSE.txt
+  - from: ../../LICENSES/THIRD_PARTY.md
+    to: THIRD_PARTY_NOTICES.md
+  - from: ../../target/release/himmelcad-sidecar.exe
+    to: himmelcad-sidecar.exe
+  - from: ../../target/release/himmelcad-portable-mvs.exe
+    to: himmelcad-portable-mvs.exe
+  - from: ../../vendor/colmap/win32-x64
+    to: vendor/colmap/win32-x64
+  - from: ../../vendor/brush/win32-x64
+    to: vendor/brush/win32-x64
+  - from: ../../vendor/potreeconverter/win32-x64
+    to: vendor/potreeconverter/win32-x64
+  - from: ../../vendor/photolab-models
+    to: vendor/photolab-models
+  - from: ../../vendor/dedode/win32-x64
+    to: vendor/dedode/win32-x64
+    filter:
+      - '**/*'
+      - '!.venv/**'
+  - from: workers/dedode/dedode_worker.py
+    to: workers/dedode_worker.py
+  - from: ../../.build/photolab-runtime/win32-x64/workers/geo
+    to: workers/geo
+  - from: ../../.build/photolab-runtime/win32-x64/python
+    to: vendor/dedode/win32-x64/python
+win:
+  icon: build/icon.ico
+  target:
+    - nsis
+    - portable
+  executableName: himmelcad-photolab
+portable:
+  artifactName: HimmelCAD-PhotoLab-${version}-${arch}-portable.${ext}
+nsis:
+  artifactName: HimmelCAD-PhotoLab-${version}-${arch}-setup.${ext}
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false

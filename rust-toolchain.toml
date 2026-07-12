@@ -1,5 +1,8 @@
 [toolchain]
-channel = "1.82"
+# las v0.9.11 needs Rust ≥ 1.88 (edition 2024 + stabilized let-chains).
+# Bumping moves the workspace MSRV in lockstep — keep `rust-version` in the
+# workspace Cargo.toml in sync.
+channel = "1.88"
 components = ["rustfmt", "clippy"]
 targets = ["wasm32-unknown-unknown"]
 profile = "minimal"

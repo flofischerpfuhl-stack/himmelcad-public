@@ -19,9 +19,38 @@ body {
   font-size: 13px;
   line-height: 1.45;
   color: var(--hc-fg-default);
-  background: var(--hc-bg-base);
+  background: var(--hc-bg-void);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  /* Most chrome shouldn't be selectable, but text content (console output,
+     entity labels, cursor overlay) is opted back in via `.hc-selectable`
+     or by writing it inside an input/textarea. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea,
+.hc-selectable,
+.hc-selectable * {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Active resize drag: the splitter sets these classes on <body>. !important
+   wins against per-element cursor / selection rules so the resize cursor
+   stays consistent over canvas, iframes and React-controlled subtrees. */
+body.hc-resizing-col,
+body.hc-resizing-col * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.hc-resizing-row,
+body.hc-resizing-row * {
+  cursor: row-resize !important;
+  user-select: none !important;
 }
 
 button,

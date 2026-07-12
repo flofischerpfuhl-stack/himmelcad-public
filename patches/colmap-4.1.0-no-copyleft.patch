@@ -1,0 +1,418 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 3c65ec6..83e5420 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -112,6 +112,9 @@ set_property(GLOBAL PROPERTY GLOBAL_DEPENDS_NO_CYCLES ON)
+ ################################################################################
+ 
+ set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
++if(HIMMELCAD_LAPACK_MODULE_PATH)
++    list(APPEND CMAKE_MODULE_PATH "${HIMMELCAD_LAPACK_MODULE_PATH}")
++endif()
+ 
+ include(CheckCXXCompilerFlag)
+ include(GNUInstallDirs)
+diff --git a/cmake/FindDependencies.cmake b/cmake/FindDependencies.cmake
+index 5ae2b9f..748d1f4 100644
+--- a/cmake/FindDependencies.cmake
++++ b/cmake/FindDependencies.cmake
+@@ -13,7 +13,12 @@ else()
+     message(STATUS "Disabling LSD support")
+ endif()
+ 
+-find_package(OpenMP REQUIRED COMPONENTS C CXX)
++if(OPENMP_ENABLED)
++    find_package(OpenMP REQUIRED COMPONENTS C CXX)
++else()
++    set(OpenMP_FOUND FALSE)
++    set(OPENMP_FOUND FALSE)
++endif()
+ 
+ find_package(Boost ${COLMAP_FIND_TYPE} COMPONENTS
+              graph
+@@ -47,8 +52,6 @@ find_package(Glew ${COLMAP_FIND_TYPE})
+ 
+ find_package(Git)
+ 
+-find_package(CHOLMOD REQUIRED)
+-
+ find_package(Ceres ${COLMAP_FIND_TYPE})
+ if(NOT TARGET Ceres::ceres)
+     # Older Ceres versions don't come with an imported interface target.
+diff --git a/src/colmap/estimators/rotation_averaging_impl.cc b/src/colmap/estimators/rotation_averaging_impl.cc
+index f7e2000..7eed8a5 100644
+--- a/src/colmap/estimators/rotation_averaging_impl.cc
++++ b/src/colmap/estimators/rotation_averaging_impl.cc
+@@ -4,7 +4,8 @@
+ #include "colmap/math/math.h"
+ #include "colmap/math/random.h"
+ #include "colmap/optim/least_absolute_deviations.h"
+-#include "colmap/optim/sparse_cholesky.h"
++
++#include <Eigen/SparseCholesky>
+ 
+ #include <limits>
+ 
+@@ -773,7 +774,7 @@ std::optional<Eigen::VectorXd> RotationAveragingSolver::ComputeIRLSWeights(
+ }
+ 
+ bool RotationAveragingSolver::SolveIRLS(RotationAveragingProblem& problem) {
+-  SparseCholeskyWithFallbackSolver solver;
++  Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> solver;
+   bool pattern_analyzed = false;
+ 
+   const double sigma = DegToRad(options_.irls_loss_parameter_sigma);
+@@ -805,17 +806,18 @@ bool RotationAveragingSolver::SolveIRLS(RotationAveragingProblem& problem) {
+     }
+ 
+     if (!pattern_analyzed) {
+-      solver.AnalyzePattern(at_weight_a);
++      solver.analyzePattern(at_weight_a);
+       pattern_analyzed = true;
+     }
+-    if (!solver.Factorize(at_weight_a)) {
++    solver.factorize(at_weight_a);
++    if (solver.info() != Eigen::Success) {
+       LOG(ERROR) << "IRLS Cholesky factorization failed (iteration "
+                  << iteration << ")";
+       return false;
+     }
+ 
+-    if (!solver.Solve(at_weight * problem.Residuals(), &step) ||
+-        step.array().isNaN().any()) {
++    step = solver.solve(at_weight * problem.Residuals());
++    if (solver.info() != Eigen::Success || step.array().isNaN().any()) {
+       LOG(ERROR) << "IRLS solve failed (iteration " << iteration << ")";
+       return false;
+     }
+diff --git a/src/colmap/optim/CMakeLists.txt b/src/colmap/optim/CMakeLists.txt
+index 0c4a156..5ba6335 100644
+--- a/src/colmap/optim/CMakeLists.txt
++++ b/src/colmap/optim/CMakeLists.txt
+@@ -37,14 +37,12 @@ COLMAP_ADD_LIBRARY(
+         least_absolute_deviations.h least_absolute_deviations.cc
+         progressive_sampler.h progressive_sampler.cc
+         random_sampler.h random_sampler.cc
+-        sparse_cholesky.h sparse_cholesky.cc
+         sprt.h sprt.cc
+         support_measurement.h support_measurement.cc
+     PUBLIC_LINK_LIBS
+         colmap_math
+         colmap_util
+         Eigen3::Eigen
+-        CHOLMOD::CHOLMOD
+ )
+ if(OPENMP_FOUND)
+     target_link_libraries(colmap_optim PUBLIC OpenMP::OpenMP_CXX)
+diff --git a/src/colmap/optim/least_absolute_deviations.cc b/src/colmap/optim/least_absolute_deviations.cc
+index 998fef6..ed6016d 100644
+--- a/src/colmap/optim/least_absolute_deviations.cc
++++ b/src/colmap/optim/least_absolute_deviations.cc
+@@ -29,7 +29,6 @@
+ 
+ #include "colmap/optim/least_absolute_deviations.h"
+ 
+-#include "colmap/optim/sparse_cholesky.h"
+ #include "colmap/util/eigen_alignment.h"
+ #include "colmap/util/logging.h"
+ 
+@@ -92,15 +91,17 @@ struct SupernodalCholmodLLTLinearSolver
+       : ridge_regularization_(ridge_regularization) {}
+ 
+   bool Compute(const Eigen::SparseMatrix<double>& A) override {
+-    return solver_.Compute(NormalEquations(A, ridge_regularization_));
++    solver_.compute(NormalEquations(A, ridge_regularization_));
++    return solver_.info() == Eigen::Success;
+   }
+ 
+   bool Solve(const Eigen::VectorXd& b, Eigen::VectorXd* x) override {
+-    return solver_.Solve(b, x);
++    x->noalias() = solver_.solve(b);
++    return solver_.info() == Eigen::Success;
+   }
+ 
+  private:
+-  SparseCholeskyWithFallbackSolver solver_;
++  Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> solver_;
+   const double ridge_regularization_;
+ };
+ 
+diff --git a/vcpkg.json b/vcpkg.json
+index 6be55ac..b609bf9 100644
+--- a/vcpkg.json
++++ b/vcpkg.json
+@@ -5,18 +5,19 @@
+     "license": "BSD-3-Clause",
+     "supports": "(linux | windows | osx) & (x86 | x64 | arm64)",
+     "dependencies": [
++        "blas",
+         "boost-algorithm",
+         "boost-graph",
+         "boost-heap",
+         "boost-program-options",
+         "boost-property-map",
+         "boost-property-tree",
++        "clapack",
+         {
+             "name": "ceres",
+             "features": [
+-                "lapack",
+-                "schur",
+-                "suitesparse"
++                "eigensparse",
++                "schur"
+             ]
+         },
+         "eigen3",
+@@ -48,10 +49,7 @@
+             "version": "2023-03-27"
+         }
+     ],
+-    "default-features": [
+-        "gui",
+-        "download"
+-    ],
++    "default-features": [],
+     "features": {
+         "tests": {
+             "description": "Build all tests.",
+diff --git a/src/thirdparty/CMakeLists.txt b/src/thirdparty/CMakeLists.txt
+index 12fa2d6..6e09cad 100644
+--- a/src/thirdparty/CMakeLists.txt
++++ b/src/thirdparty/CMakeLists.txt
+@@ -71,6 +71,21 @@ if(FETCH_FAISS)
+     set(FAISS_ENABLE_MKL OFF)
+     set(BUILD_TESTING OFF)
+     FetchContent_MakeAvailable(faiss)
++    foreach(_faiss_target faiss faiss_avx2 faiss_avx512 faiss_avx512_spr faiss_sve)
++        if(TARGET ${_faiss_target})
++            get_target_property(_faiss_links ${_faiss_target} LINK_LIBRARIES)
++            if(_faiss_links)
++                list(FILTER _faiss_links EXCLUDE REGEX "OpenMP::OpenMP_CXX")
++                set_property(TARGET ${_faiss_target} PROPERTY LINK_LIBRARIES "${_faiss_links}")
++            endif()
++            get_target_property(_faiss_interface_links ${_faiss_target} INTERFACE_LINK_LIBRARIES)
++            if(_faiss_interface_links)
++                list(FILTER _faiss_interface_links EXCLUDE REGEX "OpenMP::OpenMP_CXX")
++                set_property(TARGET ${_faiss_target} PROPERTY INTERFACE_LINK_LIBRARIES "${_faiss_interface_links}")
++            endif()
++        endif()
++    endforeach()
++    target_sources(faiss PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/faiss_openmp_stubs.cc")
+     # Fix MSVC linker warning LNK4286: faiss headers use FAISS_API which
+     # defaults to dllimport on Windows, but we build faiss as a static library.
+     # Adding FAISS_MAIN_LIB as PUBLIC ensures consumers also get this defined.
+diff --git a/src/thirdparty/faiss_openmp_stubs.cc b/src/thirdparty/faiss_openmp_stubs.cc
+new file mode 100644
+index 0000000..1b11e3f
+--- /dev/null
++++ b/src/thirdparty/faiss_openmp_stubs.cc
+@@ -0,0 +1,14 @@
++extern "C" {
++void omp_set_num_threads(int) {}
++int omp_get_max_threads() { return 1; }
++int omp_get_num_threads() { return 1; }
++int omp_get_thread_num() { return 0; }
++int omp_in_parallel() { return 0; }
++void omp_set_nested(int) {}
++int omp_get_nested() { return 0; }
++void omp_set_max_active_levels(int) {}
++void omp_init_lock(void*) {}
++void omp_destroy_lock(void*) {}
++void omp_set_lock(void*) {}
++void omp_unset_lock(void*) {}
++}
+diff --git a/src/colmap/feature/aliked.cc b/src/colmap/feature/aliked.cc
+index 99d57fb..67b6b47 100644
+--- a/src/colmap/feature/aliked.cc
++++ b/src/colmap/feature/aliked.cc
+@@ -33,6 +33,8 @@
+ #include "colmap/feature/onnx_utils.h"
+ 
+ #include <algorithm>
++#include <cmath>
++#include <cstring>
+ #include <memory>
+ 
+ namespace colmap {
+@@ -165,6 +167,113 @@ class AlikedFeatureExtractor : public FeatureExtractor {
+     THROW_CHECK_NOTNULL(descriptors);
+     THROW_CHECK(bitmap.IsRGB());
+ 
++    // A 2048 px inference window keeps the full native image resolution while
++    // substantially reducing duplicate overlap work. Peak memory remains below
++    // the 32 GiB reference workstation budget; weaker machines use the same
++    // model and resolution with one worker rather than a lower-quality model.
++    constexpr int kTileEdge = 2048;
++    constexpr int kTileOverlap = 256;
++    constexpr int kTileCore = kTileEdge - 2 * kTileOverlap;
++    const int width = bitmap.Width();
++    const int height = bitmap.Height();
++    std::vector<Candidate> candidates;
++
++    if (width <= kTileEdge && height <= kTileEdge) {
++      RunModel(bitmap,
++               options_.aliked->max_num_features,
++               0,
++               0,
++               0,
++               0,
++               width,
++               height,
++               &candidates);
++    } else {
++      const double image_area = static_cast<double>(width) * height;
++      for (int core_y = 0; core_y < height; core_y += kTileCore) {
++        const int core_bottom = std::min(core_y + kTileCore, height);
++        const int tile_top = std::max(0, core_y - kTileOverlap);
++        const int tile_bottom = std::min(height, core_bottom + kTileOverlap);
++        for (int core_x = 0; core_x < width; core_x += kTileCore) {
++          const int core_right = std::min(core_x + kTileCore, width);
++          const int tile_left = std::max(0, core_x - kTileOverlap);
++          const int tile_right = std::min(width, core_right + kTileOverlap);
++          Bitmap tile(tile_right - tile_left, tile_bottom - tile_top, true);
++          const int source_pitch = bitmap.Pitch();
++          const int tile_pitch = tile.Pitch();
++          const auto& source = bitmap.RowMajorData();
++          auto& destination = tile.RowMajorData();
++          for (int y = tile_top; y < tile_bottom; ++y) {
++            std::memcpy(destination.data() + (y - tile_top) * tile_pitch,
++                        source.data() + y * source_pitch + tile_left * 3,
++                        tile_pitch);
++          }
++          const double tile_area =
++              static_cast<double>(tile.Width()) * tile.Height();
++          const int tile_features = std::clamp(
++              static_cast<int>(std::ceil(options_.aliked->max_num_features *
++                                         2.0 * tile_area / image_area)),
++              512,
++              options_.aliked->max_num_features);
++          RunModel(tile,
++                   tile_features,
++                   tile_left,
++                   tile_top,
++                   core_x,
++                   core_y,
++                   core_right,
++                   core_bottom,
++                   &candidates);
++        }
++      }
++    }
++
++    std::sort(candidates.begin(),
++              candidates.end(),
++              [](const Candidate& lhs, const Candidate& rhs) {
++                if (lhs.score != rhs.score) {
++                  return lhs.score > rhs.score;
++                }
++                if (lhs.y != rhs.y) {
++                  return lhs.y < rhs.y;
++                }
++                return lhs.x < rhs.x;
++              });
++    candidates.resize(std::min(
++        candidates.size(),
++        static_cast<size_t>(options_.aliked->max_num_features)));
++    keypoints->resize(candidates.size());
++    descriptors->type = options_.type;
++    descriptors->data.resize(candidates.size(),
++                             descriptor_dim_ * sizeof(float));
++    for (size_t index = 0; index < candidates.size(); ++index) {
++      (*keypoints)[index].x = candidates[index].x;
++      (*keypoints)[index].y = candidates[index].y;
++      std::memcpy(descriptors->data.data() +
++                      index * descriptor_dim_ * sizeof(float),
++                  candidates[index].descriptor.data(),
++                  descriptor_dim_ * sizeof(float));
++    }
++    return true;
++  }
++
++ private:
++  struct Candidate {
++    float x;
++    float y;
++    float score;
++    std::vector<float> descriptor;
++  };
++
++  void RunModel(const Bitmap& bitmap,
++                int requested_features,
++                int offset_x,
++                int offset_y,
++                int core_left,
++                int core_top,
++                int core_right,
++                int core_bottom,
++                std::vector<Candidate>* candidates) {
+     const int width = bitmap.Width();
+     const int height = bitmap.Height();
+ 
+@@ -191,7 +300,7 @@ class AlikedFeatureExtractor : public FeatureExtractor {
+         image_shape.size()));
+ 
+     // Prepare max_keypoints input tensor (scalar).
+-    int64_t max_keypoints = options_.aliked->max_num_features;
++    int64_t max_keypoints = requested_features;
+     input_tensors.emplace_back(Ort::Value::CreateTensor<int64_t>(
+         Ort::MemoryInfo::CreateCpu(OrtAllocatorType::OrtDeviceAllocator,
+                                    OrtMemType::OrtMemTypeCPU),
+@@ -249,13 +358,6 @@ class AlikedFeatureExtractor : public FeatureExtractor {
+     const float scale_x = 0.5f * static_cast<float>(padder.padded_width - 1);
+     const float scale_y = 0.5f * static_cast<float>(padder.padded_height - 1);
+ 
+-    // Collect valid keypoints, their pixel coordinates, and descriptor indices.
+-    struct ValidKeypoint {
+-      float x, y;
+-      int index;
+-    };
+-    std::vector<ValidKeypoint> valid_keypoints;
+-    valid_keypoints.reserve(num_keypoints);
+     for (int i = 0; i < num_keypoints; ++i) {
+       if (scores_data[i] < min_score) {
+         continue;
+@@ -264,30 +366,23 @@ class AlikedFeatureExtractor : public FeatureExtractor {
+       const float norm_y = keypoints_data[2 * i + 1];
+       const float px = (norm_x + 1.0f) * scale_x + 0.5f;
+       const float py = (norm_y + 1.0f) * scale_y + 0.5f;
+-      if (px >= 0.0f && px < width && py >= 0.0f && py < height) {
+-        valid_keypoints.push_back({px, py, i});
++      const float global_x = px + offset_x;
++      const float global_y = py + offset_y;
++      if (px >= 0.0f && px < width && py >= 0.0f && py < height &&
++          global_x >= core_left && global_x < core_right &&
++          global_y >= core_top && global_y < core_bottom) {
++        Candidate candidate;
++        candidate.x = global_x;
++        candidate.y = global_y;
++        candidate.score = scores_data[i];
++        candidate.descriptor.assign(descriptors_data + i * descriptor_dim_,
++                                    descriptors_data +
++                                        (i + 1) * descriptor_dim_);
++        candidates->push_back(std::move(candidate));
+       }
+     }
+-
+-    // Populate output with valid keypoints and descriptors.
+-    const int num_valid = static_cast<int>(valid_keypoints.size());
+-    keypoints->resize(num_valid);
+-    descriptors->type = options_.type;
+-    descriptors->data.resize(num_valid, descriptor_dim_ * sizeof(float));
+-    for (int j = 0; j < num_valid; ++j) {
+-      const auto& kp = valid_keypoints[j];
+-      (*keypoints)[j].x = kp.x;
+-      (*keypoints)[j].y = kp.y;
+-      std::memcpy(
+-          descriptors->data.data() + j * descriptor_dim_ * sizeof(float),
+-          descriptors_data + kp.index * descriptor_dim_,
+-          descriptor_dim_ * sizeof(float));
+-    }
+-
+-    return true;
+   }
+ 
+- private:
+   const FeatureExtractionOptions options_;
+   ONNXModel model_;
+   int descriptor_dim_;

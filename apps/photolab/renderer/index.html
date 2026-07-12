@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' hcad-image: hcad-product: data: blob:; connect-src 'self' hcad-product: ws://localhost:5174 http://localhost:5174; worker-src 'self' blob:"
+    />
+    <title>HimmelCAD PhotoLab</title>
+  </head>
+  <body>
+    <div id="hc-root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "WASM bridge for Weltview. Same contract as the sidecar binary."
+description = "WASM bridge for WeltView. Same contract as the sidecar binary."
 
 [lib]
 crate-type = ["cdylib", "rlib"]

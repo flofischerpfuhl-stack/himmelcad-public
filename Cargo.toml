@@ -11,10 +11,10 @@ members = [
 [workspace.package]
 version = "0.0.0"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.88"
 license = "BUSL-1.1"
 repository = "https://gitlab.com/florian-fischer-group/himmelcad"
-authors = ["Himmelcad project"]
+authors = ["HimmelCAD project"]
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
@@ -42,6 +42,8 @@ sha2 = "0.10"
 hex = "0.4"
 parking_lot = "0.12"
 bytes = "1"
+nom-exif = { version = "3.6.1", default-features = false }
+zip = { version = "8.6.0", default-features = false }
 wasm-bindgen = "0.2"
 js-sys = "0.3"
 

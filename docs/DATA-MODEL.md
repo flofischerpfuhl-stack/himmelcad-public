@@ -1,4 +1,4 @@
-# Himmelcad Data Model
+# HimmelCAD Data Model
 
 ## Goals
 
@@ -8,7 +8,7 @@ The data model must support:
 - CAD entities and future IFC/DXF/GIS-like attributes,
 - high-resolution meshes and Gaussian splats,
 - undo/redo,
-- semantic diffs for future Chronogit,
+- semantic diffs for future ChronoGit,
 - browser read-only viewing,
 - later simulations without changing the foundation.
 
@@ -46,24 +46,46 @@ Rules:
 
 ### Entity Kinds
 
-Initial and planned kinds:
+Entity kinds are closed and versioned in the Rust core. The list below is the
+planned semantic surface; phases may land them gradually. When a kind is added,
+the schema version and migrations must be handled explicitly.
+
+Core and current planned kinds:
 
 - `ProjectRoot`
 - `Group`
 - `Layer`
 - `PointCloud`
 - `PointCloudSegment`
+- `GaussianSplatCloud`
 - `SinglePoint`
 - `Polyline3D`
+- `Polyline2D`
+- `Circle`
+- `Arc`
+- `Spline`
+- `Clothoid`
 - `Mesh`
 - `TexturedMesh`
-- `GaussianSplatCloud`
+- `Surface`
+- `Solid`
+- `Object`
 - `Text`
+- `Label`
+- `Dimension`
+- `Orthophoto2D`
+- `Panorama2D`
+- `Panorama3D`
 - `Axis`
 - `AlignmentElement`
+- `Gradient`
+- `RampBand`
+- `WidthBand`
+- `SlopeBand`
 - `IfcElement`
 - `Pipe`
 - `Manhole`
+- `Specification`
 - `SimulationOverlay`
 
 The MVP needs only:
@@ -72,6 +94,9 @@ The MVP needs only:
 - `Group`
 - `PointCloud`
 - `PointCloudSegment`
+
+Open modeling decisions are tracked in `docs/OPEN-QUESTIONS.md`; most notably
+whether 2D/3D polylines share one kind and how strict specifications should be.
 
 ## Point Clouds
 
@@ -88,6 +113,9 @@ PointCloudGeometry {
 ```
 
 Point data is immutable. Edits and segmentations create derived entities.
+Gaussian/splat payloads that are semantically tied to a point cloud are modeled
+as display attributes of the point cloud. `GaussianSplatCloud` is reserved for
+standalone splat datasets.
 
 ### Segments
 
@@ -158,13 +186,13 @@ Attribute {
 
 Attribute roles:
 
-- `UserFreeform` — user can write anything.
-- `ImportMetadata` — preserved from source files.
-- `GeometryDriving` — affects generated geometry.
-- `MaterialDriving` — affects material/rendering.
-- `StyleDriving` — affects visual display.
-- `SimulationInput` — reserved for Testflight.
-- `ExternalMapping` — IFC/GIS/DXF mapping metadata.
+- `UserFreeform` - user can write anything.
+- `ImportMetadata` - preserved from source files.
+- `GeometryDriving` - affects generated geometry.
+- `MaterialDriving` - affects material/rendering.
+- `StyleDriving` - affects visual display.
+- `SimulationInput` - reserved for TestFlight.
+- `ExternalMapping` - IFC/GIS/DXF mapping metadata.
 
 This separates free user attributes from attributes that are allowed to affect
 geometry or rendering.
@@ -187,6 +215,24 @@ Style {
 
 Style changes are commands and can be undone. Layer style inheritance can be
 added later without changing entity geometry.
+
+## Specifications and Layers
+
+Specifications define how entities are interpreted and displayed. They may map
+to layers, styles and later geometry-generating behavior.
+
+Rules:
+
+- free user attributes do not automatically drive geometry,
+- imported attributes preserve source semantics,
+- geometry-driving/specification-driving attributes must be explicit,
+- assigning or changing a specification is a command,
+- generated geometry keeps a derivation link to the source entity plus
+  parameters.
+
+The exact specification model is not finalized. Until it is, code should keep
+styles/layers/specifications separated enough that we can make the model stricter
+without rewriting entities.
 
 ## Commands
 
@@ -242,7 +288,7 @@ Examples:
 - Rename undo: restore previous name object/ref.
 - Visibility undo: restore previous visibility state.
 
-## Diff Strategy for Chronogit
+## Diff Strategy for ChronoGit
 
 The data model preserves semantic diffs by comparing:
 
@@ -254,7 +300,7 @@ The data model preserves semantic diffs by comparing:
 - derivation specs,
 - transform refs.
 
-Large point-cloud data is not line-diffed. Instead, Chronogit can later show:
+Large point-cloud data is not line-diffed. Instead, ChronoGit can later show:
 
 - source file changed,
 - segment mask changed,
@@ -285,7 +331,10 @@ Entity conversion is modeled as derivation:
 - line to wall,
 - point to manhole,
 - points to alignment,
-- mesh to terrain model.
+- mesh to terrain model,
+- alignment to ramp/width/slope-derived surfaces,
+- 2D or 3D profile to generated solid,
+- semantic import to object.
 
 Converted entities keep a `derivation` link to the source plus parameters. If
 the conversion is later materialized, both the materialized geometry and the
@@ -299,3 +348,10 @@ just a mesh; it is a wall with a source, parameters, material, and attributes.
 Future scripting (Python console or macro system) must call the same command
 API as the UI. Scripts may create entities, attributes, selections, and derived
 geometry, but they must not bypass the command journal.
+
+Python interop should be optimized for large data extraction:
+
+- point-cloud subsets as array-like buffers,
+- vector/area data through a geometry-friendly representation,
+- attributes as typed nested objects,
+- all write-back through commands.

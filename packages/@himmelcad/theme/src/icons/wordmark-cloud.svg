@@ -1,0 +1,23 @@
+<svg width="256px" height="256px" viewBox="0 0 256 256" version="1.1" xmlns="http://www.w3.org/2000/svg">
+    <title>Faceted Cloud Logo</title>
+    <g id="Cloud-Low-Poly" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd" transform="translate(18.000000, 45.000000)">
+
+        <polygon id="Bottom-Left" fill="#8A94A3" points="42 145 85 125 110 165 60 175"></polygon>
+        <polygon id="Bottom-Center" fill="#9BA5B4" points="110 165 85 125 165 125 145 170"></polygon>
+        <polygon id="Bottom-Right" fill="#8A94A3" points="165 125 208 145 190 175 145 170"></polygon>
+
+        <polygon id="Mid-Left-Main" fill="#C4CDD9" points="15 105 85 125 42 145"></polygon>
+        <polygon id="Mid-Center-Main" fill="#D3DAE6" points="85 125 128 75 165 125"></polygon>
+        <polygon id="Mid-Right-Main" fill="#B2BCCB" points="165 125 235 105 208 145"></polygon>
+
+        <polygon id="Top-Left-Bright" fill="#FFFFFF" points="50 55 85 125 15 105"></polygon>
+        <polygon id="Top-Left-Side" fill="#E6ECF3" points="50 55 95 65 85 125"></polygon>
+
+        <polygon id="Top-Center-Bright" fill="#FFFFFF" points="128 15 95 65 128 75 160 65"></polygon>
+        <polygon id="Top-Center-Front" fill="#F0F3F7" points="95 65 85 125 128 75"></polygon>
+
+        <polygon id="Top-Right-Bright" fill="#FFFFFF" points="160 65 200 55 235 105 165 125"></polygon>
+        <polygon id="Top-Right-Side" fill="#E6ECF3" points="128 75 165 125 160 65"></polygon>
+
+    </g>
+</svg>

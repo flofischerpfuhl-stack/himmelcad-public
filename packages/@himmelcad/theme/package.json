@@ -8,7 +8,10 @@
   "exports": {
     ".": "./src/index.ts",
     "./tokens.css": "./src/tokens.css",
-    "./reset.css": "./src/reset.css"
+    "./reset.css": "./src/reset.css",
+    "./fonts.css": "./src/fonts.css",
+    "./fonts/*": "./src/fonts/*",
+    "./icons/*": "./src/icons/*"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

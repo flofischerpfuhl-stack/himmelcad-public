@@ -1,304 +1,276 @@
-# Himmelcad — Projekt-Regeln
+# HimmelCAD Agent Rules
 
-> Diese Datei ist verbindlich für **alle** Beiträge — menschlich oder durch
-> KI-Agenten (Cursor, Claude, Copilot, etc.). Cursor liest diese Datei bei
-> jedem Task automatisch. **Wenn etwas unklar ist: erst fragen, dann coden.**
+Diese Datei ist die kurze, verbindliche Arbeitsanweisung fuer Menschen und
+KI-Agenten. Sie enthaelt nur Regeln, die bei jedem Task im Kopf sein muessen.
+Produktdetails, Roadmap und Architekturgruende stehen in den referenzierten
+Dokumenten.
 
----
+Wenn eine Aufgabe unklar ist oder eine Regel verletzt werden koennte: erst
+nachfragen, dann coden.
 
-## 0. Identität & Mission
+## 0. Dokumentenkarte
 
-- **Produktfamilie:** Himmelcad
-- **Module (in Reihenfolge der Entwicklung):**
-  1. **Polyshape** — das eigentliche CAD (3D-Punktwolke first)
-  2. **Photolab** — Photogrammetrie / Gaussian Splats (Metashape-Klon)
-  3. **Weltview** — Browser-Viewer für Polyshape-Projekte (Read-Only + Measurements + IoT-Live-Daten)
-  4. **Chronogit** — Git-fähiges CAD (nur nach positiver Machbarkeitsstudie)
-  5. **Testflight** — Skriptbare Simulationen (nur nach positiver Machbarkeitsstudie)
-- **Top-Prio:** Performance > Bedienbarkeit > Ästhetik. Niemals einer
-  niedrigeren Prio zuliebe eine höhere opfern.
+- Produktvision und langfristiger Scope: `docs/PRODUCT-VISION.md`
+- Roadmap und Phasen: `docs/ROADMAP.md`
+- Architekturueberblick: `docs/ARCHITECTURE.md`
+- Datenmodell: `docs/DATA-MODEL.md`
+- Projektformat: `docs/PROJECT-FORMAT.md`
+- MVP-Plan: `docs/MVP-PLAN.md`
+- Offene Entscheidungen: `docs/OPEN-QUESTIONS.md`
+- ADRs: `docs/adr/`
+- Third-Party-Lizenzen: `LICENSES/THIRD_PARTY.md`
 
----
+## 1. Identitaet und Prioritaeten
 
-## 1. Lizenz & Dependencies (HARTE Regeln)
+- **Produktfamilie:** HimmelCAD.
+- **Aktueller Fokus:** HimmelCAD PhotoLab; HimmelCAD Builder bleibt das aktive
+  CAD-Produkt.
+- **Produktfamilie:** HimmelCAD Builder, HimmelCAD Composer, HimmelCAD PhotoLab,
+  HimmelCAD WeltView, HimmelCAD TestFlight und HimmelCAD ChronoGit.
+  Details stehen in `docs/PRODUCT-VISION.md`.
+- **Prioritaet:** Performance > intuitive UX > Aesthetik.
+- HimmelCAD ist 3D-first. Es darf kein 2D-CAD entstehen, dem spaeter 3D
+  angeklebt wird.
+- Import darf teuer sein. Runtime-Interaktion muss fliegen.
 
-### 1.1 Eigene Lizenz
-- Himmelcad steht unter **BSL 1.1** (Business Source License). Alle Header, alle
-  Repos. Forken und selber bauen ist **nur für privaten, nicht-kommerziellen
-  Gebrauch** erlaubt. Kommerzielle Distribution erfolgt ausschließlich durch
-  den Lizenzgeber.
+## 2. Lizenz und Dependencies
 
-### 1.2 Verbotene Dependency-Lizenzen
-Folgende Lizenzen sind **strikt verboten** für Code, der ins Produkt eingebaut
-oder daraus abgeleitet wird:
-- **GPL** (alle Versionen, inkl. v2, v3)
-- **LGPL** (außer als reines dynamisch geladenes Plugin außerhalb des Builds)
-- **AGPL** (alle Versionen)
-- **SSPL**
-- **Commons Clause**, sofern Bedingungen mit BSL kollidieren
+### Harte Lizenzregeln
 
-### 1.3 Erlaubte Dependency-Lizenzen
-- MIT, BSD-2/3-Clause, Apache-2.0, ISC, MPL-2.0 (file-level copyleft, ok solange
-  Datei separat bleibt), Zlib, Unlicense, CC0, BSL 1.1.
+- Eigener Code steht unter BSL/BUSL 1.1, solange keine andere Entscheidung in
+  `docs/OPEN-QUESTIONS.md` geklaert ist.
+- In Produkttexten darf HimmelCAD als Open Source beschrieben werden; die
+  rechtlich verbindlichen Regeln stehen trotzdem in Lizenzdateien und
+  Third-Party-Dokumentation.
+- Kommerzielle Nutzung/Distribution ist nur durch den Lizenzgeber erlaubt.
+- Forken und selbst bauen ist nur fuer private, Hobby-, Research- und sonstige
+  nicht-kommerzielle Nutzung erlaubt.
+- Neue Dependencies oder vendored Code muessen mit diesem Modell kompatibel
+  sein.
 
-### 1.4 Dependency-Workflow
-- **Vor** Aufnahme einer neuen Dependency:
-  1. Lizenz im Lockfile UND im offiziellen Repo prüfen
-  2. Eintrag in `LICENSES/THIRD_PARTY.md` ergänzen (Name, Version, Lizenz, URL, Verwendungszweck)
-  3. Bei kleinster Unsicherheit: in PR-Beschreibung ausweisen und Lizenztext anhängen
-- **CI** prüft automatisch via `cargo deny` (Rust) gegen die Allowlist; ein
-  Node-Lizenzcheck (`license-checker-rseidelsohn` oder gleichwertig) wird
-  ergänzt, sobald die erste Node-Dependency-Welle stabil ist.
-- **Niemals** GPL-Code "portieren" — auch nicht zeilenweise umgeschrieben. CloudCompare etc. dürfen ausschließlich als **Inspiration zum Algorithmenverständnis** dienen. Implementierungen müssen aus Originalpapieren oder MIT/BSD-Quellen erfolgen.
+### Verboten fuer Produktcode
 
-### 1.5 `libs/`-Ordner
-- Inhalte in `libs/` sind **Referenzen / Inspiration**, **kein Build-Input**.
-- Nichts aus `libs/` wird in den Produkt-Build kopiert oder daraus geforked, wenn nicht zuvor Lizenz und Implementierungspfad explizit in einem ADR geklärt wurden.
+- GPL, LGPL, AGPL, SSPL.
+- Commons Clause oder andere Klauseln, wenn sie mit dem HimmelCAD-Lizenzmodell
+  kollidieren.
+- Copy/Paste, Portierung oder abgeleitete Implementierung aus GPL-Familiencode.
+  `libs/CloudCompare-master` und aehnliche Quellen sind nur Referenz zur
+  Orientierung, nie Build-Input und keine Portierungsquelle.
 
----
+### Erlaubt, sofern korrekt dokumentiert
 
-## 2. Performance-Regeln
+- MIT, BSD-2/3-Clause, Apache-2.0, ISC, MPL-2.0 mit File-Level-Trennung, Zlib,
+  Unlicense, CC0, BUSL/BSL-kompatible eigene Komponenten.
 
-> Performance ist **nicht** ein nachträglicher Optimierungsschritt. Sie wird in
-> jeder Designentscheidung mitgedacht.
+### Dependency-Workflow
 
-### 2.0 Doktrin: Import teuer, Runtime billig
+Vor jeder neuen Dependency oder jedem Vendoring:
 
-- **Import darf teuer sein, Runtime nicht.** Lieber dauert ein Import
-  3 Minuten und danach fliegt das Projekt, als dass der Import schnell ist und
-  die Bedienung später ruckelt. Importer berechnen so viel wie möglich vor:
-  Octrees, KD-Bäume, Tile-Hierarchien, Mesh-LOD, Mipmaps, Normalen,
-  Bounding-Volumes, Klassifikations-Histogramme, Statistiken,
-  vor-quantisierte Render-Buffer, Splat-Sortier-Hierarchien.
-- **Runtime rechnet nicht, Runtime liest.** Hot Paths greifen nur auf
-  vorbereitete Strukturen zu, sie iterieren nie über Rohdaten.
-- **Edits sind incremental und non-destructive.** Sie machen die
-  Pre-Computation nicht ungültig. Strukturelle Änderungen, die es doch tun
-  müssten, lösen einen sichtbaren Hintergrund-Re-Optimize aus, blockieren
-  aber nie die Interaktion.
-- **Pre-Computation persistiert on-disk.** Was beim Import berechnet wurde,
-  liegt im Projekt-Objektspeicher und wird beim nächsten Öffnen nie neu
-  berechnet.
+1. Lizenz im Lockfile und im offiziellen Repo pruefen.
+2. Eintrag in `LICENSES/THIRD_PARTY.md` ergaenzen.
+3. Bei Unsicherheit: Entscheidung im PR/ADR offen ausweisen.
+4. Wenn Code modifiziert werden soll: lieber vendoren unter `vendor/<name>/`
+   als heimlich um die Dependency herum arbeiten.
 
-### 2.1 Hot-Path-Regeln
+`libs/` bleibt Referenz/Inspiration. Produktcode kommt aus `apps/`, `packages/`,
+`crates/` oder explizit dokumentiertem `vendor/`.
 
-1. **Render-Hot-Path frei halten.**
-   - Keine Allokationen in `requestAnimationFrame`-Callbacks (Vektor-Pools nutzen).
-   - Keine `Array.prototype.map`/`filter`/`reduce` in inneren Schleifen über Punkte/Triangles.
-   - Keine String-Konkatenation in der Render-Loop.
-2. **Typed Arrays only** für Punkt-, Index-, Attribut-Buffer (`Float32Array`, `Uint32Array`, `BigInt64Array` für Indices > 4 G, `Float64Array` nur für Storage, nie für GPU).
-3. **Web Worker / Rust-Sidecar für jede CPU-Arbeit > 8 ms.** Faustregel: alles, was den Mauscursor-Refresh stören könnte, gehört aus dem Main-Thread raus.
-4. **Streaming statt Laden.** Punktwolken, Meshes, Texturen, Splats werden gestreamt (Octree- bzw. Tile-basiert). Nichts wird "ganz" geladen.
-5. **Non-destructive Edits.** Punkte werden nie kopiert oder umgeschrieben — Klassifikations-/Selektions-Layer sind sparse Bit-Sets über dem Original.
-6. **Coordinate Precision:** Speicherung in `f64` (welt-absolut), Rendering in `f32` mit konstantem Render-Offset pro Szene → siehe §4.
-7. **Picking & Cursor-Koordinate** dürfen den Frame-Budget nie sprengen. Hardware-Picking via Depth-Buffer, kein Iterieren über alle Punkte.
-8. **Lazy Geometry.** Achsen, IFC-Hierarchien, Wand-Generierung aus Linien etc. werden erst bei sichtbarem Frustum/Detailgrad evaluiert.
-9. **Benchmark Pflicht.** Jede neue Render-Pipeline / Importer kommt mit Mikro-Benchmark im Repo (`benches/`). Regression > 10 % blockiert Merge.
+## 3. Performance-Invarianten
 
-### 2.2 Performance-Ziele (Referenz: aktueller Laptop mit dGPU)
+- Keine globale O(N)-Runtime-Arbeit ueber Punktwolken, Triangles oder Splats.
+- Grosse Daten werden gestreamt: Punktwolken, Meshes, Texturen, Splats,
+  Orthofotos und spaetere Panorama-/Rasterdaten.
+- Hot Paths greifen auf vorbereitete Strukturen zu. Importer/Preprocessor bauen
+  Octrees, BVHs, Tile-Hierarchien, Mipmaps, Statistiken, Spatial-Indizes und
+  renderfreundliche Buffer vor.
+- Renderer-Hot-Path:
+  - keine unnoetigen Allokationen in `requestAnimationFrame`,
+  - keine `map`/`filter`/`reduce` in inneren Punkt-/Triangle-Loops,
+  - keine String-Arbeit in Render-Loops,
+  - Typed Arrays fuer Punkt-, Index- und Attributbuffer.
+- Jede CPU-Arbeit > 8 ms gehoert in Worker, Rust-Sidecar oder spaetere
+  Compute-Sidecars.
+- Punktwolken-/Mesh-Daten werden im Renderer nie dauerhaft voll gehalten. Der
+  Renderer besitzt nur sichtbare/gestreamte Ausschnitte.
+- Neue Render-Pipelines, Importer und Spatial-Indizes brauchen Benchmarks oder
+  mindestens Performance-Smoke-Tests. Regressionen > 10 % muessen begruendet
+  werden.
+- Jede rechenintensive Operation, die einen Fortschrittsbalken rechtfertigt,
+  muss inkrementellen Fortschritt melden und spaeter ueber einen Cancellation-
+  Token abbrechbar sein.
 
-- 200 M Punkte: Orbit/Pan/Zoom > 60 fps mit dynamischem Punktbudget.
-- 50 M Triangles tiled mesh: Orbit/Pan/Zoom > 60 fps mit LOD.
-- 5 M Gaussian Splats: > 60 fps in einer leeren Szene, > 30 fps zusammen mit
-  einer Punktwolke.
-- Cursor-Koordinate aktualisiert sich in < 16 ms im stabilen Zustand.
-- Erste sichtbare Punkte beim Öffnen eines bereits importierten Projekts: < 1 s.
-- Frame-Spikes > 50 ms gelten als Bug, nicht als gelegentlicher Jank.
-- Import einer 50-GB-LAS-Sammlung darf länger dauern als deren Anzeige —
-  aber Anzeige danach muss obenstehende Ziele halten.
+Details:
 
----
+- Cursor/Picking: `docs/adr/0002-cursor-coordinates.md`
+- Pointcloud-Streaming: `docs/adr/0003-pointcloud-streaming.md`
+- Large-Geometry-Vertraege: `docs/adr/0004-large-geometry-contracts.md`
 
-## 3. Architektur-Invarianten
+## 4. Architektur-Invarianten
 
-> Diese Regeln sind nie verhandelbar ohne Architecture Decision Record (ADR).
+- Authoritative State liegt im Rust-Core/Sidecar bzw. spaeter in der
+  browserfaehigen WASM-Variante. UI ist Mirror, nicht Quelle der Wahrheit.
+- Alle Schreiboperationen laufen durch Commands. Keine UI-Komponente mutiert
+  kanonische Entities direkt.
+- Commands muessen undo-/redo-faehig, journalbar, replaybar und spaeter
+  ChronoGit-diffbar sein.
+- Builder und WeltView teilen Renderer und Datenvertraege.
+- Shared Renderer/Data Packages duerfen kein Electron importieren.
+- Electron-spezifische APIs leben nur unter `apps/<desktop-product>/electron/`;
+  geteilte Renderer-/Datenpakete bleiben Electron-frei.
+- Rust-Core-Code muss plattformneutral bleiben und darf nicht unnoetig Desktop-
+  Filesystem-Annahmen in gemeinsame Logik ziehen.
+- Grosse renderbare Daten implementieren den gemeinsamen `TiledDataset`-Pfad.
+  Keine neue Large-Geometry-Sonderpipeline ohne ADR.
+- Picking/Snapping liefert `SnapResult`/`GeometryTargetRef`. Exakte
+  schreibende Operationen revalidieren Entity/Tile/Primitive im Core.
+- Features duerfen WeltView-, ChronoGit- oder TestFlight-Kompatibilitaet nicht
+  unnoetig verbauen. Wenn eine Funktion desktop-only ist, muss sie klar
+  gekapselt werden.
 
-1. **Authoritative State liegt im Rust-Core.** Die UI ist ein Mirror, nie die Quelle der Wahrheit.
-2. **Renderer ist Web-only und browserfähig.** Polyshape (Electron) und Weltview (Browser) teilen sich denselben Renderer-Code in `packages/@himmelcad/viewer`. Electron-spezifische APIs (Native Menüs, FS-Dialoge, Sidecar-IPC) leben ausschließlich in `apps/polyshape/electron/`. **Kein** Renderer-Code darf `require('electron')` etc. enthalten.
-3. **Rust-Core ist plattform-neutral.** Ein- und derselbe Rust-Workspace baut zu (a) NAPI-RS Node-Modul für Electron und (b) `wasm-bindgen` Modul für Weltview. Kein Code darf nur in einem Target funktionieren.
-4. **Entities sind immutable + content-addressable.** Jede Änderung erzeugt eine neue Version (Hash-adressiert), die alte bleibt referenzierbar. Das ist die Grundlage für Undo/Redo, Chronogit und semantische Diffs.
-5. **Welt-Koordinaten sind authoritative.** Der Nutzer arbeitet immer in einem **übergeordneten kartesischen Koordinatenraum** (`f64`). Der Render-Offset wird automatisch berechnet und nie dem Nutzer angezeigt. Kein Code im Viewer darf annehmen, der Ursprung sei der Welt-Ursprung.
-6. **Z is up.** Welt-Z ist Höhe. Potree/three.js-typische Y-up wird **am Importer-/Adapter-Layer** umgerechnet, nie im Datenmodell.
-7. **Alle Schreib-Operationen gehen durch das Command-System.** Kein direktes Mutieren des Stores aus UI-Komponenten. Nur Commands sind undoable und git-fähig.
-8. **Keine Feature darf Weltview-Kompatibilität brechen.** Wenn ein Feature nicht im Browser laufen kann, muss es in `polyshape-only`-Modul gekapselt werden, **nicht** im Datenmodell verankert.
-9. **Keine Feature darf Chronogit-Kompatibilität brechen.** Konkret: jede Mutation muss als Command-Sequenz reproduzierbar sein und einen semantischen Diff liefern können.
-10. **Keine Feature darf Testflight-Kompatibilität brechen.** Konkret: Entitäts-Attribute müssen optional zeit-varianten Wert tragen können (Timeline-fähig).
+## 5. Koordinaten und Einheiten
 
----
+- Intern: kartesischer Welt-Raum, `f64`, Z ist Up.
+- Rendering: `f32` relativ zu stabilem Render-/Tile-Offset.
+- Cursor-Anzeige und CAD-Werkzeuge arbeiten mit weltabsoluten Koordinaten.
+- Drawing-/Edit-Tools duerfen nie mit GPU-`f32` als Wahrheit rechnen.
+- CRS, Hoehensysteme und Einheiten sind Metadaten bzw. UI-/Import-/Export-
+  Themen. Die Engine reprojiziert nicht implizit.
+- Keine automatische Massstabskorrektur, keine NTv2-Grids, keine stille
+  Koordinatentransformation.
 
-## 4. Koordinaten- & Einheiten-Regeln
+## 6. UI und Bedienung
 
-- **Intern: kartesisch, einheitenlos im numerischen Sinn, `f64`.** Punktwolken,
-  Geometrie, Cursor-Koordinaten — alles existiert in einem **einzigen
-  kartesischen Welt-Raum** mit konsistenter Z-Achse als Up. Was für ein CRS
-  (UTM, Gauß-Krüger, lokales System, …) die Daten ursprünglich tragen,
-  **interessiert die Engine nicht**. Annahme: die Eingabedaten sind bereits
-  kartesisch.
-- **CRS-Metadatum** wird optional pro Entity **gespeichert**, aber **nie**
-  von der Engine zur Berechnung herangezogen. Es dient ausschließlich:
-  - späterer Heuristik beim Import (Erkennung "weit auseinanderliegender"
-    Datasets → Transformations-Dialog),
-  - späterer Anzeige einer Hintergrundkarte (Map-Layer kennt sein eigenes
-    CRS und projiziert in unseren kartesischen Raum, nicht umgekehrt),
-  - Export (Beibehalten der ursprünglichen CRS-Information).
-- **Keine** automatische Maßstabskorrektur, **keine** NTv2-Grids, **keine**
-  on-the-fly-Reprojektion innerhalb der Engine. Alle solchen Operationen
-  finden ausschließlich an Importer-/Exporter-Adaptern statt — als
-  explizite Nutzeraktion, nie implizit.
-- Szene-Render-Offset: pro geöffnetem Projekt **eine** Translation
-  `T_render = round(min_corner)`. Wird beim ersten Import gesetzt, bleibt
-  konstant über die Session. Damit `f64`-Welt-Koords im `f32`-WebGL-Raum
-  präzise bleiben.
-- Cursor-Anzeige: immer welt-absolut (also Render-Position + `T_render`).
-- Längen: dimensionslos intern. Anzeige-Einheit (m, ft, …) ist
-  Nutzerpräferenz, der Wandlungspunkt liegt **nur in der UI**.
-  Default-Annahme: 1 Welt-Einheit = 1 Meter.
-- Winkel intern: Radiant. Anzeige in Grad / Gon nach Nutzerpräferenz.
-- Höhensystem (NHN, ellipsoidisch, lokal): nur Metadatum, nicht
-  rechen-relevant innerhalb der Engine.
+### Layout
 
----
+- Top: Ribbon, einklappbar zu Dropdown-Headern.
+- Links: Entity Tree, spaeter alternative Sortierungen wie Layer in eigenem Tab.
+- Rechts: 1. ab: Kontext-/Funktionspanel, oeffnet bei Funktionsaktivierung. 2. Tab: Eigenschaften der ausgewählten Entitie. Bei Multiselect sind die Eigenschaften aller editierbar. Namentliche Anzeige der geteilten Eigenschaften "multiple" wo sich die Eigenschaften unterscheiden.
+- Rechts Rechts: Später rechts neben der Rechten Bar nochmal eine mit einem AI-Agent Chat.
+- Unten: Konsole.
+- Mitte: Viewport, spaeter Multi-View-Tabs.
+- Linke, rechte und untere Leiste bleiben einklappbar.
+- Unten rechts im Viewport: persistente Cursor-Koordinatenanzeige.
 
-## 5. UI-Konventionen
+### Mausmodell
 
-### 5.1 Layout (verbindlich)
-- **Top:** Ribbon-Leiste, einklappbar zu Dropdown-Headern (Funktion bleibt erreichbar).
-- **Links:** Element-Tree (Reiter für alternative Sortierungen wie Layer).
-- **Rechts:** Kontext-/Funktions-Panel. Expandiert automatisch bei Funktions-Aktivierung.
-- **Unten:** Konsole (Stil orientiert sich an `libs/polyshapev01/`).
-- **Mitte:** Viewport (später mit Tabs für mehrere Views).
-- Linke, rechte und untere Leiste sind **immer** einklappbar.
-- Unten rechts im Viewport: persistente Cursor-Koordinatenanzeige (X/Y/Z im Projekt-Koordinatenraum).
+| Aktion                | Verhalten                                    |
+| --------------------- | -------------------------------------------- |
+| LMB Klick             | Auswahl / Funktionsklick                     |
+| LMB Hold + Drag       | Orbit, horizon-locked, Z-Up                  |
+| LMB Doppelklick       | aktive Funktion abschliessen                 |
+| RMB Klick auf Auswahl | Kontextmenue                                 |
+| RMB Klick leer        | Quick-Function-Bar am Cursor                 |
+| RMB Hold + Drag       | Pan                                          |
+| MMB/Wheel Hold + Drag | Pan als zusaetzliche CAD-kompatible Belegung |
+| Wheel                 | Zoom, Pivot = Cursor-3D-Position             |
+| Esc                   | Funktion abbrechen                           |
+| Ctrl+Z / Ctrl+Shift+Z | Undo / Redo                                  |
 
-### 5.2 Maus-Belegung (verbindlich)
-| Aktion              | Verhalten                                                          |
-|---------------------|--------------------------------------------------------------------|
-| LMB Klick           | Auswahl / Funktions-Klick                                          |
-| LMB Hold + Drag     | Orbit (horizon-locked, Z-Achse als Up-Vektor)                      |
-| LMB Doppelklick     | Funktion abschließen (z. B. gezeichnete Linie beenden)             |
-| RMB Klick (Auswahl) | Kontextmenü mit Element-Funktionen                                 |
-| RMB Klick (leer)    | Mini-Quick-Function-Bar am Cursor (per RMB auf Ribbon konfiguriert)|
-| RMB Hold + Drag     | Pan                                                                |
-| MMB / Wheel         | Zoom (Zoom-Pivot = Cursor-3D-Position)                             |
-| Esc                 | Funktion abbrechen                                                 |
-| Strg+Z / Strg+Shift+Z | Undo / Redo                                                       |
+### Aesthetik
 
-### 5.3 Aesthetik
-- **Theme-Tokens** aus `libs/vscode-dark-islands-main/themes/` portieren in `packages/@himmelcad/theme/tokens.css` (CSS Custom Properties). Niemals Hex-Codes hardcoden.
-- Icons: Tabler Icons (MIT) — ergänzt um eigene CAD-Icons; das Polyshape-Logo aus `libs/polyshapev01/build/`.
-- Schriftart: Inter (UI), JetBrains Mono (Konsole) — übernommen aus `libs/polyshapev01/assets/fonts/`.
-- Animationen subtil, immer < 200 ms, nie blockierend.
+- VSCode Dark Islands Look: dunkle Void-Flaeche, Panels als eigene Islands,
+  keine zusammengeklebten Standard-Borders.
+- Keine ungestylten Browser-/Electron-Defaults fuer Checkboxes, Alerts,
+  Dialoge, Toasts oder Controls.
+- Theme Tokens aus `packages/@himmelcad/theme`; keine One-off-Hexcodes in
+  Komponenten.
+- Lucide React fuer Standardicons, eigene CAD-Icons wo noetig.
+- Animationen subtil, < 200 ms, nie blockierend.
 
-### 5.4 Konsole
-- Eine Quelle (Pino-Style strukturiertes Logging im Renderer + aus dem Sidecar gestreamt).
-- Filter-Levels (debug/info/warn/error) per Toggle.
-- Suchfeld + Copy.
-- ANSI-Style-Farben übernommen aus `libs/polyshapev01/`.
+## 7. Konsole und Progress
 
----
+- Die In-App-Konsole ist primaeres Kommunikationsmedium zwischen App und User.
+- Jede neue nutzerrelevante Funktion loggt Start, Abschluss mit Dauer/Statistik
+  und erwartbare Fehlerszenarien.
+- Long-running Ops > 1 s brauchen `progressKey`-Progress, der in-place
+  aktualisiert. Keine reine 0-auf-100-Anzeige, wenn echter Fortschritt
+  abgreifbar ist.
+- Log-Level:
+  - `info`: nutzerrelevante Aktion,
+  - `warn`: Degraded/Fallback, aber lauffaehig,
+  - `error`: Operation gescheitert + klare Handlungsempfehlung,
+  - `debug`: interne Diagnose.
+- Jede Ribbon-/Command-Funktion soll spaeter auch ueber die Konsole erreichbar
+  sein. Keine doppelte Registrierung neben dem Command-System.
+- Python-Konsole/Scripting nutzt spaeter einen gemeinsamen Scripting-Sidecar
+  plus SDK und bleibt ein Submodus derselben Konsolenidee, kein zweites Panel.
 
-## 6. Code-Konventionen
+## 8. Code-Konventionen
 
-### 6.1 TypeScript
-- `strict: true`, `noUncheckedIndexedAccess: true`, `exactOptionalPropertyTypes: true`.
-- Keine `any`. `unknown` + Narrowing oder Branded Types.
-- ESLint + `@typescript-eslint` + `eslint-plugin-react-hooks` + `eslint-plugin-import`. Prettier für Format.
-- Imports: absolute via `@himmelcad/*`-Aliasse, keine `../../../`-Ketten > 2.
+### TypeScript
 
-### 6.2 Rust
-- `#![deny(unsafe_op_in_unsafe_fn, missing_docs, rust_2018_idioms)]` in jedem Crate.
-- `clippy --all-targets --all-features -- -D warnings` muss grün sein.
-- `unsafe` ist erlaubt für FFI/SIMD/zero-copy, aber dokumentiert mit Sicherheitsbegründung im Doc-Kommentar.
-- Fehler: `thiserror` für Bibliotheken, `anyhow` nur in Bin-Crates.
+- `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`.
+- Kein `any`, ausser lokal begruendet bei vendored/FFI-Grenzen.
+- `unknown` + Narrowing oder Branded Types.
+- Absolute Imports via `@himmelcad/*`; keine langen `../../../`-Ketten.
+- ESLint + Prettier muessen fuer beruehrte produktive Dateien gruen sein.
 
-### 6.3 Kommentare
-- **Niemals** narrative Kommentare ("// Setze x auf 5", "// Importiere Modul").
-- Kommentare erklären **warum**, nicht **was**.
-- `// SAFETY:`, `// PERF:`, `// INVARIANT:`-Marker für nicht-offensichtliche Constraints.
+### Rust
 
-### 6.4 Tests
-- Pflicht für jeden Importer, jeden Geometrie-Algorithmus, jeden Command, jedes Reducer.
-- Visual-Regression-Tests (Playwright) für UI-Komponenten ab Phase 2.
-- Punktwolken-Performance-Smoke-Test in CI: 50 M Punkte LAS muss in < x s indexiert sein (x je Hardware-Klasse dokumentiert).
+- `#![deny(unsafe_op_in_unsafe_fn, missing_docs, rust_2018_idioms)]` in
+  Crates, sobald sie nicht mehr reine Skeletons sind.
+- `clippy --all-targets --all-features -- -D warnings` ist Zielzustand.
+- `unsafe` nur fuer FFI/SIMD/Zero-copy und mit `SAFETY:`-Begruendung.
+- Bibliotheken nutzen `thiserror`; `anyhow` nur in Binaries.
 
-### 6.5 Commits
-- Conventional Commits: `feat:`, `fix:`, `perf:`, `refactor:`, `docs:`, `chore:`, `test:`, `build:`.
-- Body in Deutsch oder Englisch — konsistent pro Commit.
-- Keine Emoji im Commit-Header.
+### Kommentare
 
----
+- Keine narrativen Kommentare.
+- Kommentare erklaeren warum, nicht was.
+- Marker fuer nicht-offensichtliche Constraints: `SAFETY:`, `PERF:`,
+  `INVARIANT:`.
 
-## 7. Datenmodell-Regeln
+### Tests
 
-Volldetail in `docs/DATA-MODEL.md`. Kurzform:
+- Pflicht fuer Importer, Geometriealgorithmen, Commands, Reducer und
+  migrationsrelevante Datenmodelle.
+- Visual Regression ab UI-Phase 2.
+- Performance-Smokes fuer grosse Punktwolken und spaeter Mesh/Splat-Pipelines.
 
-1. **Entity** = `(EntityId, Kind, geometry_ref, attributes_ref, parent?, children, transform?, version_hash)`.
-2. **EntityKind** ist ein geschlossener `enum` im Rust-Core. Erweiterungen brauchen Schema-Versionierung.
-3. **Attribute** sind eine eigene baumartige (nested) Struktur, separat vom Geometry-Blob (für effizientes Edit ohne Re-Hash der Geometrie).
-4. **Sources vs. Derivations:** Eine importierte Punktwolke ist eine "Source". Segmentierung erzeugt zwei "Derived"-Entities (`extracted`, `remaining`) mit Verweis auf die Source und einer Filter-Spec — **keine** Punktdaten-Kopie.
-5. **Schema-Versionierung:** Jeder Entity-Kind trägt `schema_version`. Migrationen sind Pflichtbestandteil des PRs, der die Schema-Version bumpt.
+## 9. Prozessregeln
 
----
+- Vor nicht-trivialen Aenderungen: kurzer Plan oder Mini-ADR.
+- Architekturentscheidungen: nummeriertes ADR unter `docs/adr/`.
+- Feste Entscheidungen, die waehrend der Implementierung getroffen werden,
+  muessen in Roadmap, ADR, Architektur-/Produktdoku oder `AGENTS.md`
+  nachgezogen werden, sobald sie fuer spaetere Arbeit relevant sind.
+- `AGENTS.md` bleibt kompakt. Detailwissen gehoert in Roadmap, Doku oder ADRs;
+  hier stehen nur Regeln, die bei jedem Task aktiv gebraucht werden.
+- Keine stillen Renderer-Features, die in Core/Command-System gehoeren.
+- Keine TODO/FIXME ohne Issue-Nummer oder klare Kurzbegruendung.
+- Dirty Worktree respektieren: keine fremden Aenderungen revertieren.
+- Conventional Commits: `feat:`, `fix:`, `perf:`, `refactor:`, `docs:`,
+  `chore:`, `test:`, `build:`.
 
-## 8. Projekt-Format Regeln
+## 10. Dev-Server-Reload-Pflicht
 
-Volldetail in `docs/PROJECT-FORMAT.md`. Kurzform:
+Nach Code-Aenderungen muss verifiziert werden, dass der laufende Dev-Server die
+Aenderung erhalten hat:
 
-- Default: **Ordner** `projektname.hcad/` mit:
-  - `manifest.json` (Szene-Manifest, Entity-Refs, optionale Import-Metadaten, Render-Offset, View-States)
-  - `objects/<sha256-prefix>/<sha256-rest>` (content-addressable BLOBs für Geometrie, Attribute, Texturen)
-  - `journal/` (Append-only Command-Log für Undo/Redo & Chronogit)
-  - `index/` (optional, abgeleitete Spatial-Indizes — kann jederzeit neu gebaut werden)
-- Export: `projektname.hcadx` (zip mit identischer Struktur, optional ohne `index/`).
-- Garbage-Collection auf Anforderung (`Datei → Projekt aufräumen`).
+| Aenderung                        | Verifikation                                 |
+| -------------------------------- | -------------------------------------------- |
+| CSS, React-Komponenten           | HMR-Log `hmr update <path>` ohne Folgefehler |
+| Mount-only Hooks/Refs            | Remount ausloesen oder Dev-Reload            |
+| Electron Main/Preload/Sidecar TS | kompletter Dev-Restart                       |
+| Rust Sidecar/Crates              | `cargo build` + Sidecar-/Dev-Restart         |
+| Theme Tokens                     | HMR reicht, gecachte Werte beachten          |
 
----
+Nicht sagen "teste mal", bevor HMR oder Restart im Terminal geprueft wurde.
 
-## 9. IPC-Vertrag (Renderer ↔ Rust-Sidecar)
+## 11. Sicherheit
 
-- **Sidecar ist ein separater OS-Prozess.** Der Electron-Main-Prozess startet
-  `himmelcad-sidecar` als Child-Prozess und kommuniziert über JSON-RPC 2.0
-  über stdio. Crash-Isolation, gleicher Pattern wie später Photolab
-  (Python-Sidecar).
-- IPC-Kontrakt (Methoden + Typen) ist in `crates/himmelcad-core/src/contract.rs`
-  definiert mit `ts-rs`-Generierung der TypeScript-Typen nach
-  `packages/@himmelcad/data/src/generated/`.
-- **Eine** Quelle der Wahrheit, niemals doppelte Typdefinition.
-- Asynchron, Promise-basiert auf TS-Seite (Wrapper im Preload), Tokio im
-  Rust-Sidecar.
-- Long-Running Ops (Import, Indizierung) streamen Progress-Events als
-  Notifications. Cancellation via Request-Token.
-- Für Weltview wird derselbe Vertrag durch eine WASM-Variante
-  (`himmelcad-wasm`) bedient — gleicher Funktions-Surface, andere Transport-
-  Schicht (`postMessage` zwischen UI-Thread und Worker).
-
----
-
-## 10. Sicherheit (Electron)
-
-- `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`.
-- Alle Native-Calls via Preload-Skript mit minimaler API-Oberfläche.
-- Keine `eval`, kein `new Function`, kein `unsafe-eval` in CSP.
-- File-Pfade vom User werden vor jedem Sidecar-Call kanonikalisiert + auf Allowlist (Projekt-Verzeichnis + explizite Imports).
-
----
-
-## 11. Process-Regeln (für AI-Agenten und Menschen)
-
-1. **Vor jedem nicht-trivialen Beitrag:** kurzer Plan oder Mini-ADR im PR.
-2. **Architektur-Änderungen** brauchen ein nummeriertes ADR unter `docs/adr/`.
-3. **Niemals** Funktionalität "still" in Renderer einbauen, die ins Rust-Core gehört (siehe §3.1).
-4. **Niemals** Punktwolken-Daten im Renderer dauerhaft halten — nur Streaming-Ausschnitte.
-5. **Niemals** GPL-Code per Copy-Paste (auch nicht "umformuliert") aus `libs/` übernehmen — siehe §1.4.
-6. Wenn ein Tool/eine Lib unklar ist: lieber fragen als raten.
-7. **TODO/FIXME** dürfen committet werden, müssen aber Issue-Nummer + Kurzbegründung enthalten.
-
----
+- Electron: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`.
+- Native Calls nur ueber minimale Preload-API.
+- Keine `eval`, kein `new Function`, kein `unsafe-eval`.
+- User-Pfade vor Sidecar-Calls kanonisieren und auf erlaubte Bereiche
+  beschraenken.
 
 ## 12. Glossar
 
-- **Source-Entity:** Original-Importdaten, immutable.
-- **Derived-Entity:** Verweis-basiertes virtuelles Entity (Filter, Selektion, Transformation einer Source).
-- **Render-Offset:** Konstante Translation pro Session, um `f64`-Welt-Koords im `f32`-WebGL-Raum zu rendern.
-- **Command:** Einziger zugelassener Mutator des Stores; reversible, persistierbar, inspizierbar.
-- **Manifest:** Szene-Definition eines Projekts (welche Entities, welche View-States).
+- **Source-Entity:** immutable Originaldaten.
+- **Derived-Entity:** virtuelle/abgeleitete Entity ueber Filter, Selektion,
+  Transformation oder Generierungsparameter.
+- **Render-Offset:** stabile Translation fuer praezises `f64` -> `f32`
+  Rendering.
+- **Command:** einziger kanonischer Mutator.
+- **Manifest:** aktive Projektszene mit Entity-Refs und View-State.

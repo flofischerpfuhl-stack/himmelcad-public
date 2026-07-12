@@ -4,17 +4,25 @@
   align-items: center;
   height: var(--hc-size-statusbar);
   padding: 0 12px;
-  background: var(--hc-bg-sunken);
+  background: var(--hc-bg-void);
   color: var(--hc-fg-muted);
   font-size: 11px;
-  border-top: 1px solid var(--hc-border-subtle);
+  letter-spacing: 0.02em;
 }
 
 .side {
   display: flex;
-  gap: 12px;
+  gap: 14px;
+  align-items: center;
 }
 
 .item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   white-space: nowrap;
+}
+
+.item:hover {
+  color: var(--hc-fg-default);
 }

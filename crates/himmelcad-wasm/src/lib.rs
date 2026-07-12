@@ -1,4 +1,4 @@
-//! WASM facade for Weltview.
+//! WASM facade for WeltView.
 //!
 //! Mirrors the sidecar JSON-RPC surface, but transported over `postMessage`
 //! between the UI thread and a Web Worker hosting this module. The same Rust

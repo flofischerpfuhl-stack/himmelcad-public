@@ -1,0 +1,23 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "baseUrl": "./src/",
+    "sourceMap": true,
+    "declaration": false,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+    "target": "es2020",
+    "experimentalDecorators": true,
+    "lib": ["es2020", "dom", "webworker"],
+    "plugins": []
+  },
+  "include": ["src/**/*.ts", "src/**/*.d.ts"],
+  "exclude": ["build", "node_modules"]
+}
