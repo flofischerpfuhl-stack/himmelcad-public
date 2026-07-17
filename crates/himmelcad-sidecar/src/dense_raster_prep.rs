@@ -13,8 +13,28 @@ use himmelcad_core::photolab_jobs::CancellationToken;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-const RECORD_BYTES: usize = 19;
 const POLL: Duration = Duration::from_millis(15);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlyCoordinateKind {
+    /// Legacy portable dense products wrote absolute CRS coords as float32.
+    Float32,
+    /// Current products keep world coordinates as float64 (required for projected CRS).
+    Float64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PlyVertexLayout {
+    stride: usize,
+    x: usize,
+    y: usize,
+    z: usize,
+    coordinate_kind: PlyCoordinateKind,
+    red: Option<usize>,
+    green: Option<usize>,
+    blue: Option<usize>,
+    confidence: Option<usize>,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -611,9 +631,6 @@ fn ply_to_csv(
     let header_text = String::from_utf8_lossy(&header);
     for required in [
         "format binary_little_endian 1.0",
-        "property float x",
-        "property float y",
-        "property float z",
         "property uchar red",
         "property uchar green",
         "property uchar blue",
@@ -629,31 +646,24 @@ fn ply_to_csv(
     writer.write_all(b"x,y,z,red,green,blue,confidence\n")?;
     let mut minimum = [f64::INFINITY; 3];
     let mut maximum = [f64::NEG_INFINITY; 3];
-    let mut record = [0_u8; RECORD_BYTES];
+    let layout = ply_vertex_layout(&header_text)?;
+    let (red, green, blue, confidence_offset) = required_dense_attributes(layout)?;
+    let mut record = vec![0_u8; layout.stride];
     for index in 0..vertex_count {
         if index % 8_192 == 0 && cancellation.is_cancel_requested() {
             return Err(DenseRasterPrepError::Cancelled);
         }
         reader.read_exact(&mut record)?;
-        let values = [
-            f32::from_le_bytes(record[0..4].try_into().expect("fixed slice")) as f64,
-            f32::from_le_bytes(record[4..8].try_into().expect("fixed slice")) as f64,
-            f32::from_le_bytes(record[8..12].try_into().expect("fixed slice")) as f64,
-        ];
-        if values.iter().any(|value| !value.is_finite()) {
-            return Err(DenseRasterPrepError::InvalidPly(
-                "non-finite coordinate".into(),
-            ));
-        }
+        let values = read_coordinates(&record, layout)?;
         for axis in 0..3 {
             minimum[axis] = minimum[axis].min(values[axis]);
             maximum[axis] = maximum[axis].max(values[axis]);
         }
-        let confidence = f32::from_le_bytes(record[15..19].try_into().expect("fixed slice"));
+        let confidence = read_f32(&record, confidence_offset);
         writeln!(
             writer,
             "{},{},{},{},{},{},{}",
-            values[0], values[1], values[2], record[12], record[13], record[14], confidence
+            values[0], values[1], values[2], record[red], record[green], record[blue], confidence
         )?;
     }
     writer.flush()?;
@@ -665,70 +675,47 @@ fn ply_to_las(
     output: &Path,
     cancellation: &CancellationToken,
 ) -> Result<(), DenseRasterPrepError> {
-    let (vertex_count, data_offset, minimum, maximum) = inspect_ply(path, cancellation)?;
+    let (vertex_count, data_offset, layout, minimum, maximum) = inspect_ply(path, cancellation)?;
+    let (red, green, blue, confidence_offset) = required_dense_attributes(layout)?;
     if vertex_count > u64::from(u32::MAX) {
         return Err(DenseRasterPrepError::InvalidPly(
             "LAS 1.2 point limit exceeded".into(),
         ));
     }
+    // Millimetre floor matches sparse prep and keeps LAS quantization well below
+    // the f32 absolute-CRS grid (~0.5 m) that previously corrupted dense products.
     let scale =
         [0, 1, 2].map(|axis| ((maximum[axis] - minimum[axis]) / f64::from(i32::MAX)).max(0.001));
     let mut writer = BufWriter::with_capacity(1024 * 1024, File::create(output)?);
-    let mut header = vec![0_u8; 227];
-    header[0..4].copy_from_slice(b"LASF");
-    header[24] = 1;
-    header[25] = 2;
-    copy_ascii(&mut header[26..58], "HimmelCAD PhotoLab");
-    copy_ascii(&mut header[58..90], "HimmelCAD dense PLY to LAS");
-    header[94..96].copy_from_slice(&227_u16.to_le_bytes());
-    header[96..100].copy_from_slice(&227_u32.to_le_bytes());
-    header[104] = 2;
-    header[105..107].copy_from_slice(&26_u16.to_le_bytes());
-    let count = u32::try_from(vertex_count).expect("bounded above");
-    header[107..111].copy_from_slice(&count.to_le_bytes());
-    header[111..115].copy_from_slice(&count.to_le_bytes());
-    for axis in 0..3 {
-        header[131 + axis * 8..139 + axis * 8].copy_from_slice(&scale[axis].to_le_bytes());
-    }
-    for axis in 0..3 {
-        header[155 + axis * 8..163 + axis * 8].copy_from_slice(&minimum[axis].to_le_bytes());
-    }
-    for (offset, value) in [
-        (179, maximum[0]),
-        (187, minimum[0]),
-        (195, maximum[1]),
-        (203, minimum[1]),
-        (211, maximum[2]),
-        (219, minimum[2]),
-    ] {
-        header[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
-    }
-    writer.write_all(&header)?;
+    write_las_header(
+        &mut writer,
+        vertex_count,
+        minimum,
+        maximum,
+        scale,
+        "HimmelCAD dense PLY to LAS",
+    )?;
     let mut reader = BufReader::new(File::open(path)?);
     use std::io::Seek;
     reader.seek(std::io::SeekFrom::Start(data_offset))?;
-    let mut record = [0_u8; RECORD_BYTES];
+    let mut record = vec![0_u8; layout.stride];
     for index in 0..vertex_count {
         if index % 8_192 == 0 && cancellation.is_cancel_requested() {
             return Err(DenseRasterPrepError::Cancelled);
         }
         reader.read_exact(&mut record)?;
-        let coordinates = [
-            f32::from_le_bytes(record[0..4].try_into().expect("fixed")) as f64,
-            f32::from_le_bytes(record[4..8].try_into().expect("fixed")) as f64,
-            f32::from_le_bytes(record[8..12].try_into().expect("fixed")) as f64,
-        ];
+        let coordinates = read_coordinates(&record, layout)?;
         for axis in 0..3 {
-            let quantized = ((coordinates[axis] - minimum[axis]) / scale[axis]).round() as i32;
+            let quantized =
+                quantize_las_coordinate(coordinates[axis], minimum[axis], scale[axis]);
             writer.write_all(&quantized.to_le_bytes())?;
         }
-        let confidence =
-            f32::from_le_bytes(record[15..19].try_into().expect("fixed")).clamp(0.0, 1.0);
+        let confidence = read_f32(&record, confidence_offset).clamp(0.0, 1.0);
         let intensity = (confidence * 65_535.0).round() as u16;
         writer.write_all(&intensity.to_le_bytes())?;
         writer.write_all(&[0b0000_1001, 1, 0, 0, 0, 0])?;
-        for color in &record[12..15] {
-            writer.write_all(&(u16::from(*color) * 257).to_le_bytes())?;
+        for color in [record[red], record[green], record[blue]] {
+            writer.write_all(&(u16::from(color) * 257).to_le_bytes())?;
         }
     }
     writer.flush()?;
@@ -738,10 +725,11 @@ fn ply_to_las(
 fn inspect_ply(
     path: &Path,
     cancellation: &CancellationToken,
-) -> Result<(u64, u64, [f64; 3], [f64; 3]), DenseRasterPrepError> {
+) -> Result<(u64, u64, PlyVertexLayout, [f64; 3], [f64; 3]), DenseRasterPrepError> {
     let mut reader = BufReader::new(File::open(path)?);
     let mut offset = 0_u64;
     let mut vertex_count = None;
+    let mut header = String::new();
     loop {
         let mut line = String::new();
         let read = reader.read_line(&mut line)?;
@@ -751,6 +739,7 @@ fn inspect_ply(
             ));
         }
         offset += u64::try_from(read).expect("usize fits u64");
+        header.push_str(&line);
         if let Some(value) = line.strip_prefix("element vertex ") {
             vertex_count = value.trim().parse().ok();
         }
@@ -760,28 +749,176 @@ fn inspect_ply(
     }
     let vertex_count = vertex_count
         .ok_or_else(|| DenseRasterPrepError::InvalidPly("vertex count missing".into()))?;
+    let layout = ply_vertex_layout(&header)?;
     let mut minimum = [f64::INFINITY; 3];
     let mut maximum = [f64::NEG_INFINITY; 3];
-    let mut record = [0_u8; RECORD_BYTES];
+    let mut record = vec![0_u8; layout.stride];
     for index in 0..vertex_count {
         if index % 8_192 == 0 && cancellation.is_cancel_requested() {
             return Err(DenseRasterPrepError::Cancelled);
         }
         reader.read_exact(&mut record)?;
+        let values = read_coordinates(&record, layout)?;
         for axis in 0..3 {
-            let start = axis * 4;
-            let value =
-                f32::from_le_bytes(record[start..start + 4].try_into().expect("fixed")) as f64;
-            if !value.is_finite() {
-                return Err(DenseRasterPrepError::InvalidPly(
-                    "non-finite coordinate".into(),
-                ));
-            }
-            minimum[axis] = minimum[axis].min(value);
-            maximum[axis] = maximum[axis].max(value);
+            minimum[axis] = minimum[axis].min(values[axis]);
+            maximum[axis] = maximum[axis].max(values[axis]);
         }
     }
-    Ok((vertex_count, offset, minimum, maximum))
+    Ok((vertex_count, offset, layout, minimum, maximum))
+}
+
+fn ply_coordinate_kind(scalar: &str) -> Option<PlyCoordinateKind> {
+    match scalar {
+        "float" | "float32" => Some(PlyCoordinateKind::Float32),
+        "double" | "float64" => Some(PlyCoordinateKind::Float64),
+        _ => None,
+    }
+}
+
+fn ply_vertex_layout(header: &str) -> Result<PlyVertexLayout, DenseRasterPrepError> {
+    let mut in_vertex = false;
+    let mut stride = 0_usize;
+    let mut x = None;
+    let mut y = None;
+    let mut z = None;
+    let mut coordinate_kind = None;
+    let mut red = None;
+    let mut green = None;
+    let mut blue = None;
+    let mut confidence = None;
+    for line in header.lines().map(str::trim) {
+        if line.starts_with("element vertex ") {
+            in_vertex = true;
+            continue;
+        }
+        if line.starts_with("element ") || line == "end_header" {
+            in_vertex = false;
+        }
+        if !in_vertex || !line.starts_with("property ") {
+            continue;
+        }
+        let fields = line.split_ascii_whitespace().collect::<Vec<_>>();
+        let ["property", scalar, name] = fields.as_slice() else {
+            return Err(DenseRasterPrepError::InvalidPly(
+                "PLY vertex list properties are unsupported".into(),
+            ));
+        };
+        let width = match *scalar {
+            "float" | "float32" | "int" | "uint" => 4,
+            "double" | "float64" | "int64" | "uint64" => 8,
+            "uchar" | "uint8" | "char" | "int8" => 1,
+            "short" | "ushort" | "int16" | "uint16" => 2,
+            _ => {
+                return Err(DenseRasterPrepError::InvalidPly(format!(
+                    "unsupported PLY scalar type {scalar}"
+                )))
+            }
+        };
+        match *name {
+            "x" | "y" | "z" => {
+                let kind = ply_coordinate_kind(scalar).ok_or_else(|| {
+                    DenseRasterPrepError::InvalidPly(format!(
+                        "coordinate property {name} must be float or double"
+                    ))
+                })?;
+                match coordinate_kind {
+                    Some(existing) if existing != kind => {
+                        return Err(DenseRasterPrepError::InvalidPly(
+                            "coordinate properties must share one scalar type".into(),
+                        ));
+                    }
+                    None => coordinate_kind = Some(kind),
+                    _ => {}
+                }
+                match *name {
+                    "x" => x = Some(stride),
+                    "y" => y = Some(stride),
+                    "z" => z = Some(stride),
+                    _ => {}
+                }
+            }
+            "red" if matches!(*scalar, "uchar" | "uint8") => red = Some(stride),
+            "green" if matches!(*scalar, "uchar" | "uint8") => green = Some(stride),
+            "blue" if matches!(*scalar, "uchar" | "uint8") => blue = Some(stride),
+            "confidence" if matches!(*scalar, "float" | "float32") => confidence = Some(stride),
+            _ => {}
+        }
+        stride = stride
+            .checked_add(width)
+            .ok_or_else(|| DenseRasterPrepError::InvalidPly("PLY vertex stride overflow".into()))?;
+    }
+    Ok(PlyVertexLayout {
+        stride,
+        x: x.ok_or_else(|| DenseRasterPrepError::InvalidPly("missing coordinate x".into()))?,
+        y: y.ok_or_else(|| DenseRasterPrepError::InvalidPly("missing coordinate y".into()))?,
+        z: z.ok_or_else(|| DenseRasterPrepError::InvalidPly("missing coordinate z".into()))?,
+        coordinate_kind: coordinate_kind.ok_or_else(|| {
+            DenseRasterPrepError::InvalidPly("missing coordinate scalar type".into())
+        })?,
+        red,
+        green,
+        blue,
+        confidence,
+    })
+}
+
+fn read_coordinates(
+    record: &[u8],
+    layout: PlyVertexLayout,
+) -> Result<[f64; 3], DenseRasterPrepError> {
+    let values = [
+        read_coordinate(record, layout.x, layout.coordinate_kind),
+        read_coordinate(record, layout.y, layout.coordinate_kind),
+        read_coordinate(record, layout.z, layout.coordinate_kind),
+    ];
+    if values.iter().any(|value| !value.is_finite()) {
+        return Err(DenseRasterPrepError::InvalidPly(
+            "non-finite coordinate".into(),
+        ));
+    }
+    Ok(values)
+}
+
+fn read_coordinate(record: &[u8], offset: usize, kind: PlyCoordinateKind) -> f64 {
+    match kind {
+        PlyCoordinateKind::Float32 => f64::from(read_f32(record, offset)),
+        PlyCoordinateKind::Float64 => read_f64(record, offset),
+    }
+}
+
+fn required_dense_attributes(
+    layout: PlyVertexLayout,
+) -> Result<(usize, usize, usize, usize), DenseRasterPrepError> {
+    Ok((
+        layout
+            .red
+            .ok_or_else(|| DenseRasterPrepError::InvalidPly("missing uchar red".into()))?,
+        layout
+            .green
+            .ok_or_else(|| DenseRasterPrepError::InvalidPly("missing uchar green".into()))?,
+        layout
+            .blue
+            .ok_or_else(|| DenseRasterPrepError::InvalidPly("missing uchar blue".into()))?,
+        layout
+            .confidence
+            .ok_or_else(|| DenseRasterPrepError::InvalidPly("missing float confidence".into()))?,
+    ))
+}
+
+fn read_f32(record: &[u8], offset: usize) -> f32 {
+    f32::from_le_bytes(
+        record[offset..offset + 4]
+            .try_into()
+            .expect("validated PLY layout"),
+    )
+}
+
+fn read_f64(record: &[u8], offset: usize) -> f64 {
+    f64::from_le_bytes(
+        record[offset..offset + 8]
+            .try_into()
+            .expect("validated PLY layout"),
+    )
 }
 
 fn copy_ascii(target: &mut [u8], value: &str) {
@@ -992,6 +1129,105 @@ printf '%s' '{"points":2,"offset":[500000,5400000,100],"boundingBox":{"min":[500
     }
 
     #[test]
+    fn dense_layout_accepts_legacy_and_normal_enriched_vertices() {
+        let legacy = "element vertex 1\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nproperty float confidence\nend_header\n";
+        let legacy = ply_vertex_layout(legacy).expect("legacy layout");
+        assert_eq!(legacy.stride, 19);
+        assert_eq!(legacy.coordinate_kind, PlyCoordinateKind::Float32);
+        assert_eq!(required_dense_attributes(legacy).unwrap(), (12, 13, 14, 15));
+
+        let enriched = format!(
+            "{}property float nx\nproperty float ny\nproperty float nz\nend_header\n",
+            legacy_header_without_end()
+        );
+        let enriched = ply_vertex_layout(&enriched).expect("normal layout");
+        assert_eq!(enriched.stride, 31);
+        assert_eq!(
+            required_dense_attributes(enriched).unwrap(),
+            (12, 13, 14, 15)
+        );
+
+        let double_header = "element vertex 1\nproperty double x\nproperty double y\nproperty double z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nproperty float confidence\nproperty float nx\nproperty float ny\nproperty float nz\nend_header\n";
+        let double = ply_vertex_layout(double_header).expect("double layout");
+        assert_eq!(double.stride, 43);
+        assert_eq!(double.coordinate_kind, PlyCoordinateKind::Float64);
+        assert_eq!(required_dense_attributes(double).unwrap(), (24, 25, 26, 27));
+    }
+
+    fn legacy_header_without_end() -> &'static str {
+        "element vertex 1\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nproperty float confidence\n"
+    }
+
+    #[test]
+    fn double_coordinates_survive_las_roundtrip_at_projected_crs_magnitudes() {
+        let root = std::env::temp_dir().join(format!(
+            "hcad-dense-double-las-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let ply = root.join("dense.ply");
+        let mut file = File::create(&ply).unwrap();
+        // Absolute GK4-scale coordinates: float32 would quantize XY to ~0.5 m.
+        file.write_all(b"ply\nformat binary_little_endian 1.0\nelement vertex 2\nproperty double x\nproperty double y\nproperty double z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nproperty float confidence\nend_header\n").unwrap();
+        let points = [
+            (
+                [4_467_123.456_7_f64, 5_376_890.123_4_f64, 742.015_6_f64],
+                [255_u8, 0, 0],
+            ),
+            (
+                [4_467_123.789_1_f64, 5_376_890.456_8_f64, 742.348_9_f64],
+                [0, 255, 0],
+            ),
+        ];
+        for (coords, color) in points {
+            for value in coords {
+                file.write_all(&value.to_le_bytes()).unwrap();
+            }
+            file.write_all(&color).unwrap();
+            file.write_all(&0.9_f32.to_le_bytes()).unwrap();
+        }
+        drop(file);
+
+        let las = root.join("dense.las");
+        ply_to_las(&ply, &las, &CancellationToken::new()).expect("las conversion");
+        let bytes = fs::read(&las).expect("las bytes");
+        assert!(bytes.len() >= 227 + 2 * 26);
+        let scale = [
+            f64::from_le_bytes(bytes[131..139].try_into().unwrap()),
+            f64::from_le_bytes(bytes[139..147].try_into().unwrap()),
+            f64::from_le_bytes(bytes[147..155].try_into().unwrap()),
+        ];
+        let offset = [
+            f64::from_le_bytes(bytes[155..163].try_into().unwrap()),
+            f64::from_le_bytes(bytes[163..171].try_into().unwrap()),
+            f64::from_le_bytes(bytes[171..179].try_into().unwrap()),
+        ];
+        assert!(scale.iter().all(|value| (*value - 0.001).abs() < 1e-12));
+        for (index, (coords, _)) in points.iter().enumerate() {
+            let start = 227 + index * 26;
+            let quantized = [
+                i32::from_le_bytes(bytes[start..start + 4].try_into().unwrap()),
+                i32::from_le_bytes(bytes[start + 4..start + 8].try_into().unwrap()),
+                i32::from_le_bytes(bytes[start + 8..start + 12].try_into().unwrap()),
+            ];
+            for axis in 0..3 {
+                let recovered = offset[axis] + f64::from(quantized[axis]) * scale[axis];
+                assert!(
+                    (recovered - coords[axis]).abs() < 0.001,
+                    "axis {axis}: recovered {recovered} vs {}",
+                    coords[axis]
+                );
+            }
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     #[cfg(target_os = "linux")]
     fn system_gdal_accepts_the_streamed_flatgeobuf() {
         if !Path::new("/usr/bin/ogr2ogr").is_file() || !Path::new("/usr/bin/ogrinfo").is_file() {
@@ -1003,11 +1239,11 @@ printf '%s' '{"points":2,"offset":[500000,5400000,100],"boundingBox":{"min":[500
         fs::create_dir_all(&root).unwrap();
         let ply = root.join("dense.ply");
         let mut file = File::create(&ply).unwrap();
-        file.write_all(b"ply\nformat binary_little_endian 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nproperty float confidence\nend_header\n").unwrap();
+        file.write_all(b"ply\nformat binary_little_endian 1.0\nelement vertex 3\nproperty double x\nproperty double y\nproperty double z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nproperty float confidence\nend_header\n").unwrap();
         for (x, y, z, color) in [
-            (500_000_f32, 5_400_000_f32, 100_f32, [255, 0, 0]),
-            (500_001_f32, 5_400_000_f32, 101_f32, [0, 255, 0]),
-            (500_000_f32, 5_400_001_f32, 102_f32, [0, 0, 255]),
+            (500_000.125_f64, 5_400_000.25_f64, 100.5_f64, [255, 0, 0]),
+            (500_001.5_f64, 5_400_000.0_f64, 101.0_f64, [0, 255, 0]),
+            (500_000.0_f64, 5_400_001.75_f64, 102.0_f64, [0, 0, 255]),
         ] {
             for value in [x, y, z] {
                 file.write_all(&value.to_le_bytes()).unwrap();

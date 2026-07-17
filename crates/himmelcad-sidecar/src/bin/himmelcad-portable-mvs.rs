@@ -17,16 +17,19 @@ use std::{
 
 use himmelcad_core::hash::ObjectHash;
 use himmelcad_sidecar::mvs_runtime::{
-    MvsCheckpoint, MvsComputeDevice, MvsDepthImageRecord, MvsDepthTileKey, MvsDepthTileRecord,
-    MvsOutputIndex, MvsPinholeCamera, MvsSceneImage, MvsSceneManifest, MvsSettings,
-    MvsWorkerRequest,
+    MvsCheckpoint, MvsComputeDevice, MvsDenseFusionEvidence, MvsDepthImageRecord, MvsDepthTileKey,
+    MvsDepthTileRecord, MvsOutputIndex, MvsPinholeCamera, MvsSceneImage, MvsSceneManifest,
+    MvsSettings, MvsWorkerRequest, MVS_DENSE_FUSION_ALGORITHM,
 };
-use image::{imageops::FilterType, GrayImage, RgbImage};
+use image::{imageops::FilterType, GrayImage, Luma, RgbImage};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 const VERSION: &str = "1.0.0";
 const DEPTH_MAGIC: &[u8; 8] = b"HCDEPTH1";
+
+#[path = "himmelcad_portable_mvs/fusion.rs"]
+mod fusion;
 
 fn main() {
     if let Err(error) = real_main() {
@@ -185,7 +188,7 @@ fn run_cpu(
                     completed_bytes: 0,
                 });
                 if completed_tiles % u64::from(request.settings.checkpoint_every_tiles) == 0 {
-                    write_checkpoint(request, &checkpoint_keys, completed_tiles)?;
+                    write_checkpoint(request, &checkpoint_keys, completed_tiles, false)?;
                 }
                 Ok(())
             },
@@ -200,15 +203,27 @@ fn run_cpu(
         });
     }
 
-    geometric_consistency(
-        request,
-        scene,
-        &image_lookup,
-        &raw_root,
-        &tile_root,
-        &mut depth_images,
-        cancellation,
-    )?;
+    if request.resume_geometric_consistency_complete {
+        for completed in 1..=scene.images.len() {
+            event(&WorkerEvent::Progress {
+                stage: "geometricConsistency",
+                completed_units: completed as u64,
+                total_units: scene.images.len() as u64,
+                completed_bytes: 0,
+            });
+        }
+    } else {
+        geometric_consistency(
+            request,
+            scene,
+            &image_lookup,
+            &raw_root,
+            &tile_root,
+            &mut depth_images,
+            worker_threads,
+            cancellation,
+        )?;
+    }
     let dense_point_cloud = if request.fuse_dense_point_cloud {
         event(&WorkerEvent::Progress {
             stage: "denseFusion",
@@ -221,6 +236,8 @@ fn run_cpu(
             scene,
             scene_root,
             &raw_root,
+            &checkpoint_keys,
+            completed_tiles,
             cancellation,
         )?)
     } else {
@@ -236,7 +253,7 @@ fn run_cpu(
         dense_point_cloud,
     };
     atomic_json(&request.output_path.join("index.json"), &output)?;
-    write_checkpoint(request, &checkpoint_keys, completed_tiles)?;
+    write_checkpoint(request, &checkpoint_keys, completed_tiles, true)?;
     Ok(())
 }
 
@@ -244,6 +261,8 @@ fn run_cpu(
 struct LoadedView {
     gray: GrayImage,
     rgb: RgbImage,
+    /// 255 means usable; zero means excluded by the immutable source-image mask.
+    mask: GrayImage,
     camera: MvsPinholeCamera,
 }
 
@@ -265,9 +284,11 @@ fn load_view(root: &Path, image: &MvsSceneImage, maximum: u32) -> Result<LoadedV
         .resize_exact(width, height, FilterType::Lanczos3)
         .to_rgb8();
     let gray = image::DynamicImage::ImageRgb8(rgb.clone()).to_luma8();
+    let mask = load_keep_mask(root, image, width, height)?;
     Ok(LoadedView {
         gray,
         rgb,
+        mask,
         camera: scaled_camera(&image.camera, scale),
     })
 }
@@ -284,11 +305,37 @@ fn load_depth_view(
     let gray = decoded
         .resize_exact(width, height, FilterType::Lanczos3)
         .to_luma8();
+    let mask = load_keep_mask(root, image, width, height)?;
     Ok(LoadedView {
         gray,
         rgb: RgbImage::new(1, 1),
+        mask,
         camera: scaled_camera(&image.camera, scale),
     })
+}
+
+fn load_keep_mask(
+    root: &Path,
+    image: &MvsSceneImage,
+    width: u32,
+    height: u32,
+) -> Result<GrayImage, WorkerError> {
+    let Some(relative_path) = &image.mask_relative_path else {
+        return Ok(GrayImage::from_pixel(width, height, Luma([255])));
+    };
+    let decoded = image::open(root.join(relative_path))?.to_luma8();
+    if decoded.dimensions() != (image.width, image.height) {
+        return Err(WorkerError::InvalidInput(format!(
+            "keep mask dimensions differ from scene image {}",
+            image.image_id
+        )));
+    }
+    Ok(image::imageops::resize(
+        &decoded,
+        width,
+        height,
+        FilterType::Nearest,
+    ))
 }
 
 fn scaled_camera(camera: &MvsPinholeCamera, scale: f64) -> MvsPinholeCamera {
@@ -321,6 +368,8 @@ fn estimate_image_pyramid(
         let height = reference.gray.height().div_ceil(divisor).max(1);
         let reference_gray =
             image::imageops::resize(&reference.gray, width, height, FilterType::Triangle);
+        let reference_mask =
+            image::imageops::resize(&reference.mask, width, height, FilterType::Nearest);
         let camera = scaled_camera(&reference.camera, 1.0 / f64::from(divisor));
         let neighbor_levels = neighbors
             .iter()
@@ -331,12 +380,19 @@ fn estimate_image_pyramid(
                     neighbor.gray.height().div_ceil(divisor).max(1),
                     FilterType::Triangle,
                 ),
+                mask: image::imageops::resize(
+                    &neighbor.mask,
+                    neighbor.mask.width().div_ceil(divisor).max(1),
+                    neighbor.mask.height().div_ceil(divisor).max(1),
+                    FilterType::Nearest,
+                ),
                 camera: scaled_camera(&neighbor.camera, 1.0 / f64::from(divisor)),
             })
             .collect::<Vec<_>>();
         if level == 0 {
             let mut level_records = estimate_finest_level_tiled(
                 &reference_gray,
+                &reference_mask,
                 &camera,
                 &neighbor_levels,
                 scene_image.minimum_depth as f32,
@@ -357,12 +413,14 @@ fn estimate_image_pyramid(
         }
         let buffer = estimate_level(
             &reference_gray,
+            &reference_mask,
             &camera,
             &neighbor_levels,
             scene_image.minimum_depth as f32,
             scene_image.maximum_depth as f32,
             settings,
             previous.as_ref(),
+            worker_threads,
             cancellation,
         )?;
         let mut level_records = write_tiles(
@@ -384,6 +442,7 @@ fn estimate_image_pyramid(
 #[allow(clippy::too_many_arguments)]
 fn estimate_finest_level_tiled(
     reference: &GrayImage,
+    reference_mask: &GrayImage,
     reference_camera: &MvsPinholeCamera,
     neighbors: &[LoadedLevel],
     minimum_depth: f32,
@@ -412,7 +471,15 @@ fn estimate_finest_level_tiled(
     let jobs = (0..tiles_y)
         .flat_map(|tile_y| (0..tiles_x).map(move |tile_x| (tile_x, tile_y)))
         .collect::<Vec<_>>();
-    let workers = worker_threads.max(1).min(jobs.len().max(1));
+    // A portrait/landscape image commonly has only two 512 px tiles along its
+    // long edge. Splitting work only at tile boundaries left half of a
+    // four-core CPU idle for the dominant finest level.
+    let parallelize_inside_tiles = jobs.len() < worker_threads.max(1);
+    let workers = if parallelize_inside_tiles {
+        1
+    } else {
+        worker_threads.max(1).min(jobs.len().max(1))
+    };
     let next = AtomicUsize::new(0);
     let failed = AtomicBool::new(false);
     let (sender, receiver) = mpsc::sync_channel(workers.saturating_mul(2).max(1));
@@ -433,20 +500,40 @@ fn estimate_finest_level_tiled(
                     let start_y = tile_y * settings.tile_size;
                     let width = settings.tile_size.min(reference.width() - start_x);
                     let height = settings.tile_size.min(reference.height() - start_y);
-                    let result = estimate_level_region(
-                        reference,
-                        reference_camera,
-                        neighbors,
-                        minimum_depth,
-                        maximum_depth,
-                        settings,
-                        previous,
-                        start_x,
-                        start_y,
-                        width,
-                        height,
-                        cancellation,
-                    );
+                    let result = if parallelize_inside_tiles {
+                        estimate_level_region_parallel(
+                            reference,
+                            reference_mask,
+                            reference_camera,
+                            neighbors,
+                            minimum_depth,
+                            maximum_depth,
+                            settings,
+                            previous,
+                            start_x,
+                            start_y,
+                            width,
+                            height,
+                            worker_threads,
+                            cancellation,
+                        )
+                    } else {
+                        estimate_level_region(
+                            reference,
+                            reference_mask,
+                            reference_camera,
+                            neighbors,
+                            minimum_depth,
+                            maximum_depth,
+                            settings,
+                            previous,
+                            start_x,
+                            start_y,
+                            width,
+                            height,
+                            cancellation,
+                        )
+                    };
                     let is_error = result.is_err();
                     if sender
                         .send((tile_x, tile_y, width, height, result))
@@ -530,21 +617,121 @@ fn write_raw_region(
 
 struct LoadedLevel {
     gray: GrayImage,
+    mask: GrayImage,
     camera: MvsPinholeCamera,
+}
+
+struct PreparedNeighbor<'a> {
+    gray: &'a GrayImage,
+    mask: &'a GrayImage,
+    projection: PlaneProjection,
+}
+
+#[derive(Clone, Copy)]
+struct PlaneProjection {
+    x: ProjectionRow,
+    y: ProjectionRow,
+    z: ProjectionRow,
+}
+
+#[derive(Clone, Copy)]
+struct ProjectionRow {
+    pixel_x: f64,
+    pixel_y: f64,
+    constant: f64,
+    inverse_depth: f64,
+}
+
+impl PlaneProjection {
+    fn between(reference: &MvsPinholeCamera, source: &MvsPinholeCamera) -> Self {
+        let reference_matrix = &reference.world_to_camera;
+        let source_matrix = &source.world_to_camera;
+        let mut relative_rotation = [[0.0_f64; 3]; 3];
+        for row in 0..3 {
+            for column in 0..3 {
+                relative_rotation[row][column] = (0..3)
+                    .map(|axis| source_matrix[row * 4 + axis] * reference_matrix[column * 4 + axis])
+                    .sum();
+            }
+        }
+        let reference_translation = [
+            reference_matrix[3],
+            reference_matrix[7],
+            reference_matrix[11],
+        ];
+        let source_translation = [source_matrix[3], source_matrix[7], source_matrix[11]];
+        let mut relative_translation = source_translation;
+        for row in 0..3 {
+            relative_translation[row] -= (0..3)
+                .map(|axis| relative_rotation[row][axis] * reference_translation[axis])
+                .sum::<f64>();
+        }
+
+        let camera_row = |row: usize| ProjectionRow {
+            pixel_x: relative_rotation[row][0] / reference.fx,
+            pixel_y: relative_rotation[row][1] / reference.fy,
+            constant: relative_rotation[row][2]
+                - relative_rotation[row][0] * reference.cx / reference.fx
+                - relative_rotation[row][1] * reference.cy / reference.fy,
+            inverse_depth: relative_translation[row],
+        };
+        let camera_x = camera_row(0);
+        let camera_y = camera_row(1);
+        let camera_z = camera_row(2);
+        Self {
+            x: camera_x.scaled(source.fx).plus(camera_z.scaled(source.cx)),
+            y: camera_y.scaled(source.fy).plus(camera_z.scaled(source.cy)),
+            z: camera_z,
+        }
+    }
+}
+
+impl ProjectionRow {
+    fn scaled(self, factor: f64) -> Self {
+        Self {
+            pixel_x: self.pixel_x * factor,
+            pixel_y: self.pixel_y * factor,
+            constant: self.constant * factor,
+            inverse_depth: self.inverse_depth * factor,
+        }
+    }
+
+    fn plus(self, other: Self) -> Self {
+        Self {
+            pixel_x: self.pixel_x + other.pixel_x,
+            pixel_y: self.pixel_y + other.pixel_y,
+            constant: self.constant + other.constant,
+            inverse_depth: self.inverse_depth + other.inverse_depth,
+        }
+    }
+
+    fn at(self, x: f64, y: f64, inverse_depth: f64) -> f64 {
+        self.pixel_x * x + self.pixel_y * y + self.constant + self.inverse_depth * inverse_depth
+    }
+}
+
+struct ReferencePatch {
+    count: f32,
+    sum: f32,
+    variance: f32,
+    values: [f32; 289],
 }
 
 fn estimate_level(
     reference: &GrayImage,
+    reference_mask: &GrayImage,
     reference_camera: &MvsPinholeCamera,
     neighbors: &[LoadedLevel],
     minimum_depth: f32,
     maximum_depth: f32,
     settings: &MvsSettings,
     previous: Option<&DepthBuffer>,
+    worker_threads: usize,
     cancellation: &AtomicBool,
 ) -> Result<DepthBuffer, WorkerError> {
-    estimate_level_region(
+    estimate_level_region_parallel(
         reference,
+        reference_mask,
         reference_camera,
         neighbors,
         minimum_depth,
@@ -555,13 +742,100 @@ fn estimate_level(
         0,
         reference.width(),
         reference.height(),
+        worker_threads,
         cancellation,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
+fn estimate_level_region_parallel(
+    reference: &GrayImage,
+    reference_mask: &GrayImage,
+    reference_camera: &MvsPinholeCamera,
+    neighbors: &[LoadedLevel],
+    minimum_depth: f32,
+    maximum_depth: f32,
+    settings: &MvsSettings,
+    previous: Option<&DepthBuffer>,
+    start_x: u32,
+    start_y: u32,
+    width: u32,
+    height: u32,
+    worker_threads: usize,
+    cancellation: &AtomicBool,
+) -> Result<DepthBuffer, WorkerError> {
+    let workers = worker_threads.max(1).min(height as usize);
+    if workers == 1 {
+        return estimate_level_region(
+            reference,
+            reference_mask,
+            reference_camera,
+            neighbors,
+            minimum_depth,
+            maximum_depth,
+            settings,
+            previous,
+            start_x,
+            start_y,
+            width,
+            height,
+            cancellation,
+        );
+    }
+    let rows_per_worker = height.div_ceil(workers as u32);
+    let (sender, receiver) = mpsc::sync_channel(workers);
+    thread::scope(|scope| {
+        for worker in 0..workers {
+            let local_start = (worker as u32).saturating_mul(rows_per_worker);
+            if local_start >= height {
+                continue;
+            }
+            let band_height = rows_per_worker.min(height - local_start);
+            let sender = sender.clone();
+            scope.spawn(move || {
+                let result = estimate_level_region(
+                    reference,
+                    reference_mask,
+                    reference_camera,
+                    neighbors,
+                    minimum_depth,
+                    maximum_depth,
+                    settings,
+                    previous,
+                    start_x,
+                    start_y + local_start,
+                    width,
+                    band_height,
+                    cancellation,
+                );
+                let _ = sender.send((local_start, result));
+            });
+        }
+        drop(sender);
+        let pixel_count = usize::try_from(u64::from(width) * u64::from(height))
+            .map_err(|_| WorkerError::InvalidInput("image is too large".into()))?;
+        let mut output = DepthBuffer {
+            width,
+            height,
+            depth: vec![0.0; pixel_count],
+            confidence: vec![0.0; pixel_count],
+        };
+        for (local_start, result) in receiver {
+            let band = result?;
+            let destination = usize::try_from(u64::from(local_start) * u64::from(width))
+                .map_err(|_| WorkerError::InvalidInput("image row offset overflow".into()))?;
+            output.depth[destination..destination + band.depth.len()].copy_from_slice(&band.depth);
+            output.confidence[destination..destination + band.confidence.len()]
+                .copy_from_slice(&band.confidence);
+        }
+        Ok(output)
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 fn estimate_level_region(
     reference: &GrayImage,
+    reference_mask: &GrayImage,
     reference_camera: &MvsPinholeCamera,
     neighbors: &[LoadedLevel],
     minimum_depth: f32,
@@ -582,10 +856,21 @@ fn estimate_level_region(
     let inverse_far = 1.0 / maximum_depth;
     let full_step = (inverse_near - inverse_far) / f32::from(settings.depth_hypotheses.max(2) - 1);
     let radius = i32::from(settings.patch_radius);
+    let prepared_neighbors = neighbors
+        .iter()
+        .map(|neighbor| PreparedNeighbor {
+            gray: &neighbor.gray,
+            mask: &neighbor.mask,
+            projection: PlaneProjection::between(reference_camera, &neighbor.camera),
+        })
+        .collect::<Vec<_>>();
     for local_y in 0..height {
         check_cancel(cancellation)?;
         let y = start_y + local_y;
         for local_x in 0..width {
+            if local_x % 32 == 0 {
+                check_cancel(cancellation)?;
+            }
             let x = start_x + local_x;
             if x < settings.patch_radius.into()
                 || y < settings.patch_radius.into()
@@ -594,6 +879,10 @@ fn estimate_level_region(
             {
                 continue;
             }
+            if !patch_is_unmasked(reference_mask, x, y, radius) {
+                continue;
+            }
+            let patch = reference_patch(reference, x, y, radius);
             let prior = previous.and_then(|coarse| {
                 let px = (x / 2).min(coarse.width.saturating_sub(1));
                 let py = (y / 2).min(coarse.height.saturating_sub(1));
@@ -607,12 +896,11 @@ fn estimate_level_region(
                 let center = 1.0 / prior;
                 let span = full_step * 4.0;
                 evaluate_candidates(
-                    reference,
-                    reference_camera,
-                    neighbors,
+                    &prepared_neighbors,
                     x,
                     y,
                     radius,
+                    &patch,
                     (0..9).map(|sample| {
                         let offset = (sample as f32 - 4.0) / 4.0;
                         1.0 / (center + span * offset).clamp(inverse_far, inverse_near)
@@ -623,12 +911,11 @@ fn estimate_level_region(
                 );
             } else {
                 evaluate_candidates(
-                    reference,
-                    reference_camera,
-                    neighbors,
+                    &prepared_neighbors,
                     x,
                     y,
                     radius,
+                    &patch,
                     (0..settings.depth_hypotheses)
                         .map(|sample| 1.0 / (inverse_far + full_step * f32::from(sample))),
                     &mut best_depth,
@@ -643,13 +930,12 @@ fn estimate_level_region(
                 }
                 let center = 1.0 / best_depth;
                 evaluate_candidates(
-                    reference,
-                    reference_camera,
-                    neighbors,
+                    &prepared_neighbors,
                     x,
                     y,
                     radius,
-                    (-2..=2).map(|offset| {
+                    &patch,
+                    [-2, -1, 1, 2].into_iter().map(|offset| {
                         1.0 / (center + span * offset as f32 / 2.0).clamp(inverse_far, inverse_near)
                     }),
                     &mut best_depth,
@@ -678,12 +964,11 @@ fn estimate_level_region(
 
 #[allow(clippy::too_many_arguments)]
 fn evaluate_candidates(
-    reference: &GrayImage,
-    reference_camera: &MvsPinholeCamera,
-    neighbors: &[LoadedLevel],
+    neighbors: &[PreparedNeighbor<'_>],
     x: u32,
     y: u32,
     radius: i32,
+    reference_patch: &ReferencePatch,
     candidates: impl Iterator<Item = f32>,
     best_depth: &mut f32,
     best_score: &mut f32,
@@ -693,26 +978,28 @@ fn evaluate_candidates(
         if !candidate.is_finite() || candidate <= 0.0 {
             continue;
         }
-        let mut scores = neighbors
-            .iter()
-            .filter_map(|neighbor| {
-                ncc_score(
-                    reference,
-                    reference_camera,
-                    &neighbor.gray,
-                    &neighbor.camera,
-                    x,
-                    y,
-                    candidate,
-                    radius,
-                )
-            })
-            .collect::<Vec<_>>();
-        if scores.len() < 2 {
+        let mut scores = [-1.0_f32; 4];
+        let mut score_count = 0_usize;
+        for score in neighbors.iter().filter_map(|neighbor| {
+            ncc_score_prepared(neighbor, x, y, candidate, radius, reference_patch)
+        }) {
+            let occupied = score_count.min(4);
+            let insert_at = scores[..occupied]
+                .iter()
+                .position(|current| score > *current)
+                .unwrap_or(occupied);
+            if insert_at < 4 {
+                for index in (insert_at + 1..4).rev() {
+                    scores[index] = scores[index - 1];
+                }
+                scores[insert_at] = score;
+            }
+            score_count += 1;
+        }
+        if score_count < 2 {
             continue;
         }
-        scores.sort_by(|left, right| right.total_cmp(left));
-        let keep = scores.len().min(4);
+        let keep = score_count.min(4);
         let score = scores[..keep].iter().sum::<f32>() / keep as f32;
         if score > *best_score {
             *second_score = *best_score;
@@ -724,52 +1011,137 @@ fn evaluate_candidates(
     }
 }
 
+fn reference_patch(reference: &GrayImage, x: u32, y: u32, radius: i32) -> ReferencePatch {
+    let width = reference.width() as usize;
+    let pixels = reference.as_raw();
+    let mut count = 0_u32;
+    let mut sum = 0.0_f32;
+    let mut sum_squares = 0.0_f32;
+    let mut values = [0.0_f32; 289];
+    for dy in -radius..=radius {
+        let row =
+            usize::try_from(i64::from(y) + i64::from(dy)).expect("patch is in bounds") * width;
+        for dx in -radius..=radius {
+            let column = usize::try_from(i64::from(x) + i64::from(dx)).expect("patch is in bounds");
+            let value = f32::from(pixels[row + column]) / 255.0;
+            values[count as usize] = value;
+            count += 1;
+            sum += value;
+            sum_squares += value * value;
+        }
+    }
+    let count = count as f32;
+    ReferencePatch {
+        count,
+        sum,
+        variance: (sum_squares - sum * sum / count).max(0.0),
+        values,
+    }
+}
+
+fn patch_is_unmasked(mask: &GrayImage, x: u32, y: u32, radius: i32) -> bool {
+    (-radius..=radius).all(|dy| {
+        (-radius..=radius).all(|dx| {
+            let px = u32::try_from(i64::from(x) + i64::from(dx)).expect("patch is in bounds");
+            let py = u32::try_from(i64::from(y) + i64::from(dy)).expect("patch is in bounds");
+            mask.get_pixel(px, py).0[0] != 0
+        })
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
-fn ncc_score(
-    reference: &GrayImage,
-    reference_camera: &MvsPinholeCamera,
-    source: &GrayImage,
-    source_camera: &MvsPinholeCamera,
+fn ncc_score_prepared(
+    source: &PreparedNeighbor<'_>,
     x: u32,
     y: u32,
     depth: f32,
     radius: i32,
+    reference_patch: &ReferencePatch,
 ) -> Option<f32> {
-    let mut count = 0.0_f32;
-    let mut sum_a = 0.0_f32;
-    let mut sum_b = 0.0_f32;
-    let mut sum_aa = 0.0_f32;
-    let mut sum_bb = 0.0_f32;
-    let mut sum_ab = 0.0_f32;
-    for dy in -radius..=radius {
-        for dx in -radius..=radius {
-            let rx = x as f64 + f64::from(dx);
-            let ry = y as f64 + f64::from(dy);
-            let world = backproject(reference_camera, rx, ry, f64::from(depth));
-            let (sx, sy, z) = project(source_camera, world)?;
-            if z <= 0.0
-                || sx < 0.0
-                || sy < 0.0
-                || sx >= f64::from(source.width().saturating_sub(1))
-                || sy >= f64::from(source.height().saturating_sub(1))
-            {
-                return None;
-            }
-            let a = f32::from(reference.get_pixel(rx as u32, ry as u32).0[0]) / 255.0;
-            let b = bilinear_gray(source, sx, sy);
-            count += 1.0;
-            sum_a += a;
-            sum_b += b;
-            sum_aa += a * a;
-            sum_bb += b * b;
-            sum_ab += a * b;
+    let source_width = source.gray.width();
+    let source_height = source.gray.height();
+    let inverse_depth = 1.0 / f64::from(depth);
+    let start_x = f64::from(x) - f64::from(radius);
+    let start_y = f64::from(y) - f64::from(radius);
+    let row_start_x = source.projection.x.at(start_x, start_y, inverse_depth);
+    let row_start_y = source.projection.y.at(start_x, start_y, inverse_depth);
+    let row_start_z = source.projection.z.at(start_x, start_y, inverse_depth);
+    let last_offset = f64::from(radius * 2);
+    for (offset_x, offset_y) in [
+        (0.0, 0.0),
+        (last_offset, 0.0),
+        (0.0, last_offset),
+        (last_offset, last_offset),
+    ] {
+        let denominator = row_start_z
+            + source.projection.z.pixel_x * offset_x
+            + source.projection.z.pixel_y * offset_y;
+        if denominator <= 0.0 {
+            return None;
+        }
+        let reciprocal = 1.0 / denominator;
+        let sx = (row_start_x
+            + source.projection.x.pixel_x * offset_x
+            + source.projection.x.pixel_y * offset_y)
+            * reciprocal;
+        let sy = (row_start_y
+            + source.projection.y.pixel_x * offset_x
+            + source.projection.y.pixel_y * offset_y)
+            * reciprocal;
+        if sx < 0.0
+            || sy < 0.0
+            || sx >= f64::from(source_width.saturating_sub(1))
+            || sy >= f64::from(source_height.saturating_sub(1))
+        {
+            return None;
         }
     }
-    let covariance = sum_ab - sum_a * sum_b / count;
-    let variance_a = (sum_aa - sum_a * sum_a / count).max(0.0);
-    let variance_b = (sum_bb - sum_b * sum_b / count).max(0.0);
-    let denominator = (variance_a * variance_b).sqrt();
+    let mut sum_b = 0.0_f32;
+    let mut sum_bb = 0.0_f32;
+    let mut sum_ab = 0.0_f32;
+    let mut patch_offset = 0_usize;
+    for dy in -radius..=radius {
+        let row_offset = f64::from(dy + radius);
+        let mut numerator_x = row_start_x + source.projection.x.pixel_y * row_offset;
+        let mut numerator_y = row_start_y + source.projection.y.pixel_y * row_offset;
+        let mut denominator = row_start_z + source.projection.z.pixel_y * row_offset;
+        for _ in -radius..=radius {
+            let reciprocal = 1.0 / denominator;
+            let sx = numerator_x * reciprocal;
+            let sy = numerator_y * reciprocal;
+            if bilinear_mask_excluded(source.mask, sx, sy) {
+                return None;
+            }
+            let a = reference_patch.values[patch_offset];
+            patch_offset += 1;
+            let b = bilinear_gray(source.gray, sx, sy);
+            sum_b += b;
+            sum_bb += b * b;
+            sum_ab += a * b;
+            numerator_x += source.projection.x.pixel_x;
+            numerator_y += source.projection.y.pixel_x;
+            denominator += source.projection.z.pixel_x;
+        }
+    }
+    let covariance = sum_ab - reference_patch.sum * sum_b / reference_patch.count;
+    let variance_b = (sum_bb - sum_b * sum_b / reference_patch.count).max(0.0);
+    let denominator = (reference_patch.variance * variance_b).sqrt();
     (denominator > 1.0e-6).then_some((covariance / denominator).clamp(-1.0, 1.0))
+}
+
+fn bilinear_mask_excluded(mask: &GrayImage, x: f64, y: f64) -> bool {
+    let x0 = x.floor() as u32;
+    let y0 = y.floor() as u32;
+    let x1 = (x0 + 1).min(mask.width() - 1);
+    let y1 = (y0 + 1).min(mask.height() - 1);
+    [
+        mask.get_pixel(x0, y0).0[0],
+        mask.get_pixel(x1, y0).0[0],
+        mask.get_pixel(x0, y1).0[0],
+        mask.get_pixel(x1, y1).0[0],
+    ]
+    .into_iter()
+    .any(|value| value == 0)
 }
 
 fn bilinear_gray(image: &GrayImage, x: f64, y: f64) -> f32 {
@@ -779,10 +1151,16 @@ fn bilinear_gray(image: &GrayImage, x: f64, y: f64) -> f32 {
     let y1 = (y0 + 1).min(image.height() - 1);
     let tx = (x - f64::from(x0)) as f32;
     let ty = (y - f64::from(y0)) as f32;
-    let p00 = f32::from(image.get_pixel(x0, y0).0[0]);
-    let p10 = f32::from(image.get_pixel(x1, y0).0[0]);
-    let p01 = f32::from(image.get_pixel(x0, y1).0[0]);
-    let p11 = f32::from(image.get_pixel(x1, y1).0[0]);
+    let width = image.width() as usize;
+    let pixels = image.as_raw();
+    let x0 = x0 as usize;
+    let x1 = x1 as usize;
+    let y0 = y0 as usize;
+    let y1 = y1 as usize;
+    let p00 = f32::from(pixels[y0 * width + x0]);
+    let p10 = f32::from(pixels[y0 * width + x1]);
+    let p01 = f32::from(pixels[y1 * width + x0]);
+    let p11 = f32::from(pixels[y1 * width + x1]);
     let top = p00 + (p10 - p00) * tx;
     let bottom = p01 + (p11 - p01) * tx;
     (top + (bottom - top) * ty) / 255.0
@@ -827,6 +1205,7 @@ fn geometric_consistency(
     raw_root: &Path,
     tile_root: &Path,
     depth_images: &mut [MvsDepthImageRecord],
+    worker_threads: usize,
     cancellation: &AtomicBool,
 ) -> Result<(), WorkerError> {
     event(&WorkerEvent::Progress {
@@ -835,6 +1214,18 @@ fn geometric_consistency(
         total_units: scene.images.len() as u64,
         completed_bytes: 0,
     });
+    if worker_threads > 1 && scene.images.len() > 1 {
+        return geometric_consistency_parallel(
+            request,
+            scene,
+            image_lookup,
+            raw_root,
+            tile_root,
+            depth_images,
+            worker_threads,
+            cancellation,
+        );
+    }
     for (image_index, image) in scene.images.iter().enumerate() {
         check_cancel(cancellation)?;
         let reference_path = raw_root.join(format!("{}.raw", image.image_id));
@@ -971,6 +1362,216 @@ fn geometric_consistency(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn geometric_consistency_parallel(
+    request: &MvsWorkerRequest,
+    scene: &MvsSceneManifest,
+    image_lookup: &BTreeMap<&str, &MvsSceneImage>,
+    raw_root: &Path,
+    tile_root: &Path,
+    depth_images: &mut [MvsDepthImageRecord],
+    worker_threads: usize,
+    cancellation: &AtomicBool,
+) -> Result<(), WorkerError> {
+    let workers = worker_threads.max(1).min(scene.images.len());
+    let next = AtomicUsize::new(0);
+    let failed = AtomicBool::new(false);
+    let (sender, receiver) = mpsc::sync_channel(workers.saturating_mul(2));
+    thread::scope(|scope| {
+        for _ in 0..workers {
+            let sender = sender.clone();
+            let next = &next;
+            let failed = &failed;
+            scope.spawn(move || {
+                while !failed.load(Ordering::Acquire) {
+                    let image_index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(image) = scene.images.get(image_index) else {
+                        break;
+                    };
+                    let result = geometric_consistency_image(
+                        request,
+                        image,
+                        image_lookup,
+                        raw_root,
+                        tile_root,
+                        cancellation,
+                    );
+                    let is_error = result.is_err();
+                    if sender.send((image_index, result)).is_err() {
+                        break;
+                    }
+                    if is_error {
+                        failed.store(true, Ordering::Release);
+                    }
+                }
+            });
+        }
+        drop(sender);
+        let mut completed = 0_u64;
+        let mut first_error = None;
+        for (image_index, result) in receiver {
+            match result {
+                Ok(replacement) if first_error.is_none() => {
+                    let image = &scene.images[image_index];
+                    let output = depth_images
+                        .iter_mut()
+                        .find(|candidate| candidate.image_id == image.image_id)
+                        .ok_or_else(|| {
+                            WorkerError::InvalidInput("missing depth output record".into())
+                        })?;
+                    output.tiles.retain(|tile| tile.key.level != 0);
+                    output.tiles.extend(replacement);
+                    output.tiles.sort_by(|left, right| left.key.cmp(&right.key));
+                    completed += 1;
+                    event(&WorkerEvent::Progress {
+                        stage: "geometricConsistency",
+                        completed_units: completed,
+                        total_units: scene.images.len() as u64,
+                        completed_bytes: 0,
+                    });
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                }
+            }
+        }
+        if let Some(error) = first_error {
+            Err(error)
+        } else {
+            Ok(())
+        }
+    })
+}
+
+fn geometric_consistency_image(
+    request: &MvsWorkerRequest,
+    image: &MvsSceneImage,
+    image_lookup: &BTreeMap<&str, &MvsSceneImage>,
+    raw_root: &Path,
+    tile_root: &Path,
+    cancellation: &AtomicBool,
+) -> Result<Vec<MvsDepthTileRecord>, WorkerError> {
+    check_cancel(cancellation)?;
+    let reference_path = raw_root.join(format!("{}.raw", image.image_id));
+    let mut reference_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&reference_path)?;
+    let (reference_width, reference_height) = read_raw_header(&mut reference_file)?;
+    let reference_scale_x = f64::from(reference_width) / f64::from(image.width);
+    let reference_scale_y = f64::from(reference_height) / f64::from(image.height);
+    let reference_camera = scaled_camera_xy(&image.camera, reference_scale_x, reference_scale_y);
+    let mut neighbors = image
+        .neighbor_image_ids
+        .iter()
+        .take(usize::from(request.settings.matching_views))
+        .map(|id| {
+            let source = image_lookup
+                .get(id.as_str())
+                .copied()
+                .ok_or_else(|| WorkerError::InvalidInput(format!("unknown neighbor {id}")))?;
+            let buffer = RawDepthRowCache::open(&raw_root.join(format!("{id}.raw")))?;
+            let camera = scaled_camera_xy(
+                &source.camera,
+                f64::from(buffer.width) / f64::from(source.width),
+                f64::from(buffer.height) / f64::from(source.height),
+            );
+            Ok((buffer, camera))
+        })
+        .collect::<Result<Vec<_>, WorkerError>>()?;
+    let neighbor_count = neighbors.len().max(1);
+    let tiles_x = reference_width.div_ceil(request.settings.tile_size);
+    let tiles_y = reference_height.div_ceil(request.settings.tile_size);
+    let mut replacement = Vec::with_capacity((tiles_x * tiles_y) as usize);
+    for tile_y in 0..tiles_y {
+        for tile_x in 0..tiles_x {
+            check_cancel(cancellation)?;
+            let start_x = tile_x * request.settings.tile_size;
+            let start_y = tile_y * request.settings.tile_size;
+            let width = request.settings.tile_size.min(reference_width - start_x);
+            let height = request.settings.tile_size.min(reference_height - start_y);
+            let mut reference = read_raw_region(
+                &mut reference_file,
+                reference_width,
+                start_x,
+                start_y,
+                width,
+                height,
+            )?;
+            for local_y in 0..height {
+                check_cancel(cancellation)?;
+                let y = start_y + local_y;
+                for local_x in 0..width {
+                    let x = start_x + local_x;
+                    let offset = index(width, local_x, local_y);
+                    let depth = reference.depth[offset];
+                    if depth <= 0.0 {
+                        continue;
+                    }
+                    let world = backproject(
+                        &reference_camera,
+                        f64::from(x),
+                        f64::from(y),
+                        f64::from(depth),
+                    );
+                    let mut consistent = 0_u8;
+                    for (source, camera) in &mut neighbors {
+                        let Some((sx, sy, projected_depth)) = project(camera, world) else {
+                            continue;
+                        };
+                        let ix = sx.round() as i64;
+                        let iy = sy.round() as i64;
+                        if ix < 0
+                            || iy < 0
+                            || ix >= i64::from(source.width)
+                            || iy >= i64::from(source.height)
+                        {
+                            continue;
+                        }
+                        let observed = source.depth_at(ix as u32, iy as u32)?;
+                        if observed > 0.0
+                            && ((f64::from(observed) - projected_depth).abs()
+                                / projected_depth.max(f64::EPSILON))
+                                <= f64::from(request.settings.geometric_relative_tolerance)
+                        {
+                            consistent = consistent.saturating_add(1);
+                        }
+                    }
+                    if consistent < request.settings.minimum_consistent_views {
+                        reference.depth[offset] = 0.0;
+                        reference.confidence[offset] = 0.0;
+                    } else {
+                        reference.confidence[offset] *=
+                            f32::from(consistent) / neighbor_count as f32;
+                    }
+                }
+            }
+            write_raw_region(
+                &mut reference_file,
+                reference_width,
+                start_x,
+                start_y,
+                &reference,
+            )?;
+            replacement.push(write_tile_region(
+                tile_root,
+                &image.image_id,
+                0,
+                tile_x,
+                tile_y,
+                &reference,
+                0,
+                0,
+                width,
+                height,
+            )?);
+        }
+    }
+    reference_file.sync_all()?;
+    Ok(replacement)
+}
+
 struct RawDepthRowCache {
     file: File,
     width: u32,
@@ -1004,10 +1605,10 @@ impl RawDepthRowCache {
         self.file.seek(SeekFrom::Start(
             16 + u64::from(y) * u64::from(self.width) * 8,
         ))?;
-        let mut sample = [0_u8; 8];
-        for value in &mut row {
-            self.file.read_exact(&mut sample)?;
-            *value = f32::from_le_bytes(sample[0..4].try_into().expect("fixed slice"));
+        let mut encoded = vec![0_u8; row.len() * 8];
+        self.file.read_exact(&mut encoded)?;
+        for (value, sample) in row.iter_mut().zip(encoded.chunks_exact(8)) {
+            *value = f32::from_le_bytes(sample[0..4].try_into().expect("fixed chunk"));
         }
         let value = row[usize::try_from(x).expect("u32 fits usize")];
         if self.rows.len() == 16 {
@@ -1048,12 +1649,12 @@ fn read_raw_region(
 ) -> Result<DepthBuffer, WorkerError> {
     let mut depth = Vec::with_capacity((width * height) as usize);
     let mut confidence = Vec::with_capacity((width * height) as usize);
-    let mut sample = [0_u8; 8];
+    let mut encoded = vec![0_u8; width as usize * 8];
     for y in 0..height {
         let pixel_offset = u64::from(start_y + y) * u64::from(full_width) + u64::from(start_x);
         file.seek(SeekFrom::Start(16 + pixel_offset * 8))?;
-        for _ in 0..width {
-            file.read_exact(&mut sample)?;
+        file.read_exact(&mut encoded)?;
+        for sample in encoded.chunks_exact(8) {
             depth.push(f32::from_le_bytes(
                 sample[0..4].try_into().expect("fixed slice"),
             ));
@@ -1293,13 +1894,59 @@ fn fuse_dense_cloud(
     scene: &MvsSceneManifest,
     scene_root: &Path,
     raw_root: &Path,
+    checkpoint_keys: &BTreeSet<MvsDepthTileKey>,
+    completed_tiles: u64,
     cancellation: &AtomicBool,
 ) -> Result<himmelcad_sidecar::mvs_runtime::MvsDenseCloudRecord, WorkerError> {
+    let footprints = fusion::FootprintStatistics::from_values(
+        scene
+            .images
+            .iter()
+            .map(|image| {
+                let scale = (f64::from(request.settings.maximum_image_dimension)
+                    / f64::from(image.width.max(image.height)))
+                .min(1.0);
+                let fx = image.camera.fx * scale;
+                let fy = image.camera.fy * scale;
+                let representative_depth = (image.minimum_depth * image.maximum_depth).sqrt();
+                representative_depth / (fx * fy).sqrt()
+            })
+            .collect(),
+    )?;
+    // One depth pixel is the smallest defensible scene sampling cell. Hardware
+    // pressure changes the number of external-sort runs, never this resolution.
+    let voxel_size_meters = footprints.median;
+    let ordered_image_ids = scene
+        .images
+        .iter()
+        .map(|image| image.image_id.clone())
+        .collect::<Vec<_>>();
+    let work_root = request.output_path.join("fusion-work");
+    let mut spool = fusion::FusionSpool::open(
+        &work_root,
+        &request.job_id,
+        &request.scene_manifest_sha256,
+        &request.settings_sha256,
+        voxel_size_meters,
+        &ordered_image_ids,
+        fusion::DEFAULT_BUFFERED_SAMPLES,
+    )?;
+    let completed_images = spool.completed_image_count();
     let payload_path = request.output_path.join("dense.vertices");
-    let mut payload = File::create(&payload_path)?;
-    let mut vertex_count = 0_u64;
     for (image_index, image) in scene.images.iter().enumerate() {
+        if image_index < completed_images {
+            event(&WorkerEvent::Progress {
+                stage: "denseFusion",
+                completed_units: (image_index + 1) as u64,
+                total_units: scene.images.len() as u64,
+                completed_bytes: 0,
+            });
+            continue;
+        }
         check_cancel(cancellation)?;
+        let view_index = u32::try_from(image_index).map_err(|_| {
+            WorkerError::InvalidInput("dense fusion supports at most 2^32 source views".into())
+        })?;
         let mut depth_file = File::open(raw_root.join(format!("{}.raw", image.image_id)))?;
         let (depth_width, depth_height) = read_raw_header(&mut depth_file)?;
         let loaded = load_view(scene_root, image, request.settings.maximum_image_dimension)?;
@@ -1311,47 +1958,74 @@ fn fuse_dense_cloud(
         for start_y in (0..depth_height).step_by(64) {
             check_cancel(cancellation)?;
             let height = 64.min(depth_height - start_y);
+            let read_start_y = start_y.saturating_sub(1);
+            let read_end_y = (start_y + height + 1).min(depth_height);
             let depth = read_raw_region(
                 &mut depth_file,
                 depth_width,
                 0,
-                start_y,
+                read_start_y,
                 depth_width,
-                height,
+                read_end_y - read_start_y,
             )?;
             for local_y in 0..height {
                 let y = start_y + local_y;
+                let band_y = y - read_start_y;
                 for x in 0..depth_width {
-                    let offset = index(depth_width, x, local_y);
+                    let offset = index(depth_width, x, band_y);
                     let value = depth.depth[offset];
                     if value <= 0.0 {
                         continue;
                     }
                     let world = backproject(&camera, f64::from(x), f64::from(y), f64::from(value));
-                    for coordinate in world {
-                        payload.write_all(&(coordinate as f32).to_le_bytes())?;
-                    }
-                    if request.settings.calculate_colors {
+                    let normal = estimate_surface_normal(
+                        &camera,
+                        x,
+                        y,
+                        depth_width,
+                        depth_height,
+                        read_start_y,
+                        &depth,
+                        world,
+                    );
+                    let color = if request.settings.calculate_colors {
                         let color_x = x.min(loaded.rgb.width() - 1);
                         let color_y = y.min(loaded.rgb.height() - 1);
-                        payload.write_all(&loaded.rgb.get_pixel(color_x, color_y).0)?;
-                    }
-                    if request.settings.retain_confidence_attribute {
-                        payload.write_all(&depth.confidence[offset].to_le_bytes())?;
-                    }
-                    vertex_count += 1;
+                        loaded.rgb.get_pixel(color_x, color_y).0
+                    } else {
+                        [0, 0, 0]
+                    };
+                    spool.push(
+                        fusion::FusionSample {
+                            view_index,
+                            position: world,
+                            color,
+                            confidence: depth.confidence[offset],
+                            normal,
+                            pixel_footprint_meters: f64::from(value)
+                                / (camera.fx * camera.fy).sqrt(),
+                        },
+                        cancellation,
+                    )?;
                 }
             }
         }
+        spool.finish_image(&image.image_id, cancellation)?;
+        write_checkpoint(request, checkpoint_keys, completed_tiles.max(1), true)?;
         event(&WorkerEvent::Progress {
             stage: "denseFusion",
             completed_units: (image_index + 1) as u64,
             total_units: scene.images.len() as u64,
-            completed_bytes: payload.metadata()?.len(),
+            completed_bytes: 0,
         });
     }
-    payload.sync_all()?;
-    drop(payload);
+    let fusion_result = spool.finish(
+        &payload_path,
+        request.settings.calculate_colors,
+        request.settings.retain_confidence_attribute,
+        cancellation,
+    )?;
+    let vertex_count = fusion_result.fused_sample_count;
     if vertex_count == 0 {
         return Err(WorkerError::InvalidInput(
             "geometric consistency rejected every dense point".into(),
@@ -1362,7 +2036,7 @@ fn fuse_dense_cloud(
     let mut output = File::create(&temporary)?;
     write!(
         output,
-        "ply\nformat binary_little_endian 1.0\nelement vertex {vertex_count}\nproperty float x\nproperty float y\nproperty float z\n"
+        "ply\nformat binary_little_endian 1.0\nelement vertex {vertex_count}\nproperty double x\nproperty double y\nproperty double z\n"
     )?;
     if request.settings.calculate_colors {
         output.write_all(b"property uchar red\nproperty uchar green\nproperty uchar blue\n")?;
@@ -1370,17 +2044,124 @@ fn fuse_dense_cloud(
     if request.settings.retain_confidence_attribute {
         output.write_all(b"property float confidence\n")?;
     }
+    output.write_all(b"property float nx\nproperty float ny\nproperty float nz\n")?;
     output.write_all(b"end_header\n")?;
     io::copy(&mut File::open(&payload_path)?, &mut output)?;
     output.sync_all()?;
     drop(output);
+    if dense_path.exists() {
+        fs::remove_file(&dense_path)?;
+    }
     fs::rename(temporary, &dense_path)?;
     fs::remove_file(payload_path)?;
-    Ok(himmelcad_sidecar::mvs_runtime::MvsDenseCloudRecord {
+    let record = himmelcad_sidecar::mvs_runtime::MvsDenseCloudRecord {
         relative_path: PathBuf::from("dense.ply"),
         sha256: hash_file(&dense_path)?,
         vertex_count,
         bytes: dense_path.metadata()?.len(),
+        fusion: Some(MvsDenseFusionEvidence {
+            algorithm: MVS_DENSE_FUSION_ALGORITHM.into(),
+            raw_sample_count: fusion_result.raw_sample_count,
+            fused_sample_count: fusion_result.fused_sample_count,
+            voxel_size_meters,
+            minimum_representative_pixel_footprint_meters: footprints.minimum,
+            median_representative_pixel_footprint_meters: footprints.median,
+            maximum_representative_pixel_footprint_meters: footprints.maximum,
+            external_sort_runs: fusion_result.external_sort_runs,
+            maximum_buffered_samples: fusion_result.maximum_buffered_samples,
+        }),
+    };
+    fs::remove_dir_all(work_root)?;
+    Ok(record)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn estimate_surface_normal(
+    camera: &MvsPinholeCamera,
+    x: u32,
+    y: u32,
+    full_width: u32,
+    full_height: u32,
+    band_start_y: u32,
+    depth: &DepthBuffer,
+    world: [f64; 3],
+) -> [f32; 3] {
+    let x0 = x.saturating_sub(1);
+    let x1 = (x + 1).min(full_width - 1);
+    let y0 = y.saturating_sub(1);
+    let y1 = (y + 1).min(full_height - 1);
+    let sample = |sample_x: u32, sample_y: u32| -> Option<[f64; 3]> {
+        let local_y = sample_y.checked_sub(band_start_y)?;
+        if sample_x >= depth.width || local_y >= depth.height {
+            return None;
+        }
+        let value = *depth.depth.get(index(depth.width, sample_x, local_y))?;
+        (value > 0.0).then(|| {
+            backproject(
+                camera,
+                f64::from(sample_x),
+                f64::from(sample_y),
+                f64::from(value),
+            )
+        })
+    };
+    let camera_center = camera_center(camera);
+    let toward_camera = subtract(camera_center, world);
+    let normal = sample(x0, y)
+        .zip(sample(x1, y))
+        .zip(sample(x, y0).zip(sample(x, y1)))
+        .map(|((left, right), (top, bottom))| {
+            // Image Y points down. dy × dx therefore points approximately
+            // toward an aerial camera above the reconstructed surface.
+            cross(subtract(bottom, top), subtract(right, left))
+        })
+        .filter(|candidate| squared_length(*candidate) > 1.0e-20)
+        .unwrap_or(toward_camera);
+    let oriented = if dot(normal, toward_camera) < 0.0 {
+        [-normal[0], -normal[1], -normal[2]]
+    } else {
+        normal
+    };
+    normalize(oriented).unwrap_or([0.0, 0.0, 1.0])
+}
+
+fn camera_center(camera: &MvsPinholeCamera) -> [f64; 3] {
+    let matrix = camera.world_to_camera;
+    [
+        -(matrix[0] * matrix[3] + matrix[4] * matrix[7] + matrix[8] * matrix[11]),
+        -(matrix[1] * matrix[3] + matrix[5] * matrix[7] + matrix[9] * matrix[11]),
+        -(matrix[2] * matrix[3] + matrix[6] * matrix[7] + matrix[10] * matrix[11]),
+    ]
+}
+
+fn subtract(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {
+    [left[0] - right[0], left[1] - right[1], left[2] - right[2]]
+}
+
+fn cross(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {
+    [
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    ]
+}
+
+fn dot(left: [f64; 3], right: [f64; 3]) -> f64 {
+    left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
+}
+
+fn squared_length(value: [f64; 3]) -> f64 {
+    dot(value, value)
+}
+
+fn normalize(value: [f64; 3]) -> Option<[f32; 3]> {
+    let length = squared_length(value).sqrt();
+    (length.is_finite() && length > 1.0e-12).then(|| {
+        [
+            (value[0] / length) as f32,
+            (value[1] / length) as f32,
+            (value[2] / length) as f32,
+        ]
     })
 }
 
@@ -1405,6 +2186,7 @@ fn write_checkpoint(
     request: &MvsWorkerRequest,
     keys: &BTreeSet<MvsDepthTileKey>,
     sequence: u64,
+    geometric_consistency_complete: bool,
 ) -> Result<(), WorkerError> {
     let sequence = sequence.max(1);
     let checkpoint = MvsCheckpoint {
@@ -1414,6 +2196,7 @@ fn write_checkpoint(
         settings_sha256: request.settings_sha256.clone(),
         sequence,
         completed_tiles: keys.clone(),
+        geometric_consistency_complete,
     };
     atomic_json(
         &request
@@ -1571,11 +2354,53 @@ mod tests {
     }
 
     #[test]
+    fn prepared_plane_projection_matches_camera_projection() {
+        let reference = MvsPinholeCamera {
+            fx: 812.0,
+            fy: 809.0,
+            cx: 503.0,
+            cy: 397.0,
+            world_to_camera: [
+                0.9998, -0.0175, 0.008, 2.0, 0.0174, 0.9998, 0.011, -3.0, -0.0082, -0.0108, 0.9999,
+                5.0,
+            ],
+        };
+        let source = MvsPinholeCamera {
+            fx: 798.0,
+            fy: 801.0,
+            cx: 490.0,
+            cy: 405.0,
+            world_to_camera: [
+                0.9994, 0.028, -0.018, -4.0, -0.0278, 0.9995, 0.012, 1.5, 0.0183, -0.0115, 0.9998,
+                6.0,
+            ],
+        };
+        let prepared = PlaneProjection::between(&reference, &source);
+        for (x, y, depth) in [
+            (480.0, 390.0, 20.0),
+            (100.0, 75.0, 8.0),
+            (900.0, 700.0, 45.0),
+        ] {
+            let expected =
+                project(&source, backproject(&reference, x, y, depth)).expect("projected point");
+            let inverse_depth = 1.0 / depth;
+            let denominator = prepared.z.at(x, y, inverse_depth);
+            let actual_x = prepared.x.at(x, y, inverse_depth) / denominator;
+            let actual_y = prepared.y.at(x, y, inverse_depth) / denominator;
+            assert!((actual_x - expected.0).abs() < 1.0e-8);
+            assert!((actual_y - expected.1).abs() < 1.0e-8);
+            assert_eq!(denominator > 0.0, expected.2 > 0.0);
+        }
+    }
+
+    #[test]
     fn tile_count_includes_every_pyramid_level() {
         let image = MvsSceneImage {
             image_id: "image".into(),
             relative_path: "image.jpg".into(),
             sha256: ObjectHash::of_bytes(b"image"),
+            mask_relative_path: None,
+            mask_sha256: None,
             width: 1024,
             height: 1024,
             camera: MvsPinholeCamera {
@@ -1632,7 +2457,8 @@ mod tests {
             }
         }
         let reference_camera = test_camera(0.0);
-        let neighbors = [1_i32, 2, 3]
+        let keep_mask = GrayImage::from_pixel(width, height, Luma([255]));
+        let mut neighbors = [1_i32, 2, 3]
             .into_iter()
             .map(|baseline| {
                 let shift = baseline * 4;
@@ -1647,6 +2473,7 @@ mod tests {
                 }
                 LoadedLevel {
                     gray: source,
+                    mask: keep_mask.clone(),
                     camera: test_camera(-f64::from(baseline)),
                 }
             })
@@ -1660,17 +2487,58 @@ mod tests {
         };
         let result = estimate_level(
             &reference,
+            &keep_mask,
             &reference_camera,
             &neighbors,
             5.0,
             20.0,
             &settings,
             None,
+            4,
             &AtomicBool::new(false),
         )
         .expect("synthetic depth");
         let recovered = result.depth[index(width, 48, 32)];
         assert!((recovered - 10.0).abs() < 1.0, "recovered {recovered}");
+
+        let mut masked_reference = keep_mask.clone();
+        masked_reference.put_pixel(48, 32, Luma([0]));
+        let masked = estimate_level(
+            &reference,
+            &masked_reference,
+            &reference_camera,
+            &neighbors,
+            5.0,
+            20.0,
+            &settings,
+            None,
+            4,
+            &AtomicBool::new(false),
+        )
+        .expect("masked reference depth");
+        assert_eq!(masked.depth[index(width, 48, 32)], 0.0);
+        assert_eq!(masked.confidence[index(width, 48, 32)], 0.0);
+
+        for neighbor in &mut neighbors {
+            neighbor.mask.fill(0);
+        }
+        let source_masked = estimate_level(
+            &reference,
+            &keep_mask,
+            &reference_camera,
+            &neighbors,
+            5.0,
+            20.0,
+            &settings,
+            None,
+            4,
+            &AtomicBool::new(false),
+        )
+        .expect("masked source depth");
+        assert!(source_masked.depth.iter().all(|value| *value == 0.0));
+        for neighbor in &mut neighbors {
+            neighbor.mask.fill(255);
+        }
 
         let directory = TestDirectory::new();
         let tile_root = directory.0.join("output/depth");
@@ -1680,6 +2548,7 @@ mod tests {
         tiled_settings.tile_size = 32;
         let records = estimate_finest_level_tiled(
             &reference,
+            &keep_mask,
             &reference_camera,
             &neighbors,
             5.0,
@@ -1740,6 +2609,8 @@ mod tests {
                 image_id: (*id).into(),
                 relative_path: relative,
                 sha256: ObjectHash::of_bytes(&bytes),
+                mask_relative_path: None,
+                mask_sha256: None,
                 width,
                 height,
                 camera: MvsPinholeCamera {
@@ -1774,6 +2645,7 @@ mod tests {
         let scene = MvsSceneManifest {
             schema_version: 1,
             coordinate_frame_id: "synthetic".into(),
+            image_mask_scope_sha256: None,
             images,
         };
         let scene_path = scene_root.join("scene.json");
@@ -1807,8 +2679,9 @@ mod tests {
             device: MvsComputeDevice::Cpu { threads: 1 },
             fuse_dense_point_cloud: true,
             output_path: output.clone(),
-            checkpoint_path: checkpoints,
+            checkpoint_path: checkpoints.clone(),
             resume_checkpoint_path: None,
+            resume_geometric_consistency_complete: false,
             network_policy: "offlineOnly".into(),
         };
         run_cpu(
@@ -1836,7 +2709,23 @@ mod tests {
         )
         .expect("runtime validates worker output");
         assert_eq!(validated.depth_images.len(), 4);
-        assert!(validated.dense_point_cloud.is_some());
+        let dense_record = validated.dense_point_cloud.expect("dense point cloud");
+        let fusion = dense_record.fusion.expect("fusion evidence");
+        assert_eq!(fusion.algorithm, MVS_DENSE_FUSION_ALGORITHM);
+        assert!(fusion.raw_sample_count >= fusion.fused_sample_count);
+        assert_eq!(fusion.fused_sample_count, dense_record.vertex_count);
+        let final_checkpoint: MvsCheckpoint = serde_json::from_slice(
+            &fs::read(checkpoints.join("checkpoint-000000000004.json")).expect("final checkpoint"),
+        )
+        .expect("checkpoint json");
+        assert!(final_checkpoint.geometric_consistency_complete);
+        let dense = fs::read(output.join("dense.ply")).expect("dense PLY");
+        assert!(dense
+            .windows(b"property double x".len())
+            .any(|window| window == b"property double x"));
+        assert!(dense
+            .windows(b"property float nx".len())
+            .any(|window| window == b"property float nx"));
     }
 
     fn test_camera(tx: f64) -> MvsPinholeCamera {

@@ -43,6 +43,9 @@ const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(15);
 const FORCE_KILL_AFTER: Duration = Duration::from_millis(300);
 const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// Stable identifier for the portable worker's depth-footprint voxel fusion.
+pub const MVS_DENSE_FUSION_ALGORITHM: &str = "depthFootprintVoxelExternalMergeV1";
+
 /// Algorithm capabilities asserted by a release worker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -105,6 +108,7 @@ pub struct MvsRuntimeConfig {
     pub trusted_signer_key_id: String,
     pub scratch_root: PathBuf,
     pub allowed_scene_roots: Vec<PathBuf>,
+    pub allowed_resume_roots: Vec<PathBuf>,
 }
 
 /// Explicitly untrusted development configuration.
@@ -115,6 +119,7 @@ pub struct DevMvsRuntimeConfig {
     pub capabilities: BTreeSet<MvsCapability>,
     pub scratch_root: PathBuf,
     pub allowed_scene_roots: Vec<PathBuf>,
+    pub allowed_resume_roots: Vec<PathBuf>,
 }
 
 /// Backend selection contains no arbitrary command-line escape hatch.
@@ -180,6 +185,10 @@ pub struct MvsSceneImage {
     pub image_id: String,
     pub relative_path: PathBuf,
     pub sha256: ObjectHash,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask_relative_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask_sha256: Option<ObjectHash>,
     pub width: u32,
     pub height: u32,
     pub camera: MvsPinholeCamera,
@@ -194,6 +203,8 @@ pub struct MvsSceneImage {
 pub struct MvsSceneManifest {
     pub schema_version: u32,
     pub coordinate_frame_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_mask_scope_sha256: Option<ObjectHash>,
     pub images: Vec<MvsSceneImage>,
 }
 
@@ -302,6 +313,7 @@ impl MvsSettings {
 pub struct MvsResumeCheckpoint {
     pub path: PathBuf,
     pub sha256: ObjectHash,
+    pub output_path: PathBuf,
 }
 
 /// Immutable request for depth maps and optional dense fusion.
@@ -351,14 +363,39 @@ pub struct MvsDepthImageRecord {
     pub tiles: Vec<MvsDepthTileRecord>,
 }
 
+/// Auditable evidence emitted by the deterministic cross-view fusion stage.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MvsDenseFusionEvidence {
+    /// Stable implementation identifier; changes require explicit migration.
+    pub algorithm: String,
+    /// Geometrically consistent depth samples presented to fusion.
+    pub raw_sample_count: u64,
+    /// Samples remaining after confidence-weighted cross-view deduplication.
+    pub fused_sample_count: u64,
+    /// Scene sampling cell derived from depth-pixel ground footprints.
+    pub voxel_size_meters: f64,
+    pub minimum_representative_pixel_footprint_meters: f64,
+    pub median_representative_pixel_footprint_meters: f64,
+    pub maximum_representative_pixel_footprint_meters: f64,
+    /// Number of bounded external-sort runs used for the fusion.
+    pub external_sort_runs: u32,
+    /// Hard upper bound on raw samples held in memory at once.
+    pub maximum_buffered_samples: u32,
+}
+
 /// Optional fused point cloud artifact.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MvsDenseCloudRecord {
     pub relative_path: PathBuf,
     pub sha256: ObjectHash,
     pub vertex_count: u64,
     pub bytes: u64,
+    /// Present on all newly validated outputs. Optional only so historical,
+    /// already-published projects remain readable during format migration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fusion: Option<MvsDenseFusionEvidence>,
 }
 
 /// Worker-written index validated before any project publication.
@@ -385,6 +422,8 @@ pub struct MvsCheckpoint {
     pub settings_sha256: ObjectHash,
     pub sequence: u64,
     pub completed_tiles: BTreeSet<MvsDepthTileKey>,
+    #[serde(default)]
+    pub geometric_consistency_complete: bool,
 }
 
 /// Bounded process provenance.
@@ -424,6 +463,7 @@ pub struct MvsRuntime {
     tool: Arc<VerifiedMvsTool>,
     scratch_root: PathBuf,
     allowed_scene_roots: Arc<Vec<PathBuf>>,
+    allowed_resume_roots: Arc<Vec<PathBuf>>,
 }
 
 impl std::fmt::Debug for MvsRuntime {
@@ -544,6 +584,7 @@ impl MvsRuntime {
             manifest.capabilities,
             &config.scratch_root,
             &config.allowed_scene_roots,
+            &config.allowed_resume_roots,
         )
     }
 
@@ -566,6 +607,7 @@ impl MvsRuntime {
             config.capabilities.clone(),
             &config.scratch_root,
             &config.allowed_scene_roots,
+            &config.allowed_resume_roots,
         )
     }
 
@@ -576,11 +618,16 @@ impl MvsRuntime {
         capabilities: BTreeSet<MvsCapability>,
         scratch_root: &Path,
         allowed_scene_roots: &[PathBuf],
+        allowed_resume_roots: &[PathBuf],
     ) -> Result<Self, MvsRuntimeError> {
         validate_capabilities(&capabilities)?;
         fs::create_dir_all(scratch_root)?;
         let scratch_root = canonical_directory(scratch_root)?;
         let allowed_scene_roots = allowed_scene_roots
+            .iter()
+            .map(|path| canonical_directory(path))
+            .collect::<Result<Vec<_>, _>>()?;
+        let allowed_resume_roots = allowed_resume_roots
             .iter()
             .map(|path| canonical_directory(path))
             .collect::<Result<Vec<_>, _>>()?;
@@ -598,16 +645,33 @@ impl MvsRuntime {
             }),
             scratch_root,
             allowed_scene_roots: Arc::new(allowed_scene_roots),
+            allowed_resume_roots: Arc::new(allowed_resume_roots),
         })
     }
 
     /// Stable initial progress compatible with the Photolab job manager.
     #[must_use]
     pub fn initial_progress(request: &MvsRunRequest) -> JobProgress {
-        // The image count is only authoritative after the scene manifest has
-        // been validated. Leave it unknown here so the first worker update can
-        // freeze the real total without violating the monotone progress model.
+        // Scene conversion runs after the job has entered Running. Its total is
+        // frozen by the preparation callback once the alignment scope is known.
         progress(request.fuse_dense_point_cloud, 0, 0, None, 0, None)
+    }
+
+    /// Progress for deterministic COLMAP-to-MVS scene preparation.
+    #[must_use]
+    pub fn scene_preparation_progress(
+        fuse_dense_point_cloud: bool,
+        completed_units: u64,
+        total_units: u64,
+    ) -> JobProgress {
+        progress(
+            fuse_dense_point_cloud,
+            0,
+            completed_units,
+            Some(total_units),
+            0,
+            None,
+        )
     }
 
     /// Finds the newest hash-compatible checkpoint from an interrupted run.
@@ -617,29 +681,49 @@ impl MvsRuntime {
         settings: &MvsSettings,
     ) -> Result<Option<MvsResumeCheckpoint>, MvsRuntimeError> {
         let settings_sha256 = hash_json(settings)?;
-        let mut candidates = fs::read_dir(&self.scratch_root)?
-            .filter_map(Result::ok)
-            .filter_map(|entry| {
-                entry
-                    .file_type()
-                    .ok()
-                    .filter(|kind| kind.is_dir() && !kind.is_symlink())
-                    .map(|_| entry.path())
-            })
-            .collect::<Vec<_>>();
-        candidates.sort_by(|left, right| right.file_name().cmp(&left.file_name()));
-        for scratch in candidates {
+        let mut candidates = Vec::new();
+        for (root, require_completed_geometry) in std::iter::once((&self.scratch_root, false))
+            .chain(self.allowed_resume_roots.iter().map(|root| (root, true)))
+        {
+            candidates.extend(
+                fs::read_dir(root)?
+                    .filter_map(Result::ok)
+                    .filter_map(|entry| {
+                        entry
+                            .file_type()
+                            .ok()
+                            .filter(|kind| kind.is_dir() && !kind.is_symlink())
+                            .map(|_| (entry.path(), require_completed_geometry))
+                    }),
+            );
+        }
+        candidates.sort_by(|left, right| right.0.file_name().cmp(&left.0.file_name()));
+        let mut best: Option<(MvsResumeCheckpoint, u64)> = None;
+        for (scratch, require_completed_geometry) in candidates {
             let checkpoints = scratch.join("checkpoints");
             if !checkpoints.is_dir() {
                 continue;
             }
-            if let Some((path, sha256, _)) =
+            if let Some((path, sha256, checkpoint)) =
                 latest_compatible_checkpoint(&checkpoints, scene_manifest_sha256, &settings_sha256)?
             {
-                return Ok(Some(MvsResumeCheckpoint { path, sha256 }));
+                if require_completed_geometry && !checkpoint.geometric_consistency_complete {
+                    continue;
+                }
+                let candidate = MvsResumeCheckpoint {
+                    path,
+                    sha256,
+                    output_path: scratch.join("output"),
+                };
+                if best
+                    .as_ref()
+                    .is_none_or(|(_, sequence)| checkpoint.sequence > *sequence)
+                {
+                    best = Some((candidate, checkpoint.sequence));
+                }
             }
         }
-        Ok(None)
+        Ok(best.map(|(checkpoint, _)| checkpoint))
     }
 
     /// Runs the worker in a fresh scratch directory, supervises cancellation and validates all output.
@@ -685,16 +769,30 @@ impl MvsRuntime {
             .as_ref()
             .map(|resume| validate_resume(resume, &scene_hash, &settings_sha256))
             .transpose()?;
+        let resume_source = resume
+            .as_ref()
+            .map(|(checkpoint, _)| self.resume_output_directory(checkpoint))
+            .transpose()?;
+        let resume_copy_plan = resume_source
+            .as_ref()
+            .map(|source| inspect_resume_output(source))
+            .transpose()?
+            .unwrap_or_default();
+        let validation_total = u64::try_from(scene.images.len())
+            .unwrap_or(u64::MAX)
+            .saturating_add(resume_copy_plan.file_count);
+        let validation_total_bytes =
+            (resume_copy_plan.total_bytes > 0).then_some(resume_copy_plan.total_bytes);
 
         report(
             context,
             progress(
                 request.fuse_dense_point_cloud,
+                1,
                 0,
+                Some(validation_total),
                 0,
-                Some(scene.images.len() as u64),
-                0,
-                None,
+                validation_total_bytes,
             ),
         )?;
         for (index, image) in scene.images.iter().enumerate() {
@@ -703,15 +801,23 @@ impl MvsRuntime {
                 canonical_file_inside(&scene_root.join(&image.relative_path), scene_root)?;
             let observed = hash_file(&image_path, Some(&context.cancellation))?;
             verify_hash(&image_path, &image.sha256, &observed)?;
+            if let (Some(relative), Some(expected)) = (
+                image.mask_relative_path.as_ref(),
+                image.mask_sha256.as_ref(),
+            ) {
+                let mask_path = canonical_file_inside(&scene_root.join(relative), scene_root)?;
+                let observed = hash_file(&mask_path, Some(&context.cancellation))?;
+                verify_hash(&mask_path, expected, &observed)?;
+            }
             report(
                 context,
                 progress(
                     request.fuse_dense_point_cloud,
-                    0,
+                    1,
                     (index + 1) as u64,
-                    Some(scene.images.len() as u64),
+                    Some(validation_total),
                     0,
-                    None,
+                    validation_total_bytes,
                 ),
             )?;
         }
@@ -721,9 +827,34 @@ impl MvsRuntime {
         let checkpoint_path = scratch.join("checkpoints");
         fs::create_dir(&output_path)?;
         fs::create_dir(&checkpoint_path)?;
-        if let Some((checkpoint, _)) = &resume {
-            let source_output = resume_output_directory(checkpoint, &self.scratch_root)?;
-            copy_resume_output(&source_output, &output_path, &context.cancellation)?;
+        let mut resume_geometric_consistency_complete = false;
+        if resume.is_some() {
+            resume_geometric_consistency_complete = resume
+                .as_ref()
+                .is_some_and(|(_, checkpoint)| checkpoint.geometric_consistency_complete);
+            let source_output = resume_source
+                .as_ref()
+                .expect("validated resume always has a source output");
+            copy_resume_output(
+                source_output,
+                &output_path,
+                &context.cancellation,
+                |completed_files, completed_bytes| {
+                    report(
+                        context,
+                        progress(
+                            request.fuse_dense_point_cloud,
+                            1,
+                            u64::try_from(scene.images.len())
+                                .unwrap_or(u64::MAX)
+                                .saturating_add(completed_files),
+                            Some(validation_total),
+                            completed_bytes,
+                            validation_total_bytes,
+                        ),
+                    )
+                },
+            )?;
         }
         let worker_request = MvsWorkerRequest {
             schema_version: 1,
@@ -736,7 +867,10 @@ impl MvsRuntime {
             fuse_dense_point_cloud: request.fuse_dense_point_cloud,
             output_path: output_path.clone(),
             checkpoint_path: checkpoint_path.clone(),
-            resume_checkpoint_path: resume.as_ref().map(|(path, _)| path.clone()),
+            resume_checkpoint_path: resume
+                .as_ref()
+                .map(|(checkpoint, _)| checkpoint.path.clone()),
+            resume_geometric_consistency_complete,
             network_policy: "offlineOnly".into(),
         };
         let request_path = scratch.join("request.json");
@@ -744,7 +878,7 @@ impl MvsRuntime {
 
         report(
             context,
-            progress(request.fuse_dense_point_cloud, 1, 0, None, 0, None),
+            progress(request.fuse_dense_point_cloud, 2, 0, None, 0, None),
         )?;
         let argv = vec![
             OsString::from("run"),
@@ -784,7 +918,7 @@ impl MvsRuntime {
             context,
             progress(
                 request.fuse_dense_point_cloud,
-                if request.fuse_dense_point_cloud { 4 } else { 3 },
+                if request.fuse_dense_point_cloud { 5 } else { 4 },
                 0,
                 Some(1),
                 0,
@@ -810,7 +944,7 @@ impl MvsRuntime {
             context,
             progress(
                 request.fuse_dense_point_cloud,
-                if request.fuse_dense_point_cloud { 4 } else { 3 },
+                if request.fuse_dense_point_cloud { 5 } else { 4 },
                 1,
                 Some(1),
                 0,
@@ -828,6 +962,25 @@ impl MvsRuntime {
             latest_checkpoint,
             potree: None,
         })
+    }
+
+    fn resume_output_directory(
+        &self,
+        resume: &MvsResumeCheckpoint,
+    ) -> Result<PathBuf, MvsRuntimeError> {
+        let output = canonical_directory(&resume.output_path)?;
+        let trusted = output.starts_with(&self.scratch_root)
+            || self
+                .allowed_resume_roots
+                .iter()
+                .any(|root| output.starts_with(root));
+        if !trusted || output.file_name() != Some(OsStr::new("output")) {
+            return Err(MvsRuntimeError::InvalidPath {
+                path: output,
+                reason: "resume output is outside the configured MVS roots".into(),
+            });
+        }
+        Ok(output)
     }
 
     /// Hash of the exact executable used for provenance.
@@ -865,6 +1018,8 @@ pub struct MvsWorkerRequest {
     pub checkpoint_path: PathBuf,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_checkpoint_path: Option<PathBuf>,
+    #[serde(default)]
+    pub resume_geometric_consistency_complete: bool,
     pub network_policy: String,
 }
 
@@ -959,6 +1114,17 @@ fn validate_scene(
         validate_component("imageId", &image.image_id)?;
         validate_relative_path(&image.relative_path)?;
         validate_hash(&image.sha256, "scene image")?;
+        if image.mask_relative_path.is_some() != image.mask_sha256.is_some() {
+            return Err(MvsRuntimeError::InvalidRequest(
+                "scene image mask path/hash must be present together".into(),
+            ));
+        }
+        if let Some(relative) = image.mask_relative_path.as_ref() {
+            validate_relative_path(relative)?;
+        }
+        if let Some(hash) = image.mask_sha256.as_ref() {
+            validate_hash(hash, "scene image mask")?;
+        }
         if image.width == 0 || image.height == 0 || image.width > 200_000 || image.height > 200_000
         {
             return Err(MvsRuntimeError::InvalidRequest(format!(
@@ -1127,6 +1293,33 @@ pub fn validate_output_directory(
                     "dense cloud metadata does not match PLY".into(),
                 ));
             }
+            let fusion = cloud.fusion.as_ref().ok_or_else(|| {
+                MvsRuntimeError::InvalidOutput("dense fusion evidence is missing".into())
+            })?;
+            let footprints = [
+                fusion.minimum_representative_pixel_footprint_meters,
+                fusion.median_representative_pixel_footprint_meters,
+                fusion.maximum_representative_pixel_footprint_meters,
+            ];
+            if fusion.algorithm != MVS_DENSE_FUSION_ALGORITHM
+                || fusion.raw_sample_count < fusion.fused_sample_count
+                || fusion.fused_sample_count != cloud.vertex_count
+                || fusion.fused_sample_count == 0
+                || fusion.external_sort_runs == 0
+                || fusion.maximum_buffered_samples == 0
+                || fusion.maximum_buffered_samples > 2_000_000
+                || !fusion.voxel_size_meters.is_finite()
+                || fusion.voxel_size_meters <= 0.0
+                || footprints
+                    .iter()
+                    .any(|value| !value.is_finite() || *value <= 0.0)
+                || footprints[0] > footprints[1]
+                || footprints[1] > footprints[2]
+            {
+                return Err(MvsRuntimeError::InvalidOutput(
+                    "dense fusion evidence is missing or inconsistent".into(),
+                ));
+            }
         }
         (None, false) => {}
         _ => {
@@ -1249,6 +1442,8 @@ fn validate_dense_ply(path: &Path) -> Result<DensePlySummary, MvsRuntimeError> {
     let mut in_vertex = false;
     let mut vertex_stride = 0_u64;
     let mut required = BTreeSet::new();
+    let mut coordinate_offsets = [None; 3];
+    let mut coordinate_width = None;
     loop {
         line.clear();
         let read = reader.read_line(&mut line)?;
@@ -1279,7 +1474,7 @@ fn validate_dense_ply(path: &Path) -> Result<DensePlySummary, MvsRuntimeError> {
             let fields = trimmed.split_whitespace().collect::<Vec<_>>();
             if fields.first() == Some(&"property") && fields.len() == 3 {
                 let width = match fields[1] {
-                    "float" | "float32" | "int" | "uint" => 4,
+                    "float" | "float32" | "int" | "uint" => 4_u64,
                     "double" | "float64" | "int64" | "uint64" => 8,
                     "uchar" | "uint8" | "char" | "int8" => 1,
                     "short" | "ushort" | "int16" | "uint16" => 2,
@@ -1290,8 +1485,37 @@ fn validate_dense_ply(path: &Path) -> Result<DensePlySummary, MvsRuntimeError> {
                         )));
                     }
                 };
+                let name = fields[2];
+                if matches!(name, "x" | "y" | "z") {
+                    let coord_width = match fields[1] {
+                        "float" | "float32" => 4_u64,
+                        "double" | "float64" => 8,
+                        _ => {
+                            return Err(MvsRuntimeError::InvalidOutput(format!(
+                                "dense PLY coordinate {name} must be float or double"
+                            )));
+                        }
+                    };
+                    match coordinate_width {
+                        Some(existing) if existing != coord_width => {
+                            return Err(MvsRuntimeError::InvalidOutput(
+                                "dense PLY coordinate properties must share one scalar type"
+                                    .into(),
+                            ));
+                        }
+                        None => coordinate_width = Some(coord_width),
+                        _ => {}
+                    }
+                    let axis = match name {
+                        "x" => 0,
+                        "y" => 1,
+                        "z" => 2,
+                        _ => unreachable!(),
+                    };
+                    coordinate_offsets[axis] = Some(vertex_stride);
+                }
                 vertex_stride += width;
-                required.insert(fields[2].to_owned());
+                required.insert(name.to_owned());
             } else if fields.first() == Some(&"property") {
                 return Err(MvsRuntimeError::InvalidOutput(
                     "list properties are not allowed on dense vertices".into(),
@@ -1310,11 +1534,24 @@ fn validate_dense_ply(path: &Path) -> Result<DensePlySummary, MvsRuntimeError> {
             "dense PLY vertex count exceeds product limit".into(),
         ));
     }
-    if !format_ok || !["x", "y", "z"].iter().all(|name| required.contains(*name)) {
+    let coordinate_width = coordinate_width.ok_or_else(|| {
+        MvsRuntimeError::InvalidOutput("dense PLY is missing coordinate properties".into())
+    })?;
+    if !format_ok
+        || !["x", "y", "z"]
+            .iter()
+            .all(|name| required.contains(*name))
+        || coordinate_offsets.iter().any(Option::is_none)
+    {
         return Err(MvsRuntimeError::InvalidOutput(
             "dense PLY must be binary little-endian with x/y/z".into(),
         ));
     }
+    let coordinate_offsets = [
+        coordinate_offsets[0].expect("validated"),
+        coordinate_offsets[1].expect("validated"),
+        coordinate_offsets[2].expect("validated"),
+    ];
     let expected_minimum = u64::try_from(header_bytes)
         .unwrap_or(u64::MAX)
         .saturating_add(vertex_count.saturating_mul(vertex_stride));
@@ -1327,20 +1564,34 @@ fn validate_dense_ply(path: &Path) -> Result<DensePlySummary, MvsRuntimeError> {
     file.seek(SeekFrom::Start(
         u64::try_from(header_bytes).unwrap_or(u64::MAX),
     ))?;
-    let mut xyz = [0_u8; 12];
+    let mut record = vec![0_u8; usize::try_from(vertex_stride).unwrap_or(usize::MAX)];
+    if record.is_empty() {
+        return Err(MvsRuntimeError::InvalidOutput(
+            "dense PLY vertex stride is zero".into(),
+        ));
+    }
     let sample_count = vertex_count.min(4_096);
     for _ in 0..sample_count {
-        file.read_exact(&mut xyz)?;
-        for chunk in xyz.chunks_exact(4) {
-            if !f32::from_le_bytes(chunk.try_into().expect("fixed chunk")).is_finite() {
+        file.read_exact(&mut record)?;
+        for offset in coordinate_offsets {
+            let start = usize::try_from(offset).unwrap_or(usize::MAX);
+            let end = start.saturating_add(usize::try_from(coordinate_width).unwrap_or(0));
+            if end > record.len() {
+                return Err(MvsRuntimeError::InvalidOutput(
+                    "dense PLY coordinate layout is inconsistent".into(),
+                ));
+            }
+            let finite = match coordinate_width {
+                4 => f32::from_le_bytes(record[start..end].try_into().expect("4 bytes")).is_finite(),
+                8 => f64::from_le_bytes(record[start..end].try_into().expect("8 bytes")).is_finite(),
+                _ => false,
+            };
+            if !finite {
                 return Err(MvsRuntimeError::InvalidOutput(
                     "dense PLY contains non-finite coordinates".into(),
                 ));
             }
         }
-        file.seek(SeekFrom::Current(
-            i64::try_from(vertex_stride.saturating_sub(12)).unwrap_or(i64::MAX),
-        ))?;
     }
     Ok(DensePlySummary {
         sha256: hash_file(path, None)?,
@@ -1353,14 +1604,21 @@ fn validate_resume(
     resume: &MvsResumeCheckpoint,
     scene_sha256: &ObjectHash,
     settings_sha256: &ObjectHash,
-) -> Result<(PathBuf, MvsCheckpoint), MvsRuntimeError> {
+) -> Result<(MvsResumeCheckpoint, MvsCheckpoint), MvsRuntimeError> {
     let path = canonical_file(&resume.path)?;
     let observed = hash_file(&path, None)?;
     verify_hash(&path, &resume.sha256, &observed)?;
     let bytes = read_bounded(&path, MAX_JSON_BYTES)?;
     let checkpoint: MvsCheckpoint = serde_json::from_slice(&bytes)?;
     validate_compatible_checkpoint(&checkpoint, scene_sha256, settings_sha256)?;
-    Ok((path, checkpoint))
+    Ok((
+        MvsResumeCheckpoint {
+            path,
+            sha256: observed,
+            output_path: resume.output_path.clone(),
+        },
+        checkpoint,
+    ))
 }
 
 fn validate_compatible_checkpoint(
@@ -1457,6 +1715,7 @@ fn latest_compatible_checkpoint(
     Ok(latest)
 }
 
+#[cfg(test)]
 fn resume_output_directory(
     checkpoint_path: &Path,
     scratch_root: &Path,
@@ -1491,25 +1750,80 @@ fn resume_output_directory(
     canonical_directory(&scratch.join("output"))
 }
 
-fn copy_resume_output(
-    source: &Path,
-    destination: &Path,
-    cancellation: &CancellationToken,
-) -> Result<(), MvsRuntimeError> {
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct ResumeCopyPlan {
+    file_count: u64,
+    total_bytes: u64,
+}
+
+fn inspect_resume_output(source: &Path) -> Result<ResumeCopyPlan, MvsRuntimeError> {
+    let mut plan = ResumeCopyPlan::default();
     for name in ["raw", "depth"] {
-        let source_child = source.join(name);
-        if source_child.is_dir() {
-            copy_resume_tree(&source_child, &destination.join(name), cancellation)?;
+        let child = source.join(name);
+        if child.is_dir() {
+            inspect_resume_tree(&child, &mut plan)?;
+        }
+    }
+    Ok(plan)
+}
+
+fn inspect_resume_tree(source: &Path, plan: &mut ResumeCopyPlan) -> Result<(), MvsRuntimeError> {
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_symlink() {
+            return Err(MvsRuntimeError::InvalidOutput(
+                "resume output contains a symbolic link".into(),
+            ));
+        }
+        if kind.is_dir() {
+            inspect_resume_tree(&entry.path(), plan)?;
+        } else if kind.is_file() {
+            plan.file_count = plan.file_count.saturating_add(1);
+            plan.total_bytes = plan.total_bytes.saturating_add(entry.metadata()?.len());
         }
     }
     Ok(())
 }
 
-fn copy_resume_tree(
+fn copy_resume_output<F>(
     source: &Path,
     destination: &Path,
     cancellation: &CancellationToken,
-) -> Result<(), MvsRuntimeError> {
+    mut progress: F,
+) -> Result<(), MvsRuntimeError>
+where
+    F: FnMut(u64, u64) -> Result<(), MvsRuntimeError>,
+{
+    let mut completed_files = 0_u64;
+    let mut completed_bytes = 0_u64;
+    for name in ["raw", "depth"] {
+        let source_child = source.join(name);
+        if source_child.is_dir() {
+            copy_resume_tree(
+                &source_child,
+                &destination.join(name),
+                cancellation,
+                &mut completed_files,
+                &mut completed_bytes,
+                &mut progress,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_resume_tree<F>(
+    source: &Path,
+    destination: &Path,
+    cancellation: &CancellationToken,
+    completed_files: &mut u64,
+    completed_bytes: &mut u64,
+    progress: &mut F,
+) -> Result<(), MvsRuntimeError>
+where
+    F: FnMut(u64, u64) -> Result<(), MvsRuntimeError>,
+{
     cancellation
         .check()
         .map_err(|_| MvsRuntimeError::Cancelled)?;
@@ -1527,7 +1841,14 @@ fn copy_resume_tree(
         }
         let target = destination.join(entry.file_name());
         if kind.is_dir() {
-            copy_resume_tree(&entry.path(), &target, cancellation)?;
+            copy_resume_tree(
+                &entry.path(),
+                &target,
+                cancellation,
+                completed_files,
+                completed_bytes,
+                progress,
+            )?;
         } else if kind.is_file() {
             let mut input = File::open(entry.path())?;
             let mut output = File::create(&target)?;
@@ -1541,8 +1862,11 @@ fn copy_resume_tree(
                     break;
                 }
                 output.write_all(&buffer[..read])?;
+                *completed_bytes = completed_bytes.saturating_add(u64::try_from(read).unwrap_or(0));
             }
             output.sync_all()?;
+            *completed_files = completed_files.saturating_add(1);
+            progress(*completed_files, *completed_bytes)?;
         }
     }
     Ok(())
@@ -1636,7 +1960,7 @@ fn supervise_worker(
     spawn_line_reader(stderr, true, sender);
     let mut log_tail = VecDeque::with_capacity(LOG_TAIL_LINES);
     let mut cancel_sent_at = None;
-    let mut last_stage = 1_u32;
+    let mut last_stage = 2_u32;
     let mut last_completed = 0_u64;
     let mut last_total = None;
 
@@ -1660,9 +1984,9 @@ fn supervise_worker(
                     total_bytes,
                 }) => {
                     let stage_index = match stage {
-                        WorkerStage::DepthEstimation => 1,
-                        WorkerStage::GeometricConsistency => 2,
-                        WorkerStage::DenseFusion if fusion => 3,
+                        WorkerStage::DepthEstimation => 2,
+                        WorkerStage::GeometricConsistency => 3,
+                        WorkerStage::DenseFusion if fusion => 4,
                         WorkerStage::DenseFusion => {
                             return Err(MvsRuntimeError::InvalidOutput(
                                 "worker fused a cloud although fusion was disabled".into(),
@@ -1774,15 +2098,16 @@ fn progress(
     completed_bytes: u64,
     total_bytes: Option<u64>,
 ) -> JobProgress {
-    let stage_count = if fusion { 5 } else { 4 };
+    let stage_count = if fusion { 6 } else { 5 };
     let (kind, label) = match stage_index {
-        0 => (PhotolabStageKind::Preparing, "Validate MVS inputs"),
-        1 => (PhotolabStageKind::DepthEstimation, "Build depth tiles"),
-        2 => (
+        0 => (PhotolabStageKind::Preparing, "Prepare MVS scene"),
+        1 => (PhotolabStageKind::Preparing, "Validate MVS inputs"),
+        2 => (PhotolabStageKind::DepthEstimation, "Build depth tiles"),
+        3 => (
             PhotolabStageKind::DepthEstimation,
             "Validate geometric consistency",
         ),
-        3 if fusion => (PhotolabStageKind::DenseFusion, "Fuse point cloud"),
+        4 if fusion => (PhotolabStageKind::DenseFusion, "Fuse point cloud"),
         _ => (PhotolabStageKind::Finalizing, "Validate MVS output"),
     };
     JobProgress {
@@ -2090,6 +2415,25 @@ mod tests {
     }
 
     #[test]
+    fn scene_preparation_has_an_independent_monotone_progress_stage() {
+        let request = request(PathBuf::from("scene.json"), hash(b"scene"));
+        let mut value = MvsRuntime::initial_progress(&request);
+        assert_eq!(value.stage.index, 0);
+        assert_eq!(value.stage.label, "Prepare MVS scene");
+        value
+            .advance_to(MvsRuntime::scene_preparation_progress(false, 4, 10))
+            .expect("scene preparation progress");
+        value
+            .advance_to(progress(false, 1, 0, Some(3), 0, None))
+            .expect("input validation follows scene preparation");
+        assert_eq!(value.stage.label, "Validate MVS inputs");
+        value
+            .advance_to(progress(false, 2, 0, None, 0, None))
+            .expect("depth follows validation");
+        assert_eq!(value.stage.label, "Build depth tiles");
+    }
+
+    #[test]
     fn settings_reject_tiles_with_unbounded_overlap() {
         let settings = MvsSettings {
             tile_size: 512,
@@ -2142,6 +2486,7 @@ mod tests {
         let scene = MvsSceneManifest {
             schema_version: 1,
             coordinate_frame_id: "frame".into(),
+            image_mask_scope_sha256: None,
             images: vec![
                 scene_image("a", &["b", "missing"]),
                 scene_image("b", &["a", "c"]),
@@ -2199,6 +2544,26 @@ mod tests {
     }
 
     #[test]
+    fn dense_ply_validation_accepts_binary_double_xyz() {
+        let directory = TestDirectory::new("valid-ply-double");
+        let path = directory.0.join("dense.ply");
+        let header = b"ply\nformat binary_little_endian 1.0\nelement vertex 1\nproperty double x\nproperty double y\nproperty double z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nproperty float confidence\nproperty float nx\nproperty float ny\nproperty float nz\nend_header\n";
+        let mut file = File::create(&path).expect("create ply");
+        file.write_all(header).expect("header");
+        for value in [4_467_123.456_7_f64, 5_376_890.123_4_f64, 742.015_6_f64] {
+            file.write_all(&value.to_le_bytes()).expect("coordinate");
+        }
+        file.write_all(&[255, 128, 64]).expect("color");
+        file.write_all(&0.95_f32.to_le_bytes()).expect("confidence");
+        for value in [0.0_f32, 0.0, 1.0] {
+            file.write_all(&value.to_le_bytes()).expect("normal");
+        }
+        drop(file);
+        let summary = validate_dense_ply(&path).expect("valid double ply");
+        assert_eq!(summary.vertex_count, 1);
+    }
+
+    #[test]
     fn checkpoint_rejects_changed_settings() {
         let checkpoint = MvsCheckpoint {
             schema_version: 1,
@@ -2207,6 +2572,7 @@ mod tests {
             settings_sha256: hash(b"old"),
             sequence: 1,
             completed_tiles: BTreeSet::new(),
+            geometric_consistency_complete: false,
         };
         assert!(matches!(
             validate_checkpoint(&checkpoint, "job", &hash(b"scene"), &hash(b"new")),
@@ -2234,6 +2600,7 @@ mod tests {
             settings_sha256: settings.clone(),
             sequence: 8,
             completed_tiles: BTreeSet::new(),
+            geometric_consistency_complete: false,
         };
         let checkpoint_path = checkpoints.join("checkpoint-000000000008.json");
         atomic_write_json(&checkpoint_path, &checkpoint).expect("checkpoint fixture");
@@ -2244,6 +2611,7 @@ mod tests {
             &MvsResumeCheckpoint {
                 path: found.0.clone(),
                 sha256: found.1,
+                output_path: output.clone(),
             },
             &scene,
             &settings,
@@ -2252,8 +2620,20 @@ mod tests {
         let source = resume_output_directory(&found.0, &directory.0).expect("resume output");
         let destination = directory.0.join("new-output");
         fs::create_dir(&destination).expect("new output");
-        copy_resume_output(&source, &destination, &CancellationToken::new())
-            .expect("copy resume output");
+        let plan = inspect_resume_output(&source).expect("inspect resume output");
+        let mut progress = Vec::new();
+        copy_resume_output(
+            &source,
+            &destination,
+            &CancellationToken::new(),
+            |files, bytes| {
+                progress.push((files, bytes));
+                Ok(())
+            },
+        )
+        .expect("copy resume output");
+        assert_eq!(plan.file_count, 2);
+        assert_eq!(progress.last(), Some(&(2, plan.total_bytes)));
         assert_eq!(
             fs::read(destination.join("raw/a.raw")).expect("copied raw"),
             b"immutable raw"
@@ -2342,6 +2722,8 @@ mod tests {
             image_id: id.into(),
             relative_path: format!("{id}.jpg").into(),
             sha256: hash(id.as_bytes()),
+            mask_relative_path: None,
+            mask_sha256: None,
             width: 1_000,
             height: 800,
             camera: camera(),
@@ -2355,6 +2737,7 @@ mod tests {
         MvsSceneManifest {
             schema_version: 1,
             coordinate_frame_id: "frame".into(),
+            image_mask_scope_sha256: None,
             images: vec![
                 scene_image("a", &["b", "c"]),
                 scene_image("b", &["a", "c"]),
