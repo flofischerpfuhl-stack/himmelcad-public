@@ -1,0 +1,116 @@
+.wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  min-width: 0;
+  width: 100%;
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+}
+
+.wrap[data-disabled='true'] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.trigger,
+.select {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: var(--hc-size-control-h);
+  height: var(--hc-size-control-h);
+  padding: 0 10px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-input);
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+  transition:
+    border-color var(--hc-motion-fast),
+    background var(--hc-motion-fast);
+}
+
+.trigger:hover:not(:disabled),
+.select:hover:not(:disabled) {
+  border-color: var(--hc-border-strong);
+  background: var(--hc-hover-bg);
+}
+
+.trigger:focus-visible,
+.select:focus-visible {
+  border-color: var(--hc-accent-base);
+}
+
+.wrap[data-open='true'] .trigger {
+  border-color: var(--hc-border-strong);
+}
+
+.value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron {
+  flex: 0 0 auto;
+  color: var(--hc-fg-muted);
+}
+
+.menu {
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-island);
+  box-shadow: var(--hc-shadow-popover);
+}
+
+.option {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-default);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.option:hover:not(:disabled) {
+  background: var(--hc-hover-bg);
+  color: var(--hc-fg-strong);
+}
+
+.optionActive,
+.optionActive:hover {
+  background: var(--hc-press-bg);
+  border-color: var(--hc-selection-border);
+  color: var(--hc-fg-strong);
+}
+
+.option:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.empty {
+  padding: 8px 10px;
+  color: var(--hc-fg-muted);
+  font-size: 11px;
+}

@@ -15,7 +15,7 @@
 }
 
 .predictionEllipse {
-  fill: var(--hc-accent-soft);
+  fill: var(--hc-bg-chip);
   stroke: var(--hc-info);
   stroke-width: 1.5;
   vector-effect: non-scaling-stroke;

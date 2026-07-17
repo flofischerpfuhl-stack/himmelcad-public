@@ -1,14 +1,35 @@
-import { Console } from '@himmelcad/console';
-import type { HardwareCapabilities, PhotolabJob } from '@himmelcad/data';
-import { Ban, CircleGauge, FileChartColumn, FileDown } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { Console, logEvent } from '@himmelcad/console';
+import type {
+  AlignmentMergeCandidateRecord,
+  CameraCalibrationGroupRecord,
+  CaptureGroupRecord,
+  HardwareCapabilities,
+  MergedAlignmentRunRecord,
+  PhotolabJob,
+  ProcessingSetRecord,
+  PublishedGcpOptimizationEntry,
+} from '@himmelcad/data';
+import { EmptyState, ExpandChevron, IslandTabs } from '@himmelcad/ui';
+import {
+  AlertTriangle,
+  Ban,
+  CheckCircle2,
+  FileDown,
+} from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 
 import { GcpAccuracyPanel, type GcpAccuracyReport } from './GcpAccuracyPanel.js';
 import styles from './PhotolabBottomPanel.module.css';
+import { buildProcessingReportHtml, type ProcessingReportProduct } from './processingReport.js';
 
-type BottomTab = 'console' | 'jobs' | 'accuracy' | 'report';
+export type BottomTab = 'console' | 'jobs' | 'accuracy' | 'report';
 
 export interface PhotolabBottomPanelProps {
+  project: {
+    id: string;
+    name: string;
+    formatVersion: number;
+  };
   jobs: readonly PhotolabJob[];
   onCommand: (raw: string) => void;
   onCancelJob: (jobId: string) => void;
@@ -16,17 +37,21 @@ export interface PhotolabBottomPanelProps {
   accuracyReport: GcpAccuracyReport | null;
   hardware: HardwareCapabilities | null;
   products: readonly ReportProduct[];
+  processingSets: readonly ProcessingSetRecord[];
+  captureGroups: readonly CaptureGroupRecord[];
+  calibrationGroups: readonly CameraCalibrationGroupRecord[];
+  alignmentMerges: readonly MergedAlignmentRunRecord[];
+  alignmentRuns: readonly AlignmentMergeCandidateRecord[];
+  gcpOptimizations: readonly PublishedGcpOptimizationEntry[];
+  autoExpandJobId: string | null | undefined;
+  activeTab: BottomTab;
+  onTabChange: (tab: BottomTab) => void;
 }
 
-export interface ReportProduct {
-  entityId: string;
-  kind: string;
-  format: string;
-  relativePath: string;
-  pointCount?: number;
-}
+export type ReportProduct = ProcessingReportProduct;
 
 export function PhotolabBottomPanel({
+  project,
   jobs,
   onCommand,
   onCancelJob,
@@ -34,37 +59,62 @@ export function PhotolabBottomPanel({
   accuracyReport,
   hardware,
   products,
+  processingSets,
+  captureGroups,
+  calibrationGroups,
+  alignmentMerges,
+  alignmentRuns,
+  gcpOptimizations,
+  autoExpandJobId,
+  activeTab: tab,
+  onTabChange,
 }: PhotolabBottomPanelProps): JSX.Element {
-  const [tab, setTab] = useState<BottomTab>('console');
   return (
     <section className={styles.root}>
-      <nav className={styles.tabs} aria-label="PhotoLab results">
-        <TabButton active={tab === 'console'} onClick={() => setTab('console')}>
-          Console
-        </TabButton>
-        <TabButton active={tab === 'jobs'} onClick={() => setTab('jobs')}>
-          Jobs
-          {jobs.length > 0 && <span className={styles.count}>{jobs.length}</span>}
-        </TabButton>
-        <TabButton active={tab === 'accuracy'} onClick={() => setTab('accuracy')}>
-          Accuracy
-        </TabButton>
-        <TabButton active={tab === 'report'} onClick={() => setTab('report')}>
-          Report
-        </TabButton>
-      </nav>
+      <div className={styles.tabs}>
+        <IslandTabs
+          variant="strip"
+          ariaLabel="PhotoLab results"
+          value={tab}
+          onChange={(id) => onTabChange(id as BottomTab)}
+          items={[
+            { id: 'console', label: 'Console' },
+            {
+              id: 'jobs',
+              label: 'Jobs',
+              badge: jobs.length > 0 ? jobs.length : undefined,
+            },
+            { id: 'accuracy', label: 'Accuracy' },
+            { id: 'report', label: 'Report' },
+          ]}
+        />
+      </div>
       <div className={styles.content}>
         {tab === 'console' && (
-          <Console hideBrand defaultLevel="info" onCommand={onCommand} onCollapse={onCollapse} />
+          <Console
+            defaultLevel="info"
+            brandSubtitle="PhotoLab · console"
+            onCommand={onCommand}
+            onCollapse={onCollapse}
+          />
         )}
-        {tab === 'jobs' && <JobsView jobs={jobs} onCancelJob={onCancelJob} />}
+        {tab === 'jobs' && (
+          <JobsView jobs={jobs} onCancelJob={onCancelJob} autoExpandJobId={autoExpandJobId} />
+        )}
         {tab === 'accuracy' && <GcpAccuracyPanel report={accuracyReport} />}
         {tab === 'report' && (
           <ReportView
+            project={project}
             jobs={jobs}
             accuracyReport={accuracyReport}
             hardware={hardware}
             products={products}
+            processingSets={processingSets}
+            captureGroups={captureGroups}
+            calibrationGroups={calibrationGroups}
+            alignmentMerges={alignmentMerges}
+            alignmentRuns={alignmentRuns}
+            gcpOptimizations={gcpOptimizations}
           />
         )}
       </div>
@@ -72,59 +122,63 @@ export function PhotolabBottomPanel({
   );
 }
 
-function TabButton({
-  active,
-  children,
-  onClick,
-}: {
-  active: boolean;
-  children: ReactNode;
-  onClick: () => void;
-}): JSX.Element {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={active}
-      className={`${styles.tab} ${active ? styles.tabActive : ''}`}
-      onClick={onClick}
-    >
-      {children}
-    </button>
-  );
-}
-
 function JobsView({
   jobs,
   onCancelJob,
+  autoExpandJobId,
 }: {
   jobs: readonly PhotolabJob[];
   onCancelJob: (jobId: string) => void;
+  autoExpandJobId: string | null | undefined;
 }): JSX.Element {
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const telemetryRef = useRef(new Map<string, JobTelemetry>());
+  useEffect(() => {
+    if (!autoExpandJobId) return;
+    setExpanded((current) => {
+      if (current.has(autoExpandJobId)) return current;
+      const next = new Set(current);
+      next.add(autoExpandJobId);
+      return next;
+    });
+  }, [autoExpandJobId]);
+  const now = Date.now();
   if (jobs.length === 0) {
     return (
       <EmptyState
-        icon={<CircleGauge size={22} />}
-        title="No running or stored jobs"
-        text="Alignment and product runs appear here with real progress, checkpoints, and cancellation status."
+        title="No jobs yet"
+        hint="Alignment and product runs appear here with progress, checkpoints, and cancellation status."
       />
     );
   }
   return (
     <div className={styles.jobs}>
       {jobs.map((job) => {
+        const telemetry = observeJob(telemetryRef.current, job, now);
         const fraction = overallFraction(job);
         const cancellable = ['queued', 'running', 'pauseRequested'].includes(job.state.kind);
+        const isExpanded = expanded.has(job.id);
         return (
-          <article className={styles.job} key={job.id}>
+          <article className={`${styles.job} ${isExpanded ? styles.jobExpanded : ''}`} key={job.id}>
             <div className={styles.jobMain}>
               <div className={styles.jobTitleRow}>
-                <span className={styles.jobTitle}>{jobLabel(job)}</span>
+                <button
+                  type="button"
+                  className={styles.expand}
+                  aria-expanded={isExpanded}
+                  onClick={() => setExpanded((current) => toggleSet(current, job.id))}
+                >
+                  <ExpandChevron expanded={isExpanded} size={14} />
+                  <span className={styles.jobTitle}>{jobLabel(job)}</span>
+                </button>
                 <span className={`${styles.state} ${styles[`state_${job.state.kind}`] ?? ''}`}>
                   {stateLabel(job)}
                 </span>
               </div>
-              <div className={styles.jobStage}>{job.progress.stage.label}</div>
+              <div className={styles.jobStage}>
+                <span>{job.progress.stage.label}</span>
+                <span>{compactProgress(job, telemetry, now)}</span>
+              </div>
               <div className={styles.progressTrack}>
                 <span className={styles.progressFill} style={{ width: `${fraction * 100}%` }} />
               </div>
@@ -140,6 +194,7 @@ function JobsView({
               <Ban size={14} />
               Cancel
             </button>
+            {isExpanded && <JobDetails job={job} telemetry={telemetry} now={now} />}
           </article>
         );
       })}
@@ -147,45 +202,359 @@ function JobsView({
   );
 }
 
+function JobDetails({
+  job,
+  telemetry,
+  now,
+}: {
+  job: PhotolabJob;
+  telemetry: JobTelemetry;
+  now: number;
+}): JSX.Element {
+  const metrics = job.progress.metrics;
+  const stateMessage =
+    job.state.kind === 'failed' ? `${job.state.code}: ${job.state.message}` : null;
+  const stateMessageLabel =
+    job.state.kind === 'failed' && job.state.code.startsWith('interrupted') ? 'Recovery' : 'Error';
+  return (
+    <div className={styles.jobDetails}>
+      <div>
+        <span>Stage</span>
+        <strong>
+          {job.progress.stage.index + 1} / {job.progress.stage.stageCount} ·{' '}
+          {job.progress.stage.kind}
+        </strong>
+      </div>
+      <div>
+        <span>Work</span>
+        <strong>
+          {metrics.completedUnits.toLocaleString('en-US')}
+          {metrics.totalUnits == null ? '' : ` / ${metrics.totalUnits.toLocaleString('en-US')}`}
+        </strong>
+      </div>
+      <div>
+        <span>Bytes</span>
+        <strong>
+          {formatBytes(metrics.completedBytes)}
+          {metrics.totalBytes == null ? '' : ` / ${formatBytes(metrics.totalBytes)}`}
+        </strong>
+      </div>
+      <div>
+        <span>Checkpoint</span>
+        <strong>{job.lastCheckpointSequence ?? '—'}</strong>
+      </div>
+      <div>
+        <span>Configuration</span>
+        <code title={job.configHash}>{job.configHash}</code>
+      </div>
+      <div>
+        <span>Input</span>
+        <code title={job.inputHash}>{job.inputHash}</code>
+      </div>
+      <div>
+        <span>Started</span>
+        <strong>
+          {job.startedAtUnixMs == null ? 'Queued' : new Date(job.startedAtUnixMs).toLocaleString()}
+        </strong>
+      </div>
+      <div>
+        <span>Elapsed</span>
+        <strong>
+          {formatDuration(Math.max(0, now - (job.startedAtUnixMs ?? job.createdAtUnixMs)))}
+        </strong>
+      </div>
+      <div>
+        <span>Stage ETA</span>
+        <strong>{stageEta(telemetry)}</strong>
+      </div>
+      <div>
+        <span>Throughput</span>
+        <strong>{throughputLabel(job, telemetry)}</strong>
+      </div>
+      <div className={styles.jobActivity}>
+        <span>Activity</span>
+        <ol>
+          {telemetry.stages.map((stage) => (
+            <li
+              key={`${stage.index}:${stage.label}`}
+              className={stage.finishedAt == null ? styles.activityCurrent : styles.activityDone}
+            >
+              <span>{stage.label}</span>
+              <code>
+                {stage.completedUnits.toLocaleString('en-US')}
+                {stage.totalUnits == null ? '' : ` / ${stage.totalUnits.toLocaleString('en-US')}`}
+                {' · '}
+                {formatDuration((stage.finishedAt ?? now) - stage.startedAt)}
+              </code>
+            </li>
+          ))}
+        </ol>
+      </div>
+      {stateMessage && (
+        <div className={styles.jobFailure}>
+          <span>{stateMessageLabel}</span>
+          <strong>{stateMessage}</strong>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface StageActivity {
+  index: number;
+  label: string;
+  startedAt: number;
+  finishedAt?: number;
+  completedUnits: number;
+  totalUnits: number | undefined;
+}
+
+interface JobTelemetry {
+  stages: StageActivity[];
+  stageIndex: number;
+  lastUnits: number;
+  lastSampleAt: number;
+  ratePerSecond: number | undefined;
+}
+
+function observeJob(
+  telemetryByJob: Map<string, JobTelemetry>,
+  job: PhotolabJob,
+  now: number,
+): JobTelemetry {
+  const metrics = job.progress.metrics;
+  const stage = job.progress.stage;
+  let telemetry = telemetryByJob.get(job.id);
+  if (!telemetry) {
+    telemetry = {
+      stages: [],
+      stageIndex: stage.index,
+      lastUnits: metrics.completedUnits,
+      lastSampleAt: now,
+      ratePerSecond: undefined,
+    };
+    telemetryByJob.set(job.id, telemetry);
+  }
+  let activity = telemetry.stages.at(-1);
+  if (activity?.index !== stage.index || activity?.label !== stage.label) {
+    if (activity && activity.finishedAt == null) activity.finishedAt = now;
+    activity = {
+      index: stage.index,
+      label: stage.label,
+      startedAt: now,
+      completedUnits: metrics.completedUnits,
+      totalUnits: metrics.totalUnits,
+    };
+    telemetry.stages.push(activity);
+    telemetry.stageIndex = stage.index;
+    telemetry.lastUnits = metrics.completedUnits;
+    telemetry.lastSampleAt = now;
+    telemetry.ratePerSecond = undefined;
+  } else {
+    const elapsedSeconds = (now - telemetry.lastSampleAt) / 1_000;
+    const completedDelta = metrics.completedUnits - telemetry.lastUnits;
+    if (completedDelta > 0 && elapsedSeconds > 0) {
+      const observedRate = completedDelta / elapsedSeconds;
+      telemetry.ratePerSecond =
+        telemetry.ratePerSecond == null
+          ? observedRate
+          : telemetry.ratePerSecond * 0.7 + observedRate * 0.3;
+      telemetry.lastUnits = metrics.completedUnits;
+      telemetry.lastSampleAt = now;
+    }
+    activity.completedUnits = metrics.completedUnits;
+    activity.totalUnits = metrics.totalUnits ?? activity.totalUnits;
+  }
+  if (!['queued', 'running', 'pauseRequested', 'cancelRequested'].includes(job.state.kind)) {
+    activity.finishedAt ??= job.finishedAtUnixMs ?? now;
+  }
+  return telemetry;
+}
+
+function compactProgress(job: PhotolabJob, telemetry: JobTelemetry, now: number): string {
+  const { completedUnits, totalUnits } = job.progress.metrics;
+  const work =
+    totalUnits == null
+      ? ''
+      : `${completedUnits.toLocaleString('en-US')}/${totalUnits.toLocaleString('en-US')}`;
+  const eta = stageEta(telemetry);
+  const elapsed = formatDuration(Math.max(0, now - (job.startedAtUnixMs ?? job.createdAtUnixMs)));
+  return [work, eta === 'Estimating…' || eta === '—' ? null : `ETA ${eta}`, elapsed]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function stageEta(telemetry: JobTelemetry): string {
+  const stage = telemetry.stages.at(-1);
+  if (!stage || stage.finishedAt != null) return '—';
+  if (stage.totalUnits == null || telemetry.ratePerSecond == null || telemetry.ratePerSecond <= 0) {
+    return 'Estimating…';
+  }
+  const remaining = Math.max(0, stage.totalUnits - stage.completedUnits);
+  return formatDuration((remaining / telemetry.ratePerSecond) * 1_000);
+}
+
+function throughputLabel(job: PhotolabJob, telemetry: JobTelemetry): string {
+  const rate = telemetry.ratePerSecond;
+  if (rate == null || rate <= 0) return 'Estimating…';
+  const noun = job.progress.stage.kind === 'featureExtraction' ? 'images' : 'units';
+  return `${(rate * 60).toFixed(rate * 60 >= 10 ? 0 : 1)} ${noun}/min`;
+}
+
+function formatDuration(milliseconds: number): string {
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return '—';
+  const totalSeconds = Math.round(milliseconds / 1_000);
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${String(minutes).padStart(2, '0')}m`;
+  if (minutes > 0) return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+  return `${seconds}s`;
+}
+
+function toggleSet(current: ReadonlySet<string>, value: string): ReadonlySet<string> {
+  const next = new Set(current);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return next;
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KiB`;
+  if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MiB`;
+  return `${(value / 1024 ** 3).toFixed(2)} GiB`;
+}
+
 function ReportView({
+  project,
   jobs,
   accuracyReport,
   hardware,
   products,
+  processingSets,
+  captureGroups,
+  calibrationGroups,
+  alignmentMerges,
+  alignmentRuns,
+  gcpOptimizations,
 }: {
+  project: {
+    id: string;
+    name: string;
+    formatVersion: number;
+  };
   jobs: readonly PhotolabJob[];
   accuracyReport: GcpAccuracyReport | null;
   hardware: HardwareCapabilities | null;
   products: readonly ReportProduct[];
+  processingSets: readonly ProcessingSetRecord[];
+  captureGroups: readonly CaptureGroupRecord[];
+  calibrationGroups: readonly CameraCalibrationGroupRecord[];
+  alignmentMerges: readonly MergedAlignmentRunRecord[];
+  alignmentRuns: readonly AlignmentMergeCandidateRecord[];
+  gcpOptimizations: readonly PublishedGcpOptimizationEntry[];
 }): JSX.Element {
-  if (jobs.length === 0) {
-    return (
-      <EmptyState
-        icon={<FileChartColumn size={22} />}
-        title="No processing runs recorded yet"
-        text="Configuration hashes, input hashes, checkpoints, progress, failures, and accuracy statistics will appear here."
-      />
-    );
-  }
+  const [savingFormat, setSavingFormat] = useState<'html' | 'pdf' | null>(null);
+  const [saveResult, setSaveResult] = useState<{ kind: 'saved' | 'error'; message: string } | null>(
+    null,
+  );
   const save = async (format: 'html' | 'pdf'): Promise<void> => {
-    const html = processingReportHtml(jobs, products, hardware, accuracyReport);
-    await window.himmelcad?.reports.save({
-      format,
-      suggestedName: `himmelcad-photolab-report-${new Date().toISOString().slice(0, 10)}`,
-      html,
-    });
+    const api = window.himmelcad;
+    if (!api) {
+      setSaveResult({ kind: 'error', message: 'Desktop report export is unavailable.' });
+      logEvent('error', 'renderer', 'Processing report export is unavailable in this runtime.');
+      return;
+    }
+    const startedAt = performance.now();
+    setSavingFormat(format);
+    setSaveResult(null);
+    logEvent('info', 'renderer', `Exporting processing report as ${format.toUpperCase()}`);
+    try {
+      const saved = await api.reports.save({
+        format,
+        suggestedName: `${project.name}-processing-report-${new Date().toISOString().slice(0, 10)}`,
+        html: buildProcessingReportHtml({
+          project,
+          jobs,
+          products,
+          hardware,
+          accuracy: accuracyReport,
+          processingSets,
+          captureGroups,
+          calibrationGroups,
+          alignmentMerges,
+          alignmentRuns,
+          gcpOptimizations,
+        }),
+      });
+      if (saved) {
+        const durationMs = performance.now() - startedAt;
+        setSaveResult({ kind: 'saved', message: `${format.toUpperCase()} report saved.` });
+        logEvent(
+          'info',
+          'renderer',
+          `Processing report saved as ${format.toUpperCase()} · ${durationMs.toFixed(1)} ms`,
+        );
+      } else {
+        logEvent('info', 'renderer', 'Processing report export cancelled.');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Report export failed.';
+      setSaveResult({
+        kind: 'error',
+        message,
+      });
+      logEvent('error', 'renderer', `Processing report export failed: ${message}`);
+    } finally {
+      setSavingFormat(null);
+    }
   };
   return (
     <div className={styles.jobs} aria-label="Reproducible processing report">
       <div className={styles.reportToolbar}>
         <span>Immutable hashes, runtimes, hardware, products, and survey accuracy</span>
-        <button type="button" onClick={() => void save('html')}>
+        <button type="button" disabled={savingFormat != null} onClick={() => void save('html')}>
           <FileDown size={14} /> HTML
         </button>
-        <button type="button" onClick={() => void save('pdf')}>
+        <button type="button" disabled={savingFormat != null} onClick={() => void save('pdf')}>
           <FileDown size={14} /> PDF
         </button>
       </div>
+      {savingFormat && (
+        <div className={styles.reportProgressGroup} role="status">
+          <div>Preparing and writing {savingFormat.toUpperCase()} report…</div>
+          <div
+            className={styles.reportProgress}
+            role="progressbar"
+            aria-label={`Exporting ${savingFormat.toUpperCase()} processing report`}
+          >
+            <span />
+          </div>
+        </div>
+      )}
+      {saveResult && (
+        <div
+          className={`${styles.reportStatus} ${saveResult.kind === 'error' ? styles.reportStatusError : ''}`}
+          role={saveResult.kind === 'error' ? 'alert' : 'status'}
+        >
+          {saveResult.kind === 'error' ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} />}
+          {saveResult.message}
+        </div>
+      )}
+      <LineageOverview
+        processingSets={processingSets}
+        alignmentRuns={alignmentRuns}
+        gcpOptimizations={gcpOptimizations}
+        alignmentMerges={alignmentMerges}
+        products={products}
+      />
+      {jobs.length === 0 && (
+        <EmptyState
+          title="No processing runs recorded yet"
+          hint="The exported report still records current hardware, scope, products, and survey accuracy."
+        />
+      )}
       {accuracyReport && (
         <article className={styles.job}>
           <div className={styles.jobMain}>
@@ -224,60 +593,109 @@ function ReportView({
   );
 }
 
-function processingReportHtml(
-  jobs: readonly PhotolabJob[],
-  products: readonly ReportProduct[],
-  hardware: HardwareCapabilities | null,
-  accuracy: GcpAccuracyReport | null,
-): string {
-  const generated = new Date().toISOString();
-  const jobRows = jobs
-    .map((job) => {
-      const duration =
-        job.startedAtUnixMs != null && job.finishedAtUnixMs != null
-          ? `${((job.finishedAtUnixMs - job.startedAtUnixMs) / 1000).toFixed(3)} s`
-          : 'n/a';
-      return `<tr><td>${escapeHtml(job.id)}</td><td>${escapeHtml(jobLabel(job))}</td><td>${escapeHtml(stateLabel(job))}</td><td>${duration}</td><td><code>${escapeHtml(job.configHash)}</code></td><td><code>${escapeHtml(job.inputHash)}</code></td><td>${job.lastCheckpointSequence ?? '—'}</td></tr>`;
-    })
-    .join('');
-  const productRows = products
-    .map(
-      (product) =>
-        `<tr><td>${escapeHtml(product.kind)}</td><td>${escapeHtml(product.format)}</td><td>${product.pointCount?.toLocaleString('en-US') ?? '—'}</td><td><code>${escapeHtml(product.entityId)}</code></td><td>${escapeHtml(product.relativePath)}</td></tr>`,
-    )
-    .join('');
-  const accuracySection = accuracy
-    ? `<h2>Survey accuracy</h2><p>${escapeHtml(accuracy.processingSetLabel)} · ${escapeHtml(accuracy.alignmentRunLabel)} · ${accuracy.cameraCount} cameras</p><p>Optimization snapshot: <code>${escapeHtml(accuracy.optimizationSnapshotSha256)}</code></p><h3>Controls</h3><pre>${escapeHtml(JSON.stringify(accuracy.control ?? null, null, 2))}</pre><h3>Checkpoints</h3><pre>${escapeHtml(JSON.stringify(accuracy.checkpoint ?? null, null, 2))}</pre><h3>Point residuals</h3><pre>${escapeHtml(JSON.stringify(accuracy.residuals, null, 2))}</pre>`
-    : '<h2>Survey accuracy</h2><p>No GCP optimization result was published for this report.</p>';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>HimmelCAD PhotoLab Processing Report</title><style>@page{size:A4;margin:12mm}body{font:12px system-ui,sans-serif;color:#172033}h1{color:#087dcc}h2{margin-top:24px;border-bottom:1px solid #c9d5e3;padding-bottom:4px}table{width:100%;border-collapse:collapse;font-size:9px}th,td{border:1px solid #ccd6e0;padding:5px;vertical-align:top;text-align:left}th{background:#edf5fb}code,pre{font-family:ui-monospace,monospace;overflow-wrap:anywhere}pre{white-space:pre-wrap;background:#f4f7fa;padding:8px}footer{margin-top:24px;color:#566273}</style></head><body><h1>HimmelCAD PhotoLab Processing Report</h1><p>Generated ${escapeHtml(generated)} · fully offline processing record</p><h2>Hardware</h2><pre>${escapeHtml(JSON.stringify(hardware, null, 2))}</pre><h2>Processing runs</h2><table><thead><tr><th>Job</th><th>Operation</th><th>State</th><th>Runtime</th><th>Configuration SHA-256</th><th>Input SHA-256</th><th>Checkpoint</th></tr></thead><tbody>${jobRows}</tbody></table><h2>Published products</h2><table><thead><tr><th>Product</th><th>Format</th><th>Points</th><th>Entity</th><th>Project path</th></tr></thead><tbody>${productRows}</tbody></table>${accuracySection}<footer>HimmelCAD PhotoLab · reproducible offline photogrammetry</footer></body></html>`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-function EmptyState({
-  icon,
-  title,
-  text,
+function LineageOverview({
+  processingSets,
+  alignmentRuns,
+  gcpOptimizations,
+  alignmentMerges,
+  products,
 }: {
-  icon: ReactNode;
-  title: string;
-  text: string;
+  processingSets: readonly ProcessingSetRecord[];
+  alignmentRuns: readonly AlignmentMergeCandidateRecord[];
+  gcpOptimizations: readonly PublishedGcpOptimizationEntry[];
+  alignmentMerges: readonly MergedAlignmentRunRecord[];
+  products: readonly ReportProduct[];
 }): JSX.Element {
+  if (alignmentRuns.length === 0 && alignmentMerges.length === 0 && products.length === 0)
+    return <></>;
+  const processingSetNames = new Map(processingSets.map((set) => [set.entityId, set.name]));
   return (
-    <div className={styles.empty}>
-      <span className={styles.emptyIcon}>{icon}</span>
-      <div>
-        <strong>{title}</strong>
-        <p>{text}</p>
-      </div>
-    </div>
+    <section className={styles.lineageOverview} aria-label="Alignment and calibration lineage">
+      <div className={styles.lineageHeading}>Alignment and calibration lineage</div>
+      {alignmentRuns.map((alignment) => {
+        const revisions = gcpOptimizations.filter(
+          (entry) => entry.optimization.sourceAlignmentEntityId === alignment.entityId,
+        );
+        return (
+          <article className={styles.lineageCard} key={alignment.entityId}>
+            <div>
+              <strong>{alignment.name}</strong>
+              <span>
+                {alignment.cameraEntityIds.length} images ·{' '}
+                {alignment.processingSetId
+                  ? (processingSetNames.get(alignment.processingSetId) ?? alignment.processingSetId)
+                  : 'ad-hoc / project-wide'}
+              </span>
+            </div>
+            <details>
+              <summary>
+                {alignment.calibrationGroups?.length ??
+                  alignment.calibrationGroupIds?.length ??
+                  0}{' '}
+                frozen intrinsics groups · {revisions.length} GCP revisions
+              </summary>
+              <code>Alignment {alignment.entityId}</code>
+              <code>Job {alignment.jobId}</code>
+              {(alignment.calibrationGroups ?? []).map((group) => (
+                <div key={group.groupId}>
+                  <strong>{group.groupId}</strong>
+                  <code>{group.cameraEntityIds.join(', ')}</code>
+                </div>
+              ))}
+              {revisions.map((entry) => (
+                <div key={entry.entityId}>
+                  <strong>GCP revision {entry.optimization.operationId}</strong>
+                  <code>Entity {entry.entityId}</code>
+                  <code>Snapshot {entry.optimization.snapshotSha256}</code>
+                </div>
+              ))}
+            </details>
+          </article>
+        );
+      })}
+      {alignmentMerges.map((merge) => (
+        <article className={styles.lineageCard} key={merge.entityId}>
+          <div>
+            <strong>{merge.name}</strong>
+            <span>
+              {merge.state} · {merge.cameraEntityIds.length} images ·{' '}
+              {merge.inputAlignmentEntityIds.length} independent alignments
+            </span>
+          </div>
+          <details>
+            <summary>
+              {merge.inputGcpOptimizationEntityIds.length} pinned GCP revisions ·{' '}
+              {merge.connections.length} connections
+            </summary>
+            {merge.inputAlignmentEntityIds.map((entityId) => (
+              <code key={entityId}>Alignment {entityId}</code>
+            ))}
+            {merge.inputGcpOptimizationEntityIds.map((entityId) => (
+              <code key={entityId}>GCP revision {entityId}</code>
+            ))}
+            <code>Lineage {merge.lineageSha256}</code>
+          </details>
+        </article>
+      ))}
+      {products.map((product) => (
+        <article className={styles.lineageCard} key={product.entityId}>
+          <div>
+            <strong>{product.kind}</strong>
+            <span>{product.format} · published product</span>
+          </div>
+          <details>
+            <summary>Exact product lineage</summary>
+            <code>Product {product.entityId}</code>
+            <code>Alignment {product.sourceAlignmentEntityId ?? 'legacy / unavailable'}</code>
+            <code>Processing set {product.processingSetId ?? 'merged / project-wide'}</code>
+            <code>GCP revision {product.gcpOptimizationEntityId ?? 'none'}</code>
+            {product.gcpOptimizationSnapshotSha256 && (
+              <code>GCP snapshot {product.gcpOptimizationSnapshotSha256}</code>
+            )}
+          </details>
+        </article>
+      ))}
+    </section>
   );
 }
 
@@ -292,7 +710,9 @@ function overallFraction(job: PhotolabJob): number {
 
 function jobLabel(job: PhotolabJob): string {
   const labels: Record<PhotolabJob['kind'], string> = {
+    analyzeImageQuality: 'Analyze Image Quality',
     alignPhotos: 'Align Photos',
+    mergeAlignments: 'Merge Alignments',
     optimizeAlignment: 'Optimize Alignment',
     buildDepthMaps: 'Build Depth Maps',
     buildDensePointCloud: 'Build Dense Point Cloud',
@@ -307,7 +727,13 @@ function jobLabel(job: PhotolabJob): string {
 }
 
 function stateLabel(job: PhotolabJob): string {
-  if (job.state.kind === 'failed') return `Failed · ${job.state.message}`;
+  if (job.state.kind === 'failed') {
+    if (job.state.code === 'interruptedRecoverable') {
+      return `Interrupted · Resume available from checkpoint ${job.lastCheckpointSequence ?? '—'}`;
+    }
+    if (job.state.code === 'interrupted') return 'Interrupted · Restart required';
+    return `Failed · ${job.state.message}`;
+  }
   const labels: Record<Exclude<PhotolabJob['state']['kind'], 'failed'>, string> = {
     queued: 'Queued',
     running: 'Running',

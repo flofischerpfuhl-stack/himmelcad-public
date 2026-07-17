@@ -1,0 +1,81 @@
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--hc-size-chip-h);
+  height: var(--hc-size-chip-h);
+  padding: 0 12px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-chip);
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-chip);
+  box-shadow: var(--hc-shadow-chip);
+  font-family: var(--hc-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.chipInteractive {
+  cursor: pointer;
+  transition:
+    background var(--hc-motion-fast),
+    border-color var(--hc-motion-fast),
+    color var(--hc-motion-fast);
+}
+
+.chipInteractive:hover {
+  background: var(--hc-hover-bg);
+  border-color: var(--hc-border-strong);
+}
+
+.chipInteractive:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+/* Neutral pressed (aria-pressed / data-active) */
+.chipActive {
+  background: var(--hc-press-bg);
+  border-color: var(--hc-border-strong);
+  color: var(--hc-fg-strong);
+}
+
+/* Accent outline selection */
+.chipAccent {
+  border-color: var(--hc-selection-accent-border);
+  background: var(--hc-bg-chip);
+}
+
+.chipMuted {
+  color: var(--hc-fg-muted);
+}
+
+.chipInteractive:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.axis {
+  color: var(--hc-accent-base);
+  font-weight: 600;
+  margin-right: 2px;
+}
+
+.axis:first-child {
+  margin-left: 0;
+}
+
+.kind {
+  margin-left: 6px;
+  padding-left: 8px;
+  border-left: 1px solid var(--hc-border-default);
+  color: var(--hc-fg-muted);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}

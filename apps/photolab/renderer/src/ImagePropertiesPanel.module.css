@@ -1,0 +1,9 @@
+.root { display:grid; gap:13px; }
+.root section { display:grid; gap:6px; padding-bottom:11px; border-bottom:1px solid var(--hc-border-subtle); }
+.root h3 { margin:0 0 2px; color:var(--hc-fg-muted); font-size:9px; letter-spacing:.1em; text-transform:uppercase; }
+.row { display:grid; grid-template-columns:88px minmax(0,1fr); gap:8px; font-size:9px; }
+.row span { color:var(--hc-fg-muted); }
+.row strong { overflow:hidden; color:var(--hc-fg-default); font-weight:500; text-overflow:ellipsis; white-space:nowrap; }
+.mono { font-family:var(--hc-font-mono); font-size:8px; }
+.tags { display:flex; flex-wrap:wrap; gap:5px; margin-bottom:3px; }
+.tags span { padding:3px 6px; color:var(--hc-fg-default); background:var(--hc-bg-island-lo); border:1px solid var(--hc-border-subtle); border-radius:99px; font:8px var(--hc-font-mono); }

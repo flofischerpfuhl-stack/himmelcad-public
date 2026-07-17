@@ -1,5 +1,5 @@
 import type { EntityId, ObjectHash, ProcessingSetRecord } from '@himmelcad/data';
-import { Check, ChevronDown, ChevronRight, FileDown, FileUp, Play, RotateCcw } from 'lucide-react';
+import { FileDown, FileUp, Play, RotateCcw } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import styles from './BatchConfiguratorPanel.module.css';
@@ -8,6 +8,7 @@ import {
   type ProductOperation,
   type ProductRunConfiguration,
 } from './ProductPanel.js';
+import { ExpandChevron, Checkbox, Select } from '@himmelcad/ui';
 
 export interface BatchPipelineFile {
   formatVersion: 1;
@@ -39,6 +40,7 @@ interface BatchConfiguratorPanelProps {
     cameraEntityIds: readonly EntityId[],
     scopeLabel: string,
   ) => void;
+  onError: (message: string) => void;
 }
 
 const OPERATIONS: readonly ProductOperation[] = ['depth', 'dense', 'dem', 'ortho', 'mesh', 'splat'];
@@ -53,6 +55,7 @@ export function BatchConfiguratorPanel({
   onActivateProcessingSet,
   onClearProcessingSet,
   onStart,
+  onError,
 }: BatchConfiguratorPanelProps): JSX.Element {
   const [file, setFile] = useState<BatchPipelineFile>(createDefaultBatch);
   const [expanded, setExpanded] = useState<string | null>('alignment');
@@ -157,22 +160,25 @@ export function BatchConfiguratorPanel({
       }
       setFile(normalized);
     } catch (error) {
-      setBatchError(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      setBatchError(message);
+      onError(message);
+    }
+  };
+
+  const save = async () => {
+    setBatchError(null);
+    try {
+      await window.himmelcad?.batch.save(file);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setBatchError(message);
+      onError(message);
     }
   };
 
   return (
     <div className={styles.root}>
-      <section className={styles.intro}>
-        <div>
-          <strong>Resumable product batch</strong>
-          <p>
-            Every node is published atomically and saved locally immediately. After cancellation or
-            restart, the same batch resumes at the last completed node.
-          </p>
-        </div>
-      </section>
-
       <label className={styles.name}>
         <span>Configuration</span>
         <input
@@ -185,7 +191,7 @@ export function BatchConfiguratorPanel({
       </label>
       <label className={styles.name}>
         <span>Image scope</span>
-        <select
+        <Select
           value={scope}
           disabled={busy}
           onChange={(event) => {
@@ -224,7 +230,7 @@ export function BatchConfiguratorPanel({
               ))}
             </optgroup>
           )}
-        </select>
+        </Select>
       </label>
       {selectedProcessingSet && (
         <div className={styles.scopeSummary}>
@@ -248,11 +254,7 @@ export function BatchConfiguratorPanel({
         <button type="button" disabled={busy} onClick={() => void load()}>
           <FileUp size={14} /> Load
         </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void window.himmelcad?.batch.save(file)}
-        >
+        <button type="button" disabled={busy} onClick={() => void save()}>
           <FileDown size={14} /> Save
         </button>
         <button
@@ -280,7 +282,7 @@ export function BatchConfiguratorPanel({
         >
           <label className={styles.field}>
             <span>Profile</span>
-            <select
+            <Select
               value={alignmentStep(file.steps)?.profile ?? 'qualityHybrid'}
               onChange={(event) =>
                 updateAlignment(
@@ -291,7 +293,7 @@ export function BatchConfiguratorPanel({
               <option value="qualityHybrid">Quality Hybrid · recommended</option>
               <option value="maximumRobustness">Maximum Robustness</option>
               <option value="fast">Fast</option>
-            </select>
+            </Select>
           </label>
         </BatchCard>
 
@@ -316,13 +318,6 @@ export function BatchConfiguratorPanel({
         })}
       </div>
 
-      <div className={styles.note}>
-        <Check size={14} />{' '}
-        <span>
-          {file.steps.length} nodes · automatic save after every node · cancellation remains
-          available at all times
-        </span>
-      </div>
       <button
         className={styles.start}
         type="button"
@@ -376,8 +371,7 @@ function BatchCard({
     <section className={`${styles.card} ${enabled ? styles.enabled : ''}`}>
       <div className={styles.cardHeader}>
         <label className={styles.check}>
-          <input
-            type="checkbox"
+          <Checkbox
             checked={enabled}
             disabled={disabled}
             onChange={(event) => onToggle(event.currentTarget.checked)}
@@ -385,7 +379,7 @@ function BatchCard({
           <span />
         </label>
         <button type="button" className={styles.expand} disabled={!enabled} onClick={onExpand}>
-          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <ExpandChevron expanded={expanded} size={14} />
           <span>
             <strong>{label}</strong>
             <small>{description}</small>
@@ -659,13 +653,13 @@ function SelectField({
   return (
     <label className={styles.field}>
       <span>{label}</span>
-      <select value={value} onChange={(event) => onChange(event.currentTarget.value)}>
+      <Select value={value} onChange={(event) => onChange(event.currentTarget.value)}>
         {options.map(([key, text]) => (
           <option key={key} value={key}>
             {text}
           </option>
         ))}
-      </select>
+      </Select>
     </label>
   );
 }
@@ -709,8 +703,7 @@ function ToggleField({
 }): JSX.Element {
   return (
     <label className={styles.toggle}>
-      <input
-        type="checkbox"
+      <Checkbox
         checked={checked}
         onChange={(event) => onChange(event.currentTarget.checked)}
       />
@@ -841,6 +834,6 @@ function productDescription(operation: ProductOperation): string {
     dem: 'DSM or DTM raster pyramid',
     ortho: 'Georeferenced map image',
     mesh: 'Tiled textured surface',
-    splat: 'Photorealistic offline representation',
+    splat: 'Photorealistic scene representation',
   }[operation];
 }

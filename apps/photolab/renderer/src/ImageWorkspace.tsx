@@ -1,15 +1,39 @@
 import type {
   AlignedGcpCameraRecord,
   DiscoveredPhoto,
+  EntityId,
   GcpCollectionRecord,
   GcpObservationEdit,
   GcpOptimizationPublicationRecord,
+  ImageMaskEdit,
   ImageProductTag,
+  ListedImageMaskRevision,
+  ObjectHash,
   PhotoImportBatch,
   ProjectCameraImageRecord,
 } from '@himmelcad/data';
-import { Image as ImageIcon, Layers3, Maximize2 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { OverlayChip } from '@himmelcad/ui';
+import {
+  Brush,
+  Eraser,
+  Image as ImageIcon,
+  Layers3,
+  LoaderCircle,
+  Maximize2,
+  Minus,
+  Plus,
+  Trash2,
+} from 'lucide-react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
+} from 'react';
 
 import {
   GcpImageMarkerOverlay,
@@ -23,13 +47,22 @@ type ImageLayer = 'original' | 'depth' | 'confidence' | 'normals';
 export interface ImageWorkspaceProps {
   batch: PhotoImportBatch | null;
   projectImages: readonly ProjectCameraImageRecord[];
+  imageMasks: readonly ListedImageMaskRevision[];
   alignedCameras: readonly AlignedGcpCameraRecord[];
   gcpCollection: GcpCollectionRecord | null;
   gcpOptimization: GcpOptimizationPublicationRecord | null;
   focusedGcpId: string | null;
   onCommitGcpMeasurement: (measurement: GcpManualMeasurement) => void;
   onEditGcpObservation: (marker: GcpImageMarker, edit: GcpObservationEdit) => void;
+  onEditImageMask: (
+    imageEntityId: EntityId,
+    expectedRevisionSha256: ObjectHash | undefined,
+    edit: ImageMaskEdit,
+  ) => Promise<void>;
   depthDatasets: readonly { relativePath: string }[];
+  selectedImageEntityId: EntityId | null;
+  onSelectProjectImage: (entityId: EntityId) => void;
+  onError: (message: string) => void;
 }
 
 interface MvsDepthTileRecord {
@@ -54,14 +87,20 @@ interface MvsOutputIndex {
 export function ImageWorkspace({
   batch,
   projectImages,
+  imageMasks,
   alignedCameras,
   gcpCollection,
   gcpOptimization,
   focusedGcpId,
   onCommitGcpMeasurement,
   onEditGcpObservation,
+  onEditImageMask,
   depthDatasets,
+  selectedImageEntityId,
+  onSelectProjectImage,
+  onError,
 }: ImageWorkspaceProps): JSX.Element {
+  const rootRef = useRef<HTMLElement>(null);
   const [depthProduct, setDepthProduct] = useState<{
     index: MvsOutputIndex;
     basePath: string;
@@ -82,11 +121,14 @@ export function ImageWorkspace({
           basePath: latest.relativePath.replace(/[^/]+$/, ''),
         });
       })
-      .catch(() => {
-        if (!controller.signal.aborted) setDepthProduct(null);
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setDepthProduct(null);
+          onError(`Depth product could not be loaded: ${String(error)}`);
+        }
       });
     return () => controller.abort();
-  }, [depthDatasets]);
+  }, [depthDatasets, onError]);
   const allPhotos = useMemo(
     () =>
       projectImages.length > 0
@@ -132,38 +174,80 @@ export function ImageWorkspace({
       ),
     [projectImages],
   );
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [layer, setLayer] = useState<ImageLayer>('original');
-  const selected = photos.find((photo) => photo.sourcePath === selectedPath) ?? photos[0] ?? null;
+  const selectedProjectImage = useMemo(
+    () => projectImages.find((image) => image.entityId === selectedImageEntityId) ?? null,
+    [projectImages, selectedImageEntityId],
+  );
+  const selected = useMemo(() => {
+    if (selectedProjectImage) {
+      const selectedHash = selectedProjectImage.metadata.sourceObjectHash;
+      const controlledPhoto = allPhotos.find((photo) => photo.sha256 === selectedHash);
+      if (controlledPhoto) return controlledPhoto;
+    }
+    return photos[0] ?? null;
+  }, [allPhotos, photos, selectedProjectImage]);
+  const navigationPhotos = useMemo(() => {
+    if (!selected || photos.includes(selected)) return photos;
+    return [selected, ...photos];
+  }, [photos, selected]);
+  const selectPhoto = useCallback(
+    (photo: DiscoveredPhoto): void => {
+      const record = projectImages.find(
+        (image) => image.metadata.sourceObjectHash === photo.sha256,
+      );
+      if (record) onSelectProjectImage(record.entityId);
+    },
+    [onSelectProjectImage, projectImages],
+  );
 
   useEffect(() => {
-    if (selectedPath && !photos.some((photo) => photo.sourcePath === selectedPath)) {
-      setSelectedPath(null);
-    }
-  }, [photos, selectedPath]);
+    const navigate = (event: KeyboardEvent): void => {
+      if (
+        event.defaultPrevented ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.isComposing ||
+        keyboardTargetOwnsNavigation(event.target) ||
+        document.querySelector('[data-task-drag-handle]')
+      ) {
+        return;
+      }
+      const root = rootRef.current;
+      if (!root || root.getClientRects().length === 0 || navigationPhotos.length === 0) return;
+      const currentIndex = selected ? navigationPhotos.indexOf(selected) : -1;
+      let nextIndex: number | null = null;
+      if (event.key === 'ArrowLeft') nextIndex = Math.max(0, currentIndex - 1);
+      if (event.key === 'ArrowRight')
+        nextIndex = Math.min(navigationPhotos.length - 1, Math.max(0, currentIndex + 1));
+      if (event.key === 'Home') nextIndex = 0;
+      if (event.key === 'End') nextIndex = navigationPhotos.length - 1;
+      if (nextIndex == null || nextIndex === currentIndex) return;
+      const nextPhoto = navigationPhotos[nextIndex];
+      if (!nextPhoto) return;
+      event.preventDefault();
+      selectPhoto(nextPhoto);
+    };
+    window.addEventListener('keydown', navigate);
+    return () => window.removeEventListener('keydown', navigate);
+  }, [navigationPhotos, selectPhoto, selected]);
 
   return (
-    <section className={styles.root} aria-label="Image and depth-map view">
-      <header className={styles.toolbar}>
-        <div className={styles.layerTabs}>
+    <section ref={rootRef} className={styles.root} aria-label="Image and depth-map view">
+      <div className={styles.stage}>
+        <div className={styles.layerToolbar} aria-label="Image layer">
           {(['original', 'depth', 'confidence', 'normals'] as const).map((candidate) => (
-            <button
+            <OverlayChip
               key={candidate}
-              type="button"
-              className={layer === candidate ? styles.activeTab : undefined}
+              as="button"
+              active={layer === candidate}
               onClick={() => setLayer(candidate)}
             >
               {layerLabel(candidate)}
-            </button>
+            </OverlayChip>
           ))}
         </div>
-        <span className={styles.selectionLabel}>{selected ? fileName(selected) : 'No image'}</span>
-        <button type="button" className={styles.iconButton} aria-label="Fit image">
-          <Maximize2 size={15} />
-        </button>
-      </header>
-
-      <div className={styles.stage}>
         {selected ? (
           <ImageLayerContent
             photo={selected}
@@ -173,12 +257,21 @@ export function ImageWorkspace({
             projectImage={projectImages.find(
               (entry) => entry.metadata.sourceObjectHash === selected.sha256,
             )}
+            imageMask={imageMasks.find(
+              (entry) =>
+                entry.imageEntityId ===
+                projectImages.find(
+                  (image) => image.metadata.sourceObjectHash === selected.sha256,
+                )?.entityId,
+            )}
             gcpCollection={gcpCollection}
             gcpOptimization={gcpOptimization}
             focusedGcpId={focusedGcpId}
             onCommitGcpMeasurement={onCommitGcpMeasurement}
             onEditGcpObservation={onEditGcpObservation}
+            onEditImageMask={onEditImageMask}
             depthProduct={depthProduct}
+            onError={onError}
           />
         ) : (
           <div className={styles.empty}>
@@ -187,25 +280,6 @@ export function ImageWorkspace({
             <span>Imported originals and measurable depth maps appear here.</span>
           </div>
         )}
-      </div>
-
-      <div className={styles.filmstrip} aria-label="Image filmstrip">
-        {photos.map((photo) => (
-          <button
-            key={photo.sourcePath}
-            type="button"
-            className={photo === selected ? styles.activePhoto : undefined}
-            onClick={() => setSelectedPath(photo.sourcePath)}
-          >
-            <span className={styles.thumb}>
-              <ImageIcon size={18} />
-            </span>
-            <span className={styles.photoText}>
-              <strong>{fileName(photo)}</strong>
-              <small>{photoStatus(photo, tagsByHash.get(photo.sha256))}</small>
-            </span>
-          </button>
-        ))}
       </div>
     </section>
   );
@@ -217,24 +291,30 @@ function ImageLayerContent({
   tags,
   camera,
   projectImage,
+  imageMask,
   gcpCollection,
   gcpOptimization,
   focusedGcpId,
   onCommitGcpMeasurement,
   onEditGcpObservation,
+  onEditImageMask,
   depthProduct,
+  onError,
 }: {
   photo: DiscoveredPhoto;
   layer: ImageLayer;
   tags: readonly ImageProductTag[] | undefined;
   camera: AlignedGcpCameraRecord | undefined;
   projectImage: ProjectCameraImageRecord | undefined;
+  imageMask: ListedImageMaskRevision | undefined;
   gcpCollection: GcpCollectionRecord | null;
   gcpOptimization: GcpOptimizationPublicationRecord | null;
   focusedGcpId: string | null;
   onCommitGcpMeasurement: (measurement: GcpManualMeasurement) => void;
   onEditGcpObservation: (marker: GcpImageMarker, edit: GcpObservationEdit) => void;
+  onEditImageMask: ImageWorkspaceProps['onEditImageMask'];
   depthProduct: { index: MvsOutputIndex; basePath: string } | null;
+  onError: (message: string) => void;
 }) {
   const [loadFailed, setLoadFailed] = useState(false);
   useEffect(() => setLoadFailed(false), [photo.sha256]);
@@ -247,7 +327,14 @@ function ImageLayerContent({
         )
       : undefined;
     if (ready && depthImage && depthProduct) {
-      return <DepthCanvas image={depthImage} basePath={depthProduct.basePath} layer={layer} />;
+      return (
+        <DepthCanvas
+          image={depthImage}
+          basePath={depthProduct.basePath}
+          layer={layer}
+          onError={onError}
+        />
+      );
     }
     return (
       <div className={styles.empty}>
@@ -256,9 +343,7 @@ function ImageLayerContent({
           {ready ? `Loading ${layerLabel(layer)}` : `${layerLabel(layer)} has not been generated`}
         </strong>
         <span>
-          {ready
-            ? 'Initializing the measurable depth-tile decoder for this image.'
-            : 'The “Depth ready” image tag is set only after the depth run commits atomically.'}
+          {ready ? 'Preparing measurable depth tiles.' : 'Run Depth Maps to enable this layer.'}
         </span>
       </div>
     );
@@ -276,10 +361,17 @@ function ImageLayerContent({
           width={camera?.camera.widthPixels ?? dimensions?.widthPixels ?? 1}
           height={camera?.camera.heightPixels ?? dimensions?.heightPixels ?? 1}
           markers={markers}
+          imageEntityId={projectImage?.entityId}
+          imageMask={imageMask}
           focusedGcpId={focusedGcpId}
-          onError={() => setLoadFailed(true)}
+          onError={() => {
+            setLoadFailed(true);
+            onError(`Image could not be loaded: ${fileName(photo)}`);
+          }}
+          onMaskError={(message) => onError(`Image mask could not be loaded: ${message}`)}
           onCommitGcpMeasurement={onCommitGcpMeasurement}
           onEditGcpObservation={onEditGcpObservation}
+          onEditImageMask={onEditImageMask}
         />
         <span>{fileName(photo)} · Original</span>
       </div>
@@ -327,11 +419,14 @@ function DepthCanvas({
   image,
   basePath,
   layer,
+  onError,
 }: {
   image: MvsDepthImageRecord;
   basePath: string;
   layer: Exclude<ImageLayer, 'original'>;
+  onError: (message: string) => void;
 }): JSX.Element {
+  const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const depthRef = useRef<{
     values: Float32Array;
@@ -341,6 +436,47 @@ function DepthCanvas({
   } | null>(null);
   const [status, setStatus] = useState('Streaming depth tiles…');
   const [measurement, setMeasurement] = useState<string | null>(null);
+  const [canvasSize, setCanvasSize] = useState({ width: 1, height: 1 });
+  const transformRef = useRef<ImageViewTransform>({ scale: 1, x: 0, y: 0 });
+  const [transform, setTransformState] = useState<ImageViewTransform>(transformRef.current);
+  const drag = useRef<{
+    pointerId: number;
+    x: number;
+    y: number;
+    transformX: number;
+    transformY: number;
+    moved: boolean;
+  } | null>(null);
+  const suppressMeasurement = useRef(false);
+  const commitTransform = useCallback((next: ImageViewTransform): void => {
+    transformRef.current = next;
+    setTransformState(next);
+  }, []);
+  const fit = useCallback((): void => {
+    const host = hostRef.current;
+    if (!host) return;
+    const bounds = host.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) return;
+    const scale = clampImageScale(
+      Math.min(bounds.width / canvasSize.width, bounds.height / canvasSize.height),
+    );
+    commitTransform({
+      scale,
+      x: (bounds.width - canvasSize.width * scale) / 2,
+      y: (bounds.height - canvasSize.height * scale) / 2,
+    });
+  }, [canvasSize.height, canvasSize.width, commitTransform]);
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const observer = new ResizeObserver(fit);
+    observer.observe(host);
+    const animationFrame = requestAnimationFrame(fit);
+    return () => {
+      cancelAnimationFrame(animationFrame);
+      observer.disconnect();
+    };
+  }, [fit]);
   useEffect(() => {
     const controller = new AbortController();
     const availableLevels = [...new Set(image.tiles.map((tile) => tile.key.level))].sort(
@@ -380,16 +516,24 @@ function DepthCanvas({
         }
         depthRef.current = { values, confidence, width, height };
         drawDepthLayer(canvasRef.current, values, confidence, width, height, layer);
+        setCanvasSize({ width, height });
         setStatus(`Level ${targetLevel} · ${loaded.length} tiles · click to measure`);
       })
       .catch((error: unknown) => {
-        if (!controller.signal.aborted)
-          setStatus(`Depth map could not be loaded: ${String(error)}`);
+        if (!controller.signal.aborted) {
+          const message = `Depth map could not be loaded: ${String(error)}`;
+          setStatus(message);
+          onError(message);
+        }
       });
     return () => controller.abort();
-  }, [basePath, image, layer]);
+  }, [basePath, image, layer, onError]);
 
   const measure = (event: ReactMouseEvent<HTMLCanvasElement>) => {
+    if (suppressMeasurement.current) {
+      suppressMeasurement.current = false;
+      return;
+    }
     const data = depthRef.current;
     const canvas = canvasRef.current;
     if (!data || !canvas) return;
@@ -415,9 +559,107 @@ function DepthCanvas({
       `X ${formatCoordinate(world[0])} · Y ${formatCoordinate(world[1])} · Z ${formatCoordinate(world[2])} · C ${Math.round((data.confidence[offset] ?? 0) * 100)} %`,
     );
   };
+  const setZoomAt = (nextValue: number, clientX?: number, clientY?: number): void => {
+    const host = hostRef.current;
+    if (!host) return;
+    const current = transformRef.current;
+    const nextScale = clampImageScale(nextValue);
+    if (nextScale === current.scale) return;
+    const bounds = host.getBoundingClientRect();
+    const cursorX = clientX == null ? bounds.width / 2 : clientX - bounds.left;
+    const cursorY = clientY == null ? bounds.height / 2 : clientY - bounds.top;
+    const imageX = (cursorX - current.x) / current.scale;
+    const imageY = (cursorY - current.y) / current.scale;
+    commitTransform({
+      scale: nextScale,
+      x: cursorX - imageX * nextScale,
+      y: cursorY - imageY * nextScale,
+    });
+  };
+  const startPan = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (event.button !== 0 || pointerTargetOwnsInteraction(event.target)) return;
+    const current = transformRef.current;
+    drag.current = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      transformX: current.x,
+      transformY: current.y,
+      moved: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const movePan = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const current = drag.current;
+    if (current?.pointerId !== event.pointerId) return;
+    const deltaX = event.clientX - current.x;
+    const deltaY = event.clientY - current.y;
+    current.moved ||= Math.hypot(deltaX, deltaY) > 2;
+    if (!current.moved) return;
+    commitTransform({
+      ...transformRef.current,
+      x: current.transformX + deltaX,
+      y: current.transformY + deltaY,
+    });
+  };
+  const stopPan = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const current = drag.current;
+    if (current?.pointerId !== event.pointerId) return;
+    suppressMeasurement.current = current.moved;
+    drag.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  };
   return (
-    <div className={styles.depthCanvas}>
-      <canvas ref={canvasRef} onClick={measure} />
+    <div
+      ref={hostRef}
+      className={styles.depthCanvas}
+      onWheel={(event) => {
+        event.preventDefault();
+        setZoomAt(
+          transformRef.current.scale * Math.exp(-event.deltaY * 0.0015),
+          event.clientX,
+          event.clientY,
+        );
+      }}
+      onPointerDown={startPan}
+      onPointerMove={movePan}
+      onPointerUp={stopPan}
+      onPointerCancel={stopPan}
+      onDoubleClick={fit}
+    >
+      <div className={styles.zoomToolbar}>
+        <OverlayChip
+          as="button"
+          onClick={() => setZoomAt(transformRef.current.scale / 1.5)}
+          disabled={transform.scale <= MIN_IMAGE_SCALE}
+          aria-label="Zoom out"
+        >
+          <Minus size={13} />
+        </OverlayChip>
+        <OverlayChip className={styles.zoomReadout} muted>
+          {formatZoomPercentage(transform.scale)}
+        </OverlayChip>
+        <OverlayChip
+          as="button"
+          onClick={() => setZoomAt(transformRef.current.scale * 1.5)}
+          disabled={transform.scale >= MAX_IMAGE_SCALE}
+          aria-label="Zoom in"
+        >
+          <Plus size={13} />
+        </OverlayChip>
+        <OverlayChip as="button" onClick={fit} aria-label="Fit depth map">
+          <Maximize2 size={13} />
+        </OverlayChip>
+      </div>
+      <canvas
+        ref={canvasRef}
+        onClick={measure}
+        style={{
+          width: canvasSize.width,
+          height: canvasSize.height,
+          transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
+        }}
+      />
       <span className={styles.depthStatus}>{measurement ?? status}</span>
     </div>
   );
@@ -539,39 +781,303 @@ function ImageContentFrame({
   width,
   height,
   markers,
+  imageEntityId,
+  imageMask,
   focusedGcpId,
   onError,
+  onMaskError,
   onCommitGcpMeasurement,
   onEditGcpObservation,
+  onEditImageMask,
 }: {
   source: string;
   alt: string;
   width: number;
   height: number;
   markers: readonly GcpImageMarker[];
+  imageEntityId: EntityId | undefined;
+  imageMask: ListedImageMaskRevision | undefined;
   focusedGcpId: string | null;
   onError: () => void;
+  onMaskError: (message: string) => void;
   onCommitGcpMeasurement: (measurement: GcpManualMeasurement) => void;
   onEditGcpObservation: (marker: GcpImageMarker, edit: GcpObservationEdit) => void;
+  onEditImageMask: ImageWorkspaceProps['onEditImageMask'];
 }): JSX.Element {
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
-  const [size, setSize] = useState({ width: 1, height: 1 });
+  const transformRef = useRef<ImageViewTransform>({ scale: 1, x: 0, y: 0 });
+  const [transform, setTransformState] = useState<ImageViewTransform>(transformRef.current);
+  const [maskTool, setMaskTool] = useState<'pan' | 'add' | 'remove'>('pan');
+  const [maskRadius, setMaskRadius] = useState(36);
+  const [maskBusy, setMaskBusy] = useState(false);
+  const [activeStroke, setActiveStroke] = useState<readonly ImageMaskPoint[]>([]);
+  const strokeRef = useRef<{ pointerId: number; points: ImageMaskPoint[] } | null>(null);
+  const fitMode = useRef(true);
+  const lastViewportSize = useRef({ width: 0, height: 0 });
+  const drag = useRef<{
+    pointerId: number;
+    x: number;
+    y: number;
+    transformX: number;
+    transformY: number;
+  } | null>(null);
+  const commitTransform = useCallback((next: ImageViewTransform): void => {
+    transformRef.current = next;
+    setTransformState(next);
+  }, []);
+  const fit = useCallback((): void => {
+    if (!container) return;
+    const bounds = container.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) return;
+    const scale = clampImageScale(Math.min(bounds.width / width, bounds.height / height));
+    commitTransform({
+      scale,
+      x: (bounds.width - width * scale) / 2,
+      y: (bounds.height - height * scale) / 2,
+    });
+    fitMode.current = true;
+    lastViewportSize.current = { width: bounds.width, height: bounds.height };
+  }, [commitTransform, container, height, width]);
+  useEffect(() => {
+    fitMode.current = true;
+    const animationFrame = requestAnimationFrame(fit);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [fit, source]);
   useEffect(() => {
     if (!container) return;
     const update = () => {
       const bounds = container.getBoundingClientRect();
-      const scale = Math.min(bounds.width / width, bounds.height / height);
-      setSize({ width: Math.max(1, width * scale), height: Math.max(1, height * scale) });
+      const previous = lastViewportSize.current;
+      if (fitMode.current || previous.width <= 0 || previous.height <= 0) {
+        fit();
+        return;
+      }
+      const current = transformRef.current;
+      commitTransform({
+        ...current,
+        x: current.x + (bounds.width - previous.width) / 2,
+        y: current.y + (bounds.height - previous.height) / 2,
+      });
+      lastViewportSize.current = { width: bounds.width, height: bounds.height };
     };
     const observer = new ResizeObserver(update);
     observer.observe(container);
     update();
     return () => observer.disconnect();
-  }, [container, height, width]);
+  }, [commitTransform, container, fit]);
+  const setZoomAt = (nextValue: number, clientX?: number, clientY?: number): void => {
+    if (!container) return;
+    const current = transformRef.current;
+    const nextScale = clampImageScale(nextValue);
+    if (nextScale === current.scale) return;
+    const bounds = container.getBoundingClientRect();
+    const cursorX = clientX == null ? bounds.width / 2 : clientX - bounds.left;
+    const cursorY = clientY == null ? bounds.height / 2 : clientY - bounds.top;
+    const imageX = (cursorX - current.x) / current.scale;
+    const imageY = (cursorY - current.y) / current.scale;
+    commitTransform({
+      scale: nextScale,
+      x: cursorX - imageX * nextScale,
+      y: cursorY - imageY * nextScale,
+    });
+    fitMode.current = false;
+  };
+  const wheel = (event: ReactWheelEvent<HTMLDivElement>): void => {
+    event.preventDefault();
+    setZoomAt(
+      transformRef.current.scale * Math.exp(-event.deltaY * 0.0015),
+      event.clientX,
+      event.clientY,
+    );
+  };
+  const startPan = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (event.button !== 0 || event.defaultPrevented || pointerTargetOwnsInteraction(event.target))
+      return;
+    if (maskTool !== 'pan' && imageEntityId && !maskBusy) {
+      const point = imagePointAt(event, event.currentTarget, transformRef.current, width, height);
+      if (!point) return;
+      strokeRef.current = { pointerId: event.pointerId, points: [point] };
+      setActiveStroke([point]);
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
+    const current = transformRef.current;
+    drag.current = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      transformX: current.x,
+      transformY: current.y,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const movePan = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const stroke = strokeRef.current;
+    if (stroke?.pointerId === event.pointerId) {
+      const point = imagePointAt(event, event.currentTarget, transformRef.current, width, height);
+      const previous = stroke.points.at(-1);
+      if (
+        point &&
+        (!previous || Math.hypot(point.xPixels - previous.xPixels, point.yPixels - previous.yPixels) >= Math.max(1, maskRadius * 0.12))
+      ) {
+        stroke.points.push(point);
+        setActiveStroke([...stroke.points]);
+      }
+      return;
+    }
+    const current = drag.current;
+    if (current?.pointerId !== event.pointerId) return;
+    commitTransform({
+      ...transformRef.current,
+      x: current.transformX + event.clientX - current.x,
+      y: current.transformY + event.clientY - current.y,
+    });
+    fitMode.current = false;
+  };
+  const stopPan = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const stroke = strokeRef.current;
+    if (stroke?.pointerId === event.pointerId) {
+      strokeRef.current = null;
+      event.currentTarget.releasePointerCapture(event.pointerId);
+      const points = stroke.points;
+      setActiveStroke([]);
+      if (!imageEntityId || points.length === 0 || maskTool === 'pan') return;
+      setMaskBusy(true);
+      void onEditImageMask(imageEntityId, imageMask?.revisionSha256, {
+        kind: 'brush',
+        stroke: { mode: maskTool, radiusPixels: maskRadius, points },
+      }).finally(() => setMaskBusy(false));
+      return;
+    }
+    if (drag.current?.pointerId !== event.pointerId) return;
+    drag.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+  const doubleClick = (event: ReactMouseEvent<HTMLDivElement>): void => {
+    if (!pointerTargetOwnsInteraction(event.target)) fit();
+  };
   return (
-    <div ref={setContainer} className={styles.frameHost}>
-      <div className={styles.imageFrame} style={{ width: size.width, height: size.height }}>
-        <img src={source} alt={alt} onError={onError} />
+    <div
+      ref={setContainer}
+      className={`${styles.frameHost} ${drag.current ? styles.frameDragging : ''}`}
+      data-mask-tool={maskTool}
+      onWheel={wheel}
+      onPointerDown={startPan}
+      onPointerMove={movePan}
+      onPointerUp={stopPan}
+      onPointerCancel={stopPan}
+      onDoubleClick={doubleClick}
+    >
+      <div className={styles.zoomToolbar}>
+        <OverlayChip
+          as="button"
+          onClick={() => setZoomAt(transformRef.current.scale / 1.5)}
+          disabled={transform.scale <= MIN_IMAGE_SCALE}
+          aria-label="Zoom out"
+        >
+          <Minus size={13} />
+        </OverlayChip>
+        <OverlayChip className={styles.zoomReadout} muted>
+          {formatZoomPercentage(transform.scale)}
+        </OverlayChip>
+        <OverlayChip
+          as="button"
+          onClick={() => setZoomAt(transformRef.current.scale * 1.5)}
+          disabled={transform.scale >= MAX_IMAGE_SCALE}
+          aria-label="Zoom in"
+        >
+          <Plus size={13} />
+        </OverlayChip>
+        <OverlayChip as="button" onClick={fit} aria-label="Fit image">
+          <Maximize2 size={13} />
+        </OverlayChip>
+      </div>
+      {imageEntityId && (
+        <div className={styles.maskToolbar} aria-label="Image mask tools">
+          <OverlayChip
+            as="button"
+            active={maskTool === 'add'}
+            onClick={() => setMaskTool((current) => (current === 'add' ? 'pan' : 'add'))}
+            disabled={maskBusy}
+            aria-label="Paint excluded area"
+            title="Paint excluded area"
+          >
+            <Brush size={13} />
+          </OverlayChip>
+          <OverlayChip
+            as="button"
+            active={maskTool === 'remove'}
+            onClick={() => setMaskTool((current) => (current === 'remove' ? 'pan' : 'remove'))}
+            disabled={maskBusy}
+            aria-label="Restore masked area"
+            title="Restore masked area"
+          >
+            <Eraser size={13} />
+          </OverlayChip>
+          <label>
+            <span>Brush</span>
+            <input
+              type="range"
+              min="2"
+              max="500"
+              step="1"
+              value={maskRadius}
+              onChange={(event) => setMaskRadius(Number(event.currentTarget.value))}
+              disabled={maskBusy}
+            />
+            <code>{maskRadius}px</code>
+          </label>
+          <button
+            type="button"
+            onClick={() => {
+              if (!imageMask || imageMask.maskedPixelCount === 0) return;
+              setMaskBusy(true);
+              void onEditImageMask(imageEntityId, imageMask.revisionSha256, { kind: 'clear' }).finally(
+                () => setMaskBusy(false),
+              );
+            }}
+            disabled={maskBusy || !imageMask || imageMask.maskedPixelCount === 0}
+            aria-label="Clear mask"
+            title="Clear mask"
+          >
+            <Trash2 size={13} />
+          </button>
+          {maskBusy ? (
+            <LoaderCircle className={styles.maskSpinner} size={13} />
+          ) : (
+            <code>{(imageMask?.maskedPixelCount ?? 0).toLocaleString('en-US')} px</code>
+          )}
+        </div>
+      )}
+      <div
+        className={styles.imageFrame}
+        style={{
+          width,
+          height,
+          transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
+        }}
+      >
+        <img src={source} alt={alt} draggable={false} onError={onError} />
+        {imageMask?.rasterObjectHash && imageMask.maskedPixelCount > 0 && (
+          <ImageMaskOverlay
+            rasterObjectHash={imageMask.rasterObjectHash}
+            expectedWidth={width}
+            expectedHeight={height}
+            onError={onMaskError}
+          />
+        )}
+        {activeStroke.length > 0 && (
+          <svg className={styles.activeMaskStroke} viewBox={`0 0 ${width} ${height}`}>
+            <polyline
+              points={activeStroke.map((point) => `${point.xPixels},${point.yPixels}`).join(' ')}
+              fill="none"
+              stroke={maskTool === 'remove' ? 'rgba(255,255,255,0.8)' : 'rgba(255,82,82,0.85)'}
+              strokeWidth={maskRadius * 2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        )}
         {markers.length > 0 && (
           <GcpImageMarkerOverlay
             imageWidthPixels={width}
@@ -595,6 +1101,145 @@ function ImageContentFrame({
         )}
       </div>
     </div>
+  );
+}
+
+interface ImageMaskPoint {
+  xPixels: number;
+  yPixels: number;
+}
+
+interface PackedImageMask {
+  width: number;
+  height: number;
+  bits: Uint8Array;
+}
+
+function imagePointAt(
+  event: ReactPointerEvent<HTMLDivElement>,
+  host: HTMLDivElement,
+  transform: ImageViewTransform,
+  width: number,
+  height: number,
+): ImageMaskPoint | null {
+  const bounds = host.getBoundingClientRect();
+  const xPixels = (event.clientX - bounds.left - transform.x) / transform.scale;
+  const yPixels = (event.clientY - bounds.top - transform.y) / transform.scale;
+  if (xPixels < 0 || yPixels < 0 || xPixels >= width || yPixels >= height) return null;
+  return { xPixels, yPixels };
+}
+
+function ImageMaskOverlay({
+  rasterObjectHash,
+  expectedWidth,
+  expectedHeight,
+  onError,
+}: {
+  rasterObjectHash: string;
+  expectedWidth: number;
+  expectedHeight: number;
+  onError: (message: string) => void;
+}): JSX.Element {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const onErrorRef = useRef(onError);
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(`hcad-image://project/${rasterObjectHash}?format=binary`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`mask object HTTP ${response.status}`);
+        const raster = decodePackedImageMask(await response.arrayBuffer());
+        if (raster.width !== expectedWidth || raster.height !== expectedHeight) {
+          throw new Error(
+            `mask dimensions ${raster.width} × ${raster.height} do not match ${expectedWidth} × ${expectedHeight}`,
+          );
+        }
+        const canvas = canvasRef.current;
+        if (!canvas || controller.signal.aborted) return;
+        paintMaskPreview(canvas, raster);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) onErrorRef.current(String(error));
+      });
+    return () => controller.abort();
+  }, [expectedHeight, expectedWidth, rasterObjectHash]);
+  return <canvas ref={canvasRef} className={styles.maskOverlay} aria-hidden="true" />;
+}
+
+function decodePackedImageMask(buffer: ArrayBuffer): PackedImageMask {
+  const bytes = new Uint8Array(buffer);
+  if (bytes.byteLength < 24 || new TextDecoder().decode(bytes.subarray(0, 8)) !== 'HCMASK01') {
+    throw new Error('invalid image-mask framing');
+  }
+  const header = new DataView(buffer, bytes.byteOffset, bytes.byteLength);
+  const width = header.getUint32(8, true);
+  const height = header.getUint32(12, true);
+  if (width < 1 || height < 1 || bytes.byteLength !== 24 + Math.ceil((width * height) / 8)) {
+    throw new Error('invalid image-mask dimensions');
+  }
+  return { width, height, bits: bytes.subarray(24) };
+}
+
+function paintMaskPreview(canvas: HTMLCanvasElement, raster: PackedImageMask): void {
+  const scale = Math.min(1, 2048 / Math.max(raster.width, raster.height));
+  const width = Math.max(1, Math.round(raster.width * scale));
+  const height = Math.max(1, Math.round(raster.height * scale));
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('2D canvas is unavailable');
+  const pixels = context.createImageData(width, height);
+  for (let y = 0; y < height; y += 1) {
+    const sourceY = Math.min(raster.height - 1, Math.floor(((y + 0.5) * raster.height) / height));
+    for (let x = 0; x < width; x += 1) {
+      const sourceX = Math.min(raster.width - 1, Math.floor(((x + 0.5) * raster.width) / width));
+      const sourcePixel = sourceY * raster.width + sourceX;
+      if ((raster.bits[sourcePixel >> 3]! & (1 << (sourcePixel & 7))) === 0) continue;
+      const target = (y * width + x) * 4;
+      pixels.data[target] = 255;
+      pixels.data[target + 1] = 54;
+      pixels.data[target + 2] = 74;
+      pixels.data[target + 3] = 105;
+    }
+  }
+  context.putImageData(pixels, 0, 0);
+}
+
+interface ImageViewTransform {
+  scale: number;
+  x: number;
+  y: number;
+}
+
+const MIN_IMAGE_SCALE = 0.01;
+const MAX_IMAGE_SCALE = 64;
+
+function clampImageScale(scale: number): number {
+  return Math.max(MIN_IMAGE_SCALE, Math.min(MAX_IMAGE_SCALE, scale));
+}
+
+function formatZoomPercentage(scale: number): string {
+  const percentage = scale * 100;
+  return `${percentage < 10 ? percentage.toFixed(1) : Math.round(percentage)}%`;
+}
+
+function pointerTargetOwnsInteraction(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest('button, input, select, textarea, a, [contenteditable="true"]') !== null
+  );
+}
+
+function keyboardTargetOwnsNavigation(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest(
+      'input, select, textarea, [contenteditable="true"], [role="textbox"], [role="combobox"], [role="listbox"], [role="spinbutton"]',
+    ) !== null
   );
 }
 
@@ -741,24 +1386,6 @@ function fileName(photo: DiscoveredPhoto): string {
 function cameraName(photo: DiscoveredPhoto): string {
   const values = [photo.metadata.exif.make, photo.metadata.exif.model].filter(Boolean);
   return values.length > 0 ? values.join(' · ') : 'unknown';
-}
-
-function photoStatus(photo: DiscoveredPhoto, tags: readonly ImageProductTag[] | undefined): string {
-  const productStatus = [
-    tags?.includes('rtkFixed') ? 'RTK fixed' : null,
-    tags?.includes('aligned') ? 'aligned' : null,
-    tags?.includes('depthReady')
-      ? tags.includes('depthStale')
-        ? 'depth stale'
-        : 'depth ready'
-      : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
-  if (productStatus) return productStatus;
-  if (photo.metadata.djiXmp.rtk != null) return 'RTK/DJI · validated';
-  if (hasPhotoPosition(photo)) return 'GPS · validated';
-  return 'no position · validated';
 }
 
 function hasPhotoPosition(photo: DiscoveredPhoto): boolean {

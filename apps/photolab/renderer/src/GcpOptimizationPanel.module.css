@@ -144,15 +144,18 @@
   justify-content: center;
   gap: 7px;
   min-height: 34px;
-  border: 0;
+  border: 1px solid var(--hc-border-default);
   border-radius: var(--hc-radius-md);
-  color: var(--hc-accent-on);
-  background: var(--hc-accent-base);
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-island-hi);
   font: inherit;
   font-weight: 650;
   cursor: pointer;
 }
 .start:disabled {
-  opacity: 0.45;
+  color: var(--hc-fg-muted);
+  background: var(--hc-bg-island-lo);
+  border-color: var(--hc-border-default);
+  opacity: 0.72;
   cursor: default;
 }

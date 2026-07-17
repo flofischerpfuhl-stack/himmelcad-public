@@ -1,8 +1,6 @@
 import type { EntityId, EntityKind, EntitySnapshot, ProjectSnapshot } from '@himmelcad/data';
 import {
   Box,
-  ChevronDown,
-  ChevronRight,
   CircleDot,
   Eye,
   EyeOff,
@@ -13,36 +11,55 @@ import {
   Sparkles,
   Spline,
 } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 
 import styles from './EntityTree.module.css';
+import { ExpandChevron } from './ExpandChevron.js';
+import { IslandTabs } from './IslandTabs.js';
 import { useLayoutStore } from './useLayoutStore.js';
+
+export type LeftNavTabId = 'tree' | 'layers' | 'imported';
 
 export interface EntityTreeProps {
   project: ProjectSnapshot | null;
   selectedIds: ReadonlySet<EntityId>;
   onSelect: (id: EntityId, mode: 'replace' | 'add' | 'toggle') => void;
+  onSelectMany?: (ids: readonly EntityId[]) => void;
   onRename?: (id: EntityId, name: string) => void;
   onMove?: (id: EntityId, newParentId: EntityId) => void;
   onVisibilityChange?: (id: EntityId, visible: boolean) => void;
   onContextAction?: (
     id: EntityId,
-    action: 'showGcpImages' | 'open' | 'properties' | 'export',
+    action: 'showGcpImages' | 'open' | 'properties' | 'export' | 'remove',
   ) => void;
+  /** Left island navigation tab (Tree / Layers / Imported from). */
+  leftNavTab?: LeftNavTabId;
+  onLeftNavTabChange?: (tab: LeftNavTabId) => void;
 }
 
 export function EntityTree({
   project,
   selectedIds,
   onSelect,
+  onSelectMany,
   onRename,
   onMove,
   onVisibilityChange,
   onContextAction,
+  leftNavTab = 'tree',
+  onLeftNavTabChange,
 }: EntityTreeProps): JSX.Element {
   const collapseLeft = useLayoutStore((s) => s.toggleLeftPanel);
   const [context, setContext] = useState<{ id: EntityId; x: number; y: number } | null>(null);
   const [editingId, setEditingId] = useState<EntityId | null>(null);
+  const [selectionAnchor, setSelectionAnchor] = useState<EntityId | null>(null);
+  const [activeParentId, setActiveParentId] = useState<EntityId | null>(null);
+  const [localNavTab, setLocalNavTab] = useState<LeftNavTabId>(leftNavTab);
+  const navTab = onLeftNavTabChange ? leftNavTab : localNavTab;
+  const setNavTab = (tab: LeftNavTabId): void => {
+    if (onLeftNavTabChange) onLeftNavTabChange(tab);
+    else setLocalNavTab(tab);
+  };
   useEffect(() => {
     if (!context) return;
     const close = (): void => setContext(null);
@@ -65,19 +82,61 @@ export function EntityTree({
     </button>
   );
 
+  const nav = (
+    <div className={styles.navRow}>
+      <IslandTabs
+        ariaLabel="Left navigation"
+        value={navTab}
+        onChange={(id) => setNavTab(id as LeftNavTabId)}
+        items={[
+          { id: 'tree', label: 'Tree' },
+          { id: 'layers', label: 'Layers' },
+          { id: 'imported', label: 'Imported from' },
+        ]}
+      />
+      {headerCollapse}
+    </div>
+  );
+
   if (!project) {
     return (
       <div className={styles.root}>
-        <div className={styles.header}>
-          <span className={styles.headerLabel}>Project</span>
-          <span className={styles.headerName}>—</span>
-          {headerCollapse}
+        {nav}
+        <div className={styles.islandBody}>
+          <div className={styles.header}>
+            <span className={styles.headerLabel}>Project</span>
+            <span className={styles.headerName}>—</span>
+          </div>
+          <div className={styles.empty}>
+            <Layers size={28} strokeWidth={1.4} color="var(--hc-fg-subtle)" />
+            <div className={styles.emptyTitle}>No project open</div>
+            <div className={styles.emptyHint}>
+              Use Project → New, Project → Open, or drop a LAS file into the viewport.
+            </div>
+          </div>
         </div>
-        <div className={styles.empty}>
-          <Layers size={28} strokeWidth={1.4} color="var(--hc-fg-subtle)" />
-          <div className={styles.emptyTitle}>No project open</div>
-          <div className={styles.emptyHint}>
-            Use Project → New, Project → Open, or drop a LAS file into the viewport.
+      </div>
+    );
+  }
+
+  if (navTab !== 'tree') {
+    return (
+      <div className={styles.root}>
+        {nav}
+        <div className={styles.islandBody}>
+          <div className={styles.header}>
+            <span className={styles.headerLabel}>{navTab === 'layers' ? 'Layers' : 'Imported from'}</span>
+            <span className={styles.headerName}>{project.name}</span>
+          </div>
+          <div className={styles.placeholderPane}>
+            <div className={styles.emptyTitle}>
+              {navTab === 'layers' ? 'Layers view' : 'Import provenance'}
+            </div>
+            <div className={styles.emptyHint}>
+              {navTab === 'layers'
+                ? 'Layer-ordered navigation will live here. Tree remains the hierarchical project model.'
+                : 'Group entities by source import, capture, or external file. Coming next.'}
+            </div>
           </div>
         </div>
       </div>
@@ -86,31 +145,69 @@ export function EntityTree({
 
   return (
     <div className={styles.root}>
+      {nav}
+      <div className={styles.islandBody}>
       <div className={styles.header}>
         <span className={styles.headerLabel}>Project</span>
         <span className={styles.headerName}>{project.name}</span>
-        {headerCollapse}
       </div>
-      <div className={styles.body} role="tree">
+      <div
+        className={styles.body}
+        role="tree"
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'a') return;
+          const parent = activeParentId ? project.entities[activeParentId] : undefined;
+          if (!parent) return;
+          event.preventDefault();
+          const ids = parent.children.filter((id) => project.entities[id]);
+          if (onSelectMany) onSelectMany(ids);
+          else ids.forEach((id) => onSelect(id, 'add'));
+        }}
+      >
         <TreeNode
           id={project.rootEntity}
           entities={project.entities}
           depth={0}
           selectedIds={selectedIds}
-          onSelect={onSelect}
+          onSelect={(id, event) => {
+            const node = project.entities[id];
+            const parentId = node?.parent ?? null;
+            const siblings = parentId ? project.entities[parentId]?.children ?? [] : [id];
+            if (event.shiftKey && selectionAnchor && parentId === activeParentId) {
+              const anchorIndex = siblings.indexOf(selectionAnchor);
+              const currentIndex = siblings.indexOf(id);
+              if (anchorIndex >= 0 && currentIndex >= 0) {
+                const range = siblings.slice(
+                  Math.min(anchorIndex, currentIndex),
+                  Math.max(anchorIndex, currentIndex) + 1,
+                );
+                if (onSelectMany) onSelectMany(range);
+                else range.forEach((rangeId) => onSelect(rangeId, 'add'));
+                return;
+              }
+            }
+            onSelect(id, event.metaKey || event.ctrlKey ? 'toggle' : 'replace');
+            setSelectionAnchor(id);
+            setActiveParentId(parentId);
+          }}
           editingId={editingId}
           onEditingChange={setEditingId}
           onRename={onRename}
           onMove={onMove}
           onVisibilityChange={onVisibilityChange}
-          onContextMenu={(id, x, y) =>
+          onContextMenu={(id, x, y) => {
+            if (!selectedIds.has(id)) onSelect(id, 'replace');
+            setSelectionAnchor(id);
+            setActiveParentId(project.entities[id]?.parent ?? null);
             setContext({
               id,
               x: Math.max(4, Math.min(x, window.innerWidth - 226)),
               y: Math.max(4, Math.min(y, window.innerHeight - 170)),
-            })
-          }
+            });
+          }}
         />
+      </div>
       </div>
       {context && project.entities[context.id] && (
         <div
@@ -151,6 +248,18 @@ export function EntityTree({
               }}
             >
               Export…
+            </button>
+          )}
+          {project.entities[context.id]?.kind === 'CameraImage' && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onContextAction?.(context.id, 'remove');
+                setContext(null);
+              }}
+            >
+              Remove from project…
             </button>
           )}
           <button
@@ -207,7 +316,7 @@ interface NodeProps {
   entities: ProjectSnapshot['entities'];
   depth: number;
   selectedIds: ReadonlySet<EntityId>;
-  onSelect: EntityTreeProps['onSelect'];
+  onSelect: (id: EntityId, event: ReactMouseEvent<HTMLDivElement>) => void;
   editingId: EntityId | null;
   onEditingChange: (id: EntityId | null) => void;
   onRename: EntityTreeProps['onRename'];
@@ -241,12 +350,10 @@ function TreeNode({
         className={`${styles.row} ${isSelected ? styles.rowSelected : ''}`}
         style={{ paddingLeft: 4 + depth * 12 }}
         onClick={(e) => {
-          const mode = e.metaKey || e.ctrlKey ? 'toggle' : e.shiftKey ? 'add' : 'replace';
-          onSelect(node.id, mode);
+          onSelect(node.id, e);
         }}
         onContextMenu={(event) => {
           event.preventDefault();
-          onSelect(node.id, 'replace');
           onContextMenu(node.id, event.clientX, event.clientY);
         }}
         draggable={node.kind !== 'ProjectRoot'}
@@ -277,11 +384,7 @@ function TreeNode({
           tabIndex={-1}
         >
           {hasChildren ? (
-            open ? (
-              <ChevronDown size={12} />
-            ) : (
-              <ChevronRight size={12} />
-            )
+            <ExpandChevron expanded={open} size={12} />
           ) : (
             <span className={styles.twistyEmpty} />
           )}

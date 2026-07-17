@@ -1,0 +1,243 @@
+.root,
+.create,
+.groups {
+  display: grid;
+  gap: 9px;
+}
+
+.create {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--hc-border-subtle);
+}
+
+.sectionTitle {
+  color: var(--hc-fg-muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.create label {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: var(--hc-fg-default);
+  font-size: 10px;
+}
+
+.create input {
+  min-width: 0;
+  height: 29px;
+  padding: 0 8px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-void);
+}
+
+.selection,
+.groups p {
+  margin: 0;
+  color: var(--hc-fg-muted);
+  font-size: 9px;
+}
+
+.calibrationEditor {
+  display: grid;
+  gap: 6px;
+  padding: 7px;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-island-lo);
+}
+
+.editorHeader,
+.calibrationName {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.editorHeader > span {
+  margin-right: auto;
+  color: var(--hc-fg-muted);
+  font-size: 9px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.create .iconButton,
+.create .removeButton {
+  min-height: 25px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 7px;
+}
+
+.create .removeButton {
+  width: 27px;
+  padding: 0;
+  border-color: var(--hc-border-subtle);
+}
+
+.calibrationName input {
+  flex: 1;
+}
+
+.calibrationName span {
+  width: 54px;
+  color: var(--hc-fg-muted);
+  font-size: 8px;
+  text-align: right;
+}
+
+.cameraAssignments {
+  max-height: 230px;
+  overflow: auto;
+  display: grid;
+  gap: 3px;
+  padding-top: 3px;
+  border-top: 1px solid var(--hc-border-subtle);
+}
+
+.create .cameraAssignments label {
+  grid-template-columns: minmax(0, 1fr) 112px;
+}
+
+.cameraAssignments label > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cameraAssignments select {
+  min-width: 0;
+  height: 25px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-void);
+  font-size: 9px;
+}
+
+.create button {
+  min-height: 31px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-island-hi);
+}
+
+.create button:hover:not(:disabled) {
+  background: var(--hc-hover-bg);
+}
+
+.create button:disabled {
+  opacity: 0.4;
+}
+
+.groups article {
+  display: grid;
+  gap: 6px;
+  padding: 9px;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-island-lo);
+}
+
+.groupHeading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.groupHeading strong {
+  color: var(--hc-fg-strong);
+  font-size: 11px;
+}
+
+.groupHeading span,
+.calibration small,
+.groups article > small {
+  color: var(--hc-fg-muted);
+  font-size: 9px;
+}
+
+.reviewRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--hc-fg-muted);
+  font-size: 9px;
+}
+
+.reviewRow .needsReview {
+  color: var(--hc-warning);
+}
+
+.groupActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.reviewRow button {
+  min-height: 27px;
+  padding: 0 8px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-island-hi);
+}
+
+.reviewRow button:hover:not(:disabled) {
+  background: var(--hc-hover-bg);
+}
+
+.calibration {
+  display: grid;
+  gap: 2px;
+  padding: 6px 7px;
+  border: 1px solid var(--hc-border-default);
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-void);
+  font-size: 10px;
+}
+
+.calibration details {
+  color: var(--hc-fg-muted);
+  font-size: 9px;
+}
+
+.calibration summary {
+  cursor: pointer;
+}
+
+.assignedImages {
+  max-height: 150px;
+  overflow: auto;
+  display: grid;
+  gap: 2px;
+  padding: 5px 0 0 10px;
+  color: var(--hc-fg-default);
+  font: 8px var(--hc-font-mono);
+}
+
+.assignedImages span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.groups code {
+  overflow: hidden;
+  color: var(--hc-fg-muted);
+  font: 8px var(--hc-font-mono);
+  text-overflow: ellipsis;
+}

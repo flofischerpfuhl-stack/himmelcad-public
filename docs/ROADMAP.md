@@ -6,12 +6,19 @@ This roadmap is the product-level sequence. Binding day-to-day rules live in
 ## Current Execution Priority
 
 PhotoLab productization is pulled forward before further Builder feature
-work. Existing Builder viewer, UI, point-cloud and large-geometry contracts
-remain the shared foundation. The detailed PhotoLab sequence and decision gates
-live in `photolab/PHOTOLAB-CONCEPT.md` and
-`photolab/implementation-plan.html`; the older numeric phase order below is
-retained as historical product-family structure until the roadmap is fully
-rebaselined.
+work. In parallel, the shared foundation is being cut over to ADR 0016
+(canonical entities) and ADR 0017 (unified render core). Binding lane rules,
+ChronoGit tax freezes, and reserved-product freezes live in
+`docs/CURRENT-DIRECTION.md`.
+
+The detailed PhotoLab sequence and decision gates live in
+`photolab/PHOTOLAB-CONCEPT.md` and `photolab/implementation-plan.html`; the
+older numeric phase order below is retained as historical product-family
+structure until the roadmap is fully rebaselined.
+
+**Frozen until decision gates:** ChronoGit productization (Phase 7), TestFlight
+(Phase 8), Composer (Phase 9). Kernel may keep journal/immutable-object
+compatibility only — no feature work for those products.
 
 ## Product Principle
 
@@ -38,6 +45,7 @@ Status: partially implemented.
 
 - Monorepo:
   - `apps/builder`
+  - `apps/photolab`
   - `apps/weltview`
   - `packages/@himmelcad/ui`
   - `packages/@himmelcad/viewer`
@@ -274,8 +282,17 @@ Exit criteria:
 
 Goal: finished, near-full Metashape alternative plus Gaussian splats.
 
+Status: feature implementation is advanced; real-dataset, cancellation, packaging and
+cross-platform release validation are still in progress. A milestone is not complete merely
+because its UI or backend path exists.
+
 - Image/folder import with preserved EXIF/XMP/DJI RTK and explicit horizontal
   plus vertical CRS transformation.
+- Explicit, cancellable image-quality jobs with persisted per-image provenance and measured
+  sharpness, directional blur, exposure/clipping and texture indicators for project-wide or
+  processing-set scopes.
+- Immutable original-pixel image masks with add/remove/clear/restore revisions, derived tags,
+  processing-set-exact lineage and exclusion in classical/neural alignment plus portable MVS.
 - Tie-point extraction/matching, SfM, bundle adjustment and sparse point cloud.
 - GCP/checkpoint import, guided image projections, XY/Z/XYZ roles, optimization
   and scoped accuracy reports.
@@ -283,7 +300,22 @@ Goal: finished, near-full Metashape alternative plus Gaussian splats.
 - DSM/DTM raster pyramids, orthomosaics, textured terrain/mesh and COG export.
 - License-clean Gaussian-splat generation and hierarchical viewing.
 - Hardware-adaptive, resumable job DAG with isolated CPU/GPU/model workers.
+- Self-contained HTML and Chromium PDF processing reports covering persisted run hashes and
+  runtimes, cancellation/recovery, alignment scope and lineage, GCP control/checkpoint errors,
+  published products and the explicitly labelled export-time hardware probe.
+- Explicit multi-flight workflow with immutable capture/calibration groups, separately optimized
+  alignments, overlap or shared-control merge runs, and selectable merged product lineage.
 - All outputs viewable together and represented as normal HimmelCAD entities.
+
+Current verification gates:
+
+- Fresh and resumed Fast/Quality Hybrid runs on the 8-, 20–30- and 135-image Sulzberg scopes.
+- Candidate metrics compared with the bundled Agisoft report, orthomosaic and 59,639,872-point LAS.
+- Targeted cancellation/recovery at neural extraction, classical rescue, mapper, MVS, raster,
+  mesh and splat boundaries.
+- Installed Linux and Windows packages with audited offline runtimes and identical feature scope.
+- Headless visual regression of every workspace, function panel and task island at supported
+  window sizes.
 
 Exit criteria:
 

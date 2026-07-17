@@ -2,22 +2,6 @@
   display: grid;
   gap: 12px;
 }
-.intro {
-  padding: 10px;
-  background: var(--hc-bg-island-lo);
-  border-left: 2px solid var(--hc-accent-base);
-  border-radius: var(--hc-radius-sm);
-}
-.intro strong {
-  color: var(--hc-fg-default);
-  font-size: 12px;
-}
-.intro p {
-  margin: 4px 0 0;
-  color: var(--hc-fg-muted);
-  font-size: 10px;
-  line-height: 1.45;
-}
 .name,
 .field {
   display: grid;
@@ -46,7 +30,7 @@
   padding: 8px 10px;
   color: var(--hc-fg-default);
   background: var(--hc-bg-island-lo);
-  border-left: 2px solid var(--hc-success);
+  border: 1px solid var(--hc-border-default);
   border-radius: var(--hc-radius-sm);
   font-size: 10px;
 }
@@ -84,7 +68,7 @@
   font-size: 10px;
 }
 .toolbar button:hover:not(:disabled) {
-  background: var(--hc-bg-hover);
+  background: var(--hc-hover-bg);
 }
 .pipeline {
   display: grid;
@@ -191,7 +175,7 @@
   transition: transform 120ms ease;
 }
 .toggle input:checked + span {
-  background: var(--hc-accent-soft);
+  background: var(--hc-press-bg);
   border-color: var(--hc-accent-base);
 }
 .toggle input:checked + span::after {
@@ -201,34 +185,26 @@
 .toggle strong {
   font-weight: 450;
 }
-.note {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 8px;
-  color: var(--hc-fg-muted);
-  background: var(--hc-bg-island-lo);
-  border-radius: var(--hc-radius-sm);
-  font-size: 9px;
-  line-height: 1.4;
-}
 .start {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
   height: 32px;
-  color: var(--hc-accent-on);
-  background: var(--hc-accent-base);
-  border: 0;
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-island-hi);
+  border: 1px solid var(--hc-border-default);
   border-radius: var(--hc-radius-sm);
   cursor: pointer;
 }
 .start:hover:not(:disabled) {
-  background: var(--hc-accent-hover);
+  background: var(--hc-press-bg);
 }
 .start:disabled,
 .toolbar button:disabled {
-  cursor: wait;
-  opacity: 0.5;
+  color: var(--hc-fg-muted);
+  background: var(--hc-bg-island-lo);
+  border-color: var(--hc-border-default);
+  cursor: default;
+  opacity: 0.72;
 }

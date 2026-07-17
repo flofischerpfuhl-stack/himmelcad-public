@@ -41,9 +41,9 @@
 .hint,
 .resolved {
   padding: 9px 10px;
-  color: var(--hc-fg-default);
-  background: var(--hc-accent-soft);
-  border-left: 2px solid var(--hc-accent-base);
+  color: var(--hc-fg-muted);
+  background: var(--hc-bg-island-lo);
+  border: 1px solid var(--hc-border-default);
   border-radius: var(--hc-radius-sm);
   font-size: 10px;
   line-height: 1.55;
@@ -55,7 +55,7 @@
   padding: 8px 10px;
   color: var(--hc-fg-default);
   background: var(--hc-bg-island-lo);
-  border-left: 2px solid var(--hc-success);
+  border: 1px solid var(--hc-border-default);
   border-radius: var(--hc-radius-sm);
   font-size: 10px;
 }
@@ -73,7 +73,6 @@
   display: grid;
   gap: 6px;
   background: var(--hc-bg-island-lo);
-  border-left-color: var(--hc-success);
 }
 
 .resolvedRow {
@@ -97,29 +96,28 @@
 .action {
   height: 31px;
   padding: 0 12px;
-  color: var(--hc-accent-on);
-  background: var(--hc-accent-base);
-  border: 0;
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-island-hi);
+  border: 1px solid var(--hc-border-default);
   border-radius: var(--hc-radius-sm);
   cursor: pointer;
 }
 
 .action:hover:not(:disabled) {
-  background: var(--hc-accent-hover);
+  background: var(--hc-hover-bg);
+  border-color: var(--hc-border-strong);
 }
 
 .action:disabled {
-  cursor: wait;
-  opacity: 0.55;
+  color: var(--hc-fg-muted);
+  background: var(--hc-bg-island-lo);
+  border-color: var(--hc-border-default);
+  cursor: default;
+  opacity: 0.72;
 }
 
 .error {
   color: var(--hc-error);
   font-size: 10px;
   line-height: 1.5;
-}
-
-.offline {
-  color: var(--hc-success);
-  font-size: 10px;
 }

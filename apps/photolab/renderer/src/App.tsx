@@ -2,6 +2,10 @@ import { consoleStore, logEvent } from '@himmelcad/console';
 import type {
   AlignmentQualityProfile,
   AlignedGcpCameraRecord,
+  AlignmentMergeCandidateRecord,
+  AlignmentMergeConnection,
+  CameraCalibrationGroupRecord,
+  CaptureGroupRecord,
   EntityId,
   GcpCollectionRecord,
   GcpCsvImportMapping,
@@ -10,12 +14,18 @@ import type {
   GcpOptimizationSnapshotResult,
   GcpObservationEdit,
   HardwareCapabilities,
+  EditImageMaskParams,
+  EditImageMaskResult,
+  ImageQualityAnalysisRecord,
+  ListedImageMaskRevision,
+  MergedAlignmentRunRecord,
   ObjectHash,
   OpenPhotolabProjectResult,
   PhotolabJournalEntry,
   PhotolabJob,
   PhotoImportBatch,
   ProcessingSetRecord,
+  PublishedGcpOptimizationEntry,
   ProjectCameraImageRecord,
   ProjectSnapshot,
   ResolvedAlignmentConfig,
@@ -25,6 +35,8 @@ import {
   AppShell,
   EntityTree,
   FunctionPanel,
+  IslandTabs,
+  OverlayChip,
   PanelToggles,
   Ribbon,
   StatusBar,
@@ -38,23 +50,37 @@ import {
   type GcpMarker,
   type ViewportHandle,
 } from '@himmelcad/viewer';
+import { AlertTriangle, LoaderCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import photolabLogoUrl from '../../build/mark.png';
+
 import { AlignmentProfilePanel } from './AlignmentProfilePanel.js';
+import { AlignmentMergePanel } from './AlignmentMergePanel.js';
 import styles from './App.module.css';
 import { BatchConfiguratorPanel, type BatchPipelineStep } from './BatchConfiguratorPanel.js';
+import { CaptureGroupsPanel } from './CaptureGroupsPanel.js';
+import type { CaptureCalibrationDraft } from './captureGroupDraft.js';
+import { ConfirmationDialog } from './ConfirmationDialog.js';
 import type { GcpAccuracyReport } from './GcpAccuracyPanel.js';
 import type { GcpImageMarker, GcpManualMeasurement } from './GcpImageMarkerOverlay.js';
 import { GcpImportPanel } from './GcpImportPanel.js';
+import { GcpImagesPanel } from './GcpImagesPanel.js';
 import { GcpOptimizationPanel, type GcpOptimizationSelection } from './GcpOptimizationPanel.js';
+import { GcpPropertiesPanel } from './GcpPropertiesPanel.js';
+import { FloatingTaskIsland } from './FloatingTaskIsland.js';
 import { ImageImportPanel } from './ImageImportPanel.js';
 import type {
   CrsOperationDiscovery,
   CrsOperationQuery,
+  ImageImportProgress,
   ImageImportDecision,
+  LocalGridSelection,
 } from './ImageImportPanel.js';
 import { ImageWorkspace } from './ImageWorkspace.js';
-import { PhotolabBottomPanel } from './PhotolabBottomPanel.js';
+import { ImagePropertiesPanel } from './ImagePropertiesPanel.js';
+import { SelectionPropertiesPanel } from './SelectionPropertiesPanel.js';
+import { PhotolabBottomPanel, type BottomTab } from './PhotolabBottomPanel.js';
 import { ProjectDiagnosticsPanel, type ProjectDiagnosticsKind } from './ProjectDiagnosticsPanel.js';
 import {
   ProductPanel,
@@ -62,12 +88,28 @@ import {
   type ProductOperation,
   type ProductRunConfiguration,
 } from './ProductPanel.js';
+import { ProjectFileOperationDialog } from './ProjectFileOperationDialog.js';
+import {
+  applyProjectProgress,
+  createProjectFileOperation,
+  failProjectFileOperation,
+  requestProjectCancellation,
+  type ProjectFileOperationState,
+} from './projectFileOperation.js';
 import { createPhotolabProject } from './project.js';
 import { createPhotolabRibbonTabs } from './ribbon.js';
+import {
+  EntityLoadGenerationGuard,
+  ProjectRefreshGuard,
+  entityLoadToken,
+  newlyFailedJobIds,
+  requiresFullSceneReset,
+  type SceneIdentity,
+} from './viewerLifecycle.js';
 
 const DEFAULT_IMAGE_COUNT = 0;
 const SIDECAR_PROGRESS_PREFIX = '__HC_PROGRESS__';
-type WorkspaceMode = 'scene3d' | 'map2d' | 'images';
+type WorkspaceMode = 'scene' | 'images';
 interface ProjectProductDatasetRecord {
   entityId: EntityId;
   kind: 'gaussianSplat' | 'dem' | 'orthomosaic' | 'mesh' | 'depth' | 'dense' | 'sparse';
@@ -85,11 +127,38 @@ interface ProjectProductDatasetRecord {
   boundsMax?: [number, number, number];
   renderOffset?: [number, number, number];
   pointCount?: number;
+  versionHash?: ObjectHash;
+  sourceAlignmentEntityId?: EntityId;
+  processingSetId?: EntityId;
+  gcpOptimizationEntityId?: EntityId;
+  gcpOptimizationSnapshotSha256?: ObjectHash;
+}
+
+interface PendingProductExportConfirmation {
+  token: string;
+  displayName: string;
+  entityName: string;
+}
+
+interface ProductLayerStatus {
+  state: 'loading' | 'error';
+  name: string;
+  message?: string;
 }
 
 export function App(): JSX.Element {
   const [project, setProject] = useState<ProjectSnapshot>(createPhotolabProject);
   const [selected, setSelected] = useState<ReadonlySet<EntityId>>(new Set());
+  const [pendingImageRemoval, setPendingImageRemoval] = useState<readonly EntityId[] | null>(null);
+  const [imageRemovalBusy, setImageRemovalBusy] = useState(false);
+  const [pendingProductExport, setPendingProductExport] =
+    useState<PendingProductExportConfirmation | null>(null);
+  const [productExportBusy, setProductExportBusy] = useState(false);
+  const [productLayerStatuses, setProductLayerStatuses] = useState<
+    Readonly<Record<EntityId, ProductLayerStatus>>
+  >({});
+  const [productLayerRetryGeneration, setProductLayerRetryGeneration] = useState(0);
+  const [viewportRecoveryGeneration, setViewportRecoveryGeneration] = useState(0);
   const [snap, setSnap] = useState<SnapResult | null>(null);
   const [coreReady, setCoreReady] = useState(false);
   const [hardware, setHardware] = useState<HardwareCapabilities | null>(null);
@@ -100,22 +169,45 @@ export function App(): JSX.Element {
   const [resolveError, setResolveError] = useState<string | null>(null);
   const [resolving, setResolving] = useState(false);
   const [alignmentStarting, setAlignmentStarting] = useState(false);
+  const [imageQualityStarting, setImageQualityStarting] = useState(false);
   const [productStarting, setProductStarting] = useState(false);
   const [batchStarting, setBatchStarting] = useState(false);
   const [processingSetSaving, setProcessingSetSaving] = useState(false);
   const [projectReady, setProjectReady] = useState(false);
+  const [projectFileOperation, setProjectFileOperation] =
+    useState<ProjectFileOperationState | null>(null);
   const [autosaveGeneration, setAutosaveGeneration] = useState(0);
   const [lastSavedGeneration, setLastSavedGeneration] = useState(0);
   const [jobs, setJobs] = useState<readonly PhotolabJob[]>([]);
   const [imageImportBatch, setImageImportBatch] = useState<PhotoImportBatch | null>(null);
   const [projectImages, setProjectImages] = useState<readonly ProjectCameraImageRecord[]>([]);
+  const [imageQualityAnalyses, setImageQualityAnalyses] = useState<
+    readonly ImageQualityAnalysisRecord[]
+  >([]);
+  const [imageMasks, setImageMasks] = useState<readonly ListedImageMaskRevision[]>([]);
   const [processingSets, setProcessingSets] = useState<readonly ProcessingSetRecord[]>([]);
+  const [captureGroups, setCaptureGroups] = useState<readonly CaptureGroupRecord[]>([]);
+  const [calibrationGroups, setCalibrationGroups] = useState<
+    readonly CameraCalibrationGroupRecord[]
+  >([]);
+  const [captureGroupSaving, setCaptureGroupSaving] = useState(false);
+  const [alignmentMergeCandidates, setAlignmentMergeCandidates] = useState<
+    readonly AlignmentMergeCandidateRecord[]
+  >([]);
+  const [alignmentMerges, setAlignmentMerges] = useState<readonly MergedAlignmentRunRecord[]>([]);
+  const [alignmentMergeBusy, setAlignmentMergeBusy] = useState(false);
+  const [gcpOptimizations, setGcpOptimizations] = useState<
+    readonly PublishedGcpOptimizationEntry[]
+  >([]);
+  const [activeProductAlignmentId, setActiveProductAlignmentId] = useState<EntityId | null>(null);
   const [activeProcessingSetId, setActiveProcessingSetId] = useState<EntityId | null>(null);
   const [productDatasets, setProductDatasets] = useState<readonly ProjectProductDatasetRecord[]>(
     [],
   );
   const [gcpPath, setGcpPath] = useState<string | null>(null);
   const [gcpBusy, setGcpBusy] = useState(false);
+  const [gcpImportError, setGcpImportError] = useState<string | null>(null);
+  const [gcpImportOpen, setGcpImportOpen] = useState(false);
   const [gcpCollection, setGcpCollection] = useState<
     readonly [ObjectHash, GcpCollectionRecord] | null
   >(null);
@@ -127,25 +219,161 @@ export function App(): JSX.Element {
   const [focusedGcpId, setFocusedGcpId] = useState<string | null>(null);
   const [projectTargetCrs, setProjectTargetCrs] = useState<string | null>(null);
   const [imageImportBusy, setImageImportBusy] = useState(false);
-  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('scene3d');
+  const [imageImportProgress, setImageImportProgress] = useState<ImageImportProgress | null>(null);
+  const [gridSelectionProgress, setGridSelectionProgress] = useState<ImageImportProgress | null>(
+    null,
+  );
+  const [imageImportError, setImageImportError] = useState<string | null>(null);
+  const [bottomTab, setBottomTab] = useState<BottomTab>('console');
+  const [rightPanelTab, setRightPanelTab] = useState<'function' | 'properties'>('function');
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('scene');
+  const [sceneNavigationMode, setSceneNavigationMode] = useState<'orbit3d' | 'lockedTopDown2d'>(
+    'orbit3d',
+  );
   const viewportRef = useRef<ViewportHandle | null>(null);
   const initialBootstrapRequested = useRef(false);
   const jobPollErrorLogged = useRef(false);
   const activeImageCommitId = useRef<string | null>(null);
+  const activeImageInspectId = useRef<string | null>(null);
+  const activeImageProgressKey = useRef<string | null>(null);
+  const activeGridProgressKey = useRef<string | null>(null);
+  const activeProjectFileOperation = useRef<ProjectFileOperationState | null>(null);
   const activeGcpOperationId = useRef<string | null>(null);
   const lastLoadedGcpOptimizationJobId = useRef<string | null>(null);
   const loadedProductIds = useRef<Set<EntityId>>(new Set());
+  const loadingProductIds = useRef<Set<EntityId>>(new Set());
+  const desiredProductIds = useRef<Set<EntityId>>(new Set());
+  const productLoadGenerations = useRef(new EntityLoadGenerationGuard());
+  const projectRefreshGuard = useRef(new ProjectRefreshGuard());
+  const acceptedSceneIdentity = useRef<SceneIdentity | null>(null);
   const refreshedCompletedJobs = useRef<Set<string>>(new Set());
+  const observedActiveJobs = useRef<Set<string>>(new Set());
+  const observedFailedJobs = useRef<Set<string>>(new Set());
+  const [autoExpandJobId, setAutoExpandJobId] = useState<string | null>(null);
   const activeFunctionId = useLayoutStore((state) => state.activeFunctionId);
-  const activate = useLayoutStore((state) => state.activateFunction);
+  const activateStoredFunction = useLayoutStore((state) => state.activateFunction);
+  const activate = useCallback(
+    (functionId: string | null) => {
+      activateStoredFunction(functionId);
+      if (functionId) setRightPanelTab('function');
+    },
+    [activateStoredFunction],
+  );
   const toggleBottom = useLayoutStore((state) => state.toggleBottomPanel);
+  const setBottomCollapsed = useLayoutStore((state) => state.setBottomPanelCollapsed);
+  const setRightCollapsed = useLayoutStore((state) => state.setRightPanelCollapsed);
+  const reportPanelError = useCallback(
+    (message: string) => {
+      logEvent('error', 'renderer', message);
+      setBottomTab('console');
+      setBottomCollapsed(false);
+    },
+    [setBottomCollapsed],
+  );
+  const recreateViewportAfterContextLoss = useCallback(() => {
+    const staleLayerIds = new Set([...loadedProductIds.current, ...loadingProductIds.current]);
+    for (const entityId of staleLayerIds) productLoadGenerations.current.invalidate(entityId);
+    loadedProductIds.current.clear();
+    loadingProductIds.current.clear();
+    productLoadGenerations.current.reset();
+    setProductLayerStatuses({});
+    setSnap(null);
+    setViewportRecoveryGeneration((generation) => generation + 1);
+    setProductLayerRetryGeneration((generation) => generation + 1);
+    logEvent(
+      'warn',
+      'renderer',
+      'Viewport recreated after an unrecoverable GPU context reset; streaming resumes with a conservative point budget',
+    );
+  }, []);
+  useEffect(() => {
+    activeProjectFileOperation.current = projectFileOperation;
+  }, [projectFileOperation]);
   const selectedCameraIds = useMemo(
     () =>
       projectImages.filter((image) => selected.has(image.entityId)).map((image) => image.entityId),
     [projectImages, selected],
   );
+  const selectedImage = useMemo(() => {
+    if (selected.size !== 1) return null;
+    const id = [...selected][0];
+    return projectImages.find((image) => image.entityId === id) ?? null;
+  }, [projectImages, selected]);
+  const selectedGcp = useMemo(() => {
+    if (selected.size !== 1 || !gcpCollection) return null;
+    const id = [...selected][0];
+    const entity = id ? project.entities[id] : undefined;
+    if (entity?.kind !== 'GroundControlPoint') return null;
+    return gcpCollection[1].points.find(({ point }) => point.name === entity.name)?.point ?? null;
+  }, [gcpCollection, project.entities, selected]);
+  const selectedAlignedCamera = useMemo(
+    () => alignedGcpCameras.find((camera) => camera.entityId === selectedImage?.entityId) ?? null,
+    [alignedGcpCameras, selectedImage],
+  );
+  const selectedImageQuality = useMemo(() => {
+    if (!selectedImage) return null;
+    const candidates = imageQualityAnalyses.filter(
+      (analysis) => analysis.imageEntityId === selectedImage.entityId,
+    );
+    const projectWide = candidates.filter((analysis) => analysis.processingSetId === undefined);
+    const scoped = activeProcessingSetId
+      ? candidates.filter((analysis) => analysis.processingSetId === activeProcessingSetId)
+      : projectWide;
+    return [...(scoped.length > 0 ? scoped : projectWide)].sort(
+      (left, right) => right.analyzedAtUnixMs - left.analyzedAtUnixMs,
+    )[0] ?? null;
+  }, [activeProcessingSetId, imageQualityAnalyses, selectedImage]);
+  const focusedGcpImages = useMemo(() => {
+    if (!focusedGcpId) return [];
+    const imageIds = new Set<number>();
+    for (const observation of gcpCollection?.[1].observations ?? []) {
+      if (observation.pointId === focusedGcpId) imageIds.add(observation.imageId);
+    }
+    for (const projection of gcpOptimization?.artifact.result.projections ?? []) {
+      if (projection.pointId === focusedGcpId) imageIds.add(projection.imageId);
+    }
+    const entities = new Set(
+      alignedGcpCameras
+        .filter((camera) => imageIds.has(camera.imageId))
+        .map((camera) => camera.entityId),
+    );
+    return projectImages.filter((image) => entities.has(image.entityId));
+  }, [alignedGcpCameras, focusedGcpId, gcpCollection, gcpOptimization, projectImages]);
+  const focusedGcpName = useMemo(
+    () =>
+      gcpCollection?.[1].points.find(({ point }) => point.id === focusedGcpId)?.point.name ?? 'GCP',
+    [focusedGcpId, gcpCollection],
+  );
   const alignmentImageCount =
     alignmentScope === 'selection' ? selectedCameraIds.length : projectImages.length;
+  const productAlignmentInputs = useMemo(
+    () => [
+      {
+        id: 'latest',
+        label:
+          processingSets.find((set) => set.entityId === activeProcessingSetId)?.name ??
+          'Latest compatible alignment',
+      },
+      ...alignmentMergeCandidates.map((candidate) => ({
+        id: candidate.entityId,
+        label: `${candidate.name} · ${candidate.cameraEntityIds.length} cameras`,
+      })),
+      ...alignmentMerges
+        .filter((merge) => merge.state === 'published')
+        .map((merge) => ({
+          id: merge.entityId,
+          label: `${merge.name} · merged · ${merge.cameraEntityIds.length} cameras`,
+        })),
+    ],
+    [activeProcessingSetId, alignmentMergeCandidates, alignmentMerges, processingSets],
+  );
+  const activeProductProcessingSetId = useMemo(
+    () =>
+      alignmentMergeCandidates.find(
+        (candidate) => candidate.entityId === activeProductAlignmentId,
+      )?.processingSetId ?? null,
+    [activeProductAlignmentId, alignmentMergeCandidates],
+  );
 
   const resolveProfile = useCallback(async () => {
     const api = window.himmelcad;
@@ -223,8 +451,50 @@ export function App(): JSX.Element {
       opened: OpenPhotolabProjectResult,
       options?: { preserveSelection: boolean; processingSetId: EntityId | null },
     ) => {
-      for (const entityId of loadedProductIds.current) viewportRef.current?.removeLayer(entityId);
-      loadedProductIds.current.clear();
+      const nextSceneIdentity: SceneIdentity = {
+        projectId: opened.manifest.projectId,
+        renderOffset: [
+          opened.manifest.renderOffset.x,
+          opened.manifest.renderOffset.y,
+          opened.manifest.renderOffset.z,
+        ],
+      };
+      const fullReset = requiresFullSceneReset(acceptedSceneIdentity.current, nextSceneIdentity);
+      const refreshTicket = projectRefreshGuard.current.begin(opened.manifest.projectId);
+      acceptedSceneIdentity.current = nextSceneIdentity;
+      const commitIfCurrent = (commit: () => void): void => {
+        if (projectRefreshGuard.current.isCurrent(refreshTicket)) commit();
+      };
+      if (fullReset) {
+        const staleLayerIds = new Set([...loadedProductIds.current, ...loadingProductIds.current]);
+        for (const entityId of staleLayerIds) viewportRef.current?.removeLayer(entityId);
+        loadedProductIds.current.clear();
+        loadingProductIds.current.clear();
+        desiredProductIds.current.clear();
+        productLoadGenerations.current.reset();
+        setProductLayerStatuses({});
+        viewportRef.current?.resetProjectScene(nextSceneIdentity.renderOffset);
+        setProjectImages([]);
+        setImageQualityAnalyses([]);
+        setImageMasks([]);
+        setImageCount(0);
+        setProcessingSets([]);
+        setCaptureGroups([]);
+        setCalibrationGroups([]);
+        setAlignmentMergeCandidates([]);
+        setAlignmentMerges([]);
+        setGcpOptimizations([]);
+        setProductDatasets([]);
+        setGcpCollection(null);
+        setGcpOptimization(null);
+        setAlignedGcpCameras([]);
+        setJobs([]);
+        observedActiveJobs.current.clear();
+        observedFailedJobs.current.clear();
+        refreshedCompletedJobs.current.clear();
+        lastLoadedGcpOptimizationJobId.current = null;
+        setAutoExpandJobId(null);
+      }
       setProject({
         formatVersion: opened.manifest.formatVersion,
         projectId: opened.manifest.projectId,
@@ -240,6 +510,7 @@ export function App(): JSX.Element {
       if (!options?.preserveSelection) {
         setSelected(new Set());
         setActiveProcessingSetId(null);
+        setActiveProductAlignmentId(null);
         setFocusedGcpId(null);
       }
       const api = window.himmelcad;
@@ -247,15 +518,38 @@ export function App(): JSX.Element {
         void api.sidecar
           .call<ProjectCameraImageRecord[]>('photolab.images.list')
           .then((records) => {
-            setProjectImages(records);
-            setImageCount(records.length);
+            commitIfCurrent(() => {
+              setProjectImages(records);
+              setImageCount(records.length);
+            });
           })
           .catch((error: unknown) => {
-            setProjectImages([]);
-            logEvent(
-              'error',
-              'sidecar',
-              `Image catalog could not be loaded: ${errorMessage(error)}`,
+            commitIfCurrent(() =>
+              logEvent(
+                'error',
+                'sidecar',
+                `Image catalog could not be loaded: ${errorMessage(error)}`,
+              ),
+            );
+          });
+        void api.sidecar
+          .call<ImageQualityAnalysisRecord[]>('photolab.images.quality.list')
+          .then((records) => commitIfCurrent(() => setImageQualityAnalyses(records)))
+          .catch((error: unknown) => {
+            commitIfCurrent(() =>
+              logEvent(
+                'error',
+                'sidecar',
+                `Image-quality catalog could not be loaded: ${errorMessage(error)}`,
+              ),
+            );
+          });
+        void api.sidecar
+          .call<ListedImageMaskRevision[]>('photolab.project.imageMask.list')
+          .then((records) => commitIfCurrent(() => setImageMasks(records)))
+          .catch((error: unknown) => {
+            commitIfCurrent(() =>
+              logEvent('error', 'sidecar', `Image masks could not be loaded: ${errorMessage(error)}`),
             );
           });
         if (
@@ -265,58 +559,136 @@ export function App(): JSX.Element {
             .call<AlignedGcpCameraRecord[]>('photolab.gcp.alignedCameras', {
               ...(options?.processingSetId ? { processingSetId: options.processingSetId } : {}),
             })
-            .then(setAlignedGcpCameras)
+            .then((records) => commitIfCurrent(() => setAlignedGcpCameras(records)))
             .catch((error: unknown) => {
-              setAlignedGcpCameras([]);
-              logEvent(
-                'warn',
-                'sidecar',
-                `Aligned cameras are not available yet: ${errorMessage(error)}`,
+              commitIfCurrent(() =>
+                logEvent(
+                  'warn',
+                  'sidecar',
+                  `Aligned cameras are not available yet: ${errorMessage(error)}`,
+                ),
               );
             });
         } else {
-          setAlignedGcpCameras([]);
+          commitIfCurrent(() => setAlignedGcpCameras([]));
         }
         void api.sidecar
           .call<ProjectProductDatasetRecord[]>('photolab.products.list')
-          .then(setProductDatasets)
+          .then((records) =>
+            commitIfCurrent(() =>
+              setProductDatasets(
+                records.map((record) => {
+                  const versionHash = opened.manifest.entities[record.entityId]?.versionHash;
+                  return versionHash ? { ...record, versionHash } : record;
+                }),
+              ),
+            ),
+          )
           .catch((error: unknown) => {
-            setProductDatasets([]);
-            logEvent(
-              'error',
-              'sidecar',
-              `Product catalog could not be loaded: ${errorMessage(error)}`,
+            commitIfCurrent(() =>
+              logEvent(
+                'error',
+                'sidecar',
+                `Product catalog could not be loaded: ${errorMessage(error)}`,
+              ),
             );
           });
         void api.sidecar
           .call<ProcessingSetRecord[]>('photolab.project.processingSet.list')
-          .then(setProcessingSets)
+          .then((records) => commitIfCurrent(() => setProcessingSets(records)))
           .catch((error: unknown) => {
-            setProcessingSets([]);
-            logEvent(
-              'error',
-              'sidecar',
-              `Processing sets could not be loaded: ${errorMessage(error)}`,
+            commitIfCurrent(() =>
+              logEvent(
+                'error',
+                'sidecar',
+                `Processing sets could not be loaded: ${errorMessage(error)}`,
+              ),
+            );
+          });
+        void api.sidecar
+          .call<CaptureGroupRecord[]>('photolab.project.captureGroup.list')
+          .then((records) => commitIfCurrent(() => setCaptureGroups(records)))
+          .catch((error: unknown) => {
+            commitIfCurrent(() =>
+              logEvent(
+                'error',
+                'sidecar',
+                `Capture groups could not be loaded: ${errorMessage(error)}`,
+              ),
+            );
+          });
+        void api.sidecar
+          .call<CameraCalibrationGroupRecord[]>('photolab.project.calibrationGroup.list')
+          .then((records) => commitIfCurrent(() => setCalibrationGroups(records)))
+          .catch((error: unknown) => {
+            commitIfCurrent(() =>
+              logEvent(
+                'error',
+                'sidecar',
+                `Calibration groups could not be loaded: ${errorMessage(error)}`,
+              ),
+            );
+          });
+        void api.sidecar
+          .call<AlignmentMergeCandidateRecord[]>('photolab.project.alignmentMerge.candidates')
+          .then((records) => commitIfCurrent(() => setAlignmentMergeCandidates(records)))
+          .catch((error: unknown) => {
+            commitIfCurrent(() =>
+              logEvent(
+                'error',
+                'sidecar',
+                `Merge candidates could not be loaded: ${errorMessage(error)}`,
+              ),
+            );
+          });
+        void api.sidecar
+          .call<MergedAlignmentRunRecord[]>('photolab.project.alignmentMerge.list')
+          .then((records) => commitIfCurrent(() => setAlignmentMerges(records)))
+          .catch((error: unknown) => {
+            commitIfCurrent(() =>
+              logEvent(
+                'error',
+                'sidecar',
+                `Alignment merges could not be loaded: ${errorMessage(error)}`,
+              ),
+            );
+          });
+        void api.sidecar
+          .call<PublishedGcpOptimizationEntry[]>('photolab.gcp.optimization.list')
+          .then((records) => commitIfCurrent(() => setGcpOptimizations(records)))
+          .catch((error: unknown) => {
+            commitIfCurrent(() =>
+              logEvent(
+                'error',
+                'sidecar',
+                `GCP optimization lineage could not be loaded: ${errorMessage(error)}`,
+              ),
             );
           });
         void api.sidecar
           .call<readonly [ObjectHash, GcpCollectionRecord] | null>('photolab.gcp.list')
-          .then(setGcpCollection)
+          .then((records) => commitIfCurrent(() => setGcpCollection(records)))
           .catch((error: unknown) => {
-            setGcpCollection(null);
-            logEvent('error', 'sidecar', `GCP catalog could not be loaded: ${errorMessage(error)}`);
+            commitIfCurrent(() =>
+              logEvent(
+                'error',
+                'sidecar',
+                `GCP catalog could not be loaded: ${errorMessage(error)}`,
+              ),
+            );
           });
         void api.sidecar
           .call<GcpOptimizationPublicationRecord | null>('photolab.gcp.optimization.latest', {
             ...(options?.processingSetId ? { processingSetId: options.processingSetId } : {}),
           })
-          .then(setGcpOptimization)
+          .then((record) => commitIfCurrent(() => setGcpOptimization(record)))
           .catch((error: unknown) => {
-            setGcpOptimization(null);
-            logEvent(
-              'error',
-              'sidecar',
-              `GCP optimization result could not be loaded: ${errorMessage(error)}`,
+            commitIfCurrent(() =>
+              logEvent(
+                'error',
+                'sidecar',
+                `GCP optimization result could not be loaded: ${errorMessage(error)}`,
+              ),
             );
           });
       }
@@ -331,71 +703,161 @@ export function App(): JSX.Element {
     [],
   );
 
+  const beginProjectFileOperation = useCallback(
+    (kind: ProjectFileOperationState['kind']): ProjectFileOperationState | null => {
+      if (activeProjectFileOperation.current) return null;
+      const operation = createProjectFileOperation(kind);
+      activeProjectFileOperation.current = operation;
+      setProjectFileOperation(operation);
+      return operation;
+    },
+    [],
+  );
+
+  const finishProjectFileOperation = useCallback((archiveOperationId: string): void => {
+    if (activeProjectFileOperation.current?.archiveOperationId !== archiveOperationId) return;
+    activeProjectFileOperation.current = null;
+    setProjectFileOperation(null);
+  }, []);
+
+  const showProjectFileOperationError = useCallback(
+    (archiveOperationId: string, error: unknown): void => {
+      const message = errorMessage(error);
+      if (message.toLowerCase().includes('cancel')) {
+        logEvent('warn', 'sidecar', 'Project operation cancelled; no archive was published');
+        finishProjectFileOperation(archiveOperationId);
+        return;
+      }
+      setProjectFileOperation((current) => {
+        if (!current || current.archiveOperationId !== archiveOperationId) return current;
+        const failed = failProjectFileOperation(current, message);
+        activeProjectFileOperation.current = failed;
+        return failed;
+      });
+      logEvent('error', 'sidecar', `Project operation failed: ${message}`);
+    },
+    [finishProjectFileOperation],
+  );
+
+  const cancelProjectFileOperation = useCallback(async () => {
+    const operation = activeProjectFileOperation.current;
+    const api = window.himmelcad;
+    if (!operation || operation.error || operation.cancelRequested || !api) return;
+    const requested = requestProjectCancellation(operation);
+    activeProjectFileOperation.current = requested;
+    setProjectFileOperation(requested);
+    try {
+      await api.project.cancelArchive(operation.archiveOperationId);
+    } catch (error) {
+      showProjectFileOperationError(operation.archiveOperationId, error);
+    }
+  }, [showProjectFileOperationError]);
+
   const createProject = useCallback(async () => {
     const api = window.himmelcad;
     if (!api) return;
+    const operation = beginProjectFileOperation('create');
+    if (!operation) return;
     try {
-      const opened = await api.project.create<OpenPhotolabProjectResult>();
-      if (opened) acceptProject(opened);
+      const opened = await api.project.create<OpenPhotolabProjectResult>(operation);
+      if (opened) {
+        acceptProject(opened);
+        finishProjectFileOperation(operation.archiveOperationId);
+      } else finishProjectFileOperation(operation.archiveOperationId);
     } catch (error) {
-      logEvent('error', 'electron', `Project could not be created: ${errorMessage(error)}`);
+      showProjectFileOperationError(operation.archiveOperationId, error);
     }
-  }, [acceptProject]);
+  }, [
+    acceptProject,
+    beginProjectFileOperation,
+    finishProjectFileOperation,
+    showProjectFileOperationError,
+  ]);
 
   const openProject = useCallback(async () => {
     const api = window.himmelcad;
     if (!api) return;
+    const operation = beginProjectFileOperation('open');
+    if (!operation) return;
     try {
-      const opened = await api.project.open<OpenPhotolabProjectResult>();
-      if (opened) acceptProject(opened);
+      const opened = await api.project.open<OpenPhotolabProjectResult>(operation);
+      if (opened) {
+        acceptProject(opened);
+        finishProjectFileOperation(operation.archiveOperationId);
+      } else finishProjectFileOperation(operation.archiveOperationId);
     } catch (error) {
-      logEvent('error', 'electron', `Project could not be opened: ${errorMessage(error)}`);
+      showProjectFileOperationError(operation.archiveOperationId, error);
     }
-  }, [acceptProject]);
+  }, [
+    acceptProject,
+    beginProjectFileOperation,
+    finishProjectFileOperation,
+    showProjectFileOperationError,
+  ]);
 
   const saveProject = useCallback(async () => {
     const api = window.himmelcad;
     if (!api || !projectReady) return;
+    const operation = beginProjectFileOperation('save');
+    if (!operation) return;
     const started = performance.now();
     try {
-      const result = await api.project.save<{ savedGeneration: number; sourcePath: string }>();
+      const result = await api.project.save<{ savedGeneration: number; sourcePath: string }>(
+        operation,
+      );
       setLastSavedGeneration(result.savedGeneration);
       logEvent(
         'info',
         'sidecar',
         `Project saved · generation ${result.savedGeneration} · ${(performance.now() - started).toFixed(1)} ms`,
       );
+      finishProjectFileOperation(operation.archiveOperationId);
     } catch (error) {
-      logEvent('error', 'sidecar', `Save failed: ${errorMessage(error)}`);
+      showProjectFileOperationError(operation.archiveOperationId, error);
     }
-  }, [projectReady]);
+  }, [
+    beginProjectFileOperation,
+    finishProjectFileOperation,
+    projectReady,
+    showProjectFileOperationError,
+  ]);
 
   const saveProjectAs = useCallback(async () => {
     const api = window.himmelcad;
     if (!api || !projectReady) return;
+    const operation = beginProjectFileOperation('saveAs');
+    if (!operation) return;
     const started = performance.now();
     try {
       const result = await api.project.saveAs<{
         savedGeneration: number;
         sourcePath: string;
-      }>();
-      if (!result) return;
+      }>(operation);
+      if (!result) {
+        finishProjectFileOperation(operation.archiveOperationId);
+        return;
+      }
       setLastSavedGeneration(result.savedGeneration);
       logEvent(
         'info',
         'sidecar',
         `Project archive written · ${result.sourcePath} · ${(performance.now() - started).toFixed(1)} ms`,
       );
+      finishProjectFileOperation(operation.archiveOperationId);
     } catch (error) {
-      logEvent('error', 'sidecar', `Save As failed: ${errorMessage(error)}`);
+      showProjectFileOperationError(operation.archiveOperationId, error);
     }
-  }, [projectReady]);
+  }, [
+    beginProjectFileOperation,
+    finishProjectFileOperation,
+    projectReady,
+    showProjectFileOperationError,
+  ]);
 
   const inspectImages = useCallback(
     async (source: 'files' | 'folder') => {
       const api = window.himmelcad;
       if (!api || imageImportBusy) return;
-      setImageImportBusy(true);
       const started = performance.now();
       logEvent(
         'info',
@@ -403,25 +865,51 @@ export function App(): JSX.Element {
         source === 'files' ? 'Image picker opened' : 'Folder picker opened',
       );
       try {
-        const batch =
-          source === 'files'
-            ? await api.images.selectFiles<PhotoImportBatch>()
-            : await api.images.selectFolder<PhotoImportBatch>();
+        const paths =
+          source === 'files' ? await api.images.selectFiles() : await api.images.selectFolder();
+        if (!paths) return;
+        const operationId = `image-inspect-${crypto.randomUUID()}`;
+        const progressKey = `image-import:${operationId}`;
+        activeImageInspectId.current = operationId;
+        activeImageProgressKey.current = progressKey;
+        setImageImportBusy(true);
+        setImageImportError(null);
+        setImageImportProgress({
+          fraction: 0,
+          message: 'Scanning folders…',
+          phase: 'inspect',
+          indeterminate: true,
+        });
+        const batch = await api.sidecar.call<PhotoImportBatch>('photolab.images.inspect', {
+          paths,
+          operationId,
+          progressKey,
+        });
         if (!batch) return;
         setImageImportBatch((previous) => mergePhotoBatches(previous, batch));
-        activate('images.import.review');
         logEvent(
           batch.warnings.length > 0 ? 'warn' : 'info',
           'sidecar',
           `${batch.photos.length} images validated · ${batch.warnings.length} warnings · ${(performance.now() - started).toFixed(1)} ms`,
         );
       } catch (error) {
-        logEvent('error', 'sidecar', `Image validation failed: ${errorMessage(error)}`);
+        const message = errorMessage(error);
+        setImageImportError(message.toLowerCase().includes('cancel') ? null : message);
+        logEvent(
+          message.toLowerCase().includes('cancel') ? 'warn' : 'error',
+          'sidecar',
+          message.toLowerCase().includes('cancel')
+            ? 'Image inspection cancelled; no images were committed'
+            : `Image validation failed: ${message}`,
+        );
       } finally {
+        activeImageInspectId.current = null;
+        activeImageProgressKey.current = null;
         setImageImportBusy(false);
+        setImageImportProgress(null);
       }
     },
-    [activate, imageImportBusy],
+    [imageImportBusy],
   );
 
   const discoverImageCrs = useCallback(async (query: CrsOperationQuery) => {
@@ -429,7 +917,7 @@ export function App(): JSX.Element {
     if (!api) throw new Error('Desktop bridge is missing');
     const operationId = `crs-discover-${crypto.randomUUID()}`;
     const started = performance.now();
-    logEvent('info', 'sidecar', 'Checking CRS operations fully offline');
+    logEvent('info', 'sidecar', 'Validating coordinate operations');
     const discovery = await api.sidecar.call<CrsOperationDiscovery>('photolab.crs.discover', {
       operationId,
       query,
@@ -448,7 +936,15 @@ export function App(): JSX.Element {
       if (!api || !imageImportBatch || imageImportBusy || !projectReady) return;
       const operationId = `image-import-${crypto.randomUUID()}`;
       activeImageCommitId.current = operationId;
+      activeImageProgressKey.current = `image-import:${operationId}`;
       setImageImportBusy(true);
+      setImageImportError(null);
+      setImageImportProgress({
+        fraction: 0.02,
+        message: 'Freezing the selected CRS operation…',
+        phase: 'commit',
+        indeterminate: true,
+      });
       const started = performance.now();
       try {
         const transformation = await api.sidecar.call<unknown>('photolab.crs.freeze', {
@@ -464,6 +960,7 @@ export function App(): JSX.Element {
           autosaveGeneration: number;
         }>('photolab.images.commit', {
           operationId,
+          progressKey: activeImageProgressKey.current,
           transformation,
           images: imageImportBatch.photos.map((photo) => ({
             photo,
@@ -484,47 +981,97 @@ export function App(): JSX.Element {
         );
         setAutosaveGeneration(result.autosaveGeneration);
         setWorkspaceMode('images');
-        activate(null);
+        setImageImportBatch(null);
         logEvent(
           'info',
           'sidecar',
           `${result.importedEntityCount} images imported atomically · ${result.duplicateCount} duplicates · ${(performance.now() - started).toFixed(1)} ms`,
         );
       } catch (error) {
-        logEvent('error', 'sidecar', `Image import failed: ${errorMessage(error)}`);
+        const message = errorMessage(error);
+        setImageImportError(`Image import failed: ${message}`);
+        logEvent('error', 'sidecar', `Image import failed: ${message}`);
       } finally {
         activeImageCommitId.current = null;
+        activeImageProgressKey.current = null;
         setImageImportBusy(false);
+        setImageImportProgress(null);
       }
     },
-    [acceptProject, activate, imageImportBatch, imageImportBusy, projectReady],
+    [acceptProject, imageImportBatch, imageImportBusy, projectReady],
   );
 
   const cancelImageImport = useCallback(async () => {
+    const inspectionId = activeImageInspectId.current;
     const operationId = activeImageCommitId.current;
     const api = window.himmelcad;
-    if (operationId && api) {
-      await Promise.allSettled([
-        api.sidecar.call('photolab.crs.cancel', { operationId: `${operationId}.freeze` }),
-        api.sidecar.call('photolab.crs.cancel', { operationId: `${operationId}.coordinates` }),
-        api.sidecar.call('photolab.images.commit.cancel', { operationId }),
-      ]);
-      logEvent('warn', 'sidecar', 'Image import cancellation requested');
-      return;
+    try {
+      if (inspectionId && api) {
+        await api.sidecar.call('photolab.images.inspect.cancel', { operationId: inspectionId });
+        logEvent('warn', 'sidecar', 'Image inspection cancellation requested');
+        return;
+      }
+      if (operationId && api) {
+        const results = await Promise.allSettled([
+          api.sidecar.call('photolab.crs.cancel', { operationId: `${operationId}.freeze` }),
+          api.sidecar.call('photolab.crs.cancel', { operationId: `${operationId}.coordinates` }),
+          api.sidecar.call('photolab.images.commit.cancel', { operationId }),
+        ]);
+        const failure = results.find(
+          (result): result is PromiseRejectedResult => result.status === 'rejected',
+        );
+        if (failure) throw failure.reason;
+        logEvent('warn', 'sidecar', 'Image import cancellation requested');
+        return;
+      }
+      setImageImportBatch(null);
+      setImageImportProgress(null);
+      setImageImportError(null);
+    } catch (error) {
+      reportPanelError(`Image import could not be cancelled: ${errorMessage(error)}`);
     }
-    setImageImportBatch(null);
-    activate(null);
-  }, [activate]);
+  }, [reportPanelError]);
+
+  const selectTransformationGrid = useCallback(
+    async (kind: 'horizontal' | 'vertical'): Promise<LocalGridSelection | null> => {
+      const progressKey = `grid-register:${crypto.randomUUID()}`;
+      activeGridProgressKey.current = progressKey;
+      setGridSelectionProgress({
+        fraction: 0.01,
+        message: 'Reading transformation grid…',
+        phase: 'grid',
+      });
+      try {
+        const selected = await window.himmelcad?.grids.select(kind, progressKey);
+        if (!selected) return null;
+        logEvent(
+          'info',
+          'renderer',
+          `Transformation grid ready · ${selected.filename} · ${selected.driver}`,
+        );
+        return selected;
+      } finally {
+        activeGridProgressKey.current = null;
+        setGridSelectionProgress(null);
+      }
+    },
+    [],
+  );
 
   const chooseGcpCsv = useCallback(async () => {
     const api = window.himmelcad;
     if (!api || gcpBusy) return;
-    const path = await api.reference.selectGcpCsv();
-    if (!path) return;
-    setGcpPath(path);
-    activate('reference.gcp.import');
-    logEvent('info', 'renderer', `GCP file selected · ${path}`);
-  }, [activate, gcpBusy]);
+    try {
+      const path = await api.reference.selectGcpCsv();
+      if (!path) return;
+      setGcpImportOpen(true);
+      setGcpImportError(null);
+      setGcpPath(path);
+      logEvent('info', 'renderer', `GCP file selected · ${path}`);
+    } catch (error) {
+      reportPanelError(`GCP file could not be selected: ${errorMessage(error)}`);
+    }
+  }, [gcpBusy, reportPanelError]);
 
   const previewGcpCsv = useCallback(async (path: string, mapping: GcpCsvImportMapping) => {
     const api = window.himmelcad;
@@ -537,12 +1084,18 @@ export function App(): JSX.Element {
   }, []);
 
   const commitGcpCsv = useCallback(
-    async (path: string, mapping: GcpCsvImportMapping, decision: ImageImportDecision) => {
+    async (
+      path: string,
+      mapping: GcpCsvImportMapping,
+      decision: ImageImportDecision,
+      coordinatesAlreadyInProjectCrs: boolean,
+    ) => {
       const api = window.himmelcad;
       if (!api || gcpBusy || !projectReady) return;
       const operationId = `gcp-import-${crypto.randomUUID()}`;
       activeGcpOperationId.current = operationId;
       setGcpBusy(true);
+      setGcpImportError(null);
       const started = performance.now();
       try {
         const transformation = await api.sidecar.call('photolab.crs.freeze', {
@@ -558,6 +1111,7 @@ export function App(): JSX.Element {
           path,
           mapping,
           transformation,
+          coordinatesAlreadyInProjectCrs,
         });
         const opened = await api.sidecar.call<OpenPhotolabProjectResult>(
           'photolab.project.snapshot',
@@ -565,37 +1119,48 @@ export function App(): JSX.Element {
         acceptProject(opened);
         setAutosaveGeneration(result.autosaveGeneration);
         setGcpPath(null);
-        setWorkspaceMode('scene3d');
-        activate(null);
+        setGcpImportOpen(false);
+        setWorkspaceMode('scene');
         logEvent(
           'info',
           'sidecar',
           `${result.points.length} GCPs imported atomically · ${(performance.now() - started).toFixed(1)} ms`,
         );
       } catch (error) {
-        logEvent('error', 'sidecar', `GCP import failed: ${errorMessage(error)}`);
+        const message = `GCP import failed: ${errorMessage(error)}`;
+        setGcpImportError(message);
+        logEvent('error', 'sidecar', message);
       } finally {
         activeGcpOperationId.current = null;
         setGcpBusy(false);
       }
     },
-    [acceptProject, activate, gcpBusy, projectReady],
+    [acceptProject, gcpBusy, projectReady],
   );
 
   const cancelGcpImport = useCallback(async () => {
     const operationId = activeGcpOperationId.current;
     const api = window.himmelcad;
-    if (operationId && api) {
-      await Promise.allSettled([
-        api.sidecar.call('photolab.crs.cancel', { operationId: `${operationId}.freeze` }),
-        api.sidecar.call('photolab.gcp.cancel', { operationId }),
-      ]);
-      logEvent('warn', 'sidecar', 'GCP import cancellation requested');
-      return;
+    try {
+      if (operationId && api) {
+        const results = await Promise.allSettled([
+          api.sidecar.call('photolab.crs.cancel', { operationId: `${operationId}.freeze` }),
+          api.sidecar.call('photolab.gcp.cancel', { operationId }),
+        ]);
+        const failure = results.find(
+          (result): result is PromiseRejectedResult => result.status === 'rejected',
+        );
+        if (failure) throw failure.reason;
+        logEvent('warn', 'sidecar', 'GCP import cancellation requested');
+        return;
+      }
+      setGcpPath(null);
+      setGcpImportError(null);
+      setGcpImportOpen(false);
+    } catch (error) {
+      reportPanelError(`GCP import could not be cancelled: ${errorMessage(error)}`);
     }
-    setGcpPath(null);
-    activate(null);
-  }, [activate]);
+  }, [reportPanelError]);
 
   useEffect(() => {
     activate('alignment.run');
@@ -604,7 +1169,11 @@ export function App(): JSX.Element {
     if (!api) return;
     void api.sidecar.status().then(async (ready) => {
       setCoreReady(ready);
-      logEvent(ready ? 'info' : 'warn', 'sidecar', ready ? 'PhotoLab core ready' : 'Core offline');
+      logEvent(
+        ready ? 'info' : 'warn',
+        'sidecar',
+        ready ? 'PhotoLab core ready' : 'Core unavailable',
+      );
       if (ready && !initialBootstrapRequested.current) {
         initialBootstrapRequested.current = true;
         try {
@@ -643,6 +1212,29 @@ export function App(): JSX.Element {
           progress: progress.fraction,
           progressKey: progress.progressKey,
         });
+        if (progress.progressKey === activeImageProgressKey.current) {
+          setImageImportProgress((current) => ({
+            fraction: progress.fraction,
+            message: progress.message,
+            phase: current?.phase ?? 'inspect',
+            indeterminate: progress.message.startsWith('Scanning folders'),
+          }));
+        }
+        if (progress.progressKey === activeGridProgressKey.current) {
+          setGridSelectionProgress({
+            fraction: progress.fraction,
+            message: progress.message,
+            phase: 'grid',
+          });
+        }
+        if (progress.progressKey === activeProjectFileOperation.current?.progressKey) {
+          setProjectFileOperation((current) => {
+            if (!current) return current;
+            const next = applyProjectProgress(current, progress);
+            activeProjectFileOperation.current = next;
+            return next;
+          });
+        }
         return;
       }
       const lower = line.toLowerCase();
@@ -650,6 +1242,40 @@ export function App(): JSX.Element {
       logEvent(level, 'sidecar', line);
     });
   }, [acceptProject, activate]);
+
+  useEffect(() => {
+    return consoleStore.subscribe(() => {
+      const latest = consoleStore.getSnapshot().at(-1);
+      if (latest?.level !== 'error') return;
+      setBottomTab('console');
+      setBottomCollapsed(false);
+    });
+  }, [setBottomCollapsed]);
+
+  useEffect(() => {
+    const active = jobs.filter((job) =>
+      ['queued', 'running', 'cancelRequested'].includes(job.state.kind),
+    );
+    const newlyActive = active.find((job) => !observedActiveJobs.current.has(job.id));
+    observedActiveJobs.current = new Set(active.map((job) => job.id));
+    if (!newlyActive) return;
+    setBottomTab('jobs');
+    setBottomCollapsed(false);
+  }, [jobs, setBottomCollapsed]);
+
+  useEffect(() => {
+    const failedIds = newlyFailedJobIds(jobs, observedFailedJobs.current);
+    if (failedIds.length === 0) return;
+    for (const jobId of failedIds) {
+      observedFailedJobs.current.add(jobId);
+      const job = jobs.find((candidate) => candidate.id === jobId);
+      if (job?.state.kind !== 'failed') continue;
+      logEvent('error', 'sidecar', `${job.kind} failed: ${job.state.code}: ${job.state.message}`);
+    }
+    setAutoExpandJobId(failedIds.at(-1) ?? null);
+    setBottomTab('jobs');
+    setBottomCollapsed(false);
+  }, [jobs, setBottomCollapsed]);
 
   useEffect(() => {
     if (!projectReady) return;
@@ -743,7 +1369,7 @@ export function App(): JSX.Element {
         logEvent(
           'error',
           'sidecar',
-          `Product result could not be mirrored: ${errorMessage(error)}`,
+          `Completed job result could not be mirrored: ${errorMessage(error)}`,
         );
       });
   }, [acceptProject, activeProcessingSetId, jobs, projectReady]);
@@ -753,10 +1379,11 @@ export function App(): JSX.Element {
     if (!api) return;
     const started = performance.now();
     try {
-      const result = await api.sidecar.call<{ job: PhotolabJob }>('photolab.jobs.cancel', {
-        jobId,
-      });
-      setJobs((previous) => previous.map((job) => (job.id === result.job.id ? result.job : job)));
+      const { job } = await api.sidecar.call<{ firstRequest: boolean; job: PhotolabJob }>(
+        'photolab.jobs.cancel',
+        { jobId },
+      );
+      setJobs((previous) => previous.map((current) => (current.id === job.id ? job : current)));
       logEvent(
         'warn',
         'sidecar',
@@ -766,6 +1393,42 @@ export function App(): JSX.Element {
       logEvent('error', 'sidecar', `Job could not be cancelled: ${errorMessage(error)}`);
     }
   }, []);
+
+  const startImageQuality = useCallback(
+    async (processingSetId: EntityId | null) => {
+      const api = window.himmelcad;
+      if (!api || !projectReady || imageQualityStarting || projectImages.length === 0) return;
+      setImageQualityStarting(true);
+      try {
+        const result = await api.sidecar.call<{ job: PhotolabJob }>(
+          'photolab.jobs.startImageQuality',
+          {
+            operationId: `image-quality-${crypto.randomUUID()}`,
+            ...(processingSetId ? { processingSetId } : {}),
+          },
+        );
+        setJobs((previous) => [...previous.filter((job) => job.id !== result.job.id), result.job]);
+        logEvent(
+          'info',
+          'sidecar',
+          processingSetId
+            ? 'Image-quality analysis queued for the selected processing set'
+            : `Image-quality analysis queued for all ${projectImages.length} images`,
+        );
+        setBottomTab('jobs');
+        setBottomCollapsed(false);
+      } catch (error) {
+        logEvent(
+          'error',
+          'sidecar',
+          `Image-quality analysis could not start: ${errorMessage(error)}`,
+        );
+      } finally {
+        setImageQualityStarting(false);
+      }
+    },
+    [imageQualityStarting, projectImages.length, projectReady, setBottomCollapsed],
+  );
 
   const startAlignment = useCallback(async () => {
     const api = window.himmelcad;
@@ -779,10 +1442,16 @@ export function App(): JSX.Element {
     setResolveError(null);
     const started = performance.now();
     try {
+      const config = await api.sidecar.call<ResolvedAlignmentConfig>('photolab.alignment.resolve', {
+        profile,
+        imageCount: alignmentImageCount,
+      });
+      setResolved(config);
       const result = await api.sidecar.call<{ job: PhotolabJob }>('photolab.jobs.startAlignment', {
         operationId,
         profile,
         cameraEntityIds: alignmentScope === 'selection' ? selectedCameraIds : [],
+        processingSetId: activeProcessingSetId,
       });
       setJobs((previous) => [...previous.filter((job) => job.id !== result.job.id), result.job]);
       logEvent(
@@ -801,6 +1470,7 @@ export function App(): JSX.Element {
     alignmentImageCount,
     alignmentScope,
     alignmentStarting,
+    activeProcessingSetId,
     profile,
     projectReady,
     selectedCameraIds,
@@ -817,7 +1487,10 @@ export function App(): JSX.Element {
         const result = await api.sidecar.call<{ job: PhotolabJob }>('photolab.jobs.startProduct', {
           operationId,
           configuration,
-          processingSetId: activeProcessingSetId,
+          processingSetId: activeProductAlignmentId
+            ? activeProductProcessingSetId
+            : activeProcessingSetId,
+          sourceAlignmentEntityId: activeProductAlignmentId,
         });
         setJobs((previous) => [...previous.filter((job) => job.id !== result.job.id), result.job]);
         logEvent(
@@ -835,7 +1508,13 @@ export function App(): JSX.Element {
         setProductStarting(false);
       }
     },
-    [activeProcessingSetId, productStarting, projectReady],
+    [
+      activeProcessingSetId,
+      activeProductAlignmentId,
+      activeProductProcessingSetId,
+      productStarting,
+      projectReady,
+    ],
   );
 
   const startBatch = useCallback(
@@ -853,6 +1532,7 @@ export function App(): JSX.Element {
           operationId,
           steps,
           cameraEntityIds,
+          ...(activeProcessingSetId ? { processingSetId: activeProcessingSetId } : {}),
         });
         setJobs((previous) => [...previous.filter((job) => job.id !== result.job.id), result.job]);
         logEvent(
@@ -867,7 +1547,7 @@ export function App(): JSX.Element {
         setBatchStarting(false);
       }
     },
-    [batchStarting, projectReady, toggleBottom],
+    [activeProcessingSetId, batchStarting, projectReady, toggleBottom],
   );
 
   const startGcpOptimization = useCallback(
@@ -991,6 +1671,48 @@ export function App(): JSX.Element {
     [gcpCollection],
   );
 
+  const editImageMask = useCallback(
+    async (
+      imageEntityId: EntityId,
+      expectedRevisionSha256: ObjectHash | undefined,
+      edit: EditImageMaskParams['edit'],
+    ): Promise<void> => {
+      const api = window.himmelcad;
+      if (!api || !projectReady) return;
+      const operationId = `image-mask-${crypto.randomUUID()}`;
+      try {
+        const result = await api.sidecar.call<EditImageMaskResult>(
+          'photolab.project.imageMask.edit',
+          {
+            operationId,
+            imageEntityId,
+            ...(expectedRevisionSha256 ? { expectedRevisionSha256 } : {}),
+            edit,
+          } satisfies EditImageMaskParams,
+        );
+        setAutosaveGeneration(result.autosaveGeneration);
+        const [records, images] = await Promise.all([
+          api.sidecar.call<ListedImageMaskRevision[]>('photolab.project.imageMask.list'),
+          api.sidecar.call<ProjectCameraImageRecord[]>('photolab.images.list'),
+        ]);
+        setImageMasks(records);
+        setProjectImages(images);
+        setImageCount(images.length);
+        logEvent(
+          'info',
+          'sidecar',
+          result.maskedPixelCount > 0
+            ? `Image mask saved · ${result.maskedPixelCount.toLocaleString('en-US')} excluded pixels`
+            : 'Image mask cleared',
+        );
+      } catch (error) {
+        reportPanelError(`Image mask edit failed: ${errorMessage(error)}`);
+        throw error;
+      }
+    },
+    [projectReady, reportPanelError],
+  );
+
   const gcpAccuracyReport = useMemo<GcpAccuracyReport | null>(() => {
     if (!gcpOptimization || !gcpCollection) return null;
     const result = gcpOptimization.artifact.result;
@@ -1005,7 +1727,7 @@ export function App(): JSX.Element {
         ? `Optimization converged · ${result.iterations} iterations`
         : `Optimization completed · ${result.iterations} iterations`,
       processingSetLabel: processingSet
-        ? `${processingSet.name} · gespeicherter Scope`
+        ? `${processingSet.name} · saved scope`
         : `Ad-hoc alignment · ${alignedGcpCameras.length} cameras`,
       alignmentRunLabel: gcpOptimization.operationId,
       optimizationSnapshotSha256: gcpOptimization.snapshotSha256,
@@ -1059,10 +1781,20 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     if (workspaceMode === 'images') return;
-    viewportRef.current?.setNavigationMode(
-      workspaceMode === 'map2d' ? 'lockedTopDown2d' : 'orbit3d',
-    );
-  }, [workspaceMode]);
+    viewportRef.current?.setSceneRenderOffset([
+      project.renderOffset.x,
+      project.renderOffset.y,
+      project.renderOffset.z,
+    ]);
+    viewportRef.current?.setNavigationMode(sceneNavigationMode);
+  }, [
+    project.renderOffset.x,
+    project.renderOffset.y,
+    project.renderOffset.z,
+    sceneNavigationMode,
+    viewportRecoveryGeneration,
+    workspaceMode,
+  ]);
 
   useEffect(() => {
     if (workspaceMode === 'images') return;
@@ -1074,7 +1806,11 @@ export function App(): JSX.Element {
     );
     viewportRef.current?.setCameraImageRectangles(
       projectImages
-        .filter((image) => project.entities[image.entityId]?.visibility.visible !== false)
+        .filter(
+          (image) =>
+            project.entities[image.entityId]?.kind === 'CameraImage' &&
+            project.entities[image.entityId]?.visibility.visible !== false,
+        )
         .flatMap((image) => {
           const aligned = alignedByEntity.get(image.entityId);
           const optimized = aligned ? optimizedByImageId.get(aligned.imageId) : undefined;
@@ -1096,13 +1832,31 @@ export function App(): JSX.Element {
                     focalXPixels: aligned.camera.focalXPixels,
                     focalYPixels: aligned.camera.focalYPixels,
                     cameraToWorldRotation: aligned.camera.cameraToReconstructionRotation,
-                    centerWorld: aligned.camera.centerReconstruction,
+                    // The selected sparse model is normally the GPS/RTK-aligned project-world
+                    // model. Only genuinely ungeoreferenced reconstructions need a temporary
+                    // render-origin lift; adding the offset to an already aligned model doubles
+                    // UTM/GK coordinates and makes every camera fail the precision guard.
+                    centerWorld: aligned.centerInProjectWorld
+                      ? aligned.camera.centerReconstruction
+                      : [
+                          aligned.camera.centerReconstruction[0] + project.renderOffset.x,
+                          aligned.camera.centerReconstruction[1] + project.renderOffset.y,
+                          aligned.camera.centerReconstruction[2] + project.renderOffset.z,
+                        ],
                   }
                 : undefined,
           );
         }),
     );
-  }, [alignedGcpCameras, gcpOptimization, project.entities, projectImages, workspaceMode]);
+  }, [
+    alignedGcpCameras,
+    gcpOptimization,
+    project.entities,
+    project.renderOffset,
+    projectImages,
+    viewportRecoveryGeneration,
+    workspaceMode,
+  ]);
 
   useEffect(() => {
     if (workspaceMode === 'images') return;
@@ -1126,29 +1880,46 @@ export function App(): JSX.Element {
       ];
     });
     viewportRef.current?.setGcpMarkers(markers);
-  }, [gcpCollection, project.entities, workspaceMode]);
+  }, [gcpCollection, project.entities, viewportRecoveryGeneration, workspaceMode]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
-    if (workspaceMode === 'images') {
-      for (const entityId of loadedProductIds.current) viewport?.removeLayer(entityId);
-      loadedProductIds.current.clear();
-      return;
-    }
     if (!viewport) return;
-    let active = true;
     const visibleIds = new Set(
       productDatasets.filter((dataset) => dataset.visible).map((dataset) => dataset.entityId),
     );
+    desiredProductIds.current = visibleIds;
+    setProductLayerStatuses((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([entityId]) => visibleIds.has(entityId as EntityId)),
+      ),
+    );
     for (const entityId of loadedProductIds.current) {
       if (visibleIds.has(entityId)) continue;
+      productLoadGenerations.current.invalidate(entityId);
       viewport.removeLayer(entityId);
       loadedProductIds.current.delete(entityId);
+    }
+    for (const entityId of loadingProductIds.current) {
+      if (visibleIds.has(entityId)) continue;
+      productLoadGenerations.current.invalidate(entityId);
+      viewport.removeLayer(entityId);
+      loadingProductIds.current.delete(entityId);
     }
     const dem = productDatasets.find((dataset) => dataset.kind === 'dem' && dataset.visible);
     for (const dataset of productDatasets) {
       if (!dataset.visible) continue;
       if (loadedProductIds.current.has(dataset.entityId)) continue;
+      if (loadingProductIds.current.has(dataset.entityId)) continue;
+      const loadTicket = productLoadGenerations.current.begin(dataset.entityId);
+      const loadToken = entityLoadToken(loadTicket);
+      loadingProductIds.current.add(dataset.entityId);
+      const layerName =
+        project.entities[dataset.entityId]?.name ?? productDatasetLabel(dataset.kind);
+      setProductLayerStatuses((current) => ({
+        ...current,
+        [dataset.entityId]: { state: 'loading', name: layerName },
+      }));
       const url = projectProductUrl(dataset.relativePath);
       const renderOffset: [number, number, number] = [
         project.renderOffset.x,
@@ -1165,6 +1936,7 @@ export function App(): JSX.Element {
           ? viewport.loadPotreePointCloud(url, {
               entityId: dataset.entityId,
               sourceName: dataset.kind === 'sparse' ? 'Sparse Point Cloud' : 'Dense Point Cloud',
+              loadToken,
               renderOffset: dataset.renderOffset,
               bounds: { min: dataset.boundsMin, max: dataset.boundsMax },
               pointCount: dataset.pointCount,
@@ -1172,17 +1944,20 @@ export function App(): JSX.Element {
           : dataset.kind === 'gaussianSplat'
             ? viewport.loadGaussianSplats(url, {
                 entityId: dataset.entityId,
+                loadToken,
                 format: dataset.format === 'brushPly' ? 'brushPly' : 'prepared',
                 renderOffset,
               })
             : dataset.kind === 'mesh'
               ? viewport.loadTiledMesh(url, {
                   entityId: dataset.entityId,
+                  loadToken,
                   renderOffset,
                 })
               : dataset.kind === 'dem' || dataset.kind === 'orthomosaic'
                 ? viewport.loadRasterPyramid(url, {
                     entityId: dataset.entityId,
+                    loadToken,
                     kind: dataset.kind,
                     renderOffset,
                     ...(dataset.kind === 'orthomosaic' && dem
@@ -1190,14 +1965,41 @@ export function App(): JSX.Element {
                       : {}),
                   })
                 : null;
-      if (!loading) continue;
+      if (!loading) {
+        loadingProductIds.current.delete(dataset.entityId);
+        productLoadGenerations.current.invalidate(dataset.entityId);
+        setProductLayerStatuses((current) => {
+          const next = { ...current };
+          delete next[dataset.entityId];
+          return next;
+        });
+        continue;
+      }
       void loading
         .then(() => {
-          if (!active) {
+          if (!productLoadGenerations.current.isCurrent(loadTicket)) {
+            if (!desiredProductIds.current.has(dataset.entityId)) {
+              viewport.removeLayer(dataset.entityId);
+            }
+            return;
+          }
+          loadingProductIds.current.delete(dataset.entityId);
+          if (!desiredProductIds.current.has(dataset.entityId)) {
             viewport.removeLayer(dataset.entityId);
             return;
           }
+          const frameAfterLoad = loadedProductIds.current.size === 0;
           loadedProductIds.current.add(dataset.entityId);
+          setProductLayerStatuses((current) => {
+            const next = { ...current };
+            delete next[dataset.entityId];
+            return next;
+          });
+          if (frameAfterLoad) {
+            window.requestAnimationFrame(() => {
+              if (!viewport.frameSelection([dataset.entityId])) viewport.frameAll();
+            });
+          }
           logEvent(
             'info',
             'renderer',
@@ -1205,21 +2007,48 @@ export function App(): JSX.Element {
           );
         })
         .catch((error: unknown) => {
-          logEvent('error', 'renderer', `Product could not be loaded: ${errorMessage(error)}`);
+          if (!productLoadGenerations.current.isCurrent(loadTicket)) return;
+          loadingProductIds.current.delete(dataset.entityId);
+          const message = errorMessage(error);
+          if (message.includes('load superseded by a newer entity generation')) {
+            loadedProductIds.current.delete(dataset.entityId);
+            setProductLayerStatuses((current) => {
+              const next = { ...current };
+              delete next[dataset.entityId];
+              return next;
+            });
+            window.setTimeout(() => {
+              if (desiredProductIds.current.has(dataset.entityId)) {
+                setProductLayerRetryGeneration((generation) => generation + 1);
+              }
+            }, 0);
+            return;
+          }
+          setProductLayerStatuses((current) => ({
+            ...current,
+            [dataset.entityId]: { state: 'error', name: layerName, message },
+          }));
+          logEvent('error', 'renderer', `Product could not be loaded: ${message}`);
         });
     }
-    return () => {
-      active = false;
-    };
-  }, [productDatasets, project.renderOffset, workspaceMode]);
+  }, [productDatasets, productLayerRetryGeneration, project.entities, project.renderOffset]);
 
-  const switchWorkspace = useCallback(
-    (mode: WorkspaceMode) => {
-      setWorkspaceMode(mode);
-      activate(null);
-    },
-    [activate],
-  );
+  const retryProductLayer = useCallback((entityId: EntityId) => {
+    productLoadGenerations.current.invalidate(entityId);
+    loadingProductIds.current.delete(entityId);
+    loadedProductIds.current.delete(entityId);
+    viewportRef.current?.removeLayer(entityId);
+    setProductLayerStatuses((current) => {
+      const next = { ...current };
+      delete next[entityId];
+      return next;
+    });
+    setProductLayerRetryGeneration((generation) => generation + 1);
+  }, []);
+
+  const switchWorkspace = useCallback((mode: WorkspaceMode) => {
+    setWorkspaceMode(mode);
+  }, []);
 
   const runEntityCommand = useCallback(
     async (method: string, params: Record<string, unknown>, successMessage: string) => {
@@ -1236,10 +2065,54 @@ export function App(): JSX.Element {
     [acceptProject, projectReady],
   );
 
+  const applyProcessingSet = useCallback((processingSet: ProcessingSetRecord) => {
+    setSelected(new Set(processingSet.cameraEntityIds));
+    setAlignmentScope('selection');
+    setActiveProcessingSetId(processingSet.entityId);
+    setResolved(null);
+    void window.himmelcad?.sidecar
+      .call<AlignedGcpCameraRecord[]>('photolab.gcp.alignedCameras', {
+        processingSetId: processingSet.entityId,
+      })
+      .then(setAlignedGcpCameras)
+      .catch((error: unknown) => {
+        setAlignedGcpCameras([]);
+        logEvent(
+          'warn',
+          'sidecar',
+          `Aligned cameras for ${processingSet.name} are not available yet: ${errorMessage(error)}`,
+        );
+      });
+    void window.himmelcad?.sidecar
+      .call<GcpOptimizationPublicationRecord | null>('photolab.gcp.optimization.latest', {
+        processingSetId: processingSet.entityId,
+      })
+      .then(setGcpOptimization)
+      .catch((error: unknown) => {
+        setGcpOptimization(null);
+        logEvent(
+          'warn',
+          'sidecar',
+          `No compatible GCP optimization is available for ${processingSet.name}: ${errorMessage(error)}`,
+        );
+      });
+    logEvent(
+      'info',
+      'renderer',
+      `${processingSet.name} activated · ${processingSet.cameraEntityIds.length} cameras · immutable scope`,
+    );
+  }, []);
+
   const saveProcessingSet = useCallback(async () => {
     const api = window.himmelcad;
     if (!api || processingSetSaving || selectedCameraIds.length < 2) return;
     const cameraEntityIds = [...selectedCameraIds];
+    const existing = findMatchingProcessingSet(processingSets, cameraEntityIds);
+    if (existing) {
+      applyProcessingSet(existing);
+      logEvent('info', 'renderer', `${existing.name} already contains this exact image selection.`);
+      return;
+    }
     const sortedCameraEntityIds = [...cameraEntityIds].sort();
     const name = `Processing Set ${processingSets.length + 1}`;
     const previousIds = new Set(processingSets.map((processingSet) => processingSet.entityId));
@@ -1275,7 +2148,198 @@ export function App(): JSX.Element {
     } finally {
       setProcessingSetSaving(false);
     }
-  }, [acceptProject, processingSetSaving, processingSets, selectedCameraIds]);
+  }, [acceptProject, applyProcessingSet, processingSetSaving, processingSets, selectedCameraIds]);
+
+  const createCaptureGroup = useCallback(
+    async (
+      name: string,
+      cameraEntityIds: readonly EntityId[],
+      calibrationGroups: readonly CaptureCalibrationDraft[],
+    ) => {
+      const api = window.himmelcad;
+      if (!api || captureGroupSaving || cameraEntityIds.length < 2) return;
+      setCaptureGroupSaving(true);
+      try {
+        const opened = await api.sidecar.call<OpenPhotolabProjectResult>(
+          'photolab.project.captureGroup.create',
+          {
+            name,
+            cameraEntityIds,
+            calibrationGroups,
+          },
+        );
+        acceptProject(opened, { preserveSelection: true, processingSetId: activeProcessingSetId });
+        const [captures, calibrations] = await Promise.all([
+          api.sidecar.call<CaptureGroupRecord[]>('photolab.project.captureGroup.list'),
+          api.sidecar.call<CameraCalibrationGroupRecord[]>(
+            'photolab.project.calibrationGroup.list',
+          ),
+        ]);
+        setCaptureGroups(captures);
+        setCalibrationGroups(calibrations);
+        logEvent(
+          'info',
+          'sidecar',
+          `${name} created · ${cameraEntityIds.length} images · independent calibration`,
+        );
+      } catch (error) {
+        logEvent('error', 'sidecar', `Capture group could not be created: ${errorMessage(error)}`);
+      } finally {
+        setCaptureGroupSaving(false);
+      }
+    },
+    [acceptProject, activeProcessingSetId, captureGroupSaving],
+  );
+
+  const confirmCaptureGroup = useCallback(
+    async (captureGroupId: EntityId) => {
+      const api = window.himmelcad;
+      if (!api || captureGroupSaving) return;
+      setCaptureGroupSaving(true);
+      try {
+        const opened = await api.sidecar.call<OpenPhotolabProjectResult>(
+          'photolab.project.captureGroup.confirm',
+          { captureGroupId },
+        );
+        acceptProject(opened, { preserveSelection: true, processingSetId: activeProcessingSetId });
+        const [captures, calibrations] = await Promise.all([
+          api.sidecar.call<CaptureGroupRecord[]>('photolab.project.captureGroup.list'),
+          api.sidecar.call<CameraCalibrationGroupRecord[]>(
+            'photolab.project.calibrationGroup.list',
+          ),
+        ]);
+        setCaptureGroups(captures);
+        setCalibrationGroups(calibrations);
+        logEvent('info', 'sidecar', 'Camera intrinsics grouping confirmed');
+      } catch (error) {
+        logEvent(
+          'error',
+          'sidecar',
+          `Capture grouping could not be confirmed: ${errorMessage(error)}`,
+        );
+      } finally {
+        setCaptureGroupSaving(false);
+      }
+    },
+    [acceptProject, activeProcessingSetId, captureGroupSaving],
+  );
+
+  const useCaptureGroupAsProcessingSet = useCallback(
+    async (capture: CaptureGroupRecord) => {
+      const api = window.himmelcad;
+      if (!api || processingSetSaving) return;
+      const existing = findMatchingProcessingSet(processingSets, capture.cameraEntityIds);
+      if (existing) {
+        applyProcessingSet(existing);
+        activateStoredFunction('alignment.run');
+        setRightPanelTab('function');
+        return;
+      }
+      setProcessingSetSaving(true);
+      try {
+        const name = `${capture.name} Processing`;
+        const opened = await api.sidecar.call<OpenPhotolabProjectResult>(
+          'photolab.project.processingSet.create',
+          { name, cameraEntityIds: capture.cameraEntityIds },
+        );
+        acceptProject(opened, { preserveSelection: true, processingSetId: null });
+        const refreshed = await api.sidecar.call<ProcessingSetRecord[]>(
+          'photolab.project.processingSet.list',
+        );
+        setProcessingSets(refreshed);
+        const created = findMatchingProcessingSet(refreshed, capture.cameraEntityIds);
+        if (!created) throw new Error('The new processing set was not published.');
+        applyProcessingSet(created);
+        activateStoredFunction('alignment.run');
+        setRightPanelTab('function');
+        logEvent(
+          'info',
+          'sidecar',
+          `${name} created from ${capture.name} · ready for independent alignment and GCP optimization`,
+        );
+      } catch (error) {
+        logEvent(
+          'error',
+          'sidecar',
+          `Mission processing set could not be prepared: ${errorMessage(error)}`,
+        );
+      } finally {
+        setProcessingSetSaving(false);
+      }
+    },
+    [
+      acceptProject,
+      activateStoredFunction,
+      applyProcessingSet,
+      processingSetSaving,
+      processingSets,
+    ],
+  );
+
+  const createAlignmentMerge = useCallback(
+    async (
+      name: string,
+      inputAlignmentEntityIds: readonly EntityId[],
+      inputGcpOptimizationEntityIds: readonly EntityId[],
+      connections: readonly AlignmentMergeConnection[],
+    ) => {
+      const api = window.himmelcad;
+      if (!api || alignmentMergeBusy || inputAlignmentEntityIds.length < 2) return;
+      setAlignmentMergeBusy(true);
+      try {
+        const opened = await api.sidecar.call<OpenPhotolabProjectResult>(
+          'photolab.project.alignmentMerge.create',
+          {
+            name,
+            inputAlignmentEntityIds,
+            inputGcpOptimizationEntityIds,
+            connections,
+          },
+        );
+        acceptProject(opened, { preserveSelection: true, processingSetId: activeProcessingSetId });
+        setAlignmentMerges(
+          await api.sidecar.call<MergedAlignmentRunRecord[]>(
+            'photolab.project.alignmentMerge.list',
+          ),
+        );
+        logEvent(
+          'info',
+          'sidecar',
+          `${name} planned · ${inputAlignmentEntityIds.length} alignment runs`,
+        );
+      } catch (error) {
+        logEvent('error', 'sidecar', `Alignment merge plan failed: ${errorMessage(error)}`);
+      } finally {
+        setAlignmentMergeBusy(false);
+      }
+    },
+    [acceptProject, activeProcessingSetId, alignmentMergeBusy],
+  );
+
+  const startAlignmentMerge = useCallback(
+    async (mergeEntityId: EntityId) => {
+      const api = window.himmelcad;
+      if (!api || alignmentMergeBusy) return;
+      setAlignmentMergeBusy(true);
+      try {
+        const result = await api.sidecar.call<{ job: PhotolabJob }>(
+          'photolab.jobs.startAlignmentMerge',
+          {
+            operationId: `alignment-merge-${crypto.randomUUID()}`,
+            mergeEntityId,
+            profile,
+          },
+        );
+        setJobs((previous) => [...previous.filter((job) => job.id !== result.job.id), result.job]);
+        logEvent('info', 'sidecar', 'Alignment merge queued');
+      } catch (error) {
+        logEvent('error', 'sidecar', `Alignment merge could not start: ${errorMessage(error)}`);
+      } finally {
+        setAlignmentMergeBusy(false);
+      }
+    },
+    [alignmentMergeBusy, profile],
+  );
 
   const activateProcessingSet = useCallback(
     (processingSetId: EntityId) => {
@@ -1286,43 +2350,9 @@ export function App(): JSX.Element {
         logEvent('error', 'renderer', `Processing set ${processingSetId} is unavailable.`);
         return;
       }
-      setSelected(new Set(processingSet.cameraEntityIds));
-      setAlignmentScope('selection');
-      setActiveProcessingSetId(processingSet.entityId);
-      setResolved(null);
-      void window.himmelcad?.sidecar
-        .call<AlignedGcpCameraRecord[]>('photolab.gcp.alignedCameras', {
-          processingSetId: processingSet.entityId,
-        })
-        .then(setAlignedGcpCameras)
-        .catch((error: unknown) => {
-          setAlignedGcpCameras([]);
-          logEvent(
-            'error',
-            'sidecar',
-            `Aligned cameras for ${processingSet.name} could not be loaded: ${errorMessage(error)}`,
-          );
-        });
-      void window.himmelcad?.sidecar
-        .call<GcpOptimizationPublicationRecord | null>('photolab.gcp.optimization.latest', {
-          processingSetId: processingSet.entityId,
-        })
-        .then(setGcpOptimization)
-        .catch((error: unknown) => {
-          setGcpOptimization(null);
-          logEvent(
-            'warn',
-            'sidecar',
-            `No compatible GCP optimization is available for ${processingSet.name}: ${errorMessage(error)}`,
-          );
-        });
-      logEvent(
-        'info',
-        'renderer',
-        `${processingSet.name} activated · ${processingSet.cameraEntityIds.length} cameras · immutable scope`,
-      );
+      applyProcessingSet(processingSet);
     },
-    [processingSets],
+    [applyProcessingSet, processingSets],
   );
 
   const exportProduct = useCallback(
@@ -1332,57 +2362,119 @@ export function App(): JSX.Element {
       const dataset = productDatasets.find((candidate) => candidate.entityId === id);
       if (!api || !entity || !dataset) return;
       try {
-        const result = await api.products.export<{ job: PhotolabJob }>({
+        const result = await api.products.export<
+          { job: PhotolabJob } | { confirmation: { token: string; displayName: string } }
+        >({
           entityId: id,
           kind: dataset.kind,
           name: entity.name,
         });
         if (!result) return;
+        if ('confirmation' in result) {
+          setPendingProductExport({ ...result.confirmation, entityName: entity.name });
+          return;
+        }
         setJobs((previous) => [...previous.filter((job) => job.id !== result.job.id), result.job]);
         logEvent('info', 'sidecar', `Export queued · ${entity.name}`);
-        toggleBottom();
+        setBottomTab('jobs');
+        setBottomCollapsed(false);
       } catch (error) {
         logEvent('error', 'sidecar', `Product could not be exported: ${errorMessage(error)}`);
       }
     },
-    [productDatasets, project.entities, toggleBottom],
+    [productDatasets, project.entities, setBottomCollapsed],
   );
 
+  const confirmProductExport = useCallback(async () => {
+    const api = window.himmelcad;
+    if (!api || !pendingProductExport || productExportBusy) return;
+    setProductExportBusy(true);
+    try {
+      const result = await api.products.confirmExport<{ job: PhotolabJob }>(
+        pendingProductExport.token,
+      );
+      setJobs((previous) => [...previous.filter((job) => job.id !== result.job.id), result.job]);
+      logEvent('info', 'sidecar', `Export queued · ${pendingProductExport.entityName}`);
+      setPendingProductExport(null);
+      setBottomTab('jobs');
+      setBottomCollapsed(false);
+    } catch (error) {
+      logEvent('error', 'sidecar', `Product could not be exported: ${errorMessage(error)}`);
+    } finally {
+      setProductExportBusy(false);
+    }
+  }, [pendingProductExport, productExportBusy, setBottomCollapsed]);
+
+  const cancelProductExport = useCallback(() => {
+    if (!pendingProductExport || productExportBusy) return;
+    const token = pendingProductExport.token;
+    setPendingProductExport(null);
+    void window.himmelcad?.products.cancelExport(token).catch((error: unknown) => {
+      logEvent(
+        'error',
+        'electron',
+        `Export confirmation could not be closed: ${errorMessage(error)}`,
+      );
+    });
+  }, [pendingProductExport, productExportBusy]);
+
   const handleTreeContextAction = useCallback(
-    (id: EntityId, action: 'showGcpImages' | 'open' | 'properties' | 'export') => {
+    (id: EntityId, action: 'showGcpImages' | 'open' | 'properties' | 'export' | 'remove') => {
       const entity = project.entities[id];
       if (!entity) return;
-      if (action === 'export') {
+      if (action === 'remove' && entity.kind === 'CameraImage') {
+        const entityIds = selected.has(id)
+          ? [...selected].filter((candidate) => project.entities[candidate]?.kind === 'CameraImage')
+          : [id];
+        setPendingImageRemoval(entityIds);
+      } else if (action === 'export') {
         void exportProduct(id);
       } else if (action === 'open' && entity.kind === 'ProcessingSet') {
         const processingSet = processingSets.find((candidate) => candidate.entityId === id);
         if (!processingSet) return;
         activateProcessingSet(processingSet.entityId);
-        setWorkspaceMode('scene3d');
+        setWorkspaceMode('scene');
         activate('alignment.run');
+      } else if (action === 'open' && entity.kind === 'CaptureGroup') {
+        const capture = captureGroups.find((candidate) => candidate.entityId === id);
+        if (!capture) return;
+        setSelected(new Set(capture.cameraEntityIds));
+        setWorkspaceMode('scene');
+        activate('alignment.groups');
+      } else if (action === 'open' && entity.kind === 'CameraCalibrationGroup') {
+        const calibration = calibrationGroups.find((candidate) => candidate.entityId === id);
+        if (!calibration) return;
+        setSelected(new Set(calibration.cameraEntityIds));
+        setWorkspaceMode('scene');
+        activate('alignment.groups');
       } else if (action === 'showGcpImages') {
         const pointId = gcpCollection?.[1].points.find(({ point }) => point.name === entity.name)
           ?.point.id;
         setFocusedGcpId(pointId ?? null);
         setWorkspaceMode('images');
-        activate(null);
+        activate('reference.gcp.images');
         logEvent('info', 'renderer', `Filtering images containing GCP “${entity.name}”`);
       } else if (action === 'open') {
         setFocusedGcpId(null);
-        setWorkspaceMode(entity.kind === 'CameraImage' ? 'images' : 'scene3d');
-        activate(null);
+        setWorkspaceMode(entity.kind === 'CameraImage' ? 'images' : 'scene');
       } else {
         setSelected(new Set([id]));
-        activate(null);
+        setRightPanelTab('properties');
+        setRightCollapsed(false);
       }
     },
     [
       activate,
       activateProcessingSet,
+      calibrationGroups,
+      captureGroups,
       exportProduct,
       gcpCollection,
       processingSets,
       project.entities,
+      runEntityCommand,
+      selected,
+      setRightCollapsed,
     ],
   );
 
@@ -1396,21 +2488,9 @@ export function App(): JSX.Element {
         onImportFiles: () => void inspectImages('files'),
         onImportFolder: () => void inspectImages('folder'),
         onImportGcps: () => void chooseGcpCsv(),
-        onViewScene: () => switchWorkspace('scene3d'),
-        onViewMap: () => switchWorkspace('map2d'),
-        onViewImages: () => switchWorkspace('images'),
         onActivateFunction: activate,
       }),
-    [
-      chooseGcpCsv,
-      createProject,
-      inspectImages,
-      openProject,
-      saveProject,
-      saveProjectAs,
-      switchWorkspace,
-      activate,
-    ],
+    [chooseGcpCsv, createProject, inspectImages, openProject, saveProject, saveProjectAs, activate],
   );
 
   const windowControls = useMemo<WindowControls | null>(() => {
@@ -1425,11 +2505,20 @@ export function App(): JSX.Element {
     };
   }, []);
 
+  const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() => {
+    if (typeof document === 'undefined') return 'dark';
+    return document.documentElement.classList.contains('hc-theme-light') ? 'light' : 'dark';
+  });
+  useEffect(() => {
+    document.documentElement.classList.toggle('hc-theme-dark', themeMode === 'dark');
+    document.documentElement.classList.toggle('hc-theme-light', themeMode === 'light');
+  }, [themeMode]);
+
   const statusItems = useMemo(
     () => [
       {
         id: 'core',
-        content: coreReady ? '● Core ready' : '○ Core offline',
+        content: coreReady ? '● Core ready' : '○ Core unavailable',
         align: 'left' as const,
       },
       { id: 'profile', content: `Profile: ${profileLabel(profile)}`, align: 'left' as const },
@@ -1438,7 +2527,11 @@ export function App(): JSX.Element {
         content: hardware ? hardwareLabel(hardware) : 'Hardware: probing…',
         align: 'left' as const,
       },
-      { id: 'view', content: `View: ${workspaceLabel(workspaceMode)}`, align: 'left' as const },
+      {
+        id: 'view',
+        content: `View: ${workspaceLabel(workspaceMode, sceneNavigationMode)}`,
+        align: 'left' as const,
+      },
       {
         id: 'autosave',
         content: projectReady
@@ -1454,6 +2547,20 @@ export function App(): JSX.Element {
       },
       { id: 'snap', content: snap ? `Snap: ${snap.kind}` : 'Snap: —', align: 'right' as const },
       { id: 'units', content: 'Z-Up · m', align: 'right' as const },
+      {
+        id: 'theme',
+        content: (
+          <button
+            type="button"
+            className={styles.themeToggle}
+            onClick={() => setThemeMode((mode) => (mode === 'dark' ? 'light' : 'dark'))}
+            title="Toggle light / dark theme"
+          >
+            {themeMode === 'dark' ? 'Light' : 'Dark'}
+          </button>
+        ),
+        align: 'right' as const,
+      },
       { id: 'panels', content: <PanelToggles />, align: 'right' as const },
     ],
     [
@@ -1463,15 +2570,21 @@ export function App(): JSX.Element {
       hardware,
       imageCount,
       lastSavedGeneration,
+      themeMode,
       profile,
       projectReady,
       snap,
+      sceneNavigationMode,
       workspaceMode,
     ],
   );
 
   const onSelect = (id: EntityId, mode: 'replace' | 'add' | 'toggle') => {
-    setActiveProcessingSetId(null);
+    if (project.entities[id] && mode === 'replace') {
+      setRightPanelTab('properties');
+      setRightCollapsed(false);
+      if (project.entities[id]?.kind === 'CameraImage') setFocusedGcpId(null);
+    }
     setSelected((previous) => {
       const next = new Set(previous);
       if (mode === 'replace') {
@@ -1511,195 +2624,502 @@ export function App(): JSX.Element {
   const productOperation = productOperationFromFunctionId(activeFunctionId);
 
   return (
-    <AppShell
-      titleBar={
-        <TitleBar
-          appName="HimmelCAD"
-          productLabel="PhotoLab"
-          projectLabel={project.name}
-          controls={windowControls}
-          rightSlot={<span className={styles.titleStatus}>OFFLINE PIPELINE</span>}
-        />
-      }
-      ribbon={<Ribbon tabs={ribbonTabs} />}
-      leftPanel={
-        <EntityTree
-          project={project}
-          selectedIds={selected}
-          onSelect={onSelect}
-          onRename={(entityId, name) =>
-            void runEntityCommand(
-              'photolab.project.entity.rename',
-              { entityId, name },
-              `Entity renamed · ${name}`,
-            )
-          }
-          onMove={(entityId, newParentId) =>
-            void runEntityCommand(
-              'photolab.project.entity.move',
-              { entityId, newParentId },
-              'Entity moved in the project tree',
-            )
-          }
-          onVisibilityChange={(entityId, visible) =>
-            void runEntityCommand(
-              'photolab.project.entity.visibility',
-              { entityId, visible },
-              visible ? 'Entity shown' : 'Entity hidden',
-            )
-          }
-          onContextAction={handleTreeContextAction}
-        />
-      }
-      rightPanel={
-        <FunctionPanel
-          activeFunctionId={activeFunctionId}
-          title={
-            activeFunctionId === 'alignment.run'
-              ? 'Align Photos'
-              : activeFunctionId === 'alignment.optimize'
-                ? 'Optimize Alignment'
-                : activeFunctionId === 'images.import.review'
-                  ? 'Import Images'
-                  : activeFunctionId === 'reference.gcp.import'
-                    ? 'Import GCPs'
-                    : activeFunctionId === 'batch.configure' || activeFunctionId === 'batch.queue'
-                      ? 'Batchprocessing'
-                      : isProjectDiagnosticsKind(activeFunctionId)
-                        ? diagnosticsTitle(activeFunctionId)
-                        : productOperation
-                          ? productLabel(productOperation)
-                          : undefined
-          }
+    <>
+      <AppShell
+        titleBar={
+          <TitleBar
+            appName="himmel:CAD"
+            productLabel="PHOTOLAB"
+            projectLabel={project.name}
+            brandMark={<img className={styles.brandLogo} src={photolabLogoUrl} alt="" />}
+            controls={windowControls}
+          />
+        }
+        ribbon={<Ribbon tabs={ribbonTabs} />}
+        leftPanel={
+          <EntityTree
+            project={project}
+            selectedIds={selected}
+            onSelect={onSelect}
+            onSelectMany={(ids) => {
+              setSelected(new Set(ids));
+              if (ids.some((id) => project.entities[id]?.kind === 'CameraImage')) {
+                setFocusedGcpId(null);
+                setRightPanelTab('properties');
+                setRightCollapsed(false);
+              }
+            }}
+            onRename={(entityId, name) =>
+              void runEntityCommand(
+                'photolab.project.entity.rename',
+                { entityId, name },
+                `Entity renamed · ${name}`,
+              )
+            }
+            onMove={(entityId, newParentId) =>
+              void runEntityCommand(
+                'photolab.project.entity.move',
+                { entityId, newParentId },
+                'Entity moved in the project tree',
+              )
+            }
+            onVisibilityChange={(entityId, visible) =>
+              void runEntityCommand(
+                'photolab.project.entity.visibility',
+                { entityId, visible },
+                visible ? 'Entity shown' : 'Entity hidden',
+              )
+            }
+            onContextAction={handleTreeContextAction}
+          />
+        }
+        rightPanel={
+          <FunctionPanel
+            activeFunctionId={activeFunctionId}
+            activeTab={rightPanelTab}
+            onActiveTabChange={setRightPanelTab}
+            propertiesTitle={
+              selected.size > 1
+                ? `${selected.size} selected`
+                : (selectedImage?.name ??
+                  selectedGcp?.name ??
+                  ([...selected][0] ? project.entities[[...selected][0]!]?.name : undefined))
+            }
+            properties={
+              selectedImage ? (
+                <ImagePropertiesPanel
+                  image={selectedImage}
+                  quality={selectedImageQuality}
+                  aligned={selectedAlignedCamera}
+                  optimization={gcpOptimization}
+                />
+              ) : selectedGcp && gcpCollection ? (
+                <GcpPropertiesPanel
+                  point={selectedGcp}
+                  collection={gcpCollection[1]}
+                  optimization={gcpOptimization}
+                />
+              ) : selected.size > 0 ? (
+                <SelectionPropertiesPanel
+                  project={project}
+                  selectedIds={[...selected]}
+                  images={projectImages}
+                  processingSets={processingSets}
+                  captureGroups={captureGroups}
+                  calibrationGroups={calibrationGroups}
+                  alignmentMerges={alignmentMerges}
+                />
+              ) : null
+            }
+            title={
+              activeFunctionId === 'alignment.run'
+                ? 'Align Photos'
+                : activeFunctionId === 'alignment.optimize'
+                  ? 'Optimize Alignment'
+                  : activeFunctionId === 'alignment.merge'
+                    ? 'Merge Alignments'
+                    : activeFunctionId === 'alignment.groups'
+                      ? 'Capture Groups'
+                      : activeFunctionId === 'reference.gcp.images'
+                        ? 'Images with this GCP'
+                        : activeFunctionId === 'images.import.review'
+                          ? undefined
+                          : activeFunctionId === 'batch.configure' ||
+                              activeFunctionId === 'batch.queue'
+                            ? 'Batchprocessing'
+                            : isProjectDiagnosticsKind(activeFunctionId)
+                              ? diagnosticsTitle(activeFunctionId)
+                              : productOperation
+                                ? productLabel(productOperation)
+                                : undefined
+            }
+          >
+            {activeFunctionId === 'alignment.merge' ? (
+              <AlignmentMergePanel
+                candidates={alignmentMergeCandidates}
+                merges={alignmentMerges}
+                gcpOptimizations={gcpOptimizations}
+                busy={alignmentMergeBusy}
+                onCreate={(name, alignmentIds, optimizationIds, connections) =>
+                  void createAlignmentMerge(name, alignmentIds, optimizationIds, connections)
+                }
+                onStart={(mergeEntityId) => void startAlignmentMerge(mergeEntityId)}
+              />
+            ) : activeFunctionId === 'alignment.groups' ? (
+              <CaptureGroupsPanel
+                captureGroups={captureGroups}
+                calibrationGroups={calibrationGroups}
+                projectCameras={projectImages.map((image) => ({
+                  entityId: image.entityId,
+                  name: image.name,
+                }))}
+                selectedCameras={projectImages.filter((image) =>
+                  selectedCameraIds.includes(image.entityId),
+                )}
+                busy={captureGroupSaving || processingSetSaving}
+                onCreate={(name, cameraIds, groups) =>
+                  void createCaptureGroup(name, cameraIds, groups)
+                }
+                onConfirm={(captureGroupId) => void confirmCaptureGroup(captureGroupId)}
+                onUseAsAlignmentScope={(capture) => void useCaptureGroupAsProcessingSet(capture)}
+              />
+            ) : activeFunctionId === 'reference.gcp.images' ? (
+              <GcpImagesPanel
+                pointName={focusedGcpName}
+                images={focusedGcpImages}
+                selectedImageEntityId={selectedImage?.entityId ?? null}
+                onSelect={(entityId) => {
+                  setSelected(new Set([entityId]));
+                  setWorkspaceMode('images');
+                }}
+              />
+            ) : activeFunctionId === 'alignment.run' ? (
+              <AlignmentProfilePanel
+                profile={profile}
+                imageCount={alignmentImageCount}
+                totalImageCount={projectImages.length}
+                selectedImageCount={selectedCameraIds.length}
+                scopeCameraIds={
+                  alignmentScope === 'selection'
+                    ? selectedCameraIds
+                    : projectImages.map((image) => image.entityId)
+                }
+                scope={alignmentScope}
+                processingSets={processingSets}
+                captureGroups={captureGroups}
+                calibrationGroups={calibrationGroups}
+                activeProcessingSetId={activeProcessingSetId}
+                resolving={resolving}
+                starting={alignmentStarting}
+                savingProcessingSet={processingSetSaving}
+                canStart={projectReady && alignmentImageCount >= 2}
+                resolved={resolved}
+                error={resolveError}
+                onProfileChange={(next) => {
+                  setProfile(next);
+                  setResolved(null);
+                }}
+                onScopeChange={(next) => {
+                  setAlignmentScope(next);
+                  setActiveProcessingSetId(null);
+                  setResolved(null);
+                }}
+                onProcessingSetChange={activateProcessingSet}
+                onStart={() => void startAlignment()}
+                onSaveProcessingSet={() => void saveProcessingSet()}
+                onReviewGroups={() => {
+                  activateStoredFunction('alignment.groups');
+                  setRightPanelTab('function');
+                }}
+              />
+            ) : activeFunctionId === 'alignment.optimize' ? (
+              <GcpOptimizationPanel
+                collection={gcpCollection?.[1] ?? null}
+                cameras={gcpCameraReferences}
+                busy={gcpOptimizationStarting}
+                onStart={(selection) => void startGcpOptimization(selection)}
+              />
+            ) : activeFunctionId === 'batch.configure' || activeFunctionId === 'batch.queue' ? (
+              <BatchConfiguratorPanel
+                busy={batchStarting}
+                canStart={projectReady && projectImages.length >= 2}
+                allCameraIds={projectImages.map((image) => image.entityId)}
+                selectedCameraIds={selectedCameraIds}
+                processingSets={processingSets}
+                activeProcessingSetId={activeProcessingSetId}
+                onActivateProcessingSet={activateProcessingSet}
+                onClearProcessingSet={() => setActiveProcessingSetId(null)}
+                onStart={(steps, cameraEntityIds, scopeLabel) =>
+                  void startBatch(steps, cameraEntityIds, scopeLabel)
+                }
+                onError={reportPanelError}
+              />
+            ) : isProjectDiagnosticsKind(activeFunctionId) ? (
+              <ProjectDiagnosticsPanel
+                kind={activeFunctionId}
+                images={projectImages}
+                imageQualityAnalyses={imageQualityAnalyses}
+                alignedCameras={alignedGcpCameras}
+                jobs={jobs}
+                processingSets={processingSets}
+                activeProcessingSetId={activeProcessingSetId}
+                projectTargetCrs={projectTargetCrs}
+                gcpOptimization={gcpOptimization}
+                imageQualityStarting={imageQualityStarting}
+                onAnalyzeImageQuality={(processingSetId) =>
+                  void startImageQuality(processingSetId)
+                }
+              />
+            ) : productOperation ? (
+              <ProductPanel
+                operation={productOperation}
+                busy={productStarting}
+                inputs={productAlignmentInputs}
+                selectedInputId={activeProductAlignmentId ?? 'latest'}
+                onInputChange={(id) =>
+                  setActiveProductAlignmentId(id === 'latest' ? null : (id as EntityId))
+                }
+                onStart={(configuration) => void startProduct(configuration)}
+              />
+            ) : null}
+          </FunctionPanel>
+        }
+        bottomPanel={
+          <PhotolabBottomPanel
+            project={{
+              id: project.projectId,
+              name: project.name,
+              formatVersion: project.formatVersion,
+            }}
+            jobs={jobs}
+            onCommand={onCommand}
+            onCancelJob={(jobId) => void cancelJob(jobId)}
+            onCollapse={toggleBottom}
+            accuracyReport={gcpAccuracyReport}
+            hardware={hardware}
+            products={productDatasets}
+            processingSets={processingSets}
+            captureGroups={captureGroups}
+            calibrationGroups={calibrationGroups}
+            alignmentMerges={alignmentMerges}
+            alignmentRuns={alignmentMergeCandidates}
+            gcpOptimizations={gcpOptimizations}
+            autoExpandJobId={autoExpandJobId}
+            activeTab={bottomTab}
+            onTabChange={setBottomTab}
+          />
+        }
+        viewport={
+          <div className={styles.workspace}>
+            <div className={styles.workspaceTabs}>
+              <IslandTabs
+                ariaLabel="Workspace"
+                value={workspaceMode}
+                onChange={(id) => switchWorkspace(id as 'scene' | 'images')}
+                items={[
+                  { id: 'scene', label: 'View' },
+                  { id: 'images', label: 'Images' },
+                ]}
+              />
+            </div>
+            <div className={styles.workspaceBody}>
+              <div
+                className={`${styles.sceneWorkspace} ${workspaceMode === 'images' ? styles.workspacePaneHidden : ''}`}
+                aria-hidden={workspaceMode === 'images'}
+              >
+                <Viewport
+                  key={`${project.projectId}:${String(viewportRecoveryGeneration)}`}
+                  ref={viewportRef}
+                  renderOffset={[
+                    project.renderOffset.x,
+                    project.renderOffset.y,
+                    project.renderOffset.z,
+                  ]}
+                  navigationMode={sceneNavigationMode}
+                  pointBudget={viewportRecoveryGeneration === 0 ? 8_000_000 : 2_000_000}
+                  onCursorSnap={setSnap}
+                  onLog={(level, message) => logEvent(level, 'renderer', message)}
+                  onContextRecreate={recreateViewportAfterContextLoss}
+                />
+                {Object.entries(productLayerStatuses).length > 0 && (
+                  <div className={styles.productLayerStatus} aria-live="polite">
+                    {Object.entries(productLayerStatuses).map(([entityId, status]) => (
+                      <div
+                        key={entityId}
+                        className={
+                          status.state === 'error'
+                            ? styles.productLayerStatusError
+                            : styles.productLayerStatusLoading
+                        }
+                        role={status.state === 'error' ? 'alert' : 'status'}
+                      >
+                        {status.state === 'loading' ? (
+                          <LoaderCircle className={styles.productLayerSpinner} size={17} />
+                        ) : (
+                          <AlertTriangle size={17} />
+                        )}
+                        <span>
+                          <strong>
+                            {status.state === 'loading' ? `Loading ${status.name}` : status.name}
+                          </strong>
+                          <small>
+                            {status.state === 'loading'
+                              ? 'Preparing the visible layer…'
+                              : (status.message ?? 'The layer could not be loaded.')}
+                          </small>
+                        </span>
+                        {status.state === 'error' && (
+                          <button
+                            type="button"
+                            onClick={() => retryProductLayer(entityId as EntityId)}
+                          >
+                            Retry
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className={styles.sceneOverlayBar}>
+                  <OverlayChip
+                    as="button"
+                    active={sceneNavigationMode === 'lockedTopDown2d'}
+                    aria-pressed={sceneNavigationMode === 'lockedTopDown2d'}
+                    onClick={() =>
+                      setSceneNavigationMode((mode) =>
+                        mode === 'orbit3d' ? 'lockedTopDown2d' : 'orbit3d',
+                      )
+                    }
+                  >
+                    {sceneNavigationMode === 'lockedTopDown2d' ? 'Orbit 3D' : 'Top-down 2D'}
+                  </OverlayChip>
+                  <OverlayChip
+                    as="button"
+                    onClick={() => {
+                      const ids = [...selected];
+                      if (ids.length === 0 || !viewportRef.current?.frameSelection(ids)) {
+                        viewportRef.current?.frameAll();
+                      }
+                    }}
+                  >
+                    {selected.size > 0 ? 'Frame selection' : 'Frame all'}
+                  </OverlayChip>
+                </div>
+              </div>
+              <div
+                className={`${styles.imageWorkspace} ${workspaceMode === 'scene' ? styles.workspacePaneHidden : ''}`}
+                aria-hidden={workspaceMode === 'scene'}
+              >
+                <ImageWorkspace
+                  batch={imageImportBatch}
+                  projectImages={projectImages}
+                  imageMasks={imageMasks}
+                  selectedImageEntityId={selectedImage?.entityId ?? null}
+                  alignedCameras={alignedGcpCameras}
+                  gcpCollection={gcpCollection?.[1] ?? null}
+                  gcpOptimization={gcpOptimization}
+                  focusedGcpId={focusedGcpId}
+                  onCommitGcpMeasurement={(measurement) => void commitGcpMeasurement(measurement)}
+                  onEditGcpObservation={(marker, edit) => void editGcpObservation(marker, edit)}
+                  onEditImageMask={editImageMask}
+                  depthDatasets={productDatasets.filter((dataset) => dataset.kind === 'depth')}
+                  onSelectProjectImage={(entityId) => {
+                    setSelected(new Set([entityId]));
+                    setRightPanelTab('properties');
+                    setRightCollapsed(false);
+                  }}
+                  onError={reportPanelError}
+                />
+              </div>
+            </div>
+          </div>
+        }
+        floatingViewportTabs
+        floatingLeftTabs
+        floatingRightTabs
+        statusBar={<StatusBar items={statusItems} />}
+      />
+      {projectFileOperation && (
+        <FloatingTaskIsland
+          modal
+          onRequestClose={() => {
+            if (projectFileOperation.error)
+              finishProjectFileOperation(projectFileOperation.archiveOperationId);
+            else void cancelProjectFileOperation();
+          }}
         >
-          {activeFunctionId === 'alignment.run' ? (
-            <AlignmentProfilePanel
-              profile={profile}
-              imageCount={alignmentImageCount}
-              totalImageCount={projectImages.length}
-              selectedImageCount={selectedCameraIds.length}
-              scope={alignmentScope}
-              processingSets={processingSets}
-              activeProcessingSetId={activeProcessingSetId}
-              resolving={resolving}
-              starting={alignmentStarting}
-              savingProcessingSet={processingSetSaving}
-              canStart={projectReady && alignmentImageCount >= 2}
-              resolved={resolved}
-              error={resolveError}
-              onProfileChange={(next) => {
-                setProfile(next);
-                setResolved(null);
-              }}
-              onScopeChange={(next) => {
-                setAlignmentScope(next);
-                setActiveProcessingSetId(null);
-                setResolved(null);
-              }}
-              onProcessingSetChange={activateProcessingSet}
-              onResolve={() => void resolveProfile()}
-              onStart={() => void startAlignment()}
-              onSaveProcessingSet={() => void saveProcessingSet()}
-            />
-          ) : activeFunctionId === 'alignment.optimize' ? (
-            <GcpOptimizationPanel
-              collection={gcpCollection?.[1] ?? null}
-              cameras={gcpCameraReferences}
-              busy={gcpOptimizationStarting}
-              onStart={(selection) => void startGcpOptimization(selection)}
-            />
-          ) : activeFunctionId === 'images.import.review' && imageImportBatch ? (
-            <ImageImportPanel
-              batch={imageImportBatch}
-              busy={imageImportBusy}
-              onChooseMoreFiles={() => void inspectImages('files')}
-              onChooseFolder={() => void inspectImages('folder')}
-              onDiscoverCrs={discoverImageCrs}
-              onCommit={commitImageImport}
-              onCancel={() => void cancelImageImport()}
-            />
-          ) : activeFunctionId === 'reference.gcp.import' ? (
-            <GcpImportPanel
-              path={gcpPath}
-              projectTargetCrs={projectTargetCrs}
-              projectImages={projectImages}
-              busy={gcpBusy}
-              onChooseFile={() => void chooseGcpCsv()}
-              onPreview={previewGcpCsv}
-              onDiscoverCrs={discoverImageCrs}
-              onCommit={commitGcpCsv}
-              onCancel={() => void cancelGcpImport()}
-            />
-          ) : activeFunctionId === 'batch.configure' || activeFunctionId === 'batch.queue' ? (
-            <BatchConfiguratorPanel
-              busy={batchStarting}
-              canStart={projectReady && projectImages.length >= 2}
-              allCameraIds={projectImages.map((image) => image.entityId)}
-              selectedCameraIds={selectedCameraIds}
-              processingSets={processingSets}
-              activeProcessingSetId={activeProcessingSetId}
-              onActivateProcessingSet={activateProcessingSet}
-              onClearProcessingSet={() => setActiveProcessingSetId(null)}
-              onStart={(steps, cameraEntityIds, scopeLabel) =>
-                void startBatch(steps, cameraEntityIds, scopeLabel)
-              }
-            />
-          ) : isProjectDiagnosticsKind(activeFunctionId) ? (
-            <ProjectDiagnosticsPanel
-              kind={activeFunctionId}
-              images={projectImages}
-              alignedCameras={alignedGcpCameras}
-              jobs={jobs}
-              projectTargetCrs={projectTargetCrs}
-              gcpOptimization={gcpOptimization}
-            />
-          ) : productOperation ? (
-            <ProductPanel
-              operation={productOperation}
-              busy={productStarting}
-              inputLabel={
-                processingSets.find((set) => set.entityId === activeProcessingSetId)?.name ??
-                'latest published alignment'
-              }
-              onStart={(configuration) => void startProduct(configuration)}
-            />
-          ) : null}
-        </FunctionPanel>
-      }
-      bottomPanel={
-        <PhotolabBottomPanel
-          jobs={jobs}
-          onCommand={onCommand}
-          onCancelJob={(jobId) => void cancelJob(jobId)}
-          onCollapse={toggleBottom}
-          accuracyReport={gcpAccuracyReport}
-          hardware={hardware}
-          products={productDatasets}
-        />
-      }
-      viewport={
-        workspaceMode === 'images' ? (
-          <ImageWorkspace
+          <ProjectFileOperationDialog
+            operation={projectFileOperation}
+            onCancel={() => void cancelProjectFileOperation()}
+            onClose={() => finishProjectFileOperation(projectFileOperation.archiveOperationId)}
+          />
+        </FloatingTaskIsland>
+      )}
+      {(imageImportBusy || imageImportBatch != null || imageImportError != null) && (
+        <FloatingTaskIsland>
+          <ImageImportPanel
             batch={imageImportBatch}
+            busy={imageImportBusy}
+            progress={imageImportProgress}
+            gridProgress={gridSelectionProgress}
+            error={imageImportError}
+            onChooseMoreFiles={() => void inspectImages('files')}
+            onChooseFolder={() => void inspectImages('folder')}
+            onSelectGrid={selectTransformationGrid}
+            onDiscoverCrs={discoverImageCrs}
+            onCommit={commitImageImport}
+            onCancel={() => void cancelImageImport()}
+            onError={reportPanelError}
+          />
+        </FloatingTaskIsland>
+      )}
+      {gcpImportOpen && (
+        <FloatingTaskIsland>
+          <GcpImportPanel
+            path={gcpPath}
+            projectTargetCrs={projectTargetCrs}
             projectImages={projectImages}
-            alignedCameras={alignedGcpCameras}
-            gcpCollection={gcpCollection?.[1] ?? null}
-            gcpOptimization={gcpOptimization}
-            focusedGcpId={focusedGcpId}
-            onCommitGcpMeasurement={(measurement) => void commitGcpMeasurement(measurement)}
-            onEditGcpObservation={(marker, edit) => void editGcpObservation(marker, edit)}
-            depthDatasets={productDatasets.filter((dataset) => dataset.kind === 'depth')}
+            busy={gcpBusy}
+            externalError={gcpImportError}
+            gridProgress={gridSelectionProgress}
+            onChooseFile={() => void chooseGcpCsv()}
+            onPreview={previewGcpCsv}
+            onDiscoverCrs={discoverImageCrs}
+            onSelectGrid={selectTransformationGrid}
+            onCommit={commitGcpCsv}
+            onCancel={() => void cancelGcpImport()}
+            onError={reportPanelError}
           />
-        ) : (
-          <Viewport
-            ref={viewportRef}
-            onCursorSnap={setSnap}
-            onLog={(level, message) => logEvent(level, 'renderer', message)}
+        </FloatingTaskIsland>
+      )}
+      {pendingImageRemoval && (
+        <FloatingTaskIsland
+          modal
+          onRequestClose={() => {
+            if (!imageRemovalBusy) setPendingImageRemoval(null);
+          }}
+        >
+          <ConfirmationDialog
+            title={
+              pendingImageRemoval.length === 1
+                ? 'Remove image?'
+                : `Remove ${pendingImageRemoval.length} images?`
+            }
+            message="The images are removed from the active project tree. Their immutable copied source objects remain recoverable from project history. Images referenced by a processing set, alignment, GCP observation, or product are protected."
+            confirmLabel="Remove from project"
+            busy={imageRemovalBusy}
+            onCancel={() => {
+              if (!imageRemovalBusy) setPendingImageRemoval(null);
+            }}
+            onConfirm={() => {
+              const entityIds = [...pendingImageRemoval];
+              setImageRemovalBusy(true);
+              void runEntityCommand(
+                'photolab.project.images.remove',
+                { entityIds },
+                `${entityIds.length} image${entityIds.length === 1 ? '' : 's'} removed from project`,
+              ).finally(() => {
+                setImageRemovalBusy(false);
+                setPendingImageRemoval(null);
+              });
+            }}
           />
-        )
-      }
-      statusBar={<StatusBar items={statusItems} />}
-    />
+        </FloatingTaskIsland>
+      )}
+      {pendingProductExport && (
+        <FloatingTaskIsland modal onRequestClose={cancelProductExport}>
+          <ConfirmationDialog
+            title={`Replace “${pendingProductExport.displayName}”?`}
+            message="The selected export destination already exists. Replacing it removes the existing export before the new product is published. The PhotoLab project itself is not changed."
+            confirmLabel="Replace and export"
+            busyLabel="Queueing export…"
+            busy={productExportBusy}
+            onCancel={cancelProductExport}
+            onConfirm={() => void confirmProductExport()}
+          />
+        </FloatingTaskIsland>
+      )}
+    </>
   );
 }
 
@@ -1750,10 +3170,9 @@ function isProfile(value: string | undefined): value is AlignmentQualityProfile 
   return value === 'qualityHybrid' || value === 'maximumRobustness' || value === 'fast';
 }
 
-function workspaceLabel(mode: WorkspaceMode): string {
-  if (mode === 'scene3d') return '3D-Szene';
-  if (mode === 'map2d') return '2D Map · locked';
-  return 'Images / Depth';
+function workspaceLabel(mode: WorkspaceMode, sceneMode: 'orbit3d' | 'lockedTopDown2d'): string {
+  if (mode === 'images') return 'Images / Depth';
+  return sceneMode === 'lockedTopDown2d' ? 'Top-down 2D · locked' : '3D Scene';
 }
 
 function hardwareLabel(hardware: HardwareCapabilities): string {
@@ -1978,7 +3397,7 @@ function normalize3(vector: readonly number[]): Vector3Tuple {
 
 function parseSidecarProgress(
   line: string,
-): { progressKey: string; fraction: number; message: string } | null {
+): import('./projectFileOperation.js').ProjectProgressEvent | null {
   const index = line.indexOf(SIDECAR_PROGRESS_PREFIX);
   if (index < 0) return null;
   try {
@@ -1986,6 +3405,8 @@ function parseSidecarProgress(
       progressKey?: unknown;
       fraction?: unknown;
       message?: unknown;
+      operationId?: unknown;
+      archive?: unknown;
     };
     if (typeof parsed.progressKey !== 'string') return null;
     if (typeof parsed.fraction !== 'number' || !Number.isFinite(parsed.fraction)) return null;
@@ -1994,10 +3415,28 @@ function parseSidecarProgress(
       progressKey: parsed.progressKey,
       fraction: Math.min(1, Math.max(0, parsed.fraction)),
       message: parsed.message,
+      ...(typeof parsed.operationId === 'string' ? { operationId: parsed.operationId } : {}),
+      ...(isProjectArchiveProgress(parsed.archive) ? { archive: parsed.archive } : {}),
     };
   } catch {
     return null;
   }
+}
+
+function isProjectArchiveProgress(
+  value: unknown,
+): value is import('./projectFileOperation.js').ProjectArchiveProgress {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    ['scanning', 'packing', 'validating', 'extracting', 'committing'].includes(
+      String(candidate.phase),
+    ) &&
+    ['filesCompleted', 'filesTotal', 'bytesCompleted', 'bytesTotal'].every(
+      (key) => typeof candidate[key] === 'number' && Number.isFinite(candidate[key]),
+    ) &&
+    (candidate.currentPath == null || typeof candidate.currentPath === 'string')
+  );
 }
 
 function referenceFrameLabel(
@@ -2011,6 +3450,9 @@ function referenceFrameLabel(
   const kind = (crs as { kind?: unknown }).kind;
   const value = (crs as { value?: unknown }).value;
   if (kind === 'epsg' && typeof value === 'number') return `EPSG:${value}`;
-  if (kind === 'authority' && typeof value === 'string') return value;
+  if (kind === 'authority' && typeof value === 'string') {
+    const horizontal = /^(EPSG:\d+)(?:\+\d+)?$/i.exec(value)?.[1];
+    return horizontal ?? value;
+  }
   return null;
 }

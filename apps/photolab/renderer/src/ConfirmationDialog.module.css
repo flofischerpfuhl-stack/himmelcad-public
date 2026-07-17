@@ -1,0 +1,82 @@
+.dialog {
+  width: min(460px, calc(100vw - 32px));
+  overflow: hidden;
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: 14px;
+  box-shadow: var(--hc-shadow-island);
+}
+.dialog header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 15px 17px;
+  border-bottom: 1px solid var(--hc-border-subtle);
+  cursor: move;
+}
+.dialog header span {
+  color: var(--hc-fg-subtle);
+  font: 8px var(--hc-font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.dialog h2 {
+  margin: 3px 0 0;
+  font-size: 16px;
+}
+.dialog button {
+  min-height: 32px;
+  padding: 0 13px;
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island-hi);
+  border: 1px solid var(--hc-border-default);
+  border-radius: 7px;
+  font: inherit;
+  cursor: pointer;
+}
+.dialog header button {
+  display: grid;
+  place-items: center;
+  min-width: 30px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+}
+.dialog button:hover:not(:disabled) {
+  background: var(--hc-hover-bg);
+  border-color: var(--hc-border-strong);
+}
+.dialog button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.content {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 11px;
+  align-items: start;
+  padding: 19px 17px;
+}
+.content svg {
+  color: var(--hc-warning);
+}
+.content p {
+  margin: 0;
+  color: var(--hc-fg-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+.dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  padding: 12px 17px;
+  background: var(--hc-bg-island-lo);
+  border-top: 1px solid var(--hc-border-subtle);
+}
+.dialog .danger {
+  color: var(--hc-danger-fg, var(--hc-fg-default));
+  border-color: var(--hc-danger, var(--hc-border-strong));
+  background: color-mix(in srgb, var(--hc-danger, #c45151) 18%, var(--hc-bg-island-hi));
+}

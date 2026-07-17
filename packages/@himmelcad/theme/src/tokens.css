@@ -1,24 +1,30 @@
 /**
- * HimmelCAD design tokens — derived from VS Code "Islands Dark"
- * (libs/vscode-dark-islands-main). Single source of truth for color, type,
- * spacing, motion. UI components must read tokens, never hardcode hex.
+ * HimmelCAD design tokens — Dark Islands + Light Dashboard.
+ * UI must read tokens; never hardcode hex in components.
  *
- * The "islands" aesthetic: a dark workspace void with floating, rounded
- * panels (islands) sitting on top. Each panel has its own slightly elevated
- * background tone, a soft hairline border, and is separated from neighbors
- * by a small gutter that shows the void.
+ * Selection rules:
+ *   - Neutral press/active = grey elevation change (no blue wash)
+ *   - Accent selection = solid 1px accent border only (no soft fill, no gradient)
+ *   - Accent filled = solid accent bg + on-accent text (buttons, primary actions)
+ *   - Status colors only for success / warning / error (filled or border variants)
  */
 
 :root,
 .hc-theme-dark {
-  /* Background layers, from deepest to most elevated */
-  --hc-bg-void: #101114;        /* the workspace gutter behind every island */
-  --hc-bg-island: #1a1c20;      /* default island surface (panels, viewport chrome) */
-  --hc-bg-island-hi: #1f2226;   /* slightly raised: ribbon body, hovered islands */
-  --hc-bg-island-lo: #15171a;   /* slightly recessed: console body, inactive tabs */
-  --hc-bg-overlay: rgba(8, 9, 11, 0.6);
+  color-scheme: dark;
 
-  /* Legacy aliases — keep until all callsites migrate. */
+  /* Background layers */
+  --hc-bg-void: #101114;
+  --hc-bg-island: #1a1c20;
+  --hc-bg-island-hi: #1f2226;
+  --hc-bg-island-lo: #15171a;
+  --hc-bg-overlay: rgba(8, 9, 11, 0.72);
+  --hc-bg-chip: #15171a;
+  --hc-bg-input: #101114;
+  --hc-bg-table: #1a1c20;
+  --hc-bg-table-row-alt: #17191d;
+
+  /* Legacy aliases */
   --hc-bg-base: var(--hc-bg-void);
   --hc-bg-panel: var(--hc-bg-island);
   --hc-bg-elevated: var(--hc-bg-island-hi);
@@ -30,30 +36,38 @@
   --hc-fg-muted: #7a7e85;
   --hc-fg-subtle: #4e5157;
   --hc-fg-inverse: #0e0f12;
+  --hc-fg-on-accent: #ffffff;
 
-  /* Borders & dividers */
-  --hc-border-subtle: rgba(255, 255, 255, 0.04);
-  --hc-border-default: rgba(255, 255, 255, 0.08);
-  --hc-border-strong: rgba(255, 255, 255, 0.16);
-  --hc-border-accent: #548af7;
+  /* Borders */
+  --hc-border-subtle: rgba(255, 255, 255, 0.05);
+  --hc-border-default: rgba(255, 255, 255, 0.1);
+  --hc-border-strong: rgba(255, 255, 255, 0.18);
+  --hc-border-accent: var(--hc-accent-base);
 
-  /* Accent */
-  --hc-accent-base: #548af7;
-  --hc-accent-hover: #6d9df8;
+  /* Single accent blue — use sparingly */
+  --hc-accent-base: #1597f2;
+  --hc-accent-hover: #2ea6f7;
   --hc-accent-on: #ffffff;
-  --hc-accent-soft: rgba(84, 138, 247, 0.18);
+  /* Deprecated soft wash — keep alias mapped to transparent so old callers break visibly less hard */
+  --hc-accent-soft: transparent;
 
-  /* Selection / interaction */
-  --hc-selection-bg: rgba(84, 138, 247, 0.22);
+  /* Interaction (neutral) */
   --hc-hover-bg: rgba(255, 255, 255, 0.05);
   --hc-press-bg: rgba(255, 255, 255, 0.09);
-  --hc-focus-ring: #548af7;
+  --hc-active-bg: rgba(255, 255, 255, 0.07);
+  --hc-selection-bg: var(--hc-press-bg);
+  --hc-selection-border: var(--hc-border-strong);
+  --hc-selection-accent-border: var(--hc-accent-base);
+  --hc-focus-ring: var(--hc-accent-base);
 
-  /* Status */
+  /* Status — solid only, no gradients */
   --hc-success: #73b00a;
+  --hc-success-fg: #d6f08a;
   --hc-warning: #e8a33e;
+  --hc-warning-fg: #ffe0a8;
   --hc-error: #f75464;
-  --hc-info: #548af7;
+  --hc-error-fg: #ffc0c6;
+  --hc-info: var(--hc-accent-base);
   --hc-debug: #7a7e85;
 
   /* Typography */
@@ -75,21 +89,85 @@
   --hc-size-statusbar: 24px;
   --hc-size-panel-min: 0px;
   --hc-size-panel-default: 280px;
+  --hc-size-tab: 26px;
+  --hc-size-chip-h: 28px;
+  --hc-size-control-h: 28px;
 
   /* Island geometry */
   --hc-radius-sm: 4px;
   --hc-radius-md: 6px;
   --hc-radius-lg: 10px;
   --hc-radius-island: 10px;
+  --hc-radius-chip: 6px;
   --hc-gap-island: 4px;
   --hc-pad-workspace: 4px;
 
-  /* Shadows */
-  --hc-shadow-island: 0 1px 2px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--hc-border-default);
-  --hc-shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--hc-border-strong);
+  /* Shadows — elevation only; perimeter ring is a real border where needed */
+  --hc-shadow-island: 0 1px 2px rgba(0, 0, 0, 0.55);
+  --hc-shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --hc-shadow-chip: 0 1px 2px rgba(0, 0, 0, 0.45);
 
   /* Motion */
   --hc-motion-fast: 90ms cubic-bezier(0.2, 0.6, 0.2, 1);
   --hc-motion-base: 160ms cubic-bezier(0.2, 0.6, 0.2, 1);
   --hc-motion-slow: 280ms cubic-bezier(0.2, 0.6, 0.2, 1);
 }
+
+/* Light mode — Cloudflare-dashboard inspired: light void, white islands, purple→blue accent mapped to our single blue */
+.hc-theme-light {
+  color-scheme: light;
+
+  --hc-bg-void: #f1f2f5;
+  --hc-bg-island: #ffffff;
+  --hc-bg-island-hi: #f7f8fa;
+  --hc-bg-island-lo: #eef0f3;
+  --hc-bg-overlay: rgba(15, 17, 22, 0.4);
+  --hc-bg-chip: #ffffff;
+  --hc-bg-input: #ffffff;
+  --hc-bg-table: #ffffff;
+  --hc-bg-table-row-alt: #f7f8fa;
+
+  --hc-bg-base: var(--hc-bg-void);
+  --hc-bg-panel: var(--hc-bg-island);
+  --hc-bg-elevated: var(--hc-bg-island-hi);
+  --hc-bg-sunken: var(--hc-bg-island-lo);
+
+  --hc-fg-default: #2f333a;
+  --hc-fg-strong: #0f1115;
+  --hc-fg-muted: #6b7280;
+  --hc-fg-subtle: #9aa0a8;
+  --hc-fg-inverse: #ffffff;
+  --hc-fg-on-accent: #ffffff;
+
+  --hc-border-subtle: rgba(15, 17, 22, 0.06);
+  --hc-border-default: rgba(15, 17, 22, 0.12);
+  --hc-border-strong: rgba(15, 17, 22, 0.2);
+  --hc-border-accent: var(--hc-accent-base);
+
+  --hc-accent-base: #1597f2;
+  --hc-accent-hover: #0d7fd1;
+  --hc-accent-on: #ffffff;
+  --hc-accent-soft: transparent;
+
+  --hc-hover-bg: rgba(15, 17, 22, 0.04);
+  --hc-press-bg: rgba(15, 17, 22, 0.08);
+  --hc-active-bg: rgba(15, 17, 22, 0.06);
+  --hc-selection-bg: var(--hc-press-bg);
+  --hc-selection-border: var(--hc-border-strong);
+  --hc-selection-accent-border: var(--hc-accent-base);
+  --hc-focus-ring: var(--hc-accent-base);
+
+  --hc-success: #3d8b0a;
+  --hc-success-fg: #1f4a05;
+  --hc-warning: #c67a12;
+  --hc-warning-fg: #5c3600;
+  --hc-error: #d63b4a;
+  --hc-error-fg: #5c1018;
+  --hc-info: var(--hc-accent-base);
+  --hc-debug: #6b7280;
+
+  --hc-shadow-island: 0 1px 2px rgba(15, 17, 22, 0.06);
+  --hc-shadow-popover: 0 12px 32px rgba(15, 17, 22, 0.12);
+  --hc-shadow-chip: 0 1px 2px rgba(15, 17, 22, 0.08);
+}
+

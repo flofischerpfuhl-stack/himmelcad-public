@@ -1,19 +1,25 @@
 import type {
   AlignmentQualityProfile,
+  CameraCalibrationGroupRecord,
+  CaptureGroupRecord,
   EntityId,
   ProcessingSetRecord,
   ResolvedAlignmentConfig,
 } from '@himmelcad/data';
 
 import styles from './AlignmentProfilePanel.module.css';
+import { Select } from '@himmelcad/ui';
 
 export interface AlignmentProfilePanelProps {
   profile: AlignmentQualityProfile;
   imageCount: number;
   totalImageCount: number;
   selectedImageCount: number;
+  scopeCameraIds: readonly EntityId[];
   scope: 'all' | 'selection';
   processingSets: readonly ProcessingSetRecord[];
+  captureGroups: readonly CaptureGroupRecord[];
+  calibrationGroups: readonly CameraCalibrationGroupRecord[];
   activeProcessingSetId: EntityId | null;
   resolving: boolean;
   starting: boolean;
@@ -24,17 +30,15 @@ export interface AlignmentProfilePanelProps {
   onProfileChange: (profile: AlignmentQualityProfile) => void;
   onScopeChange: (scope: 'all' | 'selection') => void;
   onProcessingSetChange: (processingSetId: EntityId) => void;
-  onResolve: () => void;
   onStart: () => void;
   onSaveProcessingSet: () => void;
+  onReviewGroups: () => void;
 }
 
 const PROFILE_DESCRIPTION: Record<AlignmentQualityProfile, string> = {
-  qualityHybrid:
-    'ALIKED/LightGlue and SIFT/LightGlue independently match every candidate pair. Large backends are added where quality diagnostics require them.',
-  maximumRobustness:
-    'Extended pair graph, higher feature budgets, and DeDoDe on every candidate pair. Dense rescue remains active.',
-  fast: 'ALIKED runs first; SIFT and large backends activate only for diagnosed weak edges.',
+  qualityHybrid: 'Independent neural and classical matching with quality-driven rescue.',
+  maximumRobustness: 'Maximum pair coverage and feature budget, including DeDoDe.',
+  fast: 'Fast matching with rescue only on diagnosed weak connections.',
 };
 
 export function AlignmentProfilePanel({
@@ -42,8 +46,11 @@ export function AlignmentProfilePanel({
   imageCount,
   totalImageCount,
   selectedImageCount,
+  scopeCameraIds,
   scope,
   processingSets,
+  captureGroups,
+  calibrationGroups,
   activeProcessingSetId,
   resolving,
   starting,
@@ -54,17 +61,31 @@ export function AlignmentProfilePanel({
   onProfileChange,
   onScopeChange,
   onProcessingSetChange,
-  onResolve,
   onStart,
   onSaveProcessingSet,
+  onReviewGroups,
 }: AlignmentProfilePanelProps): JSX.Element {
+  const scopeCameraSet = new Set(scopeCameraIds);
+  const scopedCalibrationGroups = calibrationGroups.filter((group) =>
+    group.cameraEntityIds.some((entityId) => scopeCameraSet.has(entityId)),
+  );
+  const coveredImageCount = new Set(
+    scopedCalibrationGroups.flatMap((group) =>
+      group.cameraEntityIds.filter((entityId) => scopeCameraSet.has(entityId)),
+    ),
+  ).size;
+  const needsReviewCount = captureGroups.filter(
+    (group) =>
+      group.reviewStatus === 'needsReview' &&
+      group.cameraEntityIds.some((entityId) => scopeCameraSet.has(entityId)),
+  ).length;
   return (
     <div className={styles.root}>
       <section className={styles.section}>
         <div className={styles.sectionTitle}>Align Photos</div>
         <label className={styles.field}>
           <span>Input Scope</span>
-          <select
+          <Select
             className={styles.control}
             value={
               scope === 'selection' && activeProcessingSetId
@@ -94,7 +115,7 @@ export function AlignmentProfilePanel({
                 ))}
               </optgroup>
             )}
-          </select>
+          </Select>
         </label>
         {activeProcessingSetId && (
           <ProcessingSetSummary
@@ -110,7 +131,7 @@ export function AlignmentProfilePanel({
         </label>
         <label className={styles.field}>
           <span>Quality profile</span>
-          <select
+          <Select
             className={styles.control}
             value={profile}
             onChange={(event) =>
@@ -120,10 +141,36 @@ export function AlignmentProfilePanel({
             <option value="qualityHybrid">Quality Hybrid · recommended</option>
             <option value="maximumRobustness">Maximum Robustness</option>
             <option value="fast">Fast · adaptive rescue</option>
-          </select>
+          </Select>
         </label>
         <div className={styles.hint}>{PROFILE_DESCRIPTION[profile]}</div>
-        <div className={styles.offline}>● Fully offline · no runtime downloads</div>
+      </section>
+
+      <section className={styles.section} aria-label="Camera intrinsics sharing plan">
+        <div className={styles.sectionTitle}>Camera intrinsics</div>
+        <div className={styles.scopeSummary}>
+          <strong>
+            {scopedCalibrationGroups.length} intrinsics group
+            {scopedCalibrationGroups.length === 1 ? '' : 's'} in this scope
+          </strong>
+          <span>
+            {coveredImageCount} of {scopeCameraIds.length} scoped images covered
+            {needsReviewCount > 0 ? ` · ${needsReviewCount} capture groups need review` : ''}
+          </span>
+        </div>
+        {scopedCalibrationGroups.slice(0, 8).map((group) => (
+          <ResolvedRow
+            key={group.entityId}
+            label={group.name}
+            value={`${group.cameraEntityIds.filter((id) => scopeCameraSet.has(id)).length} images · ${group.groupingBasis}`}
+          />
+        ))}
+        {scopedCalibrationGroups.length > 8 && (
+          <div className={styles.hint}>{scopedCalibrationGroups.length - 8} more groups</div>
+        )}
+        <button className={styles.action} type="button" onClick={onReviewGroups}>
+          {needsReviewCount > 0 ? 'Review detected groups' : 'Review groups'}
+        </button>
       </section>
 
       {resolved && (
@@ -154,6 +201,12 @@ export function AlignmentProfilePanel({
       )}
 
       {error && <div className={styles.error}>{error}</div>}
+      {needsReviewCount > 0 && (
+        <div className={styles.error} role="alert">
+          Confirm or replace the detected intrinsics groups before alignment. A landing or
+          autofocus change must not share camera parameters implicitly.
+        </div>
+      )}
       {scope === 'selection' && selectedImageCount >= 2 && (
         <button
           className={styles.action}
@@ -164,16 +217,17 @@ export function AlignmentProfilePanel({
           {savingProcessingSet ? 'Saving processing set…' : 'Save selection as processing set'}
         </button>
       )}
-      <button className={styles.action} type="button" disabled={resolving} onClick={onResolve}>
-        {resolving ? 'Core is validating…' : 'Freeze configuration'}
-      </button>
       <button
         className={styles.action}
         type="button"
-        disabled={!canStart || resolving || starting}
+        disabled={!canStart || needsReviewCount > 0 || resolving || starting}
         onClick={onStart}
       >
-        {starting ? 'Queueing job…' : 'Start photo alignment'}
+        {resolving
+          ? 'Validating configuration…'
+          : starting
+            ? 'Validating and queueing…'
+            : 'Start alignment'}
       </button>
     </div>
   );
@@ -190,6 +244,8 @@ function ProcessingSetSummary({
       <strong>{processingSet.name}</strong>
       <span>
         Immutable scope · {processingSet.cameraEntityIds.length} cameras ·{' '}
+        {processingSet.captureGroupIds?.length ?? 0} capture groups ·{' '}
+        {processingSet.calibrationGroupIds?.length ?? 0} calibration groups ·{' '}
         <code title={processingSet.membershipSha256}>
           {processingSet.membershipSha256.slice(0, 12)}
         </code>

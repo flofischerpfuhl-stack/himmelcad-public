@@ -10,6 +10,8 @@ import { App } from './App.js';
 const rootEl = document.getElementById('hc-root');
 if (!rootEl) throw new Error('Missing #hc-root mount point');
 
+document.documentElement.classList.add('hc-theme-dark');
+
 createRoot(rootEl).render(
   <StrictMode>
     <App />

@@ -15,20 +15,26 @@ The project is designed around three constraints from day one:
 
 ## Products
 
-| Product              | Purpose                                                                           | Status                       |
-| -------------------- | --------------------------------------------------------------------------------- | ---------------------------- |
-| HimmelCAD Builder    | Desktop CAD for point clouds, 3D entities, segmentation, measurement, and drawing | Active MVP                   |
-| HimmelCAD PhotoLab   | Offline photogrammetry, survey products, meshes, and Gaussian splats              | Active productization        |
-| HimmelCAD WeltView   | Browser viewer for shared HimmelCAD projects and measurements                     | Shared viewer foundation     |
-| HimmelCAD ChronoGit  | Semantic versioning and diffing for CAD projects                                  | Reserved feasibility track   |
-| HimmelCAD Composer   | Precision-mechanics and manufacturing-oriented sibling product                    | Reserved; no application yet |
-| HimmelCAD TestFlight | Scripted simulations such as runoff, wind, and vehicle sweep paths                | Reserved feasibility track   |
+| Product              | Purpose                                                                           | Status                                       |
+| -------------------- | --------------------------------------------------------------------------------- | -------------------------------------------- |
+| HimmelCAD Builder    | Desktop CAD for point clouds, 3D entities, segmentation, measurement, and drawing | Foundation maintained; productization paused |
+| HimmelCAD PhotoLab   | Offline photogrammetry, survey products, meshes, and Gaussian splats              | Active productization                        |
+| HimmelCAD WeltView   | Browser viewer for shared HimmelCAD projects and measurements                     | Shared viewer foundation                     |
+| HimmelCAD ChronoGit  | Semantic versioning and diffing for CAD projects                                  | Reserved feasibility track                   |
+| HimmelCAD Composer   | Precision-mechanics and manufacturing-oriented sibling product                    | Reserved; no application yet                 |
+| HimmelCAD TestFlight | Scripted simulations such as runoff, wind, and vehicle sweep paths                | Reserved feasibility track                   |
+
+The implemented application roots are `apps/builder`, `apps/photolab`, and
+`apps/weltview`. Composer, TestFlight, and ChronoGit are reserved product names;
+they do not currently have application directories.
 
 ## Branding
 
 The original vector masters are kept unchanged under
 [`branding/logos/source`](branding/logos/source). PNG and ICO platform assets
-are generated deterministically with `pnpm branding:generate`.
+are generated deterministically with `pnpm branding:generate`. Desktop app
+icons use the original mark on a black rounded card, while title bars keep the
+un-carded mark.
 
 | Product            | Primary mark                                                                                            | Notes                                                                    |
 | ------------------ | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
@@ -49,8 +55,9 @@ are generated deterministically with `pnpm branding:generate`.
 ## Important Files
 
 - `AGENTS.md` - binding project rules and AI-agent instructions.
+- `docs/CURRENT-DIRECTION.md` - what to build now, parallel lanes, scope freezes.
 - `docs/PRODUCT-VISION.md` - product family, long-term entity scope, scripting direction.
-- `docs/ROADMAP.md` - product roadmap.
+- `docs/ROADMAP.md` - product roadmap (partly historical until rebaselined).
 - `docs/MVP-PLAN.md` - implementation plan for the first MVP.
 - `docs/ARCHITECTURE.md` - system architecture and core trade-offs.
 - `docs/DATA-MODEL.md` - entity, attribute, command, and undo model.
@@ -59,6 +66,10 @@ are generated deterministically with `pnpm branding:generate`.
 - `docs/adr/0001-stack.md` - first architecture decision record.
 - `docs/adr/0004-large-geometry-contracts.md` - shared contracts for tiled
   geometry, render budgets, picking and snapping targets.
+- `docs/adr/0016-canonical-entity-model.md` - canonical entities and optional Z.
+- `docs/adr/0017-unified-render-core.md` - unified render-core direction.
+- `docs/adr/0018-canonical-io-provider-contract.md` - provider-neutral canonical import/export boundary.
+- `docs/adr/0019-canonical-document-authority.md` - document commands versus view attachment/residency.
 
 ## License
 

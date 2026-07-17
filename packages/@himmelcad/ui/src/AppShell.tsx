@@ -13,6 +13,9 @@ export interface AppShellProps {
   bottomPanel: ReactNode;
   viewport: ReactNode;
   statusBar: ReactNode;
+  floatingViewportTabs?: boolean;
+  floatingLeftTabs?: boolean;
+  floatingRightTabs?: boolean;
 }
 
 /**
@@ -51,7 +54,7 @@ export function AppShell(props: AppShellProps): JSX.Element {
           ) : (
             <>
               <aside
-                className={`${styles.island} ${styles.leftPanel}`}
+                className={`${styles.island} ${styles.leftPanel} ${props.floatingLeftTabs ? styles.floatingTabsHost : ''}`}
                 style={{ width: leftWidth }}
                 aria-label="Entity tree"
               >
@@ -63,7 +66,7 @@ export function AppShell(props: AppShellProps): JSX.Element {
           )}
           <main className={styles.center}>
             <section
-              className={`${styles.island} ${styles.viewport}`}
+              className={`${styles.island} ${styles.viewport} ${props.floatingViewportTabs ? styles.floatingTabsHost : ''}`}
               aria-label="3D viewport"
             >
               {props.viewport}
@@ -91,7 +94,7 @@ export function AppShell(props: AppShellProps): JSX.Element {
               {/* drag left = grow right panel → -delta */}
               <Splitter orientation="vertical" onResize={(d) => adjustRight(-d)} />
               <aside
-                className={`${styles.island} ${styles.rightPanel}`}
+                className={`${styles.island} ${styles.rightPanel} ${props.floatingRightTabs ? styles.floatingTabsHost : ''}`}
                 style={{ width: rightWidth }}
                 aria-label="Function panel"
               >

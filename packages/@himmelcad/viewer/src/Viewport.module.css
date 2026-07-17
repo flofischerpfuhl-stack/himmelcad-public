@@ -4,6 +4,12 @@
   background: var(--hc-bg-island);
   border-radius: var(--hc-radius-island);
   overflow: hidden;
+  /* The WebGL canvas is intentionally window-sized and translated inside this
+     mask. Give it an explicit compositor boundary so Chromium cannot promote
+     the canvas past the rounded overflow clip after ribbon/panel relayouts. */
+  contain: layout paint style;
+  isolation: isolate;
+  clip-path: inset(0 round var(--hc-radius-island));
   cursor: default;
 }
 
@@ -23,18 +29,20 @@
   position: absolute;
   right: 10px;
   bottom: 10px;
-  padding: 6px 12px;
-  font-family: var(--hc-font-mono);
-  font-size: 11px;
-  color: var(--hc-fg-strong);
-  background: rgba(8, 9, 11, 0.78);
-  backdrop-filter: blur(6px);
-  border: 1px solid var(--hc-border-default);
-  border-radius: var(--hc-radius-md);
-  letter-spacing: 0.02em;
   display: flex;
   align-items: center;
   gap: 6px;
+  min-height: var(--hc-size-chip-h);
+  height: var(--hc-size-chip-h);
+  padding: 0 12px;
+  font-family: var(--hc-font-mono);
+  font-size: 11px;
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-chip);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-chip);
+  box-shadow: var(--hc-shadow-chip);
+  letter-spacing: 0.02em;
   pointer-events: auto;
   user-select: text;
   -webkit-user-select: text;

@@ -1,0 +1,167 @@
+/**
+ * Floating island pills — same full perimeter border as AppShell .island.
+ * IMPORTANT: do not use overflow-y:hidden — it clips the 1px ring top/bottom.
+ */
+
+.root {
+  display: flex;
+  align-items: stretch;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  /* Only horizontal scroll; vertical must stay visible so borders are not cut */
+  overflow-x: auto;
+  overflow-y: visible;
+  padding: 1px 1px 1px 0; /* room for 1px border without clip */
+  scrollbar-width: thin;
+  scrollbar-color: var(--hc-border-strong) transparent;
+}
+
+.root::-webkit-scrollbar {
+  height: 6px;
+}
+
+.root::-webkit-scrollbar-thumb {
+  background: var(--hc-border-strong);
+  border-radius: 999px;
+}
+
+.tab {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--hc-size-tab);
+  height: var(--hc-size-tab);
+  padding: 0 12px;
+  /* Real border all around — not box-shadow ring (shadow gets clipped) */
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-island);
+  color: var(--hc-fg-muted);
+  background: var(--hc-bg-island);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--hc-motion-fast),
+    color var(--hc-motion-fast),
+    border-color var(--hc-motion-fast);
+}
+
+.tab:hover:not(:disabled) {
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-island-hi);
+  border-color: var(--hc-border-strong);
+}
+
+.tab:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.tabActive {
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-island);
+  border-color: var(--hc-border-default);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+/* Attached strip tabs (console) — live ON the island */
+.strip {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  padding: 0 6px;
+  height: 28px;
+  background: var(--hc-bg-island-hi);
+  border-bottom: 1px solid var(--hc-border-default);
+  scrollbar-width: thin;
+}
+
+.stripTab {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 12px;
+  border: none;
+  border-radius: 0;
+  color: var(--hc-fg-muted);
+  background: transparent;
+  box-shadow: none;
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.stripTab:hover:not(:disabled) {
+  color: var(--hc-fg-default);
+  background: var(--hc-hover-bg);
+}
+
+.stripTabActive {
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-island);
+  box-shadow: inset 0 -2px 0 var(--hc-border-strong);
+}
+
+.stripTab:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.stripTab:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: -2px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  border: 1px solid var(--hc-border-default);
+  color: var(--hc-fg-muted);
+  background: var(--hc-bg-island-lo);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--hc-fg-muted);
+}
+
+/* Light theme shadow tweak */
+:global(.hc-theme-light) .tab,
+:global(.hc-theme-light) .tabActive {
+  box-shadow: 0 1px 2px rgba(15, 17, 22, 0.08);
+}

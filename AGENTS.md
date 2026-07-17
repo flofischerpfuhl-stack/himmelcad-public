@@ -10,6 +10,11 @@ nachfragen, dann coden.
 
 ## 0. Dokumentenkarte
 
+- **Aktuelle Ausfuehrungsrichtung, Lanes, Scope-Freezes:**
+  `docs/CURRENT-DIRECTION.md` (bei Widerspruch zur aelteren Roadmap-Prosa
+  gewinnt dieses File fuer Sequenz und Freezes)
+- **Design-System (alle Produkte):** `docs/DESIGN-SYSTEM.md` + Tokens in
+  `packages/@himmelcad/theme`, Module in `packages/@himmelcad/ui`
 - Produktvision und langfristiger Scope: `docs/PRODUCT-VISION.md`
 - Roadmap und Phasen: `docs/ROADMAP.md`
 - Architekturueberblick: `docs/ARCHITECTURE.md`
@@ -17,21 +22,30 @@ nachfragen, dann coden.
 - Projektformat: `docs/PROJECT-FORMAT.md`
 - MVP-Plan: `docs/MVP-PLAN.md`
 - Offene Entscheidungen: `docs/OPEN-QUESTIONS.md`
-- ADRs: `docs/adr/`
+- ADRs: `docs/adr/` (Entity: 0016, Render: 0017)
 - Third-Party-Lizenzen: `LICENSES/THIRD_PARTY.md`
 
 ## 1. Identitaet und Prioritaeten
 
 - **Produktfamilie:** HimmelCAD.
-- **Aktueller Fokus:** HimmelCAD PhotoLab; HimmelCAD Builder bleibt das aktive
-  CAD-Produkt.
-- **Produktfamilie:** HimmelCAD Builder, HimmelCAD Composer, HimmelCAD PhotoLab,
-  HimmelCAD WeltView, HimmelCAD TestFlight und HimmelCAD ChronoGit.
-  Details stehen in `docs/PRODUCT-VISION.md`.
+- **Aktueller Fokus:** HimmelCAD PhotoLab als Delivery-Produkt; parallele
+  Kernel-Arbeit an Entities (ADR 0016) und Render-Core (ADR 0017). Builder
+  bleibt das CAD-Produkt, weitere CAD-Feature-Productization ist pausiert.
+- **Produktfamilie:** HimmelCAD Builder, HimmelCAD PhotoLab, HimmelCAD
+  WeltView. **Composer, TestFlight und ChronoGit sind nur reservierte Namen**
+  bis zu einem expliziten Decision Gate — keine Implementierung, keine
+  Agent-Aufgaben dafuer. Details: `docs/PRODUCT-VISION.md` und
+  `docs/CURRENT-DIRECTION.md`.
+- **ChronoGit-Tax:** Command-Journal, immutable Objects und stabile IDs sind
+  erwuenscht. Diff-UI, Merge-Produkt und weitere Schema-Komplexitaet nur fuer
+  ChronoGit sind eingefroren.
 - **Prioritaet:** Performance > intuitive UX > Aesthetik.
 - HimmelCAD ist 3D-first. Es darf kein 2D-CAD entstehen, dem spaeter 3D
   angeklebt wird.
 - Import darf teuer sein. Runtime-Interaktion muss fliegen.
+- Parallel-Arbeit: Kernel/Viewer-Lane und PhotoLab-UI-Lane trennen. UI-Polish
+  lebt unter `apps/photolab/renderer/`; Kernel unter `crates/` und
+  `packages/@himmelcad/viewer/`. Siehe `docs/CURRENT-DIRECTION.md`.
 
 ## 2. Lizenz und Dependencies
 

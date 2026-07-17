@@ -8,7 +8,6 @@ import {
   FilePlus,
   FolderOpen,
   Gauge,
-  Image,
   Images,
   Layers3,
   Map,
@@ -32,9 +31,6 @@ export interface PhotolabRibbonCallbacks {
   onImportFiles: () => void;
   onImportFolder: () => void;
   onImportGcps: () => void;
-  onViewScene: () => void;
-  onViewMap: () => void;
-  onViewImages: () => void;
   onActivateFunction: (id: string) => void;
 }
 
@@ -163,12 +159,24 @@ export function createPhotolabRibbonTabs(callbacks: PhotolabRibbonCallbacks): Ri
               icon: icon(ChartNoAxesCombined),
               onActivate: () => callbacks.onActivateFunction('alignment.optimize'),
             },
+            {
+              id: 'alignment.merge',
+              label: 'Merge Alignments',
+              icon: icon(Layers3),
+              onActivate: () => callbacks.onActivateFunction('alignment.merge'),
+            },
           ],
         },
         {
           id: 'alignment.inspect',
           label: 'Diagnostics',
           actions: [
+            {
+              id: 'alignment.groups',
+              label: 'Capture Groups',
+              icon: icon(Layers3),
+              onActivate: () => callbacks.onActivateFunction('alignment.groups'),
+            },
             {
               id: 'alignment.report',
               label: 'Report',
@@ -228,36 +236,6 @@ export function createPhotolabRibbonTabs(callbacks: PhotolabRibbonCallbacks): Ri
               label: 'Gaussian Splat',
               icon: icon(Sparkles),
               onActivate: () => callbacks.onActivateFunction('products.splat'),
-            },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'view',
-      label: 'View',
-      groups: [
-        {
-          id: 'view.workspaces',
-          label: 'Workspace',
-          actions: [
-            {
-              id: 'view.scene3d',
-              label: '3D Scene',
-              icon: icon(Box),
-              onActivate: callbacks.onViewScene,
-            },
-            {
-              id: 'view.map2d',
-              label: '2D Map',
-              icon: icon(Map),
-              onActivate: callbacks.onViewMap,
-            },
-            {
-              id: 'view.images',
-              label: 'Images / Depth',
-              icon: icon(Image),
-              onActivate: callbacks.onViewImages,
             },
           ],
         },

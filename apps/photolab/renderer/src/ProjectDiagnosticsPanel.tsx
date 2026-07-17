@@ -1,10 +1,15 @@
 import type {
   AlignedGcpCameraRecord,
+  EntityId,
   GcpOptimizationPublicationRecord,
+  ImageQualityAnalysisRecord,
   PhotolabJob,
+  ProcessingSetRecord,
   ProjectCameraImageRecord,
 } from '@himmelcad/data';
+import { Select } from '@himmelcad/ui';
 import type { ReactNode } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import styles from './ProjectDiagnosticsPanel.module.css';
 
@@ -17,22 +22,44 @@ export type ProjectDiagnosticsKind =
 interface ProjectDiagnosticsPanelProps {
   kind: ProjectDiagnosticsKind;
   images: readonly ProjectCameraImageRecord[];
+  imageQualityAnalyses: readonly ImageQualityAnalysisRecord[];
   alignedCameras: readonly AlignedGcpCameraRecord[];
   jobs: readonly PhotolabJob[];
+  processingSets: readonly ProcessingSetRecord[];
+  activeProcessingSetId: EntityId | null;
   projectTargetCrs: string | null;
   gcpOptimization: GcpOptimizationPublicationRecord | null;
+  imageQualityStarting: boolean;
+  onAnalyzeImageQuality: (processingSetId: EntityId | null) => void;
 }
 
 export function ProjectDiagnosticsPanel({
   kind,
   images,
+  imageQualityAnalyses,
   alignedCameras,
   jobs,
+  processingSets,
+  activeProcessingSetId,
   projectTargetCrs,
   gcpOptimization,
+  imageQualityStarting,
+  onAnalyzeImageQuality,
 }: ProjectDiagnosticsPanelProps): JSX.Element {
   if (kind === 'images.metadata') return <MetadataView images={images} />;
-  if (kind === 'images.quality') return <ImageStatusView images={images} />;
+  if (kind === 'images.quality') {
+    return (
+      <ImageStatusView
+        images={images}
+        analyses={imageQualityAnalyses}
+        jobs={jobs}
+        processingSets={processingSets}
+        activeProcessingSetId={activeProcessingSetId}
+        starting={imageQualityStarting}
+        onAnalyze={onAnalyzeImageQuality}
+      />
+    );
+  }
   if (kind === 'reference.transform') {
     return <ReferenceView images={images} projectTargetCrs={projectTargetCrs} />;
   }
@@ -81,29 +108,168 @@ function MetadataView({ images }: { images: readonly ProjectCameraImageRecord[] 
   );
 }
 
-function ImageStatusView({ images }: { images: readonly ProjectCameraImageRecord[] }): JSX.Element {
-  const count = (tag: ProjectCameraImageRecord['metadata']['statusTags'][number]): number =>
-    images.filter((image) => image.metadata.statusTags.includes(tag)).length;
-  const rows: [string, string][] = images
-    .slice(0, 200)
-    .map((image) => [
+function ImageStatusView({
+  images,
+  analyses,
+  jobs,
+  processingSets,
+  activeProcessingSetId,
+  starting,
+  onAnalyze,
+}: {
+  images: readonly ProjectCameraImageRecord[];
+  analyses: readonly ImageQualityAnalysisRecord[];
+  jobs: readonly PhotolabJob[];
+  processingSets: readonly ProcessingSetRecord[];
+  activeProcessingSetId: EntityId | null;
+  starting: boolean;
+  onAnalyze: (processingSetId: EntityId | null) => void;
+}): JSX.Element {
+  const [scope, setScope] = useState<EntityId | 'all'>(activeProcessingSetId ?? 'all');
+  useEffect(() => {
+    if (activeProcessingSetId) setScope(activeProcessingSetId);
+  }, [activeProcessingSetId]);
+  const scopedImages = useMemo(() => {
+    if (scope === 'all') return images;
+    const members = new Set(
+      processingSets.find((processingSet) => processingSet.entityId === scope)?.cameraEntityIds ?? [],
+    );
+    return images.filter((image) => members.has(image.entityId));
+  }, [images, processingSets, scope]);
+  const scopedAnalyses = useMemo(
+    () =>
+      analyses.filter((analysis) =>
+        scope === 'all'
+          ? analysis.processingSetId === undefined
+          : analysis.processingSetId === scope,
+      ),
+    [analyses, scope],
+  );
+  const latestByImage = useMemo(() => {
+    const records = new Map<EntityId, ImageQualityAnalysisRecord>();
+    for (const analysis of scopedAnalyses) {
+      const previous = records.get(analysis.imageEntityId);
+      if (!previous || previous.analyzedAtUnixMs < analysis.analyzedAtUnixMs) {
+        records.set(analysis.imageEntityId, analysis);
+      }
+    }
+    return records;
+  }, [scopedAnalyses]);
+  const measured = [...latestByImage.values()].filter(
+    (analysis) => analysis.outcome.status === 'measured',
+  );
+  const warned = measured.filter(
+    (analysis) => analysis.outcome.status === 'measured' && analysis.outcome.warnings.length > 0,
+  ).length;
+  const unavailable = [...latestByImage.values()].filter(
+    (analysis) => analysis.outcome.status === 'unavailable',
+  ).length;
+  const countStatus = (
+    tag: ProjectCameraImageRecord['metadata']['statusTags'][number],
+  ): number => scopedImages.filter((image) => image.metadata.statusTags.includes(tag)).length;
+  const activeJob = [...jobs]
+    .reverse()
+    .find(
+      (job) =>
+        job.kind === 'analyzeImageQuality' &&
+        ['queued', 'running', 'cancelRequested'].includes(job.state.kind),
+    );
+  const mean = (selector: (analysis: ImageQualityAnalysisRecord) => number): string => {
+    if (measured.length === 0) return '—';
+    return `${(
+      (measured.reduce((sum, analysis) => sum + selector(analysis), 0) / measured.length) *
+      100
+    ).toFixed(2)}%`;
+  };
+  const rows: [string, string][] = scopedImages.slice(0, 500).map((image) => {
+    const status =
+      image.metadata.statusTags.length > 0 ? image.metadata.statusTags.join(' · ') : 'imported';
+    const analysis = latestByImage.get(image.entityId);
+    if (!analysis) return [image.name, `${status} · Not analyzed`];
+    if (analysis.outcome.status === 'unavailable') {
+      return [image.name, `${status} · Unavailable · ${analysis.outcome.reason}`];
+    }
+    const { metrics, warnings } = analysis.outcome;
+    return [
       image.name,
-      image.metadata.statusTags.length > 0 ? image.metadata.statusTags.join(' · ') : 'imported',
-    ]);
+      `${status} · Sharp ${metrics.laplacianVariance.toExponential(2)} · Blur indicator ${(metrics.directionalGradientCoherence * 100).toFixed(1)}% · Clip ${(metrics.shadowClippedFraction * 100).toFixed(1)}/${(metrics.highlightClippedFraction * 100).toFixed(1)}% · Texture ${metrics.textureEntropyBits.toFixed(2)} bit${warnings.length > 0 ? ` · ${warnings.length} flag${warnings.length === 1 ? '' : 's'}` : ''}`,
+    ];
+  });
+  const total = activeJob?.progress.metrics.totalUnits;
+  const completed = activeJob?.progress.metrics.completedUnits ?? 0;
   return (
     <PanelRoot
-      title="Processing readiness"
-      hint="Status tags describe published project products. Alignment and depth tags are scoped and become stale when their inputs change."
+      title="Image status and measured quality"
+      hint="Published status tags remain visible alongside metrics measured from decoded project pixels. Directional blur is a structure-tensor indicator, not a fabricated camera score."
     >
+      <div className={styles.controls}>
+        <label>
+          <span>Scope</span>
+          <Select
+            value={scope}
+            onChange={(event) =>
+              setScope(
+                event.currentTarget.value === 'all'
+                  ? 'all'
+                  : (event.currentTarget.value as EntityId),
+              )
+            }
+          >
+            <option value="all">All imported images · {images.length}</option>
+            {processingSets.map((processingSet) => (
+              <option key={processingSet.entityId} value={processingSet.entityId}>
+                {processingSet.name} · {processingSet.cameraEntityIds.length}
+              </option>
+            ))}
+          </Select>
+        </label>
+        <button
+          type="button"
+          disabled={starting || activeJob !== undefined || scopedImages.length === 0}
+          onClick={() => onAnalyze(scope === 'all' ? null : scope)}
+        >
+          {starting ? 'Queuing…' : activeJob ? 'Analysis running' : 'Analyze images'}
+        </button>
+      </div>
+      {activeJob && (
+        <div className={styles.progress} role="status">
+          <span>
+            {activeJob.progress.stage.label} · {completed} / {total ?? '—'} images
+          </span>
+          <progress value={completed} max={total ?? Math.max(1, completed)} />
+        </div>
+      )}
       <MetricGrid
         values={[
-          ['Aligned', count('aligned')],
-          ['Depth ready', count('depthReady')],
-          ['Warnings', count('qualityWarning')],
-          ['Masked', count('masked')],
+          ['Aligned', countStatus('aligned')],
+          ['Depth ready', countStatus('depthReady')],
+          ['Status warnings', countStatus('qualityWarning')],
+          ['Masked', countStatus('masked')],
         ]}
       />
-      <List title="Per-image state" rows={rows} empty="No images imported." />
+      <MetricGrid
+        values={[
+          ['Analyzed', `${latestByImage.size} / ${scopedImages.length}`],
+          ['Review flags', warned + unavailable],
+          [
+            'Shadow clipping',
+            mean((analysis) =>
+              analysis.outcome.status === 'measured'
+                ? analysis.outcome.metrics.shadowClippedFraction
+                : 0,
+            ),
+          ],
+          [
+            'Highlight clipping',
+            mean((analysis) =>
+              analysis.outcome.status === 'measured'
+                ? analysis.outcome.metrics.highlightClippedFraction
+                : 0,
+            ),
+          ],
+        ]}
+      />
+      <List title="Per-image status and measurements" rows={rows} empty="No images in this scope." />
     </PanelRoot>
   );
 }

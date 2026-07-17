@@ -1,0 +1,36 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 6px;
+  height: 100%;
+  min-height: 96px;
+  padding: 12px 14px;
+  color: var(--hc-fg-muted);
+  background: var(--hc-bg-island-lo);
+  font-family: var(--hc-font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.title {
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.hint {
+  max-width: 42rem;
+  color: var(--hc-fg-subtle);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.meta {
+  margin-top: 4px;
+  color: var(--hc-fg-subtle);
+  font-size: 11px;
+}

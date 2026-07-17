@@ -99,15 +99,50 @@
   -webkit-user-select: text;
 }
 
+.brandBlock {
+  padding: 10px 0 8px;
+  border-bottom: 1px dashed var(--hc-border-default);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.liturgy {
+  margin: 0;
+  padding: 8px 16px 4px;
+  color: var(--hc-fg-muted);
+  font-family: var(--hc-font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.asciiArt {
+  margin: 0;
+  padding: 4px 16px 10px;
+  color: var(--hc-fg-subtle);
+  font-family: var(--hc-font-mono);
+  font-size: 9px;
+  line-height: 1.05;
+  white-space: pre;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* Dense Madonna block is wider; keep it legible but compact */
+.asciiArtDense {
+  font-size: 5.5px;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
 .brandSplash {
   font-family: var(--hc-font-display-3d);
-  font-size: 64px;
+  font-size: 48px;
   color: var(--hc-accent-base);
   letter-spacing: 4px;
   line-height: 1.1;
-  padding: 12px 16px 16px;
+  padding: 8px 16px 6px;
   user-select: none;
-  text-shadow: 0 0 24px rgba(84, 138, 247, 0.18);
 }
 
 .brandSubtitle {
@@ -117,7 +152,7 @@
   letter-spacing: 0.16em;
   text-transform: uppercase;
   padding: 0 16px 12px;
-  border-bottom: 1px dashed var(--hc-border-default);
+
   margin-bottom: 8px;
 }
 

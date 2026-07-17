@@ -2,17 +2,19 @@
   display: flex;
   flex-direction: column;
   background: var(--hc-bg-void);
-  padding: 4px var(--hc-pad-workspace) 12px;
+  padding: 4px var(--hc-pad-workspace) 0;
   flex-shrink: 0;
 }
 
-/* Tab strip — sits flush against the body island below. */
+/* Tab strip sits on the void; active tab connects into the body island */
 .tabRow {
   display: flex;
   align-items: stretch;
   height: var(--hc-size-ribbon-tabs);
   gap: 2px;
   padding: 0 4px;
+  position: relative;
+  z-index: 2;
 }
 
 .tabs {
@@ -21,6 +23,8 @@
   gap: 2px;
   flex: 1;
   min-width: 0;
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 .tab {
@@ -28,29 +32,40 @@
   display: inline-flex;
   align-items: center;
   padding: 0 14px;
-  height: 100%;
+  height: calc(100% - 1px);
+  margin-bottom: 0;
   color: var(--hc-fg-muted);
   background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
   border-radius: var(--hc-radius-md) var(--hc-radius-md) 0 0;
   font-size: 12px;
   letter-spacing: 0.02em;
-  transition: color var(--hc-motion-fast), background var(--hc-motion-fast);
+  transition:
+    color var(--hc-motion-fast),
+    background var(--hc-motion-fast),
+    border-color var(--hc-motion-fast);
   white-space: nowrap;
 }
 
 .tab:hover {
   color: var(--hc-fg-default);
   background: var(--hc-bg-island-hi);
+  border-color: var(--hc-border-subtle);
+  border-bottom: none;
 }
 
+/* Active tab: full top/side border, open bottom into body, same fill as body */
 .tabActive,
 .tabActive:hover {
   color: var(--hc-fg-strong);
   background: var(--hc-bg-island);
+  border-color: var(--hc-border-default);
+  border-bottom-color: var(--hc-bg-island);
+  z-index: 3;
 }
 
-/* When the body is open, fill the rounded gap underneath the active tab so
-   it looks fused with the body island. */
+/* Cover the body's top border under the active tab so it reads as one piece */
 .tabActive::after {
   content: '';
   position: absolute;
@@ -59,19 +74,24 @@
   bottom: -1px;
   height: 2px;
   background: var(--hc-bg-island);
+  z-index: 4;
 }
 
 .collapsed .tabActive::after {
   display: none;
 }
 
-/* Collapsed mode: tabs act as dropdown triggers; when the dropdown is open
-   we mark them with the same background as the popover so the popover
-   visually "hangs" off the tab. */
+.collapsed .tabActive,
+.collapsed .tabActive:hover {
+  border-bottom: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-md);
+}
+
 .tabDropdownOpen,
 .tabDropdownOpen:hover {
   color: var(--hc-fg-strong);
   background: var(--hc-bg-island-hi);
+  border-color: var(--hc-border-default);
 }
 
 .tabBadge {
@@ -88,27 +108,33 @@
   height: 100%;
   color: var(--hc-fg-muted);
   border-radius: var(--hc-radius-md);
+  border: 1px solid transparent;
 }
 
 .collapseToggle:hover {
   color: var(--hc-fg-default);
   background: var(--hc-hover-bg);
+  border-color: var(--hc-border-subtle);
 }
 
-/* Body — the island the active tab is fused into. */
+/* Body island — continuous with active tab; groups lay out horizontally */
 .body {
+  position: relative;
+  z-index: 1;
   background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
   border-radius: var(--hc-radius-island);
-  /* the active tab's bottom corners sit on top of the body, so trim the
-     top-left corner only when the first tab is active (handled in renderer
-     via aria-selected if needed). For now keep symmetric rounding. */
   height: var(--hc-size-ribbon-body);
   display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: stretch;
   padding: 8px 8px;
   gap: 4px;
   overflow-x: auto;
-  box-shadow: var(--hc-shadow-island);
+  overflow-y: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  margin-bottom: 12px;
 }
 
 .collapsed .body {
@@ -118,37 +144,50 @@
 .group {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
+  justify-content: flex-end;
   padding: 0 6px;
   border-right: 1px solid var(--hc-border-subtle);
   min-width: 0;
+  flex: 0 0 auto;
 }
 
 .group:last-child {
   border-right: none;
 }
 
-.groupBody {
-  flex: 1;
+/* Horizontal row of function buttons inside a ribbon group */
+.groupBody,
+.actions {
   display: flex;
-  align-items: center;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: stretch;
   gap: 2px;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
 }
 
 .action {
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  padding: 4px 8px;
+  padding: 4px 10px;
   min-width: 56px;
-  height: 100%;
+  max-width: 96px;
+  height: auto;
+  align-self: stretch;
   color: var(--hc-fg-default);
   border-radius: var(--hc-radius-md);
   font-size: 11px;
   text-align: center;
-  transition: background var(--hc-motion-fast), color var(--hc-motion-fast);
+  flex: 0 0 auto;
+  transition:
+    background var(--hc-motion-fast),
+    color var(--hc-motion-fast);
 }
 
 .action:hover {
@@ -158,9 +197,9 @@
 
 .actionActive,
 .actionActive:hover {
-  background: var(--hc-accent-soft);
+  background: var(--hc-press-bg);
   color: var(--hc-fg-strong);
-  box-shadow: inset 0 0 0 1px var(--hc-border-accent);
+  box-shadow: inset 0 0 0 1px var(--hc-selection-border);
 }
 
 .actionIcon {
@@ -187,11 +226,10 @@
   flex-shrink: 0;
 }
 
-/* === Collapsed-tab dropdown popover === */
-
 .dropdown {
   z-index: 1000;
-  background: var(--hc-bg-island-hi);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
   border-radius: var(--hc-radius-md);
   box-shadow: var(--hc-shadow-popover);
   padding: 6px;
@@ -205,8 +243,14 @@
 }
 
 @keyframes hc-dropdown-in {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .dropdownGroup {
@@ -255,9 +299,9 @@
 
 .dropdownItemActive,
 .dropdownItemActive:hover {
-  background: var(--hc-accent-soft);
+  background: var(--hc-press-bg);
   color: var(--hc-fg-strong);
-  box-shadow: inset 0 0 0 1px var(--hc-border-accent);
+  box-shadow: inset 0 0 0 1px var(--hc-selection-border);
 }
 
 .dropdownItemIcon {
@@ -278,6 +322,9 @@
 .dropdownItemShortcut {
   color: var(--hc-fg-subtle);
   font-size: 10px;
-  letter-spacing: 0.06em;
-  padding-left: 12px;
+  font-family: var(--hc-font-mono);
+}
+
+:global(.hc-theme-light) .body {
+  box-shadow: 0 1px 2px rgba(15, 17, 22, 0.08);
 }

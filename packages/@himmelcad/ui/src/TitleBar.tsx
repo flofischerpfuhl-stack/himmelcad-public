@@ -15,6 +15,7 @@ export interface TitleBarProps {
   appName?: string;
   productLabel?: string;
   projectLabel?: string;
+  brandMark?: React.ReactNode;
   controls?: WindowControls | null;
   rightSlot?: React.ReactNode;
 }
@@ -28,9 +29,10 @@ export interface TitleBarProps {
  * - When `controls` is null we fall back to no buttons (e.g. browser/WeltView).
  */
 export function TitleBar({
-  appName = 'HimmelCAD',
-  productLabel = 'Builder',
+  appName = 'himmel:CAD',
+  productLabel = 'BUILDER',
   projectLabel,
+  brandMark,
   controls,
   rightSlot,
 }: TitleBarProps): JSX.Element {
@@ -52,7 +54,7 @@ export function TitleBar({
   return (
     <div className={styles.root}>
       <div className={styles.left}>
-        <CloudMark className={styles.logo} />
+        {brandMark ?? <CloudMark className={styles.logo} />}
         <span className={styles.wordmark}>{appName}</span>
         <span className={styles.product}>{productLabel}</span>
       </div>

@@ -3,69 +3,52 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  display: grid;
-  grid-template-rows: 38px minmax(0, 1fr) 92px;
+  display: block;
   overflow: hidden;
   color: var(--hc-fg-strong);
   background: var(--hc-bg-void);
 }
 
-.toolbar {
+/* Same anchor family as scene View: bottom-left only (never top). */
+.layerToolbar {
+  position: absolute;
+  z-index: 6;
+  left: 10px;
+  bottom: 10px;
   display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: calc(100% - 220px);
+}
+
+/* Zoom sits just above layer chips so both stay bottom-left */
+.zoomToolbar {
+  position: absolute;
+  z-index: 6;
+  left: 10px;
+  bottom: 46px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   align-items: center;
-  gap: 8px;
-  padding: 4px 7px;
-  background: var(--hc-bg-island);
-  border-radius: var(--hc-radius-md);
+  max-width: calc(100% - 220px);
 }
 
-.layerTabs {
-  display: flex;
-  gap: 2px;
-}
-
-.layerTabs button,
-.iconButton {
-  min-height: 28px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: var(--hc-radius-sm);
-  color: var(--hc-fg-muted);
-  background: transparent;
-  font: inherit;
-  cursor: pointer;
-}
-
-.layerTabs button:hover,
-.iconButton:hover,
-.activeTab {
-  color: var(--hc-fg-strong) !important;
-  background: var(--hc-hover-bg) !important;
-}
-
-.selectionLabel {
-  min-width: 0;
-  margin-left: auto;
-  overflow: hidden;
-  color: var(--hc-fg-default);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.iconButton {
-  display: grid;
-  place-items: center;
-  padding: 0;
-  width: 28px;
+.zoomReadout {
+  min-width: 52px;
+  justify-content: center;
 }
 
 .stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   display: grid;
   place-items: center;
-  margin: 7px 0;
-  overflow: auto;
+  margin: 0;
+  overflow: hidden;
   border-radius: var(--hc-radius-lg);
   background: var(--hc-bg-island);
 }
@@ -95,22 +78,99 @@
 }
 
 .frameHost {
+  position: relative;
   width: 100%;
   height: 100%;
-  display: grid;
-  place-items: center;
   overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.frameHost:active,
+.frameDragging {
+  cursor: grabbing;
+}
+.frameHost[data-mask-tool='add'],
+.frameHost[data-mask-tool='remove'] {
+  cursor: crosshair;
 }
 .imageFrame {
-  position: relative;
-  flex: 0 0 auto;
+  position: absolute;
+  top: 0;
+  left: 0;
   overflow: hidden;
+  transform-origin: 0 0;
+  will-change: transform;
 }
 .imageFrame img {
   display: block;
   width: 100%;
   height: 100%;
   image-rendering: auto;
+  pointer-events: none;
+  user-select: none;
+}
+.maskOverlay,
+.activeMaskStroke {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.maskOverlay {
+  image-rendering: auto;
+}
+.activeMaskStroke {
+  overflow: visible;
+}
+
+/* Mask tools: still bottom-left stack, above zoom */
+.maskToolbar {
+  position: absolute;
+  z-index: 5;
+  left: 10px;
+  bottom: 82px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  max-width: calc(100% - 220px);
+  cursor: default;
+}
+.maskToolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--hc-size-chip-h);
+  padding: 0 10px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-chip);
+  background: var(--hc-bg-chip);
+  box-shadow: var(--hc-shadow-chip);
+  color: var(--hc-fg-muted);
+  font-family: var(--hc-font-mono);
+  font-size: 11px;
+}
+.maskToolbar input[type='range'] {
+  width: 72px;
+  accent-color: var(--hc-accent-base);
+}
+.maskToolbar code {
+  min-width: 44px;
+  color: var(--hc-fg-muted);
+  font-family: var(--hc-font-mono);
+  font-size: 11px;
+  text-align: right;
+}
+.maskSpinner {
+  margin: 0 5px;
+  animation: maskSpin 0.8s linear infinite;
+}
+@keyframes maskSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .imageCanvas > span {
@@ -130,14 +190,17 @@
   position: relative;
   width: 100%;
   height: 100%;
-  display: grid;
-  place-items: center;
   overflow: hidden;
   background: var(--hc-bg-void);
+  touch-action: none;
+  user-select: none;
 }
 .depthCanvas canvas {
-  max-width: 100%;
-  max-height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
   cursor: crosshair;
   image-rendering: auto;
 }
@@ -195,69 +258,4 @@
   margin-top: 7px;
   color: var(--hc-fg-muted);
   font-size: 11px;
-}
-
-.filmstrip {
-  display: flex;
-  gap: 5px;
-  padding: 6px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  border-radius: var(--hc-radius-md);
-  background: var(--hc-bg-island);
-}
-
-.filmstrip > button {
-  flex: 0 0 174px;
-  min-width: 0;
-  display: grid;
-  grid-template-columns: 52px minmax(0, 1fr);
-  align-items: center;
-  gap: 7px;
-  padding: 5px;
-  border: 1px solid transparent;
-  border-radius: var(--hc-radius-sm);
-  color: var(--hc-fg-default);
-  background: var(--hc-bg-island-lo);
-  text-align: left;
-  cursor: pointer;
-}
-
-.filmstrip > button:hover,
-.filmstrip > .activePhoto {
-  border-color: var(--hc-border-strong);
-  background: var(--hc-hover-bg);
-}
-
-.thumb {
-  height: 56px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--hc-radius-sm);
-  color: var(--hc-fg-muted);
-  background: var(--hc-bg-void);
-}
-
-.photoText {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.photoText strong,
-.photoText small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.photoText strong {
-  color: var(--hc-fg-strong);
-  font-size: 11px;
-}
-
-.photoText small {
-  color: var(--hc-fg-muted);
-  font-size: 10px;
 }

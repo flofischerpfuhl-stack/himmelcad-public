@@ -1,4 +1,5 @@
-import { AlertTriangle, CheckCircle2, Crosshair } from 'lucide-react';
+import { EmptyState } from '@himmelcad/ui';
+import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 
 import styles from './GcpAccuracyPanel.module.css';
 
@@ -63,13 +64,10 @@ export function GcpAccuracyPanel({
 }: GcpAccuracyPanelProps): JSX.Element {
   if (!report) {
     return (
-      <div className={styles.empty}>
-        <Crosshair size={22} />
-        <div>
-          <strong>No optimization result yet</strong>
-          <p>Each active GCP requires measurements in at least two images.</p>
-        </div>
-      </div>
+      <EmptyState
+        title="No accuracy report yet"
+        hint="Run GCP optimization after measuring each active control in at least two images. Residuals and RMS then appear here."
+      />
     );
   }
   return (

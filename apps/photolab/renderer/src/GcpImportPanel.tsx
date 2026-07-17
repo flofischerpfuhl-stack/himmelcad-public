@@ -4,15 +4,28 @@ import type {
   GcpRole,
   ProjectCameraImageRecord,
 } from '@himmelcad/data';
-import { AlertTriangle, Check, FileSpreadsheet, MapPinned } from 'lucide-react';
-import { useMemo, useState, type ReactNode } from 'react';
+import { Checkbox, CrsTransformPair, Radio, Select } from '@himmelcad/ui';
+import {
+  AlertTriangle,
+  Check,
+  FileSpreadsheet,
+  Grid3X3,
+  LoaderCircle,
+  MapPinned,
+  X,
+} from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import styles from './GcpImportPanel.module.css';
-import type {
-  CrsOperationCandidate,
-  CrsOperationDiscovery,
-  CrsOperationQuery,
-  ImageImportDecision,
+import {
+  CrsPicker,
+  HORIZONTAL_CRS_PRESETS,
+  type CrsOperationCandidate,
+  type CrsOperationDiscovery,
+  type CrsOperationQuery,
+  type ImageImportDecision,
+  type ImageImportProgress,
+  type LocalGridSelection,
 } from './ImageImportPanel.js';
 
 export interface GcpImportPanelProps {
@@ -20,15 +33,20 @@ export interface GcpImportPanelProps {
   projectTargetCrs: string | null;
   projectImages: readonly ProjectCameraImageRecord[];
   busy: boolean;
+  externalError: string | null;
+  gridProgress: ImageImportProgress | null;
   onChooseFile: () => void;
   onPreview: (path: string, mapping: GcpCsvImportMapping) => Promise<GcpCsvPreview>;
   onDiscoverCrs: (query: CrsOperationQuery) => Promise<CrsOperationDiscovery>;
+  onSelectGrid: (kind: 'horizontal') => Promise<LocalGridSelection | null>;
   onCommit: (
     path: string,
     mapping: GcpCsvImportMapping,
     decision: ImageImportDecision,
+    coordinatesAlreadyInProjectCrs: boolean,
   ) => Promise<void>;
   onCancel: () => void;
+  onError: (message: string) => void;
 }
 
 export function GcpImportPanel({
@@ -36,11 +54,15 @@ export function GcpImportPanel({
   projectTargetCrs,
   projectImages,
   busy,
+  externalError,
+  gridProgress,
   onChooseFile,
   onPreview,
   onDiscoverCrs,
+  onSelectGrid,
   onCommit,
   onCancel,
+  onError,
 }: GcpImportPanelProps): JSX.Element {
   const [step, setStep] = useState(1);
   const [delimiter, setDelimiter] = useState(';');
@@ -51,14 +73,37 @@ export function GcpImportPanel({
   const [horizontalStddev, setHorizontalStddev] = useState(0.02);
   const [heightStddev, setHeightStddev] = useState(0.03);
   const [preview, setPreview] = useState<GcpCsvPreview | null>(null);
-  const [sourceCrs, setSourceCrs] = useState(projectTargetCrs ?? 'EPSG:25832');
-  const [targetCrs, setTargetCrs] = useState(projectTargetCrs ?? 'EPSG:25832');
+  const [transformCoordinates, setTransformCoordinates] = useState(false);
+  const [sourceCrsEpsg, setSourceCrsEpsg] = useState(25832);
+  const targetCrsEpsg = parseEpsgCode(projectTargetCrs) ?? 25832;
+  const sourceCrs = `EPSG:${sourceCrsEpsg}`;
+  const targetCrs = `EPSG:${targetCrsEpsg}`;
   const defaultArea = useMemo(() => projectImageArea(projectImages), [projectImages]);
-  const [area, setArea] = useState(defaultArea);
+  const area = defaultArea;
   const [discovery, setDiscovery] = useState<CrsOperationDiscovery | null>(null);
+  const [discoveryQueryKey, setDiscoveryQueryKey] = useState<string | null>(null);
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [localBusy, setLocalBusy] = useState(false);
+  const [localGrid, setLocalGrid] = useState<LocalGridSelection | null>(null);
+  const preferencesHydrated = useRef(false);
+
+  useEffect(() => {
+    if (preferencesHydrated.current) return;
+    preferencesHydrated.current = true;
+    void window.himmelcad?.preferences.gcpCsv
+      .get()
+      .then((defaults) => {
+        setDelimiter(defaults.delimiter);
+        setDecimalSeparator(defaults.decimalSeparator);
+        setHasHeader(defaults.hasHeader);
+        setColumns(defaults.columns);
+        setRole(defaults.role);
+        setHorizontalStddev(defaults.horizontalStddev);
+        setHeightStddev(defaults.heightStddev);
+      })
+      .catch(() => undefined);
+  }, []);
 
   const mapping = useMemo<GcpCsvImportMapping>(
     () => ({
@@ -86,45 +131,132 @@ export function GcpImportPanel({
       role,
     ],
   );
-  const query = useMemo(() => buildQuery(sourceCrs, targetCrs, area), [area, sourceCrs, targetCrs]);
+  const query = useMemo(
+    () =>
+      buildQuery(
+        transformCoordinates ? sourceCrs : targetCrs,
+        targetCrs,
+        area,
+        transformCoordinates ? localGrid : null,
+      ),
+    [area, localGrid, sourceCrs, targetCrs, transformCoordinates],
+  );
   const selectedOperation =
     discovery?.candidates.find((item) => item.operationId === selectedOperationId) ?? null;
   const operationReady =
+    discoveryQueryKey === JSON.stringify(query) &&
     selectedOperation != null &&
     !selectedOperation.ballpark &&
     selectedOperation.requiredGrids.every((grid) => grid.availability.state === 'presentVerified');
+
+  const mappingInputKey = JSON.stringify({
+    columns,
+    decimalSeparator,
+    delimiter,
+    hasHeader,
+    heightStddev,
+    horizontalStddev,
+    role,
+  });
+
+  useEffect(() => {
+    setPreview(null);
+  }, [mappingInputKey]);
 
   const refreshPreview = async () => {
     if (!path) return;
     setLocalBusy(true);
     setError(null);
     try {
-      setPreview(await onPreview(path, mapping));
+      const nextPreview = await onPreview(path, mapping);
+      setPreview(nextPreview);
+      if (nextPreview.errors.length === 0) {
+        void window.himmelcad?.preferences.gcpCsv
+          .save({
+            delimiter: delimiter.slice(0, 1) || ';',
+            decimalSeparator,
+            hasHeader,
+            columns,
+            role,
+            horizontalStddev,
+            heightStddev,
+          })
+          .catch(() => undefined);
+      }
       setStep(3);
     } catch (reason) {
-      setError(message(reason));
+      const detail = message(reason);
+      setError(detail);
+      onError(detail);
     } finally {
       setLocalBusy(false);
     }
   };
 
-  const discover = async () => {
+  useEffect(() => {
+    if (step !== 4) return;
+    let cancelled = false;
+    const queryKey = JSON.stringify(query);
+    const timer = window.setTimeout(() => {
+      setLocalBusy(true);
+      setError(null);
+      void onDiscoverCrs(query)
+        .then((result) => {
+          if (cancelled) return;
+          setDiscovery(result);
+          setDiscoveryQueryKey(queryKey);
+          const preferred = result.candidates.find(
+            (item) =>
+              item.bestAvailable &&
+              !item.ballpark &&
+              item.requiredGrids.every((grid) => grid.availability.state === 'presentVerified'),
+          );
+          setSelectedOperationId(
+            preferred?.operationId ?? result.candidates[0]?.operationId ?? null,
+          );
+          if (result.candidates.length === 0) {
+            const detail = 'No accurate coordinate operation covers the GCP and project area.';
+            setError(detail);
+            onError(detail);
+          }
+        })
+        .catch((reason: unknown) => {
+          if (cancelled) return;
+          setDiscovery(null);
+          setDiscoveryQueryKey(null);
+          setSelectedOperationId(null);
+          const detail = message(reason);
+          setError(detail);
+          onError(detail);
+        })
+        .finally(() => {
+          if (!cancelled) setLocalBusy(false);
+        });
+    }, 180);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [onDiscoverCrs, onError, query, step]);
+
+  const chooseGrid = async (): Promise<void> => {
     setLocalBusy(true);
     setError(null);
     try {
-      const result = await onDiscoverCrs(query);
-      setDiscovery(result);
-      const preferred = result.candidates.find(
-        (item) =>
-          item.bestAvailable &&
-          !item.ballpark &&
-          item.requiredGrids.every((grid) => grid.availability.state === 'presentVerified'),
-      );
-      setSelectedOperationId(preferred?.operationId ?? result.candidates[0]?.operationId ?? null);
+      const selected = await onSelectGrid('horizontal');
+      if (!selected) return;
+      if (selected.kind === 'geoid')
+        throw new Error(`${selected.filename} is a vertical grid, not a horizontal datum grid.`);
+      if (!containsArea(selected.coverage, area))
+        throw new Error(
+          `${selected.filename} does not cover the GCP/project area. Select a grid whose coverage contains the image positions.`,
+        );
+      setLocalGrid(selected);
+      setDiscoveryQueryKey(null);
     } catch (reason) {
-      setDiscovery(null);
-      setSelectedOperationId(null);
-      setError(message(reason));
+      const detail = message(reason);
+      setError(detail);
+      onError(detail);
     } finally {
       setLocalBusy(false);
     }
@@ -132,17 +264,54 @@ export function GcpImportPanel({
 
   const commit = async () => {
     if (!path || !selectedOperation || !discovery) return;
-    await onCommit(path, mapping, buildDecision(query, selectedOperation, discovery));
+    await onCommit(
+      path,
+      mapping,
+      buildDecision(query, selectedOperation, discovery),
+      !transformCoordinates,
+    );
   };
+
+  const previewReady = preview?.errors.length === 0;
+  const canVisitStep = (candidate: number): boolean => {
+    if (candidate === 1) return true;
+    if (candidate === 2) return path != null;
+    if (candidate === 3 || candidate === 4) return previewReady;
+    return previewReady && operationReady;
+  };
+  const next = async (): Promise<void> => {
+    if (step === 1 && path) setStep(2);
+    else if (step === 2) await refreshPreview();
+    else if (step === 3 && previewReady) setStep(4);
+    else if (step === 4 && operationReady) setStep(5);
+    else if (step === 5) await commit();
+  };
+  const nextDisabled =
+    busy ||
+    localBusy ||
+    (step === 1 && !path) ||
+    (step === 3 && !previewReady) ||
+    (step === 4 && !operationReady) ||
+    (step === 5 && (!previewReady || !operationReady));
 
   return (
     <section className={styles.root}>
+      <header className={styles.header} data-task-drag-handle>
+        <h2 className={styles.functionTitle}>GCP Import</h2>
+        <button type="button" onClick={onCancel} aria-label="Close GCP import">
+          <X size={16} />
+        </button>
+      </header>
       <ol className={styles.steps}>
         {['File', 'Columns', 'Preview', 'CRS', 'Import'].map((label, index) => {
           const number = index + 1;
           return (
             <li key={label} className={step === number ? styles.activeStep : ''}>
-              <button type="button" onClick={() => setStep(number)}>
+              <button
+                type="button"
+                disabled={!canVisitStep(number)}
+                onClick={() => setStep(number)}
+              >
                 <span>{number < step ? <Check size={11} /> : number}</span>
                 {label}
               </button>
@@ -173,7 +342,7 @@ export function GcpImportPanel({
             />
           </Field>
           <Field label="Decimal separator">
-            <select
+            <Select
               value={decimalSeparator}
               onChange={(event) =>
                 setDecimalSeparator(event.currentTarget.value as 'point' | 'comma')
@@ -181,7 +350,7 @@ export function GcpImportPanel({
             >
               <option value="comma">Comma</option>
               <option value="point">Point</option>
-            </select>
+            </Select>
           </Field>
           <Toggle
             label="First row contains column names"
@@ -205,7 +374,7 @@ export function GcpImportPanel({
             </datalist>
           )}
           <Field label="Default role">
-            <select
+            <Select
               value={role}
               onChange={(event) => setRole(event.currentTarget.value as GcpRole)}
             >
@@ -216,7 +385,7 @@ export function GcpImportPanel({
               <option value="checkpointXy">Checkpoint · horizontal only</option>
               <option value="checkpointZ">Checkpoint · height only</option>
               <option value="disabled">Disabled</option>
-            </select>
+            </Select>
           </Field>
           <NumberField
             label="σ horizontal [m]"
@@ -224,23 +393,20 @@ export function GcpImportPanel({
             onChange={setHorizontalStddev}
           />
           <NumberField label="σ height [m]" value={heightStddev} onChange={setHeightStddev} />
-          <button
-            type="button"
-            className={styles.primary}
-            disabled={!path || localBusy}
-            onClick={() => void refreshPreview()}
-          >
-            {localBusy ? 'Validating…' : 'Validate preview'}
-          </button>
+          {localBusy && (
+            <div className={styles.validating} role="status">
+              <LoaderCircle className={styles.spinner} size={14} /> Reading and validating preview…
+            </div>
+          )}
         </div>
       )}
 
       {step === 3 && (
         <div className={styles.page}>
-          <h3>Validated preview</h3>
+          <h3>Preview</h3>
           {!preview ? (
             <div className={styles.notice}>
-              <AlertTriangle size={14} /> Validate the column mapping first.
+              <AlertTriangle size={14} /> Return to Columns and press Next to create the preview.
             </div>
           ) : (
             <>
@@ -290,111 +456,116 @@ export function GcpImportPanel({
       {step === 4 && (
         <div className={styles.page}>
           <h3>
-            <MapPinned size={15} /> Coordinate transformation
+            <MapPinned size={15} /> Coordinate reference
           </h3>
-          <Field label="Source CRS">
-            <input
-              value={sourceCrs}
-              onChange={(event) => setSourceCrs(event.currentTarget.value)}
-            />
-          </Field>
-          <Field label="Project CRS">
-            <input
-              value={targetCrs}
-              onChange={(event) => setTargetCrs(event.currentTarget.value)}
-            />
-          </Field>
-          <div className={styles.notice}>
-            Define the geographic area explicitly. It limits PROJ operation selection and is frozen
-            with the import; PhotoLab never infers a datum transformation silently.
+          <div className={styles.crsSummary}>
+            <span>Project reference</span>
+            <strong>{targetCrs}</strong>
           </div>
-          <NumberField
-            label="Area west [°]"
-            value={area.westLongitude}
-            min={-180}
-            max={180}
-            step={0.0001}
-            onChange={(value) => setArea({ ...area, westLongitude: value })}
+          <CrsTransformPair
+            title="Horizontal transform"
+            hint="Left: CRS stored in the CSV. Right: project target CRS. Uncheck transform only when values are already in the project CRS."
+            noTransform={!transformCoordinates}
+            onNoTransformChange={(noTransform) => setTransformCoordinates(!noTransform)}
+            noTransformLabel="No transform — CSV is already in project CRS"
+            source={
+              <CrsPicker
+                label="CSV source CRS"
+                value={sourceCrsEpsg}
+                presets={HORIZONTAL_CRS_PRESETS}
+                onChange={setSourceCrsEpsg}
+              />
+            }
+            target={
+              <div className={styles.crsSummary}>
+                <span>Project target</span>
+                <strong>{targetCrs}</strong>
+              </div>
+            }
           />
-          <NumberField
-            label="Area south [°]"
-            value={area.southLatitude}
-            min={-90}
-            max={90}
-            step={0.0001}
-            onChange={(value) => setArea({ ...area, southLatitude: value })}
-          />
-          <NumberField
-            label="Area east [°]"
-            value={area.eastLongitude}
-            min={-180}
-            max={180}
-            step={0.0001}
-            onChange={(value) => setArea({ ...area, eastLongitude: value })}
-          />
-          <NumberField
-            label="Area north [°]"
-            value={area.northLatitude}
-            min={-90}
-            max={90}
-            step={0.0001}
-            onChange={(value) => setArea({ ...area, northLatitude: value })}
-          />
-          {projectTargetCrs && targetCrs !== projectTargetCrs && (
-            <div className={styles.notice}>
-              <AlertTriangle size={14} /> The target differs from the established project frame{' '}
-              {projectTargetCrs} and will be rejected at commit time.
+          {transformCoordinates && sourceCrs !== targetCrs && (
+            <div className={styles.gridSelector}>
+              <Grid3X3 size={16} />
+              <span>
+                <strong>Datum transformation grid</strong>
+                <small>
+                  {localGrid
+                    ? `${localGrid.filename} · registered locally`
+                    : 'Bundled official grids are used when they cover the project.'}
+                </small>
+                {gridProgress?.phase === 'grid' && <ProgressBar value={gridProgress.fraction} />}
+              </span>
+              <button
+                type="button"
+                className={styles.secondary}
+                disabled={localBusy}
+                onClick={() => void chooseGrid()}
+              >
+                {gridProgress?.phase === 'grid' && (
+                  <LoaderCircle className={styles.spinner} size={13} />
+                )}
+                {localGrid ? 'Change file' : 'Choose grid file…'}
+              </button>
             </div>
           )}
-          <button
-            type="button"
-            className={styles.secondary}
-            disabled={localBusy}
-            onClick={() => void discover()}
-          >
-            {localBusy ? 'PROJ is checking…' : 'Check offline operations'}
-          </button>
-          {discovery?.candidates.map((candidate) => (
-            <label key={candidate.operationId} className={styles.operation}>
-              <input
-                type="radio"
-                checked={selectedOperationId === candidate.operationId}
-                onChange={() => setSelectedOperationId(candidate.operationId)}
-              />
-              <span>
-                <strong>{candidate.name}</strong>
-                <small>
-                  {candidate.expectedAccuracyMm == null
-                    ? 'Accuracy not specified'
-                    : `${candidate.expectedAccuracyMm.toFixed(1)} mm`}
-                  {candidate.ballpark ? ' · ballpark blocked' : ''}
-                </small>
-              </span>
-            </label>
-          ))}
+          {localBusy && (
+            <div className={styles.validating}>
+              <LoaderCircle className={styles.spinner} size={14} /> Validating coordinate operation…
+            </div>
+          )}
+          {transformCoordinates &&
+            discovery?.candidates.map((candidate) => (
+              <label key={candidate.operationId} className={styles.operation}>
+                <Radio
+                  checked={selectedOperationId === candidate.operationId}
+                  onChange={() => setSelectedOperationId(candidate.operationId)}
+                />
+                <span>
+                  <strong>{candidate.name}</strong>
+                  <small>
+                    {candidate.expectedAccuracyMm == null
+                      ? 'Accuracy not specified'
+                      : `${candidate.expectedAccuracyMm.toFixed(1)} mm`}
+                    {candidate.ballpark ? ' · ballpark blocked' : ''}
+                  </small>
+                </span>
+              </label>
+            ))}
         </div>
       )}
 
       {step === 5 && (
         <div className={styles.page}>
-          <h3>Approve import</h3>
-          <div className={styles.notice}>
-            The CSV is hashed and parsed again before commit. Transformation, point definitions, and
-            roles are stored content-addressed.
+          <h3>Review import</h3>
+          <div className={styles.crsSummary}>
+            <span>Points</span>
+            <strong>{preview?.validPointCount ?? 0}</strong>
           </div>
-          <button
-            type="button"
-            className={styles.primary}
-            disabled={busy || !preview || preview.errors.length > 0 || !operationReady}
-            onClick={() => void commit()}
-          >
-            {busy ? 'Importing…' : `Import ${preview?.validPointCount ?? 0} GCPs`}
-          </button>
+          <div className={styles.crsSummary}>
+            <span>Coordinate handling</span>
+            <strong>
+              {transformCoordinates ? `${sourceCrs} → ${targetCrs}` : `Use values as ${targetCrs}`}
+            </strong>
+          </div>
+          {busy && (
+            <div className={styles.validating} role="status">
+              <LoaderCircle className={styles.spinner} size={14} /> Importing ground control points…
+            </div>
+          )}
+          {!localBusy && !operationReady && (
+            <div className={styles.error}>
+              {error ?? 'No valid coordinate operation is selected.'}
+            </div>
+          )}
         </div>
       )}
 
-      {error && <div className={styles.error}>{error}</div>}
-      <footer>
+      {(error ?? externalError) && (
+        <div className={styles.error} role="alert">
+          <AlertTriangle size={14} /> {error ?? externalError}
+        </div>
+      )}
+      <footer className={styles.footer}>
         <button type="button" onClick={onCancel}>
           Cancel
         </button>
@@ -408,10 +579,17 @@ export function GcpImportPanel({
           </button>
           <button
             type="button"
-            disabled={step >= 5}
-            onClick={() => setStep((value) => Math.min(5, value + 1))}
+            className={step === 5 ? styles.primary : undefined}
+            disabled={nextDisabled}
+            onClick={() => void next()}
           >
-            Next
+            {localBusy
+              ? 'Working…'
+              : step === 5
+                ? busy
+                  ? 'Importing…'
+                  : `Import ${preview?.validPointCount ?? 0} GCPs`
+                : 'Next'}
           </button>
         </div>
       </footer>
@@ -468,8 +646,7 @@ function Toggle({
 }): JSX.Element {
   return (
     <label className={styles.toggle}>
-      <input
-        type="checkbox"
+      <Checkbox
         checked={checked}
         onChange={(event) => onChange(event.currentTarget.checked)}
       />
@@ -497,7 +674,8 @@ function Metric({
 }
 
 function selector(value: string, hasHeader: boolean, headers: readonly string[] | undefined) {
-  if (hasHeader && headers?.includes(value)) return { kind: 'header' as const, value };
+  if (hasHeader && (headers?.includes(value) || !/^\d+$/.test(value.trim())))
+    return { kind: 'header' as const, value };
   const index = Number.parseInt(value, 10);
   return { kind: 'index' as const, value: Number.isSafeInteger(index) && index >= 0 ? index : 0 };
 }
@@ -506,31 +684,85 @@ function buildQuery(
   source: string,
   target: string,
   areaOfInterest: CrsOperationQuery['areaOfInterest'],
+  localGrid: LocalGridSelection | null,
 ): CrsOperationQuery {
   return {
     source: { crs: parseCrs(source) },
     target: { crs: parseCrs(target) },
     areaOfInterest,
     selectionPolicy: { allowBallpark: false, onlyBest: true },
-    gridCatalog: [
-      {
-        kind: 'gtg',
-        officialFilename: 'de_adv_BETA2007.tif',
-        officialSha256: '46e681fcc7d022dde1db1f9d0a3426a9bfb1d4a151af69a81b3c30104c9388e2',
-        license: {
-          licenseName: 'AdV free redistribution notice',
-          source: 'https://cdn.proj.org/de_adv_README.txt',
-          redistributionAllowed: true,
-        },
-        coverage: {
-          westLongitude: 5.416666666666667,
-          southLatitude: 46.95,
-          eastLongitude: 15.75,
-          northLatitude: 55.35,
-        },
-      },
-    ],
+    gridCatalog: localGrid
+      ? [
+          {
+            kind: localGrid.kind,
+            officialFilename: localGrid.filename,
+            license: {
+              licenseName: 'User-supplied local grid',
+              source: localGrid.localPath,
+              redistributionAllowed: false,
+            },
+            coverage: localGrid.coverage,
+            localPath: localGrid.localPath,
+          },
+        ]
+      : [
+          {
+            kind: 'gtg',
+            officialFilename: 'de_adv_BETA2007.tif',
+            officialSha256: '46e681fcc7d022dde1db1f9d0a3426a9bfb1d4a151af69a81b3c30104c9388e2',
+            license: {
+              licenseName: 'AdV free redistribution notice',
+              source: 'https://cdn.proj.org/de_adv_README.txt',
+              redistributionAllowed: true,
+            },
+            coverage: {
+              westLongitude: 5.416666666666667,
+              southLatitude: 46.95,
+              eastLongitude: 15.75,
+              northLatitude: 55.35,
+            },
+          },
+          {
+            kind: 'ntv2',
+            officialFilename: 'de_lgvl_saarland_SeTa2016.tif',
+            officialSha256: '529acdef6f5634669087de3dfc7923ab0100a9a7d94fa5e5b4aadb7ec4226c6c',
+            license: {
+              licenseName: 'Creative Commons Attribution 4.0',
+              spdxExpression: 'CC-BY-4.0',
+              source: 'https://cdn.proj.org/de_lgvl_saarland_README.txt',
+              redistributionAllowed: true,
+            },
+            coverage: {
+              westLongitude: 6.345,
+              southLatitude: 49.1,
+              eastLongitude: 7.455,
+              northLatitude: 49.6466667,
+            },
+          },
+        ],
   };
+}
+
+function ProgressBar({ value }: { value: number }): JSX.Element {
+  const percent = Math.round(Math.max(0, Math.min(1, value)) * 100);
+  return (
+    <div className={styles.progress}>
+      <span style={{ width: `${percent}%` }} />
+      <code>{percent}%</code>
+    </div>
+  );
+}
+
+function containsArea(
+  coverage: CrsOperationQuery['areaOfInterest'],
+  area: CrsOperationQuery['areaOfInterest'],
+): boolean {
+  return (
+    coverage.westLongitude <= area.westLongitude &&
+    coverage.southLatitude <= area.southLatitude &&
+    coverage.eastLongitude >= area.eastLongitude &&
+    coverage.northLatitude >= area.northLatitude
+  );
 }
 
 function projectImageArea(
@@ -558,10 +790,16 @@ function projectImageArea(
 }
 
 function parseCrs(value: string): { kind: 'epsg' | 'authority'; value: number | string } {
-  const match = /^EPSG:\s*(\d+)$/i.exec(value.trim());
+  const match = /^EPSG:\s*(\d+)(?:\+\d+)?$/i.exec(value.trim());
   return match
     ? { kind: 'epsg', value: Number(match[1]) }
     : { kind: 'authority', value: value.trim() };
+}
+
+function parseEpsgCode(value: string | null): number | null {
+  if (!value) return null;
+  const match = /^EPSG:\s*(\d+)(?:\+\d+)?$/i.exec(value.trim());
+  return match ? Number(match[1]) : null;
 }
 
 function buildDecision(

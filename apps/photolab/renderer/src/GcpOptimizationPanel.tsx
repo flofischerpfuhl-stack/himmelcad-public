@@ -1,4 +1,5 @@
 import type { GcpCollectionRecord, GcpRole } from '@himmelcad/data';
+import { Checkbox, Select } from '@himmelcad/ui';
 import { CheckCircle2, CircleGauge, Info, Shuffle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -121,8 +122,7 @@ export function GcpOptimizationPanel({
             return (
               <div className={`${styles.row} ${!usable ? styles.disabled : ''}`} key={point.id}>
                 <label className={styles.check}>
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={included.has(point.id)}
                     disabled={!usable || busy}
                     onChange={(event) => {
@@ -141,7 +141,7 @@ export function GcpOptimizationPanel({
                   <small>{point.id}</small>
                 </span>
                 <span className={styles.count}>{count}</span>
-                <select
+                <Select
                   value={roles[point.id] ?? point.role}
                   disabled={!usable || busy}
                   onChange={(event) =>
@@ -158,7 +158,7 @@ export function GcpOptimizationPanel({
                   <option value="checkpointXy">Checkpoint · horizontal only</option>
                   <option value="checkpointZ">Checkpoint · height only</option>
                   <option value="disabled">Do not use</option>
-                </select>
+                </Select>
               </div>
             );
           })}
@@ -184,8 +184,7 @@ export function GcpOptimizationPanel({
               key={camera.imageId}
             >
               <label className={styles.check}>
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={cameraReferences.has(camera.imageId)}
                   disabled={!camera.referenceAvailable || busy}
                   onChange={(event) => {

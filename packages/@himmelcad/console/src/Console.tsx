@@ -2,7 +2,15 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { Check, Copy, Eraser, PanelBottomClose, Search, Terminal } from 'lucide-react';
 
 import type { LogEvent, LogLevel } from '@himmelcad/data';
+import { Select } from '@himmelcad/ui';
 
+import {
+  AVE_MARIA,
+  BRAND_WORDMARK,
+  CRUCIFIX_ASCII,
+  MADONNA_ASCII,
+  PATER_NOSTER,
+} from './brandArt.js';
 import { consoleStore } from './store.js';
 import styles from './Console.module.css';
 
@@ -12,6 +20,8 @@ export interface ConsoleProps {
   onCommand?: (raw: string) => void;
   /** Hide the wordmark splash even on first mount. */
   hideBrand?: boolean;
+  /** Product line under the brand splash, e.g. "PhotoLab · console". */
+  brandSubtitle?: string;
   /** When provided, a "collapse panel" button is shown in the toolbar. */
   onCollapse?: () => void;
 }
@@ -27,6 +37,7 @@ export function Console({
   defaultLevel = 'info',
   onCommand,
   hideBrand = false,
+  brandSubtitle = 'console',
   onCollapse,
 }: ConsoleProps): JSX.Element {
   const [level, setLevel] = useState<LogLevel>(defaultLevel);
@@ -84,17 +95,18 @@ export function Console({
     <div className={styles.root}>
       <div className={styles.toolbar}>
         <span className={styles.title}>Console</span>
-        <select
-          value={level}
-          onChange={(e) => setLevel(e.target.value as LogLevel)}
+        <Select
+          wrapClassName={styles.selectWrap}
           className={styles.select}
           aria-label="Log level"
+          value={level}
+          onChange={(e) => setLevel(e.target.value as LogLevel)}
         >
           <option value="debug">debug</option>
           <option value="info">info</option>
           <option value="warn">warn</option>
           <option value="error">error</option>
-        </select>
+        </Select>
         <Search size={12} color="var(--hc-fg-subtle)" />
         <input
           value={query}
@@ -164,10 +176,14 @@ export function Console({
       </div>
       <div className={styles.body} ref={bodyRef} role="log" aria-live="polite">
         {!hideBrand && (
-          <>
-            <div className={styles.brandSplash}>HimmelCAD</div>
-            <div className={styles.brandSubtitle}>Builder · console</div>
-          </>
+          <div className={styles.brandBlock}>
+            <pre className={styles.liturgy}>{PATER_NOSTER}</pre>
+            <pre className={styles.asciiArt}>{CRUCIFIX_ASCII}</pre>
+            <pre className={styles.liturgy}>{AVE_MARIA}</pre>
+            <pre className={`${styles.asciiArt} ${styles.asciiArtDense}`}>{MADONNA_ASCII}</pre>
+            <div className={styles.brandSplash}>{BRAND_WORDMARK}</div>
+            <div className={styles.brandSubtitle}>{brandSubtitle}</div>
+          </div>
         )}
         {filtered.map((evt, i) => (
           <ConsoleLine key={i} evt={evt} />

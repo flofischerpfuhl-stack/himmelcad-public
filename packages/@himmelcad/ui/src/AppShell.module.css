@@ -35,6 +35,7 @@
 
 .island {
   background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
   border-radius: var(--hc-radius-island);
   box-shadow: var(--hc-shadow-island);
   overflow: hidden;
@@ -61,6 +62,14 @@
   position: relative;
   background: var(--hc-bg-island);
   min-height: 0;
+}
+
+.floatingTabsHost {
+  overflow: visible;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .bottomPanel {

@@ -1,3 +1,4 @@
+import { Checkbox, Select } from '@himmelcad/ui';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import styles from './ProductPanel.module.css';
@@ -53,14 +54,18 @@ export type ProductRunConfiguration =
 export interface ProductPanelProps {
   operation: ProductOperation;
   busy: boolean;
-  inputLabel: string;
+  inputs: readonly { id: string; label: string }[];
+  selectedInputId: string;
+  onInputChange: (id: string) => void;
   onStart: (configuration: ProductRunConfiguration) => void;
 }
 
 export function ProductPanel({
   operation,
   busy,
-  inputLabel,
+  inputs,
+  selectedInputId,
+  onInputChange,
   onStart,
 }: ProductPanelProps): JSX.Element {
   const defaults = useMemo(() => defaultProductConfiguration(operation), [operation]);
@@ -75,12 +80,21 @@ export function ProductPanel({
       <section className={styles.section}>
         <div className={styles.sectionTitle}>{title(operation)}</div>
         <Field label="Input">
-          <span className={styles.readonly}>{inputLabel}</span>
+          <Select
+            value={selectedInputId}
+            onChange={(event) => onInputChange(event.currentTarget.value)}
+          >
+            {inputs.map((input) => (
+              <option key={input.id} value={input.id}>
+                {input.label}
+              </option>
+            ))}
+          </Select>
         </Field>
         {configuration.kind === 'depth' && (
           <>
             <Field label="Image resolution">
-              <select
+              <Select
                 value={configuration.imageDownscale}
                 onChange={(event) =>
                   setConfiguration({
@@ -93,10 +107,10 @@ export function ProductPanel({
                 <option value={2}>High · 1/2 edge</option>
                 <option value={4}>Medium · 1/4 edge</option>
                 <option value={8}>Low · 1/8 edge</option>
-              </select>
+              </Select>
             </Field>
             <Field label="Depth filter">
-              <select
+              <Select
                 value={configuration.filter}
                 onChange={(event) =>
                   setConfiguration({
@@ -108,7 +122,7 @@ export function ProductPanel({
                 <option value="mild">Mild · fine detail</option>
                 <option value="moderate">Moderate · recommended</option>
                 <option value="aggressive">Aggressive · clean surfaces</option>
-              </select>
+              </Select>
             </Field>
             <Toggle
               label="Reuse compatible depth maps"
@@ -122,7 +136,7 @@ export function ProductPanel({
         {configuration.kind === 'dense' && (
           <>
             <Field label="Image resolution">
-              <select
+              <Select
                 value={configuration.imageDownscale}
                 onChange={(event) =>
                   setConfiguration({
@@ -135,7 +149,7 @@ export function ProductPanel({
                 <option value={2}>High · 1/2 edge</option>
                 <option value={4}>Medium · 1/4 edge</option>
                 <option value={8}>Low · 1/8 edge</option>
-              </select>
+              </Select>
             </Field>
             <NumberField
               label="Minimum views"
@@ -164,7 +178,7 @@ export function ProductPanel({
         {configuration.kind === 'dem' && (
           <>
             <Field label="Surface">
-              <select
+              <Select
                 value={configuration.surface}
                 onChange={(event) =>
                   setConfiguration({
@@ -175,7 +189,7 @@ export function ProductPanel({
               >
                 <option value="dsm">DSM · visible surface</option>
                 <option value="dtm">DTM · conservative local ground envelope</option>
-              </select>
+              </Select>
             </Field>
             <Resolution configuration={configuration} setConfiguration={setConfiguration} />
             <Field label="Streaming tiles">
@@ -194,7 +208,7 @@ export function ProductPanel({
           <>
             <Resolution configuration={configuration} setConfiguration={setConfiguration} />
             <Field label="Blending">
-              <select
+              <Select
                 value={configuration.blendMode}
                 onChange={(event) =>
                   setConfiguration({
@@ -206,7 +220,7 @@ export function ProductPanel({
                 <option value="mosaic">Mosaic · best viewing geometry</option>
                 <option value="average">Weighted average</option>
                 <option value="disabled">First suitable camera</option>
-              </select>
+              </Select>
             </Field>
             <Field label="Streaming tiles">
               <span className={styles.readonly}>512 px · fixed COG/quadtree pyramid</span>
@@ -247,8 +261,8 @@ export function ProductPanel({
               checked={configuration.buildTexture}
               onChange={(checked) => setConfiguration({ ...configuration, buildTexture: checked })}
             />
-            <Field label="Texture atlas">
-              <select
+            <Field label="Texture detail budget">
+              <Select
                 value={configuration.textureSize}
                 disabled={!configuration.buildTexture}
                 onChange={(event) =>
@@ -261,7 +275,7 @@ export function ProductPanel({
                 {[2048, 4096, 8192, 16384].map((size) => (
                   <option key={size} value={size}>{`${size} × ${size}`}</option>
                 ))}
-              </select>
+              </Select>
             </Field>
           </>
         )}
@@ -283,7 +297,7 @@ export function ProductPanel({
               onChange={(value) => setConfiguration({ ...configuration, iterations: value })}
             />
             <Field label="SH degree">
-              <select
+              <Select
                 value={configuration.sphericalHarmonicsDegree}
                 onChange={(event) =>
                   setConfiguration({
@@ -296,7 +310,7 @@ export function ProductPanel({
                 <option value={1}>1</option>
                 <option value={2}>2</option>
                 <option value={3}>3 · highest view dependence</option>
-              </select>
+              </Select>
             </Field>
             <NumberField
               label="Maximum splats"
@@ -325,10 +339,6 @@ export function ProductPanel({
         )}
       </section>
 
-      <div className={styles.note}>
-        Output is tiled, content-addressed, and committed atomically only after validation.
-        Cancellation leaves the latest project generation unchanged.
-      </div>
       <button
         className={styles.action}
         type="button"
@@ -390,8 +400,7 @@ function Toggle({
 }): JSX.Element {
   return (
     <label className={styles.toggle}>
-      <input
-        type="checkbox"
+      <Checkbox
         checked={checked}
         onChange={(event) => onChange(event.currentTarget.checked)}
       />
