@@ -1,7 +1,7 @@
 # Transformationsmodul für Punkte (Plan)
 
 **Branch:** `grok/pipeline-and-transform`  
-**Status:** Design / Plan (noch keine Implementierung)  
+**Status:** Design + **v1 implementiert** (siehe `docs/TRANSFORM-MODULE-REPORT.md`)  
 **Ziel:** Ein wiederverwendbares, auditierbares Transformationsmodul, das **Punkte** transformiert und damit **jeden Geometrietyp** bedient (Punktwolken, Vertex-Listen, Polyline-Stützpunkte, Mesh-Vertices, Raster-Anker/Georeferenz, GCP, Kamerazentren, …).
 
 ---
