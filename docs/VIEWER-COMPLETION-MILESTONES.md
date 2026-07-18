@@ -30,8 +30,8 @@ Fallback zählen nicht als Abschluss.
 | V2  | Kanonische Entity- und Definitionsbreite       | abgeschlossen                                      | 2026-07-18 11:33 CEST           | 2026-07-18 15:33 CEST | 4 h 00 min verstrichene Arbeitszeit |
 | V3  | Darstellung, Interaktion, Messung und Schnitte | abgeschlossen                                      | 2026-07-18 15:33 CEST           | 2026-07-18 17:04 CEST | 1 h 31 min verstrichene Arbeitszeit |
 | V4  | Civil-Scale, Hardware und Backend-Härtung      | abgeschlossen; physische Klassen-Conformance in V6 | 2026-07-18 17:04 CEST           | 2026-07-18 18:48 CEST | 1 h 44 min verstrichene Arbeitszeit |
-| V5  | Stabile Viewer-Fassade und App-Ready-Gate      | abgeschlossen                                      | 2026-07-18 18:48 CEST           | 2026-07-18 20:02 CEST | 1 h 14 min verstrichene Arbeitszeit |
-| V6  | Release- und Plattform-Conformance             | aktiv; externe Hardwareläufe ausstehend            | 2026-07-18 20:02 CEST           | –                     | läuft                               |
+| V5  | Stabile Viewer-Fassade und App-Ready-Gate      | Abschlussaudit offen: sauberer IO-HEAD-Gate rot    | 2026-07-18 18:48 CEST           | –                     | 1 h 14 min plus laufender Audit     |
+| V6  | Release- und Plattform-Conformance             | vorbereitet; externe Hardwareläufe ausstehend      | 2026-07-18 20:02 CEST           | –                     | Portabilitätsslice abgeschlossen    |
 
 ## V1 – Imaging und Heavy-Geometry-Verträge
 
@@ -580,14 +580,14 @@ einen eigenen Geometriepfad benötigt.
   Architektur-, Datenformat-, Verifikations- und Integrationsdokumentation auf
   demselben Stand; es bleiben die V5-Abschlussgates.
 
-### V5-Abschluss am 2026-07-18 20:02 CEST
+### V5-Kandidatenbericht am 2026-07-18 20:02 CEST
 
-- Der exakt gepushte Detached-HEAD besteht 145/145 Core-, 322/322 Render-Core-,
-  61/61 IO- (ein bewusst ignorierter synthetischer Scale-Test), 7/7 Viewer-
-  WASM-, 4/4 Decode-WASM- und 85/85 Viewer-Pakettests. Zwei Fehler eines Laufs
-  im gemeinsamen schmutzigen Worktree liegen ausschließlich in parallelen,
-  uncommitted PhotoLab-Matching-Änderungen; derselbe vollständige Core-Gate ist
-  auf `aa0d884` isoliert grün, ohne diese fremde Lane zu verändern.
+- Die Kandidatenprüfung meldete 145/145 Core-, 322/322 Render-Core-, 61/61 IO-
+  (ein bewusst ignorierter synthetischer Scale-Test), 7/7 Viewer-WASM-, 4/4
+  Decode-WASM- und 85/85 Viewer-Pakettests. Core wurde dabei auf `aa0d884`
+  isoliert geprüft, während IO aus dem gemeinsamen schmutzigen Worktree kam.
+  Der spätere Reproduzierbarkeitsaudit unten zeigt, weshalb diese getrennten
+  Source-Stände nicht als gemeinsamer Abschlussnachweis ausreichen.
 - Generated Bindings sind driftfrei, beide wasm32-Targets kompilieren und der
   Decode-WASM-Artefaktinhalt bleibt mit 3.141.896 Bytes optimiert sowie
   1.091.938 Bytes gzip unter den unveränderten Grenzen. Ubuntu-Binaryen 108
@@ -610,10 +610,33 @@ einen eigenen Geometriepfad benötigt.
   Entry bleibt produkt-, React-, Three- und Electron-frei; der alte Pfad ist nur
   noch die explizite Legacy-Kompatibilitätsschicht.
 
-Damit ist V5 nach 1 h 14 min aktiver Arbeit abgeschlossen und der Status lautet
-**Viewer app-ready fertig**. Für Builder, PhotoLab und WeltView fehlen nur noch
-Lifecycle-/Command-/Resource-/UI-Adapter; keine App benötigt Geometriesemantik
-oder einen zweiten Renderer.
+Die Viewer-Implementierung erreichte nach 1 h 14 min aktiver Arbeit den
+App-ready-Kandidaten. Für Builder, PhotoLab und WeltView fehlen auf dieser
+Grenze nur Lifecycle-/Command-/Resource-/UI-Adapter; keine App benötigt
+Geometriesemantik oder einen zweiten Renderer. Der endgültige V5-Status hängt
+jedoch vom nachfolgenden sauberen Reproduzierbarkeitsaudit ab.
+
+### V5-Reproduzierbarkeitsaudit am 2026-07-18 20:24 CEST
+
+- Ein neuer Detached-Worktree auf dem exakt gepushten `75539af` bestätigt
+  145/145 Core-, 322/322 Render-Core-, 7/7 Viewer-WASM- und 4/4 Decode-WASM-
+  Tests, driftfreie Generated Bindings sowie beide wasm32-Targets.
+- Derselbe saubere HEAD kompiliert `himmelcad-io` nicht: Das seit `bb431a6`
+  getrackte `crates/himmelcad-io/src/lib.rs` re-exportiert
+  `import_photo_files_with_progress`, während der getrackte Modulstand diese
+  Funktion nicht enthält. Die Implementierung existiert derzeit ausschließlich
+  im fremden uncommitted PhotoLab-Worktree.
+- Der gemeinsame Worktree besteht zwar 61/61 IO-Tests mit einem bewussten
+  Scale-Ignore, ist aber gleichzeitig wegen anderer uncommitted PhotoLab-
+  Policyänderungen bei 148/150 Core-Tests rot. Damit gibt es noch keinen
+  einzelnen reproduzierbaren Source-Stand, der den vorgeschriebenen
+  vollständigen Core/Render/IO/WASM-Gate trägt.
+- Diese Lücke liegt nicht in Viewer-Geometrie, Hardware oder Plattformcode. Sie
+  darf dennoch nicht durch Kombination von Testergebnissen verschiedener
+  Source-Stände als grün erklärt werden. Die fremde PhotoLab-/Sidecar-Lane wird
+  nicht übernommen oder zurückgesetzt; V5 bleibt bis zu einem integrierten
+  grünen Stand offen. Physische Windows-/macOS-/Apple-Silicon-Läufe bleiben
+  davon getrennte V6-Conformance und blockieren V5 weiterhin nicht.
 
 ## V6 – Release- und Plattform-Conformance
 
@@ -685,8 +708,8 @@ Zeit wird nicht geschätzt oder nachträglich rekonstruiert:
 | V2          | 2026-07-18 11:33 CEST | 2026-07-18 15:33 CEST | 4 h 00 min   | Kanonische Entity- und Definitionsbreite abgeschlossen                                                                          |
 | V3          | 2026-07-18 15:33 CEST | 2026-07-18 17:04 CEST | 1 h 31 min   | Darstellung, Interaktion, Messung und Schnitte abgeschlossen                                                                    |
 | V4          | 2026-07-18 17:04 CEST | 2026-07-18 18:48 CEST | 1 h 44 min   | Portable Civil-Scale-, Recovery-, Residency- und Backend-Härtung abgeschlossen; physische Klassen-Conformance nach V6 überführt |
-| V5          | 2026-07-18 18:48 CEST | 2026-07-18 20:02 CEST | 1 h 14 min   | Viewer app-ready fertig; stabile produktfreie Fassade und vollständige Abschlussgates                                            |
-| V6          | 2026-07-18 20:02 CEST | läuft                 | läuft        | Release-/Plattform-Conformance gestartet; physische Windows-/macOS-/Apple-Silicon-Hardware extern ausstehend                     |
+| V5          | 2026-07-18 18:48 CEST | wieder geöffnet       | läuft        | App-ready-Implementierungskandidat; sauberer IO-HEAD-Gate im Abschlussaudit nicht reproduzierbar                                 |
+| V6          | 2026-07-18 20:02 CEST | vorbereitet           | –            | Portabler Release-Runner fertig; physische Windows-/macOS-/Apple-Silicon-Hardware extern ausstehend                              |
 
 ### Abschlussnachweise
 
@@ -697,4 +720,4 @@ Zeit wird nicht geschätzt oder nachträglich rekonstruiert:
 | V2          | `aecf700`, `c85d298` und vorherige V2-Slices           | 38 Entities/47 Proxies; checksum-gepinnte DXF-/IFC-/LandXML-Providerpfade auf WebGPU/WebGL2                                                                                                                                                                      | 4 h 00 min                | 4 h 00 min                |
 | V3          | `b2d9a7f`, `c4b017b`, `f1fef3f` und V3-Abschlusscommit | 320 Render-Core-, 7 Viewer-WASM-, 73 Viewer-Pakettests; 38 Entities/47 Proxies; Real-Data-Farbparität RMSE 0,011007                                                                                                                                              | 1 h 31 min                | 1 h 31 min                |
 | V4          | `40ea2cf` bis V4-Abschlusscommit                       | 322 Render-Core-, 7 Viewer-WASM-, 75 Viewer-Pakettests; WebGPU/WebGL2 Device-Rebuild; Intel- und Quadro-Low grün; vollständige Null-Eviction und stabile Reload-Plateaus; Mainstream-Residency grün, Quadro-Latenz ehrlich nicht bestanden und nach V6 überführt | 1 h 44 min                | 1 h 44 min                |
-| V5          | `0ce5ab6` bis V5-Abschlusscommit                       | 145 Core-, 322 Render-Core-, 61 IO-, 7 Viewer-WASM-, 4 Decode-WASM-, 85 Viewer-Pakettests; Browser/Electron-Public-Consumer; explizites WebGPU und WebGL2; Intel-Low- und WebGPU-Correctness-Scale grün                                   | 1 h 14 min                | 1 h 14 min                |
+| V5          | `0ce5ab6` bis App-ready-Kandidat `ffb993e`              | Viewer-, Browser-, Scale- und isolierte Core/Render/WASM-Gates grün; sauberer IO-HEAD-Gate wegen getracktem dangling PhotoLab-Re-export offen                                                                                             | 1 h 14 min plus Audit     | läuft                     |

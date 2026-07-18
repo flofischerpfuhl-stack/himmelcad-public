@@ -1599,16 +1599,15 @@ the same ownership and geometry semantics. No live height resolver, secondary
 renderer or product-specific dependency is presented as part of the stable
 facade.
 
-### V5 completion and app-ready gate
+### V5 app-ready candidate gate
 
-V5 closed on July 18, 2026 at 20:02 CEST after 1 hour 14 minutes of active
-work. The exact pushed `aa0d884` state passed the following deterministic
-completion set:
+The implementation reached its app-ready candidate on July 18, 2026 at 20:02
+CEST after 1 hour 14 minutes of active work. The candidate evidence contained:
 
-- 145/145 `himmelcad-core`, 322/322 `himmelcad-render`, 61/61
-  `himmelcad-io` with one explicitly ignored rare synthetic preparation gate,
-  7/7 `himmelcad-wasm`, 4/4 `himmelcad-decode-wasm`, and 85/85 viewer package
-  tests;
+- 145/145 `himmelcad-core` on an isolated `aa0d884`, 322/322
+  `himmelcad-render`, 61/61 `himmelcad-io` from the shared worktree with one
+  explicitly ignored rare synthetic preparation gate, 7/7 `himmelcad-wasm`,
+  4/4 `himmelcad-decode-wasm`, and 85/85 viewer package tests;
 - current generated TypeScript bindings, browser-kernel TypeScript contract,
   package typecheck, and both wasm32 targets;
 - one 241.1 kB public-consumer bundle in headless Chrome and an Electron 43
@@ -1624,9 +1623,10 @@ completion set:
 
 The full Core command in the shared dirty worktree reported 148/150 because two
 tests observe concurrently edited, uncommitted PhotoLab matcher policy. An
-isolated detached worktree at the exact pushed viewer HEAD passed its complete
-145/145 Core suite. This records the external lane accurately without changing,
-staging, or weakening it.
+isolated detached worktree at the viewer candidate passed its complete 145/145
+Core suite. The later audit below establishes that this isolated state does not
+also compile IO, so the two green counts cannot be combined into one completion
+claim.
 
 The decode-WASM release content was independently built, bound, optimized and
 measured at 4,941,333 raw bytes, 3,549,040 bindgen bytes, 3,141,896 optimized
@@ -1647,11 +1647,34 @@ texture bytes, and 170 draw calls. Interaction p50/p95/p99/max was
 zero entries in every stage, and zero in all nine cost dimensions; reloads used
 174/176/174 new requests and remained within the unchanged plateau.
 
-The common viewer is therefore **app-ready complete**. Remaining Builder,
-PhotoLab, and WeltView work is limited to lifecycle, document-command, resource
-URL, and UI-state adapters. Physical Windows, macOS, Apple-Silicon, suitable
-mainstream/high-end, and mobile sustained measurements remain explicit V6
-release-conformance work; their absence does not invalidate or block V5.
+The common viewer implementation is therefore an app-ready candidate. Remaining
+Builder, PhotoLab, and WeltView work is limited to lifecycle, document-command,
+resource URL, and UI-state adapters. The clean-checkout completion claim was
+reopened by the reproducibility audit below. Physical Windows, macOS,
+Apple-Silicon, suitable mainstream/high-end, and mobile sustained measurements
+remain explicit V6 release-conformance work; their absence does not block V5.
+
+### V5 clean-HEAD reproducibility audit
+
+A detached worktree at the current pushed `75539af` reconfirmed 145/145 Core,
+322/322 Render-Core, 7/7 viewer-WASM, 4/4 decode-WASM, current generated
+bindings, and both wasm32 targets. It then found that the same clean HEAD cannot
+compile `himmelcad-io`: `crates/himmelcad-io/src/lib.rs` has re-exported
+`import_photo_files_with_progress` since `bb431a6`, but the tracked
+`photolab_image_import.rs` has no such function.
+
+The shared worktree contains that function only inside the concurrently edited,
+uncommitted PhotoLab import lane and therefore passes 61/61 IO tests with one
+intentional ignored synthetic scale gate. That same worktree currently fails
+two unrelated PhotoLab matcher tests in the complete Core suite. Consequently,
+the earlier completion evidence combined green results from two different
+source states; it does not prove one reproducible full-suite state.
+
+No PhotoLab or Sidecar hunk was staged, reverted, copied, or weakened during
+this audit. V5 is reopened until the owning lane provides an integrated state
+where the full Core/Render/IO/WASM/viewer gate is green. This is a repository
+integration/reproducibility issue, not an Apple-Silicon, Windows, WebGPU,
+WebGL2, or viewer-geometry gap.
 
 ### V6 portable platform-runner checkpoint
 
