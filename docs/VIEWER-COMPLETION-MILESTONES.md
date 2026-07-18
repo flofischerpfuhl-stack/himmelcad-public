@@ -96,8 +96,9 @@ Viewer-Entities zu erfinden.
 
 - Punkte mit optionaler Höhe, Linien, Polylinien, Kreise, Bögen, Ellipsen,
   Kegelschnitte, zusammengesetzte Kurven, Splines und Klothoiden.
-- Flächen mit Außenring, Löchern/Inseln und expliziter Höhenauflösung; gemischte
-  XY/XYZ-Stützpunkte bleiben kanonische Vermessungsgeometrie.
+- Flächen mit Außenring und Löchern/Inseln; gemischte XY/XYZ-Stützpunkte bleiben
+  kanonische Vermessungsgeometrie. Eine Höhenauflösungs-Anweisung ist keine
+  Viewer-Eigenschaft der Fläche.
 - Entities mit mindestens einem höhenlosen Stützpunkt sind reguläre
   2D-/Plan-Geometrie: Sie erscheinen im
   locked Top-down-View vollständig, im 3D-Orbit standardmäßig überhaupt nicht.

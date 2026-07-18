@@ -554,16 +554,13 @@ stream identity may also change provider type transactionally; the browser gate
 round-trips Potree to glTF and back without leaking either provider's request,
 proxy or refinement index.
 
-Mixed-height areas now resolve known and unknown Z independently through an
-explicit plane or a versioned TIN/raster drape support. The same resolver is
-used for compilation and exact picking; dependent raster publication is atomic
-and NoData/PixelSteps never invent continuity.
-
-Named, versioned interpolation is also a first-class immutable resource. The
-kernel accepts its content-addressed result only when loop/use topology, curve
-semantics, traversal direction and XY are unchanged, every missing height is
-finite and every previously known survey Z remains exactly equal. GPU display
-and exact picking consume the same validated snapshot on WebGPU and WebGL2.
+Mixed-height areas remain visible only in locked top-down plan views. The
+render kernel never resolves missing Z through a plane, TIN/raster drape or an
+interpolation resource. A CAD height-assignment command may use those inputs,
+but it must write actual finite Z values and commit a new canonical entity
+revision before the common 3D compiler, GPU display or exact spatial picking
+accepts the result. Known survey Z remains unchanged unless a separate explicit
+edit requests otherwise.
 
 Unknown namespaced geometry extensions remain preserved canonical payloads.
 When their domain evaluator publishes a separate content-addressed triangle

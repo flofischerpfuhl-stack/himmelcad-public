@@ -112,17 +112,24 @@ An `Area` consists of an outer curve loop and zero or more inner loops. A loop
 may contain inline curves and associative references to existing curve entities.
 Its vertices and referenced curves may mix XY and XYZ positions.
 
-An area is valid in plan even when some heights are unresolved. Any operation
-that needs a complete spatial surface declares an explicit height resolution:
+An area is valid in plan even when some heights are unresolved. Geometry with
+at least one unresolved height remains plan geometry and is not a complete 3D
+representation. The viewer does not resolve, drape or interpolate missing Z for
+display.
+
+A later CAD operation may assign actual heights by:
 
 - resolve missing Z against a referenced elevation surface;
 - resolve missing Z on an explicit plane;
 - resolve missing Z with a named, versioned interpolation algorithm; or
-- keep the spatial fill unresolved.
+- leaving positions unresolved when the selected method has no valid result.
 
-Existing Z values are not overwritten by height resolution. Resolved geometry
-is derived and content-addressed; it does not mutate the surveyed or imported
-source coordinates.
+That operation is an ordinary validated, journalled and undoable document
+command. It preserves existing surveyed Z unless the user explicitly invokes a
+different editing operation, writes every successfully resolved Z into the
+canonical geometry and commits a new entity revision. Only that complete new
+revision may be displayed as 3D geometry. A resolver recipe or transient
+derived representation is never sufficient viewer authority.
 
 This directly supports a parcel area bounded by a tachymetrically measured XYZ
 road edge and an XY cadastral boundary. Associative boundary references ensure
