@@ -6,6 +6,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { chromium } from 'playwright-core';
+import {
+  browserHeadless,
+  resolveChromeExecutable,
+  resolveEsbuildExecutable,
+  toolCommand,
+} from '../support/platform-tools.mjs';
 
 import {
   AHN4_POINT_COUNT,
@@ -30,9 +36,9 @@ const outputRoot = path.join(repoRoot, 'target/viewer-scale-synthetic');
 const wasmRoot = path.join(outputRoot, 'wasm');
 const decodeWasmRoot = path.join(outputRoot, 'decode-wasm');
 const screenshots = path.join(outputRoot, 'screenshots');
-const cargo = '/home/oem/.cargo/bin/cargo';
-const bindgen = '/home/oem/.cargo/bin/wasm-bindgen';
-const esbuild = path.join(repoRoot, 'node_modules/.pnpm/node_modules/.bin/esbuild');
+const cargo = toolCommand('CARGO', 'cargo');
+const bindgen = toolCommand('WASM_BINDGEN', 'wasm-bindgen');
+const esbuild = resolveEsbuildExecutable(repoRoot);
 const forceWebGl2 = process.env.HCAD_WEBGL2 === '1' || process.argv.includes('--webgl2');
 const chromeAngleBackend = process.env.HCAD_CHROME_ANGLE ?? '';
 assert(['', 'gl', 'vulkan'].includes(chromeAngleBackend), 'HCAD_CHROME_ANGLE must be gl or vulkan');
@@ -249,8 +255,8 @@ if (chromeAngleBackend !== '') {
   chromeArgs.push('--use-gl=angle', `--use-angle=${chromeAngleBackend}`);
 }
 const browser = await chromium.launch({
-  executablePath: '/usr/bin/google-chrome',
-  headless: process.env.HCAD_HEADLESS === '1' || !process.env.DISPLAY,
+  executablePath: resolveChromeExecutable(),
+  headless: browserHeadless(),
   args: chromeArgs,
 });
 

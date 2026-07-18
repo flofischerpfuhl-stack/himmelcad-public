@@ -647,6 +647,21 @@ zur Releasefreigabe. V6 erweitert weder den kanonischen Viewer-Vertrag noch
 - V6 beginnt mit der reproduzierbaren Plattformmatrix und der Übertragung der
   bestehenden öffentlichen Consumer-, Real-Data-, Recovery- und Scale-Gates auf
   die nativen Release-Runner. Produkt-UI-Migration bleibt eine getrennte Lane.
+- Die Browser-, Real-Data-, Scale-, WebGPU-Probe- und Public-Consumer-Runner
+  enthalten keine fest verdrahteten Linux-Home- oder Chrome-Pfade mehr. Ein
+  gemeinsamer Resolver findet Chrome und Electron auf Linux, Windows und macOS,
+  akzeptiert `HCAD_CHROME_PATH`/`HCAD_ELECTRON_PATH`, findet die native
+  esbuild-Binary ohne Unix-`.bin`-Shim, löst Cargo und wasm-bindgen über PATH
+  bzw. explizite Environment-Overrides auf und erlaubt
+  mit `HCAD_HEADLESS=0|1` eine bewusste headed Hardwaremessung auf macOS/Windows.
+  Ein Architekturtest hält diese Portabilitätsgrenze fest; die Viewer-Suite
+  steht bei 86/86.
+- Der portable Runner ist auf dem vorhandenen Host weiterhin funktional: echter
+  Chrome-/Electron-Public-Consumer, Browser-Typecheck und explizites WebGPU sind
+  grün. Der 38-Entity-/47-Proxy-WebGPU-Lauf erreicht 1,0 ms CPU-Submit. Der
+  separate Map-Range-Probe akzeptiert nun sowohl den historischen bekannten
+  Fallbackfehler als auch neuere Chromium-Fallbacks, die nach Surface-Present
+  erfolgreich mappen; ein Hardwareadapterfehler bleibt weiterhin fatal.
 
 ## Zeitmessung und Fortschrittsprotokoll
 

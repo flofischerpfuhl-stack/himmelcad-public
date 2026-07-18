@@ -58,6 +58,33 @@ void test('legacy React and Three surface is isolated behind an explicit compati
   assert.doesNotMatch(legacy, /export \* from ['"]\.\/kernel\/index/);
 });
 
+void test('browser release runners resolve tools for Linux, Windows and macOS', async () => {
+  const files = [
+    'test/browser/kernel-browser-e2e.mjs',
+    'test/browser/webgpu-map-range-probe.mjs',
+    'test/consumer/public-process-hosts.mjs',
+    'test/scale/viewer-scale-gate.mjs',
+  ];
+  const runnerSources: string[] = [];
+  for (const file of files) {
+    const source = await readFile(path.join(packageRoot, file), 'utf8');
+    runnerSources.push(source);
+    assert.match(source, /support\/platform-tools\.mjs/);
+    assert.doesNotMatch(source, /\/home\/oem|\/usr\/bin\/google-chrome/);
+  }
+  assert.match(runnerSources.join('\n'), /WASM_BINDGEN/);
+  const support = await readFile(
+    path.join(packageRoot, 'test/support/platform-tools.mjs'),
+    'utf8',
+  );
+  assert.match(support, /process\.platform === 'win32'/);
+  assert.match(support, /process\.platform === 'darwin'/);
+  assert.match(support, /HCAD_CHROME_PATH/);
+  assert.match(support, /HCAD_ELECTRON_PATH/);
+  assert.match(support, /HCAD_ESBUILD_PATH/);
+  assert.match(support, /HCAD_HEADLESS/);
+});
+
 void test('kernel public API surface is exact and runtime internals stay private', async () => {
   const entry = path.join(packageRoot, 'src/kernel/index.ts');
   const program = ts.createProgram([entry], {

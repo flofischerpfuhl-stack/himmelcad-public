@@ -6,14 +6,19 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { _electron as electron, chromium } from 'playwright-core';
+import {
+  resolveChromeExecutable,
+  resolveElectronExecutable,
+  resolveEsbuildExecutable,
+} from '../support/platform-tools.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const viewerRoot = path.resolve(here, '../..');
 const repoRoot = path.resolve(viewerRoot, '../../..');
 const outputRoot = path.join(repoRoot, 'target/viewer-public-consumer-process');
 const bundle = path.join(outputRoot, 'public-process-bundle.js');
-const esbuild = path.join(repoRoot, 'node_modules/.pnpm/node_modules/.bin/esbuild');
-const electronExecutable = path.join(repoRoot, 'apps/photolab/node_modules/electron/dist/electron');
+const esbuild = resolveEsbuildExecutable(repoRoot);
+const electronExecutable = resolveElectronExecutable(repoRoot);
 const electronMain = path.join(viewerRoot, 'test/electron/public-process-main.cjs');
 const html = path.join(here, 'public-process-host.html');
 
@@ -43,7 +48,7 @@ assert(address && typeof address === 'object');
 const rootUrl = `http://127.0.0.1:${String(address.port)}`;
 
 const browser = await chromium.launch({
-  executablePath: '/usr/bin/google-chrome',
+  executablePath: resolveChromeExecutable(),
   headless: true,
   args: ['--disable-gpu'],
 });

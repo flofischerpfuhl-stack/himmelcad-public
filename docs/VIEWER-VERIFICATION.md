@@ -1653,6 +1653,34 @@ URL, and UI-state adapters. Physical Windows, macOS, Apple-Silicon, suitable
 mainstream/high-end, and mobile sustained measurements remain explicit V6
 release-conformance work; their absence does not invalidate or block V5.
 
+### V6 portable platform-runner checkpoint
+
+The browser, real-data, scale, WebGPU probe, and public Chrome/Electron process
+runners no longer embed one Linux home directory or one `/usr/bin` Chrome path.
+A shared test-only resolver selects installed Chrome and Electron executables on
+Linux, Windows, and macOS, with explicit `HCAD_CHROME_PATH` and
+`HCAD_ELECTRON_PATH` overrides for release machines. Cargo and wasm-bindgen are
+resolved from PATH or their existing environment overrides; esbuild uses its
+native executable rather than a Unix `.bin` shim. `HCAD_HEADLESS=0`
+can now request a headed physical run on Windows or macOS instead of treating a
+missing Linux `DISPLAY` variable as a cross-platform headless requirement.
+
+The architecture gate reads all four runners and rejects reintroduced
+machine-specific Linux paths while requiring Windows and Darwin resolution.
+The viewer package passes 86/86 tests, its browser contract passes, and the same
+portable consumer bundle passes in real local Chrome and Electron processes.
+An explicit WebGPU browser run remains green at 38 entities, 47 proxies, ten
+worker ingests, zero main-thread provider decodes, and 1.0 ms maximum CPU
+submit.
+
+The standalone map-range diagnostic also accounts for Chromium versions whose
+CPU fallback now maps successfully after a presented WebGPU surface. A failure
+on a hardware adapter remains fatal; only the already-known fallback-specific
+map failure is diagnostic. The current fallback completed implicit and explicit
+768- and 13,056-byte maps plus the post-surface map successfully. This is
+portable runner readiness, not a substitute for the outstanding physical
+Apple-Silicon or Windows V6 measurements.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

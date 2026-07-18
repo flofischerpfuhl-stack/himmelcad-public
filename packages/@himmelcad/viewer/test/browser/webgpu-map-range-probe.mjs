@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 
 import { chromium } from 'playwright-core';
+import { browserHeadless, resolveChromeExecutable } from '../support/platform-tools.mjs';
 
 const server = createServer((_request, response) => {
   response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -12,8 +13,8 @@ const address = server.address();
 assert(address && typeof address === 'object');
 
 const browser = await chromium.launch({
-  executablePath: '/usr/bin/google-chrome',
-  headless: process.env.HCAD_HEADLESS === '1' || !process.env.DISPLAY,
+  executablePath: resolveChromeExecutable(),
+  headless: browserHeadless(),
   args: ['--enable-unsafe-webgpu'],
 });
 
@@ -109,11 +110,10 @@ try {
     assert.equal(probe.implicit.ok, true, `implicit map failed at ${String(probe.size)} bytes`);
     assert.equal(probe.explicit.ok, true, `explicit map failed at ${String(probe.size)} bytes`);
   }
-  if (result.isFallbackAdapter) {
-    assert.equal(result.postSurfaceProbe.ok, false, 'fallback adapter unexpectedly presented WebGPU');
+  if (result.isFallbackAdapter && !result.postSurfaceProbe.ok) {
     assert.match(result.postSurfaceProbe.error, /external Instance reference|map/i);
   } else {
-    assert.equal(result.postSurfaceProbe.ok, true, 'hardware WebGPU post-surface map failed');
+    assert.equal(result.postSurfaceProbe.ok, true, 'WebGPU post-surface map failed');
   }
 } finally {
   await browser.close();

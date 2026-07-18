@@ -7,6 +7,12 @@ import { fileURLToPath } from 'node:url';
 import { deflateSync, inflateSync } from 'node:zlib';
 
 import { chromium } from 'playwright-core';
+import {
+  browserHeadless,
+  resolveChromeExecutable,
+  resolveEsbuildExecutable,
+  toolCommand,
+} from '../support/platform-tools.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const viewerRoot = path.resolve(here, '../..');
@@ -16,9 +22,9 @@ const wasmRoot = path.join(outputRoot, 'wasm');
 const decodeWasmRoot = path.join(outputRoot, 'decode-wasm');
 const screenshots = path.join(outputRoot, 'screenshots');
 const preparedTexturedFixtureRoot = path.join(outputRoot, 'prepared-textured-fixture');
-const cargo = '/home/oem/.cargo/bin/cargo';
-const bindgen = '/home/oem/.cargo/bin/wasm-bindgen';
-const esbuild = path.join(repoRoot, 'node_modules/.pnpm/node_modules/.bin/esbuild');
+const cargo = toolCommand('CARGO', 'cargo');
+const bindgen = toolCommand('WASM_BINDGEN', 'wasm-bindgen');
+const esbuild = resolveEsbuildExecutable(repoRoot);
 const forceWebGl2 = process.env.HCAD_WEBGL2 === '1' || process.argv.includes('--webgl2');
 const forceWebGpu = process.argv.includes('--webgpu');
 const realData = process.argv.includes('--real');
@@ -229,7 +235,7 @@ await mkdir(wasmRoot, { recursive: true });
 await mkdir(decodeWasmRoot, { recursive: true });
 await mkdir(screenshots, { recursive: true });
 if (realData) {
-  await run('node', [path.join(repoRoot, 'scripts/fetch-viewer-real-fixtures.mjs')]);
+  await run(process.execPath, [path.join(repoRoot, 'scripts/fetch-viewer-real-fixtures.mjs')]);
   await run(cargo, [
     'run',
     '-p',
@@ -346,8 +352,8 @@ const address = server.address();
 assert(address && typeof address === 'object');
 
 const browser = await chromium.launch({
-  executablePath: '/usr/bin/google-chrome',
-  headless: process.env.HCAD_HEADLESS === '1' || !process.env.DISPLAY,
+  executablePath: resolveChromeExecutable(),
+  headless: browserHeadless(),
   // Chromium's headless Vulkan surface is unavailable on some otherwise fully
   // accelerated Linux hosts. Let Dawn select the real adapter instead of
   // forcing a backend; the captured capability report records what was used.
