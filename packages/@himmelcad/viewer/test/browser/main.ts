@@ -335,8 +335,8 @@ const BASE = [6_378_137.125, 5_400_000.25, 512.75] as const;
 const FONT_HASH = 'f'.repeat(64);
 const DIMENSION_STYLE_HASH = 'd'.repeat(64);
 let BLOCK_HASH = 'b'.repeat(64);
-const PANORAMA_IMAGE_HASH = 'a'.repeat(64);
-const PANORAMA_DEPTH_HASH = 'e'.repeat(64);
+const PANORAMA_IMAGE_HASH = '8253870745066d9c79172635fae46712dbfd232c0548340493eebb5daf387d52';
+const PANORAMA_DEPTH_HASH = '11f2667fd090884e4fccbadb71c96435bfb589537a858b53070f4b8aab365543';
 const PANORAMA_VALIDITY_HASH = 'a2c70538651a7e9296b097e8c3dfc1b195a945802ffe45aa471868fba6f1042e';
 const PANORAMA_CONFIDENCE_HASH = 'c05617ac39c882500d10674a36f1795b657df7606db0fdce146f93ea4a288b38';
 const PANORAMA_CONNECTIVITY_HASH = 'ce8bee525d6736e9825261b19a9b51719f9dc4bb728e95cf7067a2142b03b362';
@@ -344,8 +344,8 @@ let EVALUATED_MESH_HASH = 'c'.repeat(64);
 let EVALUATED_TOPOLOGY_HASH = 'c'.repeat(64);
 let MATERIAL_TABLE_HASH = '7'.repeat(64);
 let MATERIAL_TEXTURE_RESIDENCY: ReturnType<WgpuKernelViewer['gpuTextureCacheStats']> | null = null;
-const ORTHO_IMAGE_HASH = '1'.repeat(64);
-const ORTHO_DEPTH_HASH = '2'.repeat(64);
+const ORTHO_IMAGE_HASH = 'ea92df404f5e053a252a4b9646f2e375c877dcd057bf01920a85014bd44e741e';
+const ORTHO_DEPTH_HASH = '2c29aeb5a673b79a27bbab7207bdbba21fc08ae1afdcc362b8ef29c75facbbbb';
 const POINT_VERSION_HASH = '3'.repeat(64);
 const DIMENSION_VERSION_HASH = '4'.repeat(64);
 let SECTION_PRODUCT_HASH = '5'.repeat(64);
@@ -3972,6 +3972,20 @@ async function run(): Promise<void> {
   const panoramaPixels = new Uint8Array(8 * 4 * 4);
   for (let index = 0; index < 8 * 4; index += 1) {
     panoramaPixels.set(index % 2 === 0 ? [30, 180, 255, 255] : [255, 110, 30, 255], index * 4);
+  }
+  for (const registerTampered of [
+    () => viewer.registerImageResource('0'.repeat(64), 1, 1, new Uint8Array([1, 2, 3, 4])),
+    () => viewer.registerDepthResource('0'.repeat(64), 1, 1, new Float32Array([1])),
+    () => viewer.registerRasterBinaryResource('0'.repeat(64), new Uint8Array([1])),
+  ]) {
+    let rejected = false;
+    try {
+      registerTampered();
+    } catch (error) {
+      if (!String(error).includes('content hash')) throw error;
+      rejected = true;
+    }
+    if (!rejected) throw new Error('tampered inline raster resource was registered');
   }
   viewer.registerImageResource(PANORAMA_IMAGE_HASH, 8, 4, panoramaPixels);
   viewer.registerDepthResource(PANORAMA_DEPTH_HASH, 8, 4, new Float32Array(8 * 4).fill(3));

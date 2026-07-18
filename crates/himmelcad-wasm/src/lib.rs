@@ -3211,9 +3211,12 @@ impl WasmViewer {
             })
             .and_then(|pixels| pixels.checked_mul(4))
             .ok_or_else(|| JsValue::from_str("image dimensions overflow"))?;
-        if rgba8.len() != expected || self.image_resources.contains_key(object_hash) {
+        if rgba8.len() != expected
+            || ObjectHash::of_bytes(rgba8).0 != object_hash
+            || self.image_resources.contains_key(object_hash)
+        {
             return Err(JsValue::from_str(
-                "image byte length is invalid or resource is already registered",
+                "image length/content hash is invalid or resource is already registered",
             ));
         }
         let texture = self
@@ -3258,14 +3261,19 @@ impl WasmViewer {
                     .and_then(|height| width.checked_mul(height))
             })
             .ok_or_else(|| JsValue::from_str("depth dimensions overflow"))?;
+        let canonical_bytes = values
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect::<Vec<_>>();
         if object_hash.is_empty()
             || width == 0
             || height == 0
             || values.len() != expected
+            || ObjectHash::of_bytes(&canonical_bytes).0 != object_hash
             || self.depth_resources.contains_key(object_hash)
         {
             return Err(JsValue::from_str(
-                "depth payload is invalid or resource is already registered",
+                "depth length/content hash is invalid or resource is already registered",
             ));
         }
         self.depth_resources.insert(
@@ -3380,10 +3388,11 @@ impl WasmViewer {
     ) -> Result<(), JsValue> {
         if object_hash.is_empty()
             || bytes.is_empty()
+            || ObjectHash::of_bytes(bytes).0 != object_hash
             || self.raster_binary_resources.contains_key(object_hash)
         {
             return Err(JsValue::from_str(
-                "raster binary payload is invalid or resource is already registered",
+                "raster binary content hash is invalid or resource is already registered",
             ));
         }
         self.raster_binary_resources.insert(
