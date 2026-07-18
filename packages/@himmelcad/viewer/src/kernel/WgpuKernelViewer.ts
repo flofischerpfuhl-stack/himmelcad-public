@@ -10,9 +10,12 @@ import type {
   GeometryRepresentationSlotKey,
   HatchPatternResource,
   LineTypeResource,
+  MaterialResource,
+  MaterialTableResource,
   SectionTopologyPartitionManifest,
   Transform3d,
   TriangleMeshGeometry,
+  TextureResource,
 } from './generated/index.js';
 import {
   KernelClipCapCoordinator,
@@ -34,6 +37,9 @@ export interface WasmViewerBinding {
   block_definition_content_hash_json(definitionJson: string): string;
   line_type_resource_content_hash_json(resourceJson: string): string;
   hatch_pattern_resource_content_hash_json(resourceJson: string): string;
+  texture_resource_content_hash_json(resourceJson: string): string;
+  material_resource_content_hash_json(resourceJson: string): string;
+  material_table_resource_content_hash_json(resourceJson: string): string;
   section_topology_partition_content_hash_json(manifestJson: string): string;
   area_interpolation_dependency_hash_json(dependencyJson: string): string;
   section_product_content_hash_json(productJson: string): string;
@@ -120,6 +126,7 @@ export interface WasmViewerBinding {
   register_mesh_resource(objectHash: string, meshJson: string): void;
   register_area_interpolation(admissionJson: string): void;
   register_canonical_hatch_pattern_resource(resourceJson: string): void;
+  register_canonical_material_resource_set(resourcesJson: string): void;
   register_canonical_line_type_resource(resourceJson: string): void;
   register_line_type_resource(resourceId: string, patternJson: string): string;
   begin_authoritative_section_evaluation(
@@ -811,6 +818,8 @@ export interface KernelEntityPresentationBatch {
   readonly strokeWidthOverride: number;
   readonly lineTypeComponents: number;
   readonly declaredTextureCoordinates: boolean;
+  readonly sourceMaterialSlot: number | null;
+  readonly sourceMaterialColor: readonly [number, number, number, number] | null;
   readonly usesSourceTexture: boolean;
 }
 
@@ -1119,6 +1128,16 @@ export interface KernelAnnotationStyle {
   readonly prefix?: string;
   readonly suffix?: string;
   readonly lineWidth?: number;
+}
+
+/** Atomic exact-revision publication for canonical mesh presentation. */
+export interface KernelCanonicalMaterialResourceSet {
+  readonly textures: readonly TextureResource[];
+  readonly materials: readonly MaterialResource[];
+  readonly materialTables: readonly MaterialTableResource[];
+  readonly hatchPatterns: readonly [];
+  readonly lineTypes: readonly [];
+  readonly annotationStyles: readonly [];
 }
 
 export interface KernelSectionHatchStyle {
@@ -1532,6 +1551,24 @@ export class WgpuKernelViewer {
   hatchPatternResourceContentHash(resource: HatchPatternResource): string {
     this.assertAlive();
     return this.binding.hatch_pattern_resource_content_hash_json(JSON.stringify(resource));
+  }
+
+  /** Authoritative Rust hash for one immutable canonical texture revision. */
+  textureResourceContentHash(resource: TextureResource): string {
+    this.assertAlive();
+    return this.binding.texture_resource_content_hash_json(JSON.stringify(resource));
+  }
+
+  /** Authoritative Rust hash for one immutable canonical material revision. */
+  materialResourceContentHash(resource: MaterialResource): string {
+    this.assertAlive();
+    return this.binding.material_resource_content_hash_json(JSON.stringify(resource));
+  }
+
+  /** Authoritative Rust hash for one immutable ordered material table. */
+  materialTableResourceContentHash(resource: MaterialTableResource): string {
+    this.assertAlive();
+    return this.binding.material_table_resource_content_hash_json(JSON.stringify(resource));
   }
 
   /** Authoritative Rust hash of one exact topology-partition manifest. */
@@ -1995,6 +2032,12 @@ export class WgpuKernelViewer {
   registerCanonicalHatchPatternResource(resource: HatchPatternResource): void {
     this.assertAlive();
     this.binding.register_canonical_hatch_pattern_resource(JSON.stringify(resource));
+  }
+
+  /** Atomically publishes exact texture, material and material-table revisions. */
+  registerCanonicalMaterialResourceSet(resources: KernelCanonicalMaterialResourceSet): void {
+    this.assertAlive();
+    this.binding.register_canonical_material_resource_set(JSON.stringify(resources));
   }
 
   /** Registers one validated immutable canonical line-type revision. */
@@ -3546,6 +3589,13 @@ function isEntityPresentationBatch(value: unknown): value is KernelEntityPresent
     Number.isFinite(value.strokeWidthOverride) &&
     Number.isSafeInteger(value.lineTypeComponents) &&
     typeof value.declaredTextureCoordinates === 'boolean' &&
+    (value.sourceMaterialSlot === null || Number.isSafeInteger(value.sourceMaterialSlot)) &&
+    (value.sourceMaterialColor === null ||
+      (Array.isArray(value.sourceMaterialColor) &&
+        value.sourceMaterialColor.length === 4 &&
+        value.sourceMaterialColor.every(
+          (component) => typeof component === 'number' && Number.isFinite(component),
+        ))) &&
     typeof value.usesSourceTexture === 'boolean'
   );
 }

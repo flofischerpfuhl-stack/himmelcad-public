@@ -1,8 +1,9 @@
 //! Canonical geometry compilation into shared GPU batches and proxy metadata.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use glam::{DMat3, DMat4, DVec3};
+use himmelcad_core::canonical_resources::CanonicalResourceRef;
 use himmelcad_core::entity::EntityId;
 use himmelcad_core::entity_model::{
     AlignmentGeometry, CsgNode, CurveGeometry, ElevationSurfaceGeometry, GeometryObject, Position,
@@ -59,6 +60,14 @@ pub struct CompiledEntityPart {
     pub cost: ResourceCost,
     /// Resident production GPU batch.
     pub batch: GpuDrawBatch,
+    /// Additional draw batches sharing this proxy and exact pick namespace.
+    ///
+    /// Canonical per-triangle material slots are compiled into immutable,
+    /// compact batches. They deliberately remain one render proxy so material
+    /// partitioning cannot change entity or primitive identity.
+    pub additional_batches: Vec<GpuDrawBatch>,
+    /// Exact canonical material-table revision used by this mesh part.
+    pub source_material_table: Option<CanonicalResourceRef>,
 }
 
 /// One immutable, f64-authoritative slope surface evaluated outside the render core.
@@ -622,6 +631,12 @@ where
             bounds: part.bounds,
             cost: part.cost,
             batch: part.batch.with_material(material.clone()),
+            additional_batches: part
+                .additional_batches
+                .into_iter()
+                .map(|batch| batch.with_material(material.clone()))
+                .collect(),
+            source_material_table: part.source_material_table,
         })
         .collect())
 }
@@ -1352,30 +1367,128 @@ fn mesh_part(
             color: [1.0; 4],
         })
         .collect::<Vec<_>>();
-    let batch = GpuDrawBatch::new_indexed_mesh_with_queue(
-        device,
-        queue,
-        label,
-        pick_slot,
-        0,
-        &vertices,
-        indices,
-        options.style.opacity < 1.0,
-    )?
-    .with_declared_texture_coordinates(texture_coordinates.is_some());
+    let material_slots = mesh
+        .materials
+        .as_ref()
+        .map(|_| {
+            mesh.triangle_material_slots
+                .clone()
+                .unwrap_or_else(|| vec![0; indices.len() / 3])
+        })
+        .unwrap_or_default();
+    let mut material_batches = if material_slots.is_empty() {
+        vec![GpuDrawBatch::new_indexed_mesh_with_queue(
+            device,
+            queue,
+            label,
+            pick_slot,
+            0,
+            &vertices,
+            indices,
+            options.style.opacity < 1.0,
+        )?
+        .with_declared_texture_coordinates(texture_coordinates.is_some())]
+    } else {
+        compact_material_mesh_batches(
+            device,
+            queue,
+            label,
+            pick_slot,
+            &vertices,
+            indices,
+            &material_slots,
+            texture_coordinates.is_some(),
+            options.style.opacity < 1.0,
+        )?
+    };
+    let batch = material_batches.remove(0);
+    let additional_batches = material_batches;
+    let resident_vertex_count = vertices.len().saturating_add(
+        additional_batches
+            .iter()
+            .map(GpuDrawBatch::vertex_count_usize)
+            .sum::<usize>(),
+    );
+    let draw_calls = u32::try_from(1 + additional_batches.len()).unwrap_or(u32::MAX);
     Ok(part(
         RenderProxyKind::Triangles,
         bounds(world_positions.iter().copied())?,
         ResourceCost {
-            gpu_buffer_bytes: u64::try_from(vertices.len())
+            gpu_buffer_bytes: u64::try_from(resident_vertex_count)
                 .unwrap_or(u64::MAX)
                 .saturating_mul(32),
             triangles: u64::try_from(indices.len() / 3).unwrap_or(u64::MAX),
-            draw_calls: 1,
+            draw_calls,
             ..ResourceCost::default()
         },
         batch,
-    ))
+    )
+    .with_additional_batches(additional_batches)
+    .with_source_material_table(mesh.materials.clone()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compact_material_mesh_batches(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    pick_slot: u32,
+    vertices: &[GpuMeshVertexInput],
+    indices: &[u32],
+    material_slots: &[u32],
+    declared_texture_coordinates: bool,
+    transparent: bool,
+) -> Result<Vec<GpuDrawBatch>, EntityCompilationError> {
+    let mut groups = BTreeMap::<u32, (Vec<u32>, Vec<u32>)>::new();
+    for (primitive_id, (triangle, material_slot)) in
+        indices.chunks_exact(3).zip(material_slots).enumerate()
+    {
+        let primitive_id =
+            u32::try_from(primitive_id).map_err(|_| GpuFrameError::TooManyVertices)?;
+        let group = groups.entry(*material_slot).or_default();
+        group.0.extend_from_slice(triangle);
+        group.1.push(primitive_id);
+    }
+    let mut batches = Vec::with_capacity(groups.len());
+    for (material_slot, (source_indices, primitive_ids)) in groups {
+        let mut remap = BTreeMap::<u32, u32>::new();
+        let mut compact_vertices = Vec::new();
+        let mut compact_indices = Vec::with_capacity(source_indices.len());
+        for source_index in source_indices {
+            let compact_index = if let Some(index) = remap.get(&source_index) {
+                *index
+            } else {
+                let index = u32::try_from(compact_vertices.len())
+                    .map_err(|_| GpuFrameError::TooManyVertices)?;
+                compact_vertices.push(
+                    *vertices
+                        .get(usize::try_from(source_index).expect("validated mesh index"))
+                        .ok_or(GpuFrameError::InvalidMeshIndices)?,
+                );
+                remap.insert(source_index, index);
+                index
+            };
+            compact_indices.push(compact_index);
+        }
+        batches.push(
+            GpuDrawBatch::new_indexed_mesh_with_primitive_ids_with_queue(
+                device,
+                queue,
+                &format!("{label}-material-{material_slot}"),
+                pick_slot,
+                &compact_vertices,
+                &compact_indices,
+                &primitive_ids,
+                transparent,
+            )?
+            .with_declared_texture_coordinates(declared_texture_coordinates)
+            .with_source_material_slot(material_slot),
+        );
+    }
+    if batches.is_empty() {
+        return Err(GpuFrameError::EmptyBatch.into());
+    }
+    Ok(batches)
 }
 
 #[allow(clippy::cast_possible_truncation)]
@@ -1422,6 +1535,20 @@ fn part(
         bounds,
         cost,
         batch,
+        additional_batches: Vec::new(),
+        source_material_table: None,
+    }
+}
+
+impl CompiledEntityPart {
+    fn with_additional_batches(mut self, batches: Vec<GpuDrawBatch>) -> Self {
+        self.additional_batches = batches;
+        self
+    }
+
+    fn with_source_material_table(mut self, table: Option<CanonicalResourceRef>) -> Self {
+        self.source_material_table = table;
+        self
     }
 }
 

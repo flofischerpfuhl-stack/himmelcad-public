@@ -512,6 +512,16 @@ try {
   assert.equal(state.presentationBindings.invalidStrokeRejectedAtomically, true);
   assert.equal(state.presentationBindings.decodeCountersStable, true);
   assert.equal(state.presentationBindings.proxyIdentityStable, true);
+  assert.deepEqual(
+    state.presentationBindings.canonicalMaterials.map((batch) => batch.sourceMaterialSlot),
+    [3, 7],
+  );
+  assert(
+    state.presentationBindings.canonicalMaterials.every(
+      (batch) => batch.declaredTextureCoordinates && batch.usesSourceTexture,
+    ),
+    'canonical material batches must retain authored UV and source-texture bindings',
+  );
   assert.equal(state.canonicalDocument?.generation, 3);
   assert.equal(state.canonicalDocument?.journalEntries, 3);
   assert.equal(state.canonicalDocument?.restoredName, state.canonicalDocument?.replayedName);

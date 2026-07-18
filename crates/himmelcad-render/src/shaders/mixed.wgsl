@@ -16,6 +16,7 @@ struct MaterialUniform {
     color_mode: u32,
     gradient_count: u32,
     base_color: vec4<f32>,
+    source_color: vec4<f32>,
     style_values: vec4<f32>,
     height_values: vec4<f32>,
     gradient_colors: array<vec4<f32>, 256>,
@@ -186,15 +187,17 @@ fn height_gradient(height: f32) -> vec4<f32> {
 }
 
 fn styled_color(source: vec4<f32>, height: f32, shape_kind: u32) -> vec4<f32> {
+    let canonical_source = source * material.source_color;
     var base_color = material.base_color;
     if (shape_kind >= 3u && material.stroke_modes.z == 1u) {
         base_color = material.stroke_color;
     }
-    var color = source * base_color;
+    var color = canonical_source * base_color;
     if (material.color_mode == 1u) {
         color = base_color;
     } else if (material.color_mode == 2u) {
-        color = height_gradient(height) * vec4<f32>(base_color.rgb, source.a * base_color.a);
+        color = height_gradient(height)
+            * vec4<f32>(base_color.rgb, canonical_source.a * base_color.a);
     }
     color.a *= material.style_values.x;
     return color;

@@ -1103,6 +1103,7 @@ pub struct GpuMaterial {
     alpha_mode: GpuAlphaMode,
     transparent: bool,
     style: GpuPresentationStyle,
+    source_color: [f32; 4],
     interaction_translation: [f32; 3],
     source_linear_rows: [[f32; 4]; 3],
     source_normal_rows: [[f32; 4]; 3],
@@ -1141,6 +1142,7 @@ impl GpuMaterial {
             bytemuck::bytes_of(&MaterialUniform::new(
                 self.alpha_mode,
                 &self.style,
+                self.source_color,
                 self.interaction_translation,
                 origin_delta,
                 self.source_linear_rows,
@@ -1230,6 +1232,42 @@ impl GpuMaterial {
         );
         self.active_texture_resource = texture.clone();
         self.bind_group = bind_group;
+    }
+
+    fn set_source_material(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        texture: Option<&GpuTextureResource>,
+        color: [f32; 4],
+        alpha_mode: GpuAlphaMode,
+    ) -> Result<(), GpuFrameError> {
+        if color
+            .iter()
+            .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
+        {
+            return Err(GpuFrameError::InvalidStyle);
+        }
+        let texture = texture
+            .cloned()
+            .unwrap_or_else(|| self.source_texture_resource.clone());
+        self.source_texture_resource = texture.clone();
+        self.active_texture_resource = texture.clone();
+        self.source_color = color;
+        self.alpha_mode = alpha_mode;
+        self.transparent = alpha_mode == GpuAlphaMode::Blend || self.style.opacity < 1.0;
+        self.bind_group = create_material_bind_group(
+            device,
+            layout,
+            "himmelcad-source-material",
+            &texture,
+            &self.line_type_resource,
+            &self.hatch_resource,
+            &self.uniform,
+        );
+        self.rewrite_uniform(queue);
+        Ok(())
     }
 
     fn rebind_line_type_resource(
@@ -1528,6 +1566,7 @@ pub struct GpuDrawBatch {
     mesh_instance_sort: Option<Arc<Mutex<MeshInstanceSortState>>>,
     shared_mesh_geometry: Option<GpuIndexedMeshGeometry>,
     declared_texture_coordinates: bool,
+    source_material_slot: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -1838,12 +1877,60 @@ impl GpuDrawBatch {
         self.declared_texture_coordinates
     }
 
+    /// Tags a compact mesh batch with its canonical material-table slot.
+    #[must_use]
+    pub fn with_source_material_slot(mut self, slot: u32) -> Self {
+        self.source_material_slot = Some(slot);
+        self
+    }
+
+    /// Canonical material-table slot represented by this mesh batch.
+    #[must_use]
+    pub fn source_material_slot(&self) -> Option<u32> {
+        self.source_material_slot
+    }
+
+    /// Canonical linear base-color factor currently retained by the batch.
+    #[must_use]
+    pub fn source_material_color(&self) -> Option<[f32; 4]> {
+        self.material.as_ref().map(|material| material.source_color)
+    }
+
+    pub(crate) fn vertex_count_usize(&self) -> usize {
+        usize::try_from(self.vertex_count).unwrap_or(usize::MAX)
+    }
+
     /// Process-local identity of the immutable source texture retained by the material.
     #[must_use]
     pub fn source_texture_allocation_key(&self) -> Option<usize> {
         self.material
             .as_ref()
             .map(|material| material.source_texture_resource.allocation_key())
+    }
+
+    /// Resolves the immutable canonical source material independently from
+    /// view styling. Later presentation texture overrides remain reversible:
+    /// rebinding `None` restores this exact source texture revision.
+    pub fn set_source_material(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        renderer: &GpuSharedRenderer,
+        texture: Option<&GpuTextureResource>,
+        color: [f32; 4],
+        alpha_mode: GpuAlphaMode,
+    ) -> Result<(), GpuFrameError> {
+        let material = self.material.as_mut().ok_or(GpuFrameError::InvalidStyle)?;
+        material.set_source_material(
+            device,
+            queue,
+            &renderer.material_bind_group_layout,
+            texture,
+            color,
+            alpha_mode,
+        )?;
+        self.transparent = material.transparent;
+        Ok(())
     }
 
     /// Process-local identity of the texture currently bound for presentation.
@@ -2174,6 +2261,7 @@ impl GpuDrawBatch {
             mesh_instance_sort: None,
             shared_mesh_geometry: None,
             declared_texture_coordinates: false,
+            source_material_slot: None,
         })
     }
 
@@ -2237,6 +2325,7 @@ impl GpuDrawBatch {
             mesh_instance_sort: None,
             shared_mesh_geometry: None,
             declared_texture_coordinates: false,
+            source_material_slot: None,
         })
     }
 
@@ -2297,6 +2386,7 @@ impl GpuDrawBatch {
             mesh_instance_sort: None,
             shared_mesh_geometry: None,
             declared_texture_coordinates: false,
+            source_material_slot: None,
         })
     }
 
@@ -2432,6 +2522,7 @@ impl GpuDrawBatch {
             mesh_instance_sort: None,
             shared_mesh_geometry: None,
             declared_texture_coordinates: false,
+            source_material_slot: None,
         })
     }
 
@@ -2491,6 +2582,7 @@ impl GpuDrawBatch {
             mesh_instance_sort: None,
             shared_mesh_geometry: None,
             declared_texture_coordinates: false,
+            source_material_slot: None,
         })
     }
 
@@ -2546,6 +2638,7 @@ impl GpuDrawBatch {
             mesh_instance_sort: None,
             shared_mesh_geometry: None,
             declared_texture_coordinates: false,
+            source_material_slot: None,
         })
     }
 
@@ -2562,10 +2655,48 @@ impl GpuDrawBatch {
         indices: &[u32],
         transparent: bool,
     ) -> Result<Self, GpuFrameError> {
+        let triangle_count = indices.len() / 3;
+        let primitive_slots = (0..triangle_count)
+            .map(|index| {
+                primitive_base
+                    .checked_add(u32::try_from(index).map_err(|_| GpuFrameError::TooManyVertices)?)
+                    .ok_or(GpuFrameError::TooManyVertices)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Self::new_indexed_mesh_with_primitive_ids_with_queue(
+            device,
+            queue,
+            label,
+            proxy_slot,
+            vertices,
+            indices,
+            &primitive_slots,
+            transparent,
+        )
+    }
+
+    /// Uploads an indexed mesh whose compact draw order retains explicit
+    /// canonical source-triangle IDs in the exact pick pass.
+    ///
+    /// This is used by per-material mesh partitioning: color batches may be
+    /// reordered and compacted, while picking must still return the original
+    /// triangle slot rather than a material-local surrogate.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_indexed_mesh_with_primitive_ids_with_queue(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        label: &str,
+        proxy_slot: u32,
+        vertices: &[GpuMeshVertexInput],
+        indices: &[u32],
+        primitive_slots: &[u32],
+        transparent: bool,
+    ) -> Result<Self, GpuFrameError> {
         if vertices.is_empty() || indices.is_empty() {
             return Err(GpuFrameError::EmptyBatch);
         }
         if !indices.len().is_multiple_of(3)
+            || primitive_slots.len() != indices.len() / 3
             || indices
                 .iter()
                 .any(|index| usize::try_from(*index).map_or(true, |index| index >= vertices.len()))
@@ -2584,17 +2715,12 @@ impl GpuDrawBatch {
             .map(|vertex| mesh_vertex(vertex, proxy_slot, 0))
             .collect::<Vec<_>>();
         let mut pick_vertices = Vec::with_capacity(indices.len());
-        for (primitive_slot, triangle) in indices.chunks_exact(3).enumerate() {
-            let local_primitive =
-                u32::try_from(primitive_slot).map_err(|_| GpuFrameError::TooManyVertices)?;
-            let primitive_slot = primitive_base
-                .checked_add(local_primitive)
-                .ok_or(GpuFrameError::TooManyVertices)?;
+        for (primitive_slot, triangle) in primitive_slots.iter().zip(indices.chunks_exact(3)) {
             for index in triangle {
                 pick_vertices.push(mesh_vertex(
                     &vertices[usize::try_from(*index).expect("validated mesh index")],
                     proxy_slot,
-                    primitive_slot,
+                    *primitive_slot,
                 ));
             }
         }
@@ -2633,6 +2759,7 @@ impl GpuDrawBatch {
             mesh_instance_sort: None,
             shared_mesh_geometry: None,
             declared_texture_coordinates: false,
+            source_material_slot: None,
         })
     }
 
@@ -2815,6 +2942,7 @@ impl GpuDrawBatch {
             }),
             shared_mesh_geometry: Some(geometry.clone()),
             declared_texture_coordinates: false,
+            source_material_slot: None,
         })
     }
 
@@ -2911,6 +3039,7 @@ impl GpuDrawBatch {
             )))),
             shared_mesh_geometry: self.shared_mesh_geometry.clone(),
             declared_texture_coordinates: self.declared_texture_coordinates,
+            source_material_slot: self.source_material_slot,
         })
     }
 
@@ -3044,6 +3173,7 @@ impl GpuDrawBatch {
         )?;
         material.source_texture_resource = source.source_texture_resource.clone();
         material.active_texture_resource = source.active_texture_resource.clone();
+        material.source_color = source.source_color;
         material.rebind_line_type_resource(
             device,
             &renderer.material_bind_group_layout,
@@ -3096,6 +3226,7 @@ impl GpuDrawBatch {
             mesh_instance_sort,
             shared_mesh_geometry: self.shared_mesh_geometry.clone(),
             declared_texture_coordinates: self.declared_texture_coordinates,
+            source_material_slot: self.source_material_slot,
         })
     }
 }
@@ -4561,6 +4692,7 @@ struct MaterialUniform {
     color_mode: u32,
     gradient_count: u32,
     base_color: [f32; 4],
+    source_color: [f32; 4],
     style_values: [f32; 4],
     height_values: [f32; 4],
     gradient_colors: [[f32; 4]; MAX_GPU_GRADIENT_COLORS],
@@ -4582,6 +4714,7 @@ impl MaterialUniform {
     fn new(
         alpha_mode: GpuAlphaMode,
         style: &GpuPresentationStyle,
+        source_color: [f32; 4],
         interaction_translation: [f32; 3],
         batch_origin_delta: [f32; 3],
         source_linear_rows: [[f32; 4]; 3],
@@ -4597,6 +4730,7 @@ impl MaterialUniform {
             color_mode: style.color_mode,
             gradient_count: style.gradient_count,
             base_color: style.base_color,
+            source_color,
             style_values: [
                 style.opacity,
                 style.vertical_exaggeration,
@@ -4893,6 +5027,7 @@ fn create_material_from_texture(
     let material_uniform = MaterialUniform::new(
         alpha_mode,
         style,
+        [1.0; 4],
         [0.0; 3],
         origin_delta,
         IDENTITY_AFFINE_ROWS,
@@ -4924,6 +5059,7 @@ fn create_material_from_texture(
         alpha_mode,
         transparent: alpha_mode == GpuAlphaMode::Blend || style.opacity < 1.0,
         style: *style,
+        source_color: [1.0; 4],
         interaction_translation: [0.0; 3],
         source_linear_rows: IDENTITY_AFFINE_ROWS,
         source_normal_rows: IDENTITY_AFFINE_ROWS,

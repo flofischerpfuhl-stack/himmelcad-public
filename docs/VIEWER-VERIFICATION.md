@@ -811,6 +811,24 @@ opaque mesh-material JSON boundaries:
   one atomically validated presentation set, while referenced pixel/font bytes
   remain checksum-addressed binary artifacts.
 
+The subsequent runtime gate resolves those tables instead of merely validating
+their envelopes. Inline meshes are compacted by canonical material slot into
+multiple draw batches under one render proxy; each pick vertex retains the
+original source-triangle ID even when the material partition changes draw
+order. Source color, alpha mode and decoded base-color texture remain separate
+from live view styling, so a temporary presentation texture can be removed
+without rebuilding geometry or losing the authored texture revision.
+
+Both explicit browser backends passed the stricter material fixture. It
+requires slots `3` and `7`, two exact material revisions, separate linear base
+colors, authored UVs and one checksum-addressed 2x2 source texture. The forced
+WebGL2 run used the physical Intel HD Graphics 630 and reported 1.7 ms maximum
+CPU submit; the WebGPU CPU adapter is again a correctness-only result and also
+reported 1.7 ms. Unsupported canonical sampler, UV-transform and single-sided
+culling combinations fail before publication rather than being approximated;
+their shared-pipeline implementations remain required before the complete PBR
+material contract can be called finished.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

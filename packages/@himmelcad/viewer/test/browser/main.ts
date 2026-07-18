@@ -13,9 +13,12 @@ import type {
   CanonicalResourceRef,
   HatchPatternResource,
   LineTypeResource,
+  MaterialResource,
+  MaterialTableResource,
   SectionTopologyPartitionManifest,
   Transform3d,
   TriangleMeshGeometry,
+  TextureResource,
   CanonicalCommandTransaction,
 } from '../../src/kernel/generated/index.js';
 import type { KernelSectionTopologyPartitionLocation } from '../../src/kernel/KernelSectionTopologyEvaluation';
@@ -142,6 +145,7 @@ interface BrowserValidationState {
     readonly strokeNone: readonly KernelEntityPresentationBatch[];
     readonly textureOverride: readonly KernelEntityPresentationBatch[];
     readonly textureRestored: readonly KernelEntityPresentationBatch[];
+    readonly canonicalMaterials: readonly KernelEntityPresentationBatch[];
     readonly invalidAreaTextureRejectedAtomically: boolean;
     readonly invalidStrokeRejectedAtomically: boolean;
     readonly decodeCountersStable: boolean;
@@ -327,7 +331,7 @@ const PANORAMA_CONFIDENCE_HASH = 'c05617ac39c882500d10674a36f1795b657df7606db0fd
 const PANORAMA_CONNECTIVITY_HASH = 'ce8bee525d6736e9825261b19a9b51719f9dc4bb728e95cf7067a2142b03b362';
 let EVALUATED_MESH_HASH = 'c'.repeat(64);
 let EVALUATED_TOPOLOGY_HASH = 'c'.repeat(64);
-const MATERIAL_TABLE_HASH = '7'.repeat(64);
+let MATERIAL_TABLE_HASH = '7'.repeat(64);
 const ORTHO_IMAGE_HASH = '1'.repeat(64);
 const ORTHO_DEPTH_HASH = '2'.repeat(64);
 const POINT_VERSION_HASH = '3'.repeat(64);
@@ -2592,6 +2596,19 @@ function verifyResolvedPresentationBindings(
   const batchIdentity = (batches: readonly KernelEntityPresentationBatch[]) =>
     JSON.stringify(batches.map(({ proxyId, batchIndex, kind }) => ({ proxyId, batchIndex, kind })));
   const decodeBefore = viewer.streamDecodeDiagnostics();
+  const canonicalMaterials = viewer.entityPresentation('material-layer-box');
+  if (
+    canonicalMaterials.length !== 2 ||
+    canonicalMaterials[0]?.sourceMaterialSlot !== 3 ||
+    canonicalMaterials[1]?.sourceMaterialSlot !== 7 ||
+    canonicalMaterials.some(
+      (batch) => !batch.declaredTextureCoordinates || !batch.usesSourceTexture,
+    ) ||
+    canonicalMaterials[0]?.sourceMaterialColor?.[0] !== 1 ||
+    canonicalMaterials[1]?.sourceMaterialColor?.[1] !== 1
+  ) {
+    throw new Error('canonical mesh material table did not resolve exact slots/colors/textures');
+  }
   const unsealedOldLineType: LineTypeResource = {
     schemaId: 'hcad.resource.line-type@1',
     resourceId: 'revisioned-survey-line',
@@ -2828,6 +2845,7 @@ function verifyResolvedPresentationBindings(
     throw new Error('presentation-only changes entered a provider decode path');
   }
   return {
+    canonicalMaterials,
     hatchAfterLiveStyle,
     none,
     strokeLineType,
@@ -3100,7 +3118,12 @@ function entityZoo(): LegacyEntityRequest[] {
                 13, 12, 9, 10, 14, 9, 14, 13, 10, 11, 15, 10, 15, 14, 11, 8, 12, 11, 12, 15,
               ],
               normals: null,
-              textureCoordinates: null,
+              textureCoordinates: [
+                [0, 0], [1, 0], [1, 1], [0, 1],
+                [0, 0], [1, 0], [1, 1], [0, 1],
+                [0, 0], [1, 0], [1, 1], [0, 1],
+                [0, 0], [1, 0], [1, 1], [0, 1],
+              ],
             },
             closedManifold: true,
             triangleMaterialSlots: [
@@ -3546,6 +3569,110 @@ async function run(): Promise<void> {
     schemaId: crossHatch.schemaId,
     contentHash: crossHatch.contentHash,
   };
+  const materialPixels = new Uint8Array([
+    255, 255, 255, 255, 32, 220, 255, 255,
+    255, 80, 48, 255, 255, 255, 255, 255,
+  ]);
+  const materialPixelsHash = await sha256Bytes(materialPixels);
+  viewer.registerImageResource(materialPixelsHash, 2, 2, materialPixels);
+  const unsealedTexture: TextureResource = {
+    schemaId: 'hcad.resource.texture@1',
+    resourceId: 'browser-material-checker',
+    contentHash: '00'.repeat(32),
+    pixels: {
+      objectHash: materialPixelsHash,
+      mediaType: 'application/x-himmelcad-decoded-rgba8',
+      byteLength: materialPixels.byteLength,
+    },
+    colorSpace: 'srgb',
+    wrapU: 'repeat',
+    wrapV: 'repeat',
+    magFilter: 'linear',
+    minFilter: 'linear',
+  };
+  const texture: TextureResource = {
+    ...unsealedTexture,
+    contentHash: viewer.textureResourceContentHash(unsealedTexture),
+  };
+  const textureRef: CanonicalResourceRef = {
+    resourceId: texture.resourceId,
+    schemaId: texture.schemaId,
+    contentHash: texture.contentHash,
+  };
+  const unsealedSurveyMaterial: MaterialResource = {
+    schemaId: 'hcad.resource.material@1',
+    resourceId: 'browser-survey-red',
+    contentHash: '00'.repeat(32),
+    name: 'Survey red',
+    baseColor: { red: 1, green: 0.16, blue: 0.08, alpha: 1 },
+    emissive: [0, 0, 0],
+    metallic: 0,
+    roughness: 0.8,
+    alphaMode: 'opaque',
+    alphaCutoff: null,
+    doubleSided: true,
+    textureBindings: [],
+  };
+  const surveyMaterial: MaterialResource = {
+    ...unsealedSurveyMaterial,
+    contentHash: viewer.materialResourceContentHash(unsealedSurveyMaterial),
+  };
+  const unsealedTexturedMaterial: MaterialResource = {
+    schemaId: 'hcad.resource.material@1',
+    resourceId: 'browser-survey-checker',
+    contentHash: '00'.repeat(32),
+    name: 'Survey checker',
+    baseColor: { red: 0.28, green: 1, blue: 0.48, alpha: 1 },
+    emissive: [0, 0, 0],
+    metallic: 0,
+    roughness: 0.65,
+    alphaMode: 'opaque',
+    alphaCutoff: null,
+    doubleSided: true,
+    textureBindings: [
+      {
+        slot: 'baseColor',
+        texture: textureRef,
+        textureCoordinateSet: 0,
+        transform: null,
+      },
+    ],
+  };
+  const texturedMaterial: MaterialResource = {
+    ...unsealedTexturedMaterial,
+    contentHash: viewer.materialResourceContentHash(unsealedTexturedMaterial),
+  };
+  const surveyMaterialRef: CanonicalResourceRef = {
+    resourceId: surveyMaterial.resourceId,
+    schemaId: surveyMaterial.schemaId,
+    contentHash: surveyMaterial.contentHash,
+  };
+  const texturedMaterialRef: CanonicalResourceRef = {
+    resourceId: texturedMaterial.resourceId,
+    schemaId: texturedMaterial.schemaId,
+    contentHash: texturedMaterial.contentHash,
+  };
+  const tableMaterials = new Array<CanonicalResourceRef>(8).fill(surveyMaterialRef);
+  tableMaterials[7] = texturedMaterialRef;
+  const unsealedMaterialTable: MaterialTableResource = {
+    schemaId: 'hcad.resource.material-table@1',
+    resourceId: 'browser-material-table',
+    contentHash: '00'.repeat(32),
+    materials: tableMaterials,
+  };
+  const materialTable: MaterialTableResource = {
+    ...unsealedMaterialTable,
+    contentHash: viewer.materialTableResourceContentHash(unsealedMaterialTable),
+  };
+  MATERIAL_TABLE_HASH = materialTable.contentHash;
+  viewer.registerCanonicalMaterialResourceSet({
+    textures: [texture],
+    materials: [surveyMaterial, texturedMaterial],
+    materialTables: [materialTable],
+    hatchPatterns: [],
+    lineTypes: [],
+    annotationStyles: [],
+  });
   viewer.registerLineTypeResource('survey-dash', {
     segments: [2.4, 0.8, 0.25, 0.8],
     phase: 0.15,

@@ -41,8 +41,9 @@ use himmelcad_core::canonical_resource_catalog::{
 use himmelcad_core::canonical_resources::{
     validate_block_definition_set, validate_hatch_pattern_resource, validate_line_type_resource,
     BlockDefinition, BlockMember, BlockMemberSource, BlockMemberStyle, CanonicalResourceRef,
-    HatchPatternResource, LineTypeElement, LineTypePattern, LineTypeResource,
-    LINE_TYPE_RESOURCE_SCHEMA_ID,
+    HatchPatternResource, LineTypeElement, LineTypePattern, LineTypeResource, MaterialAlphaMode,
+    MaterialResource, MaterialTableResource, MaterialTextureSlot, TextureColorSpace, TextureFilter,
+    TextureResource, TextureWrapMode, LINE_TYPE_RESOURCE_SCHEMA_ID,
 };
 #[cfg(target_arch = "wasm32")]
 use himmelcad_core::entity_commands::{
@@ -387,6 +388,7 @@ pub struct WasmViewer {
     raster_binary_resources: BTreeMap<String, WasmBinaryResource>,
     mesh_resources: BTreeMap<String, TriangleMeshGeometry>,
     area_interpolations: BTreeMap<String, WasmRegisteredAreaInterpolation>,
+    material_resources: WasmMaterialResourceRegistry,
     hatch_resources: WasmHatchResourceRegistry,
     line_type_resources: WasmLineTypeResourceRegistry,
     section_products: BTreeMap<String, AuthoritativeSectionProduct>,
@@ -1307,6 +1309,12 @@ struct WasmHatchResourceRegistry {
 }
 
 #[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, Default)]
+struct WasmMaterialResourceRegistry {
+    catalog: CanonicalPresentationResourceCatalog,
+}
+
+#[cfg(target_arch = "wasm32")]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WasmStreamingFrameOptions {
@@ -1464,6 +1472,7 @@ async fn create_wasm_viewer(
         raster_binary_resources: BTreeMap::new(),
         mesh_resources: BTreeMap::new(),
         area_interpolations: BTreeMap::new(),
+        material_resources: WasmMaterialResourceRegistry::default(),
         hatch_resources: WasmHatchResourceRegistry::default(),
         line_type_resources: WasmLineTypeResourceRegistry::default(),
         section_products: BTreeMap::new(),
@@ -1695,6 +1704,43 @@ impl WasmViewer {
         resource_json: &str,
     ) -> Result<String, JsValue> {
         let resource: HatchPatternResource =
+            serde_json::from_str(resource_json).map_err(js_error)?;
+        resource
+            .computed_content_hash()
+            .map(|hash| hash.0)
+            .map_err(js_error)
+    }
+
+    /// Computes one canonical texture-resource hash excluding `contentHash`.
+    pub fn texture_resource_content_hash_json(
+        &self,
+        resource_json: &str,
+    ) -> Result<String, JsValue> {
+        let resource: TextureResource = serde_json::from_str(resource_json).map_err(js_error)?;
+        resource
+            .computed_content_hash()
+            .map(|hash| hash.0)
+            .map_err(js_error)
+    }
+
+    /// Computes one canonical material-resource hash excluding `contentHash`.
+    pub fn material_resource_content_hash_json(
+        &self,
+        resource_json: &str,
+    ) -> Result<String, JsValue> {
+        let resource: MaterialResource = serde_json::from_str(resource_json).map_err(js_error)?;
+        resource
+            .computed_content_hash()
+            .map(|hash| hash.0)
+            .map_err(js_error)
+    }
+
+    /// Computes one canonical ordered material-table hash excluding `contentHash`.
+    pub fn material_table_resource_content_hash_json(
+        &self,
+        resource_json: &str,
+    ) -> Result<String, JsValue> {
+        let resource: MaterialTableResource =
             serde_json::from_str(resource_json).map_err(js_error)?;
         resource
             .computed_content_hash()
@@ -2064,6 +2110,7 @@ impl WasmViewer {
                 &self.depth_resources,
                 &self.raster_binary_resources,
                 &self.mesh_resources,
+                &self.material_resources,
                 &self.hatch_resources,
                 &self.line_type_resources,
                 area_support,
@@ -2097,6 +2144,7 @@ impl WasmViewer {
                 &self.depth_resources,
                 &self.raster_binary_resources,
                 &self.mesh_resources,
+                &self.material_resources,
                 &self.hatch_resources,
                 &self.line_type_resources,
                 area_support,
@@ -2366,6 +2414,8 @@ impl WasmViewer {
                     "strokeWidthOverride": batch.presentation_stroke_width_override(),
                     "lineTypeComponents": batch.presentation_line_type_components(),
                     "declaredTextureCoordinates": batch.has_declared_texture_coordinates(),
+                    "sourceMaterialSlot": batch.source_material_slot(),
+                    "sourceMaterialColor": batch.source_material_color(),
                     "usesSourceTexture": batch.source_texture_allocation_key()
                         == batch.active_texture_allocation_key(),
                 }));
@@ -3319,6 +3369,30 @@ impl WasmViewer {
         self.install_hatch_resource(resource).map_err(js_error)?;
         self.rebuild_inline_clip_previews().map_err(js_error)?;
         Ok(())
+    }
+
+    /// Atomically publishes exact texture, material and ordered material-table
+    /// revisions. Decoded texture pixels remain separately content-addressed by
+    /// `TextureResource.pixels.objectHash` and are uploaded through
+    /// `register_image_resource` before a referencing entity is compiled.
+    pub fn register_canonical_material_resource_set(
+        &mut self,
+        resources_json: &str,
+    ) -> Result<(), JsValue> {
+        let resources: CanonicalPresentationResourceSet =
+            serde_json::from_str(resources_json).map_err(js_error)?;
+        if !resources.hatch_patterns.is_empty()
+            || !resources.line_types.is_empty()
+            || !resources.annotation_styles.is_empty()
+        {
+            return Err(JsValue::from_str(
+                "material publication must contain only textures, materials and material tables",
+            ));
+        }
+        self.material_resources
+            .catalog
+            .publish(resources)
+            .map_err(js_error)
     }
 
     /// Registers one exact immutable canonical line-type revision.
@@ -5331,6 +5405,7 @@ impl WasmViewer {
                     &self.depth_resources,
                     &self.raster_binary_resources,
                     &self.mesh_resources,
+                    &self.material_resources,
                     &self.hatch_resources,
                     &self.line_type_resources,
                     area_support,
@@ -5369,6 +5444,7 @@ impl WasmViewer {
                     &self.depth_resources,
                     &self.raster_binary_resources,
                     &self.mesh_resources,
+                    &self.material_resources,
                     &self.hatch_resources,
                     &self.line_type_resources,
                     area_support,
@@ -5777,6 +5853,7 @@ impl WasmViewer {
                     &self.depth_resources,
                     &self.raster_binary_resources,
                     &self.mesh_resources,
+                    &self.material_resources,
                     &self.hatch_resources,
                     &self.line_type_resources,
                     area_support,
@@ -7748,6 +7825,7 @@ fn compile_inline_entity(
     depth_resources: &BTreeMap<String, WasmDepthResource>,
     raster_binary_resources: &BTreeMap<String, WasmBinaryResource>,
     mesh_resources: &BTreeMap<String, TriangleMeshGeometry>,
+    material_resources: &WasmMaterialResourceRegistry,
     hatch_resources: &WasmHatchResourceRegistry,
     line_type_resources: &WasmLineTypeResourceRegistry,
     area_support: WasmAreaSupportContext<'_>,
@@ -7770,6 +7848,7 @@ fn compile_inline_entity(
             depth_resources,
             raster_binary_resources,
             mesh_resources,
+            material_resources,
             hatch_resources,
             line_type_resources,
             area_support,
@@ -7891,23 +7970,145 @@ fn compile_inline_entity(
         world
             .set_compiled_metadata(&id, part.kind, part.bounds, part.cost)
             .map_err(|error| error.to_string())?;
-        let mut batch = part.batch;
-        batch
-            .set_world_origins(host.queue(), origin, origin)
-            .map_err(|error| error.to_string())?;
-        let resolved = resolve_batch_presentation(
-            &request.style,
-            request.exaggeration_datum,
-            part.kind,
-            &batch,
-            image_resources,
-            hatch_resources,
-            line_type_resources,
-        )?;
-        apply_batch_presentation(host, &mut batch, &resolved)?;
-        batches.insert(id, vec![batch]);
+        let mut proxy_batches = Vec::with_capacity(1 + part.additional_batches.len());
+        proxy_batches.push(part.batch);
+        proxy_batches.extend(part.additional_batches);
+        for batch in &mut proxy_batches {
+            batch
+                .set_world_origins(host.queue(), origin, origin)
+                .map_err(|error| error.to_string())?;
+            apply_canonical_mesh_material(
+                host,
+                batch,
+                part.source_material_table.as_ref(),
+                material_resources,
+                image_resources,
+            )?;
+            let resolved = resolve_batch_presentation(
+                &request.style,
+                request.exaggeration_datum,
+                part.kind,
+                batch,
+                image_resources,
+                hatch_resources,
+                line_type_resources,
+            )?;
+            apply_batch_presentation(host, batch, &resolved)?;
+        }
+        batches.insert(id, proxy_batches);
     }
     Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn apply_canonical_mesh_material(
+    host: &GpuSurfaceHost<'_>,
+    batch: &mut GpuDrawBatch,
+    table_ref: Option<&CanonicalResourceRef>,
+    resources: &WasmMaterialResourceRegistry,
+    image_resources: &BTreeMap<String, WasmImageResource>,
+) -> Result<(), String> {
+    let Some(table_ref) = table_ref else {
+        if batch.source_material_slot().is_some() {
+            return Err("material-partitioned batch has no canonical material table".to_owned());
+        }
+        return Ok(());
+    };
+    let table = resources.catalog.material_table(table_ref).ok_or_else(|| {
+        format!(
+            "exact material-table revision '{}' is not registered",
+            table_ref.resource_id
+        )
+    })?;
+    let slot = usize::try_from(batch.source_material_slot().unwrap_or(0))
+        .map_err(|_| "canonical material slot does not fit this host".to_owned())?;
+    let material_ref = table.materials.get(slot).ok_or_else(|| {
+        format!(
+            "canonical material slot {slot} is outside table '{}'",
+            table.resource_id
+        )
+    })?;
+    let material = resources.catalog.material(material_ref).ok_or_else(|| {
+        format!(
+            "exact material revision '{}' is not registered",
+            material_ref.resource_id
+        )
+    })?;
+    if !material.double_sided {
+        return Err(format!(
+            "canonical material '{}' requires back-face culling, which is not installed in the shared pipeline yet",
+            material.resource_id
+        ));
+    }
+    let texture = material
+        .texture_bindings
+        .iter()
+        .find(|binding| binding.slot == MaterialTextureSlot::BaseColor)
+        .map(|binding| {
+            if binding.texture_coordinate_set != 0 || binding.transform.is_some() {
+                return Err(format!(
+                    "canonical base-color texture '{}' requires unsupported UV set/transform",
+                    binding.texture.resource_id
+                ));
+            }
+            if !batch.has_declared_texture_coordinates() {
+                return Err(format!(
+                    "canonical base-color texture '{}' requires declared mesh UVs",
+                    binding.texture.resource_id
+                ));
+            }
+            let canonical = resources.catalog.texture(&binding.texture).ok_or_else(|| {
+                format!(
+                    "exact texture revision '{}' is not registered",
+                    binding.texture.resource_id
+                )
+            })?;
+            if canonical.color_space != TextureColorSpace::Srgb
+                || canonical.wrap_u != TextureWrapMode::Repeat
+                || canonical.wrap_v != TextureWrapMode::Repeat
+                || canonical.mag_filter != TextureFilter::Linear
+                || canonical.min_filter != TextureFilter::Linear
+            {
+                return Err(format!(
+                    "canonical texture '{}' sampling contract is not installed in the shared sampler path",
+                    canonical.resource_id
+                ));
+            }
+            image_resources
+                .get(&canonical.pixels.object_hash.0)
+                .map(|image| &image.texture)
+                .ok_or_else(|| {
+                    format!(
+                        "decoded pixels '{}' for canonical texture '{}' are not registered",
+                        canonical.pixels.object_hash.0, canonical.resource_id
+                    )
+                })
+        })
+        .transpose()?;
+    let alpha_mode = match material.alpha_mode {
+        MaterialAlphaMode::Opaque => GpuAlphaMode::Opaque,
+        MaterialAlphaMode::Mask => GpuAlphaMode::Mask {
+            cutoff: material
+                .alpha_cutoff
+                .expect("canonical material validation requires a mask cutoff"),
+        },
+        MaterialAlphaMode::Blend => GpuAlphaMode::Blend,
+    };
+    batch
+        .set_source_material(
+            host.device(),
+            host.queue(),
+            host.renderer(),
+            texture,
+            [
+                material.base_color.red,
+                material.base_color.green,
+                material.base_color.blue,
+                material.base_color.alpha,
+            ],
+            alpha_mode,
+        )
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -8030,6 +8231,7 @@ fn compile_block_entity(
     depth_resources: &BTreeMap<String, WasmDepthResource>,
     raster_binary_resources: &BTreeMap<String, WasmBinaryResource>,
     mesh_resources: &BTreeMap<String, TriangleMeshGeometry>,
+    material_resources: &WasmMaterialResourceRegistry,
     hatch_resources: &WasmHatchResourceRegistry,
     line_type_resources: &WasmLineTypeResourceRegistry,
     area_support: WasmAreaSupportContext<'_>,
@@ -8072,6 +8274,7 @@ fn compile_block_entity(
                 depth_resources,
                 raster_binary_resources,
                 mesh_resources,
+                material_resources,
                 hatch_resources,
                 line_type_resources,
                 area_support,
@@ -8094,6 +8297,7 @@ fn compile_block_entity(
                 depth_resources,
                 raster_binary_resources,
                 mesh_resources,
+                material_resources,
                 hatch_resources,
                 line_type_resources,
                 area_support,
@@ -8413,6 +8617,8 @@ fn compile_panorama_entity(
             ..part.cost
         },
         batch: part.batch.with_material(material),
+        additional_batches: Vec::new(),
+        source_material_table: None,
     })
 }
 
@@ -8526,6 +8732,8 @@ fn compile_raster_image_entity(
             ..part.cost
         },
         batch: part.batch.with_material(material),
+        additional_batches: Vec::new(),
+        source_material_table: None,
     })
 }
 
@@ -9786,6 +9994,8 @@ fn compile_text_entity(
             ..ResourceCost::default()
         },
         batch,
+        additional_batches: Vec::new(),
+        source_material_table: None,
     })
 }
 
