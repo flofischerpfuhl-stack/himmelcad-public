@@ -132,6 +132,125 @@ pub fn canonical_builtin_import_registry(
 }
 
 #[cfg(test)]
+pub(crate) mod viewer_contract_test_support {
+    use himmelcad_core::entity_model::{ElevationSurfaceGeometry, GeometryObject, SolidGeometry};
+    use himmelcad_render::{
+        required_entity_proxy_slots, resolve_entity_point_world,
+        tessellate_entity_strokes_with_associations, EntityCompilationOptions, FloatingOrigin,
+        RenderStyle, UnresolvedHeightDisplay, WorldVec3,
+    };
+
+    use crate::CanonicalImportPackage;
+
+    /// Provider-to-viewer evidence shared by the real format fixture tests.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) struct ViewerContractEvidence {
+        pub(crate) direct_admissions: usize,
+        pub(crate) delegated_admissions: usize,
+        pub(crate) source_stroke_parts: usize,
+        pub(crate) source_points: usize,
+    }
+
+    /// Proves that a validated provider package reaches the production inline
+    /// Render-Core contract without reinterpreting geometry in an app adapter.
+    pub(crate) fn assert_provider_package_reaches_viewer(
+        package: &CanonicalImportPackage,
+    ) -> ViewerContractEvidence {
+        package.validate().expect("canonical provider package");
+        let mut evidence = ViewerContractEvidence {
+            direct_admissions: 0,
+            delegated_admissions: 0,
+            source_stroke_parts: 0,
+            source_points: 0,
+        };
+
+        for admission in &package.admissions {
+            let options = EntityCompilationOptions {
+                floating_origin: FloatingOrigin::new(
+                    1_024.0,
+                    WorldVec3 {
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0,
+                    },
+                )
+                .expect("test floating origin"),
+                unresolved_height: UnresolvedHeightDisplay::ViewPlane { elevation: 0.0 },
+                chord_tolerance: 0.001,
+                maximum_curve_segments: 4_096,
+                line_width: 1.0,
+                plane_extent: 10.0,
+                fill_areas: true,
+                style: RenderStyle::default(),
+                exaggeration_datum: 0.0,
+                placement: admission.entity.placement,
+            };
+            let delegated = match &admission.resolved_geometry {
+                GeometryObject::PointCloud { .. }
+                | GeometryObject::GaussianSplatCloud { .. }
+                | GeometryObject::Block { .. }
+                | GeometryObject::Extension { .. } => true,
+                GeometryObject::ElevationSurface { surface } => {
+                    matches!(surface.as_ref(), ElevationSurfaceGeometry::Grid { .. })
+                }
+                GeometryObject::Solid { solid } => matches!(
+                    solid.as_ref(),
+                    SolidGeometry::Brep { .. } | SolidGeometry::Extension { .. }
+                ),
+                _ => false,
+            };
+            if delegated {
+                evidence.delegated_admissions += 1;
+                continue;
+            }
+
+            let slots = required_entity_proxy_slots(&admission.resolved_geometry, true)
+                .expect("provider geometry must enter the common Render-Core proxy contract");
+            assert!(
+                slots > 0,
+                "viewer admission must allocate a stable proxy slot"
+            );
+            evidence.direct_admissions += 1;
+
+            if let GeometryObject::Point { position } = &admission.resolved_geometry {
+                let world = resolve_entity_point_world(*position, &options)
+                    .expect("provider point must retain exact f64 placement semantics");
+                assert!(world.x.is_finite() && world.y.is_finite() && world.z.is_finite());
+                evidence.source_points += 1;
+            }
+
+            let strokes = tessellate_entity_strokes_with_associations(
+                &admission.resolved_geometry,
+                &options,
+                |entity_id, expected_version| {
+                    package.admissions.iter().find_map(|candidate| {
+                        if &candidate.entity.id != entity_id
+                            || expected_version
+                                .is_some_and(|version| version != &candidate.entity.version_hash)
+                        {
+                            return None;
+                        }
+                        match &candidate.resolved_geometry {
+                            GeometryObject::Curve { curve } => Some(curve.as_ref().clone()),
+                            _ => None,
+                        }
+                    })
+                },
+            )
+            .expect("provider strokes must use the common f64 source tessellator");
+            assert!(strokes
+                .iter()
+                .flat_map(|stroke| &stroke.segments)
+                .all(|segment| segment.start.x.is_finite() && segment.end.x.is_finite()));
+            evidence.source_stroke_parts += strokes.len();
+        }
+
+        assert!(evidence.direct_admissions > 0);
+        evidence
+    }
+}
+
+#[cfg(test)]
 mod canonical_registry_tests {
     use super::*;
 

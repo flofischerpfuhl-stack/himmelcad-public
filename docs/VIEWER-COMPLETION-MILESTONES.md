@@ -27,8 +27,8 @@ Fallback zählen nicht als Abschluss.
 | --- | --- | --- | --- | --- | --- |
 | A | Foundation A | abgeschlossen | historisch, nicht exakt erfasst | 2026-07-17 | nicht rückwirkend erfunden |
 | V1 | Imaging und Heavy-Geometry-Verträge | abgeschlossen | 2026-07-18 07:21 CEST | 2026-07-18 11:33 CEST | 4 h 12 min verstrichene Arbeitszeit |
-| V2 | Kanonische Entity- und Definitionsbreite | aktiv | 2026-07-18 11:33 CEST | – | läuft |
-| V3 | Darstellung, Interaktion, Messung und Schnitte | offen | – | – | – |
+| V2 | Kanonische Entity- und Definitionsbreite | abgeschlossen | 2026-07-18 11:33 CEST | 2026-07-18 15:33 CEST | 4 h 00 min verstrichene Arbeitszeit |
+| V3 | Darstellung, Interaktion, Messung und Schnitte | aktiv | 2026-07-18 15:33 CEST | – | läuft |
 | V4 | Civil-Scale, Hardware und Backend-Härtung | offen | – | – | – |
 | V5 | Stabile Viewer-Fassade und App-Ready-Gate | offen | – | – | – |
 
@@ -184,10 +184,25 @@ von echten V2-Lücken:
   source-gepickt, verborgen unpickbar und anschließend ohne Neuaufnahme wieder
   pickbar; manipulierte Block-, Attribut-, UV- und Referenzfälle bleiben
   atomisch abgewiesen.
-- Als reales verbleibendes Gate bleibt der vollständige Viewer-Nachweis der
-  bereits vorhandenen DXF-, IFC- und LandXML-Providerpfade.
+- Der sechste V2-Slice schließt den Viewer-Nachweis der bereits vorhandenen
+  DXF-, IFC- und LandXML-Providerpfade direkt aus ihren kanonischen
+  Importpaketen.
 - Zusätzliche Formatkorpora ohne neue Geometriesemantik bleiben gemäß V2-Gate
   Provider-Conformance und werden nicht als Viewer-Schemaarbeit vorgezogen.
+
+### Abschluss 2026-07-18 15:33 CEST
+
+V2 ist nach 4 h 00 min tatsächlich verstrichener Arbeitszeit abgeschlossen.
+Die realen DXF-, buildingSMART-IFC- und Civil-LandXML-Fixtures durchlaufen aus
+ihren kanonischen Importpaketen direkt die gemeinsamen Render-Core-Proxy-,
+f64-Placement- und Source-Tessellationsverträge. Der vollständige Zoo umfasst
+38 Entities/47 Proxies; seine acht ergänzten Varianten werden zusätzlich als
+temporäre kanonische Slots gemeinsam aufgenommen und über exakte Bindings
+atomar ohne verbleibende Proxy- oder Pick-Adresse detached. Die checksum-
+gepinnten Real-Data-Gates umfassen 47 Entities/56 Proxies auf WebGPU und
+WebGL2. Manipulierte Referenzen, Attribute, Ressourcen und Generationen bleiben
+atomar abgewiesen. V3 beginnt unmittelbar mit demselben permanenten
+Foundation-/V1-/V2-Regressionsstand.
 
 ## V3 – Darstellung, Interaktion, Messung und Schnitte
 

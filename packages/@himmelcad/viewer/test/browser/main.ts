@@ -99,6 +99,7 @@ interface BrowserValidationState {
     readonly picked: boolean;
     readonly hiddenUnpickable: boolean;
     readonly restoredPickable: boolean;
+    readonly unloadedAtomically: boolean;
   } | null;
   mixedHeightLifecycle: {
     readonly orbitRejected: boolean;
@@ -5212,6 +5213,29 @@ async function run(): Promise<void> {
     ['construction-plane', { x: BASE[0] + 24, y: BASE[1] + 15, z: BASE[2] + 1 }],
     ['nested-survey-marker-block', { x: BASE[0] - 24, y: BASE[1] + 2, z: BASE[2] + 4 }],
   ] as const;
+  const zooVariantIds = new Set<string>(zooVariantTargets.map(([entityId]) => entityId));
+  const unloadProofRequests = entityZoo()
+    .filter((request) => zooVariantIds.has(request.entityId))
+    .map((request) => ({
+      ...request,
+      entityId: `unload-proof-${request.entityId}`,
+      proxyId: `unload-proof-${request.proxyId ?? request.entityId}`,
+    }));
+  const unloadProofPublish = await publishLegacyRequests(viewer, unloadProofRequests);
+  if (
+    unloadProofPublish.bindings.length !== zooVariantTargets.length ||
+    unloadProofPublish.entities !== repeatTransaction.entities + zooVariantTargets.length
+  ) {
+    throw new Error('canonical zoo unload proof did not publish every temporary entity atomically');
+  }
+  const unloadProof = viewer.detachCanonicalEntities(unloadProofPublish.bindings);
+  const variantsUnloadedAtomically =
+    unloadProof.entities === repeatTransaction.entities &&
+    unloadProof.proxies === repeatTransaction.proxies &&
+    unloadProofRequests.every((request) => viewer.entityPresentation(request.entityId).length === 0);
+  if (!variantsUnloadedAtomically) {
+    throw new Error('canonical zoo variants did not unload through one exact binding transaction');
+  }
   let variantsPresented = true;
   let variantsPicked = true;
   let variantsHiddenUnpickable = true;
@@ -5223,6 +5247,13 @@ async function run(): Promise<void> {
     }
     setFocusedTopCamera(viewer, target);
     const visiblePick = await viewer.pick(640, 360, 8);
+    if (
+      visiblePick.candidates.some((candidate) =>
+        candidate.address.entityId.startsWith('unload-proof-'),
+      )
+    ) {
+      throw new Error('detached canonical zoo variant left a pick address behind');
+    }
     if (!visiblePick.candidates.some((candidate) => candidate.address.entityId === entityId)) {
       variantsPicked = false;
       throw new Error(`canonical zoo variant '${entityId}' is not source-pickable`);
@@ -5248,6 +5279,7 @@ async function run(): Promise<void> {
     picked: variantsPicked,
     hiddenUnpickable: variantsHiddenUnpickable,
     restoredPickable: variantsRestoredPickable,
+    unloadedAtomically: variantsUnloadedAtomically,
   };
   viewer.setEntityStyle('survey-point', style([1, 0.38, 0.08, 1]));
   viewer.setWorldCamera(worldCamera, [BASE[0] + 1_024, BASE[1] - 512, BASE[2] + 64]);

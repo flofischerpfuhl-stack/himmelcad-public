@@ -1086,11 +1086,36 @@ or app-owned geometry shape was introduced.
 
 For each of those eight newly covered cases, the browser requires a non-empty
 presentation, an exact Source pick, an unpickable hidden state and a restored
-Source pick after visibility returns. Both explicit backends pass the complete
-38-entity/47-proxy fixture with ten worker ingests and zero main-thread provider
-decodes. Forced WebGL2 on the physical Intel HD Graphics 630 reports 2.7 ms
-maximum CPU submit; the WebGPU CPU-adapter correctness run reports 3.3 ms. The
-browser TypeScript contract is green.
+Source pick after visibility returns. A second temporary set of the same eight
+canonical variants is admitted together and detached through one exact-binding
+transaction; entity/proxy counts return exactly and later picks contain no
+retired address. Both explicit backends pass the complete 38-entity/47-proxy
+fixture with ten worker ingests and zero main-thread provider decodes. The final
+forced-WebGL2 run on the physical Intel HD Graphics 630 reports 2.8 ms maximum
+CPU submit; the WebGPU CPU-adapter correctness run reports 1.4 ms. The browser
+TypeScript contract is green.
+
+### V2 provider-to-viewer and completion checkpoint
+
+The deterministic real DXF canonical zoo, checksum-pinned buildingSMART
+Tessellated Item IFC and Civil LandXML zoo now share a test-only provider-to-
+viewer bridge that consumes each complete `CanonicalImportPackage` with the
+production Render-Core proxy-slot, exact f64 entity-placement and Source-stroke
+tessellation contracts. Associative curve uses resolve only an exact resident
+entity revision; stream/block/extension or evaluated BRep cases remain
+explicitly delegated instead of being reinterpreted in the importer or an app.
+The complete IO suite passes 61 tests with the one declared rare synthetic scale
+gate ignored.
+
+At the milestone boundary, both explicit real-data browser backends verify all
+nine checksum-pinned Khronos/Cesium fixtures plus the prepared textured-mesh
+and section-topology producer. The scene contains 47 entities/56 proxies, 19
+worker ingests and zero main-thread provider decodes. Forced WebGL2 on the
+physical Intel HD Graphics 630 reports 2.8 ms maximum CPU submit. The WebGPU
+CPU-adapter correctness run reports 4.3 ms and is not a hardware-performance
+claim. Render-Core remains 317/317, viewer-WASM 7/7 and the viewer package
+71/71; generated bindings and the browser contract are current. V2 closed on
+2026-07-18 at 15:33 CEST after 4 h 00 min elapsed work.
 
 ## Candidate external data
 

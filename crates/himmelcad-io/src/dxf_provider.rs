@@ -2265,6 +2265,13 @@ mod tests {
         )
         .expect("first import");
         assert!(first.admissions.len() >= 8);
+        let viewer_evidence =
+            crate::viewer_contract_test_support::assert_provider_package_reaches_viewer(&first);
+        assert_eq!(
+            viewer_evidence.direct_admissions + viewer_evidence.delegated_admissions,
+            first.admissions.len()
+        );
+        assert!(viewer_evidence.source_stroke_parts >= 3);
         assert_eq!(
             first
                 .admissions

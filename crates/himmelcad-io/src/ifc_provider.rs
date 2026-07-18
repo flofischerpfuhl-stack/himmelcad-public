@@ -2265,6 +2265,12 @@ ENDSEC;END-ISO-10303-21;";
                 &mut context,
             )
             .expect("official buildingSMART IFC import");
+        let viewer_evidence =
+            crate::viewer_contract_test_support::assert_provider_package_reaches_viewer(&package);
+        assert_eq!(
+            viewer_evidence.direct_admissions + viewer_evidence.delegated_admissions,
+            package.admissions.len()
+        );
         let proxy = package
             .admissions
             .iter()

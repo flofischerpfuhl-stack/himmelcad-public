@@ -2731,6 +2731,13 @@ mod tests {
         let second = import_fixture(&source);
         assert_eq!(first, second);
         first.validate().expect("canonical package");
+        let viewer_evidence =
+            crate::viewer_contract_test_support::assert_provider_package_reaches_viewer(&first);
+        assert_eq!(
+            viewer_evidence.direct_admissions + viewer_evidence.delegated_admissions,
+            first.admissions.len()
+        );
+        assert!(viewer_evidence.source_stroke_parts >= 2);
         assert_eq!(first.admissions.len(), 6);
         assert!(first.datasets.is_empty());
         assert!(first.resource_sets.is_empty());

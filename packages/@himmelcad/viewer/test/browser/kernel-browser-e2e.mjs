@@ -402,6 +402,7 @@ try {
   assert.equal(state.zooVariantLifecycle?.picked, true);
   assert.equal(state.zooVariantLifecycle?.hiddenUnpickable, true);
   assert.equal(state.zooVariantLifecycle?.restoredPickable, true);
+  assert.equal(state.zooVariantLifecycle?.unloadedAtomically, true);
   assert(
     state.proxyCount >= 24,
     `expected mixed inline and provider render proxies, received ${String(state.proxyCount)}`,
