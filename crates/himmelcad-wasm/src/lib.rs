@@ -53,11 +53,12 @@ use himmelcad_core::entity_commands::{
 };
 #[cfg(target_arch = "wasm32")]
 use himmelcad_core::entity_model::{
-    AnnotationAnchor, AreaGeometry, CanonicalEntity, CurveGeometry, CurveUse, DepthSemantics,
-    DimensionGeometry, DimensionKind, ElevationSurfaceGeometry, GeometryObject, GeometryResource,
-    HeightResolution, PanoramaGeometry, Position, RasterCellDiagonal, RasterConfidenceEncoding,
-    RasterConnectivity, RasterMapping, RepresentationAuthority, RepresentationRole, SolidGeometry,
-    TextGeometry, TextSpace, Transform3d, TriangleMeshGeometry, TriangleMeshStorage, Vector3,
+    AnnotationAnchor, AreaGeometry, CameraModel, CanonicalEntity, CurveGeometry, CurveUse,
+    DepthSemantics, DimensionGeometry, DimensionKind, ElevationSurfaceGeometry, GeometryObject,
+    GeometryResource, HeightResolution, PanoramaGeometry, Position, RasterCellDiagonal,
+    RasterConfidenceEncoding, RasterConnectivity, RasterMapping, RepresentationAuthority,
+    RepresentationRole, SolidGeometry, TextGeometry, TextSpace, Transform3d, TriangleMeshGeometry,
+    TriangleMeshStorage, Vector3,
 };
 #[cfg(target_arch = "wasm32")]
 use himmelcad_core::entity_validation::{geometry_object_content_hash, validate_geometry_object};
@@ -8859,26 +8860,77 @@ fn compile_raster_image_entity(
         raster.height,
         raster_binary_resources,
     )?;
+    let wraps_horizontally = matches!(
+        &raster.mapping,
+        RasterMapping::Camera {
+            model: CameraModel::Equirectangular,
+            ..
+        }
+    );
     let connectivity = resolve_raster_connectivity_mask(
         raster.depth.as_ref(),
         raster.width,
         raster.height,
-        false,
+        wraps_horizontally,
         raster_binary_resources,
     )?;
-    let RasterMapping::OrthoGrid(mapping) = raster.mapping else {
-        return Err(
-            "inline planar and central-camera rasters require a prepared mesh provider".to_owned(),
-        );
+    let mesh = match &raster.mapping {
+        RasterMapping::OrthoGrid(mapping) => {
+            if raster.depth.as_ref().is_some_and(|field| {
+                !matches!(field.sampling.semantics, DepthSemantics::ElevationZ)
+            }) {
+                return Err("orthographic raster depth must use elevationZ semantics".to_owned());
+            }
+            raster_ortho_mesh(raster, *mapping, depth, validity, connectivity)?
+        }
+        RasterMapping::Planar { homography, frame } => {
+            if raster.depth.is_some() {
+                return Err("planar raster images cannot carry a depth field".to_owned());
+            }
+            raster_planar_mesh(raster, *homography, *frame)?
+        }
+        RasterMapping::Camera {
+            model:
+                CameraModel::Pinhole {
+                    focal_x,
+                    focal_y,
+                    center_x,
+                    center_y,
+                    distortion_model,
+                    ..
+                },
+            pose,
+        } => {
+            if distortion_model.is_some() {
+                return Err(
+                    "distorted camera raster requires a registered projection evaluator".to_owned(),
+                );
+            }
+            raster_pinhole_presentation_mesh(
+                raster,
+                [*focal_x, *focal_y],
+                [*center_x, *center_y],
+                *pose,
+                request.plane_extent,
+            )?
+        }
+        RasterMapping::Camera {
+            model: CameraModel::Equirectangular,
+            ..
+        } => {
+            return Err(
+                "equirectangular camera rasters require panorama station presentation".to_owned(),
+            );
+        }
+        RasterMapping::Camera {
+            model: CameraModel::Extension { .. },
+            ..
+        } => {
+            return Err(
+                "camera extension raster requires a registered projection evaluator".to_owned(),
+            );
+        }
     };
-    if raster
-        .depth
-        .as_ref()
-        .is_some_and(|field| !matches!(field.sampling.semantics, DepthSemantics::ElevationZ))
-    {
-        return Err("orthographic raster depth must use elevationZ semantics".to_owned());
-    }
-    let mesh = raster_ortho_mesh(raster, mapping, depth, validity, connectivity)?;
     let geometry = GeometryObject::Surface3d {
         mesh: Box::new(mesh),
     };
@@ -9064,6 +9116,141 @@ fn verify_raster_binary_resource<'a>(
         ));
     }
     Ok(&registered.bytes)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn raster_planar_mesh(
+    raster: &himmelcad_core::entity_model::RasterImageGeometry,
+    homography: [f64; 9],
+    frame: himmelcad_core::entity_model::PlaneFrame,
+) -> Result<TriangleMeshGeometry, String> {
+    let vertex_columns = raster
+        .width
+        .checked_add(1)
+        .ok_or_else(|| "planar raster width exceeds indexed geometry limits".to_owned())?;
+    let vertex_rows = raster
+        .height
+        .checked_add(1)
+        .ok_or_else(|| "planar raster height exceeds indexed geometry limits".to_owned())?;
+    let count = u64::from(vertex_columns).saturating_mul(u64::from(vertex_rows));
+    if count > u64::from(u32::MAX) {
+        return Err("planar raster mesh exceeds indexed geometry limits".to_owned());
+    }
+    let origin = DVec3::new(frame.origin.x, frame.origin.y, frame.origin.z);
+    let u_axis = DVec3::new(frame.u_axis.x, frame.u_axis.y, frame.u_axis.z);
+    let v_axis = DVec3::new(frame.v_axis.x, frame.v_axis.y, frame.v_axis.z);
+    let normal = u_axis.cross(v_axis).normalize_or_zero();
+    if !normal.is_finite() || normal.length_squared() <= f64::EPSILON {
+        return Err("planar raster frame is degenerate".to_owned());
+    }
+    let capacity = usize::try_from(count).map_err(|_| "planar raster mesh is too large")?;
+    let mut positions = Vec::with_capacity(capacity);
+    let mut texture_coordinates = Vec::with_capacity(capacity);
+    for row in 0..vertex_rows {
+        for column in 0..vertex_columns {
+            let pixel_column = f64::from(column) - 0.5;
+            let pixel_row = f64::from(row) - 0.5;
+            let [u, v] = planar_homography_sample(homography, pixel_column, pixel_row)?;
+            positions.push(vector3(origin + u_axis * u + v_axis * v));
+            texture_coordinates.push([
+                f64::from(column) / f64::from(raster.width),
+                f64::from(row) / f64::from(raster.height),
+            ]);
+        }
+    }
+    let mut indices = Vec::with_capacity(
+        usize::try_from(u64::from(raster.width) * u64::from(raster.height) * 6)
+            .map_err(|_| "planar raster topology is too large")?,
+    );
+    for row in 0..raster.height {
+        for column in 0..raster.width {
+            let top_left = row * vertex_columns + column;
+            let top_right = top_left + 1;
+            let bottom_left = (row + 1) * vertex_columns + column;
+            let bottom_right = bottom_left + 1;
+            indices.extend([
+                top_left,
+                top_right,
+                bottom_right,
+                top_left,
+                bottom_right,
+                bottom_left,
+            ]);
+        }
+    }
+    raster_triangle_mesh(
+        positions,
+        indices,
+        vec![vector3(normal); capacity],
+        texture_coordinates,
+    )
+}
+
+#[cfg(target_arch = "wasm32")]
+fn planar_homography_sample(
+    homography: [f64; 9],
+    column: f64,
+    row: f64,
+) -> Result<[f64; 2], String> {
+    // Canonical matrices are column-major: H * (column, row, 1).
+    let u_h = homography[0] * column + homography[3] * row + homography[6];
+    let v_h = homography[1] * column + homography[4] * row + homography[7];
+    let w_h = homography[2] * column + homography[5] * row + homography[8];
+    if !u_h.is_finite() || !v_h.is_finite() || !w_h.is_finite() || w_h.abs() <= f64::EPSILON {
+        return Err("planar raster homography maps a pixel to infinity".to_owned());
+    }
+    Ok([u_h / w_h, v_h / w_h])
+}
+
+#[cfg(target_arch = "wasm32")]
+fn raster_pinhole_presentation_mesh(
+    raster: &himmelcad_core::entity_model::RasterImageGeometry,
+    focal: [f64; 2],
+    principal: [f64; 2],
+    pose: Transform3d,
+    optical_axis_distance: f64,
+) -> Result<TriangleMeshGeometry, String> {
+    if !optical_axis_distance.is_finite() || optical_axis_distance <= 0.0 {
+        return Err("camera image presentation distance must be finite and positive".to_owned());
+    }
+    let pose = DMat4::from_cols_array(&pose.0);
+    if !pose.is_finite() || pose.determinant().abs() <= f64::EPSILON {
+        return Err("camera image pose is non-invertible".to_owned());
+    }
+    let pixel_edges = [
+        (-0.5, -0.5),
+        (f64::from(raster.width) - 0.5, -0.5),
+        (
+            f64::from(raster.width) - 0.5,
+            f64::from(raster.height) - 0.5,
+        ),
+        (-0.5, f64::from(raster.height) - 0.5),
+    ];
+    let positions = pixel_edges
+        .map(|(column, row)| {
+            let camera = DVec3::new(
+                (column - principal[0]) / focal[0] * optical_axis_distance,
+                (row - principal[1]) / focal[1] * optical_axis_distance,
+                optical_axis_distance,
+            );
+            vector3(pose.transform_point3(camera))
+        })
+        .to_vec();
+    if positions.iter().any(|position| {
+        !position.x.is_finite() || !position.y.is_finite() || !position.z.is_finite()
+    }) {
+        return Err("camera image presentation plane is non-finite".to_owned());
+    }
+    let normal = pose.transform_vector3(-DVec3::Z).normalize_or_zero();
+    if !normal.is_finite() || normal.length_squared() <= f64::EPSILON {
+        return Err("camera image presentation normal is invalid".to_owned());
+    }
+    raster_triangle_mesh(
+        positions,
+        vec![0, 2, 1, 0, 3, 2],
+        vec![vector3(normal); 4],
+        vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+    )
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -9282,7 +9469,7 @@ fn raster_triangle_mesh(
     texture_coordinates: Vec<[f64; 2]>,
 ) -> Result<TriangleMeshGeometry, String> {
     if indices.is_empty() {
-        return Err("panorama depth contains no connected visible samples".to_owned());
+        return Err("raster contains no connected visible samples".to_owned());
     }
     Ok(TriangleMeshGeometry {
         storage: TriangleMeshStorage::Inline {

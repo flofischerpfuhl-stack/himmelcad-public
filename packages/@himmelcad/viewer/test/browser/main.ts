@@ -4023,6 +4023,93 @@ async function run(): Promise<void> {
     4,
     new Float32Array(Array.from({ length: 16 }, (_, index) => BASE[2] + (index % 4) * 0.7)),
   );
+  const orientedImagePixels = new Uint8Array(4 * 4 * 4);
+  for (let index = 0; index < 16; index += 1) {
+    orientedImagePixels.set(index % 2 === 0 ? [245, 90, 35, 255] : [35, 155, 245, 255], index * 4);
+  }
+  const orientedImageHash = await sha256Bytes(orientedImagePixels);
+  viewer.registerImageResource(orientedImageHash, 4, 4, orientedImagePixels);
+  const cameraDepth = new Float32Array(16).fill(7);
+  const cameraDepthHash = await sha256Bytes(
+    new Uint8Array(cameraDepth.buffer, cameraDepth.byteOffset, cameraDepth.byteLength),
+  );
+  viewer.registerDepthResource(cameraDepthHash, 4, 4, cameraDepth);
+  const orientedRasterRequests: LegacyEntityRequest[] = [
+    {
+      entityId: 'planar-oriented-image',
+      geometry: {
+        kind: 'rasterImage',
+        raster: {
+          pixels: {
+            objectHash: orientedImageHash,
+            mediaType: 'image/raw-rgba8',
+            byteLength: orientedImagePixels.byteLength,
+          },
+          width: 4,
+          height: 4,
+          mapping: {
+            kind: 'planar',
+            homography: [1.5, 0, 0, 0, 1.5, 0, 0, 0, 1],
+            frame: {
+              origin: { x: BASE[0] + 14, y: BASE[1] - 8, z: BASE[2] + 3 },
+              uAxis: { x: 1, y: 0, z: 0 },
+              vAxis: { x: 0, y: 0.7071067811865476, z: 0.7071067811865476 },
+            },
+          },
+          depth: null,
+        },
+      },
+      style: style([1, 1, 1, 1]),
+    },
+    {
+      entityId: 'pinhole-depth-image',
+      geometry: {
+        kind: 'rasterImage',
+        raster: {
+          pixels: {
+            objectHash: orientedImageHash,
+            mediaType: 'image/raw-rgba8',
+            byteLength: orientedImagePixels.byteLength,
+          },
+          width: 4,
+          height: 4,
+          mapping: {
+            kind: 'camera',
+            model: {
+              kind: 'pinhole',
+              focalX: 4,
+              focalY: 4,
+              centerX: 1.5,
+              centerY: 1.5,
+              distortionModel: null,
+              distortionParameters: [],
+            },
+            pose: placement(5, 12, 4),
+          },
+          depth: {
+            values: {
+              objectHash: cameraDepthHash,
+              mediaType: 'application/x-f32le',
+              byteLength: cameraDepth.byteLength,
+            },
+            validity: null,
+            confidence: null,
+            sampling: {
+              semantics: 'opticalAxisDepth',
+              interpolation: 'bilinear',
+              connectivity: {
+                kind: 'continuous',
+                maximumHeightJump: null,
+                diagonal: 'topLeftToBottomRight',
+              },
+            },
+          },
+        },
+      },
+      planeExtent: 3,
+      style: style([1, 1, 1, 1]),
+    },
+  ];
   state.phase = 'canonical-entity-zoo';
   // Orthographic rasters are provider-backed by contract and are exercised by
   // the canonical worker fixture below, not admitted as fake inline geometry.
@@ -4061,12 +4148,25 @@ async function run(): Promise<void> {
     if (request === boundaryRequest || request === mixedAreaRequest) continue;
     remainingAdmissions.push(await canonicalizeLegacyRequest(viewer, request));
   }
+  for (const request of orientedRasterRequests) {
+    remainingAdmissions.push(await canonicalizeLegacyRequest(viewer, request));
+  }
   const zooMutation = viewer.publishCanonicalRepresentations(remainingAdmissions);
   for (const binding of zooMutation.bindings) {
     admittedGenerations.set(binding.key.slot.entityId, binding.generation);
   }
   state.entityCount = zooMutation.entities;
   state.proxyCount = zooMutation.proxies;
+  const cameraMeasurement = viewer.measureRasterDepthSample('pinhole-depth-image', 2, 2);
+  if (
+    Math.abs(cameraMeasurement.sourcePosition.x - (BASE[0] + 5.875)) > 1e-7 ||
+    Math.abs(cameraMeasurement.sourcePosition.y - (BASE[1] + 12.875)) > 1e-7 ||
+    Math.abs(cameraMeasurement.sourcePosition.z - (BASE[2] + 11)) > 1e-7
+  ) {
+    throw new Error(
+      `pinhole depth measurement did not retain source camera semantics: ${JSON.stringify(cameraMeasurement)}`,
+    );
+  }
 
   const referencedSurveyPointAdmission = remainingAdmissions.find(
     ({ admission }) => admission.entity.id === 'survey-point',

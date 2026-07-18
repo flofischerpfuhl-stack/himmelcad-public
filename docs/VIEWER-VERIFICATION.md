@@ -924,6 +924,22 @@ loads the checksum-pinned panorama/orthoraster fixtures and repeats the source
 measurement. Canonical validation also rejects depth/mapping combinations that
 have no geometric meaning before a renderer or measurement path can see them.
 
+Inline oriented images no longer stop at canonical validation. A Planar raster
+is tessellated over its complete pixel footprint, evaluates the authored
+column-major homography at every cell boundary and embeds the result in the
+exact local plane frame. An undistorted Pinhole raster produces a textured
+presentation plane from the canonical intrinsics and rigid camera pose; its
+configured plane distance is presentation-only. Attached camera depth is not
+used to deform that main-view plane and remains the separate source
+measurement authority. Distorted, equirectangular and namespaced camera models
+still fail closed unless their proper station/evaluator path is selected. The
+browser scene now contains 28 entities and 36 proxies and checks a Pinhole
+`OpticalAxisDepth` sample analytically to `1e-7` after pose application. Both
+explicit backends passed; the final forced WebGL2 run on the physical Intel HD
+Graphics 630 reported 4.3 ms maximum CPU submit, and the WebGPU correctness run
+reported 3.3 ms. This closes inline Planar/Pinhole presentation, not the still
+open provider-prepared Planar/Camera streaming path.
+
 The real provider boundary is separately verified: 9 focused E57 tests pass
 posed f64 point transcoding, immutable embedded images, exact camera semantics,
 scan association, cancellation and tamper/invalid-intrinsic failures; 5 focused
