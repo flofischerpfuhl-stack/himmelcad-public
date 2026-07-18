@@ -395,7 +395,7 @@ try {
   // two transformed tiles, two external JSON glTFs and two legacy-metadata fixtures.
   // The canonical zoo also includes one immutable entity-reference block plus
   // the planar and pinhole oriented-image contracts.
-  assert.equal(state.entityCount, realData ? 38 : 29);
+  assert.equal(state.entityCount, realData ? 39 : 30);
   assert(
     state.proxyCount >= 24,
     `expected mixed inline and provider render proxies, received ${String(state.proxyCount)}`,
@@ -759,6 +759,20 @@ try {
   assert(
     materializedAreaHit,
     `materialized area revision must drive exact picking: ${JSON.stringify(state.materializedAreaPick)}`,
+  );
+  const conicMidpointHit = state.conicPick?.candidates?.find(
+    (candidate) =>
+      candidate.address.entityId === 'rational-conic-arc' &&
+      candidate.snapKind === 'midpoint' &&
+      worldClose(
+        candidate.worldPosition,
+        { x: 6_378_109.125, y: 5_399_992.916666667, z: 514.75 },
+        1e-7,
+      ),
+  );
+  assert(
+    conicMidpointHit,
+    `rational conic midpoint must remain analytic: ${JSON.stringify(state.conicPick)}`,
   );
   assert.deepEqual(state.mixedHeightLifecycle, {
     orbitRejected: true,

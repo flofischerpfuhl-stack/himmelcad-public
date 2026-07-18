@@ -1003,6 +1003,22 @@ WebGPU CPU adapter correctness run reports 1.8 ms. The full Core run reaches
 144 passing viewer/shared tests but is not recorded as a green gate because
 two concurrently modified PhotoLab matching tests fail outside this lane.
 
+### V2 canonical conic checkpoint
+
+`CurveGeometry::ConicArc` is one exact rational quadratic with unit endpoint
+weights and a positive authored middle-control weight. It therefore retains
+elliptic, parabolic and hyperbolic arc identity without converting the source
+to an app-owned polyline or approximate spline. Canonical validation rejects
+non-positive and non-finite weights; the shared Render-Core adaptively
+tessellates the homogeneous evaluator while keeping exact endpoints and the
+analytic parameter midpoint as semantic Source snaps.
+
+Generated TypeScript bindings and the WASM target check pass. The complete
+Render-Core suite is 316/316 and all 71 viewer-package tests pass. Both explicit
+browser backends verify the exact f64 conic midpoint in the 30-entity/38-proxy
+scene. Forced WebGL2 on the physical Intel HD Graphics 630 reports 2.9 ms
+maximum CPU submit; the WebGPU CPU adapter correctness run reports 1.3 ms.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

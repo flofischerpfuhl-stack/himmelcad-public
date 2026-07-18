@@ -146,8 +146,9 @@ von echten V2-Lücken:
 
 - Vorhanden und zu erhalten sind stabile kanonische Entity-/Revisionshüllen,
   optionale Z-Werte, alle derzeit deklarierten Built-in-Typen, analytische
-  Kreis-/Bogen-/Ellipsen-/Spline-/Klothoiden-/Composite-Kurven, Area-Ringe mit
-  Löchern und assoziativen Kurven, TIN/Grid/Surface/Solid-Repräsentationen,
+  Kreis-/Bogen-/Ellipsen-, rational-quadratische Kegelschnitt-, Spline-,
+  Klothoiden- und Composite-Kurven, Area-Ringe mit Löchern und assoziativen
+  Kurven, TIN/Grid/Surface/Solid-Repräsentationen,
   Alignment-Bänder und Böschungsresultate, Raster/Pointcloud/Splat/Panorama,
   Text/Label/Dimension, content-addressed Präsentationsressourcen,
   versionsgeprüfte Blockdefinitionen einschließlich Verschachtelungszyklen und
@@ -157,10 +158,14 @@ von echten V2-Lücken:
   ist nur über eine explizite locked-plan-Präsentation kompilierbar; eine
   eigenständige materialisierte XYZ-Revision ersetzt denselben stabilen Slot für
   3D.
-- Reale verbleibende Schema-Lücken sind allgemeine Kegelschnittbreite jenseits
-  Kreis/Ellipse, mehrere authored UV-Sets für Inline-Meshes sowie ein typisierter
-  Vererbungs-/Override-Vertrag für Blockinstanz-Attribute und -Stile statt eines
-  opaken Override-Hashes.
+- Der zweite V2-Slice ergänzt `ConicArc` als exakten rational-quadratischen
+  Kegelschnitt. Positive Kontrollgewichte unter, gleich und über eins bilden
+  elliptische, parabolische und hyperbolische Bögen im kanonischen Rust-Vertrag
+  ab; Bindings, adaptive Tessellation und analytische Source-Snaps teilen diesen
+  Typ auf WebGPU und WebGL2.
+- Reale verbleibende Schema-Lücken sind mehrere authored UV-Sets für
+  Inline-Meshes sowie ein typisierter Vererbungs-/Override-Vertrag für
+  Blockinstanz-Attribute und -Stile statt eines opaken Override-Hashes.
 - Reale verbleibende Gate-Lücken sind die Aufnahme jeder vorhandenen
   Kurvenvariante und Plane-/Definition-Variante in den gemeinsamen Browser-Zoo,
   manipulierte Referenzfälle für die neuen Breiten und der vollständige

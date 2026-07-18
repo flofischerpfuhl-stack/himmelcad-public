@@ -112,7 +112,7 @@ impl From<GpuFrameError> for CadCurveError {
     }
 }
 
-/// Tessellates line, polyline, circle, arc, ellipse, clothoid, NURBS and composite curves.
+/// Tessellates line, polyline, circle, conic, clothoid, NURBS and composite curves.
 pub fn tessellate_curve(
     curve: &CurveGeometry,
     options: CurveTessellationOptions,
@@ -159,6 +159,7 @@ fn authored_curve_closed(curve: &CurveGeometry) -> bool {
         CurveGeometry::LineSegment { .. }
         | CurveGeometry::CircularArc { .. }
         | CurveGeometry::EllipticArc { .. }
+        | CurveGeometry::ConicArc { .. }
         | CurveGeometry::Clothoid { .. }
         | CurveGeometry::Composite { .. } => false,
     }
@@ -481,6 +482,17 @@ impl CurveBuilder {
                 *plane,
                 Some((*start_parameter, *sweep_parameter)),
             ),
+            CurveGeometry::ConicArc {
+                start,
+                control,
+                end,
+                control_weight,
+            } => self.conic_arc(
+                self.position(*start)?,
+                self.position(*control)?,
+                self.position(*end)?,
+                *control_weight,
+            ),
             CurveGeometry::Clothoid {
                 start,
                 start_tangent,
@@ -594,6 +606,36 @@ impl CurveBuilder {
             self.parametric_closed(evaluate)?;
             self.push_semantic_snap(center, SnapKind::Point)
         }
+    }
+
+    fn conic_arc(
+        &mut self,
+        start: DVec3,
+        control: DVec3,
+        end: DVec3,
+        control_weight: f64,
+    ) -> Result<(), CadCurveError> {
+        if !control_weight.is_finite()
+            || control_weight <= 0.0
+            || start == control
+            || control == end
+            || start == end
+            || (control - start).cross(end - start).length_squared() <= f64::EPSILON
+        {
+            return Err(CadCurveError::InvalidGeometry);
+        }
+        let evaluate = |parameter: f64| {
+            let inverse = 1.0 - parameter;
+            let start_basis = inverse * inverse;
+            let control_basis = 2.0 * control_weight * parameter * inverse;
+            let end_basis = parameter * parameter;
+            let denominator = start_basis + control_basis + end_basis;
+            (start * start_basis + control * control_basis + end * end_basis) / denominator
+        };
+        self.adaptive_parametric(0.0, 1.0, &evaluate)?;
+        self.push_semantic_snap(start, SnapKind::Vertex)?;
+        self.push_semantic_snap(end, SnapKind::Vertex)?;
+        self.push_semantic_snap(evaluate(0.5), SnapKind::Midpoint)
     }
 
     fn parametric_closed(&mut self, evaluate: impl Fn(f64) -> DVec3) -> Result<(), CadCurveError> {
@@ -1389,6 +1431,28 @@ mod tests {
         .expect("explicit view-plane display");
         assert!((displayed.segments[0].end.z - 123.0).abs() < f64::EPSILON);
         assert!((displayed.segments[0].start.z - 500.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn rational_quadratic_conic_preserves_exact_endpoints_and_midpoint() {
+        let curve = CurveGeometry::ConicArc {
+            start: position(0.0, 0.0),
+            control: position(2.0, 3.0),
+            end: position(4.0, 0.0),
+            control_weight: 2.0,
+        };
+        let tessellated = tessellate_curve(&curve, options()).expect("hyperbolic conic arc");
+        let expected_midpoint = WorldVec3 {
+            x: 2.0,
+            y: 2.0,
+            z: 500.0,
+        };
+
+        assert_eq!(tessellated.segments.first().expect("first").start.x, 0.0);
+        assert_eq!(tessellated.segments.last().expect("last").end.x, 4.0);
+        assert!(tessellated.semantic_snaps.iter().any(|candidate| {
+            candidate.snap_kind == SnapKind::Midpoint && candidate.position == expected_midpoint
+        }));
     }
 
     #[test]

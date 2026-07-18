@@ -92,6 +92,7 @@ interface BrowserValidationState {
   materializedParcelPick: KernelPickResult | null;
   materializedSurveyPick: KernelPickResult | null;
   materializedAreaPick: KernelPickResult | null;
+  conicPick: KernelPickResult | null;
   mixedHeightLifecycle: {
     readonly orbitRejected: boolean;
     readonly planProxyCount: number;
@@ -388,6 +389,11 @@ const MATERIALIZED_AREA_VERTEX = {
   y: BASE[1] - 8,
   z: BASE[2] + 0.75,
 } as const;
+const CONIC_MIDPOINT = {
+  x: BASE[0] - 28,
+  y: BASE[1] - 22 / 3,
+  z: BASE[2] + 2,
+} as const;
 const EXTENSION_TOP = {
   x: BASE[0] - 25,
   y: BASE[1] + 10,
@@ -471,6 +477,7 @@ const state: BrowserValidationState = {
   materializedParcelPick: null,
   materializedSurveyPick: null,
   materializedAreaPick: null,
+  conicPick: null,
   mixedHeightLifecycle: null,
   extensionPick: null,
   tilesMetadata: null,
@@ -3207,6 +3214,25 @@ function entityZoo(): LegacyEntityRequest[] {
       style: style([0.96, 0.72, 0.16, 1]),
     },
     {
+      entityId: 'rational-conic-arc',
+      proxyId: 'rational-conic-arc@1',
+      geometry: {
+        kind: 'curve',
+        curve: {
+          kind: 'conicArc',
+          start: point(-34, -14, 2),
+          control: point(-28, -4, 2),
+          end: point(-22, -14, 2),
+          controlWeight: 2,
+        },
+      },
+      placement: placement(),
+      chordTolerance: 0.005,
+      maximumCurveSegments: 1024,
+      lineWidth: 3,
+      style: style([0.82, 0.32, 1, 1]),
+    },
+    {
       entityId: 'open-surface',
       proxyId: 'open-surface@1',
       evaluatedMesh: requiredOpenSurfaceTopology().admission,
@@ -5504,6 +5530,8 @@ async function run(): Promise<void> {
   state.materializedSurveyPick = await viewer.pick(640, 360, 3);
   setFocusedTopCamera(viewer, MATERIALIZED_AREA_VERTEX);
   state.materializedAreaPick = await viewer.pick(640, 360, 3);
+  setFocusedTopCamera(viewer, CONIC_MIDPOINT);
+  state.conicPick = await viewer.pick(640, 360, 3);
   setFocusedTopCamera(viewer, EXTENSION_TOP);
   state.extensionPick = await viewer.pick(640, 360, 2);
   setFocusedTopCamera(viewer, {

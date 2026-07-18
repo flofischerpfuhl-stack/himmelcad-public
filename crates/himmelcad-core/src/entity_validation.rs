@@ -457,6 +457,25 @@ fn validate_curve(curve: &CurveGeometry) -> Result<(), EntityValidationError> {
                 return Err(EntityValidationError::InvalidCurve);
             }
         }
+        CurveGeometry::ConicArc {
+            start,
+            control,
+            end,
+            control_weight,
+        } => {
+            for position in [start, control, end] {
+                validate_position(*position)?;
+            }
+            if same_position(*start, *control)
+                || same_position(*control, *end)
+                || same_position(*start, *end)
+                || conic_control_polygon_degenerate(*start, *control, *end)
+                || !control_weight.is_finite()
+                || *control_weight <= 0.0
+            {
+                return Err(EntityValidationError::InvalidCurve);
+            }
+        }
         CurveGeometry::Clothoid {
             start,
             start_tangent,
@@ -509,6 +528,29 @@ fn validate_curve(curve: &CurveGeometry) -> Result<(), EntityValidationError> {
         }
     }
     Ok(())
+}
+
+fn conic_control_polygon_degenerate(start: Position, control: Position, end: Position) -> bool {
+    let first = [control.x - start.x, control.y - start.y];
+    let second = [end.x - start.x, end.y - start.y];
+    let xy_cross = first[0] * second[1] - first[1] * second[0];
+    match (start.z, control.z, end.z) {
+        (Some(start_z), Some(control_z), Some(end_z)) => {
+            let first_z = control_z - start_z;
+            let second_z = end_z - start_z;
+            let cross = [
+                first[1] * second_z - first_z * second[1],
+                first_z * second[0] - first[0] * second_z,
+                xy_cross,
+            ];
+            cross
+                .iter()
+                .map(|component| component * component)
+                .sum::<f64>()
+                <= f64::EPSILON
+        }
+        _ => xy_cross.abs() <= f64::EPSILON,
+    }
 }
 
 fn validate_area(area: &AreaGeometry) -> Result<(), EntityValidationError> {
@@ -1752,6 +1794,66 @@ mod tests {
         };
 
         assert_eq!(validate_geometry_object(&geometry), Ok(()));
+    }
+
+    #[test]
+    fn rational_quadratic_conic_requires_a_positive_finite_control_weight() {
+        let conic = |control_weight| GeometryObject::Curve {
+            curve: Box::new(CurveGeometry::ConicArc {
+                start: Position {
+                    x: 0.0,
+                    y: 0.0,
+                    z: Some(5.0),
+                },
+                control: Position {
+                    x: 2.0,
+                    y: 3.0,
+                    z: Some(5.0),
+                },
+                end: Position {
+                    x: 4.0,
+                    y: 0.0,
+                    z: Some(5.0),
+                },
+                control_weight,
+            }),
+        };
+
+        assert_eq!(validate_geometry_object(&conic(0.5)), Ok(()));
+        assert_eq!(validate_geometry_object(&conic(1.0)), Ok(()));
+        assert_eq!(validate_geometry_object(&conic(2.0)), Ok(()));
+        assert_eq!(
+            validate_geometry_object(&conic(0.0)),
+            Err(EntityValidationError::InvalidCurve)
+        );
+        assert_eq!(
+            validate_geometry_object(&conic(f64::INFINITY)),
+            Err(EntityValidationError::InvalidCurve)
+        );
+        let degenerate = GeometryObject::Curve {
+            curve: Box::new(CurveGeometry::ConicArc {
+                start: Position {
+                    x: 0.0,
+                    y: 0.0,
+                    z: None,
+                },
+                control: Position {
+                    x: 1.0,
+                    y: 1.0,
+                    z: None,
+                },
+                end: Position {
+                    x: 2.0,
+                    y: 2.0,
+                    z: None,
+                },
+                control_weight: 1.0,
+            }),
+        };
+        assert_eq!(
+            validate_geometry_object(&degenerate),
+            Err(EntityValidationError::InvalidCurve)
+        );
     }
 
     #[test]

@@ -86,7 +86,23 @@ sweepParameter: number,
 /**
  * Explicit plane for a spatial arc. When absent, the XY plane is used.
  */
-plane: PlaneDefinition | null, } | { "kind": "clothoid",
+plane: PlaneDefinition | null, } | { "kind": "conicArc",
+/**
+ * First point on the conic.
+ */
+start: Position,
+/**
+ * Middle control position; it does not generally lie on the conic.
+ */
+control: Position,
+/**
+ * Last point on the conic.
+ */
+end: Position,
+/**
+ * Positive homogeneous weight of `control`; both endpoint weights are one.
+ */
+controlWeight: number, } | { "kind": "clothoid",
 /**
  * Start position.
  */
