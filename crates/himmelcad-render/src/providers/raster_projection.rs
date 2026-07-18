@@ -441,7 +441,7 @@ mod tests {
         let optical = raster(mapping, Some(DepthSemantics::OpticalAxisDepth));
         assert_eq!(
             project_raster_sample(&optical, 1.5, 1.5, Some(10.0)),
-            Err(RasterProjectionError::UnsupportedDepthSemantics)
+            Err(RasterProjectionError::InvalidContract)
         );
     }
 

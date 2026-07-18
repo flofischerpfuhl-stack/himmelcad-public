@@ -733,6 +733,7 @@ fn validate_raster(raster: &RasterImageGeometry) -> Result<(), EntityValidationE
         }
     );
     if let Some(depth) = &raster.depth {
+        validate_raster_depth_mapping(&raster.mapping, depth.sampling.semantics)?;
         validate_resource(&depth.values)?;
         if let Some(validity) = &depth.validity {
             validate_resource(&validity.resource)?;
@@ -763,6 +764,35 @@ fn validate_raster(raster: &RasterImageGeometry) -> Result<(), EntityValidationE
         )?;
     }
     Ok(())
+}
+
+fn validate_raster_depth_mapping(
+    mapping: &RasterMapping,
+    semantics: crate::entity_model::DepthSemantics,
+) -> Result<(), EntityValidationError> {
+    use crate::entity_model::DepthSemantics;
+
+    match (mapping, semantics) {
+        (RasterMapping::OrthoGrid(_), DepthSemantics::ElevationZ)
+        | (RasterMapping::Camera { .. }, DepthSemantics::RayDistance)
+        | (
+            RasterMapping::Camera {
+                model: CameraModel::Pinhole { .. } | CameraModel::Extension { .. },
+                ..
+            },
+            DepthSemantics::OpticalAxisDepth,
+        )
+        | (RasterMapping::Camera { .. }, DepthSemantics::ElevationZ) => Ok(()),
+        (RasterMapping::OrthoGrid(_), _)
+        | (RasterMapping::Planar { .. }, _)
+        | (
+            RasterMapping::Camera {
+                model: CameraModel::Equirectangular,
+                ..
+            },
+            DepthSemantics::OpticalAxisDepth,
+        ) => Err(EntityValidationError::InvalidRaster),
+    }
 }
 
 fn validate_solid(solid: &SolidGeometry) -> Result<(), EntityValidationError> {
@@ -1593,6 +1623,79 @@ mod tests {
                 raster: Box::new(raster),
             }),
             Err(EntityValidationError::InvalidRaster)
+        );
+    }
+
+    #[test]
+    fn raster_depth_semantics_require_a_geometrically_defined_mapping() {
+        let mut raster = ortho_raster();
+        raster.depth.as_mut().expect("depth").sampling.semantics = DepthSemantics::OpticalAxisDepth;
+        assert_eq!(
+            validate_geometry_object(&GeometryObject::RasterImage {
+                raster: Box::new(raster.clone()),
+            }),
+            Err(EntityValidationError::InvalidRaster)
+        );
+
+        raster.depth.as_mut().expect("depth").sampling.semantics = DepthSemantics::ElevationZ;
+        raster.mapping = RasterMapping::Planar {
+            homography: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            frame: PlaneFrame {
+                origin: Vector3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                u_axis: Vector3 {
+                    x: 1.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                v_axis: Vector3 {
+                    x: 0.0,
+                    y: 1.0,
+                    z: 0.0,
+                },
+            },
+        };
+        assert_eq!(
+            validate_geometry_object(&GeometryObject::RasterImage {
+                raster: Box::new(raster.clone()),
+            }),
+            Err(EntityValidationError::InvalidRaster)
+        );
+
+        raster.mapping = camera_mapping(
+            CameraModel::Equirectangular,
+            Vector3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        );
+        raster.depth.as_mut().expect("depth").sampling.semantics = DepthSemantics::OpticalAxisDepth;
+        assert_eq!(
+            validate_geometry_object(&GeometryObject::RasterImage {
+                raster: Box::new(raster.clone()),
+            }),
+            Err(EntityValidationError::InvalidRaster)
+        );
+
+        if let RasterMapping::Camera { model, .. } = &mut raster.mapping {
+            *model = CameraModel::Pinhole {
+                focal_x: 1_000.0,
+                focal_y: 1_000.0,
+                center_x: 1.0,
+                center_y: 1.0,
+                distortion_model: None,
+                distortion_parameters: Vec::new(),
+            };
+        }
+        assert_eq!(
+            validate_geometry_object(&GeometryObject::RasterImage {
+                raster: Box::new(raster),
+            }),
+            Ok(())
         );
     }
 
