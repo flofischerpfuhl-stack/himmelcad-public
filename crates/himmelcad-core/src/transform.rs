@@ -141,6 +141,8 @@ pub enum GridFileFormat {
     GeodeticTiff,
     /// PROJ ctable binary (legacy NADCON-style).
     Ctable,
+    /// Trimble GGF vertical/geoid grid (proprietary layout; clean-room readable).
+    Ggf,
     /// Unknown but present; PROJ may still open it via `+grids=`.
     Unrecognized,
 }
@@ -153,6 +155,7 @@ impl GridFileFormat {
             Self::Gtx => "gtx",
             Self::GeodeticTiff => "geodeticTiff",
             Self::Ctable => "ctable",
+            Self::Ggf => "ggf",
             Self::Unrecognized => "unrecognized",
         }
     }
@@ -364,6 +367,23 @@ pub enum TransformStage {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         grids: Vec<GridFileRef>,
     },
+    /// Apply geoid undulation \(N\) from a vertical grid file (GGF, GTX, GTG, …).
+    ///
+    /// - `subtract_undulation = true`:  \(H = h - N\) (ellipsoid → gravity-related)
+    /// - `subtract_undulation = false`: \(h = H + N\) (gravity-related → ellipsoid)
+    ///
+    /// Horizontal coordinates are interpreted as geographic degrees (lon=x, lat=y)
+    /// unless `horizontal_is_projected` is set (then a PROJ inverse is required at runtime).
+    GeoidUndulation {
+        grid: GridFileRef,
+        subtract_undulation: bool,
+        /// When true, `x/y` are projected metres and must be converted via `geographic_crs`
+        /// before grid sampling (runtime responsibility).
+        #[serde(default)]
+        horizontal_is_projected: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        geographic_crs: Option<CrsDefinition>,
+    },
 }
 
 /// Full recipe. Apps persist this (or its frozen form) with products.
@@ -555,6 +575,27 @@ fn validate_stage(stage: &TransformStage) -> Result<(), TransformSpecError> {
             for grid in grids {
                 if grid.path.trim().is_empty() {
                     return Err(TransformSpecError::EmptyGridPath);
+                }
+            }
+            Ok(())
+        }
+        TransformStage::GeoidUndulation {
+            grid,
+            horizontal_is_projected,
+            geographic_crs,
+            ..
+        } => {
+            if grid.path.trim().is_empty() {
+                return Err(TransformSpecError::EmptyGridPath);
+            }
+            if *horizontal_is_projected {
+                match geographic_crs {
+                    Some(crs) => validate_crs_def(crs, "geoid geographic crs")?,
+                    None => {
+                        return Err(TransformSpecError::InvalidCrs(
+                            "geoid undulation on projected XY requires geographicCrs",
+                        ));
+                    }
                 }
             }
             Ok(())

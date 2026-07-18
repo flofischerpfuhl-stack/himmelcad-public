@@ -28,4 +28,5 @@ pub mod product_export;
 pub mod project_archive;
 pub mod raster_runtime;
 pub mod splat_tiler;
+pub mod grid_codecs;
 pub mod transform_runtime;

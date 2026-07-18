@@ -2,7 +2,7 @@
 
 **Branch:** `grok/pipeline-and-transform`  
 **Datum:** 2026-07-18  
-**Status:** Kern-Contract + Sidecar-Runtime v1 (Rust)
+**Status:** Kern-Contract + Sidecar-Runtime v1 (Rust) + **GGF clean-room codec**
 
 ---
 
