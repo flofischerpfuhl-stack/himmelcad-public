@@ -1208,6 +1208,25 @@ revision and version hash, then publish all expected representation bindings
 through slot-generation compare-and-swap. Stale geometry targets cannot reach a
 partial render-world mutation.
 
+### V3 completion checkpoint
+
+V3 closed on July 18, 2026 at 17:04 CEST after 1 hour 31 minutes of elapsed
+work. The final boundary gate compares the checksum-pinned 47-entity/56-proxy
+WebGPU and WebGL2 real-data screenshots. It reports frame RMSE `0.011007`,
+identical clear and opaque-region means, and exact matching blue and pink solid
+material pixels. The blue probe now occupies an unoccluded solid pixel and is
+the exact sRGB transfer `[129, 191, 243]` of its linear authored base style
+`[0.22, 0.52, 0.9]`; the one-channel-value tolerance was not relaxed.
+
+Together with the current 320/320 Render-Core, 7/7 viewer-WASM, wasm32 target,
+73/73 viewer-package and both explicit 38-entity/47-proxy browser gates, this
+closes the deterministic navigation, analysis-view, Source-pick, snap/Tab,
+selection/hover, transformjournal, clip/section and transparency requirements.
+The browser fixture retains ten worker ingests and zero main-thread provider
+decodes. Multi-partition section publication, reload/cancel/stale generations
+and bounded per-frame work remain covered by the ordinary Rust and host suites.
+V4 starts from this unchanged regression baseline.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

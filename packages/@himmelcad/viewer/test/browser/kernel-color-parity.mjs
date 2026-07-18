@@ -29,7 +29,7 @@ const opaqueRegions = [
   },
 ];
 const materialPixels = [
-  { name: 'blue-solid', x: 735, y: 475, expected: [123, 170, 233] },
+  { name: 'blue-solid', x: 700, y: 400, expected: [129, 191, 243] },
   { name: 'pink-solid', x: 520, y: 290, expected: [246, 144, 221] },
 ];
 

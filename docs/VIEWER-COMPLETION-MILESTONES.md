@@ -28,8 +28,8 @@ Fallback zählen nicht als Abschluss.
 | A | Foundation A | abgeschlossen | historisch, nicht exakt erfasst | 2026-07-17 | nicht rückwirkend erfunden |
 | V1 | Imaging und Heavy-Geometry-Verträge | abgeschlossen | 2026-07-18 07:21 CEST | 2026-07-18 11:33 CEST | 4 h 12 min verstrichene Arbeitszeit |
 | V2 | Kanonische Entity- und Definitionsbreite | abgeschlossen | 2026-07-18 11:33 CEST | 2026-07-18 15:33 CEST | 4 h 00 min verstrichene Arbeitszeit |
-| V3 | Darstellung, Interaktion, Messung und Schnitte | aktiv | 2026-07-18 15:33 CEST | – | läuft |
-| V4 | Civil-Scale, Hardware und Backend-Härtung | offen | – | – | – |
+| V3 | Darstellung, Interaktion, Messung und Schnitte | abgeschlossen | 2026-07-18 15:33 CEST | 2026-07-18 17:04 CEST | 1 h 31 min verstrichene Arbeitszeit |
+| V4 | Civil-Scale, Hardware und Backend-Härtung | aktiv | 2026-07-18 17:04 CEST | – | läuft |
 | V5 | Stabile Viewer-Fassade und App-Ready-Gate | offen | – | – | – |
 
 ## V1 – Imaging und Heavy-Geometry-Verträge
@@ -295,6 +295,19 @@ V3 macht aus vollständiger Geometrie einen vollständigen CAD-View.
   Placement-Commit, Undo und Redo. Es wurde dafür kein zweiter App-seitiger
   Commandpfad eingeführt.
 
+### Abschluss 2026-07-18 17:04 CEST
+
+V3 ist nach 1 h 31 min tatsächlich verstrichener Arbeitszeit abgeschlossen.
+Alle Darstellungseigenschaften, Navigations- und Analyseviews, Source-Picks,
+Bildmessungen, CAD-Snaps, Clip-/Schnittprodukte, Transformjournal- und
+Transparenzpfade bleiben im gemeinsamen Rust/wgpu-Kernel. Die abschließende
+Bildparität prüft die checksum-gepinnten WebGPU-/WebGL2-Real-Data-Aufnahmen mit
+einem Frame-RMSE von 0,011007 sowie identischen Clear-, Opaque- und
+Materialfarben. Der freie blaue Solid-Probe-Punkt entspricht auf beiden
+Backends exakt der sRGB-Übertragung seines linearen Basisstils; die strikte
+Toleranz von einem 8-Bit-Kanalwert bleibt unverändert. V4 beginnt unmittelbar
+mit demselben permanenten Foundation-/V1-/V2-/V3-Regressionsstand.
+
 ## V4 – Civil-Scale, Hardware und Backend-Härtung
 
 V4 belegt, dass der vollständige Viewer nicht nur mit kleinen Testdaten
@@ -388,10 +401,16 @@ Zeit wird nicht geschätzt oder nachträglich rekonstruiert:
 
 | Meilenstein | Start | Ende | Aktive Dauer | Anlass/Ergebnis |
 | --- | --- | --- | --- | --- |
-| V1 | 2026-07-18 07:21 CEST | läuft | läuft | Prepared Raster/Depth-Vertrag und Q11 |
+| V1 | 2026-07-18 07:21 CEST | 2026-07-18 11:33 CEST | 4 h 12 min | Imaging und Heavy-Geometry-Verträge abgeschlossen |
+| V2 | 2026-07-18 11:33 CEST | 2026-07-18 15:33 CEST | 4 h 00 min | Kanonische Entity- und Definitionsbreite abgeschlossen |
+| V3 | 2026-07-18 15:33 CEST | 2026-07-18 17:04 CEST | 1 h 31 min | Darstellung, Interaktion, Messung und Schnitte abgeschlossen |
+| V4 | 2026-07-18 17:04 CEST | läuft | läuft | Civil-Scale-, Hardware- und Backend-Härtung gestartet |
 
 ### Abschlussnachweise
 
 | Meilenstein | Commit(s) | Gates und Messwerte | Aktive Zeit | Kalenderdauer |
 | --- | --- | --- | --- | --- |
 | A | siehe `docs/VIEWER-VERIFICATION.md` | Foundation-A-Gates | nicht rückwirkend messbar | nicht rückwirkend messbar |
+| V1 | siehe V1-Abschluss und `docs/VIEWER-VERIFICATION.md` | 324 Render-Core-, 7 Viewer-WASM-, 4 Decode-WASM-, 71 Viewer-Pakettests; 29 Entities/37 Proxies | 4 h 12 min | 4 h 12 min |
+| V2 | `aecf700`, `c85d298` und vorherige V2-Slices | 38 Entities/47 Proxies; checksum-gepinnte DXF-/IFC-/LandXML-Providerpfade auf WebGPU/WebGL2 | 4 h 00 min | 4 h 00 min |
+| V3 | `b2d9a7f`, `c4b017b`, `f1fef3f` und V3-Abschlusscommit | 320 Render-Core-, 7 Viewer-WASM-, 73 Viewer-Pakettests; 38 Entities/47 Proxies; Real-Data-Farbparität RMSE 0,011007 | 1 h 31 min | 1 h 31 min |
