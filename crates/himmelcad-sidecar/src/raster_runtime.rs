@@ -9,6 +9,8 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use fs2::FileExt;
+use himmelcad_core::canonical_document::EntityVersionRef;
+use himmelcad_core::canonical_resources::CanonicalResourceRef;
 use himmelcad_core::hash::ObjectHash;
 use himmelcad_core::photolab_jobs::CancellationToken;
 use serde::{Deserialize, Serialize};
@@ -22,6 +24,9 @@ use tokio::task::JoinSet;
 use crate::viewer_raster_manifest::{
     publish_prepared_elevation_hierarchy, PreparedElevationHierarchyError,
     PreparedElevationHierarchyOptions,
+};
+use crate::viewer_raster_surface_manifest::{
+    publish_prepared_raster_surface_hierarchy, PreparedRasterSurfaceHierarchyError,
 };
 
 const PYRAMID_TILE_SIZE: u32 = 512;
@@ -183,6 +188,17 @@ pub struct OrthomosaicRequest {
     pub sources: Vec<OrthophotoSource>,
     pub order: MosaicOrder,
     pub resampling: RasterResampling,
+    pub elevation_support: Box<OrthomosaicElevationSupport>,
+}
+
+/// Exact DEM authority and prepared pyramid used to drape an orthomosaic.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrthomosaicElevationSupport {
+    pub dataset_root: String,
+    pub summary: RasterBuildSummary,
+    pub source_surface: EntityVersionRef,
+    pub derivation: CanonicalResourceRef,
 }
 
 /// Resampling choices accepted by the curated worker.
@@ -346,6 +362,8 @@ pub enum RasterRuntimeError {
     BackgroundTask(String),
     #[error(transparent)]
     ViewerHierarchy(#[from] PreparedElevationHierarchyError),
+    #[error(transparent)]
+    ViewerRasterSurface(#[from] PreparedRasterSurfaceHierarchyError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -697,6 +715,21 @@ impl RasterRuntime {
             })
             .await
             .map_err(|error| RasterRuntimeError::BackgroundTask(error.to_string()))??;
+        } else if let RasterProductRequest::Orthomosaic(request) = &command.product {
+            let hierarchy_root = job_directory.clone();
+            let hierarchy_summary = summary.clone();
+            let hierarchy_support = request.elevation_support.clone();
+            let hierarchy_cancellation = cancellation.clone();
+            tokio::task::spawn_blocking(move || {
+                publish_prepared_raster_surface_hierarchy(
+                    &hierarchy_root,
+                    &hierarchy_summary,
+                    &hierarchy_support,
+                    &hierarchy_cancellation,
+                )
+            })
+            .await
+            .map_err(|error| RasterRuntimeError::BackgroundTask(error.to_string()))??;
         }
         progress(RasterProgress {
             phase: RasterPhase::Committing,
@@ -741,6 +774,7 @@ impl RasterRuntime {
                 }
             }
             RasterProductRequest::Orthomosaic(request) => {
+                self.canonical_input_directory(&request.elevation_support.dataset_root)?;
                 for source in &request.sources {
                     let canonical = self.canonical_input(&source.warp_vrt_path)?;
                     let output = self
@@ -1404,6 +1438,20 @@ impl RasterRuntime {
 
     fn canonical_input(&self, path: &str) -> Result<PathBuf, RasterRuntimeError> {
         let canonical = canonical_file(Path::new(path))?;
+        if self
+            .config
+            .input_roots
+            .iter()
+            .any(|root| canonical.starts_with(root))
+        {
+            Ok(canonical)
+        } else {
+            Err(RasterRuntimeError::PathOutsideRoots { path: path.into() })
+        }
+    }
+
+    fn canonical_input_directory(&self, path: &str) -> Result<PathBuf, RasterRuntimeError> {
+        let canonical = canonical_directory(Path::new(path))?;
         if self
             .config
             .input_roots

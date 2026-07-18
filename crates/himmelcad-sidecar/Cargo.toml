@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 himmelcad-core = { path = "../himmelcad-core" }
 himmelcad-io = { path = "../himmelcad-io" }
+himmelcad-render = { path = "../himmelcad-render" }
 himmelcad-spatial = { path = "../himmelcad-spatial" }
 serde.workspace = true
 serde_json.workspace = true

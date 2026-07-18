@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use himmelcad_core::canonical_document::EntityVersionRef;
+use himmelcad_core::canonical_resources::CanonicalResourceRef;
 use himmelcad_core::entity::EntityId;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -87,9 +89,10 @@ use himmelcad_sidecar::orthophoto_prep::{
 use himmelcad_sidecar::product_export::{export_product, ProductExportError, ProductExportRequest};
 use himmelcad_sidecar::raster_runtime::{
     ElevationGeometrySource, ElevationInputTile, ElevationInterpolation, ElevationRasterRequest,
-    ElevationSurface, ElevationViewRange, GdalToolchainConfig, MosaicOrder, OrthomosaicRequest,
-    RasterBounds, RasterBuildCommand, RasterCrs, RasterGrid, RasterNoDataValue, RasterPhase,
-    RasterProductRequest, RasterProgress, RasterResampling, RasterRuntime,
+    ElevationSurface, ElevationViewRange, GdalToolchainConfig, MosaicOrder,
+    OrthomosaicElevationSupport, OrthomosaicRequest, RasterBounds, RasterBuildCommand, RasterCrs,
+    RasterGrid, RasterNoDataValue, RasterPhase, RasterProductRequest, RasterProgress,
+    RasterResampling, RasterRuntime,
 };
 use himmelcad_sidecar::splat_tiler::{tile_brush_ply, SplatTilerError};
 use himmelcad_sidecar::{
@@ -339,10 +342,7 @@ struct PreparedRasterProductJob {
     configuration: ProductRunConfiguration,
     project_root: PathBuf,
     dense_ply: Option<PathBuf>,
-    dem_dataset: Option<(
-        PathBuf,
-        himmelcad_sidecar::raster_runtime::RasterBuildSummary,
-    )>,
+    dem_dataset: Option<(PathBuf, crate::project_runtime::RasterArtifactRecord)>,
     alignment_dataset: Option<PathBuf>,
     colmap_executable: Option<PathBuf>,
     coordinate_frame_id: String,
@@ -2857,13 +2857,14 @@ fn prepare_raster_product_job(
             ProductRunConfiguration::Ortho { .. } => {
                 let (dem_root, dem_record) = projects
                     .latest_raster_dataset_for_lineage(PublishedRasterKind::Dem, &lineage)?;
+                let dem_evidence = ObjectHash::of_bytes(&serde_json::to_vec(&dem_record)?);
                 (
                     PhotolabJobKind::BuildOrthomosaic,
                     None,
-                    Some((dem_root, dem_record.summary)),
+                    Some((dem_root, dem_record)),
                     Some(alignment.root.clone()),
                     Some(development_colmap_executable()?),
-                    ObjectHash::of_bytes(alignment.root.to_string_lossy().as_bytes()),
+                    dem_evidence,
                 )
             }
             _ => anyhow::bail!("raster preparation needs a DEM or orthomosaic configuration"),
@@ -3123,9 +3124,10 @@ fn run_raster_product(
             fill_holes,
             ..
         } => {
-            let (dem_root, dem_summary) = prepared.dem_dataset.as_ref().ok_or_else(|| {
+            let (dem_root, dem_record) = prepared.dem_dataset.as_ref().ok_or_else(|| {
                 worker_error("invalidRasterInput", "orthomosaic has no DEM input")
             })?;
+            let dem_summary = &dem_record.summary;
             let alignment = prepared.alignment_dataset.as_ref().ok_or_else(|| {
                 worker_error("invalidRasterInput", "orthomosaic has no alignment input")
             })?;
@@ -3215,6 +3217,46 @@ fn run_raster_product(
                 sources,
                 order: MosaicOrder::EarlierOnTop,
                 resampling: RasterResampling::Bilinear,
+                elevation_support: Box::new({
+                    let source_surface = EntityVersionRef {
+                        id: EntityId(format!(
+                            "{}:raster:{}",
+                            prepared.coordinate_frame_id, dem_record.job_id
+                        )),
+                        revision: 1,
+                        version_hash: ObjectHash::of_bytes(
+                            &serde_json::to_vec(dem_record)
+                                .map_err(|error| worker_error("json", &error.to_string()))?,
+                        ),
+                    };
+                    let derivation_bytes = serde_json::to_vec(&serde_json::json!({
+                        "schemaId": "hcad.derivation.raster-surface-drape@1",
+                        "sourceSurface": source_surface,
+                        "orthomosaicJobId": prepared.operation_id,
+                        "orthomosaicConfiguration": prepared.configuration,
+                        "orthomosaicInputHash": prepared.input_hash,
+                        "evaluator": {
+                            "id": "hcad.bilinear-elevation-grid",
+                            "version": 1,
+                            "maximumSupportCellsPerAxis": 512,
+                            "sharedBoundary": "repeatByteExact",
+                        },
+                    }))
+                    .map_err(|error| worker_error("json", &error.to_string()))?;
+                    OrthomosaicElevationSupport {
+                        dataset_root: dem_root.to_string_lossy().into_owned(),
+                        summary: dem_summary.clone(),
+                        source_surface,
+                        derivation: CanonicalResourceRef {
+                            resource_id: format!(
+                                "{}:raster-surface-drape:{}",
+                                prepared.coordinate_frame_id, prepared.operation_id
+                            ),
+                            schema_id: "hcad.derivation.raster-surface-drape@1".into(),
+                            content_hash: ObjectHash::of_bytes(&derivation_bytes),
+                        },
+                    }
+                }),
             });
             (crs, grid, product)
         }

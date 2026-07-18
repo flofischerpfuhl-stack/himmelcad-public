@@ -873,10 +873,18 @@ pub fn build_elevation_raster_batch(
             height: raster.color_height,
             rgba8: &raster.rgba8,
         },
-        GpuAlphaMode::Opaque,
+        raster_alpha_mode(&raster.rgba8),
         *style,
     )?;
     Ok(batch.with_material(material))
+}
+
+fn raster_alpha_mode(rgba8: &[u8]) -> GpuAlphaMode {
+    if rgba8.chunks_exact(4).any(|pixel| pixel[3] != 255) {
+        GpuAlphaMode::Blend
+    } else {
+        GpuAlphaMode::Opaque
+    }
 }
 
 /// Uploads all GLB primitives while preserving one collision-free triangle-ID range.
@@ -1227,4 +1235,22 @@ fn mesh_vertices(primitive: &DecodedMeshPrimitive) -> Vec<GpuMeshVertexInput> {
             }),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::raster_alpha_mode;
+    use crate::GpuAlphaMode;
+
+    #[test]
+    fn raster_alpha_selects_blending_only_for_non_opaque_texels() {
+        assert_eq!(
+            raster_alpha_mode(&[10, 20, 30, 255, 40, 50, 60, 255]),
+            GpuAlphaMode::Opaque
+        );
+        assert_eq!(
+            raster_alpha_mode(&[10, 20, 30, 255, 40, 50, 60, 0]),
+            GpuAlphaMode::Blend
+        );
+    }
 }
