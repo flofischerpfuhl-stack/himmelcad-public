@@ -865,6 +865,18 @@ committed owners, five allocations, 80 resident bytes, five factory calls and
 zero staged owners. Forced WebGL2 reported 3.7 ms maximum CPU submit and the
 WebGPU correctness adapter reported 2.2 ms with that accounting active.
 
+Panorama station authority is now singular. The serialized panorama contains
+only its camera-mapped raster; the rigid camera-to-entity-local pose supplies
+both orientation and scan-station position, while depth remains attached only
+to that raster. Canonical validation rejects non-rigid or reflected poses,
+optical-axis depth on an equirectangular image, legacy duplicate depth and a
+second serialized `station`. The E57 provider preserves its exact imported
+pose and station-cloud association without copying the translation. The
+focused Core, canonical-provider and E57 tests, generated-binding drift gate,
+WASM check, all 70 viewer tests and the 26-entity/34-proxy browser scene passed.
+Forced WebGL2 on the physical Intel HD Graphics 630 reported 3.5 ms maximum
+CPU submit; the WebGPU CPU correctness adapter reported 1.3 ms.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

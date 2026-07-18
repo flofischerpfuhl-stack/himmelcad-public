@@ -1334,7 +1334,6 @@ mod tests {
                         },
                     }),
                 },
-                station,
                 station_point_cloud: None,
             }),
         };

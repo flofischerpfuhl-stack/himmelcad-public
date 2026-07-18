@@ -67,9 +67,11 @@ not smuggle in accidental product decisions.
     connectivity masks. The Foundation-A orthographic elevation path already
     has one pixel-centre convention; these additional imaging modes must reuse
     it rather than open a parallel renderer.
-12. Remove the remaining duplicate panorama depth authority and define one
+12. ~~Remove the remaining duplicate panorama depth authority and define one
     rigid camera-to-entity-local pose validation before panorama measurement is
-    expanded. This is catalog/conformance work, not an A blocker.
+    expanded.~~ **Resolved:** panorama image, depth and scan-station position
+    now have one authority: the camera-mapped raster and its validated rigid
+    camera-to-entity-local pose. A second serialized `station` is rejected.
 
 ## ChronoGit and TestFlight
 

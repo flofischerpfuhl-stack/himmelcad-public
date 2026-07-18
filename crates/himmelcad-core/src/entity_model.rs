@@ -791,8 +791,6 @@ pub struct StreamedGeometry {
 pub struct PanoramaGeometry {
     /// Equirectangular or vendor-specific panorama raster.
     pub image: RasterImageGeometry,
-    /// Exact entity-local scan station.
-    pub station: Vector3,
     /// Optional point-cloud entity measured from the same station.
     pub station_point_cloud: Option<EntityId>,
 }

@@ -956,18 +956,10 @@ fn validate_anchor(anchor: &AnnotationAnchor) -> Result<(), EntityValidationErro
 
 fn validate_panorama(panorama: &PanoramaGeometry) -> Result<(), EntityValidationError> {
     validate_raster(&panorama.image)?;
-    validate_vector(panorama.station)?;
-    let RasterMapping::Camera { model, pose } = &panorama.image.mapping else {
+    let RasterMapping::Camera { model, .. } = &panorama.image.mapping else {
         return Err(EntityValidationError::InvalidRaster);
     };
-    if !same_vector(
-        panorama.station,
-        Vector3 {
-            x: pose.0[12],
-            y: pose.0[13],
-            z: pose.0[14],
-        },
-    ) || matches!(
+    if matches!(
         (model, panorama.image.depth.as_ref()),
         (
             CameraModel::Equirectangular,
@@ -1280,12 +1272,6 @@ fn homography_determinant(matrix: [f64; 9]) -> f64 {
     matrix[0] * (matrix[4] * matrix[8] - matrix[5] * matrix[7])
         - matrix[1] * (matrix[3] * matrix[8] - matrix[5] * matrix[6])
         + matrix[2] * (matrix[3] * matrix[7] - matrix[4] * matrix[6])
-}
-
-fn same_vector(left: Vector3, right: Vector3) -> bool {
-    left.x.to_bits() == right.x.to_bits()
-        && left.y.to_bits() == right.y.to_bits()
-        && left.z.to_bits() == right.z.to_bits()
 }
 
 fn approximately_one(value: f64) -> bool {
@@ -1611,7 +1597,7 @@ mod tests {
     }
 
     #[test]
-    fn panorama_depth_lives_only_on_its_image_and_station_matches_pose() {
+    fn panorama_depth_and_station_live_only_on_the_camera_raster() {
         let station = Vector3 {
             x: 100.0,
             y: 200.0,
@@ -1622,7 +1608,6 @@ mod tests {
         raster.depth.as_mut().expect("depth").sampling.semantics = DepthSemantics::RayDistance;
         let mut panorama = PanoramaGeometry {
             image: raster,
-            station,
             station_point_cloud: None,
         };
         assert_eq!(
@@ -1638,14 +1623,15 @@ mod tests {
             .insert("depth".to_owned(), serde_json::Value::Null);
         assert!(serde_json::from_value::<PanoramaGeometry>(legacy).is_err());
 
-        panorama.station.x += 1.0;
-        assert_eq!(
-            validate_geometry_object(&GeometryObject::Panorama {
-                panorama: Box::new(panorama.clone()),
-            }),
-            Err(EntityValidationError::InvalidRaster)
-        );
-        panorama.station.x -= 1.0;
+        let mut duplicate_station = serde_json::to_value(&panorama).expect("panorama JSON");
+        duplicate_station
+            .as_object_mut()
+            .expect("panorama object")
+            .insert(
+                "station".to_owned(),
+                serde_json::json!({ "x": station.x, "y": station.y, "z": station.z }),
+            );
+        assert!(serde_json::from_value::<PanoramaGeometry>(duplicate_station).is_err());
         panorama
             .image
             .depth

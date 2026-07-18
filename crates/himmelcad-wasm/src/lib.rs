@@ -8716,7 +8716,7 @@ fn compile_panorama_entity(
         true,
         raster_binary_resources,
     )?;
-    let mesh = panorama_mesh(panorama, pose, depth_field, depth, validity, connectivity)?;
+    let mesh = panorama_mesh(pose, depth_field, depth, validity, connectivity)?;
     let geometry = GeometryObject::Surface3d {
         mesh: Box::new(mesh),
     };
@@ -9193,7 +9193,6 @@ fn ortho_grid_position(
 
 #[cfg(target_arch = "wasm32")]
 fn panorama_mesh(
-    panorama: &PanoramaGeometry,
     pose: Transform3d,
     depth_field: Option<&himmelcad_core::entity_model::DepthField>,
     depth: Option<&WasmDepthResource>,
@@ -9204,7 +9203,7 @@ fn panorama_mesh(
     if !pose.is_finite() || pose.determinant().abs() <= f64::EPSILON {
         return Err("panorama camera pose is non-invertible".to_owned());
     }
-    let center = DVec3::new(panorama.station.x, panorama.station.y, panorama.station.z);
+    let center = pose.transform_point3(DVec3::ZERO);
     if let (Some(field), Some(depth)) = (depth_field, depth) {
         if matches!(field.sampling.semantics, DepthSemantics::OpticalAxisDepth) {
             return Err("optical-axis depth is undefined for equirectangular panoramas".to_owned());

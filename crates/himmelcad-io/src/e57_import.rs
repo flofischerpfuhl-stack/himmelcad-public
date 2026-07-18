@@ -32,7 +32,7 @@ use himmelcad_core::entity::EntityId;
 use himmelcad_core::entity_model::{
     built_in_type, CameraModel, CanonicalEntity, EntityTypeId, GeometryObject, GeometryResource,
     PanoramaGeometry, RasterImageGeometry, RasterMapping, Representation, RepresentationAuthority,
-    RepresentationRole, Transform3d, Vector3,
+    RepresentationRole, Transform3d,
 };
 use himmelcad_core::entity_validation::{
     canonical_entity_version_hash, geometry_object_content_hash, validate_resolved_representation,
@@ -1629,11 +1629,6 @@ fn add_image_admission(
             GeometryObject::Panorama {
                 panorama: Box::new(PanoramaGeometry {
                     image: raster,
-                    station: Vector3 {
-                        x: pose.0[12],
-                        y: pose.0[13],
-                        z: pose.0[14],
-                    },
                     station_point_cloud: association.station_entity.clone(),
                 }),
             },
@@ -2119,22 +2114,17 @@ mod tests {
                 GeometryObject::Panorama { panorama } => {
                     assert!(panorama.image.depth.is_none());
                     assert_eq!(
-                        Vector3 {
-                            x: 10.0,
-                            y: 20.0,
-                            z: 30.0
-                        },
-                        panorama.station
-                    );
-                    assert_eq!(
                         Some(EntityId("entity-e57-test".to_owned())),
                         panorama.station_point_cloud
                     );
                     match &panorama.image.mapping {
                         RasterMapping::Camera {
                             model: CameraModel::Equirectangular,
-                            ..
-                        } => saw_spherical = true,
+                            pose,
+                        } => {
+                            assert_eq!([10.0, 20.0, 30.0], [pose.0[12], pose.0[13], pose.0[14]]);
+                            saw_spherical = true;
+                        }
                         RasterMapping::Camera {
                             model: CameraModel::Extension { model_id, .. },
                             ..

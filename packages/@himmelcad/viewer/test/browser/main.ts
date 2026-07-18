@@ -3383,7 +3383,6 @@ function entityZoo(): LegacyEntityRequest[] {
               },
             },
           },
-          station: { x: 18, y: -10, z: 4 },
           stationPointCloud: null,
         },
       },
