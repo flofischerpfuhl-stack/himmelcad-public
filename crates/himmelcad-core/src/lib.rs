@@ -29,3 +29,4 @@ pub mod photolab_products;
 pub mod photolab_project;
 pub mod project;
 pub mod transform;
+pub mod transform_geometry;

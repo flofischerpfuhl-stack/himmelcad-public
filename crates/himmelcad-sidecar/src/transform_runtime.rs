@@ -107,6 +107,8 @@ pub enum TransformRuntimeError {
     Ggf(#[from] GgfError),
     #[error("geoid undulation on projected XY requires a projected CRS (geographicCrs field)")]
     ProjectedGeoidMissingCrs,
+    #[error(transparent)]
+    Geometry(#[from] himmelcad_core::transform_geometry::GeometryTransformError),
 }
 
 impl TransformRuntime {
@@ -1413,6 +1415,7 @@ mod tests {
             out_of_bounds: OutOfBoundsPolicy::Error,
             area_of_interest: None,
             label: None,
+            geometry_policy: None,
         };
         let frozen = runtime.freeze_spec(&spec, &cancel).unwrap();
         let out = runtime
@@ -1491,6 +1494,7 @@ mod tests {
             out_of_bounds: OutOfBoundsPolicy::Error,
             area_of_interest: None,
             label: Some("wgs84-utm32".into()),
+            geometry_policy: None,
         };
         // Munich-ish
         let points = [WorldPoint::new(11.5, 48.0, 500.0)];
@@ -1572,6 +1576,7 @@ mod tests {
             out_of_bounds: OutOfBoundsPolicy::Error,
             area_of_interest: None,
             label: Some("ggf-gcg2016".into()),
+            geometry_policy: None,
         };
         // lon, lat, ellipsoidal height
         let points = [WorldPoint::new(11.5, 48.0, 500.0)];
@@ -1620,6 +1625,7 @@ mod tests {
             out_of_bounds: OutOfBoundsPolicy::Error,
             area_of_interest: None,
             label: None,
+            geometry_policy: None,
         };
         let err = runtime
             .transform_points(&spec, &[WorldPoint::new(0.0, 0.0, 100.0)], &cancel)
@@ -1666,6 +1672,7 @@ mod tests {
             out_of_bounds: OutOfBoundsPolicy::Error,
             area_of_interest: None,
             label: None,
+            geometry_policy: None,
         };
         let (_, result) = runtime
             .transform_points(&spec, &[WorldPoint::new(e, n, h)], &cancel)

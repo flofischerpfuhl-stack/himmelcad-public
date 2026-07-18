@@ -409,6 +409,9 @@ pub struct TransformSpec {
     pub area_of_interest: Option<GeographicArea>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Geometry-class policies (circle preserve, densify, text scale, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry_policy: Option<crate::transform_geometry::GeometryTransformPolicy>,
 }
 
 /// Immutable audit record after validation + grid inspection.
@@ -894,6 +897,7 @@ pub fn identity_spec() -> TransformSpec {
         out_of_bounds: OutOfBoundsPolicy::Error,
         area_of_interest: None,
         label: Some("identity".into()),
+        geometry_policy: None,
     }
 }
 
@@ -945,6 +949,7 @@ mod tests {
             out_of_bounds: OutOfBoundsPolicy::Error,
             area_of_interest: None,
             label: None,
+            geometry_policy: None,
         };
         assert!(matches!(
             spec.validate(),
