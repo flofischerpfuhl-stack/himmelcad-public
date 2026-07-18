@@ -134,6 +134,7 @@ impl AdmissionPlanner {
         }
 
         let mut admitted = Vec::new();
+        let mut deferred_frame = Vec::new();
         let mut total_cost = baseline;
         let mut decode_ms = 0.0_f32;
         let mut upload_bytes = 0_u64;
@@ -161,10 +162,7 @@ impl AdmissionPlanner {
                     || next_upload > frame_budget.upload_bytes
                     || next_requests > frame_budget.new_requests
                 {
-                    rejected.push(RejectedCandidate {
-                        key: candidate.key,
-                        reason: RejectionReason::FrameBudget,
-                    });
+                    deferred_frame.push(candidate);
                     continue;
                 }
                 total_cost = next_cost;
@@ -174,6 +172,38 @@ impl AdmissionPlanner {
                 admitted.push(candidate.key);
             }
         }
+
+        // A frame allowance is a latency target rather than a permanent size
+        // ceiling. If every otherwise valid candidate is larger than that
+        // target, claim exactly one so a large tile cannot starve forever.
+        if admitted.is_empty() {
+            deferred_frame.sort_by(|left, right| {
+                right
+                    .benefit
+                    .total_cmp(&left.benefit)
+                    .then_with(|| left.key.cmp(&right.key))
+            });
+            if let Some(index) = deferred_frame.iter().position(|candidate| {
+                (!candidate.starts_request || frame_budget.new_requests > 0)
+                    && (candidate.decode_ms <= 0.0 || frame_budget.decode_ms > 0.0)
+                    && (candidate.upload_bytes == 0 || frame_budget.upload_bytes > 0)
+            }) {
+                let candidate = deferred_frame.remove(index);
+                total_cost = total_cost.saturating_add(candidate.cost);
+                decode_ms += candidate.decode_ms.max(0.0);
+                upload_bytes = upload_bytes.saturating_add(candidate.upload_bytes);
+                new_requests = new_requests.saturating_add(u16::from(candidate.starts_request));
+                admitted.push(candidate.key);
+            }
+        }
+        rejected.extend(
+            deferred_frame
+                .into_iter()
+                .map(|candidate| RejectedCandidate {
+                    key: candidate.key,
+                    reason: RejectionReason::FrameBudget,
+                }),
+        );
 
         AdmissionPlan {
             admitted,
@@ -301,6 +331,46 @@ mod tests {
         );
 
         assert_eq!(plan.admitted.len(), 1);
+        assert_eq!(plan.rejected.len(), 1);
+        assert_eq!(plan.rejected[0].reason, RejectionReason::FrameBudget);
+    }
+
+    #[test]
+    fn oversized_frame_work_makes_single_item_progress() {
+        let mut planner = AdmissionPlanner::new();
+        let plan = planner.plan(
+            ResourceCost::default(),
+            resource_budget(1_000),
+            FrameBudget {
+                decode_ms: 0.1,
+                upload_bytes: 50,
+                new_requests: 1,
+                ..frame_budget(1)
+            },
+            [candidate("points", "large", 10.0, 100)],
+        );
+
+        assert_eq!(plan.admitted, vec![key("points", "large")]);
+        assert!(plan.decode_ms > 0.1);
+        assert_eq!(plan.upload_bytes, 100);
+    }
+
+    #[test]
+    fn zero_frame_allowance_remains_a_hard_pause() {
+        let mut planner = AdmissionPlanner::new();
+        let plan = planner.plan(
+            ResourceCost::default(),
+            resource_budget(1_000),
+            FrameBudget {
+                decode_ms: 0.0,
+                upload_bytes: 0,
+                new_requests: 0,
+                ..frame_budget(0)
+            },
+            [candidate("points", "paused", 10.0, 100)],
+        );
+
+        assert!(plan.admitted.is_empty());
         assert_eq!(plan.rejected.len(), 1);
         assert_eq!(plan.rejected[0].reason, RejectionReason::FrameBudget);
     }

@@ -16,6 +16,16 @@ use crate::{
 /// preventing enormous visible hierarchies from producing enormous JSON plans.
 const ADMISSION_LOOKAHEAD_FRAMES: usize = 64;
 
+/// Short camera-motion hysteresis before non-resident work from an old view is
+/// cancelled. This avoids one-frame boundary churn without allowing a full
+/// idle request wave to block the current view for seconds.
+const STALE_WORK_GRACE_FRAMES: u64 = 4;
+
+/// Initial visible-tile retry delay. Repeated failures back off to at most
+/// eight seconds at 60 Hz, avoiding both permanent holes and request storms.
+const RETRY_BACKOFF_FRAMES: u64 = 15;
+const MAX_RETRY_BACKOFF_FRAMES: u64 = 480;
+
 /// One bounded host operation emitted by the shared streaming coordinator.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
@@ -114,6 +124,11 @@ pub struct StreamingCoordinator {
     queued_decodes: BTreeSet<TileKey>,
     decoding: BTreeSet<TileKey>,
     hierarchy_requests: BTreeSet<TileKey>,
+    priorities: BTreeMap<TileKey, f64>,
+    last_wanted_frame: BTreeMap<TileKey, u64>,
+    retry_attempts: BTreeMap<TileKey, u8>,
+    retry_after_frame: BTreeMap<TileKey, u64>,
+    plan_frame: u64,
     runtime_limits: StreamingRuntimeLimits,
 }
 
@@ -136,6 +151,11 @@ impl StreamingCoordinator {
             queued_decodes: BTreeSet::new(),
             decoding: BTreeSet::new(),
             hierarchy_requests: BTreeSet::new(),
+            priorities: BTreeMap::new(),
+            last_wanted_frame: BTreeMap::new(),
+            retry_attempts: BTreeMap::new(),
+            retry_after_frame: BTreeMap::new(),
+            plan_frame: 0,
             runtime_limits: StreamingRuntimeLimits::new(
                 maximum_concurrent_decodes,
                 usize::from(u16::MAX),
@@ -225,20 +245,44 @@ impl StreamingCoordinator {
             .flat_map(|selection| selection.render.iter().cloned())
             .collect::<BTreeSet<_>>();
         let wanted = coalesce_wanted(primary, auxiliary);
+        self.plan_frame = self.plan_frame.saturating_add(1).max(1);
+        let mut current_priorities = BTreeMap::<TileKey, f64>::new();
+        for tile in &wanted {
+            let priority = tile.screen_space_error.max(0.0);
+            current_priorities
+                .entry(tile.key.clone())
+                .and_modify(|current| *current = current.max(priority))
+                .or_insert(priority);
+            self.priorities.insert(tile.key.clone(), priority);
+            self.last_wanted_frame
+                .insert(tile.key.clone(), self.plan_frame);
+        }
         self.residency.begin_frame(active_render);
-        let (mut eviction, mut actions) = self.evict_to_budget(resource_budget);
+        let selection_complete = primary
+            .iter()
+            .chain(auxiliary)
+            .all(|selection| !selection.work_limit_reached);
+        let (stale_evictions, mut actions) = if selection_complete {
+            self.cancel_stale_non_resident_work()
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        let (mut eviction, mut budget_actions) = self.evict_to_budget(resource_budget);
+        if !stale_evictions.is_empty() {
+            let mut combined = stale_evictions;
+            combined.append(&mut eviction.evicted);
+            eviction.evicted = combined;
+            eviction.remaining_cost = self.residency.total_cost();
+            eviction.budget_satisfied = resource_budget.contains(eviction.remaining_cost);
+        }
+        actions.append(&mut budget_actions);
         if let Some(candidate) = wanted
             .iter()
             .copied()
-            .filter(|tile| {
-                matches!(
-                    self.residency.residency(&tile.key),
-                    TileResidency::Unloaded | TileResidency::Decoded
-                )
-            })
+            .filter(|tile| self.admission_residency(&tile.key).is_some())
             .max_by(|left, right| selected_tile_priority(left, right))
             .and_then(|tile| {
-                admission_candidate_with_residency(tile, self.residency.residency(&tile.key))
+                admission_candidate_with_residency(tile, self.admission_residency(&tile.key)?)
             })
         {
             let replacement_evictions = self.residency.evict_lru_for_admission(
@@ -256,8 +300,12 @@ impl StreamingCoordinator {
             eviction.remaining_cost = self.residency.total_cost();
             eviction.budget_satisfied = resource_budget.contains(eviction.remaining_cost);
         }
-        let hierarchy_actions =
-            self.claim_hierarchy_pages(primary, auxiliary, usize::from(frame_budget.new_requests));
+        let hierarchy_actions = self.claim_hierarchy_pages(
+            primary,
+            auxiliary,
+            &current_priorities,
+            usize::from(frame_budget.new_requests),
+        );
         let hierarchy_requests_started = u16::try_from(hierarchy_actions.len())
             .expect("hierarchy claims are bounded by the u16 frame request limit");
         actions.extend(hierarchy_actions);
@@ -298,10 +346,46 @@ impl StreamingCoordinator {
         (eviction, actions)
     }
 
+    fn cancel_stale_non_resident_work(
+        &mut self,
+    ) -> (Vec<crate::EvictedResidency>, Vec<StreamingAction>) {
+        let stale_before = self.plan_frame.saturating_sub(STALE_WORK_GRACE_FRAMES);
+        let stale = self
+            .tickets
+            .keys()
+            .filter(|key| {
+                self.last_wanted_frame.get(*key).copied().unwrap_or(0) <= stale_before
+                    && matches!(
+                        self.residency.stage(key),
+                        Some(
+                            ResidencyStage::Fetching
+                                | ResidencyStage::QueuedDecode
+                                | ResidencyStage::Decoding
+                                | ResidencyStage::QueuedUpload
+                                | ResidencyStage::Uploading
+                                | ResidencyStage::Failed
+                        )
+                    )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut evicted = Vec::with_capacity(stale.len());
+        let mut actions = Vec::with_capacity(stale.len());
+        for key in stale {
+            if let Some(entry) = self.residency.evict(&key) {
+                evicted.push(entry);
+                actions.push(StreamingAction::EvictTile { key: key.clone() });
+            }
+            self.forget_tile(&key);
+        }
+        (evicted, actions)
+    }
+
     fn claim_hierarchy_pages(
         &mut self,
         primary: &[TileSelection],
         auxiliary: &[TileSelection],
+        priorities: &BTreeMap<TileKey, f64>,
         maximum_new_requests: usize,
     ) -> Vec<StreamingAction> {
         let mut actions = Vec::new();
@@ -310,11 +394,20 @@ impl StreamingCoordinator {
             .content_requests
             .saturating_sub(self.in_flight_content_requests())
             .min(maximum_new_requests);
-        for request in primary
+        let mut requests = primary
             .iter()
             .chain(auxiliary)
             .flat_map(|selection| &selection.hierarchy_pages)
-        {
+            .collect::<Vec<_>>();
+        requests.sort_by(|left, right| {
+            priorities
+                .get(&right.owner)
+                .copied()
+                .unwrap_or(0.0)
+                .total_cmp(&priorities.get(&left.owner).copied().unwrap_or(0.0))
+                .then_with(|| left.owner.cmp(&right.owner))
+        });
+        for request in requests {
             if available_slots == 0 {
                 break;
             }
@@ -350,13 +443,33 @@ impl StreamingCoordinator {
                         decode_ms: 0.05,
                         upload_bytes: 0,
                     });
-                Some((key.clone(), ticket.clone(), estimate.decode_ms))
+                let current = self.last_wanted_frame.get(key).copied() == Some(self.plan_frame);
+                let priority = current
+                    .then(|| self.priorities.get(key).copied())
+                    .flatten()
+                    .unwrap_or(f64::NEG_INFINITY);
+                Some((key.clone(), ticket.clone(), estimate.decode_ms, priority))
             })
             .collect::<Vec<_>>();
+        let mut queued = queued;
+        queued.sort_by(|left, right| {
+            right
+                .3
+                .total_cmp(&left.3)
+                .then_with(|| left.2.total_cmp(&right.2))
+                .then_with(|| left.0.cmp(&right.0))
+        });
         let mut claimed_ms = 0.0_f32;
         let mut actions = Vec::new();
-        for (key, ticket, decode_ms) in queued.into_iter().take(available_workers) {
+        let mut deferred = None;
+        for (key, ticket, decode_ms, _) in queued {
+            if actions.len() >= available_workers {
+                break;
+            }
             if claimed_ms + decode_ms > decode_budget_ms {
+                if deferred.is_none() {
+                    deferred = Some((key, ticket, decode_ms));
+                }
                 continue;
             }
             self.residency.begin_decode(&ticket)?;
@@ -364,6 +477,15 @@ impl StreamingCoordinator {
             self.decoding.insert(key);
             claimed_ms += decode_ms;
             actions.push(StreamingAction::DecodeTile { ticket });
+        }
+        if actions.is_empty() && available_workers > 0 && decode_budget_ms > 0.0 {
+            if let Some((key, ticket, decode_ms)) = deferred {
+                self.residency.begin_decode(&ticket)?;
+                self.queued_decodes.remove(&key);
+                self.decoding.insert(key);
+                claimed_ms = decode_ms;
+                actions.push(StreamingAction::DecodeTile { ticket });
+            }
         }
         Ok((actions, claimed_ms))
     }
@@ -443,6 +565,9 @@ impl StreamingCoordinator {
                 TileResidency::Unloaded => {
                     unloaded.entry(&tile.key.dataset_id).or_default().push(tile)
                 }
+                TileResidency::Failed if self.retry_is_due(&tile.key) => {
+                    unloaded.entry(&tile.key.dataset_id).or_default().push(tile)
+                }
                 TileResidency::Requested | TileResidency::Resident | TileResidency::Failed => {}
             }
         }
@@ -498,7 +623,12 @@ impl StreamingCoordinator {
         ticket: &ResidencyTicket,
         retained_cost: ResourceCost,
     ) -> Result<(), ResidencyError> {
-        self.residency.uploaded(ticket, retained_cost)
+        let result = self.residency.uploaded(ticket, retained_cost);
+        if result.is_ok() {
+            self.retry_attempts.remove(&ticket.key);
+            self.retry_after_frame.remove(&ticket.key);
+        }
+        result
     }
 
     /// Synchronizes globally deduplicated allocations owned outside tile entries.
@@ -518,6 +648,14 @@ impl StreamingCoordinator {
             self.fetching.remove(&ticket.key);
             self.queued_decodes.remove(&ticket.key);
             self.decoding.remove(&ticket.key);
+            let attempts = self.retry_attempts.entry(ticket.key.clone()).or_default();
+            *attempts = attempts.saturating_add(1);
+            let shift = u32::from(attempts.saturating_sub(1).min(5));
+            let delay = RETRY_BACKOFF_FRAMES
+                .saturating_mul(1_u64 << shift)
+                .min(MAX_RETRY_BACKOFF_FRAMES);
+            self.retry_after_frame
+                .insert(ticket.key.clone(), self.plan_frame.saturating_add(delay));
         }
         result
     }
@@ -544,6 +682,14 @@ impl StreamingCoordinator {
         self.decoding.retain(|key| &key.dataset_id != dataset_id);
         self.hierarchy_requests
             .retain(|key| &key.dataset_id != dataset_id);
+        self.priorities
+            .retain(|key, _| &key.dataset_id != dataset_id);
+        self.last_wanted_frame
+            .retain(|key, _| &key.dataset_id != dataset_id);
+        self.retry_attempts
+            .retain(|key, _| &key.dataset_id != dataset_id);
+        self.retry_after_frame
+            .retain(|key, _| &key.dataset_id != dataset_id);
         evicted
             .into_iter()
             .map(|entry| StreamingAction::EvictTile { key: entry.key })
@@ -557,6 +703,25 @@ impl StreamingCoordinator {
         self.queued_decodes.remove(key);
         self.decoding.remove(key);
         self.hierarchy_requests.remove(key);
+        self.priorities.remove(key);
+        self.last_wanted_frame.remove(key);
+        self.retry_attempts.remove(key);
+        self.retry_after_frame.remove(key);
+    }
+
+    fn retry_is_due(&self, key: &TileKey) -> bool {
+        self.retry_after_frame
+            .get(key)
+            .is_none_or(|retry_after| self.plan_frame >= *retry_after)
+    }
+
+    fn admission_residency(&self, key: &TileKey) -> Option<TileResidency> {
+        match self.residency.residency(key) {
+            TileResidency::Unloaded => Some(TileResidency::Unloaded),
+            TileResidency::Decoded => Some(TileResidency::Decoded),
+            TileResidency::Failed if self.retry_is_due(key) => Some(TileResidency::Unloaded),
+            TileResidency::Requested | TileResidency::Resident | TileResidency::Failed => None,
+        }
     }
 }
 
@@ -595,7 +760,7 @@ fn selected_tile_priority(left: &SelectedTile, right: &SelectedTile) -> std::cmp
 mod tests {
     use super::{
         coalesce_wanted, StreamingAction, StreamingCoordinator, StreamingRuntimeLimits,
-        ADMISSION_LOOKAHEAD_FRAMES,
+        ADMISSION_LOOKAHEAD_FRAMES, RETRY_BACKOFF_FRAMES,
     };
 
     #[test]
@@ -958,6 +1123,107 @@ mod tests {
             ADMISSION_LOOKAHEAD_FRAMES - 1
         );
         assert_eq!(fetch_tickets(&second.actions).len(), 1);
+    }
+
+    #[test]
+    fn queued_decode_follows_the_latest_view_priority() {
+        let mut coordinator = StreamingCoordinator::new(8);
+        coordinator.set_runtime_limits(StreamingRuntimeLimits::new(1, 2));
+        let mut selection = selection_many("points", ContentKind::PotreePoints, 2);
+
+        let requested = coordinator
+            .plan_frame(
+                &[selection.clone()],
+                unlimited_budget(),
+                concurrency_frame_budget(),
+            )
+            .expect("point requests");
+        let tickets = fetch_tickets(&requested.actions);
+        assert_eq!(tickets.len(), 2);
+        for ticket in &tickets {
+            coordinator
+                .fetched(ticket, compressed_cost(100))
+                .expect("queued decode");
+        }
+
+        selection.wanted[0].screen_space_error = 1.0;
+        selection.wanted[1].screen_space_error = 100.0;
+        let decode = coordinator
+            .plan_frame(
+                &[selection.clone()],
+                unlimited_budget(),
+                concurrency_frame_budget(),
+            )
+            .expect("priority decode");
+        let decoded = decode_tickets(&decode.actions);
+
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].key, selection.wanted[1].key);
+    }
+
+    #[test]
+    fn stale_fetch_is_cancelled_after_the_view_moves_away() {
+        let mut coordinator = StreamingCoordinator::new(8);
+        coordinator.set_runtime_limits(StreamingRuntimeLimits::new(1, 1));
+        let selection = selection("old-view", ContentKind::PotreePoints, 10.0);
+        let empty = selection_many("old-view", ContentKind::PotreePoints, 0);
+
+        let requested = coordinator
+            .plan_frame(&[selection.clone()], unlimited_budget(), frame_budget())
+            .expect("old-view request");
+        assert_eq!(fetch_tickets(&requested.actions).len(), 1);
+
+        for _ in 0..3 {
+            let frame = coordinator
+                .plan_frame(&[empty.clone()], unlimited_budget(), frame_budget())
+                .expect("grace frame");
+            assert!(!frame
+                .actions
+                .iter()
+                .any(|action| matches!(action, StreamingAction::EvictTile { .. })));
+        }
+        let cancelled = coordinator
+            .plan_frame(&[empty], unlimited_budget(), frame_budget())
+            .expect("stale cancellation");
+
+        assert!(cancelled.actions.iter().any(|action| {
+            matches!(action, StreamingAction::EvictTile { key } if key == &selection.wanted[0].key)
+        }));
+        assert!(coordinator
+            .residency()
+            .snapshot(&selection.wanted[0].key)
+            .is_none());
+    }
+
+    #[test]
+    fn visible_failure_retries_after_bounded_backoff() {
+        let mut coordinator = StreamingCoordinator::new(1);
+        coordinator.set_runtime_limits(StreamingRuntimeLimits::new(1, 1));
+        let selection = selection("retry", ContentKind::PotreePoints, 10.0);
+        let requested = coordinator
+            .plan_frame(&[selection.clone()], unlimited_budget(), frame_budget())
+            .expect("initial request");
+        let ticket = fetch_tickets(&requested.actions)
+            .into_iter()
+            .next()
+            .expect("fetch ticket");
+        coordinator
+            .failed(&ticket, "transient", compressed_cost(100))
+            .expect("record failure");
+
+        for _ in 1..RETRY_BACKOFF_FRAMES {
+            let waiting = coordinator
+                .plan_frame(&[selection.clone()], unlimited_budget(), frame_budget())
+                .expect("backoff frame");
+            assert!(fetch_tickets(&waiting.actions).is_empty());
+        }
+        let retry = coordinator
+            .plan_frame(&[selection], unlimited_budget(), frame_budget())
+            .expect("retry frame");
+        let retries = fetch_tickets(&retry.actions);
+
+        assert_eq!(retries.len(), 1);
+        assert!(retries[0].generation > ticket.generation);
     }
 
     #[test]

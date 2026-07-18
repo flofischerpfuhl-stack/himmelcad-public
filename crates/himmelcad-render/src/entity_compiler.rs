@@ -18,8 +18,8 @@ use crate::{
     build_cad_area_batches, build_cad_curve_batch_with_width, tessellate_area, tessellate_curve,
     AreaFillMode, BoundingVolume, CadAreaError, CadCurveError, CurveTessellationOptions,
     FloatingOrigin, GpuAlphaMode, GpuDrawBatch, GpuFrameError, GpuMeshVertexInput,
-    GpuPresentationStyle, GpuSharedRenderer, GpuTextureData, RenderProxyKind, RenderStyle,
-    ResourceCost, TessellatedArea, TessellatedCurve, TessellatedCurvePath, TessellatedCurveSegment,
+    GpuPresentationStyle, GpuSharedRenderer, RenderProxyKind, RenderStyle, ResourceCost,
+    TessellatedArea, TessellatedCurve, TessellatedCurvePath, TessellatedCurveSegment,
     UnresolvedHeightDisplay, WorldAabb, WorldVec3, GPU_POINT_VERTEX_STRIDE_BYTES,
 };
 
@@ -529,15 +529,10 @@ where
     } else {
         GpuAlphaMode::Opaque
     };
-    let material = renderer.create_styled_material(
+    let material = renderer.create_solid_styled_material(
         device,
         queue,
         &format!("{label}-style"),
-        GpuTextureData {
-            width: 1,
-            height: 1,
-            rgba8: &[255; 4],
-        },
         alpha_mode,
         gpu_style,
     )?;

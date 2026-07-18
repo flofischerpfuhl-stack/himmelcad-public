@@ -305,8 +305,14 @@ impl HardwarePolicyResolver {
         };
         let maximum_traversed_nodes =
             finite_u32(100_000.0 * f64::from(detail_class)).clamp(25_000, 1_000_000);
-        let interactive_requests =
-            finite_u32(f64::from(detail_class * 2.0).ceil()).clamp(2, 8) as u16;
+        // Fetch transport is asynchronous and already residency-bounded. Keep
+        // enough requests live during navigation to fill the decode pipeline;
+        // stale-view cancellation prevents this wider frontier becoming a
+        // disposable backlog after a camera turn.
+        let interactive_requests = u16::try_from(finite_u32(f64::from(detail_class * 4.0).ceil()))
+            .unwrap_or(u16::MAX)
+            .clamp(4, 12)
+            .min(content_requests);
         let policy = ResolvedHardwarePolicy {
             deployment_profile,
             resources: ResourceBudget {
@@ -330,7 +336,7 @@ impl HardwarePolicyResolver {
                     upload_bytes: (frame.upload_bytes / 2).max(MEBIBYTE),
                     new_requests: interactive_requests.min(frame.new_requests),
                 },
-                maximum_traversed_nodes: (maximum_traversed_nodes / 16).clamp(4_000, 100_000),
+                maximum_traversed_nodes: (maximum_traversed_nodes / 4).clamp(8_000, 250_000),
             },
             workload,
             maximum_render_scale: detail_class.sqrt().clamp(0.75, 2.0),

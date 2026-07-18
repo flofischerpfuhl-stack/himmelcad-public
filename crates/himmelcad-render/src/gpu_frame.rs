@@ -3,6 +3,7 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::mem::size_of;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bytemuck::{Pod, Zeroable};
@@ -1773,6 +1774,8 @@ pub struct GpuDrawBatch {
     index_count: u32,
     material: Option<GpuMaterial>,
     primitive: GpuPrimitive,
+    /// Native point-list vertex count available for the exact 1 px view path.
+    native_point_count: Option<u32>,
     transparent: bool,
     pickable: bool,
     sort_center: [f32; 3],
@@ -2542,6 +2545,7 @@ impl GpuDrawBatch {
             index_count: 0,
             material: None,
             primitive,
+            native_point_count: None,
             transparent,
             pickable: true,
             sort_center: position_center(vertices.iter().map(|vertex| vertex.position)),
@@ -2607,6 +2611,7 @@ impl GpuDrawBatch {
             index_count: 0,
             material: None,
             primitive: GpuPrimitive::Lines,
+            native_point_count: None,
             transparent: vertices[0].color[3] < 1.0,
             pickable: true,
             sort_center: position_center(vertices.iter().map(|vertex| vertex.position)),
@@ -2665,6 +2670,7 @@ impl GpuDrawBatch {
             index_count: 0,
             material: None,
             primitive: GpuPrimitive::Lines,
+            native_point_count: None,
             transparent: instances[0].color[3] < 1.0,
             pickable: true,
             sort_center: position_center(
@@ -2808,6 +2814,8 @@ impl GpuDrawBatch {
             } else {
                 GpuPrimitive::PointSprites
             },
+            native_point_count: (force_point_sprites && point_size.to_bits() == 1.0_f32.to_bits())
+                .then_some(point_count),
             transparent: false,
             pickable: true,
             sort_center: position_center(positions.iter().copied()),
@@ -2868,6 +2876,7 @@ impl GpuDrawBatch {
             index_count: 0,
             material: None,
             primitive: GpuPrimitive::GaussianSplats,
+            native_point_count: None,
             transparent: true,
             pickable: true,
             sort_center: position_center(splats.iter().map(|splat| splat.position)),
@@ -2926,6 +2935,7 @@ impl GpuDrawBatch {
             index_count: 0,
             material: None,
             primitive: GpuPrimitive::ScreenText,
+            native_point_count: None,
             transparent,
             pickable: true,
             sort_center: position_center(vertices.iter().map(|vertex| vertex.anchor)),
@@ -3048,6 +3058,7 @@ impl GpuDrawBatch {
             index_count,
             material: None,
             primitive: GpuPrimitive::Triangles,
+            native_point_count: None,
             transparent,
             pickable: true,
             sort_center: position_center(vertices.iter().map(|vertex| vertex.position)),
@@ -3221,6 +3232,7 @@ impl GpuDrawBatch {
             index_count: geometry.0.index_count,
             material: None,
             primitive: GpuPrimitive::InstancedTriangles,
+            native_point_count: None,
             transparent,
             pickable: true,
             sort_center: position_center(instance_centers.into_iter()),
@@ -3318,6 +3330,7 @@ impl GpuDrawBatch {
             index_count: self.index_count,
             material: self.material.clone(),
             primitive: self.primitive,
+            native_point_count: self.native_point_count,
             transparent: self.transparent,
             pickable: self.pickable,
             sort_center: position_center(instance_centers.into_iter()),
@@ -3517,6 +3530,7 @@ impl GpuDrawBatch {
             transparent: material.transparent,
             material: Some(material),
             primitive: self.primitive,
+            native_point_count: self.native_point_count,
             pickable,
             sort_center: self.sort_center,
             splat_sort: self.splat_sort.clone(),
@@ -4115,6 +4129,7 @@ impl Error for GpuFrameError {}
 #[derive(Debug)]
 pub struct GpuSharedRenderer {
     frame_uniform: wgpu::Buffer,
+    point_size_scale_bits: AtomicU32,
     frame_bind_group: wgpu::BindGroup,
     material_bind_group_layout: wgpu::BindGroupLayout,
     default_line_type_resource: GpuLineTypeResource,
@@ -4428,6 +4443,7 @@ impl GpuSharedRenderer {
             .then(|| OitRenderer::new(device, color_format));
         Self {
             frame_uniform,
+            point_size_scale_bits: AtomicU32::new(1.0_f32.to_bits()),
             frame_bind_group,
             material_bind_group_layout,
             default_line_type_resource,
@@ -4539,6 +4555,28 @@ impl GpuSharedRenderer {
             &style,
             MaterialOriginState::ZERO,
         ))
+    }
+
+    /// Creates an independently styled untextured material while sharing the
+    /// renderer's immutable white texture and sampler allocation. Streamed
+    /// point nodes still retain separate transform/style uniforms, but no
+    /// longer allocate and upload an identical one-pixel texture per tile.
+    pub fn create_solid_styled_material(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        label: &str,
+        alpha_mode: GpuAlphaMode,
+        style: GpuPresentationStyle,
+    ) -> Result<GpuMaterial, GpuFrameError> {
+        self.create_styled_material_from_texture(
+            device,
+            queue,
+            label,
+            &self.default_material.source_texture_resource,
+            alpha_mode,
+            style,
+        )
     }
 
     /// Uploads a complete device-ready mip chain and creates a styled material.
@@ -4670,6 +4708,8 @@ impl GpuSharedRenderer {
             viewport_size,
             point_size_scale,
         )?;
+        self.point_size_scale_bits
+            .store(point_size_scale.to_bits(), Ordering::Relaxed);
         queue.write_buffer(&self.frame_uniform, 0, bytemuck::bytes_of(&uniform));
         Ok(())
     }
@@ -4708,6 +4748,7 @@ impl GpuSharedRenderer {
         picking_requested: bool,
         timestamp_begin: Option<(&wgpu::QuerySet, u32)>,
     ) {
+        let point_size_scale = f32::from_bits(self.point_size_scale_bits.load(Ordering::Relaxed));
         {
             let color_attachments = [Some(wgpu::RenderPassColorAttachment {
                 view: color_view,
@@ -4747,6 +4788,7 @@ impl GpuSharedRenderer {
                 batches,
                 false,
                 false,
+                point_size_scale,
             );
             if self.transparency_strategy == TransparencyStrategy::SortedAlpha {
                 encode_batches(
@@ -4756,14 +4798,15 @@ impl GpuSharedRenderer {
                     batches,
                     true,
                     false,
+                    point_size_scale,
                 );
             }
         }
         if let Some(oit) = &self.oit {
-            self.encode_oit(encoder, color_view, targets, batches, oit);
+            self.encode_oit(encoder, color_view, targets, batches, oit, point_size_scale);
         }
         if picking_requested {
-            self.encode_pick_pass(encoder, targets, batches);
+            self.encode_pick_pass(encoder, targets, batches, point_size_scale);
         }
     }
 
@@ -4774,7 +4817,8 @@ impl GpuSharedRenderer {
         targets: &GpuFrameTargets,
         batches: &[&GpuDrawBatch],
     ) {
-        self.encode_pick_pass(encoder, targets, batches);
+        let point_size_scale = f32::from_bits(self.point_size_scale_bits.load(Ordering::Relaxed));
+        self.encode_pick_pass(encoder, targets, batches, point_size_scale);
     }
 
     fn encode_oit(
@@ -4784,6 +4828,7 @@ impl GpuSharedRenderer {
         targets: &GpuFrameTargets,
         batches: &[&GpuDrawBatch],
         oit_renderer: &OitRenderer,
+        point_size_scale: f32,
     ) {
         let oit_targets = targets
             .oit
@@ -4833,6 +4878,7 @@ impl GpuSharedRenderer {
                 batches,
                 true,
                 false,
+                point_size_scale,
             );
         }
         let attachments = [Some(wgpu::RenderPassColorAttachment {
@@ -4862,6 +4908,7 @@ impl GpuSharedRenderer {
         encoder: &mut wgpu::CommandEncoder,
         targets: &GpuFrameTargets,
         batches: &[&GpuDrawBatch],
+        point_size_scale: f32,
     ) {
         let attachment = |view| {
             Some(wgpu::RenderPassColorAttachment {
@@ -4905,6 +4952,7 @@ impl GpuSharedRenderer {
                 batches,
                 transparent,
                 true,
+                point_size_scale,
             );
         }
     }
@@ -6112,6 +6160,22 @@ fn pipeline(
     })
 }
 
+fn resolve_batch_geometry(
+    primitive: GpuPrimitive,
+    vertex_count: u32,
+    instance_count: u32,
+    native_point_count: Option<u32>,
+    point_size_scale: f32,
+) -> (GpuPrimitive, u32, u32) {
+    if let Some(point_count) =
+        native_point_count.filter(|_| point_size_scale.to_bits() == 1.0_f32.to_bits())
+    {
+        (GpuPrimitive::Points, point_count, 1)
+    } else {
+        (primitive, vertex_count, instance_count)
+    }
+}
+
 fn encode_batches<'pass>(
     pass: &mut wgpu::RenderPass<'pass>,
     pipelines: &'pass PrimitivePipelines,
@@ -6119,12 +6183,20 @@ fn encode_batches<'pass>(
     batches: &'pass [&'pass GpuDrawBatch],
     transparent: bool,
     picking: bool,
+    point_size_scale: f32,
 ) {
     for batch in batches {
         if batch.transparent != transparent || (picking && !batch.pickable) {
             continue;
         }
-        pass.set_pipeline(pipelines.get(batch.primitive, batch.double_sided));
+        let (primitive, vertex_count, instance_count) = resolve_batch_geometry(
+            batch.primitive,
+            batch.vertex_count,
+            batch.instance_count,
+            batch.native_point_count,
+            point_size_scale,
+        );
+        pass.set_pipeline(pipelines.get(primitive, batch.double_sided));
         pass.set_bind_group(
             1,
             batch
@@ -6145,13 +6217,13 @@ fn encode_batches<'pass>(
             let count = batch
                 .pick_vertex_buffer
                 .as_ref()
-                .map_or(batch.vertex_count, |_| batch.index_count);
+                .map_or_else(|| vertex_count, |_| batch.index_count);
             let instances = if batch.pick_vertex_buffer.is_some()
                 && batch.primitive != GpuPrimitive::InstancedTriangles
             {
                 1
             } else {
-                batch.instance_count
+                instance_count
             };
             pass.draw(0..count, 0..instances);
         } else if let Some(index_buffer) = &batch.index_buffer {
@@ -6160,7 +6232,7 @@ fn encode_batches<'pass>(
             pass.draw_indexed(0..batch.index_count, 0, 0..batch.instance_count);
         } else {
             pass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
-            pass.draw(0..batch.vertex_count, 0..batch.instance_count);
+            pass.draw(0..vertex_count, 0..instance_count);
         }
     }
 }
@@ -6258,10 +6330,10 @@ fn sample_gradient(colors: &[[f32; 4]], index: usize, output_count: usize) -> [f
 mod tests {
     use super::{
         affine_rows, batch_origin_delta, decode_hit_neighborhood, hit_neighborhood_buffer_layout,
-        FrameUniform, GpuAlphaMode, GpuDrawBatch, GpuFrameError, GpuIndexedMeshGeometry,
-        GpuMeshInstanceInput, GpuMeshVertexInput, GpuPointVertex, GpuPrimitive,
-        GpuScreenTextVertex, GpuSharedRenderer, GpuSplatVertex, GpuTextureData, GpuVertex,
-        MeshInstanceSortState, SplatSortState, GPU_POINT_VERTEX_STRIDE_BYTES,
+        resolve_batch_geometry, FrameUniform, GpuAlphaMode, GpuDrawBatch, GpuFrameError,
+        GpuIndexedMeshGeometry, GpuMeshInstanceInput, GpuMeshVertexInput, GpuPointVertex,
+        GpuPrimitive, GpuScreenTextVertex, GpuSharedRenderer, GpuSplatVertex, GpuTextureData,
+        GpuVertex, MeshInstanceSortState, SplatSortState, GPU_POINT_VERTEX_STRIDE_BYTES,
         SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE, SORTED_ALPHA_SPLAT_BLOCK_SIZE,
         SORTED_ALPHA_UPLOAD_BYTES_PER_FRAME,
     };
@@ -6288,6 +6360,22 @@ mod tests {
         assert_eq!(
             GPU_POINT_VERTEX_STRIDE_BYTES,
             u64::try_from(std::mem::size_of::<GpuPointVertex>()).expect("point stride fits u64")
+        );
+    }
+
+    #[test]
+    fn exact_one_pixel_points_use_native_point_rasterization() {
+        assert_eq!(
+            resolve_batch_geometry(GpuPrimitive::PointSprites, 6, 123, Some(123), 1.0),
+            (GpuPrimitive::Points, 123, 1)
+        );
+        assert_eq!(
+            resolve_batch_geometry(GpuPrimitive::PointSprites, 6, 123, Some(123), 1.001),
+            (GpuPrimitive::PointSprites, 6, 123)
+        );
+        assert_eq!(
+            resolve_batch_geometry(GpuPrimitive::PointSprites, 6, 123, Some(123), 0.75),
+            (GpuPrimitive::PointSprites, 6, 123)
         );
     }
 

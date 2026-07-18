@@ -846,6 +846,7 @@ struct WasmPotreeMetadata {
 struct WasmPotreeRequest {
     metadata: WasmPotreeMetadata,
     layout: PotreePointLayout,
+    compressed_byte_length: u64,
     bytes: Vec<u8>,
     decoded: Option<himmelcad_render::DecodedPotreePoints>,
 }
@@ -2628,6 +2629,7 @@ impl WasmViewer {
                 let request = WasmPotreeRequest {
                     metadata,
                     layout,
+                    compressed_byte_length: usize_to_u64(primary.len()),
                     bytes: primary.to_vec(),
                     decoded: None,
                 };
@@ -6451,6 +6453,11 @@ impl WasmViewer {
                         .eq_ignore_ascii_case("BROTLI")
                     {
                         staged.request.decoded = Some(staged.decoded);
+                        // Exact picking reads the retained decoded arrays for
+                        // Brotli nodes. Keeping the compressed node as well
+                        // would duplicate resident CPU ownership indefinitely.
+                        staged.request.bytes.clear();
+                        staged.request.bytes.shrink_to_fit();
                     }
                     self.potree_requests
                         .insert(stream_id.clone(), staged.request);
@@ -6772,10 +6779,7 @@ impl WasmViewer {
         // mesh error. 0.65 also covers the diagonal gaps of a near-grid sample
         // distribution once idle detail reaches its ordinary scale of one.
         let potree_view = TileSelectionView {
-            maximum_screen_space_error: (view.maximum_screen_space_error
-                * f64::from(self.point_size_scale)
-                * 0.65)
-                .clamp(0.125, 8.0),
+            maximum_screen_space_error: (f64::from(self.point_size_scale) * 0.65).clamp(0.125, 8.0),
             ..view
         };
         // Metadata-only hierarchies can exist without a visible canonical
@@ -7520,15 +7524,10 @@ fn build_clip_preview_batches(
                         .with_pickable(false);
                         let material = host
                             .renderer()
-                            .create_styled_material(
+                            .create_solid_styled_material(
                                 host.device(),
                                 host.queue(),
                                 &format!("{label}-material"),
-                                GpuTextureData {
-                                    width: 1,
-                                    height: 1,
-                                    rgba8: &[255; 4],
-                                },
                                 GpuAlphaMode::Opaque,
                                 gpu_style,
                             )
@@ -11249,15 +11248,10 @@ fn compile_section_product_regions(
         };
         let material = host
             .renderer()
-            .create_styled_material(
+            .create_solid_styled_material(
                 host.device(),
                 host.queue(),
                 &format!("{}-material", id.0),
-                GpuTextureData {
-                    width: 1,
-                    height: 1,
-                    rgba8: &[255; 4],
-                },
                 alpha_mode,
                 region_style,
             )
@@ -11372,15 +11366,10 @@ fn compile_section_product_segments(
     .map_err(|error| error.to_string())?;
     let material = host
         .renderer()
-        .create_styled_material(
+        .create_solid_styled_material(
             host.device(),
             host.queue(),
             &format!("{}-material", id.0),
-            GpuTextureData {
-                width: 1,
-                height: 1,
-                rgba8: &[255; 4],
-            },
             alpha_mode,
             *gpu_style,
         )
@@ -13314,7 +13303,11 @@ fn potree_cost(request: &WasmPotreeRequest, decoded_stage: bool) -> ResourceCost
     let decoded_bytes_per_point = 16_u64 + u64::from(has_civil_attributes) * 8;
     let retains_decoded = request.layout.encoding.eq_ignore_ascii_case("BROTLI");
     ResourceCost {
-        cpu_compressed_bytes: usize_to_u64(request.bytes.len()),
+        cpu_compressed_bytes: if decoded_stage || !retains_decoded {
+            request.compressed_byte_length
+        } else {
+            0
+        },
         cpu_decoded_bytes: if decoded_stage || retains_decoded {
             count.saturating_mul(decoded_bytes_per_point)
         } else {

@@ -693,15 +693,10 @@ pub fn build_potree_batch(
         &points.colors,
         points.civil_attributes.as_deref(),
     )?;
-    let material = renderer.create_styled_material(
+    let material = renderer.create_solid_styled_material(
         device,
         queue,
         &format!("{label}-style"),
-        GpuTextureData {
-            width: 1,
-            height: 1,
-            rgba8: &[255; 4],
-        },
         if style.opacity() < 1.0 {
             GpuAlphaMode::Blend
         } else {
@@ -812,15 +807,10 @@ fn build_gaussian_splat_block(
         &splats,
         renderer.transparency_strategy(),
     )?;
-    let material = renderer.create_styled_material(
+    let material = renderer.create_solid_styled_material(
         device,
         queue,
         &format!("{label}-style"),
-        GpuTextureData {
-            width: 1,
-            height: 1,
-            rgba8: &[255; 4],
-        },
         GpuAlphaMode::Blend,
         *style,
     )?;
@@ -1174,18 +1164,7 @@ fn build_glb_material(
             .map_err(Into::into);
     }
     renderer
-        .create_styled_material(
-            device,
-            queue,
-            &format!("{label}-style"),
-            GpuTextureData {
-                width: 1,
-                height: 1,
-                rgba8: &[255; 4],
-            },
-            alpha_mode,
-            *style,
-        )
+        .create_solid_styled_material(device, queue, &format!("{label}-style"), alpha_mode, *style)
         .map_err(Into::into)
 }
 

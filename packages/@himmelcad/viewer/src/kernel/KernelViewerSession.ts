@@ -611,10 +611,10 @@ export class KernelViewerSession {
         resourceBudget: this.policyState.resources,
         frameBudget: work.frame,
         detailScale: this.qualityState.detailScale,
-        // One physical pixel is the format-neutral baseline. Potree tightens
-        // this further from its live point diameter inside the kernel so a
-        // 1 px presentation cannot settle on a visibly sparse hierarchy level.
-        maximumScreenSpaceError: 1,
+        // Two physical pixels is the neutral mesh/raster baseline. Potree uses
+        // its own point-diameter coverage target inside the kernel, so point
+        // quality no longer forces every other provider to over-refine.
+        maximumScreenSpaceError: 2,
         maximumTraversedNodes: work.maximumTraversedNodes,
       });
       const uploadedBytes = this.streamingState.execute(plan);
