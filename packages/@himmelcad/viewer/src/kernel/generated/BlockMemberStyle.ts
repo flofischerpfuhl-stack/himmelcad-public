@@ -2,6 +2,6 @@
 import type { CanonicalResourceRef } from "./CanonicalResourceRef";
 
 /**
- * Explicit style state for inline block-member geometry.
+ * Explicit style inheritance for one block level.
  */
-export type BlockMemberStyle = { "kind": "none" } | { "kind": "resource", style: CanonicalResourceRef, };
+export type BlockMemberStyle = { "kind": "inherit" } | { "kind": "clear" } | { "kind": "resource", style: CanonicalResourceRef, };

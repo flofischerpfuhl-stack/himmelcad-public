@@ -1,11 +1,12 @@
 //! Structural validation for canonical entity and geometry objects.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use thiserror::Error;
 
 use crate::canonical_resources::{
-    validate_canonical_resource_ref, MATERIAL_TABLE_RESOURCE_SCHEMA_ID,
+    validate_canonical_resource_ref, BlockInstanceOverrides, BlockMemberAttributes,
+    BlockMemberStyle, MATERIAL_TABLE_RESOURCE_SCHEMA_ID,
 };
 use crate::entity_model::{
     AlignmentGeometry, AnnotationAnchor, AreaGeometry, BuiltInEntityType, CameraModel,
@@ -370,12 +371,10 @@ pub fn validate_geometry_object(geometry: &GeometryObject) -> Result<(), EntityV
             if instance.definition_id.trim().is_empty()
                 || !valid_hash(instance.definition_hash.as_str())
                 || !valid_transform(instance.placement)
-                || instance
-                    .overrides
-                    .as_ref()
-                    .is_some_and(|hash| !valid_hash(hash.as_str()))
             {
                 Err(EntityValidationError::InvalidIdentifier)
+            } else if let Some(overrides) = &instance.overrides {
+                validate_block_instance_overrides(overrides)
             } else {
                 Ok(())
             }
@@ -391,6 +390,46 @@ pub fn validate_geometry_object(geometry: &GeometryObject) -> Result<(), EntityV
             }
         }
     }
+}
+
+fn validate_block_instance_overrides(
+    overrides: &BlockInstanceOverrides,
+) -> Result<(), EntityValidationError> {
+    const MAX_BLOCK_MEMBER_OVERRIDES: usize = 1_000_000;
+
+    if overrides.members.len() > MAX_BLOCK_MEMBER_OVERRIDES {
+        return Err(EntityValidationError::InvalidIdentifier);
+    }
+    validate_block_member_style(&overrides.style)?;
+    validate_block_member_attributes(&overrides.attributes)?;
+    let mut member_ids = BTreeSet::new();
+    for member in &overrides.members {
+        if member.member_id.trim().is_empty() || !member_ids.insert(&member.member_id) {
+            return Err(EntityValidationError::InvalidIdentifier);
+        }
+        validate_block_member_style(&member.style)?;
+        validate_block_member_attributes(&member.attributes)?;
+    }
+    Ok(())
+}
+
+fn validate_block_member_style(style: &BlockMemberStyle) -> Result<(), EntityValidationError> {
+    if let BlockMemberStyle::Resource { style } = style {
+        validate_canonical_resource_ref(style)
+            .map_err(|_| EntityValidationError::InvalidIdentifier)?;
+    }
+    Ok(())
+}
+
+fn validate_block_member_attributes(
+    attributes: &BlockMemberAttributes,
+) -> Result<(), EntityValidationError> {
+    if let BlockMemberAttributes::Replace { attributes_ref } = attributes {
+        if !valid_hash(attributes_ref.as_str()) {
+            return Err(EntityValidationError::InvalidIdentifier);
+        }
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_lines)]

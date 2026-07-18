@@ -7,4 +7,4 @@
  * extension points; this enum is only the strict compatibility gate for the
  * built-ins whose geometry semantics are known here.
  */
-export type BuiltInEntityType = "hcad.group@1" | "hcad.layer@1" | "hcad.point@1" | "hcad.curve@1" | "hcad.area@1" | "hcad.plane@1" | "hcad.elevation-surface@1" | "hcad.surface-3d@1" | "hcad.raster-image@1" | "hcad.point-cloud@1" | "hcad.gaussian-splat-cloud@1" | "hcad.panorama@1" | "hcad.object-3d@1" | "hcad.bim-object@1" | "hcad.alignment@1" | "hcad.block@1" | "hcad.text@1" | "hcad.label@1" | "hcad.dimension@1";
+export type BuiltInEntityType = "hcad.group@1" | "hcad.layer@1" | "hcad.point@1" | "hcad.curve@1" | "hcad.area@1" | "hcad.plane@1" | "hcad.elevation-surface@1" | "hcad.surface-3d@1" | "hcad.raster-image@1" | "hcad.point-cloud@1" | "hcad.gaussian-splat-cloud@1" | "hcad.panorama@1" | "hcad.object-3d@1" | "hcad.bim-object@1" | "hcad.alignment@1" | "hcad.block@2" | "hcad.text@1" | "hcad.label@1" | "hcad.dimension@1";

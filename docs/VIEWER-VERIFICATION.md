@@ -1046,6 +1046,35 @@ PhotoLab/COLMAP CPU saturation and reports 4.0 ms; this contended measurement is
 evidence of correctness only and does not replace the established performance
 gate.
 
+### V2 typed block-inheritance checkpoint
+
+The canonical block contract is now `hcad.block@2` with immutable
+`hcad.resource.block-definition@2` definitions. Definition members, complete
+instances and stable member-specific overrides carry explicit `inherit`,
+`clear` or exact style/attribute replacement states. Inline geometry no longer
+owns an app-shaped style field, and the former opaque instance override hash is
+gone. Exact entity and style revisions, content-addressed attribute-table bytes,
+duplicate or unknown member IDs, nesting cycles and placement composition are
+validated before expansion. Source attributes/styles resolve through
+definition, instance-wide and member-specific levels; a live view style remains
+the final presentation-only state.
+
+The browser fixture hash-verifies two attribute tables, exercises definition-
+and instance-level inheritance plus a stable member override, and rejects a
+tampered attribute payload and an unknown member override without publishing a
+partial proxy. Both explicit backends pass the 30-entity/38-proxy scene. The
+WebGPU CPU-adapter correctness run reports 1.9 ms maximum CPU submit. Forced
+WebGL2 also passes on the physical Intel HD Graphics 630, but its 6.4 ms run was
+recorded while an unrelated compute process saturated the host and is therefore
+correctness evidence only, not a replacement performance gate.
+
+Generated TypeScript bindings, the browser contract and the WASM target check
+are green. The complete Render-Core suite passes 317/317, viewer-WASM passes
+7/7, IO passes 61 tests with its one explicit rare scale gate ignored, and all
+71 viewer-package tests pass. The full shared Core run has 148 passing tests;
+the same two concurrently modified PhotoLab matching tests remain outside this
+lane and prevent recording that combined command as a green gate.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

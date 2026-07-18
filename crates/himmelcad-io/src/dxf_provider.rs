@@ -22,9 +22,9 @@ use dxf::tables::{Layer, LineType};
 use dxf::{Block, Color, Drawing, Point, Vector};
 use himmelcad_core::canonical_resources::{
     validate_block_definition_set, validate_line_type_resource, BlockDefinition, BlockMember,
-    BlockMemberSource, BlockMemberStyle, BlockPlacementComposition, CanonicalResourceRef,
-    LineTypeElement, LineTypePattern, LineTypeResource, BLOCK_DEFINITION_SCHEMA_ID,
-    LINE_TYPE_RESOURCE_SCHEMA_ID,
+    BlockMemberAttributes, BlockMemberSource, BlockMemberStyle, BlockPlacementComposition,
+    CanonicalResourceRef, LineTypeElement, LineTypePattern, LineTypeResource,
+    BLOCK_DEFINITION_SCHEMA_ID, LINE_TYPE_RESOURCE_SCHEMA_ID,
 };
 use himmelcad_core::entity::EntityId;
 use himmelcad_core::entity_model::{
@@ -637,7 +637,7 @@ fn drawing_to_package(
         &mut objects,
         &mut resource_refs,
     )?;
-    validate_block_definition_set(&block_definitions, &[], &resource_refs)
+    validate_block_definition_set(&block_definitions, &[], &resource_refs, &[])
         .map_err(provider_error)?;
     for definition in &block_definitions {
         objects.insert(BLOCK_DEFINITION_MEDIA_TYPE, definition)?;
@@ -1053,9 +1053,10 @@ fn import_block_definitions(
                 members.push(BlockMember {
                     member_id: format!("member-{index}"),
                     placement: conversion.placement.unwrap_or(Transform3d::IDENTITY),
+                    style: BlockMemberStyle::Inherit,
+                    attributes: BlockMemberAttributes::Inherit,
                     source: BlockMemberSource::Inline {
                         geometry: conversion.geometry,
-                        style: BlockMemberStyle::None,
                     },
                 });
             }
@@ -1787,14 +1788,16 @@ fn export_loss_codes(
                 if member.placement != Transform3d::IDENTITY {
                     losses.insert(LOSS_METADATA.to_owned());
                 }
+                if !matches!(member.style, BlockMemberStyle::Inherit)
+                    || !matches!(member.attributes, BlockMemberAttributes::Inherit)
+                {
+                    losses.insert(LOSS_METADATA.to_owned());
+                }
                 match &member.source {
                     BlockMemberSource::EntityReference { .. } => {
                         losses.insert(LOSS_BLOCK_DEFINITION.to_owned());
                     }
-                    BlockMemberSource::Inline { geometry, style } => {
-                        if !matches!(style, BlockMemberStyle::None) {
-                            losses.insert(LOSS_METADATA.to_owned());
-                        }
+                    BlockMemberSource::Inline { geometry } => {
                         collect_geometry_losses(geometry, &mut losses);
                     }
                 }

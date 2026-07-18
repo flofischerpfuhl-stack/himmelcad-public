@@ -111,6 +111,7 @@ export interface WasmViewerBinding {
   register_annotation_style(objectHash: string, styleJson: string): void;
   register_block_definition(definitionJson: string): void;
   register_block_member_style(resourceRefJson: string, styleJson: string): void;
+  register_block_attribute_table(objectHash: string, bytes: Uint8Array): void;
   register_image_resource(
     objectHash: string,
     width: number,
@@ -1991,6 +1992,15 @@ export class WgpuKernelViewer {
       JSON.stringify(resource),
       JSON.stringify(this.resolveLegacyLineType(style)),
     );
+  }
+
+  /** Registers one content-addressed attribute table used by block inheritance. */
+  registerBlockAttributeTable(objectHash: string, bytes: Uint8Array): void {
+    this.assertAlive();
+    if (objectHash.length === 0) {
+      throw new RangeError('block attribute table hash must be non-empty');
+    }
+    this.binding.register_block_attribute_table(objectHash, bytes);
   }
 
   /** Uploads deterministic decoded pixels for raster and panorama resources. */

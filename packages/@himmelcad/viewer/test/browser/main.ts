@@ -354,6 +354,8 @@ const BASE = [6_378_137.125, 5_400_000.25, 512.75] as const;
 const FONT_HASH = 'f'.repeat(64);
 const DIMENSION_STYLE_HASH = 'd'.repeat(64);
 let BLOCK_HASH = 'b'.repeat(64);
+let BLOCK_CENTER_ATTRIBUTES_HASH = 'a'.repeat(64);
+let BLOCK_INSTANCE_ATTRIBUTES_HASH = 'd'.repeat(64);
 const PANORAMA_IMAGE_HASH = '8253870745066d9c79172635fae46712dbfd232c0548340493eebb5daf387d52';
 const PANORAMA_DEPTH_HASH = '11f2667fd090884e4fccbadb71c96435bfb589537a858b53070f4b8aab365543';
 const PANORAMA_VALIDITY_HASH = 'a2c70538651a7e9296b097e8c3dfc1b195a945802ffe45aa471868fba6f1042e';
@@ -1037,7 +1039,7 @@ function canonicalTypeIdForGeometry(
     panorama: 'hcad.panorama@1',
     solid: 'hcad.object-3d@1',
     alignment: 'hcad.alignment@1',
-    block: 'hcad.block@1',
+    block: 'hcad.block@2',
     text: 'hcad.text@1',
     label: 'hcad.label@1',
     dimension: 'hcad.dimension@1',
@@ -3544,7 +3546,27 @@ function entityZoo(): LegacyEntityRequest[] {
           definitionId: 'survey-marker',
           definitionHash: BLOCK_HASH,
           placement: IDENTITY,
-          overrides: null,
+          overrides: {
+            style: { kind: 'inherit' },
+            attributes: {
+              kind: 'replace',
+              attributesRef: BLOCK_INSTANCE_ATTRIBUTES_HASH,
+            },
+            members: [
+              {
+                memberId: 'ring',
+                style: {
+                  kind: 'resource',
+                  style: {
+                    resourceId: 'survey-marker-center-style',
+                    schemaId: 'hcad.resource.render-style@1',
+                    contentHash: 'c1'.repeat(32),
+                  },
+                },
+                attributes: { kind: 'clear' },
+              },
+            ],
+          },
         },
       },
       placement: placement(-18, -3, 0),
@@ -4131,10 +4153,16 @@ async function run(): Promise<void> {
     schemaId: 'hcad.resource.render-style@1',
     contentHash: 'c2'.repeat(32),
   };
+  const centerAttributes = new TextEncoder().encode('{"surveyRole":"center"}');
+  const instanceAttributes = new TextEncoder().encode('{"markerRevision":2}');
+  BLOCK_CENTER_ATTRIBUTES_HASH = await sha256Bytes(centerAttributes);
+  BLOCK_INSTANCE_ATTRIBUTES_HASH = await sha256Bytes(instanceAttributes);
+  viewer.registerBlockAttributeTable(BLOCK_CENTER_ATTRIBUTES_HASH, centerAttributes);
+  viewer.registerBlockAttributeTable(BLOCK_INSTANCE_ATTRIBUTES_HASH, instanceAttributes);
   viewer.registerBlockMemberStyle(centerStyleResource, style([1, 0.16, 0.1, 1]));
   viewer.registerBlockMemberStyle(ringStyleResource, style([1, 0.82, 0.12, 1]));
   const blockDefinition: KernelBlockDefinition = {
-    schemaId: 'hcad.resource.block-definition@1',
+    schemaId: 'hcad.resource.block-definition@2',
     definitionId: 'survey-marker',
     contentHash: '00'.repeat(32),
     placementComposition: 'instanceThenMember',
@@ -4142,33 +4170,74 @@ async function run(): Promise<void> {
       {
         memberId: 'center',
         placement: IDENTITY,
+        style: { kind: 'resource', style: centerStyleResource },
+        attributes: {
+          kind: 'replace',
+          attributesRef: BLOCK_CENTER_ATTRIBUTES_HASH,
+        },
         source: {
           kind: 'inline',
           geometry: { kind: 'point', position: point(0, 0, 3) },
-          style: { kind: 'resource', style: centerStyleResource },
         },
       },
       {
         memberId: 'ring',
         placement: IDENTITY,
+        style: { kind: 'resource', style: ringStyleResource },
+        attributes: { kind: 'inherit' },
         source: {
           kind: 'inline',
           geometry: {
             kind: 'curve',
             curve: { kind: 'circle', center: point(0, 0, 3), radius: 2, plane: null },
           },
-          style: { kind: 'resource', style: ringStyleResource },
         },
       },
     ],
   };
   BLOCK_HASH = viewer.blockDefinitionContentHash(blockDefinition);
   viewer.registerBlockDefinition({ ...blockDefinition, contentHash: BLOCK_HASH });
+  const unknownBlockOverrideAdmission = await canonicalizeLegacyRequest(viewer, {
+    entityId: 'invalid-block-member-override',
+    geometry: {
+      kind: 'block',
+      instance: {
+        definitionId: 'survey-marker',
+        definitionHash: BLOCK_HASH,
+        placement: IDENTITY,
+        overrides: {
+          style: { kind: 'inherit' },
+          attributes: { kind: 'inherit' },
+          members: [
+            {
+              memberId: 'missing-member',
+              style: { kind: 'inherit' },
+              attributes: { kind: 'inherit' },
+            },
+          ],
+        },
+      },
+    },
+  });
+  let unknownBlockOverrideRejected = false;
+  try {
+    viewer.publishCanonicalRepresentations([unknownBlockOverrideAdmission]);
+  } catch (error) {
+    if (!String(error).includes('unknown member')) throw error;
+    unknownBlockOverrideRejected = true;
+  }
+  if (
+    !unknownBlockOverrideRejected ||
+    viewer.entityPresentation('invalid-block-member-override').length !== 0
+  ) {
+    throw new Error('unknown block member override published a partial representation');
+  }
   const panoramaPixels = new Uint8Array(8 * 4 * 4);
   for (let index = 0; index < 8 * 4; index += 1) {
     panoramaPixels.set(index % 2 === 0 ? [30, 180, 255, 255] : [255, 110, 30, 255], index * 4);
   }
   for (const registerTampered of [
+    () => viewer.registerBlockAttributeTable('0'.repeat(64), new Uint8Array([1, 2, 3])),
     () => viewer.registerImageResource('0'.repeat(64), 1, 1, new Uint8Array([1, 2, 3, 4])),
     () => viewer.registerDepthResource('0'.repeat(64), 1, 1, new Float32Array([1])),
     () => viewer.registerRasterBinaryResource('0'.repeat(64), new Uint8Array([1])),
@@ -4388,7 +4457,7 @@ async function run(): Promise<void> {
     throw new Error('entity-reference block fixture has no canonical survey point');
   }
   const referenceBlockDraft: KernelBlockDefinition = {
-    schemaId: 'hcad.resource.block-definition@1',
+    schemaId: 'hcad.resource.block-definition@2',
     definitionId: 'survey-point-reference',
     contentHash: '00'.repeat(32),
     placementComposition: 'instanceThenMember',
@@ -4396,6 +4465,8 @@ async function run(): Promise<void> {
       {
         memberId: 'exact-survey-point-revision',
         placement: IDENTITY,
+        style: { kind: 'inherit' },
+        attributes: { kind: 'inherit' },
         source: {
           kind: 'entityReference',
           entity: {
@@ -4417,7 +4488,11 @@ async function run(): Promise<void> {
         definitionId: 'survey-point-reference',
         definitionHash: referenceBlockHash,
         placement: IDENTITY,
-        overrides: null,
+        overrides: {
+          style: { kind: 'clear' },
+          attributes: { kind: 'inherit' },
+          members: [],
+        },
       },
     },
     placement: placement(-14, 5, 0),

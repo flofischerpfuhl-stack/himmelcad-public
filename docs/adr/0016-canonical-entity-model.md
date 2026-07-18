@@ -183,6 +183,16 @@ convention.
 `BlockDefinition` project record. Changing a definition updates its instances;
 exploding an instance produces independent entities.
 
+The reusable contract is versioned as `hcad.block@2` with
+`hcad.resource.block-definition@2`. Every member has a definition-stable ID,
+an exact placement, a source revision and explicit style/attribute inheritance.
+Definition, instance-wide and member-specific levels use typed `inherit`,
+`clear` and exact resource/content-address replacements; an opaque override hash
+is not a block semantic. Duplicate or unknown override member IDs, stale entity
+or style revisions, unregistered attribute tables and definition cycles are
+invalid. Instance and member placements compose in the serialized
+`instanceThenMember` order without copying definition vertices.
+
 ### Alignments and views
 
 Horizontal alignment, vertical alignment/gradient, stationing, width bands,

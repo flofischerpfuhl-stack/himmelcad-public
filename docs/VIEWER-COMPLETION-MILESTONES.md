@@ -169,9 +169,15 @@ von echten V2-Lücken:
   WebGPU-/WebGL2-Shader. Vier gepackte Vertexattribute und aus der affinen
   Instanzmatrix rekonstruierte Normaltransformation halten den portablen
   16-Attribut-Vertrag ein, ohne die kanonische Breite zu reduzieren.
-- Die reale verbleibende Schema-Lücke ist ein typisierter
-  Vererbungs-/Override-Vertrag für Blockinstanz-Attribute und -Stile statt eines
-  opaken Override-Hashes.
+- Der vierte V2-Slice ersetzt den ignorierten Block-Override-Hash durch den
+  versionierten `hcad.block@2`-/`block-definition@2`-Vertrag. Definition,
+  Instanz und stabile Member-ID besitzen explizite `inherit`-/`clear`-/exakte
+  Stil- und Attributzustände; Attributbytes werden vor der Referenzaufnahme
+  gehasht. Unbekannte Member, fehlende oder veraltete Revisionen und Zyklen
+  publizieren keine Teilinstanz.
+- Der erneute Schema-Audit findet damit keine verbleibende V2-Schema-Lücke.
+  Offen sind ausschließlich die nachfolgenden Zoo-, Manipulations- und realen
+  Provider-Gates.
 - Reale verbleibende Gate-Lücken sind die Aufnahme jeder vorhandenen
   Kurvenvariante und Plane-/Definition-Variante in den gemeinsamen Browser-Zoo,
   manipulierte Referenzfälle für die neuen Breiten und der vollständige

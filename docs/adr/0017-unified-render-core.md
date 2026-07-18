@@ -367,6 +367,15 @@ metadata and source textures remain unchanged. The same resolver is used for
 inline entities, streamed glTF/3D Tiles and elevation rasters, move previews and
 section-region presentation rather than keeping a second host-side style path.
 
+Block expansion resolves immutable `block-definition@2` contracts in the same
+kernel. Member source style/attributes are followed by definition assignment,
+instance-wide assignment and stable member-specific assignment; a live view
+style remains a final presentation-only override. `inherit`, `clear` and exact
+resource/content replacements are explicit states. Attribute-table bytes are
+hash-verified before their identities are admitted. Unknown member IDs, missing
+or stale style/attribute revisions and cycles fail before any member proxy is
+published, while nested placements preserve `instanceThenMember` composition.
+
 Stroke presentation is a separate required contract on the same `RenderStyle`,
 with a serde default that normalizes older stored styles to the previous visible
 source-width behavior. `none`, `color` and registered `lineType` modes apply

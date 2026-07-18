@@ -40,10 +40,11 @@ use himmelcad_core::canonical_resource_catalog::{
 #[cfg(target_arch = "wasm32")]
 use himmelcad_core::canonical_resources::{
     validate_block_definition_set, validate_hatch_pattern_resource, validate_line_type_resource,
-    BlockDefinition, BlockMember, BlockMemberSource, BlockMemberStyle, CanonicalResourceRef,
-    HatchPatternResource, LineTypeElement, LineTypePattern, LineTypeResource, MaterialAlphaMode,
-    MaterialResource, MaterialTableResource, MaterialTextureSlot, TextureColorSpace, TextureFilter,
-    TextureResource, TextureWrapMode, LINE_TYPE_RESOURCE_SCHEMA_ID,
+    BlockDefinition, BlockMember, BlockMemberAttributes, BlockMemberSource, BlockMemberStyle,
+    CanonicalResourceRef, HatchPatternResource, LineTypeElement, LineTypePattern, LineTypeResource,
+    MaterialAlphaMode, MaterialResource, MaterialTableResource, MaterialTextureSlot,
+    TextureColorSpace, TextureFilter, TextureResource, TextureWrapMode,
+    LINE_TYPE_RESOURCE_SCHEMA_ID,
 };
 #[cfg(target_arch = "wasm32")]
 use himmelcad_core::entity_commands::{
@@ -404,6 +405,7 @@ pub struct WasmViewer {
     annotation_styles: BTreeMap<String, WasmAnnotationStyle>,
     block_definitions: BTreeMap<String, BlockDefinition>,
     block_member_styles: BTreeMap<String, (CanonicalResourceRef, RenderStyle)>,
+    block_attribute_tables: BTreeSet<String>,
     block_member_entity_versions: BTreeMap<String, (EntityVersionRef, WasmEntityRenderRequest)>,
     image_resources: BTreeMap<String, WasmImageResource>,
     depth_resources: BTreeMap<String, WasmDepthResource>,
@@ -613,6 +615,8 @@ struct WasmEntityRenderRequest {
     version_hash: Option<String>,
     #[serde(default)]
     source_revision: Option<u64>,
+    #[serde(default)]
+    attributes_ref: Option<ObjectHash>,
     #[serde(default)]
     evaluated_mesh_resource_ref: Option<String>,
     geometry: GeometryObject,
@@ -1451,6 +1455,7 @@ async fn create_wasm_viewer(
         annotation_styles: BTreeMap::new(),
         block_definitions: BTreeMap::new(),
         block_member_styles: BTreeMap::new(),
+        block_attribute_tables: BTreeSet::new(),
         block_member_entity_versions: BTreeMap::new(),
         image_resources: BTreeMap::new(),
         depth_resources: BTreeMap::new(),
@@ -2059,6 +2064,7 @@ impl WasmViewer {
                 &compile_entities,
                 &self.block_definitions,
                 &self.block_member_styles,
+                &self.block_attribute_tables,
                 &self.block_member_entity_versions,
                 &self.image_resources,
                 &self.depth_resources,
@@ -2092,6 +2098,7 @@ impl WasmViewer {
                 &compile_entities,
                 &self.block_definitions,
                 &self.block_member_styles,
+                &self.block_attribute_tables,
                 &self.block_member_entity_versions,
                 &self.image_resources,
                 &self.depth_resources,
@@ -3837,6 +3844,27 @@ impl WasmViewer {
         Ok(())
     }
 
+    /// Registers one immutable general attribute table used by typed block
+    /// inheritance. The viewer retains only its verified content identity.
+    pub fn register_block_attribute_table(
+        &mut self,
+        object_hash: &str,
+        bytes: &[u8],
+    ) -> Result<(), JsValue> {
+        let computed = ObjectHash::of_bytes(bytes);
+        if computed.as_str() != object_hash {
+            return Err(JsValue::from_str(
+                "block attribute table content hash does not match its bytes",
+            ));
+        }
+        if !self.block_attribute_tables.insert(object_hash.to_owned()) {
+            return Err(JsValue::from_str(
+                "block attribute table revision is already registered",
+            ));
+        }
+        Ok(())
+    }
+
     /// Registers one immutable reusable block definition. Definitions are
     /// installed before their instances so a block never renders partially.
     pub fn register_block_definition(&mut self, definition_json: &str) -> Result<(), JsValue> {
@@ -3880,7 +3908,14 @@ impl WasmViewer {
             .values()
             .map(|(resource, _)| resource.clone())
             .collect::<Vec<_>>();
-        validate_block_definition_set(&definitions, &entities, &resources).map_err(js_error)?;
+        let attributes = self
+            .block_attribute_tables
+            .iter()
+            .cloned()
+            .map(ObjectHash)
+            .collect::<Vec<_>>();
+        validate_block_definition_set(&definitions, &entities, &resources, &attributes)
+            .map_err(js_error)?;
         let previous_entity_versions =
             std::mem::replace(&mut self.block_member_entity_versions, entity_versions);
         self.block_definitions.insert(key.clone(), definition);
@@ -5535,6 +5570,7 @@ impl WasmViewer {
                     &self.entity_requests,
                     &self.block_definitions,
                     &self.block_member_styles,
+                    &self.block_attribute_tables,
                     &self.block_member_entity_versions,
                     &self.image_resources,
                     &self.depth_resources,
@@ -5573,6 +5609,7 @@ impl WasmViewer {
                     &self.entity_requests,
                     &self.block_definitions,
                     &self.block_member_styles,
+                    &self.block_attribute_tables,
                     &self.block_member_entity_versions,
                     &self.image_resources,
                     &self.depth_resources,
@@ -5955,6 +5992,7 @@ impl WasmViewer {
                     &self.entity_requests,
                     &self.block_definitions,
                     &self.block_member_styles,
+                    &self.block_attribute_tables,
                     &self.block_member_entity_versions,
                     &self.image_resources,
                     &self.depth_resources,
@@ -7850,6 +7888,7 @@ fn compile_inline_entity(
     entity_requests: &BTreeMap<String, WasmEntityRenderRequest>,
     block_definitions: &BTreeMap<String, BlockDefinition>,
     block_member_styles: &BTreeMap<String, (CanonicalResourceRef, RenderStyle)>,
+    block_attribute_tables: &BTreeSet<String>,
     block_member_entity_versions: &BTreeMap<String, (EntityVersionRef, WasmEntityRenderRequest)>,
     image_resources: &BTreeMap<String, WasmImageResource>,
     depth_resources: &BTreeMap<String, WasmDepthResource>,
@@ -7872,6 +7911,7 @@ fn compile_inline_entity(
             entity_requests,
             block_definitions,
             block_member_styles,
+            block_attribute_tables,
             block_member_entity_versions,
             image_resources,
             depth_resources,
@@ -8248,6 +8288,7 @@ fn compile_block_entity(
     entity_requests: &BTreeMap<String, WasmEntityRenderRequest>,
     block_definitions: &BTreeMap<String, BlockDefinition>,
     block_member_styles: &BTreeMap<String, (CanonicalResourceRef, RenderStyle)>,
+    block_attribute_tables: &BTreeSet<String>,
     block_member_entity_versions: &BTreeMap<String, (EntityVersionRef, WasmEntityRenderRequest)>,
     image_resources: &BTreeMap<String, WasmImageResource>,
     depth_resources: &BTreeMap<String, WasmDepthResource>,
@@ -8258,6 +8299,7 @@ fn compile_block_entity(
     line_type_resources: &WasmLineTypeResourceRegistry,
     stack: &mut Vec<String>,
 ) -> Result<(), String> {
+    validate_block_instance_attribute_refs(instance, block_attribute_tables)?;
     let definition = resolve_block_definition(instance, block_definitions)?;
     let definition_key =
         block_definition_key(&definition.definition_id, &definition.content_hash.0);
@@ -8290,6 +8332,7 @@ fn compile_block_entity(
                 entity_requests,
                 block_definitions,
                 block_member_styles,
+                block_attribute_tables,
                 block_member_entity_versions,
                 image_resources,
                 depth_resources,
@@ -8312,6 +8355,7 @@ fn compile_block_entity(
                 entity_requests,
                 block_definitions,
                 block_member_styles,
+                block_attribute_tables,
                 block_member_entity_versions,
                 image_resources,
                 depth_resources,
@@ -8345,6 +8389,19 @@ fn resolve_block_definition<'a>(
             instance.definition_id
         ));
     }
+    if let Some(overrides) = &instance.overrides {
+        if overrides.members.iter().any(|override_| {
+            !definition
+                .members
+                .iter()
+                .any(|member| member.member_id == override_.member_id)
+        }) {
+            return Err(format!(
+                "block instance override targets an unknown member in definition '{}'",
+                instance.definition_id
+            ));
+        }
+    }
     Ok(definition)
 }
 
@@ -8372,45 +8429,27 @@ fn block_member_request(
     block_member_styles: &BTreeMap<String, (CanonicalResourceRef, RenderStyle)>,
 ) -> Result<WasmEntityRenderRequest, String> {
     let (mut source, source_placement) = match &member.source {
-        BlockMemberSource::Inline { geometry, style } => {
-            let style = match style {
-                BlockMemberStyle::None => RenderStyle::default(),
-                BlockMemberStyle::Resource { style } => {
-                    let key = canonical_resource_ref_key(style)?;
-                    let (registered_ref, registered_style) =
-                        block_member_styles.get(&key).ok_or_else(|| {
-                            format!(
-                                "block member style resource '{}' is not registered",
-                                style.resource_id
-                            )
-                        })?;
-                    if registered_ref != style {
-                        return Err("block member style resource revision mismatch".to_owned());
-                    }
-                    registered_style.clone()
-                }
-            };
-            (
-                WasmEntityRenderRequest {
-                    entity_id: request.entity_id.clone(),
-                    proxy_id: request.proxy_id.clone(),
-                    version_hash: request.version_hash.clone(),
-                    source_revision: request.source_revision,
-                    evaluated_mesh_resource_ref: None,
-                    geometry: geometry.clone(),
-                    style,
-                    placement: None,
-                    locked_plan_elevation: request.locked_plan_elevation,
-                    chord_tolerance: request.chord_tolerance,
-                    maximum_curve_segments: request.maximum_curve_segments,
-                    line_width: request.line_width,
-                    plane_extent: request.plane_extent,
-                    fill_areas: request.fill_areas,
-                    exaggeration_datum: request.exaggeration_datum,
-                },
-                Transform3d::IDENTITY,
-            )
-        }
+        BlockMemberSource::Inline { geometry } => (
+            WasmEntityRenderRequest {
+                entity_id: request.entity_id.clone(),
+                proxy_id: request.proxy_id.clone(),
+                version_hash: request.version_hash.clone(),
+                source_revision: request.source_revision,
+                attributes_ref: None,
+                evaluated_mesh_resource_ref: None,
+                geometry: geometry.clone(),
+                style: RenderStyle::default(),
+                placement: None,
+                locked_plan_elevation: request.locked_plan_elevation,
+                chord_tolerance: request.chord_tolerance,
+                maximum_curve_segments: request.maximum_curve_segments,
+                line_width: request.line_width,
+                plane_extent: request.plane_extent,
+                fill_areas: request.fill_areas,
+                exaggeration_datum: request.exaggeration_datum,
+            },
+            Transform3d::IDENTITY,
+        ),
         BlockMemberSource::EntityReference { entity } => {
             let key = canonical_entity_version_ref_key(entity)?;
             let (registered_ref, source) =
@@ -8429,6 +8468,24 @@ fn block_member_request(
             )
         }
     };
+    apply_block_member_style(&mut source.style, &member.style, block_member_styles)?;
+    apply_block_member_attributes(&mut source.attributes_ref, &member.attributes);
+    if let Some(overrides) = &instance.overrides {
+        apply_block_member_style(&mut source.style, &overrides.style, block_member_styles)?;
+        apply_block_member_attributes(&mut source.attributes_ref, &overrides.attributes);
+        if let Some(member_override) = overrides
+            .members
+            .iter()
+            .find(|candidate| candidate.member_id == member.member_id)
+        {
+            apply_block_member_style(
+                &mut source.style,
+                &member_override.style,
+                block_member_styles,
+            )?;
+            apply_block_member_attributes(&mut source.attributes_ref, &member_override.attributes);
+        }
+    }
     let parent = DMat4::from_cols_array(&request.placement.unwrap_or(Transform3d::IDENTITY).0);
     let instance = DMat4::from_cols_array(&instance.placement.0);
     let member_placement = DMat4::from_cols_array(&member.placement.0);
@@ -8452,6 +8509,73 @@ fn block_member_request(
     source.placement = Some(Transform3d(placement.to_cols_array()));
     source.exaggeration_datum = request.exaggeration_datum;
     Ok(source)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn apply_block_member_style(
+    target: &mut RenderStyle,
+    assignment: &BlockMemberStyle,
+    block_member_styles: &BTreeMap<String, (CanonicalResourceRef, RenderStyle)>,
+) -> Result<(), String> {
+    match assignment {
+        BlockMemberStyle::Inherit => Ok(()),
+        BlockMemberStyle::Clear => {
+            *target = RenderStyle::default();
+            Ok(())
+        }
+        BlockMemberStyle::Resource { style } => {
+            let key = canonical_resource_ref_key(style)?;
+            let (registered_ref, registered_style) =
+                block_member_styles.get(&key).ok_or_else(|| {
+                    format!(
+                        "block member style resource '{}' is not registered",
+                        style.resource_id
+                    )
+                })?;
+            if registered_ref != style {
+                return Err("block member style resource revision mismatch".to_owned());
+            }
+            target.clone_from(registered_style);
+            Ok(())
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn apply_block_member_attributes(
+    target: &mut Option<ObjectHash>,
+    assignment: &BlockMemberAttributes,
+) {
+    match assignment {
+        BlockMemberAttributes::Inherit => {}
+        BlockMemberAttributes::Clear => *target = None,
+        BlockMemberAttributes::Replace { attributes_ref } => {
+            *target = Some(attributes_ref.clone());
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn validate_block_instance_attribute_refs(
+    instance: &himmelcad_core::entity_model::BlockInstanceGeometry,
+    registered: &BTreeSet<String>,
+) -> Result<(), String> {
+    let Some(overrides) = &instance.overrides else {
+        return Ok(());
+    };
+    let assignments = std::iter::once(&overrides.attributes)
+        .chain(overrides.members.iter().map(|member| &member.attributes));
+    for assignment in assignments {
+        if let BlockMemberAttributes::Replace { attributes_ref } = assignment {
+            if !registered.contains(attributes_ref.as_str()) {
+                return Err(format!(
+                    "block attribute table '{}' is not registered",
+                    attributes_ref.as_str()
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -12531,6 +12655,7 @@ fn canonical_render_request(
         proxy_id: canonical_slot_proxy_id(&slot)?,
         version_hash: Some(request.admission.entity.version_hash.0.clone()),
         source_revision: Some(request.admission.entity.revision),
+        attributes_ref: Some(request.admission.entity.attributes_ref.clone()),
         evaluated_mesh_resource_ref: evaluated_mesh_ref.map(|hash| hash.0),
         geometry: request.admission.resolved_geometry.clone(),
         style: request.style.clone(),
@@ -13293,6 +13418,7 @@ fn alignment_preview_render_request(
         proxy_id,
         version_hash: Some(partition_identity.0.clone()),
         source_revision: None,
+        attributes_ref: None,
         evaluated_mesh_resource_ref: None,
         geometry: GeometryObject::Surface3d {
             mesh: Box::new(mesh),

@@ -217,6 +217,7 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
     register_annotation_style(): void {},
     register_block_definition(): void {},
     register_block_member_style(): void {},
+    register_block_attribute_table(): void {},
     register_image_resource(): void {},
     register_depth_resource(): void {},
     measure_raster_depth_sample_json: () =>
@@ -1189,6 +1190,7 @@ function minimalBinding(
     register_annotation_style(): void {},
     register_block_definition(): void {},
     register_block_member_style(): void {},
+    register_block_attribute_table(): void {},
     register_image_resource(): void {},
     register_depth_resource(): void {},
     measure_raster_depth_sample_json: () =>

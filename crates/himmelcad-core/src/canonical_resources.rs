@@ -27,7 +27,7 @@ const MAX_RESOURCE_REFERENCES: usize = 1_000_000;
 const JAVASCRIPT_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 
 /// Schema identifier for reusable block definitions.
-pub const BLOCK_DEFINITION_SCHEMA_ID: &str = "hcad.resource.block-definition@1";
+pub const BLOCK_DEFINITION_SCHEMA_ID: &str = "hcad.resource.block-definition@2";
 /// Schema identifier for physically based material resources.
 pub const MATERIAL_RESOURCE_SCHEMA_ID: &str = "hcad.resource.material@1";
 /// Schema identifier for ordered mesh material-table resources.
@@ -67,7 +67,7 @@ pub enum BlockPlacementComposition {
     InstanceThenMember,
 }
 
-/// Explicit style state for inline block-member geometry.
+/// Explicit style inheritance for one block level.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[cfg_attr(
@@ -85,10 +85,64 @@ pub enum BlockPlacementComposition {
     deny_unknown_fields
 )]
 pub enum BlockMemberStyle {
-    /// The member has no resource-backed style assignment.
-    None,
+    /// Retain the style resolved from the referenced source or enclosing level.
+    Inherit,
+    /// Remove the inherited source style and use the neutral render style.
+    Clear,
     /// The member uses one exact immutable style resource.
     Resource { style: CanonicalResourceRef },
+}
+
+/// Explicit attribute-table inheritance for one block level.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-bindings",
+    ts(
+        tag = "kind",
+        rename_all = "camelCase",
+        rename_all_fields = "camelCase"
+    )
+)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum BlockMemberAttributes {
+    /// Retain the exact attribute table resolved from the referenced source.
+    Inherit,
+    /// Remove the inherited attribute table for this member expansion.
+    Clear,
+    /// Replace it with one exact content-addressed attribute table.
+    Replace { attributes_ref: ObjectHash },
+}
+
+/// One stable member-specific override authored on a block instance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BlockMemberOverride {
+    /// Definition-owned member identity targeted by this override.
+    pub member_id: String,
+    /// Explicit style inheritance at this instance level.
+    pub style: BlockMemberStyle,
+    /// Explicit attribute inheritance at this instance level.
+    pub attributes: BlockMemberAttributes,
+}
+
+/// Typed overrides carried directly by one canonical block-instance revision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BlockInstanceOverrides {
+    /// Style applied to every expanded member before member-specific overrides.
+    pub style: BlockMemberStyle,
+    /// Attributes applied to every expanded member before member-specific overrides.
+    pub attributes: BlockMemberAttributes,
+    /// Stable member-specific overrides; duplicate or unknown IDs are invalid.
+    pub members: Vec<BlockMemberOverride>,
 }
 
 /// Authoritative source of one reusable block member.
@@ -113,8 +167,6 @@ pub enum BlockMemberSource {
     Inline {
         /// Complete canonical member geometry.
         geometry: GeometryObject,
-        /// Explicit member style state.
-        style: BlockMemberStyle,
     },
     /// Exact immutable revision of an existing canonical entity.
     EntityReference { entity: EntityVersionRef },
@@ -129,6 +181,10 @@ pub struct BlockMember {
     pub member_id: String,
     /// Placement composed after the block-instance placement.
     pub placement: Transform3d,
+    /// Definition-level style assignment or inheritance from the source entity.
+    pub style: BlockMemberStyle,
+    /// Definition-level attribute assignment or inheritance from the source entity.
+    pub attributes: BlockMemberAttributes,
     /// Complete inline content or an exact entity revision.
     pub source: BlockMemberSource,
 }
@@ -977,12 +1033,14 @@ pub fn validate_block_definition_set(
     definitions: &[BlockDefinition],
     entities: &[EntityVersionRef],
     resources: &[CanonicalResourceRef],
+    attribute_tables: &[ObjectHash],
 ) -> Result<(), CanonicalResourceValidationError> {
     if definitions.len() > MAX_BLOCK_DEFINITIONS {
         return Err(CanonicalResourceValidationError::CollectionLimit);
     }
     let resource_index = build_resource_index(resources)?;
     let entity_index = build_entity_index(entities)?;
+    let attribute_index = build_block_attribute_index(attribute_tables)?;
     let mut definition_index = HashMap::with_capacity(definitions.len());
     for definition in definitions {
         validate_resource_envelope(
@@ -1013,18 +1071,18 @@ pub fn validate_block_definition_set(
                 return Err(CanonicalResourceValidationError::DuplicateIdentifier);
             }
             validate_transform(member.placement)?;
+            validate_block_member_style_resources(&member.style, &resource_index)?;
+            validate_block_member_attributes(&member.attributes, &attribute_index)?;
             match &member.source {
-                BlockMemberSource::Inline { geometry, style } => {
+                BlockMemberSource::Inline { geometry } => {
                     validate_geometry_object(geometry)
                         .map_err(|_| CanonicalResourceValidationError::InvalidGeometry)?;
-                    if let BlockMemberStyle::Resource { style } = style {
-                        validate_canonical_resource_ref(style)?;
-                        let Some(versions) = resource_index.get(style.resource_id.as_str()) else {
-                            return Err(CanonicalResourceValidationError::MissingReference);
-                        };
-                        if !versions.contains(&style) {
-                            return Err(CanonicalResourceValidationError::ReferenceVersionMismatch);
-                        }
+                    if let GeometryObject::Block { instance } = geometry {
+                        validate_block_instance_override_resources(
+                            instance,
+                            &resource_index,
+                            &attribute_index,
+                        )?;
                     }
                 }
                 BlockMemberSource::EntityReference { entity } => {
@@ -1045,6 +1103,73 @@ pub fn validate_block_definition_set(
         validate_block_cycles(definition, &definition_index, &mut visiting, &mut visited)?;
     }
     Ok(())
+}
+
+fn validate_block_member_style_resources(
+    style: &BlockMemberStyle,
+    resources: &HashMap<&str, Vec<&CanonicalResourceRef>>,
+) -> Result<(), CanonicalResourceValidationError> {
+    let BlockMemberStyle::Resource { style } = style else {
+        return Ok(());
+    };
+    validate_canonical_resource_ref(style)?;
+    let Some(versions) = resources.get(style.resource_id.as_str()) else {
+        return Err(CanonicalResourceValidationError::MissingReference);
+    };
+    if !versions.contains(&style) {
+        return Err(CanonicalResourceValidationError::ReferenceVersionMismatch);
+    }
+    Ok(())
+}
+
+fn validate_block_member_attributes(
+    attributes: &BlockMemberAttributes,
+    attribute_tables: &HashSet<&str>,
+) -> Result<(), CanonicalResourceValidationError> {
+    if let BlockMemberAttributes::Replace { attributes_ref } = attributes {
+        if !valid_hash(attributes_ref.as_str()) {
+            return Err(CanonicalResourceValidationError::InvalidContentHash);
+        }
+        if !attribute_tables.contains(attributes_ref.as_str()) {
+            return Err(CanonicalResourceValidationError::MissingReference);
+        }
+    }
+    Ok(())
+}
+
+fn validate_block_instance_override_resources(
+    instance: &crate::entity_model::BlockInstanceGeometry,
+    resources: &HashMap<&str, Vec<&CanonicalResourceRef>>,
+    attribute_tables: &HashSet<&str>,
+) -> Result<(), CanonicalResourceValidationError> {
+    let Some(overrides) = &instance.overrides else {
+        return Ok(());
+    };
+    validate_block_member_style_resources(&overrides.style, resources)?;
+    validate_block_member_attributes(&overrides.attributes, attribute_tables)?;
+    for member in &overrides.members {
+        validate_block_member_style_resources(&member.style, resources)?;
+        validate_block_member_attributes(&member.attributes, attribute_tables)?;
+    }
+    Ok(())
+}
+
+fn build_block_attribute_index(
+    attributes: &[ObjectHash],
+) -> Result<HashSet<&str>, CanonicalResourceValidationError> {
+    if attributes.len() > MAX_RESOURCE_REFERENCES {
+        return Err(CanonicalResourceValidationError::CollectionLimit);
+    }
+    let mut index = HashSet::with_capacity(attributes.len());
+    for attributes_ref in attributes {
+        if !valid_hash(attributes_ref.as_str()) {
+            return Err(CanonicalResourceValidationError::InvalidContentHash);
+        }
+        if !index.insert(attributes_ref.as_str()) {
+            return Err(CanonicalResourceValidationError::DuplicateIdentifier);
+        }
+    }
+    Ok(index)
 }
 
 /// Validates utility topology references, uniqueness and explicit cycle policy.
@@ -1178,6 +1303,20 @@ fn validate_block_cycles<'a>(
                 },
             );
         };
+        if let Some(overrides) = &instance.overrides {
+            let nested_members = nested
+                .members
+                .iter()
+                .map(|member| member.member_id.as_str())
+                .collect::<HashSet<_>>();
+            if overrides
+                .members
+                .iter()
+                .any(|member| !nested_members.contains(member.member_id.as_str()))
+            {
+                return Err(CanonicalResourceValidationError::MissingReference);
+            }
+        }
         validate_block_cycles(nested, definitions, visiting, visited)?;
     }
     visiting.remove(&key);
@@ -1450,6 +1589,8 @@ mod tests {
         BlockMember {
             member_id: id.to_owned(),
             placement: Transform3d::IDENTITY,
+            style: BlockMemberStyle::Inherit,
+            attributes: BlockMemberAttributes::Inherit,
             source: BlockMemberSource::Inline {
                 geometry: GeometryObject::Point {
                     position: Position {
@@ -1458,7 +1599,6 @@ mod tests {
                         z: None,
                     },
                 },
-                style: BlockMemberStyle::None,
             },
         }
     }
@@ -1500,6 +1640,8 @@ mod tests {
                 BlockMember {
                     member_id: "linked".to_owned(),
                     placement: Transform3d::IDENTITY,
+                    style: BlockMemberStyle::Inherit,
+                    attributes: BlockMemberAttributes::Inherit,
                     source: BlockMemberSource::EntityReference {
                         entity: entity.clone(),
                     },
@@ -1509,8 +1651,89 @@ mod tests {
         definition.content_hash = definition.computed_content_hash().unwrap();
 
         assert_eq!(
-            validate_block_definition_set(&[definition], &[entity], &[]),
+            validate_block_definition_set(&[definition], &[entity], &[], &[]),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn block_definition_validates_exact_typed_style_and_attribute_inheritance() {
+        let style = CanonicalResourceRef {
+            resource_id: "marker-style".to_owned(),
+            schema_id: "hcad.resource.render-style@1".to_owned(),
+            content_hash: hash("marker-style"),
+        };
+        let mut member = point_member("marker");
+        member.style = BlockMemberStyle::Resource {
+            style: style.clone(),
+        };
+        member.attributes = BlockMemberAttributes::Replace {
+            attributes_ref: hash("marker-attributes"),
+        };
+        let definition = block_definition("typed-marker", vec![member]);
+
+        assert_eq!(
+            validate_block_definition_set(
+                &[definition.clone()],
+                &[],
+                &[style.clone()],
+                &[hash("marker-attributes")],
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            validate_block_definition_set(&[definition.clone()], &[], &[style.clone()], &[]),
+            Err(CanonicalResourceValidationError::MissingReference)
+        );
+        let stale_style = CanonicalResourceRef {
+            content_hash: hash("stale-marker-style"),
+            ..style
+        };
+        assert_eq!(
+            validate_block_definition_set(
+                &[definition],
+                &[],
+                &[stale_style],
+                &[hash("marker-attributes")],
+            ),
+            Err(CanonicalResourceValidationError::ReferenceVersionMismatch)
+        );
+    }
+
+    #[test]
+    fn nested_block_rejects_an_unknown_stable_member_override() {
+        let child = block_definition("child", vec![point_member("known-member")]);
+        let parent = block_definition(
+            "parent",
+            vec![BlockMember {
+                member_id: "child-instance".to_owned(),
+                placement: Transform3d::IDENTITY,
+                style: BlockMemberStyle::Inherit,
+                attributes: BlockMemberAttributes::Inherit,
+                source: BlockMemberSource::Inline {
+                    geometry: GeometryObject::Block {
+                        instance: Box::new(BlockInstanceGeometry {
+                            definition_id: child.definition_id.clone(),
+                            definition_hash: child.content_hash.clone(),
+                            placement: Transform3d::IDENTITY,
+                            overrides: Some(BlockInstanceOverrides {
+                                style: BlockMemberStyle::Inherit,
+                                attributes: BlockMemberAttributes::Inherit,
+                                members: vec![BlockMemberOverride {
+                                    member_id: "missing-member".to_owned(),
+                                    style: BlockMemberStyle::Inherit,
+                                    attributes: BlockMemberAttributes::Inherit,
+                                }],
+                            }),
+                        }),
+                    },
+                },
+            }],
+        );
+
+        assert_eq!(
+            validate_block_definition_set(&[child, parent], &[], &[], &[]),
+            Err(CanonicalResourceValidationError::MissingReference)
         );
     }
 
@@ -1526,6 +1749,8 @@ mod tests {
                 vec![BlockMember {
                     member_id: member_id.to_owned(),
                     placement: Transform3d::IDENTITY,
+                    style: BlockMemberStyle::Inherit,
+                    attributes: BlockMemberAttributes::Inherit,
                     source: BlockMemberSource::EntityReference { entity },
                 }],
             )
@@ -1539,6 +1764,7 @@ mod tests {
                 ],
                 &[old, current],
                 &[],
+                &[],
             ),
             Ok(())
         );
@@ -1551,7 +1777,7 @@ mod tests {
 
         assert_ne!(old.content_hash, current.content_hash);
         assert_eq!(
-            validate_block_definition_set(&[old, current], &[], &[]),
+            validate_block_definition_set(&[old, current], &[], &[], &[]),
             Ok(())
         );
     }
@@ -1563,6 +1789,8 @@ mod tests {
         left.members.push(BlockMember {
             member_id: "right-instance".to_owned(),
             placement: Transform3d::IDENTITY,
+            style: BlockMemberStyle::Inherit,
+            attributes: BlockMemberAttributes::Inherit,
             source: BlockMemberSource::Inline {
                 geometry: GeometryObject::Block {
                     instance: Box::new(BlockInstanceGeometry {
@@ -1572,13 +1800,14 @@ mod tests {
                         overrides: None,
                     }),
                 },
-                style: BlockMemberStyle::None,
             },
         });
         left = left.seal().unwrap();
         right.members.push(BlockMember {
             member_id: "left-instance".to_owned(),
             placement: Transform3d::IDENTITY,
+            style: BlockMemberStyle::Inherit,
+            attributes: BlockMemberAttributes::Inherit,
             source: BlockMemberSource::Inline {
                 geometry: GeometryObject::Block {
                     instance: Box::new(BlockInstanceGeometry {
@@ -1588,13 +1817,14 @@ mod tests {
                         overrides: None,
                     }),
                 },
-                style: BlockMemberStyle::None,
             },
         });
         right = right.seal().unwrap();
         left.members[0] = BlockMember {
             member_id: "right-instance".to_owned(),
             placement: Transform3d::IDENTITY,
+            style: BlockMemberStyle::Inherit,
+            attributes: BlockMemberAttributes::Inherit,
             source: BlockMemberSource::Inline {
                 geometry: GeometryObject::Block {
                     instance: Box::new(BlockInstanceGeometry {
@@ -1604,12 +1834,11 @@ mod tests {
                         overrides: None,
                     }),
                 },
-                style: BlockMemberStyle::None,
             },
         };
         left = left.seal().unwrap();
         assert_eq!(
-            validate_block_definition_set(&[left, right], &[], &[]),
+            validate_block_definition_set(&[left, right], &[], &[], &[]),
             Err(CanonicalResourceValidationError::ReferenceVersionMismatch)
         );
     }

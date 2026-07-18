@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::canonical_resources::CanonicalResourceRef;
+use crate::canonical_resources::{BlockInstanceOverrides, CanonicalResourceRef};
 use crate::entity::EntityId;
 use crate::hash::ObjectHash;
 
@@ -49,7 +49,7 @@ pub mod built_in_type {
     /// Horizontal/vertical alignment with station-dependent bands and rules.
     pub const ALIGNMENT: &str = "hcad.alignment@1";
     /// Placed instance of a reusable block definition.
-    pub const BLOCK: &str = "hcad.block@1";
+    pub const BLOCK: &str = "hcad.block@2";
     /// World- or paper-space text.
     pub const TEXT: &str = "hcad.text@1";
     /// Associative label.
@@ -96,7 +96,7 @@ pub enum BuiltInEntityType {
     BimObject,
     #[serde(rename = "hcad.alignment@1")]
     Alignment,
-    #[serde(rename = "hcad.block@1")]
+    #[serde(rename = "hcad.block@2")]
     Block,
     #[serde(rename = "hcad.text@1")]
     Text,
@@ -961,7 +961,7 @@ pub struct AlignmentGeometry {
 /// Reusable block instance; its definition remains a project record.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BlockInstanceGeometry {
     /// Stable reusable definition identity.
     pub definition_id: String,
@@ -969,8 +969,8 @@ pub struct BlockInstanceGeometry {
     pub definition_hash: ObjectHash,
     /// Instance placement.
     pub placement: Transform3d,
-    /// Optional content-addressed instance overrides.
-    pub overrides: Option<ObjectHash>,
+    /// Typed style and attribute inheritance committed with this revision.
+    pub overrides: Option<BlockInstanceOverrides>,
 }
 
 /// Text orientation and size convention.
