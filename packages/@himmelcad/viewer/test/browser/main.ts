@@ -86,6 +86,7 @@ interface BrowserValidationState {
   pickFrameTiming: { before: unknown; after: unknown } | null;
   pick: unknown;
   exactPointPick: KernelPickResult | null;
+  panoramaMarkerPick: KernelPickResult | null;
   originRebase: { generationStable: boolean; pick: unknown } | null;
   drapePick: KernelPickResult | null;
   drapeKnownPick: KernelPickResult | null;
@@ -447,6 +448,7 @@ const state: BrowserValidationState = {
   pickFrameTiming: null,
   pick: null,
   exactPointPick: null,
+  panoramaMarkerPick: null,
   originRebase: null,
   drapePick: null,
   drapeKnownPick: null,
@@ -5203,6 +5205,12 @@ async function run(): Promise<void> {
   state.interpolationPick = await viewer.pick(640, 360, 3);
   setFocusedTopCamera(viewer, EXTENSION_TOP);
   state.extensionPick = await viewer.pick(640, 360, 2);
+  setFocusedTopCamera(viewer, {
+    x: BASE[0] + 18,
+    y: BASE[1] - 10,
+    z: BASE[2] + 4,
+  });
+  state.panoramaMarkerPick = await viewer.pick(640, 360, 2);
   setFocusedOrientedCamera(
     viewer,
     syntheticPointTarget,

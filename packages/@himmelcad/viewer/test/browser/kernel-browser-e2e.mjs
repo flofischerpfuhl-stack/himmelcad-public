@@ -659,6 +659,27 @@ try {
   assert.equal(exactPoint.worldPosition.x, 6378137.125);
   assert.equal(exactPoint.worldPosition.y, 5400000.25);
   assert.equal(exactPoint.worldPosition.z, 516.75);
+  const panoramaMarker = state.panoramaMarkerPick?.candidates.find(
+    (candidate) =>
+      candidate.address.entityId === 'scan-panorama' &&
+      candidate.snapKind === 'point' &&
+      candidate.address.primitiveId === 0,
+  );
+  assert(
+    panoramaMarker,
+    `panorama must be an exact station marker in the main view: ${JSON.stringify(state.panoramaMarkerPick)}`,
+  );
+  assertWorldClose(
+    panoramaMarker.worldPosition,
+    { x: 6_378_155.125, y: 5_399_990.25, z: 516.75 },
+    1e-7,
+  );
+  assert(
+    state.panoramaMarkerPick.candidates
+      .filter((candidate) => candidate.address.entityId === 'scan-panorama')
+      .every((candidate) => candidate.snapKind === 'point'),
+    'panorama depth must not appear as an implicit main-view surface',
+  );
   const centerHit = state.pick.candidates.find(
     (candidate) =>
       candidate.address.entityId === 'open-surface' &&

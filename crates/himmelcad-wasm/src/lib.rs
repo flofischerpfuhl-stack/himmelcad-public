@@ -53,12 +53,11 @@ use himmelcad_core::entity_commands::{
 };
 #[cfg(target_arch = "wasm32")]
 use himmelcad_core::entity_model::{
-    AnnotationAnchor, AreaGeometry, CameraModel, CanonicalEntity, CurveGeometry, CurveUse,
-    DepthSemantics, DimensionGeometry, DimensionKind, ElevationSurfaceGeometry, GeometryObject,
-    GeometryResource, HeightResolution, PanoramaGeometry, Position, RasterCellDiagonal,
-    RasterConfidenceEncoding, RasterConnectivity, RasterMapping, RepresentationAuthority,
-    RepresentationRole, SolidGeometry, TextGeometry, TextSpace, Transform3d, TriangleMeshGeometry,
-    TriangleMeshStorage, Vector3,
+    AnnotationAnchor, AreaGeometry, CanonicalEntity, CurveGeometry, CurveUse, DepthSemantics,
+    DimensionGeometry, DimensionKind, ElevationSurfaceGeometry, GeometryObject, GeometryResource,
+    HeightResolution, PanoramaGeometry, Position, RasterCellDiagonal, RasterConfidenceEncoding,
+    RasterConnectivity, RasterMapping, RepresentationAuthority, RepresentationRole, SolidGeometry,
+    TextGeometry, TextSpace, Transform3d, TriangleMeshGeometry, TriangleMeshStorage, Vector3,
 };
 #[cfg(target_arch = "wasm32")]
 use himmelcad_core::entity_validation::{geometry_object_content_hash, validate_geometry_object};
@@ -8097,9 +8096,6 @@ fn compile_inline_entity(
             panorama,
             pick_slots[0],
             floating_origin,
-            image_resources,
-            depth_resources,
-            raster_binary_resources,
         )?],
         GeometryObject::RasterImage { raster } => vec![compile_raster_image_entity(
             host,
@@ -8673,59 +8669,13 @@ fn compile_panorama_entity(
     panorama: &PanoramaGeometry,
     pick_slot: u32,
     floating_origin: FloatingOrigin,
-    image_resources: &BTreeMap<String, WasmImageResource>,
-    depth_resources: &BTreeMap<String, WasmDepthResource>,
-    raster_binary_resources: &BTreeMap<String, WasmBinaryResource>,
 ) -> Result<himmelcad_render::CompiledEntityPart, String> {
-    let image = image_resources
-        .get(&panorama.image.pixels.object_hash.0)
-        .ok_or_else(|| "panorama image resource is not registered".to_owned())?;
-    if image.width != panorama.image.width || image.height != panorama.image.height {
-        return Err("panorama image dimensions do not match its resource".to_owned());
-    }
-    let (model, pose) = match &panorama.image.mapping {
-        RasterMapping::Camera { model, pose } => (model, *pose),
+    let pose = match &panorama.image.mapping {
+        RasterMapping::Camera { pose, .. } => *pose,
         _ => return Err("panorama requires a camera raster mapping".to_owned()),
     };
-    if !matches!(model, CameraModel::Equirectangular) {
-        return Err("only equirectangular panorama projection is registered".to_owned());
-    }
-    let depth_field = panorama.image.depth.as_ref();
-    let depth = depth_field
-        .map(|field| {
-            depth_resources
-                .get(&field.values.object_hash.0)
-                .ok_or_else(|| "panorama depth resource is not registered".to_owned())
-        })
-        .transpose()?;
-    if let Some(depth) = depth {
-        if depth.width != image.width || depth.height != image.height {
-            return Err("panorama depth dimensions do not match the image".to_owned());
-        }
-    }
-    let validity = resolve_raster_validity(
-        depth_field,
-        image.width,
-        image.height,
-        raster_binary_resources,
-    )?;
-    validate_raster_confidence(
-        depth_field,
-        image.width,
-        image.height,
-        raster_binary_resources,
-    )?;
-    let connectivity = resolve_raster_connectivity_mask(
-        depth_field,
-        image.width,
-        image.height,
-        true,
-        raster_binary_resources,
-    )?;
-    let mesh = panorama_mesh(pose, depth_field, depth, validity, connectivity)?;
-    let geometry = GeometryObject::Surface3d {
-        mesh: Box::new(mesh),
-    };
+    let station = panorama_station_position(pose)?;
+    let geometry = GeometryObject::Point { position: station };
     let mut parts = compile_entity_geometry(
         host.device(),
         host.queue(),
@@ -8736,43 +8686,22 @@ fn compile_panorama_entity(
         &compilation_options(request, floating_origin),
     )
     .map_err(|error| error.to_string())?;
-    let part = parts
+    parts
         .pop()
-        .ok_or_else(|| "panorama mesh compiler returned no geometry".to_owned())?;
-    let style = GpuPresentationStyle::from_render_style(
-        &request.style,
-        floating_origin.world(),
-        request.exaggeration_datum,
-    )
-    .map_err(|error| error.to_string())?;
-    let alpha_mode = if request.style.opacity < 1.0 {
-        GpuAlphaMode::Blend
-    } else {
-        GpuAlphaMode::Opaque
-    };
-    let material = host
-        .renderer()
-        .create_styled_material_from_texture(
-            host.device(),
-            host.queue(),
-            &format!("{}-panorama-material", request.proxy_id),
-            &image.texture,
-            alpha_mode,
-            style,
-        )
-        .map_err(|error| error.to_string())?;
-    Ok(himmelcad_render::CompiledEntityPart {
-        kind: RenderProxyKind::Raster,
-        bounds: part.bounds,
-        cost: ResourceCost {
-            gpu_texture_bytes: u64::from(image.width)
-                .saturating_mul(u64::from(image.height))
-                .saturating_mul(4),
-            ..part.cost
-        },
-        batch: part.batch.with_material(material),
-        additional_batches: Vec::new(),
-        source_material_table: None,
+        .ok_or_else(|| "panorama station compiler returned no marker".to_owned())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn panorama_station_position(pose: Transform3d) -> Result<Position, String> {
+    let pose = DMat4::from_cols_array(&pose.0);
+    if !pose.is_finite() || pose.determinant().abs() <= f64::EPSILON {
+        return Err("panorama camera pose is non-invertible".to_owned());
+    }
+    let station = pose.transform_point3(DVec3::ZERO);
+    Ok(Position {
+        x: station.x,
+        y: station.y,
+        z: Some(station.z),
     })
 }
 
@@ -9067,7 +8996,7 @@ fn raster_ortho_mesh(
             }
         }
     }
-    panorama_triangle_mesh(
+    raster_triangle_mesh(
         positions,
         indices,
         vec![
@@ -9125,7 +9054,7 @@ fn raster_ortho_pixel_steps(
         };
         positions.len()
     ];
-    panorama_triangle_mesh(positions, indices, normals, texture_coordinates)
+    raster_triangle_mesh(positions, indices, normals, texture_coordinates)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -9198,267 +9127,7 @@ fn ortho_grid_position(
 }
 
 #[cfg(target_arch = "wasm32")]
-fn panorama_mesh(
-    pose: Transform3d,
-    depth_field: Option<&himmelcad_core::entity_model::DepthField>,
-    depth: Option<&WasmDepthResource>,
-    validity: Option<&[u8]>,
-    connectivity_mask: Option<&[u8]>,
-) -> Result<TriangleMeshGeometry, String> {
-    let pose = DMat4::from_cols_array(&pose.0);
-    if !pose.is_finite() || pose.determinant().abs() <= f64::EPSILON {
-        return Err("panorama camera pose is non-invertible".to_owned());
-    }
-    let center = pose.transform_point3(DVec3::ZERO);
-    if let (Some(field), Some(depth)) = (depth_field, depth) {
-        if matches!(field.sampling.semantics, DepthSemantics::OpticalAxisDepth) {
-            return Err("optical-axis depth is undefined for equirectangular panoramas".to_owned());
-        }
-        return match &field.sampling.connectivity {
-            RasterConnectivity::PixelSteps => {
-                panorama_pixel_step_mesh(center, pose, depth, validity, field.sampling.semantics)
-            }
-            RasterConnectivity::Continuous {
-                maximum_height_jump,
-                diagonal,
-            } => panorama_continuous_mesh(
-                center,
-                pose,
-                depth.width,
-                depth.height,
-                |column, row, direction| {
-                    panorama_depth_sample(
-                        center,
-                        direction,
-                        depth,
-                        validity,
-                        column,
-                        row,
-                        field.sampling.semantics,
-                    )
-                },
-                *maximum_height_jump,
-                *diagonal,
-                None,
-            ),
-            RasterConnectivity::Mask { diagonal, .. } => panorama_continuous_mesh(
-                center,
-                pose,
-                depth.width,
-                depth.height,
-                |column, row, direction| {
-                    panorama_depth_sample(
-                        center,
-                        direction,
-                        depth,
-                        validity,
-                        column,
-                        row,
-                        field.sampling.semantics,
-                    )
-                },
-                None,
-                *diagonal,
-                connectivity_mask,
-            ),
-        };
-    }
-    panorama_continuous_mesh(
-        center,
-        pose,
-        256,
-        128,
-        |_column, _row, _direction| Some(50.0),
-        None,
-        RasterCellDiagonal::TopLeftToBottomRight,
-        None,
-    )
-}
-
-#[cfg(target_arch = "wasm32")]
-#[allow(clippy::too_many_arguments)]
-fn panorama_continuous_mesh(
-    center: DVec3,
-    pose: DMat4,
-    width: u32,
-    height: u32,
-    mut distance: impl FnMut(u32, u32, DVec3) -> Option<f64>,
-    maximum_jump: Option<f64>,
-    diagonal: RasterCellDiagonal,
-    connectivity_mask: Option<&[u8]>,
-) -> Result<TriangleMeshGeometry, String> {
-    if width < 2 || height < 2 {
-        return Err("panorama mesh requires at least 2x2 samples".to_owned());
-    }
-    let columns = width
-        .checked_add(1)
-        .ok_or_else(|| "panorama is too large".to_owned())?;
-    let vertex_count = u64::from(columns).saturating_mul(u64::from(height));
-    if vertex_count > u64::from(u32::MAX) {
-        return Err("panorama mesh exceeds indexed geometry limits".to_owned());
-    }
-    let mut positions = Vec::with_capacity(usize::try_from(vertex_count).unwrap_or(usize::MAX));
-    let mut normals = Vec::with_capacity(positions.capacity());
-    let mut texture_coordinates = Vec::with_capacity(positions.capacity());
-    let mut distances = Vec::with_capacity(positions.capacity());
-    for row in 0..height {
-        for column in 0..columns {
-            let source_column = column % width;
-            let direction = panorama_direction(pose, column, row, width, height);
-            let sample = distance(source_column, row, direction);
-            let position = sample.map_or(center, |distance| center + direction * distance);
-            positions.push(vector3(position));
-            normals.push(vector3(-direction));
-            texture_coordinates.push([
-                f64::from(column) / f64::from(width),
-                (f64::from(row) + 0.5) / f64::from(height),
-            ]);
-            distances.push(sample);
-        }
-    }
-    let mut indices = Vec::new();
-    for row in 0..height - 1 {
-        for column in 0..width {
-            let a = row * columns + column;
-            let b = a + 1;
-            let d = (row + 1) * columns + column;
-            let c = d + 1;
-            let cell_index = u64::from(row) * u64::from(width) + u64::from(column);
-            for (triangle_index, mut triangle) in raster_cell_triangles(a, b, c, d, diagonal)
-                .into_iter()
-                .enumerate()
-            {
-                if connectivity_mask.is_some_and(|mask| {
-                    !raster_connectivity_triangle(mask, cell_index, triangle_index)
-                }) {
-                    continue;
-                }
-                let values = triangle.map(|index| distances[index as usize]);
-                let Some(values) = values.into_iter().collect::<Option<Vec<_>>>() else {
-                    continue;
-                };
-                if maximum_jump.is_some_and(|limit| {
-                    let minimum = values.iter().copied().fold(f64::INFINITY, f64::min);
-                    let maximum = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-                    maximum - minimum > limit
-                }) {
-                    continue;
-                }
-                // Inward winding makes the station-side image visible when culling is enabled.
-                triangle.swap(1, 2);
-                indices.extend(triangle);
-            }
-        }
-    }
-    panorama_triangle_mesh(positions, indices, normals, texture_coordinates)
-}
-
-#[cfg(target_arch = "wasm32")]
-fn panorama_pixel_step_mesh(
-    center: DVec3,
-    pose: DMat4,
-    depth: &WasmDepthResource,
-    validity: Option<&[u8]>,
-    semantics: DepthSemantics,
-) -> Result<TriangleMeshGeometry, String> {
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut texture_coordinates = Vec::new();
-    let mut indices = Vec::new();
-    for row in 0..depth.height {
-        for column in 0..depth.width {
-            let center_direction = panorama_direction(pose, column, row, depth.width, depth.height);
-            let Some(distance) = panorama_depth_sample(
-                center,
-                center_direction,
-                depth,
-                validity,
-                column,
-                row,
-                semantics,
-            ) else {
-                continue;
-            };
-            let base = u32::try_from(positions.len())
-                .map_err(|_| "panorama pixel-step mesh is too large".to_owned())?;
-            for (u, v) in [
-                (f64::from(column), f64::from(row)),
-                (f64::from(column + 1), f64::from(row)),
-                (f64::from(column + 1), f64::from(row + 1)),
-                (f64::from(column), f64::from(row + 1)),
-            ] {
-                let direction = panorama_direction_fraction(pose, u, v, depth.width, depth.height);
-                positions.push(vector3(center + direction * distance));
-                normals.push(vector3(-direction));
-                texture_coordinates.push([u / f64::from(depth.width), v / f64::from(depth.height)]);
-            }
-            indices.extend([base, base + 2, base + 1, base, base + 3, base + 2]);
-        }
-    }
-    panorama_triangle_mesh(positions, indices, normals, texture_coordinates)
-}
-
-#[cfg(target_arch = "wasm32")]
-fn panorama_depth_sample(
-    center: DVec3,
-    direction: DVec3,
-    depth: &WasmDepthResource,
-    validity: Option<&[u8]>,
-    column: u32,
-    row: u32,
-    semantics: DepthSemantics,
-) -> Option<f64> {
-    let index =
-        usize::try_from(u64::from(row) * u64::from(depth.width) + u64::from(column)).ok()?;
-    if validity.is_some_and(|mask| !raster_validity_sample(mask, index)) {
-        return None;
-    }
-    let value = f64::from(*depth.values.get(index)?);
-    if !value.is_finite() {
-        return None;
-    }
-    match semantics {
-        DepthSemantics::RayDistance if value > 0.0 => Some(value),
-        DepthSemantics::ElevationZ if direction.z.abs() > 1.0e-12 => {
-            let distance = (value - center.z) / direction.z;
-            (distance > 0.0).then_some(distance)
-        }
-        _ => None,
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn panorama_direction(pose: DMat4, column: u32, row: u32, width: u32, height: u32) -> DVec3 {
-    panorama_direction_fraction(
-        pose,
-        f64::from(column) + 0.5,
-        f64::from(row) + 0.5,
-        width,
-        height,
-    )
-}
-
-#[cfg(target_arch = "wasm32")]
-fn panorama_direction_fraction(
-    pose: DMat4,
-    column: f64,
-    row: f64,
-    width: u32,
-    height: u32,
-) -> DVec3 {
-    let longitude = (column / f64::from(width) - 0.5) * std::f64::consts::TAU;
-    let latitude = (0.5 - row / f64::from(height)) * std::f64::consts::PI;
-    let planar = latitude.cos();
-    pose.transform_vector3(DVec3::new(
-        planar * longitude.cos(),
-        planar * longitude.sin(),
-        latitude.sin(),
-    ))
-    .normalize_or_zero()
-}
-
-#[cfg(target_arch = "wasm32")]
-fn panorama_triangle_mesh(
+fn raster_triangle_mesh(
     positions: Vec<Vector3>,
     indices: Vec<u32>,
     normals: Vec<Vector3>,
@@ -13442,6 +13111,24 @@ fn refine_pick_candidates(
         if let GeometryObject::Point { position } = &request.geometry {
             let exact = resolve_entity_point_world(
                 *position,
+                &compilation_options(request, floating_origin),
+            )
+            .map_err(|error| error.to_string())?;
+            let point_candidates = refine_exact_point_pick(snap_request, exact);
+            if point_candidates.is_empty() {
+                refined.push(project_coarse);
+            } else {
+                refined.extend(point_candidates);
+            }
+            continue;
+        }
+        if let GeometryObject::Panorama { panorama } = &request.geometry {
+            let pose = match &panorama.image.mapping {
+                RasterMapping::Camera { pose, .. } => *pose,
+                _ => return Err("panorama requires a camera raster mapping".to_owned()),
+            };
+            let exact = resolve_entity_point_world(
+                panorama_station_position(pose)?,
                 &compilation_options(request, floating_origin),
             )
             .map_err(|error| error.to_string())?;
