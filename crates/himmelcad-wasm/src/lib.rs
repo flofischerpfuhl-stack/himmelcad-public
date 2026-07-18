@@ -5165,10 +5165,15 @@ impl WasmViewer {
         .map_err(js_error)?;
         let mut cycle = PickCycle::new();
         cycle.replace(generation, candidates);
+        let candidates = cycle
+            .candidates()
+            .iter()
+            .map(|candidate| public_pick_candidate(self, candidate))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(serde_json::json!({
             "generation": generation,
             "stale": false,
-            "candidates": cycle.candidates()
+            "candidates": candidates
         })
         .to_string())
     }
@@ -13540,6 +13545,146 @@ fn compilation_options(
         exaggeration_datum: request.exaggeration_datum,
         placement: request.placement,
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn public_pick_candidate(
+    viewer: &WasmViewer,
+    candidate: &PickCandidate,
+) -> Result<serde_json::Value, JsValue> {
+    let presentation = viewer
+        .entity_styles
+        .get(&candidate.address.entity_id)
+        .map_or(Ok(PresentationTransform::IDENTITY), |(style, datum)| {
+            PresentationTransform::new(f64::from(style.vertical_exaggeration), *datum)
+        })
+        .map_err(js_error)?;
+    let display_position = presentation.present(candidate.world_position);
+    let unresolved_source_height = viewer
+        .entity_requests
+        .get(&candidate.address.entity_id)
+        .is_some_and(|request| {
+            request.locked_plan_elevation.is_some()
+                && geometry_has_unresolved_height(&request.geometry)
+        });
+    let source_z = if unresolved_source_height {
+        serde_json::Value::Null
+    } else {
+        serde_json::json!(candidate.world_position.z)
+    };
+    Ok(serde_json::json!({
+        "address": candidate.address,
+        "worldPosition": {
+            "x": candidate.world_position.x,
+            "y": candidate.world_position.y,
+            "z": source_z,
+        },
+        "presentationPosition": display_position,
+        "snapKind": candidate.snap_kind,
+        "pixelDistance": candidate.pixel_distance,
+        "depth": candidate.depth,
+    }))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn geometry_has_unresolved_height(geometry: &GeometryObject) -> bool {
+    match geometry {
+        GeometryObject::Point { position } => position.z.is_none(),
+        GeometryObject::Curve { curve } => curve_has_unresolved_height(curve),
+        GeometryObject::Area { area } => area
+            .outer
+            .uses
+            .iter()
+            .chain(area.holes.iter().flat_map(|hole| &hole.uses))
+            .any(curve_use_has_unresolved_height),
+        GeometryObject::Solid { solid } => match solid.as_ref() {
+            SolidGeometry::Extrusion { profile, .. } => profile
+                .outer
+                .uses
+                .iter()
+                .chain(profile.holes.iter().flat_map(|hole| &hole.uses))
+                .any(curve_use_has_unresolved_height),
+            SolidGeometry::Sweep { profile, path } => {
+                profile
+                    .outer
+                    .uses
+                    .iter()
+                    .chain(profile.holes.iter().flat_map(|hole| &hole.uses))
+                    .any(curve_use_has_unresolved_height)
+                    || curve_has_unresolved_height(path)
+            }
+            SolidGeometry::ClosedMesh { .. }
+            | SolidGeometry::Brep { .. }
+            | SolidGeometry::Csg { .. }
+            | SolidGeometry::Extension { .. } => false,
+        },
+        GeometryObject::Alignment { alignment } => {
+            curve_has_unresolved_height(&alignment.horizontal)
+        }
+        GeometryObject::Text { text } => text.anchor.z.is_none(),
+        GeometryObject::Label { label } => {
+            annotation_anchor_has_unresolved_height(&label.target)
+                || label.text.anchor.z.is_none()
+                || label.leader.iter().any(|position| position.z.is_none())
+        }
+        GeometryObject::Dimension { dimension } => {
+            dimension.placement.z.is_none()
+                || dimension
+                    .anchors
+                    .iter()
+                    .any(annotation_anchor_has_unresolved_height)
+        }
+        GeometryObject::Plane { .. }
+        | GeometryObject::ElevationSurface { .. }
+        | GeometryObject::Surface3d { .. }
+        | GeometryObject::RasterImage { .. }
+        | GeometryObject::PointCloud { .. }
+        | GeometryObject::GaussianSplatCloud { .. }
+        | GeometryObject::Panorama { .. }
+        | GeometryObject::Block { .. }
+        | GeometryObject::Extension { .. } => false,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn curve_use_has_unresolved_height(curve_use: &CurveUse) -> bool {
+    match curve_use {
+        CurveUse::Inline { curve, .. } => curve_has_unresolved_height(curve),
+        CurveUse::Associative { .. } => false,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn curve_has_unresolved_height(curve: &CurveGeometry) -> bool {
+    match curve {
+        CurveGeometry::LineSegment { start, end } => start.z.is_none() || end.z.is_none(),
+        CurveGeometry::Polyline { positions, .. }
+        | CurveGeometry::Spline {
+            control_points: positions,
+            ..
+        } => positions.iter().any(|position| position.z.is_none()),
+        CurveGeometry::CircularArc {
+            start,
+            point_on_arc,
+            end,
+        } => start.z.is_none() || point_on_arc.z.is_none() || end.z.is_none(),
+        CurveGeometry::Circle { center, .. }
+        | CurveGeometry::Ellipse { center, .. }
+        | CurveGeometry::EllipticArc { center, .. } => center.z.is_none(),
+        CurveGeometry::ConicArc {
+            start,
+            control,
+            end,
+            ..
+        } => start.z.is_none() || control.z.is_none() || end.z.is_none(),
+        CurveGeometry::Clothoid { start, .. } => start.z.is_none(),
+        CurveGeometry::Composite { segments } => segments.iter().any(curve_has_unresolved_height),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn annotation_anchor_has_unresolved_height(anchor: &AnnotationAnchor) -> bool {
+    matches!(anchor, AnnotationAnchor::Position { position } if position.z.is_none())
 }
 
 #[cfg(target_arch = "wasm32")]

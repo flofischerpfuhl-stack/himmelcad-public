@@ -210,6 +210,7 @@ export type {
   KernelTileKey,
   KernelWorldCamera,
   KernelWorldPoint,
+  KernelSourcePoint,
   WasmViewerBinding,
   WasmCanonicalDocumentBinding,
 } from './kernel/WgpuKernelViewer.js';

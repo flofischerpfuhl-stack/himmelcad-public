@@ -100,6 +100,7 @@ interface BrowserValidationState {
   materializedParcelPick: KernelPickResult | null;
   materializedSurveyPick: KernelPickResult | null;
   materializedAreaPick: KernelPickResult | null;
+  mixedHeightPlanPick: KernelPickResult | null;
   conicPick: KernelPickResult | null;
   zooVariantLifecycle: {
     readonly entityIds: readonly string[];
@@ -497,6 +498,7 @@ const state: BrowserValidationState = {
   materializedParcelPick: null,
   materializedSurveyPick: null,
   materializedAreaPick: null,
+  mixedHeightPlanPick: null,
   conicPick: null,
   zooVariantLifecycle: null,
   mixedHeightLifecycle: null,
@@ -4603,6 +4605,12 @@ async function run(): Promise<void> {
   admittedGenerations.set('mixed-height-area', planBinding.generation);
   const planProxyCount = viewer.entityPresentation('mixed-height-area').length;
   if (planProxyCount !== 2) throw new Error('locked plan area omitted boundary or fill');
+  setFocusedTopCamera(viewer, {
+    x: BASE[0] - 10,
+    y: BASE[1] - 5,
+    z: BASE[2],
+  });
+  state.mixedHeightPlanPick = await viewer.pick(640, 360, 3);
 
   const {
     lockedPlanElevation: _planElevation,

@@ -239,6 +239,7 @@ function candidate(
       primitiveId: 0,
     },
     worldPosition,
+    presentationPosition: worldPosition,
     snapKind: 'point',
     pixelDistance,
     depth,

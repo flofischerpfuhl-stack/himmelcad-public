@@ -279,6 +279,11 @@ V3 macht aus vollständiger Geometrie einen vollständigen CAD-View.
   aufgelöst. Segment- und Gesamtstrecken entstehen ausschließlich aus diesen
   f64-Source-Punkten, nicht aus GPU-Depth. View-Eintritt und -Austritt ändern
   weder kanonische Revision noch normale Visibility oder Residency.
+- Der öffentliche Pick-Contract trennt nun den numerischen
+  `presentationPosition` vom kanonischen `worldPosition`. Für eine im locked
+  Top-down dargestellte Mixed-Z-Revision bleibt dessen Z ausdrücklich `null`;
+  die nur für GPU-Rasterung und Navigation verwendete Planhöhe kann damit
+  weder Messung noch Metadatenabfrage als Source-Höhe erreichen.
 
 ## V4 – Civil-Scale, Hardware und Backend-Härtung
 

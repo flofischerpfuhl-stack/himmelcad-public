@@ -283,6 +283,13 @@ export interface KernelWorldPoint {
   readonly z: number;
 }
 
+/** Authoritative Source coordinate; `null` means the canonical revision has no Z. */
+export interface KernelSourcePoint {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number | null;
+}
+
 /** Authoritative f64 camera; Rust derives both render and inverse matrices. */
 export interface KernelWorldCamera {
   readonly eye: KernelWorldPoint;
@@ -1003,7 +1010,10 @@ export type KernelSnapKind =
 /** Ranked kernel-owned point-picking candidate used for Tab traversal. */
 export interface KernelPickCandidate {
   readonly address: KernelPickAddress;
-  readonly worldPosition: KernelWorldPoint;
+  /** Exact canonical Source coordinate. Never contains a synthetic plan height. */
+  readonly worldPosition: KernelSourcePoint;
+  /** Numeric displayed coordinate used only for navigation and screen-space ranking. */
+  readonly presentationPosition: KernelWorldPoint;
   readonly snapKind: KernelSnapKind;
   readonly pixelDistance: number;
   readonly depth: number;
@@ -1865,15 +1875,19 @@ export class WgpuKernelViewer {
   gltfFeatureMetadata(
     renderProxyId: string,
     sourcePrimitiveId: number,
-    worldPosition: KernelWorldPoint,
+    worldPosition: KernelSourcePoint,
   ): KernelGltfFeatureMetadata {
     this.assertAlive();
+    const sourceZ = worldPosition.z;
     if (
       renderProxyId.length === 0 ||
       !Number.isSafeInteger(sourcePrimitiveId) ||
       sourcePrimitiveId < 0 ||
       sourcePrimitiveId > 0xffff_ffff ||
-      ![worldPosition.x, worldPosition.y, worldPosition.z].every(Number.isFinite)
+      !Number.isFinite(worldPosition.x) ||
+      !Number.isFinite(worldPosition.y) ||
+      sourceZ === null ||
+      !Number.isFinite(sourceZ)
     ) {
       throw new RangeError('glTF feature hit address must be finite and portable');
     }
@@ -1883,7 +1897,7 @@ export class WgpuKernelViewer {
         sourcePrimitiveId,
         worldPosition.x,
         worldPosition.y,
-        worldPosition.z,
+        sourceZ,
       ),
     );
     return parseGltfFeatureMetadata(value);
@@ -1893,15 +1907,19 @@ export class WgpuKernelViewer {
   pickMetadata(
     renderProxyId: string,
     sourcePrimitiveId: number,
-    worldPosition: KernelWorldPoint,
+    worldPosition: KernelSourcePoint,
   ): KernelPickMetadata {
     this.assertAlive();
+    const sourceZ = worldPosition.z;
     if (
       renderProxyId.length === 0 ||
       !Number.isSafeInteger(sourcePrimitiveId) ||
       sourcePrimitiveId < 0 ||
       sourcePrimitiveId > 0xffff_ffff ||
-      ![worldPosition.x, worldPosition.y, worldPosition.z].every(Number.isFinite)
+      !Number.isFinite(worldPosition.x) ||
+      !Number.isFinite(worldPosition.y) ||
+      sourceZ === null ||
+      !Number.isFinite(sourceZ)
     ) {
       throw new RangeError('pick metadata address must be finite and portable');
     }
@@ -1912,7 +1930,7 @@ export class WgpuKernelViewer {
           sourcePrimitiveId,
           worldPosition.x,
           worldPosition.y,
-          worldPosition.z,
+          sourceZ,
         ),
       ),
     );
@@ -3563,12 +3581,24 @@ function isPickCandidate(value: unknown): value is KernelPickCandidate {
     isRecord(value.address) &&
     typeof value.address.entityId === 'string' &&
     typeof value.address.renderProxyId === 'string' &&
-    isWorldPoint(value.worldPosition) &&
+    isSourcePoint(value.worldPosition) &&
+    isWorldPoint(value.presentationPosition) &&
     typeof value.snapKind === 'string' &&
     typeof value.pixelDistance === 'number' &&
     Number.isFinite(value.pixelDistance) &&
     typeof value.depth === 'number' &&
     Number.isFinite(value.depth)
+  );
+}
+
+function isSourcePoint(value: unknown): value is KernelSourcePoint {
+  return (
+    isRecord(value) &&
+    typeof value.x === 'number' &&
+    Number.isFinite(value.x) &&
+    typeof value.y === 'number' &&
+    Number.isFinite(value.y) &&
+    (value.z === null || (typeof value.z === 'number' && Number.isFinite(value.z)))
   );
 }
 

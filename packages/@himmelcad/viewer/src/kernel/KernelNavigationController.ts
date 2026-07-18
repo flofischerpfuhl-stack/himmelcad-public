@@ -6,7 +6,11 @@ import type {
 } from './KernelCameraController.js';
 import { localSectionClipVolume } from './KernelLocalSectionView.js';
 import type { KernelLocalSectionView } from './KernelLocalSectionView.js';
-import type { KernelPickCandidate, KernelRasterAnalysisView } from './WgpuKernelViewer.js';
+import type {
+  KernelPickCandidate,
+  KernelRasterAnalysisView,
+  KernelWorldPoint,
+} from './WgpuKernelViewer.js';
 import { WgpuKernelViewer } from './WgpuKernelViewer.js';
 
 export interface KernelNavigationCallbacks {
@@ -35,7 +39,7 @@ const LOCAL_SECTION_CLIP_ID = 'kernel-local-section-depth';
  */
 export class KernelNavigationController {
   private dragMode: DragMode | null = null;
-  private dragPivot: KernelPickCandidate['worldPosition'] | null = null;
+  private dragPivot: KernelWorldPoint | null = null;
   private lastClientX = 0;
   private lastClientY = 0;
   private movedDuringDrag = false;
@@ -48,6 +52,7 @@ export class KernelNavigationController {
   private candidates: readonly KernelPickCandidate[] = [];
   private activeCandidateIndex = 0;
   private cursorCoordinate: KernelPickCandidate['worldPosition'] | null = null;
+  private cursorPresentationPosition: KernelWorldPoint | null = null;
   private transitionGeneration = 0;
   private pointerInteracting = false;
   private wheelInteracting = false;
@@ -92,6 +97,11 @@ export class KernelNavigationController {
 
   activeCandidate(): KernelPickCandidate | null {
     return this.candidates[this.activeCandidateIndex] ?? null;
+  }
+
+  /** Current authoritative cursor coordinate, including an explicitly unknown Source Z. */
+  cursorSourceCoordinate(): KernelPickCandidate['worldPosition'] | null {
+    return this.cursorCoordinate;
   }
 
   /** Runs the Rust perspective/orthographic morph and commits its endpoint. */
@@ -257,7 +267,7 @@ export class KernelNavigationController {
       return;
     }
     if (event.button === 1) event.preventDefault();
-    this.dragPivot = this.cursorCoordinate;
+    this.dragPivot = this.cursorPresentationPosition;
     this.lastClientX = event.clientX;
     this.lastClientY = event.clientY;
     this.movedDuringDrag = false;
@@ -315,7 +325,7 @@ export class KernelNavigationController {
       this.reportInteraction();
     }, 120);
     const factor = Math.pow(1.0015, clamp(event.deltaY, -2_000, 2_000));
-    const anchor = this.cursorCoordinate;
+    const anchor = this.cursorPresentationPosition;
     if (anchor) this.camera.zoomAt(factor, anchor);
     else this.camera.zoom(factor);
     this.uploadCamera();
@@ -357,8 +367,10 @@ export class KernelNavigationController {
           } else {
             this.activeCandidateIndex = 0;
             const ndc = this.physicalPointerNdc(position[0], position[1]);
-            this.cursorCoordinate = this.camera.worldPointOnTargetPlane(ndc[0], ndc[1]);
-            this.callbacks.onCursorCoordinate?.(this.cursorCoordinate, 'targetPlane');
+            const targetPlaneCoordinate = this.camera.worldPointOnTargetPlane(ndc[0], ndc[1]);
+            this.cursorCoordinate = targetPlaneCoordinate;
+            this.cursorPresentationPosition = targetPlaneCoordinate;
+            this.callbacks.onCursorCoordinate?.(targetPlaneCoordinate, 'targetPlane');
             this.callbacks.onActivePick?.(null, 0, 0);
           }
         }
@@ -384,6 +396,7 @@ export class KernelNavigationController {
     if (!candidate) return null;
     this.activeCandidateIndex = index;
     this.cursorCoordinate = candidate.worldPosition;
+    this.cursorPresentationPosition = candidate.presentationPosition;
     this.callbacks.onCursorCoordinate?.(candidate.worldPosition, 'geometry');
     this.callbacks.onActivePick?.(candidate, index, this.candidates.length);
     return candidate;

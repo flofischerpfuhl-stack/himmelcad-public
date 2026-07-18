@@ -847,6 +847,27 @@ try {
     materializedRevision: 2,
     sourceStillMissingZ: true,
   });
+  const unresolvedPlanHit = state.mixedHeightPlanPick?.candidates?.find(
+    (candidate) =>
+      candidate.address.entityId === 'mixed-height-area' &&
+      candidate.snapKind === 'vertex' &&
+      Math.abs(candidate.worldPosition.x - 6_378_127.125) < 1e-7 &&
+      Math.abs(candidate.worldPosition.y - 5_399_995.25) < 1e-7,
+  );
+  assert(
+    unresolvedPlanHit,
+    `mixed-Z plan vertex must be pickable: ${JSON.stringify(state.mixedHeightPlanPick)}`,
+  );
+  assert.equal(
+    unresolvedPlanHit.worldPosition.z,
+    null,
+    'plan-only source pick must retain unknown Z',
+  );
+  assert.equal(
+    unresolvedPlanHit.presentationPosition.z,
+    512.75,
+    'locked plan height must remain presentation-only',
+  );
   const extensionHit = state.extensionPick?.candidates?.find(
     (candidate) =>
       candidate.address.entityId === 'namespaced-extension' &&

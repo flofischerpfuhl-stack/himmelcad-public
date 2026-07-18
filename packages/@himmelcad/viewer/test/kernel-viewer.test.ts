@@ -372,6 +372,7 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
                 primitiveId: 0,
               },
               worldPosition: { x: 1, y: 2, z: 3 },
+              presentationPosition: { x: 1, y: 2, z: 3 },
               snapKind: 'point',
               pixelDistance: 0,
               depth: 0.25,
@@ -755,7 +756,12 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
   ]);
   const pick = await viewer.pick(10, 20, 4);
   assert.equal(pick.candidates[0]?.worldPosition.z, 3);
+  assert.deepEqual(pick.candidates[0]?.presentationPosition, { x: 1, y: 2, z: 3 });
   assert.equal(pick.stale, false);
+  assert.throws(
+    () => viewer.pickMetadata('point-1@1', 0, { x: 1, y: 2, z: null }),
+    /finite and portable/,
+  );
   assert.throws(
     () =>
       viewer.setEntityStyle('flattened', {

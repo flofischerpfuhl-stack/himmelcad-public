@@ -1155,6 +1155,27 @@ normal-view restoration in the 38-entity/47-proxy fixture. Forced WebGL2 on the
 physical Intel HD Graphics 630 reports 4.2 ms maximum CPU submit; the WebGPU
 CPU-adapter correctness run reports 2.0 ms.
 
+### V3 plan-only Source-pick checkpoint
+
+Kernel pick serialization now publishes two explicit coordinates. The exact
+`worldPosition` is the canonical Source result and permits `z: null`, while the
+numeric `presentationPosition` is limited to navigation and screen-space
+ranking. The Rust refinement path still uses its numeric plan plane internally,
+but a canonical request containing unresolved heights cannot serialize that
+plane as Source Z. Metadata refinement rejects an unresolved Source coordinate
+instead of silently consuming its presentation height. Vertical exaggeration
+uses the same separation for fully spatial entities.
+
+The browser fixture picks an authored missing-Z hole vertex before replacing
+the entity with its materialized XYZ revision. Both forced WebGL2 on the
+physical Intel HD Graphics 630 and explicit WebGPU return exact f64 Source XY,
+`worldPosition.z === null` and the separate numeric locked-plan presentation
+height. The later revision still returns its committed XYZ value, and the
+original admission still serializes its missing Z unchanged. The WASM target
+check, 7 viewer-WASM tests, browser TypeScript contract and all 73 viewer-package
+tests are green; the unchanged 38-entity/47-proxy scene retains ten worker
+ingests and zero main-thread provider decodes on both backends.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.
