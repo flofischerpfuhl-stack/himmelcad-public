@@ -30,7 +30,7 @@ Fallback zählen nicht als Abschluss.
 | V2  | Kanonische Entity- und Definitionsbreite       | abgeschlossen                                      | 2026-07-18 11:33 CEST           | 2026-07-18 15:33 CEST | 4 h 00 min verstrichene Arbeitszeit |
 | V3  | Darstellung, Interaktion, Messung und Schnitte | abgeschlossen                                      | 2026-07-18 15:33 CEST           | 2026-07-18 17:04 CEST | 1 h 31 min verstrichene Arbeitszeit |
 | V4  | Civil-Scale, Hardware und Backend-Härtung      | abgeschlossen; physische Klassen-Conformance in V6 | 2026-07-18 17:04 CEST           | 2026-07-18 18:48 CEST | 1 h 44 min verstrichene Arbeitszeit |
-| V5  | Stabile Viewer-Fassade und App-Ready-Gate      | Abschlussaudit offen: sauberer IO-HEAD-Gate rot    | 2026-07-18 18:48 CEST           | –                     | 1 h 14 min plus laufender Audit     |
+| V5  | Stabile Viewer-Fassade und App-Ready-Gate      | abgeschlossen; Viewer app-ready fertig             | 2026-07-18 18:48 CEST           | 2026-07-18 20:50 CEST | 1 h 40 min aktive Arbeitszeit       |
 | V6  | Release- und Plattform-Conformance             | vorbereitet; externe Hardwareläufe ausstehend      | 2026-07-18 20:02 CEST           | –                     | Portabilitätsslice abgeschlossen    |
 
 ## V1 – Imaging und Heavy-Geometry-Verträge
@@ -638,6 +638,39 @@ jedoch vom nachfolgenden sauberen Reproduzierbarkeitsaudit ab.
   grünen Stand offen. Physische Windows-/macOS-/Apple-Silicon-Läufe bleiben
   davon getrennte V6-Conformance und blockieren V5 weiterhin nicht.
 
+### V5-Abschluss am 2026-07-18 20:50 CEST
+
+- `507d81a` entfernt ausschließlich den seit `bb431a6` verwaisten IO-Re-Export.
+  Die umfangreiche fremde PhotoLab-Implementierung wurde weder übernommen noch
+  verändert; die Re-Exportzeile bleibt im gemeinsamen schmutzigen Worktree als
+  nicht gestagte Kompatibilitätsüberlagerung erhalten, damit dessen laufender
+  Sidecar-Code arbeitsfähig bleibt.
+- Der saubere Typecheck fand zusätzlich die ebenfalls seit `bb431a6` getrackte
+  Kamera-Snap-Geometrie ohne korrespondierendes `GeometryDatasetKind`.
+  `d224000` ergänzt im ausdrücklich erlaubten zwingenden Shared-Data-Vertrag
+  exakt den Wert `camera`; keine weitere fremde Data-Änderung wurde gestagt.
+- Ein Detached-Worktree auf dem gepushten Abschlussstand bestätigt in einem
+  einzigen Source-Zustand 145/145 Core-, 322/322 Render-Core-, 58/58 IO-Tests
+  mit einem bewusst ignorierten synthetischen Scale-Test, 7/7 Viewer-WASM- und
+  4/4 Decode-WASM-Tests. Generated Bindings sind driftfrei und beide wasm32-
+  Targets kompilieren.
+- Package-Typecheck, Browser-Kernel-Contract und 86/86 Viewer-Pakettests sind
+  auf demselben Stand grün. Der 241,1-kB-Public-Consumer lädt in echtem Chrome
+  und Electron dieselben vier Entity-Handles ausschließlich über die stabile
+  Fassade und disposet seinen einzigen Session-Owner.
+- Ein zusätzlich bewusst breiterer `cargo test --workspace` erreicht die
+  fremde App-/Sidecar-Lane und scheitert dort an sechs getrackten Moduldeklarationen
+  für noch ungetrackte Runtime-Dateien sowie zwei nicht integrierten Maskenfeldern.
+  Sidecar gehört nicht zum verbindlichen V5-Gate
+  Core/Render/IO/WASM/Viewer und ist genau verbleibende App-Integration; der
+  Befund wurde nicht durch Übernahme oder Abschwächung fremder Änderungen
+  kaschiert.
+
+Damit ist der gemeinsame Viewer **app-ready fertig**. Für Builder, PhotoLab und
+WeltView fehlen ausschließlich Lifecycle-, Dokumentcommand-, Resource-URL- und
+UI-State-Adapter. Physische Windows-/macOS-/Apple-Silicon-Läufe bleiben wie
+verbindlich festgelegt V6-Release-Conformance und blockieren V5 nicht.
+
 ## V6 – Release- und Plattform-Conformance
 
 V6 führt die bewusst nicht erfundenen physischen Klassenmessungen aus V4/V5 bis
@@ -708,7 +741,8 @@ Zeit wird nicht geschätzt oder nachträglich rekonstruiert:
 | V2          | 2026-07-18 11:33 CEST | 2026-07-18 15:33 CEST | 4 h 00 min   | Kanonische Entity- und Definitionsbreite abgeschlossen                                                                          |
 | V3          | 2026-07-18 15:33 CEST | 2026-07-18 17:04 CEST | 1 h 31 min   | Darstellung, Interaktion, Messung und Schnitte abgeschlossen                                                                    |
 | V4          | 2026-07-18 17:04 CEST | 2026-07-18 18:48 CEST | 1 h 44 min   | Portable Civil-Scale-, Recovery-, Residency- und Backend-Härtung abgeschlossen; physische Klassen-Conformance nach V6 überführt |
-| V5          | 2026-07-18 18:48 CEST | wieder geöffnet       | läuft        | App-ready-Implementierungskandidat; sauberer IO-HEAD-Gate im Abschlussaudit nicht reproduzierbar                                 |
+| V5          | 2026-07-18 18:48 CEST | 2026-07-18 20:02 CEST | 1 h 14 min   | App-ready-Implementierungskandidat; Abschlussclaim anschließend für sauberen Reproduzierbarkeitsaudit wieder geöffnet             |
+| V5          | 2026-07-18 20:24 CEST | 2026-07-18 20:50 CEST | 26 min       | IO-/Shared-Data-Reproduzierbarkeit isoliert behoben; vollständiger V5-Gate auf einem sauberen gepushten Source-Stand grün          |
 | V6          | 2026-07-18 20:02 CEST | vorbereitet           | –            | Portabler Release-Runner fertig; physische Windows-/macOS-/Apple-Silicon-Hardware extern ausstehend                              |
 
 ### Abschlussnachweise
@@ -720,4 +754,4 @@ Zeit wird nicht geschätzt oder nachträglich rekonstruiert:
 | V2          | `aecf700`, `c85d298` und vorherige V2-Slices           | 38 Entities/47 Proxies; checksum-gepinnte DXF-/IFC-/LandXML-Providerpfade auf WebGPU/WebGL2                                                                                                                                                                      | 4 h 00 min                | 4 h 00 min                |
 | V3          | `b2d9a7f`, `c4b017b`, `f1fef3f` und V3-Abschlusscommit | 320 Render-Core-, 7 Viewer-WASM-, 73 Viewer-Pakettests; 38 Entities/47 Proxies; Real-Data-Farbparität RMSE 0,011007                                                                                                                                              | 1 h 31 min                | 1 h 31 min                |
 | V4          | `40ea2cf` bis V4-Abschlusscommit                       | 322 Render-Core-, 7 Viewer-WASM-, 75 Viewer-Pakettests; WebGPU/WebGL2 Device-Rebuild; Intel- und Quadro-Low grün; vollständige Null-Eviction und stabile Reload-Plateaus; Mainstream-Residency grün, Quadro-Latenz ehrlich nicht bestanden und nach V6 überführt | 1 h 44 min                | 1 h 44 min                |
-| V5          | `0ce5ab6` bis App-ready-Kandidat `ffb993e`              | Viewer-, Browser-, Scale- und isolierte Core/Render/WASM-Gates grün; sauberer IO-HEAD-Gate wegen getracktem dangling PhotoLab-Re-export offen                                                                                             | 1 h 14 min plus Audit     | läuft                     |
+| V5          | `0ce5ab6` bis `d224000`                                 | 145 Core-, 322 Render-, 58 IO- plus 1 Ignore-, 7 Viewer-WASM-, 4 Decode-WASM- und 86 Viewer-Tests auf reproduzierbarem Stand; Bindings/wasm32 grün; Public Consumer in Chrome/Electron; frühere Real-/Scale-Gates unverändert grün           | 1 h 40 min                | 2 h 02 min                |

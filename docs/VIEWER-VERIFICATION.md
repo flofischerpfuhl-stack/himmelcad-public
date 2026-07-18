@@ -1676,6 +1676,39 @@ where the full Core/Render/IO/WASM/viewer gate is green. This is a repository
 integration/reproducibility issue, not an Apple-Silicon, Windows, WebGPU,
 WebGL2, or viewer-geometry gap.
 
+### V5 clean-HEAD closure
+
+Commit `507d81a` removes only the dangling root re-export introduced by
+`bb431a6`; it does not copy or alter the uncommitted PhotoLab progress import.
+The shared dirty worktree retains the re-export as an unstaged compatibility
+overlay, so its concurrently edited Sidecar continues to see its own
+implementation. A second clean-checkout typecheck exposed the matching
+`bb431a6` camera-snap contract without `camera` in the shared dataset-kind
+union. Commit `d224000` publishes exactly that required one-value Shared Data
+contract and no other concurrent Data/UI change.
+
+A detached worktree at the pushed closure state verifies one coherent source
+state with 145/145 Core, 322/322 Render-Core, 58/58 IO plus one intentionally
+ignored synthetic scale gate, 7/7 viewer-WASM, and 4/4 decode-WASM tests.
+Generated bindings are current, both wasm32 targets compile, package typecheck
+and browser-kernel typecheck pass, and the viewer package passes 86/86. The
+241.1 kB public bundle also passes in real Chrome and Electron, loading four
+identical stable handles solely through the public facade and releasing the one
+session owner.
+
+An intentionally broader workspace test proceeds past IO but separately finds
+the concurrently developed application lane incomplete: tracked Sidecar module
+declarations point at six still-untracked runtime files, and tracked MVS code is
+not yet synchronized with two mask fields. Sidecar is not part of the explicit
+V5 Core/Render/IO/WASM/viewer gate; it is remaining application integration and
+was neither staged nor weakened here.
+
+V5 is therefore closed at 20:50 CEST after 1 hour 40 minutes of active work
+(2 hours 2 minutes calendar duration). The common viewer is app-ready; only
+Builder, PhotoLab, and WeltView lifecycle, document-command, resource URL, and
+UI-state adapters remain. Physical Windows, macOS, and Apple-Silicon evidence
+continues as V6 release conformance and does not retroactively block V5.
+
 ### V6 portable platform-runner checkpoint
 
 The browser, real-data, scale, WebGPU probe, and public Chrome/Electron process
