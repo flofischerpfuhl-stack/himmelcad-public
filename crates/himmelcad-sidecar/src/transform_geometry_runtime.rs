@@ -160,22 +160,17 @@ impl TransformRuntime {
                 let centre_batch =
                     self.apply_points(frozen, &[circle.centre], cancellation)?;
                 let centre = centre_batch.points[0];
-                let (circle_out, extra) = match policy.circle {
+                let circle_out = match policy.circle {
                     CirclePolicy::FitCircleFromSamples => {
-                        let fit = fit_circle_xy(&mapped.points)
-                            .map_err(TransformRuntimeError::Geometry)?;
-                        (fit, None)
+                        fit_circle_xy(&mapped.points).map_err(TransformRuntimeError::Geometry)?
                     }
                     _ => {
                         let radius = mean_radius_xy(centre, &mapped.points);
-                        (
-                            Circle3 {
-                                centre,
-                                radius,
-                                normal: circle.normal,
-                            },
-                            None,
-                        )
+                        Circle3 {
+                            centre,
+                            radius,
+                            normal: circle.normal,
+                        }
                     }
                 };
                 if !matches!(policy.circle, CirclePolicy::DensifyToPolyline) {
@@ -188,7 +183,6 @@ impl TransformRuntime {
                         geometry_id: geometry_id.map(str::to_owned),
                     });
                 }
-                let _ = extra;
                 Ok(GeometryTransformResult {
                     value: CircleOrPolyline::Circle(circle_out),
                     warnings,

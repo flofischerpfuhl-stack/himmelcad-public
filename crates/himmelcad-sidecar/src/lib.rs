@@ -31,3 +31,4 @@ pub mod raster_runtime;
 pub mod splat_tiler;
 pub mod transform_geometry_runtime;
 pub mod transform_runtime;
+pub mod viewer_raster_manifest;

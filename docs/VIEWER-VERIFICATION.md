@@ -944,11 +944,21 @@ The real provider boundary is separately verified: 9 focused E57 tests pass
 posed f64 point transcoding, immutable embedded images, exact camera semantics,
 scan association, cancellation and tamper/invalid-intrinsic failures; 5 focused
 GeoTIFF tests pass georeferenced DGM NoData/mapping, range-readable COG import,
-exact roundtrip, cancellation and immutable-resource tamper rejection. The
-remaining V1 gap is the automatic preparation bridge from a canonical
-GeoTIFF elevation-grid resource into the pyramidal prepared-raster hierarchy;
-these provider tests alone are therefore not reported as the completed V1
-viewer-provider gate.
+exact roundtrip, cancellation and immutable-resource tamper rejection.
+
+The native elevation-raster pipeline now automatically publishes
+`viewer/manifest.json` before its product-directory rename. A blocking worker
+hashes every existing 512x512 preview PNG and exact Float32 height tile without
+decoding the complete raster, retains byte order, NoData, pixel-center mapping,
+GSD and topology, then emits a coarse-to-fine REPLACE hierarchy accepted by the
+render core's real `PreparedHierarchySource`. The product directory becomes
+visible only after all references and the manifest are complete. Focused tests
+cover render-core parsing, exact mapping, hash-bound band references,
+cancellation, invalid band length and the fake offline GDAL pipeline's complete
+atomic publication. The remaining provider gap is narrower: canonical GeoTIFF
+imports must invoke this preparation pipeline automatically, and a paired
+full-color orthomosaic plus elevation pyramid must publish one combined raster
+hierarchy. V1 is therefore still active.
 
 ## Candidate external data
 

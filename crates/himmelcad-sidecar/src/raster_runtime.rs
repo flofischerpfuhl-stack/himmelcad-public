@@ -19,6 +19,11 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::task::JoinSet;
 
+use crate::viewer_raster_manifest::{
+    publish_prepared_elevation_hierarchy, PreparedElevationHierarchyError,
+    PreparedElevationHierarchyOptions,
+};
+
 const PYRAMID_TILE_SIZE: u32 = 512;
 const PYRAMID_TILE_SIZE_U16: u16 = 512;
 const CHECKPOINT_SCHEMA: u32 = 1;
@@ -339,6 +344,8 @@ pub enum RasterRuntimeError {
     JobAlreadyActive(String),
     #[error("background task failed: {0}")]
     BackgroundTask(String),
+    #[error(transparent)]
+    ViewerHierarchy(#[from] PreparedElevationHierarchyError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -663,6 +670,34 @@ impl RasterRuntime {
         )
         .await?;
         check_cancelled(cancellation)?;
+        let summary = RasterBuildSummary {
+            output_directory: path_string(&output_directory)?,
+            cog_path: "product.cog.tif".into(),
+            pyramid_manifest_path: "pyramid/manifest.json".into(),
+            levels,
+            crs: command.crs.clone(),
+            grid: command.grid.clone(),
+            audit,
+        };
+        if matches!(&command.product, RasterProductRequest::Elevation(_)) {
+            let hierarchy_root = job_directory.clone();
+            let hierarchy_summary = summary.clone();
+            let hierarchy_cancellation = cancellation.clone();
+            tokio::task::spawn_blocking(move || {
+                publish_prepared_elevation_hierarchy(
+                    &hierarchy_root,
+                    &hierarchy_summary,
+                    PreparedElevationHierarchyOptions {
+                        maximum_height_jump: None,
+                        diagonal:
+                            himmelcad_core::entity_model::RasterCellDiagonal::TopLeftToBottomRight,
+                    },
+                    &hierarchy_cancellation,
+                )
+            })
+            .await
+            .map_err(|error| RasterRuntimeError::BackgroundTask(error.to_string()))??;
+        }
         progress(RasterProgress {
             phase: RasterPhase::Committing,
             completed_steps: 0,
@@ -672,15 +707,7 @@ impl RasterRuntime {
         cleanup_intermediates(job_directory.clone()).await?;
         publish_directory(job_directory.clone(), output_directory.clone()).await?;
         remove_checkpoint(checkpoint_path).await?;
-        Ok(RasterBuildSummary {
-            output_directory: path_string(&output_directory)?,
-            cog_path: "product.cog.tif".into(),
-            pyramid_manifest_path: "pyramid/manifest.json".into(),
-            levels,
-            crs: command.crs.clone(),
-            grid: command.grid.clone(),
-            audit,
-        })
+        Ok(summary)
     }
 
     async fn validate_inputs(
@@ -2607,6 +2634,7 @@ mod tests {
         assert!(destination.join("view/height/L00/0/0.f32").is_file());
         assert!(destination.join("view/preview/L00/0/0.png").is_file());
         assert!(destination.join("pyramid/manifest.json").is_file());
+        assert!(destination.join("viewer/manifest.json").is_file());
         assert!(!staging.join("raster-checkpoints/raster-test.json").exists());
         assert!(updates
             .iter()
@@ -2768,7 +2796,10 @@ printf '%s|%s|%s|' "$name" "$PROJ_NETWORK" "$GDAL_DRIVER_PATH" >> '{log}'
 for argument in "$@"; do printf '%s ' "$argument" >> '{log}'; done
 printf '\n' >> '{log}'
 {delay}
-printf '%s\n' 'fake GDAL output' > "$last"
+case "$last" in
+  *.f32) dd if=/dev/zero of="$last" bs=1048576 count=1 status=none ;;
+  *) printf '%s\n' 'fake GDAL output' > "$last" ;;
+esac
 "#,
             log = log.display(),
             delay = delay,
