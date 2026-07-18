@@ -890,6 +890,50 @@ The 26-entity/34-proxy browser scene passed on both backends; forced WebGL2 on
 the physical Intel HD Graphics 630 reported 2.9 ms maximum CPU submit and the
 WebGPU CPU correctness adapter reported 1.5 ms.
 
+Prepared raster confidence now crosses the same hash-bound worker transfer as
+color, depth, validity and connectivity. `unorm8` and little-endian f32
+confidence are length- and content-verified; f32 values outside `[0,1]` fail
+before decode residency, and confidence never changes validity or triangle
+admission. The four side bands have explicit non-overlapping transfer lengths
+in both decode WASM and render-host WASM. The focused contract tests, complete
+317-test render suite, both WASM band-boundary tests and all 70 viewer tests
+passed. Both explicit browser backends retained the 26-entity/34-proxy mixed
+scene and exact provider picks.
+
+The main-view panorama presentation no longer builds an implicit textured
+depth sphere. It compiles one exact pickable marker at the camera pose; browser
+gates reject any panorama main-view candidate reported as a surface. The shared
+kernel now also measures an exact integer depth pixel independently of the GPU
+depth buffer and presentation exaggeration. A provider-neutral projector maps
+OrthoGrid, Planar homography, undistorted Pinhole and Equirectangular pixels to
+entity-local f64 source coordinates, then applies the canonical entity
+placement. It distinguishes `ElevationZ`, `OpticalAxisDepth` and `RayDistance`
+and rejects missing depth, behind-camera values, equirectangular optical depth,
+unknown distortion evaluators and namespaced camera models without a resolver.
+The browser fixture measures panorama pixel `(3,1)` with ray distance `3`,
+checks confidence `26/255` and matches the analytical posed spherical ray to
+`1e-7` on WebGL2 and WebGPU. The complete render suite reached 322/322 and all
+70 viewer tests remained green; the latest forced WebGL2 run on the physical
+Intel HD Graphics 630 reported 3.4 ms maximum CPU submit and the WebGPU CPU
+correctness run reported 2.0 ms.
+
+Inline RGBA, f32 depth and binary raster side bands are now accepted only when
+their actual bytes match the declared canonical SHA-256. The browser gate first
+submits one tampered payload of each class and requires all three to fail, then
+loads the checksum-pinned panorama/orthoraster fixtures and repeats the source
+measurement. Canonical validation also rejects depth/mapping combinations that
+have no geometric meaning before a renderer or measurement path can see them.
+
+The real provider boundary is separately verified: 9 focused E57 tests pass
+posed f64 point transcoding, immutable embedded images, exact camera semantics,
+scan association, cancellation and tamper/invalid-intrinsic failures; 5 focused
+GeoTIFF tests pass georeferenced DGM NoData/mapping, range-readable COG import,
+exact roundtrip, cancellation and immutable-resource tamper rejection. The
+remaining V1 gap is the automatic preparation bridge from a canonical
+GeoTIFF elevation-grid resource into the pyramidal prepared-raster hierarchy;
+these provider tests alone are therefore not reported as the completed V1
+viewer-provider gate.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.
