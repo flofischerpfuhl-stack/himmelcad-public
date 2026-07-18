@@ -30,11 +30,12 @@ use sha2::{Digest, Sha256};
 
 use crate::canonical_provider::{
     CanonicalExportPlan, CanonicalExportProvider, CanonicalExportRequest, CanonicalImportPackage,
-    CanonicalImportProvider, CanonicalImportRequest, CanonicalJsonObject, CanonicalResourceSet,
-    ExportOutput, FormatCapability, FormatProviderDescriptor, ImportProbe, ImportProbeRequest,
-    PreparedResourceArtifact, ProviderContractError, ProviderOperationContext, ProviderProgress,
-    CANONICAL_IO_SCHEMA_VERSION,
+    CanonicalImportProvider, CanonicalImportRequest, CanonicalJsonObject, CanonicalPreparedDataset,
+    CanonicalResourceSet, ExportOutput, FormatCapability, FormatProviderDescriptor, ImportProbe,
+    ImportProbeRequest, PreparedDatasetArtifact, PreparedResourceArtifact, ProviderContractError,
+    ProviderOperationContext, ProviderProgress, CANONICAL_IO_SCHEMA_VERSION,
 };
+use crate::geotiff_preparation::prepare_elevation_geotiff;
 
 /// `GeoTIFF` 1.1 including locally range-readable COG storage.
 pub const GEOTIFF_FORMAT_ID: &str = "geotiff@1.1";
@@ -163,6 +164,7 @@ enum StorageMetadata {
     },
 }
 
+#[derive(Clone)]
 struct StagedSource {
     resource: GeometryResource,
     relative_path: PathBuf,
@@ -288,7 +290,39 @@ impl CanonicalImportProvider for GeoTiffCanonicalProvider {
                 }),
             },
         };
-        let package = build_package(request.source, &source, geometry, interpretation, staged)?;
+        let prepared = if interpretation == RasterInterpretation::ElevationSurface {
+            Some(prepare_elevation_geotiff(
+                &geotiff,
+                &self.resource_root,
+                &staged.resource,
+                mapping,
+                options.maximum_height_jump,
+                context,
+            )?)
+        } else {
+            None
+        };
+        let staged_for_dataset = staged.clone();
+        let mut package = build_package(request.source, &source, geometry, interpretation, staged)?;
+        if let Some(prepared) = prepared {
+            let admission = package
+                .admissions
+                .first()
+                .ok_or(ProviderContractError::InvalidPackage)?;
+            let mut artifacts = vec![PreparedDatasetArtifact {
+                relative_path: staged_for_dataset.relative_path,
+                resource: staged_for_dataset.resource.clone(),
+            }];
+            artifacts.extend(prepared.artifacts);
+            package.datasets.push(CanonicalPreparedDataset {
+                dataset_id: prepared.dataset_id,
+                format_id: staged_for_dataset.resource.media_type.clone(),
+                entity_id: admission.entity.id.0.clone(),
+                representation_slot: admission.representation_slot.clone(),
+                root_metadata: staged_for_dataset.resource,
+                artifacts,
+            });
+        }
         package.validate()?;
         context.report_progress(ProviderProgress {
             phase: "admit".to_owned(),
@@ -697,7 +731,7 @@ fn stage_source_file(
     Ok(StagedSource {
         resource: GeometryResource {
             object_hash: ObjectHash(hash),
-            media_type: TIFF_MEDIA_TYPE.to_owned(),
+            media_type: GEOTIFF_FORMAT_ID.to_owned(),
             byte_length: Some(copied),
         },
         relative_path,
@@ -755,7 +789,7 @@ fn passthrough_artifact(package: &CanonicalImportPackage) -> Option<&PreparedRes
         },
         _ => return None,
     };
-    if resource.media_type != TIFF_MEDIA_TYPE {
+    if resource.media_type != GEOTIFF_FORMAT_ID {
         return None;
     }
     package
@@ -952,7 +986,9 @@ impl Drop for IncompleteFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geotiff_preparation::{F64_TILE_BYTES, HEIGHT_MEDIA_TYPE, HIERARCHY_MEDIA_TYPE};
     use geotiff_writer::{CogBuilder, Compression, GeoTiffBuilder, Resampling};
+    use himmelcad_render::{DatasetId, HierarchySource, PreparedHierarchySource, TileId};
     use ndarray::{Array2, Array3};
 
     #[derive(Default)]
@@ -1101,6 +1137,59 @@ mod tests {
             fs::read(resources.join(&artifact.relative_path)).expect("staged"),
             fs::read(&source).expect("source")
         );
+        assert_eq!(package.datasets.len(), 1);
+        let dataset = &package.datasets[0];
+        assert_eq!(dataset.format_id, GEOTIFF_FORMAT_ID);
+        assert_eq!(&dataset.root_metadata, raster);
+        assert_eq!(dataset.artifacts.len(), 4);
+        let manifest = dataset
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.resource.media_type == HIERARCHY_MEDIA_TYPE)
+            .expect("viewer manifest");
+        let manifest_bytes =
+            fs::read(resources.join(&manifest.relative_path)).expect("viewer manifest bytes");
+        assert_eq!(
+            manifest.resource.object_hash,
+            ObjectHash::of_bytes(&manifest_bytes)
+        );
+        let mut hierarchy = PreparedHierarchySource::from_json(
+            DatasetId(dataset.dataset_id.clone()),
+            "hcad://fixture/viewer/manifest.json",
+            &manifest_bytes,
+        )
+        .expect("render-core hierarchy");
+        let tile = hierarchy
+            .tile(&TileId("L00/0/0".to_owned()))
+            .expect("tile query")
+            .expect("root tile");
+        assert_eq!(tile.contents.len(), 1);
+        let decoder = tile.contents[0]
+            .decoder_parameters
+            .as_ref()
+            .expect("raster decoder contract");
+        assert_eq!(
+            decoder["mapping"]["origin"],
+            serde_json::json!([500_000.125, 5_399_999.75])
+        );
+        assert_eq!(decoder["elevationEncoding"]["kind"], "float64LittleEndian");
+        let height = dataset
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.resource.media_type == HEIGHT_MEDIA_TYPE)
+            .expect("prepared height tile");
+        assert_eq!(height.resource.byte_length, Some(F64_TILE_BYTES));
+        let height_bytes =
+            fs::read(resources.join(&height.relative_path)).expect("height tile bytes");
+        let heights = height_bytes
+            .chunks_exact(8)
+            .take(4)
+            .map(|sample| f64::from_le_bytes(sample.try_into().expect("sample")))
+            .collect::<Vec<_>>();
+        assert_eq!(heights[0], 100.0);
+        assert_eq!(heights[1], 101.0);
+        assert!(heights[2].is_nan());
+        assert_eq!(heights[3], 103.0);
         let attributes = package
             .objects
             .iter()
@@ -1118,6 +1207,25 @@ mod tests {
             .progress
             .iter()
             .any(|progress| progress.phase == "stage"));
+
+        let repeated = provider
+            .import(
+                CanonicalImportRequest {
+                    source: &source,
+                    format_id: GEOTIFF_FORMAT_ID,
+                    options: &import_options("elevationSurface"),
+                },
+                &mut TestContext::default(),
+            )
+            .expect("repeat deterministic DEM import");
+        assert_eq!(repeated.datasets, package.datasets);
+        let staging = resources.join("geotiff/.prepared-staging");
+        assert_eq!(
+            fs::read_dir(staging)
+                .expect("prepared staging directory")
+                .count(),
+            0
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 

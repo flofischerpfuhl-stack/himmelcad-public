@@ -9,6 +9,7 @@ description = "Importers/exporters (LAS first). License-checked dependencies onl
 [dependencies]
 himmelcad-core = { path = "../himmelcad-core" }
 himmelcad-spatial = { path = "../himmelcad-spatial" }
+himmelcad-render = { path = "../himmelcad-render" }
 serde.workspace = true
 serde_json.workspace = true
 nom-exif.workspace = true
@@ -22,10 +23,11 @@ quick-xml = "=0.41.0"
 dxf = { version = "=0.6.1", features = ["serialize"] }
 geotiff-reader = { version = "=0.7.0", default-features = false, features = ["local"] }
 tiff-reader = { version = "=0.7.0", default-features = false, features = ["jpeg", "zstd"] }
+image = { version = "0.25.8", default-features = false, features = ["png"] }
+ndarray = "=0.17.2"
 
 [dev-dependencies]
 geotiff-writer = "=0.7.0"
-ndarray = "=0.17.2"
 
 [lints]
 workspace = true
