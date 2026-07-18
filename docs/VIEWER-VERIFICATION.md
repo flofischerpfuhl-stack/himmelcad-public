@@ -1599,6 +1599,60 @@ the same ownership and geometry semantics. No live height resolver, secondary
 renderer or product-specific dependency is presented as part of the stable
 facade.
 
+### V5 completion and app-ready gate
+
+V5 closed on July 18, 2026 at 20:02 CEST after 1 hour 14 minutes of active
+work. The exact pushed `aa0d884` state passed the following deterministic
+completion set:
+
+- 145/145 `himmelcad-core`, 322/322 `himmelcad-render`, 61/61
+  `himmelcad-io` with one explicitly ignored rare synthetic preparation gate,
+  7/7 `himmelcad-wasm`, 4/4 `himmelcad-decode-wasm`, and 85/85 viewer package
+  tests;
+- current generated TypeScript bindings, browser-kernel TypeScript contract,
+  package typecheck, and both wasm32 targets;
+- one 241.1 kB public-consumer bundle in headless Chrome and an Electron 43
+  `BrowserWindow`, each loading four identical public-facade entities and
+  releasing its sole session owner;
+- explicit real-data WebGPU and forced-WebGL2 browser runs at 47 entities and
+  56 proxies, with exact Source picks, 19 worker artifact ingests, zero
+  main-thread provider decodes, device rebuild, and maximum CPU submit of
+  1.3 ms on the WebGPU correctness adapter and 4.3 ms on Intel HD Graphics 630
+  WebGL2; and
+- current cross-backend color RMSE 0.011956, below the existing acceptance
+  threshold.
+
+The full Core command in the shared dirty worktree reported 148/150 because two
+tests observe concurrently edited, uncommitted PhotoLab matcher policy. An
+isolated detached worktree at the exact pushed viewer HEAD passed its complete
+145/145 Core suite. This records the external lane accurately without changing,
+staging, or weakening it.
+
+The decode-WASM release content was independently built, bound, optimized and
+measured at 4,941,333 raw bytes, 3,549,040 bindgen bytes, 3,141,896 optimized
+bytes, 1,360,797 raw-gzip bytes and 1,091,938 optimized-gzip bytes. All five are
+below the existing ceilings. The locally available Ubuntu Binaryen 108 requires
+`--enable-sign-ext` for current Rust output; the still-untracked external check
+script only enables bulk-memory and nontrapping conversion. The measured
+artifact passes when the actual emitted feature is enabled; this harness/tool
+version mismatch is retained as tooling conformance rather than hidden or
+patched across lane ownership.
+
+At the V5 boundary, explicit WebGPU correctness scale completed with interaction
+p95/p99 9.0/16.0 ms, three complete zero-cost drains, and 27/27/27 provider
+requests on reload. The physical Intel HD Graphics 630 forced-WebGL2 low profile
+materialized 3,040,128 points, 524,288 triangles, 100,000 splats, 16,777,216
+texture bytes, and 170 draw calls. Interaction p50/p95/p99/max was
+10.2/26.8/34.6/34.7 ms. Its three lifecycle drains reached zero tracked entries,
+zero entries in every stage, and zero in all nine cost dimensions; reloads used
+174/176/174 new requests and remained within the unchanged plateau.
+
+The common viewer is therefore **app-ready complete**. Remaining Builder,
+PhotoLab, and WeltView work is limited to lifecycle, document-command, resource
+URL, and UI-state adapters. Physical Windows, macOS, Apple-Silicon, suitable
+mainstream/high-end, and mobile sustained measurements remain explicit V6
+release-conformance work; their absence does not invalidate or block V5.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

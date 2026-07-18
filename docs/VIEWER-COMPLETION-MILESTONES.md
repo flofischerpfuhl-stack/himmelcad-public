@@ -30,7 +30,8 @@ Fallback zählen nicht als Abschluss.
 | V2  | Kanonische Entity- und Definitionsbreite       | abgeschlossen                                      | 2026-07-18 11:33 CEST           | 2026-07-18 15:33 CEST | 4 h 00 min verstrichene Arbeitszeit |
 | V3  | Darstellung, Interaktion, Messung und Schnitte | abgeschlossen                                      | 2026-07-18 15:33 CEST           | 2026-07-18 17:04 CEST | 1 h 31 min verstrichene Arbeitszeit |
 | V4  | Civil-Scale, Hardware und Backend-Härtung      | abgeschlossen; physische Klassen-Conformance in V6 | 2026-07-18 17:04 CEST           | 2026-07-18 18:48 CEST | 1 h 44 min verstrichene Arbeitszeit |
-| V5  | Stabile Viewer-Fassade und App-Ready-Gate      | aktiv                                              | 2026-07-18 18:48 CEST           | –                     | läuft                               |
+| V5  | Stabile Viewer-Fassade und App-Ready-Gate      | abgeschlossen                                      | 2026-07-18 18:48 CEST           | 2026-07-18 20:02 CEST | 1 h 14 min verstrichene Arbeitszeit |
+| V6  | Release- und Plattform-Conformance             | aktiv; externe Hardwareläufe ausstehend            | 2026-07-18 20:02 CEST           | –                     | läuft                               |
 
 ## V1 – Imaging und Heavy-Geometry-Verträge
 
@@ -579,6 +580,74 @@ einen eigenen Geometriepfad benötigt.
   Architektur-, Datenformat-, Verifikations- und Integrationsdokumentation auf
   demselben Stand; es bleiben die V5-Abschlussgates.
 
+### V5-Abschluss am 2026-07-18 20:02 CEST
+
+- Der exakt gepushte Detached-HEAD besteht 145/145 Core-, 322/322 Render-Core-,
+  61/61 IO- (ein bewusst ignorierter synthetischer Scale-Test), 7/7 Viewer-
+  WASM-, 4/4 Decode-WASM- und 85/85 Viewer-Pakettests. Zwei Fehler eines Laufs
+  im gemeinsamen schmutzigen Worktree liegen ausschließlich in parallelen,
+  uncommitted PhotoLab-Matching-Änderungen; derselbe vollständige Core-Gate ist
+  auf `aa0d884` isoliert grün, ohne diese fremde Lane zu verändern.
+- Generated Bindings sind driftfrei, beide wasm32-Targets kompilieren und der
+  Decode-WASM-Artefaktinhalt bleibt mit 3.141.896 Bytes optimiert sowie
+  1.091.938 Bytes gzip unter den unveränderten Grenzen. Ubuntu-Binaryen 108
+  benötigt dafür zusätzlich `--enable-sign-ext`; das noch ungetrackte fremde
+  Harness nennt dieses erforderliche Feature nicht und wird in dieser Lane
+  nicht überschrieben.
+- Der reale 47-Entity-/56-Proxy-Browserlauf ist über explizites WebGPU und
+  erzwungenes WebGL2 grün. Source-Picks, 19 Worker-Ingests, null Provider-
+  Decodes auf dem Main Thread und Device-Rebuild bleiben erhalten. WebGPU
+  erreicht maximal 1,3 ms CPU-Submit, WebGL2 4,3 ms; die aktuelle Farbparität
+  hat RMSE 0,011956.
+- Der WebGPU-Correctness-Scale-Gate erreicht dreimal vollständige Null-Residency
+  und 27/27/27 neue Requests. Intel HD Graphics 630 über WebGL2/Low erreicht
+  3.040.128 Punkte, 524.288 Dreiecke, 100.000 Splats und 170 Draw Calls bei
+  Interaktions-p95/p99 26,8/34,6 ms. Alle drei Drains enden in null Einträgen,
+  null Stages und null Kosten; die Reloads benötigen 174/176/174 Requests und
+  bleiben im unveränderten Plateau.
+- Derselbe 241,1-kB-Consumer lädt in echtem Chrome und Electron dieselben vier
+  Public-Facade-Entities und disposet den einzigen Session-Owner. Der stabile
+  Entry bleibt produkt-, React-, Three- und Electron-frei; der alte Pfad ist nur
+  noch die explizite Legacy-Kompatibilitätsschicht.
+
+Damit ist V5 nach 1 h 14 min aktiver Arbeit abgeschlossen und der Status lautet
+**Viewer app-ready fertig**. Für Builder, PhotoLab und WeltView fehlen nur noch
+Lifecycle-/Command-/Resource-/UI-Adapter; keine App benötigt Geometriesemantik
+oder einen zweiten Renderer.
+
+## V6 – Release- und Plattform-Conformance
+
+V6 führt die bewusst nicht erfundenen physischen Klassenmessungen aus V4/V5 bis
+zur Releasefreigabe. V6 erweitert weder den kanonischen Viewer-Vertrag noch
+öffnet es den abgeschlossenen App-ready-Gate erneut.
+
+### Verbindlicher Umfang
+
+- Native Electron- und Browserläufe auf Windows 11 sowie macOS auf Apple
+  Silicon prüfen Package-Consumer, WebGPU, den verfügbaren WebGL2-Fallback,
+  Device-/Surface-Recovery, Suspend/Resume und Dispose ohne Owner-/Worker-Leak.
+- Mindestens integrierte Low-, geeignete Mainstream-/High-End- und mobile bzw.
+  WebView-Hardware durchläuft dieselben unveränderten Profilgrenzen. Eine
+  schwächere Klasse darf die auf besserer Hardware gewählten Limits nicht
+  deckeln.
+- Apple Silicon wird als eigener Metal/WebGPU-Adapter ausgewiesen. Unified
+  Memory darf nicht als getrenntes VRAM doppelt budgetiert werden; hohe
+  `maxBufferSize`-/Texture-Limits bleiben gerätespezifisch und werden nicht auf
+  Intel-/WebGL2-Werte gekappt.
+- Jeder Plattformbericht nennt OS-/Browser-/Electron-Version, Adapter, Backend,
+  Limits, Kalibrierung, Scale-Spitzen, p50/p95/p99, Residency-Plateaus und
+  Recovery-Ergebnis. Fehlende physische Hardware bleibt ein offenes
+  Release-Conformance-Ergebnis und kein rückwirkender V5-Fehler.
+
+### Arbeitsstand ab 2026-07-18 20:02 CEST
+
+- Die portable Engine- und Consumerbasis ist durch V5 grün. Auf dem aktuellen
+  Linux-Host sind weder Windows noch macOS/Apple Silicon physisch verfügbar;
+  entsprechende Messwerte werden nicht simuliert oder als Pass ausgegeben.
+- V6 beginnt mit der reproduzierbaren Plattformmatrix und der Übertragung der
+  bestehenden öffentlichen Consumer-, Real-Data-, Recovery- und Scale-Gates auf
+  die nativen Release-Runner. Produkt-UI-Migration bleibt eine getrennte Lane.
+
 ## Zeitmessung und Fortschrittsprotokoll
 
 Zeit wird nicht geschätzt oder nachträglich rekonstruiert:
@@ -601,7 +670,8 @@ Zeit wird nicht geschätzt oder nachträglich rekonstruiert:
 | V2          | 2026-07-18 11:33 CEST | 2026-07-18 15:33 CEST | 4 h 00 min   | Kanonische Entity- und Definitionsbreite abgeschlossen                                                                          |
 | V3          | 2026-07-18 15:33 CEST | 2026-07-18 17:04 CEST | 1 h 31 min   | Darstellung, Interaktion, Messung und Schnitte abgeschlossen                                                                    |
 | V4          | 2026-07-18 17:04 CEST | 2026-07-18 18:48 CEST | 1 h 44 min   | Portable Civil-Scale-, Recovery-, Residency- und Backend-Härtung abgeschlossen; physische Klassen-Conformance nach V6 überführt |
-| V5          | 2026-07-18 18:48 CEST | läuft                 | läuft        | Stabile Viewer-Fassade und App-Ready-Gate gestartet                                                                             |
+| V5          | 2026-07-18 18:48 CEST | 2026-07-18 20:02 CEST | 1 h 14 min   | Viewer app-ready fertig; stabile produktfreie Fassade und vollständige Abschlussgates                                            |
+| V6          | 2026-07-18 20:02 CEST | läuft                 | läuft        | Release-/Plattform-Conformance gestartet; physische Windows-/macOS-/Apple-Silicon-Hardware extern ausstehend                     |
 
 ### Abschlussnachweise
 
@@ -612,3 +682,4 @@ Zeit wird nicht geschätzt oder nachträglich rekonstruiert:
 | V2          | `aecf700`, `c85d298` und vorherige V2-Slices           | 38 Entities/47 Proxies; checksum-gepinnte DXF-/IFC-/LandXML-Providerpfade auf WebGPU/WebGL2                                                                                                                                                                      | 4 h 00 min                | 4 h 00 min                |
 | V3          | `b2d9a7f`, `c4b017b`, `f1fef3f` und V3-Abschlusscommit | 320 Render-Core-, 7 Viewer-WASM-, 73 Viewer-Pakettests; 38 Entities/47 Proxies; Real-Data-Farbparität RMSE 0,011007                                                                                                                                              | 1 h 31 min                | 1 h 31 min                |
 | V4          | `40ea2cf` bis V4-Abschlusscommit                       | 322 Render-Core-, 7 Viewer-WASM-, 75 Viewer-Pakettests; WebGPU/WebGL2 Device-Rebuild; Intel- und Quadro-Low grün; vollständige Null-Eviction und stabile Reload-Plateaus; Mainstream-Residency grün, Quadro-Latenz ehrlich nicht bestanden und nach V6 überführt | 1 h 44 min                | 1 h 44 min                |
+| V5          | `0ce5ab6` bis V5-Abschlusscommit                       | 145 Core-, 322 Render-Core-, 61 IO-, 7 Viewer-WASM-, 4 Decode-WASM-, 85 Viewer-Pakettests; Browser/Electron-Public-Consumer; explizites WebGPU und WebGL2; Intel-Low- und WebGPU-Correctness-Scale grün                                   | 1 h 14 min                | 1 h 14 min                |
