@@ -631,6 +631,7 @@ export interface AlignedGcpCameraRecord {
 export type SnapKind = 'Point' | 'Vertex' | 'Edge' | 'Face' | 'Grid' | 'EstimatedSurface' | 'Free';
 
 export type GeometryDatasetKind =
+  | 'camera'
   | 'point-cloud'
   | 'mesh'
   | 'textured-mesh'
