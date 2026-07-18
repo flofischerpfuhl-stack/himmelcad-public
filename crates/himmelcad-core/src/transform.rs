@@ -373,14 +373,15 @@ pub enum TransformStage {
     /// - `subtract_undulation = false`: \(h = H + N\) (gravity-related → ellipsoid)
     ///
     /// Horizontal coordinates are interpreted as geographic degrees (lon=x, lat=y)
-    /// unless `horizontal_is_projected` is set (then a PROJ inverse is required at runtime).
+    /// unless `horizontal_is_projected` is set.
     GeoidUndulation {
         grid: GridFileRef,
         subtract_undulation: bool,
-        /// When true, `x/y` are projected metres and must be converted via `geographic_crs`
-        /// before grid sampling (runtime responsibility).
+        /// When true, `x/y` are projected metres (E,N).
         #[serde(default)]
         horizontal_is_projected: bool,
+        /// CRS of the XY coordinates when projected (e.g. `EPSG:25832`, `EPSG:31468`).
+        /// Runtime inverts to WGS84 lon/lat for grid sampling, then keeps original E/N.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         geographic_crs: Option<CrsDefinition>,
     },
@@ -590,10 +591,10 @@ fn validate_stage(stage: &TransformStage) -> Result<(), TransformSpecError> {
             }
             if *horizontal_is_projected {
                 match geographic_crs {
-                    Some(crs) => validate_crs_def(crs, "geoid geographic crs")?,
+                    Some(crs) => validate_crs_def(crs, "projected source crs for geoid")?,
                     None => {
                         return Err(TransformSpecError::InvalidCrs(
-                            "geoid undulation on projected XY requires geographicCrs",
+                            "geoid undulation on projected XY requires projected CRS in geographicCrs field",
                         ));
                     }
                 }

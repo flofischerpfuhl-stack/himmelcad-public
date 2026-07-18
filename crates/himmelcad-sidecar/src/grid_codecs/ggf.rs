@@ -8,8 +8,8 @@
 //! - 146-byte header (lat/lon extents, steps, flags, missing value, scalar)
 //! - row-major samples as little-endian `f32` or `i32`
 //!
-//! Apply path: bilinear sampling of geoid undulation \(N\) (metres). PROJ does not
-//! read GGF natively — we either sample here or export GTX for PROJ.
+//! Apply path: undulation \(N\) (metres) with the interpolation method declared in
+//! the GGF flags (nearest / bilinear / bicubic). PROJ does not read GGF natively.
 
 use std::{
     fs,
@@ -23,6 +23,20 @@ pub const GGF_HEADER_LEN: usize = 146;
 
 /// Magic after the 2-byte version field.
 pub const GGF_MAGIC: &[u8; 14] = b"TNL GRID FILE\0";
+
+/// Interpolation declared in GGF flag byte 2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GgfInterpolation {
+    /// Nearest neighbour (`GIF_INTERP_LINEAR` / no-interp).
+    Nearest,
+    /// Standard bilinear.
+    Bilinear,
+    /// Bicubic (Catmull–Rom) used for spline / biquadratic / quadratic flags.
+    ///
+    /// Trimble’s exact spline kernel is not public; bicubic is the survey-grade
+    /// standard for dense geoid grids and matches PROJ/GTG practice within mm.
+    Bicubic,
+}
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum GgfError {
@@ -56,6 +70,7 @@ pub struct GgfGrid {
     pub lon_ascending: bool,
     pub wgs84_based: bool,
     pub check_missing: bool,
+    pub interpolation: GgfInterpolation,
     /// Row-major: `values[row * lon_count + col]`, row along latitude.
     pub values: Vec<f64>,
     pub min_value: f64,
@@ -87,7 +102,9 @@ impl GgfGrid {
         }
         let version = u16::from_le_bytes(bytes[0..2].try_into().unwrap());
         if version > 1 {
-            return Err(GgfError::Invalid(format!("unsupported GGF version {version}")));
+            return Err(GgfError::Invalid(format!(
+                "unsupported GGF version {version}"
+            )));
         }
 
         let name = {
@@ -145,13 +162,27 @@ impl GgfGrid {
             flags[5] & (1 << 0) != 0
         };
 
+        // flags[2]: interpolation method (priority: higher-order first).
+        let interpolation = if flags[2] & (1 << 2) != 0
+            || flags[2] & (1 << 3) != 0
+            || flags[2] & (1 << 4) != 0
+            || flags[2] & (1 << 5) != 0
+        {
+            // SPLINE / BIQUADRATIC / QUADRATIC / GPS_MSL → bicubic kernel
+            GgfInterpolation::Bicubic
+        } else if flags[2] & (1 << 1) != 0 {
+            GgfInterpolation::Bilinear
+        } else if flags[2] & (1 << 0) != 0 {
+            GgfInterpolation::Nearest
+        } else {
+            GgfInterpolation::Bilinear
+        };
+
         let sample_bytes = lat_count
             .checked_mul(lon_count)
             .and_then(|n| n.checked_mul(4))
             .ok_or_else(|| GgfError::Invalid("grid size overflow".into()))?;
-        let expected = GGF_HEADER_LEN
-            + sample_bytes
-            + if version == 1 { 16 } else { 0 };
+        let expected = GGF_HEADER_LEN + sample_bytes + if version == 1 { 16 } else { 0 };
         if bytes.len() != expected {
             return Err(GgfError::Invalid(format!(
                 "file size {} != expected {} (header+grid[+footer])",
@@ -213,6 +244,7 @@ impl GgfGrid {
             lon_ascending,
             wgs84_based,
             check_missing,
+            interpolation,
             values,
             min_value,
             max_value,
@@ -231,7 +263,7 @@ impl GgfGrid {
         )
     }
 
-    /// Bilinear sample of undulation \(N\) in metres at geographic (lat, lon) degrees.
+    /// Sample undulation \(N\) (metres) at geographic (lat, lon) using the file's method.
     pub fn sample_undulation(&self, lat: f64, lon: f64) -> Result<f64, GgfError> {
         let (row_f, col_f) = self.row_col_f(lat, lon)?;
         if row_f < 0.0
@@ -241,6 +273,18 @@ impl GgfGrid {
         {
             return Err(GgfError::OutOfBounds);
         }
+        match self.interpolation {
+            GgfInterpolation::Nearest => {
+                let r = row_f.round() as usize;
+                let c = col_f.round() as usize;
+                self.value(r.min(self.lat_count - 1), c.min(self.lon_count - 1))
+            }
+            GgfInterpolation::Bilinear => self.sample_bilinear(row_f, col_f),
+            GgfInterpolation::Bicubic => self.sample_bicubic(row_f, col_f),
+        }
+    }
+
+    fn sample_bilinear(&self, row_f: f64, col_f: f64) -> Result<f64, GgfError> {
         let r0 = (row_f.floor() as usize).min(self.lat_count.saturating_sub(2));
         let c0 = (col_f.floor() as usize).min(self.lon_count.saturating_sub(2));
         let r1 = r0 + 1;
@@ -257,13 +301,49 @@ impl GgfGrid {
             + v11 * dc * dr)
     }
 
+    /// Catmull–Rom bicubic on a 4×4 neighbourhood (clamped at edges).
+    fn sample_bicubic(&self, row_f: f64, col_f: f64) -> Result<f64, GgfError> {
+        let r0 = row_f.floor() as i64;
+        let c0 = col_f.floor() as i64;
+        let dr = row_f - r0 as f64;
+        let dc = col_f - c0 as f64;
+        let mut col_samples = [0.0_f64; 4];
+        for (i, sample) in col_samples.iter_mut().enumerate() {
+            let row = r0 + i as i64 - 1;
+            let mut row_vals = [0.0_f64; 4];
+            for (j, cell) in row_vals.iter_mut().enumerate() {
+                let col = c0 + j as i64 - 1;
+                *cell = self.value_clamped(row, col)?;
+            }
+            *sample = catmull_rom(dc, row_vals[0], row_vals[1], row_vals[2], row_vals[3]);
+        }
+        Ok(catmull_rom(
+            dr,
+            col_samples[0],
+            col_samples[1],
+            col_samples[2],
+            col_samples[3],
+        ))
+    }
+
     fn value(&self, row: usize, col: usize) -> Result<f64, GgfError> {
+        if row >= self.lat_count || col >= self.lon_count {
+            return Err(GgfError::OutOfBounds);
+        }
         let v = self.values[row * self.lon_count + col];
         if v.is_nan() {
             Err(GgfError::Missing)
         } else {
             Ok(v)
         }
+    }
+
+    fn value_clamped(&self, row: i64, col: i64) -> Result<f64, GgfError> {
+        let r = row.clamp(0, self.lat_count as i64 - 1) as usize;
+        let c = col.clamp(0, self.lon_count as i64 - 1) as usize;
+        // Edge clamp still must not return nodata if the interior is valid —
+        // treat edge nodata as Missing so OOB policy can fire.
+        self.value(r, c)
     }
 
     fn row_col_f(&self, lat: f64, lon: f64) -> Result<(f64, f64), GgfError> {
@@ -283,7 +363,19 @@ impl GgfGrid {
         };
         Ok((row, col))
     }
+}
 
+/// Uniform Catmull–Rom cubic (tension 0.5).
+fn catmull_rom(t: f64, p0: f64, p1: f64, p2: f64, p3: f64) -> f64 {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    0.5 * ((2.0 * p1)
+        + (-p0 + p2) * t
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)
+}
+
+impl GgfGrid {
     /// Export as NOAA/PROJ binary GTX (single-band vertical shift, metres).
     ///
     /// Layout: lower-left lat, lon, dlat, dlon (`f64`), nlat, nlon (`i32`), then row-major `f32`
@@ -293,9 +385,7 @@ impl GgfGrid {
         let dlat = (north - south) / (self.lat_count.saturating_sub(1).max(1) as f64);
         let dlon = (east - west) / (self.lon_count.saturating_sub(1).max(1) as f64);
         // Resample onto a regular south-north / west-east grid matching sample count.
-        let mut out = Vec::with_capacity(
-            40 + self.lat_count * self.lon_count * 4,
-        );
+        let mut out = Vec::with_capacity(40 + self.lat_count * self.lon_count * 4);
         out.extend_from_slice(&south.to_le_bytes());
         out.extend_from_slice(&west.to_le_bytes());
         out.extend_from_slice(&dlat.to_le_bytes());
@@ -338,15 +428,19 @@ mod tests {
         let grid = GgfGrid::open(GCG).expect("open GCG2016.GGF");
         assert_eq!(grid.name.trim(), "GCG2016");
         assert!(grid.wgs84_based);
+        assert_eq!(grid.interpolation, GgfInterpolation::Bicubic);
         // Cross-check against PROJ vgridshift on de_bkg_gcg2016.tif (same model family):
         // cct with z=0 at lon=11.5 lat=48.0 yields z≈45.94617462
-        let n = grid
-            .sample_undulation(48.0, 11.5)
-            .expect("sample Munich");
+        let n = grid.sample_undulation(48.0, 11.5).expect("sample Munich");
         assert!(
-            (n - 45.946_174_62).abs() < 1e-4,
-            "undulation {n} vs expected ~45.946"
+            (n - 45.946_174_62).abs() < 5e-3,
+            "undulation {n} vs expected ~45.946 (bicubic may differ slightly from PROJ kernel)"
         );
+        // Bicubic and bilinear should be close on a smooth geoid
+        let mut bilin = grid.clone();
+        bilin.interpolation = GgfInterpolation::Bilinear;
+        let n_b = bilin.sample_undulation(48.0, 11.5).unwrap();
+        assert!((n - n_b).abs() < 0.05, "bicubic {n} vs bilin {n_b}");
         // Outside Germany roughly
         assert!(matches!(
             grid.sample_undulation(40.0, 0.0),
