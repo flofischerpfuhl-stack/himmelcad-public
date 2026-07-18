@@ -1336,6 +1336,41 @@ proxy and exact pick-address identity. The surrounding full fixture remains at
 decodes on the main thread. Maximum CPU submit is 3.6 ms for WebGL2 and 1.4 ms
 for the WebGPU CPU adapter in these correctness runs.
 
+### V4 complete residency plateau checkpoint
+
+The WASM streaming diagnostics now expose the Rust coordinator's complete
+resource cost together with tracked entries and all eight residency stages.
+The scale harness uses those values for canonical lifecycle cycles rather than
+attempting to evict visible, deliberately pinned tiles by shrinking budgets. It
+retires every active canonical binding, detaches each corresponding dataset
+from the host driver, and requires zero tracked entries, zero entries in every
+stage, and zero cost in all nine resource dimensions. It then registers the
+same immutable provider manifests with the returned tombstone generations,
+publishes fresh canonical bindings, and requires new network requests and
+resident content. Repeated reload costs must stay under the unchanged hardware
+budget and within the larger of one unit or 15 percent of that budget.
+
+This lifecycle exposed a real retirement defect: streamed canonical slots were
+being sent through the inline entity compiler while their proxies were also
+retired through the dataset lifecycle. The WASM bridge now skips inline proxy
+enumeration for dataset-backed slots; streamed proxy removal remains owned by
+the atomic stream retirement path.
+
+On the physical Intel HD Graphics 630 forced-WebGL2 low profile, the gate
+materialized 3,040,128 points, 524,288 triangles, 100,000 splats and 170 draw
+calls before latency sampling. Three full detach/reload cycles each drained all
+nine costs to zero and issued 244, 242 and 242 new provider requests. Reload
+costs remained on the same bounded plateau. Interaction p50/p95/p99/max was
+12.5/29.9/42.2/43.0 ms, within the unchanged low-profile thresholds. The
+correctness profile also passed with three zero-cost drains and 27 new requests
+per reload on explicit WebGPU. The scale runner now selects `webgpu` explicitly;
+its previous automatic selection could silently fall back to WebGL2 and is no
+longer accepted as WebGPU evidence.
+
+After this change the complete Render-Core suite passes 322/322, native viewer
+WASM passes 7/7, the wasm32 target and browser contract typecheck pass, and the
+viewer package passes 75/75 tests.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

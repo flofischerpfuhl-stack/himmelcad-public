@@ -301,7 +301,7 @@ try {
   });
   page.on('pageerror', (error) => browserErrors.push(error.stack ?? error.message));
   const query = new URLSearchParams();
-  if (forceWebGl2) query.set('backend', 'webgl2');
+  query.set('backend', forceWebGl2 ? 'webgl2' : 'webgpu');
   if (performanceProfile) query.set('profile', performanceProfile);
   query.set('width', String(viewport.width));
   query.set('height', String(viewport.height));
@@ -348,6 +348,16 @@ try {
   assert(state.actionCounts.fetchHierarchyPage > 0);
   assert(state.actionCounts.evictTile > 0);
   assert(state.reenteredTiles.length > 0);
+  assert(state.residencyPlateau);
+  assert(state.residencyPlateau.drainedCosts.length >= 2);
+  assert.equal(
+    state.residencyPlateau.reloadCosts.length,
+    state.residencyPlateau.drainedCosts.length,
+  );
+  assert(
+    state.residencyPlateau.reloadRequestDeltas.every((requests) => requests > 0),
+    JSON.stringify(state.residencyPlateau),
+  );
   assert(state.driverDiagnostics.peakRequests <= state.runtimeLimits.contentRequests);
   assert(state.driverDiagnostics.actualDecodeWorkers <= state.runtimeLimits.decoderWorkers);
   assert(state.frameTelemetry.peakPoints <= state.residentPointCeiling);
@@ -357,11 +367,12 @@ try {
     assert.equal(state.performanceProfile, performanceProfile);
     assert.equal(state.profilePeaksReached, true);
     assert(state.profileMinimum);
-    assert(state.frameTelemetry.peakPoints >= state.profileMinimum.points);
-    assert(state.frameTelemetry.peakTriangles >= state.profileMinimum.triangles);
-    assert(state.frameTelemetry.peakSplats >= state.profileMinimum.splats);
-    assert(state.textureCache.gpuTextureBytes >= state.profileMinimum.textureBytes);
-    assert(state.frameTelemetry.peakDrawCalls >= state.profileMinimum.drawCalls);
+    assert(state.profilePeak);
+    assert(state.profilePeak.points >= state.profileMinimum.points);
+    assert(state.profilePeak.triangles >= state.profileMinimum.triangles);
+    assert(state.profilePeak.splats >= state.profileMinimum.splats);
+    assert(state.profilePeak.textureBytes >= state.profileMinimum.textureBytes);
+    assert(state.profilePeak.drawCalls >= state.profileMinimum.drawCalls);
     assert(state.hardwarePolicy);
     assert(state.calibration);
     assert.equal(

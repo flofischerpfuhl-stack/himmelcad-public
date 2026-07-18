@@ -4201,6 +4201,7 @@ impl WasmViewer {
             "inFlightContentRequests": self.streaming.in_flight_content_requests(),
             "trackedEntries": self.streaming.residency().tracked_entries(),
             "residencyStageCounts": self.streaming.residency().stage_counts(),
+            "residencyCost": self.streaming.residency().total_cost(),
         }))
         .map_err(js_error)
     }
@@ -4375,6 +4376,9 @@ impl WasmViewer {
             .collect::<std::collections::BTreeSet<_>>();
         let mut removed_proxy_ids = std::collections::BTreeSet::new();
         for slot in &retiring_slots {
+            if self.slot_dataset_ids.contains_key(slot) {
+                continue;
+            }
             if let Some(request) = self.slot_requests.get(slot) {
                 removed_proxy_ids.extend(
                     entity_proxy_ids(

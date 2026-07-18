@@ -13,6 +13,7 @@ import type {
   KernelHardwareInventory,
   KernelResourceBudget,
   KernelResolvedHardwarePolicy,
+  KernelResourceCost,
   KernelRuntimeQualityState,
   KernelStreamingAction,
   KernelStreamingRuntimeState,
@@ -119,6 +120,13 @@ interface ScaleGateState {
     readonly textureBytes: number;
     readonly drawCalls: number;
   } | null;
+  profilePeak: {
+    readonly points: number;
+    readonly triangles: number;
+    readonly splats: number;
+    readonly textureBytes: number;
+    readonly drawCalls: number;
+  } | null;
   profilePeaksReached: boolean;
   viewport: {
     readonly width: number;
@@ -126,6 +134,11 @@ interface ScaleGateState {
     readonly devicePixelRatio: number;
   } | null;
   calibration: KernelDeviceCalibration | null;
+  residencyPlateau: {
+    readonly drainedCosts: readonly KernelResourceCost[];
+    readonly reloadCosts: readonly KernelResourceCost[];
+    readonly reloadRequestDeltas: readonly number[];
+  } | null;
 }
 
 type PerformanceProfileName = 'mobile' | 'low' | 'mainstream' | 'high';
@@ -263,9 +276,11 @@ const state: ScaleGateState = {
           textureBytes: PERFORMANCE_PROFILES[PERFORMANCE_PROFILE].minimumTextureBytes,
           drawCalls: PERFORMANCE_PROFILES[PERFORMANCE_PROFILE].minimumDrawCalls,
         },
+  profilePeak: null,
   profilePeaksReached: PERFORMANCE_PROFILE === null,
   viewport: null,
   calibration: null,
+  residencyPlateau: null,
 };
 window.__HCAD_SCALE__ = state;
 
@@ -369,12 +384,17 @@ async function run(): Promise<void> {
 
   state.phase = 'create-viewer';
   const wasmModuleUrl = '/wasm/himmelcad_wasm.js';
+  const requestedBackend = query.get('backend');
   const viewer = await WgpuKernelViewer.create(
     canvas,
     async () => (await import(wasmModuleUrl)) as unknown as HimmelcadViewerWasmModule,
     VIEWPORT_WIDTH,
     VIEWPORT_HEIGHT,
-    query.get('backend') === 'webgl2' ? 'webgl2' : 'automatic',
+    requestedBackend === 'webgl2'
+      ? 'webgl2'
+      : requestedBackend === 'webgpu'
+        ? 'webgpu'
+        : 'automatic',
   );
   if (PERFORMANCE_PROFILE !== null && isSoftwareAdapter(viewer.capabilities)) {
     throw new Error(
@@ -406,9 +426,12 @@ async function run(): Promise<void> {
       elementCount: LOGICAL_POINTS,
     },
   };
-  viewer.publishCanonicalRepresentations([
-    canonicalAdmission(viewer, ENTITY_ID, DATASET_ID, pointCloudGeometry),
-  ]);
+  const pointAdmission = canonicalAdmission(viewer, ENTITY_ID, DATASET_ID, pointCloudGeometry);
+  const pointMutation = viewer.publishCanonicalRepresentations([pointAdmission]);
+  let activeBindings = [...pointMutation.bindings];
+  let meshManifest: Uint8Array | null = null;
+  let splatManifest: Uint8Array | null = null;
+  let mixedAdmissions: ReturnType<typeof canonicalAdmission>[] = [];
   if (profile !== null) {
     const [meshManifestResponse, splatManifestResponse] = await Promise.all([
       fetch('/scale/mixed/mesh/manifest.json'),
@@ -417,8 +440,8 @@ async function run(): Promise<void> {
     if (!meshManifestResponse.ok || !splatManifestResponse.ok) {
       throw new Error('synthetic mixed hierarchy endpoint failed');
     }
-    const meshManifest = new Uint8Array(await meshManifestResponse.arrayBuffer());
-    const splatManifest = new Uint8Array(await splatManifestResponse.arrayBuffer());
+    meshManifest = new Uint8Array(await meshManifestResponse.arrayBuffer());
+    splatManifest = new Uint8Array(await splatManifestResponse.arrayBuffer());
     viewer.registerPreparedDataset(
       MESH_DATASET_ID,
       PREPARED_FORMAT,
@@ -461,10 +484,12 @@ async function run(): Promise<void> {
         elementCount: LOGICAL_SPLATS,
       },
     };
-    viewer.publishCanonicalRepresentations([
+    mixedAdmissions = [
       canonicalAdmission(viewer, MESH_ENTITY_ID, MESH_DATASET_ID, meshGeometry),
       canonicalAdmission(viewer, SPLAT_ENTITY_ID, SPLAT_DATASET_ID, splatGeometry),
-    ]);
+    ];
+    const mixedMutation = viewer.publishCanonicalRepresentations(mixedAdmissions);
+    activeBindings.push(...mixedMutation.bindings);
   }
 
   const inventory = profile?.inventory ?? {
@@ -710,6 +735,13 @@ async function run(): Promise<void> {
         textureCache.gpuTextureBytes >= profile.minimumTextureBytes &&
         telemetry.peakDrawCalls >= profile.minimumDrawCalls
       ) {
+        state.profilePeak = {
+          points: telemetry.peakPoints,
+          triangles: telemetry.peakTriangles,
+          splats: telemetry.peakSplats,
+          textureBytes: textureCache.gpuTextureBytes,
+          drawCalls: telemetry.peakDrawCalls,
+        };
         state.profilePeaksReached = true;
         break;
       }
@@ -799,6 +831,103 @@ async function run(): Promise<void> {
   for (let frame = 0; frame < (SOFTWARE_CORRECTNESS ? 6 : 12); frame += 1)
     await runFrame(false, true);
   await driver.settled();
+
+  state.phase = 'residency-plateau';
+  const drainedCosts: KernelResourceCost[] = [];
+  const reloadCosts: KernelResourceCost[] = [];
+  const reloadRequestDeltas: number[] = [];
+  const plateauCycles = SOFTWARE_CORRECTNESS ? 2 : 3;
+  const plateauTarget = corners[0];
+  for (let cycle = 0; cycle < plateauCycles; cycle += 1) {
+    const retirement = viewer.detachCanonicalEntities(activeBindings);
+    for (const datasetId of retirement.retiredDatasetIds) {
+      driver.detachDataset(datasetId);
+      for (const key of tracked.keys()) {
+        if (key.startsWith(`${datasetId}/`)) tracked.delete(key);
+      }
+    }
+    await driver.settled();
+    const drained = viewer.streamingRuntime();
+    if (
+      drained.trackedEntries !== 0 ||
+      Object.values(drained.residencyStageCounts).some((count) => count !== 0) ||
+      Object.values(drained.residencyCost).some((cost) => cost !== 0)
+    ) {
+      throw new Error(`canonical unload retained streamed residency: ${JSON.stringify(drained)}`);
+    }
+    drainedCosts.push(drained.residencyCost);
+
+    const tombstones = new Map(
+      retirement.tombstones.map((tombstone) => [
+        `${tombstone.key.slot.entityId}\u0000${tombstone.key.slot.representationSlot}`,
+        tombstone.generation,
+      ]),
+    );
+    const replayAdmissions = [pointAdmission, ...mixedAdmissions].map((item) => ({
+      ...item,
+      admission: {
+        ...item.admission,
+        expectedGeneration:
+          tombstones.get(`${item.admission.entity.id}\u0000${item.admission.representationSlot}`) ??
+          null,
+      },
+    }));
+    viewer.registerPotreeDataset(
+      DATASET_ID,
+      'potree@2',
+      '/scale/metadata.json',
+      metadataBytes,
+      hierarchyBytes,
+    );
+    if (meshManifest !== null && splatManifest !== null) {
+      viewer.registerPreparedDataset(
+        MESH_DATASET_ID,
+        PREPARED_FORMAT,
+        '/scale/mixed/mesh/manifest.json',
+        meshManifest,
+      );
+      viewer.registerPreparedDataset(
+        SPLAT_DATASET_ID,
+        PREPARED_FORMAT,
+        '/scale/mixed/splat/manifest.json',
+        splatManifest,
+      );
+    }
+    activeBindings = [...viewer.publishCanonicalRepresentations(replayAdmissions).bindings];
+
+    const requestsBeforeReload = driver.diagnostics().startedRequests;
+    viewer.setWorldCamera(camera(plateauTarget, 240, -0.8), [
+      plateauTarget.x,
+      plateauTarget.y,
+      plateauTarget.z,
+    ]);
+    for (let frame = 0; frame < (SOFTWARE_CORRECTNESS ? 16 : 32); frame += 1) {
+      await runFrame(false, true);
+    }
+    for (let frame = 0; frame < 512; frame += 1) {
+      const runtime = viewer.streamingRuntime();
+      if (
+        runtime.residencyStageCounts.fetching === 0 &&
+        runtime.residencyStageCounts.queuedDecode === 0 &&
+        runtime.residencyStageCounts.decoding === 0 &&
+        runtime.residencyStageCounts.uploading === 0
+      ) {
+        break;
+      }
+      await runFrame(false, true);
+    }
+    const reloaded = viewer.streamingRuntime();
+    const requestDelta = driver.diagnostics().startedRequests - requestsBeforeReload;
+    if (reloaded.residencyStageCounts.resident === 0 || requestDelta === 0) {
+      throw new Error(
+        `drained residency did not reload from immutable providers: ${JSON.stringify({ reloaded, requestDelta })}`,
+      );
+    }
+    reloadCosts.push(reloaded.residencyCost);
+    reloadRequestDeltas.push(requestDelta);
+  }
+  state.residencyPlateau = { drainedCosts, reloadCosts, reloadRequestDeltas };
+  assertResidencyPlateau(reloadCosts, budget);
 
   state.phase = 'assertions';
   state.driverDiagnostics = driver.diagnostics();
@@ -959,12 +1088,12 @@ async function run(): Promise<void> {
 
   if (
     profile !== null &&
-    (state.frameTelemetry.peakPoints < profile.minimumPoints ||
-      state.frameTelemetry.peakTriangles < profile.minimumTriangles ||
-      state.frameTelemetry.peakSplats < profile.minimumSplats ||
-      state.textureCache === null ||
-      state.textureCache.gpuTextureBytes < profile.minimumTextureBytes ||
-      state.frameTelemetry.peakDrawCalls < profile.minimumDrawCalls)
+    (state.profilePeak === null ||
+      state.profilePeak.points < profile.minimumPoints ||
+      state.profilePeak.triangles < profile.minimumTriangles ||
+      state.profilePeak.splats < profile.minimumSplats ||
+      state.profilePeak.textureBytes < profile.minimumTextureBytes ||
+      state.profilePeak.drawCalls < profile.minimumDrawCalls)
   ) {
     throw new Error(
       `${PERFORMANCE_PROFILE} profile workload regressed before latency assertion: ${JSON.stringify(
@@ -974,12 +1103,12 @@ async function run(): Promise<void> {
           requiredSplats: profile.minimumSplats,
           requiredTextureBytes: profile.minimumTextureBytes,
           requiredDrawCalls: profile.minimumDrawCalls,
-          peakPoints: state.frameTelemetry.peakPoints,
-          peakTriangles: state.frameTelemetry.peakTriangles,
-          peakSplats: state.frameTelemetry.peakSplats,
+          peakPoints: state.profilePeak?.points ?? 0,
+          peakTriangles: state.profilePeak?.triangles ?? 0,
+          peakSplats: state.profilePeak?.splats ?? 0,
           peakResidentGpuBytes: state.frameTelemetry.peakResidentGpuBytes,
-          gpuTextureBytes: state.textureCache?.gpuTextureBytes ?? 0,
-          peakDrawCalls: state.frameTelemetry.peakDrawCalls,
+          gpuTextureBytes: state.profilePeak?.textureBytes ?? 0,
+          peakDrawCalls: state.profilePeak?.drawCalls ?? 0,
         },
       )}`,
     );
@@ -1021,6 +1150,35 @@ void run().catch((error: unknown) => {
 function percentile(sorted: readonly number[], fraction: number): number {
   if (sorted.length === 0) return Number.POSITIVE_INFINITY;
   return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)]!;
+}
+
+function assertResidencyPlateau(
+  samples: readonly KernelResourceCost[],
+  budget: KernelResourceBudget,
+): void {
+  if (samples.length < 2) throw new Error('residency plateau requires repeated reload samples');
+  const dimensions = [
+    'cpuCompressedBytes',
+    'cpuDecodedBytes',
+    'gpuBufferBytes',
+    'gpuTextureBytes',
+    'stagingBytes',
+    'points',
+    'triangles',
+    'splats',
+    'drawCalls',
+  ] as const;
+  for (const dimension of dimensions) {
+    const values = samples.map((sample) => sample[dimension]);
+    const maximum = Math.max(...values);
+    const minimum = Math.min(...values);
+    const tolerance = Math.max(1, Math.ceil(budget[dimension] * 0.15));
+    if (maximum > budget[dimension] || maximum - minimum > tolerance) {
+      throw new Error(
+        `residency ${dimension} did not plateau across complete reloads: ${JSON.stringify({ values, budget: budget[dimension], tolerance })}`,
+      );
+    }
+  }
 }
 
 function phaseLatency(samples: readonly number[]): PhaseLatencyTelemetry {

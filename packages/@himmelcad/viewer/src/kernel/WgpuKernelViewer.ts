@@ -832,6 +832,21 @@ export interface KernelStreamingRuntimeState {
   };
   readonly activeDecodes: number;
   readonly inFlightContentRequests: number;
+  readonly trackedEntries: number;
+  readonly residencyStageCounts: Readonly<
+    Record<
+      | 'unloaded'
+      | 'fetching'
+      | 'queuedDecode'
+      | 'decoding'
+      | 'queuedUpload'
+      | 'uploading'
+      | 'resident'
+      | 'failed',
+      number
+    >
+  >;
+  readonly residencyCost: KernelResourceCost;
 }
 
 /** Presentation-only quality selected by the Rust runtime governor. */
@@ -1372,10 +1387,7 @@ export class WgpuKernelViewer {
   private publishedClipVolumes: readonly KernelClipVolume[] = [];
   private baseClipVolumes: readonly KernelClipVolume[] = [];
   private scopedClipVolumes = new Map<string, KernelClipVolume>();
-  private readonly definitionReplay = new Map<
-    string,
-    (target: WgpuKernelViewer) => void
-  >();
+  private readonly definitionReplay = new Map<string, (target: WgpuKernelViewer) => void>();
   private readonly entityStyleReplay = new Map<
     string,
     { readonly style: KernelRenderStyle; readonly exaggerationDatum: number }
@@ -2483,11 +2495,17 @@ export class WgpuKernelViewer {
       !Number.isSafeInteger(value.activeDecodes) ||
       Number(value.activeDecodes) < 0 ||
       !Number.isSafeInteger(value.inFlightContentRequests) ||
-      Number(value.inFlightContentRequests) < 0
+      Number(value.inFlightContentRequests) < 0 ||
+      !Number.isSafeInteger(value.trackedEntries) ||
+      Number(value.trackedEntries) < 0 ||
+      !validResidencyStageCounts(value.residencyStageCounts)
     ) {
       throw new TypeError('kernel streaming runtime state is malformed');
     }
-    return value as unknown as KernelStreamingRuntimeState;
+    return {
+      ...value,
+      residencyCost: parseResourceCost(value.residencyCost),
+    } as unknown as KernelStreamingRuntimeState;
   }
 
   streamingFetched(ticket: KernelResidencyTicket, retainedCost: KernelResourceCost): void {
@@ -2632,10 +2650,7 @@ export class WgpuKernelViewer {
   }
 
   /** Highlights one exact picked entity without replacing its base style or resources. */
-  setEntityInteractionState(
-    entityId: string,
-    state: KernelEntityInteractionState,
-  ): number {
+  setEntityInteractionState(entityId: string, state: KernelEntityInteractionState): number {
     this.assertAlive();
     if (
       entityId.length === 0 ||
@@ -3118,10 +3133,7 @@ export class WgpuKernelViewer {
     return parseCalibrationProgress(JSON.parse(this.binding.step_hardware_calibration()));
   }
 
-  private rememberDefinition(
-    identity: string,
-    replay: (target: WgpuKernelViewer) => void,
-  ): void {
+  private rememberDefinition(identity: string, replay: (target: WgpuKernelViewer) => void): void {
     this.definitionReplay.set(identity, replay);
   }
 
@@ -3132,6 +3144,20 @@ export class WgpuKernelViewer {
 
 function replayClone<T>(value: T): T {
   return structuredClone(value);
+}
+
+function validResidencyStageCounts(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return [
+    'unloaded',
+    'fetching',
+    'queuedDecode',
+    'decoding',
+    'queuedUpload',
+    'uploading',
+    'resident',
+    'failed',
+  ].every((stage) => Number.isSafeInteger(value[stage]) && Number(value[stage]) >= 0);
 }
 
 async function reliableAutomaticBrowserBackend(): Promise<KernelBackendPreference> {
@@ -3994,9 +4020,7 @@ function isEntityPresentationBatch(value: unknown): value is KernelEntityPresent
           (row) =>
             Array.isArray(row) &&
             row.length === 4 &&
-            row.every(
-              (component) => typeof component === 'number' && Number.isFinite(component),
-            ),
+            row.every((component) => typeof component === 'number' && Number.isFinite(component)),
         ))) &&
     (value.sourcePbr === null ||
       (isRecord(value.sourcePbr) &&
@@ -4017,9 +4041,7 @@ function isEntityPresentationBatch(value: unknown): value is KernelEntityPresent
           (row) =>
             Array.isArray(row) &&
             row.length === 4 &&
-            row.every(
-              (component) => typeof component === 'number' && Number.isFinite(component),
-            ),
+            row.every((component) => typeof component === 'number' && Number.isFinite(component)),
         ))) &&
     typeof value.usesSourceTexture === 'boolean'
   );

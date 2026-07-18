@@ -407,6 +407,18 @@ funktioniert.
   verfügbarer Hardware nicht als V4-Blocker behandelt. Alle portablen Engine-
   und Browser-Gates bleiben verbindlich; die fehlenden Hostmessungen werden als
   explizites V6-/Release-Conformance-Risiko weitergeführt, ohne V5 aufzuhalten.
+- Der gemeinsame Scale-Gate misst die Rust-Residency nun in allen neun
+  Budgetachsen und führt vollständige kanonische Detach-/Provider-Drop-/Reload-
+  Zyklen aus. Jeder Drain muss null Einträge, null Stages und null Kosten
+  erreichen; jeder Reload muss neue unveränderliche Providerdaten anfordern und
+  innerhalb eines unveränderten 15-Prozent-/Ein-Tile-Plateaus bleiben. Dabei
+  wurde ein WASM-Retirementfehler behoben, der für gestreamte Slots fälschlich
+  den Inline-Compiler aufrief. Der physische Intel-HD-630-Low-Lauf ist über drei
+  Zyklen grün: 3.040.128 Punkte, 524.288 Dreiecke, 100.000 Splats, 170 Draw
+  Calls und 244/242/242 neue Requests. Der explizite WebGPU-Correctness-Lauf
+  erreicht ebenfalls dreimal vollständige Null-Eviction und je 27 Reload-
+  Requests. Der Runner fordert WebGPU jetzt ausdrücklich an und kann nicht mehr
+  unbemerkt auf WebGL2 zurückfallen.
 
 ## V5 – Stabile Viewer-Fassade und App-Ready-Gate
 

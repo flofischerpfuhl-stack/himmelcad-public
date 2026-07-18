@@ -291,6 +291,9 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
         limits: { decoderWorkers: 1, contentRequests: 4 },
         activeDecodes: 0,
         inFlightContentRequests: 0,
+        trackedEntries: 0,
+        residencyStageCounts: zeroResidencyStages(),
+        residencyCost: zeroCost(),
       }),
     streaming_fetched(): void {},
     streaming_decoded(): void {},
@@ -485,6 +488,9 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
     limits: { decoderWorkers: 1, contentRequests: 4 },
     activeDecodes: 0,
     inFlightContentRequests: 0,
+    trackedEntries: 0,
+    residencyStageCounts: zeroResidencyStages(),
+    residencyCost: zeroCost(),
   });
   assert.deepEqual(viewer.streamDecodeDiagnostics(), {
     workerArtifactIngests: 0,
@@ -546,10 +552,7 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
   assert.equal(viewer.canonicalEntityBindings('point-1')[0]?.key.slot.entityId, 'point-1');
   assert.equal(viewer.setEntityVisibility('point-1', false), 1);
   assert.deepEqual(calls.at(-1), ['entityVisibility', 'point-1', false]);
-  assert.equal(
-    viewer.setEntityInteractionState('point-1', { selected: true, hovered: false }),
-    1,
-  );
+  assert.equal(viewer.setEntityInteractionState('point-1', { selected: true, hovered: false }), 1);
   assert.deepEqual(calls.at(-1), ['entityInteraction', 'point-1', true, false]);
   assert.deepEqual(viewer.threeDTilesMetadata('city'), {
     schema: null,
@@ -1361,6 +1364,9 @@ function minimalBinding(
         limits: { decoderWorkers: 1, contentRequests: 4 },
         activeDecodes: 0,
         inFlightContentRequests: 0,
+        trackedEntries: 0,
+        residencyStageCounts: zeroResidencyStages(),
+        residencyCost: zeroCost(),
       }),
     streaming_fetched(): void {},
     streaming_decoded(): void {},
@@ -1442,6 +1448,19 @@ function zeroCost(): Record<string, number> {
     triangles: 0,
     splats: 0,
     drawCalls: 0,
+  };
+}
+
+function zeroResidencyStages(): Record<string, number> {
+  return {
+    unloaded: 0,
+    fetching: 0,
+    queuedDecode: 0,
+    decoding: 0,
+    queuedUpload: 0,
+    uploading: 0,
+    resident: 0,
+    failed: 0,
   };
 }
 
