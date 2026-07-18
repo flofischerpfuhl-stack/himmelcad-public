@@ -4,7 +4,11 @@ import { KernelCameraController } from '../../src/kernel/KernelCameraController'
 import { localSectionClipVolume } from '../../src/kernel/KernelLocalSectionView';
 import { KernelDecodeWorkerPool } from '../../src/kernel/KernelDecodeWorkerPool';
 import { KernelClipCapCoordinator } from '../../src/kernel/KernelClipCapCoordinator';
-import { decodeInputManifestHash } from '../../src/kernel/KernelStreamingDriver';
+import {
+  decodeInputManifestHash,
+  KernelStreamingDriver,
+} from '../../src/kernel/KernelStreamingDriver';
+import { KernelViewerScene } from '../../src/kernel/KernelViewerScene';
 import { evaluateCanonicalSectionTopologyWith } from '../../src/kernel/KernelSectionTopologyEvaluation';
 import type {
   AlignmentGeometry,
@@ -105,6 +109,13 @@ interface BrowserValidationState {
     readonly proxyIdentityStable: boolean;
     readonly pickIdentityStable: boolean;
     readonly decodeCountersStable: boolean;
+  } | null;
+  deviceRecovery: {
+    readonly detected: boolean;
+    readonly presented: boolean;
+    readonly entityHandleStable: boolean;
+    readonly proxyIdentityStable: boolean;
+    readonly pickIdentityStable: boolean;
   } | null;
   panoramaMarkerPick: KernelPickResult | null;
   panoramaDepthMeasurement: ReturnType<WgpuKernelViewer['measureRasterDepthSample']> | null;
@@ -513,6 +524,7 @@ const state: BrowserValidationState = {
   exactPointPick: null,
   interactionPresentation: null,
   surfaceRecovery: null,
+  deviceRecovery: null,
   panoramaMarkerPick: null,
   panoramaDepthMeasurement: null,
   rasterAnalysis: null,
@@ -5899,6 +5911,88 @@ async function run(): Promise<void> {
     decodeCountersStable:
       JSON.stringify(viewer.streamDecodeDiagnostics()) === JSON.stringify(recoveryDecodeBefore),
   };
+
+  const deviceCanvas = document.createElement('canvas');
+  deviceCanvas.width = 320;
+  deviceCanvas.height = 240;
+  deviceCanvas.style.position = 'fixed';
+  deviceCanvas.style.left = '-10000px';
+  document.body.append(deviceCanvas);
+  const backend =
+    requestedBackend === 'webgl2'
+      ? 'webgl2'
+      : requestedBackend === 'webgpu'
+        ? 'webgpu'
+        : 'automatic';
+  const deviceSource = await WgpuKernelViewer.create(deviceCanvas, moduleLoader, 320, 240, backend);
+  const deviceSourceDriver = new KernelStreamingDriver(deviceSource);
+  const deviceScene = new KernelViewerScene(deviceSource, deviceSourceDriver);
+  const recoveryPoint = { x: BASE[0] + 8, y: BASE[1] - 5, z: BASE[2] + 7 };
+  const recoveryAdmission = await canonicalizeLegacyRequest(deviceSource, {
+    entityId: 'device-recovery-point',
+    proxyId: 'device-recovery-point@1',
+    geometry: { kind: 'point', position: recoveryPoint },
+    style: style([0.2, 0.9, 0.45, 1]),
+  });
+  const [recoveryHandle] = deviceScene.loadCanonical([recoveryAdmission]);
+  if (recoveryHandle === undefined) throw new Error('device recovery handle was not created');
+  deviceSource.resize(320, 240, 1);
+  const deviceRecoveryPixel = new Uint8Array([32, 64, 128, 255]);
+  deviceSource.registerImageResource(
+    await sha256Bytes(deviceRecoveryPixel),
+    1,
+    1,
+    deviceRecoveryPixel,
+  );
+  setFocusedTopCamera(deviceSource, recoveryPoint);
+  deviceSource.render();
+  const deviceProxyBefore = batchIdentity(deviceSource.entityPresentation('device-recovery-point'));
+  const devicePickBefore = await deviceSource.pick(160, 120, 2);
+  const deviceAddressBefore = JSON.stringify(
+    devicePickBefore.candidates.find(
+      (candidate) => candidate.address.entityId === 'device-recovery-point',
+    )?.address ?? null,
+  );
+  deviceSource.requestDeviceRecoveryForTest('deviceLost');
+  const deviceOutcome = deviceSource.render();
+  const deviceReplacement = await WgpuKernelViewer.create(
+    deviceCanvas,
+    moduleLoader,
+    320,
+    240,
+    backend,
+  );
+  const deviceReplacementDriver = new KernelStreamingDriver(deviceReplacement);
+  deviceSource.replayDefinitionsInto(deviceReplacement);
+  await deviceScene.recover(deviceReplacement, deviceReplacementDriver, {
+    restoreViewState: () => deviceSource.replayViewStateInto(deviceReplacement),
+  });
+  recoveryHandle.setVisible(false);
+  recoveryHandle.setVisible(true);
+  deviceSourceDriver.dispose();
+  deviceSource.dispose();
+  const devicePresented = deviceReplacement.render();
+  const deviceProxyAfter = batchIdentity(
+    deviceReplacement.entityPresentation('device-recovery-point'),
+  );
+  const devicePickAfter = await deviceReplacement.pick(160, 120, 2);
+  const deviceAddressAfter = JSON.stringify(
+    devicePickAfter.candidates.find(
+      (candidate) => candidate.address.entityId === 'device-recovery-point',
+    )?.address ?? null,
+  );
+  state.deviceRecovery = {
+    detected:
+      deviceOutcome.status === 'recreateDevice' && deviceOutcome.reason === 'deviceLost',
+    presented: devicePresented.status === 'presented',
+    entityHandleStable: recoveryHandle.loaded && recoveryHandle.visible,
+    proxyIdentityStable: deviceProxyAfter === deviceProxyBefore,
+    pickIdentityStable:
+      deviceAddressBefore !== 'null' && deviceAddressAfter === deviceAddressBefore,
+  };
+  deviceReplacementDriver.dispose();
+  deviceReplacement.dispose();
+  deviceCanvas.remove();
   viewer.setEntityStyle('survey-point', style([1, 0.38, 0.08, 1]), 0);
   viewer.setWorldCamera(worldCamera, BASE);
   viewer.render();

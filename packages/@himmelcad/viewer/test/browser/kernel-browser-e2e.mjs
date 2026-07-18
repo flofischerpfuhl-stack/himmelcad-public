@@ -700,6 +700,13 @@ try {
     pickIdentityStable: true,
     decodeCountersStable: true,
   });
+  assert.deepEqual(state.deviceRecovery, {
+    detected: true,
+    presented: true,
+    entityHandleStable: true,
+    proxyIdentityStable: true,
+    pickIdentityStable: true,
+  });
   const panoramaMarker = state.panoramaMarkerPick?.candidates.find(
     (candidate) =>
       candidate.address.entityId === 'scan-panorama' &&

@@ -240,9 +240,9 @@ export class KernelNavigationController {
     requestAnimationFrame(frame);
   }
 
-  dispose(): void {
+  dispose(preserveViewerState = false): void {
     if (this.disposed) return;
-    if (this.rasterAnalysisKind) this.viewer.clearRasterAnalysisView();
+    if (this.rasterAnalysisKind && !preserveViewerState) this.viewer.clearRasterAnalysisView();
     this.rasterAnalysisKind = null;
     this.disposed = true;
     this.transitionGeneration += 1;

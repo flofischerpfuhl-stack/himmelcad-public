@@ -835,6 +835,63 @@ void test('kernel canvas host suspends zero extent and rejects incomplete camera
   );
 });
 
+void test('device replay restores immutable resources before presentation state', async () => {
+  const canvas = { width: 1, height: 1, clientWidth: 1, clientHeight: 1 } as HTMLCanvasElement;
+  const sourceBinding = minimalBinding(canvas, () => undefined);
+  const source = await WgpuKernelViewer.create(canvas, () =>
+    Promise.resolve({ WasmViewer: { create: () => Promise.resolve(sourceBinding) } }),
+  );
+  const pixels = new Uint8Array([1, 2, 3, 4]);
+  const depths = new Float32Array([17.5]);
+  source.registerImageResource('image-hash', 1, 1, pixels);
+  source.registerDepthResource('depth-hash', 1, 1, depths);
+  source.setCamera({
+    viewProjection: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    floatingOrigin: [6_378_137.25, 5_400_000.5, 712.75],
+  });
+  source.setClearColor([0.1, 0.2, 0.3, 1]);
+  source.setEntityVisibility('survey', false);
+  source.setEntityInteractionState('survey', { selected: true, hovered: false });
+  pixels.fill(255);
+  depths[0] = 99;
+
+  const calls: unknown[][] = [];
+  const targetBinding = minimalBinding(canvas, () => undefined);
+  targetBinding.register_image_resource = (hash, width, height, bytes) =>
+    calls.push(['image', hash, width, height, [...bytes]]);
+  targetBinding.register_depth_resource = (hash, width, height, values) =>
+    calls.push(['depth', hash, width, height, [...values]]);
+  targetBinding.set_view_projection = (values) => calls.push(['matrix', [...values]]);
+  targetBinding.set_floating_origin = (x, y, z) => calls.push(['origin', x, y, z]);
+  targetBinding.set_clear_color = (r, g, b, a) => calls.push(['clear', r, g, b, a]);
+  targetBinding.set_clip_volumes_json = (json) => calls.push(['clips', JSON.parse(json)]);
+  targetBinding.set_entity_visibility = (entityId, visible) => {
+    calls.push(['visible', entityId, visible]);
+    return 1;
+  };
+  targetBinding.set_entity_interaction_state = (entityId, selected, hovered) => {
+    calls.push(['interaction', entityId, selected, hovered]);
+    return 1;
+  };
+  const target = await WgpuKernelViewer.create(canvas, () =>
+    Promise.resolve({ WasmViewer: { create: () => Promise.resolve(targetBinding) } }),
+  );
+
+  source.replayDefinitionsInto(target);
+  source.replayViewStateInto(target);
+
+  assert.deepEqual(calls, [
+    ['image', 'image-hash', 1, 1, [1, 2, 3, 4]],
+    ['depth', 'depth-hash', 1, 1, [17.5]],
+    ['matrix', [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]],
+    ['origin', 6_378_137.25, 5_400_000.5, 712.75],
+    ['clear', 0.1, 0.2, 0.3, 1],
+    ['clips', []],
+    ['visible', 'survey', false],
+    ['interaction', 'survey', true, false],
+  ]);
+});
+
 void test('scoped view clips compose atomically without discarding user clip boxes', async () => {
   const canvas = { width: 1, height: 1, clientWidth: 1, clientHeight: 1 } as HTMLCanvasElement;
   const publications: Array<Array<{ id: string }>> = [];

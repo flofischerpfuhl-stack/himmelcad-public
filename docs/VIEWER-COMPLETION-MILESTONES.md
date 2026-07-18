@@ -384,6 +384,25 @@ funktioniert.
   bleiben absichtlich harte Rendererfehler. Der deterministische Neuaufbau und
   Definition-/Streaming-Replay auf das Ersatzgerät ist weiterhin die aktive
   Folgescheibe; dieser Zwischenstand behauptet noch keine vollständige Recovery.
+- Der Neuaufbau ist jetzt vollständig an die stabile Viewer-Scene angebunden.
+  Der Host stoppt Streaming und Telemetrie am `recreateDevice`-Outcome, bricht
+  alte Requests/Worker ab, fordert einen neuen Adapter/Device-Host an und spielt
+  content-addressierte Definitionen, nur noch lebende kanonische Admissions und
+  anschließend Presentation-State deterministisch ein. Bereits ausgegebene
+  Scene-/Entity-Handles bleiben an dieselbe Fassade gebunden. Ausgeladene
+  Entities werden nicht wiederbelebt; versteckte, selektierte und Raster-
+  Analysezustände bleiben erhalten. Stream-Tile-Payloads werden absichtlich
+  nicht im Replay-Archiv verdoppelt, sondern vom neuen globalen Scheduler erneut
+  angefordert und resident gemacht. Abgebrochene Recoveries geben alle neuen
+  Handles frei; Netzwerk-/Bootstrapfehler werden mit begrenztem Backoff erneut
+  versucht.
+- Ein echter Browser-Neuaufbau auf einem zweiten Canvas-/Device-Host ist über
+  erzwungenes WebGL2 auf der physischen Intel HD 630 und explizites WebGPU grün.
+  Beide Pfade erkennen den injizierten Device-Loss, präsentieren danach wieder
+  und behalten stabile Entity-Handle-, Proxy- und exakte Pick-Identität. Der
+  vollständige 38-Entity-/47-Proxy-Hauptlauf bleibt ebenfalls grün: WebGL2
+  erreicht maximal 3,6 ms CPU-Submit, WebGPU 1,4 ms; zehn Worker-Ingests und
+  null Provider-Decodes auf dem Main Thread bleiben unverändert.
 - Physische Windows-, macOS- und Apple-Silicon-Messläufe werden mangels lokal
   verfügbarer Hardware nicht als V4-Blocker behandelt. Alle portablen Engine-
   und Browser-Gates bleiben verbindlich; die fehlenden Hostmessungen werden als

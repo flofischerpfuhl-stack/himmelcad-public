@@ -1304,6 +1304,38 @@ the currently available host. Per project direction they are carried as an
 explicit V6/release-conformance risk rather than blocking the transition to V5;
 portable engine invariants and both browser backends remain mandatory.
 
+### V4 device rebuild and replay checkpoint
+
+`KernelViewport` now consumes `recreateDevice` as a terminal outcome for the
+old GPU host rather than continuing frame planning or telemetry. It disposes
+the old driver's requests and decode workers, creates a fresh adapter/device,
+then restores state in an explicit dependency order: immutable content-
+addressed definitions, live canonical scene admissions, and finally camera,
+clear colour, clipping, entity presentation and raster-analysis state. The
+stable scene swaps its internal viewer and streaming driver only after the
+complete replay succeeds. Existing entity handles therefore follow the new
+host, while retired entities remain absent. Failed bootstrap I/O releases the
+candidate host and retries with bounded exponential backoff.
+
+The replay archive retains canonical/dataset definitions and non-streaming
+resources needed to recreate GPU objects. It does not retain resident tile
+payloads or decoded worker artifacts; a replacement global scheduler refetches
+and re-decodes those under its new hardware policy. Unit tests mutate original
+pixel/depth inputs after registration and prove that replay uses immutable
+snapshots. A separate scene test retires one of two entities before recovery,
+keeps the other hidden, and proves the original handle operates on the new
+viewer afterwards. All 75 viewer-package tests pass, as do the wasm32 and both
+browser TypeScript contracts.
+
+The browser fixture injects the same machine-readable device-loss state used by
+the asynchronous wgpu callback, then creates a genuinely new kernel on a second
+canvas surface. Forced WebGL2 on the physical Intel HD Graphics 630 and explicit
+WebGPU both present the replacement and preserve stable entity-handle, render-
+proxy and exact pick-address identity. The surrounding full fixture remains at
+38 entities and 47 proxies with ten worker artifact ingests and zero provider
+decodes on the main thread. Maximum CPU submit is 3.6 ms for WebGL2 and 1.4 ms
+for the WebGPU CPU adapter in these correctness runs.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

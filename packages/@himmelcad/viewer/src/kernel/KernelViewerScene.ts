@@ -30,6 +30,16 @@ export interface KernelPreparedHierarchyAdmission {
   readonly topology?: readonly KernelPreparedTopologyRegistration[];
 }
 
+type KernelSceneReplayEntry =
+  | {
+      readonly kind: 'canonical';
+      readonly admissions: readonly KernelCanonicalRenderAdmission[];
+    }
+  | { readonly kind: 'potree'; readonly input: KernelPotreeDatasetAdmission }
+  | { readonly kind: 'preparedMesh'; readonly input: KernelPreparedMeshDatasetAdmission }
+  | { readonly kind: 'preparedTin'; readonly input: KernelPreparedTinDatasetAdmission }
+  | { readonly kind: 'preparedHierarchy'; readonly input: KernelPreparedHierarchyAdmission };
+
 /** Stable product-facing handle for one canonical entity in the shared viewer. */
 export class KernelViewerEntityHandle {
   private loadedState = true;
@@ -74,16 +84,38 @@ export class KernelViewerEntityHandle {
  * canonical registry, scheduler and render world.
  */
 export class KernelViewerScene {
+  private viewerState: WgpuKernelViewer;
+  private streamingState: KernelStreamingDriver;
+  private replayEntries: KernelSceneReplayEntry[] = [];
+  private readonly visibility = new Map<string, boolean>();
+  private recovering = false;
+
   constructor(
-    readonly viewer: WgpuKernelViewer,
-    readonly streaming: KernelStreamingDriver,
+    viewer: WgpuKernelViewer,
+    streaming: KernelStreamingDriver,
     private readonly requestFrame: () => void = () => undefined,
-  ) {}
+  ) {
+    this.viewerState = viewer;
+    this.streamingState = streaming;
+  }
+
+  get viewer(): WgpuKernelViewer {
+    return this.viewerState;
+  }
+
+  get streaming(): KernelStreamingDriver {
+    return this.streamingState;
+  }
 
   loadCanonical(
     admissions: readonly KernelCanonicalRenderAdmission[],
   ): readonly KernelViewerEntityHandle[] {
+    this.assertMutable();
     this.viewer.publishCanonicalRepresentations(admissions);
+    this.replaceReplayEntities(
+      entityIdsForAdmissions(admissions),
+      { kind: 'canonical', admissions: replaySnapshot(admissions) },
+    );
     const handles = handlesForAdmissions(this, admissions);
     this.requestFrame();
     return handles;
@@ -93,7 +125,12 @@ export class KernelViewerScene {
     input: KernelPotreeDatasetAdmission,
     signal?: AbortSignal,
   ): Promise<KernelViewerEntityHandle> {
+    this.assertMutable();
     await admitCanonicalPotreeDataset(this.viewer, this.streaming, input, signal);
+    this.replaceReplayEntities(
+      [input.admission.entity.id],
+      { kind: 'potree', input: replaySnapshot(input) },
+    );
     const handle = new KernelViewerEntityHandle(this, input.admission.entity.id, input.datasetId);
     this.requestFrame();
     return handle;
@@ -103,11 +140,16 @@ export class KernelViewerScene {
     input: KernelPreparedMeshDatasetAdmission,
     signal?: AbortSignal,
   ): Promise<KernelPreparedMeshDatasetResult & { readonly handle: KernelViewerEntityHandle }> {
+    this.assertMutable();
     const result = await admitCanonicalPreparedMeshDataset(
       this.viewer,
       this.streaming,
       input,
       signal,
+    );
+    this.replaceReplayEntities(
+      [input.admission.entity.id],
+      { kind: 'preparedMesh', input: replaySnapshot(input) },
     );
     const handle = new KernelViewerEntityHandle(this, input.admission.entity.id, input.datasetId);
     this.requestFrame();
@@ -118,11 +160,16 @@ export class KernelViewerScene {
     input: KernelPreparedTinDatasetAdmission,
     signal?: AbortSignal,
   ): Promise<KernelPreparedTinDatasetResult & { readonly handle: KernelViewerEntityHandle }> {
+    this.assertMutable();
     const result = await admitCanonicalPreparedTinDataset(
       this.viewer,
       this.streaming,
       input,
       signal,
+    );
+    this.replaceReplayEntities(
+      [input.admission.entity.id],
+      { kind: 'preparedTin', input: replaySnapshot(input) },
     );
     const handle = new KernelViewerEntityHandle(this, input.admission.entity.id, input.datasetId);
     this.requestFrame();
@@ -132,6 +179,7 @@ export class KernelViewerScene {
   loadPreparedHierarchy(
     input: KernelPreparedHierarchyAdmission,
   ): readonly KernelViewerEntityHandle[] {
+    this.assertMutable();
     this.viewer.registerPreparedDatasetAndPublishCanonicalRepresentations(
       input.datasetId,
       input.formatId,
@@ -140,23 +188,126 @@ export class KernelViewerScene {
       input.admissions,
       input.topology,
     );
+    this.replaceReplayEntities(
+      entityIdsForAdmissions(input.admissions),
+      { kind: 'preparedHierarchy', input: replaySnapshot(input) },
+    );
     const handles = handlesForAdmissions(this, input.admissions, input.datasetId);
     this.requestFrame();
     return handles;
   }
 
   setEntityVisibility(entityId: string, visible: boolean): void {
+    this.assertMutable();
     this.viewer.setEntityVisibility(entityId, visible);
+    this.visibility.set(entityId, visible);
     this.requestFrame();
   }
 
   unloadEntity(entityId: string): KernelCanonicalRetirementMutation {
+    this.assertMutable();
     const mutation = this.viewer.detachCanonicalEntities(
       this.viewer.canonicalEntityBindings(entityId),
     );
     for (const datasetId of mutation.retiredDatasetIds) this.streaming.detachDataset(datasetId);
+    this.removeReplayEntities(new Set([entityId]));
+    this.visibility.delete(entityId);
     this.requestFrame();
     return mutation;
+  }
+
+  /**
+   * Replays immutable dataset definitions onto a replacement device. Streamed
+   * tile bytes are deliberately re-fetched by the new global driver instead of
+   * being duplicated in this archive.
+   */
+  async recover(
+    viewer: WgpuKernelViewer,
+    streaming: KernelStreamingDriver,
+    options: {
+      readonly signal?: AbortSignal;
+      readonly restoreViewState?: () => void;
+    } = {},
+  ): Promise<void> {
+    this.assertMutable();
+    this.recovering = true;
+    const entries = replaySnapshot(this.replayEntries);
+    try {
+      for (const entry of entries) {
+        options.signal?.throwIfAborted();
+        switch (entry.kind) {
+          case 'canonical':
+            viewer.publishCanonicalRepresentations(entry.admissions);
+            break;
+          case 'potree':
+            await admitCanonicalPotreeDataset(viewer, streaming, entry.input, options.signal);
+            break;
+          case 'preparedMesh':
+            await admitCanonicalPreparedMeshDataset(viewer, streaming, entry.input, options.signal);
+            break;
+          case 'preparedTin':
+            await admitCanonicalPreparedTinDataset(viewer, streaming, entry.input, options.signal);
+            break;
+          case 'preparedHierarchy':
+            viewer.registerPreparedDatasetAndPublishCanonicalRepresentations(
+              entry.input.datasetId,
+              entry.input.formatId,
+              entry.input.manifestUri,
+              entry.input.manifestBytes,
+              entry.input.admissions,
+              entry.input.topology,
+            );
+            break;
+        }
+      }
+      for (const [entityId, visible] of this.visibility) {
+        if (!visible) viewer.setEntityVisibility(entityId, false);
+      }
+      options.restoreViewState?.();
+      options.signal?.throwIfAborted();
+      this.viewerState = viewer;
+      this.streamingState = streaming;
+      this.requestFrame();
+    } finally {
+      this.recovering = false;
+    }
+  }
+
+  private replaceReplayEntities(
+    entityIds: ReadonlySet<string> | readonly string[],
+    entry: KernelSceneReplayEntry,
+  ): void {
+    const ids = entityIds instanceof Set ? entityIds : new Set(entityIds);
+    this.removeReplayEntities(ids);
+    this.replayEntries.push(entry);
+  }
+
+  private removeReplayEntities(entityIds: ReadonlySet<string>): void {
+    const retained: KernelSceneReplayEntry[] = [];
+    for (const entry of this.replayEntries) {
+      if (entry.kind === 'potree' || entry.kind === 'preparedMesh' || entry.kind === 'preparedTin') {
+        if (!entityIds.has(entry.input.admission.entity.id)) retained.push(entry);
+        continue;
+      }
+      if (entry.kind === 'canonical') {
+        const admissions = entry.admissions.filter(
+          (item) => !entityIds.has(item.admission.entity.id),
+        );
+        if (admissions.length !== 0) retained.push({ ...entry, admissions });
+        continue;
+      }
+      const admissions = entry.input.admissions.filter(
+        (item) => !entityIds.has(item.admission.entity.id),
+      );
+      if (admissions.length !== 0) {
+        retained.push({ ...entry, input: { ...entry.input, admissions } });
+      }
+    }
+    this.replayEntries = retained;
+  }
+
+  private assertMutable(): void {
+    if (this.recovering) throw new Error('viewer scene is recovering its GPU device');
   }
 }
 
@@ -172,4 +323,14 @@ function handlesForAdmissions(
   return [...entities].map(
     ([entityId, datasetId]) => new KernelViewerEntityHandle(scene, entityId, datasetId),
   );
+}
+
+function entityIdsForAdmissions(
+  admissions: readonly KernelCanonicalRenderAdmission[],
+): Set<string> {
+  return new Set(admissions.map((item) => item.admission.entity.id));
+}
+
+function replaySnapshot<T>(value: T): T {
+  return structuredClone(value);
 }

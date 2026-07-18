@@ -1578,6 +1578,22 @@ impl WasmViewer {
         self.host.replace_surface(surface).map_err(js_error)
     }
 
+    /// Test hook for browser lifecycle gates; production recovery is driven by
+    /// wgpu device-lost and out-of-memory callbacks.
+    pub fn request_device_recovery_for_test(&self, reason: &str) -> Result<(), JsValue> {
+        let reason = match reason {
+            "deviceLost" => GpuRecoveryReason::DeviceLost,
+            "outOfMemory" => GpuRecoveryReason::OutOfMemory,
+            _ => {
+                return Err(JsValue::from_str(
+                    "test recovery reason must be deviceLost or outOfMemory",
+                ));
+            }
+        };
+        self.host.require_device_recovery(reason);
+        Ok(())
+    }
+
     /// Builds an immutable, partitioned Civil-alignment preview session.
     pub fn build_alignment_preview_json(
         &mut self,

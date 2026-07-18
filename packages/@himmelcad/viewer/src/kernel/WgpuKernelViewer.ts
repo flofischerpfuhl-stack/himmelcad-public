@@ -194,6 +194,7 @@ export interface WasmViewerBinding {
   clip_preview_material_slots_json?(): string;
   render(): string;
   recover_surface?(): void;
+  request_device_recovery_for_test?(reason: string): void;
   render_pick(x: number, y: number, radius: number): Promise<string>;
   capabilities_json(): string;
   hardware_policy_json(requestJson: string): string;
@@ -1371,6 +1372,19 @@ export class WgpuKernelViewer {
   private publishedClipVolumes: readonly KernelClipVolume[] = [];
   private baseClipVolumes: readonly KernelClipVolume[] = [];
   private scopedClipVolumes = new Map<string, KernelClipVolume>();
+  private readonly definitionReplay = new Map<
+    string,
+    (target: WgpuKernelViewer) => void
+  >();
+  private readonly entityStyleReplay = new Map<
+    string,
+    { readonly style: KernelRenderStyle; readonly exaggerationDatum: number }
+  >();
+  private readonly entityVisibilityReplay = new Map<string, boolean>();
+  private readonly entityInteractionReplay = new Map<string, KernelEntityInteractionState>();
+  private cameraReplay: ((target: WgpuKernelViewer) => void) | null = null;
+  private clearColorReplay: readonly [number, number, number, number] | null = null;
+  private rasterAnalysisReplay: string | null = null;
 
   private constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -1459,6 +1473,8 @@ export class WgpuKernelViewer {
     }
     this.binding.set_view_projection(matrix);
     this.binding.set_floating_origin(...frame.floatingOrigin);
+    const replayFrame = replayClone(frame);
+    this.cameraReplay = (target) => target.setCamera(replayFrame);
   }
 
   /** Sets the f64 camera required for precise coordinate-aware picking. */
@@ -1472,6 +1488,9 @@ export class WgpuKernelViewer {
     }
     this.binding.set_floating_origin(...floatingOrigin);
     this.binding.set_world_camera_json(JSON.stringify(camera));
+    const replayCamera = replayClone(camera);
+    const replayOrigin = replayClone(floatingOrigin);
+    this.cameraReplay = (target) => target.setWorldCamera(replayCamera, replayOrigin);
   }
 
   /** Samples the Rust f64 perspective/orthographic camera morph. */
@@ -1487,6 +1506,11 @@ export class WgpuKernelViewer {
     }
     this.binding.set_floating_origin(...floatingOrigin);
     this.binding.set_camera_transition_json(JSON.stringify({ from, to }), progress);
+    const replayFrom = replayClone(from);
+    const replayTo = replayClone(to);
+    const replayOrigin = replayClone(floatingOrigin);
+    this.cameraReplay = (target) =>
+      target.setCameraTransition(replayFrom, replayTo, progress, replayOrigin);
   }
 
   /** Sets a linear clear color without silently clamping invalid channels. */
@@ -1496,6 +1520,36 @@ export class WgpuKernelViewer {
       throw new RangeError('clear color channels must be finite values from zero through one');
     }
     this.binding.set_clear_color(...color);
+    this.clearColorReplay = [...color];
+  }
+
+  /** Recreates immutable non-streaming resources before canonical scene replay. */
+  replayDefinitionsInto(target: WgpuKernelViewer): void {
+    this.assertAlive();
+    for (const replay of this.definitionReplay.values()) replay(target);
+  }
+
+  /** Restores presentation-only state after canonical entities were replayed. */
+  replayViewStateInto(target: WgpuKernelViewer): void {
+    this.assertAlive();
+    this.cameraReplay?.(target);
+    if (this.clearColorReplay !== null) target.setClearColor(this.clearColorReplay);
+    target.setClipVolumes(this.baseClipVolumes);
+    for (const [scopeId, volume] of this.scopedClipVolumes) {
+      target.setScopedClipVolume(scopeId, volume);
+    }
+    for (const [entityId, state] of this.entityStyleReplay) {
+      target.setEntityStyle(entityId, state.style, state.exaggerationDatum);
+    }
+    for (const [entityId, visible] of this.entityVisibilityReplay) {
+      target.setEntityVisibility(entityId, visible);
+    }
+    for (const [entityId, state] of this.entityInteractionReplay) {
+      target.setEntityInteractionState(entityId, state);
+    }
+    if (this.rasterAnalysisReplay !== null) {
+      target.setRasterAnalysisView(this.rasterAnalysisReplay);
+    }
   }
 
   /** Atomically publishes complete canonical entity envelopes and selected representations. */
@@ -2032,6 +2086,11 @@ export class WgpuKernelViewer {
       throw new RangeError('objectHash and glyph atlas pixels must be non-empty');
     }
     this.binding.register_glyph_atlas(objectHash, JSON.stringify(metadata), rgba8);
+    const replayMetadata = replayClone(metadata);
+    const replayPixels = rgba8.slice();
+    this.rememberDefinition(`glyph:${objectHash}`, (target) =>
+      target.registerGlyphAtlas(objectHash, replayMetadata, replayPixels),
+    );
   }
 
   /** Registers immutable formatting shared by associative dimension entities. */
@@ -2041,6 +2100,10 @@ export class WgpuKernelViewer {
       throw new RangeError('objectHash and glyphAtlasHash must be non-empty');
     }
     this.binding.register_annotation_style(objectHash, JSON.stringify(style));
+    const replayStyle = replayClone(style);
+    this.rememberDefinition(`annotation:${objectHash}`, (target) =>
+      target.registerAnnotationStyle(objectHash, replayStyle),
+    );
   }
 
   /** Registers one resolved immutable block definition before placing instances. */
@@ -2054,6 +2117,10 @@ export class WgpuKernelViewer {
       throw new RangeError('block definition id, hash and members must be non-empty');
     }
     this.binding.register_block_definition(JSON.stringify(definition));
+    const replayDefinition = replayClone(definition);
+    this.rememberDefinition(`block:${definition.definitionId}`, (target) =>
+      target.registerBlockDefinition(replayDefinition),
+    );
   }
 
   /** Binds an exact canonical style-resource revision to render presentation. */
@@ -2070,6 +2137,11 @@ export class WgpuKernelViewer {
       JSON.stringify(resource),
       JSON.stringify(this.resolveLegacyLineType(style)),
     );
+    const replayResource = replayClone(resource);
+    const replayStyle = replayClone(style);
+    this.rememberDefinition(`block-style:${resource.contentHash}`, (target) =>
+      target.registerBlockMemberStyle(replayResource, replayStyle),
+    );
   }
 
   /** Registers one content-addressed attribute table used by block inheritance. */
@@ -2079,6 +2151,10 @@ export class WgpuKernelViewer {
       throw new RangeError('block attribute table hash must be non-empty');
     }
     this.binding.register_block_attribute_table(objectHash, bytes);
+    const replayBytes = bytes.slice();
+    this.rememberDefinition(`block-attributes:${objectHash}`, (target) =>
+      target.registerBlockAttributeTable(objectHash, replayBytes),
+    );
   }
 
   /** Uploads deterministic decoded pixels for raster and panorama resources. */
@@ -2093,6 +2169,10 @@ export class WgpuKernelViewer {
       throw new RangeError('image hash and dimensions must be non-empty');
     }
     this.binding.register_image_resource(objectHash, width, height, rgba8);
+    const replayPixels = rgba8.slice();
+    this.rememberDefinition(`image:${objectHash}`, (target) =>
+      target.registerImageResource(objectHash, width, height, replayPixels),
+    );
   }
 
   /** Uploads immutable depth/elevation samples without collapsing NaN validity. */
@@ -2107,6 +2187,10 @@ export class WgpuKernelViewer {
       throw new RangeError('depth hash and dimensions must be non-empty');
     }
     this.binding.register_depth_resource(objectHash, width, height, values);
+    const replayValues = values.slice();
+    this.rememberDefinition(`depth:${objectHash}`, (target) =>
+      target.registerDepthResource(objectHash, width, height, replayValues),
+    );
   }
 
   /** Measures one exact raster/depth pixel in source coordinates, never GPU presentation space. */
@@ -2159,15 +2243,19 @@ export class WgpuKernelViewer {
   setRasterAnalysisView(entityId: string): KernelRasterAnalysisView {
     this.assertAlive();
     if (entityId.length === 0) throw new RangeError('raster analysis entity must be non-empty');
-    return JSON.parse(
+    const view = JSON.parse(
       this.binding.set_raster_analysis_view_json(entityId),
     ) as KernelRasterAnalysisView;
+    this.rasterAnalysisReplay = entityId;
+    return view;
   }
 
   /** Restores normal mixed-scene submission without changing entity visibility. */
   clearRasterAnalysisView(): boolean {
     this.assertAlive();
-    return this.binding.clear_raster_analysis_view();
+    const cleared = this.binding.clear_raster_analysis_view();
+    if (cleared) this.rasterAnalysisReplay = null;
+    return cleared;
   }
 
   /** Uploads an encoded validity, confidence or connectivity side-band unchanged. */
@@ -2177,6 +2265,10 @@ export class WgpuKernelViewer {
       throw new RangeError('raster binary hash and payload must be non-empty');
     }
     this.binding.register_raster_binary_resource(objectHash, bytes);
+    const replayBytes = bytes.slice();
+    this.rememberDefinition(`raster-binary:${objectHash}`, (target) =>
+      target.registerRasterBinaryResource(objectHash, replayBytes),
+    );
   }
 
   /** Registers one immutable evaluated mesh for BRep, Boolean CSG or sweep display. */
@@ -2184,12 +2276,20 @@ export class WgpuKernelViewer {
     this.assertAlive();
     if (objectHash.length === 0) throw new RangeError('mesh objectHash must be non-empty');
     this.binding.register_mesh_resource(objectHash, JSON.stringify(mesh));
+    const replayMesh = replayClone(mesh);
+    this.rememberDefinition(`mesh:${objectHash}`, (target) =>
+      target.registerMeshResource(objectHash, replayMesh),
+    );
   }
 
   /** Registers one validated immutable canonical hatch-pattern revision. */
   registerCanonicalHatchPatternResource(resource: HatchPatternResource): void {
     this.assertAlive();
     this.binding.register_canonical_hatch_pattern_resource(JSON.stringify(resource));
+    const replayResource = replayClone(resource);
+    this.rememberDefinition(`hatch:${resource.resourceId}`, (target) =>
+      target.registerCanonicalHatchPatternResource(replayResource),
+    );
   }
 
   /** Uploads one exact decoded canonical texture with authored sampling. */
@@ -2209,18 +2309,31 @@ export class WgpuKernelViewer {
       height,
       rgba8,
     );
+    const replayResource = replayClone(resource);
+    const replayPixels = rgba8.slice();
+    this.rememberDefinition(`texture:${resource.resourceId}`, (target) =>
+      target.registerCanonicalTextureResource(replayResource, width, height, replayPixels),
+    );
   }
 
   /** Atomically publishes exact texture, material and material-table revisions. */
   registerCanonicalMaterialResourceSet(resources: KernelCanonicalMaterialResourceSet): void {
     this.assertAlive();
     this.binding.register_canonical_material_resource_set(JSON.stringify(resources));
+    const replayResources = replayClone(resources);
+    this.rememberDefinition(`material-set:${JSON.stringify(resources)}`, (target) =>
+      target.registerCanonicalMaterialResourceSet(replayResources),
+    );
   }
 
   /** Registers one validated immutable canonical line-type revision. */
   registerCanonicalLineTypeResource(resource: LineTypeResource): void {
     this.assertAlive();
     this.binding.register_canonical_line_type_resource(JSON.stringify(resource));
+    const replayResource = replayClone(resource);
+    this.rememberDefinition(`line-type:${resource.resourceId}`, (target) =>
+      target.registerCanonicalLineTypeResource(replayResource),
+    );
   }
 
   /**
@@ -2248,6 +2361,10 @@ export class WgpuKernelViewer {
       JSON.parse(this.binding.register_line_type_resource(resourceId, JSON.stringify(pattern))),
     );
     this.legacyLineTypeRefs.set(resourceId, reference);
+    const replayPattern = replayClone(pattern);
+    this.rememberDefinition(`legacy-line-type:${resourceId}`, (target) => {
+      target.registerLineTypeResource(resourceId, replayPattern);
+    });
     return reference;
   }
 
@@ -2327,6 +2444,10 @@ export class WgpuKernelViewer {
     if (objectHash.length === 0)
       throw new RangeError('section product objectHash must be non-empty');
     this.binding.register_section_product(objectHash, JSON.stringify(product));
+    const replayProduct = replayClone(product);
+    this.rememberDefinition(`section-product:${objectHash}`, (target) =>
+      target.registerSectionProduct(objectHash, replayProduct),
+    );
   }
 
   /** Produces the single mixed-provider work plan for the current camera frame. */
@@ -2427,6 +2548,11 @@ export class WgpuKernelViewer {
       if (retiredEntities.has(binding.key.slot.entityId)) this.datasetBindings.delete(datasetId);
     }
     for (const entityId of retiredEntities) this.entityBindings.delete(entityId);
+    for (const entityId of retiredEntities) {
+      this.entityStyleReplay.delete(entityId);
+      this.entityVisibilityReplay.delete(entityId);
+      this.entityInteractionReplay.delete(entityId);
+    }
     const nextTopology = new Map(this.preparedTopologySources);
     for (const entityId of retiredEntities) nextTopology.delete(entityId);
     this.preparedTopologySources = nextTopology;
@@ -2463,6 +2589,10 @@ export class WgpuKernelViewer {
       JSON.stringify(resolvedStyle),
       exaggerationDatum,
     );
+    this.entityStyleReplay.set(entityId, {
+      style: replayClone(style),
+      exaggerationDatum,
+    });
     const source = this.preparedTopologySources.get(entityId);
     if (source !== undefined) {
       this.preparedTopologySources = new Map(this.preparedTopologySources).set(entityId, {
@@ -2496,7 +2626,9 @@ export class WgpuKernelViewer {
   setEntityVisibility(entityId: string, visible: boolean): number {
     this.assertAlive();
     if (entityId.length === 0) throw new RangeError('entityId must be non-empty');
-    return this.binding.set_entity_visibility(entityId, visible);
+    const updated = this.binding.set_entity_visibility(entityId, visible);
+    this.entityVisibilityReplay.set(entityId, visible);
+    return updated;
   }
 
   /** Highlights one exact picked entity without replacing its base style or resources. */
@@ -2512,11 +2644,13 @@ export class WgpuKernelViewer {
     ) {
       throw new TypeError('entity interaction state requires an entity id and boolean flags');
     }
-    return this.binding.set_entity_interaction_state(
+    const updated = this.binding.set_entity_interaction_state(
       entityId,
       state.selected,
       state.hovered,
     );
+    this.entityInteractionReplay.set(entityId, replayClone(state));
+    return updated;
   }
 
   /** Commits an absolute canonical placement through entity and slot-generation CAS. */
@@ -2819,6 +2953,15 @@ export class WgpuKernelViewer {
     this.binding.recover_surface();
   }
 
+  /** Browser-gate injection for the otherwise asynchronous platform callback. */
+  requestDeviceRecoveryForTest(reason: 'deviceLost' | 'outOfMemory'): void {
+    this.assertAlive();
+    if (this.binding.request_device_recovery_for_test === undefined) {
+      throw new Error('loaded viewer kernel does not support device-recovery test injection');
+    }
+    this.binding.request_device_recovery_for_test(reason);
+  }
+
   /**
    * Presents an ID/depth frame and returns world-space candidates in stable Tab
    * order. A result is marked stale if the render world changed during mapping.
@@ -2975,9 +3118,20 @@ export class WgpuKernelViewer {
     return parseCalibrationProgress(JSON.parse(this.binding.step_hardware_calibration()));
   }
 
+  private rememberDefinition(
+    identity: string,
+    replay: (target: WgpuKernelViewer) => void,
+  ): void {
+    this.definitionReplay.set(identity, replay);
+  }
+
   private assertAlive(): void {
     if (this.disposed) throw new Error('WgpuKernelViewer has been disposed');
   }
+}
+
+function replayClone<T>(value: T): T {
+  return structuredClone(value);
 }
 
 async function reliableAutomaticBrowserBackend(): Promise<KernelBackendPreference> {
