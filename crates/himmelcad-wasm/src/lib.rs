@@ -53,12 +53,11 @@ use himmelcad_core::entity_commands::{
 };
 #[cfg(target_arch = "wasm32")]
 use himmelcad_core::entity_model::{
-    AnnotationAnchor, AreaGeometry, CameraModel, CanonicalEntity, CurveGeometry, CurveUse,
-    DepthSemantics, DimensionGeometry, DimensionKind, ElevationSurfaceGeometry, GeometryObject,
-    GeometryResource, HeightResolution, PanoramaGeometry, Position, RasterCellDiagonal,
-    RasterConfidenceEncoding, RasterConnectivity, RasterMapping, RepresentationAuthority,
-    RepresentationRole, SolidGeometry, TextGeometry, TextSpace, Transform3d, TriangleMeshGeometry,
-    TriangleMeshStorage, Vector3,
+    AnnotationAnchor, CameraModel, CanonicalEntity, CurveGeometry, CurveUse, DepthSemantics,
+    DimensionGeometry, DimensionKind, ElevationSurfaceGeometry, GeometryObject, GeometryResource,
+    PanoramaGeometry, Position, RasterCellDiagonal, RasterConfidenceEncoding, RasterConnectivity,
+    RasterMapping, RepresentationAuthority, RepresentationRole, SolidGeometry, TextGeometry,
+    TextSpace, Transform3d, TriangleMeshGeometry, TriangleMeshStorage, Vector3,
 };
 #[cfg(target_arch = "wasm32")]
 use himmelcad_core::entity_validation::{geometry_object_content_hash, validate_geometry_object};
@@ -76,23 +75,23 @@ use himmelcad_render::{
     build_gaussian_splat_batches, build_instanced_glb_geometries_with_queue, build_potree_batch,
     build_section_region_batch, build_text_batch_with_texture,
     build_three_d_tiles_batches_with_resources, compile_entity_geometry,
-    compile_entity_geometry_with_all_resolvers, decode_artifact, glb_texture_source_keys,
+    compile_entity_geometry_with_associations, decode_artifact, glb_texture_source_keys,
     gpu_indexed_geometry_identity, gpu_uploaded_texture_identity, inspect_gltf_dependencies,
     instanced_model_chunks, layout_text, potree_point_world_position,
     prepare_glb_texture_uploads_for_sources, project_raster_sample,
     reconstruct_coarse_pick_candidates, refine_decoded_potree_point_pick, refine_exact_point_pick,
     refine_potree_point_pick, refine_tessellated_curve_pick, required_entity_proxy_slots,
     required_three_d_tiles_proxy_slots, resolve_entity_point_world, section_geometry_object,
-    tessellate_entity_strokes, tessellate_entity_strokes_with_all_resolvers,
+    tessellate_entity_strokes, tessellate_entity_strokes_with_associations,
     tessellate_generated_solid_mesh, transform_bounding_volume,
     validate_authoritative_section_product, validate_glyph_atlas, AlignmentPreviewPartition,
-    AreaDrapeSurface, AssetBundleLimits, AuthoritativeSectionAccumulator,
-    AuthoritativeSectionProduct, BackendPolicy, BoundingVolume, CameraFrame, ClipOperation,
-    ClipVolume, CurveTessellationOptions, DatasetId, DecodedFeatureIdBinding, DecodedFeatureImage,
-    DecodedLegacyBatchIds, DecodedLegacyBatchTableCatalog, DecodedMeshFeatureSet,
-    DecodedPrimitivePropertyAttribute, DecodedPrimitivePropertyTexture, DecodedStreamingPayload,
-    DecodedStructuralMetadata, DecodedThreeDTilesContent, DecodedTriangleFeatureId,
-    DeviceCalibration, ElevationRasterPickRefiner, EntityCompilationOptions, EvaluatedMeshRecipe,
+    AssetBundleLimits, AuthoritativeSectionAccumulator, AuthoritativeSectionProduct, BackendPolicy,
+    BoundingVolume, CameraFrame, ClipOperation, ClipVolume, CurveTessellationOptions, DatasetId,
+    DecodedFeatureIdBinding, DecodedFeatureImage, DecodedLegacyBatchIds,
+    DecodedLegacyBatchTableCatalog, DecodedMeshFeatureSet, DecodedPrimitivePropertyAttribute,
+    DecodedPrimitivePropertyTexture, DecodedStreamingPayload, DecodedStructuralMetadata,
+    DecodedThreeDTilesContent, DecodedTriangleFeatureId, DeviceCalibration,
+    ElevationRasterPickRefiner, EntityCompilationOptions, EvaluatedMeshRecipe,
     EvaluatedMeshRepresentation, FillMode, FloatingOrigin, FrameTelemetrySample,
     FrameTelemetryWindow, GaussianSplatPickRefiner, GeometryRepresentationRegistry, GlyphAtlas,
     GlyphMetrics, GpuAlphaMode, GpuCalibrationProgress, GpuCalibrationSession,
@@ -107,8 +106,7 @@ use himmelcad_render::{
     PickCandidate, PickCycle, PickRefinementRequest, PotreeHierarchySource, PotreePointLayout,
     PreparedAssetBundle, PreparedGpuTextureResources, PreparedHierarchySource,
     PreparedRasterTileContract, PresentationTransform, QualityAdjustment, RenderProxy,
-    RenderProxyId, RenderProxyKind, RenderStyle, RenderWorld, ResidencyTicket,
-    ResolvedAreaDrapeSurface, ResolvedAreaInterpolation, ResolvedAssetEntry,
+    RenderProxyId, RenderProxyKind, RenderStyle, RenderWorld, ResidencyTicket, ResolvedAssetEntry,
     ResolvedGeometryRepresentationAdmission, ResourceBudget, ResourceCost, RuntimeQualityGovernor,
     RuntimeQualityState, SectionBatchOptions, SectionHatchStyle, SectionMaterialRegionBinding,
     SectionPlane, SectionProduct, SectionRegion, SectionTopologyPart, SectionTopologyPartitionData,
@@ -411,7 +409,6 @@ pub struct WasmViewer {
     depth_resources: BTreeMap<String, WasmDepthResource>,
     raster_binary_resources: BTreeMap<String, WasmBinaryResource>,
     mesh_resources: BTreeMap<String, TriangleMeshGeometry>,
-    area_interpolations: BTreeMap<String, WasmRegisteredAreaInterpolation>,
     material_resources: WasmMaterialResourceRegistry,
     hatch_resources: WasmHatchResourceRegistry,
     line_type_resources: WasmLineTypeResourceRegistry,
@@ -618,15 +615,14 @@ struct WasmEntityRenderRequest {
     source_revision: Option<u64>,
     #[serde(default)]
     evaluated_mesh_resource_ref: Option<String>,
-    #[serde(default)]
-    area_interpolation_resource_ref: Option<String>,
     geometry: GeometryObject,
     #[serde(default)]
     style: RenderStyle,
     #[serde(default)]
     placement: Option<Transform3d>,
+    /// Presentation plane asserted by an explicitly locked top-down plan view.
     #[serde(default)]
-    unresolved_height_elevation: Option<f64>,
+    locked_plan_elevation: Option<f64>,
     #[serde(default = "default_chord_tolerance")]
     chord_tolerance: f64,
     #[serde(default = "default_curve_segments")]
@@ -651,11 +647,10 @@ struct WasmCanonicalRenderAdmission {
     #[serde(default)]
     evaluated_mesh: Option<WasmEvaluatedMeshAdmission>,
     #[serde(default)]
-    area_interpolation_ref: Option<ObjectHash>,
-    #[serde(default)]
     style: RenderStyle,
+    /// Presentation plane asserted by an explicitly locked top-down plan view.
     #[serde(default)]
-    unresolved_height_elevation: Option<f64>,
+    locked_plan_elevation: Option<f64>,
     #[serde(default = "default_chord_tolerance")]
     chord_tolerance: f64,
     #[serde(default = "default_curve_segments")]
@@ -684,45 +679,6 @@ struct WasmEvaluatedMeshAdmission {
     parts: Vec<SectionTopologyPart>,
     material_keys: BTreeMap<u32, String>,
     closed_manifold: bool,
-}
-
-#[cfg(target_arch = "wasm32")]
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct WasmAreaInterpolationResourceAdmission {
-    result_geometry_ref: ObjectHash,
-    source_geometry_ref: ObjectHash,
-    source_entity_version: ObjectHash,
-    algorithm_id: String,
-    algorithm_version: String,
-    parameters: ObjectHash,
-    dependency_hash: ObjectHash,
-    area: AreaGeometry,
-}
-
-#[cfg(target_arch = "wasm32")]
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct WasmAreaInterpolationDependencyRequest {
-    source_geometry_ref: ObjectHash,
-    source_entity_version: ObjectHash,
-    algorithm_id: String,
-    algorithm_version: String,
-    parameters: ObjectHash,
-    result_geometry_ref: ObjectHash,
-}
-
-#[cfg(target_arch = "wasm32")]
-#[derive(Debug, Clone)]
-struct WasmRegisteredAreaInterpolation {
-    result_geometry_ref: ObjectHash,
-    source_geometry_ref: ObjectHash,
-    source_entity_version: ObjectHash,
-    algorithm_id: String,
-    algorithm_version: String,
-    parameters: ObjectHash,
-    dependency_hash: ObjectHash,
-    area: AreaGeometry,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1500,7 +1456,6 @@ async fn create_wasm_viewer(
         depth_resources: BTreeMap::new(),
         raster_binary_resources: BTreeMap::new(),
         mesh_resources: BTreeMap::new(),
-        area_interpolations: BTreeMap::new(),
         material_resources: WasmMaterialResourceRegistry::default(),
         hatch_resources: WasmHatchResourceRegistry::default(),
         line_type_resources: WasmLineTypeResourceRegistry::default(),
@@ -1787,25 +1742,6 @@ impl WasmViewer {
         manifest.content_hash().map(|hash| hash.0).map_err(js_error)
     }
 
-    /// Computes the versioned named-interpolation dependency manifest hash in Rust.
-    pub fn area_interpolation_dependency_hash_json(
-        &self,
-        dependency_json: &str,
-    ) -> Result<String, JsValue> {
-        let dependency: WasmAreaInterpolationDependencyRequest =
-            serde_json::from_str(dependency_json).map_err(js_error)?;
-        area_interpolation_dependency_hash(
-            &dependency.source_geometry_ref,
-            &dependency.source_entity_version,
-            &dependency.algorithm_id,
-            &dependency.algorithm_version,
-            &dependency.parameters,
-            &dependency.result_geometry_ref,
-        )
-        .map(|hash| hash.0)
-        .map_err(js_error)
-    }
-
     /// Computes the canonical immutable section-product hash in Rust.
     pub fn section_product_content_hash_json(&self, product_json: &str) -> Result<String, JsValue> {
         let product: AuthoritativeSectionProduct =
@@ -1900,10 +1836,8 @@ impl WasmViewer {
                 .evaluated_mesh
                 .as_ref()
                 .map(|evaluated| evaluated.mesh_resource_ref.clone());
-            let area_interpolation_ref = self.validate_area_interpolation_admission(admission)?;
             let request =
-                canonical_render_request(admission, evaluated_mesh_ref, area_interpolation_ref)
-                    .map_err(js_error)?;
+                canonical_render_request(admission, evaluated_mesh_ref).map_err(js_error)?;
             validate_fill_resource(&request.style, &self.image_resources, &self.hatch_resources)
                 .map_err(js_error)?;
             prepared_slots.push(WasmPreparedCanonicalSlot {
@@ -2110,15 +2044,6 @@ impl WasmViewer {
         let staging_world = render_overlay.staging_world_mut();
         let mut next_batches = BTreeMap::new();
         let mut next_mesh_pick_indices = BTreeMap::new();
-        let area_support = WasmAreaSupportContext {
-            entities: &compile_entities,
-            raster_requests: &self.raster_requests,
-            raster_pick_indices: &self.raster_pick_indices,
-            raster_overrides: &[],
-            raster_removed_stream_ids: &[],
-            mesh_resources: &self.mesh_resources,
-            area_interpolations: &self.area_interpolations,
-        };
         for slot in prepared_slots
             .iter()
             .filter(|slot| slot.dataset_id.is_none())
@@ -2142,7 +2067,6 @@ impl WasmViewer {
                 &self.material_resources,
                 &self.hatch_resources,
                 &self.line_type_resources,
-                area_support,
             )
             .map_err(js_error)?;
             collect_inline_mesh_pick_indices(
@@ -2176,7 +2100,6 @@ impl WasmViewer {
                 &self.material_resources,
                 &self.hatch_resources,
                 &self.line_type_resources,
-                area_support,
             )
             .map_err(js_error)?;
             collect_inline_mesh_pick_indices(
@@ -3456,66 +3379,6 @@ impl WasmViewer {
         }
         self.mesh_resources.insert(object_hash.to_owned(), mesh);
         self.rebuild_inline_clip_previews().map_err(js_error)?;
-        Ok(())
-    }
-
-    /// Registers one immutable result of a named, versioned missing-height
-    /// interpolation. The result is revalidated against each source area when
-    /// compiled, so it cannot alter XY, topology or known surveyed heights.
-    pub fn register_area_interpolation(&mut self, admission_json: &str) -> Result<(), JsValue> {
-        let admission: WasmAreaInterpolationResourceAdmission =
-            serde_json::from_str(admission_json).map_err(js_error)?;
-        let object_hash = &admission.result_geometry_ref.0;
-        if self.area_interpolations.contains_key(object_hash) {
-            return Err(JsValue::from_str(
-                "area interpolation resource is already registered",
-            ));
-        }
-        if admission.area.height_resolution.is_some() {
-            return Err(JsValue::from_str(
-                "resolved area interpolation must not contain another height resolver",
-            ));
-        }
-        validate_geometry_object(&GeometryObject::Area {
-            area: Box::new(admission.area.clone()),
-        })
-        .map_err(js_error)?;
-        let result_geometry_ref = geometry_object_content_hash(&GeometryObject::Area {
-            area: Box::new(admission.area.clone()),
-        })
-        .map_err(js_error)?;
-        if result_geometry_ref != admission.result_geometry_ref {
-            return Err(JsValue::from_str(
-                "area interpolation result hash does not match canonical resolved geometry",
-            ));
-        }
-        let dependency_hash = area_interpolation_dependency_hash(
-            &admission.source_geometry_ref,
-            &admission.source_entity_version,
-            &admission.algorithm_id,
-            &admission.algorithm_version,
-            &admission.parameters,
-            &admission.result_geometry_ref,
-        )
-        .map_err(js_error)?;
-        if dependency_hash != admission.dependency_hash {
-            return Err(JsValue::from_str(
-                "area interpolation dependency hash does not match its provenance manifest",
-            ));
-        }
-        self.area_interpolations.insert(
-            object_hash.to_owned(),
-            WasmRegisteredAreaInterpolation {
-                result_geometry_ref: admission.result_geometry_ref,
-                source_geometry_ref: admission.source_geometry_ref,
-                source_entity_version: admission.source_entity_version,
-                algorithm_id: admission.algorithm_id,
-                algorithm_version: admission.algorithm_version,
-                parameters: admission.parameters,
-                dependency_hash: admission.dependency_hash,
-                area: admission.area,
-            },
-        );
         Ok(())
     }
 
@@ -5651,17 +5514,6 @@ impl WasmViewer {
             .map_err(|error| error.to_string())?;
         let mut staged_batches = BTreeMap::new();
         let mut staged_pick_indices = BTreeMap::new();
-        let raster_overrides = [];
-        let removed_rasters = [];
-        let area_support = WasmAreaSupportContext {
-            entities: &self.entity_requests,
-            raster_requests: &self.raster_requests,
-            raster_pick_indices: &self.raster_pick_indices,
-            raster_overrides: &raster_overrides,
-            raster_removed_stream_ids: &removed_rasters,
-            mesh_resources: &self.mesh_resources,
-            area_interpolations: &self.area_interpolations,
-        };
 
         for partition in partitions {
             for part in &partition.road_body {
@@ -5691,7 +5543,6 @@ impl WasmViewer {
                     &self.material_resources,
                     &self.hatch_resources,
                     &self.line_type_resources,
-                    area_support,
                 )?;
                 collect_inline_mesh_pick_indices(
                     &request,
@@ -5730,7 +5581,6 @@ impl WasmViewer {
                     &self.material_resources,
                     &self.hatch_resources,
                     &self.line_type_resources,
-                    area_support,
                 )?;
                 collect_inline_mesh_pick_indices(
                     &request,
@@ -5935,23 +5785,6 @@ impl WasmViewer {
                 self.gpu_texture_cache
                     .staged_resident_bytes(prepared_gpu_textures.keys().map(String::as_str)),
             );
-        let raster_overrides = staged
-            .iter()
-            .filter_map(|record| match record {
-                WasmStagedContent::Raster(staged) => Some(WasmRasterSupportOverride {
-                    stream_id: &staged.request.metadata.stream_id,
-                    request: &staged.request,
-                    pick_index: &staged.pick_index,
-                }),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        let raster_removed_stream_ids = staged
-            .iter()
-            .map(WasmStagedContent::stream_id)
-            .filter(|stream_id| self.raster_requests.contains_key(*stream_id))
-            .collect::<Vec<_>>();
-
         let prepared = (|| -> Result<_, String> {
             let mut next_batches = BTreeMap::new();
             let mut next_mesh_pick_indices = BTreeMap::new();
@@ -6110,15 +5943,6 @@ impl WasmViewer {
                 }
             }
 
-            let area_support = WasmAreaSupportContext {
-                entities: &self.entity_requests,
-                raster_requests: &self.raster_requests,
-                raster_pick_indices: &self.raster_pick_indices,
-                raster_overrides: &raster_overrides,
-                raster_removed_stream_ids: &raster_removed_stream_ids,
-                mesh_resources: &self.mesh_resources,
-                area_interpolations: &self.area_interpolations,
-            };
             for dependent in dependent_entities {
                 compile_inline_entity(
                     &self.host,
@@ -6139,7 +5963,6 @@ impl WasmViewer {
                     &self.material_resources,
                     &self.hatch_resources,
                     &self.line_type_resources,
-                    area_support,
                 )?;
                 let mut mesh_pick_indices = BTreeMap::new();
                 collect_inline_mesh_pick_indices(
@@ -6543,62 +6366,6 @@ impl WasmViewer {
         )
         .map(Some)
         .map_err(js_error)
-    }
-
-    fn validate_area_interpolation_admission(
-        &self,
-        admission: &WasmCanonicalRenderAdmission,
-    ) -> Result<Option<ObjectHash>, JsValue> {
-        let recipe = match &admission.admission.resolved_geometry {
-            GeometryObject::Area { area } => match &area.height_resolution {
-                Some(HeightResolution::InterpolateMissing {
-                    algorithm_id,
-                    algorithm_version,
-                    parameters,
-                }) => Some((algorithm_id, algorithm_version, parameters)),
-                _ => None,
-            },
-            _ => None,
-        };
-        let Some((algorithm_id, algorithm_version, parameters)) = recipe else {
-            if admission.area_interpolation_ref.is_some() {
-                return Err(JsValue::from_str(
-                    "area interpolation resource supplied without InterpolateMissing geometry",
-                ));
-            }
-            return Ok(None);
-        };
-        let result_ref = admission.area_interpolation_ref.as_ref().ok_or_else(|| {
-            JsValue::from_str(
-                "InterpolateMissing geometry requires an exact derived resource binding",
-            )
-        })?;
-        let registered = self
-            .area_interpolations
-            .get(&result_ref.0)
-            .ok_or_else(|| JsValue::from_str("area interpolation resource is not registered"))?;
-        let dependency_hash = area_interpolation_dependency_hash(
-            &registered.source_geometry_ref,
-            &registered.source_entity_version,
-            &registered.algorithm_id,
-            &registered.algorithm_version,
-            &registered.parameters,
-            &registered.result_geometry_ref,
-        )
-        .map_err(js_error)?;
-        if registered.result_geometry_ref != *result_ref
-            || registered.source_geometry_ref != admission.admission.selected.geometry_ref
-            || registered.source_entity_version != admission.admission.entity.version_hash
-            || registered.algorithm_id != *algorithm_id
-            || registered.algorithm_version != *algorithm_version
-            || registered.parameters != *parameters
-            || registered.dependency_hash != dependency_hash
-        {
-            return Err(JsValue::from_str(
-                "area interpolation provenance does not match canonical source and recipe",
-            ));
-        }
-        Ok(Some(result_ref.clone()))
     }
 
     fn ensure_new_dataset(&self, dataset_id: &str) -> Result<(), JsValue> {
@@ -7877,26 +7644,6 @@ fn runtime_quality_observation_json(
 }
 
 #[cfg(target_arch = "wasm32")]
-#[derive(Clone, Copy)]
-struct WasmAreaSupportContext<'a> {
-    entities: &'a BTreeMap<String, WasmEntityRenderRequest>,
-    raster_requests: &'a BTreeMap<String, WasmRasterRequest>,
-    raster_pick_indices: &'a BTreeMap<String, ElevationRasterPickRefiner>,
-    raster_overrides: &'a [WasmRasterSupportOverride<'a>],
-    raster_removed_stream_ids: &'a [&'a str],
-    mesh_resources: &'a BTreeMap<String, TriangleMeshGeometry>,
-    area_interpolations: &'a BTreeMap<String, WasmRegisteredAreaInterpolation>,
-}
-
-#[cfg(target_arch = "wasm32")]
-#[derive(Clone, Copy)]
-struct WasmRasterSupportOverride<'a> {
-    stream_id: &'a str,
-    request: &'a WasmRasterRequest,
-    pick_index: &'a ElevationRasterPickRefiner,
-}
-
-#[cfg(target_arch = "wasm32")]
 #[derive(Clone)]
 struct WasmResolvedBatchPresentation {
     style: GpuPresentationStyle,
@@ -8111,7 +7858,6 @@ fn compile_inline_entity(
     material_resources: &WasmMaterialResourceRegistry,
     hatch_resources: &WasmHatchResourceRegistry,
     line_type_resources: &WasmLineTypeResourceRegistry,
-    area_support: WasmAreaSupportContext<'_>,
 ) -> Result<(), String> {
     if let GeometryObject::Block { instance } = &request.geometry {
         return compile_block_entity(
@@ -8134,7 +7880,6 @@ fn compile_inline_entity(
             material_resources,
             hatch_resources,
             line_type_resources,
-            area_support,
             &mut Vec::new(),
         );
     }
@@ -8164,7 +7909,7 @@ fn compile_inline_entity(
     let compilation_geometry = resolved_resource_geometry
         .as_ref()
         .unwrap_or(&request.geometry);
-    let compiled = compile_entity_geometry_with_all_resolvers(
+    let compiled = compile_entity_geometry_with_associations(
         host.device(),
         host.queue(),
         host.renderer(),
@@ -8174,18 +7919,6 @@ fn compile_inline_entity(
         &options,
         |entity_id, expected_version| {
             associative_curve_in_area_frame(request, entity_requests, entity_id, expected_version)
-        },
-        |entity_id, expected_version| {
-            area_drape_surface_in_area_frame(request, area_support, entity_id, expected_version)
-        },
-        |algorithm_id, algorithm_version, parameters| {
-            area_interpolation_for_request(
-                request,
-                area_support,
-                algorithm_id,
-                algorithm_version,
-                parameters,
-            )
         },
     );
     let compiled = match &request.geometry {
@@ -8519,7 +8252,6 @@ fn compile_block_entity(
     material_resources: &WasmMaterialResourceRegistry,
     hatch_resources: &WasmHatchResourceRegistry,
     line_type_resources: &WasmLineTypeResourceRegistry,
-    area_support: WasmAreaSupportContext<'_>,
     stack: &mut Vec<String>,
 ) -> Result<(), String> {
     let definition = resolve_block_definition(instance, block_definitions)?;
@@ -8562,7 +8294,6 @@ fn compile_block_entity(
                 material_resources,
                 hatch_resources,
                 line_type_resources,
-                area_support,
                 stack,
             )
         } else {
@@ -8585,7 +8316,6 @@ fn compile_block_entity(
                 material_resources,
                 hatch_resources,
                 line_type_resources,
-                area_support,
             )
         }
     });
@@ -8663,11 +8393,10 @@ fn block_member_request(
                     version_hash: request.version_hash.clone(),
                     source_revision: request.source_revision,
                     evaluated_mesh_resource_ref: None,
-                    area_interpolation_resource_ref: None,
                     geometry: geometry.clone(),
                     style,
                     placement: None,
-                    unresolved_height_elevation: request.unresolved_height_elevation,
+                    locked_plan_elevation: request.locked_plan_elevation,
                     chord_tolerance: request.chord_tolerance,
                     maximum_curve_segments: request.maximum_curve_segments,
                     line_width: request.line_width,
@@ -9609,7 +9338,7 @@ fn transform_authored_position(
 ) -> Result<WorldVec3, String> {
     let z = position
         .z
-        .or(request.unresolved_height_elevation)
+        .or(request.locked_plan_elevation)
         .ok_or_else(|| "dimension position height is unresolved".to_owned())?;
     let transform = DMat4::from_cols_array(&request.placement.unwrap_or(Transform3d::IDENTITY).0);
     if !transform.is_finite() || transform.determinant().abs() <= f64::EPSILON {
@@ -9722,115 +9451,6 @@ fn associative_curve_in_area_frame(
 }
 
 #[cfg(target_arch = "wasm32")]
-fn area_drape_surface_in_area_frame(
-    area_request: &WasmEntityRenderRequest,
-    context: WasmAreaSupportContext<'_>,
-    entity_id: &EntityId,
-    expected_version: Option<&ObjectHash>,
-) -> Option<ResolvedAreaDrapeSurface> {
-    let source = context.entities.get(&entity_id.0)?;
-    if source.placement.unwrap_or(Transform3d::IDENTITY)
-        != area_request.placement.unwrap_or(Transform3d::IDENTITY)
-        || expected_version
-            .is_some_and(|expected| source.version_hash.as_deref() != Some(expected.as_str()))
-    {
-        return None;
-    }
-    let version = ObjectHash(source.version_hash.clone()?);
-    match &source.geometry {
-        GeometryObject::ElevationSurface { surface } => match surface.as_ref() {
-            ElevationSurfaceGeometry::Tin { mesh, .. } => {
-                let mesh = resolve_registered_inline_mesh(mesh, context.mesh_resources).ok()?;
-                let TriangleMeshStorage::Inline {
-                    positions, indices, ..
-                } = &mesh.storage
-                else {
-                    return None;
-                };
-                return Some(ResolvedAreaDrapeSurface {
-                    version,
-                    surface: AreaDrapeSurface::ElevationTin {
-                        positions: positions
-                            .iter()
-                            .map(|position| WorldVec3 {
-                                x: position.x,
-                                y: position.y,
-                                z: position.z,
-                            })
-                            .collect(),
-                        indices: indices.clone(),
-                    },
-                });
-            }
-            ElevationSurfaceGeometry::Grid { .. } => {}
-        },
-        GeometryObject::RasterImage { .. } => {}
-        _ => return None,
-    }
-    let parts = context
-        .raster_requests
-        .iter()
-        .filter(|(stream_id, _)| {
-            !context
-                .raster_removed_stream_ids
-                .contains(&stream_id.as_str())
-                && !context
-                    .raster_overrides
-                    .iter()
-                    .any(|replacement| replacement.stream_id == stream_id.as_str())
-        })
-        .filter(|(_, request)| request.metadata.entity_id == entity_id.0)
-        .filter_map(|(stream_id, _)| context.raster_pick_indices.get(stream_id))
-        .chain(
-            context
-                .raster_overrides
-                .iter()
-                .filter(|replacement| replacement.request.metadata.entity_id == entity_id.0)
-                .map(|replacement| replacement.pick_index),
-        )
-        .map(|index| {
-            let (width, height, mapping, topology, elevations, triangle_mask) = index.source_grid();
-            AreaDrapeSurface::ElevationRaster {
-                width,
-                height,
-                elevations: elevations
-                    .iter()
-                    .map(|elevation| elevation.is_finite().then_some(*elevation))
-                    .collect(),
-                triangle_mask: triangle_mask.map(<[u8]>::to_vec),
-                mapping,
-                topology,
-            }
-        })
-        .collect::<Vec<_>>();
-    if parts.is_empty() {
-        return None;
-    }
-    Some(ResolvedAreaDrapeSurface {
-        version,
-        surface: AreaDrapeSurface::Composite { parts },
-    })
-}
-
-#[cfg(target_arch = "wasm32")]
-fn area_interpolation_for_request(
-    area_request: &WasmEntityRenderRequest,
-    context: WasmAreaSupportContext<'_>,
-    algorithm_id: &str,
-    algorithm_version: &str,
-    parameters: &ObjectHash,
-) -> Option<ResolvedAreaInterpolation> {
-    let result_hash = area_request.area_interpolation_resource_ref.as_ref()?;
-    let resolved = context.area_interpolations.get(result_hash)?.area.clone();
-    Some(ResolvedAreaInterpolation {
-        algorithm_id: algorithm_id.to_owned(),
-        algorithm_version: algorithm_version.to_owned(),
-        parameters: parameters.clone(),
-        area: resolved,
-    })
-}
-
-#[cfg(target_arch = "wasm32")]
 fn validate_associative_area_references(
     request: &WasmEntityRenderRequest,
     entity_requests: &BTreeMap<String, WasmEntityRenderRequest>,
@@ -9907,12 +9527,6 @@ fn geometry_entity_dependencies(geometry: &GeometryObject) -> std::collections::
                 if let CurveUse::Associative { entity_id, .. } = curve_use {
                     dependencies.insert(entity_id.0.clone());
                 }
-            }
-            if let Some(HeightResolution::DrapeMissing {
-                support_surface, ..
-            }) = &area.height_resolution
-            {
-                dependencies.insert(support_surface.0.clone());
             }
         }
         _ => {}
@@ -10108,7 +9722,7 @@ fn compile_text_entity(
     let elevation = text
         .anchor
         .z
-        .or(request.unresolved_height_elevation)
+        .or(request.locked_plan_elevation)
         .ok_or_else(|| "text anchor height is unresolved".to_owned())?;
     let transform = DMat4::from_cols_array(&request.placement.unwrap_or(Transform3d::IDENTITY).0);
     if !transform.is_finite() || transform.determinant().abs() <= f64::EPSILON {
@@ -12078,7 +11692,7 @@ fn collect_inline_mesh_pick_indices(
                         chord_tolerance: request.chord_tolerance,
                         maximum_segments: request.maximum_curve_segments,
                         unresolved_height: request
-                            .unresolved_height_elevation
+                            .locked_plan_elevation
                             .map_or(UnresolvedHeightDisplay::Reject, |elevation| {
                                 UnresolvedHeightDisplay::ViewPlane { elevation }
                             }),
@@ -12889,45 +12503,6 @@ fn is_primary_representation(admission: &CanonicalRepresentationAdmission) -> bo
 }
 
 #[cfg(target_arch = "wasm32")]
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AreaInterpolationDependencyManifest<'a> {
-    schema_version: u32,
-    source_geometry_ref: &'a ObjectHash,
-    source_entity_version: &'a ObjectHash,
-    algorithm_id: &'a str,
-    algorithm_version: &'a str,
-    parameters: &'a ObjectHash,
-    result_geometry_ref: &'a ObjectHash,
-}
-
-#[cfg(target_arch = "wasm32")]
-fn area_interpolation_dependency_hash(
-    source_geometry_ref: &ObjectHash,
-    source_entity_version: &ObjectHash,
-    algorithm_id: &str,
-    algorithm_version: &str,
-    parameters: &ObjectHash,
-    result_geometry_ref: &ObjectHash,
-) -> Result<ObjectHash, String> {
-    if algorithm_id.trim().is_empty() || algorithm_version.trim().is_empty() {
-        return Err("area interpolation algorithm identity is empty".to_owned());
-    }
-    let manifest = AreaInterpolationDependencyManifest {
-        schema_version: 1,
-        source_geometry_ref,
-        source_entity_version,
-        algorithm_id,
-        algorithm_version,
-        parameters,
-        result_geometry_ref,
-    };
-    serde_json::to_vec(&manifest)
-        .map(|bytes| ObjectHash::of_bytes(&bytes))
-        .map_err(|error| error.to_string())
-}
-
-#[cfg(target_arch = "wasm32")]
 fn canonical_slot_storage_key(slot: &GeometryRepresentationSlotKey) -> Result<String, String> {
     serde_json::to_string(slot).map_err(|error| error.to_string())
 }
@@ -12942,7 +12517,6 @@ fn canonical_slot_proxy_id(slot: &GeometryRepresentationSlotKey) -> Result<Strin
 fn canonical_render_request(
     request: &WasmCanonicalRenderAdmission,
     evaluated_mesh_ref: Option<ObjectHash>,
-    area_interpolation_ref: Option<ObjectHash>,
 ) -> Result<WasmEntityRenderRequest, String> {
     let slot = GeometryRepresentationSlotKey {
         entity_id: request.admission.entity.id.clone(),
@@ -12954,11 +12528,10 @@ fn canonical_render_request(
         version_hash: Some(request.admission.entity.version_hash.0.clone()),
         source_revision: Some(request.admission.entity.revision),
         evaluated_mesh_resource_ref: evaluated_mesh_ref.map(|hash| hash.0),
-        area_interpolation_resource_ref: area_interpolation_ref.map(|hash| hash.0),
         geometry: request.admission.resolved_geometry.clone(),
         style: request.style.clone(),
         placement: request.admission.entity.placement,
-        unresolved_height_elevation: request.unresolved_height_elevation,
+        locked_plan_elevation: request.locked_plan_elevation,
         chord_tolerance: request.chord_tolerance,
         maximum_curve_segments: request.maximum_curve_segments,
         line_width: request.line_width,
@@ -13387,7 +12960,7 @@ fn compilation_options(
     EntityCompilationOptions {
         floating_origin,
         unresolved_height: request
-            .unresolved_height_elevation
+            .locked_plan_elevation
             .map_or(UnresolvedHeightDisplay::Reject, |elevation| {
                 UnresolvedHeightDisplay::ViewPlane { elevation }
             }),
@@ -13511,16 +13084,7 @@ fn refine_pick_candidates(
             continue;
         }
         validate_associative_area_references(request, &viewer.entity_requests)?;
-        let area_support = WasmAreaSupportContext {
-            entities: &viewer.entity_requests,
-            raster_requests: &viewer.raster_requests,
-            raster_pick_indices: &viewer.raster_pick_indices,
-            raster_overrides: &[],
-            raster_removed_stream_ids: &[],
-            mesh_resources: &viewer.mesh_resources,
-            area_interpolations: &viewer.area_interpolations,
-        };
-        let strokes = tessellate_entity_strokes_with_all_resolvers(
+        let strokes = tessellate_entity_strokes_with_associations(
             &request.geometry,
             &compilation_options(request, floating_origin),
             |entity_id, expected_version| {
@@ -13529,18 +13093,6 @@ fn refine_pick_candidates(
                     &viewer.entity_requests,
                     entity_id,
                     expected_version,
-                )
-            },
-            |entity_id, expected_version| {
-                area_drape_surface_in_area_frame(request, area_support, entity_id, expected_version)
-            },
-            |algorithm_id, algorithm_version, parameters| {
-                area_interpolation_for_request(
-                    request,
-                    area_support,
-                    algorithm_id,
-                    algorithm_version,
-                    parameters,
                 )
             },
         )
@@ -13738,13 +13290,12 @@ fn alignment_preview_render_request(
         version_hash: Some(partition_identity.0.clone()),
         source_revision: None,
         evaluated_mesh_resource_ref: None,
-        area_interpolation_resource_ref: None,
         geometry: GeometryObject::Surface3d {
             mesh: Box::new(mesh),
         },
         style: RenderStyle::default(),
         placement: None,
-        unresolved_height_elevation: None,
+        locked_plan_elevation: None,
         chord_tolerance: default_chord_tolerance(),
         maximum_curve_segments: default_curve_segments(),
         line_width: default_line_width(),

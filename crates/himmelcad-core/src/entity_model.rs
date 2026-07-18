@@ -355,56 +355,7 @@ pub struct CurveLoop {
     pub uses: Vec<CurveUse>,
 }
 
-/// Behavior when an explicit height resolver cannot resolve a position.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[serde(rename_all = "camelCase")]
-pub enum MissingHeightPolicy {
-    /// Preserve unresolved positions and omit unsupported spatial fill.
-    KeepUnresolved,
-    /// Reject the particular operation that requires complete XYZ.
-    RejectOperation,
-}
-
-/// Explicit strategy for deriving missing heights without changing source data.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[serde(
-    tag = "kind",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub enum HeightResolution {
-    /// Resolve unknown heights on a specified plane.
-    Planar {
-        /// Resolution plane.
-        plane: PlaneDefinition,
-    },
-    /// Project unknown heights onto a referenced elevation or spatial surface.
-    DrapeMissing {
-        /// Supporting surface entity.
-        support_surface: EntityId,
-        /// Optional immutable version required from the supporting surface.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[cfg_attr(feature = "ts-bindings", ts(optional = nullable))]
-        expected_version: Option<ObjectHash>,
-        /// Projection direction.
-        direction: Vector3,
-        /// Behavior for misses.
-        miss_policy: MissingHeightPolicy,
-    },
-    /// Resolve through a named, versioned algorithm and immutable parameters.
-    InterpolateMissing {
-        /// Namespaced algorithm identifier.
-        algorithm_id: String,
-        /// Algorithm implementation version.
-        algorithm_version: String,
-        /// Content-addressed parameter object.
-        parameters: ObjectHash,
-    },
-}
-
-/// Area topology with optional spatial height-resolution instructions.
+/// Area topology whose authored positions retain their exact XY/XYZ dimensionality.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -413,8 +364,6 @@ pub struct AreaGeometry {
     pub outer: CurveLoop,
     /// Interior void boundaries.
     pub holes: Vec<CurveLoop>,
-    /// Explicit resolution used only when complete spatial fill is needed.
-    pub height_resolution: Option<HeightResolution>,
 }
 
 /// Column-major affine placement from representation-local into project space.
@@ -1344,7 +1293,6 @@ mod tests {
                 }],
             },
             holes: Vec::new(),
-            height_resolution: None,
         };
 
         let json = serde_json::to_string(&area).expect("area serializes");

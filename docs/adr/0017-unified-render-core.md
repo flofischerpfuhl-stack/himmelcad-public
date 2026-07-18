@@ -454,10 +454,11 @@ CAD refinement keeps authored/evaluated point, vertex and midpoint candidates
 in a semantic primitive-ID range disjoint from 32-bit render tessellation.
 Changing chord tolerance cannot change these candidates, and render vertices
 of circles, clothoids or splines are never exposed as authored snaps. Exact
-single-point refinement shares point placement and unresolved-height semantics
-with compilation instead of accepting a depth-unprojected approximation. Area
-boundary snaps follow the same associative interpolation/drape resolver as the
-rendered boundary. Open TIN sections emit exact traces without invented caps, while
+single-point refinement shares point placement and locked-plan unknown-height
+semantics with compilation instead of accepting a depth-unprojected approximation.
+Area boundary snaps resolve only authored inline or exact associative curves. A
+fully materialized XYZ revision uses the same path without any viewer-side height
+resolver. Open TIN sections emit exact traces without invented caps, while
 evaluated closed products retain material-slot hatch regions.
 
 Vertical exaggeration is presentation-only and explicitly invertible. Its

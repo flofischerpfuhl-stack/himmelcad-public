@@ -730,36 +730,42 @@ try {
   assert(Math.abs(rebasedCenterHit.worldPosition.y - centerHit.worldPosition.y) < 0.002);
   assert(Math.abs(rebasedCenterHit.worldPosition.z - centerHit.worldPosition.z) < 0.002);
 
-  const drapedUnknownHit = state.drapePick?.candidates?.find(
+  const materializedParcelHit = state.materializedParcelPick?.candidates?.find(
     (candidate) =>
-      candidate.address.entityId === 'mixed-draped-parcel' &&
+      candidate.address.entityId === 'materialized-xyz-parcel' &&
       candidate.snapKind === 'vertex' &&
-      worldClose(candidate.worldPosition, { x: 6_378_173.125, y: 5_399_997.25, z: 519.35 }, 1e-7),
+      worldClose(candidate.worldPosition, { x: 6_378_193.125, y: 5_399_997.25, z: 518.75 }, 1e-7),
   );
   assert(
-    drapedUnknownHit,
-    `unknown cadastral vertex must drape to the versioned TIN: ${JSON.stringify(state.drapePick)}`,
+    materializedParcelHit,
+    `materialized parcel XYZ must remain exact: ${JSON.stringify(state.materializedParcelPick)}`,
   );
-  const surveyedKnownHit = state.drapeKnownPick?.candidates?.find(
+  const materializedSurveyHit = state.materializedSurveyPick?.candidates?.find(
     (candidate) =>
-      candidate.address.entityId === 'mixed-draped-parcel' &&
+      candidate.address.entityId === 'materialized-xyz-parcel' &&
       candidate.snapKind === 'vertex' &&
-      worldClose(candidate.worldPosition, { x: 6_378_161.125, y: 5_399_997.25, z: 518.75 }, 1e-7),
+      worldClose(candidate.worldPosition, { x: 6_378_181.125, y: 5_399_997.25, z: 518.75 }, 1e-7),
   );
   assert(
-    surveyedKnownHit,
-    `surveyed XYZ road vertex must remain authoritative: ${JSON.stringify(state.drapeKnownPick)}`,
+    materializedSurveyHit,
+    `surveyed XYZ road vertex must remain authoritative: ${JSON.stringify(state.materializedSurveyPick)}`,
   );
-  const interpolatedHit = state.interpolationPick?.candidates?.find(
+  const materializedAreaHit = state.materializedAreaPick?.candidates?.find(
     (candidate) =>
       candidate.address.entityId === 'mixed-height-area' &&
       candidate.snapKind === 'vertex' &&
       worldClose(candidate.worldPosition, { x: 6_378_135.125, y: 5_399_992.25, z: 513.5 }, 1e-7),
   );
   assert(
-    interpolatedHit,
-    `named/versioned area interpolation must drive exact picking: ${JSON.stringify(state.interpolationPick)}`,
+    materializedAreaHit,
+    `materialized area revision must drive exact picking: ${JSON.stringify(state.materializedAreaPick)}`,
   );
+  assert.deepEqual(state.mixedHeightLifecycle, {
+    orbitRejected: true,
+    planProxyCount: 2,
+    materializedRevision: 2,
+    sourceStillMissingZ: true,
+  });
   const extensionHit = state.extensionPick?.candidates?.find(
     (candidate) =>
       candidate.address.entityId === 'namespaced-extension' &&

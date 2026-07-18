@@ -516,38 +516,6 @@ fn validate_area(area: &AreaGeometry) -> Result<(), EntityValidationError> {
     for hole in &area.holes {
         validate_loop(hole)?;
     }
-    if let Some(resolution) = &area.height_resolution {
-        match resolution {
-            crate::entity_model::HeightResolution::Planar { plane } => validate_plane(*plane)?,
-            crate::entity_model::HeightResolution::DrapeMissing {
-                support_surface,
-                expected_version,
-                direction,
-                ..
-            } => {
-                if support_surface.0.trim().is_empty()
-                    || expected_version
-                        .as_ref()
-                        .is_some_and(|version| !valid_hash(version.as_str()))
-                {
-                    return Err(EntityValidationError::InvalidIdentifier);
-                }
-                validate_direction(*direction)?;
-            }
-            crate::entity_model::HeightResolution::InterpolateMissing {
-                algorithm_id,
-                algorithm_version,
-                parameters,
-            } => {
-                if algorithm_id.trim().is_empty()
-                    || algorithm_version.trim().is_empty()
-                    || !valid_hash(parameters.as_str())
-                {
-                    return Err(EntityValidationError::InvalidIdentifier);
-                }
-            }
-        }
-    }
     Ok(())
 }
 
@@ -1751,7 +1719,7 @@ mod tests {
     }
 
     #[test]
-    fn mixed_xy_xyz_area_is_valid_without_height_resolution() {
+    fn mixed_xy_xyz_area_is_valid_plan_geometry() {
         let geometry = GeometryObject::Area {
             area: Box::new(AreaGeometry {
                 outer: CurveLoop {
@@ -1780,7 +1748,6 @@ mod tests {
                     }],
                 },
                 holes: Vec::new(),
-                height_resolution: None,
             }),
         };
 

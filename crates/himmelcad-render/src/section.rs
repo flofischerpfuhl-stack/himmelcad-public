@@ -1238,7 +1238,7 @@ mod tests {
         CanonicalResourceRef, MATERIAL_TABLE_RESOURCE_SCHEMA_ID,
     };
     use himmelcad_core::entity_model::{
-        CsgNode, GeometryObject, GeometryResource, SolidGeometry, SolidPrimitive, Transform3d,
+        CsgNode, GeometryObject, SolidGeometry, SolidPrimitive, Transform3d,
         TriangleMeshGeometry, TriangleMeshStorage, Vector3,
     };
     use himmelcad_core::hash::ObjectHash;

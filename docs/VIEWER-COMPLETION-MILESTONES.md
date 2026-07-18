@@ -139,6 +139,35 @@ Viewer-Entities zu erfinden.
   Viewer-Verträge. Dateiformat-Zoobreite, die keine neue Viewer-Semantik
   enthält, blockiert V2 nicht und bleibt Provider-Conformance.
 
+### Implementierungs-Audit 2026-07-18
+
+Der Code-Audit gegen den Muss-Umfang unterscheidet bereits vorhandene Breite
+von echten V2-Lücken:
+
+- Vorhanden und zu erhalten sind stabile kanonische Entity-/Revisionshüllen,
+  optionale Z-Werte, alle derzeit deklarierten Built-in-Typen, analytische
+  Kreis-/Bogen-/Ellipsen-/Spline-/Klothoiden-/Composite-Kurven, Area-Ringe mit
+  Löchern und assoziativen Kurven, TIN/Grid/Surface/Solid-Repräsentationen,
+  Alignment-Bänder und Böschungsresultate, Raster/Pointcloud/Splat/Panorama,
+  Text/Label/Dimension, content-addressed Präsentationsressourcen,
+  versionsgeprüfte Blockdefinitionen einschließlich Verschachtelungszyklen und
+  registrierte Extension-Evaluationsmeshes.
+- Der erste V2-Slice schließt die aktive Invariantenverletzung:
+  `AreaGeometry` und Viewer/WASM besitzen keinen Height-Resolver mehr. Mixed-Z
+  ist nur über eine explizite locked-plan-Präsentation kompilierbar; eine
+  eigenständige materialisierte XYZ-Revision ersetzt denselben stabilen Slot für
+  3D.
+- Reale verbleibende Schema-Lücken sind allgemeine Kegelschnittbreite jenseits
+  Kreis/Ellipse, mehrere authored UV-Sets für Inline-Meshes sowie ein typisierter
+  Vererbungs-/Override-Vertrag für Blockinstanz-Attribute und -Stile statt eines
+  opaken Override-Hashes.
+- Reale verbleibende Gate-Lücken sind die Aufnahme jeder vorhandenen
+  Kurvenvariante und Plane-/Definition-Variante in den gemeinsamen Browser-Zoo,
+  manipulierte Referenzfälle für die neuen Breiten und der vollständige
+  Viewer-Nachweis der bereits vorhandenen realen DXF-, IFC- und LandXML-Pfade.
+- Zusätzliche Formatkorpora ohne neue Geometriesemantik bleiben gemäß V2-Gate
+  Provider-Conformance und werden nicht als Viewer-Schemaarbeit vorgezogen.
+
 ## V3 – Darstellung, Interaktion, Messung und Schnitte
 
 V3 macht aus vollständiger Geometrie einen vollständigen CAD-View.

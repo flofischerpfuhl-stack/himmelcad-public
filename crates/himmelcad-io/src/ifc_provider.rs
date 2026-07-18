@@ -754,7 +754,6 @@ fn area_profile(
             }],
         },
         holes: Vec::new(),
-        height_resolution: None,
     })
 }
 

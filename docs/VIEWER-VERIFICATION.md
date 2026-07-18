@@ -403,15 +403,15 @@ none` hides only the boundary while the hatch fill remains. A missing resource
   remains a CPU-adapter correctness result. Open Civil TINs continue to emit
   exact traces but never invented solid caps;
 - line, polyline, circle, arc, ellipse, clothoid, NURBS and composite authored
-  curves receive stable analytic-subprimitive pick IDs; unresolved Z requires an
-  explicit display resolver and never becomes zero. Authored/evaluated point,
+  curves receive stable analytic-subprimitive pick IDs; unresolved Z never
+  becomes zero. Authored/evaluated point,
   vertex and midpoint snaps occupy a semantic ID range above the 32-bit render
   segment range and remain identical when chord tolerance changes. Circle,
   clothoid and spline tessellation vertices can therefore never leak into the
   Tab stack as authored vertices or midpoints. Area-boundary semantic snaps
-  survive associative resolution, named interpolation and TIN draping; surveyed
-  XYZ remains exact while unresolved cadastral XY is projected by the declared
-  resolver. Standalone point proxies replace GPU-depth reconstruction with the
+  survive exact associative resolution. Mixed-Z source revisions remain locked-
+  plan geometry; only a later fully materialized XYZ revision enters spatial
+  display and exact spatial picking. Standalone point proxies replace GPU-depth reconstruction with the
   canonical f64 position after entity placement, inverse presentation and
   screen ranking. The browser gate verifies this under 4x exaggeration on both
   backends;
@@ -646,8 +646,8 @@ none` hides only the boundary while the hatch fill remains. A missing resource
   exact SHA-256 and are rejected before fetched residency when their bytes
   differ from the declared immutable resource. Their exact byte boundaries and
   zero padding are validated in the native decoder, WASM facade and browser
-  streaming driver; rendering, exact picking and area draping consume the same
-  connectivity mask, so none of those paths can recreate a masked triangle;
+  streaming driver; raster rendering and exact picking consume the same
+  connectivity mask, so neither path can recreate a masked triangle;
 - reusable blocks now cross the package/WASM boundary as the canonical
   `hcad.resource.block-definition@1` contract rather than a viewer-private
   duplicate. Inline members resolve exact immutable style resources; entity
@@ -675,12 +675,11 @@ none` hides only the boundary while the hatch fill remains. A missing resource
   instance; exact face/edge/vertex addresses survive non-uniform transforms,
   and a 128-instance by 64-triangle regression requires less than one quarter
   of the expanded pick-index memory;
-- a live mixed XYZ/XY parcel keeps its tachymetrically surveyed road-edge Z
-  while draping only missing cadastral heights against a versioned TIN; the
-  same result and exact vertex picks are required from WebGPU and WebGL2;
-- a content-addressed named/versioned interpolation materializes associative
-  and inline area loops without changing XY, topology or known survey Z; both
-  browser backends must return its interpolated vertex through exact picking;
+- a live mixed XYZ/XY parcel is accepted only with the explicitly locked plan
+  presentation plane and is rejected from ordinary 3D compilation as one whole
+  entity; the browser gate then replaces the same stable slot with a new canonical
+  revision containing actual XYZ positions and requires exact vertex picks from
+  WebGPU and WebGL2. The source Mixed-Z revision remains unchanged;
 - a preserved namespaced extension renders through a separately evaluated
   immutable mesh and returns an exact source-triangle BVH hit without requiring
   the renderer to interpret its payload;
@@ -980,6 +979,29 @@ data extension), with ten worker ingests, zero main-thread provider decodes and
 no decode rebuild. The focused regression evidence is 324 render-core, 7 wasm,
 4 decode-wasm, 71 viewer-package, 9 E57 and 5 GeoTIFF tests. V1 closed on
 2026-07-18 at 11:33 CEST after 4 h 12 min elapsed work.
+
+## V2 plan-only height checkpoint
+
+The canonical and viewer contracts no longer contain `HeightResolution`,
+`MissingHeightPolicy`, `DrapeMissing`, `InterpolateMissing` or their former
+area-interpolation registries. An area with any missing source Z remains valid
+canonical CAD geometry, but compilation without an explicitly locked plan
+plane rejects the complete representation atomically. The locked-plan fixture
+publishes boundary and fill without changing the canonical source revision;
+the browser then publishes a separate, fully authored XYZ revision into the
+same stable entity slot and verifies its exact source vertices in 3D. The
+original Mixed-Z admission still serializes its absent Z values.
+
+The focused Core validation and render tests pass, generated TypeScript
+bindings are current, and the complete render suite is 315/315 after removal
+of the obsolete resolver-only tests. The native provider/WASM regression is
+61 IO tests plus 7 viewer-WASM and 4 decode-WASM tests; all 71 viewer-package
+tests pass. Both explicit browser backends pass the 29-entity/37-proxy scene
+with ten worker ingests and zero main-thread provider decodes. Forced WebGL2 on
+the physical Intel HD Graphics 630 reports 3.9 ms maximum CPU submit; the
+WebGPU CPU adapter correctness run reports 1.8 ms. The full Core run reaches
+144 passing viewer/shared tests but is not recorded as a green gate because
+two concurrently modified PhotoLab matching tests fail outside this lane.
 
 ## Candidate external data
 

@@ -89,9 +89,15 @@ interface BrowserValidationState {
   panoramaMarkerPick: KernelPickResult | null;
   panoramaDepthMeasurement: ReturnType<WgpuKernelViewer['measureRasterDepthSample']> | null;
   originRebase: { generationStable: boolean; pick: unknown } | null;
-  drapePick: KernelPickResult | null;
-  drapeKnownPick: KernelPickResult | null;
-  interpolationPick: KernelPickResult | null;
+  materializedParcelPick: KernelPickResult | null;
+  materializedSurveyPick: KernelPickResult | null;
+  materializedAreaPick: KernelPickResult | null;
+  mixedHeightLifecycle: {
+    readonly orbitRejected: boolean;
+    readonly planProxyCount: number;
+    readonly materializedRevision: number;
+    readonly sourceStillMissingZ: boolean;
+  } | null;
   extensionPick: KernelPickResult | null;
   tilesMetadata: unknown;
   gltfFeatureMetadata: unknown;
@@ -365,21 +371,19 @@ let diagonalHatchRef: CanonicalResourceRef;
 let crossHatchRef: CanonicalResourceRef;
 const BOOLEAN_SOLID_VERSION_HASH = '6'.repeat(64);
 const AREA_BOUNDARY_HASH = '6'.repeat(64);
-const DRAPE_SUPPORT_HASH = 'ab'.repeat(32);
-const AREA_INTERPOLATION_PARAMETERS_HASH = 'cd'.repeat(32);
-let AREA_INTERPOLATION_RESULT_HASH = 'ef'.repeat(32);
+const ELEVATION_SURFACE_HASH = 'ab'.repeat(32);
 const EXTENSION_PAYLOAD_HASH = '12'.repeat(32);
-const DRAPED_UNKNOWN_VERTEX = {
-  x: BASE[0] + 36,
-  y: BASE[1] - 3,
-  z: BASE[2] + 6.6,
-} as const;
-const DRAPED_KNOWN_VERTEX = {
-  x: BASE[0] + 24,
+const MATERIALIZED_PARCEL_VERTEX = {
+  x: BASE[0] + 56,
   y: BASE[1] - 3,
   z: BASE[2] + 6,
 } as const;
-const INTERPOLATED_VERTEX = {
+const MATERIALIZED_SURVEY_VERTEX = {
+  x: BASE[0] + 44,
+  y: BASE[1] - 3,
+  z: BASE[2] + 6,
+} as const;
+const MATERIALIZED_AREA_VERTEX = {
   x: BASE[0] - 2,
   y: BASE[1] - 8,
   z: BASE[2] + 0.75,
@@ -464,9 +468,10 @@ const state: BrowserValidationState = {
   panoramaMarkerPick: null,
   panoramaDepthMeasurement: null,
   originRebase: null,
-  drapePick: null,
-  drapeKnownPick: null,
-  interpolationPick: null,
+  materializedParcelPick: null,
+  materializedSurveyPick: null,
+  materializedAreaPick: null,
+  mixedHeightLifecycle: null,
   extensionPick: null,
   tilesMetadata: null,
   gltfFeatureMetadata: null,
@@ -998,7 +1003,7 @@ interface LegacyEntityRequest {
   readonly geometry: Record<string, unknown>;
   readonly placement?: readonly number[];
   readonly style?: KernelRenderStyle;
-  readonly unresolvedHeightElevation?: number;
+  readonly lockedPlanElevation?: number;
   readonly chordTolerance?: number;
   readonly maximumCurveSegments?: number;
   readonly lineWidth?: number;
@@ -1006,7 +1011,6 @@ interface LegacyEntityRequest {
   readonly fillAreas?: boolean;
   readonly exaggerationDatum?: number;
   readonly evaluatedMesh?: KernelEvaluatedMeshAdmission;
-  readonly areaInterpolationRef?: string;
 }
 
 function canonicalTypeIdForGeometry(
@@ -1082,9 +1086,9 @@ async function canonicalizeLegacyRequest(
     },
     ...(datasetId === undefined ? {} : { datasetId }),
     ...(request.style === undefined ? {} : { style: request.style }),
-    ...(request.unresolvedHeightElevation === undefined
+    ...(request.lockedPlanElevation === undefined
       ? {}
-      : { unresolvedHeightElevation: request.unresolvedHeightElevation }),
+      : { lockedPlanElevation: request.lockedPlanElevation }),
     ...(request.chordTolerance === undefined ? {} : { chordTolerance: request.chordTolerance }),
     ...(request.maximumCurveSegments === undefined
       ? {}
@@ -1096,9 +1100,6 @@ async function canonicalizeLegacyRequest(
       ? {}
       : { exaggerationDatum: request.exaggerationDatum }),
     ...(request.evaluatedMesh === undefined ? {} : { evaluatedMesh: request.evaluatedMesh }),
-    ...(request.areaInterpolationRef === undefined
-      ? {}
-      : { areaInterpolationRef: request.areaInterpolationRef }),
   };
 }
 
@@ -3126,12 +3127,6 @@ function entityZoo(): LegacyEntityRequest[] {
         ],
       },
     ],
-    heightResolution: {
-      kind: 'interpolateMissing',
-      algorithmId: 'de.himmelcad.height/natural-neighbour',
-      algorithmVersion: '1.0.0',
-      parameters: AREA_INTERPOLATION_PARAMETERS_HASH,
-    },
   };
 
   return [
@@ -3153,7 +3148,7 @@ function entityZoo(): LegacyEntityRequest[] {
         },
       },
       placement: placement(),
-      unresolvedHeightElevation: 0,
+      lockedPlanElevation: 0,
       lineWidth: 1,
       style: style([0.3, 0.72, 1, 1], 0.35),
     },
@@ -3168,9 +3163,8 @@ function entityZoo(): LegacyEntityRequest[] {
       entityId: 'mixed-height-area',
       proxyId: 'mixed-height-area@1',
       geometry: { kind: 'area', area },
-      areaInterpolationRef: AREA_INTERPOLATION_RESULT_HASH,
       placement: placement(),
-      unresolvedHeightElevation: 0,
+      lockedPlanElevation: 0,
       fillAreas: true,
       lineWidth: 3,
       style: {
@@ -3233,9 +3227,9 @@ function entityZoo(): LegacyEntityRequest[] {
       }),
     },
     {
-      entityId: 'road-drape-support',
-      proxyId: 'road-drape-support@1',
-      versionHash: DRAPE_SUPPORT_HASH,
+      entityId: 'road-elevation-surface',
+      proxyId: 'road-elevation-surface@1',
+      versionHash: ELEVATION_SURFACE_HASH,
       geometry: {
         kind: 'elevationSurface',
         surface: {
@@ -3264,8 +3258,8 @@ function entityZoo(): LegacyEntityRequest[] {
       style: style([0.2, 0.46, 0.22, 1], 0.22),
     },
     {
-      entityId: 'mixed-draped-parcel',
-      proxyId: 'mixed-draped-parcel@1',
+      entityId: 'materialized-xyz-parcel',
+      proxyId: 'materialized-xyz-parcel@1',
       geometry: {
         kind: 'area',
         area: {
@@ -3278,23 +3272,16 @@ function entityZoo(): LegacyEntityRequest[] {
                   kind: 'polyline',
                   closed: true,
                   positions: [
-                    point(24, -15, 2),
-                    point(24, -3, 6),
-                    point(36, -3, null),
-                    point(36, -15, null),
+                    point(44, -15, 2),
+                    point(44, -3, 6),
+                    point(56, -3, 6),
+                    point(56, -15, 2),
                   ],
                 },
               },
             ],
           },
           holes: [],
-          heightResolution: {
-            kind: 'drapeMissing',
-            supportSurface: 'road-drape-support',
-            expectedVersion: DRAPE_SUPPORT_HASH,
-            direction: { x: 0, y: 0, z: 1 },
-            missPolicy: 'rejectOperation',
-          },
         },
       },
       placement: placement(),
@@ -3441,7 +3428,7 @@ function entityZoo(): LegacyEntityRequest[] {
         },
       },
       placement: placement(),
-      unresolvedHeightElevation: 0,
+      lockedPlanElevation: 0,
       lineWidth: 2,
       style: style([0.92, 0.96, 1, 1]),
     },
@@ -4065,7 +4052,7 @@ async function run(): Promise<void> {
     evicted = true;
   }
   state.gltfFeatureMetadata = { resolved: resolvedFeature, evicted };
-  const interpolatedArea: AreaGeometry = {
+  const materializedArea: AreaGeometry = {
     outer: {
       uses: [
         {
@@ -4104,7 +4091,6 @@ async function run(): Promise<void> {
         ],
       },
     ],
-    heightResolution: null,
   };
   const centerStyleResource = {
     resourceId: 'survey-marker-center-style',
@@ -4301,29 +4287,38 @@ async function run(): Promise<void> {
   }
   await publishLegacyRequests(viewer, [boundaryRequest]);
   const mixedAreaAdmission = await canonicalizeLegacyRequest(viewer, mixedAreaRequest);
-  AREA_INTERPOLATION_RESULT_HASH = viewer.geometryObjectContentHash({
-    kind: 'area',
-    area: interpolatedArea,
-  });
-  const interpolationDependency = {
-    resultGeometryRef: AREA_INTERPOLATION_RESULT_HASH,
-    sourceGeometryRef: mixedAreaAdmission.admission.selected.geometryRef,
-    sourceEntityVersion: mixedAreaAdmission.admission.entity.versionHash,
-    algorithmId: 'de.himmelcad.height/natural-neighbour',
-    algorithmVersion: '1.0.0',
-    parameters: AREA_INTERPOLATION_PARAMETERS_HASH,
+  const { lockedPlanElevation: _lockedPlanElevation, ...orbitMixedAreaAdmission } =
+    mixedAreaAdmission;
+  let orbitRejected = false;
+  try {
+    viewer.publishCanonicalRepresentations([orbitMixedAreaAdmission]);
+  } catch (error) {
+    if (!String(error).includes('unresolved')) throw error;
+    orbitRejected = true;
+  }
+  if (!orbitRejected || viewer.entityPresentation('mixed-height-area').length !== 0) {
+    throw new Error('mixed-Z source revision became visible without a locked plan plane');
+  }
+  const planMutation = viewer.publishCanonicalRepresentations([mixedAreaAdmission]);
+  const planBinding = planMutation.bindings[0];
+  if (planBinding === undefined) throw new Error('locked plan admission returned no binding');
+  admittedGenerations.set('mixed-height-area', planBinding.generation);
+  const planProxyCount = viewer.entityPresentation('mixed-height-area').length;
+  if (planProxyCount !== 2) throw new Error('locked plan area omitted boundary or fill');
+
+  const {
+    lockedPlanElevation: _planElevation,
+    geometry: _mixedGeometry,
+    ...materializedRequestBase
+  } = mixedAreaRequest;
+  const materializedRequest: LegacyEntityRequest = {
+    ...materializedRequestBase,
+    proxyId: 'mixed-height-area@2',
+    revision: 2,
+    geometry: { kind: 'area', area: materializedArea },
   };
-  viewer.registerAreaInterpolation({
-    ...interpolationDependency,
-    dependencyHash: viewer.areaInterpolationDependencyHash(interpolationDependency),
-    area: interpolatedArea,
-  });
-  const remainingAdmissions: KernelCanonicalRenderAdmission[] = [
-    {
-      ...mixedAreaAdmission,
-      areaInterpolationRef: AREA_INTERPOLATION_RESULT_HASH,
-    },
-  ];
+  const materializedAdmission = await canonicalizeLegacyRequest(viewer, materializedRequest);
+  const remainingAdmissions: KernelCanonicalRenderAdmission[] = [materializedAdmission];
   for (const request of zooRequests) {
     if (request === boundaryRequest || request === mixedAreaRequest) continue;
     remainingAdmissions.push(await canonicalizeLegacyRequest(viewer, request));
@@ -4337,6 +4332,14 @@ async function run(): Promise<void> {
   }
   state.entityCount = zooMutation.entities;
   state.proxyCount = zooMutation.proxies;
+  state.mixedHeightLifecycle = {
+    orbitRejected,
+    planProxyCount,
+    materializedRevision: materializedAdmission.admission.entity.revision,
+    sourceStillMissingZ: JSON.stringify(mixedAreaAdmission.admission.resolvedGeometry).includes(
+      '"z":null',
+    ),
+  };
   const cameraMeasurement = viewer.measureRasterDepthSample('pinhole-depth-image', 2, 2);
   if (
     Math.abs(cameraMeasurement.sourcePosition.x - (BASE[0] + 5.875)) > 1e-7 ||
@@ -5495,12 +5498,12 @@ async function run(): Promise<void> {
   const gaussianPositiveSideOrder = viewer.gaussianSplatOrder(gaussianProxyId);
   setFocusedSideCamera(viewer, providerFixtures.gaussian.expectedMean, -1);
   const gaussianNegativeSideOrder = viewer.gaussianSplatOrder(gaussianProxyId);
-  setFocusedTopCamera(viewer, DRAPED_UNKNOWN_VERTEX);
-  state.drapePick = await viewer.pick(640, 360, 3);
-  setFocusedTopCamera(viewer, DRAPED_KNOWN_VERTEX);
-  state.drapeKnownPick = await viewer.pick(640, 360, 3);
-  setFocusedTopCamera(viewer, INTERPOLATED_VERTEX);
-  state.interpolationPick = await viewer.pick(640, 360, 3);
+  setFocusedTopCamera(viewer, MATERIALIZED_PARCEL_VERTEX);
+  state.materializedParcelPick = await viewer.pick(640, 360, 3);
+  setFocusedTopCamera(viewer, MATERIALIZED_SURVEY_VERTEX);
+  state.materializedSurveyPick = await viewer.pick(640, 360, 3);
+  setFocusedTopCamera(viewer, MATERIALIZED_AREA_VERTEX);
+  state.materializedAreaPick = await viewer.pick(640, 360, 3);
   setFocusedTopCamera(viewer, EXTENSION_TOP);
   state.extensionPick = await viewer.pick(640, 360, 2);
   setFocusedTopCamera(viewer, {

@@ -136,8 +136,6 @@ export type {
   KernelCanonicalRenderAdmission,
   KernelCanonicalStreamMetadata,
   KernelEvaluatedMeshAdmission,
-  KernelAreaInterpolationResourceAdmission,
-  KernelAreaInterpolationDependency,
   KernelAlignmentPreviewBuildRequest,
   KernelAlignmentPreviewChangedPartition,
   KernelAlignmentPreviewConfig,

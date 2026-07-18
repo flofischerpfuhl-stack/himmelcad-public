@@ -15,11 +15,10 @@ use himmelcad_core::hash::ObjectHash;
 use thiserror::Error;
 
 use crate::{
-    build_cad_area_batches, build_cad_curve_batch_with_width, tessellate_area,
-    tessellate_area_with_resolvers, tessellate_curve, AreaFillMode, BoundingVolume, CadAreaError,
-    CadCurveError, CurveTessellationOptions, FloatingOrigin, GpuAlphaMode, GpuDrawBatch,
-    GpuFrameError, GpuMeshVertexInput, GpuPresentationStyle, GpuSharedRenderer, GpuTextureData,
-    RenderProxyKind, RenderStyle, ResolvedAreaDrapeSurface, ResolvedAreaInterpolation,
+    build_cad_area_batches, build_cad_curve_batch_with_width, tessellate_area, tessellate_curve,
+    AreaFillMode, BoundingVolume, CadAreaError, CadCurveError, CurveTessellationOptions,
+    FloatingOrigin, GpuAlphaMode, GpuDrawBatch, GpuFrameError, GpuMeshVertexInput,
+    GpuPresentationStyle, GpuSharedRenderer, GpuTextureData, RenderProxyKind, RenderStyle,
     ResourceCost, TessellatedArea, TessellatedCurve, TessellatedCurvePath, TessellatedCurveSegment,
     UnresolvedHeightDisplay, WorldAabb, WorldVec3, GPU_POINT_VERTEX_STRIDE_BYTES,
 };
@@ -225,75 +224,6 @@ pub fn compile_entity_geometry_with_associations<F>(
 where
     F: FnMut(&EntityId, Option<&ObjectHash>) -> Option<CurveGeometry>,
 {
-    compile_entity_geometry_with_resolvers(
-        device,
-        queue,
-        renderer,
-        label,
-        geometry,
-        pick_slots,
-        options,
-        &mut resolve_curve,
-        |_entity_id, _expected_version| None,
-    )
-}
-
-/// Compiles canonical geometry with version-aware area curve and drape-surface
-/// resolvers supplied by the authoritative host.
-///
-/// Both callbacks return geometry in the requesting area's local placement
-/// frame. Hosts must reject incompatible placements instead of silently
-/// transforming or flattening source coordinates.
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-pub fn compile_entity_geometry_with_resolvers<F, S>(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    renderer: &GpuSharedRenderer,
-    label: &str,
-    geometry: &GeometryObject,
-    pick_slots: &[u32],
-    options: &EntityCompilationOptions,
-    mut resolve_curve: F,
-    mut resolve_surface: S,
-) -> Result<Vec<CompiledEntityPart>, EntityCompilationError>
-where
-    F: FnMut(&EntityId, Option<&ObjectHash>) -> Option<CurveGeometry>,
-    S: FnMut(&EntityId, Option<&ObjectHash>) -> Option<ResolvedAreaDrapeSurface>,
-{
-    compile_entity_geometry_with_all_resolvers(
-        device,
-        queue,
-        renderer,
-        label,
-        geometry,
-        pick_slots,
-        options,
-        &mut resolve_curve,
-        &mut resolve_surface,
-        |_, _, _| None,
-    )
-}
-
-/// Compiles canonical geometry with every version-aware area resolver supplied
-/// by the authoritative host, including immutable named interpolation results.
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-pub fn compile_entity_geometry_with_all_resolvers<F, S, I>(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    renderer: &GpuSharedRenderer,
-    label: &str,
-    geometry: &GeometryObject,
-    pick_slots: &[u32],
-    options: &EntityCompilationOptions,
-    mut resolve_curve: F,
-    mut resolve_surface: S,
-    mut resolve_interpolation: I,
-) -> Result<Vec<CompiledEntityPart>, EntityCompilationError>
-where
-    F: FnMut(&EntityId, Option<&ObjectHash>) -> Option<CurveGeometry>,
-    S: FnMut(&EntityId, Option<&ObjectHash>) -> Option<ResolvedAreaDrapeSurface>,
-    I: FnMut(&str, &str, &ObjectHash) -> Option<ResolvedAreaInterpolation>,
-{
     compile_entity_geometry_with_complete_resolvers(
         device,
         queue,
@@ -303,8 +233,6 @@ where
         pick_slots,
         options,
         &mut resolve_curve,
-        &mut resolve_surface,
-        &mut resolve_interpolation,
         |_rule| None,
     )
 }
@@ -315,7 +243,7 @@ where
 /// The render core validates its rule, target-surface provenance and geometry
 /// hash before any GPU allocation; it does not derive civil semantics itself.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-pub fn compile_entity_geometry_with_complete_resolvers<F, S, I, A>(
+pub fn compile_entity_geometry_with_complete_resolvers<F, A>(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     renderer: &GpuSharedRenderer,
@@ -324,14 +252,10 @@ pub fn compile_entity_geometry_with_complete_resolvers<F, S, I, A>(
     pick_slots: &[u32],
     options: &EntityCompilationOptions,
     mut resolve_curve: F,
-    mut resolve_surface: S,
-    mut resolve_interpolation: I,
     mut resolve_slope: A,
 ) -> Result<Vec<CompiledEntityPart>, EntityCompilationError>
 where
     F: FnMut(&EntityId, Option<&ObjectHash>) -> Option<CurveGeometry>,
-    S: FnMut(&EntityId, Option<&ObjectHash>) -> Option<ResolvedAreaDrapeSurface>,
-    I: FnMut(&str, &str, &ObjectHash) -> Option<ResolvedAreaInterpolation>,
     A: FnMut(&SlopeRule) -> Option<ResolvedAlignmentSlopeGeometry>,
 {
     let expected = required_entity_proxy_slots(geometry, options.fill_areas)?;
@@ -409,14 +333,7 @@ where
                 AreaFillMode::BoundaryOnly
             };
             let area = transformed_area(
-                tessellate_area_with_resolvers(
-                    area,
-                    curve_options,
-                    fill_mode,
-                    &mut resolve_curve,
-                    &mut resolve_surface,
-                    &mut resolve_interpolation,
-                )?,
+                tessellate_area(area, curve_options, fill_mode, &mut resolve_curve)?,
                 transform,
             );
             let batches = build_cad_area_batches(
@@ -685,55 +602,10 @@ pub fn tessellate_entity_strokes_with_associations<F>(
 where
     F: FnMut(&EntityId, Option<&ObjectHash>) -> Option<CurveGeometry>,
 {
-    tessellate_entity_strokes_with_resolvers(
-        geometry,
-        options,
-        &mut resolve_curve,
-        |_entity_id, _expected_version| None,
-    )
-}
-
-/// Recreates exact f64 strokes with the same associative-curve and drape
-/// support resolvers used by production compilation.
-pub fn tessellate_entity_strokes_with_resolvers<F, S>(
-    geometry: &GeometryObject,
-    options: &EntityCompilationOptions,
-    mut resolve_curve: F,
-    mut resolve_surface: S,
-) -> Result<Vec<TessellatedCurve>, EntityCompilationError>
-where
-    F: FnMut(&EntityId, Option<&ObjectHash>) -> Option<CurveGeometry>,
-    S: FnMut(&EntityId, Option<&ObjectHash>) -> Option<ResolvedAreaDrapeSurface>,
-{
-    tessellate_entity_strokes_with_all_resolvers(
-        geometry,
-        options,
-        &mut resolve_curve,
-        &mut resolve_surface,
-        |_, _, _| None,
-    )
-}
-
-/// Recreates exact f64 strokes through associative, surface and named
-/// interpolation resolvers identical to production GPU compilation.
-pub fn tessellate_entity_strokes_with_all_resolvers<F, S, I>(
-    geometry: &GeometryObject,
-    options: &EntityCompilationOptions,
-    mut resolve_curve: F,
-    mut resolve_surface: S,
-    mut resolve_interpolation: I,
-) -> Result<Vec<TessellatedCurve>, EntityCompilationError>
-where
-    F: FnMut(&EntityId, Option<&ObjectHash>) -> Option<CurveGeometry>,
-    S: FnMut(&EntityId, Option<&ObjectHash>) -> Option<ResolvedAreaDrapeSurface>,
-    I: FnMut(&str, &str, &ObjectHash) -> Option<ResolvedAreaInterpolation>,
-{
     tessellate_entity_strokes_with_complete_resolvers(
         geometry,
         options,
         &mut resolve_curve,
-        &mut resolve_surface,
-        &mut resolve_interpolation,
         |_rule| None,
     )
 }
@@ -743,18 +615,14 @@ where
 /// Slope meshes are filled surface parts rather than authored strokes, so they
 /// are not returned here. Their resolver is still mandatory to keep snapping
 /// and GPU compilation on the same complete associative entity snapshot.
-pub fn tessellate_entity_strokes_with_complete_resolvers<F, S, I, A>(
+pub fn tessellate_entity_strokes_with_complete_resolvers<F, A>(
     geometry: &GeometryObject,
     options: &EntityCompilationOptions,
     mut resolve_curve: F,
-    mut resolve_surface: S,
-    mut resolve_interpolation: I,
     mut resolve_slope: A,
 ) -> Result<Vec<TessellatedCurve>, EntityCompilationError>
 where
     F: FnMut(&EntityId, Option<&ObjectHash>) -> Option<CurveGeometry>,
-    S: FnMut(&EntityId, Option<&ObjectHash>) -> Option<ResolvedAreaDrapeSurface>,
-    I: FnMut(&str, &str, &ObjectHash) -> Option<ResolvedAreaInterpolation>,
     A: FnMut(&SlopeRule) -> Option<ResolvedAlignmentSlopeGeometry>,
 {
     validate_geometry_object(geometry)?;
@@ -777,13 +645,11 @@ where
             )])
         }
         GeometryObject::Area { area } => Ok(vec![transformed_curve(
-            tessellate_area_with_resolvers(
+            tessellate_area(
                 area,
                 curve_options,
                 AreaFillMode::BoundaryOnly,
                 &mut resolve_curve,
-                &mut resolve_surface,
-                &mut resolve_interpolation,
             )?
             .boundary,
             transform,
@@ -2009,8 +1875,6 @@ mod tests {
             &geometry,
             &entity_options(),
             |_, _| None,
-            |_, _| None,
-            |_, _, _| None,
             |rule| {
                 assert_eq!(rule.target_surface, EntityId("design-ground".into()));
                 Some(ResolvedAlignmentSlopeGeometry {
@@ -2037,8 +1901,6 @@ mod tests {
             &geometry,
             &entity_options(),
             |_, _| None,
-            |_, _| None,
-            |_, _, _| None,
             |rule| {
                 Some(ResolvedAlignmentSlopeGeometry {
                     rule_id: rule.id.clone(),
@@ -2063,8 +1925,6 @@ mod tests {
             &geometry,
             &entity_options(),
             |_, _| None,
-            |_, _| None,
-            |_, _, _| None,
             |rule| {
                 Some(ResolvedAlignmentSlopeGeometry {
                     rule_id: rule.id.clone(),
@@ -2106,8 +1966,6 @@ mod tests {
             &[11, 12],
             &entity_options(),
             |_, _| None,
-            |_, _| None,
-            |_, _, _| None,
             |rule| {
                 Some(ResolvedAlignmentSlopeGeometry {
                     rule_id: rule.id.clone(),
@@ -2245,7 +2103,6 @@ mod tests {
                     }],
                 },
                 holes: Vec::new(),
-                height_resolution: None,
             }),
         };
         let options = EntityCompilationOptions {

@@ -55,9 +55,8 @@ pub use alignment_preview::{
     AlignmentTargetSurfaceSnapshot, AlignmentTargetSurfaceUpdate,
 };
 pub use cad_area::{
-    build_cad_area_batches, tessellate_area, tessellate_area_with_drape_surfaces,
-    tessellate_area_with_resolvers, AreaDrapeSurface, AreaFillMode, CadAreaError, GpuAreaBatches,
-    ResolvedAreaDrapeSurface, ResolvedAreaInterpolation, TessellatedArea, TessellatedAreaFill,
+    build_cad_area_batches, tessellate_area, AreaFillMode, CadAreaError, GpuAreaBatches,
+    TessellatedArea, TessellatedAreaFill,
 };
 pub use cad_curve::{
     build_cad_curve_batch, build_cad_curve_batch_with_width, refine_tessellated_curve_pick,
@@ -70,11 +69,9 @@ pub use camera::{
 };
 pub use entity_compiler::{
     alignment_slope_geometry_version, compile_entity_geometry,
-    compile_entity_geometry_with_all_resolvers, compile_entity_geometry_with_associations,
-    compile_entity_geometry_with_complete_resolvers, compile_entity_geometry_with_resolvers,
+    compile_entity_geometry_with_associations, compile_entity_geometry_with_complete_resolvers,
     required_entity_proxy_slots, resolve_entity_point_world, tessellate_entity_strokes,
-    tessellate_entity_strokes_with_all_resolvers, tessellate_entity_strokes_with_associations,
-    tessellate_entity_strokes_with_complete_resolvers, tessellate_entity_strokes_with_resolvers,
+    tessellate_entity_strokes_with_associations, tessellate_entity_strokes_with_complete_resolvers,
     tessellate_generated_solid_mesh, CompiledEntityPart, EntityCompilationError,
     EntityCompilationOptions, ResolvedAlignmentSlopeGeometry,
 };

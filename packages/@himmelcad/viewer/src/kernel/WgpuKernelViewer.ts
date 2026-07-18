@@ -43,7 +43,6 @@ export interface WasmViewerBinding {
   material_resource_content_hash_json(resourceJson: string): string;
   material_table_resource_content_hash_json(resourceJson: string): string;
   section_topology_partition_content_hash_json(manifestJson: string): string;
-  area_interpolation_dependency_hash_json(dependencyJson: string): string;
   section_product_content_hash_json(productJson: string): string;
   publish_canonical_representations_json(admissionsJson: string): string;
   transform_entity_json(commandJson: string, expectedBindingsJson: string): string;
@@ -127,7 +126,6 @@ export interface WasmViewerBinding {
   measure_raster_depth_sample_json(entityId: string, column: number, row: number): string;
   register_raster_binary_resource(objectHash: string, bytes: Uint8Array): void;
   register_mesh_resource(objectHash: string, meshJson: string): void;
-  register_area_interpolation(admissionJson: string): void;
   register_canonical_hatch_pattern_resource(resourceJson: string): void;
   register_canonical_texture_resource(
     resourceJson: string,
@@ -1106,9 +1104,9 @@ export interface KernelCanonicalRenderAdmission {
   readonly admission: CanonicalRepresentationAdmission;
   readonly datasetId?: string;
   readonly evaluatedMesh?: KernelEvaluatedMeshAdmission;
-  readonly areaInterpolationRef?: string;
   readonly style?: KernelRenderStyle;
-  readonly unresolvedHeightElevation?: number;
+  /** Presentation plane used only by an explicitly locked top-down plan view. */
+  readonly lockedPlanElevation?: number;
   readonly chordTolerance?: number;
   readonly maximumCurveSegments?: number;
   readonly lineWidth?: number;
@@ -1129,22 +1127,6 @@ export interface KernelEvaluatedMeshAdmission {
   readonly materialKeys: Readonly<Record<number, string>>;
   readonly closedManifold: boolean;
 }
-
-export interface KernelAreaInterpolationResourceAdmission {
-  readonly resultGeometryRef: string;
-  readonly sourceGeometryRef: string;
-  readonly sourceEntityVersion: string;
-  readonly algorithmId: string;
-  readonly algorithmVersion: string;
-  readonly parameters: string;
-  readonly dependencyHash: string;
-  readonly area: Readonly<Record<string, unknown>>;
-}
-
-export type KernelAreaInterpolationDependency = Omit<
-  KernelAreaInterpolationResourceAdmission,
-  'dependencyHash' | 'area'
->;
 
 export interface KernelGlyphMetrics {
   readonly atlasMin: readonly [number, number];
@@ -1619,12 +1601,6 @@ export class WgpuKernelViewer {
     return this.binding.section_topology_partition_content_hash_json(JSON.stringify(manifest));
   }
 
-  /** Authoritative Rust hash binding named interpolation to source, recipe and result. */
-  areaInterpolationDependencyHash(dependency: KernelAreaInterpolationDependency): string {
-    this.assertAlive();
-    return this.binding.area_interpolation_dependency_hash_json(JSON.stringify(dependency));
-  }
-
   /** Authoritative Rust content hash of one validated exact section product. */
   sectionProductContentHash(product: KernelAuthoritativeSectionProduct): string {
     this.assertAlive();
@@ -2080,15 +2056,6 @@ export class WgpuKernelViewer {
     this.assertAlive();
     if (objectHash.length === 0) throw new RangeError('mesh objectHash must be non-empty');
     this.binding.register_mesh_resource(objectHash, JSON.stringify(mesh));
-  }
-
-  /** Registers a content-addressed named-interpolation result for an area. */
-  registerAreaInterpolation(admission: KernelAreaInterpolationResourceAdmission): void {
-    this.assertAlive();
-    if (admission.resultGeometryRef.length === 0) {
-      throw new RangeError('area interpolation resultGeometryRef must be non-empty');
-    }
-    this.binding.register_area_interpolation(JSON.stringify(admission));
   }
 
   /** Registers one validated immutable canonical hatch-pattern revision. */

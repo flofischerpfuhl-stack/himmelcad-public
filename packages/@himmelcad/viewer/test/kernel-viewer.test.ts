@@ -52,7 +52,6 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
     material_resource_content_hash_json: () => '58'.repeat(32),
     material_table_resource_content_hash_json: () => '59'.repeat(32),
     section_topology_partition_content_hash_json: () => '66'.repeat(32),
-    area_interpolation_dependency_hash_json: () => '44'.repeat(32),
     section_product_content_hash_json: () => '55'.repeat(32),
     publish_canonical_representations_json(admissionsJson): string {
       calls.push(['publishCanonical', admissionsJson]);
@@ -231,7 +230,6 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
       }),
     register_raster_binary_resource(): void {},
     register_mesh_resource(): void {},
-    register_area_interpolation(): void {},
     register_canonical_hatch_pattern_resource(): void {},
     register_canonical_texture_resource(): void {},
     register_canonical_material_resource_set(): void {},
@@ -1119,7 +1117,6 @@ function minimalBinding(
     material_resource_content_hash_json: () => '58'.repeat(32),
     material_table_resource_content_hash_json: () => '59'.repeat(32),
     section_topology_partition_content_hash_json: () => '66'.repeat(32),
-    area_interpolation_dependency_hash_json: () => '44'.repeat(32),
     section_product_content_hash_json: () => '55'.repeat(32),
     publish_canonical_representations_json: () =>
       JSON.stringify({
@@ -1205,7 +1202,6 @@ function minimalBinding(
       }),
     register_raster_binary_resource(): void {},
     register_mesh_resource(): void {},
-    register_area_interpolation(): void {},
     register_canonical_hatch_pattern_resource(): void {},
     register_canonical_texture_resource(): void {},
     register_canonical_material_resource_set(): void {},
