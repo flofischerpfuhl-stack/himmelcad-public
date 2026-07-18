@@ -933,16 +933,16 @@ configured plane distance is presentation-only. Attached camera depth is not
 used to deform that main-view plane and remains the separate source
 measurement authority. Distorted, equirectangular and namespaced camera models
 still fail closed unless their proper station/evaluator path is selected. The
-browser scene now contains 28 entities and 36 proxies and checks a Pinhole
+browser scene now contains 29 entities and 37 proxies and checks a Pinhole
 `OpticalAxisDepth` sample analytically to `1e-7` after pose application. Both
 explicit backends passed; the final forced WebGL2 run on the physical Intel HD
-Graphics 630 reported 4.3 ms maximum CPU submit, and the WebGPU correctness run
-reported 3.3 ms. This closes inline Planar/Pinhole presentation, not the still
+Graphics 630 reported 4.6 ms maximum CPU submit, and the WebGPU correctness run
+reported 2.0 ms. This closes inline Planar/Pinhole presentation, not the still
 open provider-prepared Planar/Camera streaming path.
 
 The real provider boundary is separately verified: 9 focused E57 tests pass
 posed f64 point transcoding, immutable embedded images, exact camera semantics,
-scan association, cancellation and tamper/invalid-intrinsic failures; 6 focused
+scan association, cancellation and tamper/invalid-intrinsic failures; 5 focused
 GeoTIFF tests pass georeferenced DGM NoData/mapping, range-readable COG import,
 exact roundtrip, cancellation and immutable-resource tamper rejection.
 
@@ -960,9 +960,26 @@ parallel manifest schema. A prepared directory becomes visible only after all
 hash-bound references and its manifest are complete. Focused tests cover
 render-core parsing, exact mapping, band references, cancellation, invalid
 band length, atomic publication, deterministic immutable reuse and the fake
-offline GDAL pipeline. The remaining raster gap is a paired full-colour
-orthomosaic plus elevation source with independently resolved pyramids in one
-viewer contract. V1 is therefore still active.
+offline GDAL pipeline.
+
+The schema-v2 prepared raster-surface contract closes the remaining paired
+orthomosaic/elevation gap without coupling their resolutions. Colour pages stay
+at 512x512 pixels while each independently derived DEM support grid is bounded
+to 513x513 vertices. The deterministic 2 cm colour / 10 cm DEM fixture therefore
+publishes a 103x103 support grid. Every product pins the exact source-surface
+revision and content-addressed drape derivation; adjacent tile edges evaluate
+the same world coordinates and are byte-identical. Alpha affects colour
+presentation only and never elevation validity. Cancellation leaves no visible
+manifest.
+
+The browser gate stages a 4x4 colour tile over an independent 3x3 elevation
+grid, analytically verifies the source-coordinate pick, accounts 64 GPU texture
+bytes and eight triangles, and proves atomic colour/support unload. Both
+explicit backends pass the 29-entity/37-proxy fixture (38 entities with the real
+data extension), with ten worker ingests, zero main-thread provider decodes and
+no decode rebuild. The focused regression evidence is 324 render-core, 7 wasm,
+4 decode-wasm, 71 viewer-package, 9 E57 and 5 GeoTIFF tests. V1 closed on
+2026-07-18 at 11:33 CEST after 4 h 12 min elapsed work.
 
 ## Candidate external data
 

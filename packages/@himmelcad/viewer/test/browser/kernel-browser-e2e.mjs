@@ -395,7 +395,7 @@ try {
   // two transformed tiles, two external JSON glTFs and two legacy-metadata fixtures.
   // The canonical zoo also includes one immutable entity-reference block plus
   // the planar and pinhole oriented-image contracts.
-  assert.equal(state.entityCount, realData ? 37 : 28);
+  assert.equal(state.entityCount, realData ? 38 : 29);
   assert(
     state.proxyCount >= 24,
     `expected mixed inline and provider render proxies, received ${String(state.proxyCount)}`,
@@ -1074,6 +1074,34 @@ try {
     ),
     false,
     'numeric NoData pixel must not create a pickable raster primitive',
+  );
+
+  assert.equal(providerFixtures.surfaceRaster.stage.cpuCompressedBytes, 100);
+  assert.equal(providerFixtures.surfaceRaster.publish.cost.triangles, 8);
+  assert.equal(providerFixtures.surfaceRaster.publish.cost.gpuTextureBytes, 64);
+  const surfaceProxyId = providerFixtures.surfaceRaster.publish.streams[0]?.proxyIds[0];
+  assert(surfaceProxyId, 'surface raster publication must return its stable proxy identity');
+  const surfaceHit = providerFixtures.surfaceRaster.pick.candidates.find(
+    (candidate) =>
+      candidate.address.entityId === 'fixture-orthomosaic-surface' &&
+      candidate.address.renderProxyId === surfaceProxyId &&
+      candidate.address.datasetId === 'fixture-orthomosaic-surface' &&
+      candidate.address.tileId === 'r' &&
+      worldClose(candidate.worldPosition, providerFixtures.surfaceRaster.expectedSample, 1e-7),
+  );
+  assert(
+    surfaceHit,
+    `independent orthomosaic/DEM grids must pick the exact source support surface: ${JSON.stringify(providerFixtures.surfaceRaster.pick)}`,
+  );
+  assert.equal(providerFixtures.surfaceRaster.unload.removed, true);
+  assert(providerFixtures.surfaceRaster.unload.batchesBefore > 0);
+  assert.equal(providerFixtures.surfaceRaster.unload.batchesAfter, 0);
+  assert.equal(
+    providerFixtures.surfaceRaster.unload.pickAfter.candidates.some(
+      (candidate) => candidate.address.entityId === 'fixture-orthomosaic-surface',
+    ),
+    false,
+    'combined texture/support residency must disappear atomically on unload',
   );
 
   assert(providerFixtures.gaussian.stage.cpuCompressedBytes > 0);

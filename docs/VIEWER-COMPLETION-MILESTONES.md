@@ -26,8 +26,8 @@ Fallback zählen nicht als Abschluss.
 | ID | Meilenstein | Status | Start | Abschluss | Aktive Zeit |
 | --- | --- | --- | --- | --- | --- |
 | A | Foundation A | abgeschlossen | historisch, nicht exakt erfasst | 2026-07-17 | nicht rückwirkend erfunden |
-| V1 | Imaging und Heavy-Geometry-Verträge | aktiv | 2026-07-18 07:21 CEST | – | läuft |
-| V2 | Kanonische Entity- und Definitionsbreite | offen | – | – | – |
+| V1 | Imaging und Heavy-Geometry-Verträge | abgeschlossen | 2026-07-18 07:21 CEST | 2026-07-18 11:33 CEST | 4 h 12 min verstrichene Arbeitszeit |
+| V2 | Kanonische Entity- und Definitionsbreite | aktiv | 2026-07-18 11:33 CEST | – | läuft |
 | V3 | Darstellung, Interaktion, Messung und Schnitte | offen | – | – | – |
 | V4 | Civil-Scale, Hardware und Backend-Härtung | offen | – | – | – |
 | V5 | Stabile Viewer-Fassade und App-Ready-Gate | offen | – | – | – |

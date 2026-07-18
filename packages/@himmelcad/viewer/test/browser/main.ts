@@ -319,6 +319,18 @@ interface ProviderFixtureValidation {
     highPick: KernelPickResult;
     noDataPick: KernelPickResult;
   };
+  surfaceRaster: {
+    stage: KernelResourceCost;
+    publish: KernelStreamingPublish;
+    expectedSample: { x: number; y: number; z: number };
+    pick: KernelPickResult;
+    unload: {
+      removed: boolean;
+      batchesBefore: number;
+      batchesAfter: number;
+      pickAfter: KernelPickResult;
+    };
+  };
   gaussian: {
     stage: KernelResourceCost;
     publish: KernelStreamingPublish;
@@ -1344,6 +1356,37 @@ async function decodeAndStage(
         readonly bounds?: { readonly min?: { readonly z?: number } };
       }
     | undefined;
+  const rasterSurface = metadata.surface as
+    | {
+        readonly width: number;
+        readonly height: number;
+        readonly mapping: {
+          readonly origin: readonly [number, number];
+          readonly columnStep: readonly [number, number];
+          readonly rowStep: readonly [number, number];
+        };
+        readonly sourceSurface: {
+          readonly id: string;
+          readonly revision: number;
+          readonly versionHash: string;
+        };
+        readonly derivation: {
+          readonly resourceId: string;
+          readonly schemaId: string;
+          readonly contentHash: string;
+        };
+      }
+    | undefined;
+  const rasterDepth = {
+    values: depthResource,
+    validity: null,
+    confidence: null,
+    sampling: {
+      semantics: 'elevationZ' as const,
+      interpolation: 'discontinuityAware' as const,
+      connectivity: metadata.topology,
+    },
+  };
   const geometry =
     decodeKind === 'gaussianSplats'
       ? {
@@ -1380,16 +1423,7 @@ async function decodeAndStage(
                     z: 0,
                   },
                 },
-                depth: {
-                  values: depthResource,
-                  validity: null,
-                  confidence: null,
-                  sampling: {
-                    semantics: 'elevationZ',
-                    interpolation: 'discontinuityAware',
-                    connectivity: metadata.topology,
-                  },
-                },
+                depth: rasterSurface === undefined ? rasterDepth : null,
               },
             }
           : {
@@ -1420,6 +1454,7 @@ async function decodeAndStage(
     colorEncoding: _colorEncoding,
     elevationEncoding: _elevationEncoding,
     noData: _noData,
+    surface: _surface,
     ...content
   } = metadata;
   const canonicalMetadata = {
@@ -1427,11 +1462,14 @@ async function decodeAndStage(
     ...(geometry.kind === 'rasterImage'
       ? {
           contract: {
-            schemaVersion: 1,
+            schemaVersion: rasterSurface === undefined ? 1 : 2,
             raster: geometry.raster,
             colorEncoding: metadata.colorEncoding,
             depthEncoding: metadata.elevationEncoding,
             noData: metadata.noData,
+            ...(rasterSurface === undefined
+              ? {}
+              : { surface: { ...rasterSurface, depth: rasterDepth } }),
           },
         }
       : {}),
@@ -2525,6 +2563,143 @@ async function installProviderFixtures(viewer: WgpuKernelViewer) {
   state.entityCount = rasterPublish.entities;
   state.proxyCount = rasterPublish.proxies;
 
+  const surfaceDatasetId = 'fixture-orthomosaic-surface';
+  const surfaceEntityId = 'fixture-orthomosaic-surface';
+  const surfaceStreamId = 'fixture-orthomosaic-surface/r';
+  const surfaceFootprintOrigin = [BASE[0] + 120, BASE[1] - 32] as const;
+  const surfaceColorOrigin = [surfaceFootprintOrigin[0] + 0.5, surfaceFootprintOrigin[1] + 3.5] as const;
+  const surfaceMapping = {
+    origin: [surfaceFootprintOrigin[0], surfaceFootprintOrigin[1] + 4] as const,
+    columnStep: [2, 0] as const,
+    rowStep: [0, -2] as const,
+  };
+  const surfaceElevations = [
+    BASE[2] + 8,
+    BASE[2] + 9,
+    BASE[2] + 10,
+    BASE[2] + 10,
+    BASE[2] + 12,
+    BASE[2] + 14,
+    BASE[2] + 12,
+    BASE[2] + 15,
+    BASE[2] + 18,
+  ] as const;
+  const expectedSurfaceSample = {
+    x: surfaceFootprintOrigin[0] + 2,
+    y: surfaceFootprintOrigin[1] + 2,
+    z: surfaceElevations[4],
+  };
+  const surfaceBounds = {
+    kind: 'axisAlignedBox' as const,
+    bounds: {
+      min: {
+        x: surfaceFootprintOrigin[0],
+        y: surfaceFootprintOrigin[1],
+        z: surfaceElevations[0],
+      },
+      max: {
+        x: surfaceFootprintOrigin[0] + 4,
+        y: surfaceFootprintOrigin[1] + 4,
+        z: surfaceElevations[8],
+      },
+    },
+  };
+  const surfaceManifestBytes = jsonBytes({
+    schemaVersion: 1,
+    roots: ['r'],
+    tiles: [
+      {
+        id: 'r',
+        parent: null,
+        children: [],
+        bounds: surfaceBounds,
+        contentTransform: IDENTITY,
+        geometricError: 1,
+        refinement: 'replace',
+        contents: [
+          {
+            kind: 'raster',
+            uri: 'orthomosaic.png',
+            byteOffset: null,
+            byteLength: null,
+            primitiveCount: 8,
+            contentHash: null,
+          },
+        ],
+        childPage: null,
+      },
+    ],
+  });
+  viewer.registerPreparedDataset(
+    surfaceDatasetId,
+    'himmelcad-prepared-hierarchy@1',
+    'hcad://browser-fixture/orthomosaic-surface/manifest.json',
+    surfaceManifestBytes,
+  );
+  const surfaceColor = new Uint8Array(4 * 4 * 4);
+  for (let pixel = 0; pixel < 16; pixel += 1) {
+    surfaceColor.set(
+      pixel === 0 ? [20, 80, 160, 0] : [30 + pixel * 4, 140, 75, 255],
+      pixel * 4,
+    );
+  }
+  state.phase = 'provider-worker-fixtures:surface-raster';
+  const surfaceStage = await decodeAndStage(
+    viewer,
+    'raster',
+    {
+      streamId: surfaceStreamId,
+      entityId: surfaceEntityId,
+      proxyId: 'fixture-orthomosaic-surface/r@1',
+      datasetId: surfaceDatasetId,
+      canonicalDatasetRegistered: true,
+      canonicalDatasetFormatId: 'himmelcad-prepared-hierarchy@1',
+      canonicalDatasetMetadata: surfaceManifestBytes,
+      tileId: 'r',
+      bounds: surfaceBounds,
+      width: 4,
+      height: 4,
+      mapping: {
+        origin: surfaceColorOrigin,
+        columnStep: [1, 0] as const,
+        rowStep: [0, -1] as const,
+      },
+      surface: {
+        width: 3,
+        height: 3,
+        mapping: surfaceMapping,
+        sourceSurface: {
+          id: 'fixture-source-dem',
+          revision: 7,
+          versionHash: '33'.repeat(32),
+        },
+        derivation: {
+          resourceId: 'fixture-orthomosaic-drape',
+          schemaId: 'hcad.derivation.raster-surface-drape@1',
+          contentHash: '44'.repeat(32),
+        },
+      },
+      topology: {
+        kind: 'continuous' as const,
+        maximumHeightJump: null,
+        diagonal: 'topLeftToBottomRight' as const,
+      },
+      colorEncoding: 'rgba8' as const,
+      elevationEncoding: { kind: 'float32LittleEndian' as const },
+      noData: { kind: 'nan' as const },
+      elevationPayloadByteLength: surfaceElevations.length * Float32Array.BYTES_PER_ELEMENT,
+      validityPayloadByteLength: 0,
+      confidencePayloadByteLength: 0,
+      triangleMaskPayloadByteLength: 0,
+      style: style([1, 1, 1, 1], 1, { kind: 'source' }),
+    },
+    surfaceColor,
+    float32Band(surfaceElevations),
+  );
+  const surfacePublish = viewer.publishStagedContents([surfaceStreamId]);
+  state.entityCount = surfacePublish.entities;
+  state.proxyCount = surfacePublish.proxies;
+
   const gaussianDatasetId = 'fixture-gaussian-splat';
   const gaussianEntityId = 'fixture-gaussian-mean';
   const gaussianStreamId = 'fixture-gaussian-splat/r';
@@ -2613,6 +2788,11 @@ async function installProviderFixtures(viewer: WgpuKernelViewer) {
       publish: rasterPublish,
       expectedLowSample,
       expectedHighSample,
+    },
+    surfaceRaster: {
+      stage: surfaceStage,
+      publish: surfacePublish,
+      expectedSample: expectedSurfaceSample,
     },
     gaussian: {
       stage: gaussianStage,
@@ -5304,6 +5484,8 @@ async function run(): Promise<void> {
     z: BASE[2] + 20,
   });
   const rasterNoDataPick = await viewer.pick(640, 360, 1);
+  setFocusedTopCamera(viewer, providerFixtures.surfaceRaster.expectedSample);
+  const surfaceRasterPick = await viewer.pick(640, 360, 1);
   setFocusedTopCamera(viewer, providerFixtures.gaussian.expectedMean);
   const gaussianMeanPick = await viewer.pick(640, 360, 2);
   const gaussianCoveragePick = await viewer.pick(652, 360, 1);
@@ -5470,6 +5652,12 @@ async function run(): Promise<void> {
       pick: await viewer.pick(550, 360, 1),
     };
   }
+  setFocusedTopCamera(viewer, providerFixtures.surfaceRaster.expectedSample);
+  const surfaceBatchesBefore = viewer.entityPresentation('fixture-orthomosaic-surface').length;
+  const surfaceRemoved = viewer.removeRasterContent('fixture-orthomosaic-surface/r');
+  viewer.render();
+  const surfaceBatchesAfter = viewer.entityPresentation('fixture-orthomosaic-surface').length;
+  const surfacePickAfterUnload = await viewer.pick(640, 360, 1);
   state.providerFixtures = {
     potree: { ...providerFixtures.potree, pick: potreePick, metadata: potreeMetadata },
     raster: {
@@ -5477,6 +5665,16 @@ async function run(): Promise<void> {
       lowPick: rasterLowPick,
       highPick: rasterHighPick,
       noDataPick: rasterNoDataPick,
+    },
+    surfaceRaster: {
+      ...providerFixtures.surfaceRaster,
+      pick: surfaceRasterPick,
+      unload: {
+        removed: surfaceRemoved,
+        batchesBefore: surfaceBatchesBefore,
+        batchesAfter: surfaceBatchesAfter,
+        pickAfter: surfacePickAfterUnload,
+      },
     },
     gaussian: {
       ...providerFixtures.gaussian,

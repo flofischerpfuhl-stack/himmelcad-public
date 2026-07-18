@@ -1,6 +1,6 @@
 # ADR 0020: Independent colour and elevation grids in prepared raster surfaces
 
-- Status: Accepted, implementation in progress
+- Status: Accepted and implemented
 - Date: 2026-07-18
 - Depends on: ADR 0016, ADR 0017 and ADR 0018
 
