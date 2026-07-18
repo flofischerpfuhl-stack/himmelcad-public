@@ -419,6 +419,15 @@ funktioniert.
   erreicht ebenfalls dreimal vollständige Null-Eviction und je 27 Reload-
   Requests. Der Runner fordert WebGPU jetzt ausdrücklich an und kann nicht mehr
   unbemerkt auf WebGL2 zurückfallen.
+- Der finale Scale-Harness startet den gemessenen Interaktionsburst nach einem
+  tiefen, noch nicht residenten Scheduler-Plan ohne Event-Loop-Pause. Damit ist
+  Live-Fetch/Decode deterministisch gleichzeitig aktiv, ohne den aufgebauten
+  globalen Speicherdruck zu löschen. Auf der diskreten Quadro M2200 über
+  ANGLE/Vulkan/WebGL2 ist der aktuelle Low-Gate mit p95/p99 23,4/30,8 ms,
+  Eviction/Re-entry, drei Null-Drains und exakt 173 Requests je Reload grün. Der
+  finale Intel-HD-630-Lauf erreicht p95/p99 30,8/36,1 ms und bestätigt erneut
+  244/242/242 Reload-Requests. Beide bleiben unter den unveränderten
+  Low-Grenzen 33/50 ms.
 
 ## V5 – Stabile Viewer-Fassade und App-Ready-Gate
 

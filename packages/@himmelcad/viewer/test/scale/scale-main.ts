@@ -594,6 +594,64 @@ async function run(): Promise<void> {
     }
   };
 
+  const recycleCanonicalScene = async (): Promise<KernelResourceCost> => {
+    const retirement = viewer.detachCanonicalEntities(activeBindings);
+    for (const datasetId of retirement.retiredDatasetIds) {
+      driver.detachDataset(datasetId);
+      for (const key of tracked.keys()) {
+        if (key.startsWith(`${datasetId}/`)) tracked.delete(key);
+      }
+    }
+    await driver.settled();
+    const drained = viewer.streamingRuntime();
+    if (
+      drained.trackedEntries !== 0 ||
+      Object.values(drained.residencyStageCounts).some((count) => count !== 0) ||
+      Object.values(drained.residencyCost).some((cost) => cost !== 0)
+    ) {
+      throw new Error(`canonical unload retained streamed residency: ${JSON.stringify(drained)}`);
+    }
+
+    const tombstones = new Map(
+      retirement.tombstones.map((tombstone) => [
+        `${tombstone.key.slot.entityId}\u0000${tombstone.key.slot.representationSlot}`,
+        tombstone.generation,
+      ]),
+    );
+    const replayAdmissions = [pointAdmission, ...mixedAdmissions].map((item) => ({
+      ...item,
+      admission: {
+        ...item.admission,
+        expectedGeneration:
+          tombstones.get(`${item.admission.entity.id}\u0000${item.admission.representationSlot}`) ??
+          null,
+      },
+    }));
+    viewer.registerPotreeDataset(
+      DATASET_ID,
+      'potree@2',
+      '/scale/metadata.json',
+      metadataBytes,
+      hierarchyBytes,
+    );
+    if (meshManifest !== null && splatManifest !== null) {
+      viewer.registerPreparedDataset(
+        MESH_DATASET_ID,
+        PREPARED_FORMAT,
+        '/scale/mixed/mesh/manifest.json',
+        meshManifest,
+      );
+      viewer.registerPreparedDataset(
+        SPLAT_DATASET_ID,
+        PREPARED_FORMAT,
+        '/scale/mixed/splat/manifest.json',
+        splatManifest,
+      );
+    }
+    activeBindings = [...viewer.publishCanonicalRepresentations(replayAdmissions).bindings];
+    return drained.residencyCost;
+  };
+
   const runFrame = async (
     interacting: boolean,
     settle: boolean,
@@ -782,6 +840,29 @@ async function run(): Promise<void> {
     state.phase = 'camera-path';
   }
 
+  const primerTarget = corners[3];
+  viewer.setWorldCamera(camera(primerTarget, 40, 2.4), [
+    primerTarget.x,
+    primerTarget.y,
+    primerTarget.z,
+  ]);
+  const liveStreamingPrimer = viewer.planStreamingFrame({
+    resourceBudget: budget,
+    frameBudget,
+    maximumScreenSpaceError: 0.7,
+    detailScale: 1.5,
+    maximumTraversedNodes: Math.min(MAXIMUM_TRAVERSED_NODES, resolvedPolicy.maximumTraversedNodes),
+    includeRenderKeys: true,
+  });
+  if (
+    !liveStreamingPrimer.actions.some(
+      (action) => action.kind === 'fetchTile' || action.kind === 'decodeTile',
+    )
+  ) {
+    throw new Error('deep-view primer did not schedule real fetch/decode work');
+  }
+  observeActions(liveStreamingPrimer.actions);
+  driver.execute(liveStreamingPrimer);
   const burstTarget = corners[0];
   await runBurst('zoom-orbit-with-live-streaming', SOFTWARE_CORRECTNESS ? 12 : 24, (frame) => {
     const radius = 520 - frame * 15;
@@ -839,61 +920,7 @@ async function run(): Promise<void> {
   const plateauCycles = SOFTWARE_CORRECTNESS ? 2 : 3;
   const plateauTarget = corners[0];
   for (let cycle = 0; cycle < plateauCycles; cycle += 1) {
-    const retirement = viewer.detachCanonicalEntities(activeBindings);
-    for (const datasetId of retirement.retiredDatasetIds) {
-      driver.detachDataset(datasetId);
-      for (const key of tracked.keys()) {
-        if (key.startsWith(`${datasetId}/`)) tracked.delete(key);
-      }
-    }
-    await driver.settled();
-    const drained = viewer.streamingRuntime();
-    if (
-      drained.trackedEntries !== 0 ||
-      Object.values(drained.residencyStageCounts).some((count) => count !== 0) ||
-      Object.values(drained.residencyCost).some((cost) => cost !== 0)
-    ) {
-      throw new Error(`canonical unload retained streamed residency: ${JSON.stringify(drained)}`);
-    }
-    drainedCosts.push(drained.residencyCost);
-
-    const tombstones = new Map(
-      retirement.tombstones.map((tombstone) => [
-        `${tombstone.key.slot.entityId}\u0000${tombstone.key.slot.representationSlot}`,
-        tombstone.generation,
-      ]),
-    );
-    const replayAdmissions = [pointAdmission, ...mixedAdmissions].map((item) => ({
-      ...item,
-      admission: {
-        ...item.admission,
-        expectedGeneration:
-          tombstones.get(`${item.admission.entity.id}\u0000${item.admission.representationSlot}`) ??
-          null,
-      },
-    }));
-    viewer.registerPotreeDataset(
-      DATASET_ID,
-      'potree@2',
-      '/scale/metadata.json',
-      metadataBytes,
-      hierarchyBytes,
-    );
-    if (meshManifest !== null && splatManifest !== null) {
-      viewer.registerPreparedDataset(
-        MESH_DATASET_ID,
-        PREPARED_FORMAT,
-        '/scale/mixed/mesh/manifest.json',
-        meshManifest,
-      );
-      viewer.registerPreparedDataset(
-        SPLAT_DATASET_ID,
-        PREPARED_FORMAT,
-        '/scale/mixed/splat/manifest.json',
-        splatManifest,
-      );
-    }
-    activeBindings = [...viewer.publishCanonicalRepresentations(replayAdmissions).bindings];
+    drainedCosts.push(await recycleCanonicalScene());
 
     const requestsBeforeReload = driver.diagnostics().startedRequests;
     viewer.setWorldCamera(camera(plateauTarget, 240, -0.8), [

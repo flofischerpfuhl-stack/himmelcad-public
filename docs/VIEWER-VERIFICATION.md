@@ -1371,6 +1371,27 @@ After this change the complete Render-Core suite passes 322/322, native viewer
 WASM passes 7/7, the wasm32 target and browser contract typecheck pass, and the
 viewer package passes 75/75 tests.
 
+The final harness makes live interaction pressure deterministic without
+discarding the profile-fill residency. It first plans a deep, non-resident view
+with the ordinary idle frame budget and immediately starts the measured camera
+burst before yielding to the event loop. The burst must therefore overlap a
+real asynchronous fetch or decode, while the already populated mixed scene
+continues to exert global budget pressure for subsequent eviction and re-entry.
+This avoids both timing-dependent sampling on fast completion and the false
+shortcut of clearing residency before the camera path.
+
+On the discrete NVIDIA Quadro M2200 through PRIME-offloaded ANGLE/Vulkan and
+forced WebGL2, the final low gate passed at 3,040,128 points, 524,288 triangles,
+100,000 splats and 170 draw calls. Interaction p50/p95/p99/max was
+8.8/23.4/30.8/54.5 ms, with the unchanged p95/p99 acceptance at 33/50 ms.
+Eviction and re-entry occurred; three complete drains reached zero in every
+stage and cost dimension, and all three reloads issued exactly 173 requests
+with identical residency cost. The final integrated Intel HD Graphics 630 run
+also passed at p50/p95/p99/max 11.8/30.8/36.1/37.1 ms, with 244/242/242 reload
+requests. Final forced-WebGL2 and explicit-WebGPU correctness runs both pass the
+same deterministic lifecycle; the WebGPU adapter reports CPU and remains a
+correctness result rather than a hardware-performance claim.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.
