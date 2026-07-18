@@ -149,7 +149,25 @@ void test('React viewport is a thin session adapter without engine ownership', a
   ]) {
     assert.equal(source.includes(forbidden), false, `React adapter owns ${forbidden}`);
   }
+});
 
+void test('shared headless, browser and Electron fixture consumes only the public entry', async () => {
+  const consumer = await readFile(
+    path.join(packageRoot, 'test/consumer/public-mixed-scene.ts'),
+    'utf8',
+  );
+  const specifiers = [...consumer.matchAll(/from ['"]([^'"]+)['"]/g)].map((match) => match[1]);
+  assert.deepEqual(specifiers, ['../../src/kernel/index.js']);
+  for (const host of ['browser', 'electron']) {
+    const source = await readFile(
+      path.join(packageRoot, `test/${host}/public-session-host.ts`),
+      'utf8',
+    );
+    assert.equal(
+      source.trim(),
+      `export { loadPublicMixedScene as load${host === 'browser' ? 'Browser' : 'Electron'}MixedScene } from '../consumer/public-mixed-scene.js';`,
+    );
+  }
 });
 
 void test('kernel public entry has no React, Three, Electron or product dependency', async () => {

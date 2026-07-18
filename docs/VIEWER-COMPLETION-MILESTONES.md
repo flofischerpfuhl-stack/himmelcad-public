@@ -551,6 +551,16 @@ einen eigenen Geometriepfad benötigt.
   nicht-fetchenden Residency-Aktionen selbst. Ein Source-Gate verhindert die
   erneute Einführung des doppelten Lifecycles. Paket-Typecheck, Browser-Kernel-
   Contract und 82/82 Viewer-Tests sind grün.
+- Ein einziger produktneutraler Public-Consumer lädt über den stabilen Entry
+  dieselbe vierteilige Mixed Scene in Headless-, Browser-Renderer- und Electron-
+  Renderer-Adaptern: vollständiger XYZ-Punkt, zulässige Plan-only-Kurve mit
+  fehlendem Z, registrierte Extension und prepared Splat-Hierarchie. Image,
+  Depth, Validity und evaluated Mesh werden vorher ausschließlich über die
+  Session registriert. Alle drei Adapter führen denselben Loader aus, liefern
+  dieselben stabilen Entity-Handles und disposen ihren einzigen Owner. Ein
+  Source-Gate erlaubt dem Consumer genau den Public-Entry. Die Node-basierte
+  Host-Contract-Suite steht bei 84/84; echte Browser-/Electron-Prozessausführung
+  dieses Minimalhosts bleibt vor dem V5-Abschluss noch auszuführen.
 
 ## Zeitmessung und Fortschrittsprotokoll
 

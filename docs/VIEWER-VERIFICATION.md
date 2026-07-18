@@ -1535,6 +1535,23 @@ and rejects raw viewer creation, streaming/decode construction and legacy
 handle fields. Viewer package typecheck, the browser-kernel TypeScript contract
 and all 82 package tests pass.
 
+### V5 shared public consumer contract checkpoint
+
+One product-neutral mixed-scene loader is now re-exported unchanged by the
+headless, browser-renderer and Electron-renderer host adapters. It registers
+image, depth, validity and evaluated-mesh resources, then loads a full XYZ
+point, a canonical plan-only line with absent Z, a registered extension and a
+prepared splat hierarchy. Every path returns the same four stable entity-handle
+identities and disposes its sole session/device owner.
+
+The functional contract executes all three adapter exports with a deterministic
+headless WASM boundary. A separate source gate permits the shared loader only
+one import, the public kernel entry, and requires both environment adapters to
+be pure re-exports of that loader. The viewer package now passes 84/84 tests.
+This proves public API consumption and shared host wiring; launching the new
+minimal adapter in actual Chromium and Electron processes remains an explicit
+V5 completion action rather than being inferred from the Node host contract.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.
