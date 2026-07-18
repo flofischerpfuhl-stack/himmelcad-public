@@ -1,5 +1,6 @@
 import type { CanonicalRepresentationAdmission } from './generated/index.js';
 import type { KernelStreamingDriver } from './KernelStreamingDriver.js';
+import { reportLoadProgress, type KernelLoadOperationOptions } from './KernelLoadOperation.js';
 import type {
   KernelCanonicalEntityMutation,
   KernelCanonicalRenderAdmission,
@@ -18,9 +19,7 @@ export interface KernelPotreeDatasetAdmission {
 }
 
 interface PotreeAdmissionTarget {
-  geometryObjectContentHash(
-    geometry: CanonicalRepresentationAdmission['resolvedGeometry'],
-  ): string;
+  geometryObjectContentHash(geometry: CanonicalRepresentationAdmission['resolvedGeometry']): string;
   canonicalEntityVersionHash(entity: CanonicalRepresentationAdmission['entity']): string;
   registerPotreeDataset(
     datasetId: string,
@@ -54,8 +53,9 @@ export async function admitCanonicalPotreeDataset(
   streaming: KernelStreamingDriver,
   input: KernelPotreeDatasetAdmission,
   signal?: AbortSignal,
+  progress?: KernelLoadOperationOptions['onProgress'],
 ): Promise<KernelCanonicalEntityMutation> {
-  return admitCanonicalPotreeDatasetWith(viewer, streaming, input, signal);
+  return admitCanonicalPotreeDatasetWith(viewer, streaming, input, signal, progress);
 }
 
 export async function admitCanonicalPotreeDatasetWith(
@@ -63,7 +63,11 @@ export async function admitCanonicalPotreeDatasetWith(
   streaming: ImmutableResourceFetcher,
   input: KernelPotreeDatasetAdmission,
   signal?: AbortSignal,
+  progress?: KernelLoadOperationOptions['onProgress'],
 ): Promise<KernelCanonicalEntityMutation> {
+  const total = 4;
+  reportLoadProgress(progress, 'validating', 0, total);
+  signal?.throwIfAborted();
   if (input.datasetId.length === 0 || input.metadataUri.length === 0) {
     throw new RangeError('Potree dataset and metadata URI must be non-empty');
   }
@@ -77,10 +81,13 @@ export async function admitCanonicalPotreeDatasetWith(
   if (viewer.geometryObjectContentHash(geometry) !== input.admission.selected.geometryRef) {
     throw new Error('canonical Potree geometry hash does not match the selected representation');
   }
-  if (viewer.canonicalEntityVersionHash(input.admission.entity) !== input.admission.entity.versionHash) {
+  if (
+    viewer.canonicalEntityVersionHash(input.admission.entity) !== input.admission.entity.versionHash
+  ) {
     throw new Error('canonical Potree entity version hash does not match its envelope');
   }
 
+  reportLoadProgress(progress, 'fetching', 0, total);
   const metadataBytes = await streaming.fetchImmutableResource(
     { uri: input.metadataUri, byteOffset: null, byteLength: null },
     signal,
@@ -94,12 +101,16 @@ export async function admitCanonicalPotreeDatasetWith(
   if ((await sha256Hex(metadataBytes)) !== geometry.dataset.metadata.objectHash) {
     throw new Error('Potree metadata content does not match canonical geometry');
   }
+  signal?.throwIfAborted();
+  reportLoadProgress(progress, 'verifying', 1, total);
   const firstChunkSize = parseFirstHierarchyChunkSize(metadataBytes);
   const hierarchyUri = resolveSiblingUri(input.metadataUri, 'hierarchy.bin');
   const firstHierarchyChunk = await streaming.fetchImmutableResource(
     { uri: hierarchyUri, byteOffset: 0, byteLength: firstChunkSize },
     signal,
   );
+  signal?.throwIfAborted();
+  reportLoadProgress(progress, 'publishing', 3, total);
 
   viewer.registerPotreeDataset(
     input.datasetId,
@@ -108,13 +119,15 @@ export async function admitCanonicalPotreeDatasetWith(
     metadataBytes,
     firstHierarchyChunk,
   );
-  return viewer.publishCanonicalRepresentations([
+  const mutation = viewer.publishCanonicalRepresentations([
     {
       admission: input.admission,
       datasetId: input.datasetId,
       ...(input.style === undefined ? {} : { style: input.style }),
     },
   ]);
+  reportLoadProgress(progress, 'complete', total, total);
+  return mutation;
 }
 
 function parseFirstHierarchyChunkSize(bytes: Uint8Array): number {
@@ -128,7 +141,11 @@ function parseFirstHierarchyChunkSize(bytes: Uint8Array): number {
     throw new TypeError('Potree metadata has no hierarchy object');
   }
   const size = value.hierarchy.firstChunkSize;
-  if (!Number.isSafeInteger(size) || Number(size) <= 0 || Number(size) > MAX_INITIAL_HIERARCHY_BYTES) {
+  if (
+    !Number.isSafeInteger(size) ||
+    Number(size) <= 0 ||
+    Number(size) > MAX_INITIAL_HIERARCHY_BYTES
+  ) {
     throw new RangeError('Potree hierarchy.firstChunkSize is outside the bounded bootstrap range');
   }
   return Number(size);

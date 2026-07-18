@@ -1443,6 +1443,24 @@ V5 lifecycle adapters. The viewer package passes 78/78 tests. Typed provider
 operation progress, exact API-surface freezing, headless/browser consumer hosts
 and final legacy-surface isolation remain active V5 work.
 
+### V5 typed provider operation checkpoint
+
+Potree, prepared triangle-mesh and prepared Civil-TIN admission now share one
+monotonic operation contract. Progress moves through validation, immutable
+fetch, verification and atomic publication; `complete` is emitted only after
+the canonical mutation succeeds. Abort is checked before work, after
+asynchronous fetch/hash boundaries and immediately before dataset registration
+and publication. A Potree regression aborts after the hierarchy fetch has
+returned and proves that neither dataset registration nor canonical publication
+occurs.
+
+`KernelViewerSession` assigns or preserves an operation ID, forwards progress
+both to the direct caller and its typed event stream, and distinguishes
+`aborted` from `loadFailed`. Progress callbacks and event listeners are
+observational: their exceptions are isolated and cannot turn a committed load
+into an apparent failure or mutate viewer state. The framework-free package
+suite now passes 79/79 tests.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

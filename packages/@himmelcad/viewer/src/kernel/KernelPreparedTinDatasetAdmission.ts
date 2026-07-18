@@ -1,5 +1,6 @@
 import type { CanonicalRepresentationAdmission, GeometryResource } from './generated/index.js';
 import type { KernelStreamingDriver } from './KernelStreamingDriver.js';
+import type { KernelLoadOperationOptions } from './KernelLoadOperation.js';
 import {
   admitCanonicalPreparedMeshDatasetWith,
   type KernelPreparedMeshDatasetResult,
@@ -55,8 +56,9 @@ export async function admitCanonicalPreparedTinDataset(
   streaming: KernelStreamingDriver,
   input: KernelPreparedTinDatasetAdmission,
   signal?: AbortSignal,
+  progress?: KernelLoadOperationOptions['onProgress'],
 ): Promise<KernelPreparedTinDatasetResult> {
-  return admitCanonicalPreparedTinDatasetWith(viewer, streaming, input, signal);
+  return admitCanonicalPreparedTinDatasetWith(viewer, streaming, input, signal, progress);
 }
 
 export async function admitCanonicalPreparedTinDatasetWith(
@@ -64,6 +66,7 @@ export async function admitCanonicalPreparedTinDatasetWith(
   streaming: ImmutableResourceFetcher,
   input: KernelPreparedTinDatasetAdmission,
   signal?: AbortSignal,
+  progress?: KernelLoadOperationOptions['onProgress'],
 ): Promise<KernelPreparedTinDatasetResult> {
   const geometry = input.admission.resolvedGeometry;
   if (
@@ -82,5 +85,6 @@ export async function admitCanonicalPreparedTinDatasetWith(
       providerVersion: '1.0.0',
     },
     signal,
+    progress,
   );
 }

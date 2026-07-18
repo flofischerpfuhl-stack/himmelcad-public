@@ -43,14 +43,7 @@ void test('canonical Potree bootstrap verifies metadata before registry publicat
       metadataJson: Uint8Array,
       hierarchy: Uint8Array,
     ): void {
-      calls.push([
-        'register',
-        datasetId,
-        formatId,
-        metadataUri,
-        metadataJson,
-        hierarchy,
-      ]);
+      calls.push(['register', datasetId, formatId, metadataUri, metadataJson, hierarchy]);
     },
     publishCanonicalRepresentations(
       admissions: readonly KernelCanonicalRenderAdmission[],
@@ -60,6 +53,7 @@ void test('canonical Potree bootstrap verifies metadata before registry publicat
     },
   };
   const requests: Array<readonly unknown[]> = [];
+  const progress: Array<readonly [string, number, number]> = [];
   const streaming = {
     fetchImmutableResource(reference: {
       readonly uri: string;
@@ -71,7 +65,12 @@ void test('canonical Potree bootstrap verifies metadata before registry publicat
     },
   };
 
-  assert.equal(await admitCanonicalPotreeDatasetWith(viewer, streaming, input), mutation);
+  assert.equal(
+    await admitCanonicalPotreeDatasetWith(viewer, streaming, input, undefined, (item) =>
+      progress.push([item.phase, item.completed, item.total]),
+    ),
+    mutation,
+  );
   assert.deepEqual(requests, [
     ['hcad-cache://local/dataset/metadata.json', null, null],
     ['hcad-cache://local/dataset/hierarchy.bin', 0, 22],
@@ -81,6 +80,50 @@ void test('canonical Potree bootstrap verifies metadata before registry publicat
   const published = calls[1]?.[1] as readonly KernelCanonicalRenderAdmission[];
   assert.equal(published[0]?.datasetId, 'dataset');
   assert.equal(published[0]?.admission, input.admission);
+  assert.deepEqual(progress, [
+    ['validating', 0, 4],
+    ['fetching', 0, 4],
+    ['verifying', 1, 4],
+    ['publishing', 3, 4],
+    ['complete', 4, 4],
+  ]);
+});
+
+void test('Potree abort after immutable fetch cannot publish a half-loaded dataset', async () => {
+  const metadata = new TextEncoder().encode(
+    JSON.stringify({ hierarchy: { firstChunkSize: 22 }, version: '2.0' }),
+  );
+  const input = await admission(metadata);
+  const abort = new AbortController();
+  let registrations = 0;
+  let publications = 0;
+  let fetches = 0;
+  const viewer = {
+    geometryObjectContentHash: () => input.admission.selected.geometryRef,
+    canonicalEntityVersionHash: () => input.admission.entity.versionHash,
+    registerPotreeDataset: () => {
+      registrations += 1;
+    },
+    publishCanonicalRepresentations: () => {
+      publications += 1;
+      return { entities: 0, slots: 0, proxies: 0, generation: 0, bindings: [] };
+    },
+  };
+  const streaming = {
+    fetchImmutableResource: () => {
+      fetches += 1;
+      if (fetches === 2) abort.abort();
+      return Promise.resolve(fetches === 1 ? metadata : new Uint8Array(22));
+    },
+  };
+
+  await assert.rejects(
+    admitCanonicalPotreeDatasetWith(viewer, streaming, input, abort.signal),
+    /abort/i,
+  );
+  assert.equal(fetches, 2);
+  assert.equal(registrations, 0);
+  assert.equal(publications, 0);
 });
 
 void test('tampered Potree metadata never reaches dataset registration', async () => {

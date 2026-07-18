@@ -4,6 +4,7 @@ import type {
   TriangleMeshGeometry,
 } from './generated/index.js';
 import type { KernelStreamingDriver } from './KernelStreamingDriver.js';
+import { reportLoadProgress, type KernelLoadOperationOptions } from './KernelLoadOperation.js';
 import type { KernelSectionTopologyPartitionLocation } from './KernelSectionTopologyEvaluation.js';
 import type {
   KernelCanonicalEntityMutation,
@@ -79,8 +80,9 @@ export async function admitCanonicalPreparedMeshDataset(
   streaming: KernelStreamingDriver,
   input: KernelPreparedMeshDatasetAdmission,
   signal?: AbortSignal,
+  progress?: KernelLoadOperationOptions['onProgress'],
 ): Promise<KernelPreparedMeshDatasetResult> {
-  return admitCanonicalPreparedMeshDatasetWith(viewer, streaming, input, signal);
+  return admitCanonicalPreparedMeshDatasetWith(viewer, streaming, input, signal, progress);
 }
 
 export async function admitCanonicalPreparedMeshDatasetWith(
@@ -88,7 +90,11 @@ export async function admitCanonicalPreparedMeshDatasetWith(
   streaming: ImmutableResourceFetcher,
   input: KernelPreparedMeshDatasetAdmission,
   signal?: AbortSignal,
+  progress?: KernelLoadOperationOptions['onProgress'],
 ): Promise<KernelPreparedMeshDatasetResult> {
+  const total = 4;
+  reportLoadProgress(progress, 'validating', 0, total);
+  signal?.throwIfAborted();
   if (
     input.datasetId.length === 0 ||
     input.manifestUri.length === 0 ||
@@ -122,6 +128,7 @@ export async function admitCanonicalPreparedMeshDatasetWith(
   ) {
     throw new Error('canonical mesh entity version hash does not match its envelope');
   }
+  reportLoadProgress(progress, 'fetching', 0, total);
   const [manifestBytes, preparationBytes, topologyBytes] = await Promise.all([
     fetchWhole(streaming, input.manifestUri, signal),
     fetchWhole(streaming, input.preparationUri, signal),
@@ -130,6 +137,8 @@ export async function admitCanonicalPreparedMeshDatasetWith(
   await verifyResource(renderResource, manifestBytes, 'mesh render manifest');
   await verifyResource(input.preparationResource, preparationBytes, 'mesh preparation recipe');
   await verifyResource(input.sectionTopologyResource, topologyBytes, 'mesh section topology');
+  signal?.throwIfAborted();
+  reportLoadProgress(progress, 'verifying', 2, total);
   const topology = parseSectionTopologyIndex(topologyBytes);
   if (topology.closedManifold !== mesh.closedManifold) {
     throw new TypeError('prepared mesh topology contradicts canonical open/closed semantics');
@@ -165,6 +174,8 @@ export async function admitCanonicalPreparedMeshDatasetWith(
       ...(input.style === undefined ? {} : { style: input.style }),
     },
   ];
+  signal?.throwIfAborted();
+  reportLoadProgress(progress, 'publishing', 3, total);
   const mutation = viewer.registerPreparedDatasetAndPublishCanonicalRepresentations(
     input.datasetId,
     renderResource.mediaType,
@@ -181,6 +192,7 @@ export async function admitCanonicalPreparedMeshDatasetWith(
       },
     ],
   );
+  reportLoadProgress(progress, 'complete', total, total);
   return { mutation, sectionTopologyParts };
 }
 

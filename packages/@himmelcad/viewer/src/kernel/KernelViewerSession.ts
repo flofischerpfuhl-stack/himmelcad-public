@@ -1,12 +1,22 @@
 import { KernelCameraController } from './KernelCameraController.js';
 import { KernelDecodeWorkerPool } from './KernelDecodeWorkerPool.js';
+import type { KernelLoadOperationOptions, KernelLoadProgress } from './KernelLoadOperation.js';
+import type { KernelPotreeDatasetAdmission } from './KernelPotreeDatasetAdmission.js';
+import type {
+  KernelPreparedMeshDatasetAdmission,
+  KernelPreparedMeshDatasetResult,
+} from './KernelPreparedMeshDatasetAdmission.js';
+import type {
+  KernelPreparedTinDatasetAdmission,
+  KernelPreparedTinDatasetResult,
+} from './KernelPreparedTinDatasetAdmission.js';
 import {
   KernelStreamingDriver,
   type KernelDecodeExecutor,
   type KernelFetch,
   type KernelStreamingDriverDiagnostics,
 } from './KernelStreamingDriver.js';
-import { KernelViewerScene } from './KernelViewerScene.js';
+import { KernelViewerScene, type KernelViewerEntityHandle } from './KernelViewerScene.js';
 import {
   kernelStreamingWorkPolicy,
   WgpuKernelViewer,
@@ -38,7 +48,8 @@ export type KernelViewerSessionErrorCode =
   | 'creationFailed'
   | 'deviceRecoveryFailed'
   | 'disposed'
-  | 'frameFailed';
+  | 'frameFailed'
+  | 'loadFailed';
 
 /** Stable typed error boundary exposed to product hosts. */
 export class KernelViewerSessionError extends Error {
@@ -66,6 +77,13 @@ export type KernelViewerSessionEvent =
       readonly reason: 'deviceLost' | 'outOfMemory';
     }
   | { readonly type: 'deviceRecoveryCompleted' }
+  | {
+      readonly type: 'loadProgress';
+      readonly operationId: string;
+      readonly entityId: string;
+      readonly datasetId: string;
+      readonly progress: KernelLoadProgress;
+    }
   | { readonly type: 'error'; readonly error: KernelViewerSessionError }
   | { readonly type: 'disposed' };
 
@@ -87,6 +105,10 @@ export interface KernelViewerSessionOptions {
   readonly authoritativeSectionTolerance?: number;
   readonly requestFrame?: () => void;
   readonly signal?: AbortSignal;
+}
+
+export interface KernelViewerLoadOptions extends KernelLoadOperationOptions {
+  readonly operationId?: string;
 }
 
 export interface KernelViewerSessionDiagnostics {
@@ -167,6 +189,7 @@ export class KernelViewerSession {
   private recovery: Promise<void> | null = null;
   private recoveryAbort: AbortController | null = null;
   private recoveryReason: 'deviceLost' | 'outOfMemory' | null = null;
+  private nextOperationId = 1;
 
   private constructor(
     private readonly options: KernelViewerSessionOptions,
@@ -236,6 +259,33 @@ export class KernelViewerSession {
     this.assertReady();
     this.viewerState.setClearColor(color);
     this.options.requestFrame?.();
+  }
+
+  loadPotree(
+    input: KernelPotreeDatasetAdmission,
+    options: KernelViewerLoadOptions = {},
+  ): Promise<KernelViewerEntityHandle> {
+    return this.loadProvider(input.admission.entity.id, input.datasetId, options, (control) =>
+      this.scene.loadPotree(input, control),
+    );
+  }
+
+  loadPreparedMesh(
+    input: KernelPreparedMeshDatasetAdmission,
+    options: KernelViewerLoadOptions = {},
+  ): Promise<KernelPreparedMeshDatasetResult & { readonly handle: KernelViewerEntityHandle }> {
+    return this.loadProvider(input.admission.entity.id, input.datasetId, options, (control) =>
+      this.scene.loadPreparedMesh(input, control),
+    );
+  }
+
+  loadPreparedTin(
+    input: KernelPreparedTinDatasetAdmission,
+    options: KernelViewerLoadOptions = {},
+  ): Promise<KernelPreparedTinDatasetResult & { readonly handle: KernelViewerEntityHandle }> {
+    return this.loadProvider(input.admission.entity.id, input.datasetId, options, (control) =>
+      this.scene.loadPreparedTin(input, control),
+    );
   }
 
   setEntityVisibility(entityId: string, visible: boolean): void {
@@ -475,6 +525,42 @@ export class KernelViewerSession {
       });
   }
 
+  private async loadProvider<T>(
+    entityId: string,
+    datasetId: string,
+    options: KernelViewerLoadOptions,
+    load: (control: KernelLoadOperationOptions) => Promise<T>,
+  ): Promise<T> {
+    this.assertReady();
+    const operationId = options.operationId ?? `viewer-load-${String(this.nextOperationId++)}`;
+    if (operationId.length === 0) throw new RangeError('viewer load operationId must be non-empty');
+    const onProgress = (progress: KernelLoadProgress): void => {
+      try {
+        options.onProgress?.(progress);
+      } catch {
+        // Product observers cannot affect canonical publication.
+      }
+      this.emit({ type: 'loadProgress', operationId, entityId, datasetId, progress });
+    };
+    try {
+      return await load({
+        ...(options.signal ? { signal: options.signal } : {}),
+        onProgress,
+      });
+    } catch (cause) {
+      const aborted = options.signal?.aborted || isAbort(cause);
+      const error = new KernelViewerSessionError(
+        aborted ? 'aborted' : 'loadFailed',
+        aborted
+          ? `viewer load ${operationId} was aborted`
+          : `viewer load ${operationId} failed: ${errorMessage(cause)}`,
+        { cause },
+      );
+      this.emit({ type: 'error', error });
+      throw error;
+    }
+  }
+
   private reportError(
     code: Extract<KernelViewerSessionErrorCode, 'deviceRecoveryFailed' | 'frameFailed'>,
     cause: unknown,
@@ -488,7 +574,13 @@ export class KernelViewerSession {
   }
 
   private emit(event: KernelViewerSessionEvent): void {
-    for (const listener of this.listeners) listener(event);
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch {
+        // Events are observational and never participate in viewer state changes.
+      }
+    }
   }
 
   private assertAlive(): void {

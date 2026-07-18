@@ -95,8 +95,15 @@ export type {
   KernelViewerSessionDiagnostics,
   KernelViewerSessionErrorCode,
   KernelViewerSessionEvent,
+  KernelViewerLoadOptions,
   KernelViewerSessionOptions,
 } from './kernel/KernelViewerSession.js';
+export type {
+  KernelLoadControl,
+  KernelLoadOperationOptions,
+  KernelLoadPhase,
+  KernelLoadProgress,
+} from './kernel/KernelLoadOperation.js';
 export { admitCanonicalPotreeDataset } from './kernel/KernelPotreeDatasetAdmission.js';
 export { admitCanonicalPreparedMeshDataset } from './kernel/KernelPreparedMeshDatasetAdmission.js';
 export type {

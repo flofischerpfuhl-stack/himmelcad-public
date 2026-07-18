@@ -3,6 +3,7 @@ export * from './KernelCanonicalDocument.js';
 export * from './KernelClipCapCoordinator.js';
 export * from './KernelDecodeWorkerPool.js';
 export * from './KernelLocalSectionView.js';
+export * from './KernelLoadOperation.js';
 export * from './KernelNavigationController.js';
 export * from './KernelPotreeDatasetAdmission.js';
 export * from './KernelPreparedMeshDatasetAdmission.js';

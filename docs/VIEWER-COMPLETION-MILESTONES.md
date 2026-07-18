@@ -503,6 +503,16 @@ einen eigenen Geometriepfad benötigt.
   verbietet React, Three, Electron, `@himmelcad/data`, Shared UI und App-
   Abhängigkeiten. Der Session-Lifecycle Create → Frame → Device-Rebuild →
   Dispose ist als Package-Test belegt; die Viewer-Suite steht bei 78/78.
+- Asynchrone Potree-, prepared-Mesh- und prepared-TIN-Loads besitzen nun einen
+  gemeinsamen monotonen Progressvertrag mit `validating`, `fetching`,
+  `verifying`, `publishing` und `complete`. `complete` wird ausschließlich nach
+  atomischer kanonischer Publikation gemeldet. Abort wird vor jedem Commit und
+  erneut nach Fetch/Hash geprüft; ein Test bricht Potree nach dem zweiten
+  unveränderlichen Fetch ab und belegt null Dataset-Registrierungen und null
+  Publikationen. Die Session versieht Loads mit stabilen Operation-IDs,
+  typisiert `aborted` gegenüber `loadFailed` und emittiert beobachtende
+  Progress-/Error-Events. Fehler in Hostcallbacks können den Load nicht
+  beeinflussen. Die Viewer-Suite steht bei 79/79.
 
 ## Zeitmessung und Fortschrittsprotokoll
 

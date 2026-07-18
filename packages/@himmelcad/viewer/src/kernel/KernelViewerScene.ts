@@ -13,6 +13,7 @@ import {
   type KernelPreparedTinDatasetResult,
 } from './KernelPreparedTinDatasetAdmission.js';
 import type { KernelStreamingDriver } from './KernelStreamingDriver.js';
+import { loadOperationOptions, type KernelLoadControl } from './KernelLoadOperation.js';
 import type {
   KernelCanonicalRenderAdmission,
   KernelCanonicalRetirementMutation,
@@ -112,10 +113,10 @@ export class KernelViewerScene {
   ): readonly KernelViewerEntityHandle[] {
     this.assertMutable();
     this.viewer.publishCanonicalRepresentations(admissions);
-    this.replaceReplayEntities(
-      entityIdsForAdmissions(admissions),
-      { kind: 'canonical', admissions: replaySnapshot(admissions) },
-    );
+    this.replaceReplayEntities(entityIdsForAdmissions(admissions), {
+      kind: 'canonical',
+      admissions: replaySnapshot(admissions),
+    });
     const handles = handlesForAdmissions(this, admissions);
     this.requestFrame();
     return handles;
@@ -123,14 +124,21 @@ export class KernelViewerScene {
 
   async loadPotree(
     input: KernelPotreeDatasetAdmission,
-    signal?: AbortSignal,
+    control?: KernelLoadControl,
   ): Promise<KernelViewerEntityHandle> {
     this.assertMutable();
-    await admitCanonicalPotreeDataset(this.viewer, this.streaming, input, signal);
-    this.replaceReplayEntities(
-      [input.admission.entity.id],
-      { kind: 'potree', input: replaySnapshot(input) },
+    const options = loadOperationOptions(control);
+    await admitCanonicalPotreeDataset(
+      this.viewer,
+      this.streaming,
+      input,
+      options.signal,
+      options.onProgress,
     );
+    this.replaceReplayEntities([input.admission.entity.id], {
+      kind: 'potree',
+      input: replaySnapshot(input),
+    });
     const handle = new KernelViewerEntityHandle(this, input.admission.entity.id, input.datasetId);
     this.requestFrame();
     return handle;
@@ -138,19 +146,21 @@ export class KernelViewerScene {
 
   async loadPreparedMesh(
     input: KernelPreparedMeshDatasetAdmission,
-    signal?: AbortSignal,
+    control?: KernelLoadControl,
   ): Promise<KernelPreparedMeshDatasetResult & { readonly handle: KernelViewerEntityHandle }> {
     this.assertMutable();
+    const options = loadOperationOptions(control);
     const result = await admitCanonicalPreparedMeshDataset(
       this.viewer,
       this.streaming,
       input,
-      signal,
+      options.signal,
+      options.onProgress,
     );
-    this.replaceReplayEntities(
-      [input.admission.entity.id],
-      { kind: 'preparedMesh', input: replaySnapshot(input) },
-    );
+    this.replaceReplayEntities([input.admission.entity.id], {
+      kind: 'preparedMesh',
+      input: replaySnapshot(input),
+    });
     const handle = new KernelViewerEntityHandle(this, input.admission.entity.id, input.datasetId);
     this.requestFrame();
     return { ...result, handle };
@@ -158,19 +168,21 @@ export class KernelViewerScene {
 
   async loadPreparedTin(
     input: KernelPreparedTinDatasetAdmission,
-    signal?: AbortSignal,
+    control?: KernelLoadControl,
   ): Promise<KernelPreparedTinDatasetResult & { readonly handle: KernelViewerEntityHandle }> {
     this.assertMutable();
+    const options = loadOperationOptions(control);
     const result = await admitCanonicalPreparedTinDataset(
       this.viewer,
       this.streaming,
       input,
-      signal,
+      options.signal,
+      options.onProgress,
     );
-    this.replaceReplayEntities(
-      [input.admission.entity.id],
-      { kind: 'preparedTin', input: replaySnapshot(input) },
-    );
+    this.replaceReplayEntities([input.admission.entity.id], {
+      kind: 'preparedTin',
+      input: replaySnapshot(input),
+    });
     const handle = new KernelViewerEntityHandle(this, input.admission.entity.id, input.datasetId);
     this.requestFrame();
     return { ...result, handle };
@@ -188,10 +200,10 @@ export class KernelViewerScene {
       input.admissions,
       input.topology,
     );
-    this.replaceReplayEntities(
-      entityIdsForAdmissions(input.admissions),
-      { kind: 'preparedHierarchy', input: replaySnapshot(input) },
-    );
+    this.replaceReplayEntities(entityIdsForAdmissions(input.admissions), {
+      kind: 'preparedHierarchy',
+      input: replaySnapshot(input),
+    });
     const handles = handlesForAdmissions(this, input.admissions, input.datasetId);
     this.requestFrame();
     return handles;
@@ -285,7 +297,11 @@ export class KernelViewerScene {
   private removeReplayEntities(entityIds: ReadonlySet<string>): void {
     const retained: KernelSceneReplayEntry[] = [];
     for (const entry of this.replayEntries) {
-      if (entry.kind === 'potree' || entry.kind === 'preparedMesh' || entry.kind === 'preparedTin') {
+      if (
+        entry.kind === 'potree' ||
+        entry.kind === 'preparedMesh' ||
+        entry.kind === 'preparedTin'
+      ) {
         if (!entityIds.has(entry.input.admission.entity.id)) retained.push(entry);
         continue;
       }
