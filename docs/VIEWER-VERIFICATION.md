@@ -1392,6 +1392,28 @@ requests. Final forced-WebGL2 and explicit-WebGPU correctness runs both pass the
 same deterministic lifecycle; the WebGPU adapter reports CPU and remains a
 correctness result rather than a hardware-performance claim.
 
+### V4 completion boundary
+
+V4 closed on July 18, 2026 at 18:48 CEST after 1 hour 44 minutes of measured
+active work. The portable engine boundary is green: one Rust/wgpu core serves
+explicit WebGPU and forced WebGL2; integrated and discrete low-profile hardware
+passes retain unchanged latency limits; mobile/WebView policy cannot cap
+desktop devices; surface loss and device/OOM loss have distinct recovery paths;
+canonical definitions, stable handles and presentation replay onto a new device;
+and repeated canonical unload/reload reaches complete zero residency before
+bounded provider re-fetch.
+
+The final physical mainstream attempt on the Quadro M2200 populated 12,160,512
+points, 2,097,152 triangles, 500,000 splats and 690 draw calls without provider
+failure. All three complete unloads reached zero in every stage and resource
+dimension; each reload made 125 new requests and returned to the same residency
+cost. The adapter is nevertheless not relabelled as mainstream: interaction
+p95/p99 was 32.1/61.4 ms and fails the unchanged 16.7/33 ms criterion. No
+suitable mainstream/high-end, Windows, macOS, Apple-Silicon or sustained mobile
+hardware is locally available. Those physical class results remain mandatory
+V6/release-conformance risks. They are not claimed as passes and, per project
+direction, do not block the start of V5's package/app-ready work.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

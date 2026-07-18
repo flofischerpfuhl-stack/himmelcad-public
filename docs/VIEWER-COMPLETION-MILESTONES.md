@@ -29,8 +29,8 @@ Fallback zählen nicht als Abschluss.
 | V1 | Imaging und Heavy-Geometry-Verträge | abgeschlossen | 2026-07-18 07:21 CEST | 2026-07-18 11:33 CEST | 4 h 12 min verstrichene Arbeitszeit |
 | V2 | Kanonische Entity- und Definitionsbreite | abgeschlossen | 2026-07-18 11:33 CEST | 2026-07-18 15:33 CEST | 4 h 00 min verstrichene Arbeitszeit |
 | V3 | Darstellung, Interaktion, Messung und Schnitte | abgeschlossen | 2026-07-18 15:33 CEST | 2026-07-18 17:04 CEST | 1 h 31 min verstrichene Arbeitszeit |
-| V4 | Civil-Scale, Hardware und Backend-Härtung | aktiv | 2026-07-18 17:04 CEST | – | läuft |
-| V5 | Stabile Viewer-Fassade und App-Ready-Gate | offen | – | – | – |
+| V4 | Civil-Scale, Hardware und Backend-Härtung | abgeschlossen; physische Klassen-Conformance in V6 | 2026-07-18 17:04 CEST | 2026-07-18 18:48 CEST | 1 h 44 min verstrichene Arbeitszeit |
+| V5 | Stabile Viewer-Fassade und App-Ready-Gate | aktiv | 2026-07-18 18:48 CEST | – | läuft |
 
 ## V1 – Imaging und Heavy-Geometry-Verträge
 
@@ -428,6 +428,21 @@ funktioniert.
   finale Intel-HD-630-Lauf erreicht p95/p99 30,8/36,1 ms und bestätigt erneut
   244/242/242 Reload-Requests. Beide bleiben unter den unveränderten
   Low-Grenzen 33/50 ms.
+- Der finale physische Mainstream-Versuch auf derselben Quadro materialisiert
+  12.160.512 Punkte, 2.097.152 Dreiecke, 500.000 Splats und 690 Draw Calls ohne
+  Providerfehler. Seine drei Voll-Reloads erreichen jeweils in allen
+  Kostenachsen null und anschließend identische Plateaus mit je 125 neuen
+  Requests. Die Karte verfehlt das unveränderte Mainstreamziel jedoch mit
+  p95/p99 32,1/61,4 ms und ist ausdrücklich **kein** Mainstream-Pass. Geeignete
+  Mainstream-/High-End-, Windows-, macOS-, Apple-Silicon- und mobile sustained
+  Hardware ist lokal nicht verfügbar. Diese physischen Klassenmessungen bleiben
+  deshalb verpflichtende V6-/Release-Conformance und werden weder geschönt noch
+  verwendet, um die abgeschlossene portable V4-Enginearbeit oder V5 aufzuhalten.
+
+V4 wurde am 2026-07-18 um 18:48 CEST nach 1 h 44 min aktiver Arbeit
+abgeschlossen. V5 begann unmittelbar danach. Der V4-Abschluss bedeutet keinen
+vorgetäuschten Pass der extern nicht verfügbaren Hardwareklassen; deren
+unveränderte Grenzwerte bleiben vor einem Release in V6 verbindlich.
 
 ## V5 – Stabile Viewer-Fassade und App-Ready-Gate
 
@@ -487,7 +502,8 @@ Zeit wird nicht geschätzt oder nachträglich rekonstruiert:
 | V1 | 2026-07-18 07:21 CEST | 2026-07-18 11:33 CEST | 4 h 12 min | Imaging und Heavy-Geometry-Verträge abgeschlossen |
 | V2 | 2026-07-18 11:33 CEST | 2026-07-18 15:33 CEST | 4 h 00 min | Kanonische Entity- und Definitionsbreite abgeschlossen |
 | V3 | 2026-07-18 15:33 CEST | 2026-07-18 17:04 CEST | 1 h 31 min | Darstellung, Interaktion, Messung und Schnitte abgeschlossen |
-| V4 | 2026-07-18 17:04 CEST | läuft | läuft | Civil-Scale-, Hardware- und Backend-Härtung gestartet |
+| V4 | 2026-07-18 17:04 CEST | 2026-07-18 18:48 CEST | 1 h 44 min | Portable Civil-Scale-, Recovery-, Residency- und Backend-Härtung abgeschlossen; physische Klassen-Conformance nach V6 überführt |
+| V5 | 2026-07-18 18:48 CEST | läuft | läuft | Stabile Viewer-Fassade und App-Ready-Gate gestartet |
 
 ### Abschlussnachweise
 
@@ -497,3 +513,4 @@ Zeit wird nicht geschätzt oder nachträglich rekonstruiert:
 | V1 | siehe V1-Abschluss und `docs/VIEWER-VERIFICATION.md` | 324 Render-Core-, 7 Viewer-WASM-, 4 Decode-WASM-, 71 Viewer-Pakettests; 29 Entities/37 Proxies | 4 h 12 min | 4 h 12 min |
 | V2 | `aecf700`, `c85d298` und vorherige V2-Slices | 38 Entities/47 Proxies; checksum-gepinnte DXF-/IFC-/LandXML-Providerpfade auf WebGPU/WebGL2 | 4 h 00 min | 4 h 00 min |
 | V3 | `b2d9a7f`, `c4b017b`, `f1fef3f` und V3-Abschlusscommit | 320 Render-Core-, 7 Viewer-WASM-, 73 Viewer-Pakettests; 38 Entities/47 Proxies; Real-Data-Farbparität RMSE 0,011007 | 1 h 31 min | 1 h 31 min |
+| V4 | `40ea2cf` bis V4-Abschlusscommit | 322 Render-Core-, 7 Viewer-WASM-, 75 Viewer-Pakettests; WebGPU/WebGL2 Device-Rebuild; Intel- und Quadro-Low grün; vollständige Null-Eviction und stabile Reload-Plateaus; Mainstream-Residency grün, Quadro-Latenz ehrlich nicht bestanden und nach V6 überführt | 1 h 44 min | 1 h 44 min |
