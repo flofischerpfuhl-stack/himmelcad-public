@@ -54,6 +54,7 @@ struct RasterMetadata {
     contract: PreparedRasterTileContract,
     elevation_payload_byte_length: usize,
     validity_payload_byte_length: usize,
+    confidence_payload_byte_length: usize,
     triangle_mask_payload_byte_length: usize,
 }
 
@@ -148,16 +149,23 @@ pub fn decode_streaming_payload(
                 .contract
                 .elevation_grid_decode_semantics()
                 .map_err(js_error)?;
-            let (elevations, validity_mask, triangle_mask) = split_raster_bands(
+            let (elevations, validity_mask, confidence, triangle_mask) = split_raster_bands(
                 secondary,
                 metadata.elevation_payload_byte_length,
                 metadata.validity_payload_byte_length,
+                metadata.confidence_payload_byte_length,
                 metadata.triangle_mask_payload_byte_length,
             )
             .map_err(error)?;
             metadata
                 .contract
-                .validate_payloads(primary, elevations, validity_mask, triangle_mask)
+                .validate_payloads(
+                    primary,
+                    elevations,
+                    validity_mask,
+                    confidence,
+                    triangle_mask,
+                )
                 .map_err(js_error)?;
             let anchor = metadata
                 .bounds
@@ -192,12 +200,16 @@ fn split_raster_bands(
     packed: &[u8],
     elevation_length: usize,
     validity_length: usize,
+    confidence_length: usize,
     triangle_mask_length: usize,
-) -> Result<(&[u8], Option<&[u8]>, Option<&[u8]>), &'static str> {
+) -> Result<(&[u8], Option<&[u8]>, Option<&[u8]>, Option<&[u8]>), &'static str> {
     let validity_end = elevation_length
         .checked_add(validity_length)
         .ok_or("raster side-band byte length overflow")?;
-    let total = validity_end
+    let confidence_end = validity_end
+        .checked_add(confidence_length)
+        .ok_or("raster side-band byte length overflow")?;
+    let total = confidence_end
         .checked_add(triangle_mask_length)
         .ok_or("raster side-band byte length overflow")?;
     if total != packed.len() {
@@ -205,8 +217,9 @@ fn split_raster_bands(
     }
     let elevations = &packed[..elevation_length];
     let validity = (validity_length != 0).then_some(&packed[elevation_length..validity_end]);
-    let triangle_mask = (triangle_mask_length != 0).then_some(&packed[validity_end..total]);
-    Ok((elevations, validity, triangle_mask))
+    let confidence = (confidence_length != 0).then_some(&packed[validity_end..confidence_end]);
+    let triangle_mask = (triangle_mask_length != 0).then_some(&packed[confidence_end..total]);
+    Ok((elevations, validity, confidence, triangle_mask))
 }
 
 fn aggregate_worker_input_bytes(lengths: [usize; 7]) -> Option<usize> {
@@ -269,13 +282,14 @@ mod tests {
 
     #[test]
     fn raster_side_bands_are_split_without_copying_or_ambiguity() {
-        let packed = [1_u8, 2, 3, 4, 5, 6, 7];
-        let (elevation, validity, triangles) =
-            split_raster_bands(&packed, 4, 1, 2).expect("exact bands");
+        let packed = [1_u8, 2, 3, 4, 5, 6, 7, 8, 9];
+        let (elevation, validity, confidence, triangles) =
+            split_raster_bands(&packed, 4, 1, 2, 2).expect("exact bands");
         assert_eq!(elevation, [1, 2, 3, 4]);
         assert_eq!(validity, Some([5].as_slice()));
-        assert_eq!(triangles, Some([6, 7].as_slice()));
-        assert!(split_raster_bands(&packed, 4, 1, 1).is_err());
+        assert_eq!(confidence, Some([6, 7].as_slice()));
+        assert_eq!(triangles, Some([8, 9].as_slice()));
+        assert!(split_raster_bands(&packed, 4, 1, 2, 1).is_err());
     }
 
     #[test]

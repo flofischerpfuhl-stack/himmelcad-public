@@ -291,17 +291,20 @@ void test('dataset bootstrap fetches share the live kernel request ceiling', asy
   driver.dispose();
 });
 
-void test('raster content hash-verifies and packs its elevation and validity side-bands', async () => {
+void test('raster hash-verifies and packs elevation, validity and confidence side-bands', async () => {
   const target = new RecordingTarget();
   const uris: string[] = [];
   const elevationBytes = new Uint8Array(new Float32Array([12]).buffer);
   const validityBytes = new Uint8Array([1]);
+  const confidenceBytes = new Uint8Array([204]);
   const driver = streamingDriver(target, (uri) => {
     uris.push(uri);
     const bytes = uri.endsWith('height.raw')
       ? elevationBytes
       : uri.endsWith('validity.bin')
         ? validityBytes
+        : uri.endsWith('confidence.bin')
+          ? confidenceBytes
         : new Uint8Array([255, 0, 0, 255]);
     return Promise.resolve(new Response(bytes));
   });
@@ -348,6 +351,13 @@ void test('raster content hash-verifies and packs its elevation and validity sid
                 byteLength: null,
                 contentHash: await testSha256Hex(validityBytes),
               },
+              confidenceReference: {
+                uri: 'confidence.bin',
+                byteOffset: null,
+                byteLength: null,
+                contentHash: await testSha256Hex(confidenceBytes),
+                encoding: 'unorm8',
+              },
               triangleMaskReference: null,
             },
           },
@@ -360,6 +370,7 @@ void test('raster content hash-verifies and packs its elevation and validity sid
     'https://example.test/tiles/color.rgba',
     'https://example.test/tiles/height.raw',
     'https://example.test/tiles/validity.bin',
+    'https://example.test/tiles/confidence.bin',
   ]);
   driver.execute(plan({ kind: 'decodeTile', ticket }));
   await driver.settled();
@@ -371,10 +382,23 @@ void test('raster content hash-verifies and packs its elevation and validity sid
     )?.raster?.depth?.sampling?.connectivity?.kind,
     'pixelSteps',
   );
-  assert.equal(target.stagedRaster[0]?.elevations.byteLength, 5);
+  assert.equal(target.stagedRaster[0]?.elevations.byteLength, 6);
   assert.equal(target.stagedRaster[0]?.metadata.elevationPayloadByteLength, 4);
   assert.equal(target.stagedRaster[0]?.metadata.validityPayloadByteLength, 1);
+  assert.equal(target.stagedRaster[0]?.metadata.confidencePayloadByteLength, 1);
   assert.equal(target.stagedRaster[0]?.metadata.triangleMaskPayloadByteLength, 0);
+  assert.equal(
+    (
+      target.stagedRaster[0]?.metadata.contract as
+        | {
+            readonly raster?: {
+              readonly depth?: { readonly confidence?: { readonly encoding?: string } | null };
+            };
+          }
+        | undefined
+    )?.raster?.depth?.confidence?.encoding,
+    'unorm8',
+  );
   driver.dispose();
 });
 
@@ -416,6 +440,7 @@ void test('tampered raster elevation never becomes fetched residency', async () 
             contentHash: '00'.repeat(32),
           },
           validityReference: null,
+          confidenceReference: null,
           triangleMaskReference: null,
         },
       },

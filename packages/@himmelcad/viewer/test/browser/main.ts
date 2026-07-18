@@ -2502,6 +2502,7 @@ async function installProviderFixtures(viewer: WgpuKernelViewer) {
     noData: { kind: 'numeric' as const, value: -9_999 },
     elevationPayloadByteLength: elevations.length * Float32Array.BYTES_PER_ELEMENT,
     validityPayloadByteLength: 0,
+    confidencePayloadByteLength: 0,
     triangleMaskPayloadByteLength: 0,
     style: style([1, 1, 1, 1], 1, { kind: 'source' }),
   };

@@ -118,6 +118,7 @@ interface FetchedPayload {
   readonly streamId: string;
   readonly elevationBytes: Uint8Array;
   readonly validityBytes: Uint8Array;
+  readonly confidenceBytes: Uint8Array;
   readonly triangleMaskBytes: Uint8Array;
   readonly assetBundle: KernelResolvedAssetBundle;
 }
@@ -176,6 +177,13 @@ export interface KernelRasterDecoderParameters {
     readonly byteOffset: number | null;
     readonly byteLength: number | null;
     readonly contentHash: string | null;
+  } | null;
+  readonly confidenceReference: {
+    readonly uri: string;
+    readonly byteOffset: number | null;
+    readonly byteLength: number | null;
+    readonly contentHash: string | null;
+    readonly encoding: 'unorm8' | 'float32LittleEndian';
   } | null;
   readonly triangleMaskReference: {
     readonly uri: string;
@@ -470,6 +478,7 @@ export class KernelStreamingDriver {
               : EMPTY_ASSET_BUNDLE;
           let elevationBytes: Uint8Array = new Uint8Array(0);
           let validityBytes: Uint8Array = new Uint8Array(0);
+          let confidenceBytes: Uint8Array = new Uint8Array(0);
           let triangleMaskBytes: Uint8Array = new Uint8Array(0);
           if (reference.kind === 'raster') {
             const parameters = parseRasterParameters(reference.decoderParameters);
@@ -493,6 +502,16 @@ export class KernelStreamingDriver {
                 'raster validity',
               );
             }
+            if (parameters.confidenceReference) {
+              confidenceBytes = await this.fetchVerifiedBytes(
+                {
+                  ...parameters.confidenceReference,
+                  uri: resolveSiblingUri(reference.uri, parameters.confidenceReference.uri),
+                },
+                controller.signal,
+                'raster confidence',
+              );
+            }
             if (parameters.triangleMaskReference) {
               triangleMaskBytes = await this.fetchVerifiedBytes(
                 {
@@ -510,6 +529,7 @@ export class KernelStreamingDriver {
             assetBundle,
             elevationBytes,
             validityBytes,
+            confidenceBytes,
             triangleMaskBytes,
             streamId: streamId(ticket.key, index),
           };
@@ -524,6 +544,7 @@ export class KernelStreamingDriver {
             payload.bytes.byteLength +
             payload.elevationBytes.byteLength +
             payload.validityBytes.byteLength +
+            payload.confidenceBytes.byteLength +
             payload.triangleMaskBytes.byteLength,
           0,
         ) + payloads.reduce((total, payload) => total + payload.assetBundle.bytes.byteLength, 0);
@@ -647,10 +668,12 @@ export class KernelStreamingDriver {
                       payload.bytes,
                       payload.elevationBytes,
                       payload.validityBytes,
+                      payload.confidenceBytes,
                       payload.triangleMaskBytes,
                     ),
                     elevationPayloadByteLength: payload.elevationBytes.byteLength,
                     validityPayloadByteLength: payload.validityBytes.byteLength,
+                    confidencePayloadByteLength: payload.confidenceBytes.byteLength,
                     triangleMaskPayloadByteLength: payload.triangleMaskBytes.byteLength,
                   } satisfies KernelRasterContentMetadata);
         const metadataJson = JSON.stringify(metadata);
@@ -666,6 +689,7 @@ export class KernelStreamingDriver {
             packRasterBands(
               payload.elevationBytes,
               payload.validityBytes,
+              payload.confidenceBytes,
               payload.triangleMaskBytes,
             ),
           ),
@@ -1151,6 +1175,7 @@ async function buildPreparedRasterContract(
   color: Uint8Array,
   depth: Uint8Array,
   validity: Uint8Array,
+  confidence: Uint8Array,
   triangleMask: Uint8Array,
 ): Promise<KernelRasterContentMetadata['contract']> {
   const resource = async (bytes: Uint8Array, mediaType: string) => ({
@@ -1208,7 +1233,18 @@ async function buildPreparedRasterContract(
                 ),
                 encoding: 'bitsetLsb0',
               },
-        confidence: null,
+        confidence:
+          parameters.confidenceReference === null
+            ? null
+            : {
+                resource: await resource(
+                  confidence,
+                  parameters.confidenceReference.encoding === 'unorm8'
+                    ? 'application/vnd.himmelcad.raster-confidence+unorm8'
+                    : 'application/vnd.himmelcad.raster-confidence+f32le',
+                ),
+                encoding: parameters.confidenceReference.encoding,
+              },
         sampling: {
           semantics: 'elevationZ',
           interpolation: 'discontinuityAware',
@@ -1238,6 +1274,13 @@ function parseRasterParameters(value: unknown): KernelRasterDecoderParameters {
     !(value.elevationReference === null || validHashedByteReference(value.elevationReference)) ||
     !(value.validityReference === null || validHashedByteReference(value.validityReference)) ||
     !(
+      value.confidenceReference === null ||
+      (record(value.confidenceReference) &&
+        validHashedByteReference(value.confidenceReference) &&
+        (value.confidenceReference.encoding === 'unorm8' ||
+          value.confidenceReference.encoding === 'float32LittleEndian'))
+    ) ||
+    !(
       value.triangleMaskReference === null ||
       validHashedByteReference(value.triangleMaskReference)
     )
@@ -1263,14 +1306,22 @@ function parseRasterParameters(value: unknown): KernelRasterDecoderParameters {
 function packRasterBands(
   elevations: Uint8Array,
   validity: Uint8Array,
+  confidence: Uint8Array,
   triangleMask: Uint8Array,
 ): Uint8Array {
   const packed = new Uint8Array(
-    elevations.byteLength + validity.byteLength + triangleMask.byteLength,
+    elevations.byteLength +
+      validity.byteLength +
+      confidence.byteLength +
+      triangleMask.byteLength,
   );
   packed.set(elevations, 0);
   packed.set(validity, elevations.byteLength);
-  packed.set(triangleMask, elevations.byteLength + validity.byteLength);
+  packed.set(confidence, elevations.byteLength + validity.byteLength);
+  packed.set(
+    triangleMask,
+    elevations.byteLength + validity.byteLength + confidence.byteLength,
+  );
   return packed;
 }
 

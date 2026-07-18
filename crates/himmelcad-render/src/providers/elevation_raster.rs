@@ -7,8 +7,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use himmelcad_core::entity_model::{
-    DepthSemantics, GeometryObject, RasterCellDiagonal, RasterConnectivity, RasterImageGeometry,
-    RasterMapping,
+    DepthSemantics, GeometryObject, RasterCellDiagonal, RasterConfidenceEncoding,
+    RasterConnectivity, RasterImageGeometry, RasterMapping,
 };
 use himmelcad_core::entity_validation::validate_geometry_object;
 
@@ -107,6 +107,7 @@ impl PreparedRasterTileContract {
         color: &[u8],
         depth: &[u8],
         validity: Option<&[u8]>,
+        confidence: Option<&[u8]>,
         connectivity: Option<&[u8]>,
     ) -> Result<(), ElevationRasterError> {
         self.validate()?;
@@ -117,13 +118,30 @@ impl PreparedRasterTileContract {
             .ok_or(ElevationRasterError::Contract)?;
         if !resource_matches(&self.raster.pixels, color)
             || !resource_matches(&depth_field.values, depth)
-            || depth_field.confidence.is_some()
             || !optional_resource_matches(
                 depth_field.validity.as_ref().map(|mask| &mask.resource),
                 validity,
             )
+            || !optional_resource_matches(
+                depth_field.confidence.as_ref().map(|band| &band.resource),
+                confidence,
+            )
         {
             return Err(ElevationRasterError::Contract);
+        }
+        if let (Some(band), Some(bytes)) = (&depth_field.confidence, confidence) {
+            let normalized = match band.encoding {
+                RasterConfidenceEncoding::Unorm8 => true,
+                RasterConfidenceEncoding::Float32LittleEndian => {
+                    bytes.chunks_exact(4).all(|sample| {
+                        let value = f32::from_le_bytes(sample.try_into().unwrap());
+                        (0.0..=1.0).contains(&value)
+                    })
+                }
+            };
+            if !normalized {
+                return Err(ElevationRasterError::Contract);
+            }
         }
         let connectivity_resource = match &depth_field.sampling.connectivity {
             RasterConnectivity::Mask { resource, .. } => Some(resource),
@@ -869,8 +887,8 @@ fn pixel_count(width: u32, height: u32) -> Result<usize, ElevationRasterError> {
 mod tests {
     use himmelcad_core::entity_model::{
         DepthField, DepthSampling, DepthSemantics, GeometryResource, OrthoGridMapping,
-        RasterCellDiagonal, RasterConnectivity, RasterImageGeometry, RasterInterpolation,
-        RasterMapping, Vector3,
+        RasterCellDiagonal, RasterConfidenceBand, RasterConfidenceEncoding, RasterConnectivity,
+        RasterImageGeometry, RasterInterpolation, RasterMapping, Vector3,
     };
     use himmelcad_core::hash::ObjectHash;
 
@@ -955,11 +973,11 @@ mod tests {
         let mut contract = prepared_contract();
         assert_eq!(contract.validate(), Ok(()));
         assert_eq!(
-            contract.validate_payloads(&[255; 16], &[0; 16], None, None),
+            contract.validate_payloads(&[255; 16], &[0; 16], None, None, None),
             Ok(())
         );
         assert_eq!(
-            contract.validate_payloads(&[254; 16], &[0; 16], None, None),
+            contract.validate_payloads(&[254; 16], &[0; 16], None, None, None),
             Err(super::ElevationRasterError::Contract)
         );
 
@@ -972,6 +990,43 @@ mod tests {
         contract.raster.depth = None;
         assert_eq!(
             contract.validate(),
+            Err(super::ElevationRasterError::Contract)
+        );
+    }
+
+    #[test]
+    fn prepared_contract_transports_confidence_without_changing_surface_semantics() {
+        let mut contract = prepared_contract();
+        let confidence = [0_u8, 127, 255, 64];
+        contract.raster.depth.as_mut().unwrap().confidence = Some(RasterConfidenceBand {
+            resource: resource(
+                &confidence,
+                "application/vnd.himmelcad.raster-confidence+unorm8",
+            ),
+            encoding: RasterConfidenceEncoding::Unorm8,
+        });
+        assert_eq!(
+            contract.validate_payloads(&[255; 16], &[0; 16], None, Some(&confidence), None,),
+            Ok(())
+        );
+        assert_eq!(
+            contract.validate_payloads(&[255; 16], &[0; 16], None, None, None),
+            Err(super::ElevationRasterError::Contract)
+        );
+
+        let invalid = [1.5_f32, 0.5, 0.25, 0.0]
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect::<Vec<_>>();
+        contract.raster.depth.as_mut().unwrap().confidence = Some(RasterConfidenceBand {
+            resource: resource(
+                &invalid,
+                "application/vnd.himmelcad.raster-confidence+f32le",
+            ),
+            encoding: RasterConfidenceEncoding::Float32LittleEndian,
+        });
+        assert_eq!(
+            contract.validate_payloads(&[255; 16], &[0; 16], None, Some(&invalid), None,),
             Err(super::ElevationRasterError::Contract)
         );
     }

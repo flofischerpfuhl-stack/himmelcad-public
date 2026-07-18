@@ -647,6 +647,7 @@ export interface KernelRasterContentMetadata extends KernelCanonicalStreamMetada
   };
   readonly elevationPayloadByteLength: number;
   readonly validityPayloadByteLength: number;
+  readonly confidencePayloadByteLength: number;
   readonly triangleMaskPayloadByteLength: number;
   readonly style?: KernelRenderStyle;
   readonly exaggerationDatum?: number;

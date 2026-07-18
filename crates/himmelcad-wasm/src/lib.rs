@@ -300,12 +300,16 @@ fn split_streamed_raster_bands(
     packed: &[u8],
     elevation_length: usize,
     validity_length: usize,
+    confidence_length: usize,
     triangle_mask_length: usize,
-) -> Result<(&[u8], Option<&[u8]>, Option<&[u8]>), &'static str> {
+) -> Result<(&[u8], Option<&[u8]>, Option<&[u8]>, Option<&[u8]>), &'static str> {
     let validity_end = elevation_length
         .checked_add(validity_length)
         .ok_or("Raster side-band byte length overflow")?;
-    let total = validity_end
+    let confidence_end = validity_end
+        .checked_add(confidence_length)
+        .ok_or("Raster side-band byte length overflow")?;
+    let total = confidence_end
         .checked_add(triangle_mask_length)
         .ok_or("Raster side-band byte length overflow")?;
     if total != packed.len() {
@@ -314,7 +318,8 @@ fn split_streamed_raster_bands(
     Ok((
         &packed[..elevation_length],
         (validity_length != 0).then_some(&packed[elevation_length..validity_end]),
-        (triangle_mask_length != 0).then_some(&packed[validity_end..]),
+        (confidence_length != 0).then_some(&packed[validity_end..confidence_end]),
+        (triangle_mask_length != 0).then_some(&packed[confidence_end..]),
     ))
 }
 
@@ -1115,6 +1120,7 @@ struct WasmRasterMetadata {
     contract: PreparedRasterTileContract,
     elevation_payload_byte_length: usize,
     validity_payload_byte_length: usize,
+    confidence_payload_byte_length: usize,
     triangle_mask_payload_byte_length: usize,
     #[serde(skip)]
     style: RenderStyle,
@@ -2667,16 +2673,18 @@ impl WasmViewer {
                     &metadata.stream_id,
                     StreamContentKind::Raster,
                 )?;
-                let (elevations, validity, triangle_mask) = split_streamed_raster_bands(
-                    secondary,
-                    metadata.elevation_payload_byte_length,
-                    metadata.validity_payload_byte_length,
-                    metadata.triangle_mask_payload_byte_length,
-                )
-                .map_err(JsValue::from_str)?;
+                let (elevations, validity, confidence, triangle_mask) =
+                    split_streamed_raster_bands(
+                        secondary,
+                        metadata.elevation_payload_byte_length,
+                        metadata.validity_payload_byte_length,
+                        metadata.confidence_payload_byte_length,
+                        metadata.triangle_mask_payload_byte_length,
+                    )
+                    .map_err(JsValue::from_str)?;
                 metadata
                     .contract
-                    .validate_payloads(primary, elevations, validity, triangle_mask)
+                    .validate_payloads(primary, elevations, validity, confidence, triangle_mask)
                     .map_err(js_error)?;
                 let pick_index = ElevationRasterPickRefiner::from_decoded(
                     mapping,
@@ -13813,12 +13821,13 @@ mod tests {
 
     #[test]
     fn streamed_raster_band_boundaries_are_exact_and_non_overlapping() {
-        let packed = [1_u8, 2, 3, 4, 5, 6];
-        let (elevation, validity, triangles) =
-            split_streamed_raster_bands(&packed, 3, 1, 2).expect("exact packed bands");
+        let packed = [1_u8, 2, 3, 4, 5, 6, 7, 8];
+        let (elevation, validity, confidence, triangles) =
+            split_streamed_raster_bands(&packed, 3, 1, 2, 2).expect("exact packed bands");
         assert_eq!(elevation, [1, 2, 3]);
         assert_eq!(validity, Some([4].as_slice()));
-        assert_eq!(triangles, Some([5, 6].as_slice()));
-        assert!(split_streamed_raster_bands(&packed, 3, 1, 1).is_err());
+        assert_eq!(confidence, Some([5, 6].as_slice()));
+        assert_eq!(triangles, Some([7, 8].as_slice()));
+        assert!(split_streamed_raster_bands(&packed, 3, 1, 2, 1).is_err());
     }
 }
