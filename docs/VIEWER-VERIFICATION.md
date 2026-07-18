@@ -1548,9 +1548,26 @@ The functional contract executes all three adapter exports with a deterministic
 headless WASM boundary. A separate source gate permits the shared loader only
 one import, the public kernel entry, and requires both environment adapters to
 be pure re-exports of that loader. The viewer package now passes 84/84 tests.
-This proves public API consumption and shared host wiring; launching the new
-minimal adapter in actual Chromium and Electron processes remains an explicit
-V5 completion action rather than being inferred from the Node host contract.
+This proves public API consumption and shared host wiring. Render-Core and real
+WASM correctness remain covered by the separate full browser fixture rather
+than being inferred from this deterministic host-boundary test.
+
+### V5 browser and Electron process checkpoint
+
+The shared public consumer was bundled once (241.1 kB) and launched unchanged
+in headless Google Chrome and an actual Electron 43 `BrowserWindow`. Both
+renderer processes selected their one-line environment adapter, loaded the
+same four-entity mixed scene, reported the exact same stable handle identities,
+and proved that disposing the session invalidated diagnostics. Neither process
+had Node integration; the Electron window used context isolation and sandboxing.
+
+This process gate deliberately supplies a deterministic in-memory WASM boundary
+because it tests package resolution, renderer compatibility and lifecycle
+ownership. It is not relabelled as GPU or Rust correctness evidence; the real
+WASM WebGPU/WebGL2 browser fixture remains the authority for those properties.
+The strict browser contract typechecks the process host and the executable gate
+reports `{ browser: "pass", electron: "pass", entities: 4,
+publicFacadeOnly: true }`.
 
 ## Candidate external data
 

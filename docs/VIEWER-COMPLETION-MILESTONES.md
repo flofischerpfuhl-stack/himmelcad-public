@@ -558,9 +558,12 @@ einen eigenen Geometriepfad benötigt.
   Depth, Validity und evaluated Mesh werden vorher ausschließlich über die
   Session registriert. Alle drei Adapter führen denselben Loader aus, liefern
   dieselben stabilen Entity-Handles und disposen ihren einzigen Owner. Ein
-  Source-Gate erlaubt dem Consumer genau den Public-Entry. Die Node-basierte
-  Host-Contract-Suite steht bei 84/84; echte Browser-/Electron-Prozessausführung
-  dieses Minimalhosts bleibt vor dem V5-Abschluss noch auszuführen.
+  Source-Gate erlaubt dem Consumer genau den Public-Entry. Die Host-Contract-
+  Suite steht bei 84/84. Derselbe 241,1-kB-Bundle wurde zusätzlich in headless
+  Google Chrome und einem echten Electron-43-`BrowserWindow` gestartet; beide
+  Prozesse lieferten vier identische Handles und bestätigten Dispose ihres
+  Session-Owners. Der Browser-Contract-Typecheck einschließlich Prozesshost ist
+  grün.
 
 ## Zeitmessung und Fortschrittsprotokoll
 

@@ -28,6 +28,7 @@
     "test:browser-kernel-real-webgl2": "node test/browser/kernel-browser-e2e.mjs --real --webgl2",
     "test:browser-kernel-color-parity": "node test/browser/kernel-color-parity.mjs",
     "test:browser-kernel-real-parity": "node test/browser/kernel-browser-e2e.mjs --real && node test/browser/kernel-browser-e2e.mjs --real --webgl2 && node test/browser/kernel-color-parity.mjs",
+    "test:public-consumer-processes": "node test/consumer/public-process-hosts.mjs",
     "test:decode-wasm-artifact": "node ../../../scripts/check-decode-wasm-artifact.mjs"
   },
   "peerDependencies": {
