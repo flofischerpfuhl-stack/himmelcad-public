@@ -1584,6 +1584,21 @@ kernel entry. The package typecheck and all 85 viewer tests pass. This is
 compatibility isolation, not a claim that Builder, PhotoLab or WeltView have
 already replaced their UI wiring.
 
+### V5 consumer documentation checkpoint
+
+The viewer package now documents its complete stable integration contract next
+to the exported code. The guide covers session creation/frame/disposal,
+navigation, immutable resource-before-entity ordering, inline and every
+prepared/provider load path, typed abort/progress/atomic publication, f64 Source
+authority, the mandatory plan-only behavior for any missing Z, measurement and
+section operations, events, diagnostics, device replay and the React/legacy
+migration boundary.
+
+The package guide, ADRs, milestone plan and verification history now describe
+the same ownership and geometry semantics. No live height resolver, secondary
+renderer or product-specific dependency is presented as part of the stable
+facade.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.
