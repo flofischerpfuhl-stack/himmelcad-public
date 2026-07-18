@@ -1569,6 +1569,21 @@ The strict browser contract typechecks the process host and the executable gate
 reports `{ browser: "pass", electron: "pass", entities: 4,
 publicFacadeOnly: true }`.
 
+### V5 legacy compatibility isolation checkpoint
+
+The complete historical React/Three export surface now lives in
+`src/legacy.ts` and is addressable explicitly as `@himmelcad/viewer/legacy`.
+The original package root is only a deprecated one-line re-export so the three
+product lanes can migrate in their own lifecycle/UI work without being edited
+by this viewer milestone. New hosts use the separately frozen
+`@himmelcad/viewer/kernel` entry.
+
+An architecture gate verifies the manifest mapping, exact root shim, legacy
+Viewport ownership and absence of any legacy re-export through the stable
+kernel entry. The package typecheck and all 85 viewer tests pass. This is
+compatibility isolation, not a claim that Builder, PhotoLab or WeltView have
+already replaced their UI wiring.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

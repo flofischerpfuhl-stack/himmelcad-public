@@ -564,6 +564,13 @@ einen eigenen Geometriepfad benötigt.
   Prozesse lieferten vier identische Handles und bestätigten Dispose ihres
   Session-Owners. Der Browser-Contract-Typecheck einschließlich Prozesshost ist
   grün.
+- Die alte Three-/React-Oberfläche liegt nun physisch in `src/legacy.ts` und ist
+  explizit als `@himmelcad/viewer/legacy` exportiert. Der bisherige Package-Root
+  bleibt ausschließlich als deprecater Einzeilen-Kompatibilitätsshim bestehen,
+  damit Builder-, PhotoLab- und WeltView-Lanes nicht in diesem Viewer-Slice
+  verändert werden. Ein Gate belegt diese Trennung und verhindert, dass der
+  Legacy-Entry den stabilen Kernel-Entry re-exportiert. Paket-Typecheck und
+  85/85 Viewer-Tests sind grün.
 
 ## Zeitmessung und Fortschrittsprotokoll
 
