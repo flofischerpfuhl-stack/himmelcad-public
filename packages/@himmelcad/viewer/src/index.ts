@@ -157,6 +157,7 @@ export type {
   KernelTransformEntityCommand,
   KernelFrameOutcome,
   KernelFrameBudget,
+  KernelHardwareDeploymentProfile,
   KernelHardwareInventory,
   KernelDeviceCalibration,
   KernelResolvedHardwarePolicy,

@@ -399,7 +399,8 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
         maxSampleCount: 8,
       });
     },
-    hardware_policy_json(): string {
+    hardware_policy_json(requestJson): string {
+      calls.push(['hardwarePolicy', JSON.parse(requestJson)]);
       return JSON.stringify(testHardwarePolicy());
     },
     runtime_quality_json: () => JSON.stringify({ renderScale: 1, detailScale: 0.75 }),
@@ -456,7 +457,21 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
   });
   assert.deepEqual(calls.at(-1), ['origin', 6_378_137.000_001, 5_400_000.000_002, 712.003]);
   assert.deepEqual(viewer.render(), { status: 'presented', reconfigured: false });
-  viewer.resolveHardwarePolicy({ gpuMemoryBytes: null, systemMemoryBytes: null, logicalCores: 8 });
+  const hardwareInventory = {
+    gpuMemoryBytes: null,
+    systemMemoryBytes: null,
+    logicalCores: 8,
+  };
+  viewer.resolveHardwarePolicy(hardwareInventory);
+  assert.deepEqual(calls.at(-1), [
+    'hardwarePolicy',
+    { inventory: hardwareInventory, calibration: null, deploymentProfile: 'desktop' },
+  ]);
+  viewer.resolveHardwarePolicy(hardwareInventory, null, 'mobileWebView');
+  assert.deepEqual(calls.at(-1), [
+    'hardwarePolicy',
+    { inventory: hardwareInventory, calibration: null, deploymentProfile: 'mobileWebView' },
+  ]);
   assert.deepEqual(viewer.streamingRuntime(), {
     limits: { decoderWorkers: 1, contentRequests: 4 },
     activeDecodes: 0,
@@ -1393,6 +1408,7 @@ function alignmentPreviewMutation(
 
 function testHardwarePolicy(): Record<string, unknown> {
   return {
+    deploymentProfile: 'desktop',
     resources: zeroCost(),
     frame: {
       targetFrameMs: 16.7,

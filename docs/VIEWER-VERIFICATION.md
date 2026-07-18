@@ -1227,6 +1227,34 @@ decodes. Multi-partition section publication, reload/cancel/stale generations
 and bounded per-frame work remain covered by the ordinary Rust and host suites.
 V4 starts from this unchanged regression baseline.
 
+### V4 mobile/WebView policy checkpoint
+
+The hardware resolver now accepts an explicit `desktop` or `mobileWebView`
+deployment profile. Desktop is still the default and retains the complete
+adapter-derived memory, detail, render-scale, MSAA, worker and request ceilings.
+A deterministic Rust gate resolves a 24-GiB calibrated discrete adapter as
+mobile, then resolves desktop again and requires the latter policy to be
+identical to the original desktop result. Mobile-only memory and concurrency
+ceilings therefore cannot leak into capable desktop hardware. Transparency
+continues to follow actual adapter features rather than a host-class label.
+
+The short mobile portability profile ran on the physical Intel HD Graphics 630
+through forced WebGL2. Its logical sources contain 1,185,930,249 points,
+4,194,304 DGM triangles and 2,000,000 splats. One physical population retained
+1,013,376 points, 131,072 textured DGM triangles, 50,000 splats, 16 distinct
+textures (4,194,304 texture bytes) and 53 draw calls with 48,093,504 peak GPU
+bytes. The interaction trace reports p50/p95/p99/maximum
+10.8/29.4/36.9/42.8 ms, below the unchanged short-profile 33/50-ms p95/p99
+limits. Fast zoom/orbit and abrupt direction changes ran with live worker and
+range traffic; eviction plus re-entry occurred, two workers and four content
+requests stayed within the Rust policy, and no provider operation failed.
+
+This is a physical integrated-GPU browser portability gate, not a sustained
+mobile-runtime claim. Thermally stable Android/iOS hardware remains an explicit
+V4 completion risk. The complete Render-Core suite passes 321/321,
+viewer-WASM passes 7/7, the wasm32 target and browser TypeScript checks are
+green, and all 73 viewer-package tests pass.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

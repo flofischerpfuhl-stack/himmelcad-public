@@ -101,6 +101,7 @@ interface ScaleGateState {
   residentPointCeiling: number;
   performanceProfile: string | null;
   interactionBursts: InteractionBurstTelemetry[];
+  interactionLatency: PhaseLatencyTelemetry | null;
   interactionPhases: {
     readonly plan: PhaseLatencyTelemetry;
     readonly streamingHost: PhaseLatencyTelemetry;
@@ -127,7 +128,7 @@ interface ScaleGateState {
   calibration: KernelDeviceCalibration | null;
 }
 
-type PerformanceProfileName = 'low' | 'mainstream' | 'high';
+type PerformanceProfileName = 'mobile' | 'low' | 'mainstream' | 'high';
 
 interface PerformanceProfile {
   readonly inventory: KernelHardwareInventory;
@@ -163,6 +164,15 @@ const VIEWPORT_HEIGHT = Number(query.get('height') ?? 720);
 const PERFORMANCE_PROFILE = performanceProfile(query.get('profile'));
 const SOFTWARE_CORRECTNESS = query.get('backend') === 'webgl2' && PERFORMANCE_PROFILE === null;
 const PERFORMANCE_PROFILES: Readonly<Record<PerformanceProfileName, PerformanceProfile>> = {
+  mobile: {
+    inventory: { gpuMemoryBytes: 1024 ** 3, systemMemoryBytes: 4 * 1024 ** 3, logicalCores: 4 },
+    minimumPoints: 1_000_000,
+    minimumPointDrawCalls: 32,
+    minimumTriangles: 131_072,
+    minimumSplats: 50_000,
+    minimumTextureBytes: 16 * TEXTURE_BYTES_PER_TILE,
+    minimumDrawCalls: 53,
+  },
   low: {
     inventory: { gpuMemoryBytes: 2 * 1024 ** 3, systemMemoryBytes: 8 * 1024 ** 3, logicalCores: 4 },
     minimumPoints: 3_000_000,
@@ -236,6 +246,7 @@ const state: ScaleGateState = {
   residentPointCeiling: 220_000,
   performanceProfile: PERFORMANCE_PROFILE,
   interactionBursts: [],
+  interactionLatency: null,
   interactionPhases: null,
   trackedEntries: 0,
   locallyTrackedEntries: 0,
@@ -463,8 +474,16 @@ async function run(): Promise<void> {
   };
   const resolvedPolicy =
     state.calibration === null
-      ? viewer.resolveHardwarePolicy(inventory)
-      : viewer.resolveHardwarePolicy(inventory, state.calibration);
+      ? viewer.resolveHardwarePolicy(
+          inventory,
+          null,
+          PERFORMANCE_PROFILE === 'mobile' ? 'mobileWebView' : 'desktop',
+        )
+      : viewer.resolveHardwarePolicy(
+          inventory,
+          state.calibration,
+          PERFORMANCE_PROFILE === 'mobile' ? 'mobileWebView' : 'desktop',
+        );
   state.hardwarePolicy = resolvedPolicy;
   let runtimeQuality = viewer.runtimeQuality();
   state.runtimeQuality = runtimeQuality;
@@ -809,9 +828,9 @@ async function run(): Promise<void> {
   state.locallyTrackedEntries = tracked.size;
   state.queuedUploadDecodedUpperBoundBytes =
     stageCounts.queuedUpload * MAXIMUM_POINTS_PER_NODE * GPU_POINT_BYTES;
-  const sortedInteractionMs = [...interactionFrameMs].sort((left, right) => left - right);
-  const interactionP95 = percentile(sortedInteractionMs, 0.95);
-  const interactionP99 = percentile(sortedInteractionMs, 0.99);
+  state.interactionLatency = phaseLatency(interactionFrameMs);
+  const interactionP95 = state.interactionLatency.p95Ms;
+  const interactionP99 = state.interactionLatency.p99Ms;
   state.interactionPhases = {
     plan: phaseLatency(interactionPlanMs),
     streamingHost: phaseLatency(interactionStreamingHostMs),
@@ -970,6 +989,11 @@ async function run(): Promise<void> {
       `low profile interaction target missed: p95=${interactionP95}, p99=${interactionP99}`,
     );
   }
+  if (PERFORMANCE_PROFILE === 'mobile' && (interactionP95 > 33 || interactionP99 > 50)) {
+    throw new Error(
+      `mobile WebView short-profile target missed: p95=${interactionP95}, p99=${interactionP99}`,
+    );
+  }
   if (PERFORMANCE_PROFILE === 'mainstream' && (interactionP95 > 16.7 || interactionP99 > 33)) {
     throw new Error(
       `mainstream profile interaction target missed: p95=${interactionP95}, p99=${interactionP99}`,
@@ -1011,7 +1035,9 @@ function phaseLatency(samples: readonly number[]): PhaseLatencyTelemetry {
 
 function performanceProfile(value: string | null): PerformanceProfileName | null {
   if (value === null || value === '') return null;
-  if (value === 'low' || value === 'mainstream' || value === 'high') return value;
+  if (value === 'mobile' || value === 'low' || value === 'mainstream' || value === 'high') {
+    return value;
+  }
   throw new TypeError(`unknown scale performance profile ${value}`);
 }
 

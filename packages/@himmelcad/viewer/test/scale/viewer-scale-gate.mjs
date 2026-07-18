@@ -257,17 +257,19 @@ const browser = await chromium.launch({
 try {
   const performanceProfile = process.env.HCAD_SCALE_PROFILE ?? '';
   assert(
-    ['', 'low', 'mainstream', 'high'].includes(performanceProfile),
-    'HCAD_SCALE_PROFILE must be low, mainstream or high',
+    ['', 'mobile', 'low', 'mainstream', 'high'].includes(performanceProfile),
+    'HCAD_SCALE_PROFILE must be mobile, low, mainstream or high',
   );
   const viewport =
-    performanceProfile === 'low'
-      ? { width: 1920, height: 1080 }
-      : performanceProfile === 'mainstream'
-        ? { width: 2560, height: 1440 }
-        : performanceProfile === 'high'
-          ? { width: 3840, height: 2160 }
-          : { width: 1280, height: 720 };
+    performanceProfile === 'mobile'
+      ? { width: 1280, height: 720 }
+      : performanceProfile === 'low'
+        ? { width: 1920, height: 1080 }
+        : performanceProfile === 'mainstream'
+          ? { width: 2560, height: 1440 }
+          : performanceProfile === 'high'
+            ? { width: 3840, height: 2160 }
+            : { width: 1280, height: 720 };
   const page = await browser.newPage({ viewport, deviceScaleFactor: 1 });
   const browserGraphics = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
@@ -314,7 +316,7 @@ try {
         timeout:
           performanceProfile === ''
             ? 240_000
-            : performanceProfile === 'low'
+            : performanceProfile === 'mobile' || performanceProfile === 'low'
               ? 360_000
               : performanceProfile === 'mainstream'
                 ? 600_000
@@ -349,6 +351,8 @@ try {
   assert(state.driverDiagnostics.peakRequests <= state.runtimeLimits.contentRequests);
   assert(state.driverDiagnostics.actualDecodeWorkers <= state.runtimeLimits.decoderWorkers);
   assert(state.frameTelemetry.peakPoints <= state.residentPointCeiling);
+  assert(state.interactionLatency);
+  assert(Number.isFinite(state.interactionLatency.maximumMs));
   if (performanceProfile) {
     assert.equal(state.performanceProfile, performanceProfile);
     assert.equal(state.profilePeaksReached, true);
@@ -360,6 +364,10 @@ try {
     assert(state.frameTelemetry.peakDrawCalls >= state.profileMinimum.drawCalls);
     assert(state.hardwarePolicy);
     assert(state.calibration);
+    assert.equal(
+      state.hardwarePolicy.deploymentProfile,
+      performanceProfile === 'mobile' ? 'mobileWebView' : 'desktop',
+    );
     assert(state.hardwarePolicy.resources.points >= state.residentPointCeiling);
     assert(state.hardwarePolicy.resources.triangles >= state.profileMinimum.triangles);
     assert(state.hardwarePolicy.resources.splats >= state.profileMinimum.splats);

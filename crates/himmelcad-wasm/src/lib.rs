@@ -102,10 +102,10 @@ use himmelcad_render::{
     GpuSurfaceHost, GpuTextureAddressMode, GpuTextureColorSpace, GpuTextureData,
     GpuTextureFilterMode, GpuTextureMipChainData, GpuTextureResource, GpuTextureResourceCache,
     GpuTextureResourceIdentity, GpuTextureResourceStage, GpuTextureSamplerIdentity,
-    GpuTextureTransform, HardwareInventory, HardwarePolicyResolver, HierarchySource,
-    ImplicitThreeDTilesHierarchySource, InstancedTriangleMeshPickRefiner, MeshPickRefiner,
-    PickCandidate, PickCycle, PickRefinementRequest, PotreeHierarchySource, PotreePointLayout,
-    PreparedAssetBundle, PreparedGpuTextureResources, PreparedHierarchySource,
+    GpuTextureTransform, HardwareDeploymentProfile, HardwareInventory, HardwarePolicyResolver,
+    HierarchySource, ImplicitThreeDTilesHierarchySource, InstancedTriangleMeshPickRefiner,
+    MeshPickRefiner, PickCandidate, PickCycle, PickRefinementRequest, PotreeHierarchySource,
+    PotreePointLayout, PreparedAssetBundle, PreparedGpuTextureResources, PreparedHierarchySource,
     PreparedRasterTileContract, PresentationTransform, QualityAdjustment, RasterAnalysisView,
     RenderProxy, RenderProxyId, RenderProxyKind, RenderStyle, RenderWorld, ResidencyTicket,
     ResolvedAssetEntry, ResolvedGeometryRepresentationAdmission, ResourceBudget, ResourceCost,
@@ -1379,6 +1379,8 @@ struct WasmHardwarePolicyRequest {
     inventory: HardwareInventory,
     #[serde(default)]
     calibration: Option<DeviceCalibration>,
+    #[serde(default)]
+    deployment_profile: HardwareDeploymentProfile,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -5264,10 +5266,11 @@ impl WasmViewer {
     pub fn hardware_policy_json(&mut self, request_json: &str) -> Result<String, JsValue> {
         let request: WasmHardwarePolicyRequest =
             serde_json::from_str(request_json).map_err(js_error)?;
-        let policy = HardwarePolicyResolver::resolve(
+        let policy = HardwarePolicyResolver::resolve_for_profile(
             self.host.capabilities(),
             request.inventory,
             request.calibration,
+            request.deployment_profile,
         );
         self.streaming
             .set_runtime_limits(StreamingRuntimeLimits::new(

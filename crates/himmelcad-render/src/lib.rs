@@ -116,9 +116,9 @@ pub use gpu_texture_cache::{
 pub use hardware_policy::{
     CalibrationObservation, DeviceCalibration, DeviceCalibrationAccumulator, FrameTelemetrySample,
     FrameTelemetrySnapshot, FrameTelemetryWindow, FrameTimeDistribution, FrameWorkloadBudget,
-    HardwareInventory, HardwarePolicyResolver, InteractionStreamingPolicy, QualityAdjustment,
-    ResolvedHardwarePolicy, RuntimeQualityGovernor, RuntimeQualityState, TimingSample,
-    TransparencyStrategy,
+    HardwareDeploymentProfile, HardwareInventory, HardwarePolicyResolver,
+    InteractionStreamingPolicy, QualityAdjustment, ResolvedHardwarePolicy, RuntimeQualityGovernor,
+    RuntimeQualityState, TimingSample, TransparencyStrategy,
 };
 pub use mesh_picking::{
     InstancedTriangleMeshPickRefiner, MeshPickRefiner, TriangleMeshNearbyHit,

@@ -766,6 +766,9 @@ export interface KernelHardwareInventory {
   readonly logicalCores: number;
 }
 
+/** Explicit host class; desktop remains the uncapped default. */
+export type KernelHardwareDeploymentProfile = 'desktop' | 'mobileWebView';
+
 export interface KernelDeviceCalibration {
   readonly uploadGibPerSecond: number;
   readonly pointMillionsPerSecond: number;
@@ -783,6 +786,7 @@ export interface KernelCalibrationProgress {
 }
 
 export interface KernelResolvedHardwarePolicy {
+  readonly deploymentProfile: KernelHardwareDeploymentProfile;
   readonly resources: KernelResourceBudget;
   readonly frame: KernelFrameBudget;
   readonly maximumTraversedNodes: number;
@@ -2843,13 +2847,18 @@ export class WgpuKernelViewer {
   resolveHardwarePolicy(
     inventory: KernelHardwareInventory,
     calibration: KernelDeviceCalibration | null = null,
+    deploymentProfile: KernelHardwareDeploymentProfile = 'desktop',
   ): KernelResolvedHardwarePolicy {
     this.assertAlive();
+    if (deploymentProfile !== 'desktop' && deploymentProfile !== 'mobileWebView') {
+      throw new TypeError('kernel hardware deployment profile is invalid');
+    }
     const value: unknown = JSON.parse(
       this.binding.hardware_policy_json(
         JSON.stringify({
           inventory,
           calibration,
+          deploymentProfile,
         }),
       ),
     );
@@ -2860,6 +2869,7 @@ export class WgpuKernelViewer {
       !isRecord(value.interaction) ||
       !isRecord(value.interaction.frame) ||
       !isRecord(value.workload) ||
+      (value.deploymentProfile !== 'desktop' && value.deploymentProfile !== 'mobileWebView') ||
       typeof value.maximumTraversedNodes !== 'number' ||
       typeof value.interaction.maximumTraversedNodes !== 'number' ||
       typeof value.maximumRenderScale !== 'number' ||

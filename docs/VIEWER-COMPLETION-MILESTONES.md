@@ -346,6 +346,28 @@ funktioniert.
 - Speicherplateau- und vollständige Eviction-/Reload-Nachweise für lange
   Navigationssequenzen.
 
+### Arbeitsstand ab 2026-07-18 17:04 CEST
+
+- Der initiale V4-Audit bestätigt den vorhandenen gemeinsamen Milliardenpunkt-
+  und Mixed-Civil-Harness, providerneutrale globale Budgets, physische
+  Low-/Mainstream-Population, Interaktions-Perzentile sowie Eviction/Re-entry.
+  Als erste reale Lücken bleiben ein explizites Mobile/WebView-Profil, echte
+  Surface-/Device-Recovery und die noch offenen Mainstream-/High-End-
+  Hardwarebelege.
+- `mobileWebView` ist nun ein explizites Rust-eigenes Deployment-Profil. Desktop
+  bleibt der unveränderte Default und wird in einem Gegenbeweis nach einer
+  Mobile-Auflösung identisch erneut aufgelöst. Mobile begrenzt nur seinen
+  eigenen Speicher-, RenderScale-, Detail-, MSAA-, Worker- und Request-Raum;
+  Capability-abhängige Transparenz und gemeinsame Geometriesemantik bleiben
+  erhalten.
+- Das kurze physische Mobile-Portability-Gate materialisiert auf der Intel HD
+  Graphics 630/WebGL2 gleichzeitig 1.013.376 Punkte, 131.072 DGM-Dreiecke,
+  50.000 Splats und 16 Texturen. Seine Interaktion erreicht p50/p95/p99/Max
+  10,8/29,4/36,9/42,8 ms, beweist Eviction und Re-entry und meldet keine
+  Providerfehler. Ein sustained Lauf auf physischer Android-/iOS-Hardware bleibt
+  entsprechend dem Abschluss-Gate offen und wird nicht durch diesen Desktop-
+  Portabilitätslauf ersetzt.
+
 ## V5 – Stabile Viewer-Fassade und App-Ready-Gate
 
 V5 friert den konsumierbaren Viewer-Vertrag ein und beweist, dass keine App

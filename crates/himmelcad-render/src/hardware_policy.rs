@@ -171,10 +171,26 @@ impl TransparencyStrategy {
     }
 }
 
+/// Host deployment class applied after adapter-specific calibration.
+///
+/// Desktop remains the default. Mobile/WebView constraints are explicit and
+/// therefore can never become an accidental ceiling for a capable desktop GPU.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HardwareDeploymentProfile {
+    /// Browser or desktop host with ordinary desktop resource ownership.
+    #[default]
+    Desktop,
+    /// Memory- and thermally-bounded mobile browser or embedded WebView host.
+    MobileWebView,
+}
+
 /// Complete initial resource, frame and quality ceiling for one adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedHardwarePolicy {
+    /// Explicit host deployment class used to derive the policy.
+    pub deployment_profile: HardwareDeploymentProfile,
     /// Shared point/mesh/raster/splat residency ceiling.
     pub resources: ResourceBudget,
     /// Per-frame work admission ceiling.
@@ -225,6 +241,22 @@ impl HardwarePolicyResolver {
         inventory: HardwareInventory,
         calibration: Option<DeviceCalibration>,
     ) -> ResolvedHardwarePolicy {
+        Self::resolve_for_profile(
+            capabilities,
+            inventory,
+            calibration,
+            HardwareDeploymentProfile::Desktop,
+        )
+    }
+
+    /// Resolves one explicit deployment profile without changing the desktop default.
+    #[must_use]
+    pub fn resolve_for_profile(
+        capabilities: &DeviceCapabilities,
+        inventory: HardwareInventory,
+        calibration: Option<DeviceCalibration>,
+        deployment_profile: HardwareDeploymentProfile,
+    ) -> ResolvedHardwarePolicy {
         let gpu_memory = inventory
             .gpu_memory_bytes
             .unwrap_or_else(|| fallback_gpu_memory(capabilities.device_kind));
@@ -274,7 +306,8 @@ impl HardwarePolicyResolver {
         let maximum_traversed_nodes =
             finite_u32(100_000.0 * f64::from(detail_class)).clamp(25_000, 1_000_000);
         let interactive_requests = finite_u32(f64::from(detail_class).ceil()).clamp(1, 8) as u16;
-        ResolvedHardwarePolicy {
+        let policy = ResolvedHardwarePolicy {
+            deployment_profile,
             resources: ResourceBudget {
                 cpu_compressed_bytes: compressed_cpu,
                 cpu_decoded_bytes: decoded_cpu,
@@ -305,8 +338,57 @@ impl HardwarePolicyResolver {
             decoder_workers,
             content_requests,
             transparency,
+        };
+        match deployment_profile {
+            HardwareDeploymentProfile::Desktop => policy,
+            HardwareDeploymentProfile::MobileWebView => mobile_webview_policy(policy),
         }
     }
+}
+
+fn mobile_webview_policy(mut policy: ResolvedHardwarePolicy) -> ResolvedHardwarePolicy {
+    policy.resources.cpu_compressed_bytes =
+        policy.resources.cpu_compressed_bytes.min(512 * MEBIBYTE);
+    policy.resources.cpu_decoded_bytes = policy.resources.cpu_decoded_bytes.min(GIBIBYTE);
+    policy.resources.gpu_buffer_bytes = policy.resources.gpu_buffer_bytes.min(512 * MEBIBYTE);
+    policy.resources.gpu_texture_bytes = policy.resources.gpu_texture_bytes.min(384 * MEBIBYTE);
+    policy.resources.staging_bytes = policy.resources.staging_bytes.min(128 * MEBIBYTE);
+    policy.resources.points = policy
+        .resources
+        .points
+        .min(policy.resources.gpu_buffer_bytes / GPU_POINT_VERTEX_STRIDE_BYTES);
+    policy.resources.triangles = policy
+        .resources
+        .triangles
+        .min(policy.resources.gpu_buffer_bytes / 36);
+    policy.resources.splats = policy
+        .resources
+        .splats
+        .min(policy.resources.gpu_buffer_bytes / 32);
+    policy.resources.draw_calls = policy.resources.draw_calls.min(4_000);
+
+    policy.frame.target_frame_ms = 33.3;
+    policy.frame.traversal_ms = policy.frame.traversal_ms.min(1.5);
+    policy.frame.decode_ms = policy.frame.decode_ms.min(4.0);
+    policy.frame.upload_bytes = policy.frame.upload_bytes.min(16 * MEBIBYTE);
+    policy.frame.new_requests = policy.frame.new_requests.min(6);
+    policy.maximum_traversed_nodes = policy.maximum_traversed_nodes.min(100_000);
+    policy.interaction.frame.target_frame_ms = 33.3;
+    policy.interaction.frame.traversal_ms = policy.interaction.frame.traversal_ms.min(0.75);
+    policy.interaction.frame.decode_ms = policy.interaction.frame.decode_ms.min(2.0);
+    policy.interaction.frame.upload_bytes = policy.interaction.frame.upload_bytes.min(4 * MEBIBYTE);
+    policy.interaction.frame.new_requests = policy.interaction.frame.new_requests.min(2);
+    policy.interaction.maximum_traversed_nodes =
+        policy.interaction.maximum_traversed_nodes.min(10_000);
+    policy.workload.points = policy.workload.points.min(6_000_000);
+    policy.workload.triangles = policy.workload.triangles.min(3_000_000);
+    policy.workload.splats = policy.workload.splats.min(1_500_000);
+    policy.maximum_render_scale = policy.maximum_render_scale.min(1.0);
+    policy.maximum_detail_scale = policy.maximum_detail_scale.min(1.0);
+    policy.maximum_msaa_samples = policy.maximum_msaa_samples.min(2);
+    policy.decoder_workers = policy.decoder_workers.min(4);
+    policy.content_requests = policy.content_requests.min(8);
+    policy
 }
 
 /// One completed frame timing sample.
@@ -768,9 +850,9 @@ fn finite_u32(value: f64) -> u32 {
 mod tests {
     use super::{
         CalibrationObservation, DeviceCalibration, DeviceCalibrationAccumulator,
-        FrameTelemetrySample, FrameTelemetryWindow, HardwareInventory, HardwarePolicyResolver,
-        QualityAdjustment, RuntimeQualityGovernor, RuntimeQualityState, TimingSample,
-        TransparencyStrategy,
+        FrameTelemetrySample, FrameTelemetryWindow, HardwareDeploymentProfile, HardwareInventory,
+        HardwarePolicyResolver, QualityAdjustment, RuntimeQualityGovernor, RuntimeQualityState,
+        TimingSample, TransparencyStrategy,
     };
     use crate::GPU_POINT_VERTEX_STRIDE_BYTES;
     use crate::{BackendKind, DeviceCapabilities, DeviceFeature, DeviceKind};
@@ -791,6 +873,54 @@ mod tests {
         assert!(high.resources.gpu_buffer_bytes > low.resources.gpu_buffer_bytes * 10);
         assert!(high.resources.gpu_texture_bytes > low.resources.gpu_texture_bytes * 10);
         assert!(high.maximum_detail_scale > low.maximum_detail_scale);
+    }
+
+    #[test]
+    fn mobile_webview_limits_are_explicit_and_never_cap_desktop() {
+        let capabilities = capabilities(DeviceKind::DiscreteGpu);
+        let inventory = inventory(24);
+        let calibration = DeviceCalibration {
+            upload_gib_per_second: 8.0,
+            point_millions_per_second: 2_000.0,
+            triangle_millions_per_second: 1_000.0,
+            splat_millions_per_second: 600.0,
+        };
+        let desktop = HardwarePolicyResolver::resolve_for_profile(
+            &capabilities,
+            inventory,
+            Some(calibration),
+            HardwareDeploymentProfile::Desktop,
+        );
+        let mobile = HardwarePolicyResolver::resolve_for_profile(
+            &capabilities,
+            inventory,
+            Some(calibration),
+            HardwareDeploymentProfile::MobileWebView,
+        );
+        let repeated_desktop =
+            HardwarePolicyResolver::resolve(&capabilities, inventory, Some(calibration));
+
+        assert_eq!(desktop, repeated_desktop);
+        assert_eq!(
+            desktop.deployment_profile,
+            HardwareDeploymentProfile::Desktop
+        );
+        assert_eq!(
+            mobile.deployment_profile,
+            HardwareDeploymentProfile::MobileWebView
+        );
+        assert_eq!(mobile.frame.target_frame_ms, 33.3);
+        assert_eq!(mobile.interaction.frame.target_frame_ms, 33.3);
+        assert!(mobile.resources.gpu_buffer_bytes <= 512 * super::MEBIBYTE);
+        assert!(mobile.resources.gpu_texture_bytes <= 384 * super::MEBIBYTE);
+        assert!(mobile.maximum_render_scale <= 1.0);
+        assert!(mobile.maximum_detail_scale <= 1.0);
+        assert!(mobile.maximum_msaa_samples <= 2);
+        assert!(mobile.decoder_workers <= 4);
+        assert!(mobile.content_requests <= 8);
+        assert!(desktop.resources.gpu_buffer_bytes > mobile.resources.gpu_buffer_bytes);
+        assert!(desktop.maximum_detail_scale > mobile.maximum_detail_scale);
+        assert!(desktop.maximum_render_scale > mobile.maximum_render_scale);
     }
 
     #[test]
