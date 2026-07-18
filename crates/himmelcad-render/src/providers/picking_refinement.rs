@@ -463,10 +463,13 @@ impl ElevationRasterPickRefiner {
         raster: &DecodedElevationRaster,
     ) -> Result<Self, ElevationRasterPickError> {
         let count = sample_count(input.width, input.height)?;
+        let color_count = sample_count(input.color_width, input.color_height)?;
         if input.elevations.len() != count
-            || input.rgba8.len() != count.saturating_mul(4)
+            || input.rgba8.len() != color_count.saturating_mul(4)
             || raster.width != input.width
             || raster.height != input.height
+            || raster.color_width != input.color_width
+            || raster.color_height != input.color_height
             || !source_elevations_match(&raster.source_elevations, input.elevations)
             || !raster.indices.len().is_multiple_of(3)
         {
@@ -484,7 +487,8 @@ impl ElevationRasterPickRefiner {
         raster: &DecodedElevationRaster,
     ) -> Result<Self, ElevationRasterPickError> {
         let count = sample_count(raster.width, raster.height)?;
-        if raster.rgba8.len() != count.saturating_mul(4)
+        let color_count = sample_count(raster.color_width, raster.color_height)?;
+        if raster.rgba8.len() != color_count.saturating_mul(4)
             || raster.source_elevations.len() != count
             || !raster.indices.len().is_multiple_of(3)
         {
@@ -1209,6 +1213,8 @@ mod tests {
         let input = ElevationRasterInput {
             width: 2,
             height: 2,
+            color_width: 2,
+            color_height: 2,
             rgba8: &[255; 16],
             elevations: &elevations,
             triangle_mask: Some(&[0b0000_0010]),
@@ -1458,6 +1464,8 @@ mod tests {
         ElevationRasterInput {
             width,
             height,
+            color_width: width,
+            color_height: height,
             rgba8: if elevations.len() == 4 {
                 &[255; 16]
             } else {

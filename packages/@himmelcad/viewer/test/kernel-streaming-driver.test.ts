@@ -4,7 +4,7 @@ import test from 'node:test';
 import {
   decodeInputManifestHash,
   KernelStreamingDriver,
-  validateDecodeArtifactV3,
+  validateDecodeArtifactV4,
   type KernelAssetUriResolver,
   type KernelDecodeExecutor,
   type KernelFetch,
@@ -27,7 +27,7 @@ import type {
   KernelTileKey,
 } from '../src/kernel/WgpuKernelViewer.js';
 
-void test('HCDECODE v3 manifest matches the Rust fixed vector and rejects tamper', async () => {
+void test('HCDECODE v4 manifest matches the Rust fixed vector and rejects tamper', async () => {
   const job: KernelDecodeJob = {
     kind: 'gltf',
     metadataJson: '{"slot":"primary","revision":7}',
@@ -40,13 +40,13 @@ void test('HCDECODE v3 manifest matches the Rust fixed vector and rejects tamper
   const hash = await decodeInputManifestHash(job);
   assert.equal(hash, '13a4ab80a1d45e3d7e338f7fb3fe4e530f1f21aded30d2081b645796c1f6da1a');
   const artifact = await mockDecodeArtifact(job);
-  assert.doesNotThrow(() => validateDecodeArtifactV3(artifact, hash));
+  assert.doesNotThrow(() => validateDecodeArtifactV4(artifact, hash));
   assert.throws(
-    () => validateDecodeArtifactV3(artifact, `${hash.slice(0, 62)}00`),
+    () => validateDecodeArtifactV4(artifact, `${hash.slice(0, 62)}00`),
     /manifest hash mismatch/,
   );
   new Uint8Array(artifact)[8] = 1;
-  assert.throws(() => validateDecodeArtifactV3(artifact, hash), /version or length/);
+  assert.throws(() => validateDecodeArtifactV4(artifact, hash), /version or length/);
 });
 
 void test('streaming driver executes range fetch, decode, upload and eviction lifecycle', async () => {
@@ -399,6 +399,93 @@ void test('raster hash-verifies and packs elevation, validity and confidence sid
     )?.raster?.depth?.confidence?.encoding,
     'unorm8',
   );
+  driver.dispose();
+});
+
+void test('surface drape preserves independent colour and elevation grids in one worker contract', async () => {
+  const target = new RecordingTarget();
+  const color = new Uint8Array(4 * 4 * 4).fill(255);
+  const elevation = new Uint8Array(new Float32Array(3 * 3).buffer);
+  const driver = streamingDriver(target, (uri) =>
+    Promise.resolve(new Response(uri.endsWith('height.raw') ? elevation : color)),
+  );
+  const ticket = { key: { datasetId: 'ortho-surface', tileId: 'r' }, generation: 1 };
+  driver.execute(
+    plan({
+      kind: 'fetchTile',
+      ticket,
+      descriptor: {
+        id: 'r',
+        parent: null,
+        children: [],
+        bounds: { kind: 'sphere', center: { x: 2, y: 2, z: 0 }, radius: 4 },
+        contentTransform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        geometricError: 0,
+        refinement: 'replace',
+        childPage: null,
+        contents: [
+          {
+            kind: 'raster',
+            uri: 'https://example.test/surface/color.rgba',
+            byteOffset: null,
+            byteLength: null,
+            primitiveCount: 8,
+            contentHash: await testSha256Hex(color),
+            decoderParameters: {
+              schemaVersion: 2,
+              width: 4,
+              height: 4,
+              mapping: { origin: [0.5, 3.5], columnStep: [1, 0], rowStep: [0, -1] },
+              topology: {
+                kind: 'continuous',
+                maximumHeightJump: null,
+                diagonal: 'topLeftToBottomRight',
+              },
+              colorEncoding: 'rgba8',
+              elevationEncoding: { kind: 'float32LittleEndian' },
+              noData: { kind: 'nan' },
+              elevationReference: {
+                uri: 'height.raw',
+                byteOffset: null,
+                byteLength: null,
+                contentHash: await testSha256Hex(elevation),
+              },
+              validityReference: null,
+              confidenceReference: null,
+              triangleMaskReference: null,
+              surface: {
+                width: 3,
+                height: 3,
+                mapping: { origin: [0, 4], columnStep: [2, 0], rowStep: [0, -2] },
+                sourceSurface: {
+                  id: 'dem-entity',
+                  revision: 7,
+                  versionHash: '33'.repeat(32),
+                },
+                derivation: {
+                  resourceId: 'ortho-dem-drape',
+                  schemaId: 'hcad.derivation.raster-surface-drape@1',
+                  contentHash: '44'.repeat(32),
+                },
+              },
+            },
+          },
+        ],
+      },
+    }),
+  );
+  await driver.settled();
+  driver.execute(plan({ kind: 'decodeTile', ticket }));
+  await driver.settled();
+  const contract = target.stagedRaster[0]?.metadata.contract;
+  assert.equal(contract?.schemaVersion, 2);
+  assert.equal(contract?.raster.width, 4);
+  assert.equal(contract?.raster.depth, null);
+  assert.equal(contract?.surface?.width, 3);
+  assert.equal(contract?.surface?.height, 3);
+  assert.equal(contract?.surface?.depth.values.byteLength, elevation.byteLength);
+  assert.equal(target.stagedRaster[0]?.color.byteLength, color.byteLength);
+  assert.equal(target.stagedRaster[0]?.metadata.elevationPayloadByteLength, elevation.byteLength);
   driver.dispose();
 });
 
@@ -1215,7 +1302,7 @@ async function mockDecodeArtifact(job: KernelDecodeJob): Promise<ArrayBuffer> {
   const bytes = new Uint8Array(artifact);
   bytes.set(new TextEncoder().encode('HCDECODE'));
   const view = new DataView(artifact);
-  view.setUint16(8, 3, true);
+  view.setUint16(8, 4, true);
   view.setBigUint64(10, 0n, true);
   for (let index = 0; index < 32; index += 1) {
     bytes[18 + index] = Number.parseInt(hash.slice(index * 2, index * 2 + 2), 16);

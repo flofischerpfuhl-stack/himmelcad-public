@@ -5,6 +5,7 @@ import type {
   CanonicalRepresentationAdmission,
   CanonicalResourceRef,
   CanonicalEntity,
+  EntityVersionRef,
   GeometryObject,
   GeometryRepresentationBindingRef,
   GeometryRepresentationSlotKey,
@@ -637,14 +638,28 @@ export type KernelPreparedRasterNoData =
   | { readonly kind: 'numeric'; readonly value: number }
   | { readonly kind: 'alphaMask' };
 
+export interface KernelPreparedRasterSurfaceGrid {
+  readonly width: number;
+  readonly height: number;
+  readonly mapping: {
+    readonly origin: readonly [number, number];
+    readonly columnStep: readonly [number, number];
+    readonly rowStep: readonly [number, number];
+  };
+  readonly depth: NonNullable<RasterImageGeometry['depth']>;
+  readonly sourceSurface: EntityVersionRef;
+  readonly derivation: CanonicalResourceRef;
+}
+
 export interface KernelRasterContentMetadata extends KernelCanonicalStreamMetadata {
   readonly bounds: KernelBoundingVolume;
   readonly contract: {
-    readonly schemaVersion: 1;
+    readonly schemaVersion: 1 | 2;
     readonly raster: RasterImageGeometry;
     readonly colorEncoding: KernelPreparedRasterColorEncoding;
     readonly depthEncoding: KernelPreparedRasterDepthEncoding;
     readonly noData: KernelPreparedRasterNoData;
+    readonly surface?: KernelPreparedRasterSurfaceGrid;
   };
   readonly elevationPayloadByteLength: number;
   readonly validityPayloadByteLength: number;

@@ -6,9 +6,11 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use himmelcad_core::canonical_document::EntityVersionRef;
+use himmelcad_core::canonical_resources::CanonicalResourceRef;
 use himmelcad_core::entity_model::{
-    DepthSemantics, GeometryObject, RasterCellDiagonal, RasterConfidenceEncoding,
-    RasterConnectivity, RasterImageGeometry, RasterMapping,
+    DepthField, DepthSemantics, GeometryObject, OrthoGridMapping, RasterCellDiagonal,
+    RasterConfidenceEncoding, RasterConnectivity, RasterImageGeometry, RasterMapping, Vector3,
 };
 use himmelcad_core::entity_validation::validate_geometry_object;
 
@@ -16,6 +18,31 @@ use himmelcad_core::entity_validation::validate_geometry_object;
 /// rejected rather than guessed because mapping and depth semantics affect
 /// both rendered geometry and measurement coordinates.
 pub const PREPARED_RASTER_TILE_SCHEMA_VERSION: u16 = 1;
+
+/// Prepared surface-drape schema with independent colour and support grids.
+pub const PREPARED_RASTER_SURFACE_TILE_SCHEMA_VERSION: u16 = 2;
+
+/// Independently sampled elevation support for one orthographic colour page.
+///
+/// Integer grid coordinates address mesh vertices, not image pixel centres.
+/// The four outer vertices must coincide with the colour pixel-footprint
+/// corners so adjacent producer tiles can repeat a byte-identical boundary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PreparedRasterSurfaceGrid {
+    /// Number of support vertices per row.
+    pub width: u32,
+    /// Number of support vertices per column.
+    pub height: u32,
+    /// Entity-local XY mapping of support vertex `(0, 0)` and its steps.
+    pub mapping: RasterGridMapping,
+    /// Elevation, validity, confidence and connectivity resources.
+    pub depth: DepthField,
+    /// Exact canonical elevation-surface revision used for preparation.
+    pub source_surface: EntityVersionRef,
+    /// Immutable evaluator recipe including source geometry and parameters.
+    pub derivation: CanonicalResourceRef,
+}
 
 /// Immutable semantic envelope shared by the decode worker and render host.
 ///
@@ -36,22 +63,32 @@ pub struct PreparedRasterTileContract {
     /// Additional invalid-sample rule applied before the canonical validity
     /// mask. It preserves source sentinels without changing canonical masks.
     pub no_data: RasterNoData,
+    /// Independent elevation support for a schema-v2 surface drape. Schema-v1
+    /// co-registered image depth omits this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<PreparedRasterSurfaceGrid>,
 }
 
 impl PreparedRasterTileContract {
     /// Rejects schema drift and invalid canonical imaging semantics before any
     /// provider payload is decoded or allocated.
     pub fn validate(&self) -> Result<(), ElevationRasterError> {
-        if self.schema_version != PREPARED_RASTER_TILE_SCHEMA_VERSION
-            || self.raster.depth.is_none()
-            || validate_geometry_object(&GeometryObject::RasterImage {
-                raster: Box::new(self.raster.clone()),
-            })
-            .is_err()
+        if validate_geometry_object(&GeometryObject::RasterImage {
+            raster: Box::new(self.raster.clone()),
+        })
+        .is_err()
         {
             return Err(ElevationRasterError::Contract);
         }
-        Ok(())
+        match (self.schema_version, &self.surface) {
+            (PREPARED_RASTER_TILE_SCHEMA_VERSION, None) if self.raster.depth.is_some() => Ok(()),
+            (PREPARED_RASTER_SURFACE_TILE_SCHEMA_VERSION, Some(surface))
+                if self.raster.depth.is_none() =>
+            {
+                validate_surface_grid(&self.raster, surface, self.no_data)
+            }
+            _ => Err(ElevationRasterError::Contract),
+        }
     }
 
     /// Resolves the canonical orthographic elevation contract used by the
@@ -61,14 +98,39 @@ impl PreparedRasterTileContract {
         &self,
     ) -> Result<(RasterGridMapping, RasterSurfaceTopology), ElevationRasterError> {
         self.validate()?;
-        let RasterMapping::OrthoGrid(mapping) = self.raster.mapping else {
-            return Err(ElevationRasterError::Contract);
+        let (mapping, depth) = if let Some(surface) = &self.surface {
+            (
+                OrthoGridMapping {
+                    origin: Vector3 {
+                        x: surface.mapping.origin[0],
+                        y: surface.mapping.origin[1],
+                        z: 0.0,
+                    },
+                    column_step: Vector3 {
+                        x: surface.mapping.column_step[0],
+                        y: surface.mapping.column_step[1],
+                        z: 0.0,
+                    },
+                    row_step: Vector3 {
+                        x: surface.mapping.row_step[0],
+                        y: surface.mapping.row_step[1],
+                        z: 0.0,
+                    },
+                },
+                &surface.depth,
+            )
+        } else {
+            let RasterMapping::OrthoGrid(mapping) = self.raster.mapping else {
+                return Err(ElevationRasterError::Contract);
+            };
+            (
+                mapping,
+                self.raster
+                    .depth
+                    .as_ref()
+                    .ok_or(ElevationRasterError::Contract)?,
+            )
         };
-        let depth = self
-            .raster
-            .depth
-            .as_ref()
-            .ok_or(ElevationRasterError::Contract)?;
         if depth.sampling.semantics != DepthSemantics::ElevationZ
             || mapping.column_step.z.abs() > f64::EPSILON
             || mapping.row_step.z.abs() > f64::EPSILON
@@ -99,6 +161,23 @@ impl PreparedRasterTileContract {
         ))
     }
 
+    /// Returns independent colour and elevation dimensions after validation.
+    pub fn decode_dimensions(&self) -> Result<(u32, u32, u32, u32), ElevationRasterError> {
+        self.validate()?;
+        let (elevation_width, elevation_height) = self
+            .surface
+            .as_ref()
+            .map_or((self.raster.width, self.raster.height), |surface| {
+                (surface.width, surface.height)
+            });
+        Ok((
+            self.raster.width,
+            self.raster.height,
+            elevation_width,
+            elevation_height,
+        ))
+    }
+
     /// Verifies every transported immutable payload against the canonical
     /// resource descriptor before decode. Empty slices mean the optional band
     /// is absent, not an unverified resource.
@@ -112,9 +191,10 @@ impl PreparedRasterTileContract {
     ) -> Result<(), ElevationRasterError> {
         self.validate()?;
         let depth_field = self
-            .raster
-            .depth
+            .surface
             .as_ref()
+            .map(|surface| &surface.depth)
+            .or(self.raster.depth.as_ref())
             .ok_or(ElevationRasterError::Contract)?;
         if !resource_matches(&self.raster.pixels, color)
             || !resource_matches(&depth_field.values, depth)
@@ -152,6 +232,115 @@ impl PreparedRasterTileContract {
         }
         Ok(())
     }
+}
+
+fn validate_surface_grid(
+    raster: &RasterImageGeometry,
+    surface: &PreparedRasterSurfaceGrid,
+    no_data: RasterNoData,
+) -> Result<(), ElevationRasterError> {
+    let RasterMapping::OrthoGrid(colour_mapping) = raster.mapping else {
+        return Err(ElevationRasterError::Contract);
+    };
+    if surface.width < 2
+        || surface.height < 2
+        || matches!(no_data, RasterNoData::AlphaMask)
+        || surface.source_surface.id.0.trim().is_empty()
+        || surface.derivation.resource_id.trim().is_empty()
+        || surface.derivation.schema_id.trim().is_empty()
+    {
+        return Err(ElevationRasterError::Contract);
+    }
+    let support_mapping = OrthoGridMapping {
+        origin: Vector3 {
+            x: surface.mapping.origin[0],
+            y: surface.mapping.origin[1],
+            z: 0.0,
+        },
+        column_step: Vector3 {
+            x: surface.mapping.column_step[0],
+            y: surface.mapping.column_step[1],
+            z: 0.0,
+        },
+        row_step: Vector3 {
+            x: surface.mapping.row_step[0],
+            y: surface.mapping.row_step[1],
+            z: 0.0,
+        },
+    };
+    let validation_raster = RasterImageGeometry {
+        pixels: raster.pixels.clone(),
+        width: surface.width,
+        height: surface.height,
+        mapping: RasterMapping::OrthoGrid(support_mapping),
+        depth: Some(surface.depth.clone()),
+    };
+    if validate_geometry_object(&GeometryObject::RasterImage {
+        raster: Box::new(validation_raster),
+    })
+    .is_err()
+        || surface.depth.sampling.semantics != DepthSemantics::ElevationZ
+    {
+        return Err(ElevationRasterError::Contract);
+    }
+    let colour_corners = grid_corners(
+        [colour_mapping.origin.x, colour_mapping.origin.y],
+        [colour_mapping.column_step.x, colour_mapping.column_step.y],
+        [colour_mapping.row_step.x, colour_mapping.row_step.y],
+        -0.5,
+        f64::from(raster.width) - 0.5,
+        -0.5,
+        f64::from(raster.height) - 0.5,
+    );
+    let support_corners = grid_corners(
+        surface.mapping.origin,
+        surface.mapping.column_step,
+        surface.mapping.row_step,
+        0.0,
+        f64::from(surface.width - 1),
+        0.0,
+        f64::from(surface.height - 1),
+    );
+    let scale = colour_corners
+        .iter()
+        .flatten()
+        .chain(support_corners.iter().flatten())
+        .map(|value| value.abs())
+        .fold(1.0, f64::max);
+    let tolerance = scale * 1.0e-12;
+    if colour_corners
+        .iter()
+        .zip(support_corners)
+        .any(|(colour, support)| {
+            (colour[0] - support[0]).abs() > tolerance || (colour[1] - support[1]).abs() > tolerance
+        })
+    {
+        return Err(ElevationRasterError::Contract);
+    }
+    Ok(())
+}
+
+fn grid_corners(
+    origin: [f64; 2],
+    column_step: [f64; 2],
+    row_step: [f64; 2],
+    minimum_column: f64,
+    maximum_column: f64,
+    minimum_row: f64,
+    maximum_row: f64,
+) -> [[f64; 2]; 4] {
+    let point = |column: f64, row: f64| {
+        [
+            origin[0] + column_step[0] * column + row_step[0] * row,
+            origin[1] + column_step[1] * column + row_step[1] * row,
+        ]
+    };
+    [
+        point(minimum_column, minimum_row),
+        point(maximum_column, minimum_row),
+        point(minimum_column, maximum_row),
+        point(maximum_column, maximum_row),
+    ]
 }
 
 fn resource_matches(
@@ -264,10 +453,14 @@ pub enum RasterNoData {
 /// Encoded bands plus explicit grid and discontinuity semantics.
 #[derive(Debug, Clone, Copy)]
 pub struct EncodedElevationRasterInput<'a> {
-    /// Expected pixel width.
+    /// Expected elevation/support width.
     pub width: u32,
-    /// Expected pixel height.
+    /// Expected elevation/support height.
     pub height: u32,
+    /// Expected colour texture width.
+    pub color_width: u32,
+    /// Expected colour texture height.
+    pub color_height: u32,
     /// Encoded or raw color bytes.
     pub color: &'a [u8],
     /// Raw scalar elevation bytes; empty only for constant elevation.
@@ -291,10 +484,14 @@ pub struct EncodedElevationRasterInput<'a> {
 /// Borrowed decoded color and elevation bands.
 #[derive(Debug, Clone, Copy)]
 pub struct ElevationRasterInput<'a> {
-    /// Raster width.
+    /// Elevation/support width.
     pub width: u32,
-    /// Raster height.
+    /// Elevation/support height.
     pub height: u32,
+    /// Colour texture width.
+    pub color_width: u32,
+    /// Colour texture height.
+    pub color_height: u32,
     /// Tightly packed sRGB RGBA8 color pixels.
     pub rgba8: &'a [u8],
     /// Row-major world elevations; `None` is an invalid pixel/sample.
@@ -312,10 +509,14 @@ pub struct ElevationRasterInput<'a> {
 pub struct DecodedElevationRaster {
     /// Stable f64 world origin subtracted from every vertex position.
     pub world_origin: WorldVec3,
-    /// Width of `rgba8`.
+    /// Elevation/support width.
     pub width: u32,
-    /// Height of `rgba8`.
+    /// Elevation/support height.
     pub height: u32,
+    /// Width of `rgba8`.
+    pub color_width: u32,
+    /// Height of `rgba8`.
+    pub color_height: u32,
     /// Original RGBA8 color band.
     pub rgba8: Vec<u8>,
     /// Exact row-major source elevations after no-data decoding.
@@ -369,12 +570,13 @@ pub fn decode_encoded_elevation_raster(
     input: EncodedElevationRasterInput<'_>,
     render_origin: WorldVec3,
 ) -> Result<DecodedElevationRaster, ElevationRasterError> {
-    let count = pixel_count(input.width, input.height)?;
-    validate_decode_budget(count, input.topology)?;
-    validate_lsb0_mask(input.validity_mask, count)?;
+    let elevation_count = pixel_count(input.width, input.height)?;
+    let color_count = pixel_count(input.color_width, input.color_height)?;
+    validate_decode_budget(elevation_count, input.topology)?;
+    validate_lsb0_mask(input.validity_mask, elevation_count)?;
     let rgba8 = match input.color_encoding {
         RasterColorEncoding::Rgba8 => {
-            if input.color.len() != count.saturating_mul(4) {
+            if input.color.len() != color_count.saturating_mul(4) {
                 return Err(ElevationRasterError::Image);
             }
             input.color.to_vec()
@@ -383,26 +585,30 @@ pub fn decode_encoded_elevation_raster(
             let image = crate::decode_limits::decode_bounded_image(input.color)
                 .map_err(|_| ElevationRasterError::Image)?
                 .to_rgba8();
-            if image.width() != input.width || image.height() != input.height {
+            if image.width() != input.color_width || image.height() != input.color_height {
                 return Err(ElevationRasterError::Image);
             }
             image.into_raw()
         }
     };
-    let values = decode_elevations(input.elevations, count, input.elevation_encoding)?;
+    let values = decode_elevations(input.elevations, elevation_count, input.elevation_encoding)?;
+    if matches!(input.no_data, RasterNoData::AlphaMask)
+        && (input.width != input.color_width || input.height != input.color_height)
+    {
+        return Err(ElevationRasterError::Contract);
+    }
     let elevations = values
         .into_iter()
-        .zip(rgba8.chunks_exact(4))
-        .map(|(value, color)| match input.no_data {
-            RasterNoData::None => value.is_finite().then_some(value),
-            RasterNoData::Nan => (!value.is_nan()).then_some(value),
-            RasterNoData::Numeric { value: no_data } => {
-                (value.to_bits() != no_data.to_bits()).then_some(value)
-            }
-            RasterNoData::AlphaMask => (color[3] != 0).then_some(value),
-        })
         .enumerate()
         .map(|(index, value)| {
+            let value = match input.no_data {
+                RasterNoData::None => value.is_finite().then_some(value),
+                RasterNoData::Nan => (!value.is_nan()).then_some(value),
+                RasterNoData::Numeric { value: no_data } => {
+                    (value.to_bits() != no_data.to_bits()).then_some(value)
+                }
+                RasterNoData::AlphaMask => (rgba8[index * 4 + 3] != 0).then_some(value),
+            };
             if input.validity_mask.is_none_or(|mask| lsb0_bit(mask, index)) {
                 value
             } else {
@@ -414,6 +620,8 @@ pub fn decode_encoded_elevation_raster(
         ElevationRasterInput {
             width: input.width,
             height: input.height,
+            color_width: input.color_width,
+            color_height: input.color_height,
             rgba8: &rgba8,
             elevations: &elevations,
             triangle_mask: input.triangle_mask,
@@ -553,6 +761,8 @@ fn continuous(
         world_origin: origin,
         width: input.width,
         height: input.height,
+        color_width: input.color_width,
+        color_height: input.color_height,
         rgba8: input.rgba8.to_vec(),
         source_elevations: compact_elevations(input.elevations),
         vertices,
@@ -596,6 +806,8 @@ fn pixel_steps(
         world_origin: origin,
         width: input.width,
         height: input.height,
+        color_width: input.color_width,
+        color_height: input.color_height,
         rgba8: input.rgba8.to_vec(),
         source_elevations: compact_elevations(input.elevations),
         vertices,
@@ -644,8 +856,9 @@ fn validate(
     origin: WorldVec3,
 ) -> Result<(), ElevationRasterError> {
     let count = pixel_count(input.width, input.height)?;
+    let color_count = pixel_count(input.color_width, input.color_height)?;
     validate_decode_budget(count, input.topology)?;
-    if input.elevations.len() != count || input.rgba8.len() != count.saturating_mul(4) {
+    if input.elevations.len() != count || input.rgba8.len() != color_count.saturating_mul(4) {
         return Err(ElevationRasterError::BandSize);
     }
     validate_lsb0_mask(
@@ -885,6 +1098,9 @@ fn pixel_count(width: u32, height: u32) -> Result<usize, ElevationRasterError> {
 
 #[cfg(test)]
 mod tests {
+    use himmelcad_core::canonical_document::EntityVersionRef;
+    use himmelcad_core::canonical_resources::CanonicalResourceRef;
+    use himmelcad_core::entity::EntityId;
     use himmelcad_core::entity_model::{
         DepthField, DepthSampling, DepthSemantics, GeometryResource, OrthoGridMapping,
         RasterCellDiagonal, RasterConfidenceBand, RasterConfidenceEncoding, RasterConnectivity,
@@ -894,8 +1110,9 @@ mod tests {
 
     use super::{
         decode_elevation_raster, decode_encoded_elevation_raster, ElevationRasterInput,
-        EncodedElevationRasterInput, PreparedRasterTileContract, RasterColorEncoding,
-        RasterElevationEncoding, RasterGridMapping, RasterNoData, RasterSurfaceTopology,
+        EncodedElevationRasterInput, PreparedRasterSurfaceGrid, PreparedRasterTileContract,
+        RasterColorEncoding, RasterElevationEncoding, RasterGridMapping, RasterNoData,
+        RasterSurfaceTopology, PREPARED_RASTER_SURFACE_TILE_SCHEMA_VERSION,
         PREPARED_RASTER_TILE_SCHEMA_VERSION,
     };
     use crate::WorldVec3;
@@ -965,6 +1182,7 @@ mod tests {
             color_encoding: RasterColorEncoding::Rgba8,
             depth_encoding: RasterElevationEncoding::Float32LittleEndian,
             no_data: RasterNoData::None,
+            surface: None,
         }
     }
 
@@ -988,6 +1206,122 @@ mod tests {
         );
         contract.schema_version = PREPARED_RASTER_TILE_SCHEMA_VERSION;
         contract.raster.depth = None;
+        assert_eq!(
+            contract.validate(),
+            Err(super::ElevationRasterError::Contract)
+        );
+    }
+
+    #[test]
+    fn surface_drape_keeps_full_colour_page_and_independent_edge_support() {
+        let color = [255_u8; 4 * 4 * 4];
+        let elevations = [0_u8; 3 * 3 * 4];
+        let depth = DepthField {
+            values: resource(&elevations, "application/vnd.himmelcad.depth-f32le"),
+            validity: None,
+            confidence: None,
+            sampling: DepthSampling {
+                semantics: DepthSemantics::ElevationZ,
+                interpolation: RasterInterpolation::DiscontinuityAware,
+                connectivity: RasterConnectivity::Continuous {
+                    maximum_height_jump: None,
+                    diagonal: RasterCellDiagonal::TopLeftToBottomRight,
+                },
+            },
+        };
+        let mut contract = PreparedRasterTileContract {
+            schema_version: PREPARED_RASTER_SURFACE_TILE_SCHEMA_VERSION,
+            raster: RasterImageGeometry {
+                pixels: resource(&color, "image/rgba8"),
+                width: 4,
+                height: 4,
+                mapping: RasterMapping::OrthoGrid(OrthoGridMapping {
+                    origin: Vector3 {
+                        x: 0.5,
+                        y: 3.5,
+                        z: 0.0,
+                    },
+                    column_step: Vector3 {
+                        x: 1.0,
+                        y: 0.0,
+                        z: 0.0,
+                    },
+                    row_step: Vector3 {
+                        x: 0.0,
+                        y: -1.0,
+                        z: 0.0,
+                    },
+                }),
+                depth: None,
+            },
+            color_encoding: RasterColorEncoding::Rgba8,
+            depth_encoding: RasterElevationEncoding::Float32LittleEndian,
+            no_data: RasterNoData::Nan,
+            surface: Some(PreparedRasterSurfaceGrid {
+                width: 3,
+                height: 3,
+                mapping: RasterGridMapping {
+                    origin: [0.0, 4.0],
+                    column_step: [2.0, 0.0],
+                    row_step: [0.0, -2.0],
+                },
+                depth,
+                source_surface: EntityVersionRef {
+                    id: EntityId("surface-1".to_owned()),
+                    revision: 7,
+                    version_hash: ObjectHash::of_bytes(b"surface revision"),
+                },
+                derivation: CanonicalResourceRef {
+                    resource_id: "surface-drape-1".to_owned(),
+                    schema_id: "hcad.derivation.raster-surface-drape@1".to_owned(),
+                    content_hash: ObjectHash::of_bytes(b"surface drape derivation"),
+                },
+            }),
+        };
+        assert_eq!(contract.validate(), Ok(()));
+        assert_eq!(contract.decode_dimensions(), Ok((4, 4, 3, 3)));
+        assert_eq!(
+            contract.validate_payloads(&color, &elevations, None, None, None),
+            Ok(())
+        );
+        let decoded = decode_encoded_elevation_raster(
+            EncodedElevationRasterInput {
+                width: 3,
+                height: 3,
+                color_width: 4,
+                color_height: 4,
+                color: &color,
+                elevations: &elevations,
+                validity_mask: None,
+                triangle_mask: None,
+                color_encoding: RasterColorEncoding::Rgba8,
+                elevation_encoding: RasterElevationEncoding::Float32LittleEndian,
+                no_data: RasterNoData::Nan,
+                mapping: RasterGridMapping {
+                    origin: [0.0, 4.0],
+                    column_step: [2.0, 0.0],
+                    row_step: [0.0, -2.0],
+                },
+                topology: RasterSurfaceTopology::Continuous {
+                    maximum_height_jump: None,
+                    diagonal: RasterCellDiagonal::TopLeftToBottomRight,
+                },
+            },
+            WorldVec3 {
+                x: 0.0,
+                y: 4.0,
+                z: 0.0,
+            },
+        )
+        .expect("independent surface drape decode");
+        assert_eq!((decoded.width, decoded.height), (3, 3));
+        assert_eq!((decoded.color_width, decoded.color_height), (4, 4));
+        assert_eq!(decoded.vertices.len(), 9);
+        assert_eq!(decoded.rgba8.len(), 64);
+        assert_eq!(decoded.vertices[0].tex_coord, [0.0, 0.0]);
+        assert_eq!(decoded.vertices[8].tex_coord, [1.0, 1.0]);
+
+        contract.surface.as_mut().unwrap().mapping.origin[0] = 0.25;
         assert_eq!(
             contract.validate(),
             Err(super::ElevationRasterError::Contract)
@@ -1037,6 +1371,8 @@ mod tests {
             ElevationRasterInput {
                 width: 2,
                 height: 1,
+                color_width: 2,
+                color_height: 1,
                 rgba8: &[255; 8],
                 elevations: &[Some(10.0), Some(100.0)],
                 triangle_mask: None,
@@ -1059,6 +1395,8 @@ mod tests {
             ElevationRasterInput {
                 width: u32::from(u16::MAX),
                 height: u32::from(u16::MAX),
+                color_width: u32::from(u16::MAX),
+                color_height: u32::from(u16::MAX),
                 rgba8: &[],
                 elevations: &[],
                 triangle_mask: None,
@@ -1076,6 +1414,8 @@ mod tests {
         let input = ElevationRasterInput {
             width: 2,
             height: 2,
+            color_width: 2,
+            color_height: 2,
             rgba8: &[255; 16],
             elevations: &[Some(0.0), Some(0.0), Some(0.0), Some(10.0)],
             triangle_mask: None,
@@ -1100,6 +1440,8 @@ mod tests {
             EncodedElevationRasterInput {
                 width: 2,
                 height: 1,
+                color_width: 2,
+                color_height: 1,
                 color: &[255, 0, 0, 255, 0, 255, 0, 0],
                 elevations: &elevations,
                 validity_mask: None,
@@ -1124,6 +1466,8 @@ mod tests {
             ElevationRasterInput {
                 width: 2,
                 height: 2,
+                color_width: 2,
+                color_height: 2,
                 rgba8: &[255; 16],
                 elevations: &[Some(0.0), Some(1.0), Some(0.0), Some(1.0)],
                 triangle_mask: None,
@@ -1163,6 +1507,8 @@ mod tests {
             EncodedElevationRasterInput {
                 width: 2,
                 height: 2,
+                color_width: 2,
+                color_height: 2,
                 color: &[255; 16],
                 elevations: &elevations,
                 validity_mask: Some(&[0b0000_0111]),
@@ -1190,6 +1536,8 @@ mod tests {
             EncodedElevationRasterInput {
                 width: 2,
                 height: 2,
+                color_width: 2,
+                color_height: 2,
                 color: &[255; 16],
                 elevations: &[],
                 validity_mask: Some(&[0b1000_1111]),

@@ -149,6 +149,8 @@ pub fn decode_streaming_payload(
                 .contract
                 .elevation_grid_decode_semantics()
                 .map_err(js_error)?;
+            let (color_width, color_height, elevation_width, elevation_height) =
+                metadata.contract.decode_dimensions().map_err(js_error)?;
             let (elevations, validity_mask, confidence, triangle_mask) = split_raster_bands(
                 secondary,
                 metadata.elevation_payload_byte_length,
@@ -174,8 +176,10 @@ pub fn decode_streaming_payload(
             DecodedStreamingPayload::Raster(
                 decode_encoded_elevation_raster(
                     EncodedElevationRasterInput {
-                        width: metadata.contract.raster.width,
-                        height: metadata.contract.raster.height,
+                        width: elevation_width,
+                        height: elevation_height,
+                        color_width,
+                        color_height,
                         color: primary,
                         elevations,
                         validity_mask,

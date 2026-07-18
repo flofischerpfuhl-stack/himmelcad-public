@@ -13,7 +13,7 @@ const MAGIC: &[u8; 8] = b"HCDECODE";
 const INPUT_MANIFEST_DOMAIN: &[u8] = b"HCDECODE-INPUT-MANIFEST\0";
 const INPUT_MANIFEST_SCHEMA_VERSION: u16 = 1;
 /// Current worker artifact wire version. Older layouts are intentionally rejected.
-pub const DECODE_ARTIFACT_VERSION: u16 = 3;
+pub const DECODE_ARTIFACT_VERSION: u16 = 4;
 /// Magic, version, body length and exact input-manifest SHA-256.
 pub const DECODE_ARTIFACT_HEADER_BYTES: usize = 8 + 2 + 8 + 32;
 /// Hard allocation ceiling for one worker result and one viewer ingest.
@@ -109,7 +109,7 @@ pub fn encode_decode_artifact(
     Ok(artifact)
 }
 
-/// Validates v3 framing, exact input identity and bounded binary/JSON wire data.
+/// Validates v4 framing, exact input identity and bounded binary/JSON wire data.
 pub fn decode_artifact(
     bytes: &[u8],
     expected_input_hash: [u8; 32],
@@ -232,7 +232,7 @@ mod tests {
     }
 
     #[test]
-    fn v3_round_trips_gltf_and_pnts_metadata_values_and_rejects_tamper() {
+    fn v4_round_trips_gltf_and_pnts_metadata_values_and_rejects_tamper() {
         use std::collections::BTreeMap;
 
         use crate::{
@@ -297,8 +297,8 @@ mod tests {
                 }),
             ]));
         let input_hash = [0x5a; 32];
-        let artifact = encode_decode_artifact(input_hash, payload).expect("encode v3 artifact");
-        let decoded = decode_artifact(&artifact, input_hash).expect("decode v3 artifact");
+        let artifact = encode_decode_artifact(input_hash, payload).expect("encode v4 artifact");
+        let decoded = decode_artifact(&artifact, input_hash).expect("decode v4 artifact");
         let DecodedStreamingPayload::ThreeDTiles(DecodedThreeDTilesContent::Composite(children)) =
             decoded
         else {
@@ -342,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn v3_round_trips_potree_civil_attributes_exactly() {
+    fn v4_round_trips_potree_civil_attributes_exactly() {
         use crate::{PackedCivilPointAttributes, WorldVec3};
 
         let civil = PackedCivilPointAttributes::new(
@@ -364,9 +364,9 @@ mod tests {
             civil_attributes: Some(vec![civil]),
         });
         let hash = [0xa5; 32];
-        let artifact = encode_decode_artifact(hash, payload).expect("encode v3 civil artifact");
+        let artifact = encode_decode_artifact(hash, payload).expect("encode v4 civil artifact");
         let DecodedStreamingPayload::Potree(decoded) =
-            decode_artifact(&artifact, hash).expect("decode v3 civil artifact")
+            decode_artifact(&artifact, hash).expect("decode v4 civil artifact")
         else {
             panic!("expected Potree payload");
         };

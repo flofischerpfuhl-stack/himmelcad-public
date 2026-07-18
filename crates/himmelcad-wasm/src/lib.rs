@@ -268,28 +268,44 @@ fn validate_decoded_splat_cardinality(
 
 #[cfg(any(test, target_arch = "wasm32"))]
 fn validate_decoded_raster_cardinality(
-    declared_width: u32,
-    declared_height: u32,
+    declared_elevation_width: u32,
+    declared_elevation_height: u32,
+    declared_color_width: u32,
+    declared_color_height: u32,
     decoded_width: u32,
     decoded_height: u32,
+    decoded_color_width: u32,
+    decoded_color_height: u32,
     rgba_count: usize,
     elevation_count: usize,
 ) -> Result<(), &'static str> {
-    if decoded_width != declared_width || decoded_height != declared_height {
+    if decoded_width != declared_elevation_width
+        || decoded_height != declared_elevation_height
+        || decoded_color_width != declared_color_width
+        || decoded_color_height != declared_color_height
+    {
         return Err("Raster worker artifact dimensions disagree with metadata");
     }
-    let sample_count = usize::try_from(declared_width)
+    let elevation_count_expected = usize::try_from(declared_elevation_width)
         .ok()
         .and_then(|width| {
-            usize::try_from(declared_height)
+            usize::try_from(declared_elevation_height)
                 .ok()
                 .and_then(|height| width.checked_mul(height))
         })
         .ok_or("Raster metadata dimensions exceed portable addressing")?;
-    let expected_rgba_count = sample_count
+    let color_count = usize::try_from(declared_color_width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(declared_color_height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .ok_or("Raster color dimensions exceed portable addressing")?;
+    let expected_rgba_count = color_count
         .checked_mul(4)
         .ok_or("Raster metadata color band exceeds portable addressing")?;
-    if rgba_count != expected_rgba_count || elevation_count != sample_count {
+    if rgba_count != expected_rgba_count || elevation_count != elevation_count_expected {
         return Err("Raster worker artifact bands disagree with metadata");
     }
     Ok(())
@@ -2663,6 +2679,8 @@ impl WasmViewer {
                     .contract
                     .elevation_grid_decode_semantics()
                     .map_err(js_error)?;
+                let (color_width, color_height, elevation_width, elevation_height) =
+                    metadata.contract.decode_dimensions().map_err(js_error)?;
                 validate_streamed_metadata(
                     &metadata.stream_id,
                     &metadata.entity_id,
@@ -2673,10 +2691,14 @@ impl WasmViewer {
                     "Raster",
                 )?;
                 validate_decoded_raster_cardinality(
-                    metadata.contract.raster.width,
-                    metadata.contract.raster.height,
+                    elevation_width,
+                    elevation_height,
+                    color_width,
+                    color_height,
                     decoded.width,
                     decoded.height,
+                    decoded.color_width,
+                    decoded.color_height,
                     decoded.rgba8.len(),
                     decoded.source_elevations.len(),
                 )
@@ -13059,8 +13081,8 @@ fn raster_cost(
 ) -> ResourceCost {
     let vertices = usize_to_u64(decoded.vertices.len());
     let indices = usize_to_u64(decoded.indices.len());
-    let texture_bytes = u64::from(decoded.width)
-        .saturating_mul(u64::from(decoded.height))
+    let texture_bytes = u64::from(decoded.color_width)
+        .saturating_mul(u64::from(decoded.color_height))
         .saturating_mul(4);
     ResourceCost {
         cpu_compressed_bytes: usize_to_u64(request.color.len())
@@ -13835,10 +13857,11 @@ mod tests {
         assert!(validate_decoded_splat_cardinality(1, 2, 2).is_err());
         assert!(validate_decoded_splat_cardinality(2, 2, 1).is_err());
 
-        assert!(validate_decoded_raster_cardinality(2, 3, 2, 3, 24, 6).is_ok());
-        assert!(validate_decoded_raster_cardinality(2, 3, 3, 2, 24, 6).is_err());
-        assert!(validate_decoded_raster_cardinality(2, 3, 2, 3, 20, 6).is_err());
-        assert!(validate_decoded_raster_cardinality(2, 3, 2, 3, 24, 5).is_err());
+        assert!(validate_decoded_raster_cardinality(2, 3, 4, 5, 2, 3, 4, 5, 80, 6).is_ok());
+        assert!(validate_decoded_raster_cardinality(2, 3, 4, 5, 3, 2, 4, 5, 80, 6).is_err());
+        assert!(validate_decoded_raster_cardinality(2, 3, 4, 5, 2, 3, 5, 4, 80, 6).is_err());
+        assert!(validate_decoded_raster_cardinality(2, 3, 4, 5, 2, 3, 4, 5, 79, 6).is_err());
+        assert!(validate_decoded_raster_cardinality(2, 3, 4, 5, 2, 3, 4, 5, 80, 5).is_err());
     }
 
     #[test]

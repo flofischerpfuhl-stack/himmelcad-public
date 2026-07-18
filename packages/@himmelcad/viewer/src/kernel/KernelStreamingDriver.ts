@@ -7,6 +7,7 @@ import type {
   KernelPreparedRasterColorEncoding,
   KernelPreparedRasterDepthEncoding,
   KernelPreparedRasterNoData,
+  KernelPreparedRasterSurfaceGrid,
   KernelRasterContentMetadata,
   KernelResidencyTicket,
   KernelResourceCost,
@@ -148,7 +149,7 @@ const MAX_EXTERNAL_ASSET_BYTES = 512 * 1024 * 1024;
 const MAX_SINGLE_EXTERNAL_ASSET_BYTES = 256 * 1024 * 1024;
 
 export interface KernelRasterDecoderParameters {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 1 | 2;
   readonly width: number;
   readonly height: number;
   readonly mapping: {
@@ -191,6 +192,7 @@ export interface KernelRasterDecoderParameters {
     readonly byteLength: number | null;
     readonly contentHash: string | null;
   } | null;
+  readonly surface?: Omit<KernelPreparedRasterSurfaceGrid, 'depth'>;
 }
 
 export interface KernelImmutableAssetDecoderParameters {
@@ -696,7 +698,7 @@ export class KernelStreamingDriver {
         };
         const expectedInputHash = await decodeInputManifestHash(decodeJob);
         const result = await this.requiredDecodePool().decode(decodeJob, decodeController.signal);
-        validateDecodeArtifactV3(result.artifact, expectedInputHash);
+        validateDecodeArtifactV4(result.artifact, expectedInputHash);
         const restored: FetchedPayload = {
           ...payload,
           bytes: new Uint8Array(result.primary),
@@ -1198,8 +1200,38 @@ async function buildPreparedRasterContract(
               : 'topLeftToBottomRight',
         }
       : parameters.topology;
+  const depthField = {
+    values: await resource(depth, 'application/vnd.himmelcad.depth'),
+    validity:
+      validity.byteLength === 0
+        ? null
+        : {
+            resource: await resource(
+              validity,
+              'application/vnd.himmelcad.raster-validity+bitset-lsb0',
+            ),
+            encoding: 'bitsetLsb0' as const,
+          },
+    confidence:
+      parameters.confidenceReference === null
+        ? null
+        : {
+            resource: await resource(
+              confidence,
+              parameters.confidenceReference.encoding === 'unorm8'
+                ? 'application/vnd.himmelcad.raster-confidence+unorm8'
+                : 'application/vnd.himmelcad.raster-confidence+f32le',
+            ),
+            encoding: parameters.confidenceReference.encoding,
+          },
+    sampling: {
+      semantics: 'elevationZ' as const,
+      interpolation: 'discontinuityAware' as const,
+      connectivity,
+    },
+  };
   return {
-    schemaVersion: 1,
+    schemaVersion: parameters.schemaVersion,
     raster: {
       pixels: await resource(
         color,
@@ -1221,47 +1253,21 @@ async function buildPreparedRasterContract(
           z: 0,
         },
       },
-      depth: {
-        values: await resource(depth, 'application/vnd.himmelcad.depth'),
-        validity:
-          validity.byteLength === 0
-            ? null
-            : {
-                resource: await resource(
-                  validity,
-                  'application/vnd.himmelcad.raster-validity+bitset-lsb0',
-                ),
-                encoding: 'bitsetLsb0',
-              },
-        confidence:
-          parameters.confidenceReference === null
-            ? null
-            : {
-                resource: await resource(
-                  confidence,
-                  parameters.confidenceReference.encoding === 'unorm8'
-                    ? 'application/vnd.himmelcad.raster-confidence+unorm8'
-                    : 'application/vnd.himmelcad.raster-confidence+f32le',
-                ),
-                encoding: parameters.confidenceReference.encoding,
-              },
-        sampling: {
-          semantics: 'elevationZ',
-          interpolation: 'discontinuityAware',
-          connectivity,
-        },
-      },
+      depth: parameters.surface === undefined ? depthField : null,
     },
     colorEncoding: parameters.colorEncoding,
     depthEncoding: parameters.elevationEncoding,
     noData: parameters.noData,
+    ...(parameters.surface === undefined
+      ? {}
+      : { surface: { ...parameters.surface, depth: depthField } }),
   };
 }
 
 function parseRasterParameters(value: unknown): KernelRasterDecoderParameters {
   if (
     !record(value) ||
-    value.schemaVersion !== 1 ||
+    (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
     !Number.isSafeInteger(value.width) ||
     Number(value.width) <= 0 ||
     !Number.isSafeInteger(value.height) ||
@@ -1287,6 +1293,13 @@ function parseRasterParameters(value: unknown): KernelRasterDecoderParameters {
   ) {
     throw new TypeError('raster decoderParameters are malformed');
   }
+  if (
+    (value.schemaVersion === 1 && value.surface !== undefined) ||
+    (value.schemaVersion === 2 && !validPreparedSurface(value.surface)) ||
+    (value.schemaVersion === 2 && record(value.noData) && value.noData.kind === 'alphaMask')
+  ) {
+    throw new TypeError('raster surface decoderParameters are malformed');
+  }
   const constant = record(value.elevationEncoding) && value.elevationEncoding.kind === 'constant';
   if (constant !== (value.elevationReference === null)) {
     throw new TypeError(
@@ -1301,6 +1314,43 @@ function parseRasterParameters(value: unknown): KernelRasterDecoderParameters {
     throw new TypeError('raster triangle masks require continuous topology');
   }
   return value as unknown as KernelRasterDecoderParameters;
+}
+
+function validPreparedSurface(value: unknown): boolean {
+  return (
+    record(value) &&
+    Number.isSafeInteger(value.width) &&
+    Number(value.width) >= 2 &&
+    Number.isSafeInteger(value.height) &&
+    Number(value.height) >= 2 &&
+    validRasterMapping(value.mapping) &&
+    validEntityVersionRef(value.sourceSurface) &&
+    validCanonicalResourceRef(value.derivation)
+  );
+}
+
+function validEntityVersionRef(value: unknown): boolean {
+  return (
+    record(value) &&
+    typeof value.id === 'string' &&
+    value.id.length > 0 &&
+    Number.isSafeInteger(value.revision) &&
+    Number(value.revision) >= 0 &&
+    typeof value.versionHash === 'string' &&
+    /^[0-9a-f]{64}$/.test(value.versionHash)
+  );
+}
+
+function validCanonicalResourceRef(value: unknown): boolean {
+  return (
+    record(value) &&
+    typeof value.resourceId === 'string' &&
+    value.resourceId.length > 0 &&
+    typeof value.schemaId === 'string' &&
+    value.schemaId.includes('@') &&
+    typeof value.contentHash === 'string' &&
+    /^[0-9a-f]{64}$/.test(value.contentHash)
+  );
 }
 
 function packRasterBands(
@@ -1458,11 +1508,11 @@ function isAbort(error: unknown): boolean {
 }
 
 const DECODE_ARTIFACT_MAGIC = new TextEncoder().encode('HCDECODE');
-const DECODE_ARTIFACT_VERSION = 3;
+const DECODE_ARTIFACT_VERSION = 4;
 const DECODE_ARTIFACT_HEADER_BYTES = 50;
 const DECODE_INPUT_DOMAIN = new TextEncoder().encode('HCDECODE-INPUT-MANIFEST\0');
 
-/** Async host half of the HCDECODE v3 hierarchical input-manifest contract. */
+/** Async host half of the HCDECODE v4 hierarchical input-manifest contract. */
 export async function decodeInputManifestHash(job: KernelDecodeJob): Promise<string> {
   const encoder = new TextEncoder();
   const components = [
@@ -1511,20 +1561,20 @@ export async function decodeInputManifestHash(job: KernelDecodeJob): Promise<str
 }
 
 /** Rejects v1, truncation, trailing bytes and a worker/main input-identity split. */
-export function validateDecodeArtifactV3(artifact: ArrayBuffer, expectedInputHash: string): void {
+export function validateDecodeArtifactV4(artifact: ArrayBuffer, expectedInputHash: string): void {
   const bytes = new Uint8Array(artifact);
   if (
     bytes.byteLength < DECODE_ARTIFACT_HEADER_BYTES ||
     !DECODE_ARTIFACT_MAGIC.every((byte, index) => bytes[index] === byte)
   ) {
-    throw new Error('decode artifact v3 header is invalid');
+    throw new Error('decode artifact v4 header is invalid');
   }
   const view = new DataView(artifact);
   if (
     view.getUint16(8, true) !== DECODE_ARTIFACT_VERSION ||
     view.getBigUint64(10, true) !== BigInt(bytes.byteLength - DECODE_ARTIFACT_HEADER_BYTES)
   ) {
-    throw new Error('decode artifact v3 version or length is invalid');
+    throw new Error('decode artifact v4 version or length is invalid');
   }
   const artifactHash = Array.from(bytes.subarray(18, DECODE_ARTIFACT_HEADER_BYTES), (byte) =>
     byte.toString(16).padStart(2, '0'),

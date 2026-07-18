@@ -25,8 +25,9 @@ mod tiles3d_implicit;
 pub use elevation_raster::{
     decode_elevation_raster, decode_encoded_elevation_raster, DecodedElevationRaster,
     ElevationRasterError, ElevationRasterInput, EncodedElevationRasterInput,
-    PreparedRasterTileContract, RasterColorEncoding, RasterElevationEncoding, RasterGridMapping,
-    RasterNoData, RasterSurfaceTopology, PREPARED_RASTER_TILE_SCHEMA_VERSION,
+    PreparedRasterSurfaceGrid, PreparedRasterTileContract, RasterColorEncoding,
+    RasterElevationEncoding, RasterGridMapping, RasterNoData, RasterSurfaceTopology,
+    PREPARED_RASTER_SURFACE_TILE_SCHEMA_VERSION, PREPARED_RASTER_TILE_SCHEMA_VERSION,
 };
 pub use gaussian_splat::{
     decode_gaussian_splat_ply, DecodedGaussianSplat, DecodedGaussianSplats,

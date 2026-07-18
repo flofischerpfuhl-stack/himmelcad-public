@@ -869,8 +869,8 @@ pub fn build_elevation_raster_batch(
         queue,
         &format!("{label}-color"),
         GpuTextureData {
-            width: raster.width,
-            height: raster.height,
+            width: raster.color_width,
+            height: raster.color_height,
             rgba8: &raster.rgba8,
         },
         GpuAlphaMode::Opaque,
