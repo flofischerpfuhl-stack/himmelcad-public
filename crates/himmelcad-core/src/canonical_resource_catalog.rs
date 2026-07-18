@@ -7,6 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::canonical_resources::{
@@ -22,7 +23,8 @@ type ResourceKey = (String, String);
 
 /// One atomic publication unit. Dependencies may refer to resources already
 /// resident in the catalog or to another resource in the same unit.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CanonicalPresentationResourceSet {
     /// Immutable texture revisions published before dependent materials.
     pub textures: Vec<TextureResource>,

@@ -164,7 +164,7 @@ export type {
   KernelBlockMember,
   KernelGlyphAtlasMetadata,
   KernelGlyphMetrics,
-  KernelHatchPattern,
+  KernelSectionHatchStyle,
   KernelPickAddress,
   KernelPickCandidate,
   KernelPickResult,

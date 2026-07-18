@@ -697,6 +697,7 @@ fn drawing_to_package(
                 resources: font_artifacts,
             }]
         },
+        presentation_resources: Default::default(),
     })
 }
 

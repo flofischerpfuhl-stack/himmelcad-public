@@ -8,6 +8,7 @@ import type {
   GeometryObject,
   GeometryRepresentationBindingRef,
   GeometryRepresentationSlotKey,
+  HatchPatternResource,
   LineTypeResource,
   SectionTopologyPartitionManifest,
   Transform3d,
@@ -32,6 +33,7 @@ export interface WasmViewerBinding {
   geometry_object_content_hash_json(geometryJson: string): string;
   block_definition_content_hash_json(definitionJson: string): string;
   line_type_resource_content_hash_json(resourceJson: string): string;
+  hatch_pattern_resource_content_hash_json(resourceJson: string): string;
   section_topology_partition_content_hash_json(manifestJson: string): string;
   area_interpolation_dependency_hash_json(dependencyJson: string): string;
   section_product_content_hash_json(productJson: string): string;
@@ -117,7 +119,7 @@ export interface WasmViewerBinding {
   register_raster_binary_resource(objectHash: string, bytes: Uint8Array): void;
   register_mesh_resource(objectHash: string, meshJson: string): void;
   register_area_interpolation(admissionJson: string): void;
-  register_hatch_resource(resourceId: string, patternJson: string): void;
+  register_canonical_hatch_pattern_resource(resourceJson: string): void;
   register_canonical_line_type_resource(resourceJson: string): void;
   register_line_type_resource(resourceId: string, patternJson: string): string;
   begin_authoritative_section_evaluation(
@@ -296,9 +298,9 @@ interface KernelSectionRequestBase {
   readonly tolerance: number;
   readonly style?: KernelRenderStyle;
   /** Optional section-wide override; per-region material identity remains in `materialSlot`. */
-  readonly hatch?: KernelHatchPattern | null;
+  readonly hatch?: KernelSectionHatchStyle | null;
   /** Registered hatch selected by a local slot string or authoritative material key. */
-  readonly materialHatches?: Readonly<Record<string, string>>;
+  readonly materialHatches?: Readonly<Record<string, KernelSectionHatchStyle>>;
   /** Exact cap owned by one currently published clip-volume plane. */
   readonly clipCap?: {
     readonly volumeId: string;
@@ -406,8 +408,8 @@ export interface KernelClipVolume {
   readonly planes: readonly KernelClipPlane[];
   readonly operation: 'keepInside' | 'removeInside';
   readonly previewCap: boolean;
-  readonly sectionFillResource?: string | null;
-  readonly sectionMaterialHatches?: Readonly<Record<number, string>>;
+  readonly sectionFill?: KernelSectionHatchStyle | null;
+  readonly sectionMaterialHatches?: Readonly<Record<number, KernelSectionHatchStyle>>;
   readonly enabled: boolean;
 }
 
@@ -929,7 +931,15 @@ export type KernelFillMode =
   | { readonly kind: 'none' }
   | { readonly kind: 'color' }
   | { readonly kind: 'texture'; readonly resourceId: string }
-  | { readonly kind: 'hatch'; readonly resourceId: string };
+  | {
+      readonly kind: 'hatch';
+      readonly resource: CanonicalResourceRef;
+      readonly origin: KernelWorldPoint;
+      readonly axisU: KernelWorldPoint;
+      readonly axisV: KernelWorldPoint;
+      readonly lineWidth: number;
+      readonly color: readonly [number, number, number, number];
+    };
 
 export type KernelStrokeMode =
   | { readonly kind: 'none' }
@@ -1111,10 +1121,8 @@ export interface KernelAnnotationStyle {
   readonly lineWidth?: number;
 }
 
-export interface KernelHatchPattern {
-  readonly origin: KernelWorldPoint;
-  readonly direction: KernelWorldPoint;
-  readonly spacing: number;
+export interface KernelSectionHatchStyle {
+  readonly resource: CanonicalResourceRef;
   readonly lineWidth: number;
   readonly color: readonly [number, number, number, number];
 }
@@ -1518,6 +1526,12 @@ export class WgpuKernelViewer {
   lineTypeResourceContentHash(resource: LineTypeResource): string {
     this.assertAlive();
     return this.binding.line_type_resource_content_hash_json(JSON.stringify(resource));
+  }
+
+  /** Authoritative Rust hash for one immutable canonical hatch-pattern revision. */
+  hatchPatternResourceContentHash(resource: HatchPatternResource): string {
+    this.assertAlive();
+    return this.binding.hatch_pattern_resource_content_hash_json(JSON.stringify(resource));
   }
 
   /** Authoritative Rust hash of one exact topology-partition manifest. */
@@ -1977,11 +1991,10 @@ export class WgpuKernelViewer {
     this.binding.register_area_interpolation(JSON.stringify(admission));
   }
 
-  /** Registers a vector hatch shared by ordinary entity fills and sections. */
-  registerHatchResource(resourceId: string, pattern: KernelHatchPattern): void {
+  /** Registers one validated immutable canonical hatch-pattern revision. */
+  registerCanonicalHatchPatternResource(resource: HatchPatternResource): void {
     this.assertAlive();
-    if (resourceId.length === 0) throw new RangeError('hatch resourceId must be non-empty');
-    this.binding.register_hatch_resource(resourceId, JSON.stringify(pattern));
+    this.binding.register_canonical_hatch_pattern_resource(JSON.stringify(resource));
   }
 
   /** Registers one validated immutable canonical line-type revision. */
@@ -2217,11 +2230,11 @@ export class WgpuKernelViewer {
     if (!Number.isFinite(exaggerationDatum)) {
       throw new RangeError('exaggerationDatum must be finite');
     }
-    if (
-      (style.fill.kind === 'texture' || style.fill.kind === 'hatch') &&
-      style.fill.resourceId.length === 0
-    ) {
+    if (style.fill.kind === 'texture' && style.fill.resourceId.length === 0) {
       throw new RangeError('fill resourceId must be non-empty');
+    }
+    if (style.fill.kind === 'hatch' && style.fill.resource.resourceId.length === 0) {
+      throw new RangeError('hatch resourceId must be non-empty');
     }
     validateStrokeStyle(style.stroke);
     const resolvedStyle = this.resolveLegacyLineType(style);
@@ -3433,9 +3446,30 @@ function cloneClipVolume(volume: KernelClipVolume): KernelClipVolume {
       normal: { ...plane.normal },
       distance: plane.distance,
     })),
+    ...(volume.sectionFill === undefined
+      ? {}
+      : {
+          sectionFill:
+            volume.sectionFill === null ? null : cloneSectionHatchStyle(volume.sectionFill),
+        }),
     ...(volume.sectionMaterialHatches === undefined
       ? {}
-      : { sectionMaterialHatches: { ...volume.sectionMaterialHatches } }),
+      : {
+          sectionMaterialHatches: Object.fromEntries(
+            Object.entries(volume.sectionMaterialHatches).map(([slot, style]) => [
+              slot,
+              cloneSectionHatchStyle(style),
+            ]),
+          ),
+        }),
+  };
+}
+
+function cloneSectionHatchStyle(style: KernelSectionHatchStyle): KernelSectionHatchStyle {
+  return {
+    resource: { ...style.resource },
+    lineWidth: style.lineWidth,
+    color: [...style.color],
   };
 }
 

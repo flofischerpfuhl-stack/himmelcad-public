@@ -1193,6 +1193,7 @@ fn build_package(
         objects: object_map.into_values().collect(),
         datasets: Vec::new(),
         resource_sets: Vec::new(),
+        presentation_resources: Default::default(),
     };
     package
         .validate()

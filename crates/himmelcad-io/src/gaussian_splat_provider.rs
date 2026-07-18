@@ -1335,6 +1335,7 @@ fn build_package(
             artifacts: prepared.artifacts,
         }],
         resource_sets: Vec::new(),
+        presentation_resources: Default::default(),
     })
 }
 

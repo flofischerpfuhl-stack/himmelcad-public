@@ -365,6 +365,7 @@ impl LasImportSummary {
                 artifacts,
             }],
             resource_sets: Vec::new(),
+            presentation_resources: Default::default(),
         };
         package.validate().map_err(provider_contract_import_error)?;
         Ok(package)

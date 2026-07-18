@@ -10,6 +10,8 @@ import type {
   AlignmentGeometry,
   AreaGeometry,
   GeometryRepresentationBindingRef,
+  CanonicalResourceRef,
+  HatchPatternResource,
   LineTypeResource,
   SectionTopologyPartitionManifest,
   Transform3d,
@@ -331,6 +333,8 @@ const ORTHO_DEPTH_HASH = '2'.repeat(64);
 const POINT_VERSION_HASH = '3'.repeat(64);
 const DIMENSION_VERSION_HASH = '4'.repeat(64);
 let SECTION_PRODUCT_HASH = '5'.repeat(64);
+let diagonalHatchRef: CanonicalResourceRef;
+let crossHatchRef: CanonicalResourceRef;
 const BOOLEAN_SOLID_VERSION_HASH = '6'.repeat(64);
 const AREA_BOUNDARY_HASH = '6'.repeat(64);
 const DRAPE_SUPPORT_HASH = 'ab'.repeat(32);
@@ -681,6 +685,22 @@ function style(
       join: 'miter',
       miterLimit: 4,
     },
+  };
+}
+
+function hatchFill(
+  resource: CanonicalResourceRef,
+  lineWidth: number,
+  color: readonly [number, number, number, number],
+): KernelRenderStyle['fill'] {
+  return {
+    kind: 'hatch',
+    resource,
+    origin: { x: BASE[0], y: BASE[1], z: BASE[2] },
+    axisU: { x: 1, y: 0, z: 0 },
+    axisV: { x: 0, y: 1, z: 0 },
+    lineWidth,
+    color,
   };
 }
 
@@ -2616,7 +2636,7 @@ function verifyResolvedPresentationBindings(
   const areaHatchStyle: KernelRenderStyle = {
     ...style([0.08, 0.52, 0.92, 1], 0.61),
     verticalExaggeration: 1.75,
-    fill: { kind: 'hatch', resourceId: 'cross-survey' },
+    fill: hatchFill(crossHatchRef, 0.1, [1, 0.72, 0.2, 0.95]),
   };
   viewer.setEntityStyle('mixed-height-area', areaHatchStyle, BASE[2]);
   viewer.render();
@@ -2902,7 +2922,7 @@ function entityZoo(): LegacyEntityRequest[] {
       lineWidth: 3,
       style: {
         ...style([0.08, 0.52, 0.92, 1], 0.78),
-        fill: { kind: 'hatch', resourceId: 'diagonal-survey' },
+        fill: hatchFill(diagonalHatchRef, 0.12, [0.94, 0.98, 1, 0.9]),
       },
     },
     {
@@ -3088,9 +3108,9 @@ function entityZoo(): LegacyEntityRequest[] {
               ...new Array<number>(12).fill(7),
             ],
             materials: {
-              objectHash: MATERIAL_TABLE_HASH,
-              mediaType: 'application/vnd.himmelcad.material-table+json',
-              byteLength: 1,
+              resourceId: 'browser-material-table',
+              schemaId: 'hcad.resource.material-table@1',
+              contentHash: MATERIAL_TABLE_HASH,
             },
           },
         },
@@ -3483,20 +3503,49 @@ async function run(): Promise<void> {
     suffix: ' m',
     lineWidth: 2,
   });
-  viewer.registerHatchResource('diagonal-survey', {
-    origin: { x: BASE[0], y: BASE[1], z: BASE[2] },
-    direction: { x: 1, y: 1, z: 0 },
-    spacing: 1.2,
-    lineWidth: 0.12,
-    color: [0.94, 0.98, 1, 0.9],
-  });
-  viewer.registerHatchResource('cross-survey', {
-    origin: { x: BASE[0], y: BASE[1], z: BASE[2] },
-    direction: { x: 1, y: -0.35, z: 0 },
-    spacing: 0.65,
-    lineWidth: 0.1,
-    color: [1, 0.72, 0.2, 0.95],
-  });
+  const unsealedDiagonalHatch: HatchPatternResource = {
+    schemaId: 'hcad.resource.hatch-pattern@1',
+    resourceId: 'diagonal-survey',
+    contentHash: '00'.repeat(32),
+    name: 'Diagonal survey',
+    pattern: {
+      kind: 'lines',
+      lines: [{ angle: Math.PI / 4, origin: [0, 0], offset: [0, 1.2], dashPattern: [] }],
+    },
+  };
+  const diagonalHatch: HatchPatternResource = {
+    ...unsealedDiagonalHatch,
+    contentHash: viewer.hatchPatternResourceContentHash(unsealedDiagonalHatch),
+  };
+  const unsealedCrossHatch: HatchPatternResource = {
+    schemaId: 'hcad.resource.hatch-pattern@1',
+    resourceId: 'cross-survey',
+    contentHash: '00'.repeat(32),
+    name: 'Cross survey',
+    pattern: {
+      kind: 'lines',
+      lines: [
+        { angle: 0, origin: [0, 0], offset: [0, 0.65], dashPattern: [1.1, -0.35, 0] },
+        { angle: Math.PI / 2, origin: [0, 0], offset: [0.65, 0], dashPattern: [] },
+      ],
+    },
+  };
+  const crossHatch: HatchPatternResource = {
+    ...unsealedCrossHatch,
+    contentHash: viewer.hatchPatternResourceContentHash(unsealedCrossHatch),
+  };
+  viewer.registerCanonicalHatchPatternResource(diagonalHatch);
+  viewer.registerCanonicalHatchPatternResource(crossHatch);
+  diagonalHatchRef = {
+    resourceId: diagonalHatch.resourceId,
+    schemaId: diagonalHatch.schemaId,
+    contentHash: diagonalHatch.contentHash,
+  };
+  crossHatchRef = {
+    resourceId: crossHatch.resourceId,
+    schemaId: crossHatch.schemaId,
+    contentHash: crossHatch.contentHash,
+  };
   viewer.registerLineTypeResource('survey-dash', {
     segments: [2.4, 0.8, 0.25, 0.8],
     phase: 0.15,
@@ -4106,7 +4155,13 @@ async function run(): Promise<void> {
     },
     tolerance: 0.0001,
     style: style([0.96, 0.76, 0.12, 1]),
-    materialHatches: { 'material:default': 'diagonal-survey' },
+    materialHatches: {
+      'material:default': {
+        resource: diagonalHatchRef,
+        lineWidth: 0.12,
+        color: [0.94, 0.98, 1, 0.9],
+      },
+    },
   });
   state.proxyCount = section.proxies;
   const authoritativeCapVolume = {
@@ -4120,7 +4175,11 @@ async function run(): Promise<void> {
     ],
     operation: 'keepInside',
     previewCap: true,
-    sectionFillResource: 'diagonal-survey',
+    sectionFill: {
+      resource: diagonalHatchRef,
+      lineWidth: 0.12,
+      color: [0.94, 0.98, 1, 0.9],
+    },
     enabled: true,
   } as const;
   const booleanSolidBinding = zooMutation.bindings.find(
@@ -4358,8 +4417,15 @@ async function run(): Promise<void> {
         ],
         operation: 'keepInside',
         previewCap: true,
-        sectionFillResource: null,
-        sectionMaterialHatches: { 3: 'cross-survey', 7: 'diagonal-survey' },
+        sectionFill: null,
+        sectionMaterialHatches: {
+          3: { resource: crossHatchRef, lineWidth: 0.1, color: [1, 0.72, 0.2, 0.95] },
+          7: {
+            resource: diagonalHatchRef,
+            lineWidth: 0.12,
+            color: [0.94, 0.98, 1, 0.9],
+          },
+        },
         enabled: true,
       },
     ]);
@@ -4383,8 +4449,15 @@ async function run(): Promise<void> {
         ],
         operation: 'removeInside',
         previewCap: true,
-        sectionFillResource: null,
-        sectionMaterialHatches: { 3: 'cross-survey', 7: 'diagonal-survey' },
+        sectionFill: null,
+        sectionMaterialHatches: {
+          3: { resource: crossHatchRef, lineWidth: 0.1, color: [1, 0.72, 0.2, 0.95] },
+          7: {
+            resource: diagonalHatchRef,
+            lineWidth: 0.12,
+            color: [0.94, 0.98, 1, 0.9],
+          },
+        },
         enabled: true,
       },
     ]);

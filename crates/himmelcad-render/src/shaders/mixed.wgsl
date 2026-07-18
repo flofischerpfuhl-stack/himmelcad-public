@@ -19,10 +19,10 @@ struct MaterialUniform {
     style_values: vec4<f32>,
     height_values: vec4<f32>,
     gradient_colors: array<vec4<f32>, 256>,
-    hatch_origin_enabled: vec4<f32>,
-    hatch_direction_spacing: vec4<f32>,
+    hatch_origin_width: vec4<f32>,
+    hatch_axis_u_count: vec4<f32>,
     hatch_color: vec4<f32>,
-    hatch_values: vec4<f32>,
+    hatch_axis_v_texture_width: vec4<f32>,
     stroke_color: vec4<f32>,
     stroke_values: vec4<f32>,
     stroke_modes: vec4<u32>,
@@ -41,6 +41,8 @@ var base_color_sampler: sampler;
 var<uniform> material: MaterialUniform;
 @group(1) @binding(3)
 var line_type_texture: texture_2d<f32>;
+@group(1) @binding(4)
+var hatch_texture: texture_2d<f32>;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -231,22 +233,115 @@ fn point_source_color(input: PointInstanceInput) -> vec4<f32> {
     return input.color;
 }
 
+fn hatch_entry(index: u32) -> vec4<f32> {
+    let width = max(u32(material.hatch_axis_v_texture_width.w), 1u);
+    let coordinate = vec2<i32>(i32(index % width), i32(index / width));
+    return textureLoad(hatch_texture, coordinate, 0);
+}
+
+fn hatch_dash_coverage(
+    coordinate: f32,
+    period: f32,
+    advance_start: u32,
+    advance_count: u32,
+    dot_start: u32,
+    dot_count: u32,
+    line_width: f32,
+) -> f32 {
+    if (advance_count == 0u) {
+        return 1.0;
+    }
+    let wrapped = positive_modulo(coordinate, period);
+    var lower = 0u;
+    var upper = advance_count;
+    loop {
+        if (lower >= upper) {
+            break;
+        }
+        let middle = lower + (upper - lower) / 2u;
+        if (wrapped < hatch_entry(advance_start + middle).x) {
+            upper = middle;
+        } else {
+            lower = middle + 1u;
+        }
+    }
+    let interval = min(lower, advance_count - 1u);
+    var coverage = select(0.0, 1.0, hatch_entry(advance_start + interval).y > 0.5);
+    if (dot_count > 0u) {
+        var dot_lower = 0u;
+        var dot_upper = dot_count;
+        loop {
+            if (dot_lower >= dot_upper) {
+                break;
+            }
+            let middle = dot_lower + (dot_upper - dot_lower) / 2u;
+            if (wrapped < hatch_entry(dot_start + middle).x) {
+                dot_upper = middle;
+            } else {
+                dot_lower = middle + 1u;
+            }
+        }
+        let next = min(dot_lower, dot_count - 1u);
+        var previous = next;
+        if (dot_lower > 0u) {
+            previous = dot_lower - 1u;
+        }
+        let next_distance = abs(wrapped - hatch_entry(dot_start + next).x);
+        let previous_distance = abs(wrapped - hatch_entry(dot_start + previous).x);
+        let periodic_distance = min(
+            min(next_distance, previous_distance),
+            min(period - next_distance, period - previous_distance),
+        );
+        let antialias = max(fwidth(coordinate), line_width * 1.0e-3);
+        coverage = max(
+            coverage,
+            1.0 - smoothstep(line_width * 0.5, line_width * 0.5 + antialias, periodic_distance),
+        );
+    }
+    return coverage;
+}
+
 fn apply_hatch(base: vec4<f32>, position: vec3<f32>) -> vec4<f32> {
-    if (material.hatch_origin_enabled.w < 0.5) {
+    let line_count_value = material.hatch_axis_u_count.w;
+    if (line_count_value == 0.0) {
         return base;
     }
-    let coordinate = dot(
-        position - material.hatch_origin_enabled.xyz,
-        material.hatch_direction_spacing.xyz,
+    var coverage = select(0.0, 1.0, line_count_value < 0.0);
+    let relative = position - material.hatch_origin_width.xyz;
+    let pattern_position = vec2<f32>(
+        dot(relative, material.hatch_axis_u_count.xyz),
+        dot(relative, material.hatch_axis_v_texture_width.xyz),
     );
-    let spacing = material.hatch_direction_spacing.w;
-    let distance_to_line = abs(fract(coordinate / spacing + 0.5) - 0.5) * spacing;
-    let antialias = max(fwidth(coordinate), spacing * 1.0e-4);
-    let coverage = 1.0 - smoothstep(
-        material.hatch_values.x * 0.5,
-        material.hatch_values.x * 0.5 + antialias,
-        distance_to_line,
-    );
+    let line_width = material.hatch_origin_width.w;
+    let line_count = u32(max(line_count_value, 0.0));
+    for (var line_index = 0u; line_index < line_count; line_index += 1u) {
+        let descriptor_index = line_index * 4u;
+        let origin_offset = hatch_entry(descriptor_index);
+        let direction_normal = hatch_entry(descriptor_index + 1u);
+        let spacing_dash = hatch_entry(descriptor_index + 2u);
+        let counts = hatch_entry(descriptor_index + 3u);
+        let local = pattern_position - origin_offset.xy;
+        let line_number = round(dot(local, direction_normal.zw) / spacing_dash.x);
+        let line_origin = origin_offset.xy + line_number * origin_offset.zw;
+        let from_line = pattern_position - line_origin;
+        let perpendicular = dot(from_line, direction_normal.zw);
+        let antialias = max(fwidth(perpendicular), abs(spacing_dash.x) * 1.0e-4);
+        let line_coverage = 1.0 - smoothstep(
+            line_width * 0.5,
+            line_width * 0.5 + antialias,
+            abs(perpendicular),
+        );
+        let dash_coverage = hatch_dash_coverage(
+            dot(from_line, direction_normal.xy),
+            spacing_dash.z,
+            u32(spacing_dash.w),
+            u32(counts.x),
+            u32(counts.y),
+            u32(counts.z),
+            line_width,
+        );
+        coverage = max(coverage, line_coverage * dash_coverage);
+    }
     let hatch_alpha = coverage * material.hatch_color.a;
     return vec4<f32>(
         mix(base.rgb, material.hatch_color.rgb, hatch_alpha),

@@ -775,7 +775,7 @@ pub fn validate_material_resource(
         if !slots.insert(binding.slot) {
             return Err(CanonicalResourceValidationError::DuplicateIdentifier);
         }
-        validate_resource_ref(&binding.texture)?;
+        validate_canonical_resource_ref(&binding.texture)?;
         validate_resolved_resource_ref(
             &binding.texture,
             TEXTURE_RESOURCE_SCHEMA_ID,
@@ -845,6 +845,8 @@ pub fn validate_hatch_pattern_resource(
             return Err(CanonicalResourceValidationError::CollectionLimit);
         }
         for line in lines {
+            let direction = [line.angle.cos(), line.angle.sin()];
+            let normal_step = -direction[1] * line.offset[0] + direction[0] * line.offset[1];
             if !line.angle.is_finite()
                 || !line
                     .origin
@@ -852,6 +854,8 @@ pub fn validate_hatch_pattern_resource(
                     .chain(line.offset.iter())
                     .all(|v| v.is_finite())
                 || line.offset == [0.0, 0.0]
+                || !normal_step.is_finite()
+                || normal_step.abs() <= f64::EPSILON
                 || line.dash_pattern.len() > MAX_PATTERN_SEGMENTS
                 || line.dash_pattern.iter().any(|value| !value.is_finite())
                 || (!line.dash_pattern.is_empty()
@@ -1014,7 +1018,7 @@ pub fn validate_block_definition_set(
                     validate_geometry_object(geometry)
                         .map_err(|_| CanonicalResourceValidationError::InvalidGeometry)?;
                     if let BlockMemberStyle::Resource { style } = style {
-                        validate_resource_ref(style)?;
+                        validate_canonical_resource_ref(style)?;
                         let Some(versions) = resource_index.get(style.resource_id.as_str()) else {
                             return Err(CanonicalResourceValidationError::MissingReference);
                         };
@@ -1211,7 +1215,7 @@ fn build_resource_index(
     }
     let mut index = HashMap::<&str, Vec<&CanonicalResourceRef>>::new();
     for resource in resources {
-        validate_resource_ref(resource)?;
+        validate_canonical_resource_ref(resource)?;
         let versions = index.entry(resource.resource_id.as_str()).or_default();
         if versions.contains(&resource) {
             return Err(CanonicalResourceValidationError::DuplicateIdentifier);
@@ -1249,7 +1253,7 @@ fn validate_resolved_resource_ref(
     expected_schema: &str,
     index: &HashMap<&str, Vec<&CanonicalResourceRef>>,
 ) -> Result<(), CanonicalResourceValidationError> {
-    validate_resource_ref(resource)?;
+    validate_canonical_resource_ref(resource)?;
     if resource.schema_id != expected_schema {
         return Err(CanonicalResourceValidationError::InvalidSchema);
     }
@@ -1262,7 +1266,8 @@ fn validate_resolved_resource_ref(
     Ok(())
 }
 
-fn validate_resource_ref(
+/// Validates the envelope of one exact immutable canonical resource reference.
+pub fn validate_canonical_resource_ref(
     resource: &CanonicalResourceRef,
 ) -> Result<(), CanonicalResourceValidationError> {
     if valid_identifier(&resource.resource_id)
@@ -1739,6 +1744,29 @@ mod tests {
         assert_eq!(
             validate_annotation_style_resource(&style, &[]),
             Err(CanonicalResourceValidationError::MissingReference)
+        );
+    }
+
+    #[test]
+    fn hatch_rejects_offsets_parallel_to_the_repeated_line() {
+        let hatch = HatchPatternResource {
+            schema_id: HATCH_PATTERN_RESOURCE_SCHEMA_ID.to_owned(),
+            resource_id: "parallel-offset".to_owned(),
+            content_hash: hash("unsealed"),
+            name: None,
+            pattern: HatchPatternKind::Lines {
+                lines: vec![HatchPatternLine {
+                    angle: 0.0,
+                    origin: [0.0, 0.0],
+                    offset: [1.0, 0.0],
+                    dash_pattern: Vec::new(),
+                }],
+            },
+        };
+        let hatch = hatch.seal().expect("content address");
+        assert_eq!(
+            validate_hatch_pattern_resource(&hatch),
+            Err(CanonicalResourceValidationError::InvalidNumber)
         );
     }
 

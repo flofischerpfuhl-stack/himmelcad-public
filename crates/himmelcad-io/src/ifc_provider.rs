@@ -1567,6 +1567,7 @@ fn build_package(
                 resource: staged.resource.clone(),
             }],
         }],
+        presentation_resources: Default::default(),
     })
 }
 

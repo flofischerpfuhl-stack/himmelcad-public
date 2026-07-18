@@ -47,6 +47,7 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
     geometry_object_content_hash_json: () => '22'.repeat(32),
     block_definition_content_hash_json: () => '33'.repeat(32),
     line_type_resource_content_hash_json: () => '34'.repeat(32),
+    hatch_pattern_resource_content_hash_json: () => '56'.repeat(32),
     section_topology_partition_content_hash_json: () => '66'.repeat(32),
     area_interpolation_dependency_hash_json: () => '44'.repeat(32),
     section_product_content_hash_json: () => '55'.repeat(32),
@@ -219,7 +220,7 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
     register_raster_binary_resource(): void {},
     register_mesh_resource(): void {},
     register_area_interpolation(): void {},
-    register_hatch_resource(): void {},
+    register_canonical_hatch_pattern_resource(): void {},
     register_canonical_line_type_resource(resourceJson): void {
       calls.push(['canonicalLineType', resourceJson]);
     },
@@ -627,11 +628,23 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
         normal: { x: 0, y: 0, z: 1 },
       },
       tolerance: 0.001,
-      materialHatches: { 'material:insulation': 'wall-insulation' },
+      materialHatches: {
+        'material:insulation': {
+          resource: {
+            resourceId: 'wall-insulation',
+            schemaId: 'hcad.resource.hatch-pattern@1',
+            contentHash: 'cd'.repeat(32),
+          },
+          lineWidth: 0.025,
+          color: [0.2, 0.2, 0.2, 1],
+        },
+      },
       hatch: {
-        origin: { x: 0, y: 0, z: 1 },
-        direction: { x: 1, y: 0, z: 0 },
-        spacing: 0.25,
+        resource: {
+          resourceId: 'section-default',
+          schemaId: 'hcad.resource.hatch-pattern@1',
+          contentHash: 'ef'.repeat(32),
+        },
         lineWidth: 0.025,
         color: [0.2, 0.2, 0.2, 1],
       },
@@ -642,7 +655,17 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
   assert.equal(sectionCall?.[0], 'section');
   const sectionRequest = JSON.parse(String(sectionCall?.[1])) as Record<string, unknown>;
   assert.equal(sectionRequest.productHash, 'evaluated-section-hash');
-  assert.deepEqual(sectionRequest.materialHatches, { 'material:insulation': 'wall-insulation' });
+  assert.deepEqual(sectionRequest.materialHatches, {
+    'material:insulation': {
+      resource: {
+        resourceId: 'wall-insulation',
+        schemaId: 'hcad.resource.hatch-pattern@1',
+        contentHash: 'cd'.repeat(32),
+      },
+      lineWidth: 0.025,
+      color: [0.2, 0.2, 0.2, 1],
+    },
+  });
   const preview = viewer.buildAlignmentPreview('road-edit', {
     alignment: {
       horizontal: {
@@ -1077,6 +1100,7 @@ function minimalBinding(
     geometry_object_content_hash_json: () => '22'.repeat(32),
     block_definition_content_hash_json: () => '33'.repeat(32),
     line_type_resource_content_hash_json: () => '34'.repeat(32),
+    hatch_pattern_resource_content_hash_json: () => '56'.repeat(32),
     section_topology_partition_content_hash_json: () => '66'.repeat(32),
     area_interpolation_dependency_hash_json: () => '44'.repeat(32),
     section_product_content_hash_json: () => '55'.repeat(32),
@@ -1156,7 +1180,7 @@ function minimalBinding(
     register_raster_binary_resource(): void {},
     register_mesh_resource(): void {},
     register_area_interpolation(): void {},
-    register_hatch_resource(): void {},
+    register_canonical_hatch_pattern_resource(): void {},
     register_canonical_line_type_resource(): void {},
     register_line_type_resource: () =>
       JSON.stringify({

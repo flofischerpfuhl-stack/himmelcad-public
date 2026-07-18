@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::canonical_resources::CanonicalResourceRef;
 use crate::entity::EntityId;
 use crate::hash::ObjectHash;
 
@@ -486,8 +487,8 @@ pub struct TriangleMeshGeometry {
     /// Resource-backed meshes carry this association in their immutable format.
     #[serde(default)]
     pub triangle_material_slots: Option<Vec<u32>>,
-    /// Optional material-table resource.
-    pub materials: Option<GeometryResource>,
+    /// Optional exact immutable canonical material-table revision.
+    pub materials: Option<CanonicalResourceRef>,
 }
 
 /// 2.5D surface with at most one height for an XY coordinate.

@@ -1234,6 +1234,9 @@ mod tests {
         SectionTopologyBounds, SectionTopologyPart, AUTHORITATIVE_SECTION_PRODUCT_SCHEMA_VERSION,
     };
     use crate::{WorldTransform, WorldVec3};
+    use himmelcad_core::canonical_resources::{
+        CanonicalResourceRef, MATERIAL_TABLE_RESOURCE_SCHEMA_ID,
+    };
     use himmelcad_core::entity_model::{
         CsgNode, GeometryObject, GeometryResource, SolidGeometry, SolidPrimitive, Transform3d,
         TriangleMeshGeometry, TriangleMeshStorage, Vector3,
@@ -1315,10 +1318,10 @@ mod tests {
                     },
                     closed_manifold: true,
                     triangle_material_slots: Some(vec![7; cube_indices().len() / 3]),
-                    materials: Some(GeometryResource {
-                        object_hash: ObjectHash("7".repeat(64)),
-                        media_type: "application/vnd.himmelcad.material-table+json".to_owned(),
-                        byte_length: Some(1),
+                    materials: Some(CanonicalResourceRef {
+                        resource_id: "cube-materials".to_owned(),
+                        schema_id: MATERIAL_TABLE_RESOURCE_SCHEMA_ID.to_owned(),
+                        content_hash: ObjectHash("7".repeat(64)),
                     }),
                 },
             }),

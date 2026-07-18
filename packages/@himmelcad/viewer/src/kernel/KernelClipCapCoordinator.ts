@@ -282,7 +282,7 @@ function desiredCaps(update: KernelClipCapUpdate): Map<string, DesiredCap> {
           geometrySignature,
           volumePlanes: volume.planes,
           operation: volume.operation,
-          sectionFillResource: volume.sectionFillResource ?? null,
+          sectionFill: volume.sectionFill ?? null,
           sectionMaterialHatches: volume.sectionMaterialHatches ?? null,
           style: source.style ?? null,
         });

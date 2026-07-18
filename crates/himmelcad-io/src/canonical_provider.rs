@@ -5,6 +5,9 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use himmelcad_core::canonical_document::{CanonicalCommandTransaction, CanonicalEntityMutation};
+use himmelcad_core::canonical_resource_catalog::{
+    CanonicalPresentationResourceCatalog, CanonicalPresentationResourceSet,
+};
 use himmelcad_core::entity_model::{
     DepthSampling, ElevationSurfaceGeometry, GeometryObject, GeometryResource, RasterConnectivity,
     RasterImageGeometry, SolidGeometry, TriangleMeshGeometry, TriangleMeshStorage,
@@ -230,6 +233,9 @@ pub struct CanonicalImportPackage {
     /// Non-streamed binary resources such as pixels, depth bands, textures and fonts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resource_sets: Vec<CanonicalResourceSet>,
+    /// Exact immutable presentation resources published atomically with the geometry.
+    #[serde(default, skip_serializing_if = "presentation_resources_are_empty")]
+    pub presentation_resources: CanonicalPresentationResourceSet,
 }
 
 impl CanonicalImportPackage {
@@ -242,6 +248,10 @@ impl CanonicalImportPackage {
         {
             return Err(ProviderContractError::InvalidPackage);
         }
+        let mut presentation_catalog = CanonicalPresentationResourceCatalog::default();
+        presentation_catalog
+            .publish(self.presentation_resources.clone())
+            .map_err(|error| ProviderContractError::Canonical(error.to_string()))?;
 
         let mut entity_slots = BTreeMap::new();
         let mut entities = BTreeMap::new();
@@ -252,6 +262,10 @@ impl CanonicalImportPackage {
                 &admission.resolved_geometry,
             )
             .map_err(|error| ProviderContractError::Canonical(error.to_string()))?;
+            validate_geometry_presentation_resources(
+                &admission.resolved_geometry,
+                &presentation_catalog,
+            )?;
             let key = (
                 admission.entity.id.0.clone(),
                 admission.representation_slot.clone(),
@@ -373,6 +387,10 @@ impl CanonicalImportPackage {
                 }
             }
         }
+        collect_presentation_binary_resources(
+            &self.presentation_resources,
+            &mut required_resources,
+        )?;
         for resource in streamed_metadata.values() {
             if !resource_is_exactly_declared(&dataset_resources, resource) {
                 return Err(ProviderContractError::MissingGeometryResource);
@@ -418,6 +436,52 @@ impl CanonicalImportPackage {
                 .collect(),
         })
     }
+}
+
+fn presentation_resources_are_empty(resources: &CanonicalPresentationResourceSet) -> bool {
+    resources.textures.is_empty()
+        && resources.materials.is_empty()
+        && resources.material_tables.is_empty()
+        && resources.hatch_patterns.is_empty()
+        && resources.line_types.is_empty()
+        && resources.annotation_styles.is_empty()
+}
+
+fn validate_geometry_presentation_resources(
+    geometry: &GeometryObject,
+    catalog: &CanonicalPresentationResourceCatalog,
+) -> Result<(), ProviderContractError> {
+    let mesh = match geometry {
+        GeometryObject::ElevationSurface { surface } => match surface.as_ref() {
+            ElevationSurfaceGeometry::Tin { mesh, .. } => Some(mesh),
+            _ => None,
+        },
+        GeometryObject::Surface3d { mesh } => Some(mesh.as_ref()),
+        GeometryObject::Solid { solid } => match solid.as_ref() {
+            SolidGeometry::ClosedMesh { mesh } => Some(mesh),
+            _ => None,
+        },
+        _ => None,
+    };
+    if let Some(reference) = mesh.and_then(|mesh| mesh.materials.as_ref()) {
+        if catalog.material_table(reference).is_none() {
+            return Err(ProviderContractError::MissingPresentationResource);
+        }
+    }
+    Ok(())
+}
+
+fn collect_presentation_binary_resources(
+    resources: &CanonicalPresentationResourceSet,
+    required: &mut BTreeMap<String, GeometryResource>,
+) -> Result<(), ProviderContractError> {
+    for texture in &resources.textures {
+        collect_required_resource(&texture.pixels, required)?;
+    }
+    for annotation in &resources.annotation_styles {
+        collect_required_resource(&annotation.font, required)?;
+    }
+    Ok(())
 }
 
 /// Monotone operation progress emitted by expensive providers.
@@ -720,6 +784,9 @@ pub enum ProviderContractError {
     /// Admitted geometry references bytes absent from datasets and resource sets.
     #[error("canonical geometry resource is missing from the import package")]
     MissingGeometryResource,
+    /// Geometry references an exact presentation revision absent from the package.
+    #[error("canonical presentation resource is missing from the import package")]
+    MissingPresentationResource,
     /// A resource-set payload is not referenced by any admitted geometry object.
     #[error("canonical binary resource set contains an unreferenced payload")]
     UnreferencedGeometryResource,
@@ -847,9 +914,6 @@ fn collect_mesh_resources(
     if let TriangleMeshStorage::Resource { resource } = &mesh.storage {
         collect_required_resource(resource, required)?;
     }
-    if let Some(materials) = &mesh.materials {
-        collect_required_resource(materials, required)?;
-    }
     Ok(())
 }
 
@@ -933,6 +997,12 @@ where
 mod tests {
     use super::*;
     use himmelcad_core::canonical_document::CanonicalDocument;
+    use himmelcad_core::canonical_resources::{
+        CanonicalResourceRef, LinearRgba, MaterialAlphaMode, MaterialResource,
+        MaterialTableResource, MaterialTextureSlot, TextureColorSpace, TextureFilter,
+        TextureResource, TextureResourceBinding, TextureWrapMode, MATERIAL_RESOURCE_SCHEMA_ID,
+        MATERIAL_TABLE_RESOURCE_SCHEMA_ID, TEXTURE_RESOURCE_SCHEMA_ID,
+    };
     use himmelcad_core::entity::EntityId;
     use himmelcad_core::entity_model::{
         built_in_type, CameraModel, CanonicalEntity, DepthField, DepthSemantics, EntityTypeId,
@@ -1133,17 +1203,18 @@ mod tests {
         let mesh_a = resource(b"mesh-a", "model/gltf-binary");
         let mesh_b = resource(b"mesh-b", "model/gltf-binary");
         let texture = resource(b"shared-texture", "image/png");
+        let (presentation_resources, material_table) = presentation_materials(texture.clone());
         let package = binary_package(
             vec![
                 (
                     "surface-a",
                     built_in_type::SURFACE_3D,
-                    resource_mesh(mesh_a.clone(), texture.clone()),
+                    resource_mesh(mesh_a.clone(), material_table.clone()),
                 ),
                 (
                     "surface-b",
                     built_in_type::SURFACE_3D,
-                    resource_mesh(mesh_b.clone(), texture.clone()),
+                    resource_mesh(mesh_b.clone(), material_table),
                 ),
             ],
             vec![CanonicalResourceSet {
@@ -1154,6 +1225,7 @@ mod tests {
                     resource_artifact("texture.png", texture.clone()),
                 ],
             }],
+            presentation_resources,
         );
         package.validate().expect("shared texture declared once");
 
@@ -1278,6 +1350,7 @@ mod tests {
                     resource_artifact("connectivity.bits", connectivity),
                 ],
             }],
+            CanonicalPresentationResourceSet::default(),
         );
         package.validate().expect("complete panorama resource set");
 
@@ -1307,7 +1380,69 @@ mod tests {
         }
     }
 
-    fn resource_mesh(mesh: GeometryResource, materials: GeometryResource) -> GeometryObject {
+    fn presentation_materials(
+        pixels: GeometryResource,
+    ) -> (CanonicalPresentationResourceSet, CanonicalResourceRef) {
+        let texture = TextureResource {
+            schema_id: TEXTURE_RESOURCE_SCHEMA_ID.to_owned(),
+            resource_id: "shared-texture".to_owned(),
+            content_hash: ObjectHash::of_bytes(b"unsealed"),
+            pixels,
+            color_space: TextureColorSpace::Srgb,
+            wrap_u: TextureWrapMode::Repeat,
+            wrap_v: TextureWrapMode::Repeat,
+            mag_filter: TextureFilter::Linear,
+            min_filter: TextureFilter::Linear,
+        }
+        .seal()
+        .expect("texture hash");
+        let material = MaterialResource {
+            schema_id: MATERIAL_RESOURCE_SCHEMA_ID.to_owned(),
+            resource_id: "shared-material".to_owned(),
+            content_hash: ObjectHash::of_bytes(b"unsealed"),
+            name: None,
+            base_color: LinearRgba {
+                red: 1.0,
+                green: 1.0,
+                blue: 1.0,
+                alpha: 1.0,
+            },
+            emissive: [0.0; 3],
+            metallic: 0.0,
+            roughness: 1.0,
+            alpha_mode: MaterialAlphaMode::Opaque,
+            alpha_cutoff: None,
+            double_sided: false,
+            texture_bindings: vec![TextureResourceBinding {
+                slot: MaterialTextureSlot::BaseColor,
+                texture: texture.resource_ref(),
+                texture_coordinate_set: 0,
+                transform: None,
+            }],
+        }
+        .seal()
+        .expect("material hash");
+        let table = MaterialTableResource {
+            schema_id: MATERIAL_TABLE_RESOURCE_SCHEMA_ID.to_owned(),
+            resource_id: "shared-material-table".to_owned(),
+            content_hash: ObjectHash::of_bytes(b"unsealed"),
+            materials: vec![material.resource_ref()],
+        }
+        .seal()
+        .expect("material-table hash");
+        let reference = table.resource_ref();
+        (
+            CanonicalPresentationResourceSet {
+                textures: vec![texture],
+                materials: vec![material],
+                material_tables: vec![table],
+                ..CanonicalPresentationResourceSet::default()
+            },
+            reference,
+        )
+    }
+
+    fn resource_mesh(mesh: GeometryResource, materials: CanonicalResourceRef) -> GeometryObject {
         GeometryObject::Surface3d {
             mesh: Box::new(TriangleMeshGeometry {
                 storage: TriangleMeshStorage::Resource { resource: mesh },
@@ -1321,6 +1456,7 @@ mod tests {
     fn binary_package(
         geometries: Vec<(&str, &str, GeometryObject)>,
         resource_sets: Vec<CanonicalResourceSet>,
+        presentation_resources: CanonicalPresentationResourceSet,
     ) -> CanonicalImportPackage {
         let components = CanonicalJsonObject::new(
             "application/vnd.himmelcad.components+json",
@@ -1381,6 +1517,7 @@ mod tests {
             objects: vec![components, attributes, relations],
             datasets: Vec::new(),
             resource_sets,
+            presentation_resources,
         }
     }
 
@@ -1472,6 +1609,7 @@ mod tests {
                 }],
             }],
             resource_sets: Vec::new(),
+            presentation_resources: CanonicalPresentationResourceSet::default(),
         }
     }
 }

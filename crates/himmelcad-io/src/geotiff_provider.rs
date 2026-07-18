@@ -598,6 +598,7 @@ fn build_package(
                 resource: staged.resource,
             }],
         }],
+        presentation_resources: Default::default(),
     })
 }
 

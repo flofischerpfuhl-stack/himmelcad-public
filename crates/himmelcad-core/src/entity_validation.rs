@@ -4,6 +4,9 @@ use std::collections::BTreeMap;
 
 use thiserror::Error;
 
+use crate::canonical_resources::{
+    validate_canonical_resource_ref, MATERIAL_TABLE_RESOURCE_SCHEMA_ID,
+};
 use crate::entity_model::{
     AlignmentGeometry, AnnotationAnchor, AreaGeometry, BuiltInEntityType, CameraModel,
     CanonicalEntity, CsgNode, CurveGeometry, CurveLoop, CurveUse, DepthSampling, DimensionGeometry,
@@ -575,7 +578,11 @@ fn validate_loop(curve_loop: &CurveLoop) -> Result<(), EntityValidationError> {
 
 fn validate_mesh(mesh: &TriangleMeshGeometry) -> Result<(), EntityValidationError> {
     if let Some(materials) = &mesh.materials {
-        validate_resource(materials)?;
+        if materials.schema_id != MATERIAL_TABLE_RESOURCE_SCHEMA_ID
+            || validate_canonical_resource_ref(materials).is_err()
+        {
+            return Err(EntityValidationError::InvalidMesh);
+        }
     }
     match &mesh.storage {
         TriangleMeshStorage::Resource { resource } => {
@@ -1308,6 +1315,7 @@ mod tests {
         validate_canonical_entity_semantics, validate_geometry_object,
         validate_resolved_representation, EntityValidationError,
     };
+    use crate::canonical_resources::{CanonicalResourceRef, MATERIAL_TABLE_RESOURCE_SCHEMA_ID};
     use crate::entity::EntityId;
     use crate::entity_model::{
         built_in_type, AreaGeometry, CameraModel, CanonicalEntity, CurveGeometry, CurveLoop,
@@ -1757,10 +1765,10 @@ mod tests {
             },
             closed_manifold: false,
             triangle_material_slots: Some(vec![7]),
-            materials: Some(GeometryResource {
-                object_hash: ObjectHash("7".repeat(64)),
-                media_type: "application/vnd.himmelcad.material-table+json".to_owned(),
-                byte_length: Some(1),
+            materials: Some(CanonicalResourceRef {
+                resource_id: "road-materials".to_owned(),
+                schema_id: MATERIAL_TABLE_RESOURCE_SCHEMA_ID.to_owned(),
+                content_hash: ObjectHash("7".repeat(64)),
             }),
         };
         assert_eq!(

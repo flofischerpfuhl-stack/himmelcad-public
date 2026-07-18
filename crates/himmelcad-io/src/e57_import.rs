@@ -2650,6 +2650,7 @@ mod tests {
                 }],
             }],
             resource_sets: Vec::new(),
+            presentation_resources: Default::default(),
         }
     }
 

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     BoundingVolume, ClipPlane, DatasetId, PickAddress, PickToken, ResourceCost, TileId, TileKey,
+    WorldVec3,
 };
 
 /// Stable identity of one versioned render proxy.
@@ -83,7 +84,7 @@ pub struct HeightGradient {
 }
 
 /// Fill resource used for triangles, regions and exact section caps.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
@@ -101,8 +102,18 @@ pub enum FillMode {
     },
     /// Evaluate a vector hatch in object or section coordinates.
     Hatch {
-        /// Project hatch resource identity.
-        resource_id: String,
+        /// Exact immutable canonical hatch-pattern revision.
+        resource: CanonicalResourceRef,
+        /// Pattern-space origin in authoritative project coordinates.
+        origin: WorldVec3,
+        /// Unit world direction of the pattern-space U axis.
+        axis_u: WorldVec3,
+        /// Unit world direction of the pattern-space V axis.
+        axis_v: WorldVec3,
+        /// Hatch stroke width in authored project units.
+        line_width: f64,
+        /// Linear RGBA hatch-stroke color.
+        color: [f32; 4],
     },
 }
 
@@ -282,6 +293,18 @@ pub enum ClipOperation {
     RemoveInside,
 }
 
+/// View-local styling for a canonical hatch evaluated in a generated section plane.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SectionHatchStyle {
+    /// Exact immutable canonical hatch-pattern revision.
+    pub resource: CanonicalResourceRef,
+    /// Hatch stroke width in authored project units.
+    pub line_width: f64,
+    /// Linear RGBA hatch-stroke color.
+    pub color: [f32; 4],
+}
+
 /// Convex world-space clip volume shared by all proxy kinds.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -294,11 +317,11 @@ pub struct ClipVolume {
     pub operation: ClipOperation,
     /// Whether closed solid proxies request a preview cap.
     pub preview_cap: bool,
-    /// Optional hatch/material resource for exact generated sections.
-    pub section_fill_resource: Option<String>,
+    /// Optional hatch style for exact generated sections.
+    pub section_fill: Option<SectionHatchStyle>,
     /// Per-material hatch overrides for layered closed-solid preview caps.
     #[serde(default)]
-    pub section_material_hatches: BTreeMap<u32, String>,
+    pub section_material_hatches: BTreeMap<u32, SectionHatchStyle>,
     /// Whether the clip volume is active.
     pub enabled: bool,
 }
@@ -1070,13 +1093,13 @@ fn normalized_clip_volume(mut volume: ClipVolume) -> Result<ClipVolume, RenderWo
     if volume.id.0.trim().is_empty()
         || volume.planes.is_empty()
         || volume
-            .section_fill_resource
+            .section_fill
             .as_ref()
-            .is_some_and(|resource| resource.trim().is_empty())
+            .is_some_and(invalid_section_hatch)
         || volume
             .section_material_hatches
             .values()
-            .any(|resource| resource.trim().is_empty())
+            .any(invalid_section_hatch)
     {
         return Err(invalid());
     }
@@ -1094,6 +1117,21 @@ fn normalized_clip_volume(mut volume: ClipVolume) -> Result<ClipVolume, RenderWo
         plane.distance /= length;
     }
     Ok(volume)
+}
+
+fn invalid_section_hatch(style: &SectionHatchStyle) -> bool {
+    style.resource.resource_id.trim().is_empty()
+        || style.resource.schema_id.trim().is_empty()
+        || style.resource.content_hash.as_str().len() != 64
+        || !style
+            .resource
+            .content_hash
+            .as_str()
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+        || !style.line_width.is_finite()
+        || style.line_width <= 0.0
+        || style.color.iter().any(|value| !value.is_finite())
 }
 
 #[cfg(test)]
@@ -1286,7 +1324,7 @@ mod tests {
                 }],
                 operation: ClipOperation::KeepInside,
                 preview_cap: true,
-                section_fill_resource: Some("concrete-hatch".to_owned()),
+                section_fill: None,
                 section_material_hatches: BTreeMap::new(),
                 enabled: true,
             })
@@ -1518,7 +1556,7 @@ mod tests {
             }],
             operation: ClipOperation::KeepInside,
             preview_cap: false,
-            section_fill_resource: None,
+            section_fill: None,
             section_material_hatches: BTreeMap::new(),
             enabled: true,
         }

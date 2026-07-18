@@ -7,7 +7,9 @@ use std::sync::{Arc, Mutex};
 
 use bytemuck::{Pod, Zeroable};
 use glam::{DMat3, DMat4};
-use himmelcad_core::canonical_resources::{LineTypeElement, LineTypePattern};
+use himmelcad_core::canonical_resources::{
+    HatchPatternKind, HatchPatternLine, LineTypeElement, LineTypePattern,
+};
 use wgpu::util::DeviceExt;
 
 // BUFFER_UPLOAD_GATE: every initialized buffer goes through
@@ -32,6 +34,12 @@ pub const MAX_GPU_GRADIENT_COLORS: usize = 256;
 /// This matches the canonical resource validation ceiling. Pattern lookup is
 /// logarithmic in the shader and does not consume per-material uniform space.
 pub const MAX_GPU_LINE_TYPE_ELEMENTS: usize = 65_536;
+/// Maximum lookup texels retained by one canonical hatch revision.
+///
+/// The bound prevents a syntactically valid but combinatorially large pattern
+/// from monopolizing GPU memory. Admission remains independent per device and
+/// never changes the canonical resource itself.
+pub const MAX_GPU_HATCH_TEXELS: usize = 1_048_576;
 const DEFAULT_POINT_CLASSIFICATION_COLORS: [[f32; 4]; 19] = [
     [0.60, 0.60, 0.60, 1.0], // 0 never classified
     [0.75, 0.75, 0.75, 1.0], // 1 unclassified
@@ -77,11 +85,12 @@ pub struct GpuPresentationStyle {
     gradient_count: u32,
     gradient_colors: [[f32; 4]; MAX_GPU_GRADIENT_COLORS],
     hatch_origin: [f32; 3],
-    hatch_enabled: f32,
-    hatch_direction: [f32; 3],
-    hatch_spacing: f32,
-    hatch_color: [f32; 4],
     hatch_line_width: f32,
+    hatch_axis_u: [f32; 3],
+    hatch_line_count: f32,
+    hatch_axis_v: [f32; 3],
+    hatch_texture_width: f32,
+    hatch_color: [f32; 4],
     fill_visible: f32,
     stroke_visible: f32,
     stroke_color_mode: u32,
@@ -111,11 +120,12 @@ impl Default for GpuPresentationStyle {
             gradient_count: 1,
             gradient_colors: [[1.0; 4]; MAX_GPU_GRADIENT_COLORS],
             hatch_origin: [0.0; 3],
-            hatch_enabled: 0.0,
-            hatch_direction: [1.0, 0.0, 0.0],
-            hatch_spacing: 1.0,
+            hatch_line_width: 0.0,
+            hatch_axis_u: [1.0, 0.0, 0.0],
+            hatch_line_count: 0.0,
+            hatch_axis_v: [0.0, 1.0, 0.0],
+            hatch_texture_width: 1.0,
             hatch_color: [0.0, 0.0, 0.0, 1.0],
-            hatch_line_width: 0.1,
             fill_visible: 1.0,
             stroke_visible: 1.0,
             stroke_color_mode: 0,
@@ -289,13 +299,18 @@ impl GpuPresentationStyle {
 
     /// Adds one anti-aliased world-space vector hatch layer.
     #[must_use]
-    pub fn with_hatch(mut self, hatch: GpuHatchPattern) -> Self {
+    pub fn with_hatch(mut self, hatch: GpuHatchPattern, pattern: &GpuHatchPatternData) -> Self {
         self.hatch_origin = hatch.origin_relative;
-        self.hatch_enabled = 1.0;
-        self.hatch_direction = hatch.direction;
-        self.hatch_spacing = hatch.spacing;
-        self.hatch_color = hatch.color;
         self.hatch_line_width = hatch.line_width;
+        self.hatch_axis_u = hatch.axis_u;
+        self.hatch_line_count = if pattern.solid {
+            -1.0
+        } else {
+            pattern.line_count as f32
+        };
+        self.hatch_axis_v = hatch.axis_v;
+        self.hatch_texture_width = pattern.texture_width as f32;
+        self.hatch_color = hatch.color;
         self
     }
 }
@@ -520,36 +535,284 @@ impl GpuLineTypeResource {
     }
 }
 
-/// One world-space line hatch compiled from a project hatch resource.
+/// Canonical hatch lookup data compiled without view placement or color.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GpuHatchPatternData {
+    solid: bool,
+    line_count: u32,
+    texture_width: u32,
+    texels: Vec<[f32; 4]>,
+}
+
+impl GpuHatchPatternData {
+    /// Compiles every analytic line family and signed dash sequence in one
+    /// canonical hatch resource for bounded fragment-shader lookup.
+    pub fn from_canonical(pattern: &HatchPatternKind) -> Result<Self, GpuFrameError> {
+        let HatchPatternKind::Lines { lines } = pattern else {
+            return Ok(Self {
+                solid: true,
+                line_count: 0,
+                texture_width: 1,
+                texels: vec![[0.0; 4]],
+            });
+        };
+        if lines.is_empty() {
+            return Err(GpuFrameError::InvalidStyle);
+        }
+        let descriptor_count = lines
+            .len()
+            .checked_mul(4)
+            .ok_or(GpuFrameError::InvalidStyle)?;
+        let payload_count = lines.iter().try_fold(0_usize, |total, line| {
+            total
+                .checked_add(line.dash_pattern.len())
+                .ok_or(GpuFrameError::InvalidStyle)
+        })?;
+        let texel_count = descriptor_count
+            .checked_add(payload_count)
+            .ok_or(GpuFrameError::InvalidStyle)?;
+        if texel_count == 0 || texel_count > MAX_GPU_HATCH_TEXELS {
+            return Err(GpuFrameError::InvalidStyle);
+        }
+        let mut descriptors = Vec::with_capacity(descriptor_count);
+        let mut payload = Vec::with_capacity(payload_count);
+        for line in lines {
+            compile_hatch_line(line, descriptor_count, &mut descriptors, &mut payload)?;
+        }
+        let texture_width =
+            u32::try_from(texel_count.min(256)).map_err(|_| GpuFrameError::InvalidStyle)?;
+        let texture_height = u32::try_from(texel_count.div_ceil(texture_width as usize))
+            .map_err(|_| GpuFrameError::InvalidStyle)?;
+        let padded_count = usize::try_from(texture_width)
+            .ok()
+            .and_then(|width| {
+                usize::try_from(texture_height)
+                    .ok()
+                    .and_then(|height| width.checked_mul(height))
+            })
+            .ok_or(GpuFrameError::InvalidStyle)?;
+        descriptors.extend(payload);
+        descriptors.resize(padded_count, [0.0; 4]);
+        Ok(Self {
+            solid: false,
+            line_count: u32::try_from(lines.len()).map_err(|_| GpuFrameError::InvalidStyle)?,
+            texture_width,
+            texels: descriptors,
+        })
+    }
+}
+
+fn compile_hatch_line(
+    line: &HatchPatternLine,
+    descriptor_count: usize,
+    descriptors: &mut Vec<[f32; 4]>,
+    payload: &mut Vec<[f32; 4]>,
+) -> Result<(), GpuFrameError> {
+    let direction = [line.angle.cos(), line.angle.sin()];
+    let normal = [-direction[1], direction[0]];
+    let normal_step = line.offset[0] * normal[0] + line.offset[1] * normal[1];
+    let along_step = line.offset[0] * direction[0] + line.offset[1] * direction[1];
+    if !line.angle.is_finite()
+        || line
+            .origin
+            .iter()
+            .chain(line.offset.iter())
+            .any(|value| !value.is_finite())
+        || !normal_step.is_finite()
+        || normal_step.abs() <= f64::EPSILON
+        || !along_step.is_finite()
+    {
+        return Err(GpuFrameError::InvalidStyle);
+    }
+    let advance_start = descriptor_count
+        .checked_add(payload.len())
+        .ok_or(GpuFrameError::InvalidStyle)?;
+    let mut boundary = 0.0_f64;
+    let mut advances = Vec::with_capacity(line.dash_pattern.len());
+    let mut dots = Vec::new();
+    for element in &line.dash_pattern {
+        if !element.is_finite() {
+            return Err(GpuFrameError::InvalidStyle);
+        }
+        if *element == 0.0 {
+            dots.push(boundary);
+        } else {
+            boundary += element.abs();
+            if !boundary.is_finite() {
+                return Err(GpuFrameError::InvalidStyle);
+            }
+            advances.push([boundary, f64::from(*element > 0.0), 0.0, 0.0]);
+        }
+    }
+    if !line.dash_pattern.is_empty() && boundary <= 0.0 {
+        return Err(GpuFrameError::InvalidStyle);
+    }
+    let dot_start = advance_start
+        .checked_add(advances.len())
+        .ok_or(GpuFrameError::InvalidStyle)?;
+    let mut converted_advances = Vec::with_capacity(advances.len());
+    let mut previous = f32::NEG_INFINITY;
+    for advance in advances {
+        #[allow(clippy::cast_possible_truncation)]
+        let converted = [advance[0] as f32, advance[1] as f32, 0.0, 0.0];
+        if !converted[0].is_finite() || converted[0] <= previous {
+            return Err(GpuFrameError::InvalidStyle);
+        }
+        previous = converted[0];
+        converted_advances.push(converted);
+    }
+    let mut converted_dots = Vec::with_capacity(dots.len());
+    for dot in dots {
+        #[allow(clippy::cast_possible_truncation)]
+        let converted = dot as f32;
+        if !converted.is_finite() || converted < 0.0 || converted > previous {
+            return Err(GpuFrameError::InvalidStyle);
+        }
+        converted_dots.push([converted, 2.0, 0.0, 0.0]);
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    let converted = [
+        [
+            line.origin[0] as f32,
+            line.origin[1] as f32,
+            line.offset[0] as f32,
+            line.offset[1] as f32,
+        ],
+        [
+            direction[0] as f32,
+            direction[1] as f32,
+            normal[0] as f32,
+            normal[1] as f32,
+        ],
+        [
+            normal_step as f32,
+            along_step as f32,
+            boundary as f32,
+            advance_start as f32,
+        ],
+        [
+            converted_advances.len() as f32,
+            dot_start as f32,
+            converted_dots.len() as f32,
+            0.0,
+        ],
+    ];
+    if converted.iter().flatten().any(|value| !value.is_finite())
+        || converted[2][0] == 0.0
+        || (!line.dash_pattern.is_empty() && converted[2][2] <= 0.0)
+    {
+        return Err(GpuFrameError::InvalidStyle);
+    }
+    descriptors.extend(converted);
+    payload.extend(converted_advances);
+    payload.extend(converted_dots);
+    Ok(())
+}
+
+/// Immutable GPU texture containing one exact canonical hatch revision.
+#[derive(Debug, Clone)]
+pub struct GpuHatchResource(Arc<GpuHatchResourceInner>);
+
+#[derive(Debug)]
+struct GpuHatchResourceInner {
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    pattern: GpuHatchPatternData,
+    resident_bytes: u64,
+}
+
+impl GpuHatchResource {
+    fn upload(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        label: &str,
+        pattern: GpuHatchPatternData,
+    ) -> Result<Self, GpuFrameError> {
+        let texel_count = pattern.texels.len();
+        let width = pattern.texture_width;
+        let height = u32::try_from(texel_count.div_ceil(width as usize))
+            .map_err(|_| GpuFrameError::InvalidStyle)?;
+        let descriptor = wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        };
+        let texture = device.create_texture_with_data(
+            queue,
+            &descriptor,
+            wgpu::util::TextureDataOrder::LayerMajor,
+            bytemuck::cast_slice(&pattern.texels),
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let resident_bytes = u64::try_from(texel_count)
+            .unwrap_or(u64::MAX)
+            .saturating_mul(u64::try_from(size_of::<[f32; 4]>()).expect("size fits u64"));
+        Ok(Self(Arc::new(GpuHatchResourceInner {
+            _texture: texture,
+            view,
+            pattern,
+            resident_bytes,
+        })))
+    }
+
+    /// Validated canonical pattern represented by this immutable allocation.
+    #[must_use]
+    pub fn pattern(&self) -> &GpuHatchPatternData {
+        &self.0.pattern
+    }
+
+    /// Exact GPU bytes retained by this resource revision.
+    #[must_use]
+    pub fn resident_bytes(&self) -> u64 {
+        self.0.resident_bytes
+    }
+
+    /// Process-local allocation identity used to verify revision sharing.
+    #[must_use]
+    pub fn allocation_key(&self) -> usize {
+        Arc::as_ptr(&self.0) as usize
+    }
+}
+
+/// View-local placement and styling of one canonical hatch resource.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GpuHatchPattern {
     origin_relative: [f32; 3],
-    direction: [f32; 3],
-    spacing: f32,
+    axis_u: [f32; 3],
+    axis_v: [f32; 3],
     line_width: f32,
     color: [f32; 4],
 }
 
 impl GpuHatchPattern {
-    /// Resolves a hatch against the same floating origin as its cap geometry.
+    /// Resolves an orthonormal pattern frame against the batch floating origin.
     pub fn new(
         origin: WorldVec3,
-        direction: WorldVec3,
-        spacing: f64,
+        axis_u: WorldVec3,
+        axis_v: WorldVec3,
         line_width: f64,
         color: [f32; 4],
         floating_origin: WorldVec3,
     ) -> Result<Self, GpuFrameError> {
-        let length =
-            (direction.x * direction.x + direction.y * direction.y + direction.z * direction.z)
-                .sqrt();
-        if !length.is_finite()
-            || length <= f64::EPSILON
-            || !spacing.is_finite()
-            || spacing <= 0.0
+        let u_length = (axis_u.x * axis_u.x + axis_u.y * axis_u.y + axis_u.z * axis_u.z).sqrt();
+        let v_length = (axis_v.x * axis_v.x + axis_v.y * axis_v.y + axis_v.z * axis_v.z).sqrt();
+        let dot = axis_u.x * axis_v.x + axis_u.y * axis_v.y + axis_u.z * axis_v.z;
+        if !u_length.is_finite()
+            || !v_length.is_finite()
+            || u_length <= f64::EPSILON
+            || v_length <= f64::EPSILON
+            || (dot / (u_length * v_length)).abs() > 1.0e-6
             || !line_width.is_finite()
             || line_width <= 0.0
-            || line_width > spacing
             || color.iter().any(|value| !value.is_finite())
         {
             return Err(GpuFrameError::InvalidStyle);
@@ -561,21 +824,27 @@ impl GpuHatchPattern {
                 (origin.y - floating_origin.y) as f32,
                 (origin.z - floating_origin.z) as f32,
             ],
-            direction: [
-                (direction.x / length) as f32,
-                (direction.y / length) as f32,
-                (direction.z / length) as f32,
+            axis_u: [
+                (axis_u.x / u_length) as f32,
+                (axis_u.y / u_length) as f32,
+                (axis_u.z / u_length) as f32,
             ],
-            spacing: spacing as f32,
+            axis_v: [
+                (axis_v.x / v_length) as f32,
+                (axis_v.y / v_length) as f32,
+                (axis_v.z / v_length) as f32,
+            ],
             line_width: line_width as f32,
             color,
         };
         if converted
             .origin_relative
             .iter()
-            .chain(&converted.direction)
-            .chain([converted.spacing, converted.line_width].iter())
+            .chain(&converted.axis_u)
+            .chain(&converted.axis_v)
+            .chain([converted.line_width].iter())
             .any(|value| !value.is_finite())
+            || converted.line_width <= 0.0
         {
             return Err(GpuFrameError::InvalidStyle);
         }
@@ -829,6 +1098,7 @@ pub struct GpuMaterial {
     source_texture_resource: GpuTextureResource,
     active_texture_resource: GpuTextureResource,
     line_type_resource: GpuLineTypeResource,
+    hatch_resource: GpuHatchResource,
     uniform: wgpu::Buffer,
     alpha_mode: GpuAlphaMode,
     transparent: bool,
@@ -955,6 +1225,7 @@ impl GpuMaterial {
             "himmelcad-presentation-texture",
             texture,
             &self.line_type_resource,
+            &self.hatch_resource,
             &self.uniform,
         );
         self.active_texture_resource = texture.clone();
@@ -973,9 +1244,28 @@ impl GpuMaterial {
             "himmelcad-line-type-resource",
             &self.active_texture_resource,
             resource,
+            &self.hatch_resource,
             &self.uniform,
         );
         self.line_type_resource = resource.clone();
+    }
+
+    fn rebind_hatch_resource(
+        &mut self,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        resource: &GpuHatchResource,
+    ) {
+        self.bind_group = create_material_bind_group(
+            device,
+            layout,
+            "himmelcad-hatch-resource",
+            &self.active_texture_resource,
+            &self.line_type_resource,
+            resource,
+            &self.uniform,
+        );
+        self.hatch_resource = resource.clone();
     }
 }
 
@@ -1577,7 +1867,7 @@ impl GpuDrawBatch {
     pub fn presentation_hatch_enabled(&self) -> Option<bool> {
         self.material
             .as_ref()
-            .map(|material| material.style.hatch_enabled >= 0.5)
+            .map(|material| material.style.hatch_line_count != 0.0)
     }
 
     /// Whether stroke-capable fragments are currently visible and ID-pickable.
@@ -1634,6 +1924,23 @@ impl GpuDrawBatch {
             device,
             &renderer.material_bind_group_layout,
             resource.unwrap_or(&renderer.default_line_type_resource),
+        );
+        Ok(())
+    }
+
+    /// Binds one immutable canonical hatch revision without rebuilding
+    /// geometry. `None` restores the renderer's inert hatch resource.
+    pub fn rebind_hatch_resource(
+        &mut self,
+        device: &wgpu::Device,
+        renderer: &GpuSharedRenderer,
+        resource: Option<&GpuHatchResource>,
+    ) -> Result<(), GpuFrameError> {
+        let material = self.material.as_mut().ok_or(GpuFrameError::InvalidStyle)?;
+        material.rebind_hatch_resource(
+            device,
+            &renderer.material_bind_group_layout,
+            resource.unwrap_or(&renderer.default_hatch_resource),
         );
         Ok(())
     }
@@ -2742,6 +3049,11 @@ impl GpuDrawBatch {
             &renderer.material_bind_group_layout,
             &source.line_type_resource,
         );
+        material.rebind_hatch_resource(
+            device,
+            &renderer.material_bind_group_layout,
+            &source.hatch_resource,
+        );
         material.interaction_translation = source.interaction_translation;
         material.source_linear_rows = source.source_linear_rows;
         material.source_normal_rows = source.source_normal_rows;
@@ -3377,6 +3689,7 @@ pub struct GpuSharedRenderer {
     frame_bind_group: wgpu::BindGroup,
     material_bind_group_layout: wgpu::BindGroupLayout,
     default_line_type_resource: GpuLineTypeResource,
+    default_hatch_resource: GpuHatchResource,
     default_material: GpuMaterial,
     opaque: PrimitivePipelines,
     transparent: PrimitivePipelines,
@@ -3486,6 +3799,16 @@ impl GpuSharedRenderer {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
                 ],
             });
         let default_texture = create_texture_resource(
@@ -3507,6 +3830,18 @@ impl GpuSharedRenderer {
                 .expect("continuous canonical line type is valid"),
         )
         .expect("continuous GPU line type is valid");
+        let default_hatch_resource = GpuHatchResource::upload(
+            device,
+            queue,
+            "himmelcad-inert-hatch",
+            GpuHatchPatternData {
+                solid: false,
+                line_count: 0,
+                texture_width: 1,
+                texels: vec![[0.0; 4]],
+            },
+        )
+        .expect("inert GPU hatch is valid");
         let default_material = create_material_from_texture(
             device,
             queue,
@@ -3514,6 +3849,7 @@ impl GpuSharedRenderer {
             "himmelcad-default-material",
             &default_texture,
             &default_line_type_resource,
+            &default_hatch_resource,
             GpuAlphaMode::Opaque,
             &GpuPresentationStyle::default(),
             MaterialOriginState::ZERO,
@@ -3545,6 +3881,7 @@ impl GpuSharedRenderer {
             frame_bind_group,
             material_bind_group_layout,
             default_line_type_resource,
+            default_hatch_resource,
             default_material,
             opaque,
             transparent,
@@ -3595,6 +3932,7 @@ impl GpuSharedRenderer {
             label,
             &texture,
             &self.default_line_type_resource,
+            &self.default_hatch_resource,
             alpha_mode,
             &GpuPresentationStyle::default(),
             MaterialOriginState::ZERO,
@@ -3612,6 +3950,18 @@ impl GpuSharedRenderer {
         pattern: GpuLineTypePattern,
     ) -> Result<GpuLineTypeResource, GpuFrameError> {
         GpuLineTypeResource::upload(device, queue, label, pattern)
+    }
+
+    /// Uploads one validated canonical hatch revision as an immutable,
+    /// shareable lookup texture on both native WebGPU and the WebGL2 backend.
+    pub fn create_hatch_resource(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        label: &str,
+        pattern: GpuHatchPatternData,
+    ) -> Result<GpuHatchResource, GpuFrameError> {
+        GpuHatchResource::upload(device, queue, label, pattern)
     }
 
     /// Uploads a texture with independently resolved color, opacity and Z styling.
@@ -3632,6 +3982,7 @@ impl GpuSharedRenderer {
             label,
             &texture,
             &self.default_line_type_resource,
+            &self.default_hatch_resource,
             alpha_mode,
             &style,
             MaterialOriginState::ZERO,
@@ -3656,6 +4007,7 @@ impl GpuSharedRenderer {
             label,
             &texture,
             &self.default_line_type_resource,
+            &self.default_hatch_resource,
             alpha_mode,
             &style,
             MaterialOriginState::ZERO,
@@ -3725,6 +4077,7 @@ impl GpuSharedRenderer {
             label,
             texture,
             &self.default_line_type_resource,
+            &self.default_hatch_resource,
             alpha_mode,
             style,
             origins,
@@ -4211,10 +4564,10 @@ struct MaterialUniform {
     style_values: [f32; 4],
     height_values: [f32; 4],
     gradient_colors: [[f32; 4]; MAX_GPU_GRADIENT_COLORS],
-    hatch_origin_enabled: [f32; 4],
-    hatch_direction_spacing: [f32; 4],
+    hatch_origin_width: [f32; 4],
+    hatch_axis_u_count: [f32; 4],
     hatch_color: [f32; 4],
-    hatch_values: [f32; 4],
+    hatch_axis_v_texture_width: [f32; 4],
     stroke_color: [f32; 4],
     stroke_values: [f32; 4],
     stroke_modes: [u32; 4],
@@ -4257,20 +4610,25 @@ impl MaterialUniform {
                 0.0,
             ],
             gradient_colors: style.gradient_colors,
-            hatch_origin_enabled: [
+            hatch_origin_width: [
                 style.hatch_origin[0],
                 style.hatch_origin[1],
                 style.hatch_origin[2],
-                style.hatch_enabled,
+                style.hatch_line_width,
             ],
-            hatch_direction_spacing: [
-                style.hatch_direction[0],
-                style.hatch_direction[1],
-                style.hatch_direction[2],
-                style.hatch_spacing,
+            hatch_axis_u_count: [
+                style.hatch_axis_u[0],
+                style.hatch_axis_u[1],
+                style.hatch_axis_u[2],
+                style.hatch_line_count,
             ],
             hatch_color: style.hatch_color,
-            hatch_values: [style.hatch_line_width, 0.0, 0.0, 0.0],
+            hatch_axis_v_texture_width: [
+                style.hatch_axis_v[0],
+                style.hatch_axis_v[1],
+                style.hatch_axis_v[2],
+                style.hatch_texture_width,
+            ],
             stroke_color: style.stroke_color,
             stroke_values: [
                 style.stroke_visible,
@@ -4525,6 +4883,7 @@ fn create_material_from_texture(
     label: &str,
     texture: &GpuTextureResource,
     line_type_resource: &GpuLineTypeResource,
+    hatch_resource: &GpuHatchResource,
     alpha_mode: GpuAlphaMode,
     style: &GpuPresentationStyle,
     origins: MaterialOriginState,
@@ -4546,13 +4905,21 @@ fn create_material_from_texture(
         bytemuck::bytes_of(&material_uniform),
         wgpu::BufferUsages::UNIFORM,
     );
-    let bind_group =
-        create_material_bind_group(device, layout, label, texture, line_type_resource, &uniform);
+    let bind_group = create_material_bind_group(
+        device,
+        layout,
+        label,
+        texture,
+        line_type_resource,
+        hatch_resource,
+        &uniform,
+    );
     GpuMaterial {
         bind_group,
         source_texture_resource: texture.clone(),
         active_texture_resource: texture.clone(),
         line_type_resource: line_type_resource.clone(),
+        hatch_resource: hatch_resource.clone(),
         uniform,
         alpha_mode,
         transparent: alpha_mode == GpuAlphaMode::Blend || style.opacity < 1.0,
@@ -4571,6 +4938,7 @@ fn create_material_bind_group(
     label: &str,
     texture: &GpuTextureResource,
     line_type_resource: &GpuLineTypeResource,
+    hatch_resource: &GpuHatchResource,
     uniform: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -4592,6 +4960,10 @@ fn create_material_bind_group(
             wgpu::BindGroupEntry {
                 binding: 3,
                 resource: wgpu::BindingResource::TextureView(&line_type_resource.0.view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::TextureView(&hatch_resource.0.view),
             },
         ],
     })
@@ -5495,6 +5867,17 @@ mod tests {
             }),
             ..RenderStyle::default()
         };
+        let hatch_pattern = super::GpuHatchPatternData::from_canonical(
+            &himmelcad_core::canonical_resources::HatchPatternKind::Lines {
+                lines: vec![himmelcad_core::canonical_resources::HatchPatternLine {
+                    angle: std::f64::consts::FRAC_PI_4,
+                    origin: [0.0, 0.0],
+                    offset: [0.0, 0.25],
+                    dash_pattern: Vec::new(),
+                }],
+            },
+        )
+        .expect("canonical hatch");
         let resolved = super::GpuPresentationStyle::from_render_style(
             &style,
             WorldVec3 {
@@ -5514,10 +5897,14 @@ mod tests {
                 },
                 WorldVec3 {
                     x: 1.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                WorldVec3 {
+                    x: 0.0,
                     y: 1.0,
                     z: 0.0,
                 },
-                0.25,
                 0.02,
                 [0.0, 0.0, 0.0, 1.0],
                 WorldVec3 {
@@ -5527,6 +5914,7 @@ mod tests {
                 },
             )
             .expect("hatch"),
+            &hatch_pattern,
         );
 
         assert_eq!(resolved.gradient_count, 20);
@@ -5534,7 +5922,56 @@ mod tests {
         assert!((resolved.height_maximum_relative - 100.0).abs() < f32::EPSILON);
         assert!((resolved.exaggeration_datum_relative - 50.0).abs() < f32::EPSILON);
         assert!((resolved.hatch_origin[2] - 50.0).abs() < f32::EPSILON);
-        assert!((resolved.hatch_spacing - 0.25).abs() < f32::EPSILON);
+        assert_eq!(resolved.hatch_line_count, 1.0);
+        assert_eq!(resolved.hatch_texture_width, 4.0);
+    }
+
+    #[test]
+    fn canonical_hatch_preserves_multiple_families_dashes_gaps_and_dots() {
+        use himmelcad_core::canonical_resources::{HatchPatternKind, HatchPatternLine};
+
+        let pattern = super::GpuHatchPatternData::from_canonical(&HatchPatternKind::Lines {
+            lines: vec![
+                HatchPatternLine {
+                    angle: 0.0,
+                    origin: [0.25, -0.5],
+                    offset: [0.125, 1.0],
+                    dash_pattern: vec![2.0, -0.75, 0.0, -0.25],
+                },
+                HatchPatternLine {
+                    angle: std::f64::consts::FRAC_PI_2,
+                    origin: [0.0, 0.0],
+                    offset: [1.5, 0.0],
+                    dash_pattern: Vec::new(),
+                },
+            ],
+        })
+        .expect("multi-family hatch");
+
+        assert!(!pattern.solid);
+        assert_eq!(pattern.line_count, 2);
+        assert_eq!(pattern.texture_width, 12);
+        assert_eq!(pattern.texels[2][2], 3.0);
+        assert_eq!(pattern.texels[3][0], 3.0);
+        assert_eq!(pattern.texels[3][2], 1.0);
+        assert_eq!(pattern.texels[8][1], 1.0);
+        assert_eq!(pattern.texels[9][1], 0.0);
+        assert_eq!(pattern.texels[11][1], 2.0);
+    }
+
+    #[test]
+    fn canonical_hatch_fails_when_spacing_collapses_in_gpu_precision() {
+        use himmelcad_core::canonical_resources::{HatchPatternKind, HatchPatternLine};
+
+        let result = super::GpuHatchPatternData::from_canonical(&HatchPatternKind::Lines {
+            lines: vec![HatchPatternLine {
+                angle: 0.0,
+                origin: [0.0, 0.0],
+                offset: [0.0, f64::from(f32::MIN_POSITIVE) * 0.25],
+                dash_pattern: Vec::new(),
+            }],
+        });
+        assert!(matches!(result, Err(super::GpuFrameError::InvalidStyle)));
     }
 
     #[test]
@@ -6646,7 +7083,7 @@ mod tests {
             planes,
             operation: ClipOperation::KeepInside,
             preview_cap: false,
-            section_fill_resource: None,
+            section_fill: None,
             section_material_hatches: std::collections::BTreeMap::new(),
             enabled: true,
         }

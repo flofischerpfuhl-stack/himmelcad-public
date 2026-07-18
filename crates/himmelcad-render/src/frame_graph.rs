@@ -54,7 +54,7 @@ impl FrameGraph {
         }
         let has_caps = world
             .active_clip_volumes()
-            .any(|volume| volume.preview_cap || volume.section_fill_resource.is_some());
+            .any(|volume| volume.preview_cap || volume.section_fill.is_some());
         let mut passes = vec![RenderPassKind::Clear];
         if has_opaque {
             passes.push(RenderPassKind::Opaque);

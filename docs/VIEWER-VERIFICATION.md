@@ -788,6 +788,29 @@ sources; the checkpoint introduced no Clippy finding in the exact-revision
 resource catalog after its validation path was split into bounded dependency
 graphs.
 
+### Exact hatch and mesh-presentation checkpoint
+
+The following post-checkpoint slice removes the former mutable hatch-ID and
+opaque mesh-material JSON boundaries:
+
+- hatch fills now retain an exact canonical resource revision plus an explicit
+  view-local orthonormal pattern frame, authored line width and linear color;
+- one immutable `Rgba32Float` lookup allocation represents all canonical hatch
+  line families, offsets and signed dash/gap/dot sequences. Entity restyling,
+  section fills and material-specific clip caps only rebind that allocation and
+  rewrite presentation uniforms; geometry buffers remain unchanged;
+- WebGPU and forced WebGL2 both passed the 26-entity/34-proxy browser gate with
+  a two-family dashed/dotted cross hatch, ordinary area fill, streamed exact
+  section and material-specific clip-cap use;
+- all 315 render-core tests pass, including the new multi-family and f64-to-f32
+  fail-closed hatch compilation tests. All 70 viewer tests and 60 ordinary IO
+  tests pass; the same two unrelated PhotoLab matching-policy tests remain the
+  only failures in the complete core suite;
+- `TriangleMeshGeometry.materials` is an exact typed material-table reference.
+  Import packages publish textures, materials and ordered material tables as
+  one atomically validated presentation set, while referenced pixel/font bytes
+  remain checksum-addressed binary artifacts.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

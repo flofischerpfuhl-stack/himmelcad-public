@@ -1183,7 +1183,7 @@ mod tests {
             }],
             operation: ClipOperation::KeepInside,
             preview_cap: false,
-            section_fill_resource: None,
+            section_fill: None,
             section_material_hatches: BTreeMap::new(),
             enabled: true,
         };
@@ -1374,7 +1374,7 @@ mod tests {
             }],
             operation,
             preview_cap: false,
-            section_fill_resource: None,
+            section_fill: None,
             section_material_hatches: std::collections::BTreeMap::new(),
             enabled,
         }

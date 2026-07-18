@@ -39,9 +39,10 @@ use himmelcad_core::canonical_resource_catalog::{
 };
 #[cfg(target_arch = "wasm32")]
 use himmelcad_core::canonical_resources::{
-    validate_block_definition_set, validate_line_type_resource, BlockDefinition, BlockMember,
-    BlockMemberSource, BlockMemberStyle, CanonicalResourceRef, LineTypeElement, LineTypePattern,
-    LineTypeResource, LINE_TYPE_RESOURCE_SCHEMA_ID,
+    validate_block_definition_set, validate_hatch_pattern_resource, validate_line_type_resource,
+    BlockDefinition, BlockMember, BlockMemberSource, BlockMemberStyle, CanonicalResourceRef,
+    HatchPatternResource, LineTypeElement, LineTypePattern, LineTypeResource,
+    LINE_TYPE_RESOURCE_SCHEMA_ID,
 };
 #[cfg(target_arch = "wasm32")]
 use himmelcad_core::entity_commands::{
@@ -93,27 +94,28 @@ use himmelcad_render::{
     EvaluatedMeshRepresentation, FillMode, FloatingOrigin, FrameTelemetrySample,
     FrameTelemetryWindow, GaussianSplatPickRefiner, GeometryRepresentationRegistry, GlyphAtlas,
     GlyphMetrics, GpuAlphaMode, GpuCalibrationProgress, GpuCalibrationSession, GpuDrawBatch,
-    GpuHatchPattern, GpuIndexedMeshGeometry, GpuLineTypePattern, GpuLineTypeResource,
-    GpuModelResourceIdentity, GpuPresentationStyle, GpuSurfaceHost, GpuTextureData,
-    GpuTextureResource, GpuTextureResourceCache, GpuTextureResourceIdentity,
-    GpuTextureResourceStage, HardwareInventory, HardwarePolicyResolver, HierarchySource,
-    ImplicitThreeDTilesHierarchySource, InstancedTriangleMeshPickRefiner, MeshPickRefiner,
-    PickCandidate, PickCycle, PickRefinementRequest, PotreeHierarchySource, PotreePointLayout,
-    PreparedAssetBundle, PreparedGpuTextureResources, PreparedHierarchySource,
+    GpuHatchPattern, GpuHatchPatternData, GpuHatchResource, GpuIndexedMeshGeometry,
+    GpuLineTypePattern, GpuLineTypeResource, GpuModelResourceIdentity, GpuPresentationStyle,
+    GpuSurfaceHost, GpuTextureData, GpuTextureResource, GpuTextureResourceCache,
+    GpuTextureResourceIdentity, GpuTextureResourceStage, HardwareInventory, HardwarePolicyResolver,
+    HierarchySource, ImplicitThreeDTilesHierarchySource, InstancedTriangleMeshPickRefiner,
+    MeshPickRefiner, PickCandidate, PickCycle, PickRefinementRequest, PotreeHierarchySource,
+    PotreePointLayout, PreparedAssetBundle, PreparedGpuTextureResources, PreparedHierarchySource,
     PresentationTransform, QualityAdjustment, RasterColorEncoding, RasterElevationEncoding,
     RasterGridMapping, RasterNoData, RasterSurfaceTopology, RenderProxy, RenderProxyId,
     RenderProxyKind, RenderStyle, RenderWorld, ResidencyTicket, ResolvedAreaDrapeSurface,
     ResolvedAreaInterpolation, ResolvedAssetEntry, ResolvedGeometryRepresentationAdmission,
     ResourceBudget, ResourceCost, RuntimeQualityGovernor, RuntimeQualityState, SectionBatchOptions,
-    SectionMaterialRegionBinding, SectionPlane, SectionProduct, SectionRegion, SectionTopologyPart,
-    SectionTopologyPartitionData, SectionTopologySnapshotKey, SharedAssetBlobCache,
-    StreamingCoordinator, StreamingRuntimeLimits, StrokeMode, SurfaceFrame, SurfaceFrameOutcome,
-    SurfacePickRequest, TessellatedCurve, TessellatedCurvePath, TessellatedCurveSegment,
-    TextAlignment, TextBatchOptions, TextLayoutOptions, TextLayoutSpace, ThreeDTilesContentKind,
-    ThreeDTilesHierarchySource, TileId, TileKey, TileSelection, TileSelectionView, TileSelector,
-    TimingSample, TriangleMeshPickInstance, TriangleMeshPickRefiner, TriangleMeshPickSource,
-    UnresolvedHeightDisplay, WorldAabb, WorldCamera, WorldTransform, WorldVec3,
-    GPU_POINT_VERTEX_STRIDE_BYTES, SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
+    SectionHatchStyle, SectionMaterialRegionBinding, SectionPlane, SectionProduct, SectionRegion,
+    SectionTopologyPart, SectionTopologyPartitionData, SectionTopologySnapshotKey,
+    SharedAssetBlobCache, StreamingCoordinator, StreamingRuntimeLimits, StrokeMode, SurfaceFrame,
+    SurfaceFrameOutcome, SurfacePickRequest, TessellatedCurve, TessellatedCurvePath,
+    TessellatedCurveSegment, TextAlignment, TextBatchOptions, TextLayoutOptions, TextLayoutSpace,
+    ThreeDTilesContentKind, ThreeDTilesHierarchySource, TileId, TileKey, TileSelection,
+    TileSelectionView, TileSelector, TimingSample, TriangleMeshPickInstance,
+    TriangleMeshPickRefiner, TriangleMeshPickSource, UnresolvedHeightDisplay, WorldAabb,
+    WorldCamera, WorldTransform, WorldVec3, GPU_POINT_VERTEX_STRIDE_BYTES,
+    SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
 };
 #[cfg(target_arch = "wasm32")]
 use web_sys::HtmlCanvasElement;
@@ -385,7 +387,7 @@ pub struct WasmViewer {
     raster_binary_resources: BTreeMap<String, WasmBinaryResource>,
     mesh_resources: BTreeMap<String, TriangleMeshGeometry>,
     area_interpolations: BTreeMap<String, WasmRegisteredAreaInterpolation>,
-    hatch_resources: BTreeMap<String, WasmHatchPattern>,
+    hatch_resources: WasmHatchResourceRegistry,
     line_type_resources: WasmLineTypeResourceRegistry,
     section_products: BTreeMap<String, AuthoritativeSectionProduct>,
     section_evaluations: BTreeMap<String, AuthoritativeSectionAccumulator>,
@@ -448,6 +450,36 @@ impl WasmStagedContent {
 
 #[cfg(target_arch = "wasm32")]
 impl WasmViewer {
+    fn install_hatch_resource(&mut self, resource: HatchPatternResource) -> Result<(), String> {
+        validate_hatch_pattern_resource(&resource).map_err(|error| error.to_string())?;
+        let reference = resource.resource_ref();
+        let key = canonical_resource_ref_key(&reference)?;
+        if self.hatch_resources.gpu.contains_key(&key) {
+            return Err("hatch resource revision is already registered".to_owned());
+        }
+        let pattern = GpuHatchPatternData::from_canonical(&resource.pattern)
+            .map_err(|error| error.to_string())?;
+        let gpu = self
+            .host
+            .renderer()
+            .create_hatch_resource(
+                self.host.device(),
+                self.host.queue(),
+                &format!("himmelcad-hatch-{}", reference.resource_id),
+                pattern,
+            )
+            .map_err(|error| error.to_string())?;
+        self.hatch_resources
+            .catalog
+            .publish(CanonicalPresentationResourceSet {
+                hatch_patterns: vec![resource],
+                ..CanonicalPresentationResourceSet::default()
+            })
+            .map_err(|error| error.to_string())?;
+        self.hatch_resources.gpu.insert(key, gpu);
+        Ok(())
+    }
+
     fn install_line_type_resource(
         &mut self,
         resource: LineTypeResource,
@@ -1230,9 +1262,9 @@ struct WasmSectionRequest {
     #[serde(default)]
     style: RenderStyle,
     #[serde(default)]
-    hatch: Option<WasmHatchPattern>,
+    hatch: Option<SectionHatchStyle>,
     #[serde(default)]
-    material_hatches: BTreeMap<String, String>,
+    material_hatches: BTreeMap<String, SectionHatchStyle>,
     /// Optional derived-product role for one exact clipping-volume cap.
     ///
     /// The authoritative section product remains keyed by canonical entity
@@ -1251,17 +1283,6 @@ struct WasmSectionClipCap {
 }
 
 #[cfg(target_arch = "wasm32")]
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WasmHatchPattern {
-    origin: WorldVec3,
-    direction: WorldVec3,
-    spacing: f64,
-    line_width: f64,
-    color: [f32; 4],
-}
-
-#[cfg(target_arch = "wasm32")]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WasmLineTypePattern {
@@ -1276,6 +1297,13 @@ struct WasmLineTypeResourceRegistry {
     catalog: CanonicalPresentationResourceCatalog,
     gpu: BTreeMap<String, GpuLineTypeResource>,
     legacy: BTreeMap<String, CanonicalResourceRef>,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, Default)]
+struct WasmHatchResourceRegistry {
+    catalog: CanonicalPresentationResourceCatalog,
+    gpu: BTreeMap<String, GpuHatchResource>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1436,7 +1464,7 @@ async fn create_wasm_viewer(
         raster_binary_resources: BTreeMap::new(),
         mesh_resources: BTreeMap::new(),
         area_interpolations: BTreeMap::new(),
-        hatch_resources: BTreeMap::new(),
+        hatch_resources: WasmHatchResourceRegistry::default(),
         line_type_resources: WasmLineTypeResourceRegistry::default(),
         section_products: BTreeMap::new(),
         section_evaluations: BTreeMap::new(),
@@ -1654,6 +1682,20 @@ impl WasmViewer {
         resource_json: &str,
     ) -> Result<String, JsValue> {
         let resource: LineTypeResource = serde_json::from_str(resource_json).map_err(js_error)?;
+        resource
+            .computed_content_hash()
+            .map(|hash| hash.0)
+            .map_err(js_error)
+    }
+
+    /// Computes the canonical hash of a hatch-pattern resource excluding its
+    /// embedded `contentHash`, so hosts can seal authored revisions in Rust.
+    pub fn hatch_pattern_resource_content_hash_json(
+        &self,
+        resource_json: &str,
+    ) -> Result<String, JsValue> {
+        let resource: HatchPatternResource =
+            serde_json::from_str(resource_json).map_err(js_error)?;
         resource
             .computed_content_hash()
             .map(|hash| hash.0)
@@ -3267,29 +3309,14 @@ impl WasmViewer {
         Ok(())
     }
 
-    /// Registers one world-calibrated vector hatch used by ordinary fills and
-    /// section caps without rasterizing the pattern into geometry.
-    pub fn register_hatch_resource(
+    /// Registers one exact immutable canonical hatch-pattern revision.
+    pub fn register_canonical_hatch_pattern_resource(
         &mut self,
-        resource_id: &str,
-        pattern_json: &str,
+        resource_json: &str,
     ) -> Result<(), JsValue> {
-        if resource_id.is_empty() || self.hatch_resources.contains_key(resource_id) {
-            return Err(JsValue::from_str(
-                "hatch resource id is empty or already registered",
-            ));
-        }
-        let pattern: WasmHatchPattern = serde_json::from_str(pattern_json).map_err(js_error)?;
-        GpuHatchPattern::new(
-            pattern.origin,
-            pattern.direction,
-            pattern.spacing,
-            pattern.line_width,
-            pattern.color,
-            self.floating_origin,
-        )
-        .map_err(js_error)?;
-        self.hatch_resources.insert(resource_id.to_owned(), pattern);
+        let resource: HatchPatternResource =
+            serde_json::from_str(resource_json).map_err(js_error)?;
+        self.install_hatch_resource(resource).map_err(js_error)?;
         self.rebuild_inline_clip_previews().map_err(js_error)?;
         Ok(())
     }
@@ -6791,7 +6818,7 @@ fn build_clip_preview_batches(
     block_member_styles: &BTreeMap<String, (CanonicalResourceRef, RenderStyle)>,
     block_member_entity_versions: &BTreeMap<String, (EntityVersionRef, WasmEntityRenderRequest)>,
     mesh_resources: &BTreeMap<String, TriangleMeshGeometry>,
-    hatch_resources: &BTreeMap<String, WasmHatchPattern>,
+    hatch_resources: &WasmHatchResourceRegistry,
     volumes: &[ClipVolume],
     origin: WorldVec3,
 ) -> Result<ClipPreviewBuild, String> {
@@ -6865,8 +6892,18 @@ fn build_clip_preview_batches(
                     else {
                         continue;
                     };
-                    let style_hatch = if let FillMode::Hatch { resource_id } = &member.style.fill {
-                        Some(resource_id)
+                    let style_hatch = if let FillMode::Hatch {
+                        resource,
+                        line_width,
+                        color,
+                        ..
+                    } = &member.style.fill
+                    {
+                        Some(SectionHatchStyle {
+                            resource: resource.clone(),
+                            line_width: *line_width,
+                            color: *color,
+                        })
                     } else {
                         None
                     };
@@ -6887,23 +6924,34 @@ fn build_clip_preview_batches(
                             plane.origin.z,
                         )
                         .map_err(|error| error.to_string())?;
-                        let hatch_id = volume
+                        let hatch_style = volume
                             .section_material_hatches
                             .get(&region.material_slot)
-                            .or(volume.section_fill_resource.as_ref())
-                            .or(style_hatch);
-                        if let Some(hatch) = hatch_id.and_then(|id| hatch_resources.get(id)) {
+                            .or(volume.section_fill.as_ref())
+                            .or(style_hatch.as_ref());
+                        let mut hatch_resource = None;
+                        if let Some(hatch_style) = hatch_style {
+                            let key = canonical_resource_ref_key(&hatch_style.resource)?;
+                            let hatch = hatch_resources.gpu.get(&key).ok_or_else(|| {
+                                format!(
+                                    "exact GPU hatch resource revision '{}' is not registered",
+                                    hatch_style.resource.resource_id
+                                )
+                            })?;
+                            let (axis_u, axis_v) = section_hatch_axes(plane.normal)?;
                             gpu_style = gpu_style.with_hatch(
                                 GpuHatchPattern::new(
-                                    hatch.origin,
-                                    hatch.direction,
-                                    hatch.spacing,
-                                    hatch.line_width,
-                                    hatch.color,
+                                    plane.origin,
+                                    axis_u,
+                                    axis_v,
+                                    hatch_style.line_width,
+                                    hatch_style.color,
                                     origin,
                                 )
                                 .map_err(|error| error.to_string())?,
+                                hatch.pattern(),
                             );
+                            hatch_resource = Some(hatch);
                         } else {
                             match &member.style.fill {
                                 FillMode::None => {
@@ -6953,6 +7001,9 @@ fn build_clip_preview_batches(
                             .map_err(|error| error.to_string())?;
                         batch = batch.with_material(material);
                         batch
+                            .rebind_hatch_resource(host.device(), host.renderer(), hatch_resource)
+                            .map_err(|error| error.to_string())?;
+                        batch
                             .set_world_origins(host.queue(), origin, origin)
                             .map_err(|error| error.to_string())?;
                         output.push(batch);
@@ -6984,6 +7035,35 @@ struct ClipPreviewBuild {
     batches: Vec<GpuDrawBatch>,
     material_slots: Vec<u32>,
     cost: ResourceCost,
+}
+
+#[cfg(target_arch = "wasm32")]
+fn section_hatch_axes(normal: WorldVec3) -> Result<(WorldVec3, WorldVec3), String> {
+    let normal = DVec3::new(normal.x, normal.y, normal.z);
+    let length = normal.length();
+    if !length.is_finite() || length <= f64::EPSILON {
+        return Err("section hatch plane normal is invalid".to_owned());
+    }
+    let normal = normal / length;
+    let reference = if normal.z.abs() < 0.9 {
+        DVec3::Z
+    } else {
+        DVec3::X
+    };
+    let axis_u = reference.cross(normal).normalize();
+    let axis_v = normal.cross(axis_u).normalize();
+    Ok((
+        WorldVec3 {
+            x: axis_u.x,
+            y: axis_u.y,
+            z: axis_u.z,
+        },
+        WorldVec3 {
+            x: axis_v.x,
+            y: axis_v.y,
+            z: axis_v.z,
+        },
+    ))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -7090,7 +7170,7 @@ fn build_move_preview_batches(
     floating_origin: WorldVec3,
     target_render_tiles: &BTreeSet<TileKey>,
     image_resources: &BTreeMap<String, WasmImageResource>,
-    hatch_resources: &BTreeMap<String, WasmHatchPattern>,
+    hatch_resources: &WasmHatchResourceRegistry,
     line_type_resources: &WasmLineTypeResourceRegistry,
 ) -> Result<Vec<WasmMovePreviewBatch>, String> {
     let mut output = Vec::new();
@@ -7462,6 +7542,7 @@ struct WasmResolvedBatchPresentation {
     style: GpuPresentationStyle,
     texture: Option<GpuTextureResource>,
     line_type: Option<GpuLineTypeResource>,
+    hatch: Option<GpuHatchResource>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -7476,14 +7557,22 @@ fn fill_capable(kind: RenderProxyKind) -> bool {
 fn validate_fill_resource(
     style: &RenderStyle,
     image_resources: &BTreeMap<String, WasmImageResource>,
-    hatch_resources: &BTreeMap<String, WasmHatchPattern>,
+    hatch_resources: &WasmHatchResourceRegistry,
 ) -> Result<(), String> {
     match &style.fill {
         FillMode::Texture { resource_id } if !image_resources.contains_key(resource_id) => Err(
             format!("fill texture resource '{resource_id}' is not registered"),
         ),
-        FillMode::Hatch { resource_id } if !hatch_resources.contains_key(resource_id) => {
-            Err(format!("hatch resource '{resource_id}' is not registered"))
+        FillMode::Hatch { resource, .. }
+            if hatch_resources.catalog.hatch_pattern(resource).is_none()
+                || canonical_resource_ref_key(resource)
+                    .ok()
+                    .is_none_or(|key| !hatch_resources.gpu.contains_key(&key)) =>
+        {
+            Err(format!(
+                "exact hatch resource revision '{}' is not registered",
+                resource.resource_id
+            ))
         }
         _ => Ok(()),
     }
@@ -7517,7 +7606,7 @@ fn resolve_batch_presentation(
     kind: RenderProxyKind,
     batch: &GpuDrawBatch,
     image_resources: &BTreeMap<String, WasmImageResource>,
-    hatch_resources: &BTreeMap<String, WasmHatchPattern>,
+    hatch_resources: &WasmHatchResourceRegistry,
     line_type_resources: &WasmLineTypeResourceRegistry,
 ) -> Result<WasmResolvedBatchPresentation, String> {
     let origin = batch
@@ -7527,6 +7616,7 @@ fn resolve_batch_presentation(
         .map_err(|error| error.to_string())?;
     let mut texture = None;
     let mut line_type = None;
+    let mut hatch = None;
     if fill_capable(kind) {
         match &style.fill {
             FillMode::None => gpu_style = gpu_style.with_fill_visible(false),
@@ -7547,21 +7637,45 @@ fn resolve_batch_presentation(
                         .clone(),
                 );
             }
-            FillMode::Hatch { resource_id } => {
-                let pattern = hatch_resources
-                    .get(resource_id)
-                    .ok_or_else(|| format!("hatch resource '{resource_id}' is not registered"))?;
+            FillMode::Hatch {
+                resource,
+                origin: pattern_origin,
+                axis_u,
+                axis_v,
+                line_width,
+                color,
+            } => {
+                let canonical =
+                    hatch_resources
+                        .catalog
+                        .hatch_pattern(resource)
+                        .ok_or_else(|| {
+                            format!(
+                                "exact hatch resource revision '{}' is not registered",
+                                resource.resource_id
+                            )
+                        })?;
+                validate_hatch_pattern_resource(canonical).map_err(|error| error.to_string())?;
+                let key = canonical_resource_ref_key(resource)?;
+                let gpu = hatch_resources.gpu.get(&key).ok_or_else(|| {
+                    format!(
+                        "exact GPU hatch resource revision '{}' is not registered",
+                        resource.resource_id
+                    )
+                })?;
                 gpu_style = gpu_style.with_hatch(
                     GpuHatchPattern::new(
-                        pattern.origin,
-                        pattern.direction,
-                        pattern.spacing,
-                        pattern.line_width,
-                        pattern.color,
+                        *pattern_origin,
+                        *axis_u,
+                        *axis_v,
+                        *line_width,
+                        *color,
                         origin,
                     )
                     .map_err(|error| error.to_string())?,
+                    gpu.pattern(),
                 );
+                hatch = Some(gpu.clone());
             }
         }
     }
@@ -7592,6 +7706,7 @@ fn resolve_batch_presentation(
         style: gpu_style,
         texture,
         line_type,
+        hatch,
     })
 }
 
@@ -7606,6 +7721,9 @@ fn apply_batch_presentation(
         .map_err(|error| error.to_string())?;
     batch
         .rebind_line_type_resource(host.device(), host.renderer(), resolved.line_type.as_ref())
+        .map_err(|error| error.to_string())?;
+    batch
+        .rebind_hatch_resource(host.device(), host.renderer(), resolved.hatch.as_ref())
         .map_err(|error| error.to_string())?;
     batch
         .update_material_style(host.queue(), &resolved.style)
@@ -7630,7 +7748,7 @@ fn compile_inline_entity(
     depth_resources: &BTreeMap<String, WasmDepthResource>,
     raster_binary_resources: &BTreeMap<String, WasmBinaryResource>,
     mesh_resources: &BTreeMap<String, TriangleMeshGeometry>,
-    hatch_resources: &BTreeMap<String, WasmHatchPattern>,
+    hatch_resources: &WasmHatchResourceRegistry,
     line_type_resources: &WasmLineTypeResourceRegistry,
     area_support: WasmAreaSupportContext<'_>,
 ) -> Result<(), String> {
@@ -7912,7 +8030,7 @@ fn compile_block_entity(
     depth_resources: &BTreeMap<String, WasmDepthResource>,
     raster_binary_resources: &BTreeMap<String, WasmBinaryResource>,
     mesh_resources: &BTreeMap<String, TriangleMeshGeometry>,
-    hatch_resources: &BTreeMap<String, WasmHatchPattern>,
+    hatch_resources: &WasmHatchResourceRegistry,
     line_type_resources: &WasmLineTypeResourceRegistry,
     area_support: WasmAreaSupportContext<'_>,
     stack: &mut Vec<String>,
@@ -9915,7 +10033,7 @@ fn compile_decoded_raster_content(
     frame_origin: WorldVec3,
     pick_index_bytes: u64,
     image_resources: &BTreeMap<String, WasmImageResource>,
-    hatch_resources: &BTreeMap<String, WasmHatchPattern>,
+    hatch_resources: &WasmHatchResourceRegistry,
     line_type_resources: &WasmLineTypeResourceRegistry,
 ) -> Result<(), String> {
     let metadata = &request.metadata;
@@ -10095,7 +10213,7 @@ fn compile_section_request(
     block_member_styles: &BTreeMap<String, (CanonicalResourceRef, RenderStyle)>,
     block_member_entity_versions: &BTreeMap<String, (EntityVersionRef, WasmEntityRenderRequest)>,
     mesh_resources: &BTreeMap<String, TriangleMeshGeometry>,
-    hatch_resources: &BTreeMap<String, WasmHatchPattern>,
+    hatch_resources: &WasmHatchResourceRegistry,
     line_type_resources: &WasmLineTypeResourceRegistry,
     section_products: &BTreeMap<String, AuthoritativeSectionProduct>,
     clip_volumes: &[ClipVolume],
@@ -10119,24 +10237,20 @@ fn compile_section_request(
     } else {
         None
     };
-    let default_hatch = if let Some(hatch) = request.hatch {
-        Some(
-            GpuHatchPattern::new(
-                hatch.origin,
-                hatch.direction,
-                hatch.spacing,
-                hatch.line_width,
-                hatch.color,
-                origin,
-            )
-            .map_err(|error| error.to_string())?,
-        )
-    } else if let FillMode::Hatch { resource_id } = &request.style.fill {
-        Some(resolve_section_hatch_resource(
-            resource_id,
-            hatch_resources,
-            origin,
-        )?)
+    let default_hatch = if let Some(hatch) = &request.hatch {
+        Some(hatch.clone())
+    } else if let FillMode::Hatch {
+        resource,
+        line_width,
+        color,
+        ..
+    } = &request.style.fill
+    {
+        Some(SectionHatchStyle {
+            resource: resource.clone(),
+            line_width: *line_width,
+            color: *color,
+        })
     } else {
         None
     };
@@ -10183,7 +10297,7 @@ fn compile_section_request(
             Some(&evaluated.material_regions),
             floating_origin,
             &gpu_style,
-            default_hatch,
+            default_hatch.as_ref(),
             hatch_resources,
             alpha_mode,
             clip_cap,
@@ -10256,7 +10370,7 @@ fn compile_section_request(
                 None,
                 floating_origin,
                 &gpu_style,
-                default_hatch,
+                default_hatch.as_ref(),
                 hatch_resources,
                 alpha_mode,
                 clip_cap,
@@ -10300,8 +10414,8 @@ fn compile_section_product_regions(
     material_regions: Option<&[SectionMaterialRegionBinding]>,
     floating_origin: FloatingOrigin,
     gpu_style: &GpuPresentationStyle,
-    default_hatch: Option<GpuHatchPattern>,
-    hatch_resources: &BTreeMap<String, WasmHatchPattern>,
+    default_hatch: Option<&SectionHatchStyle>,
+    hatch_resources: &WasmHatchResourceRegistry,
     alpha_mode: GpuAlphaMode,
     clip_cap: Option<(&ClipVolume, usize)>,
 ) -> Result<Vec<RenderProxyId>, String> {
@@ -10382,30 +10496,27 @@ fn compile_section_product_regions(
                 volume
                     .section_material_hatches
                     .get(&region.material_slot)
-                    .or(volume.section_fill_resource.as_ref())
+                    .or(volume.section_fill.as_ref())
             })
-            .map(|resource_id| {
+            .cloned();
+        let hatch_style = volume_hatch.or(request
+            .material_hatches
+            .get(&material_key)
+            .cloned()
+            .or_else(|| default_hatch.cloned()));
+        let resolved_hatch = hatch_style
+            .as_ref()
+            .map(|style| {
                 resolve_section_hatch_resource(
-                    resource_id,
+                    style,
                     hatch_resources,
+                    request.plane,
                     floating_origin.world(),
                 )
             })
             .transpose()?;
-        let hatch = volume_hatch.or(request
-            .material_hatches
-            .get(&material_key)
-            .map(|resource_id| {
-                resolve_section_hatch_resource(
-                    resource_id,
-                    hatch_resources,
-                    floating_origin.world(),
-                )
-            })
-            .transpose()?
-            .or(default_hatch));
-        let region_style = if let Some(hatch) = hatch {
-            gpu_style.with_hatch(hatch)
+        let region_style = if let Some((placement, resource)) = &resolved_hatch {
+            gpu_style.with_hatch(*placement, resource.pattern())
         } else {
             match &request.style.fill {
                 FillMode::None => gpu_style.with_fill_visible(false),
@@ -10435,6 +10546,13 @@ fn compile_section_product_regions(
         batch = batch
             .with_material(material)
             .with_pickable(clip_cap.is_none());
+        batch
+            .rebind_hatch_resource(
+                host.device(),
+                host.renderer(),
+                resolved_hatch.as_ref().map(|(_, resource)| resource),
+            )
+            .map_err(|error| error.to_string())?;
         batch
             .set_world_origins(
                 host.queue(),
@@ -10570,22 +10688,29 @@ fn compile_section_product_segments(
 
 #[cfg(target_arch = "wasm32")]
 fn resolve_section_hatch_resource(
-    resource_id: &str,
-    hatch_resources: &BTreeMap<String, WasmHatchPattern>,
-    origin: WorldVec3,
-) -> Result<GpuHatchPattern, String> {
-    let pattern = hatch_resources
-        .get(resource_id)
-        .ok_or_else(|| format!("hatch resource '{resource_id}' is not registered"))?;
-    GpuHatchPattern::new(
-        pattern.origin,
-        pattern.direction,
-        pattern.spacing,
-        pattern.line_width,
-        pattern.color,
-        origin,
+    style: &SectionHatchStyle,
+    hatch_resources: &WasmHatchResourceRegistry,
+    plane: SectionPlane,
+    floating_origin: WorldVec3,
+) -> Result<(GpuHatchPattern, GpuHatchResource), String> {
+    let key = canonical_resource_ref_key(&style.resource)?;
+    let resource = hatch_resources.gpu.get(&key).ok_or_else(|| {
+        format!(
+            "exact GPU hatch resource revision '{}' is not registered",
+            style.resource.resource_id
+        )
+    })?;
+    let (axis_u, axis_v) = section_hatch_axes(plane.normal)?;
+    let placement = GpuHatchPattern::new(
+        plane.origin,
+        axis_u,
+        axis_v,
+        style.line_width,
+        style.color,
+        floating_origin,
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    Ok((placement, resource.clone()))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -10622,7 +10747,7 @@ fn compile_decoded_streamed_content(
     gpu_textures: &PreparedGpuTextureResources,
     frame_origin: WorldVec3,
     image_resources: &BTreeMap<String, WasmImageResource>,
-    hatch_resources: &BTreeMap<String, WasmHatchPattern>,
+    hatch_resources: &WasmHatchResourceRegistry,
     line_type_resources: &WasmLineTypeResourceRegistry,
 ) -> Result<(), String> {
     let metadata = &request.metadata;
