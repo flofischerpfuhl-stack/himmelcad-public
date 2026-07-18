@@ -393,9 +393,15 @@ try {
   assert.equal(state.ready, true);
   // Real mode adds nine entities: one glTF, two shared external i3dm owners,
   // two transformed tiles, two external JSON glTFs and two legacy-metadata fixtures.
-  // The canonical zoo also includes one immutable entity-reference block plus
-  // the planar and pinhole oriented-image contracts.
-  assert.equal(state.entityCount, realData ? 39 : 30);
+  // The canonical zoo also includes direct and nested block definitions, every
+  // analytic curve variant, a construction plane and the planar/pinhole image
+  // contracts.
+  assert.equal(state.entityCount, realData ? 47 : 38);
+  assert.equal(state.zooVariantLifecycle?.entityIds.length, 8);
+  assert.equal(state.zooVariantLifecycle?.presented, true);
+  assert.equal(state.zooVariantLifecycle?.picked, true);
+  assert.equal(state.zooVariantLifecycle?.hiddenUnpickable, true);
+  assert.equal(state.zooVariantLifecycle?.restoredPickable, true);
   assert(
     state.proxyCount >= 24,
     `expected mixed inline and provider render proxies, received ${String(state.proxyCount)}`,

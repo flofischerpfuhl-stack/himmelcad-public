@@ -93,6 +93,13 @@ interface BrowserValidationState {
   materializedSurveyPick: KernelPickResult | null;
   materializedAreaPick: KernelPickResult | null;
   conicPick: KernelPickResult | null;
+  zooVariantLifecycle: {
+    readonly entityIds: readonly string[];
+    readonly presented: boolean;
+    readonly picked: boolean;
+    readonly hiddenUnpickable: boolean;
+    readonly restoredPickable: boolean;
+  } | null;
   mixedHeightLifecycle: {
     readonly orbitRejected: boolean;
     readonly planProxyCount: number;
@@ -354,6 +361,7 @@ const BASE = [6_378_137.125, 5_400_000.25, 512.75] as const;
 const FONT_HASH = 'f'.repeat(64);
 const DIMENSION_STYLE_HASH = 'd'.repeat(64);
 let BLOCK_HASH = 'b'.repeat(64);
+let NESTED_BLOCK_HASH = 'e'.repeat(64);
 let BLOCK_CENTER_ATTRIBUTES_HASH = 'a'.repeat(64);
 let BLOCK_INSTANCE_ATTRIBUTES_HASH = 'd'.repeat(64);
 const PANORAMA_IMAGE_HASH = '8253870745066d9c79172635fae46712dbfd232c0548340493eebb5daf387d52';
@@ -480,6 +488,7 @@ const state: BrowserValidationState = {
   materializedSurveyPick: null,
   materializedAreaPick: null,
   conicPick: null,
+  zooVariantLifecycle: null,
   mixedHeightLifecycle: null,
   extensionPick: null,
   tilesMetadata: null,
@@ -968,7 +977,7 @@ function placement(x = 0, y = 0, z = 0): readonly number[] {
   return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, BASE[0] + x, BASE[1] + y, BASE[2] + z, 1];
 }
 
-function relativePlacement(x = 0, y = 0, z = 0): readonly number[] {
+function relativePlacement(x = 0, y = 0, z = 0): Transform3d {
   return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1];
 }
 
@@ -3236,6 +3245,142 @@ function entityZoo(): LegacyEntityRequest[] {
       style: style([0.82, 0.32, 1, 1]),
     },
     {
+      entityId: 'analytic-line-segment',
+      proxyId: 'analytic-line-segment@1',
+      geometry: {
+        kind: 'curve',
+        curve: {
+          kind: 'lineSegment',
+          start: point(-28, -20, 1),
+          end: point(-20, -20, 4),
+        },
+      },
+      placement: placement(),
+      lineWidth: 4,
+      style: style([0.98, 0.38, 0.2, 1]),
+    },
+    {
+      entityId: 'analytic-circular-arc',
+      proxyId: 'analytic-circular-arc@1',
+      geometry: {
+        kind: 'curve',
+        curve: {
+          kind: 'circularArc',
+          start: point(-18, -20, 2),
+          pointOnArc: point(-14, -16, 2),
+          end: point(-10, -20, 2),
+        },
+      },
+      placement: placement(),
+      chordTolerance: 0.005,
+      maximumCurveSegments: 1024,
+      lineWidth: 4,
+      style: style([1, 0.62, 0.12, 1]),
+    },
+    {
+      entityId: 'analytic-ellipse',
+      proxyId: 'analytic-ellipse@1',
+      geometry: {
+        kind: 'curve',
+        curve: {
+          kind: 'ellipse',
+          center: point(-2, -18, 2),
+          majorAxis: { x: 5, y: 1, z: 0 },
+          minorRadius: 2,
+          plane: null,
+        },
+      },
+      placement: placement(),
+      chordTolerance: 0.005,
+      maximumCurveSegments: 1024,
+      lineWidth: 4,
+      style: style([0.18, 0.86, 0.96, 1]),
+    },
+    {
+      entityId: 'analytic-elliptic-arc',
+      proxyId: 'analytic-elliptic-arc@1',
+      geometry: {
+        kind: 'curve',
+        curve: {
+          kind: 'ellipticArc',
+          center: point(10, -18, 2),
+          majorAxis: { x: 5, y: 0, z: 0 },
+          minorRadius: 2,
+          startParameter: 0,
+          sweepParameter: 4.2,
+          plane: null,
+        },
+      },
+      placement: placement(),
+      chordTolerance: 0.005,
+      maximumCurveSegments: 1024,
+      lineWidth: 4,
+      style: style([0.45, 0.96, 0.42, 1]),
+    },
+    {
+      entityId: 'analytic-spline',
+      proxyId: 'analytic-spline@1',
+      geometry: {
+        kind: 'curve',
+        curve: {
+          kind: 'spline',
+          degree: 2,
+          controlPoints: [point(20, -18, 1), point(24, -12, 4), point(29, -20, 2)],
+          knots: [0, 0, 0, 1, 1, 1],
+          weights: [1, 0.8, 1],
+          closed: false,
+        },
+      },
+      placement: placement(),
+      chordTolerance: 0.005,
+      maximumCurveSegments: 1024,
+      lineWidth: 4,
+      style: style([0.96, 0.32, 0.72, 1]),
+    },
+    {
+      entityId: 'analytic-composite',
+      proxyId: 'analytic-composite@1',
+      geometry: {
+        kind: 'curve',
+        curve: {
+          kind: 'composite',
+          segments: [
+            {
+              kind: 'lineSegment',
+              start: point(-28, 20, 2),
+              end: point(-22, 20, 2),
+            },
+            {
+              kind: 'circularArc',
+              start: point(-22, 20, 2),
+              pointOnArc: point(-19, 23, 2),
+              end: point(-16, 20, 2),
+            },
+          ],
+        },
+      },
+      placement: placement(),
+      chordTolerance: 0.005,
+      maximumCurveSegments: 1024,
+      lineWidth: 4,
+      style: style([0.72, 0.48, 1, 1]),
+    },
+    {
+      entityId: 'construction-plane',
+      proxyId: 'construction-plane@1',
+      geometry: {
+        kind: 'plane',
+        plane: {
+          origin: { x: 24, y: 15, z: 1 },
+          normal: { x: 0, y: 0, z: 1 },
+        },
+      },
+      placement: placement(),
+      planeExtent: 4,
+      lineWidth: 2,
+      style: style([0.35, 0.7, 1, 1], 0.42),
+    },
+    {
       entityId: 'open-surface',
       proxyId: 'open-surface@1',
       evaluatedMesh: requiredOpenSurfaceTopology().admission,
@@ -3570,6 +3715,20 @@ function entityZoo(): LegacyEntityRequest[] {
         },
       },
       placement: placement(-18, -3, 0),
+    },
+    {
+      entityId: 'nested-survey-marker-block',
+      proxyId: 'nested-survey-marker-block@1',
+      geometry: {
+        kind: 'block',
+        instance: {
+          definitionId: 'nested-survey-marker',
+          definitionHash: NESTED_BLOCK_HASH,
+          placement: IDENTITY,
+          overrides: null,
+        },
+      },
+      placement: placement(-25, 2, 0),
     },
     {
       entityId: 'scan-panorama',
@@ -4197,6 +4356,37 @@ async function run(): Promise<void> {
   };
   BLOCK_HASH = viewer.blockDefinitionContentHash(blockDefinition);
   viewer.registerBlockDefinition({ ...blockDefinition, contentHash: BLOCK_HASH });
+  const nestedBlockDefinition: KernelBlockDefinition = {
+    schemaId: 'hcad.resource.block-definition@2',
+    definitionId: 'nested-survey-marker',
+    contentHash: '00'.repeat(32),
+    placementComposition: 'instanceThenMember',
+    members: [
+      {
+        memberId: 'nested-marker',
+        placement: relativePlacement(0, 0, 1),
+        style: { kind: 'inherit' },
+        attributes: { kind: 'inherit' },
+        source: {
+          kind: 'inline',
+          geometry: {
+            kind: 'block',
+            instance: {
+              definitionId: 'survey-marker',
+              definitionHash: BLOCK_HASH,
+              placement: relativePlacement(1, 0, 0),
+              overrides: null,
+            },
+          },
+        },
+      },
+    ],
+  };
+  NESTED_BLOCK_HASH = viewer.blockDefinitionContentHash(nestedBlockDefinition);
+  viewer.registerBlockDefinition({
+    ...nestedBlockDefinition,
+    contentHash: NESTED_BLOCK_HASH,
+  });
   const unknownBlockOverrideAdmission = await canonicalizeLegacyRequest(viewer, {
     entityId: 'invalid-block-member-override',
     geometry: {
@@ -5012,6 +5202,53 @@ async function run(): Promise<void> {
   const repeatTransaction = await publishLegacyRequests(viewer, transactionRequests);
   state.entityCount = repeatTransaction.entities;
   state.proxyCount = repeatTransaction.proxies;
+  const zooVariantTargets = [
+    ['analytic-line-segment', { x: BASE[0] - 24, y: BASE[1] - 20, z: BASE[2] + 2.5 }],
+    ['analytic-circular-arc', { x: BASE[0] - 18, y: BASE[1] - 20, z: BASE[2] + 2 }],
+    ['analytic-ellipse', { x: BASE[0] + 3, y: BASE[1] - 17, z: BASE[2] + 2 }],
+    ['analytic-elliptic-arc', { x: BASE[0] + 15, y: BASE[1] - 18, z: BASE[2] + 2 }],
+    ['analytic-spline', { x: BASE[0] + 20, y: BASE[1] - 18, z: BASE[2] + 1 }],
+    ['analytic-composite', { x: BASE[0] - 22, y: BASE[1] + 20, z: BASE[2] + 2 }],
+    ['construction-plane', { x: BASE[0] + 24, y: BASE[1] + 15, z: BASE[2] + 1 }],
+    ['nested-survey-marker-block', { x: BASE[0] - 24, y: BASE[1] + 2, z: BASE[2] + 4 }],
+  ] as const;
+  let variantsPresented = true;
+  let variantsPicked = true;
+  let variantsHiddenUnpickable = true;
+  let variantsRestoredPickable = true;
+  for (const [entityId, target] of zooVariantTargets) {
+    if (viewer.entityPresentation(entityId).length === 0) {
+      variantsPresented = false;
+      throw new Error(`canonical zoo variant '${entityId}' has no render presentation`);
+    }
+    setFocusedTopCamera(viewer, target);
+    const visiblePick = await viewer.pick(640, 360, 8);
+    if (!visiblePick.candidates.some((candidate) => candidate.address.entityId === entityId)) {
+      variantsPicked = false;
+      throw new Error(`canonical zoo variant '${entityId}' is not source-pickable`);
+    }
+    viewer.setEntityVisibility(entityId, false);
+    viewer.render();
+    const hiddenPick = await viewer.pick(640, 360, 8);
+    if (hiddenPick.candidates.some((candidate) => candidate.address.entityId === entityId)) {
+      variantsHiddenUnpickable = false;
+      throw new Error(`hidden canonical zoo variant '${entityId}' remained pickable`);
+    }
+    viewer.setEntityVisibility(entityId, true);
+    viewer.render();
+    const restoredPick = await viewer.pick(640, 360, 8);
+    if (!restoredPick.candidates.some((candidate) => candidate.address.entityId === entityId)) {
+      variantsRestoredPickable = false;
+      throw new Error(`restored canonical zoo variant '${entityId}' is not pickable`);
+    }
+  }
+  state.zooVariantLifecycle = {
+    entityIds: zooVariantTargets.map(([entityId]) => entityId),
+    presented: variantsPresented,
+    picked: variantsPicked,
+    hiddenUnpickable: variantsHiddenUnpickable,
+    restoredPickable: variantsRestoredPickable,
+  };
   viewer.setEntityStyle('survey-point', style([1, 0.38, 0.08, 1]));
   viewer.setWorldCamera(worldCamera, [BASE[0] + 1_024, BASE[1] - 512, BASE[2] + 64]);
   viewer.setWorldCamera(worldCamera, BASE);

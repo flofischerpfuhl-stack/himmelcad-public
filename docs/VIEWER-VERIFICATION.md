@@ -1075,6 +1075,23 @@ are green. The complete Render-Core suite passes 317/317, viewer-WASM passes
 the same two concurrently modified PhotoLab matching tests remain outside this
 lane and prevent recording that combined command as a green gate.
 
+### V2 canonical entity-zoo checkpoint
+
+The shared browser zoo now includes standalone `LineSegment`, `CircularArc`,
+`Ellipse`, `EllipticArc`, rational weighted `Spline` and `Composite` curves in
+addition to its existing polyline, circle, clothoid and conic coverage. It also
+admits an explicit construction-plane entity and expands a nested immutable
+block definition through the same typed definition contract. No new browser-
+or app-owned geometry shape was introduced.
+
+For each of those eight newly covered cases, the browser requires a non-empty
+presentation, an exact Source pick, an unpickable hidden state and a restored
+Source pick after visibility returns. Both explicit backends pass the complete
+38-entity/47-proxy fixture with ten worker ingests and zero main-thread provider
+decodes. Forced WebGL2 on the physical Intel HD Graphics 630 reports 2.7 ms
+maximum CPU submit; the WebGPU CPU-adapter correctness run reports 3.3 ms. The
+browser TypeScript contract is green.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

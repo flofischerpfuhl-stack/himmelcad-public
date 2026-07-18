@@ -178,10 +178,14 @@ von echten V2-Lücken:
 - Der erneute Schema-Audit findet damit keine verbleibende V2-Schema-Lücke.
   Offen sind ausschließlich die nachfolgenden Zoo-, Manipulations- und realen
   Provider-Gates.
-- Reale verbleibende Gate-Lücken sind die Aufnahme jeder vorhandenen
-  Kurvenvariante und Plane-/Definition-Variante in den gemeinsamen Browser-Zoo,
-  manipulierte Referenzfälle für die neuen Breiten und der vollständige
-  Viewer-Nachweis der bereits vorhandenen realen DXF-, IFC- und LandXML-Pfade.
+- Der fünfte V2-Slice nimmt alle analytischen Kurvenvarianten, die explizite
+  Plane-Entity und eine verschachtelte Blockdefinition in denselben Browser-Zoo
+  auf. Jede neue Variante wird auf WebGPU und WebGL2 dargestellt,
+  source-gepickt, verborgen unpickbar und anschließend ohne Neuaufnahme wieder
+  pickbar; manipulierte Block-, Attribut-, UV- und Referenzfälle bleiben
+  atomisch abgewiesen.
+- Als reales verbleibendes Gate bleibt der vollständige Viewer-Nachweis der
+  bereits vorhandenen DXF-, IFC- und LandXML-Providerpfade.
 - Zusätzliche Formatkorpora ohne neue Geometriesemantik bleiben gemäß V2-Gate
   Provider-Conformance und werden nicht als Viewer-Schemaarbeit vorgezogen.
 
