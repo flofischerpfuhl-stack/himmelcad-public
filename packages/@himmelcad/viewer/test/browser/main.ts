@@ -2604,8 +2604,12 @@ function verifyResolvedPresentationBindings(
     canonicalMaterials.some(
       (batch) => !batch.declaredTextureCoordinates || !batch.usesSourceTexture,
     ) ||
+    canonicalMaterials[0]?.sourceMaterialDoubleSided !== false ||
+    canonicalMaterials[1]?.sourceMaterialDoubleSided !== true ||
     canonicalMaterials[0]?.sourceMaterialColor?.[0] !== 1 ||
-    canonicalMaterials[1]?.sourceMaterialColor?.[1] !== 1
+    canonicalMaterials[1]?.sourceMaterialColor?.[1] !== 1 ||
+    Math.abs((canonicalMaterials[1]?.sourceMaterialUvRows?.[0]?.[2] ?? 0) - 0.125) > 1e-6 ||
+    Math.abs((canonicalMaterials[1]?.sourceMaterialUvRows?.[1]?.[2] ?? 0) + 0.25) > 1e-6
   ) {
     throw new Error('canonical mesh material table did not resolve exact slots/colors/textures');
   }
@@ -3574,7 +3578,6 @@ async function run(): Promise<void> {
     255, 80, 48, 255, 255, 255, 255, 255,
   ]);
   const materialPixelsHash = await sha256Bytes(materialPixels);
-  viewer.registerImageResource(materialPixelsHash, 2, 2, materialPixels);
   const unsealedTexture: TextureResource = {
     schemaId: 'hcad.resource.texture@1',
     resourceId: 'browser-material-checker',
@@ -3585,9 +3588,9 @@ async function run(): Promise<void> {
       byteLength: materialPixels.byteLength,
     },
     colorSpace: 'srgb',
-    wrapU: 'repeat',
-    wrapV: 'repeat',
-    magFilter: 'linear',
+    wrapU: 'mirroredRepeat',
+    wrapV: 'clampToEdge',
+    magFilter: 'nearest',
     minFilter: 'linear',
   };
   const texture: TextureResource = {
@@ -3599,6 +3602,7 @@ async function run(): Promise<void> {
     schemaId: texture.schemaId,
     contentHash: texture.contentHash,
   };
+  viewer.registerCanonicalTextureResource(texture, 2, 2, materialPixels);
   const unsealedSurveyMaterial: MaterialResource = {
     schemaId: 'hcad.resource.material@1',
     resourceId: 'browser-survey-red',
@@ -3610,7 +3614,7 @@ async function run(): Promise<void> {
     roughness: 0.8,
     alphaMode: 'opaque',
     alphaCutoff: null,
-    doubleSided: true,
+    doubleSided: false,
     textureBindings: [],
   };
   const surveyMaterial: MaterialResource = {
@@ -3634,7 +3638,7 @@ async function run(): Promise<void> {
         slot: 'baseColor',
         texture: textureRef,
         textureCoordinateSet: 0,
-        transform: null,
+        transform: { offset: [0.125, -0.25], scale: [1.5, 0.75], rotation: Math.PI / 6 },
       },
     ],
   };
@@ -3666,7 +3670,7 @@ async function run(): Promise<void> {
   };
   MATERIAL_TABLE_HASH = materialTable.contentHash;
   viewer.registerCanonicalMaterialResourceSet({
-    textures: [texture],
+    textures: [],
     materials: [surveyMaterial, texturedMaterial],
     materialTables: [materialTable],
     hatchPatterns: [],

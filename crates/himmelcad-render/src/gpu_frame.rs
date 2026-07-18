@@ -18,8 +18,9 @@ use wgpu::util::DeviceExt;
 
 use crate::gpu_texture_cache::ImmutableGpuTextureResource;
 use crate::{
-    ClipOperation, ClipVolume, ColorMode, PackedCivilPointAttributes, PickToken, RenderStyle,
-    StrokeCap, StrokeColor, StrokeJoin, StrokeMode, StrokeWidth, TransparencyStrategy,
+    ClipOperation, ClipVolume, ColorMode, GpuTextureAddressMode, GpuTextureColorSpace,
+    GpuTextureFilterMode, GpuTextureSamplerIdentity, PackedCivilPointAttributes, PickToken,
+    RenderStyle, StrokeCap, StrokeColor, StrokeJoin, StrokeMode, StrokeWidth, TransparencyStrategy,
     WorldTransform, WorldVec3,
 };
 
@@ -1039,6 +1040,57 @@ pub struct GpuTextureData<'a> {
     pub rgba8: &'a [u8],
 }
 
+/// Canonical affine transform applied to the first mesh UV set.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GpuTextureTransform {
+    /// UV translation after scale and rotation.
+    pub offset: [f32; 2],
+    /// Independent UV scale before rotation.
+    pub scale: [f32; 2],
+    /// Counter-clockwise rotation in radians.
+    pub rotation: f32,
+}
+
+impl Default for GpuTextureTransform {
+    fn default() -> Self {
+        Self {
+            offset: [0.0; 2],
+            scale: [1.0; 2],
+            rotation: 0.0,
+        }
+    }
+}
+
+impl GpuTextureTransform {
+    fn rows(self) -> Result<[[f32; 4]; 2], GpuFrameError> {
+        if self
+            .offset
+            .iter()
+            .chain(self.scale.iter())
+            .chain(std::iter::once(&self.rotation))
+            .any(|value| !value.is_finite())
+            || self.scale.contains(&0.0)
+        {
+            return Err(GpuFrameError::InvalidStyle);
+        }
+        let (sin, cos) = self.rotation.sin_cos();
+        Ok([
+            [
+                cos * self.scale[0],
+                -sin * self.scale[1],
+                self.offset[0],
+                0.0,
+            ],
+            [
+                sin * self.scale[0],
+                cos * self.scale[1],
+                self.offset[1],
+                0.0,
+            ],
+        ])
+    }
+}
+
 /// Borrowed device-ready two-dimensional texture with tightly packed mipmaps.
 #[derive(Debug, Clone, Copy)]
 pub struct GpuTextureMipChainData<'a> {
@@ -1060,9 +1112,14 @@ pub struct GpuTextureResource(Arc<GpuTextureResourceInner>);
 
 #[derive(Debug)]
 struct GpuTextureResourceInner {
+    allocation: Arc<GpuTextureAllocation>,
+    sampler: wgpu::Sampler,
+}
+
+#[derive(Debug)]
+struct GpuTextureAllocation {
     _texture: wgpu::Texture,
     view: wgpu::TextureView,
-    sampler: wgpu::Sampler,
     resident_bytes: u64,
 }
 
@@ -1071,13 +1128,13 @@ impl GpuTextureResource {
     /// texture/sampler allocation.
     #[must_use]
     pub fn allocation_key(&self) -> usize {
-        Arc::as_ptr(&self.0) as usize
+        Arc::as_ptr(&self.0.allocation) as usize
     }
 
     /// Immutable uploaded texture bytes charged once globally.
     #[must_use]
     pub fn resident_bytes(&self) -> u64 {
-        self.0.resident_bytes
+        self.0.allocation.resident_bytes
     }
 }
 
@@ -1104,6 +1161,7 @@ pub struct GpuMaterial {
     transparent: bool,
     style: GpuPresentationStyle,
     source_color: [f32; 4],
+    source_uv_rows: [[f32; 4]; 2],
     interaction_translation: [f32; 3],
     source_linear_rows: [[f32; 4]; 3],
     source_normal_rows: [[f32; 4]; 3],
@@ -1143,6 +1201,7 @@ impl GpuMaterial {
                 self.alpha_mode,
                 &self.style,
                 self.source_color,
+                self.source_uv_rows,
                 self.interaction_translation,
                 origin_delta,
                 self.source_linear_rows,
@@ -1242,6 +1301,7 @@ impl GpuMaterial {
         texture: Option<&GpuTextureResource>,
         color: [f32; 4],
         alpha_mode: GpuAlphaMode,
+        texture_transform: GpuTextureTransform,
     ) -> Result<(), GpuFrameError> {
         if color
             .iter()
@@ -1249,12 +1309,14 @@ impl GpuMaterial {
         {
             return Err(GpuFrameError::InvalidStyle);
         }
+        let source_uv_rows = texture_transform.rows()?;
         let texture = texture
             .cloned()
             .unwrap_or_else(|| self.source_texture_resource.clone());
         self.source_texture_resource = texture.clone();
         self.active_texture_resource = texture.clone();
         self.source_color = color;
+        self.source_uv_rows = source_uv_rows;
         self.alpha_mode = alpha_mode;
         self.transparent = alpha_mode == GpuAlphaMode::Blend || self.style.opacity < 1.0;
         self.bind_group = create_material_bind_group(
@@ -1567,6 +1629,7 @@ pub struct GpuDrawBatch {
     shared_mesh_geometry: Option<GpuIndexedMeshGeometry>,
     declared_texture_coordinates: bool,
     source_material_slot: Option<u32>,
+    double_sided: bool,
 }
 
 #[derive(Debug)]
@@ -1896,6 +1959,20 @@ impl GpuDrawBatch {
         self.material.as_ref().map(|material| material.source_color)
     }
 
+    /// Whether both authored triangle orientations contribute to color and picking.
+    #[must_use]
+    pub fn source_material_double_sided(&self) -> bool {
+        self.double_sided
+    }
+
+    /// Affine rows applied to the authored first UV set before sampling.
+    #[must_use]
+    pub fn source_material_uv_rows(&self) -> Option<[[f32; 4]; 2]> {
+        self.material
+            .as_ref()
+            .map(|material| material.source_uv_rows)
+    }
+
     pub(crate) fn vertex_count_usize(&self) -> usize {
         usize::try_from(self.vertex_count).unwrap_or(usize::MAX)
     }
@@ -1919,6 +1996,8 @@ impl GpuDrawBatch {
         texture: Option<&GpuTextureResource>,
         color: [f32; 4],
         alpha_mode: GpuAlphaMode,
+        texture_transform: GpuTextureTransform,
+        double_sided: bool,
     ) -> Result<(), GpuFrameError> {
         let material = self.material.as_mut().ok_or(GpuFrameError::InvalidStyle)?;
         material.set_source_material(
@@ -1928,8 +2007,10 @@ impl GpuDrawBatch {
             texture,
             color,
             alpha_mode,
+            texture_transform,
         )?;
         self.transparent = material.transparent;
+        self.double_sided = double_sided;
         Ok(())
     }
 
@@ -2262,6 +2343,7 @@ impl GpuDrawBatch {
             shared_mesh_geometry: None,
             declared_texture_coordinates: false,
             source_material_slot: None,
+            double_sided: true,
         })
     }
 
@@ -2326,6 +2408,7 @@ impl GpuDrawBatch {
             shared_mesh_geometry: None,
             declared_texture_coordinates: false,
             source_material_slot: None,
+            double_sided: true,
         })
     }
 
@@ -2387,6 +2470,7 @@ impl GpuDrawBatch {
             shared_mesh_geometry: None,
             declared_texture_coordinates: false,
             source_material_slot: None,
+            double_sided: true,
         })
     }
 
@@ -2523,6 +2607,7 @@ impl GpuDrawBatch {
             shared_mesh_geometry: None,
             declared_texture_coordinates: false,
             source_material_slot: None,
+            double_sided: true,
         })
     }
 
@@ -2583,6 +2668,7 @@ impl GpuDrawBatch {
             shared_mesh_geometry: None,
             declared_texture_coordinates: false,
             source_material_slot: None,
+            double_sided: true,
         })
     }
 
@@ -2639,6 +2725,7 @@ impl GpuDrawBatch {
             shared_mesh_geometry: None,
             declared_texture_coordinates: false,
             source_material_slot: None,
+            double_sided: true,
         })
     }
 
@@ -2760,6 +2847,7 @@ impl GpuDrawBatch {
             shared_mesh_geometry: None,
             declared_texture_coordinates: false,
             source_material_slot: None,
+            double_sided: true,
         })
     }
 
@@ -2943,6 +3031,7 @@ impl GpuDrawBatch {
             shared_mesh_geometry: Some(geometry.clone()),
             declared_texture_coordinates: false,
             source_material_slot: None,
+            double_sided: true,
         })
     }
 
@@ -3040,6 +3129,7 @@ impl GpuDrawBatch {
             shared_mesh_geometry: self.shared_mesh_geometry.clone(),
             declared_texture_coordinates: self.declared_texture_coordinates,
             source_material_slot: self.source_material_slot,
+            double_sided: self.double_sided,
         })
     }
 
@@ -3174,6 +3264,7 @@ impl GpuDrawBatch {
         material.source_texture_resource = source.source_texture_resource.clone();
         material.active_texture_resource = source.active_texture_resource.clone();
         material.source_color = source.source_color;
+        material.source_uv_rows = source.source_uv_rows;
         material.rebind_line_type_resource(
             device,
             &renderer.material_bind_group_layout,
@@ -3227,6 +3318,7 @@ impl GpuDrawBatch {
             shared_mesh_geometry: self.shared_mesh_geometry.clone(),
             declared_texture_coordinates: self.declared_texture_coordinates,
             source_material_slot: self.source_material_slot,
+            double_sided: self.double_sided,
         })
     }
 }
@@ -4157,6 +4249,21 @@ impl GpuSharedRenderer {
         create_texture_resource(device, queue, label, texture)
     }
 
+    /// Uploads one decoded canonical RGBA8 texture with its exact color-space
+    /// and sampling contract. The allocation remains shareable across every
+    /// material-table slot referencing the same immutable revision.
+    pub fn create_canonical_texture_resource(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        label: &str,
+        texture: GpuTextureData<'_>,
+        color_space: GpuTextureColorSpace,
+        sampling: GpuTextureSamplerIdentity,
+    ) -> Result<GpuTextureResource, GpuFrameError> {
+        create_texture_resource_with_options(device, queue, label, texture, color_space, sampling)
+    }
+
     /// Uploads one immutable device-ready mip chain independently from
     /// tile-local material/style uniforms.
     pub fn create_mip_chain_texture_resource(
@@ -4476,7 +4583,9 @@ struct PrimitivePipelines {
     point_sprites: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
     triangles: wgpu::RenderPipeline,
+    triangles_culled: wgpu::RenderPipeline,
     instanced_triangles: wgpu::RenderPipeline,
+    instanced_triangles_culled: wgpu::RenderPipeline,
     splats: wgpu::RenderPipeline,
     screen_text: wgpu::RenderPipeline,
 }
@@ -4497,6 +4606,7 @@ impl PrimitivePipelines {
                 format,
                 GpuPrimitive::Points,
                 transparent,
+                false,
             ),
             point_sprites: color_pipeline(
                 device,
@@ -4505,6 +4615,7 @@ impl PrimitivePipelines {
                 format,
                 GpuPrimitive::PointSprites,
                 transparent,
+                false,
             ),
             lines: color_pipeline(
                 device,
@@ -4513,6 +4624,7 @@ impl PrimitivePipelines {
                 format,
                 GpuPrimitive::Lines,
                 transparent,
+                false,
             ),
             triangles: color_pipeline(
                 device,
@@ -4521,6 +4633,16 @@ impl PrimitivePipelines {
                 format,
                 GpuPrimitive::Triangles,
                 transparent,
+                false,
+            ),
+            triangles_culled: color_pipeline(
+                device,
+                layout,
+                shader,
+                format,
+                GpuPrimitive::Triangles,
+                transparent,
+                true,
             ),
             instanced_triangles: color_pipeline(
                 device,
@@ -4529,6 +4651,16 @@ impl PrimitivePipelines {
                 format,
                 GpuPrimitive::InstancedTriangles,
                 transparent,
+                false,
+            ),
+            instanced_triangles_culled: color_pipeline(
+                device,
+                layout,
+                shader,
+                format,
+                GpuPrimitive::InstancedTriangles,
+                transparent,
+                true,
             ),
             splats: color_pipeline(
                 device,
@@ -4537,6 +4669,7 @@ impl PrimitivePipelines {
                 format,
                 GpuPrimitive::GaussianSplats,
                 transparent,
+                false,
             ),
             screen_text: color_pipeline(
                 device,
@@ -4545,6 +4678,7 @@ impl PrimitivePipelines {
                 format,
                 GpuPrimitive::ScreenText,
                 transparent,
+                false,
             ),
         }
     }
@@ -4555,18 +4689,27 @@ impl PrimitivePipelines {
         shader: &wgpu::ShaderModule,
     ) -> Self {
         Self {
-            points: pick_pipeline(device, layout, shader, GpuPrimitive::Points),
-            point_sprites: pick_pipeline(device, layout, shader, GpuPrimitive::PointSprites),
-            lines: pick_pipeline(device, layout, shader, GpuPrimitive::Lines),
-            triangles: pick_pipeline(device, layout, shader, GpuPrimitive::Triangles),
+            points: pick_pipeline(device, layout, shader, GpuPrimitive::Points, false),
+            point_sprites: pick_pipeline(device, layout, shader, GpuPrimitive::PointSprites, false),
+            lines: pick_pipeline(device, layout, shader, GpuPrimitive::Lines, false),
+            triangles: pick_pipeline(device, layout, shader, GpuPrimitive::Triangles, false),
+            triangles_culled: pick_pipeline(device, layout, shader, GpuPrimitive::Triangles, true),
             instanced_triangles: pick_pipeline(
                 device,
                 layout,
                 shader,
                 GpuPrimitive::InstancedTriangles,
+                false,
             ),
-            splats: pick_pipeline(device, layout, shader, GpuPrimitive::GaussianSplats),
-            screen_text: pick_pipeline(device, layout, shader, GpuPrimitive::ScreenText),
+            instanced_triangles_culled: pick_pipeline(
+                device,
+                layout,
+                shader,
+                GpuPrimitive::InstancedTriangles,
+                true,
+            ),
+            splats: pick_pipeline(device, layout, shader, GpuPrimitive::GaussianSplats, false),
+            screen_text: pick_pipeline(device, layout, shader, GpuPrimitive::ScreenText, false),
         }
     }
 
@@ -4576,27 +4719,38 @@ impl PrimitivePipelines {
         shader: &wgpu::ShaderModule,
     ) -> Self {
         Self {
-            points: oit_pipeline(device, layout, shader, GpuPrimitive::Points),
-            point_sprites: oit_pipeline(device, layout, shader, GpuPrimitive::PointSprites),
-            lines: oit_pipeline(device, layout, shader, GpuPrimitive::Lines),
-            triangles: oit_pipeline(device, layout, shader, GpuPrimitive::Triangles),
+            points: oit_pipeline(device, layout, shader, GpuPrimitive::Points, false),
+            point_sprites: oit_pipeline(device, layout, shader, GpuPrimitive::PointSprites, false),
+            lines: oit_pipeline(device, layout, shader, GpuPrimitive::Lines, false),
+            triangles: oit_pipeline(device, layout, shader, GpuPrimitive::Triangles, false),
+            triangles_culled: oit_pipeline(device, layout, shader, GpuPrimitive::Triangles, true),
             instanced_triangles: oit_pipeline(
                 device,
                 layout,
                 shader,
                 GpuPrimitive::InstancedTriangles,
+                false,
             ),
-            splats: oit_pipeline(device, layout, shader, GpuPrimitive::GaussianSplats),
-            screen_text: oit_pipeline(device, layout, shader, GpuPrimitive::ScreenText),
+            instanced_triangles_culled: oit_pipeline(
+                device,
+                layout,
+                shader,
+                GpuPrimitive::InstancedTriangles,
+                true,
+            ),
+            splats: oit_pipeline(device, layout, shader, GpuPrimitive::GaussianSplats, false),
+            screen_text: oit_pipeline(device, layout, shader, GpuPrimitive::ScreenText, false),
         }
     }
 
-    fn get(&self, primitive: GpuPrimitive) -> &wgpu::RenderPipeline {
+    fn get(&self, primitive: GpuPrimitive, double_sided: bool) -> &wgpu::RenderPipeline {
         match primitive {
             GpuPrimitive::Points => &self.points,
             GpuPrimitive::PointSprites => &self.point_sprites,
             GpuPrimitive::Lines => &self.lines,
+            GpuPrimitive::Triangles if !double_sided => &self.triangles_culled,
             GpuPrimitive::Triangles => &self.triangles,
+            GpuPrimitive::InstancedTriangles if !double_sided => &self.instanced_triangles_culled,
             GpuPrimitive::InstancedTriangles => &self.instanced_triangles,
             GpuPrimitive::GaussianSplats => &self.splats,
             GpuPrimitive::ScreenText => &self.screen_text,
@@ -4693,6 +4847,7 @@ struct MaterialUniform {
     gradient_count: u32,
     base_color: [f32; 4],
     source_color: [f32; 4],
+    source_uv_rows: [[f32; 4]; 2],
     style_values: [f32; 4],
     height_values: [f32; 4],
     gradient_colors: [[f32; 4]; MAX_GPU_GRADIENT_COLORS],
@@ -4715,6 +4870,7 @@ impl MaterialUniform {
         alpha_mode: GpuAlphaMode,
         style: &GpuPresentationStyle,
         source_color: [f32; 4],
+        source_uv_rows: [[f32; 4]; 2],
         interaction_translation: [f32; 3],
         batch_origin_delta: [f32; 3],
         source_linear_rows: [[f32; 4]; 3],
@@ -4731,6 +4887,7 @@ impl MaterialUniform {
             gradient_count: style.gradient_count,
             base_color: style.base_color,
             source_color,
+            source_uv_rows,
             style_values: [
                 style.opacity,
                 style.vertical_exaggeration,
@@ -4908,6 +5065,24 @@ fn create_texture_resource(
     label: &str,
     data: GpuTextureData<'_>,
 ) -> Result<GpuTextureResource, GpuFrameError> {
+    create_texture_resource_with_options(
+        device,
+        queue,
+        label,
+        data,
+        GpuTextureColorSpace::Srgb,
+        GpuTextureSamplerIdentity::REPEAT_LINEAR,
+    )
+}
+
+fn create_texture_resource_with_options(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    data: GpuTextureData<'_>,
+    color_space: GpuTextureColorSpace,
+    sampling: GpuTextureSamplerIdentity,
+) -> Result<GpuTextureResource, GpuFrameError> {
     let byte_count = u64::from(data.width)
         .checked_mul(u64::from(data.height))
         .and_then(|pixels| pixels.checked_mul(4))
@@ -4921,7 +5096,10 @@ fn create_texture_resource(
         label,
         data.width,
         data.height,
-        wgpu::TextureFormat::Rgba8UnormSrgb,
+        match color_space {
+            GpuTextureColorSpace::Linear => wgpu::TextureFormat::Rgba8Unorm,
+            GpuTextureColorSpace::Srgb => wgpu::TextureFormat::Rgba8UnormSrgb,
+        },
         wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
     );
     queue.write_texture(
@@ -4943,23 +5121,70 @@ fn create_texture_resource(
             depth_or_array_layers: 1,
         },
     );
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some(label),
-        address_mode_u: wgpu::AddressMode::Repeat,
-        address_mode_v: wgpu::AddressMode::Repeat,
-        address_mode_w: wgpu::AddressMode::Repeat,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Linear,
-        ..wgpu::SamplerDescriptor::default()
-    });
+    let sampler = canonical_sampler(device, label, sampling);
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    Ok(GpuTextureResource(Arc::new(GpuTextureResourceInner {
+    let allocation = Arc::new(GpuTextureAllocation {
         _texture: texture,
         view,
-        sampler,
         resident_bytes: u64::try_from(data.rgba8.len()).unwrap_or(u64::MAX),
+    });
+    Ok(GpuTextureResource(Arc::new(GpuTextureResourceInner {
+        allocation,
+        sampler,
     })))
+}
+
+fn canonical_sampler(
+    device: &wgpu::Device,
+    label: &str,
+    sampling: GpuTextureSamplerIdentity,
+) -> wgpu::Sampler {
+    let address = |mode| match mode {
+        GpuTextureAddressMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
+        GpuTextureAddressMode::Repeat => wgpu::AddressMode::Repeat,
+        GpuTextureAddressMode::MirrorRepeat => wgpu::AddressMode::MirrorRepeat,
+        GpuTextureAddressMode::ClampToBorder => wgpu::AddressMode::ClampToBorder,
+    };
+    let filter = |mode| match mode {
+        GpuTextureFilterMode::Nearest => wgpu::FilterMode::Nearest,
+        GpuTextureFilterMode::Linear => wgpu::FilterMode::Linear,
+    };
+    let compare = sampling.compare.map(|value| match value {
+        crate::GpuTextureCompareFunction::Never => wgpu::CompareFunction::Never,
+        crate::GpuTextureCompareFunction::Less => wgpu::CompareFunction::Less,
+        crate::GpuTextureCompareFunction::Equal => wgpu::CompareFunction::Equal,
+        crate::GpuTextureCompareFunction::LessEqual => wgpu::CompareFunction::LessEqual,
+        crate::GpuTextureCompareFunction::Greater => wgpu::CompareFunction::Greater,
+        crate::GpuTextureCompareFunction::NotEqual => wgpu::CompareFunction::NotEqual,
+        crate::GpuTextureCompareFunction::GreaterEqual => wgpu::CompareFunction::GreaterEqual,
+        crate::GpuTextureCompareFunction::Always => wgpu::CompareFunction::Always,
+    });
+    let border_color = sampling.border_color.map(|value| match value {
+        crate::GpuTextureBorderColor::TransparentBlack => {
+            wgpu::SamplerBorderColor::TransparentBlack
+        }
+        crate::GpuTextureBorderColor::OpaqueBlack => wgpu::SamplerBorderColor::OpaqueBlack,
+        crate::GpuTextureBorderColor::OpaqueWhite => wgpu::SamplerBorderColor::OpaqueWhite,
+        crate::GpuTextureBorderColor::Zero => wgpu::SamplerBorderColor::Zero,
+    });
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some(label),
+        address_mode_u: address(sampling.address_u),
+        address_mode_v: address(sampling.address_v),
+        address_mode_w: address(sampling.address_w),
+        mag_filter: filter(sampling.mag_filter),
+        min_filter: filter(sampling.min_filter),
+        mipmap_filter: match sampling.mipmap_filter {
+            GpuTextureFilterMode::Nearest => wgpu::MipmapFilterMode::Nearest,
+            GpuTextureFilterMode::Linear => wgpu::MipmapFilterMode::Linear,
+        },
+        lod_min_clamp: f32::from_bits(sampling.lod_min_clamp_bits),
+        lod_max_clamp: f32::from_bits(sampling.lod_max_clamp_bits),
+        compare,
+        anisotropy_clamp: sampling.anisotropy_clamp,
+        border_color,
+        ..wgpu::SamplerDescriptor::default()
+    })
 }
 
 fn create_mip_chain_texture_resource(
@@ -5002,11 +5227,14 @@ fn create_mip_chain_texture_resource(
         ..wgpu::SamplerDescriptor::default()
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    Ok(GpuTextureResource(Arc::new(GpuTextureResourceInner {
+    let allocation = Arc::new(GpuTextureAllocation {
         _texture: texture,
         view,
-        sampler,
         resident_bytes: u64::try_from(data.data.len()).unwrap_or(u64::MAX),
+    });
+    Ok(GpuTextureResource(Arc::new(GpuTextureResourceInner {
+        allocation,
+        sampler,
     })))
 }
 
@@ -5028,6 +5256,9 @@ fn create_material_from_texture(
         alpha_mode,
         style,
         [1.0; 4],
+        GpuTextureTransform::default()
+            .rows()
+            .expect("identity UV transform is valid"),
         [0.0; 3],
         origin_delta,
         IDENTITY_AFFINE_ROWS,
@@ -5060,6 +5291,9 @@ fn create_material_from_texture(
         transparent: alpha_mode == GpuAlphaMode::Blend || style.opacity < 1.0,
         style: *style,
         source_color: [1.0; 4],
+        source_uv_rows: GpuTextureTransform::default()
+            .rows()
+            .expect("identity UV transform is valid"),
         interaction_translation: [0.0; 3],
         source_linear_rows: IDENTITY_AFFINE_ROWS,
         source_normal_rows: IDENTITY_AFFINE_ROWS,
@@ -5083,7 +5317,7 @@ fn create_material_bind_group(
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&texture.0.view),
+                resource: wgpu::BindingResource::TextureView(&texture.0.allocation.view),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
@@ -5288,6 +5522,7 @@ fn color_pipeline(
     format: wgpu::TextureFormat,
     primitive: GpuPrimitive,
     transparent: bool,
+    cull_back_faces: bool,
 ) -> wgpu::RenderPipeline {
     let targets = [Some(wgpu::ColorTargetState {
         format,
@@ -5302,6 +5537,7 @@ fn color_pipeline(
         &targets,
         primitive,
         !transparent,
+        cull_back_faces,
     )
 }
 
@@ -5310,6 +5546,7 @@ fn oit_pipeline(
     layout: &wgpu::PipelineLayout,
     shader: &wgpu::ShaderModule,
     primitive: GpuPrimitive,
+    cull_back_faces: bool,
 ) -> wgpu::RenderPipeline {
     let additive = wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::One,
@@ -5347,6 +5584,7 @@ fn oit_pipeline(
         &targets,
         primitive,
         false,
+        cull_back_faces,
     )
 }
 
@@ -5355,6 +5593,7 @@ fn pick_pipeline(
     layout: &wgpu::PipelineLayout,
     shader: &wgpu::ShaderModule,
     primitive: GpuPrimitive,
+    cull_back_faces: bool,
 ) -> wgpu::RenderPipeline {
     let targets = [
         Some(wgpu::ColorTargetState {
@@ -5381,6 +5620,7 @@ fn pick_pipeline(
         &targets,
         primitive,
         true,
+        cull_back_faces,
     )
 }
 
@@ -5392,6 +5632,7 @@ fn pipeline(
     targets: &[Option<wgpu::ColorTargetState>],
     primitive: GpuPrimitive,
     depth_write_enabled: bool,
+    cull_back_faces: bool,
 ) -> wgpu::RenderPipeline {
     let buffers = if primitive == GpuPrimitive::InstancedTriangles {
         vec![
@@ -5424,6 +5665,7 @@ fn pipeline(
             } else {
                 wgpu::PrimitiveTopology::TriangleList
             },
+            cull_mode: cull_back_faces.then_some(wgpu::Face::Back),
             ..wgpu::PrimitiveState::default()
         },
         depth_stencil: Some(wgpu::DepthStencilState {
@@ -5457,7 +5699,7 @@ fn encode_batches<'pass>(
         if batch.transparent != transparent || (picking && !batch.pickable) {
             continue;
         }
-        pass.set_pipeline(pipelines.get(batch.primitive));
+        pass.set_pipeline(pipelines.get(batch.primitive, batch.double_sided));
         pass.set_bind_group(
             1,
             batch

@@ -224,6 +224,7 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
     register_mesh_resource(): void {},
     register_area_interpolation(): void {},
     register_canonical_hatch_pattern_resource(): void {},
+    register_canonical_texture_resource(): void {},
     register_canonical_material_resource_set(): void {},
     register_canonical_line_type_resource(resourceJson): void {
       calls.push(['canonicalLineType', resourceJson]);
@@ -1188,6 +1189,7 @@ function minimalBinding(
     register_mesh_resource(): void {},
     register_area_interpolation(): void {},
     register_canonical_hatch_pattern_resource(): void {},
+    register_canonical_texture_resource(): void {},
     register_canonical_material_resource_set(): void {},
     register_canonical_line_type_resource(): void {},
     register_line_type_resource: () =>

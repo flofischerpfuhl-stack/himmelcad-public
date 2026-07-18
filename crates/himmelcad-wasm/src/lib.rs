@@ -97,26 +97,27 @@ use himmelcad_render::{
     GlyphMetrics, GpuAlphaMode, GpuCalibrationProgress, GpuCalibrationSession, GpuDrawBatch,
     GpuHatchPattern, GpuHatchPatternData, GpuHatchResource, GpuIndexedMeshGeometry,
     GpuLineTypePattern, GpuLineTypeResource, GpuModelResourceIdentity, GpuPresentationStyle,
-    GpuSurfaceHost, GpuTextureData, GpuTextureResource, GpuTextureResourceCache,
-    GpuTextureResourceIdentity, GpuTextureResourceStage, HardwareInventory, HardwarePolicyResolver,
-    HierarchySource, ImplicitThreeDTilesHierarchySource, InstancedTriangleMeshPickRefiner,
-    MeshPickRefiner, PickCandidate, PickCycle, PickRefinementRequest, PotreeHierarchySource,
-    PotreePointLayout, PreparedAssetBundle, PreparedGpuTextureResources, PreparedHierarchySource,
-    PresentationTransform, QualityAdjustment, RasterColorEncoding, RasterElevationEncoding,
-    RasterGridMapping, RasterNoData, RasterSurfaceTopology, RenderProxy, RenderProxyId,
-    RenderProxyKind, RenderStyle, RenderWorld, ResidencyTicket, ResolvedAreaDrapeSurface,
-    ResolvedAreaInterpolation, ResolvedAssetEntry, ResolvedGeometryRepresentationAdmission,
-    ResourceBudget, ResourceCost, RuntimeQualityGovernor, RuntimeQualityState, SectionBatchOptions,
-    SectionHatchStyle, SectionMaterialRegionBinding, SectionPlane, SectionProduct, SectionRegion,
-    SectionTopologyPart, SectionTopologyPartitionData, SectionTopologySnapshotKey,
-    SharedAssetBlobCache, StreamingCoordinator, StreamingRuntimeLimits, StrokeMode, SurfaceFrame,
-    SurfaceFrameOutcome, SurfacePickRequest, TessellatedCurve, TessellatedCurvePath,
-    TessellatedCurveSegment, TextAlignment, TextBatchOptions, TextLayoutOptions, TextLayoutSpace,
-    ThreeDTilesContentKind, ThreeDTilesHierarchySource, TileId, TileKey, TileSelection,
-    TileSelectionView, TileSelector, TimingSample, TriangleMeshPickInstance,
-    TriangleMeshPickRefiner, TriangleMeshPickSource, UnresolvedHeightDisplay, WorldAabb,
-    WorldCamera, WorldTransform, WorldVec3, GPU_POINT_VERTEX_STRIDE_BYTES,
-    SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
+    GpuSurfaceHost, GpuTextureAddressMode, GpuTextureColorSpace, GpuTextureData,
+    GpuTextureFilterMode, GpuTextureResource, GpuTextureResourceCache, GpuTextureResourceIdentity,
+    GpuTextureResourceStage, GpuTextureSamplerIdentity, GpuTextureTransform, HardwareInventory,
+    HardwarePolicyResolver, HierarchySource, ImplicitThreeDTilesHierarchySource,
+    InstancedTriangleMeshPickRefiner, MeshPickRefiner, PickCandidate, PickCycle,
+    PickRefinementRequest, PotreeHierarchySource, PotreePointLayout, PreparedAssetBundle,
+    PreparedGpuTextureResources, PreparedHierarchySource, PresentationTransform, QualityAdjustment,
+    RasterColorEncoding, RasterElevationEncoding, RasterGridMapping, RasterNoData,
+    RasterSurfaceTopology, RenderProxy, RenderProxyId, RenderProxyKind, RenderStyle, RenderWorld,
+    ResidencyTicket, ResolvedAreaDrapeSurface, ResolvedAreaInterpolation, ResolvedAssetEntry,
+    ResolvedGeometryRepresentationAdmission, ResourceBudget, ResourceCost, RuntimeQualityGovernor,
+    RuntimeQualityState, SectionBatchOptions, SectionHatchStyle, SectionMaterialRegionBinding,
+    SectionPlane, SectionProduct, SectionRegion, SectionTopologyPart, SectionTopologyPartitionData,
+    SectionTopologySnapshotKey, SharedAssetBlobCache, StreamingCoordinator, StreamingRuntimeLimits,
+    StrokeMode, SurfaceFrame, SurfaceFrameOutcome, SurfacePickRequest, TessellatedCurve,
+    TessellatedCurvePath, TessellatedCurveSegment, TextAlignment, TextBatchOptions,
+    TextLayoutOptions, TextLayoutSpace, ThreeDTilesContentKind, ThreeDTilesHierarchySource, TileId,
+    TileKey, TileSelection, TileSelectionView, TileSelector, TimingSample,
+    TriangleMeshPickInstance, TriangleMeshPickRefiner, TriangleMeshPickSource,
+    UnresolvedHeightDisplay, WorldAabb, WorldCamera, WorldTransform, WorldVec3,
+    GPU_POINT_VERTEX_STRIDE_BYTES, SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
 };
 #[cfg(target_arch = "wasm32")]
 use web_sys::HtmlCanvasElement;
@@ -1312,6 +1313,7 @@ struct WasmHatchResourceRegistry {
 #[derive(Debug, Clone, Default)]
 struct WasmMaterialResourceRegistry {
     catalog: CanonicalPresentationResourceCatalog,
+    gpu_textures: BTreeMap<String, GpuTextureResource>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -2416,6 +2418,8 @@ impl WasmViewer {
                     "declaredTextureCoordinates": batch.has_declared_texture_coordinates(),
                     "sourceMaterialSlot": batch.source_material_slot(),
                     "sourceMaterialColor": batch.source_material_color(),
+                    "sourceMaterialDoubleSided": batch.source_material_double_sided(),
+                    "sourceMaterialUvRows": batch.source_material_uv_rows(),
                     "usesSourceTexture": batch.source_texture_allocation_key()
                         == batch.active_texture_allocation_key(),
                 }));
@@ -3371,22 +3375,111 @@ impl WasmViewer {
         Ok(())
     }
 
-    /// Atomically publishes exact texture, material and ordered material-table
-    /// revisions. Decoded texture pixels remain separately content-addressed by
-    /// `TextureResource.pixels.objectHash` and are uploaded through
-    /// `register_image_resource` before a referencing entity is compiled.
+    /// Validates and uploads one exact canonical decoded RGBA8 texture revision.
+    pub fn register_canonical_texture_resource(
+        &mut self,
+        resource_json: &str,
+        width: u32,
+        height: u32,
+        rgba8: &[u8],
+    ) -> Result<(), JsValue> {
+        let resource: TextureResource = serde_json::from_str(resource_json).map_err(js_error)?;
+        let expected = usize::try_from(width)
+            .ok()
+            .and_then(|width| {
+                usize::try_from(height)
+                    .ok()
+                    .and_then(|height| width.checked_mul(height))
+            })
+            .and_then(|pixels| pixels.checked_mul(4))
+            .ok_or_else(|| JsValue::from_str("canonical texture dimensions overflow"))?;
+        if width == 0
+            || height == 0
+            || rgba8.len() != expected
+            || resource.pixels.object_hash != ObjectHash::of_bytes(rgba8)
+            || resource
+                .pixels
+                .byte_length
+                .is_some_and(|length| length != u64::try_from(rgba8.len()).unwrap_or(u64::MAX))
+        {
+            return Err(JsValue::from_str(
+                "canonical decoded texture dimensions, length or checksum are invalid",
+            ));
+        }
+        let key = canonical_resource_ref_key(&resource.resource_ref()).map_err(js_error)?;
+        if self.material_resources.gpu_textures.contains_key(&key) {
+            return Err(JsValue::from_str(
+                "canonical GPU texture revision is already registered",
+            ));
+        }
+        let color_space = match resource.color_space {
+            TextureColorSpace::Srgb => GpuTextureColorSpace::Srgb,
+            TextureColorSpace::Linear | TextureColorSpace::Data => GpuTextureColorSpace::Linear,
+        };
+        let address = |mode| match mode {
+            TextureWrapMode::ClampToEdge => GpuTextureAddressMode::ClampToEdge,
+            TextureWrapMode::Repeat => GpuTextureAddressMode::Repeat,
+            TextureWrapMode::MirroredRepeat => GpuTextureAddressMode::MirrorRepeat,
+        };
+        let filter = |mode| match mode {
+            TextureFilter::Nearest => GpuTextureFilterMode::Nearest,
+            TextureFilter::Linear => GpuTextureFilterMode::Linear,
+        };
+        let gpu = self
+            .host
+            .renderer()
+            .create_canonical_texture_resource(
+                self.host.device(),
+                self.host.queue(),
+                &format!("canonical-texture-{}", resource.resource_id),
+                GpuTextureData {
+                    width,
+                    height,
+                    rgba8,
+                },
+                color_space,
+                GpuTextureSamplerIdentity {
+                    address_u: address(resource.wrap_u),
+                    address_v: address(resource.wrap_v),
+                    address_w: GpuTextureAddressMode::ClampToEdge,
+                    mag_filter: filter(resource.mag_filter),
+                    min_filter: filter(resource.min_filter),
+                    mipmap_filter: filter(resource.min_filter),
+                    lod_min_clamp_bits: 0.0_f32.to_bits(),
+                    lod_max_clamp_bits: 32.0_f32.to_bits(),
+                    compare: None,
+                    anisotropy_clamp: 1,
+                    border_color: None,
+                },
+            )
+            .map_err(js_error)?;
+        let mut catalog = self.material_resources.catalog.clone();
+        catalog
+            .publish(CanonicalPresentationResourceSet {
+                textures: vec![resource],
+                ..CanonicalPresentationResourceSet::default()
+            })
+            .map_err(js_error)?;
+        self.material_resources.catalog = catalog;
+        self.material_resources.gpu_textures.insert(key, gpu);
+        Ok(())
+    }
+
+    /// Atomically publishes exact material and ordered material-table revisions
+    /// after every referenced canonical texture revision is GPU-resident.
     pub fn register_canonical_material_resource_set(
         &mut self,
         resources_json: &str,
     ) -> Result<(), JsValue> {
         let resources: CanonicalPresentationResourceSet =
             serde_json::from_str(resources_json).map_err(js_error)?;
-        if !resources.hatch_patterns.is_empty()
+        if !resources.textures.is_empty()
+            || !resources.hatch_patterns.is_empty()
             || !resources.line_types.is_empty()
             || !resources.annotation_styles.is_empty()
         {
             return Err(JsValue::from_str(
-                "material publication must contain only textures, materials and material tables",
+                "material publication must contain only materials and material tables",
             ));
         }
         self.material_resources
@@ -7982,7 +8075,6 @@ fn compile_inline_entity(
                 batch,
                 part.source_material_table.as_ref(),
                 material_resources,
-                image_resources,
             )?;
             let resolved = resolve_batch_presentation(
                 &request.style,
@@ -8006,7 +8098,6 @@ fn apply_canonical_mesh_material(
     batch: &mut GpuDrawBatch,
     table_ref: Option<&CanonicalResourceRef>,
     resources: &WasmMaterialResourceRegistry,
-    image_resources: &BTreeMap<String, WasmImageResource>,
 ) -> Result<(), String> {
     let Some(table_ref) = table_ref else {
         if batch.source_material_slot().is_some() {
@@ -8034,20 +8125,15 @@ fn apply_canonical_mesh_material(
             material_ref.resource_id
         )
     })?;
-    if !material.double_sided {
-        return Err(format!(
-            "canonical material '{}' requires back-face culling, which is not installed in the shared pipeline yet",
-            material.resource_id
-        ));
-    }
-    let texture = material
+    let base_color_binding = material
         .texture_bindings
         .iter()
-        .find(|binding| binding.slot == MaterialTextureSlot::BaseColor)
+        .find(|binding| binding.slot == MaterialTextureSlot::BaseColor);
+    let texture = base_color_binding
         .map(|binding| {
-            if binding.texture_coordinate_set != 0 || binding.transform.is_some() {
+            if binding.texture_coordinate_set != 0 {
                 return Err(format!(
-                    "canonical base-color texture '{}' requires unsupported UV set/transform",
+                    "canonical base-color texture '{}' requires an unavailable UV set",
                     binding.texture.resource_id
                 ));
             }
@@ -8057,34 +8143,30 @@ fn apply_canonical_mesh_material(
                     binding.texture.resource_id
                 ));
             }
-            let canonical = resources.catalog.texture(&binding.texture).ok_or_else(|| {
+            resources.catalog.texture(&binding.texture).ok_or_else(|| {
                 format!(
                     "exact texture revision '{}' is not registered",
                     binding.texture.resource_id
                 )
             })?;
-            if canonical.color_space != TextureColorSpace::Srgb
-                || canonical.wrap_u != TextureWrapMode::Repeat
-                || canonical.wrap_v != TextureWrapMode::Repeat
-                || canonical.mag_filter != TextureFilter::Linear
-                || canonical.min_filter != TextureFilter::Linear
-            {
-                return Err(format!(
-                    "canonical texture '{}' sampling contract is not installed in the shared sampler path",
-                    canonical.resource_id
-                ));
-            }
-            image_resources
-                .get(&canonical.pixels.object_hash.0)
-                .map(|image| &image.texture)
-                .ok_or_else(|| {
-                    format!(
-                        "decoded pixels '{}' for canonical texture '{}' are not registered",
-                        canonical.pixels.object_hash.0, canonical.resource_id
-                    )
-                })
+            let key = canonical_resource_ref_key(&binding.texture)?;
+            resources.gpu_textures.get(&key).ok_or_else(|| {
+                format!(
+                    "exact GPU texture revision '{}' is not registered",
+                    binding.texture.resource_id
+                )
+            })
         })
         .transpose()?;
+    let texture_transform = base_color_binding
+        .and_then(|binding| binding.transform)
+        .map_or_else(GpuTextureTransform::default, |transform| {
+            GpuTextureTransform {
+                offset: transform.offset,
+                scale: transform.scale,
+                rotation: transform.rotation,
+            }
+        });
     let alpha_mode = match material.alpha_mode {
         MaterialAlphaMode::Opaque => GpuAlphaMode::Opaque,
         MaterialAlphaMode::Mask => GpuAlphaMode::Mask {
@@ -8107,6 +8189,8 @@ fn apply_canonical_mesh_material(
                 material.base_color.alpha,
             ],
             alpha_mode,
+            texture_transform,
+            material.double_sided,
         )
         .map_err(|error| error.to_string())
 }

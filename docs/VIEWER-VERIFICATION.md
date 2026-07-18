@@ -807,9 +807,10 @@ opaque mesh-material JSON boundaries:
   tests pass; the same two unrelated PhotoLab matching-policy tests remain the
   only failures in the complete core suite;
 - `TriangleMeshGeometry.materials` is an exact typed material-table reference.
-  Import packages publish textures, materials and ordered material tables as
-  one atomically validated presentation set, while referenced pixel/font bytes
-  remain checksum-addressed binary artifacts.
+  Import packages publish checksum-verified texture revisions first; materials
+  and ordered material tables are then published atomically only after every
+  referenced texture is GPU-resident. Referenced pixel/font bytes remain
+  checksum-addressed binary artifacts.
 
 The subsequent runtime gate resolves those tables instead of merely validating
 their envelopes. Inline meshes are compacted by canonical material slot into
@@ -821,13 +822,16 @@ without rebuilding geometry or losing the authored texture revision.
 
 Both explicit browser backends passed the stricter material fixture. It
 requires slots `3` and `7`, two exact material revisions, separate linear base
-colors, authored UVs and one checksum-addressed 2x2 source texture. The forced
-WebGL2 run used the physical Intel HD Graphics 630 and reported 1.7 ms maximum
-CPU submit; the WebGPU CPU adapter is again a correctness-only result and also
-reported 1.7 ms. Unsupported canonical sampler, UV-transform and single-sided
-culling combinations fail before publication rather than being approximated;
-their shared-pipeline implementations remain required before the complete PBR
-material contract can be called finished.
+colors, authored UVs and one checksum-addressed 2x2 source texture. The source
+texture uses mirrored-repeat/clamp addressing, nearest/linear filtering and an
+affine scale/rotation/offset UV transform; one material is single-sided and the
+other double-sided. These states are resolved in shared WebGPU/WebGL2 material
+and pipeline contracts without rebuilding mesh buffers, and pick rendering
+uses the same culling decision as color rendering. The forced WebGL2 run used
+the physical Intel HD Graphics 630 and reported 3.0 ms maximum CPU submit; the
+WebGPU CPU adapter is again a correctness-only result and reported 3.2 ms.
+Additional UV sets and the remaining PBR texture channels are still outside
+this checkpoint.
 
 ## Candidate external data
 

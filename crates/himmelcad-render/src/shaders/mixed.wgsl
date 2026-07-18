@@ -17,6 +17,7 @@ struct MaterialUniform {
     gradient_count: u32,
     base_color: vec4<f32>,
     source_color: vec4<f32>,
+    source_uv_rows: array<vec4<f32>, 2>,
     style_values: vec4<f32>,
     height_values: vec4<f32>,
     gradient_colors: array<vec4<f32>, 256>,
@@ -201,6 +202,14 @@ fn styled_color(source: vec4<f32>, height: f32, shape_kind: u32) -> vec4<f32> {
     }
     color.a *= material.style_values.x;
     return color;
+}
+
+fn source_texture_coordinate(uv: vec2<f32>) -> vec2<f32> {
+    let homogeneous = vec3<f32>(uv, 1.0);
+    return vec2<f32>(
+        dot(material.source_uv_rows[0].xyz, homogeneous),
+        dot(material.source_uv_rows[1].xyz, homogeneous),
+    );
 }
 
 fn categorical_point_color(value: u32) -> vec3<f32> {
@@ -526,7 +535,7 @@ fn mesh_vertex_main(input: MeshVertexInput) -> VertexOutput {
     output.color = input.color;
     output.proxy_slot = input.proxy_slot;
     output.primitive_slot = input.primitive_slot;
-    output.tex_coord = input.tex_coord;
+    output.tex_coord = source_texture_coordinate(input.tex_coord);
     output.shape_coord = vec2<f32>(0.0, 0.0);
     output.shape_kind = 0u;
     output.style_position = source_style_position;
@@ -556,7 +565,7 @@ fn instanced_mesh_vertex_main(
     output.color = input.color;
     output.proxy_slot = instance.proxy_slot;
     output.primitive_slot = input.primitive_slot + instance.primitive_offset;
-    output.tex_coord = input.tex_coord;
+    output.tex_coord = source_texture_coordinate(input.tex_coord);
     output.shape_coord = vec2<f32>(0.0, 0.0);
     output.shape_kind = 0u;
     output.style_position = source_style_position;

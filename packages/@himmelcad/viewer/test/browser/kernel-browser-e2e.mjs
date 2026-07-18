@@ -522,6 +522,12 @@ try {
     ),
     'canonical material batches must retain authored UV and source-texture bindings',
   );
+  assert.deepEqual(
+    state.presentationBindings.canonicalMaterials.map(
+      (batch) => batch.sourceMaterialDoubleSided,
+    ),
+    [false, true],
+  );
   assert.equal(state.canonicalDocument?.generation, 3);
   assert.equal(state.canonicalDocument?.journalEntries, 3);
   assert.equal(state.canonicalDocument?.restoredName, state.canonicalDocument?.replayedName);

@@ -126,6 +126,12 @@ export interface WasmViewerBinding {
   register_mesh_resource(objectHash: string, meshJson: string): void;
   register_area_interpolation(admissionJson: string): void;
   register_canonical_hatch_pattern_resource(resourceJson: string): void;
+  register_canonical_texture_resource(
+    resourceJson: string,
+    width: number,
+    height: number,
+    rgba8: Uint8Array,
+  ): void;
   register_canonical_material_resource_set(resourcesJson: string): void;
   register_canonical_line_type_resource(resourceJson: string): void;
   register_line_type_resource(resourceId: string, patternJson: string): string;
@@ -820,6 +826,13 @@ export interface KernelEntityPresentationBatch {
   readonly declaredTextureCoordinates: boolean;
   readonly sourceMaterialSlot: number | null;
   readonly sourceMaterialColor: readonly [number, number, number, number] | null;
+  readonly sourceMaterialDoubleSided: boolean;
+  readonly sourceMaterialUvRows:
+    | readonly [
+        readonly [number, number, number, number],
+        readonly [number, number, number, number],
+      ]
+    | null;
   readonly usesSourceTexture: boolean;
 }
 
@@ -1132,7 +1145,7 @@ export interface KernelAnnotationStyle {
 
 /** Atomic exact-revision publication for canonical mesh presentation. */
 export interface KernelCanonicalMaterialResourceSet {
-  readonly textures: readonly TextureResource[];
+  readonly textures: readonly [];
   readonly materials: readonly MaterialResource[];
   readonly materialTables: readonly MaterialTableResource[];
   readonly hatchPatterns: readonly [];
@@ -2032,6 +2045,25 @@ export class WgpuKernelViewer {
   registerCanonicalHatchPatternResource(resource: HatchPatternResource): void {
     this.assertAlive();
     this.binding.register_canonical_hatch_pattern_resource(JSON.stringify(resource));
+  }
+
+  /** Uploads one exact decoded canonical texture with authored sampling. */
+  registerCanonicalTextureResource(
+    resource: TextureResource,
+    width: number,
+    height: number,
+    rgba8: Uint8Array,
+  ): void {
+    this.assertAlive();
+    if (width <= 0 || height <= 0 || rgba8.byteLength === 0) {
+      throw new RangeError('canonical texture dimensions and pixels must be non-empty');
+    }
+    this.binding.register_canonical_texture_resource(
+      JSON.stringify(resource),
+      width,
+      height,
+      rgba8,
+    );
   }
 
   /** Atomically publishes exact texture, material and material-table revisions. */
@@ -3595,6 +3627,18 @@ function isEntityPresentationBatch(value: unknown): value is KernelEntityPresent
         value.sourceMaterialColor.length === 4 &&
         value.sourceMaterialColor.every(
           (component) => typeof component === 'number' && Number.isFinite(component),
+        ))) &&
+    typeof value.sourceMaterialDoubleSided === 'boolean' &&
+    (value.sourceMaterialUvRows === null ||
+      (Array.isArray(value.sourceMaterialUvRows) &&
+        value.sourceMaterialUvRows.length === 2 &&
+        value.sourceMaterialUvRows.every(
+          (row) =>
+            Array.isArray(row) &&
+            row.length === 4 &&
+            row.every(
+              (component) => typeof component === 'number' && Number.isFinite(component),
+            ),
         ))) &&
     typeof value.usesSourceTexture === 'boolean'
   );
