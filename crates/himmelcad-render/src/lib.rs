@@ -137,6 +137,7 @@ pub use picking::{
 pub use precision::{
     CameraProjection, FloatingOrigin, FloatingOriginError, OriginShift, TilePlacement, WorldCamera,
 };
+pub use providers::project_raster_sample;
 pub use providers::{
     decode_elevation_raster, decode_encoded_elevation_raster, decode_gaussian_splat_ply,
     decode_glb, decode_glb_intrinsic, decode_gltf_intrinsic_with_resources,
@@ -164,9 +165,9 @@ pub use providers::{
     PotreeAttributeLayout, PotreeAttributeType, PotreeDecodeError, PotreeHierarchySource,
     PotreePointLayout, PotreePointMetadata, PreparedAssetBundle, PreparedHierarchyError,
     PreparedHierarchySource, PreparedRasterTileContract, RasterColorEncoding,
-    RasterElevationEncoding, RasterGridMapping, RasterNoData, RasterSurfaceTopology,
-    ResolvedAssetBundle, ResolvedAssetEntry, ResolvedAssetInput, ResolvedAssetKind,
-    SharedAssetBlobCache, ThreeDTilesContentError, ThreeDTilesContentKind,
+    RasterElevationEncoding, RasterGridMapping, RasterNoData, RasterProjectionError,
+    RasterSurfaceTopology, ResolvedAssetBundle, ResolvedAssetEntry, ResolvedAssetInput,
+    ResolvedAssetKind, SharedAssetBlobCache, ThreeDTilesContentError, ThreeDTilesContentKind,
     ThreeDTilesHierarchySource, ThreeDTilesMetadataCatalog, PREPARED_RASTER_TILE_SCHEMA_VERSION,
 };
 pub use render_world::{

@@ -123,6 +123,7 @@ export interface WasmViewerBinding {
     height: number,
     values: Float32Array,
   ): void;
+  measure_raster_depth_sample_json(entityId: string, column: number, row: number): string;
   register_raster_binary_resource(objectHash: string, bytes: Uint8Array): void;
   register_mesh_resource(objectHash: string, meshJson: string): void;
   register_area_interpolation(admissionJson: string): void;
@@ -651,6 +652,16 @@ export interface KernelRasterContentMetadata extends KernelCanonicalStreamMetada
   readonly triangleMaskPayloadByteLength: number;
   readonly style?: KernelRenderStyle;
   readonly exaggerationDatum?: number;
+}
+
+/** Exact source-space result of one canonical raster depth sample. */
+export interface KernelRasterDepthMeasurement {
+  readonly entityId: string;
+  readonly column: number;
+  readonly row: number;
+  readonly depth: number;
+  readonly confidence: number | null;
+  readonly sourcePosition: KernelWorldPoint;
 }
 
 export interface KernelResourceCost {
@@ -2017,6 +2028,27 @@ export class WgpuKernelViewer {
       throw new RangeError('depth hash and dimensions must be non-empty');
     }
     this.binding.register_depth_resource(objectHash, width, height, values);
+  }
+
+  /** Measures one exact raster/depth pixel in source coordinates, never GPU presentation space. */
+  measureRasterDepthSample(
+    entityId: string,
+    column: number,
+    row: number,
+  ): KernelRasterDepthMeasurement {
+    this.assertAlive();
+    if (
+      entityId.length === 0 ||
+      !Number.isSafeInteger(column) ||
+      !Number.isSafeInteger(row) ||
+      column < 0 ||
+      row < 0
+    ) {
+      throw new RangeError('raster measurement requires an entity and non-negative pixel indices');
+    }
+    return JSON.parse(
+      this.binding.measure_raster_depth_sample_json(entityId, column, row),
+    ) as KernelRasterDepthMeasurement;
   }
 
   /** Uploads an encoded validity, confidence or connectivity side-band unchanged. */

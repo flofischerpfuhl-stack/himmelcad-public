@@ -16,6 +16,7 @@ mod legacy_tiles_layout;
 mod picking_refinement;
 mod potree;
 mod prepared;
+mod raster_projection;
 mod shared_asset_cache;
 mod tiles3d;
 mod tiles3d_content;
@@ -61,6 +62,7 @@ pub use potree::{
     PotreeDecodeError, PotreeHierarchySource, PotreePointLayout, PotreePointMetadata,
 };
 pub use prepared::{PreparedHierarchyError, PreparedHierarchySource};
+pub use raster_projection::{project_raster_sample, RasterProjectionError};
 pub use shared_asset_cache::{AssetContentIdentity, PreparedAssetBundle, SharedAssetBlobCache};
 pub use tiles3d::{ThreeDTilesHierarchySource, ThreeDTilesMetadataCatalog};
 pub use tiles3d_content::{

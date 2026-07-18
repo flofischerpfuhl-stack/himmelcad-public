@@ -680,6 +680,24 @@ try {
       .every((candidate) => candidate.snapKind === 'point'),
     'panorama depth must not appear as an implicit main-view surface',
   );
+  const panoramaMeasurement = state.panoramaDepthMeasurement;
+  assert(panoramaMeasurement, 'panorama depth measurement must resolve through the shared kernel');
+  assert.equal(panoramaMeasurement.entityId, 'scan-panorama');
+  assert.equal(panoramaMeasurement.column, 3);
+  assert.equal(panoramaMeasurement.row, 1);
+  assert.equal(panoramaMeasurement.depth, 3);
+  assert(Math.abs(panoramaMeasurement.confidence - 26 / 255) < 1e-12);
+  const longitude = ((3.5 / 8) - 0.5) * Math.PI * 2;
+  const latitude = ((1.5 / 4) - 0.5) * Math.PI;
+  assertWorldClose(
+    panoramaMeasurement.sourcePosition,
+    {
+      x: 6_378_155.125 + Math.cos(latitude) * Math.sin(longitude) * 3,
+      y: 5_399_990.25 + Math.sin(latitude) * 3,
+      z: 516.75 + Math.cos(latitude) * Math.cos(longitude) * 3,
+    },
+    1e-7,
+  );
   const centerHit = state.pick.candidates.find(
     (candidate) =>
       candidate.address.entityId === 'open-surface' &&

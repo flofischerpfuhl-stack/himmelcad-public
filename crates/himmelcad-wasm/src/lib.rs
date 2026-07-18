@@ -78,20 +78,20 @@ use himmelcad_render::{
     compile_entity_geometry_with_all_resolvers, decode_artifact, glb_texture_source_keys,
     gpu_indexed_geometry_identity, gpu_uploaded_texture_identity, inspect_gltf_dependencies,
     instanced_model_chunks, layout_text, potree_point_world_position,
-    prepare_glb_texture_uploads_for_sources, reconstruct_coarse_pick_candidates,
-    refine_decoded_potree_point_pick, refine_exact_point_pick, refine_potree_point_pick,
-    refine_tessellated_curve_pick, required_entity_proxy_slots, required_three_d_tiles_proxy_slots,
-    resolve_entity_point_world, section_geometry_object, tessellate_entity_strokes,
-    tessellate_entity_strokes_with_all_resolvers, tessellate_generated_solid_mesh,
-    transform_bounding_volume, validate_authoritative_section_product, validate_glyph_atlas,
-    AlignmentPreviewPartition, AreaDrapeSurface, AssetBundleLimits,
-    AuthoritativeSectionAccumulator, AuthoritativeSectionProduct, BackendPolicy, BoundingVolume,
-    CameraFrame, ClipOperation, ClipVolume, CurveTessellationOptions, DatasetId,
-    DecodedFeatureIdBinding, DecodedFeatureImage, DecodedLegacyBatchIds,
-    DecodedLegacyBatchTableCatalog, DecodedMeshFeatureSet, DecodedPrimitivePropertyAttribute,
-    DecodedPrimitivePropertyTexture, DecodedStreamingPayload, DecodedStructuralMetadata,
-    DecodedThreeDTilesContent, DecodedTriangleFeatureId, DeviceCalibration,
-    ElevationRasterPickRefiner, EntityCompilationOptions, EvaluatedMeshRecipe,
+    prepare_glb_texture_uploads_for_sources, project_raster_sample,
+    reconstruct_coarse_pick_candidates, refine_decoded_potree_point_pick, refine_exact_point_pick,
+    refine_potree_point_pick, refine_tessellated_curve_pick, required_entity_proxy_slots,
+    required_three_d_tiles_proxy_slots, resolve_entity_point_world, section_geometry_object,
+    tessellate_entity_strokes, tessellate_entity_strokes_with_all_resolvers,
+    tessellate_generated_solid_mesh, transform_bounding_volume,
+    validate_authoritative_section_product, validate_glyph_atlas, AlignmentPreviewPartition,
+    AreaDrapeSurface, AssetBundleLimits, AuthoritativeSectionAccumulator,
+    AuthoritativeSectionProduct, BackendPolicy, BoundingVolume, CameraFrame, ClipOperation,
+    ClipVolume, CurveTessellationOptions, DatasetId, DecodedFeatureIdBinding, DecodedFeatureImage,
+    DecodedLegacyBatchIds, DecodedLegacyBatchTableCatalog, DecodedMeshFeatureSet,
+    DecodedPrimitivePropertyAttribute, DecodedPrimitivePropertyTexture, DecodedStreamingPayload,
+    DecodedStructuralMetadata, DecodedThreeDTilesContent, DecodedTriangleFeatureId,
+    DeviceCalibration, ElevationRasterPickRefiner, EntityCompilationOptions, EvaluatedMeshRecipe,
     EvaluatedMeshRepresentation, FillMode, FloatingOrigin, FrameTelemetrySample,
     FrameTelemetryWindow, GaussianSplatPickRefiner, GeometryRepresentationRegistry, GlyphAtlas,
     GlyphMetrics, GpuAlphaMode, GpuCalibrationProgress, GpuCalibrationSession,
@@ -443,6 +443,18 @@ struct WasmTransactionDiagnostics {
     touched_sections: usize,
     touched_proxies: usize,
     foreign_visits: usize,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WasmRasterDepthMeasurement {
+    entity_id: String,
+    column: u32,
+    row: u32,
+    depth: f64,
+    confidence: Option<f64>,
+    source_position: WorldVec3,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -3265,6 +3277,97 @@ impl WasmViewer {
             },
         );
         Ok(())
+    }
+
+    /// Resolves one exact depth pixel into project source coordinates. This
+    /// path never uses presentation exaggeration or the GPU depth buffer.
+    pub fn measure_raster_depth_sample_json(
+        &self,
+        entity_id: &str,
+        column: u32,
+        row: u32,
+    ) -> Result<String, JsValue> {
+        let request = self
+            .entity_requests
+            .get(entity_id)
+            .ok_or_else(|| JsValue::from_str("raster measurement entity is not loaded"))?;
+        let raster = match &request.geometry {
+            GeometryObject::RasterImage { raster } => raster.as_ref(),
+            GeometryObject::Panorama { panorama } => &panorama.image,
+            _ => {
+                return Err(JsValue::from_str(
+                    "raster measurement requires a raster or panorama entity",
+                ))
+            }
+        };
+        if column >= raster.width || row >= raster.height {
+            return Err(JsValue::from_str(
+                "raster measurement pixel is outside the image",
+            ));
+        }
+        let field = raster
+            .depth
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("raster measurement has no depth field"))?;
+        let depth = self
+            .depth_resources
+            .get(&field.values.object_hash.0)
+            .ok_or_else(|| JsValue::from_str("raster depth resource is not registered"))?;
+        if depth.width != raster.width || depth.height != raster.height {
+            return Err(JsValue::from_str(
+                "raster depth dimensions do not match the canonical image",
+            ));
+        }
+        let sample_index = usize::try_from(
+            u64::from(row)
+                .saturating_mul(u64::from(raster.width))
+                .saturating_add(u64::from(column)),
+        )
+        .map_err(|_| JsValue::from_str("raster sample index exceeds portable addressing"))?;
+        let validity = resolve_raster_validity(
+            Some(field),
+            raster.width,
+            raster.height,
+            &self.raster_binary_resources,
+        )
+        .map_err(|error| JsValue::from_str(&error))?;
+        if validity.is_some_and(|mask| !raster_validity_sample(mask, sample_index)) {
+            return Err(JsValue::from_str("raster depth sample is invalid"));
+        }
+        let depth_value = f64::from(
+            *depth
+                .values
+                .get(sample_index)
+                .ok_or_else(|| JsValue::from_str("raster depth sample is missing"))?,
+        );
+        let local =
+            project_raster_sample(raster, f64::from(column), f64::from(row), Some(depth_value))
+                .map_err(js_error)?;
+        let placement =
+            DMat4::from_cols_array(&request.placement.unwrap_or(Transform3d::IDENTITY).0);
+        if !placement.is_finite() || placement.determinant().abs() <= f64::EPSILON {
+            return Err(JsValue::from_str(
+                "raster entity placement is non-invertible",
+            ));
+        }
+        let source_position = world_vec3(placement.transform_point3(dvec3(local)));
+        let confidence = raster_confidence_sample(
+            Some(field),
+            raster.width,
+            raster.height,
+            sample_index,
+            &self.raster_binary_resources,
+        )
+        .map_err(|error| JsValue::from_str(&error))?;
+        serde_json::to_string(&WasmRasterDepthMeasurement {
+            entity_id: entity_id.to_owned(),
+            column,
+            row,
+            depth: depth_value,
+            confidence,
+            source_position,
+        })
+        .map_err(js_error)
     }
 
     /// Registers an immutable binary raster side-band. Validity bitsets,
@@ -8869,6 +8972,42 @@ fn validate_raster_confidence(
         return Err("raster confidence contains a value outside [0, 1]".to_owned());
     }
     Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn raster_confidence_sample(
+    depth: Option<&himmelcad_core::entity_model::DepthField>,
+    width: u32,
+    height: u32,
+    sample_index: usize,
+    resources: &BTreeMap<String, WasmBinaryResource>,
+) -> Result<Option<f64>, String> {
+    validate_raster_confidence(depth, width, height, resources)?;
+    let Some(confidence) = depth.and_then(|field| field.confidence.as_ref()) else {
+        return Ok(None);
+    };
+    let bytes = resources
+        .get(&confidence.resource.object_hash.0)
+        .ok_or_else(|| "raster confidence resource is not registered".to_owned())?;
+    match confidence.encoding {
+        RasterConfidenceEncoding::Unorm8 => bytes
+            .bytes
+            .get(sample_index)
+            .map(|value| Some(f64::from(*value) / 255.0))
+            .ok_or_else(|| "raster confidence sample is missing".to_owned()),
+        RasterConfidenceEncoding::Float32LittleEndian => {
+            let offset = sample_index
+                .checked_mul(4)
+                .ok_or_else(|| "raster confidence sample index overflow".to_owned())?;
+            let sample = bytes
+                .bytes
+                .get(offset..offset + 4)
+                .ok_or_else(|| "raster confidence sample is missing".to_owned())?;
+            Ok(Some(f64::from(f32::from_le_bytes(
+                sample.try_into().expect("four bytes"),
+            ))))
+        }
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -190,6 +190,7 @@ export type {
   KernelSectionTopologyPart,
   KernelLineTypePattern,
   KernelRenderStyle,
+  KernelRasterDepthMeasurement,
   KernelStrokeColor,
   KernelStrokeMode,
   KernelStrokeStyle,

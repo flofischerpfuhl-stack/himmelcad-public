@@ -87,6 +87,7 @@ interface BrowserValidationState {
   pick: unknown;
   exactPointPick: KernelPickResult | null;
   panoramaMarkerPick: KernelPickResult | null;
+  panoramaDepthMeasurement: ReturnType<WgpuKernelViewer['measureRasterDepthSample']> | null;
   originRebase: { generationStable: boolean; pick: unknown } | null;
   drapePick: KernelPickResult | null;
   drapeKnownPick: KernelPickResult | null;
@@ -449,6 +450,7 @@ const state: BrowserValidationState = {
   pick: null,
   exactPointPick: null,
   panoramaMarkerPick: null,
+  panoramaDepthMeasurement: null,
   originRebase: null,
   drapePick: null,
   drapeKnownPick: null,
@@ -5211,6 +5213,7 @@ async function run(): Promise<void> {
     z: BASE[2] + 4,
   });
   state.panoramaMarkerPick = await viewer.pick(640, 360, 2);
+  state.panoramaDepthMeasurement = viewer.measureRasterDepthSample('scan-panorama', 3, 1);
   setFocusedOrientedCamera(
     viewer,
     syntheticPointTarget,
