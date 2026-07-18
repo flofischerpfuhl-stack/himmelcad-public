@@ -363,7 +363,14 @@ void test('raster content hash-verifies and packs its elevation and validity sid
   ]);
   driver.execute(plan({ kind: 'decodeTile', ticket }));
   await driver.settled();
-  assert.equal(target.stagedRaster[0]?.metadata.topology.kind, 'pixelSteps');
+  assert.equal(
+    (
+      target.stagedRaster[0]?.metadata.contract as
+        | { readonly raster?: { readonly depth?: { readonly sampling?: { readonly connectivity?: { readonly kind?: string } } } } }
+        | undefined
+    )?.raster?.depth?.sampling?.connectivity?.kind,
+    'pixelSteps',
+  );
   assert.equal(target.stagedRaster[0]?.elevations.byteLength, 5);
   assert.equal(target.stagedRaster[0]?.metadata.elevationPayloadByteLength, 4);
   assert.equal(target.stagedRaster[0]?.metadata.validityPayloadByteLength, 1);

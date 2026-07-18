@@ -6,7 +6,154 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use himmelcad_core::entity_model::RasterCellDiagonal;
+use himmelcad_core::entity_model::{
+    DepthSemantics, GeometryObject, RasterCellDiagonal, RasterConnectivity, RasterImageGeometry,
+    RasterMapping,
+};
+use himmelcad_core::entity_validation::validate_geometry_object;
+
+/// Current provider-neutral prepared raster tile contract. Older layouts are
+/// rejected rather than guessed because mapping and depth semantics affect
+/// both rendered geometry and measurement coordinates.
+pub const PREPARED_RASTER_TILE_SCHEMA_VERSION: u16 = 1;
+
+/// Immutable semantic envelope shared by the decode worker and render host.
+///
+/// Payload transport remains provider-specific, but dimensions, mapping,
+/// depth semantics, validity, confidence and connectivity have exactly the
+/// same authority as an inline canonical raster.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PreparedRasterTileContract {
+    /// Exact contract version.
+    pub schema_version: u16,
+    /// Canonical raster semantics for this prepared tile.
+    pub raster: RasterImageGeometry,
+    /// Color payload encoding delivered to the bounded worker.
+    pub color_encoding: RasterColorEncoding,
+    /// Scalar payload encoding delivered to the bounded worker.
+    pub depth_encoding: RasterElevationEncoding,
+    /// Additional invalid-sample rule applied before the canonical validity
+    /// mask. It preserves source sentinels without changing canonical masks.
+    pub no_data: RasterNoData,
+}
+
+impl PreparedRasterTileContract {
+    /// Rejects schema drift and invalid canonical imaging semantics before any
+    /// provider payload is decoded or allocated.
+    pub fn validate(&self) -> Result<(), ElevationRasterError> {
+        if self.schema_version != PREPARED_RASTER_TILE_SCHEMA_VERSION
+            || self.raster.depth.is_none()
+            || validate_geometry_object(&GeometryObject::RasterImage {
+                raster: Box::new(self.raster.clone()),
+            })
+            .is_err()
+        {
+            return Err(ElevationRasterError::Contract);
+        }
+        Ok(())
+    }
+
+    /// Resolves the canonical orthographic elevation contract used by the
+    /// current topology-aware decoder. Other imaging mappings are rejected at
+    /// this single boundary until their ray/plane evaluator is selected.
+    pub fn elevation_grid_decode_semantics(
+        &self,
+    ) -> Result<(RasterGridMapping, RasterSurfaceTopology), ElevationRasterError> {
+        self.validate()?;
+        let RasterMapping::OrthoGrid(mapping) = self.raster.mapping else {
+            return Err(ElevationRasterError::Contract);
+        };
+        let depth = self
+            .raster
+            .depth
+            .as_ref()
+            .ok_or(ElevationRasterError::Contract)?;
+        if depth.sampling.semantics != DepthSemantics::ElevationZ
+            || mapping.column_step.z.abs() > f64::EPSILON
+            || mapping.row_step.z.abs() > f64::EPSILON
+        {
+            return Err(ElevationRasterError::Contract);
+        }
+        let topology = match &depth.sampling.connectivity {
+            RasterConnectivity::Continuous {
+                maximum_height_jump,
+                diagonal,
+            } => RasterSurfaceTopology::Continuous {
+                maximum_height_jump: *maximum_height_jump,
+                diagonal: *diagonal,
+            },
+            RasterConnectivity::PixelSteps => RasterSurfaceTopology::PixelSteps,
+            RasterConnectivity::Mask { diagonal, .. } => RasterSurfaceTopology::Continuous {
+                maximum_height_jump: None,
+                diagonal: *diagonal,
+            },
+        };
+        Ok((
+            RasterGridMapping {
+                origin: [mapping.origin.x, mapping.origin.y],
+                column_step: [mapping.column_step.x, mapping.column_step.y],
+                row_step: [mapping.row_step.x, mapping.row_step.y],
+            },
+            topology,
+        ))
+    }
+
+    /// Verifies every transported immutable payload against the canonical
+    /// resource descriptor before decode. Empty slices mean the optional band
+    /// is absent, not an unverified resource.
+    pub fn validate_payloads(
+        &self,
+        color: &[u8],
+        depth: &[u8],
+        validity: Option<&[u8]>,
+        connectivity: Option<&[u8]>,
+    ) -> Result<(), ElevationRasterError> {
+        self.validate()?;
+        let depth_field = self
+            .raster
+            .depth
+            .as_ref()
+            .ok_or(ElevationRasterError::Contract)?;
+        if !resource_matches(&self.raster.pixels, color)
+            || !resource_matches(&depth_field.values, depth)
+            || depth_field.confidence.is_some()
+            || !optional_resource_matches(
+                depth_field.validity.as_ref().map(|mask| &mask.resource),
+                validity,
+            )
+        {
+            return Err(ElevationRasterError::Contract);
+        }
+        let connectivity_resource = match &depth_field.sampling.connectivity {
+            RasterConnectivity::Mask { resource, .. } => Some(resource),
+            RasterConnectivity::Continuous { .. } | RasterConnectivity::PixelSteps => None,
+        };
+        if !optional_resource_matches(connectivity_resource, connectivity) {
+            return Err(ElevationRasterError::Contract);
+        }
+        Ok(())
+    }
+}
+
+fn resource_matches(
+    resource: &himmelcad_core::entity_model::GeometryResource,
+    bytes: &[u8],
+) -> bool {
+    resource.object_hash == himmelcad_core::hash::ObjectHash::of_bytes(bytes)
+        && resource.byte_length == u64::try_from(bytes.len()).ok()
+}
+
+fn optional_resource_matches(
+    resource: Option<&himmelcad_core::entity_model::GeometryResource>,
+    bytes: Option<&[u8]>,
+) -> bool {
+    match (resource, bytes) {
+        (Some(resource), Some(bytes)) => resource_matches(resource, bytes),
+        (None, None) => true,
+        _ => false,
+    }
+}
 
 use crate::{GpuMeshVertexInput, WorldVec3};
 
@@ -164,6 +311,8 @@ pub struct DecodedElevationRaster {
 /// Invalid raster bands, mapping or coordinate conversion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElevationRasterError {
+    /// Prepared tile schema or canonical raster semantics are invalid.
+    Contract,
     /// Dimensions and band lengths differ or are zero.
     BandSize,
     /// Mapping or valid elevation contains a non-finite value.
@@ -183,6 +332,7 @@ pub enum ElevationRasterError {
 impl Display for ElevationRasterError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
+            Self::Contract => "prepared raster tile contract is invalid",
             Self::BandSize => "raster band lengths do not match dimensions",
             Self::NonFinite => "raster mapping or elevation is non-finite",
             Self::InvalidMapping => "raster column and row steps are degenerate",
@@ -717,12 +867,18 @@ fn pixel_count(width: u32, height: u32) -> Result<usize, ElevationRasterError> {
 
 #[cfg(test)]
 mod tests {
-    use himmelcad_core::entity_model::RasterCellDiagonal;
+    use himmelcad_core::entity_model::{
+        DepthField, DepthSampling, DepthSemantics, GeometryResource, OrthoGridMapping,
+        RasterCellDiagonal, RasterConnectivity, RasterImageGeometry, RasterInterpolation,
+        RasterMapping, Vector3,
+    };
+    use himmelcad_core::hash::ObjectHash;
 
     use super::{
         decode_elevation_raster, decode_encoded_elevation_raster, ElevationRasterInput,
-        EncodedElevationRasterInput, RasterColorEncoding, RasterElevationEncoding,
-        RasterGridMapping, RasterNoData, RasterSurfaceTopology,
+        EncodedElevationRasterInput, PreparedRasterTileContract, RasterColorEncoding,
+        RasterElevationEncoding, RasterGridMapping, RasterNoData, RasterSurfaceTopology,
+        PREPARED_RASTER_TILE_SCHEMA_VERSION,
     };
     use crate::WorldVec3;
 
@@ -740,6 +896,84 @@ mod tests {
             y: 5_400_000.0,
             z: 0.0,
         }
+    }
+
+    fn resource(bytes: &[u8], media_type: &str) -> GeometryResource {
+        GeometryResource {
+            object_hash: ObjectHash::of_bytes(bytes),
+            media_type: media_type.to_owned(),
+            byte_length: u64::try_from(bytes.len()).ok(),
+        }
+    }
+
+    fn prepared_contract() -> PreparedRasterTileContract {
+        PreparedRasterTileContract {
+            schema_version: PREPARED_RASTER_TILE_SCHEMA_VERSION,
+            raster: RasterImageGeometry {
+                pixels: resource(&[255; 16], "image/rgba8"),
+                width: 2,
+                height: 2,
+                mapping: RasterMapping::OrthoGrid(OrthoGridMapping {
+                    origin: Vector3 {
+                        x: 500_000.0,
+                        y: 5_400_000.0,
+                        z: 0.0,
+                    },
+                    column_step: Vector3 {
+                        x: 1.0,
+                        y: 0.0,
+                        z: 0.0,
+                    },
+                    row_step: Vector3 {
+                        x: 0.0,
+                        y: -1.0,
+                        z: 0.0,
+                    },
+                }),
+                depth: Some(DepthField {
+                    values: resource(&[0; 16], "application/vnd.himmelcad.depth-f32le"),
+                    validity: None,
+                    confidence: None,
+                    sampling: DepthSampling {
+                        semantics: DepthSemantics::ElevationZ,
+                        interpolation: RasterInterpolation::DiscontinuityAware,
+                        connectivity: RasterConnectivity::Continuous {
+                            maximum_height_jump: Some(0.5),
+                            diagonal: RasterCellDiagonal::TopLeftToBottomRight,
+                        },
+                    },
+                }),
+            },
+            color_encoding: RasterColorEncoding::Rgba8,
+            depth_encoding: RasterElevationEncoding::Float32LittleEndian,
+            no_data: RasterNoData::None,
+        }
+    }
+
+    #[test]
+    fn prepared_contract_reuses_canonical_raster_authority_and_rejects_schema_drift() {
+        let mut contract = prepared_contract();
+        assert_eq!(contract.validate(), Ok(()));
+        assert_eq!(
+            contract.validate_payloads(&[255; 16], &[0; 16], None, None),
+            Ok(())
+        );
+        assert_eq!(
+            contract.validate_payloads(&[254; 16], &[0; 16], None, None),
+            Err(super::ElevationRasterError::Contract)
+        );
+
+        contract.schema_version += 1;
+        assert_eq!(
+            contract.validate(),
+            Err(super::ElevationRasterError::Contract)
+        );
+        contract.schema_version = PREPARED_RASTER_TILE_SCHEMA_VERSION;
+        contract.raster.depth = None;
+        assert_eq!(
+            contract.validate(),
+            Err(super::ElevationRasterError::Contract)
+        );
     }
 
     #[test]

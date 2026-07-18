@@ -163,10 +163,11 @@ pub use providers::{
     ImplicitThreeDTilesHierarchySource, ImplicitTileCoordinates, PackedCivilPointAttributes,
     PotreeAttributeLayout, PotreeAttributeType, PotreeDecodeError, PotreeHierarchySource,
     PotreePointLayout, PotreePointMetadata, PreparedAssetBundle, PreparedHierarchyError,
-    PreparedHierarchySource, RasterColorEncoding, RasterElevationEncoding, RasterGridMapping,
-    RasterNoData, RasterSurfaceTopology, ResolvedAssetBundle, ResolvedAssetEntry,
-    ResolvedAssetInput, ResolvedAssetKind, SharedAssetBlobCache, ThreeDTilesContentError,
-    ThreeDTilesContentKind, ThreeDTilesHierarchySource, ThreeDTilesMetadataCatalog,
+    PreparedHierarchySource, PreparedRasterTileContract, RasterColorEncoding,
+    RasterElevationEncoding, RasterGridMapping, RasterNoData, RasterSurfaceTopology,
+    ResolvedAssetBundle, ResolvedAssetEntry, ResolvedAssetInput, ResolvedAssetKind,
+    SharedAssetBlobCache, ThreeDTilesContentError, ThreeDTilesContentKind,
+    ThreeDTilesHierarchySource, ThreeDTilesMetadataCatalog, PREPARED_RASTER_TILE_SCHEMA_VERSION,
 };
 pub use render_world::{
     ClipOperation, ClipVolume, ClipVolumeId, ColorMode, FillMode, HeightGradient,

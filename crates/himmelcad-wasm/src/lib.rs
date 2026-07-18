@@ -106,21 +106,20 @@ use himmelcad_render::{
     ImplicitThreeDTilesHierarchySource, InstancedTriangleMeshPickRefiner, MeshPickRefiner,
     PickCandidate, PickCycle, PickRefinementRequest, PotreeHierarchySource, PotreePointLayout,
     PreparedAssetBundle, PreparedGpuTextureResources, PreparedHierarchySource,
-    PresentationTransform, QualityAdjustment, RasterColorEncoding, RasterElevationEncoding,
-    RasterGridMapping, RasterNoData, RasterSurfaceTopology, RenderProxy, RenderProxyId,
-    RenderProxyKind, RenderStyle, RenderWorld, ResidencyTicket, ResolvedAreaDrapeSurface,
-    ResolvedAreaInterpolation, ResolvedAssetEntry, ResolvedGeometryRepresentationAdmission,
-    ResourceBudget, ResourceCost, RuntimeQualityGovernor, RuntimeQualityState, SectionBatchOptions,
-    SectionHatchStyle, SectionMaterialRegionBinding, SectionPlane, SectionProduct, SectionRegion,
-    SectionTopologyPart, SectionTopologyPartitionData, SectionTopologySnapshotKey,
-    SharedAssetBlobCache, StreamingCoordinator, StreamingRuntimeLimits, StrokeMode, SurfaceFrame,
-    SurfaceFrameOutcome, SurfacePickRequest, TessellatedCurve, TessellatedCurvePath,
-    TessellatedCurveSegment, TextAlignment, TextBatchOptions, TextLayoutOptions, TextLayoutSpace,
-    ThreeDTilesContentKind, ThreeDTilesHierarchySource, TileId, TileKey, TileSelection,
-    TileSelectionView, TileSelector, TimingSample, TriangleMeshPickInstance,
-    TriangleMeshPickRefiner, TriangleMeshPickSource, UnresolvedHeightDisplay, WorldAabb,
-    WorldCamera, WorldTransform, WorldVec3, GPU_POINT_VERTEX_STRIDE_BYTES,
-    SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
+    PreparedRasterTileContract, PresentationTransform, QualityAdjustment, RenderProxy,
+    RenderProxyId, RenderProxyKind, RenderStyle, RenderWorld, ResidencyTicket,
+    ResolvedAreaDrapeSurface, ResolvedAreaInterpolation, ResolvedAssetEntry,
+    ResolvedGeometryRepresentationAdmission, ResourceBudget, ResourceCost, RuntimeQualityGovernor,
+    RuntimeQualityState, SectionBatchOptions, SectionHatchStyle, SectionMaterialRegionBinding,
+    SectionPlane, SectionProduct, SectionRegion, SectionTopologyPart, SectionTopologyPartitionData,
+    SectionTopologySnapshotKey, SharedAssetBlobCache, StreamingCoordinator, StreamingRuntimeLimits,
+    StrokeMode, SurfaceFrame, SurfaceFrameOutcome, SurfacePickRequest, TessellatedCurve,
+    TessellatedCurvePath, TessellatedCurveSegment, TextAlignment, TextBatchOptions,
+    TextLayoutOptions, TextLayoutSpace, ThreeDTilesContentKind, ThreeDTilesHierarchySource, TileId,
+    TileKey, TileSelection, TileSelectionView, TileSelector, TimingSample,
+    TriangleMeshPickInstance, TriangleMeshPickRefiner, TriangleMeshPickSource,
+    UnresolvedHeightDisplay, WorldAabb, WorldCamera, WorldTransform, WorldVec3,
+    GPU_POINT_VERTEX_STRIDE_BYTES, SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
 };
 #[cfg(target_arch = "wasm32")]
 use web_sys::HtmlCanvasElement;
@@ -1113,16 +1112,7 @@ struct WasmRasterMetadata {
     dataset_id: String,
     tile_id: String,
     bounds: BoundingVolume,
-    width: u32,
-    height: u32,
-    mapping: RasterGridMapping,
-    topology: RasterSurfaceTopology,
-    #[serde(rename = "colorEncoding")]
-    _color_encoding: RasterColorEncoding,
-    #[serde(rename = "elevationEncoding")]
-    _elevation_encoding: RasterElevationEncoding,
-    #[serde(rename = "noData")]
-    _no_data: RasterNoData,
+    contract: PreparedRasterTileContract,
     elevation_payload_byte_length: usize,
     validity_payload_byte_length: usize,
     triangle_mask_payload_byte_length: usize,
@@ -2651,6 +2641,10 @@ impl WasmViewer {
                 let mut metadata: WasmRasterMetadata =
                     serde_json::from_str(metadata_json).map_err(js_error)?;
                 resolve_stream_metadata!(self, metadata);
+                let (mapping, topology) = metadata
+                    .contract
+                    .elevation_grid_decode_semantics()
+                    .map_err(js_error)?;
                 validate_streamed_metadata(
                     &metadata.stream_id,
                     &metadata.entity_id,
@@ -2661,8 +2655,8 @@ impl WasmViewer {
                     "Raster",
                 )?;
                 validate_decoded_raster_cardinality(
-                    metadata.width,
-                    metadata.height,
+                    metadata.contract.raster.width,
+                    metadata.contract.raster.height,
                     decoded.width,
                     decoded.height,
                     decoded.rgba8.len(),
@@ -2673,16 +2667,20 @@ impl WasmViewer {
                     &metadata.stream_id,
                     StreamContentKind::Raster,
                 )?;
-                let (_, _, triangle_mask) = split_streamed_raster_bands(
+                let (elevations, validity, triangle_mask) = split_streamed_raster_bands(
                     secondary,
                     metadata.elevation_payload_byte_length,
                     metadata.validity_payload_byte_length,
                     metadata.triangle_mask_payload_byte_length,
                 )
                 .map_err(JsValue::from_str)?;
+                metadata
+                    .contract
+                    .validate_payloads(primary, elevations, validity, triangle_mask)
+                    .map_err(js_error)?;
                 let pick_index = ElevationRasterPickRefiner::from_decoded(
-                    metadata.mapping,
-                    metadata.topology,
+                    mapping,
+                    topology,
                     triangle_mask,
                     &decoded,
                 )

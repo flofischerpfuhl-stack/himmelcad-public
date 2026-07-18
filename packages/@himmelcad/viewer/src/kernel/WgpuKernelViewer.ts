@@ -12,6 +12,7 @@ import type {
   LineTypeResource,
   MaterialResource,
   MaterialTableResource,
+  RasterImageGeometry,
   SectionTopologyPartitionManifest,
   Transform3d,
   TriangleMeshGeometry,
@@ -622,34 +623,28 @@ export interface KernelGaussianSplatContentMetadata extends KernelCanonicalStrea
   readonly maximumSplats: number;
 }
 
+export type KernelPreparedRasterColorEncoding = 'encodedImage' | 'rgba8';
+export type KernelPreparedRasterDepthEncoding =
+  | { readonly kind: 'float32LittleEndian' }
+  | { readonly kind: 'float32BigEndian' }
+  | { readonly kind: 'float64LittleEndian' }
+  | { readonly kind: 'float64BigEndian' }
+  | { readonly kind: 'constant'; readonly value: number };
+export type KernelPreparedRasterNoData =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'nan' }
+  | { readonly kind: 'numeric'; readonly value: number }
+  | { readonly kind: 'alphaMask' };
+
 export interface KernelRasterContentMetadata extends KernelCanonicalStreamMetadata {
   readonly bounds: KernelBoundingVolume;
-  readonly width: number;
-  readonly height: number;
-  readonly mapping: {
-    readonly origin: readonly [number, number];
-    readonly columnStep: readonly [number, number];
-    readonly rowStep: readonly [number, number];
+  readonly contract: {
+    readonly schemaVersion: 1;
+    readonly raster: RasterImageGeometry;
+    readonly colorEncoding: KernelPreparedRasterColorEncoding;
+    readonly depthEncoding: KernelPreparedRasterDepthEncoding;
+    readonly noData: KernelPreparedRasterNoData;
   };
-  readonly topology:
-    | {
-        readonly kind: 'continuous';
-        readonly maximumHeightJump: number | null;
-        readonly diagonal: 'topLeftToBottomRight' | 'topRightToBottomLeft';
-      }
-    | { readonly kind: 'pixelSteps' };
-  readonly colorEncoding: 'encodedImage' | 'rgba8';
-  readonly elevationEncoding:
-    | { readonly kind: 'float32LittleEndian' }
-    | { readonly kind: 'float32BigEndian' }
-    | { readonly kind: 'float64LittleEndian' }
-    | { readonly kind: 'float64BigEndian' }
-    | { readonly kind: 'constant'; readonly value: number };
-  readonly noData:
-    | { readonly kind: 'none' }
-    | { readonly kind: 'nan' }
-    | { readonly kind: 'numeric'; readonly value: number }
-    | { readonly kind: 'alphaMask' };
   readonly elevationPayloadByteLength: number;
   readonly validityPayloadByteLength: number;
   readonly triangleMaskPayloadByteLength: number;

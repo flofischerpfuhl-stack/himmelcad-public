@@ -1409,10 +1409,28 @@ async function decodeAndStage(
     canonicalDatasetFormatId: _canonicalDatasetFormatId,
     canonicalDatasetMetadata: _canonicalDatasetMetadata,
     canonicalPlacement: _canonicalPlacement,
+    width: _width,
+    height: _height,
+    mapping: _mapping,
+    topology: _topology,
+    colorEncoding: _colorEncoding,
+    elevationEncoding: _elevationEncoding,
+    noData: _noData,
     ...content
   } = metadata;
   const canonicalMetadata = {
     ...content,
+    ...(geometry.kind === 'rasterImage'
+      ? {
+          contract: {
+            schemaVersion: 1,
+            raster: geometry.raster,
+            colorEncoding: metadata.colorEncoding,
+            depthEncoding: metadata.elevationEncoding,
+            noData: metadata.noData,
+          },
+        }
+      : {}),
     slot: binding.key.slot,
     binding,
     datasetId,

@@ -877,6 +877,19 @@ WASM check, all 70 viewer tests and the 26-entity/34-proxy browser scene passed.
 Forced WebGL2 on the physical Intel HD Graphics 630 reported 3.5 ms maximum
 CPU submit; the WebGPU CPU correctness adapter reported 1.3 ms.
 
+Prepared elevation raster decoding now receives one versioned semantic
+contract instead of independent worker and host copies of width, mapping,
+topology and encodings. The contract embeds the canonical raster authority;
+both bounded decode worker and render host validate it, derive the current
+orthographic elevation-grid decoder input from it, and verify exact color,
+depth, validity and connectivity payload hashes before publication. Contract
+schema drift, a non-canonical raster, mismatched bytes and a mapping/depth
+combination outside the selected evaluator fail before residency. The complete
+316-test render suite, both WASM target checks and all 70 viewer tests passed.
+The 26-entity/34-proxy browser scene passed on both backends; forced WebGL2 on
+the physical Intel HD Graphics 630 reported 2.9 ms maximum CPU submit and the
+WebGPU CPU correctness adapter reported 1.5 ms.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

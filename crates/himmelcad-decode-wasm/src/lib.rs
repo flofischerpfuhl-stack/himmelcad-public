@@ -6,8 +6,7 @@ use himmelcad_render::{
     decode_artifact_input_hash, decode_encoded_elevation_raster, decode_gaussian_splat_ply,
     decode_three_d_tiles_content_intrinsic_with_resources, encode_decode_artifact,
     AssetBundleLimits, BoundingVolume, DecodedStreamingPayload, EncodedElevationRasterInput,
-    PotreePointLayout, RasterColorEncoding, RasterElevationEncoding, RasterGridMapping,
-    RasterNoData, RasterSurfaceTopology, ResolvedAssetEntry, SharedAssetBlobCache,
+    PotreePointLayout, PreparedRasterTileContract, ResolvedAssetEntry, SharedAssetBlobCache,
     ThreeDTilesContentKind, WorldTransform, MAX_WORKER_INPUT_BYTES,
 };
 use serde::Deserialize;
@@ -52,13 +51,7 @@ struct GaussianMetadata {
 #[serde(rename_all = "camelCase")]
 struct RasterMetadata {
     bounds: BoundingVolume,
-    width: u32,
-    height: u32,
-    mapping: RasterGridMapping,
-    topology: RasterSurfaceTopology,
-    color_encoding: RasterColorEncoding,
-    elevation_encoding: RasterElevationEncoding,
-    no_data: RasterNoData,
+    contract: PreparedRasterTileContract,
     elevation_payload_byte_length: usize,
     validity_payload_byte_length: usize,
     triangle_mask_payload_byte_length: usize,
@@ -151,6 +144,10 @@ pub fn decode_streaming_payload(
         }
         "raster" => {
             let metadata: RasterMetadata = parse(metadata_json)?;
+            let (mapping, topology) = metadata
+                .contract
+                .elevation_grid_decode_semantics()
+                .map_err(js_error)?;
             let (elevations, validity_mask, triangle_mask) = split_raster_bands(
                 secondary,
                 metadata.elevation_payload_byte_length,
@@ -158,6 +155,10 @@ pub fn decode_streaming_payload(
                 metadata.triangle_mask_payload_byte_length,
             )
             .map_err(error)?;
+            metadata
+                .contract
+                .validate_payloads(primary, elevations, validity_mask, triangle_mask)
+                .map_err(js_error)?;
             let anchor = metadata
                 .bounds
                 .stable_anchor()
@@ -165,17 +166,17 @@ pub fn decode_streaming_payload(
             DecodedStreamingPayload::Raster(
                 decode_encoded_elevation_raster(
                     EncodedElevationRasterInput {
-                        width: metadata.width,
-                        height: metadata.height,
+                        width: metadata.contract.raster.width,
+                        height: metadata.contract.raster.height,
                         color: primary,
                         elevations,
                         validity_mask,
                         triangle_mask,
-                        color_encoding: metadata.color_encoding,
-                        elevation_encoding: metadata.elevation_encoding,
-                        no_data: metadata.no_data,
-                        mapping: metadata.mapping,
-                        topology: metadata.topology,
+                        color_encoding: metadata.contract.color_encoding,
+                        elevation_encoding: metadata.contract.depth_encoding,
+                        no_data: metadata.contract.no_data,
+                        mapping,
+                        topology,
                     },
                     anchor,
                 )

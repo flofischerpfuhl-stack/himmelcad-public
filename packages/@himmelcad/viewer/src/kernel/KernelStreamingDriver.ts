@@ -4,6 +4,9 @@ import type {
   KernelAssetDependency,
   KernelGaussianSplatContentMetadata,
   KernelPotreeContentMetadata,
+  KernelPreparedRasterColorEncoding,
+  KernelPreparedRasterDepthEncoding,
+  KernelPreparedRasterNoData,
   KernelRasterContentMetadata,
   KernelResidencyTicket,
   KernelResourceCost,
@@ -147,11 +150,21 @@ export interface KernelRasterDecoderParameters {
   readonly schemaVersion: 1;
   readonly width: number;
   readonly height: number;
-  readonly mapping: KernelRasterContentMetadata['mapping'];
-  readonly topology: KernelRasterContentMetadata['topology'];
-  readonly colorEncoding: KernelRasterContentMetadata['colorEncoding'];
-  readonly elevationEncoding: KernelRasterContentMetadata['elevationEncoding'];
-  readonly noData: KernelRasterContentMetadata['noData'];
+  readonly mapping: {
+    readonly origin: readonly [number, number];
+    readonly columnStep: readonly [number, number];
+    readonly rowStep: readonly [number, number];
+  };
+  readonly topology:
+    | {
+        readonly kind: 'continuous';
+        readonly maximumHeightJump: number | null;
+        readonly diagonal: 'topLeftToBottomRight' | 'topRightToBottomLeft';
+      }
+    | { readonly kind: 'pixelSteps' };
+  readonly colorEncoding: KernelPreparedRasterColorEncoding;
+  readonly elevationEncoding: KernelPreparedRasterDepthEncoding;
+  readonly noData: KernelPreparedRasterNoData;
   readonly elevationReference: {
     readonly uri: string;
     readonly byteOffset: number | null;
@@ -584,6 +597,7 @@ export class KernelStreamingDriver {
         } as const;
         let decodeParametersJson = '';
         let validatedPrimitiveCount: number | undefined;
+        let rasterParameters: KernelRasterDecoderParameters | undefined;
         if (payload.reference.kind === 'potreePoints') {
           const pointCount = payload.reference.primitiveCount;
           if (!Number.isSafeInteger(pointCount) || pointCount === null || pointCount <= 0) {
@@ -606,7 +620,7 @@ export class KernelStreamingDriver {
           }
           validatedPrimitiveCount = maximumSplats;
         } else if (payload.reference.kind === 'raster') {
-          parseRasterParameters(payload.reference.decoderParameters);
+          rasterParameters = parseRasterParameters(payload.reference.decoderParameters);
         }
         const metadata =
           payload.reference.kind === 'potreePoints'
@@ -628,7 +642,13 @@ export class KernelStreamingDriver {
                   } satisfies KernelGaussianSplatContentMetadata)
                 : ({
                     ...common,
-                    ...parseRasterParameters(payload.reference.decoderParameters),
+                    contract: await buildPreparedRasterContract(
+                      rasterParameters!,
+                      payload.bytes,
+                      payload.elevationBytes,
+                      payload.validityBytes,
+                      payload.triangleMaskBytes,
+                    ),
                     elevationPayloadByteLength: payload.elevationBytes.byteLength,
                     validityPayloadByteLength: payload.validityBytes.byteLength,
                     triangleMaskPayloadByteLength: payload.triangleMaskBytes.byteLength,
@@ -1124,6 +1144,82 @@ function addCost(
     if (!includeCompressed && key === 'cpuCompressedBytes') continue;
     target[key] += source[key];
   }
+}
+
+async function buildPreparedRasterContract(
+  parameters: KernelRasterDecoderParameters,
+  color: Uint8Array,
+  depth: Uint8Array,
+  validity: Uint8Array,
+  triangleMask: Uint8Array,
+): Promise<KernelRasterContentMetadata['contract']> {
+  const resource = async (bytes: Uint8Array, mediaType: string) => ({
+    objectHash: await sha256Hex(bytes),
+    mediaType,
+    byteLength: bytes.byteLength,
+  });
+  const connectivity =
+    triangleMask.byteLength > 0
+      ? {
+          kind: 'mask' as const,
+          resource: await resource(
+            triangleMask,
+            'application/vnd.himmelcad.raster-connectivity+2bit-lsb0',
+          ),
+          encoding: 'twoBitsPerCellLsb0' as const,
+          diagonal:
+            parameters.topology.kind === 'continuous'
+              ? parameters.topology.diagonal
+              : 'topLeftToBottomRight',
+        }
+      : parameters.topology;
+  return {
+    schemaVersion: 1,
+    raster: {
+      pixels: await resource(
+        color,
+        parameters.colorEncoding === 'rgba8' ? 'image/rgba8' : 'image/encoded',
+      ),
+      width: parameters.width,
+      height: parameters.height,
+      mapping: {
+        kind: 'orthoGrid',
+        origin: { x: parameters.mapping.origin[0], y: parameters.mapping.origin[1], z: 0 },
+        columnStep: {
+          x: parameters.mapping.columnStep[0],
+          y: parameters.mapping.columnStep[1],
+          z: 0,
+        },
+        rowStep: {
+          x: parameters.mapping.rowStep[0],
+          y: parameters.mapping.rowStep[1],
+          z: 0,
+        },
+      },
+      depth: {
+        values: await resource(depth, 'application/vnd.himmelcad.depth'),
+        validity:
+          validity.byteLength === 0
+            ? null
+            : {
+                resource: await resource(
+                  validity,
+                  'application/vnd.himmelcad.raster-validity+bitset-lsb0',
+                ),
+                encoding: 'bitsetLsb0',
+              },
+        confidence: null,
+        sampling: {
+          semantics: 'elevationZ',
+          interpolation: 'discontinuityAware',
+          connectivity,
+        },
+      },
+    },
+    colorEncoding: parameters.colorEncoding,
+    depthEncoding: parameters.elevationEncoding,
+    noData: parameters.noData,
+  };
 }
 
 function parseRasterParameters(value: unknown): KernelRasterDecoderParameters {

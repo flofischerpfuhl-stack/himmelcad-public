@@ -58,6 +58,14 @@ kanonischem Raster, Worker-Decoding, Streaming, GPU-Upload und Picking.
 - Panorama besitzt genau eine Standpunkt-/Pose- und eine Depth-Autorität. Ein
   verknüpfter Scan bzw. eine Standpunktpunktwolke bleibt Relation, nicht zweite
   Geometriewahrheit.
+- Im gemeinsamen 3D-View ist ein Panorama standardmäßig ein pickbarer
+  Scanstandpunkt-Marker und ein orientiertes Kamerabild eine posegenaue
+  Bildfläche bzw. ein Frustum. Ihre Depth-Daten werden dort nicht ungefragt als
+  vollständige Kugel-/Ray-Oberfläche dargestellt. Eine solche
+  Analysepräsentation ist ein expliziter View-Modus.
+- Orthomosaike mit Depth/Elevation werden dagegen als pyramidal gestreamte,
+  texturierte Oberfläche dargestellt: top-down wie ein Orthofoto und im
+  Orbit-View wie ein texturiertes DGM mit derselben Source-Geometrie.
 - Prepared Pointcloud-, Mesh/TIN-, Raster- und Splat-Inhalte teilen Hierarchie,
   Scheduler, Residency-Budgets, Placement, Clip-, Pick- und Unload-Lifecycle.
 - Große Texturen und Rasterseitenbänder werden budgetiert; kein vollständiges
@@ -90,6 +98,17 @@ Viewer-Entities zu erfinden.
   Kegelschnitte, zusammengesetzte Kurven, Splines und Klothoiden.
 - Flächen mit Außenring, Löchern/Inseln und expliziter Höhenauflösung; gemischte
   XY/XYZ-Stützpunkte bleiben kanonische Vermessungsgeometrie.
+- Entities mit mindestens einem höhenlosen Stützpunkt sind reguläre
+  2D-/Plan-Geometrie: Sie erscheinen im
+  locked Top-down-View vollständig, im 3D-Orbit standardmäßig überhaupt nicht.
+  Der Viewer darf weder unbekanntes Z erfinden noch nur bekannte Teilsegmente
+  als scheinbar vollständige Entity zeigen.
+- Höhenauflösung ist eine spätere CAD-Command-Funktion, keine live abgeleitete
+  Viewer-Darstellung. Projektion auf ein DGM, Ebene oder einen versionierten
+  Interpolator schreibt eine neue kanonische Revision mit tatsächlichen
+  Z-Werten und nötigen echten Stützpunkten; erst diese materialisierte
+  XYZ-Geometrie ist 3D-fähig. Zielversion und Resolverparameter dürfen als
+  Provenienz erhalten bleiben. Undo stellt die vorherige Revision wieder her.
 - Ebenen, 2.5D-TIN/Grid-DGMs, beliebige 3D-Oberflächen, offene Meshes,
   geschlossene Solids, BRep-/CSG-/Extrusion-/Sweep-Repräsentationen und deren
   immutable ausgewertete Meshes.
@@ -131,9 +150,21 @@ V3 macht aus vollständiger Geometrie einen vollständigen CAD-View.
 - Orbit, Pan und Cursor-Pivot-Zoom; 3D, locked Top-down 2D, lokale
   orthographische Schnitt-/Profilframes und benutzerdefinierte perspektivische
   Standpunkte mit nahtlosen, maßstabserhaltenden Übergängen.
+- Ein Klick auf einen Scanstandpunkt öffnet einen separaten Panorama-View mit
+  360-Grad-Schwenken und FOV-Zoom. Ein Klick auf ein orientiertes Kamerabild
+  öffnet einen 2D-Bildview mit Pan/Zoom. Beide Views teilen Kernel, Ressourcen,
+  Source-Koordinaten und Picking; sie sind keine neuen Renderer.
+- Bildmessung bildet Pixel über Validity/Confidence, Depth-Semantik,
+  Kameramodell und Pose auf Source-3D-Punkte ab. Punktkoordinaten und Strecken
+  zwischen mindestens zwei Bildpicks werden ohne GPU-Depth als Wahrheit
+  berechnet.
 - Cursor liefert überall eine belastbare nächste Source-Koordinate oder einen
   klar gekennzeichneten Ebenen-Fallback. Tab zyklisiert deterministisch durch
   nahe Treffer aller Provider.
+- Top-down-Picking höhenloser Stützpunkte liefert `z: null`; eine für Rasterung
+  oder Kamera notwendige Präsentationsebene wird nie als gemessene Source-Höhe
+  ausgegeben. Die normale 3D-Darstellung besitzt keinen temporären Drape-,
+  Interpolations- oder Arbeitsebenen-Ersatz für unvollständige Z-Werte.
 - Kanonische CAD-Stützpunkte, End-/Mittel-/Zentrum-/Quadrant-/Schnittpunkte und
   Providerpunkte; keine Tessellations-Fake-Vertices als CAD-Snaps.
 - Auswahl, Hover, Point-Picking und Messung teilen ID-/Depth- und exakte
@@ -259,4 +290,3 @@ Zeit wird nicht geschätzt oder nachträglich rekonstruiert:
 | Meilenstein | Commit(s) | Gates und Messwerte | Aktive Zeit | Kalenderdauer |
 | --- | --- | --- | --- | --- |
 | A | siehe `docs/VIEWER-VERIFICATION.md` | Foundation-A-Gates | nicht rückwirkend messbar | nicht rückwirkend messbar |
-
