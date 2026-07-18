@@ -9,7 +9,11 @@ import {
   KernelViewerSession,
   KernelViewerSessionError,
   type CanonicalEntity,
+  type KernelCanonicalRenderAdmission,
   type KernelPotreeDatasetAdmission,
+  type KernelRasterDepthMeasurement,
+  type KernelSectionMutation,
+  type KernelSectionRequest,
   type KernelViewerEntityHandle,
   type KernelViewerLoadOptions,
   type KernelViewerSessionDiagnostics,
@@ -67,10 +71,10 @@ void test('kernel public API surface is exact and runtime internals stay private
       return `${symbol.name}:${marker}`;
     })
     .sort();
-  assert.equal(surface.length, 195);
+  assert.equal(surface.length, 199);
   assert.equal(
     createHash('sha256').update(surface.join('\n')).digest('hex'),
-    'fe1b790d471fe63f466cafb63b71249b0aae919579b45d4d64972c700b40880b',
+    '5a6f3f01e24a0967ee7b0faa84e006b48d8c44a74fe02b17326071a8a20bd59f',
     `kernel API changed; review the stable contract before updating this gate:\n${surface.join('\n')}`,
   );
 
@@ -90,10 +94,25 @@ void test('kernel public API surface is exact and runtime internals stay private
 
 void test('kernel entry is directly consumable without internal escape hatches', () => {
   type ProductSession = {
+    readonly loadCanonical: (
+      admissions: readonly KernelCanonicalRenderAdmission[],
+    ) => readonly KernelViewerEntityHandle[];
     readonly loadPotree: (
       input: KernelPotreeDatasetAdmission,
       options?: KernelViewerLoadOptions,
     ) => Promise<KernelViewerEntityHandle>;
+    readonly registerImageResource: (
+      objectHash: string,
+      width: number,
+      height: number,
+      rgba8: Uint8Array,
+    ) => void;
+    readonly measureRasterDepthSample: (
+      entityId: string,
+      column: number,
+      row: number,
+    ) => KernelRasterDepthMeasurement;
+    readonly upsertSection: (request: KernelSectionRequest) => KernelSectionMutation;
     readonly subscribe: (listener: (event: KernelViewerSessionEvent) => void) => () => void;
     readonly diagnostics: () => KernelViewerSessionDiagnostics;
     readonly dispose: () => void;

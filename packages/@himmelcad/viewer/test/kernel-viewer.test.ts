@@ -1146,6 +1146,7 @@ void test('explicit browser backend selection crosses the versioned wasm boundar
 void test('framework-free session owns create, frame, device rebuild and dispose', async () => {
   const canvas = { width: 1, height: 1, clientWidth: 640, clientHeight: 480 } as HTMLCanvasElement;
   const bindings: WasmViewerBinding[] = [];
+  const replayCalls: string[] = [];
   let disposedDecoders = 0;
   const createDecodeExecutor = (): KernelDecodeExecutor => ({
     setWorkerCount(): void {},
@@ -1177,6 +1178,25 @@ void test('framework-free session owns create, frame, device rebuild and dispose
       WasmViewer: {
         create: () => {
           const binding = minimalBinding(canvas, () => {});
+          const generation = bindings.length + 1;
+          binding.register_image_resource = () => replayCalls.push(`${generation}:image`);
+          binding.register_depth_resource = () => replayCalls.push(`${generation}:depth`);
+          binding.register_raster_binary_resource = () => replayCalls.push(`${generation}:binary`);
+          binding.register_mesh_resource = () => replayCalls.push(`${generation}:mesh`);
+          binding.publish_canonical_representations_json = () => {
+            replayCalls.push(`${generation}:canonical`);
+            return JSON.stringify({
+              entities: 1,
+              slots: 1,
+              proxies: 1,
+              generation,
+              bindings: [],
+            });
+          };
+          binding.upsert_section_json = () => {
+            replayCalls.push(`${generation}:section`);
+            return JSON.stringify({ proxies: 1, generation });
+          };
           bindings.push(binding);
           return Promise.resolve(binding);
         },
@@ -1190,6 +1210,38 @@ void test('framework-free session owns create, frame, device rebuild and dispose
   });
   const events: string[] = [];
   session.subscribe((event) => events.push(event.type));
+  session.registerImageResource('image', 1, 1, new Uint8Array([1, 2, 3, 4]));
+  session.registerDepthResource('depth', 1, 1, new Float32Array([12.5]));
+  session.registerRasterBinaryResource('validity', new Uint8Array([1]));
+  session.registerMeshResource('mesh', { positions: [0, 0, 0] });
+  assert.equal(
+    session.loadCanonical([
+      canonicalAdmission('inline', { kind: 'point', position: { x: 1, y: 2, z: 3 } }),
+    ])[0]?.entityId,
+    'inline',
+  );
+  assert.deepEqual(session.measureRasterDepthSample('raster', 0, 0).sourcePosition, {
+    x: 0,
+    y: 0,
+    z: 1,
+  });
+  assert.deepEqual(
+    session.upsertSection({
+      sectionId: 'section',
+      entityIds: ['inline'],
+      plane: { origin: { x: 0, y: 0, z: 0 }, normal: { x: 0, y: 0, z: 1 } },
+      tolerance: 0.001,
+    }),
+    { proxies: 1, generation: 1 },
+  );
+  assert.deepEqual(replayCalls, [
+    '1:image',
+    '1:depth',
+    '1:binary',
+    '1:mesh',
+    '1:canonical',
+    '1:section',
+  ]);
   assert.deepEqual(session.frame(), { status: 'skipped', reason: 'Suspended' });
   assert.equal(session.diagnostics().deviceGeneration, 1);
   assert.equal(session.diagnostics().recoveringDevice, false);
@@ -1199,6 +1251,14 @@ void test('framework-free session owns create, frame, device rebuild and dispose
   await session.settled();
   assert.equal(bindings.length, 2);
   assert.equal(session.diagnostics().deviceGeneration, 2);
+  assert.deepEqual(replayCalls.slice(6), [
+    '2:image',
+    '2:depth',
+    '2:binary',
+    '2:mesh',
+    '2:canonical',
+    '2:section',
+  ]);
   assert(events.includes('deviceRecoveryStarted'));
   assert(events.includes('deviceRecoveryCompleted'));
 

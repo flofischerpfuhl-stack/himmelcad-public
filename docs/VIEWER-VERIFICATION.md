@@ -1464,7 +1464,7 @@ suite now passes 79/79 tests.
 ### V5 stable package surface checkpoint
 
 The `@himmelcad/viewer/kernel` entry now uses an explicit, reviewed export list
-instead of forwarding every implementation module. Its complete 195-symbol
+instead of forwarding every implementation module. Its complete 199-symbol
 TypeScript surface is frozen by name and value/type classification; the gate
 also compiles that entry under the repository's strict, unchecked-index and
 exact-optional rules. A separate runtime assertion permits exactly nine facade
@@ -1481,6 +1481,26 @@ load, operation options, entity handle, event stream, diagnostics and generated
 canonical entity contract, and rejects the two old escape-hatch names. The
 recursive framework/product dependency boundary remains green and the complete
 viewer package now passes 81/81 tests.
+
+### V5 shared resource and analysis facade checkpoint
+
+Framework-free consumers no longer need the hidden raw viewer to prepare an
+inline or prepared canonical scene. `KernelViewerSession` now exposes immutable
+glyph/annotation, block/attribute, image, depth, raster-sideband, evaluated
+mesh, canonical hatch/texture/material/line-type and exact-section-product
+registration. Inline canonical admissions and generic prepared raster/splat
+hierarchies use the same stable scene handles as Potree, prepared mesh and TIN.
+Raster analysis, exact Source-coordinate raster/depth measurement and explicit
+section upsert/removal are session operations as well.
+
+The device-rebuild lifecycle test registers image, depth, binary sideband and
+mesh resources, publishes an inline canonical point, performs a Source raster
+measurement and creates an exact section before injecting device loss. On the
+replacement device it observes the strict replay sequence of immutable
+definitions, canonical entity and section. This exposed and closed a real gap:
+manual exact sections are now retained as presentation replay state and removed
+from that state atomically with `removeSection`. The package remains green at
+81/81 tests.
 
 ## Candidate external data
 

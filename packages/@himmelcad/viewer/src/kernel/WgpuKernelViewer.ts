@@ -1394,6 +1394,7 @@ export class WgpuKernelViewer {
   >();
   private readonly entityVisibilityReplay = new Map<string, boolean>();
   private readonly entityInteractionReplay = new Map<string, KernelEntityInteractionState>();
+  private readonly sectionReplay = new Map<string, KernelSectionRequest>();
   private cameraReplay: ((target: WgpuKernelViewer) => void) | null = null;
   private clearColorReplay: readonly [number, number, number, number] | null = null;
   private rasterAnalysisReplay: string | null = null;
@@ -1562,6 +1563,7 @@ export class WgpuKernelViewer {
     if (this.rasterAnalysisReplay !== null) {
       target.setRasterAnalysisView(this.rasterAnalysisReplay);
     }
+    for (const request of this.sectionReplay.values()) target.upsertSection(request);
   }
 
   /** Atomically publishes complete canonical entity envelopes and selected representations. */
@@ -2840,12 +2842,15 @@ export class WgpuKernelViewer {
     ) {
       throw new TypeError('kernel section mutation result is malformed');
     }
+    this.sectionReplay.set(request.sectionId, replayClone(resolvedRequest));
     return value as unknown as KernelSectionMutation;
   }
 
   removeSection(sectionId: string): boolean {
     this.assertAlive();
-    return this.binding.remove_section(sectionId);
+    const removed = this.binding.remove_section(sectionId);
+    this.sectionReplay.delete(sectionId);
+    return removed;
   }
 
   /** Atomically replaces all view-local convex clipping volumes. */

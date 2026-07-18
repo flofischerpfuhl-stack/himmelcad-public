@@ -16,13 +16,28 @@ import {
   type KernelFetch,
   type KernelStreamingDriverDiagnostics,
 } from './KernelStreamingDriver.js';
-import { KernelViewerScene, type KernelViewerEntityHandle } from './KernelViewerScene.js';
+import {
+  KernelViewerScene,
+  type KernelPreparedHierarchyAdmission,
+  type KernelViewerEntityHandle,
+} from './KernelViewerScene.js';
+import type {
+  CanonicalResourceRef,
+  HatchPatternResource,
+  LineTypeResource,
+  TextureResource,
+} from './generated/index.js';
 import {
   kernelStreamingWorkPolicy,
   WgpuKernelViewer,
   type HimmelcadViewerWasmLoader,
   type KernelBackendPreference,
+  type KernelAnnotationStyle,
+  type KernelAuthoritativeSectionProduct,
+  type KernelBlockDefinition,
   type KernelCanvasExtent,
+  type KernelCanonicalMaterialResourceSet,
+  type KernelCanonicalRenderAdmission,
   type KernelClipVolume,
   type KernelDeviceCapabilities,
   type KernelEntityCommandMutation,
@@ -32,11 +47,18 @@ import {
   type KernelGpuModelCacheStats,
   type KernelGpuTextureCacheStats,
   type KernelHardwareInventory,
+  type KernelGlyphAtlasMetadata,
   type KernelPickResult,
+  type KernelRasterAnalysisView,
+  type KernelRasterDepthDistanceMeasurement,
+  type KernelRasterDepthMeasurement,
+  type KernelRasterDepthPick,
   type KernelRenderStyle,
   type KernelResolvedHardwarePolicy,
   type KernelRuntimeQualityAdjustment,
   type KernelRuntimeQualityState,
+  type KernelSectionMutation,
+  type KernelSectionRequest,
   type KernelStreamingRuntimeState,
   type KernelTransformEntityCommand,
   type KernelWorldCamera,
@@ -262,6 +284,20 @@ export class KernelViewerSession {
     );
   }
 
+  loadCanonical(
+    admissions: readonly KernelCanonicalRenderAdmission[],
+  ): readonly KernelViewerEntityHandle[] {
+    this.assertReady();
+    return this.scene.loadCanonical(admissions);
+  }
+
+  loadPreparedHierarchy(
+    input: KernelPreparedHierarchyAdmission,
+  ): readonly KernelViewerEntityHandle[] {
+    this.assertReady();
+    return this.scene.loadPreparedHierarchy(input);
+  }
+
   loadPreparedMesh(
     input: KernelPreparedMeshDatasetAdmission,
     options: KernelViewerLoadOptions = {},
@@ -282,6 +318,139 @@ export class KernelViewerSession {
 
   setEntityVisibility(entityId: string, visible: boolean): void {
     this.scene.setEntityVisibility(entityId, visible);
+  }
+
+  registerGlyphAtlas(
+    objectHash: string,
+    metadata: KernelGlyphAtlasMetadata,
+    rgba8: Uint8Array,
+  ): void {
+    this.assertReady();
+    this.viewerState.registerGlyphAtlas(objectHash, metadata, rgba8);
+  }
+
+  registerAnnotationStyle(objectHash: string, style: KernelAnnotationStyle): void {
+    this.assertReady();
+    this.viewerState.registerAnnotationStyle(objectHash, style);
+  }
+
+  registerBlockDefinition(definition: KernelBlockDefinition): void {
+    this.assertReady();
+    this.viewerState.registerBlockDefinition(definition);
+  }
+
+  registerBlockMemberStyle(resource: CanonicalResourceRef, style: KernelRenderStyle): void {
+    this.assertReady();
+    this.viewerState.registerBlockMemberStyle(resource, style);
+  }
+
+  registerBlockAttributeTable(objectHash: string, bytes: Uint8Array): void {
+    this.assertReady();
+    this.viewerState.registerBlockAttributeTable(objectHash, bytes);
+  }
+
+  registerImageResource(
+    objectHash: string,
+    width: number,
+    height: number,
+    rgba8: Uint8Array,
+  ): void {
+    this.assertReady();
+    this.viewerState.registerImageResource(objectHash, width, height, rgba8);
+  }
+
+  registerDepthResource(
+    objectHash: string,
+    width: number,
+    height: number,
+    values: Float32Array,
+  ): void {
+    this.assertReady();
+    this.viewerState.registerDepthResource(objectHash, width, height, values);
+  }
+
+  registerRasterBinaryResource(objectHash: string, bytes: Uint8Array): void {
+    this.assertReady();
+    this.viewerState.registerRasterBinaryResource(objectHash, bytes);
+  }
+
+  registerMeshResource(objectHash: string, mesh: Readonly<Record<string, unknown>>): void {
+    this.assertReady();
+    this.viewerState.registerMeshResource(objectHash, mesh);
+  }
+
+  registerCanonicalHatchPatternResource(resource: HatchPatternResource): void {
+    this.assertReady();
+    this.viewerState.registerCanonicalHatchPatternResource(resource);
+  }
+
+  registerCanonicalTextureResource(
+    resource: TextureResource,
+    width: number,
+    height: number,
+    rgba8: Uint8Array,
+  ): void {
+    this.assertReady();
+    this.viewerState.registerCanonicalTextureResource(resource, width, height, rgba8);
+  }
+
+  registerCanonicalMaterialResourceSet(resources: KernelCanonicalMaterialResourceSet): void {
+    this.assertReady();
+    this.viewerState.registerCanonicalMaterialResourceSet(resources);
+  }
+
+  registerCanonicalLineTypeResource(resource: LineTypeResource): void {
+    this.assertReady();
+    this.viewerState.registerCanonicalLineTypeResource(resource);
+  }
+
+  registerSectionProduct(objectHash: string, product: KernelAuthoritativeSectionProduct): void {
+    this.assertReady();
+    this.viewerState.registerSectionProduct(objectHash, product);
+  }
+
+  measureRasterDepthSample(
+    entityId: string,
+    column: number,
+    row: number,
+  ): KernelRasterDepthMeasurement {
+    this.assertReady();
+    return this.viewerState.measureRasterDepthSample(entityId, column, row);
+  }
+
+  measureRasterDepthDistance(
+    picks: readonly KernelRasterDepthPick[],
+  ): KernelRasterDepthDistanceMeasurement {
+    this.assertReady();
+    return this.viewerState.measureRasterDepthDistance(picks);
+  }
+
+  setRasterAnalysisView(entityId: string): KernelRasterAnalysisView {
+    this.assertReady();
+    const view = this.viewerState.setRasterAnalysisView(entityId);
+    this.options.requestFrame?.();
+    return view;
+  }
+
+  clearRasterAnalysisView(): boolean {
+    this.assertReady();
+    const cleared = this.viewerState.clearRasterAnalysisView();
+    if (cleared) this.options.requestFrame?.();
+    return cleared;
+  }
+
+  upsertSection(request: KernelSectionRequest): KernelSectionMutation {
+    this.assertReady();
+    const mutation = this.viewerState.upsertSection(request);
+    this.options.requestFrame?.();
+    return mutation;
+  }
+
+  removeSection(sectionId: string): boolean {
+    this.assertReady();
+    const removed = this.viewerState.removeSection(sectionId);
+    if (removed) this.options.requestFrame?.();
+    return removed;
   }
 
   setEntityStyle(entityId: string, style: KernelRenderStyle, exaggerationDatum = 0): number {

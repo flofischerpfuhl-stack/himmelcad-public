@@ -514,7 +514,7 @@ einen eigenen Geometriepfad benötigt.
   Progress-/Error-Events. Fehler in Hostcallbacks können den Load nicht
   beeinflussen. Die Viewer-Suite steht bei 79/79.
 - Der stabile Kernel-Entry exportiert nicht länger per Wildcard sämtliche
-  Runtime-Implementierungen. Seine 195 sichtbaren TypeScript-Symbole sind
+  Runtime-Implementierungen. Seine 199 sichtbaren TypeScript-Symbole sind
   inklusive Wert-/Typ-Klassifikation durch einen exakten Hash-Gate eingefroren;
   zur Laufzeit bleiben genau neun bewusst freigegebene Fassadenwerte sichtbar.
   Insbesondere sind der rohe `WgpuKernelViewer`, Streaming-Driver, Worker-Pool
@@ -524,6 +524,16 @@ einen eigenen Geometriepfad benötigt.
   Diagnostics beobachtbar. Ein Compile-Consumer belegt Load, Events,
   Diagnostics, kanonische Entity-Typen und die Abwesenheit der internen
   Escape-Hatches. Die Viewer-Suite steht bei 81/81.
+- Package-Consumer können jetzt auch ohne Roh-Viewer alle gemeinsamen
+  Definitionen registrieren: Glyph-/Annotation, Block und Attribute, Image,
+  Depth, Raster-Sidebands, evaluated Mesh, kanonische Hatch-/Texture-/Material-
+  und Line-Type-Ressourcen sowie exakte Section-Produkte. Inline-Entities und
+  prepared Raster-/Splat-Hierarchien laufen wie Potree und Mesh/TIN über die
+  Session-/Scene-Handles. Source-Rastermessung, Rasteranalyse und explizite
+  Schnitte sind ebenfalls Session-Operationen. Der Device-Rebuild-Test belegt
+  Definition → kanonische Entity → Schnitt als Wiederherstellungsreihenfolge;
+  manuelle Schnitte werden nun wie anderer View-State deterministisch replayed.
+  Die Viewer-Suite bleibt bei 81/81.
 
 ## Zeitmessung und Fortschrittsprotokoll
 
