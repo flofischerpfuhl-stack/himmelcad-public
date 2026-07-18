@@ -693,6 +693,13 @@ try {
   assert.equal(interaction.streamedProxyIdentityStable, true);
   assert.equal(interaction.streamedPickIdentityStable, true);
   assert.equal(interaction.streamedDecodeCountersStable, true);
+  assert.deepEqual(state.surfaceRecovery, {
+    presented: true,
+    generationStable: true,
+    proxyIdentityStable: true,
+    pickIdentityStable: true,
+    decodeCountersStable: true,
+  });
   const panoramaMarker = state.panoramaMarkerPick?.candidates.find(
     (candidate) =>
       candidate.address.entityId === 'scan-panorama' &&

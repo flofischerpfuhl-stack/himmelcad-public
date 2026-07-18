@@ -136,6 +136,9 @@ export function KernelViewport({
         const uploadedBytes = streaming.execute(plan);
         const outcome = viewer.render();
         onFrame?.(outcome);
+        if (outcome.status === 'recreateSurface') {
+          viewer.recoverSurface();
+        }
         const qualityObservation = viewer.observeFrameTelemetry({
           cpuMs: performance.now() - frameStarted,
           interacting,

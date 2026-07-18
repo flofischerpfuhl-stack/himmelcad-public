@@ -1255,6 +1255,33 @@ V4 completion risk. The complete Render-Core suite passes 321/321,
 viewer-WASM passes 7/7, the wasm32 target and browser TypeScript checks are
 green, and all 73 viewer-package tests pass.
 
+### V4 surface recovery checkpoint
+
+Surface loss no longer leaves the host in an endless `recreateSurface` frame
+loop. `GpuSurfaceHost` drops the lost platform surface, while retaining its
+adapter, logical device, renderer, frame targets and all provider GPU
+allocations. The WASM host can then create a new surface for the same canvas and
+re-query format, present and alpha capabilities. Only a changed presentation
+format rebuilds the final transfer pipeline; scene buffers and textures are not
+re-uploaded. `KernelViewport` consumes the lifecycle outcome and performs this
+bounded rebind before requesting the next frame. Direct package consumers have
+the same explicit `recoverSurface()` operation.
+
+The browser fixture deliberately executes that surface replacement after an
+exact exaggerated survey-point pick. Forced WebGL2 on the physical Intel HD
+Graphics 630 and explicit WebGPU both present the next frame and retain the
+same world generation, proxy/batch identity and exact pick address. The
+38-entity/47-proxy scene remains resident, with ten worker artifact ingests and
+zero main-thread provider decodes before and after recovery. WebGL2 reports
+6.8 ms maximum CPU submit in this correctness run; the WebGPU CPU-adapter run
+reports 2.4 ms. Four focused surface tests, the wasm32 target, browser
+TypeScript contract and all 73 viewer-package tests are green.
+
+This checkpoint proves surface re-creation with an intact device. A complete
+device loss or out-of-memory reset necessarily invalidates device-owned
+buffers; deterministic canonical/streaming replay onto a new kernel remains a
+separate active V4 requirement rather than being mislabeled as covered here.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

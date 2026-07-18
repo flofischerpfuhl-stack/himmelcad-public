@@ -99,6 +99,13 @@ interface BrowserValidationState {
     readonly streamedDecodeCountersStable: boolean;
     readonly streamedSelectionColor: readonly number[];
   } | null;
+  surfaceRecovery: {
+    readonly presented: boolean;
+    readonly generationStable: boolean;
+    readonly proxyIdentityStable: boolean;
+    readonly pickIdentityStable: boolean;
+    readonly decodeCountersStable: boolean;
+  } | null;
   panoramaMarkerPick: KernelPickResult | null;
   panoramaDepthMeasurement: ReturnType<WgpuKernelViewer['measureRasterDepthSample']> | null;
   rasterAnalysis: {
@@ -505,6 +512,7 @@ const state: BrowserValidationState = {
   pick: null,
   exactPointPick: null,
   interactionPresentation: null,
+  surfaceRecovery: null,
   panoramaMarkerPick: null,
   panoramaDepthMeasurement: null,
   rasterAnalysis: null,
@@ -5875,6 +5883,21 @@ async function run(): Promise<void> {
     streamedPickIdentityStable: false,
     streamedDecodeCountersStable: false,
     streamedSelectionColor: [],
+  };
+  const recoveryGeneration = viewer.worldGeneration();
+  const recoveryProxyIdentity = batchIdentity(restoredPresentation);
+  const recoveryDecodeBefore = viewer.streamDecodeDiagnostics();
+  viewer.recoverSurface();
+  const recoveryOutcome = viewer.render();
+  const recoveryPresentation = viewer.entityPresentation('survey-point');
+  const recoveryPick = await viewer.pick(640, 360, 4);
+  state.surfaceRecovery = {
+    presented: recoveryOutcome.status === 'presented',
+    generationStable: viewer.worldGeneration() === recoveryGeneration,
+    proxyIdentityStable: batchIdentity(recoveryPresentation) === recoveryProxyIdentity,
+    pickIdentityStable: surveyPickAddress(recoveryPick) === sourcePickAddress,
+    decodeCountersStable:
+      JSON.stringify(viewer.streamDecodeDiagnostics()) === JSON.stringify(recoveryDecodeBefore),
   };
   viewer.setEntityStyle('survey-point', style([1, 0.38, 0.08, 1]), 0);
   viewer.setWorldCamera(worldCamera, BASE);

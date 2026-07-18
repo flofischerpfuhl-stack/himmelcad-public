@@ -193,6 +193,7 @@ export interface WasmViewerBinding {
   clip_preview_batch_count?(): number;
   clip_preview_material_slots_json?(): string;
   render(): string;
+  recover_surface?(): void;
   render_pick(x: number, y: number, radius: number): Promise<string>;
   capabilities_json(): string;
   hardware_policy_json(requestJson: string): string;
@@ -2803,6 +2804,15 @@ export class WgpuKernelViewer {
   render(): KernelFrameOutcome {
     this.assertAlive();
     return parseFrameOutcome(this.binding.render());
+  }
+
+  /** Rebinds a lost canvas surface without rebuilding the device or resident scene. */
+  recoverSurface(): void {
+    this.assertAlive();
+    if (this.binding.recover_surface === undefined) {
+      throw new Error('loaded viewer kernel does not support surface recovery');
+    }
+    this.binding.recover_surface();
   }
 
   /**

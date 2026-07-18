@@ -343,6 +343,7 @@ fn split_streamed_raster_bands(
 #[wasm_bindgen]
 pub struct WasmViewer {
     _instance: wgpu::Instance,
+    canvas: HtmlCanvasElement,
     host: GpuSurfaceHost<'static>,
     view_projection: [[f32; 4]; 4],
     floating_origin: WorldVec3,
@@ -1414,7 +1415,7 @@ async fn create_wasm_viewer(
         wgpu::Instance::new(descriptor)
     };
     let surface = instance
-        .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
+        .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
         .map_err(js_error)?;
     let host = GpuSurfaceHost::request(
         &instance,
@@ -1427,6 +1428,7 @@ async fn create_wasm_viewer(
     .map_err(js_error)?;
     Ok(WasmViewer {
         _instance: instance,
+        canvas,
         host,
         view_projection: identity(),
         floating_origin: WorldVec3 {
@@ -1565,6 +1567,15 @@ impl WasmViewer {
     /// Resizes physical presentation targets; zero dimensions suspend rendering.
     pub fn resize(&mut self, width: u32, height: u32) {
         self.host.resize(width, height);
+    }
+
+    /// Recreates only a lost canvas surface while preserving device residency.
+    pub fn recover_surface(&mut self) -> Result<(), JsValue> {
+        let surface = self
+            ._instance
+            .create_surface(wgpu::SurfaceTarget::Canvas(self.canvas.clone()))
+            .map_err(js_error)?;
+        self.host.replace_surface(surface).map_err(js_error)
     }
 
     /// Builds an immutable, partitioned Civil-alignment preview session.

@@ -361,6 +361,9 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
     render(): string {
       return JSON.stringify({ status: 'presented', reconfigured: false });
     },
+    recover_surface(): void {
+      calls.push(['recoverSurface']);
+    },
     render_pick(): Promise<string> {
       return Promise.resolve(
         JSON.stringify({
@@ -457,6 +460,8 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
   });
   assert.deepEqual(calls.at(-1), ['origin', 6_378_137.000_001, 5_400_000.000_002, 712.003]);
   assert.deepEqual(viewer.render(), { status: 'presented', reconfigured: false });
+  viewer.recoverSurface();
+  assert.deepEqual(calls.at(-1), ['recoverSurface']);
   const hardwareInventory = {
     gpuMemoryBytes: null,
     systemMemoryBytes: null,

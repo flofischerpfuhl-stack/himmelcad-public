@@ -135,7 +135,7 @@ impl From<GpuPickReadbackError> for GpuSurfaceError {
 /// everything from adapter selection onward and contains no winit, Electron or
 /// browser-framework dependency.
 pub struct GpuSurfaceHost<'window> {
-    surface: wgpu::Surface<'window>,
+    surface: Option<wgpu::Surface<'window>>,
     adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -238,7 +238,7 @@ impl<'window> GpuSurfaceHost<'window> {
             .contains(wgpu::Features::TIMESTAMP_QUERY)
             .then(|| GpuFrameTimestampRecorder::new(&device, &queue));
         Ok(Self {
-            surface,
+            surface: Some(surface),
             adapter,
             device,
             queue,
@@ -350,8 +350,36 @@ impl<'window> GpuSurfaceHost<'window> {
     /// Reconfigures the current surface after a platform or display change.
     pub fn reconfigure(&self) {
         if !self.suspended {
-            self.surface.configure(&self.device, &self.configuration);
+            if let Some(surface) = self.surface.as_ref() {
+                surface.configure(&self.device, &self.configuration);
+            }
         }
+    }
+
+    /// Replaces a lost platform surface while retaining the adapter, device and
+    /// every resident provider resource owned by this host.
+    pub fn replace_surface(
+        &mut self,
+        surface: wgpu::Surface<'window>,
+    ) -> Result<(), GpuSurfaceError> {
+        let capabilities = surface.get_capabilities(&self.adapter);
+        let format = choose_surface_format(&capabilities.formats)
+            .ok_or(GpuSurfaceError::IncompatibleSurface)?;
+        self.configuration.present_mode = choose_present_mode(&capabilities.present_modes);
+        self.configuration.alpha_mode = choose_alpha_mode(&capabilities.alpha_modes);
+        if format != self.configuration.format {
+            self.configuration.format = format;
+            self.presentation_renderer = GpuPresentationRenderer::new(&self.device, format);
+            self.presentation_target = self.presentation_renderer.create_target(
+                &self.device,
+                self.configuration.width,
+                self.configuration.height,
+                self.linear_frame_format,
+            );
+        }
+        self.surface = Some(surface);
+        self.reconfigure();
+        Ok(())
     }
 
     fn prepare_batches<'batch>(
@@ -433,7 +461,10 @@ impl<'window> GpuSurfaceHost<'window> {
             self.queue.submit([encoder.finish()]);
             return Ok(SurfaceFrameOutcome::Picked { hit_readback });
         }
-        let (surface_texture, suboptimal) = match self.surface.get_current_texture() {
+        let Some(surface) = self.surface.as_ref() else {
+            return Ok(SurfaceFrameOutcome::RecreateSurface);
+        };
+        let (surface_texture, suboptimal) = match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture) => (texture, false),
             wgpu::CurrentSurfaceTexture::Suboptimal(texture) => (texture, true),
             wgpu::CurrentSurfaceTexture::Timeout => {
@@ -449,6 +480,7 @@ impl<'window> GpuSurfaceHost<'window> {
                 ));
             }
             wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface.take();
                 return Ok(SurfaceFrameOutcome::RecreateSurface);
             }
             wgpu::CurrentSurfaceTexture::Validation => {
@@ -523,7 +555,10 @@ impl<'window> GpuSurfaceHost<'window> {
     /// A format change rebuilds the format-specific pipelines. The actual adapter
     /// and device remain stable, so resident provider buffers stay valid.
     pub fn refresh_surface_capabilities(&mut self) -> Result<(), GpuSurfaceError> {
-        let surface_capabilities = self.surface.get_capabilities(&self.adapter);
+        let Some(surface) = self.surface.as_ref() else {
+            return Err(GpuSurfaceError::IncompatibleSurface);
+        };
+        let surface_capabilities = surface.get_capabilities(&self.adapter);
         let format = choose_surface_format(&surface_capabilities.formats)
             .ok_or(GpuSurfaceError::IncompatibleSurface)?;
         self.configuration.present_mode = choose_present_mode(&surface_capabilities.present_modes);

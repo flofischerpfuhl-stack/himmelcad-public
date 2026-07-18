@@ -367,6 +367,15 @@ funktioniert.
   Providerfehler. Ein sustained Lauf auf physischer Android-/iOS-Hardware bleibt
   entsprechend dem Abschluss-Gate offen und wird nicht durch diesen Desktop-
   Portabilitätslauf ersetzt.
+- Ein verlorenes Canvas-Surface wird nun von Gerät und Residency getrennt
+  behandelt. Der Surface-Host gibt das verlorene Plattformobjekt frei, bindet
+  über dieselbe Instance und denselben Adapter ein neues Surface und baut nur
+  bei einem Formatwechsel die Präsentationspipeline neu. KernelViewport
+  konsumiert `recreateSurface` direkt; World, GPU-Ressourcen und Stream-Tiles
+  bleiben erhalten. Beide Browserbackends belegen nach der Neubindung stabile
+  Generation, Proxy-/Pick-Identität und Decode-Zähler. Device-Loss und OOM
+  erfordern dagegen weiterhin einen neuen Device-/Replay-Pfad und bleiben der
+  nächste aktive V4-Slice.
 
 ## V5 – Stabile Viewer-Fassade und App-Ready-Gate
 
