@@ -10,6 +10,8 @@ import {
   KernelViewerSessionError,
   type CanonicalEntity,
   type KernelCanonicalRenderAdmission,
+  type KernelNavigationCallbacks,
+  type KernelNavigationController,
   type KernelPotreeDatasetAdmission,
   type KernelRasterDepthMeasurement,
   type KernelSectionMutation,
@@ -71,10 +73,10 @@ void test('kernel public API surface is exact and runtime internals stay private
       return `${symbol.name}:${marker}`;
     })
     .sort();
-  assert.equal(surface.length, 199);
+  assert.equal(surface.length, 202);
   assert.equal(
     createHash('sha256').update(surface.join('\n')).digest('hex'),
-    '5a6f3f01e24a0967ee7b0faa84e006b48d8c44a74fe02b17326071a8a20bd59f',
+    'b806a9527735d5b29dea9bf6198cb8c461875f6bd2dfffc4ec2c0545adce48ee',
     `kernel API changed; review the stable contract before updating this gate:\n${surface.join('\n')}`,
   );
 
@@ -83,6 +85,7 @@ void test('kernel public API surface is exact and runtime internals stay private
     'KernelCameraController',
     'KernelCanonicalDocument',
     'KernelDecodeWorkerError',
+    'KernelNavigationController',
     'KernelViewerEntityHandle',
     'KernelViewerScene',
     'KernelViewerSession',
@@ -113,6 +116,9 @@ void test('kernel entry is directly consumable without internal escape hatches',
       row: number,
     ) => KernelRasterDepthMeasurement;
     readonly upsertSection: (request: KernelSectionRequest) => KernelSectionMutation;
+    readonly attachNavigation: (
+      callbacks?: KernelNavigationCallbacks,
+    ) => KernelNavigationController;
     readonly subscribe: (listener: (event: KernelViewerSessionEvent) => void) => () => void;
     readonly diagnostics: () => KernelViewerSessionDiagnostics;
     readonly dispose: () => void;

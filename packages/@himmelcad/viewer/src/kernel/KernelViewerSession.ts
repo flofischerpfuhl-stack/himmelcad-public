@@ -1,5 +1,10 @@
 import { KernelCameraController } from './KernelCameraController.js';
 import { KernelDecodeWorkerPool } from './KernelDecodeWorkerPool.js';
+import {
+  KernelNavigationController,
+  type KernelNavigationCallbacks,
+  type KernelNavigationTarget,
+} from './KernelNavigationController.js';
 import type { KernelLoadOperationOptions, KernelLoadProgress } from './KernelLoadOperation.js';
 import type { KernelPotreeDatasetAdmission } from './KernelPotreeDatasetAdmission.js';
 import type {
@@ -214,6 +219,8 @@ export class KernelViewerSession {
   private recoveryReason: 'deviceLost' | 'outOfMemory' | null = null;
   private nextOperationId = 1;
   private deviceGeneration = 1;
+  private navigationState: KernelNavigationController | null = null;
+  private navigationInteracting = false;
 
   private constructor(
     private readonly options: KernelViewerSessionOptions,
@@ -249,10 +256,57 @@ export class KernelViewerSession {
     return () => this.listeners.delete(listener);
   }
 
+  attachNavigation(callbacks: KernelNavigationCallbacks = {}): KernelNavigationController {
+    this.assertReady();
+    this.navigationState?.dispose(true);
+    this.navigationInteracting = false;
+    const requestFrame = (): void => {
+      this.options.requestFrame?.();
+      if (callbacks.requestFrame !== this.options.requestFrame) callbacks.requestFrame?.();
+    };
+    const target: KernelNavigationTarget = {
+      setScopedClipVolume: (scopeId, volume) =>
+        this.viewerState.setScopedClipVolume(scopeId, volume),
+      setRasterAnalysisView: (entityId) => this.viewerState.setRasterAnalysisView(entityId),
+      clearRasterAnalysisView: () => this.viewerState.clearRasterAnalysisView(),
+      setWorldCamera: (camera, origin) => this.viewerState.setWorldCamera(camera, origin),
+      setCameraTransition: (from, to, progress, origin) =>
+        this.viewerState.setCameraTransition(from, to, progress, origin),
+      pick: (x, y, radius) => this.viewerState.pick(x, y, radius),
+    };
+    this.navigationState = new KernelNavigationController(
+      this.options.canvas,
+      target,
+      this.camera,
+      {
+        ...(callbacks.onActivePick ? { onActivePick: callbacks.onActivePick } : {}),
+        ...(callbacks.onCameraChanged ? { onCameraChanged: callbacks.onCameraChanged } : {}),
+        ...(callbacks.onCursorCoordinate
+          ? { onCursorCoordinate: callbacks.onCursorCoordinate }
+          : {}),
+        onInteractionChanged: (interacting) => {
+          this.navigationInteracting = interacting;
+          callbacks.onInteractionChanged?.(interacting);
+          requestFrame();
+        },
+        requestFrame,
+      },
+    );
+    return this.navigationState;
+  }
+
+  detachNavigation(preserveViewerState = false): void {
+    this.assertAlive();
+    this.navigationState?.dispose(preserveViewerState);
+    this.navigationState = null;
+    this.navigationInteracting = false;
+  }
+
   resize(width: number, height: number, devicePixelRatio = 1): KernelCanvasExtent {
     this.assertReady();
     const extent = this.viewerState.resize(width, height, devicePixelRatio);
-    this.camera.setViewportSize(extent.width, extent.height);
+    if (this.navigationState === null) this.camera.setViewportSize(extent.width, extent.height);
+    else this.navigationState.setViewportSize(extent.width, extent.height);
     this.options.requestFrame?.();
     return extent;
   }
@@ -530,7 +584,8 @@ export class KernelViewerSession {
     const started = performance.now();
     try {
       this.advanceCalibration();
-      const work = kernelStreamingWorkPolicy(this.policyState, interacting);
+      const interactionActive = interacting || this.navigationInteracting;
+      const work = kernelStreamingWorkPolicy(this.policyState, interactionActive);
       const plan = this.viewerState.planStreamingFrame({
         resourceBudget: this.policyState.resources,
         frameBudget: work.frame,
@@ -549,7 +604,7 @@ export class KernelViewerSession {
       }
       const observation = this.viewerState.observeFrameTelemetry({
         cpuMs: performance.now() - started,
-        interacting,
+        interacting: interactionActive,
         uploadedBytes,
       });
       this.qualityState = observation.quality;
@@ -591,6 +646,9 @@ export class KernelViewerSession {
 
   dispose(): void {
     if (this.disposed) return;
+    this.navigationState?.dispose(true);
+    this.navigationState = null;
+    this.navigationInteracting = false;
     this.disposed = true;
     this.recoveryAbort?.abort();
     this.viewerState.detachClipCapCoordinator();
@@ -621,6 +679,7 @@ export class KernelViewerSession {
     const oldStreaming = this.streamingState;
     const abort = new AbortController();
     this.recoveryAbort = abort;
+    this.navigationState?.setEnabled(false);
     oldViewer.detachClipCapCoordinator();
     oldStreaming.dispose();
     this.emit({ type: 'deviceRecoveryStarted', reason });
@@ -673,6 +732,7 @@ export class KernelViewerSession {
       created.beginHardwareCalibration();
       this.recoveryReason = null;
       oldViewer.dispose();
+      this.navigationState?.setEnabled(true);
       this.emit({ type: 'hardwarePolicy', policy });
       this.emit({ type: 'deviceRecoveryCompleted' });
       this.options.requestFrame?.();

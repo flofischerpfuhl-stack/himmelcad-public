@@ -1144,7 +1144,15 @@ void test('explicit browser backend selection crosses the versioned wasm boundar
 });
 
 void test('framework-free session owns create, frame, device rebuild and dispose', async () => {
-  const canvas = { width: 1, height: 1, clientWidth: 640, clientHeight: 480 } as HTMLCanvasElement;
+  const canvas = {
+    width: 1,
+    height: 1,
+    clientWidth: 640,
+    clientHeight: 480,
+    tabIndex: -1,
+    addEventListener(): void {},
+    removeEventListener(): void {},
+  } as unknown as HTMLCanvasElement;
   const bindings: WasmViewerBinding[] = [];
   const replayCalls: string[] = [];
   let disposedDecoders = 0;
@@ -1210,6 +1218,8 @@ void test('framework-free session owns create, frame, device rebuild and dispose
   });
   const events: string[] = [];
   session.subscribe((event) => events.push(event.type));
+  const navigation = session.attachNavigation();
+  navigation.setLockedTopDown(true, 0);
   session.registerImageResource('image', 1, 1, new Uint8Array([1, 2, 3, 4]));
   session.registerDepthResource('depth', 1, 1, new Float32Array([12.5]));
   session.registerRasterBinaryResource('validity', new Uint8Array([1]));
@@ -1251,6 +1261,7 @@ void test('framework-free session owns create, frame, device rebuild and dispose
   await session.settled();
   assert.equal(bindings.length, 2);
   assert.equal(session.diagnostics().deviceGeneration, 2);
+  navigation.setLockedTopDown(false, 0);
   assert.deepEqual(replayCalls.slice(6), [
     '2:image',
     '2:depth',
@@ -1266,6 +1277,7 @@ void test('framework-free session owns create, frame, device rebuild and dispose
   assert.equal(disposedDecoders, 2);
   assert(events.includes('disposed'));
   assert.throws(() => session.diagnostics(), /disposed/);
+  assert.throws(() => navigation.setLockedTopDown(true, 0), /disposed/);
 });
 
 void test('automatic backend routes a browser fallback adapter to WebGL2', async () => {

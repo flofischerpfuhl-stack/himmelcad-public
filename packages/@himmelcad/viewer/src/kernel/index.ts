@@ -23,6 +23,11 @@ export type {
   KernelLocalSectionDepth,
   KernelLocalSectionView,
 } from './KernelLocalSectionView.js';
+export { KernelNavigationController } from './KernelNavigationController.js';
+export type {
+  KernelNavigationCallbacks,
+  KernelNavigationTarget,
+} from './KernelNavigationController.js';
 export type {
   KernelLoadControl,
   KernelLoadOperationOptions,

@@ -1464,10 +1464,10 @@ suite now passes 79/79 tests.
 ### V5 stable package surface checkpoint
 
 The `@himmelcad/viewer/kernel` entry now uses an explicit, reviewed export list
-instead of forwarding every implementation module. Its complete 199-symbol
+instead of forwarding every implementation module. Its complete 202-symbol
 TypeScript surface is frozen by name and value/type classification; the gate
 also compiles that entry under the repository's strict, unchecked-index and
-exact-optional rules. A separate runtime assertion permits exactly nine facade
+exact-optional rules. A separate runtime assertion permits exactly ten facade
 values. The raw `WgpuKernelViewer`, streaming driver, decode pool, quality
 governor and provider admission functions therefore cannot become accidental
 product dependencies.
@@ -1501,6 +1501,23 @@ definitions, canonical entity and section. This exposed and closed a real gap:
 manual exact sections are now retained as presentation replay state and removed
 from that state atomically with `removeSection`. The package remains green at
 81/81 tests.
+
+### V5 stable navigation checkpoint
+
+`KernelViewerSession.attachNavigation()` now owns the DOM input adapter through
+a narrow camera, pick, raster-analysis and scoped-clip target. That target has
+no render, resource or residency operations and therefore does not reopen the
+raw-viewer escape hatch. Pointer, wheel and camera-transition activity feeds
+the session's interaction-aware global streaming policy, while callbacks remain
+observational product hooks.
+
+The controller instance is stable across GPU replacement. Device recovery
+suspends new DOM input and pending transitions, replays onto the replacement
+viewer, then uploads the controller's authoritative f64 camera when it is
+reactivated. The lifecycle test enters locked top-down before injected device
+loss, uses the same handle to return to 3D afterwards, and proves session
+disposal invalidates it. The exact package gate now covers 202 symbols and ten
+runtime facade values; all 81 viewer tests pass.
 
 ## Candidate external data
 

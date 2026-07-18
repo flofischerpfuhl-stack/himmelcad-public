@@ -514,9 +514,9 @@ einen eigenen Geometriepfad benötigt.
   Progress-/Error-Events. Fehler in Hostcallbacks können den Load nicht
   beeinflussen. Die Viewer-Suite steht bei 79/79.
 - Der stabile Kernel-Entry exportiert nicht länger per Wildcard sämtliche
-  Runtime-Implementierungen. Seine 199 sichtbaren TypeScript-Symbole sind
+  Runtime-Implementierungen. Seine 202 sichtbaren TypeScript-Symbole sind
   inklusive Wert-/Typ-Klassifikation durch einen exakten Hash-Gate eingefroren;
-  zur Laufzeit bleiben genau neun bewusst freigegebene Fassadenwerte sichtbar.
+  zur Laufzeit bleiben genau zehn bewusst freigegebene Fassadenwerte sichtbar.
   Insbesondere sind der rohe `WgpuKernelViewer`, Streaming-Driver, Worker-Pool
   und Provider-Admission-Funktionen keine Package-Escape-Hatches mehr.
   `KernelViewerScene` und `KernelViewerSession` halten Viewer und Driver nur
@@ -534,6 +534,15 @@ einen eigenen Geometriepfad benötigt.
   Definition → kanonische Entity → Schnitt als Wiederherstellungsreihenfolge;
   manuelle Schnitte werden nun wie anderer View-State deterministisch replayed.
   Die Viewer-Suite bleibt bei 81/81.
+- `KernelViewerSession.attachNavigation()` bindet den vorhandenen CAD-
+  Navigationscontroller über einen schmalen Kamera/Pick/Clip-Vertrag an, ohne
+  Viewer oder Residency öffentlich zu machen. Die Session führt Pointer-,
+  Wheel- und Transition-Interaktion in die globale Streamingpolicy ein. Bei
+  Device-Recovery wird dieselbe Controller-Instanz suspendiert, nach dem
+  atomischen Viewer-Tausch mit ihrer f64-Kamera reaktiviert und erst bei
+  Session-Dispose endgültig freigegeben. Der Lifecycle-Test bedient denselben
+  Navigation-Handle vor und nach Device-Rebuild und belegt seine Invalidierung
+  nach Dispose. Die Viewer-Suite bleibt bei 81/81.
 
 ## Zeitmessung und Fortschrittsprotokoll
 

@@ -7,11 +7,31 @@ import type {
 import { localSectionClipVolume } from './KernelLocalSectionView.js';
 import type { KernelLocalSectionView } from './KernelLocalSectionView.js';
 import type {
+  KernelClipVolume,
   KernelPickCandidate,
+  KernelPickResult,
   KernelRasterAnalysisView,
+  KernelWorldCamera,
   KernelWorldPoint,
 } from './WgpuKernelViewer.js';
-import { WgpuKernelViewer } from './WgpuKernelViewer.js';
+
+/** Narrow navigation-only target; it exposes no render or residency owner. */
+export interface KernelNavigationTarget {
+  setScopedClipVolume(scopeId: string, volume: KernelClipVolume | null): void;
+  setRasterAnalysisView(entityId: string): KernelRasterAnalysisView;
+  clearRasterAnalysisView(): boolean;
+  setWorldCamera(
+    camera: KernelWorldCamera,
+    floatingOrigin: readonly [number, number, number],
+  ): void;
+  setCameraTransition(
+    from: KernelWorldCamera,
+    to: KernelWorldCamera,
+    progress: number,
+    floatingOrigin: readonly [number, number, number],
+  ): void;
+  pick(x: number, y: number, radius?: number): Promise<KernelPickResult>;
+}
 
 export interface KernelNavigationCallbacks {
   readonly onActivePick?: (
@@ -54,6 +74,7 @@ export class KernelNavigationController {
   private cursorCoordinate: KernelPickCandidate['worldPosition'] | null = null;
   private cursorPresentationPosition: KernelWorldPoint | null = null;
   private transitionGeneration = 0;
+  private enabled = true;
   private pointerInteracting = false;
   private wheelInteracting = false;
   private transitionInteracting = false;
@@ -63,7 +84,7 @@ export class KernelNavigationController {
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
-    private readonly viewer: WgpuKernelViewer,
+    private readonly viewer: KernelNavigationTarget,
     readonly camera: KernelCameraController,
     private readonly callbacks: KernelNavigationCallbacks = {},
   ) {
@@ -78,6 +99,22 @@ export class KernelNavigationController {
     canvas.addEventListener('auxclick', this.preventMiddleDefault);
     canvas.addEventListener('keydown', this.onKeyDown);
     this.uploadCamera();
+  }
+
+  /** Suspends DOM input during device replacement while preserving the stable controller. */
+  setEnabled(enabled: boolean): void {
+    if (this.disposed || this.enabled === enabled) return;
+    this.enabled = enabled;
+    this.transitionGeneration += 1;
+    this.dragMode = null;
+    this.dragPivot = null;
+    this.pointerInteracting = false;
+    this.transitionInteracting = false;
+    if (this.wheelInteractionTimer !== null) clearTimeout(this.wheelInteractionTimer);
+    this.wheelInteractionTimer = null;
+    this.wheelInteracting = false;
+    this.reportInteraction();
+    if (enabled) this.uploadCamera();
   }
 
   setViewportSize(width: number, height: number): void {
@@ -149,10 +186,7 @@ export class KernelNavigationController {
   }
 
   /** Opens one isolated kernel-owned panorama or oriented-image view. */
-  setRasterAnalysisView(
-    entityId: string,
-    durationMilliseconds = 180,
-  ): KernelRasterAnalysisView {
+  setRasterAnalysisView(entityId: string, durationMilliseconds = 180): KernelRasterAnalysisView {
     this.assertAlive();
     this.clearLocalSectionDepth();
     const view = this.viewer.setRasterAnalysisView(entityId);
@@ -259,7 +293,7 @@ export class KernelNavigationController {
   }
 
   private readonly onPointerDown = (event: PointerEvent): void => {
-    if (this.disposed) return;
+    if (this.disposed || this.enabled === false) return;
     this.canvas.focus({ preventScroll: true });
     this.dragMode = event.button === 0 && !this.camera.isOrthographicView() ? 'orbit' : 'pan';
     if (event.button !== 0 && event.button !== 1 && event.button !== 2) {
@@ -278,7 +312,7 @@ export class KernelNavigationController {
   };
 
   private readonly onPointerMove = (event: PointerEvent): void => {
-    if (this.disposed) return;
+    if (this.disposed || this.enabled === false) return;
     this.queuePick(event.clientX, event.clientY);
     if (!this.dragMode) return;
     const deltaX = clamp(event.clientX - this.lastClientX, -480, 480);
@@ -301,7 +335,7 @@ export class KernelNavigationController {
   };
 
   private readonly onPointerUp = (event: PointerEvent): void => {
-    if (this.disposed) return;
+    if (this.disposed || this.enabled === false) return;
     this.dragMode = null;
     this.dragPivot = null;
     this.pointerInteracting = false;
@@ -313,7 +347,7 @@ export class KernelNavigationController {
   };
 
   private readonly onWheel = (event: WheelEvent): void => {
-    if (this.disposed) return;
+    if (this.disposed || this.enabled === false) return;
     event.preventDefault();
     this.wheelInteracting = true;
     this.reportInteraction();
@@ -333,6 +367,7 @@ export class KernelNavigationController {
   };
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (this.disposed || this.enabled === false) return;
     if (event.key !== 'Tab' || this.candidates.length === 0) return;
     event.preventDefault();
     this.cycleCandidate(event.shiftKey ? -1 : 1);
@@ -344,6 +379,7 @@ export class KernelNavigationController {
   };
 
   private queuePick(clientX: number, clientY: number): void {
+    if (this.enabled === false) return;
     this.latestPickPosition = this.physicalPointer(clientX, clientY);
     if (this.pickPending) {
       this.pickAgain = true;
@@ -357,9 +393,14 @@ export class KernelNavigationController {
     const position = this.latestPickPosition;
     this.pickAgain = false;
     try {
-      if (!this.disposed && position) {
+      if (!this.disposed && this.navigationEnabled() && position) {
         const result = await this.viewer.pick(position[0], position[1], 4);
-        if (!this.disposed && !result.stale && position === this.latestPickPosition) {
+        if (
+          !this.disposed &&
+          this.navigationEnabled() &&
+          !result.stale &&
+          position === this.latestPickPosition
+        ) {
           this.candidates = result.candidates;
           const nearestIndex = nearestCandidateIndex(this.candidates);
           if (nearestIndex >= 0) {
@@ -377,7 +418,7 @@ export class KernelNavigationController {
       }
     } finally {
       this.pickPending = false;
-      if (!this.disposed && this.pickAgain) {
+      if (!this.disposed && this.navigationEnabled() && this.pickAgain) {
         this.pickPending = true;
         requestAnimationFrame(() => void this.executePick());
       }
@@ -438,6 +479,11 @@ export class KernelNavigationController {
 
   private assertAlive(): void {
     if (this.disposed) throw new Error('KernelNavigationController has been disposed');
+    if (this.enabled === false) throw new Error('KernelNavigationController is suspended');
+  }
+
+  private navigationEnabled(): boolean {
+    return this.enabled !== false;
   }
 }
 
