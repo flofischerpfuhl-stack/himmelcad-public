@@ -1337,7 +1337,11 @@ export interface KernelStreamingPublish extends KernelEntityMutation {
 export type KernelFrameOutcome =
   | { readonly status: 'presented'; readonly reconfigured: boolean }
   | { readonly status: 'skipped'; readonly reason: string }
-  | { readonly status: 'recreateSurface' };
+  | { readonly status: 'recreateSurface' }
+  | {
+      readonly status: 'recreateDevice';
+      readonly reason: 'deviceLost' | 'outOfMemory';
+    };
 
 /** Physical canvas extent selected after DPR and device-limit resolution. */
 export interface KernelCanvasExtent {
@@ -3117,6 +3121,12 @@ function parseFrameOutcome(json: string): KernelFrameOutcome {
     return { status: 'skipped', reason: value.reason };
   }
   if (value.status === 'recreateSurface') return { status: 'recreateSurface' };
+  if (
+    value.status === 'recreateDevice' &&
+    (value.reason === 'deviceLost' || value.reason === 'outOfMemory')
+  ) {
+    return { status: 'recreateDevice', reason: value.reason };
+  }
   throw new TypeError('kernel frame outcome contains an unknown status');
 }
 

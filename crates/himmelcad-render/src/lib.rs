@@ -106,8 +106,8 @@ pub use gpu_resource_identity::{
     GpuTextureUploadFormat, GpuTextureUploadLayout, GpuUploadedTextureIdentityInput,
 };
 pub use gpu_surface::{
-    GpuSurfaceError, GpuSurfaceHost, SurfaceFrame, SurfaceFrameOutcome, SurfacePickRequest,
-    SurfaceSkipReason,
+    GpuRecoveryReason, GpuSurfaceError, GpuSurfaceHost, SurfaceFrame, SurfaceFrameOutcome,
+    SurfacePickRequest, SurfaceSkipReason,
 };
 pub use gpu_texture_cache::{
     GpuTextureResourceCache, GpuTextureResourceCacheError, GpuTextureResourceCacheStats,

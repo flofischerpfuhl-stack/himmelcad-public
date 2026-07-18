@@ -2,6 +2,7 @@
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::sync::{Arc, Mutex};
 
 use crate::gpu_frame_timing::GpuFrameTimestampRecorder;
 use crate::{
@@ -58,6 +59,15 @@ pub enum SurfaceSkipReason {
     Reconfigured,
 }
 
+/// Device-owned state failure that requires rebuilding the complete GPU host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpuRecoveryReason {
+    /// The browser, driver or operating system invalidated the logical device.
+    DeviceLost,
+    /// A GPU allocation exhausted the device memory available to this process.
+    OutOfMemory,
+}
+
 /// Result of one surface render attempt.
 #[derive(Debug)]
 pub enum SurfaceFrameOutcome {
@@ -75,6 +85,11 @@ pub enum SurfaceFrameOutcome {
     Skipped(SurfaceSkipReason),
     /// The platform surface itself was lost and must be recreated by the host.
     RecreateSurface,
+    /// The logical device and every resource created from it must be rebuilt.
+    RecreateDevice {
+        /// Root cause reported by the device callback or an allocation scope.
+        reason: GpuRecoveryReason,
+    },
 }
 
 /// Adapter, configuration or frame failure that cannot be recovered silently.
@@ -88,6 +103,8 @@ pub enum GpuSurfaceError {
     IncompatibleSurface,
     /// Surface acquisition raised a validation error.
     SurfaceValidation,
+    /// An uncaptured validation or internal device error indicates a renderer bug.
+    DeviceError(String),
     /// Frame-state validation failed before submission.
     Frame(GpuFrameError),
     /// Requested pick copy was invalid.
@@ -109,9 +126,38 @@ impl Display for GpuSurfaceError {
             Self::SurfaceValidation => {
                 formatter.write_str("surface texture acquisition failed validation")
             }
+            Self::DeviceError(message) => write!(formatter, "GPU device failure: {message}"),
             Self::Frame(error) => Display::fmt(error, formatter),
             Self::Pick(error) => Display::fmt(error, formatter),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GpuDeviceFault {
+    Recoverable(GpuRecoveryReason),
+    Fatal(String),
+}
+
+#[derive(Debug, Clone, Default)]
+struct GpuDeviceFaultState(Arc<Mutex<Option<GpuDeviceFault>>>);
+
+impl GpuDeviceFaultState {
+    fn record(&self, fault: GpuDeviceFault) {
+        let mut current = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if current.is_none() {
+            *current = Some(fault);
+        }
+    }
+
+    fn current(&self) -> Option<GpuDeviceFault> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 }
 
@@ -147,6 +193,7 @@ pub struct GpuSurfaceHost<'window> {
     targets: GpuFrameTargets,
     renderer: GpuSharedRenderer,
     capabilities: DeviceCapabilities,
+    device_fault: GpuDeviceFaultState,
     suspended: bool,
     sorted_alpha_cursor: usize,
 }
@@ -197,6 +244,26 @@ impl<'window> GpuSurfaceHost<'window> {
             })
             .await
             .map_err(|error| GpuSurfaceError::DeviceUnavailable(error.to_string()))?;
+        let device_fault = GpuDeviceFaultState::default();
+        let lost_state = device_fault.clone();
+        device.set_device_lost_callback(move |reason, message| {
+            if reason != wgpu::DeviceLostReason::Destroyed {
+                let _ = message;
+                lost_state.record(GpuDeviceFault::Recoverable(GpuRecoveryReason::DeviceLost));
+            }
+        });
+        let error_state = device_fault.clone();
+        device.on_uncaptured_error(Arc::new(move |error| match error {
+            wgpu::Error::OutOfMemory { .. } => {
+                error_state.record(GpuDeviceFault::Recoverable(GpuRecoveryReason::OutOfMemory))
+            }
+            wgpu::Error::Validation { description, .. } => {
+                error_state.record(GpuDeviceFault::Fatal(format!("validation: {description}")));
+            }
+            wgpu::Error::Internal { description, .. } => {
+                error_state.record(GpuDeviceFault::Fatal(format!("internal: {description}")));
+            }
+        }));
         bevy_basisu_loader_sys::basisu_init().await;
         let physical_width = width.max(1);
         let physical_height = height.max(1);
@@ -250,6 +317,7 @@ impl<'window> GpuSurfaceHost<'window> {
             targets,
             renderer,
             capabilities,
+            device_fault,
             suspended: width == 0 || height == 0,
             sorted_alpha_cursor: 0,
         })
@@ -430,7 +498,15 @@ impl<'window> GpuSurfaceHost<'window> {
         &mut self,
         frame: SurfaceFrame<'_>,
     ) -> Result<SurfaceFrameOutcome, GpuSurfaceError> {
-        self.poll_frame_timing();
+        self.poll_device();
+        if let Some(fault) = self.device_fault.current() {
+            return match fault {
+                GpuDeviceFault::Recoverable(reason) => {
+                    Ok(SurfaceFrameOutcome::RecreateDevice { reason })
+                }
+                GpuDeviceFault::Fatal(message) => Err(GpuSurfaceError::DeviceError(message)),
+            };
+        }
         if self.suspended {
             return Ok(SurfaceFrameOutcome::Skipped(SurfaceSkipReason::Suspended));
         }
@@ -577,14 +653,21 @@ impl<'window> GpuSurfaceHost<'window> {
         Ok(())
     }
 
-    fn poll_frame_timing(&mut self) {
-        if self.frame_timing.is_none() {
-            return;
-        }
+    /// Marks a scoped allocation failure for recovery on the next frame.
+    pub fn require_device_recovery(&self, reason: GpuRecoveryReason) {
+        self.device_fault
+            .record(GpuDeviceFault::Recoverable(reason));
+    }
+
+    fn poll_device(&mut self) {
         let _ignored_device_loss = self.device.poll(wgpu::PollType::Poll);
         if let Some(timing) = self.frame_timing.as_mut() {
             timing.collect_completed();
         }
+    }
+
+    fn poll_frame_timing(&mut self) {
+        self.poll_device();
     }
 }
 
@@ -789,7 +872,20 @@ fn choose_alpha_mode(modes: &[wgpu::CompositeAlphaMode]) -> wgpu::CompositeAlpha
 mod tests {
     use super::{
         choose_alpha_mode, choose_present_mode, choose_surface_format, reliable_timestamp_queries,
+        GpuDeviceFault, GpuDeviceFaultState, GpuRecoveryReason,
     };
+
+    #[test]
+    fn device_fault_is_latched_until_the_host_is_rebuilt() {
+        let state = GpuDeviceFaultState::default();
+        state.record(GpuDeviceFault::Recoverable(GpuRecoveryReason::OutOfMemory));
+        state.record(GpuDeviceFault::Recoverable(GpuRecoveryReason::DeviceLost));
+
+        assert_eq!(
+            state.current(),
+            Some(GpuDeviceFault::Recoverable(GpuRecoveryReason::OutOfMemory))
+        );
+    }
 
     #[test]
     fn software_adapter_does_not_claim_reliable_timestamp_readback() {

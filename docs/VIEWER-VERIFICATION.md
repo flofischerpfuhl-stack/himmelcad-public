@@ -1282,6 +1282,28 @@ device loss or out-of-memory reset necessarily invalidates device-owned
 buffers; deterministic canonical/streaming replay onto a new kernel remains a
 separate active V4 requirement rather than being mislabeled as covered here.
 
+### V4 device-fault contract checkpoint
+
+Device-owned failure is now distinct from platform-surface loss throughout the
+Rust, WASM and TypeScript boundary. Every device is polled even when timestamp
+queries are unavailable. The wgpu device-lost callback latches an unexpected
+loss, while the uncaptured-error handler maps only out-of-memory to recovery;
+validation and internal errors remain fatal diagnostics. A pick allocation OOM
+captured by its explicit error scope latches the same recovery state. Subsequent
+frames report `recreateDevice` with `deviceLost` or `outOfMemory`, rather than
+entering a surface-rebind loop or continuing to use invalid GPU resources.
+
+Five focused Render-Core surface/device tests pass, the wasm32 viewer target
+and browser TypeScript check are green, and the package boundary accepts both
+machine-readable recovery reasons. This checkpoint establishes detection and
+transport only. Creation of a replacement kernel plus deterministic canonical
+definition and streaming replay remains the active V4 slice.
+
+Physical Windows, macOS and Apple-Silicon measurements cannot be produced on
+the currently available host. Per project direction they are carried as an
+explicit V6/release-conformance risk rather than blocking the transition to V5;
+portable engine invariants and both browser backends remain mandatory.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

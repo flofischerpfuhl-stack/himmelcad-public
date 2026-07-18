@@ -376,6 +376,18 @@ funktioniert.
   Generation, Proxy-/Pick-Identität und Decode-Zähler. Device-Loss und OOM
   erfordern dagegen weiterhin einen neuen Device-/Replay-Pfad und bleiben der
   nächste aktive V4-Slice.
+- Device-Loss und OOM besitzen nun einen vom Surface-Loss getrennten unteren
+  Lifecycle-Vertrag. Der wgpu-Host pollt jedes Gerät unabhängig von optionalen
+  Timestamp-Queries, latched unerwarteten Device-Loss und unscoped OOM und gibt
+  wiederholbar `recreateDevice` mit maschinenlesbarem Grund aus. Eine im
+  Pick-Error-Scope erkannte OOM setzt denselben Zustand. Validation/Internal
+  bleiben absichtlich harte Rendererfehler. Der deterministische Neuaufbau und
+  Definition-/Streaming-Replay auf das Ersatzgerät ist weiterhin die aktive
+  Folgescheibe; dieser Zwischenstand behauptet noch keine vollständige Recovery.
+- Physische Windows-, macOS- und Apple-Silicon-Messläufe werden mangels lokal
+  verfügbarer Hardware nicht als V4-Blocker behandelt. Alle portablen Engine-
+  und Browser-Gates bleiben verbindlich; die fehlenden Hostmessungen werden als
+  explizites V6-/Release-Conformance-Risiko weitergeführt, ohne V5 aufzuhalten.
 
 ## V5 – Stabile Viewer-Fassade und App-Ready-Gate
 

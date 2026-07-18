@@ -99,7 +99,7 @@ use himmelcad_render::{
     GpuCalibrationSession, GpuCanonicalMaterial, GpuCanonicalTextureBinding, GpuDrawBatch,
     GpuHatchPattern, GpuHatchPatternData, GpuHatchResource, GpuIndexedMeshGeometry,
     GpuLineTypePattern, GpuLineTypeResource, GpuModelResourceIdentity, GpuPresentationStyle,
-    GpuSurfaceHost, GpuTextureAddressMode, GpuTextureColorSpace, GpuTextureData,
+    GpuRecoveryReason, GpuSurfaceHost, GpuTextureAddressMode, GpuTextureColorSpace, GpuTextureData,
     GpuTextureFilterMode, GpuTextureMipChainData, GpuTextureResource, GpuTextureResourceCache,
     GpuTextureResourceIdentity, GpuTextureResourceStage, GpuTextureSamplerIdentity,
     GpuTextureTransform, HardwareDeploymentProfile, HardwareInventory, HardwarePolicyResolver,
@@ -5214,6 +5214,8 @@ impl WasmViewer {
             )));
         }
         if let Some(error) = out_of_memory.await {
+            self.host
+                .require_device_recovery(GpuRecoveryReason::OutOfMemory);
             return Err(JsValue::from_str(&format!(
                 "GPU pick ran out of memory: {error}"
             )));
@@ -7983,6 +7985,13 @@ fn frame_outcome_json(outcome: &SurfaceFrameOutcome) -> serde_json::Value {
         SurfaceFrameOutcome::RecreateSurface => {
             serde_json::json!({ "status": "recreateSurface" })
         }
+        SurfaceFrameOutcome::RecreateDevice { reason } => serde_json::json!({
+            "status": "recreateDevice",
+            "reason": match reason {
+                GpuRecoveryReason::DeviceLost => "deviceLost",
+                GpuRecoveryReason::OutOfMemory => "outOfMemory",
+            }
+        }),
     }
 }
 

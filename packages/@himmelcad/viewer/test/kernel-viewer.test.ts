@@ -460,6 +460,10 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
   });
   assert.deepEqual(calls.at(-1), ['origin', 6_378_137.000_001, 5_400_000.000_002, 712.003]);
   assert.deepEqual(viewer.render(), { status: 'presented', reconfigured: false });
+  binding.render = () => JSON.stringify({ status: 'recreateDevice', reason: 'outOfMemory' });
+  assert.deepEqual(viewer.render(), { status: 'recreateDevice', reason: 'outOfMemory' });
+  binding.render = () => JSON.stringify({ status: 'recreateDevice', reason: 'deviceLost' });
+  assert.deepEqual(viewer.render(), { status: 'recreateDevice', reason: 'deviceLost' });
   viewer.recoverSurface();
   assert.deepEqual(calls.at(-1), ['recoverSurface']);
   const hardwareInventory = {
