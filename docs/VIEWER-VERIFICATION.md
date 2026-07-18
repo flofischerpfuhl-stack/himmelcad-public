@@ -951,7 +951,10 @@ The native elevation-raster pipeline now automatically publishes
 hashes every existing 512x512 preview PNG and exact Float32 height tile without
 decoding the complete raster, retains byte order, NoData, pixel-center mapping,
 GSD and topology, then emits a coarse-to-fine REPLACE hierarchy accepted by the
-render core's real `PreparedHierarchySource`. The product directory becomes
+render core's real `PreparedHierarchySource`. Producers now serialize through
+the same public `PreparedHierarchyManifest` type and consumer validation used
+by the render core; importer and sidecar writers therefore cannot maintain a
+parallel manifest schema. The product directory becomes
 visible only after all references and the manifest are complete. Focused tests
 cover render-core parsing, exact mapping, hash-bound band references,
 cancellation, invalid band length and the fake offline GDAL pipeline's complete

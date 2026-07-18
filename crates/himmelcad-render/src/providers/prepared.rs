@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{BoundingVolume, DatasetId, HierarchySource, TileDescriptor, TileId, WorldTransform};
@@ -18,12 +18,33 @@ pub enum PreparedHierarchyError {
     InvalidField(&'static str),
 }
 
-#[derive(Debug, Deserialize)]
+/// Provider-neutral serialized root for one prepared tile hierarchy.
+///
+/// Producers use this exact type as well as consumers, preventing manifest
+/// writers in importers and native preparation workers from drifting away
+/// from the render-core validation contract.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Manifest {
-    schema_version: u32,
-    roots: Vec<TileId>,
-    tiles: Vec<TileDescriptor>,
+pub struct PreparedHierarchyManifest {
+    /// Exact prepared-hierarchy schema version.
+    pub schema_version: u32,
+    /// Complete set of roots visible without loading another hierarchy page.
+    pub roots: Vec<TileId>,
+    /// Complete descriptors embedded in this root manifest.
+    pub tiles: Vec<TileDescriptor>,
+}
+
+impl PreparedHierarchyManifest {
+    /// Serializes only after the consumer parser accepts the exact result.
+    pub fn to_validated_json(&self) -> Result<Vec<u8>, PreparedHierarchyError> {
+        let bytes = serde_json::to_vec(self)?;
+        PreparedHierarchySource::from_json(
+            DatasetId("prepared-manifest-validation".to_owned()),
+            "hcad://prepared/manifest.json",
+            &bytes,
+        )?;
+        Ok(bytes)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,7 +72,7 @@ impl PreparedHierarchySource {
         manifest_uri: &str,
         json: &[u8],
     ) -> Result<Self, PreparedHierarchyError> {
-        let mut manifest: Manifest = serde_json::from_slice(json)?;
+        let mut manifest: PreparedHierarchyManifest = serde_json::from_slice(json)?;
         if manifest.schema_version != 1 {
             return Err(PreparedHierarchyError::InvalidField("schemaVersion"));
         }

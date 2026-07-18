@@ -61,7 +61,7 @@ pub use potree::{
     DecodedPotreePoints, PackedCivilPointAttributes, PotreeAttributeLayout, PotreeAttributeType,
     PotreeDecodeError, PotreeHierarchySource, PotreePointLayout, PotreePointMetadata,
 };
-pub use prepared::{PreparedHierarchyError, PreparedHierarchySource};
+pub use prepared::{PreparedHierarchyError, PreparedHierarchyManifest, PreparedHierarchySource};
 pub use raster_projection::{project_raster_sample, RasterProjectionError};
 pub use shared_asset_cache::{AssetContentIdentity, PreparedAssetBundle, SharedAssetBlobCache};
 pub use tiles3d::{ThreeDTilesHierarchySource, ThreeDTilesMetadataCatalog};

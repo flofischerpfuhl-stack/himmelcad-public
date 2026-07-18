@@ -9,6 +9,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use himmelcad_core::entity_model::{GeometryResource, RasterCellDiagonal};
 use himmelcad_core::hash::ObjectHash;
 use himmelcad_core::photolab_jobs::CancellationToken;
+use himmelcad_render::{
+    BoundingVolume, ContentKind, ContentReference, PreparedHierarchyManifest, RefinementMode,
+    TileDescriptor, TileId, WorldAabb, WorldTransform, WorldVec3,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -64,41 +68,9 @@ pub enum PreparedElevationHierarchyError {
     /// The deterministic manifest could not be serialized.
     #[error(transparent)]
     Json(#[from] serde_json::Error),
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Manifest {
-    schema_version: u32,
-    roots: Vec<String>,
-    tiles: Vec<ManifestTile>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ManifestTile {
-    id: String,
-    parent: Option<String>,
-    children: Vec<String>,
-    bounds: serde_json::Value,
-    content_transform: [f64; 16],
-    geometric_error: f64,
-    refinement: &'static str,
-    contents: Vec<ManifestContent>,
-    child_page: Option<serde_json::Value>,
-    provider_metadata: serde_json::Value,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ManifestContent {
-    kind: &'static str,
-    uri: String,
-    byte_offset: Option<u64>,
-    byte_length: Option<u64>,
-    primitive_count: Option<u64>,
-    content_hash: Option<String>,
-    decoder_parameters: serde_json::Value,
+    /// The shared render-core rejected the manifest before publication.
+    #[error(transparent)]
+    Manifest(#[from] himmelcad_render::PreparedHierarchyError),
 }
 
 #[derive(Debug)]
@@ -181,36 +153,40 @@ pub fn publish_prepared_elevation_hierarchy(
                 let color_uri = format!("../view/preview/L{:02}/{column}/{row}.png", level.level);
                 let elevation_uri =
                     format!("../../../height/L{:02}/{column}/{row}.f32", level.level);
-                tiles.push(ManifestTile {
-                    id: id.clone(),
-                    parent,
-                    children: children.remove(&id).unwrap_or_default(),
-                    bounds: serde_json::json!({
-                        "kind": "axisAlignedBox",
-                        "bounds": {
-                            "min": {
-                                "x": tile_bounds[0],
-                                "y": tile_bounds[1],
-                                "z": minimum_height,
+                tiles.push(TileDescriptor {
+                    id: TileId(id.clone()),
+                    parent: parent.map(TileId),
+                    children: children
+                        .remove(&id)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(TileId)
+                        .collect(),
+                    bounds: BoundingVolume::AxisAlignedBox {
+                        bounds: WorldAabb {
+                            min: WorldVec3 {
+                                x: tile_bounds[0],
+                                y: tile_bounds[1],
+                                z: minimum_height,
                             },
-                            "max": {
-                                "x": tile_bounds[2],
-                                "y": tile_bounds[3],
-                                "z": maximum_height,
+                            max: WorldVec3 {
+                                x: tile_bounds[2],
+                                y: tile_bounds[3],
+                                z: maximum_height,
                             },
                         },
-                    }),
-                    content_transform: identity_transform(),
+                    },
+                    content_transform: WorldTransform::IDENTITY,
                     geometric_error: level.gsd,
-                    refinement: "replace",
-                    contents: vec![ManifestContent {
-                        kind: "raster",
+                    refinement: RefinementMode::Replace,
+                    contents: vec![ContentReference {
+                        kind: ContentKind::Raster,
                         uri: color_uri,
                         byte_offset: None,
                         byte_length: None,
                         primitive_count: Some(u64::from(TILE_SIZE) * u64::from(TILE_SIZE)),
                         content_hash: Some(files.color_hash),
-                        decoder_parameters: serde_json::json!({
+                        decoder_parameters: Some(serde_json::json!({
                             "schemaVersion": 1,
                             "width": TILE_SIZE,
                             "height": TILE_SIZE,
@@ -239,16 +215,16 @@ pub fn publish_prepared_elevation_hierarchy(
                             "validityReference": null,
                             "confidenceReference": null,
                             "triangleMaskReference": null,
-                        }),
+                        })),
                     }],
                     child_page: None,
-                    provider_metadata: serde_json::json!({
+                    provider_metadata: Some(serde_json::json!({
                         "schemaId": "hcad.provider.raster-pyramid-tile@1",
                         "level": level.level,
                         "column": column,
                         "row": row,
                         "gsd": level.gsd,
-                    }),
+                    })),
                 });
             }
         }
@@ -259,11 +235,12 @@ pub fn publish_prepared_elevation_hierarchy(
         ));
     }
     check_cancelled(cancellation)?;
-    let bytes = serde_json::to_vec(&Manifest {
+    let bytes = PreparedHierarchyManifest {
         schema_version: 1,
-        roots,
+        roots: roots.into_iter().map(TileId).collect(),
         tiles,
-    })?;
+    }
+    .to_validated_json()?;
     let relative_path = PathBuf::from("viewer/manifest.json");
     let destination = product_root.join(&relative_path);
     publish_bytes_atomically(&destination, &bytes)?;
@@ -512,12 +489,6 @@ fn tile_bounds(
         maximum_north - span,
         minimum_east + span,
         maximum_north,
-    ]
-}
-
-const fn identity_transform() -> [f64; 16] {
-    [
-        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
     ]
 }
 
