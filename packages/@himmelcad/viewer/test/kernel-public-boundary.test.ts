@@ -137,6 +137,21 @@ void test('kernel entry is directly consumable without internal escape hatches',
   assert.equal(noInternalEscapeHatches, true);
 });
 
+void test('React viewport is a thin session adapter without engine ownership', async () => {
+  const source = await readFile(path.join(packageRoot, 'src/kernel/KernelViewport.tsx'), 'utf8');
+  assert.match(source, /KernelViewerSession\.create/);
+  for (const forbidden of [
+    'WgpuKernelViewer.create',
+    'new KernelStreamingDriver',
+    'new KernelDecodeWorkerPool',
+    'readonly viewer:',
+    'readonly streaming:',
+  ]) {
+    assert.equal(source.includes(forbidden), false, `React adapter owns ${forbidden}`);
+  }
+
+});
+
 void test('kernel public entry has no React, Three, Electron or product dependency', async () => {
   const entry = path.join(packageRoot, 'src/kernel/index.ts');
   const visited = new Set<string>();

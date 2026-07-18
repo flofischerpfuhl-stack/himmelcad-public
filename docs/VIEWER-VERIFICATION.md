@@ -1519,6 +1519,22 @@ loss, uses the same handle to return to 3D afterwards, and proves session
 disposal invalidates it. The exact package gate now covers 202 symbols and ten
 runtime facade values; all 81 viewer tests pass.
 
+### V5 thin React adapter checkpoint
+
+`KernelViewport` no longer creates a raw viewer, streaming driver, decode pool,
+hardware governor or device-recovery loop. It is now limited to React effect
+ownership, the canvas, animation-frame scheduling, resize observation and
+translation of session events to optional host callbacks. Its ready handle
+contains the stable session, camera, navigation and scene facades but no raw
+viewer or streaming owner.
+
+The framework-free session now also requests the next frame after surface
+recovery and non-fetch residency actions, so the React adapter does not need to
+inspect a streaming plan. An architecture regression reads the adapter source
+and rejects raw viewer creation, streaming/decode construction and legacy
+handle fields. Viewer package typecheck, the browser-kernel TypeScript contract
+and all 82 package tests pass.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

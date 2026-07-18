@@ -615,6 +615,14 @@ export class KernelViewerSession {
           adjustment: observation.adjustment,
         });
       }
+      if (
+        plan.actions.some(
+          (action) => action.kind !== 'fetchTile' && action.kind !== 'fetchHierarchyPage',
+        ) ||
+        outcome.status === 'recreateSurface'
+      ) {
+        this.options.requestFrame?.();
+      }
       return outcome;
     } catch (error) {
       const typed = this.reportError('frameFailed', error);

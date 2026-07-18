@@ -1,30 +1,27 @@
 import { useEffect, useRef } from 'react';
 
 import styles from './KernelViewport.module.css';
-import { KernelCameraController } from './KernelCameraController.js';
-import {
+import type { KernelCameraController } from './KernelCameraController.js';
+import type {
+  KernelNavigationCallbacks,
   KernelNavigationController,
-  type KernelNavigationCallbacks,
 } from './KernelNavigationController.js';
-import { KernelStreamingDriver } from './KernelStreamingDriver.js';
-import { KernelViewerScene } from './KernelViewerScene.js';
-import { KernelDecodeWorkerPool } from './KernelDecodeWorkerPool.js';
+import type { KernelViewerScene } from './KernelViewerScene.js';
+import { KernelViewerSession, type KernelViewerSessionEvent } from './KernelViewerSession.js';
 import type {
   HimmelcadViewerWasmLoader,
   KernelFrameOutcome,
-  KernelHardwareInventory,
   KernelPickCandidate,
   KernelResolvedHardwarePolicy,
   KernelRuntimeQualityAdjustment,
   KernelRuntimeQualityState,
 } from './WgpuKernelViewer.js';
-import { kernelStreamingWorkPolicy, WgpuKernelViewer } from './WgpuKernelViewer.js';
 
+/** Stable React-host handle; all mutable engine ownership remains in the session. */
 export interface KernelViewportHandle {
-  readonly viewer: WgpuKernelViewer;
+  readonly session: KernelViewerSession;
   readonly camera: KernelCameraController;
   readonly navigation: KernelNavigationController;
-  readonly streaming: KernelStreamingDriver;
   readonly scene: KernelViewerScene;
   readonly hardwarePolicy: KernelResolvedHardwarePolicy;
   readonly runtimeQuality: KernelRuntimeQualityState;
@@ -55,7 +52,7 @@ export interface KernelViewportProps {
   readonly onError?: (error: Error) => void;
 }
 
-/** React host for the shared Rust viewer; it contains no Three.js scene state. */
+/** Thin React lifecycle adapter over the framework-free shared viewer session. */
 export function KernelViewport({
   wasmLoader,
   decodeWasmModuleUrl,
@@ -74,33 +71,16 @@ export function KernelViewport({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const abort = new AbortController();
     let alive = true;
     let animationFrame: number | null = null;
     let resizeObserver: ResizeObserver | null = null;
-    let viewer: WgpuKernelViewer | null = null;
-    let navigation: KernelNavigationController | null = null;
-    let streaming: KernelStreamingDriver | null = null;
-    let scene: KernelViewerScene | null = null;
-    let camera: KernelCameraController | null = null;
-    let hardwarePolicy: KernelResolvedHardwarePolicy | null = null;
-    let runtimeQuality: KernelRuntimeQualityState | null = null;
-    let hardwareInventory: KernelHardwareInventory | null = null;
-    let navigationInteracting = false;
+    let session: KernelViewerSession | null = null;
     let hostInteracting = false;
-    let calibrationActive = false;
-    let calibrationComplete = false;
     let resizeViewport: (() => void) | null = null;
-    let deviceRecovery: Promise<void> | null = null;
-    let deviceRecoveryReason: Extract<
-      KernelFrameOutcome,
-      { readonly status: 'recreateDevice' }
-    >['reason'] | null = null;
-    let recoveryAbort: AbortController | null = null;
-    let recoveryFailures = 0;
-    let recoveryRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
     const fail = (error: unknown): void => {
-      if (!alive) return;
+      if (!alive || abort.signal.aborted) return;
       onError?.(error instanceof Error ? error : new Error(String(error)));
     };
 
@@ -109,268 +89,88 @@ export function KernelViewport({
       animationFrame = requestAnimationFrame(renderFrame);
     };
 
-    const createStreamingDriver = (
-      target: WgpuKernelViewer,
-      policy: KernelResolvedHardwarePolicy,
-      inventory: KernelHardwareInventory,
-    ): KernelStreamingDriver => {
-      const decodePool = new KernelDecodeWorkerPool(
-        decodeWasmModuleUrl,
-        policy.decoderWorkers,
-        undefined,
-        inventory.systemMemoryBytes === null
-          ? 512 * 1024 * 1024
-          : Math.max(192 * 1024 * 1024, Math.floor(inventory.systemMemoryBytes * 0.125)),
-      );
-      const driver = new KernelStreamingDriver(
-        target,
-        undefined,
-        requestFrame,
-        undefined,
-        decodePool,
-      );
-      driver.setRuntimeLimits(policy);
-      return driver;
-    };
-
-    const createNavigation = (
-      target: WgpuKernelViewer,
-      targetCamera: KernelCameraController,
-    ): KernelNavigationController =>
-      new KernelNavigationController(canvas, target, targetCamera, {
-        ...(onActivePick ? { onActivePick } : {}),
-        ...(onCursorCoordinate ? { onCursorCoordinate } : {}),
-        onInteractionChanged(interacting): void {
-          navigationInteracting = interacting;
-          requestFrame();
-        },
-        requestFrame,
-      });
-
-    const recoverDevice = (): void => {
-      if (
-        !alive ||
-        deviceRecovery !== null ||
-        deviceRecoveryReason === null ||
-        viewer === null ||
-        streaming === null ||
-        scene === null ||
-        camera === null
-      ) {
-        return;
-      }
-      const oldViewer = viewer;
-      const oldStreaming = streaming;
-      const stableScene = scene;
-      const stableCamera = camera;
-      const abort = new AbortController();
-      recoveryAbort = abort;
-      navigation?.dispose(true);
-      navigation = null;
-      oldViewer.detachClipCapCoordinator();
-      oldStreaming.dispose();
-      deviceRecovery = (async () => {
-        const created = await WgpuKernelViewer.create(canvas, wasmLoader);
-        if (!alive || abort.signal.aborted) {
-          created.dispose();
-          return;
-        }
-        const inventory = browserInventory();
-        const policy = created.resolveHardwarePolicy(inventory);
-        const quality = created.runtimeQuality();
-        const driver = createStreamingDriver(created, policy, inventory);
-        try {
-          oldViewer.replayDefinitionsInto(created);
-          created.attachClipCapCoordinator(driver, {
-            tolerance: authoritativeSectionTolerance,
-            requestFrame,
-            onError: fail,
-          });
-          await stableScene.recover(created, driver, {
-            signal: abort.signal,
-            restoreViewState: () => oldViewer.replayViewStateInto(created),
-          });
-          if (!alive || abort.signal.aborted) {
-            created.detachClipCapCoordinator();
-            driver.dispose();
-            created.dispose();
-            return;
-          }
-        } catch (error) {
-          created.detachClipCapCoordinator();
-          driver.dispose();
-          created.dispose();
-          throw error;
-        }
-
-        viewer = created;
-        streaming = driver;
-        hardwareInventory = inventory;
-        hardwarePolicy = policy;
-        runtimeQuality = quality;
-        navigation = createNavigation(created, stableCamera);
-        deviceRecoveryReason = null;
-        recoveryFailures = 0;
-        calibrationComplete = false;
-        calibrationActive = true;
-        created.beginHardwareCalibration();
-        oldViewer.dispose();
-        onHardwarePolicy?.(policy);
-        resizeViewport?.();
-        requestFrame();
-      })()
-        .catch((error) => {
-          fail(error);
-          recoveryFailures += 1;
-          const delay = Math.min(5_000, 250 * 2 ** Math.min(4, recoveryFailures - 1));
-          recoveryRetryTimer = setTimeout(() => {
-            recoveryRetryTimer = null;
-            requestFrame();
-          }, delay);
-        })
-        .finally(() => {
-          deviceRecovery = null;
-          recoveryAbort = null;
-        });
-    };
-
     const renderFrame = (): void => {
       animationFrame = null;
-      if (!alive || !viewer || !streaming || !hardwarePolicy || !runtimeQuality) return;
-      if (deviceRecoveryReason !== null) {
-        recoverDevice();
-        return;
-      }
-      const frameStarted = performance.now();
+      if (!alive || session === null) return;
       try {
-        if (calibrationActive && !calibrationComplete && hardwareInventory) {
-          const progress = viewer.stepHardwareCalibration();
-          if (progress.calibration) {
-            const previousQuality = runtimeQuality;
-            hardwarePolicy = viewer.resolveHardwarePolicy(hardwareInventory, progress.calibration);
-            streaming.setRuntimeLimits(hardwarePolicy);
-            runtimeQuality = viewer.runtimeQuality();
-            calibrationComplete = true;
-            onHardwarePolicy?.(hardwarePolicy);
-            if (
-              runtimeQuality.renderScale < previousQuality.renderScale ||
-              runtimeQuality.detailScale < previousQuality.detailScale
-            ) {
-              onRuntimeQuality?.(runtimeQuality, 'reduced');
-            }
-            resizeViewport?.();
-          } else {
-            requestFrame();
-          }
-        }
-        const interacting = navigationInteracting || hostInteracting;
-        const streamingPolicy = kernelStreamingWorkPolicy(hardwarePolicy, interacting);
-        const plan = viewer.planStreamingFrame({
-          resourceBudget: hardwarePolicy.resources,
-          frameBudget: streamingPolicy.frame,
-          detailScale: runtimeQuality.detailScale,
-          maximumScreenSpaceError: 2,
-          maximumTraversedNodes: streamingPolicy.maximumTraversedNodes,
-        });
-        const uploadedBytes = streaming.execute(plan);
-        const outcome = viewer.render();
-        onFrame?.(outcome);
-        if (outcome.status === 'recreateSurface') {
-          viewer.recoverSurface();
-        }
-        if (outcome.status === 'recreateDevice') {
-          deviceRecoveryReason = outcome.reason;
-          recoverDevice();
-          return;
-        }
-        const qualityObservation = viewer.observeFrameTelemetry({
-          cpuMs: performance.now() - frameStarted,
-          interacting,
-          uploadedBytes,
-        });
-        runtimeQuality = qualityObservation.quality;
-        if (qualityObservation.adjustment !== 'unchanged') {
-          onRuntimeQuality?.(runtimeQuality, qualityObservation.adjustment);
-          resizeViewport?.();
-        }
-        if (
-          plan.actions.some(
-            (action) => action.kind !== 'fetchTile' && action.kind !== 'fetchHierarchyPage',
-          ) ||
-          outcome.status === 'recreateSurface'
-        ) {
-          requestFrame();
-        }
+        session.frame(hostInteracting);
       } catch (error) {
         fail(error);
       }
     };
 
+    const observeSession = (event: KernelViewerSessionEvent): void => {
+      switch (event.type) {
+        case 'frame':
+          onFrame?.(event.outcome);
+          return;
+        case 'hardwarePolicy':
+          onHardwarePolicy?.(event.policy);
+          resizeViewport?.();
+          return;
+        case 'runtimeQuality':
+          onRuntimeQuality?.(event.quality, event.adjustment);
+          resizeViewport?.();
+          return;
+        case 'deviceRecoveryCompleted':
+          resizeViewport?.();
+          requestFrame();
+          return;
+        case 'error':
+          fail(event.error);
+          return;
+        case 'deviceRecoveryStarted':
+        case 'loadProgress':
+        case 'disposed':
+          return;
+      }
+    };
+
     void (async () => {
       try {
-        const created = await WgpuKernelViewer.create(canvas, wasmLoader);
-        if (!alive) {
+        const created = await KernelViewerSession.create({
+          canvas,
+          wasmLoader,
+          decodeWasmModuleUrl,
+          authoritativeSectionTolerance,
+          requestFrame,
+          signal: abort.signal,
+        });
+        if (!alive || abort.signal.aborted) {
           created.dispose();
           return;
         }
-        viewer = created;
-        const inventory = browserInventory();
-        hardwareInventory = inventory;
-        const policy = created.resolveHardwarePolicy(inventory);
-        hardwarePolicy = policy;
-        const initialQuality = created.runtimeQuality();
-        runtimeQuality = initialQuality;
-        onHardwarePolicy?.(policy);
-        camera = new KernelCameraController(
-          Math.max(1, canvas.clientWidth),
-          Math.max(1, canvas.clientHeight),
-        );
-        camera.frame({ x: -25, y: -25, z: -1 }, { x: 25, y: 25, z: 1 });
-        const driver = createStreamingDriver(created, policy, inventory);
-        streaming = driver;
-        scene = new KernelViewerScene(created, driver, requestFrame);
-        created.attachClipCapCoordinator(driver, {
-          tolerance: authoritativeSectionTolerance,
-          requestFrame,
-          onError: fail,
+        session = created;
+        created.subscribe(observeSession);
+        created.camera.frame({ x: -25, y: -25, z: -1 }, { x: 25, y: 25, z: 1 });
+        const navigation = created.attachNavigation({
+          ...(onActivePick ? { onActivePick } : {}),
+          ...(onCursorCoordinate ? { onCursorCoordinate } : {}),
         });
-        navigation = createNavigation(created, camera);
         const resize = (): void => {
+          if (!alive || session === null) return;
           const bounds = canvas.getBoundingClientRect();
           const renderScale = Math.min(
             globalThis.devicePixelRatio || 1,
-            runtimeQuality?.renderScale ?? initialQuality.renderScale,
+            session.runtimeQuality.renderScale,
           );
-          const extent = viewer?.resize(bounds.width, bounds.height, renderScale);
-          if (extent === undefined) return;
-          navigation?.setViewportSize(extent.width, extent.height);
-          requestFrame();
+          session.resize(bounds.width, bounds.height, renderScale);
         };
         resizeViewport = resize;
         resizeObserver = new ResizeObserver(resize);
         resizeObserver.observe(canvas);
         resize();
+        onHardwarePolicy?.(created.hardwarePolicy);
         onReady?.({
-          get viewer() {
-            return viewer as WgpuKernelViewer;
-          },
-          get camera() {
-            return camera as KernelCameraController;
-          },
-          get navigation() {
-            return navigation as KernelNavigationController;
-          },
-          get streaming() {
-            return streaming as KernelStreamingDriver;
-          },
-          get scene() {
-            return scene as KernelViewerScene;
-          },
+          session: created,
+          camera: created.camera,
+          navigation,
+          scene: created.scene,
           get hardwarePolicy() {
-            return hardwarePolicy ?? policy;
+            return created.hardwarePolicy;
           },
           get runtimeQuality() {
-            return runtimeQuality ?? initialQuality;
+            return created.runtimeQuality;
           },
           requestFrame,
           setInteracting(interacting): void {
@@ -378,8 +178,6 @@ export function KernelViewport({
             requestFrame();
           },
         });
-        created.beginHardwareCalibration();
-        calibrationActive = true;
         requestFrame();
       } catch (error) {
         fail(error);
@@ -388,18 +186,14 @@ export function KernelViewport({
 
     return () => {
       alive = false;
+      abort.abort();
       if (animationFrame !== null) cancelAnimationFrame(animationFrame);
-      recoveryAbort?.abort();
-      if (recoveryRetryTimer !== null) clearTimeout(recoveryRetryTimer);
       resizeObserver?.disconnect();
-      navigation?.dispose();
-      viewer?.detachClipCapCoordinator();
-      streaming?.dispose();
-      viewer?.dispose();
+      session?.dispose();
     };
   }, [
-    decodeWasmModuleUrl,
     authoritativeSectionTolerance,
+    decodeWasmModuleUrl,
     onActivePick,
     onCursorCoordinate,
     onError,
@@ -415,19 +209,4 @@ export function KernelViewport({
       <canvas ref={canvasRef} className={styles.canvas} />
     </div>
   );
-}
-
-function browserInventory(): {
-  readonly gpuMemoryBytes: null;
-  readonly systemMemoryBytes: number | null;
-  readonly logicalCores: number;
-} {
-  const browser = navigator as Navigator & { readonly deviceMemory?: number };
-  const systemMemoryBytes =
-    typeof browser.deviceMemory === 'number' ? browser.deviceMemory * 1_073_741_824 : null;
-  return {
-    gpuMemoryBytes: null,
-    systemMemoryBytes,
-    logicalCores: Math.max(1, Math.min(65_535, navigator.hardwareConcurrency || 1)),
-  };
 }

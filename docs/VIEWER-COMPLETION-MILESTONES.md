@@ -543,6 +543,14 @@ einen eigenen Geometriepfad benötigt.
   Session-Dispose endgültig freigegeben. Der Lifecycle-Test bedient denselben
   Navigation-Handle vor und nach Device-Rebuild und belegt seine Invalidierung
   nach Dispose. Die Viewer-Suite bleibt bei 81/81.
+- Der React-`KernelViewport` ist nun ausschließlich ein dünner Adapter für
+  Canvas, RAF, ResizeObserver und Hostcallbacks über `KernelViewerSession`.
+  Eigene Viewer-/Streaming-/Worker-Erzeugung, Hardwarekalibrierung und Device-
+  Recovery wurden entfernt; auch sein Handle enthält keine rohen Engine-Owner
+  mehr. Die Session plant notwendige Folgeframes nach Surface-Recovery und
+  nicht-fetchenden Residency-Aktionen selbst. Ein Source-Gate verhindert die
+  erneute Einführung des doppelten Lifecycles. Paket-Typecheck, Browser-Kernel-
+  Contract und 82/82 Viewer-Tests sind grün.
 
 ## Zeitmessung und Fortschrittsprotokoll
 
