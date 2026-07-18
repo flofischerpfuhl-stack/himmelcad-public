@@ -257,6 +257,39 @@ impl Default for RenderStyle {
     }
 }
 
+/// View-local interaction flags resolved independently from canonical geometry
+/// and from an entity's retained base style.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EntityInteractionState {
+    /// Whether the exact entity is part of the active selection.
+    pub selected: bool,
+    /// Whether the exact entity is beneath the current refined hover pick.
+    pub hovered: bool,
+}
+
+impl RenderStyle {
+    /// Resolves shared selection/hover colors without mutating the retained
+    /// base style, immutable geometry or provider resources.
+    #[must_use]
+    pub fn with_interaction(&self, state: EntityInteractionState) -> Self {
+        if !state.selected && !state.hovered {
+            return self.clone();
+        }
+        let mut effective = self.clone();
+        let mut color = if state.selected {
+            [1.0, 0.55, 0.05, 1.0]
+        } else {
+            [0.1, 0.75, 1.0, 1.0]
+        };
+        color[3] = self.base_color[3];
+        effective.base_color = color;
+        effective.color_mode = ColorMode::Uniform;
+        effective.stroke.color = StrokeColor::Uniform { color };
+        effective
+    }
+}
+
 /// One immutable geometry version compiled for presentation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1139,9 +1172,9 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        ClipOperation, ClipVolume, ClipVolumeId, ColorMode, RenderProxy, RenderProxyId,
-        RenderProxyKind, RenderStyle, RenderWorld, RenderWorldError, StrokeCap, StrokeColor,
-        StrokeJoin, StrokeMode, StrokeStyle, StrokeWidth,
+        ClipOperation, ClipVolume, ClipVolumeId, ColorMode, EntityInteractionState, RenderProxy,
+        RenderProxyId, RenderProxyKind, RenderStyle, RenderWorld, RenderWorldError, StrokeCap,
+        StrokeColor, StrokeJoin, StrokeMode, StrokeStyle, StrokeWidth,
     };
     use crate::{
         BoundingVolume, DatasetId, PickToken, ResourceCost, TileId, TileKey, WorldAabb, WorldVec3,
@@ -1152,6 +1185,38 @@ mod tests {
         let mode: ColorMode = serde_json::from_str(r#"{"kind":"pointClassification"}"#)
             .expect("classification mode without an authored palette");
         assert_eq!(mode, ColorMode::PointClassification { colors: Vec::new() });
+    }
+
+    #[test]
+    fn interaction_overlay_preserves_base_style_and_resolves_shared_priority() {
+        let base = RenderStyle {
+            base_color: [0.2, 0.3, 0.4, 0.6],
+            color_mode: ColorMode::Source,
+            ..RenderStyle::default()
+        };
+        let hovered = base.with_interaction(EntityInteractionState {
+            selected: false,
+            hovered: true,
+        });
+        assert_eq!(hovered.base_color, [0.1, 0.75, 1.0, 0.6]);
+        assert_eq!(hovered.color_mode, ColorMode::Uniform);
+        assert_eq!(
+            hovered.stroke.color,
+            StrokeColor::Uniform {
+                color: [0.1, 0.75, 1.0, 0.6]
+            }
+        );
+
+        let selected = base.with_interaction(EntityInteractionState {
+            selected: true,
+            hovered: true,
+        });
+        assert_eq!(selected.base_color, [1.0, 0.55, 0.05, 0.6]);
+        assert_eq!(base.base_color, [0.2, 0.3, 0.4, 0.6]);
+        assert_eq!(
+            base.with_interaction(EntityInteractionState::default()),
+            base
+        );
     }
 
     #[test]

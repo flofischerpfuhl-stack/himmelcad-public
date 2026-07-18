@@ -92,15 +92,15 @@ use himmelcad_render::{
     DecodedLegacyBatchTableCatalog, DecodedMeshFeatureSet, DecodedPrimitivePropertyAttribute,
     DecodedPrimitivePropertyTexture, DecodedStreamingPayload, DecodedStructuralMetadata,
     DecodedThreeDTilesContent, DecodedTriangleFeatureId, DeviceCalibration,
-    ElevationRasterPickRefiner, EntityCompilationOptions, EvaluatedMeshRecipe,
-    EvaluatedMeshRepresentation, FillMode, FloatingOrigin, FrameTelemetrySample,
-    FrameTelemetryWindow, GaussianSplatPickRefiner, GeometryRepresentationRegistry, GlyphAtlas,
-    GlyphMetrics, GpuAlphaMode, GpuCalibrationProgress, GpuCalibrationSession,
-    GpuCanonicalMaterial, GpuCanonicalTextureBinding, GpuDrawBatch, GpuHatchPattern,
-    GpuHatchPatternData, GpuHatchResource, GpuIndexedMeshGeometry, GpuLineTypePattern,
-    GpuLineTypeResource, GpuModelResourceIdentity, GpuPresentationStyle, GpuSurfaceHost,
-    GpuTextureAddressMode, GpuTextureColorSpace, GpuTextureData, GpuTextureFilterMode,
-    GpuTextureMipChainData, GpuTextureResource, GpuTextureResourceCache,
+    ElevationRasterPickRefiner, EntityCompilationOptions, EntityInteractionState,
+    EvaluatedMeshRecipe, EvaluatedMeshRepresentation, FillMode, FloatingOrigin,
+    FrameTelemetrySample, FrameTelemetryWindow, GaussianSplatPickRefiner,
+    GeometryRepresentationRegistry, GlyphAtlas, GlyphMetrics, GpuAlphaMode, GpuCalibrationProgress,
+    GpuCalibrationSession, GpuCanonicalMaterial, GpuCanonicalTextureBinding, GpuDrawBatch,
+    GpuHatchPattern, GpuHatchPatternData, GpuHatchResource, GpuIndexedMeshGeometry,
+    GpuLineTypePattern, GpuLineTypeResource, GpuModelResourceIdentity, GpuPresentationStyle,
+    GpuSurfaceHost, GpuTextureAddressMode, GpuTextureColorSpace, GpuTextureData,
+    GpuTextureFilterMode, GpuTextureMipChainData, GpuTextureResource, GpuTextureResourceCache,
     GpuTextureResourceIdentity, GpuTextureResourceStage, GpuTextureSamplerIdentity,
     GpuTextureTransform, HardwareInventory, HardwarePolicyResolver, HierarchySource,
     ImplicitThreeDTilesHierarchySource, InstancedTriangleMeshPickRefiner, MeshPickRefiner,
@@ -401,6 +401,7 @@ pub struct WasmViewer {
     prepared_datasets: BTreeMap<String, PreparedHierarchySource>,
     registered_dataset_contracts: BTreeMap<String, WasmRegisteredDatasetContract>,
     entity_styles: BTreeMap<String, (RenderStyle, f64)>,
+    entity_interactions: BTreeMap<String, EntityInteractionState>,
     glyph_atlases: BTreeMap<String, WasmGlyphAtlasResource>,
     annotation_styles: BTreeMap<String, WasmAnnotationStyle>,
     block_definitions: BTreeMap<String, BlockDefinition>,
@@ -736,6 +737,7 @@ struct WasmRegisteredDatasetContract {
 struct WasmPreparedCanonicalSlot {
     storage_key: String,
     request: WasmEntityRenderRequest,
+    base_style: RenderStyle,
     dataset_id: Option<String>,
     primary: bool,
     admission: ResolvedGeometryRepresentationAdmission,
@@ -1490,6 +1492,7 @@ async fn create_wasm_viewer(
         prepared_datasets: BTreeMap::new(),
         registered_dataset_contracts: BTreeMap::new(),
         entity_styles: BTreeMap::new(),
+        entity_interactions: BTreeMap::new(),
         glyph_atlases: BTreeMap::new(),
         annotation_styles: BTreeMap::new(),
         block_definitions: BTreeMap::new(),
@@ -1875,19 +1878,27 @@ impl WasmViewer {
                     ));
                 }
             }
-            grouped.entry(entity_id).or_default().push(index);
+            grouped.entry(entity_id.clone()).or_default().push(index);
             let evaluated_mesh = self.prepare_evaluated_mesh_admission(admission)?;
             let evaluated_mesh_ref = admission
                 .evaluated_mesh
                 .as_ref()
                 .map(|evaluated| evaluated.mesh_resource_ref.clone());
-            let request =
+            let mut request =
                 canonical_render_request(admission, evaluated_mesh_ref).map_err(js_error)?;
+            let base_style = request.style.clone();
+            request.style = base_style.with_interaction(
+                self.entity_interactions
+                    .get(&entity_id)
+                    .copied()
+                    .unwrap_or_default(),
+            );
             validate_fill_resource(&request.style, &self.image_resources, &self.hatch_resources)
                 .map_err(js_error)?;
             prepared_slots.push(WasmPreparedCanonicalSlot {
                 storage_key,
                 request,
+                base_style,
                 dataset_id: admission.dataset_id.clone(),
                 primary: is_primary_representation(&admission.admission),
                 admission: ResolvedGeometryRepresentationAdmission {
@@ -2261,9 +2272,14 @@ impl WasmViewer {
             );
             self.entity_requests
                 .insert(entity_id.clone(), next_primary.clone());
+            let base_style = prepared_slots
+                .iter()
+                .find(|slot| slot.primary && slot.request.entity_id == *entity_id)
+                .map(|slot| slot.base_style.clone())
+                .expect("validated entity has one primary base style");
             self.entity_styles.insert(
                 entity_id.clone(),
-                (next_primary.style.clone(), next_primary.exaggeration_datum),
+                (base_style, next_primary.exaggeration_datum),
             );
             self.primary_slot_keys.remove(entity_id);
         }
@@ -2425,6 +2441,8 @@ impl WasmViewer {
                     "proxyId": proxy_id.0,
                     "batchIndex": batch_index,
                     "kind": kind,
+                    "baseColor": batch.presentation_base_color(),
+                    "colorMode": batch.presentation_color_mode(),
                     "fillVisible": batch.presentation_fill_visible(),
                     "hatchEnabled": batch.presentation_hatch_enabled(),
                     "strokeVisible": batch.presentation_stroke_visible(),
@@ -4399,6 +4417,7 @@ impl WasmViewer {
             );
             self.entity_requests.remove(entity_id);
             self.entity_styles.remove(entity_id);
+            self.entity_interactions.remove(entity_id);
             self.render_world.clear_entity_visibility(entity_id);
             self.primary_slot_keys.remove(entity_id);
             self.discard_move_previews_for_entity(entity_id);
@@ -4469,9 +4488,19 @@ impl WasmViewer {
             return Err(JsValue::from_str("entityId must be non-empty"));
         }
         let style: RenderStyle = serde_json::from_str(style_json).map_err(js_error)?;
-        validate_fill_resource(&style, &self.image_resources, &self.hatch_resources)
-            .map_err(js_error)?;
-        validate_stroke_resource(&style, &self.line_type_resources).map_err(js_error)?;
+        let effective_style = style.with_interaction(
+            self.entity_interactions
+                .get(entity_id)
+                .copied()
+                .unwrap_or_default(),
+        );
+        validate_fill_resource(
+            &effective_style,
+            &self.image_resources,
+            &self.hatch_resources,
+        )
+        .map_err(js_error)?;
+        validate_stroke_resource(&effective_style, &self.line_type_resources).map_err(js_error)?;
         let ids = self.render_world.proxy_ids_for_entity(entity_id);
         if ids.iter().any(|id| {
             self.batches
@@ -4495,7 +4524,7 @@ impl WasmViewer {
                 .iter()
                 .map(|batch| {
                     resolve_batch_presentation(
-                        &style,
+                        &effective_style,
                         exaggeration_datum,
                         kind,
                         batch,
@@ -4519,8 +4548,11 @@ impl WasmViewer {
                 apply_batch_presentation(&self.host, batch, presentation).map_err(js_error)?;
             }
         }
-        self.render_world.set_entity_style(entity_id, &style);
-        persist_entity_style(self, entity_id, &style, exaggeration_datum);
+        self.render_world
+            .set_entity_style(entity_id, &effective_style);
+        persist_entity_style(self, entity_id, &effective_style, exaggeration_datum);
+        self.entity_styles
+            .insert(entity_id.to_owned(), (style, exaggeration_datum));
         if self
             .raster_analysis_view
             .as_ref()
@@ -4537,6 +4569,50 @@ impl WasmViewer {
         self.rebuild_inline_clip_previews().map_err(js_error)?;
         self.rebuild_move_previews_for_entity(Some(entity_id), self.floating_origin)?;
         Ok(ids.len())
+    }
+
+    /// Applies shared transient selection/hover presentation without changing
+    /// canonical geometry, base style, proxy identity or residency.
+    pub fn set_entity_interaction_state(
+        &mut self,
+        entity_id: &str,
+        selected: bool,
+        hovered: bool,
+    ) -> Result<usize, JsValue> {
+        if entity_id.is_empty() || !self.entity_slot_keys.contains_key(entity_id) {
+            return Err(JsValue::from_str(
+                "entityId must name a current canonical entity",
+            ));
+        }
+        let next = EntityInteractionState { selected, hovered };
+        let previous = self.entity_interactions.get(entity_id).copied();
+        if previous.unwrap_or_default() == next {
+            return Ok(0);
+        }
+        if next == EntityInteractionState::default() {
+            self.entity_interactions.remove(entity_id);
+        } else {
+            self.entity_interactions.insert(entity_id.to_owned(), next);
+        }
+        let Some((base_style, exaggeration_datum)) = self.entity_styles.get(entity_id).cloned()
+        else {
+            restore_entity_interaction(&mut self.entity_interactions, entity_id, previous);
+            return Err(JsValue::from_str("entity base style is unavailable"));
+        };
+        let style_json = match serde_json::to_string(&base_style) {
+            Ok(style_json) => style_json,
+            Err(error) => {
+                restore_entity_interaction(&mut self.entity_interactions, entity_id, previous);
+                return Err(js_error(error));
+            }
+        };
+        match self.set_entity_style_json(entity_id, &style_json, exaggeration_datum) {
+            Ok(updated) => Ok(updated),
+            Err(error) => {
+                restore_entity_interaction(&mut self.entity_interactions, entity_id, previous);
+                Err(error)
+            }
+        }
     }
 
     /// Changes one canonical entity's view visibility without changing its
@@ -13474,12 +13550,22 @@ fn persist_entity_style(
     style: &RenderStyle,
     exaggeration_datum: f64,
 ) {
-    viewer
-        .entity_styles
-        .insert(entity_id.to_owned(), (style.clone(), exaggeration_datum));
     if let Some(request) = viewer.entity_requests.get_mut(entity_id) {
         request.style = style.clone();
         request.exaggeration_datum = exaggeration_datum;
+    }
+    let slot_keys = viewer
+        .entity_slot_keys
+        .get(entity_id)
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
+    for slot_key in slot_keys {
+        if let Some(request) = viewer.slot_requests.get_mut(&slot_key) {
+            request.style = style.clone();
+            request.exaggeration_datum = exaggeration_datum;
+        }
     }
     let stream_ids = viewer
         .entity_streams
@@ -13521,6 +13607,19 @@ fn persist_entity_style(
             staged.request.metadata.style = style.clone();
             staged.request.metadata.exaggeration_datum = exaggeration_datum;
         }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn restore_entity_interaction(
+    interactions: &mut BTreeMap<String, EntityInteractionState>,
+    entity_id: &str,
+    previous: Option<EntityInteractionState>,
+) {
+    if let Some(previous) = previous {
+        interactions.insert(entity_id.to_owned(), previous);
+    } else {
+        interactions.remove(entity_id);
     }
 }
 

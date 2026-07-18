@@ -86,6 +86,19 @@ interface BrowserValidationState {
   pickFrameTiming: { before: unknown; after: unknown } | null;
   pick: unknown;
   exactPointPick: KernelPickResult | null;
+  interactionPresentation: {
+    readonly baseColor: readonly number[];
+    readonly hoverColor: readonly number[];
+    readonly selectionColor: readonly number[];
+    readonly restoredColor: readonly number[];
+    readonly proxyIdentityStable: boolean;
+    readonly pickIdentityStable: boolean;
+    readonly decodeCountersStable: boolean;
+    readonly streamedProxyIdentityStable: boolean;
+    readonly streamedPickIdentityStable: boolean;
+    readonly streamedDecodeCountersStable: boolean;
+    readonly streamedSelectionColor: readonly number[];
+  } | null;
   panoramaMarkerPick: KernelPickResult | null;
   panoramaDepthMeasurement: ReturnType<WgpuKernelViewer['measureRasterDepthSample']> | null;
   rasterAnalysis: {
@@ -491,6 +504,7 @@ const state: BrowserValidationState = {
   pickFrameTiming: null,
   pick: null,
   exactPointPick: null,
+  interactionPresentation: null,
   panoramaMarkerPick: null,
   panoramaDepthMeasurement: null,
   rasterAnalysis: null,
@@ -2837,8 +2851,6 @@ async function installProviderFixtures(viewer: WgpuKernelViewer) {
 function verifyResolvedPresentationBindings(
   viewer: WgpuKernelViewer,
 ): NonNullable<BrowserValidationState['presentationBindings']> {
-  const batchIdentity = (batches: readonly KernelEntityPresentationBatch[]) =>
-    JSON.stringify(batches.map(({ proxyId, batchIndex, kind }) => ({ proxyId, batchIndex, kind })));
   const decodeBefore = viewer.streamDecodeDiagnostics();
   const canonicalMaterials = viewer.entityPresentation('material-layer-box');
   const materialTextureResidency = MATERIAL_TEXTURE_RESIDENCY;
@@ -3124,6 +3136,12 @@ function verifyResolvedPresentationBindings(
     decodeCountersStable,
     proxyIdentityStable,
   };
+}
+
+function batchIdentity(batches: readonly KernelEntityPresentationBatch[]): string {
+  return JSON.stringify(
+    batches.map(({ proxyId, batchIndex, kind }) => ({ proxyId, batchIndex, kind })),
+  );
 }
 
 function entityZoo(): LegacyEntityRequest[] {
@@ -5818,6 +5836,46 @@ async function run(): Promise<void> {
   );
   setFocusedTopCamera(viewer, surveyPointPresented);
   state.exactPointPick = await viewer.pick(640, 360, 4);
+  const interactionBase = viewer.entityPresentation('survey-point');
+  const interactionProxyIdentity = batchIdentity(interactionBase);
+  const interactionDecodeBefore = viewer.streamDecodeDiagnostics();
+  viewer.setEntityInteractionState('survey-point', { selected: false, hovered: true });
+  const hoverPresentation = viewer.entityPresentation('survey-point');
+  const hoverPick = await viewer.pick(640, 360, 4);
+  viewer.setEntityInteractionState('survey-point', { selected: true, hovered: true });
+  const selectionPresentation = viewer.entityPresentation('survey-point');
+  const selectionPick = await viewer.pick(640, 360, 4);
+  viewer.setEntityInteractionState('survey-point', { selected: false, hovered: false });
+  const restoredPresentation = viewer.entityPresentation('survey-point');
+  const restoredPick = await viewer.pick(640, 360, 4);
+  const surveyPickAddress = (pick: KernelPickResult | null): string => {
+    const candidate = pick?.candidates.find(
+      (entry) => entry.address.entityId === 'survey-point' && entry.snapKind === 'point',
+    );
+    return JSON.stringify(candidate?.address ?? null);
+  };
+  const sourcePickAddress = surveyPickAddress(state.exactPointPick);
+  state.interactionPresentation = {
+    baseColor: interactionBase[0]?.baseColor ?? [],
+    hoverColor: hoverPresentation[0]?.baseColor ?? [],
+    selectionColor: selectionPresentation[0]?.baseColor ?? [],
+    restoredColor: restoredPresentation[0]?.baseColor ?? [],
+    proxyIdentityStable:
+      [hoverPresentation, selectionPresentation, restoredPresentation].every(
+        (presentation) => batchIdentity(presentation) === interactionProxyIdentity,
+      ),
+    pickIdentityStable:
+      sourcePickAddress !== 'null' &&
+      [hoverPick, selectionPick, restoredPick].every(
+        (pick) => surveyPickAddress(pick) === sourcePickAddress,
+      ),
+    decodeCountersStable:
+      JSON.stringify(viewer.streamDecodeDiagnostics()) === JSON.stringify(interactionDecodeBefore),
+    streamedProxyIdentityStable: false,
+    streamedPickIdentityStable: false,
+    streamedDecodeCountersStable: false,
+    streamedSelectionColor: [],
+  };
   viewer.setEntityStyle('survey-point', style([1, 0.38, 0.08, 1]), 0);
   viewer.setWorldCamera(worldCamera, BASE);
   viewer.render();
@@ -5862,6 +5920,32 @@ async function run(): Promise<void> {
   if (potreeCandidate === undefined || potreeCandidate.address.primitiveId === null) {
     throw new Error('Potree metadata fixture did not produce an exact point pick');
   }
+  const potreeInteractionBase = viewer.entityPresentation('fixture-potree-point');
+  const potreeInteractionIdentity = batchIdentity(potreeInteractionBase);
+  const potreeInteractionDecodeBefore = viewer.streamDecodeDiagnostics();
+  viewer.setEntityInteractionState('fixture-potree-point', { selected: true, hovered: true });
+  const selectedPotreePresentation = viewer.entityPresentation('fixture-potree-point');
+  const selectedPotreePick = await viewer.pick(640, 360, 2);
+  viewer.setEntityInteractionState('fixture-potree-point', { selected: false, hovered: false });
+  const restoredPotreePresentation = viewer.entityPresentation('fixture-potree-point');
+  const selectedPotreeCandidate = selectedPotreePick.candidates.find(
+    (candidate) => candidate.address.entityId === 'fixture-potree-point',
+  );
+  const interaction = state.interactionPresentation;
+  if (interaction === null) throw new Error('inline interaction proof was not recorded');
+  state.interactionPresentation = {
+    ...interaction,
+    streamedProxyIdentityStable:
+      batchIdentity(selectedPotreePresentation) === potreeInteractionIdentity &&
+      batchIdentity(restoredPotreePresentation) === potreeInteractionIdentity,
+    streamedPickIdentityStable:
+      JSON.stringify(selectedPotreeCandidate?.address ?? null) ===
+      JSON.stringify(potreeCandidate.address),
+    streamedDecodeCountersStable:
+      JSON.stringify(viewer.streamDecodeDiagnostics()) ===
+      JSON.stringify(potreeInteractionDecodeBefore),
+    streamedSelectionColor: selectedPotreePresentation[0]?.baseColor ?? [],
+  };
   const potreeMetadata = viewer.pickMetadata(
     potreeCandidate.address.renderProxyId,
     potreeCandidate.address.primitiveId,

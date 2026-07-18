@@ -176,6 +176,7 @@ export interface WasmViewerBinding {
   detach_canonical_entities_json?(bindingsJson: string): string;
   retire_canonical_entities_json(bindingsJson: string): string;
   set_entity_style_json(entityId: string, styleJson: string, exaggerationDatum: number): number;
+  set_entity_interaction_state(entityId: string, selected: boolean, hovered: boolean): number;
   set_entity_visibility(entityId: string, visible: boolean): number;
   begin_move_preview(previewId: string, entityId: string, opacityMultiplier: number): number;
   update_move_preview(previewId: string, x: number, y: number, z: number): void;
@@ -888,6 +889,8 @@ export interface KernelEntityPresentationBatch {
     | 'raster'
     | 'gaussianSplats'
     | 'text';
+  readonly baseColor: readonly [number, number, number, number];
+  readonly colorMode: number;
   readonly fillVisible: boolean;
   readonly hatchEnabled: boolean;
   readonly strokeVisible: boolean;
@@ -1078,6 +1081,12 @@ export interface KernelRenderStyle {
   readonly colorMode: Readonly<Record<string, unknown>>;
   readonly fill: KernelFillMode;
   readonly stroke: KernelStrokeStyle;
+}
+
+/** View-local interaction flags resolved by the shared Rust presentation contract. */
+export interface KernelEntityInteractionState {
+  readonly selected: boolean;
+  readonly hovered: boolean;
 }
 
 export interface KernelAlignmentPreviewConfig {
@@ -2481,6 +2490,26 @@ export class WgpuKernelViewer {
     return this.binding.set_entity_visibility(entityId, visible);
   }
 
+  /** Highlights one exact picked entity without replacing its base style or resources. */
+  setEntityInteractionState(
+    entityId: string,
+    state: KernelEntityInteractionState,
+  ): number {
+    this.assertAlive();
+    if (
+      entityId.length === 0 ||
+      typeof state.selected !== 'boolean' ||
+      typeof state.hovered !== 'boolean'
+    ) {
+      throw new TypeError('entity interaction state requires an entity id and boolean flags');
+    }
+    return this.binding.set_entity_interaction_state(
+      entityId,
+      state.selected,
+      state.hovered,
+    );
+  }
+
   /** Commits an absolute canonical placement through entity and slot-generation CAS. */
   transformEntity(
     command: KernelTransformEntityCommand,
@@ -3753,6 +3782,12 @@ function isEntityPresentationBatch(value: unknown): value is KernelEntityPresent
     ['points', 'triangles', 'cadStroke', 'cadFill', 'raster', 'gaussianSplats', 'text'].includes(
       value.kind,
     ) &&
+    Array.isArray(value.baseColor) &&
+    value.baseColor.length === 4 &&
+    value.baseColor.every(
+      (component) => typeof component === 'number' && Number.isFinite(component),
+    ) &&
+    Number.isSafeInteger(value.colorMode) &&
     typeof value.fillVisible === 'boolean' &&
     typeof value.hatchEnabled === 'boolean' &&
     typeof value.strokeVisible === 'boolean' &&

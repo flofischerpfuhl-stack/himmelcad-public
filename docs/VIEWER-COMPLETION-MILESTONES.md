@@ -284,6 +284,16 @@ V3 macht aus vollständiger Geometrie einen vollständigen CAD-View.
   Top-down dargestellte Mixed-Z-Revision bleibt dessen Z ausdrücklich `null`;
   die nur für GPU-Rasterung und Navigation verwendete Planhöhe kann damit
   weder Messung noch Metadatenabfrage als Source-Höhe erreichen.
+- Selection und Hover sind nun explizite, gemeinsame Render-Core-Zustände mit
+  stabiler Priorität. Sie werden aus demselben verfeinerten Pick-Entity-Ziel
+  gesetzt, überschreiben den retained Basisstil nicht und ändern weder
+  Proxy-/Pick-Identität noch Residency oder Decode-Zähler. Inline- und
+  gestreamte Inhalte benutzen denselben Live-Uniform-Pfad; neue Stream-Tiles
+  übernehmen den wirksamen Zustand aus ihrem kanonischen Slot-Contract.
+- Der Befehls-Audit bestätigt die bereits vorhandene atomare Revalidierung von
+  Entity-ID, Revision, Version-Hash und Representation-Slot-Generation für
+  Placement-Commit, Undo und Redo. Es wurde dafür kein zweiter App-seitiger
+  Commandpfad eingeführt.
 
 ## V4 – Civil-Scale, Hardware und Backend-Härtung
 

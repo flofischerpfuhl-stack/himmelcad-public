@@ -318,6 +318,10 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
     set_entity_style_json(): number {
       return 1;
     },
+    set_entity_interaction_state(entityId, selected, hovered): number {
+      calls.push(['entityInteraction', entityId, selected, hovered]);
+      return 1;
+    },
     set_entity_visibility(entityId, visible): number {
       calls.push(['entityVisibility', entityId, visible]);
       return 1;
@@ -518,6 +522,11 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
   assert.equal(viewer.canonicalEntityBindings('point-1')[0]?.key.slot.entityId, 'point-1');
   assert.equal(viewer.setEntityVisibility('point-1', false), 1);
   assert.deepEqual(calls.at(-1), ['entityVisibility', 'point-1', false]);
+  assert.equal(
+    viewer.setEntityInteractionState('point-1', { selected: true, hovered: false }),
+    1,
+  );
+  assert.deepEqual(calls.at(-1), ['entityInteraction', 'point-1', true, false]);
   assert.deepEqual(viewer.threeDTilesMetadata('city'), {
     schema: null,
     schemaUri: 'https://example.test/schema.json',
@@ -1287,6 +1296,7 @@ function minimalBinding(
         generation: 0,
       }),
     set_entity_style_json: () => 0,
+    set_entity_interaction_state: () => 0,
     set_entity_visibility: () => 0,
     begin_move_preview: () => 0,
     update_move_preview(): void {},

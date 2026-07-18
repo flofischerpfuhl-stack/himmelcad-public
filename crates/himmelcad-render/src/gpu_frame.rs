@@ -146,6 +146,18 @@ impl Default for GpuPresentationStyle {
 }
 
 impl GpuPresentationStyle {
+    /// Effective linear base color after view-local interaction overlays.
+    #[must_use]
+    pub const fn base_color(self) -> [f32; 4] {
+        self.base_color
+    }
+
+    /// Numeric shader color mode used for presentation diagnostics.
+    #[must_use]
+    pub const fn color_mode(self) -> u32 {
+        self.color_mode
+    }
+
     /// Effective view opacity used to choose opaque versus transparent passes.
     #[must_use]
     pub fn opacity(self) -> f32 {
@@ -2204,6 +2216,22 @@ impl GpuDrawBatch {
         self.material
             .as_ref()
             .map(|material| material.style.fill_visible())
+    }
+
+    /// Effective base color after style and interaction resolution.
+    #[must_use]
+    pub fn presentation_base_color(&self) -> Option<[f32; 4]> {
+        self.material
+            .as_ref()
+            .map(|material| material.style.base_color())
+    }
+
+    /// Effective shader color mode after style and interaction resolution.
+    #[must_use]
+    pub fn presentation_color_mode(&self) -> Option<u32> {
+        self.material
+            .as_ref()
+            .map(|material| material.style.color_mode())
     }
 
     /// Whether the current material uniform evaluates a vector hatch.

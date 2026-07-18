@@ -149,6 +149,7 @@ export type {
   KernelAlignmentPreviewUpdateRequest,
   KernelAlignmentStationRange,
   KernelEntityMutation,
+  KernelEntityInteractionState,
   KernelEntityCommandJournal,
   KernelEntityCommandJournalEntry,
   KernelEntityCommandJournalKind,

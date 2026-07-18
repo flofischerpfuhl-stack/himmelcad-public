@@ -1176,6 +1176,38 @@ check, 7 viewer-WASM tests, browser TypeScript contract and all 73 viewer-packag
 tests are green; the unchanged 38-entity/47-proxy scene retains ten worker
 ingests and zero main-thread provider decodes on both backends.
 
+### V3 selection and hover checkpoint
+
+The Render-Core now owns one view-local `EntityInteractionState` and resolves
+hovered and selected colors from the retained `RenderStyle`; selection has
+deterministic priority when both flags are true. Resolution preserves authored
+alpha, opacity, fill/stroke resources, exaggeration and the immutable base
+style. Clearing the state therefore restores the exact prior presentation even
+after a live base-style change. The WASM façade stores only the transient flags,
+updates existing material uniforms atomically and carries the effective style
+through every current slot, resident stream and staged stream request. A later
+canonical revision inherits the still-active view state but records its own new
+base style; complete detach clears the transient state.
+
+The browser first uses the exact refined survey-point pick for hover and
+selection, then repeats selection on a resident Potree point. On forced WebGL2
+and explicit WebGPU, both cases retain the same proxy/batch identity and exact
+entity/proxy/tile/primitive pick address through hover, selection and clear.
+The base color restores exactly, while worker-ingest and main-thread decode
+counters remain unchanged. This proves that the overlay shares the existing
+ID/depth/refinement path and never becomes a geometry, residency or decode
+operation. The complete Render-Core suite passes 320/320, viewer-WASM passes
+7/7, the WASM target and browser TypeScript checks are green, and all 73 viewer
+package tests pass. Both explicit backends pass the unchanged
+38-entity/47-proxy, ten-worker-ingest fixture with zero provider decodes on the
+main thread.
+
+The adjacent command audit found no missing mutation gate: transform, move-
+preview commit, undo and redo already compare entity identity, canonical
+revision and version hash, then publish all expected representation bindings
+through slot-generation compare-and-swap. Stale geometry targets cannot reach a
+partial render-world mutation.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

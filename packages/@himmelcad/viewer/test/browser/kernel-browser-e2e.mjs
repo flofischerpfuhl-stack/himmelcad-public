@@ -673,6 +673,26 @@ try {
   assert.equal(exactPoint.worldPosition.x, 6378137.125);
   assert.equal(exactPoint.worldPosition.y, 5400000.25);
   assert.equal(exactPoint.worldPosition.z, 516.75);
+  const interaction = state.interactionPresentation;
+  assert(interaction, 'selection/hover presentation proof is missing');
+  for (const [actual, expected] of [
+    [interaction.baseColor, [1, 0.38, 0.08, 1]],
+    [interaction.hoverColor, [0.1, 0.75, 1, 1]],
+    [interaction.selectionColor, [1, 0.55, 0.05, 1]],
+    [interaction.restoredColor, [1, 0.38, 0.08, 1]],
+    [interaction.streamedSelectionColor, [1, 0.55, 0.05, 1]],
+  ]) {
+    assert(
+      actual.every((channel, index) => Math.abs(channel - expected[index]) < 1e-6),
+      `interaction color mismatch: ${JSON.stringify({ actual, expected })}`,
+    );
+  }
+  assert.equal(interaction.proxyIdentityStable, true);
+  assert.equal(interaction.pickIdentityStable, true);
+  assert.equal(interaction.decodeCountersStable, true);
+  assert.equal(interaction.streamedProxyIdentityStable, true);
+  assert.equal(interaction.streamedPickIdentityStable, true);
+  assert.equal(interaction.streamedDecodeCountersStable, true);
   const panoramaMarker = state.panoramaMarkerPick?.candidates.find(
     (candidate) =>
       candidate.address.entityId === 'scan-panorama' &&
