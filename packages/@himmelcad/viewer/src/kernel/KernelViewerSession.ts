@@ -607,10 +607,18 @@ export class KernelViewerSession {
       this.advanceCalibration();
       const interactionActive = interacting || this.navigationInteracting;
       const work = kernelStreamingWorkPolicy(this.policyState, interactionActive);
+      // Navigation may temporarily trade hierarchy detail for latency, but a
+      // stationary CAD view must always converge to the device policy's full
+      // detail ceiling. Feeding the reduced runtime value back into idle tile
+      // selection made a slow frame permanently suppress finer Potree nodes,
+      // so waiting at one location could never improve the image again.
+      const streamingDetailScale = interactionActive
+        ? this.qualityState.detailScale
+        : this.policyState.maximumDetailScale;
       const plan = this.viewerState.planStreamingFrame({
         resourceBudget: this.policyState.resources,
         frameBudget: work.frame,
-        detailScale: this.qualityState.detailScale,
+        detailScale: streamingDetailScale,
         // Two physical pixels is the neutral mesh/raster baseline. Potree uses
         // its own point-diameter coverage target inside the kernel, so point
         // quality no longer forces every other provider to over-refine.
@@ -644,6 +652,7 @@ export class KernelViewerSession {
           (action) => action.kind !== 'fetchTile' && action.kind !== 'fetchHierarchyPage',
         ) ||
         (!interactionActive &&
+          observation.adjustment !== 'reduced' &&
           (this.qualityState.renderScale + 1e-4 < this.policyState.maximumRenderScale ||
             this.qualityState.detailScale + 1e-4 < this.policyState.maximumDetailScale)) ||
         outcome.status === 'recreateSurface'

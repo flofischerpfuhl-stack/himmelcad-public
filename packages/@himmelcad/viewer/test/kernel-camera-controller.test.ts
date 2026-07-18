@@ -68,6 +68,23 @@ void test('returning from top-down preserves the orthographic zoom scale', () =>
   }
 });
 
+void test('civil-coordinate top-down zoom remains usable far below object scale', () => {
+  const controller = new KernelCameraController(1_920, 1_080);
+  controller.frame(
+    { x: 4_375_465.2058, y: 5_281_171.141, z: 693.0004 },
+    { x: 4_375_599.2036, y: 5_281_305.1388, z: 826.9982 },
+  );
+  controller.setLockedTopDown(true);
+  for (let index = 0; index < 80; index += 1) controller.zoom(0.85);
+
+  const camera = controller.worldCamera();
+  assert.equal(camera.projection.kind, 'orthographic');
+  if (camera.projection.kind === 'orthographic') {
+    assert.ok(camera.projection.verticalSpan < 0.001);
+    assert.ok(camera.projection.verticalSpan >= 1e-5);
+  }
+});
+
 void test('arbitrary local orthographic frames pan and zoom in their own plane', () => {
   const controller = new KernelCameraController(1_000, 500);
   const inverseRootTwo = Math.SQRT1_2;
