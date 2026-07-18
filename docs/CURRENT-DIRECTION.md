@@ -43,6 +43,10 @@ regression floor; it is no longer a breadth freeze.
 
 ## Post-A viewer/entity program (active)
 
+Der verbindliche Abschlussumfang, die fünf verbleibenden Viewer-Meilensteine
+und das Zeit-/Gate-Protokoll stehen in
+`docs/VIEWER-COMPLETION-MILESTONES.md`.
+
 Work now proceeds in dependency order rather than catalog order:
 
 1. canonical document authority, atomic command journal and project persistence;
