@@ -6,7 +6,7 @@ import type {
 } from './KernelCameraController.js';
 import { localSectionClipVolume } from './KernelLocalSectionView.js';
 import type { KernelLocalSectionView } from './KernelLocalSectionView.js';
-import type { KernelPickCandidate } from './WgpuKernelViewer.js';
+import type { KernelPickCandidate, KernelRasterAnalysisView } from './WgpuKernelViewer.js';
 import { WgpuKernelViewer } from './WgpuKernelViewer.js';
 
 export interface KernelNavigationCallbacks {
@@ -40,6 +40,7 @@ export class KernelNavigationController {
   private lastClientY = 0;
   private movedDuringDrag = false;
   private localSectionDepthActive = false;
+  private rasterAnalysisKind: KernelRasterAnalysisView['kind'] | null = null;
   private disposed = false;
   private pickPending = false;
   private pickAgain = false;
@@ -137,6 +138,47 @@ export class KernelNavigationController {
     this.applyCameraTransition(transition, durationMilliseconds);
   }
 
+  /** Opens one isolated kernel-owned panorama or oriented-image view. */
+  setRasterAnalysisView(
+    entityId: string,
+    durationMilliseconds = 180,
+  ): KernelRasterAnalysisView {
+    this.assertAlive();
+    this.clearLocalSectionDepth();
+    const view = this.viewer.setRasterAnalysisView(entityId);
+    try {
+      const transition =
+        view.kind === 'panorama'
+          ? this.camera.setOrientedPerspectiveViewpoint(view)
+          : this.camera.setLocalOrthographicFrame({
+              origin: view.origin,
+              normal: view.normal,
+              up: view.up,
+              verticalSpan: view.verticalSpan,
+            });
+      this.rasterAnalysisKind = view.kind;
+      this.applyCameraTransition(transition, durationMilliseconds);
+      return view;
+    } catch (error) {
+      this.viewer.clearRasterAnalysisView();
+      throw error;
+    }
+  }
+
+  /** Leaves the active image view and restores its captured mixed-scene camera. */
+  clearRasterAnalysisView(durationMilliseconds = 180): void {
+    this.assertAlive();
+    const kind = this.rasterAnalysisKind;
+    if (!kind) return;
+    const transition =
+      kind === 'panorama'
+        ? this.camera.clearOrientedPerspectiveViewpoint()
+        : this.camera.clearLocalOrthographicFrame();
+    this.viewer.clearRasterAnalysisView();
+    this.rasterAnalysisKind = null;
+    this.applyCameraTransition(transition, durationMilliseconds);
+  }
+
   /** Leaves a local section/profile frame and restores its captured 3D camera. */
   clearLocalOrthographicFrame(durationMilliseconds = 180): void {
     this.assertAlive();
@@ -190,6 +232,8 @@ export class KernelNavigationController {
 
   dispose(): void {
     if (this.disposed) return;
+    if (this.rasterAnalysisKind) this.viewer.clearRasterAnalysisView();
+    this.rasterAnalysisKind = null;
     this.disposed = true;
     this.transitionGeneration += 1;
     if (this.wheelInteractionTimer !== null) clearTimeout(this.wheelInteractionTimer);

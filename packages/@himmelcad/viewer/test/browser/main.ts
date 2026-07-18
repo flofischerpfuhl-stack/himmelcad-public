@@ -88,6 +88,14 @@ interface BrowserValidationState {
   exactPointPick: KernelPickResult | null;
   panoramaMarkerPick: KernelPickResult | null;
   panoramaDepthMeasurement: ReturnType<WgpuKernelViewer['measureRasterDepthSample']> | null;
+  rasterAnalysis: {
+    readonly panoramaView: ReturnType<WgpuKernelViewer['setRasterAnalysisView']>;
+    readonly panoramaPick: KernelPickResult;
+    readonly imageView: ReturnType<WgpuKernelViewer['setRasterAnalysisView']>;
+    readonly imagePick: KernelPickResult;
+    readonly distance: ReturnType<WgpuKernelViewer['measureRasterDepthDistance']>;
+    readonly normalViewRestored: boolean;
+  } | null;
   originRebase: { generationStable: boolean; pick: unknown } | null;
   materializedParcelPick: KernelPickResult | null;
   materializedSurveyPick: KernelPickResult | null;
@@ -484,6 +492,7 @@ const state: BrowserValidationState = {
   exactPointPick: null,
   panoramaMarkerPick: null,
   panoramaDepthMeasurement: null,
+  rasterAnalysis: null,
   originRebase: null,
   materializedParcelPick: null,
   materializedSurveyPick: null,
@@ -5888,6 +5897,66 @@ async function run(): Promise<void> {
   });
   state.panoramaMarkerPick = await viewer.pick(640, 360, 2);
   state.panoramaDepthMeasurement = viewer.measureRasterDepthSample('scan-panorama', 3, 1);
+  const panoramaView = viewer.setRasterAnalysisView('scan-panorama');
+  if (panoramaView.kind !== 'panorama') {
+    throw new Error('panorama analysis returned an oriented-image camera');
+  }
+  viewer.setWorldCamera(
+    {
+      eye: panoramaView.eye,
+      target: panoramaView.target,
+      up: panoramaView.up,
+      projection: {
+        kind: 'perspective',
+        verticalFovRadians: panoramaView.verticalFovRadians,
+        aspect: 1280 / 720,
+        near: 0.01,
+        far: 1_000,
+      },
+    },
+    BASE,
+  );
+  viewer.render();
+  const panoramaAnalysisPick = await viewer.pick(640, 360, 2);
+  const panoramaCleared = viewer.clearRasterAnalysisView();
+
+  const imageView = viewer.setRasterAnalysisView('pinhole-depth-image');
+  if (imageView.kind !== 'orientedImage') {
+    throw new Error('oriented-image analysis returned a panorama camera');
+  }
+  viewer.setWorldCamera(
+    {
+      eye: {
+        x: imageView.origin.x + imageView.normal.x * 100,
+        y: imageView.origin.y + imageView.normal.y * 100,
+        z: imageView.origin.z + imageView.normal.z * 100,
+      },
+      target: imageView.origin,
+      up: imageView.up,
+      projection: {
+        kind: 'orthographic',
+        verticalSpan: imageView.verticalSpan,
+        aspect: 1280 / 720,
+        near: 0.05,
+        far: 1_000,
+      },
+    },
+    BASE,
+  );
+  viewer.render();
+  const imageAnalysisPick = await viewer.pick(640, 360, 2);
+  const imageCleared = viewer.clearRasterAnalysisView();
+  state.rasterAnalysis = {
+    panoramaView,
+    panoramaPick: panoramaAnalysisPick,
+    imageView,
+    imagePick: imageAnalysisPick,
+    distance: viewer.measureRasterDepthDistance([
+      { entityId: 'scan-panorama', column: 3, row: 1 },
+      { entityId: 'pinhole-depth-image', column: 2, row: 2 },
+    ]),
+    normalViewRestored: panoramaCleared && imageCleared,
+  };
   setFocusedOrientedCamera(
     viewer,
     syntheticPointTarget,

@@ -79,7 +79,7 @@ use himmelcad_render::{
     compile_entity_geometry_with_associations, decode_artifact, glb_texture_source_keys,
     gpu_indexed_geometry_identity, gpu_uploaded_texture_identity, inspect_gltf_dependencies,
     instanced_model_chunks, layout_text, potree_point_world_position,
-    prepare_glb_texture_uploads_for_sources, project_raster_sample,
+    prepare_glb_texture_uploads_for_sources, project_raster_sample, raster_analysis_view,
     reconstruct_coarse_pick_candidates, refine_decoded_potree_point_pick, refine_exact_point_pick,
     refine_potree_point_pick, refine_tessellated_curve_pick, required_entity_proxy_slots,
     required_three_d_tiles_proxy_slots, resolve_entity_point_world, section_geometry_object,
@@ -106,17 +106,17 @@ use himmelcad_render::{
     ImplicitThreeDTilesHierarchySource, InstancedTriangleMeshPickRefiner, MeshPickRefiner,
     PickCandidate, PickCycle, PickRefinementRequest, PotreeHierarchySource, PotreePointLayout,
     PreparedAssetBundle, PreparedGpuTextureResources, PreparedHierarchySource,
-    PreparedRasterTileContract, PresentationTransform, QualityAdjustment, RenderProxy,
-    RenderProxyId, RenderProxyKind, RenderStyle, RenderWorld, ResidencyTicket, ResolvedAssetEntry,
-    ResolvedGeometryRepresentationAdmission, ResourceBudget, ResourceCost, RuntimeQualityGovernor,
-    RuntimeQualityState, SectionBatchOptions, SectionHatchStyle, SectionMaterialRegionBinding,
-    SectionPlane, SectionProduct, SectionRegion, SectionTopologyPart, SectionTopologyPartitionData,
-    SectionTopologySnapshotKey, SharedAssetBlobCache, StreamingCoordinator, StreamingRuntimeLimits,
-    StrokeMode, SurfaceFrame, SurfaceFrameOutcome, SurfacePickRequest, TessellatedCurve,
-    TessellatedCurvePath, TessellatedCurveSegment, TextAlignment, TextBatchOptions,
-    TextLayoutOptions, TextLayoutSpace, ThreeDTilesContentKind, ThreeDTilesHierarchySource, TileId,
-    TileKey, TileSelection, TileSelectionView, TileSelector, TimingSample,
-    TriangleMeshPickInstance, TriangleMeshPickRefiner, TriangleMeshPickSource,
+    PreparedRasterTileContract, PresentationTransform, QualityAdjustment, RasterAnalysisView,
+    RenderProxy, RenderProxyId, RenderProxyKind, RenderStyle, RenderWorld, ResidencyTicket,
+    ResolvedAssetEntry, ResolvedGeometryRepresentationAdmission, ResourceBudget, ResourceCost,
+    RuntimeQualityGovernor, RuntimeQualityState, SectionBatchOptions, SectionHatchStyle,
+    SectionMaterialRegionBinding, SectionPlane, SectionProduct, SectionRegion, SectionTopologyPart,
+    SectionTopologyPartitionData, SectionTopologySnapshotKey, SharedAssetBlobCache, SnapKind,
+    StreamingCoordinator, StreamingRuntimeLimits, StrokeMode, SurfaceFrame, SurfaceFrameOutcome,
+    SurfacePickRequest, TessellatedCurve, TessellatedCurvePath, TessellatedCurveSegment,
+    TextAlignment, TextBatchOptions, TextLayoutOptions, TextLayoutSpace, ThreeDTilesContentKind,
+    ThreeDTilesHierarchySource, TileId, TileKey, TileSelection, TileSelectionView, TileSelector,
+    TimingSample, TriangleMeshPickInstance, TriangleMeshPickRefiner, TriangleMeshPickSource,
     UnresolvedHeightDisplay, WorldAabb, WorldCamera, WorldTransform, WorldVec3,
     GPU_POINT_VERTEX_STRIDE_BYTES, SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
 };
@@ -410,6 +410,7 @@ pub struct WasmViewer {
     image_resources: BTreeMap<String, WasmImageResource>,
     depth_resources: BTreeMap<String, WasmDepthResource>,
     raster_binary_resources: BTreeMap<String, WasmBinaryResource>,
+    raster_analysis_view: Option<WasmRasterAnalysisViewState>,
     mesh_resources: BTreeMap<String, TriangleMeshGeometry>,
     material_resources: WasmMaterialResourceRegistry,
     hatch_resources: WasmHatchResourceRegistry,
@@ -471,6 +472,44 @@ struct WasmRasterDepthMeasurement {
     depth: f64,
     confidence: Option<f64>,
     source_position: WorldVec3,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WasmRasterDepthPick {
+    entity_id: String,
+    column: u32,
+    row: u32,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WasmRasterDepthMeasurementSet {
+    picks: Vec<WasmRasterDepthMeasurement>,
+    segment_distances: Vec<f64>,
+    total_distance: f64,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WasmRasterAnalysisViewDescriptor {
+    entity_id: String,
+    version_hash: Option<String>,
+    width: u32,
+    height: u32,
+    #[serde(flatten)]
+    camera: RasterAnalysisView,
+}
+
+#[cfg(target_arch = "wasm32")]
+struct WasmRasterAnalysisViewState {
+    entity_id: String,
+    proxy_id: RenderProxyId,
+    analysis_batch: GpuDrawBatch,
+    cost: ResourceCost,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1460,6 +1499,7 @@ async fn create_wasm_viewer(
         image_resources: BTreeMap::new(),
         depth_resources: BTreeMap::new(),
         raster_binary_resources: BTreeMap::new(),
+        raster_analysis_view: None,
         mesh_resources: BTreeMap::new(),
         material_resources: WasmMaterialResourceRegistry::default(),
         hatch_resources: WasmHatchResourceRegistry::default(),
@@ -2265,6 +2305,14 @@ impl WasmViewer {
             foreign_visits: 0,
         };
         self.rebuild_inline_clip_previews().map_err(js_error)?;
+        if self
+            .raster_analysis_view
+            .as_ref()
+            .is_some_and(|analysis| affected_entity_ids.contains(&analysis.entity_id))
+        {
+            self.raster_analysis_view = None;
+            self.sync_external_asset_cache_cost();
+        }
         for entity_id in affected_entity_ids {
             self.rebuild_or_discard_move_previews_for_entity(&entity_id);
         }
@@ -3248,6 +3296,42 @@ impl WasmViewer {
         column: u32,
         row: u32,
     ) -> Result<String, JsValue> {
+        serde_json::to_string(&self.measure_raster_depth_sample(entity_id, column, row)?)
+            .map_err(js_error)
+    }
+
+    /// Resolves at least two image picks and every intervening source-space
+    /// distance without treating GPU presentation depth as measurement truth.
+    pub fn measure_raster_depth_distance_json(&self, picks_json: &str) -> Result<String, JsValue> {
+        let picks: Vec<WasmRasterDepthPick> = serde_json::from_str(picks_json).map_err(js_error)?;
+        if picks.len() < 2 {
+            return Err(JsValue::from_str(
+                "raster distance measurement requires at least two image picks",
+            ));
+        }
+        let measurements = picks
+            .iter()
+            .map(|pick| self.measure_raster_depth_sample(&pick.entity_id, pick.column, pick.row))
+            .collect::<Result<Vec<_>, _>>()?;
+        let segment_distances = measurements
+            .windows(2)
+            .map(|pair| world_distance(pair[0].source_position, pair[1].source_position))
+            .collect::<Vec<_>>();
+        let total_distance = segment_distances.iter().sum();
+        serde_json::to_string(&WasmRasterDepthMeasurementSet {
+            picks: measurements,
+            segment_distances,
+            total_distance,
+        })
+        .map_err(js_error)
+    }
+
+    fn measure_raster_depth_sample(
+        &self,
+        entity_id: &str,
+        column: u32,
+        row: u32,
+    ) -> Result<WasmRasterDepthMeasurement, JsValue> {
         let request = self
             .entity_requests
             .get(entity_id)
@@ -3320,7 +3404,7 @@ impl WasmViewer {
             &self.raster_binary_resources,
         )
         .map_err(|error| JsValue::from_str(&error))?;
-        serde_json::to_string(&WasmRasterDepthMeasurement {
+        Ok(WasmRasterDepthMeasurement {
             entity_id: entity_id.to_owned(),
             column,
             row,
@@ -3328,7 +3412,85 @@ impl WasmViewer {
             confidence,
             source_position,
         })
-        .map_err(js_error)
+    }
+
+    /// Enters a separate panorama or oriented-image analysis view. Only the
+    /// selected canonical entity is submitted while the mode is active; the
+    /// normal render world and its visibility state remain unchanged.
+    pub fn set_raster_analysis_view_json(&mut self, entity_id: &str) -> Result<String, JsValue> {
+        let request = self
+            .entity_requests
+            .get(entity_id)
+            .ok_or_else(|| JsValue::from_str("raster analysis entity is not loaded"))?;
+        let (raster, panorama) = match &request.geometry {
+            GeometryObject::RasterImage { raster } => (raster.as_ref(), false),
+            GeometryObject::Panorama { panorama } => (&panorama.image, true),
+            _ => {
+                return Err(JsValue::from_str(
+                    "raster analysis requires a raster or panorama entity",
+                ))
+            }
+        };
+        let camera =
+            raster_analysis_view(raster, request.placement, request.plane_extent, panorama)
+                .map_err(js_error)?;
+        let proxy_id = RenderProxyId(request.proxy_id.clone());
+        let pick_slot = self
+            .render_world
+            .pick_slot_for_proxy(&proxy_id)
+            .ok_or_else(|| JsValue::from_str("raster render proxy is not resident"))?;
+        let (analysis_batch, analysis_cost) = if panorama {
+            compile_panorama_analysis_batch(
+                &self.host,
+                request,
+                raster,
+                pick_slot,
+                self.floating_origin,
+                &self.image_resources,
+                &self.hatch_resources,
+                &self.line_type_resources,
+            )
+            .map_err(js_error)?
+        } else {
+            compile_oriented_image_analysis_batch(
+                &self.host,
+                request,
+                raster,
+                pick_slot,
+                self.floating_origin,
+                &self.image_resources,
+                &self.depth_resources,
+                &self.raster_binary_resources,
+                &self.hatch_resources,
+                &self.line_type_resources,
+            )
+            .map_err(js_error)?
+        };
+        let descriptor = WasmRasterAnalysisViewDescriptor {
+            entity_id: entity_id.to_owned(),
+            version_hash: request.version_hash.clone(),
+            width: raster.width,
+            height: raster.height,
+            camera,
+        };
+        self.raster_analysis_view = Some(WasmRasterAnalysisViewState {
+            entity_id: entity_id.to_owned(),
+            proxy_id,
+            analysis_batch,
+            cost: analysis_cost,
+        });
+        self.sync_external_asset_cache_cost();
+        serde_json::to_string(&descriptor).map_err(js_error)
+    }
+
+    /// Leaves the separate raster analysis view without changing source or
+    /// normal-view visibility state.
+    pub fn clear_raster_analysis_view(&mut self) -> bool {
+        let cleared = self.raster_analysis_view.take().is_some();
+        if cleared {
+            self.sync_external_asset_cache_cost();
+        }
+        cleared
     }
 
     /// Registers an immutable binary raster side-band. Validity bitsets,
@@ -4218,6 +4380,14 @@ impl WasmViewer {
             self.registered_dataset_contracts.remove(dataset_id);
         }
         self.sync_external_asset_cache_cost();
+        if self
+            .raster_analysis_view
+            .as_ref()
+            .is_some_and(|analysis| retiring_entities.contains(&analysis.entity_id))
+        {
+            self.raster_analysis_view = None;
+            self.sync_external_asset_cache_cost();
+        }
         for entity_id in &retiring_entities {
             let previous = self.entity_requests.get(entity_id).cloned();
             replace_entity_dependency_index(
@@ -4351,6 +4521,13 @@ impl WasmViewer {
         }
         self.render_world.set_entity_style(entity_id, &style);
         persist_entity_style(self, entity_id, &style, exaggeration_datum);
+        if self
+            .raster_analysis_view
+            .as_ref()
+            .is_some_and(|analysis| analysis.entity_id == entity_id)
+        {
+            let _ = self.set_raster_analysis_view_json(entity_id)?;
+        }
         self.last_transaction_diagnostics = WasmTransactionDiagnostics {
             touched_entities: 1,
             touched_sections: 0,
@@ -5062,34 +5239,47 @@ impl WasmViewer {
             gpu_ms,
             interacting: observation.interacting,
         };
-        let canonical_visible_cost = self.render_world.visible_cost();
-        let move_preview_visible_cost =
-            self.move_previews
-                .values()
-                .fold(ResourceCost::default(), |preview_cost, preview| {
-                    let source = if preview.target_render_tiles.is_empty() {
-                        self.render_world
-                            .visible_cost_for_entity(&preview.entity_id)
-                    } else {
-                        self.render_world
-                            .resident_cost_for_tiles(preview.target_render_tiles.iter().cloned())
-                    };
-                    let source_cost = ResourceCost {
-                        points: source.points,
-                        triangles: source.triangles,
-                        splats: source.splats,
-                        draw_calls: source.draw_calls,
-                        ..ResourceCost::default()
-                    };
-                    preview_cost.saturating_add(source_cost)
-                });
-        let visible_cost = canonical_visible_cost
-            .saturating_add(move_preview_visible_cost)
-            .saturating_add(ResourceCost {
+        let canonical_visible_cost = self.raster_analysis_view.as_ref().map_or_else(
+            || self.render_world.visible_cost(),
+            |analysis| analysis.cost,
+        );
+        let move_preview_visible_cost = self.raster_analysis_view.as_ref().map_or_else(
+            || {
+                self.move_previews.values().fold(
+                    ResourceCost::default(),
+                    |preview_cost, preview| {
+                        let source = if preview.target_render_tiles.is_empty() {
+                            self.render_world
+                                .visible_cost_for_entity(&preview.entity_id)
+                        } else {
+                            self.render_world.resident_cost_for_tiles(
+                                preview.target_render_tiles.iter().cloned(),
+                            )
+                        };
+                        let source_cost = ResourceCost {
+                            points: source.points,
+                            triangles: source.triangles,
+                            splats: source.splats,
+                            draw_calls: source.draw_calls,
+                            ..ResourceCost::default()
+                        };
+                        preview_cost.saturating_add(source_cost)
+                    },
+                )
+            },
+            |_| ResourceCost::default(),
+        );
+        let clip_visible_cost = self.raster_analysis_view.as_ref().map_or_else(
+            || ResourceCost {
                 triangles: self.clip_preview_cost.triangles,
                 draw_calls: self.clip_preview_cost.draw_calls,
                 ..ResourceCost::default()
-            });
+            },
+            |_| ResourceCost::default(),
+        );
+        let visible_cost = canonical_visible_cost
+            .saturating_add(move_preview_visible_cost)
+            .saturating_add(clip_visible_cost);
         let shared_cost = self.streaming.residency().shared_cost();
         let move_preview_gpu_bytes = self
             .move_previews
@@ -5099,6 +5289,12 @@ impl WasmViewer {
                 bytes.saturating_add(preview_batch.batch.styled_fork_exclusive_gpu_bytes())
             });
         let canonical_resident_cost = self.render_world.resident_cost();
+        let analysis_gpu_bytes = self.raster_analysis_view.as_ref().map_or(0, |analysis| {
+            analysis
+                .cost
+                .gpu_buffer_bytes
+                .saturating_add(analysis.cost.gpu_texture_bytes)
+        });
         let resident_gpu_bytes = canonical_resident_cost
             .gpu_buffer_bytes
             .saturating_add(canonical_resident_cost.gpu_texture_bytes)
@@ -5106,7 +5302,8 @@ impl WasmViewer {
             .saturating_add(shared_cost.gpu_texture_bytes)
             .saturating_add(self.clip_preview_cost.gpu_buffer_bytes)
             .saturating_add(self.clip_preview_cost.gpu_texture_bytes)
-            .saturating_add(move_preview_gpu_bytes);
+            .saturating_add(move_preview_gpu_bytes)
+            .saturating_add(analysis_gpu_bytes);
         if !self.frame_telemetry.observe(FrameTelemetrySample {
             timing,
             uploaded_bytes: observation.uploaded_bytes,
@@ -5711,7 +5908,11 @@ impl WasmViewer {
         let texture_stats = self.gpu_texture_cache.stats();
         self.streaming.set_shared_resource_cost(ResourceCost {
             cpu_compressed_bytes: self.external_asset_cache.resident_bytes(),
-            gpu_buffer_bytes: self.gpu_model_cache.resident_bytes,
+            gpu_buffer_bytes: self.gpu_model_cache.resident_bytes.saturating_add(
+                self.raster_analysis_view
+                    .as_ref()
+                    .map_or(0, |analysis| analysis.cost.gpu_buffer_bytes),
+            ),
             gpu_texture_bytes: texture_stats.resident_bytes,
             ..ResourceCost::default()
         });
@@ -6735,11 +6936,15 @@ impl WasmViewer {
         &mut self,
         pick: Option<SurfacePickRequest>,
     ) -> Result<SurfaceFrameOutcome, String> {
-        let visible_proxy_ids = self
-            .render_world
-            .visible_proxy_ids()
-            .cloned()
-            .collect::<Vec<_>>();
+        let visible_proxy_ids = self.raster_analysis_view.as_ref().map_or_else(
+            || {
+                self.render_world
+                    .visible_proxy_ids()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            },
+            |analysis| vec![analysis.proxy_id.clone()],
+        );
         let queue = self.host.queue();
         let mut frame_origin_queue_writes = 0_u64;
         for id in &visible_proxy_ids {
@@ -6752,6 +6957,18 @@ impl WasmViewer {
                         frame_origin_queue_writes = frame_origin_queue_writes.saturating_add(1);
                     }
                 }
+            }
+        }
+        if let Some(batch) = self
+            .raster_analysis_view
+            .as_mut()
+            .map(|analysis| &mut analysis.analysis_batch)
+        {
+            if batch
+                .ensure_frame_origin(queue, self.floating_origin)
+                .map_err(|error| error.to_string())?
+            {
+                frame_origin_queue_writes = frame_origin_queue_writes.saturating_add(1);
             }
         }
         for preview in self.move_previews.values_mut() {
@@ -6782,25 +6999,34 @@ impl WasmViewer {
         self.frame_origin_queue_write_count = self
             .frame_origin_queue_write_count
             .saturating_add(frame_origin_queue_writes);
-        let mut batches = visible_proxy_ids
-            .iter()
-            .filter_map(|id| self.batches.get(id))
-            .flat_map(|batches| batches.iter())
-            .collect::<Vec<_>>();
-        batches.extend(self.move_previews.values().flat_map(|preview| {
-            preview
-                .batches
+        let mut batches = if let Some(analysis) = &self.raster_analysis_view {
+            vec![&analysis.analysis_batch]
+        } else {
+            visible_proxy_ids
                 .iter()
-                .filter(|preview_batch| {
-                    preview_batch.tile_key.as_ref().map_or_else(
-                        || self.render_world.is_visible(&preview_batch.source_id),
-                        |key| preview.target_render_tiles.contains(key),
-                    )
-                })
-                .map(|preview_batch| &preview_batch.batch)
-        }));
-        batches.extend(self.clip_preview_batches.iter());
-        let clip_volumes = self.render_world.active_clip_volumes().collect::<Vec<_>>();
+                .filter_map(|id| self.batches.get(id))
+                .flat_map(|batches| batches.iter())
+                .collect::<Vec<_>>()
+        };
+        if self.raster_analysis_view.is_none() {
+            batches.extend(self.move_previews.values().flat_map(|preview| {
+                preview
+                    .batches
+                    .iter()
+                    .filter(|preview_batch| {
+                        preview_batch.tile_key.as_ref().map_or_else(
+                            || self.render_world.is_visible(&preview_batch.source_id),
+                            |key| preview.target_render_tiles.contains(key),
+                        )
+                    })
+                    .map(|preview_batch| &preview_batch.batch)
+            }));
+            batches.extend(self.clip_preview_batches.iter());
+        }
+        let clip_volumes = self.raster_analysis_view.as_ref().map_or_else(
+            || self.render_world.active_clip_volumes().collect::<Vec<_>>(),
+            |_| Vec::new(),
+        );
         self.host
             .render(SurfaceFrame {
                 view_projection: self.view_projection,
@@ -8684,6 +8910,213 @@ fn compile_panorama_entity(
 }
 
 #[cfg(target_arch = "wasm32")]
+#[allow(clippy::too_many_arguments)]
+fn compile_panorama_analysis_batch(
+    host: &GpuSurfaceHost<'_>,
+    request: &WasmEntityRenderRequest,
+    raster: &himmelcad_core::entity_model::RasterImageGeometry,
+    pick_slot: u32,
+    floating_origin: WorldVec3,
+    image_resources: &BTreeMap<String, WasmImageResource>,
+    hatch_resources: &WasmHatchResourceRegistry,
+    line_type_resources: &WasmLineTypeResourceRegistry,
+) -> Result<(GpuDrawBatch, ResourceCost), String> {
+    let image = image_resources
+        .get(&raster.pixels.object_hash.0)
+        .ok_or_else(|| "panorama image resource is not registered".to_owned())?;
+    if image.width != raster.width || image.height != raster.height {
+        return Err("panorama dimensions do not match its image resource".to_owned());
+    }
+    let pose = match &raster.mapping {
+        RasterMapping::Camera {
+            model: CameraModel::Equirectangular,
+            pose,
+        } => *pose,
+        _ => return Err("panorama analysis requires an equirectangular camera".to_owned()),
+    };
+    let floating_origin = FloatingOrigin::from_selected(1_024.0, floating_origin)
+        .map_err(|error| error.to_string())?;
+    let mesh = panorama_analysis_mesh(raster, pose, request.plane_extent)?;
+    let mut analysis_request = request.clone();
+    analysis_request.style.vertical_exaggeration = 1.0;
+    analysis_request.exaggeration_datum = 0.0;
+    let geometry = GeometryObject::Surface3d {
+        mesh: Box::new(mesh),
+    };
+    let mut parts = compile_entity_geometry(
+        host.device(),
+        host.queue(),
+        host.renderer(),
+        &format!("{}-analysis", request.proxy_id),
+        &geometry,
+        &[pick_slot],
+        &compilation_options(&analysis_request, floating_origin),
+    )
+    .map_err(|error| error.to_string())?;
+    let part = parts
+        .pop()
+        .ok_or_else(|| "panorama analysis compiler returned no mesh".to_owned())?;
+    let style = GpuPresentationStyle::from_render_style(
+        &analysis_request.style,
+        floating_origin.world(),
+        analysis_request.exaggeration_datum,
+    )
+    .map_err(|error| error.to_string())?;
+    let alpha_mode = if analysis_request.style.opacity < 1.0 {
+        GpuAlphaMode::Blend
+    } else {
+        GpuAlphaMode::Opaque
+    };
+    let material = host
+        .renderer()
+        .create_styled_material_from_texture(
+            host.device(),
+            host.queue(),
+            &format!("{}-panorama-analysis-material", request.proxy_id),
+            &image.texture,
+            alpha_mode,
+            style,
+        )
+        .map_err(|error| error.to_string())?;
+    let cost = ResourceCost {
+        gpu_texture_bytes: 0,
+        ..part.cost
+    };
+    let mut batch = part.batch.with_material(material);
+    batch
+        .set_world_origins(
+            host.queue(),
+            floating_origin.world(),
+            floating_origin.world(),
+        )
+        .map_err(|error| error.to_string())?;
+    let resolved = resolve_batch_presentation(
+        &analysis_request.style,
+        analysis_request.exaggeration_datum,
+        RenderProxyKind::Raster,
+        &batch,
+        image_resources,
+        hatch_resources,
+        line_type_resources,
+    )?;
+    apply_batch_presentation(host, &mut batch, &resolved)?;
+    Ok((batch, cost))
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(clippy::too_many_arguments)]
+fn compile_oriented_image_analysis_batch(
+    host: &GpuSurfaceHost<'_>,
+    request: &WasmEntityRenderRequest,
+    raster: &himmelcad_core::entity_model::RasterImageGeometry,
+    pick_slot: u32,
+    floating_origin: WorldVec3,
+    image_resources: &BTreeMap<String, WasmImageResource>,
+    depth_resources: &BTreeMap<String, WasmDepthResource>,
+    raster_binary_resources: &BTreeMap<String, WasmBinaryResource>,
+    hatch_resources: &WasmHatchResourceRegistry,
+    line_type_resources: &WasmLineTypeResourceRegistry,
+) -> Result<(GpuDrawBatch, ResourceCost), String> {
+    let floating_origin = FloatingOrigin::from_selected(1_024.0, floating_origin)
+        .map_err(|error| error.to_string())?;
+    let mut analysis_request = request.clone();
+    analysis_request.style.vertical_exaggeration = 1.0;
+    analysis_request.exaggeration_datum = 0.0;
+    let part = compile_raster_image_entity(
+        host,
+        &analysis_request,
+        raster,
+        pick_slot,
+        floating_origin,
+        image_resources,
+        depth_resources,
+        raster_binary_resources,
+    )?;
+    let cost = ResourceCost {
+        gpu_texture_bytes: 0,
+        ..part.cost
+    };
+    let mut batch = part.batch;
+    batch
+        .set_world_origins(
+            host.queue(),
+            floating_origin.world(),
+            floating_origin.world(),
+        )
+        .map_err(|error| error.to_string())?;
+    let resolved = resolve_batch_presentation(
+        &analysis_request.style,
+        analysis_request.exaggeration_datum,
+        RenderProxyKind::Raster,
+        &batch,
+        image_resources,
+        hatch_resources,
+        line_type_resources,
+    )?;
+    apply_batch_presentation(host, &mut batch, &resolved)?;
+    Ok((batch, cost))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn panorama_analysis_mesh(
+    raster: &himmelcad_core::entity_model::RasterImageGeometry,
+    pose: Transform3d,
+    radius: f64,
+) -> Result<TriangleMeshGeometry, String> {
+    if !radius.is_finite() || radius <= 0.0 {
+        return Err("panorama presentation radius must be finite and positive".to_owned());
+    }
+    let pose = DMat4::from_cols_array(&pose.0);
+    if !pose.is_finite() || pose.determinant().abs() <= f64::EPSILON {
+        return Err("panorama camera pose is non-invertible".to_owned());
+    }
+    let longitude_segments = raster.width.clamp(16, 128);
+    let latitude_segments = raster.height.clamp(8, 64);
+    let row_width = longitude_segments + 1;
+    let mut positions = Vec::with_capacity(
+        usize::try_from(u64::from(row_width) * u64::from(latitude_segments + 1))
+            .map_err(|_| "panorama analysis mesh is too large")?,
+    );
+    let mut normals = Vec::with_capacity(positions.capacity());
+    let mut texture_coordinates = Vec::with_capacity(positions.capacity());
+    for row in 0..=latitude_segments {
+        let v = f64::from(row) / f64::from(latitude_segments);
+        let latitude = (v - 0.5) * std::f64::consts::PI;
+        let planar = latitude.cos();
+        for column in 0..=longitude_segments {
+            let u = f64::from(column) / f64::from(longitude_segments);
+            let longitude = (u - 0.5) * std::f64::consts::TAU;
+            let direction = DVec3::new(
+                planar * longitude.sin(),
+                latitude.sin(),
+                planar * longitude.cos(),
+            );
+            positions.push(vector3(pose.transform_point3(direction * radius)));
+            normals.push(vector3(
+                pose.transform_vector3(-direction).normalize_or_zero(),
+            ));
+            texture_coordinates.push([u, v]);
+        }
+    }
+    let mut indices = Vec::new();
+    for row in 0..latitude_segments {
+        for column in 0..longitude_segments {
+            let top_left = row * row_width + column;
+            let top_right = top_left + 1;
+            let bottom_left = (row + 1) * row_width + column;
+            let bottom_right = bottom_left + 1;
+            if row > 0 {
+                indices.extend([top_left, bottom_right, top_right]);
+            }
+            if row + 1 < latitude_segments {
+                indices.extend([top_left, bottom_left, bottom_right]);
+            }
+        }
+    }
+    raster_triangle_mesh(positions, indices, normals, texture_coordinates)
+}
+
+#[cfg(target_arch = "wasm32")]
 fn panorama_station_position(pose: Transform3d) -> Result<Position, String> {
     let pose = DMat4::from_cols_array(&pose.0);
     if !pose.is_finite() || pose.determinant().abs() <= f64::EPSILON {
@@ -9555,6 +9988,11 @@ fn position_from_world(value: WorldVec3) -> Position {
 #[cfg(target_arch = "wasm32")]
 fn dvec3(value: WorldVec3) -> DVec3 {
     DVec3::new(value.x, value.y, value.z)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn world_distance(left: WorldVec3, right: WorldVec3) -> f64 {
+    dvec3(left).distance(dvec3(right))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -13105,6 +13543,7 @@ fn compilation_options(
 }
 
 #[cfg(target_arch = "wasm32")]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn refine_pick_candidates(
     viewer: &WasmViewer,
     camera: &CameraFrame,
@@ -13167,6 +13606,36 @@ fn refine_pick_candidates(
                 None
             };
         let request = resolved_block_member.as_ref().unwrap_or(root_request);
+        if viewer
+            .raster_analysis_view
+            .as_ref()
+            .is_some_and(|analysis| analysis.entity_id == request.entity_id)
+            && matches!(
+                &request.geometry,
+                GeometryObject::RasterImage { .. } | GeometryObject::Panorama { .. }
+            )
+        {
+            if let Some(measurement) = raster_analysis_pick_measurement(viewer, request, cursor_ray)
+            {
+                let projected = camera
+                    .project_world(measurement.source_position, viewport)
+                    .map_err(|error| error.to_string())?;
+                let mut exact = candidate.clone();
+                exact.world_position = measurement.source_position;
+                exact.snap_kind = SnapKind::RasterSample;
+                exact.pixel_distance = (projected.pixel[0] - cursor[0])
+                    .hypot(projected.pixel[1] - cursor[1])
+                    .min(f64::from(f32::MAX)) as f32;
+                exact.depth = projected.reverse_z_depth as f32;
+                exact.address.primitive_id = Some(
+                    u64::from(measurement.row)
+                        .saturating_mul(raster_width(request).unwrap_or(0).into())
+                        .saturating_add(u64::from(measurement.column)),
+                );
+                refined.push(exact);
+            }
+            continue;
+        }
         if let GeometryObject::Point { position } = &request.geometry {
             let exact = resolve_entity_point_world(
                 *position,
@@ -13239,6 +13708,93 @@ fn refine_pick_candidates(
         }
     }
     Ok(refined)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn raster_width(request: &WasmEntityRenderRequest) -> Option<u32> {
+    match &request.geometry {
+        GeometryObject::RasterImage { raster } => Some(raster.width),
+        GeometryObject::Panorama { panorama } => Some(panorama.image.width),
+        _ => None,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn raster_analysis_pick_measurement(
+    viewer: &WasmViewer,
+    request: &WasmEntityRenderRequest,
+    cursor_ray: himmelcad_render::WorldRay,
+) -> Option<WasmRasterDepthMeasurement> {
+    let (raster, panorama) = match &request.geometry {
+        GeometryObject::RasterImage { raster } => (raster.as_ref(), false),
+        GeometryObject::Panorama { panorama } => (&panorama.image, true),
+        _ => return None,
+    };
+    let RasterMapping::Camera { model, pose } = &raster.mapping else {
+        return None;
+    };
+    let placement = DMat4::from_cols_array(&request.placement.unwrap_or(Transform3d::IDENTITY).0);
+    let camera_pose = DMat4::from_cols_array(&pose.0);
+    let camera_from_world = (placement * camera_pose).inverse();
+    if !camera_from_world.is_finite() {
+        return None;
+    }
+    let (column, row) = if panorama {
+        if !matches!(model, CameraModel::Equirectangular) {
+            return None;
+        }
+        let direction = camera_from_world
+            .transform_vector3(dvec3(cursor_ray.direction))
+            .try_normalize()?;
+        let longitude = direction.x.atan2(direction.z);
+        let latitude = direction.y.clamp(-1.0, 1.0).asin();
+        let column = ((((longitude / std::f64::consts::TAU) + 0.5) * f64::from(raster.width))
+            .floor() as u64
+            % u64::from(raster.width)) as u32;
+        let row = ((((latitude / std::f64::consts::PI) + 0.5) * f64::from(raster.height))
+            .floor()
+            .clamp(0.0, f64::from(raster.height - 1))) as u32;
+        (column, row)
+    } else {
+        let CameraModel::Pinhole {
+            focal_x,
+            focal_y,
+            center_x,
+            center_y,
+            distortion_model,
+            ..
+        } = model
+        else {
+            return None;
+        };
+        if distortion_model.is_some() {
+            return None;
+        }
+        let origin = camera_from_world.transform_point3(dvec3(cursor_ray.origin));
+        let direction = camera_from_world.transform_vector3(dvec3(cursor_ray.direction));
+        if !origin.is_finite() || !direction.is_finite() || direction.z.abs() <= 1.0e-12 {
+            return None;
+        }
+        let distance = (request.plane_extent - origin.z) / direction.z;
+        if !distance.is_finite() {
+            return None;
+        }
+        let presentation = origin + direction * distance;
+        let column = (presentation.x / presentation.z * focal_x + center_x).round();
+        let row = (presentation.y / presentation.z * focal_y + center_y).round();
+        if column < 0.0
+            || row < 0.0
+            || column >= f64::from(raster.width)
+            || row >= f64::from(raster.height)
+        {
+            return None;
+        }
+        (column as u32, row as u32)
+    };
+    viewer
+        .measure_raster_depth_sample(&request.entity_id, column, row)
+        .ok()
 }
 
 #[cfg(target_arch = "wasm32")]

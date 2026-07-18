@@ -13,6 +13,171 @@ use himmelcad_core::entity_validation::validate_geometry_object;
 
 use crate::WorldVec3;
 
+/// A kernel-owned camera contract for a separate raster analysis view.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum RasterAnalysisView {
+    /// Perspective camera placed at a panorama scan station.
+    Panorama {
+        /// Camera station in project source coordinates.
+        eye: WorldVec3,
+        /// Initial source-space look target.
+        target: WorldVec3,
+        /// Orthonormal source-space camera-up direction.
+        up: WorldVec3,
+        /// Initial vertical field of view in radians.
+        vertical_fov_radians: f64,
+    },
+    /// Plane-local orthographic camera showing one oriented pinhole image.
+    OrientedImage {
+        /// Center of the presentation plane in project source coordinates.
+        origin: WorldVec3,
+        /// Unit plane normal pointing toward the camera station.
+        normal: WorldVec3,
+        /// Orthonormal image-up direction in project source coordinates.
+        up: WorldVec3,
+        /// Full vertical span of the image presentation plane.
+        vertical_span: f64,
+    },
+}
+
+/// An image mapping that cannot define a stable separate analysis view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RasterAnalysisViewError {
+    /// The image or its placement is invalid.
+    InvalidContract,
+    /// Only an equirectangular panorama can enter panorama mode.
+    UnsupportedPanoramaModel,
+    /// Only an undistorted pinhole image can enter oriented-image mode.
+    UnsupportedImageModel,
+    /// The requested presentation plane distance is invalid.
+    InvalidPresentationDistance,
+}
+
+impl Display for RasterAnalysisViewError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidContract => "raster analysis view contract is invalid",
+            Self::UnsupportedPanoramaModel => {
+                "panorama analysis requires an equirectangular camera"
+            }
+            Self::UnsupportedImageModel => {
+                "oriented image analysis requires an undistorted pinhole camera"
+            }
+            Self::InvalidPresentationDistance => {
+                "raster analysis presentation distance must be finite and positive"
+            }
+        })
+    }
+}
+
+impl Error for RasterAnalysisViewError {}
+
+/// Derives a separate panorama or oriented-image camera from canonical camera
+/// axes, pose and entity placement. The result is presentation state only and
+/// never changes the raster, its pose or any measured source coordinate.
+pub fn raster_analysis_view(
+    raster: &RasterImageGeometry,
+    placement: Option<Transform3d>,
+    presentation_distance: f64,
+    panorama: bool,
+) -> Result<RasterAnalysisView, RasterAnalysisViewError> {
+    if !presentation_distance.is_finite() || presentation_distance <= 0.0 {
+        return Err(RasterAnalysisViewError::InvalidPresentationDistance);
+    }
+    validate_geometry_object(&GeometryObject::RasterImage {
+        raster: Box::new(raster.clone()),
+    })
+    .map_err(|_| RasterAnalysisViewError::InvalidContract)?;
+    let RasterMapping::Camera { model, pose } = &raster.mapping else {
+        return Err(RasterAnalysisViewError::UnsupportedImageModel);
+    };
+    let entity_placement = DMat4::from_cols_array(&placement.unwrap_or(Transform3d::IDENTITY).0);
+    let camera_pose = DMat4::from_cols_array(&pose.0);
+    let world_from_camera = entity_placement * camera_pose;
+    if !world_from_camera.is_finite() || world_from_camera.determinant().abs() <= f64::EPSILON {
+        return Err(RasterAnalysisViewError::InvalidContract);
+    }
+
+    if panorama {
+        if !matches!(model, CameraModel::Equirectangular) {
+            return Err(RasterAnalysisViewError::UnsupportedPanoramaModel);
+        }
+        let eye = world_from_camera.transform_point3(DVec3::ZERO);
+        let forward = stable_direction(world_from_camera.transform_vector3(DVec3::Z))?;
+        let raw_up = world_from_camera.transform_vector3(-DVec3::Y);
+        let up = stable_direction(raw_up - forward * raw_up.dot(forward))?;
+        return Ok(RasterAnalysisView::Panorama {
+            eye: world(eye),
+            target: world(eye + forward * presentation_distance),
+            up: world(up),
+            vertical_fov_radians: std::f64::consts::FRAC_PI_2,
+        });
+    }
+
+    let CameraModel::Pinhole {
+        focal_x,
+        focal_y,
+        center_x,
+        center_y,
+        distortion_model,
+        ..
+    } = model
+    else {
+        return Err(RasterAnalysisViewError::UnsupportedImageModel);
+    };
+    if distortion_model.is_some() {
+        return Err(RasterAnalysisViewError::UnsupportedImageModel);
+    }
+    let camera_point = |column: f64, row: f64| {
+        world_from_camera.transform_point3(DVec3::new(
+            (column - center_x) / focal_x * presentation_distance,
+            (row - center_y) / focal_y * presentation_distance,
+            presentation_distance,
+        ))
+    };
+    let left = -0.5;
+    let right = f64::from(raster.width) - 0.5;
+    let top = -0.5;
+    let bottom = f64::from(raster.height) - 0.5;
+    let top_left = camera_point(left, top);
+    let top_right = camera_point(right, top);
+    let bottom_right = camera_point(right, bottom);
+    let bottom_left = camera_point(left, bottom);
+    if [top_left, top_right, bottom_right, bottom_left]
+        .iter()
+        .any(|point| !point.is_finite())
+    {
+        return Err(RasterAnalysisViewError::InvalidContract);
+    }
+    let horizontal = top_right - top_left;
+    let downward = bottom_left - top_left;
+    let normal = stable_direction(downward.cross(horizontal))?;
+    let raw_up = -downward;
+    let up = stable_direction(raw_up - normal * raw_up.dot(normal))?;
+    let vertical_span = downward.length().max((bottom_right - top_right).length());
+    if !vertical_span.is_finite() || vertical_span <= f64::EPSILON {
+        return Err(RasterAnalysisViewError::InvalidContract);
+    }
+    Ok(RasterAnalysisView::OrientedImage {
+        origin: world((top_left + top_right + bottom_right + bottom_left) * 0.25),
+        normal: world(normal),
+        up: world(up),
+        vertical_span,
+    })
+}
+
+fn stable_direction(value: DVec3) -> Result<DVec3, RasterAnalysisViewError> {
+    value
+        .try_normalize()
+        .filter(|direction| direction.is_finite())
+        .ok_or(RasterAnalysisViewError::InvalidContract)
+}
+
 /// A raster projection or depth semantic that cannot produce an authoritative
 /// entity-local source coordinate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -259,7 +424,10 @@ mod tests {
     };
     use himmelcad_core::hash::ObjectHash;
 
-    use super::{project_raster_sample, RasterProjectionError};
+    use super::{
+        project_raster_sample, raster_analysis_view, RasterAnalysisView, RasterAnalysisViewError,
+        RasterProjectionError,
+    };
     use crate::WorldVec3;
 
     fn resource(bytes: usize) -> GeometryResource {
@@ -468,6 +636,91 @@ mod tests {
         assert_eq!(
             project_raster_sample(&distorted, -0.6, 1.0, Some(1.0)),
             Err(RasterProjectionError::PixelOutsideImage)
+        );
+    }
+
+    #[test]
+    fn panorama_analysis_camera_uses_composed_source_pose_and_camera_axes() {
+        let panorama = raster(
+            RasterMapping::Camera {
+                model: CameraModel::Equirectangular,
+                pose: translation(10.0, 20.0, 30.0),
+            },
+            Some(DepthSemantics::RayDistance),
+        );
+        assert_eq!(
+            raster_analysis_view(
+                &panorama,
+                Some(translation(100.0, 200.0, 300.0)),
+                25.0,
+                true,
+            )
+            .unwrap(),
+            RasterAnalysisView::Panorama {
+                eye: WorldVec3 {
+                    x: 110.0,
+                    y: 220.0,
+                    z: 330.0,
+                },
+                target: WorldVec3 {
+                    x: 110.0,
+                    y: 220.0,
+                    z: 355.0,
+                },
+                up: WorldVec3 {
+                    x: 0.0,
+                    y: -1.0,
+                    z: 0.0,
+                },
+                vertical_fov_radians: std::f64::consts::FRAC_PI_2,
+            }
+        );
+    }
+
+    #[test]
+    fn oriented_image_analysis_camera_exactly_frames_the_presentation_plane() {
+        let image = raster(
+            RasterMapping::Camera {
+                model: CameraModel::Pinhole {
+                    focal_x: 2.0,
+                    focal_y: 4.0,
+                    center_x: 1.5,
+                    center_y: 1.5,
+                    distortion_model: None,
+                    distortion_parameters: Vec::new(),
+                },
+                pose: Transform3d::IDENTITY,
+            },
+            Some(DepthSemantics::RayDistance),
+        );
+        assert_eq!(
+            raster_analysis_view(&image, Some(translation(10.0, 20.0, 30.0)), 10.0, false).unwrap(),
+            RasterAnalysisView::OrientedImage {
+                origin: WorldVec3 {
+                    x: 10.0,
+                    y: 20.0,
+                    z: 40.0,
+                },
+                normal: WorldVec3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: -1.0,
+                },
+                up: WorldVec3 {
+                    x: 0.0,
+                    y: -1.0,
+                    z: 0.0,
+                },
+                vertical_span: 10.0,
+            }
+        );
+        assert_eq!(
+            raster_analysis_view(&image, None, 0.0, false),
+            Err(RasterAnalysisViewError::InvalidPresentationDistance)
+        );
+        assert_eq!(
+            raster_analysis_view(&image, None, 10.0, true),
+            Err(RasterAnalysisViewError::UnsupportedPanoramaModel)
         );
     }
 }

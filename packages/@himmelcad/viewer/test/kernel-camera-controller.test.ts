@@ -193,6 +193,52 @@ void test('a user-authored perspective standpoint preserves exact world eye, tar
   assert.deepEqual(controller.worldCamera(), beforeInvalid);
 });
 
+void test('panorama camera keeps its scan station fixed and zooms only its field of view', () => {
+  const controller = new KernelCameraController(1_600, 900);
+  controller.frame({ x: 499_900, y: 5_399_900, z: 90 }, { x: 500_100, y: 5_400_100, z: 110 });
+  controller.orbit(0.31, -0.17);
+  const returnCamera = controller.worldCamera();
+  const viewpoint = {
+    eye: { x: 500_010, y: 5_400_020, z: 120 },
+    target: { x: 500_010, y: 5_400_030, z: 120 },
+    up: { x: 0, y: 0, z: 1 },
+    verticalFovRadians: Math.PI / 2,
+  };
+  const entry = controller.setOrientedPerspectiveViewpoint(viewpoint);
+  assert.deepEqual(entry.to.eye, viewpoint.eye);
+  assert.ok(distance(entry.to.target, viewpoint.target) < 1e-9);
+  assert.deepEqual(entry.to.up, viewpoint.up);
+
+  controller.orbit(Math.PI / 2, 0.2);
+  const rotated = controller.worldCamera();
+  assert.deepEqual(rotated.eye, viewpoint.eye);
+  assert.ok(Math.abs(distance(rotated.eye, rotated.target) - 10) < 1e-9);
+  assert.ok(Math.abs(distance(rotated.eye, entry.to.target) - 10) < 1e-9);
+
+  controller.zoom(0.5);
+  const zoomed = controller.worldCamera();
+  assert.deepEqual(zoomed.eye, viewpoint.eye);
+  assert.equal(zoomed.projection.kind, 'perspective');
+  if (zoomed.projection.kind === 'perspective') {
+    assert.equal(zoomed.projection.verticalFovRadians, Math.PI / 4);
+  }
+
+  const exit = controller.clearOrientedPerspectiveViewpoint();
+  assert.ok(exit);
+  assert.deepEqual(exit.to, returnCamera);
+  assert.equal(controller.clearOrientedPerspectiveViewpoint(), null);
+
+  assert.throws(
+    () =>
+      controller.setOrientedPerspectiveViewpoint({
+        eye: { x: 0, y: 0, z: 0 },
+        target: { x: 0, y: 0, z: 1 },
+        up: { x: 0, y: 0, z: 2 },
+      }),
+    RangeError,
+  );
+});
+
 void test('invalid local frames fail before mutating the active camera', () => {
   const controller = new KernelCameraController(800, 600);
   const before = controller.worldCamera();

@@ -256,6 +256,30 @@ V3 macht aus vollständiger Geometrie einen vollständigen CAD-View.
 - Schnelle Orbit-/Zoom-Interaktion während Streaming und kontrollierter
   Hintergrundarbeit ohne globale O(N)-Arbeit im Frame.
 
+### Arbeitsstand ab 2026-07-18 15:33 CEST
+
+- Der initiale V3-Audit bestätigt die vorhandenen gemeinsamen Style-, Kamera-,
+  Navigation-, Fallback-, Tab-, Snap-, Clip-/Schnitt-, Transformjournal- und
+  Transparenzpfade. Als erste reale Lücke wurden die noch fehlenden separaten
+  Panorama-/Bildviews und die Source-Strecke zwischen mehreren Bildpicks
+  geschlossen.
+- Der Panorama-View rendert eine bounded, nach innen orientierte
+  Equirectangular-Präsentationssphäre im bestehenden Rust/wgpu-Kernel. Der
+  normale Mixed-Scene-View bleibt beim exakten Scanstandpunkt-Marker. Der
+  Panorama-Controller hält den Source-Standpunkt fest, übernimmt die beliebige
+  kanonische Kamera-Up-Achse und benutzt Schwenken plus FOV-Zoom.
+- Der orientierte Bildview isoliert dieselbe kanonische Kameraebene in einem
+  lokalen orthographischen Pan-/Zoom-Frame. Beide Analyseviews teilen die
+  registrierten Bild-/Depth-/Validity-/Confidence-Ressourcen und liefern über
+  CPU-Refinement nur tatsächliche Source-RasterSamples; Präsentationssphäre und
+  Kameraebene werden nie als Messgeometrie ausgegeben. Der zusätzliche bounded
+  GPU-Buffer wird während der View-Laufzeit im globalen Shared-Resource-Budget
+  und in der Frame-Telemetrie mitgeführt.
+- Zwei oder mehr Bildpicks werden im Rust-Kernel gemeinsam auf Source-3D
+  aufgelöst. Segment- und Gesamtstrecken entstehen ausschließlich aus diesen
+  f64-Source-Punkten, nicht aus GPU-Depth. View-Eintritt und -Austritt ändern
+  weder kanonische Revision noch normale Visibility oder Residency.
+
 ## V4 – Civil-Scale, Hardware und Backend-Härtung
 
 V4 belegt, dass der vollständige Viewer nicht nur mit kleinen Testdaten

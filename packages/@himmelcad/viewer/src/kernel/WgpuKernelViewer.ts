@@ -125,6 +125,9 @@ export interface WasmViewerBinding {
     values: Float32Array,
   ): void;
   measure_raster_depth_sample_json(entityId: string, column: number, row: number): string;
+  measure_raster_depth_distance_json(picksJson: string): string;
+  set_raster_analysis_view_json(entityId: string): string;
+  clear_raster_analysis_view(): boolean;
   register_raster_binary_resource(objectHash: string, bytes: Uint8Array): void;
   register_mesh_resource(objectHash: string, meshJson: string): void;
   register_canonical_hatch_pattern_resource(resourceJson: string): void;
@@ -677,6 +680,45 @@ export interface KernelRasterDepthMeasurement {
   readonly confidence: number | null;
   readonly sourcePosition: KernelWorldPoint;
 }
+
+export interface KernelRasterDepthPick {
+  readonly entityId: string;
+  readonly column: number;
+  readonly row: number;
+}
+
+/** Source-space segments resolved atomically from two or more image picks. */
+export interface KernelRasterDepthDistanceMeasurement {
+  readonly picks: readonly KernelRasterDepthMeasurement[];
+  readonly segmentDistances: readonly number[];
+  readonly totalDistance: number;
+}
+
+interface KernelRasterAnalysisViewBase {
+  readonly entityId: string;
+  readonly versionHash: string | null;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** Kernel-derived camera state for a separate panorama or oriented-image view. */
+export type KernelRasterAnalysisView = KernelRasterAnalysisViewBase &
+  (
+    | {
+        readonly kind: 'panorama';
+        readonly eye: KernelWorldPoint;
+        readonly target: KernelWorldPoint;
+        readonly up: KernelWorldPoint;
+        readonly verticalFovRadians: number;
+      }
+    | {
+        readonly kind: 'orientedImage';
+        readonly origin: KernelWorldPoint;
+        readonly normal: KernelWorldPoint;
+        readonly up: KernelWorldPoint;
+        readonly verticalSpan: number;
+      }
+  );
 
 export interface KernelResourceCost {
   readonly cpuCompressedBytes: number;
@@ -2050,6 +2092,46 @@ export class WgpuKernelViewer {
     return JSON.parse(
       this.binding.measure_raster_depth_sample_json(entityId, column, row),
     ) as KernelRasterDepthMeasurement;
+  }
+
+  /** Resolves an ordered image-pick chain and its source-space segment distances in Rust. */
+  measureRasterDepthDistance(
+    picks: readonly KernelRasterDepthPick[],
+  ): KernelRasterDepthDistanceMeasurement {
+    this.assertAlive();
+    if (
+      picks.length < 2 ||
+      picks.some(
+        ({ entityId, column, row }) =>
+          entityId.length === 0 ||
+          !Number.isSafeInteger(column) ||
+          !Number.isSafeInteger(row) ||
+          column < 0 ||
+          row < 0,
+      )
+    ) {
+      throw new RangeError(
+        'raster distance measurement requires at least two valid non-negative image picks',
+      );
+    }
+    return JSON.parse(
+      this.binding.measure_raster_depth_distance_json(JSON.stringify(picks)),
+    ) as KernelRasterDepthDistanceMeasurement;
+  }
+
+  /** Enters the kernel's isolated panorama or oriented-image render view. */
+  setRasterAnalysisView(entityId: string): KernelRasterAnalysisView {
+    this.assertAlive();
+    if (entityId.length === 0) throw new RangeError('raster analysis entity must be non-empty');
+    return JSON.parse(
+      this.binding.set_raster_analysis_view_json(entityId),
+    ) as KernelRasterAnalysisView;
+  }
+
+  /** Restores normal mixed-scene submission without changing entity visibility. */
+  clearRasterAnalysisView(): boolean {
+    this.assertAlive();
+    return this.binding.clear_raster_analysis_view();
   }
 
   /** Uploads an encoded validity, confidence or connectivity side-band unchanged. */

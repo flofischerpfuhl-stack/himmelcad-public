@@ -712,6 +712,60 @@ try {
     },
     1e-7,
   );
+  const rasterAnalysis = state.rasterAnalysis;
+  assert(rasterAnalysis, 'separate panorama and oriented-image views must execute');
+  assert.equal(rasterAnalysis.panoramaView.kind, 'panorama');
+  assert.equal(rasterAnalysis.panoramaView.width, 8);
+  assert.equal(rasterAnalysis.panoramaView.height, 4);
+  assertWorldClose(
+    rasterAnalysis.panoramaView.eye,
+    { x: 6_378_155.125, y: 5_399_990.25, z: 516.75 },
+    1e-7,
+  );
+  const panoramaAnalysisSample = rasterAnalysis.panoramaPick.candidates.find(
+    (candidate) =>
+      candidate.address.entityId === 'scan-panorama' &&
+      candidate.snapKind === 'rasterSample',
+  );
+  assert(
+    panoramaAnalysisSample,
+    `panorama analysis did not refine its texture pick to Source depth: ${JSON.stringify(rasterAnalysis.panoramaPick)}`,
+  );
+  assert.equal(panoramaAnalysisSample.address.primitiveId, 20);
+  assert.equal(
+    rasterAnalysis.panoramaPick.candidates.some(
+      (candidate) =>
+        candidate.address.entityId === 'scan-panorama' && candidate.snapKind === 'surface',
+    ),
+    false,
+    'panorama presentation sphere must never escape as a measured surface',
+  );
+  assert.equal(rasterAnalysis.imageView.kind, 'orientedImage');
+  assert.equal(rasterAnalysis.imageView.width, 4);
+  assert.equal(rasterAnalysis.imageView.height, 4);
+  const imageAnalysisSample = rasterAnalysis.imagePick.candidates.find(
+    (candidate) =>
+      candidate.address.entityId === 'pinhole-depth-image' &&
+      candidate.snapKind === 'rasterSample',
+  );
+  assert(
+    imageAnalysisSample,
+    `image analysis did not refine its pixel through camera depth: ${JSON.stringify(rasterAnalysis.imagePick)}`,
+  );
+  assert.equal(imageAnalysisSample.address.primitiveId, 10);
+  assert.equal(rasterAnalysis.distance.picks.length, 2);
+  assert.equal(rasterAnalysis.distance.segmentDistances.length, 1);
+  const [distanceStart, distanceEnd] = rasterAnalysis.distance.picks.map(
+    (pick) => pick.sourcePosition,
+  );
+  const analyticalDistance = Math.hypot(
+    distanceEnd.x - distanceStart.x,
+    distanceEnd.y - distanceStart.y,
+    distanceEnd.z - distanceStart.z,
+  );
+  assert(Math.abs(rasterAnalysis.distance.segmentDistances[0] - analyticalDistance) < 1e-9);
+  assert(Math.abs(rasterAnalysis.distance.totalDistance - analyticalDistance) < 1e-9);
+  assert.equal(rasterAnalysis.normalViewRestored, true);
   const centerHit = state.pick.candidates.find(
     (candidate) =>
       candidate.address.entityId === 'open-surface' &&

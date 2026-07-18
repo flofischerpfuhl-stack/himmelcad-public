@@ -20,6 +20,19 @@ interface LocalOrthographicState {
   readonly up: Vec3;
 }
 
+interface OrientedPerspectiveState {
+  readonly eye: Vec3;
+  readonly baseForward: Vec3;
+  readonly baseRight: Vec3;
+  readonly baseUp: Vec3;
+  readonly targetDistance: number;
+  readonly returnOrbit: OrbitState;
+  readonly returnVerticalFovRadians: number;
+  yaw: number;
+  pitch: number;
+  verticalFovRadians: number;
+}
+
 export interface KernelCameraVector {
   readonly x: number;
   readonly y: number;
@@ -46,6 +59,11 @@ export interface KernelPerspectiveViewpoint {
   readonly verticalFovRadians?: number;
 }
 
+/** Arbitrarily oriented perspective view used by a posed panorama camera. */
+export interface KernelOrientedPerspectiveViewpoint extends KernelPerspectiveViewpoint {
+  readonly up: KernelCameraVector;
+}
+
 /** Throws before use when a local frame cannot define a stable camera basis. */
 export function assertValidKernelLocalOrthographicViewFrame(
   frame: KernelLocalOrthographicViewFrame,
@@ -70,6 +88,7 @@ export class KernelCameraController {
   private savedOrbit = { yaw: 0, pitch: Math.PI / 4, distance: 50 };
   private localOrthographic: LocalOrthographicState | null = null;
   private localReturn: OrbitState | null = null;
+  private orientedPerspective: OrientedPerspectiveState | null = null;
 
   constructor(width: number, height: number) {
     this.width = positiveExtent(width);
@@ -84,17 +103,23 @@ export class KernelCameraController {
   worldCamera(): KernelWorldCamera {
     const aspect = this.width / this.height;
     const eye = this.eye();
-    const near = Math.max(1e-5, Math.min(10, this.distance / 10_000));
-    const far = Math.max(1_000_000, Math.min(MAX_DISTANCE, this.distance * 10_000));
+    const panorama = this.orientedPerspective;
+    const viewDistance = panorama?.targetDistance ?? this.distance;
+    const near = Math.max(1e-5, Math.min(10, viewDistance / 10_000));
+    const far = Math.max(1_000_000, Math.min(MAX_DISTANCE, viewDistance * 10_000));
     return {
       eye: point(eye),
-      target: point(this.target),
-      up: point(this.localOrthographic?.up ?? (this.lockedTopDown ? [0, 1, 0] : [0, 0, 1])),
+      target: point(this.viewTarget()),
+      up: point(
+        panorama
+          ? this.orientedBasis().up
+          : (this.localOrthographic?.up ?? (this.lockedTopDown ? [0, 1, 0] : [0, 0, 1])),
+      ),
       projection: this.isOrthographicView()
         ? { kind: 'orthographic', verticalSpan: this.orthographicSpan, aspect, near, far }
         : {
             kind: 'perspective',
-            verticalFovRadians: this.verticalFovRadians,
+            verticalFovRadians: panorama?.verticalFovRadians ?? this.verticalFovRadians,
             aspect,
             near,
             far,
@@ -103,7 +128,7 @@ export class KernelCameraController {
   }
 
   targetPoint(): KernelWorldPoint {
-    return point(this.target);
+    return point(this.viewTarget());
   }
 
   /** World coordinate below any cursor on the plane through the orbit target. */
@@ -112,6 +137,7 @@ export class KernelCameraController {
     const safeY = clamp(ndcY, -3, 3);
     const eye = this.eye();
     const basis = this.basis();
+    const target = this.viewTarget();
     let rayOrigin = eye;
     let rayDirection = basis.forward;
     if (this.isOrthographicView()) {
@@ -135,18 +161,31 @@ export class KernelCameraController {
       );
     }
     const denominator = dot(rayDirection, basis.forward);
-    const distance = dot(subtract(this.target, rayOrigin), basis.forward) / denominator;
+    const distance = dot(subtract(target, rayOrigin), basis.forward) / denominator;
     return point(add(rayOrigin, scale(rayDirection, distance)));
   }
 
   orbit(deltaYaw: number, deltaPitch: number): void {
     if (this.isOrthographicView() || !finite(deltaYaw, deltaPitch)) return;
+    if (this.orientedPerspective) {
+      this.orientedPerspective.yaw += deltaYaw;
+      this.orientedPerspective.pitch = clamp(
+        this.orientedPerspective.pitch + deltaPitch,
+        -PITCH_LIMIT,
+        PITCH_LIMIT,
+      );
+      return;
+    }
     this.yaw += deltaYaw;
     this.pitch = clamp(this.pitch + deltaPitch, -PITCH_LIMIT, PITCH_LIMIT);
   }
 
   orbitAround(deltaYaw: number, deltaPitch: number, pivot: KernelWorldPoint): void {
     if (this.isOrthographicView() || !finite(deltaYaw, deltaPitch) || !finitePoint(pivot)) return;
+    if (this.orientedPerspective) {
+      this.orbit(deltaYaw, deltaPitch);
+      return;
+    }
     const effectivePitch = clamp(this.pitch + deltaPitch, -PITCH_LIMIT, PITCH_LIMIT) - this.pitch;
     const right: Vec3 = [Math.cos(this.yaw), Math.sin(this.yaw), 0];
     const relative = subtract(this.target, vector(pivot));
@@ -159,6 +198,10 @@ export class KernelCameraController {
 
   panPixels(deltaX: number, deltaY: number): void {
     if (!finite(deltaX, deltaY)) return;
+    if (this.orientedPerspective) {
+      this.orbit(-deltaX * 0.005, deltaY * 0.005);
+      return;
+    }
     const basis = this.basis();
     const worldPerPixel = this.isOrthographicView()
       ? this.orthographicSpan / this.height
@@ -172,6 +215,7 @@ export class KernelCameraController {
   /** Keeps a drag-start world point exactly beneath the current pointer NDC. */
   panAnchorToPointer(anchor: KernelWorldPoint, ndcX: number, ndcY: number): boolean {
     if (!finitePoint(anchor) || !finite(ndcX, ndcY)) return false;
+    if (this.orientedPerspective) return false;
     const safeX = clamp(ndcX, -3, 3);
     const safeY = clamp(ndcY, -3, 3);
     const eye = this.eye();
@@ -209,6 +253,14 @@ export class KernelCameraController {
 
   zoom(factor: number): void {
     if (!Number.isFinite(factor) || factor <= 0) return;
+    if (this.orientedPerspective) {
+      this.orientedPerspective.verticalFovRadians = clamp(
+        this.orientedPerspective.verticalFovRadians * factor,
+        Math.PI / 36,
+        (8 * Math.PI) / 9,
+      );
+      return;
+    }
     if (this.isOrthographicView()) {
       this.orthographicSpan = clampDistance(this.orthographicSpan * factor);
     } else this.distance = clampDistance(this.distance * factor);
@@ -216,6 +268,10 @@ export class KernelCameraController {
 
   zoomAt(factor: number, anchor: KernelWorldPoint): void {
     if (!Number.isFinite(factor) || factor <= 0 || !finitePoint(anchor)) return;
+    if (this.orientedPerspective) {
+      this.zoom(factor);
+      return;
+    }
     const previous = this.isOrthographicView() ? this.orthographicSpan : this.distance;
     const next = clampDistance(previous * factor);
     if (next === previous) return;
@@ -255,6 +311,7 @@ export class KernelCameraController {
     if (!enabled && !this.lockedTopDown) return null;
     const from = this.worldCamera();
     if (enabled) {
+      this.restoreOrientedPerspective();
       this.restoreLocalPerspective();
       this.savedOrbit = { yaw: this.yaw, pitch: this.pitch, distance: this.distance };
       this.orthographicSpan = 2 * this.distance * Math.tan(this.verticalFovRadians / 2);
@@ -295,6 +352,7 @@ export class KernelCameraController {
       throw new RangeError('perspective viewpoint vertical FOV is outside the supported range');
     }
     const from = this.worldCamera();
+    this.restoreOrientedPerspective();
     this.restoreLocalPerspective();
     this.lockedTopDown = false;
     this.target = vector(viewpoint.target);
@@ -306,6 +364,66 @@ export class KernelCameraController {
     return { from, to: this.worldCamera() };
   }
 
+  /** Enters a fixed-station arbitrary-axis perspective camera for panorama analysis. */
+  setOrientedPerspectiveViewpoint(
+    viewpoint: KernelOrientedPerspectiveViewpoint,
+  ): KernelCameraTransitionPair {
+    if (!finitePoint(viewpoint.eye) || !finitePoint(viewpoint.target) || !finiteVector(viewpoint.up)) {
+      throw new RangeError('oriented viewpoint eye, target and up must be finite');
+    }
+    const eye = vector(viewpoint.eye);
+    const target = vector(viewpoint.target);
+    const forward = normalize(subtract(target, eye));
+    const targetDistance = distanceBetween(eye, target);
+    const authoredUp = normalize(vector(viewpoint.up));
+    const right = normalize(cross(forward, authoredUp));
+    const up = normalize(cross(right, forward));
+    if (
+      targetDistance < MIN_DISTANCE ||
+      targetDistance > MAX_DISTANCE ||
+      length(authoredUp) <= Number.EPSILON ||
+      length(right) <= Number.EPSILON ||
+      Math.abs(dot(forward, authoredUp)) > 1 - ORTHONORMAL_TOLERANCE
+    ) {
+      throw new RangeError('oriented viewpoint cannot define a stable camera basis');
+    }
+    const verticalFovRadians = viewpoint.verticalFovRadians ?? this.verticalFovRadians;
+    if (
+      !Number.isFinite(verticalFovRadians) ||
+      verticalFovRadians < 1e-3 ||
+      verticalFovRadians > Math.PI - 1e-3
+    ) {
+      throw new RangeError('oriented viewpoint vertical FOV is outside the supported range');
+    }
+    const from = this.worldCamera();
+    this.restoreLocalPerspective();
+    const returnOrbit = this.orientedPerspective?.returnOrbit ?? this.orbitState();
+    const returnVerticalFovRadians =
+      this.orientedPerspective?.returnVerticalFovRadians ?? this.verticalFovRadians;
+    this.lockedTopDown = false;
+    this.orientedPerspective = {
+      eye,
+      baseForward: forward,
+      baseRight: right,
+      baseUp: up,
+      targetDistance,
+      returnOrbit,
+      returnVerticalFovRadians,
+      yaw: 0,
+      pitch: 0,
+      verticalFovRadians,
+    };
+    return { from, to: this.worldCamera() };
+  }
+
+  /** Restores the exact standard 3D camera captured before panorama entry. */
+  clearOrientedPerspectiveViewpoint(): KernelCameraTransitionPair | null {
+    if (!this.orientedPerspective) return null;
+    const from = this.worldCamera();
+    this.restoreOrientedPerspective();
+    return { from, to: this.worldCamera() };
+  }
+
   /**
    * Enters or replaces an arbitrary plane-local orthographic view. The first
    * entry captures the complete perspective camera restored by
@@ -314,6 +432,7 @@ export class KernelCameraController {
   setLocalOrthographicFrame(frame: KernelLocalOrthographicViewFrame): KernelCameraTransitionPair {
     const validated = validateLocalOrthographicFrame(frame);
     const from = this.worldCamera();
+    this.restoreOrientedPerspective();
     if (this.localOrthographic === null) {
       if (this.lockedTopDown) {
         this.localReturn = {
@@ -352,10 +471,12 @@ export class KernelCameraController {
     if (!Number.isFinite(gridSize) || gridSize <= 0) {
       throw new RangeError('floating-origin gridSize must be positive and finite');
     }
-    return this.target.map((coordinate) => Math.round(coordinate / gridSize) * gridSize) as Vec3;
+    const focus = this.orientedPerspective?.eye ?? this.target;
+    return focus.map((coordinate) => Math.round(coordinate / gridSize) * gridSize) as Vec3;
   }
 
   private eye(): Vec3 {
+    if (this.orientedPerspective) return copy(this.orientedPerspective.eye);
     if (this.localOrthographic) {
       return add(this.target, scale(this.localOrthographic.normal, this.distance));
     }
@@ -369,10 +490,36 @@ export class KernelCameraController {
   }
 
   private basis(): { readonly forward: Vec3; readonly right: Vec3; readonly up: Vec3 } {
+    if (this.orientedPerspective) return this.orientedBasis();
     const forward = normalize(subtract(this.target, this.eye()));
     const authoredUp: Vec3 =
       this.localOrthographic?.up ?? (this.lockedTopDown ? [0, 1, 0] : [0, 0, 1]);
     const right = normalize(cross(forward, authoredUp));
+    return { forward, right, up: normalize(cross(right, forward)) };
+  }
+
+  private viewTarget(): Vec3 {
+    const panorama = this.orientedPerspective;
+    return panorama
+      ? add(panorama.eye, scale(this.orientedBasis().forward, panorama.targetDistance))
+      : this.target;
+  }
+
+  private orientedBasis(): { readonly forward: Vec3; readonly right: Vec3; readonly up: Vec3 } {
+    const panorama = this.orientedPerspective;
+    if (!panorama) return this.basis();
+    const yawedRight = rotateAroundAxis(
+      panorama.baseRight,
+      panorama.baseUp,
+      panorama.yaw,
+    );
+    const yawedForward = rotateAroundAxis(
+      panorama.baseForward,
+      panorama.baseUp,
+      panorama.yaw,
+    );
+    const forward = normalize(rotateAroundAxis(yawedForward, yawedRight, panorama.pitch));
+    const right = normalize(yawedRight);
     return { forward, right, up: normalize(cross(right, forward)) };
   }
 
@@ -395,6 +542,17 @@ export class KernelCameraController {
     this.yaw = saved.yaw;
     this.pitch = saved.pitch;
     this.distance = saved.distance;
+  }
+
+  private restoreOrientedPerspective(): void {
+    const panorama = this.orientedPerspective;
+    if (!panorama) return;
+    this.orientedPerspective = null;
+    this.target = copy(panorama.returnOrbit.target);
+    this.yaw = panorama.returnOrbit.yaw;
+    this.pitch = panorama.returnOrbit.pitch;
+    this.distance = panorama.returnOrbit.distance;
+    this.verticalFovRadians = panorama.returnVerticalFovRadians;
   }
 }
 
@@ -493,6 +651,10 @@ function cross(left: Vec3, right: Vec3): Vec3 {
 
 function length(value: Vec3): number {
   return Math.hypot(value[0], value[1], value[2]);
+}
+
+function distanceBetween(left: Vec3, right: Vec3): number {
+  return length(subtract(left, right));
 }
 
 function normalize(value: Vec3): Vec3 {

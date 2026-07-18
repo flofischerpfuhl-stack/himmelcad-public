@@ -144,6 +144,59 @@ void test('navigation publishes local profile endpoints and the exact captured 3
   assert.deepEqual(published.at(-1)?.target, { x: 500_000, y: 5_400_000, z: 100 });
 });
 
+void test('navigation enters and leaves kernel raster analysis without moving panorama station', () => {
+  const camera = new KernelCameraController(1_280, 720);
+  camera.frame({ x: 90, y: 190, z: 290 }, { x: 110, y: 210, z: 310 });
+  const returnCamera = camera.worldCamera();
+  const published: ReturnType<KernelCameraController['worldCamera']>[] = [];
+  let cleared = 0;
+  const controller = Object.create(
+    KernelNavigationController.prototype,
+  ) as unknown as NavigationHarness;
+  Object.assign(controller, {
+    disposed: false,
+    camera,
+    viewer: {
+      setRasterAnalysisView: () => ({
+        entityId: 'scan',
+        versionHash: 'ab'.repeat(32),
+        width: 8,
+        height: 4,
+        kind: 'panorama',
+        eye: { x: 100, y: 200, z: 300 },
+        target: { x: 100, y: 210, z: 300 },
+        up: { x: 0, y: 0, z: 1 },
+        verticalFovRadians: Math.PI / 2,
+      }),
+      clearRasterAnalysisView: (): boolean => {
+        cleared += 1;
+        return true;
+      },
+      setWorldCamera: (value: ReturnType<KernelCameraController['worldCamera']>): void => {
+        published.push(value);
+      },
+    },
+    callbacks: {},
+    transitionGeneration: 0,
+    transitionInteracting: false,
+    reportedInteracting: false,
+    pointerInteracting: false,
+    wheelInteracting: false,
+    localSectionDepthActive: false,
+    rasterAnalysisKind: null,
+  });
+
+  const view = controller.setRasterAnalysisView('scan', 0);
+  assert.equal(view.kind, 'panorama');
+  assert.deepEqual(published.at(-1)?.eye, { x: 100, y: 200, z: 300 });
+  camera.orbit(0.5, 0.2);
+  assert.deepEqual(camera.worldCamera().eye, { x: 100, y: 200, z: 300 });
+
+  controller.clearRasterAnalysisView(0);
+  assert.equal(cleared, 1);
+  assert.deepEqual(published.at(-1), returnCamera);
+});
+
 interface NavigationHarness {
   disposed: boolean;
   candidates: readonly KernelPickCandidate[];
@@ -164,6 +217,11 @@ interface NavigationHarness {
     viewpoint: Parameters<KernelCameraController['setPerspectiveViewpoint']>[0],
     durationMilliseconds?: number,
   ): void;
+  setRasterAnalysisView(
+    entityId: string,
+    durationMilliseconds?: number,
+  ): ReturnType<KernelNavigationController['setRasterAnalysisView']>;
+  clearRasterAnalysisView(durationMilliseconds?: number): void;
 }
 
 function candidate(

@@ -1117,6 +1117,44 @@ claim. Render-Core remains 317/317, viewer-WASM 7/7 and the viewer package
 71/71; generated bindings and the browser contract are current. V2 closed on
 2026-07-18 at 15:33 CEST after 4 h 00 min elapsed work.
 
+## V3 raster-analysis view checkpoint
+
+The shared kernel now derives separate panorama and oriented-image cameras
+directly from canonical camera axes, pose, entity placement and image extent.
+An equirectangular panorama replaces the normal-view station marker only while
+its isolated analysis mode is active, using one bounded inward-facing textured
+sphere compiled by the same Rust/wgpu path and the already registered immutable
+image resource. The normal mixed-scene visibility and residency maps remain
+untouched. An undistorted pinhole image uses the same canonical presentation
+plane in a plane-local orthographic view. No React, Electron or product layer
+owns either projection rule. The bounded additional GPU buffer reduces the
+global shared-resource budget while the view is active and contributes its
+actual visible/resident work to frame telemetry; the shared image texture is
+not double-counted.
+
+Panorama navigation keeps the exact f64 station fixed, accepts the arbitrary
+canonical camera-up direction, pans through 360 degrees and changes field of
+view instead of moving the source station. Image navigation reuses the common
+local-frame pan/zoom controller. Both modes retain an exact return camera and
+drop their bounded analysis batch on exit. Style changes rebuild only the
+active bounded analysis batch; the frame path does no scene-wide work.
+
+Analysis picks never return the sphere or camera plane as measurement truth.
+The existing GPU ID/depth pass identifies the raster entity, after which Rust
+maps the cursor ray back through inverse placement and camera pose, selects the
+canonical pixel, validates its depth/validity/confidence resources and returns
+an exact `rasterSample` Source coordinate. The same measurement helper resolves
+an ordered chain of at least two image picks and computes every segment plus
+the total distance from f64 Source points without consulting GPU depth.
+
+The complete Render-Core suite passes 319/319, viewer-WASM passes 7/7, the WASM
+target check is green and the viewer package passes 73/73. The browser contract
+passes, and both explicit backends verify the isolated panorama texture,
+oriented image, exact Source primitive IDs, cross-image distance and unchanged
+normal-view restoration in the 38-entity/47-proxy fixture. Forced WebGL2 on the
+physical Intel HD Graphics 630 reports 4.2 ms maximum CPU submit; the WebGPU
+CPU-adapter correctness run reports 2.0 ms.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

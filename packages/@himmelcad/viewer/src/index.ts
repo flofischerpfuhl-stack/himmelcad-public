@@ -62,6 +62,9 @@ export { KernelCanonicalDocument } from './kernel/KernelCanonicalDocument.js';
 export type {
   KernelClipCapAttachmentOptions,
   KernelPreparedTopologyRegistration,
+  KernelRasterAnalysisView,
+  KernelRasterDepthDistanceMeasurement,
+  KernelRasterDepthPick,
 } from './kernel/WgpuKernelViewer.js';
 export {
   assertValidKernelLocalOrthographicViewFrame,
@@ -71,6 +74,7 @@ export type {
   KernelCameraTransitionPair,
   KernelCameraVector,
   KernelLocalOrthographicViewFrame,
+  KernelOrientedPerspectiveViewpoint,
   KernelPerspectiveViewpoint,
 } from './kernel/KernelCameraController.js';
 export { localSectionClipVolume } from './kernel/KernelLocalSectionView.js';
