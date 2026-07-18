@@ -337,6 +337,15 @@ duplicate exact revision commits nothing. The
 transaction validates only the staged batch and compact exact-reference
 indices; it does not clone the complete resident project catalog per update.
 
+Inline mesh vertices retain up to eight ordered authored UV sets, matching the
+canonical material-channel index range `0..=7`. The shared WebGPU/WebGL2 layout
+packs them into four `vec4` attributes. Each PBR channel selects and transforms
+its own set in the vertex shader, so a material or UV-transform change remains
+presentation-only and never rebuilds geometry. Instanced normal directions are
+reconstructed from the affine instance rows in the shader; the complete mesh
+plus instance layout therefore remains below the portable 16-attribute limit
+without reducing canonical UV breadth on more capable hardware.
+
 The real `wgpu` path renders points, Gaussian splats, indexed textured GLB,
 continuous and pixel-step elevation rasters, analytic CAD, areas with hatches,
 text, dimensions, blocks, evaluated solids and exact section products through
@@ -440,7 +449,7 @@ block uses fully transformed primitive centers, stable reverse-Z ordering and
 `primitiveOffset` as its deterministic tie-break, so exact pick addresses do not
 change with draw order. Interaction translation, vertical exaggeration, datum
 and floating-origin changes participate in the sort. Blocks are capped at the
-largest whole number of 112-byte instance records below 4 MiB. Weighted OIT
+largest whole number of 56-byte instance records below 4 MiB. Weighted OIT
 keeps one immutable GPU instance buffer and no CPU sorting copy, so downlevel
 correctness imposes no persistent cost on capable adapters.
 
