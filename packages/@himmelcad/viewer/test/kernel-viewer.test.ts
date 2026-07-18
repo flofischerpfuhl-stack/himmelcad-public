@@ -1190,22 +1190,22 @@ void test('framework-free session owns create, frame, device rebuild and dispose
   });
   const events: string[] = [];
   session.subscribe((event) => events.push(event.type));
-  const originalViewer = session.viewer;
   assert.deepEqual(session.frame(), { status: 'skipped', reason: 'Suspended' });
+  assert.equal(session.diagnostics().deviceGeneration, 1);
   assert.equal(session.diagnostics().recoveringDevice, false);
 
   bindings[0]!.render = () => JSON.stringify({ status: 'recreateDevice', reason: 'deviceLost' });
   assert.deepEqual(session.frame(), { status: 'recreateDevice', reason: 'deviceLost' });
   await session.settled();
   assert.equal(bindings.length, 2);
-  assert.notEqual(session.viewer, originalViewer);
+  assert.equal(session.diagnostics().deviceGeneration, 2);
   assert(events.includes('deviceRecoveryStarted'));
   assert(events.includes('deviceRecoveryCompleted'));
 
   session.dispose();
   assert.equal(disposedDecoders, 2);
   assert(events.includes('disposed'));
-  assert.throws(() => session.viewer, /disposed/);
+  assert.throws(() => session.diagnostics(), /disposed/);
 });
 
 void test('automatic backend routes a browser fallback adapter to WebGL2', async () => {

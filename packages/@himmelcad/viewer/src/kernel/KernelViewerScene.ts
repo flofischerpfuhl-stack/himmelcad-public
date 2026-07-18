@@ -100,19 +100,11 @@ export class KernelViewerScene {
     this.streamingState = streaming;
   }
 
-  get viewer(): WgpuKernelViewer {
-    return this.viewerState;
-  }
-
-  get streaming(): KernelStreamingDriver {
-    return this.streamingState;
-  }
-
   loadCanonical(
     admissions: readonly KernelCanonicalRenderAdmission[],
   ): readonly KernelViewerEntityHandle[] {
     this.assertMutable();
-    this.viewer.publishCanonicalRepresentations(admissions);
+    this.viewerState.publishCanonicalRepresentations(admissions);
     this.replaceReplayEntities(entityIdsForAdmissions(admissions), {
       kind: 'canonical',
       admissions: replaySnapshot(admissions),
@@ -129,8 +121,8 @@ export class KernelViewerScene {
     this.assertMutable();
     const options = loadOperationOptions(control);
     await admitCanonicalPotreeDataset(
-      this.viewer,
-      this.streaming,
+      this.viewerState,
+      this.streamingState,
       input,
       options.signal,
       options.onProgress,
@@ -151,8 +143,8 @@ export class KernelViewerScene {
     this.assertMutable();
     const options = loadOperationOptions(control);
     const result = await admitCanonicalPreparedMeshDataset(
-      this.viewer,
-      this.streaming,
+      this.viewerState,
+      this.streamingState,
       input,
       options.signal,
       options.onProgress,
@@ -173,8 +165,8 @@ export class KernelViewerScene {
     this.assertMutable();
     const options = loadOperationOptions(control);
     const result = await admitCanonicalPreparedTinDataset(
-      this.viewer,
-      this.streaming,
+      this.viewerState,
+      this.streamingState,
       input,
       options.signal,
       options.onProgress,
@@ -192,7 +184,7 @@ export class KernelViewerScene {
     input: KernelPreparedHierarchyAdmission,
   ): readonly KernelViewerEntityHandle[] {
     this.assertMutable();
-    this.viewer.registerPreparedDatasetAndPublishCanonicalRepresentations(
+    this.viewerState.registerPreparedDatasetAndPublishCanonicalRepresentations(
       input.datasetId,
       input.formatId,
       input.manifestUri,
@@ -211,17 +203,18 @@ export class KernelViewerScene {
 
   setEntityVisibility(entityId: string, visible: boolean): void {
     this.assertMutable();
-    this.viewer.setEntityVisibility(entityId, visible);
+    this.viewerState.setEntityVisibility(entityId, visible);
     this.visibility.set(entityId, visible);
     this.requestFrame();
   }
 
   unloadEntity(entityId: string): KernelCanonicalRetirementMutation {
     this.assertMutable();
-    const mutation = this.viewer.detachCanonicalEntities(
-      this.viewer.canonicalEntityBindings(entityId),
+    const mutation = this.viewerState.detachCanonicalEntities(
+      this.viewerState.canonicalEntityBindings(entityId),
     );
-    for (const datasetId of mutation.retiredDatasetIds) this.streaming.detachDataset(datasetId);
+    for (const datasetId of mutation.retiredDatasetIds)
+      this.streamingState.detachDataset(datasetId);
     this.removeReplayEntities(new Set([entityId]));
     this.visibility.delete(entityId);
     this.requestFrame();

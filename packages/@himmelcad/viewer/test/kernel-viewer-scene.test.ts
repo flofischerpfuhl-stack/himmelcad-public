@@ -132,7 +132,6 @@ test('device recovery replays only live canonical entities and keeps handles bou
     ['load', ['kept']],
     ['visible', 'kept', false],
   ]);
-  assert.equal(scene.streaming, newStreaming);
   kept.setVisible(true);
   assert.deepEqual(newCalls.at(-1), ['visible', 'kept', true]);
 });

@@ -121,6 +121,7 @@ export interface KernelViewerSessionDiagnostics {
   readonly gpuTextures: KernelGpuTextureCacheStats;
   readonly gpuFrameTiming: KernelGpuFrameTimingDiagnostics;
   readonly recoveringDevice: boolean;
+  readonly deviceGeneration: number;
 }
 
 /**
@@ -190,6 +191,7 @@ export class KernelViewerSession {
   private recoveryAbort: AbortController | null = null;
   private recoveryReason: 'deviceLost' | 'outOfMemory' | null = null;
   private nextOperationId = 1;
+  private deviceGeneration = 1;
 
   private constructor(
     private readonly options: KernelViewerSessionOptions,
@@ -207,16 +209,6 @@ export class KernelViewerSession {
       Math.max(1, options.initialHeight ?? options.canvas.clientHeight),
     );
     this.scene = new KernelViewerScene(viewer, streaming, options.requestFrame);
-  }
-
-  get viewer(): WgpuKernelViewer {
-    this.assertAlive();
-    return this.viewerState;
-  }
-
-  get streaming(): KernelStreamingDriver {
-    this.assertAlive();
-    return this.streamingState;
   }
 
   get hardwarePolicy(): KernelResolvedHardwarePolicy {
@@ -424,6 +416,7 @@ export class KernelViewerSession {
       gpuTextures: this.viewerState.gpuTextureCacheStats(),
       gpuFrameTiming: this.viewerState.gpuFrameTiming(),
       recoveringDevice: this.recovery !== null,
+      deviceGeneration: this.deviceGeneration,
     };
   }
 
@@ -506,6 +499,7 @@ export class KernelViewerSession {
       this.streamingState = driver;
       this.policyState = policy;
       this.qualityState = created.runtimeQuality();
+      this.deviceGeneration += 1;
       this.calibrationComplete = false;
       created.beginHardwareCalibration();
       this.recoveryReason = null;

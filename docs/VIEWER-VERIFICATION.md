@@ -1461,6 +1461,27 @@ observational: their exceptions are isolated and cannot turn a committed load
 into an apparent failure or mutate viewer state. The framework-free package
 suite now passes 79/79 tests.
 
+### V5 stable package surface checkpoint
+
+The `@himmelcad/viewer/kernel` entry now uses an explicit, reviewed export list
+instead of forwarding every implementation module. Its complete 195-symbol
+TypeScript surface is frozen by name and value/type classification; the gate
+also compiles that entry under the repository's strict, unchecked-index and
+exact-optional rules. A separate runtime assertion permits exactly nine facade
+values. The raw `WgpuKernelViewer`, streaming driver, decode pool, quality
+governor and provider admission functions therefore cannot become accidental
+product dependencies.
+
+`KernelViewerSession` and `KernelViewerScene` no longer expose their mutable
+viewer or streaming owners. Hosts use the stable scene/entity handles and
+session operations, while diagnostics expose a monotonic `deviceGeneration`
+to prove that recovery created a replacement device without leaking the
+implementation. A compile-level product consumer verifies the public Potree
+load, operation options, entity handle, event stream, diagnostics and generated
+canonical entity contract, and rejects the two old escape-hatch names. The
+recursive framework/product dependency boundary remains green and the complete
+viewer package now passes 81/81 tests.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

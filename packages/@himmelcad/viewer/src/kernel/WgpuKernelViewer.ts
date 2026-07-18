@@ -2809,13 +2809,13 @@ export class WgpuKernelViewer {
   /** Generates exact closed-mesh section caps in project f64 coordinates. */
   upsertSection(request: KernelSectionRequest): KernelSectionMutation {
     this.assertAlive();
-    const local = 'entityIds' in request;
+    const localEntityIds = request.entityIds;
     if (
       request.sectionId.length === 0 ||
       !Number.isFinite(request.tolerance) ||
       request.tolerance <= 0 ||
-      (local
-        ? request.entityIds.length === 0 || request.entityIds.some((id) => id.length === 0)
+      (localEntityIds !== undefined
+        ? localEntityIds.length === 0 || localEntityIds.some((id) => id.length === 0)
         : request.entityId.length === 0 || request.productHash.length === 0) ||
       (request.clipCap !== undefined &&
         (request.clipCap.volumeId.length === 0 ||

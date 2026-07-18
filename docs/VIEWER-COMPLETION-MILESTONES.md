@@ -513,6 +513,17 @@ einen eigenen Geometriepfad benötigt.
   typisiert `aborted` gegenüber `loadFailed` und emittiert beobachtende
   Progress-/Error-Events. Fehler in Hostcallbacks können den Load nicht
   beeinflussen. Die Viewer-Suite steht bei 79/79.
+- Der stabile Kernel-Entry exportiert nicht länger per Wildcard sämtliche
+  Runtime-Implementierungen. Seine 195 sichtbaren TypeScript-Symbole sind
+  inklusive Wert-/Typ-Klassifikation durch einen exakten Hash-Gate eingefroren;
+  zur Laufzeit bleiben genau neun bewusst freigegebene Fassadenwerte sichtbar.
+  Insbesondere sind der rohe `WgpuKernelViewer`, Streaming-Driver, Worker-Pool
+  und Provider-Admission-Funktionen keine Package-Escape-Hatches mehr.
+  `KernelViewerScene` und `KernelViewerSession` halten Viewer und Driver nur
+  noch privat; `deviceGeneration` macht einen tatsächlichen Device-Rebuild über
+  Diagnostics beobachtbar. Ein Compile-Consumer belegt Load, Events,
+  Diagnostics, kanonische Entity-Typen und die Abwesenheit der internen
+  Escape-Hatches. Die Viewer-Suite steht bei 81/81.
 
 ## Zeitmessung und Fortschrittsprotokoll
 
