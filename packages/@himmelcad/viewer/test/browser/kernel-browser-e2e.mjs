@@ -512,6 +512,15 @@ try {
   assert.equal(state.presentationBindings.invalidStrokeRejectedAtomically, true);
   assert.equal(state.presentationBindings.decodeCountersStable, true);
   assert.equal(state.presentationBindings.proxyIdentityStable, true);
+  assert.deepEqual(state.presentationBindings.materialTextureResidency, {
+    allocations: 5,
+    retainedAllocations: 5,
+    owners: 5,
+    stagedOwners: 0,
+    gpuTextureBytes: 80,
+    decodedSources: 0,
+    factoryCalls: 5,
+  });
   assert.deepEqual(
     state.presentationBindings.canonicalMaterials.map((batch) => batch.sourceMaterialSlot),
     [3, 7],

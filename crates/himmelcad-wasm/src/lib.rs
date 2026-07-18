@@ -77,21 +77,22 @@ use himmelcad_render::{
     build_section_region_batch, build_text_batch_with_texture,
     build_three_d_tiles_batches_with_resources, compile_entity_geometry,
     compile_entity_geometry_with_all_resolvers, decode_artifact, glb_texture_source_keys,
-    gpu_indexed_geometry_identity, inspect_gltf_dependencies, instanced_model_chunks, layout_text,
-    potree_point_world_position, prepare_glb_texture_uploads_for_sources,
-    reconstruct_coarse_pick_candidates, refine_decoded_potree_point_pick, refine_exact_point_pick,
-    refine_potree_point_pick, refine_tessellated_curve_pick, required_entity_proxy_slots,
-    required_three_d_tiles_proxy_slots, resolve_entity_point_world, section_geometry_object,
-    tessellate_entity_strokes, tessellate_entity_strokes_with_all_resolvers,
-    tessellate_generated_solid_mesh, transform_bounding_volume,
-    validate_authoritative_section_product, validate_glyph_atlas, AlignmentPreviewPartition,
-    AreaDrapeSurface, AssetBundleLimits, AuthoritativeSectionAccumulator,
-    AuthoritativeSectionProduct, BackendPolicy, BoundingVolume, CameraFrame, ClipOperation,
-    ClipVolume, CurveTessellationOptions, DatasetId, DecodedFeatureIdBinding, DecodedFeatureImage,
-    DecodedLegacyBatchIds, DecodedLegacyBatchTableCatalog, DecodedMeshFeatureSet,
-    DecodedPrimitivePropertyAttribute, DecodedPrimitivePropertyTexture, DecodedStreamingPayload,
-    DecodedStructuralMetadata, DecodedThreeDTilesContent, DecodedTriangleFeatureId,
-    DeviceCalibration, ElevationRasterPickRefiner, EntityCompilationOptions, EvaluatedMeshRecipe,
+    gpu_indexed_geometry_identity, gpu_uploaded_texture_identity, inspect_gltf_dependencies,
+    instanced_model_chunks, layout_text, potree_point_world_position,
+    prepare_glb_texture_uploads_for_sources, reconstruct_coarse_pick_candidates,
+    refine_decoded_potree_point_pick, refine_exact_point_pick, refine_potree_point_pick,
+    refine_tessellated_curve_pick, required_entity_proxy_slots, required_three_d_tiles_proxy_slots,
+    resolve_entity_point_world, section_geometry_object, tessellate_entity_strokes,
+    tessellate_entity_strokes_with_all_resolvers, tessellate_generated_solid_mesh,
+    transform_bounding_volume, validate_authoritative_section_product, validate_glyph_atlas,
+    AlignmentPreviewPartition, AreaDrapeSurface, AssetBundleLimits,
+    AuthoritativeSectionAccumulator, AuthoritativeSectionProduct, BackendPolicy, BoundingVolume,
+    CameraFrame, ClipOperation, ClipVolume, CurveTessellationOptions, DatasetId,
+    DecodedFeatureIdBinding, DecodedFeatureImage, DecodedLegacyBatchIds,
+    DecodedLegacyBatchTableCatalog, DecodedMeshFeatureSet, DecodedPrimitivePropertyAttribute,
+    DecodedPrimitivePropertyTexture, DecodedStreamingPayload, DecodedStructuralMetadata,
+    DecodedThreeDTilesContent, DecodedTriangleFeatureId, DeviceCalibration,
+    ElevationRasterPickRefiner, EntityCompilationOptions, EvaluatedMeshRecipe,
     EvaluatedMeshRepresentation, FillMode, FloatingOrigin, FrameTelemetrySample,
     FrameTelemetryWindow, GaussianSplatPickRefiner, GeometryRepresentationRegistry, GlyphAtlas,
     GlyphMetrics, GpuAlphaMode, GpuCalibrationProgress, GpuCalibrationSession,
@@ -99,26 +100,27 @@ use himmelcad_render::{
     GpuHatchPatternData, GpuHatchResource, GpuIndexedMeshGeometry, GpuLineTypePattern,
     GpuLineTypeResource, GpuModelResourceIdentity, GpuPresentationStyle, GpuSurfaceHost,
     GpuTextureAddressMode, GpuTextureColorSpace, GpuTextureData, GpuTextureFilterMode,
-    GpuTextureResource, GpuTextureResourceCache, GpuTextureResourceIdentity,
-    GpuTextureResourceStage, GpuTextureSamplerIdentity, GpuTextureTransform, HardwareInventory,
-    HardwarePolicyResolver, HierarchySource, ImplicitThreeDTilesHierarchySource,
-    InstancedTriangleMeshPickRefiner, MeshPickRefiner, PickCandidate, PickCycle,
-    PickRefinementRequest, PotreeHierarchySource, PotreePointLayout, PreparedAssetBundle,
-    PreparedGpuTextureResources, PreparedHierarchySource, PresentationTransform, QualityAdjustment,
-    RasterColorEncoding, RasterElevationEncoding, RasterGridMapping, RasterNoData,
-    RasterSurfaceTopology, RenderProxy, RenderProxyId, RenderProxyKind, RenderStyle, RenderWorld,
-    ResidencyTicket, ResolvedAreaDrapeSurface, ResolvedAreaInterpolation, ResolvedAssetEntry,
-    ResolvedGeometryRepresentationAdmission, ResourceBudget, ResourceCost, RuntimeQualityGovernor,
-    RuntimeQualityState, SectionBatchOptions, SectionHatchStyle, SectionMaterialRegionBinding,
-    SectionPlane, SectionProduct, SectionRegion, SectionTopologyPart, SectionTopologyPartitionData,
-    SectionTopologySnapshotKey, SharedAssetBlobCache, StreamingCoordinator, StreamingRuntimeLimits,
-    StrokeMode, SurfaceFrame, SurfaceFrameOutcome, SurfacePickRequest, TessellatedCurve,
-    TessellatedCurvePath, TessellatedCurveSegment, TextAlignment, TextBatchOptions,
-    TextLayoutOptions, TextLayoutSpace, ThreeDTilesContentKind, ThreeDTilesHierarchySource, TileId,
-    TileKey, TileSelection, TileSelectionView, TileSelector, TimingSample,
-    TriangleMeshPickInstance, TriangleMeshPickRefiner, TriangleMeshPickSource,
-    UnresolvedHeightDisplay, WorldAabb, WorldCamera, WorldTransform, WorldVec3,
-    GPU_POINT_VERTEX_STRIDE_BYTES, SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
+    GpuTextureMipChainData, GpuTextureResource, GpuTextureResourceCache,
+    GpuTextureResourceIdentity, GpuTextureResourceStage, GpuTextureSamplerIdentity,
+    GpuTextureTransform, HardwareInventory, HardwarePolicyResolver, HierarchySource,
+    ImplicitThreeDTilesHierarchySource, InstancedTriangleMeshPickRefiner, MeshPickRefiner,
+    PickCandidate, PickCycle, PickRefinementRequest, PotreeHierarchySource, PotreePointLayout,
+    PreparedAssetBundle, PreparedGpuTextureResources, PreparedHierarchySource,
+    PresentationTransform, QualityAdjustment, RasterColorEncoding, RasterElevationEncoding,
+    RasterGridMapping, RasterNoData, RasterSurfaceTopology, RenderProxy, RenderProxyId,
+    RenderProxyKind, RenderStyle, RenderWorld, ResidencyTicket, ResolvedAreaDrapeSurface,
+    ResolvedAreaInterpolation, ResolvedAssetEntry, ResolvedGeometryRepresentationAdmission,
+    ResourceBudget, ResourceCost, RuntimeQualityGovernor, RuntimeQualityState, SectionBatchOptions,
+    SectionHatchStyle, SectionMaterialRegionBinding, SectionPlane, SectionProduct, SectionRegion,
+    SectionTopologyPart, SectionTopologyPartitionData, SectionTopologySnapshotKey,
+    SharedAssetBlobCache, StreamingCoordinator, StreamingRuntimeLimits, StrokeMode, SurfaceFrame,
+    SurfaceFrameOutcome, SurfacePickRequest, TessellatedCurve, TessellatedCurvePath,
+    TessellatedCurveSegment, TextAlignment, TextBatchOptions, TextLayoutOptions, TextLayoutSpace,
+    ThreeDTilesContentKind, ThreeDTilesHierarchySource, TileId, TileKey, TileSelection,
+    TileSelectionView, TileSelector, TimingSample, TriangleMeshPickInstance,
+    TriangleMeshPickRefiner, TriangleMeshPickSource, UnresolvedHeightDisplay, WorldAabb,
+    WorldCamera, WorldTransform, WorldVec3, GPU_POINT_VERTEX_STRIDE_BYTES,
+    SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
 };
 #[cfg(target_arch = "wasm32")]
 use web_sys::HtmlCanvasElement;
@@ -3439,43 +3441,77 @@ impl WasmViewer {
             TextureFilter::Nearest => GpuTextureFilterMode::Nearest,
             TextureFilter::Linear => GpuTextureFilterMode::Linear,
         };
-        let gpu = self
-            .host
-            .renderer()
-            .create_canonical_texture_resource(
-                self.host.device(),
-                self.host.queue(),
-                &format!("canonical-texture-{}", resource.resource_id),
-                GpuTextureData {
-                    width,
-                    height,
-                    rgba8,
-                },
-                color_space,
-                GpuTextureSamplerIdentity {
-                    address_u: address(resource.wrap_u),
-                    address_v: address(resource.wrap_v),
-                    address_w: GpuTextureAddressMode::ClampToEdge,
-                    mag_filter: filter(resource.mag_filter),
-                    min_filter: filter(resource.min_filter),
-                    mipmap_filter: filter(resource.min_filter),
-                    lod_min_clamp_bits: 0.0_f32.to_bits(),
-                    lod_max_clamp_bits: 32.0_f32.to_bits(),
-                    compare: None,
-                    anisotropy_clamp: 1,
-                    border_color: None,
-                },
-            )
-            .map_err(js_error)?;
+        let sampler = GpuTextureSamplerIdentity {
+            address_u: address(resource.wrap_u),
+            address_v: address(resource.wrap_v),
+            address_w: GpuTextureAddressMode::ClampToEdge,
+            mag_filter: filter(resource.mag_filter),
+            min_filter: filter(resource.min_filter),
+            mipmap_filter: filter(resource.min_filter),
+            lod_min_clamp_bits: 0.0_f32.to_bits(),
+            lod_max_clamp_bits: 32.0_f32.to_bits(),
+            compare: None,
+            anisotropy_clamp: 1,
+            border_color: None,
+        };
         let mut catalog = self.material_resources.catalog.clone();
         catalog
             .publish(CanonicalPresentationResourceSet {
-                textures: vec![resource],
+                textures: vec![resource.clone()],
                 ..CanonicalPresentationResourceSet::default()
             })
             .map_err(js_error)?;
+        let identity = gpu_uploaded_texture_identity(
+            GpuTextureMipChainData {
+                width,
+                height,
+                mip_level_count: 1,
+                format: match color_space {
+                    GpuTextureColorSpace::Linear => wgpu::TextureFormat::Rgba8Unorm,
+                    GpuTextureColorSpace::Srgb => wgpu::TextureFormat::Rgba8UnormSrgb,
+                },
+                data: rgba8,
+            },
+            color_space,
+            sampler,
+            1,
+        )
+        .ok_or_else(|| JsValue::from_str("canonical texture has no stable GPU identity"))?;
+        let mut factory_calls = 0_u64;
+        let gpu = self
+            .gpu_texture_cache
+            .resolve_or_create(identity, || {
+                factory_calls = 1;
+                self.host.renderer().create_canonical_texture_resource(
+                    self.host.device(),
+                    self.host.queue(),
+                    &format!("canonical-texture-{}", resource.resource_id),
+                    GpuTextureData {
+                        width,
+                        height,
+                        rgba8,
+                    },
+                    color_space,
+                    sampler,
+                )
+            })
+            .map_err(js_error)?;
+        let owner = format!("canonical-texture:{key}");
+        let stage =
+            GpuTextureResourceStage::prepare([(identity, gpu.clone())]).map_err(js_error)?;
+        self.gpu_texture_cache
+            .stage_owner(owner.clone(), stage)
+            .map_err(js_error)?;
+        if !self.gpu_texture_cache.commit_staged(&owner) {
+            return Err(JsValue::from_str(
+                "canonical GPU texture stage disappeared before publication",
+            ));
+        }
+        self.gpu_texture_factory_count =
+            self.gpu_texture_factory_count.saturating_add(factory_calls);
         self.material_resources.catalog = catalog;
         self.material_resources.gpu_textures.insert(key, gpu);
+        self.sync_external_asset_cache_cost();
         Ok(())
     }
 

@@ -852,6 +852,19 @@ flags, mixed-scene picking and source-texture restoration. Additional authored
 UV sets remain outside this checkpoint because canonical inline meshes expose
 only their first UV set today.
 
+Canonical material textures now enter the same kernel-wide immutable GPU
+texture cache as streamed provider textures. Registration derives identity
+from exact decoded bytes, upload format, color space and sampler, resolves an
+existing allocation before invoking the upload factory, commits one stable
+document-resource owner and immediately republishes the shared GPU-texture cost
+to the streaming coordinator. Consequently pinned document materials reduce
+the remaining stream budget instead of occupying unreported GPU memory, while
+tile-local costs still exclude globally shared allocations. The browser gate
+requires the five distinct 2x2 material textures to produce exactly five
+committed owners, five allocations, 80 resident bytes, five factory calls and
+zero staged owners. Forced WebGL2 reported 3.7 ms maximum CPU submit and the
+WebGPU correctness adapter reported 2.2 ms with that accounting active.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

@@ -146,6 +146,15 @@ interface BrowserValidationState {
     readonly textureOverride: readonly KernelEntityPresentationBatch[];
     readonly textureRestored: readonly KernelEntityPresentationBatch[];
     readonly canonicalMaterials: readonly KernelEntityPresentationBatch[];
+    readonly materialTextureResidency: {
+      readonly allocations: number;
+      readonly retainedAllocations: number;
+      readonly owners: number;
+      readonly stagedOwners: number;
+      readonly gpuTextureBytes: number;
+      readonly decodedSources: number;
+      readonly factoryCalls: number;
+    };
     readonly invalidAreaTextureRejectedAtomically: boolean;
     readonly invalidStrokeRejectedAtomically: boolean;
     readonly decodeCountersStable: boolean;
@@ -332,6 +341,7 @@ const PANORAMA_CONNECTIVITY_HASH = 'ce8bee525d6736e9825261b19a9b51719f9dc4bb728e
 let EVALUATED_MESH_HASH = 'c'.repeat(64);
 let EVALUATED_TOPOLOGY_HASH = 'c'.repeat(64);
 let MATERIAL_TABLE_HASH = '7'.repeat(64);
+let MATERIAL_TEXTURE_RESIDENCY: ReturnType<WgpuKernelViewer['gpuTextureCacheStats']> | null = null;
 const ORTHO_IMAGE_HASH = '1'.repeat(64);
 const ORTHO_DEPTH_HASH = '2'.repeat(64);
 const POINT_VERSION_HASH = '3'.repeat(64);
@@ -2597,7 +2607,15 @@ function verifyResolvedPresentationBindings(
     JSON.stringify(batches.map(({ proxyId, batchIndex, kind }) => ({ proxyId, batchIndex, kind })));
   const decodeBefore = viewer.streamDecodeDiagnostics();
   const canonicalMaterials = viewer.entityPresentation('material-layer-box');
+  const materialTextureResidency = MATERIAL_TEXTURE_RESIDENCY;
   if (
+    materialTextureResidency === null ||
+    materialTextureResidency.allocations !== 5 ||
+    materialTextureResidency.retainedAllocations !== 5 ||
+    materialTextureResidency.owners !== 5 ||
+    materialTextureResidency.stagedOwners !== 0 ||
+    materialTextureResidency.gpuTextureBytes !== 80 ||
+    materialTextureResidency.factoryCalls !== 5 ||
     canonicalMaterials.length !== 2 ||
     canonicalMaterials[0]?.sourceMaterialSlot !== 3 ||
     canonicalMaterials[1]?.sourceMaterialSlot !== 7 ||
@@ -2859,6 +2877,7 @@ function verifyResolvedPresentationBindings(
   }
   return {
     canonicalMaterials,
+    materialTextureResidency,
     hatchAfterLiveStyle,
     none,
     strokeLineType,
@@ -3653,6 +3672,7 @@ async function run(): Promise<void> {
       96, 255, 255, 255, 32, 255, 255, 255,
     ]),
   );
+  MATERIAL_TEXTURE_RESIDENCY = viewer.gpuTextureCacheStats();
   const unsealedSurveyMaterial: MaterialResource = {
     schemaId: 'hcad.resource.material@1',
     resourceId: 'browser-survey-red',
