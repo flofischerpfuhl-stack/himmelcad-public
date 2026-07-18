@@ -1414,6 +1414,35 @@ hardware is locally available. Those physical class results remain mandatory
 V6/release-conformance risks. They are not claimed as passes and, per project
 direction, do not block the start of V5's package/app-ready work.
 
+### V5 framework-free session checkpoint
+
+The initial V5 audit found that the complete kernel behavior already existed
+but ownership was split between `WgpuKernelViewer`, `KernelViewerScene`, the
+streaming driver and the React canvas host. `KernelViewerSession` now provides a
+framework-free owner for one complete lifetime: canvas/WASM creation, hardware
+inventory and calibration, global streaming, the stable canonical scene,
+frame planning, surface recovery, device rebuild and replay, camera and
+presentation mutation, picking, clips, transform/move commands, typed events,
+aggregated diagnostics and idempotent disposal.
+
+Injected decoding is a factory rather than a reusable executor instance. This
+is a lifecycle invariant: device recovery disposes the old driver and its
+workers, then obtains a fresh executor for the replacement device. A package
+test executes create, an ordinary frame, a machine-readable device-loss frame,
+replacement viewer/driver creation under the same session and scene, and final
+dispose. It verifies two decoder lifetimes are released and the stable session
+now points at a genuinely new viewer.
+
+The package manifest exposes `@himmelcad/viewer/kernel` explicitly. A recursive
+boundary test walks the entry's complete relative import/export graph,
+including the generated canonical contracts, and rejects React, Three,
+Electron, shared data/UI or application imports. This keeps the stable kernel
+entry product- and framework-neutral while the existing package root remains a
+temporary compatibility surface for apps that have not yet received their thin
+V5 lifecycle adapters. The viewer package passes 78/78 tests. Typed provider
+operation progress, exact API-surface freezing, headless/browser consumer hosts
+and final legacy-surface isolation remain active V5 work.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

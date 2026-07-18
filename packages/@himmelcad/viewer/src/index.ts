@@ -90,6 +90,13 @@ export type { KernelViewportHandle, KernelViewportProps } from './kernel/KernelV
 export { KernelStreamingDriver } from './kernel/KernelStreamingDriver.js';
 export { KernelViewerEntityHandle, KernelViewerScene } from './kernel/KernelViewerScene.js';
 export type { KernelPreparedHierarchyAdmission } from './kernel/KernelViewerScene.js';
+export { KernelViewerSession, KernelViewerSessionError } from './kernel/KernelViewerSession.js';
+export type {
+  KernelViewerSessionDiagnostics,
+  KernelViewerSessionErrorCode,
+  KernelViewerSessionEvent,
+  KernelViewerSessionOptions,
+} from './kernel/KernelViewerSession.js';
 export { admitCanonicalPotreeDataset } from './kernel/KernelPotreeDatasetAdmission.js';
 export { admitCanonicalPreparedMeshDataset } from './kernel/KernelPreparedMeshDatasetAdmission.js';
 export type {

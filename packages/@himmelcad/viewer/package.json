@@ -5,6 +5,16 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./kernel": {
+      "types": "./src/kernel/index.ts",
+      "default": "./src/kernel/index.ts"
+    }
+  },
   "scripts": {
     "bindings:generate": "cargo run -p himmelcad-core --features ts-bindings --bin generate_entity_bindings",
     "bindings:check": "cargo run -p himmelcad-core --features ts-bindings --bin generate_entity_bindings -- --check",

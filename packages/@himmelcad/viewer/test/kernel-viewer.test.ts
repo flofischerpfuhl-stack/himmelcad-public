@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { kernelStreamingWorkPolicy, WgpuKernelViewer } from '../src/kernel/WgpuKernelViewer.js';
+import { KernelViewerSession } from '../src/kernel/KernelViewerSession.js';
+import type { KernelDecodeExecutor } from '../src/kernel/KernelStreamingDriver.js';
 import type {
   HimmelcadViewerWasmModule,
   KernelCanonicalRenderAdmission,
@@ -1139,6 +1141,71 @@ void test('explicit browser backend selection crosses the versioned wasm boundar
     ),
     /does not support explicit backend selection/,
   );
+});
+
+void test('framework-free session owns create, frame, device rebuild and dispose', async () => {
+  const canvas = { width: 1, height: 1, clientWidth: 640, clientHeight: 480 } as HTMLCanvasElement;
+  const bindings: WasmViewerBinding[] = [];
+  let disposedDecoders = 0;
+  const createDecodeExecutor = (): KernelDecodeExecutor => ({
+    setWorkerCount(): void {},
+    decode: () => Promise.reject(new Error('empty frame must not decode')),
+    diagnostics: () => ({
+      requestedDecodeWorkers: 1,
+      actualDecodeWorkers: 1,
+      workerRamBudgetBytes: 256 * 1024 * 1024,
+      perWorkerReservationBytes: 256 * 1024 * 1024,
+      activeDecodes: 0,
+      queuedDecodes: 0,
+      transferredInputBytes: 0,
+      transferredOutputBytes: 0,
+      peakTransferBytes: 0,
+      completedDecodes: 0,
+      failedDecodes: 0,
+      canceledDecodes: 0,
+      workerDecodeMs: 0,
+      mainThreadDispatchMs: 0,
+      maximumWorkerBaselineLinearMemoryBytes: 0,
+      maximumWorkerLinearMemoryBytes: 0,
+    }),
+    dispose(): void {
+      disposedDecoders += 1;
+    },
+  });
+  const loader = (): Promise<HimmelcadViewerWasmModule> =>
+    Promise.resolve({
+      WasmViewer: {
+        create: () => {
+          const binding = minimalBinding(canvas, () => {});
+          bindings.push(binding);
+          return Promise.resolve(binding);
+        },
+      },
+    });
+  const session = await KernelViewerSession.create({
+    canvas,
+    wasmLoader: loader,
+    inventory: { gpuMemoryBytes: null, systemMemoryBytes: 8 * 1024 ** 3, logicalCores: 4 },
+    createDecodeExecutor,
+  });
+  const events: string[] = [];
+  session.subscribe((event) => events.push(event.type));
+  const originalViewer = session.viewer;
+  assert.deepEqual(session.frame(), { status: 'skipped', reason: 'Suspended' });
+  assert.equal(session.diagnostics().recoveringDevice, false);
+
+  bindings[0]!.render = () => JSON.stringify({ status: 'recreateDevice', reason: 'deviceLost' });
+  assert.deepEqual(session.frame(), { status: 'recreateDevice', reason: 'deviceLost' });
+  await session.settled();
+  assert.equal(bindings.length, 2);
+  assert.notEqual(session.viewer, originalViewer);
+  assert(events.includes('deviceRecoveryStarted'));
+  assert(events.includes('deviceRecoveryCompleted'));
+
+  session.dispose();
+  assert.equal(disposedDecoders, 2);
+  assert(events.includes('disposed'));
+  assert.throws(() => session.viewer, /disposed/);
 });
 
 void test('automatic backend routes a browser fallback adapter to WebGL2', async () => {

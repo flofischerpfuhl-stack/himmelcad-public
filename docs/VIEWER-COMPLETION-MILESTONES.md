@@ -481,6 +481,29 @@ einen eigenen Geometriepfad benötigt.
   bekannte nicht-blockierende Provider-Conformance und die verbleibende reine
   App-Verdrahtung. Erst dann lautet der Status **Viewer app-ready fertig**.
 
+### Arbeitsstand ab 2026-07-18 18:48 CEST
+
+- Der initiale V5-Audit bestätigt eine breite, aber bislang verteilte
+  Kerneloberfläche: `WgpuKernelViewer`, `KernelViewerScene`, Streaming-Driver
+  und React-Host teilen sich Create/Dispose, Frame, Recovery und Diagnostics.
+  Der bisherige Package-Root exportiert außerdem noch die alte React-/Three-
+  Kompatibilitätsschicht für die noch nicht migrierten Apps. Reale V5-Lücken
+  sind daher eine einzige frameworkfreie Lifecycle-Fassade, ein eingefrorener
+  produktfreier Public Entry, typisierte Async-Operationen mit Fortschritt,
+  Consumer-/Dispose-Gates und anschließend die Isolierung des Legacy-Exports.
+- `KernelViewerSession` ist die erste gemeinsame Lifecycle-Fassade. Sie besitzt
+  Canvas-/WASM-Erzeugung, Hardwarepolicy und Kalibrierung, globalen
+  Streaming-Driver, stabile kanonische Scene, Frameplanung, Surface-/Device-
+  Recovery, Kamera, Style, Selection, Picking, Clips, Move-/Transformcommands,
+  Events, aggregierte Diagnostics und idempotentes Dispose. Ein Device-Rebuild
+  erzeugt pro Device-Lifetime einen neuen Decode-Executor und tauscht Viewer
+  sowie Driver unter der bestehenden Scene-Fassade aus.
+- `@himmelcad/viewer/kernel` ist nun ein expliziter Package-Entry. Ein
+  transitiver Source-Gate folgt mehr als hundert Kernel-/Generated-Modulen und
+  verbietet React, Three, Electron, `@himmelcad/data`, Shared UI und App-
+  Abhängigkeiten. Der Session-Lifecycle Create → Frame → Device-Rebuild →
+  Dispose ist als Package-Test belegt; die Viewer-Suite steht bei 78/78.
+
 ## Zeitmessung und Fortschrittsprotokoll
 
 Zeit wird nicht geschätzt oder nachträglich rekonstruiert:
