@@ -706,8 +706,7 @@ fn ply_to_las(
         reader.read_exact(&mut record)?;
         let coordinates = read_coordinates(&record, layout)?;
         for axis in 0..3 {
-            let quantized =
-                quantize_las_coordinate(coordinates[axis], minimum[axis], scale[axis]);
+            let quantized = quantize_las_coordinate(coordinates[axis], minimum[axis], scale[axis]);
             writer.write_all(&quantized.to_le_bytes())?;
         }
         let confidence = read_f32(&record, confidence_offset).clamp(0.0, 1.0);

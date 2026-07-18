@@ -34,6 +34,7 @@ export interface WasmViewerBinding {
   set_camera_transition_json(transitionJson: string, progress: number): void;
   set_floating_origin(x: number, y: number, z: number): void;
   set_clear_color(r: number, g: number, b: number, a: number): void;
+  set_point_size(pointSize: number): void;
   canonical_entity_version_hash_json(entityJson: string): string;
   geometry_object_content_hash_json(geometryJson: string): string;
   block_definition_content_hash_json(definitionJson: string): string;
@@ -1397,6 +1398,7 @@ export class WgpuKernelViewer {
   private readonly sectionReplay = new Map<string, KernelSectionRequest>();
   private cameraReplay: ((target: WgpuKernelViewer) => void) | null = null;
   private clearColorReplay: readonly [number, number, number, number] | null = null;
+  private pointSizeReplay = 1;
   private rasterAnalysisReplay: string | null = null;
 
   private constructor(
@@ -1536,6 +1538,16 @@ export class WgpuKernelViewer {
     this.clearColorReplay = [...color];
   }
 
+  /** Sets a presentation-only point diameter without reloading streamed tiles. */
+  setPointSize(pointSize: number): void {
+    this.assertAlive();
+    if (!Number.isFinite(pointSize) || pointSize < 0.25 || pointSize > 20) {
+      throw new RangeError('point size must be finite and between 0.25 and 20 physical pixels');
+    }
+    this.binding.set_point_size(pointSize);
+    this.pointSizeReplay = pointSize;
+  }
+
   /** Recreates immutable non-streaming resources before canonical scene replay. */
   replayDefinitionsInto(target: WgpuKernelViewer): void {
     this.assertAlive();
@@ -1547,6 +1559,7 @@ export class WgpuKernelViewer {
     this.assertAlive();
     this.cameraReplay?.(target);
     if (this.clearColorReplay !== null) target.setClearColor(this.clearColorReplay);
+    target.setPointSize(this.pointSizeReplay);
     target.setClipVolumes(this.baseClipVolumes);
     for (const [scopeId, volume] of this.scopedClipVolumes) {
       target.setScopedClipVolume(scopeId, volume);

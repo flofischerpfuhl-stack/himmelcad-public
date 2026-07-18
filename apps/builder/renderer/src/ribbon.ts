@@ -4,6 +4,7 @@ import {
   CircleDot,
   CloudUpload,
   FilePlus,
+  FileText,
   FolderOpen,
   Gauge,
   Grid3x3,
@@ -18,6 +19,7 @@ import {
   Scissors,
   ScanLine,
   SquareDashed,
+  SwatchBook,
   Tag,
   Triangle,
   Undo2,
@@ -141,6 +143,20 @@ export const ribbonTabs: RibbonTab[] = [
         actions: [
           { id: 'inspect.distance', label: 'Distance', icon: i(Ruler) },
           { id: 'inspect.angle', label: 'Angle', icon: i(Triangle) },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'output',
+    label: 'Output',
+    groups: [
+      {
+        id: 'output.annotate',
+        label: 'Document',
+        actions: [
+          { id: 'output.specs', label: 'Specifications', icon: i(SwatchBook) },
+          { id: 'output.plan', label: 'Plan', icon: i(FileText) },
         ],
       },
     ],

@@ -154,6 +154,12 @@ export function createPhotolabRibbonTabs(callbacks: PhotolabRibbonCallbacks): Ri
               onActivate: () => callbacks.onActivateFunction('alignment.run'),
             },
             {
+              id: 'alignment.define',
+              label: 'Define Alignment',
+              icon: icon(Settings2),
+              onActivate: () => callbacks.onActivateFunction('alignment.define'),
+            },
+            {
               id: 'alignment.optimize',
               label: 'Optimize',
               icon: icon(ChartNoAxesCombined),

@@ -37,7 +37,7 @@ Rejected alternatives:
 | Layer               | Choice                                           | Reason                                                         |
 | ------------------- | ------------------------------------------------ | -------------------------------------------------------------- |
 | Desktop shell       | Electron                                         | Stable Chromium, good packaging, predictable WebGL/WebGPU path |
-| Browser app         | Vite static app                                  | Same viewer package as Builder                               |
+| Browser app         | Vite static app                                  | Same viewer package as Builder                                 |
 | UI                  | TypeScript + React                               | Strong ecosystem, testability, refactoring safety              |
 | State mirror        | Zustand                                          | Small, explicit, works well with command events                |
 | Styling             | CSS variables / Tailwind-style tokens            | Dark-Islands-inspired design without hardcoded colors          |
@@ -226,6 +226,13 @@ This gives:
 - clean crash recovery,
 - a credible path toward ChronoGit.
 
+PhotoLab project New/Open/Save/Save As reuse the sidecar archive-operation
+identity and cancellation token; Electron does not create a parallel job
+record. Exact phase/byte/file progress travels over the existing progress
+channel to a renderer-owned Dark-Island operation dialog. Project replacement
+is transactional at the file boundary, and Electron attempts to restore the
+previous recoverable session if New/Open fails after its session switch.
+
 ## Dependency Policy
 
 CloudCompare and similar GPL projects may inform algorithm research but are not
@@ -248,9 +255,24 @@ WeltView works because:
 
 ### PhotoLab
 
-PhotoLab can use a Python/CUDA sidecar later. Its outputs must be normal
-HimmelCAD entities: point clouds, meshes, splats, transforms, and attributes.
-Builder must not depend on Python.
+PhotoLab uses the Rust sidecar as the authoritative project/job boundary and launches audited,
+offline worker runtimes for COLMAP, neural inference, MVS, raster, mesh and splat stages. Python is
+permitted only inside a staged worker runtime with an explicit inventory; neither Builder nor the
+shared renderer depends on Python. PhotoLab outputs are normal HimmelCAD entities: depth maps,
+point clouds, rasters, meshes, splats, transforms and lineage attributes. Capture groups,
+calibration groups, alignment/GCP runs and merge runs are immutable domain records rather than
+implicit mutable “chunks”.
+
+Per-image exclusion masks are original-resolution, content-addressed revisions owned by the Rust
+project runtime. COLMAP and DeDoDe receive materialized keep masks for feature extraction; the
+portable MVS scene transforms the same masks into undistorted image space and excludes masked
+reference and source patches. Mask scope hashes participate in job inputs, checkpoints, alignment
+artifacts and MVS reuse. Workers never mutate the catalog and never publish directly.
+
+The PhotoLab renderer builds processing reports exclusively from the project mirror of those
+persisted records. Electron owns only destination selection, atomic file publication and isolated
+Chromium PDF rendering; report content generation remains Electron-free and is covered by a pure
+TypeScript contract test.
 
 ### ChronoGit
 
@@ -275,11 +297,11 @@ TestFlight depends on:
 
 The MVP does not simulate anything, but it must not block this path.
 
-### Composer
+### Assembler
 
-Composer is only a feasibility concept. The shared foundation should avoid
+Assembler is only a feasibility concept. The shared foundation should avoid
 unnecessary survey/civil-only assumptions, but Builder must not wait for a
-future precision-mechanics kernel. If Composer requires fundamentally different
+future precision-mechanics kernel. If Assembler requires fundamentally different
 constraints or solid modeling, that decision gets its own ADR.
 
 ### Python Scripting and AI Agents

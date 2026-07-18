@@ -99,6 +99,7 @@ pub fn prepare_camera_orthophotos(
     let rows = request.grid.height_pixels.div_ceil(TILE_SIZE_U32);
     let total = u64::from(columns) * u64::from(rows);
     let mut sources = Vec::with_capacity(usize::try_from(total).unwrap_or(0));
+    let mut covered_pixels = 0_u64;
     for row in 0..rows {
         for column in 0..columns {
             check_cancelled(request.cancellation)?;
@@ -113,6 +114,13 @@ pub fn prepare_camera_orthophotos(
                 bounds,
                 &mut images,
             )?;
+            covered_pixels = covered_pixels.saturating_add(
+                rgba.pixels()
+                    .filter(|pixel| pixel.0[3] != 0)
+                    .count()
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+            );
             let source_id = format!("camera-{column}-{row}");
             let png = request.output_root.join(format!("{source_id}.png"));
             rgba.save_with_format(&png, image::ImageFormat::Png)?;
@@ -137,7 +145,18 @@ pub fn prepare_camera_orthophotos(
             );
         }
     }
+    validate_coverage(covered_pixels)?;
     Ok(sources)
+}
+
+fn validate_coverage(covered_pixels: u64) -> Result<(), OrthophotoPreparationError> {
+    if covered_pixels == 0 {
+        return Err(OrthophotoPreparationError::InvalidInput(
+            "camera poses and the DEM do not overlap; orthomosaic would be fully transparent"
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_request(request: &OrthophotoPreparation<'_>) -> Result<(), OrthophotoPreparationError> {
@@ -763,6 +782,12 @@ mod tests {
         }
         fill_single_pixel_holes(&mut bytes);
         assert_eq!(&bytes[center * 4..center * 4 + 4], &[30, 60, 90, 255]);
+    }
+
+    #[test]
+    fn a_fully_transparent_orthomosaic_is_rejected() {
+        assert!(validate_coverage(0).is_err());
+        assert!(validate_coverage(1).is_ok());
     }
 
     #[test]

@@ -25,6 +25,10 @@ dadurch Tiefenbilder, Punktwolken, Raster oder Meshes verschiedener Flüge unbem
   beide Lineage-Felder mit dem aktuellen Lauf übereinstimmen. Ältere Records ohne Lineage bleiben
   darstell- und exportierbar, werden aber nicht still als neue Compute-Abhängigkeit verwendet.
 - Die Lineage ist Bestandteil der Job-Input-Hashes und damit der Batch-/Recovery-Identität.
+- Mehrere Flüge werden nicht durch einen globalen Scope oder den neuesten Lauf zusammengeführt.
+  Ein gemeinsames Produkt referenziert nach ADR 0014 einen atomar veröffentlichten
+  `MergedAlignmentRun`, der seine Eingangsausrichtungen, GCP-Optimierungen und
+  Verbindungsevidenz vollständig festhält. Ein nur geplanter Merge ist keine Produktquelle.
 
 ## Konsequenzen
 

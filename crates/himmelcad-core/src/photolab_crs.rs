@@ -49,9 +49,18 @@ pub struct CrsWithEpoch {
 pub enum HeightReference {
     Unknown,
     Ellipsoidal,
-    Orthometric { vertical_crs: CrsDefinition },
-    NormalHeight { vertical_crs: CrsDefinition },
-    DeviceProfile { profile_id: String },
+    Orthometric {
+        #[serde(rename = "verticalCrs", alias = "vertical_crs")]
+        vertical_crs: CrsDefinition,
+    },
+    NormalHeight {
+        #[serde(rename = "verticalCrs", alias = "vertical_crs")]
+        vertical_crs: CrsDefinition,
+    },
+    DeviceProfile {
+        #[serde(rename = "profileId", alias = "profile_id")]
+        profile_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -141,8 +150,12 @@ pub struct GridLicenseMetadata {
 pub enum RequiredGridAvailability {
     Missing,
     PresentVerified {
+        /// Accept both camelCase (IPC) and snake_case for robustness.
+        #[serde(rename = "localPath", alias = "local_path")]
         local_path: String,
-        observed_sha256: ObjectHash,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "observedSha256", alias = "observed_sha256")]
+        observed_sha256: Option<ObjectHash>,
     },
 }
 
@@ -151,7 +164,8 @@ pub enum RequiredGridAvailability {
 pub struct RequiredTransformationGrid {
     pub kind: TransformationGridKind,
     pub official_filename: String,
-    pub official_sha256: ObjectHash,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub official_sha256: Option<ObjectHash>,
     pub license: GridLicenseMetadata,
     pub coverage: GeographicArea,
     pub availability: RequiredGridAvailability,
@@ -264,7 +278,8 @@ pub struct FrozenCrsEndpoint {
 pub struct FrozenGridBinding {
     pub kind: TransformationGridKind,
     pub official_filename: String,
-    pub official_sha256: ObjectHash,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub official_sha256: Option<ObjectHash>,
     pub local_path: String,
     pub license: GridLicenseMetadata,
 }
@@ -553,7 +568,11 @@ fn validate_grid(
     if grid.official_filename.trim().is_empty() {
         return Err(ImportTransformationError::InvalidGrid("officialFilename"));
     }
-    if !is_sha256(&grid.official_sha256) {
+    if grid
+        .official_sha256
+        .as_ref()
+        .is_some_and(|hash| !is_sha256(hash))
+    {
         return Err(ImportTransformationError::InvalidGrid("officialSha256"));
     }
     if grid.license.license_name.trim().is_empty() || grid.license.source.trim().is_empty() {
@@ -581,10 +600,16 @@ fn validate_grid(
             filename: grid.official_filename.clone(),
         });
     }
-    if observed_sha256 != &grid.official_sha256 {
-        return Err(ImportTransformationError::RequiredGridHashMismatch {
-            filename: grid.official_filename.clone(),
-        });
+    // Only enforce the pin when both sides are present. UI freeze may carry an
+    // official catalog hash without re-hashing the local file (runtime does).
+    if let (Some(expected), Some(observed)) =
+        (grid.official_sha256.as_ref(), observed_sha256.as_ref())
+    {
+        if expected != observed {
+            return Err(ImportTransformationError::RequiredGridHashMismatch {
+                filename: grid.official_filename.clone(),
+            });
+        }
     }
     if !grid.coverage.contains(area_of_interest) {
         return Err(ImportTransformationError::AreaOutsideGridCoverage {
@@ -629,7 +654,7 @@ mod tests {
         RequiredTransformationGrid {
             kind,
             official_filename: "official-grid.gsb".to_owned(),
-            official_sha256: official_sha256.clone(),
+            official_sha256: Some(official_sha256.clone()),
             license: GridLicenseMetadata {
                 license_name: "Fixture license".to_owned(),
                 spdx_expression: Some("CC-BY-4.0".to_owned()),
@@ -639,7 +664,7 @@ mod tests {
             coverage: germany_area(),
             availability: RequiredGridAvailability::PresentVerified {
                 local_path: "grids/official-grid.gsb".to_owned(),
-                observed_sha256: official_sha256,
+                observed_sha256: Some(official_sha256),
             },
         }
     }
@@ -785,7 +810,7 @@ mod tests {
         decision.operation.required_grids[0].availability =
             RequiredGridAvailability::PresentVerified {
                 local_path: "grids/official-grid.gsb".to_owned(),
-                observed_sha256: hash(b"tampered-grid"),
+                observed_sha256: Some(hash(b"tampered-grid")),
             };
 
         assert_eq!(
@@ -794,6 +819,21 @@ mod tests {
                 filename: "official-grid.gsb".to_owned(),
             })
         );
+    }
+
+    #[test]
+    fn user_registered_grid_does_not_require_a_content_hash() {
+        let mut decision = decision();
+        let grid = &mut decision.operation.required_grids[0];
+        grid.official_sha256 = None;
+        grid.availability = RequiredGridAvailability::PresentVerified {
+            local_path: "registered/horizontal/local-grid.gsb".to_owned(),
+            observed_sha256: None,
+        };
+        let frozen = decision
+            .validate_and_freeze()
+            .expect("registered local grid without hash");
+        assert!(frozen.pipeline.grids[0].official_sha256.is_none());
     }
 
     #[test]
@@ -839,5 +879,30 @@ mod tests {
             decision.validate_and_freeze(),
             Err(ImportTransformationError::InvalidCoordinateEpoch)
         );
+    }
+
+    #[test]
+    fn height_reference_uses_camel_case_and_accepts_legacy_snake_case() {
+        let current = serde_json::json!({
+            "kind": "normalHeight",
+            "verticalCrs": { "kind": "epsg", "value": 7837 }
+        });
+        let reference: HeightReference =
+            serde_json::from_value(current).expect("current renderer contract");
+        assert_eq!(
+            reference,
+            HeightReference::NormalHeight {
+                vertical_crs: CrsDefinition::Epsg(7837)
+            }
+        );
+        let serialized = serde_json::to_value(&reference).expect("serialize");
+        assert!(serialized.get("verticalCrs").is_some());
+        assert!(serialized.get("vertical_crs").is_none());
+
+        let legacy = serde_json::json!({
+            "kind": "orthometric",
+            "vertical_crs": { "kind": "epsg", "value": 5783 }
+        });
+        assert!(serde_json::from_value::<HeightReference>(legacy).is_ok());
     }
 }

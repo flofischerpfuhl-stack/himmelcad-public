@@ -30,8 +30,10 @@ pub struct CheckpointId(pub String);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PhotolabJobKind {
+    AnalyzeImageQuality,
     AlignPhotos,
     OptimizeAlignment,
+    MergeAlignments,
     BuildDepthMaps,
     BuildDensePointCloud,
     BuildDem,
@@ -47,6 +49,7 @@ pub enum PhotolabJobKind {
 #[serde(rename_all = "camelCase")]
 pub enum PhotolabStageKind {
     Preparing,
+    ImageAnalysis,
     CandidatePairSelection,
     FeatureExtraction,
     FeatureMatching,

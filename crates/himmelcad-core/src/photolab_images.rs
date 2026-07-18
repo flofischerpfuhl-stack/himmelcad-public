@@ -141,6 +141,78 @@ pub struct DjiAttitudeDegrees {
     pub roll: Option<f64>,
 }
 
+/// Provenance of an immutable embedded camera calibration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DjiCalibrationProvenance {
+    /// DJI `drone-dji:DewarpData` Brown-Conrady calibration stored in XMP.
+    DewarpData,
+}
+
+/// Full Brown-Conrady calibration decoded from DJI XMP.
+///
+/// DJI stores principal-point offsets relative to the image center. PhotoLab
+/// persists absolute pixel coordinates so all downstream consumers use the
+/// same top-left image-coordinate convention as COLMAP.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DjiBrownConradyCalibration {
+    pub focal_x_pixels: f64,
+    pub focal_y_pixels: f64,
+    pub principal_x_pixels: f64,
+    pub principal_y_pixels: f64,
+    /// `k1`, `k2`, `k3` numerator coefficients.
+    pub radial_distortion: [f64; 3],
+    /// `p1`, `p2` tangential coefficients.
+    pub tangential_distortion: [f64; 2],
+    pub calibration_date: String,
+    pub provenance: DjiCalibrationProvenance,
+}
+
+impl DjiBrownConradyCalibration {
+    /// Validates finite parameters against the unrotated source dimensions.
+    #[must_use]
+    pub fn is_valid_for_dimensions(&self, dimensions: ImageDimensions) -> bool {
+        let width = f64::from(dimensions.width_pixels);
+        let height = f64::from(dimensions.height_pixels);
+        dimensions.width_pixels > 0
+            && dimensions.height_pixels > 0
+            && self.focal_x_pixels.is_finite()
+            && self.focal_y_pixels.is_finite()
+            && self.focal_x_pixels > 0.0
+            && self.focal_y_pixels > 0.0
+            && self.focal_x_pixels <= width.max(height) * 10.0
+            && self.focal_y_pixels <= width.max(height) * 10.0
+            && self.principal_x_pixels.is_finite()
+            && self.principal_y_pixels.is_finite()
+            && (0.0..=width).contains(&self.principal_x_pixels)
+            && (0.0..=height).contains(&self.principal_y_pixels)
+            && self
+                .radial_distortion
+                .iter()
+                .chain(self.tangential_distortion.iter())
+                .all(|value| value.is_finite())
+            && valid_iso_date(&self.calibration_date)
+    }
+}
+
+fn valid_iso_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| index == 4 || index == 7 || byte.is_ascii_digit())
+        && value[5..7]
+            .parse::<u8>()
+            .is_ok_and(|month| (1..=12).contains(&month))
+        && value[8..10]
+            .parse::<u8>()
+            .is_ok_and(|day| (1..=31).contains(&day))
+}
+
 impl DjiAttitudeDegrees {
     #[must_use]
     pub const fn is_empty(self) -> bool {
@@ -174,6 +246,8 @@ pub struct DjiXmpMetadata {
     pub calibrated_optical_center_x_pixels: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub calibrated_optical_center_y_pixels: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dewarp_calibration: Option<DjiBrownConradyCalibration>,
 }
 
 /// Raw DJI RTK quality metadata. Standard deviations are stored in meters.
@@ -204,6 +278,7 @@ impl DjiXmpMetadata {
             && self.calibrated_focal_length_pixels.is_none()
             && self.calibrated_optical_center_x_pixels.is_none()
             && self.calibrated_optical_center_y_pixels.is_none()
+            && self.dewarp_calibration.is_none()
     }
 }
 

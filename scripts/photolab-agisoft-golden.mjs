@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+/* eslint-disable @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access -- This CLI validates JSON emitted by external tools before comparing it. */
+
+import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
 import {
   existsSync,
@@ -11,6 +14,9 @@ import {
   statSync,
 } from 'node:fs';
 import { resolve, join } from 'node:path';
+import process from 'node:process';
+
+import { validateAgisoftCandidate } from './lib/photolab-agisoft-candidate.mjs';
 
 const workspace = resolve(import.meta.dirname, '..');
 const baselinePath = join(workspace, 'photolab/golden/agisoft-sulzberg-baseline.json');
@@ -43,6 +49,12 @@ const required = {
   orthomosaicMetadata: join(projectFilesRoot, '0/0/orthomosaic/orthomosaic.zip'),
 };
 for (const [name, path] of Object.entries(required)) assertFile(path, name);
+assertEqual(
+  resolve(required.report),
+  resolve(projectRoot, baseline.sourceReport.relativePath),
+  'Agisoft report path',
+);
+const report = inspectAgisoftReport(required.report, baseline);
 
 const zipInventory = {};
 for (const key of [
@@ -71,7 +83,7 @@ assertEqual(las.pointCount, baseline.denseCloud.exportedLasPointCount, 'exported
 assertNearArray(las.bounds.min, baseline.denseCloud.bounds.min, 0.0001, 'LAS minimum bounds');
 assertNearArray(las.bounds.max, baseline.denseCloud.bounds.max, 0.0001, 'LAS maximum bounds');
 
-const gdal = JSON.parse(run('gdalinfo', ['-json', required.orthomosaic]));
+const gdal = JSON.parse(run('gdalinfo', ['-json', '-approx_stats', required.orthomosaic]));
 assertEqual(gdal.size[0], baseline.orthomosaic.widthPixels, 'orthomosaic width');
 assertEqual(gdal.size[1], baseline.orthomosaic.heightPixels, 'orthomosaic height');
 assertNear(
@@ -88,6 +100,11 @@ assertEqual(
 );
 if (!gdal.coordinateSystem?.wkt?.includes('ID["EPSG",31468]'))
   fail('orthomosaic CRS is not EPSG:31468');
+const orthomosaicAlpha = gdal.bands.find((band) => band.colorInterpretation === 'Alpha');
+const orthomosaicAlphaMean = Number(
+  orthomosaicAlpha?.mean ?? orthomosaicAlpha?.metadata?.['']?.STATISTICS_MEAN,
+);
+if (!Number.isFinite(orthomosaicAlphaMean)) fail('orthomosaic alpha coverage is unavailable');
 
 const observation = {
   schemaVersion: 1,
@@ -96,11 +113,13 @@ const observation = {
   imageCount: photos.length,
   cameraCount,
   gcpCount: gcpRows.length,
+  report,
   orthomosaic: {
     size: gdal.size,
     resolutionMetersPerPixel: Math.abs(gdal.geoTransform[1]),
     bandCount: gdal.bands.length,
     overviewLevels: gdal.bands[0]?.overviews?.length ?? 0,
+    validFraction: orthomosaicAlphaMean / 255,
   },
   denseCloud: las,
   archives: Object.fromEntries(
@@ -111,15 +130,27 @@ const observation = {
   ),
 };
 
-if (argumentsMap.candidate)
-  compareCandidate(JSON.parse(readFileSync(resolve(argumentsMap.candidate), 'utf8')), baseline);
+if (argumentsMap.candidate) {
+  const candidatePath = resolve(argumentsMap.candidate);
+  try {
+    observation.candidateComparison = validateAgisoftCandidate(
+      JSON.parse(readFileSync(candidatePath, 'utf8')),
+      baseline,
+      { candidatePath },
+    );
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+}
 process.stdout.write(`${JSON.stringify(observation, null, 2)}\n`);
 
 function parseArguments(values) {
   const result = {};
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
-    if (value === '--dataset' || value === '--candidate') {
+    if (value === '--') {
+      continue;
+    } else if (value === '--dataset' || value === '--candidate') {
       const next = values[index + 1];
       if (!next) fail(`${value} requires a path`);
       result[value.slice(2)] = next;
@@ -190,76 +221,63 @@ function readLasHeader(path) {
   };
 }
 
-function compareCandidate(candidate, reference) {
-  candidate = { ...candidate, ...(candidate.candidateMetrics ?? {}) };
-  const checks = [
-    [
-      'aligned image ratio',
-      candidate.alignedImages / reference.images.total,
-      reference.acceptance.alignedImageRatioMinimum,
-      'minimum',
-    ],
-    [
-      'reprojection RMS',
-      candidate.reprojectionRmsPixels,
-      reference.acceptance.reprojectionRmsPixelsMaximum,
-      'maximum',
-    ],
-    [
-      'control spatial RMSE',
-      candidate.controlSpatial3dRmseMeters,
-      reference.acceptance.controlSpatial3dRmseMetersMaximum,
-      'maximum',
-    ],
-    [
-      'checkpoint spatial RMSE',
-      candidate.checkpointSpatial3dRmseMeters,
-      reference.acceptance.checkpointSpatial3dRmseMetersMaximum,
-      'maximum',
-    ],
-  ];
-  for (const [label, value, limit, direction] of checks) {
-    if (!Number.isFinite(value)) fail(`candidate metric is missing: ${label}`);
-    if (direction === 'minimum' ? value < limit : value > limit)
-      fail(`${label} ${value} violates ${direction} ${limit}`);
+function inspectAgisoftReport(path, reference) {
+  const info = run('pdfinfo', [path]);
+  const pageMatch = /^Pages:\s+(\d+)\s*$/m.exec(info);
+  if (!pageMatch) fail('Agisoft report page count is unavailable');
+  const pageCount = Number(pageMatch[1]);
+  assertEqual(pageCount, reference.sourceReport.pageCount, 'Agisoft report page count');
+
+  const text = run('pdftotext', ['-layout', path, '-']);
+  requireReportPattern(
+    text,
+    new RegExp(
+      `Effektiver Reprojektionsfehler\\s+${escapeRegExp(String(reference.alignment.effectiveReprojectionErrorNormalized))} \\(${escapeRegExp(String(reference.alignment.effectiveReprojectionRmsPixels))} pix\\)`,
+    ),
+    'effective reprojection error',
+  );
+  requireReportPattern(
+    text,
+    /Gesamt\s+0\.0997943\s+0\.220713\s+0\.390909\s+0\.459873\s+0\.758/,
+    'control RMSE row',
+  );
+  requireReportPattern(
+    text,
+    /Gesamt\s+0\.257308\s+0\.578291\s+0\.784287\s+1\.00784\s+0\.795/,
+    'checkpoint RMSE row',
+  );
+  for (const [label, pattern] of [
+    ['matching runtime', /Zeit für Abgleich\s+2 Minuten 45 Sekunden/],
+    ['alignment runtime', /Zeit für Ausrichtung\s+1 Minute 16 Sekunden/],
+    ['optimization runtime', /Zeit für Optimierung\s+5 Sekunden/],
+    ['depth runtime', /Verarbeitungszeit\s+9 Minuten 43 Sekunden/],
+    ['dense-cloud runtime', /Verarbeitungszeit\s+16 Minuten 11 Sekunden/],
+    ['DEM runtime', /Verarbeitungszeit\s+14 Minuten 51 Sekunden/],
+    ['orthomosaic runtime', /Verarbeitungszeit\s+5 Minuten 37 Sekunden/],
+    ['CPU', /CPU\s+Intel\(R\) Xeon\(R\) Gold 5220R CPU @ 2\.20GHz/],
+    ['GPU', /GPU\(s\)\s+NVIDIA RTX A4000/],
+    ['RAM', /RAM\s+127\.63 GB/],
+  ]) {
+    requireReportPattern(text, pattern, label);
   }
-  assertEqual(candidate.depthImageCount, reference.images.total, 'candidate depth image count');
-  if (!Number.isFinite(candidate.densePointCount)) fail('candidate metric is missing: dense point count');
-  const denseRelativeError =
-    Math.abs(candidate.densePointCount - reference.denseCloud.reportPointCount) /
-    reference.denseCloud.reportPointCount;
-  if (denseRelativeError > reference.acceptance.densePointCountRelativeTolerance) {
-    fail(
-      `dense point count relative error ${denseRelativeError} exceeds ${reference.acceptance.densePointCountRelativeTolerance}`,
-    );
-  }
-  if (!Number.isFinite(candidate.orthomosaicResolutionMetersPerPixel))
-    fail('candidate metric is missing: orthomosaic resolution');
-  const resolutionRelativeError =
-    Math.abs(
-      candidate.orthomosaicResolutionMetersPerPixel -
-        reference.orthomosaic.resolutionMetersPerPixel,
-    ) / reference.orthomosaic.resolutionMetersPerPixel;
-  if (resolutionRelativeError > reference.acceptance.orthomosaicResolutionRelativeTolerance) {
-    fail(
-      `orthomosaic resolution relative error ${resolutionRelativeError} exceeds ${reference.acceptance.orthomosaicResolutionRelativeTolerance}`,
-    );
-  }
-  if (candidate.targetEpsg === 31468) {
-    if (!candidate.orthomosaicBounds) fail('candidate metric is missing: orthomosaic bounds');
-    assertNearArray(
-      candidate.orthomosaicBounds.min,
-      reference.orthomosaic.bounds.min,
-      reference.acceptance.orthomosaicBoundsToleranceMeters,
-      'candidate orthomosaic minimum bounds',
-    );
-    assertNearArray(
-      candidate.orthomosaicBounds.max,
-      reference.orthomosaic.bounds.max,
-      reference.acceptance.orthomosaicBoundsToleranceMeters,
-      'candidate orthomosaic maximum bounds',
-    );
-  }
+
+  return {
+    pageCount,
+    application: reference.sourceReport.application,
+    applicationVersion: reference.sourceReport.applicationVersion,
+    hardware: reference.referencePerformance.hardware,
+    effectiveReprojectionRmsPixels: reference.alignment.effectiveReprojectionRmsPixels,
+    controlReprojectionRmsPixels: reference.gcps.controlReprojectionRmsPixels,
+    checkpointReprojectionRmsPixels: reference.gcps.checkpointReprojectionRmsPixels,
+  };
+}
+
+function requireReportPattern(text, pattern, label) {
+  if (!pattern.test(text)) fail(`Agisoft report does not contain the expected ${label}`);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function run(command, args, maxBuffer = 64 * 1024 * 1024) {

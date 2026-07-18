@@ -2714,6 +2714,7 @@ impl GpuDrawBatch {
             colors,
             civil_attributes,
             1.0,
+            true,
         )
     }
 
@@ -2730,7 +2731,7 @@ impl GpuDrawBatch {
         point_size: f32,
     ) -> Result<Self, GpuFrameError> {
         Self::new_points_with_civil_and_size_and_queue(
-            device, queue, label, proxy_slot, positions, colors, None, point_size,
+            device, queue, label, proxy_slot, positions, colors, None, point_size, false,
         )
     }
 
@@ -2744,6 +2745,7 @@ impl GpuDrawBatch {
         colors: &[[u8; 4]],
         civil_attributes: Option<&[PackedCivilPointAttributes]>,
         point_size: f32,
+        force_point_sprites: bool,
     ) -> Result<Self, GpuFrameError> {
         if positions.is_empty() {
             return Err(GpuFrameError::EmptyBatch);
@@ -2791,7 +2793,7 @@ impl GpuDrawBatch {
             contents,
             wgpu::BufferUsages::VERTEX,
         );
-        let native_points = point_size <= 1.0;
+        let native_points = point_size <= 1.0 && !force_point_sprites;
         Ok(Self {
             vertex_buffer,
             instance_buffer: None,
@@ -4659,12 +4661,14 @@ impl GpuSharedRenderer {
         floating_origin: WorldVec3,
         clip_volumes: &[&ClipVolume],
         viewport_size: [u32; 2],
+        point_size_scale: f32,
     ) -> Result<(), GpuFrameError> {
         let uniform = FrameUniform::prepare(
             view_projection,
             floating_origin,
             clip_volumes,
             viewport_size,
+            point_size_scale,
         )?;
         queue.write_buffer(&self.frame_uniform, 0, bytemuck::bytes_of(&uniform));
         Ok(())
@@ -5165,7 +5169,7 @@ struct FrameUniform {
     clip_volume_meta: [[u32; 4]; MAX_CLIP_VOLUMES],
     viewport_size: [f32; 2],
     clip_volume_count: u32,
-    padding: u32,
+    point_size_scale: f32,
 }
 
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -5314,6 +5318,7 @@ impl FrameUniform {
         floating_origin: WorldVec3,
         clip_volumes: &[&ClipVolume],
         viewport_size: [u32; 2],
+        point_size_scale: f32,
     ) -> Result<Self, GpuFrameError> {
         if clip_volumes.len() > MAX_CLIP_VOLUMES {
             return Err(GpuFrameError::TooManyClipVolumes);
@@ -5330,6 +5335,8 @@ impl FrameUniform {
             .flatten()
             .any(|value| !value.is_finite())
             || !finite_world(floating_origin)
+            || !point_size_scale.is_finite()
+            || point_size_scale <= 0.0
         {
             return Err(GpuFrameError::NonFiniteFrameValue);
         }
@@ -5346,6 +5353,7 @@ impl FrameUniform {
             view_projection,
             inverse_view_projection,
             viewport_size: [f32::from(viewport_width), f32::from(viewport_height)],
+            point_size_scale,
             ..Self::zeroed()
         };
         let mut next_plane = 0_usize;
@@ -6667,6 +6675,7 @@ mod tests {
             },
             &[&volume],
             [16, 16],
+            1.0,
         )
         .expect("valid frame");
 
@@ -6688,7 +6697,7 @@ mod tests {
         ]);
 
         assert!(matches!(
-            FrameUniform::prepare(identity(), zero(), &[&volume], [16, 16]),
+            FrameUniform::prepare(identity(), zero(), &[&volume], [16, 16], 1.0),
             Err(GpuFrameError::TooManyClipPlanes)
         ));
     }
@@ -7059,7 +7068,7 @@ mod tests {
             distance: 0.0,
         }]);
         renderer
-            .update_frame(&queue, identity(), zero(), &[&clip], [16, 16])
+            .update_frame(&queue, identity(), zero(), &[&clip], [16, 16], 1.0)
             .expect("frame");
         let [triangle, line, point, splat, screen_text] = smoke_batches(&device, &queue);
         let mut triangle = triangle.with_material(
@@ -7427,7 +7436,7 @@ mod tests {
         let renderer = GpuSharedRenderer::new(&device, &queue, wgpu::TextureFormat::Rgba8Unorm);
         let targets = renderer.create_frame_targets(&device, 16, 16);
         renderer
-            .update_frame(&queue, identity(), zero(), &[], [16, 16])
+            .update_frame(&queue, identity(), zero(), &[], [16, 16], 1.0)
             .expect("line type frame");
         let curve = tessellate_curve(
             &CurveGeometry::LineSegment {
@@ -7557,7 +7566,7 @@ mod tests {
         );
         let targets = renderer.create_frame_targets(&device, 16, 16);
         renderer
-            .update_frame(&queue, identity(), zero(), &[], [16, 16])
+            .update_frame(&queue, identity(), zero(), &[], [16, 16], 1.0)
             .expect("OIT frame");
         let red = transparent_triangle(
             &device,

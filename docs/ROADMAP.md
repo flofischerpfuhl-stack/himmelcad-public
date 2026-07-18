@@ -17,7 +17,7 @@ older numeric phase order below is retained as historical product-family
 structure until the roadmap is fully rebaselined.
 
 **Frozen until decision gates:** ChronoGit productization (Phase 7), TestFlight
-(Phase 8), Composer (Phase 9). Kernel may keep journal/immutable-object
+(Phase 8), Assembler (Phase 9). Kernel may keep journal/immutable-object
 compatibility only — no feature work for those products.
 
 ## Product Principle
@@ -369,7 +369,7 @@ Decision gate:
 - Proceed only if simulations can be performant, explainable and visually
   useful without turning Builder into a fragile solver host.
 
-## Phase 9 - Composer Feasibility
+## Phase 9 - Assembler Feasibility
 
 Goal: decide whether a precision-mechanics / 3D-printing product should share
 the same foundation.

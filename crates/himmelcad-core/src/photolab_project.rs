@@ -16,6 +16,8 @@ pub const PHOTOLAB_PROJECT_FORMAT_VERSION: u32 = 1;
 #[serde(rename_all = "camelCase")]
 pub struct PhotolabProjectManifest {
     pub format_version: u32,
+    #[serde(default = "legacy_coordinate_axis_contract_version")]
+    pub coordinate_axis_contract_version: u32,
     pub project_id: String,
     pub name: String,
     pub created_unix_ms: u64,
@@ -28,6 +30,10 @@ pub struct PhotolabProjectManifest {
     pub render_offset: Vec3,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference_frame: Option<ProjectReferenceFrame>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_quality_catalog_hash: Option<ObjectHash>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_mask_catalog_hash: Option<ObjectHash>,
     #[serde(default)]
     pub active_runs: Vec<String>,
 }
@@ -143,7 +149,7 @@ pub fn initial_photolab_manifest(
         entity(
             reference_id,
             crate::entity::EntityKind::Group,
-            "Referenz & GCPs".to_owned(),
+            "Reference & GCPs".to_owned(),
             Some(survey_id.clone()),
             Vec::new(),
         ),
@@ -153,7 +159,7 @@ pub fn initial_photolab_manifest(
         entity(
             products_id,
             crate::entity::EntityKind::Group,
-            "Produkte".to_owned(),
+            "Products".to_owned(),
             Some(survey_id),
             Vec::new(),
         ),
@@ -161,6 +167,7 @@ pub fn initial_photolab_manifest(
 
     PhotolabProjectManifest {
         format_version: PHOTOLAB_PROJECT_FORMAT_VERSION,
+        coordinate_axis_contract_version: 2,
         project_id,
         name,
         created_unix_ms: timestamp_unix_ms,
@@ -172,8 +179,14 @@ pub fn initial_photolab_manifest(
         entities,
         render_offset: Vec3::default(),
         reference_frame: None,
+        image_quality_catalog_hash: None,
+        image_mask_catalog_hash: None,
         active_runs: Vec::new(),
     }
+}
+
+const fn legacy_coordinate_axis_contract_version() -> u32 {
+    1
 }
 
 fn entity(
@@ -219,6 +232,7 @@ mod tests {
         let value = serde_json::to_value(manifest).expect("manifest must serialize");
 
         assert_eq!(value["formatVersion"], 1);
+        assert_eq!(value["coordinateAxisContractVersion"], 2);
         assert_eq!(value["autosaveGeneration"], 0);
         assert_eq!(value["cleanShutdown"], true);
         assert!(value["entities"]["project-2:root"]["versionHash"].is_string());

@@ -45,6 +45,9 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
     set_clear_color(r, g, b, a): void {
       calls.push(['clear', r, g, b, a]);
     },
+    set_point_size(pointSize): void {
+      calls.push(['pointSize', pointSize]);
+    },
     canonical_entity_version_hash_json: () => '11'.repeat(32),
     geometry_object_content_hash_json: () => '22'.repeat(32),
     block_definition_content_hash_json: () => '33'.repeat(32),
@@ -1362,6 +1365,7 @@ function minimalBinding(
     set_camera_transition_json(): void {},
     set_floating_origin(): void {},
     set_clear_color(): void {},
+    set_point_size(): void {},
     canonical_entity_version_hash_json: () => '11'.repeat(32),
     geometry_object_content_hash_json: () => '22'.repeat(32),
     block_definition_content_hash_json: () => '33'.repeat(32),

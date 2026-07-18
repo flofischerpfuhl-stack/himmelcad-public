@@ -9,9 +9,9 @@ and materialized through the same project-object helper as COLMAP.
 
 - A release calls `DedodeRuntime::preflight` with the expected manifest digest,
   detached signature and trusted key ID.
-- The signed manifest names an exact CPython, PyTorch and torchvision version,
-  inventories every regular file by relative path, byte length, SHA-256, source
-  and SPDX license, and maps exactly three model resources.
+- The signed inventory names an exact CPython, ONNX Runtime, no-BLAS NumPy and
+  Pillow version and inventories every regular file by relative path, byte
+  length, SHA-256, source and SPDX license.
 - The approved models are Detector-L-v2 (`4113809d…bdc17`, 58,483,585 bytes),
   Descriptor-G (`ef6e3f29…fee41`, 75,485,969 bytes) and DINOv2 ViT-L/14
   (`d5383ea8…bf428`, 1,217,586,395 bytes). Full hashes live in
@@ -19,12 +19,13 @@ and materialized through the same project-object helper as COLMAP.
 - Preflight rejects unlisted files, symlinks, special files, forbidden licenses,
   a model substitution, a runtime version mismatch or any hash/size mismatch.
 - The process has an empty inherited environment, isolated home/temp/cache,
-  Torch/Hugging Face offline flags and no runtime package/download operation.
+  offline flags and no runtime package/download operation.
   The local fetch script is a developer/build action and produces an explicitly
   untrusted runtime until release packaging signs a complete inventory.
-- Stock PyTorch wheels are dev-only because their native closure can include
-  `libgomp`. A release uses the audited no-copyleft PyTorch build required by ADR
-  0006; the manifest license allowlist rejects a stock wheel's GPL-family entry.
+- Stock PyTorch wheels are conversion/dev-only because their native closure can
+  include `libgomp`. A release executes exact FP32 ONNX exports at 784 and 1176
+  pixels. ONNX Runtime supplies the matrix kernels; NumPy is built with
+  BLAS/LAPACK disabled, excluding libgfortran and libquadmath.
 
 ## Quality and resource contract
 
@@ -65,10 +66,10 @@ track, sparse reconstruction or bundle adjustment.
 
 ## Development setup
 
-Run `python3 scripts/fetch-photolab-dedode.py`. The script fetches the official
-source archive and three weight files, verifies fixed hashes and sizes, creates
-a fresh pinned Python environment and executes the worker's offline preflight.
-`--torch-channel cpu` is the default; `cu124` changes the accelerator runtime,
-not model selection or quality policy. `--smoke-inference` additionally loads
-all three pinned models and runs the complete feature/match/artifact path on the
-two upstream sample images at a bounded test resolution.
+Run `python3 scripts/fetch-photolab-dedode.py` for the build-time parity runtime,
+then `scripts/convert-dedode-onnx.py` for both fixed Descriptor-G sizes. Release
+staging uses `dedode_onnx_worker.py`; PyTorch output remains the parity oracle.
+The two upstream sample images produce 1,024 features each and 429 mutual
+matches in both paths. Corresponding descriptor cosine similarity is at least
+0.9999997 in the current Linux audit. The runtime preflight is executed with an
+empty environment and networking disabled.

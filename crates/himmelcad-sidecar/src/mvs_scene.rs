@@ -7,7 +7,7 @@ use std::{
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use himmelcad_core::{
@@ -18,11 +18,15 @@ use himmelcad_core::{
         OptimizedGcpCamera,
     },
     photolab_jobs::CancellationToken,
+    photolab_masks::{ImageMaskComputeScope, ImageMaskRaster},
     photolab_matching::ImageId,
 };
+use image::{GrayImage, ImageFormat, Luma};
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::image_mask_runtime::read_compute_mask_raster;
 use crate::mvs_runtime::{MvsPinholeCamera, MvsSceneImage, MvsSceneManifest};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(15);
@@ -53,10 +57,14 @@ pub enum MvsSceneError {
     },
     #[error("MVS scene preparation was cancelled")]
     Cancelled,
+    #[error("MVS scene progress reporting failed: {0}")]
+    Progress(String),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("image-mask encoding error: {0}")]
+    Image(#[from] image::ImageError),
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +88,18 @@ struct ParsedCamera {
     tangential_distortion: [f64; 2],
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CameraMapEntry {
+    entity_id: String,
+    image_name: PathBuf,
+}
+
+struct UndistortionMaskInput {
+    raster: ImageMaskRaster,
+    original_camera: ParsedCamera,
+}
+
 /// Converts the selected sparse model to public text and returns calibrated original cameras.
 pub fn prepare_gcp_cameras(
     colmap_executable: &Path,
@@ -100,7 +120,7 @@ pub fn prepare_gcp_cameras(
         &[
             "model_converter".into(),
             "--input_path".into(),
-            sparse.into_os_string(),
+            sparse.as_os_str().to_owned(),
             "--output_path".into(),
             output_root.as_os_str().to_owned(),
             "--output_type".into(),
@@ -347,6 +367,101 @@ pub fn prepare_mvs_scene(
     optimized_cameras: Option<&[OptimizedGcpCamera]>,
     cancellation: &CancellationToken,
 ) -> Result<PreparedMvsScene, MvsSceneError> {
+    prepare_mvs_scene_impl(
+        colmap_executable,
+        alignment_dataset,
+        scene_root,
+        coordinate_frame_id,
+        maximum_image_dimension,
+        project_transform,
+        optimized_cameras,
+        None,
+        None,
+        cancellation,
+        &mut |_, _| Ok(()),
+    )
+}
+
+/// Prepares a scene and transforms the exact original-pixel masks into every undistorted view.
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_mvs_scene_with_masks_and_progress<F>(
+    colmap_executable: &Path,
+    alignment_dataset: &Path,
+    scene_root: &Path,
+    coordinate_frame_id: &str,
+    maximum_image_dimension: u32,
+    project_transform: Option<GcpSimilarityTransform>,
+    optimized_cameras: Option<&[OptimizedGcpCamera]>,
+    project_root: &Path,
+    image_mask_scope: &ImageMaskComputeScope,
+    expected_image_count: usize,
+    cancellation: &CancellationToken,
+    mut progress: F,
+) -> Result<PreparedMvsScene, MvsSceneError>
+where
+    F: FnMut(u64, u64) -> Result<(), MvsSceneError>,
+{
+    prepare_mvs_scene_impl(
+        colmap_executable,
+        alignment_dataset,
+        scene_root,
+        coordinate_frame_id,
+        maximum_image_dimension,
+        project_transform,
+        optimized_cameras,
+        Some((project_root, image_mask_scope)),
+        Some(expected_image_count),
+        cancellation,
+        &mut progress,
+    )
+}
+
+/// Prepares an MVS scene while reporting real undistortion and manifest work.
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_mvs_scene_with_progress<F>(
+    colmap_executable: &Path,
+    alignment_dataset: &Path,
+    scene_root: &Path,
+    coordinate_frame_id: &str,
+    maximum_image_dimension: u32,
+    project_transform: Option<GcpSimilarityTransform>,
+    optimized_cameras: Option<&[OptimizedGcpCamera]>,
+    expected_image_count: usize,
+    cancellation: &CancellationToken,
+    mut progress: F,
+) -> Result<PreparedMvsScene, MvsSceneError>
+where
+    F: FnMut(u64, u64) -> Result<(), MvsSceneError>,
+{
+    prepare_mvs_scene_impl(
+        colmap_executable,
+        alignment_dataset,
+        scene_root,
+        coordinate_frame_id,
+        maximum_image_dimension,
+        project_transform,
+        optimized_cameras,
+        None,
+        Some(expected_image_count),
+        cancellation,
+        &mut progress,
+    )
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn prepare_mvs_scene_impl(
+    colmap_executable: &Path,
+    alignment_dataset: &Path,
+    scene_root: &Path,
+    coordinate_frame_id: &str,
+    maximum_image_dimension: u32,
+    project_transform: Option<GcpSimilarityTransform>,
+    optimized_cameras: Option<&[OptimizedGcpCamera]>,
+    image_masks: Option<(&Path, &ImageMaskComputeScope)>,
+    expected_image_count: Option<usize>,
+    cancellation: &CancellationToken,
+    progress: &mut dyn FnMut(u64, u64) -> Result<(), MvsSceneError>,
+) -> Result<PreparedMvsScene, MvsSceneError> {
     cancellation.check().map_err(|_| MvsSceneError::Cancelled)?;
     let executable = canonical_file(colmap_executable)?;
     let alignment = alignment_dataset.canonicalize()?;
@@ -361,7 +476,17 @@ pub fn prepare_mvs_scene(
         fs::remove_dir_all(scene_root)?;
     }
     fs::create_dir_all(scene_root)?;
-    run_colmap(
+    let progress_total = expected_image_count.map(|count| {
+        u64::try_from(count)
+            .unwrap_or(u64::MAX / 2)
+            .saturating_mul(2)
+            .saturating_add(2)
+    });
+    if let Some(total) = progress_total {
+        progress(1, total)?;
+    }
+    let mut last_undistorted_count = 0_u64;
+    run_colmap_with_poll(
         &executable,
         "image undistortion",
         &[
@@ -369,7 +494,7 @@ pub fn prepare_mvs_scene(
             "--image_path".into(),
             images.into_os_string(),
             "--input_path".into(),
-            sparse.into_os_string(),
+            sparse.as_os_str().to_owned(),
             "--output_path".into(),
             scene_root.as_os_str().to_owned(),
             "--output_type".into(),
@@ -378,7 +503,27 @@ pub fn prepare_mvs_scene(
             maximum_image_dimension.to_string().into(),
         ],
         cancellation,
+        || {
+            let (Some(expected), Some(total)) = (expected_image_count, progress_total) else {
+                return Ok(());
+            };
+            let completed = count_regular_files(&scene_root.join("images"))?
+                .min(u64::try_from(expected).unwrap_or(u64::MAX));
+            if completed > last_undistorted_count {
+                last_undistorted_count = completed;
+                progress(completed.saturating_add(1), total)?;
+            }
+            Ok(())
+        },
     )?;
+    if let (Some(expected), Some(total)) = (expected_image_count, progress_total) {
+        progress(
+            u64::try_from(expected)
+                .unwrap_or(u64::MAX)
+                .saturating_add(1),
+            total,
+        )?;
+    }
     let text_root = scene_root.join("model-txt");
     fs::create_dir_all(&text_root)?;
     run_colmap(
@@ -395,12 +540,28 @@ pub fn prepare_mvs_scene(
         ],
         cancellation,
     )?;
+    if let (Some(expected), Some(total)) = (expected_image_count, progress_total) {
+        progress(
+            u64::try_from(expected)
+                .unwrap_or(u64::MAX)
+                .saturating_add(2),
+            total,
+        )?;
+    }
     let cameras = parse_cameras(&text_root.join("cameras.txt"))?;
     let parsed_images = parse_images(&text_root.join("images.txt"), &cameras)?;
     if parsed_images.len() < 3 {
         return Err(MvsSceneError::InvalidModel(
             "portable multi-view stereo needs at least three registered images".into(),
         ));
+    }
+    if let Some(expected) = expected_image_count {
+        if parsed_images.len() != expected {
+            return Err(MvsSceneError::InvalidModel(format!(
+                "alignment scope contains {expected} cameras but COLMAP prepared {} images",
+                parsed_images.len()
+            )));
+        }
     }
     let (depths, covisibility) = parse_points(&text_root.join("points3D.txt"), &parsed_images)?;
     let fallback_depth = fallback_depth_range(&parsed_images);
@@ -413,8 +574,21 @@ pub fn prepare_mvs_scene(
         .iter()
         .map(|camera| (u64::from(camera.image_id.0), camera))
         .collect::<BTreeMap<_, _>>();
+    let undistortion_masks = if let Some((project_root, scope)) = image_masks {
+        prepare_undistortion_masks(
+            &executable,
+            &alignment,
+            &sparse,
+            scene_root,
+            project_root,
+            scope,
+            cancellation,
+        )?
+    } else {
+        BTreeMap::new()
+    };
     let mut scene_images = Vec::with_capacity(parsed_images.len());
-    for image in &parsed_images {
+    for (image_index, image) in parsed_images.iter().enumerate() {
         cancellation.check().map_err(|_| MvsSceneError::Cancelled)?;
         let source = scene_root.join("images").join(&image.name);
         let source = source.canonicalize()?;
@@ -459,10 +633,29 @@ pub fn prepare_mvs_scene(
         if let Some(optimized) = optimized_by_image.get(&image.image_id) {
             scene_camera = override_mvs_camera_pose(&scene_camera, optimized);
         }
+        let (mask_relative_path, mask_sha256) =
+            if let Some(mask) = undistortion_masks.get(&image.name) {
+                let relative = PathBuf::from("masks")
+                    .join(&image.name)
+                    .with_extension("png");
+                let destination = scene_root.join(&relative);
+                write_undistorted_keep_mask(
+                    &destination,
+                    &mask.raster,
+                    &mask.original_camera,
+                    camera,
+                    cancellation,
+                )?;
+                (Some(relative), Some(hash_file(&destination, cancellation)?))
+            } else {
+                (None, None)
+            };
         scene_images.push(MvsSceneImage {
             image_id: image.image_id.to_string(),
             relative_path: PathBuf::from("images").join(&image.name),
             sha256: hash_file(&source, cancellation)?,
+            mask_relative_path,
+            mask_sha256,
             width: camera.width,
             height: camera.height,
             camera: scene_camera,
@@ -470,11 +663,21 @@ pub fn prepare_mvs_scene(
             maximum_depth,
             neighbor_image_ids: neighbors,
         });
+        if let (Some(expected), Some(total)) = (expected_image_count, progress_total) {
+            progress(
+                u64::try_from(expected)
+                    .unwrap_or(u64::MAX)
+                    .saturating_add(2)
+                    .saturating_add(u64::try_from(image_index + 1).unwrap_or(u64::MAX)),
+                total,
+            )?;
+        }
     }
     scene_images.sort_by(|left, right| left.image_id.cmp(&right.image_id));
     let manifest = MvsSceneManifest {
         schema_version: 1,
         coordinate_frame_id: safe_frame_id(coordinate_frame_id),
+        image_mask_scope_sha256: image_masks.map(|(_, scope)| scope.scope_sha256.clone()),
         images: scene_images,
     };
     let bytes = serde_json::to_vec(&manifest)?;
@@ -486,6 +689,35 @@ pub fn prepare_mvs_scene(
     Ok(PreparedMvsScene {
         manifest_path,
         manifest_sha256,
+        manifest,
+    })
+}
+
+/// Loads a previously prepared immutable scene pinned by its manifest hash.
+pub fn load_prepared_mvs_scene(
+    manifest_path: &Path,
+    expected_sha256: &ObjectHash,
+    cancellation: &CancellationToken,
+) -> Result<PreparedMvsScene, MvsSceneError> {
+    cancellation.check().map_err(|_| MvsSceneError::Cancelled)?;
+    let manifest_path = canonical_file(manifest_path)?;
+    if manifest_path.file_name() != Some(std::ffi::OsStr::new("scene.json")) {
+        return Err(MvsSceneError::InvalidModel(
+            "cached MVS manifest is not named scene.json".into(),
+        ));
+    }
+    let bytes = fs::read(&manifest_path)?;
+    let observed = ObjectHash::of_bytes(&bytes);
+    if &observed != expected_sha256 {
+        return Err(MvsSceneError::InvalidModel(format!(
+            "cached MVS scene hash differs: expected {}, observed {}",
+            expected_sha256.0, observed.0
+        )));
+    }
+    let manifest = serde_json::from_slice(&bytes)?;
+    Ok(PreparedMvsScene {
+        manifest_path,
+        manifest_sha256: observed,
         manifest,
     })
 }
@@ -516,6 +748,139 @@ fn override_mvs_camera_pose(
             translation[2],
         ],
     }
+}
+
+fn prepare_undistortion_masks(
+    colmap_executable: &Path,
+    alignment_root: &Path,
+    sparse_model: &Path,
+    scene_root: &Path,
+    project_root: &Path,
+    scope: &ImageMaskComputeScope,
+    cancellation: &CancellationToken,
+) -> Result<BTreeMap<PathBuf, UndistortionMaskInput>, MvsSceneError> {
+    if scope.masks.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let original_text = scene_root.join("original-model-txt");
+    fs::create_dir_all(&original_text)?;
+    run_colmap(
+        colmap_executable,
+        "original camera model conversion for masks",
+        &[
+            "model_converter".into(),
+            "--input_path".into(),
+            sparse_model.as_os_str().to_owned(),
+            "--output_path".into(),
+            original_text.as_os_str().to_owned(),
+            "--output_type".into(),
+            "TXT".into(),
+        ],
+        cancellation,
+    )?;
+    let original_cameras = parse_cameras(&original_text.join("cameras.txt"))?;
+    let original_images = parse_images(&original_text.join("images.txt"), &original_cameras)?;
+    let original_by_name = original_images
+        .iter()
+        .map(|image| (image.name.clone(), image))
+        .collect::<BTreeMap<_, _>>();
+    let camera_map: Vec<CameraMapEntry> =
+        serde_json::from_slice(&fs::read(alignment_root.join("camera-map.json"))?)?;
+    let mask_by_entity = scope
+        .masks
+        .iter()
+        .map(|mask| (mask.image_entity_id.0.as_str(), mask))
+        .collect::<BTreeMap<_, _>>();
+    let mut result = BTreeMap::new();
+    for mapping in camera_map {
+        let Some(mask) = mask_by_entity.get(mapping.entity_id.as_str()).copied() else {
+            continue;
+        };
+        let image = original_by_name.get(&mapping.image_name).ok_or_else(|| {
+            MvsSceneError::InvalidModel(format!(
+                "masked camera {} is absent from the selected sparse model",
+                mapping.entity_id
+            ))
+        })?;
+        let camera = original_cameras.get(&image.camera_id).ok_or_else(|| {
+            MvsSceneError::InvalidModel("masked image references an unknown camera".into())
+        })?;
+        let raster = read_compute_mask_raster(project_root, mask)
+            .map_err(|error| MvsSceneError::InvalidModel(error.to_string()))?;
+        if raster.width() != camera.width || raster.height() != camera.height {
+            return Err(MvsSceneError::InvalidModel(format!(
+                "mask dimensions differ from the original COLMAP camera for {}",
+                mapping.entity_id
+            )));
+        }
+        result.insert(
+            mapping.image_name,
+            UndistortionMaskInput {
+                raster,
+                original_camera: camera.clone(),
+            },
+        );
+    }
+    if result.len() != scope.masks.len() {
+        return Err(MvsSceneError::InvalidModel(
+            "one or more scoped image masks could not be mapped into the alignment dataset".into(),
+        ));
+    }
+    Ok(result)
+}
+
+fn write_undistorted_keep_mask(
+    path: &Path,
+    raster: &ImageMaskRaster,
+    original: &ParsedCamera,
+    undistorted: &ParsedCamera,
+    cancellation: &CancellationToken,
+) -> Result<(), MvsSceneError> {
+    let mut output = GrayImage::new(undistorted.width, undistorted.height);
+    for y in 0..undistorted.height {
+        if y % 32 == 0 {
+            cancellation.check().map_err(|_| MvsSceneError::Cancelled)?;
+        }
+        for x in 0..undistorted.width {
+            let normalized_x = (f64::from(x) - undistorted.cx) / undistorted.fx;
+            let normalized_y = (f64::from(y) - undistorted.cy) / undistorted.fy;
+            let radius2 = normalized_x * normalized_x + normalized_y * normalized_y;
+            let radial = 1.0
+                + original.radial_distortion[0] * radius2
+                + original.radial_distortion[1] * radius2 * radius2
+                + original.radial_distortion[2] * radius2 * radius2 * radius2;
+            let tangential_x =
+                2.0 * original.tangential_distortion[0] * normalized_x * normalized_y
+                    + original.tangential_distortion[1]
+                        * (radius2 + 2.0 * normalized_x * normalized_x);
+            let tangential_y = original.tangential_distortion[0]
+                * (radius2 + 2.0 * normalized_y * normalized_y)
+                + 2.0 * original.tangential_distortion[1] * normalized_x * normalized_y;
+            let source_x = original.fx * (normalized_x * radial + tangential_x) + original.cx;
+            let source_y = original.fy * (normalized_y * radial + tangential_y) + original.cy;
+            let masked = source_x < -0.5
+                || source_y < -0.5
+                || source_x > f64::from(original.width) - 0.5
+                || source_y > f64::from(original.height) - 0.5
+                || raster.is_masked(
+                    (source_x + 0.5)
+                        .floor()
+                        .clamp(0.0, f64::from(original.width - 1)) as u32,
+                    (source_y + 0.5)
+                        .floor()
+                        .clamp(0.0, f64::from(original.height - 1)) as u32,
+                );
+            output.put_pixel(x, y, Luma([if masked { 0 } else { 255 }]));
+        }
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| MvsSceneError::InvalidModel("undistorted mask path has no parent".into()))?;
+    fs::create_dir_all(parent)?;
+    let temporary = path.with_extension("png.pending");
+    output.save_with_format(&temporary, ImageFormat::Png)?;
+    fs::rename(temporary, path)?;
+    Ok(())
 }
 
 fn transform_mvs_camera(
@@ -612,6 +977,19 @@ fn run_colmap(
     arguments: &[std::ffi::OsString],
     cancellation: &CancellationToken,
 ) -> Result<(), MvsSceneError> {
+    run_colmap_with_poll(executable, stage, arguments, cancellation, || Ok(()))
+}
+
+fn run_colmap_with_poll<F>(
+    executable: &Path,
+    stage: &'static str,
+    arguments: &[std::ffi::OsString],
+    cancellation: &CancellationToken,
+    mut on_poll: F,
+) -> Result<(), MvsSceneError>
+where
+    F: FnMut() -> Result<(), MvsSceneError>,
+{
     let mut child = Command::new(executable)
         .args(arguments)
         .env_clear()
@@ -621,11 +999,18 @@ fn run_colmap(
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
+    let mut last_progress_poll = Instant::now()
+        .checked_sub(Duration::from_millis(250))
+        .unwrap_or_else(Instant::now);
     loop {
         if cancellation.is_cancel_requested() {
             let _ = child.kill();
             let _ = child.wait();
             return Err(MvsSceneError::Cancelled);
+        }
+        if last_progress_poll.elapsed() >= Duration::from_millis(250) {
+            on_poll()?;
+            last_progress_poll = Instant::now();
         }
         if let Some(status) = child.try_wait()? {
             return if status.success() {
@@ -639,6 +1024,28 @@ fn run_colmap(
         }
         thread::sleep(POLL_INTERVAL);
     }
+}
+
+fn count_regular_files(root: &Path) -> Result<u64, MvsSceneError> {
+    if !root.is_dir() {
+        return Ok(0);
+    }
+    let mut total = 0_u64;
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_symlink() {
+            return Err(MvsSceneError::InvalidModel(
+                "prepared MVS images contain a symbolic link".into(),
+            ));
+        }
+        if kind.is_dir() {
+            total = total.saturating_add(count_regular_files(&entry.path())?);
+        } else if kind.is_file() {
+            total = total.saturating_add(1);
+        }
+    }
+    Ok(total)
 }
 
 fn parse_cameras(path: &Path) -> Result<BTreeMap<u64, ParsedCamera>, MvsSceneError> {
@@ -688,14 +1095,26 @@ fn parse_cameras(path: &Path) -> Result<BTreeMap<u64, ParsedCamera>, MvsSceneErr
                 [params[4], params[5], 0.0],
                 [params[6], params[7]],
             ),
-            "FULL_OPENCV" if params.len() >= 9 => (
-                params[0],
-                params[1],
-                params[2],
-                params[3],
-                [params[4], params[5], params[8]],
-                [params[6], params[7]],
-            ),
+            "FULL_OPENCV" if params.len() == 12 => {
+                // PhotoLab's GCP and portable-MVS camera model implements the full
+                // Brown-Conrady numerator (k1,k2,k3,p1,p2), while the emitted DJI
+                // calibration deliberately fixes COLMAP's rational denominator
+                // k4,k5,k6 to zero. Never silently discard a refined denominator.
+                if params[9..12].iter().any(|value| value.abs() > 1.0e-15) {
+                    return Err(MvsSceneError::InvalidModel(
+                        "FULL_OPENCV k4/k5/k6 must remain zero for PhotoLab GCP/MVS projection"
+                            .into(),
+                    ));
+                }
+                (
+                    params[0],
+                    params[1],
+                    params[2],
+                    params[3],
+                    [params[4], params[5], params[8]],
+                    [params[6], params[7]],
+                )
+            }
             model => {
                 return Err(MvsSceneError::InvalidModel(format!(
                     "camera model {model} is not supported for GCP projection"
@@ -1052,6 +1471,65 @@ fn is_sparse_model(path: &Path) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn undistorted_keep_mask_preserves_identity_pixels() {
+        let root = std::env::temp_dir().join(format!(
+            "himmelcad-mvs-mask-identity-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("mask root");
+        let mut raster = ImageMaskRaster::empty(8, 6).expect("mask");
+        raster.set_masked(3, 2, true);
+        let camera = ParsedCamera {
+            width: 8,
+            height: 6,
+            fx: 100.0,
+            fy: 100.0,
+            cx: 3.5,
+            cy: 2.5,
+            radial_distortion: [0.0; 3],
+            tangential_distortion: [0.0; 2],
+        };
+        let path = root.join("identity.png");
+        write_undistorted_keep_mask(&path, &raster, &camera, &camera, &CancellationToken::new())
+            .expect("write identity mask");
+        let image = image::open(&path).expect("read mask").to_luma8();
+        assert_eq!(image.get_pixel(3, 2).0[0], 0);
+        assert_eq!(image.get_pixel(2, 2).0[0], 255);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn cached_scene_requires_the_published_manifest_hash() {
+        let root = std::env::temp_dir().join(format!(
+            "himmelcad-mvs-scene-cache-hash-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("scene root");
+        let manifest = MvsSceneManifest {
+            schema_version: 1,
+            coordinate_frame_id: "frame".into(),
+            image_mask_scope_sha256: None,
+            images: Vec::new(),
+        };
+        let bytes = serde_json::to_vec(&manifest).expect("scene JSON");
+        let path = root.join("scene.json");
+        fs::write(&path, &bytes).expect("scene manifest");
+        let expected = ObjectHash::of_bytes(&bytes);
+        let loaded = load_prepared_mvs_scene(&path, &expected, &CancellationToken::new())
+            .expect("pinned scene");
+        assert_eq!(loaded.manifest_sha256, expected);
+        assert!(load_prepared_mvs_scene(
+            &path,
+            &ObjectHash::of_bytes(b"different"),
+            &CancellationToken::new(),
+        )
+        .is_err());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
     fn temporary_model_root() -> PathBuf {
         std::env::temp_dir().join(format!("himmelcad-gcp-bundle-model-{}", std::process::id()))
     }
@@ -1069,6 +1547,43 @@ mod tests {
         assert_eq!(robust_depth_range(&[]), None);
         let range = robust_depth_range(&[2.0, 3.0, 4.0]).unwrap();
         assert!(range.0 < 2.0 && range.1 > 4.0);
+    }
+
+    #[test]
+    fn full_opencv_parser_preserves_brown_parameter_order_for_gcp_and_mvs() {
+        let root = temporary_model_root().join("full-opencv-order");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("model root");
+        fs::write(
+            root.join("cameras.txt"),
+            "1 FULL_OPENCV 5280 3956 3713.5 3714.5 2660.5 1961.5 -0.1 -0.002 0.0003 -0.0004 -0.015 0 0 0\n",
+        )
+        .expect("camera fixture");
+
+        let cameras = parse_cameras(&root.join("cameras.txt")).expect("parse FULL_OPENCV");
+        let camera = cameras.get(&1).expect("camera one");
+        assert_eq!([camera.fx, camera.fy], [3713.5, 3714.5]);
+        assert_eq!([camera.cx, camera.cy], [2660.5, 1961.5]);
+        assert_eq!(camera.radial_distortion, [-0.1, -0.002, -0.015]);
+        assert_eq!(camera.tangential_distortion, [0.0003, -0.0004]);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn full_opencv_parser_rejects_unmodelled_rational_denominator() {
+        let root = temporary_model_root().join("full-opencv-denominator");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("model root");
+        fs::write(
+            root.join("cameras.txt"),
+            "1 FULL_OPENCV 100 100 80 80 50 50 0 0 0 0 0 0.001 0 0\n",
+        )
+        .expect("camera fixture");
+
+        let error = parse_cameras(&root.join("cameras.txt"))
+            .expect_err("non-zero rational denominator must not be discarded");
+        assert!(error.to_string().contains("k4/k5/k6 must remain zero"));
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]

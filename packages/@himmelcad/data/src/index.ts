@@ -17,8 +17,11 @@ export type EntityKind =
   | 'ImageCollection'
   | 'CameraImage'
   | 'CameraCalibration'
+  | 'CaptureGroup'
+  | 'CameraCalibrationGroup'
   | 'ProcessingSet'
   | 'AlignmentRun'
+  | 'MergedAlignmentRun'
   | 'DepthMap'
   | 'GroundControlPoint'
   | 'Orthomosaic'
@@ -53,9 +56,10 @@ export interface ResolveAlignmentProfileRequest {
   profile: AlignmentQualityProfile;
   imageCount: number;
   maxImageEdgeOverride?: number;
+  keypointsPerMegapixelOverride?: number;
 }
 
-/** Complete core-resolved settings persisted by a queued Photolab run. */
+/** Complete core-resolved settings persisted by a queued PhotoLab run. */
 export interface ResolvedAlignmentConfig {
   schemaVersion: number;
   profile: AlignmentQualityProfile;
@@ -127,6 +131,8 @@ export interface PhotolabProjectManifest {
     target: unknown;
     establishedByTransformationSha256: ObjectHash;
   };
+  imageQualityCatalogHash?: ObjectHash;
+  imageMaskCatalogHash?: ObjectHash;
   activeRuns: string[];
 }
 
@@ -162,8 +168,10 @@ export interface PhotolabJournalEntry {
 }
 
 export type PhotolabJobKind =
+  | 'analyzeImageQuality'
   | 'alignPhotos'
   | 'optimizeAlignment'
+  | 'mergeAlignments'
   | 'buildDepthMaps'
   | 'buildDensePointCloud'
   | 'buildDem'
@@ -174,15 +182,100 @@ export type PhotolabJobKind =
   | 'batch';
 
 export interface ProcessingSetRecord {
+  schemaVersion: 1 | 2;
+  entityId: EntityId;
+  name: string;
+  cameraEntityIds: EntityId[];
+  membershipSha256: ObjectHash;
+  captureGroupIds?: EntityId[];
+  calibrationGroupIds?: EntityId[];
+}
+
+export type CameraCalibrationGroupingBasis = 'missionAutofocus' | 'embeddedCalibration' | 'manual';
+export type CaptureGroupReviewStatus = 'needsReview' | 'confirmed';
+
+export interface CameraCalibrationSeed {
+  widthPixels: number;
+  heightPixels: number;
+  focalPixels?: number;
+  principalXPixels?: number;
+  principalYPixels?: number;
+}
+
+export interface CameraCalibrationGroupRecord {
+  schemaVersion: 1;
+  entityId: EntityId;
+  captureGroupId: EntityId;
+  name: string;
+  cameraEntityIds: EntityId[];
+  membershipSha256: ObjectHash;
+  groupingBasis: CameraCalibrationGroupingBasis;
+  reviewStatus?: CaptureGroupReviewStatus;
+  automatic?: boolean;
+  evidence?: string[];
+  initialCalibration?: CameraCalibrationSeed;
+}
+
+export interface CaptureGroupRecord {
   schemaVersion: 1;
   entityId: EntityId;
   name: string;
   cameraEntityIds: EntityId[];
   membershipSha256: ObjectHash;
+  calibrationGroupIds: EntityId[];
+  reviewStatus?: CaptureGroupReviewStatus;
+  automatic?: boolean;
+  evidence?: string[];
+}
+
+export type AlignmentMergeConnection =
+  | {
+      kind: 'overlap';
+      alignmentA: EntityId;
+      alignmentB: EntityId;
+      /** Zero while planned; populated only from the published joint model's tracks. */
+      verifiedCrossRunTrackCount: number;
+    }
+  | {
+      kind: 'sharedControls';
+      alignmentA: EntityId;
+      alignmentB: EntityId;
+      controlPointIds: string[];
+    };
+
+/** Explicit, immutable merge plan. It is not a product source until a joint solve publishes it. */
+export interface MergedAlignmentRunRecord {
+  schemaVersion: 1;
+  entityId: EntityId;
+  name: string;
+  state: 'planned' | 'published';
+  inputAlignmentEntityIds: EntityId[];
+  inputGcpOptimizationEntityIds: EntityId[];
+  connections: AlignmentMergeConnection[];
+  cameraEntityIds: EntityId[];
+  lineageSha256: ObjectHash;
+  datasetRelativePath?: string;
+}
+
+/** Sparse alignment artifact that is safe to use as an explicit merge input. */
+export interface AlignmentMergeCandidateRecord {
+  entityId: EntityId;
+  name: string;
+  jobId: string;
+  publicationSequence: number;
+  cameraEntityIds: EntityId[];
+  processingSetId?: EntityId;
+  calibrationGroupIds?: EntityId[];
+  /** Exact intrinsics partition used by this alignment, including implicit legacy groups. */
+  calibrationGroups?: {
+    groupId: string;
+    cameraEntityIds: EntityId[];
+  }[];
 }
 
 export type PhotolabStageKind =
   | 'preparing'
+  | 'imageAnalysis'
   | 'candidatePairSelection'
   | 'featureExtraction'
   | 'featureMatching'
@@ -322,6 +415,16 @@ export interface PhotoMetadata {
     calibratedFocalLengthPixels?: number;
     calibratedOpticalCenterXPixels?: number;
     calibratedOpticalCenterYPixels?: number;
+    dewarpCalibration?: {
+      focalXPixels: number;
+      focalYPixels: number;
+      principalXPixels: number;
+      principalYPixels: number;
+      radialDistortion: [number, number, number];
+      tangentialDistortion: [number, number];
+      calibrationDate: string;
+      provenance: 'dewarpData';
+    };
   };
 }
 
@@ -390,6 +493,138 @@ export interface ProjectCameraImageRecord {
     projectedReference?: ProjectedPhotoReference;
     statusTags: ImageProductTag[];
   };
+}
+
+export interface ImageMaskBrushPoint {
+  xPixels: number;
+  yPixels: number;
+}
+
+export type ImageMaskBrushMode = 'add' | 'remove';
+
+export interface ImageMaskBrushStroke {
+  mode: ImageMaskBrushMode;
+  radiusPixels: number;
+  points: ImageMaskBrushPoint[];
+}
+
+export type ImageMaskEdit =
+  | { kind: 'brush'; stroke: ImageMaskBrushStroke }
+  | { kind: 'clear' }
+  | { kind: 'restore'; revisionSha256: ObjectHash };
+
+export interface ImageMaskRevisionRecord {
+  schemaVersion: number;
+  imageEntityId: EntityId;
+  sourceObjectHash: ObjectHash;
+  sourceMetadataObjectHash: ObjectHash;
+  widthPixels: number;
+  heightPixels: number;
+  revision: number;
+  parentRevisionSha256?: ObjectHash;
+  edit: ImageMaskEdit;
+  rasterObjectHash?: ObjectHash;
+  maskedPixelCount: number;
+}
+
+/** Current revision returned by the project catalog, including its CAS identity. */
+export interface ListedImageMaskRevision extends ImageMaskRevisionRecord {
+  revisionSha256: ObjectHash;
+}
+
+export interface ImageMaskCatalogEntry {
+  imageEntityId: EntityId;
+  revisionSha256: ObjectHash;
+}
+
+export interface ImageMaskCatalog {
+  schemaVersion: number;
+  projectId: string;
+  revisions: ImageMaskCatalogEntry[];
+}
+
+export interface ComputeImageMask {
+  imageEntityId: EntityId;
+  revisionSha256: ObjectHash;
+  rasterObjectHash: ObjectHash;
+  widthPixels: number;
+  heightPixels: number;
+  maskedPixelCount: number;
+}
+
+export interface ImageMaskComputeScope {
+  schemaVersion: number;
+  processingSetId?: EntityId;
+  processingSetMembershipSha256?: ObjectHash;
+  cameraEntityIds: EntityId[];
+  masks: ComputeImageMask[];
+  scopeSha256: ObjectHash;
+}
+
+export interface EditImageMaskParams {
+  operationId: string;
+  imageEntityId: EntityId;
+  expectedRevisionSha256?: ObjectHash;
+  edit: ImageMaskEdit;
+}
+
+export interface EditImageMaskResult {
+  operationId: string;
+  revisionSha256: ObjectHash;
+  rasterObjectHash?: ObjectHash;
+  maskedPixelCount: number;
+  autosaveGeneration: number;
+  journalSequence: number;
+}
+
+export interface CancelImageMaskParams {
+  operationId: string;
+}
+
+export interface CancelImageMaskResult {
+  operationId: string;
+  cancellationRequested: boolean;
+}
+
+export type ImageQualityWarning =
+  | 'shadowClipping'
+  | 'highlightClipping'
+  | 'lowSharpness'
+  | 'lowTexture'
+  | 'directionalBlurRisk';
+
+export interface ImageQualityMetrics {
+  laplacianVariance: number;
+  tenengrad: number;
+  directionalGradientCoherence: number;
+  dominantGradientAngleDegrees: number;
+  meanLuminance: number;
+  shadowClippedFraction: number;
+  highlightClippedFraction: number;
+  textureEntropyBits: number;
+  texturedPixelFraction: number;
+}
+
+export interface ImageQualityAnalysisRecord {
+  schemaVersion: 1;
+  jobId: string;
+  imageEntityId: EntityId;
+  imageName: string;
+  sourceObjectHash: ObjectHash;
+  sourceMetadataObjectHash: ObjectHash;
+  algorithmVersion: string;
+  configurationSha256: ObjectHash;
+  analyzedAtUnixMs: number;
+  originalWidthPixels: number;
+  originalHeightPixels: number;
+  sampleWidthPixels: number;
+  sampleHeightPixels: number;
+  sampledPixelCount: number;
+  processingSetId?: EntityId;
+  processingSetMembershipSha256?: ObjectHash;
+  outcome:
+    | { status: 'measured'; metrics: ImageQualityMetrics; warnings: ImageQualityWarning[] }
+    | { status: 'unavailable'; reason: string };
 }
 
 export type GcpRole =
@@ -523,6 +758,7 @@ export interface GcpResidualStatistics {
 
 export interface GcpOptimizationPublicationRecord {
   schemaVersion: number;
+  publicationSequence: number;
   operationId: string;
   inputSha256: ObjectHash;
   artifactSha256: ObjectHash;
@@ -598,11 +834,17 @@ export interface GcpOptimizationPublicationRecord {
   processingSetId?: EntityId;
 }
 
+export interface PublishedGcpOptimizationEntry {
+  entityId: EntityId;
+  optimization: GcpOptimizationPublicationRecord;
+}
+
 export interface AlignedGcpCameraRecord {
   imageId: number;
   entityId: EntityId;
   imageName: string;
   sourceObjectHash: ObjectHash;
+  centerInProjectWorld: boolean;
   camera: {
     imageId: number;
     widthPixels: number;

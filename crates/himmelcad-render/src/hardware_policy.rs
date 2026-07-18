@@ -301,11 +301,12 @@ impl HardwarePolicyResolver {
             traversal_ms: (target_frame_ms * 0.08).clamp(0.75, 2.0),
             decode_ms: (target_frame_ms * 0.18).clamp(1.5, 6.0),
             upload_bytes,
-            new_requests: content_requests.min(12),
+            new_requests: content_requests.min(24),
         };
         let maximum_traversed_nodes =
             finite_u32(100_000.0 * f64::from(detail_class)).clamp(25_000, 1_000_000);
-        let interactive_requests = finite_u32(f64::from(detail_class).ceil()).clamp(1, 8) as u16;
+        let interactive_requests =
+            finite_u32(f64::from(detail_class * 2.0).ceil()).clamp(2, 8) as u16;
         let policy = ResolvedHardwarePolicy {
             deployment_profile,
             resources: ResourceBudget {
@@ -326,10 +327,10 @@ impl HardwarePolicyResolver {
                     target_frame_ms,
                     traversal_ms: frame.traversal_ms * 0.5,
                     decode_ms: frame.decode_ms * 0.5,
-                    upload_bytes: (frame.upload_bytes / 4).max(MEBIBYTE),
+                    upload_bytes: (frame.upload_bytes / 2).max(MEBIBYTE),
                     new_requests: interactive_requests.min(frame.new_requests),
                 },
-                maximum_traversed_nodes: (maximum_traversed_nodes / 64).clamp(2_000, 50_000),
+                maximum_traversed_nodes: (maximum_traversed_nodes / 16).clamp(4_000, 100_000),
             },
             workload,
             maximum_render_scale: detail_class.sqrt().clamp(0.75, 2.0),
@@ -689,7 +690,8 @@ impl RuntimeQualityGovernor {
             self.state.detail_scale = (self.state.detail_scale * 0.85).max(minimum_detail_scale);
             return QualityAdjustment::Reduced(self.state);
         }
-        if self.headroom_frames >= 45 {
+        let headroom_threshold = if sample.interacting { 45 } else { 12 };
+        if self.headroom_frames >= headroom_threshold {
             self.headroom_frames = 0;
             self.state.render_scale =
                 (self.state.render_scale * 1.05).min(self.ceiling.render_scale);

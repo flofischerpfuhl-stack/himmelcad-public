@@ -15,6 +15,11 @@ import {
 
 const isDev = !app.isPackaged;
 const CACHE_DIR = resolve(tmpdir(), 'himmelcad-cache');
+const DEV_POINT_CLOUD = process.env.HCAD_DEV_POINT_CLOUD?.trim() ?? '';
+const CACHE_CORS_HEADERS = {
+  'access-control-allow-origin': '*',
+  'access-control-expose-headers': 'accept-ranges, content-length, content-range',
+} as const;
 app.setName('HimmelCAD Builder');
 
 let mainWindow: BrowserWindow | null = null;
@@ -29,11 +34,23 @@ let mainWindow: BrowserWindow | null = null;
 // Must be called BEFORE `app.whenReady()` (Chromium reads the switch
 // during browser-process init).
 app.commandLine.appendSwitch('disable-features', 'MiddleClickAutoscroll');
+if (isDev && process.platform === 'linux') {
+  // Chromium keeps Linux WebGPU behind this development opt-in. Packaged
+  // builds retain normal platform policy and the viewer's permanent WebGL2
+  // fallback.
+  app.commandLine.appendSwitch('enable-unsafe-webgpu');
+}
 
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'hcad-cache',
-    privileges: { standard: true, secure: true, supportFetchAPI: true, bypassCSP: true },
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      bypassCSP: true,
+    },
   },
 ]);
 
@@ -148,7 +165,10 @@ void app.whenReady().then(async () => {
         if (!parsed) {
           return new Response('invalid range', {
             status: 416,
-            headers: { 'content-range': `bytes */${total}` },
+            headers: {
+              ...CACHE_CORS_HEADERS,
+              'content-range': `bytes */${total}`,
+            },
           });
         }
         const { start, end } = parsed;
@@ -160,6 +180,7 @@ void app.whenReady().then(async () => {
           return new Response(new Uint8Array(buf), {
             status: 206,
             headers: {
+              ...CACHE_CORS_HEADERS,
               'content-type': contentTypeFor(relPath),
               'content-length': String(length),
               'content-range': `bytes ${start}-${end}/${total}`,
@@ -174,6 +195,7 @@ void app.whenReady().then(async () => {
       const data = await fs.readFile(fullPath);
       return new Response(new Uint8Array(data), {
         headers: {
+          ...CACHE_CORS_HEADERS,
           'content-type': contentTypeFor(relPath),
           'content-length': String(total),
           'accept-ranges': 'bytes',
@@ -223,6 +245,9 @@ function registerIpc(): void {
   ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
 
   ipcMain.handle('sidecar:status', () => isSidecarRunning());
+  ipcMain.handle('dev:initial-point-cloud-paths', () =>
+    isDev && DEV_POINT_CLOUD.length > 0 ? [resolve(DEV_POINT_CLOUD)] : [],
+  );
   ipcMain.handle('sidecar:call', async (_e, method: string, params: unknown) => {
     return callSidecar({ method, params });
   });
@@ -251,9 +276,15 @@ function registerIpc(): void {
         const progressKey = Array.isArray(payload) ? undefined : payload.progressKey;
         const result = await callSidecar<{ imports: Array<Record<string, unknown>> }>({
           method: 'import.las',
-          params: { paths, cache_dir: CACHE_DIR, progress_key: progressKey },
+          params: {
+            paths,
+            cache_dir: CACHE_DIR,
+            progress_key: progressKey,
+            operation_id: progressKey,
+          },
         });
-        // Sidecar already returns `entity_id` and `potree_dir`; we only
+        // Sidecar returns independent semantic entity and immutable dataset
+        // identities; only the dataset identity addresses prepared bytes.
         // synthesize the renderer-reachable URL so the renderer never has
         // to know about CACHE_DIR or the cache scheme.
         const imports = (result?.imports ?? []).map((s) => {
@@ -261,9 +292,10 @@ function registerIpc(): void {
           if (!entityId) {
             throw new Error('sidecar import.las response missing entity_id');
           }
+          const datasetId = String(s.dataset_id ?? entityId);
           return {
             ...s,
-            metadata_url: `hcad-cache://local/${entityId}/metadata.json`,
+            metadata_url: `hcad-cache://local/${datasetId}/metadata.json`,
           };
         });
         return { imports };

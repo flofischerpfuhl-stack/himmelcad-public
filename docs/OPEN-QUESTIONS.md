@@ -22,7 +22,7 @@ not smuggle in accidental product decisions.
 - **ChronoGit readiness tax (Q9):** only journal + immutable objects + stable
   IDs/revisions. No ChronoGit product work until Phase 7 decision gate. See
   `docs/CURRENT-DIRECTION.md`.
-- **Reserved products:** Composer, TestFlight, and ChronoGit stay names-only
+- **Reserved products:** Assembler, TestFlight, and ChronoGit stay names-only
   until an explicit gate. Agents must not implement them.
 - **Entity base model:** ADR 0016 — versioned `type_id`, representations,
   optional Z (`None` never means zero). Lines/circles/arcs are curve

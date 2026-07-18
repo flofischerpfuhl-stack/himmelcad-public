@@ -1687,19 +1687,27 @@ mod tests {
         );
     }
 
+    /// GK4 (DHDN) → UTM32 (ETRS89) with `kanu_ntv2_schwaben.gsb` against the versioned
+    /// 23 KANU control pairs (`photolab/golden/kanu-schwaben-control-points.csv`).
+    /// Thresholds match `scripts/photolab-grid-golden.mjs` (max ≤ 7 mm).
     #[test]
     fn kanu_ntv2_control_pairs_within_centimetre_when_grid_present() {
-        // Public/local official pairs: GK4 → UTM32 with Schwaben NTv2.
-        let pairs_path = PathBuf::from(
-            "/home/oem/Dokumente/002_Geschäftlich/01_Geiger/03_Projekte/NT2V/Testpunkte_Echtumstellung.csv",
-        );
-        let gsb = PathBuf::from(
-            "/home/oem/Dokumente/003_Projekte/10_himmelcad/photolab/01_Transformation/Projektionsgitter/Bayern/kanu_ntv2_schwaben.gsb",
-        );
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let pairs_path = root.join("photolab/golden/kanu-schwaben-control-points.csv");
+        let gsb =
+            root.join("photolab/01_Transformation/Projektionsgitter/Bayern/kanu_ntv2_schwaben.gsb");
+        // Fallback to the original NT2V Echtumstellung dump when golden CSV is missing.
+        let pairs_path = if pairs_path.is_file() {
+            pairs_path
+        } else {
+            PathBuf::from(
+                "/home/oem/Dokumente/002_Geschäftlich/01_Geiger/03_Projekte/NT2V/Testpunkte_Echtumstellung.csv",
+            )
+        };
         if !pairs_path.is_file() || !gsb.is_file() {
             return;
         }
-        // Accuracy already proven offline; here we only assert inspect + pipeline freeze for GSB.
+
         let runtime = runtime_allowing(&gsb);
         let cancel = CancellationToken::new();
         let inspected = runtime
@@ -1707,15 +1715,143 @@ mod tests {
                 &GridFileRef {
                     path: gsb.display().to_string(),
                     role: GridRole::HorizontalDatumShift,
-                    authority_hint: None,
+                    authority_hint: Some(GridAuthorityHint {
+                        expected_source_crs: Some("DHDN".into()),
+                        expected_target_crs: Some("ETRS".into()),
+                        expected_operation: None,
+                        expected_sha256: None,
+                    }),
                 },
                 &cancel,
             )
-            .expect("inspect gsb");
+            .expect("inspect schwaben gsb");
         assert_eq!(inspected.format, GridFileFormat::Ntv2);
         assert!(inspected.coverage.is_some());
-        // Document expected golden threshold for a future full PROJ pipeline test:
-        // mean ≤ 5 mm, max ≤ 10 mm on in-grid KANU pairs (see NT2V script header).
-        let _ = pairs_path;
+
+        let pairs = parse_kanu_control_pairs(&pairs_path);
+        assert!(
+            pairs.len() >= 20,
+            "expected ~23 KANU control pairs, got {}",
+            pairs.len()
+        );
+
+        // Same pipeline as photolab-grid-golden.mjs: inv GK4 tmerc → hgridshift → UTM32.
+        let pipeline = format!(
+            "+proj=pipeline \
+             +step +inv +proj=tmerc +lat_0=0 +lon_0=12 +k=1 +x_0=4500000 +y_0=0 +ellps=bessel \
+             +step +proj=hgridshift +grids={} \
+             +step +proj=utm +zone=32 +ellps=GRS80",
+            gsb.file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("kanu_ntv2_schwaben.gsb")
+        );
+        let op = ProjCoordinateOp {
+            source: CrsWithEpoch {
+                crs: CrsDefinition::Authority("EPSG:31468".into()),
+                coordinate_epoch: None,
+            },
+            target: CrsWithEpoch {
+                crs: CrsDefinition::Epsg(25832),
+                coordinate_epoch: None,
+            },
+            proj_pipeline: Some(pipeline),
+            grids: vec![GridFileRef {
+                path: gsb.display().to_string(),
+                role: GridRole::HorizontalDatumShift,
+                authority_hint: None,
+            }],
+            selection_policy: Default::default(),
+            expected_accuracy_mm: Some(10.0),
+            ballpark: false,
+        };
+        let spec = TransformSpec {
+            schema_version: TRANSFORM_SPEC_SCHEMA_VERSION,
+            composition: TransformCompositionMode::HybridCascade,
+            separate_order: SeparateStageOrder::default(),
+            stages: vec![TransformStage::Proj(op)],
+            vertical_stages: vec![],
+            domain: None,
+            out_of_bounds: OutOfBoundsPolicy::Error,
+            area_of_interest: None,
+            label: Some("kanu-schwaben-control".into()),
+            geometry_policy: None,
+        };
+
+        let sources: Vec<WorldPoint> = pairs
+            .iter()
+            .map(|p| WorldPoint::new(p.gk4_east, p.gk4_north, 0.0))
+            .collect();
+        let result = match runtime.transform_points(&spec, &sources, &cancel) {
+            Ok((_, batch)) => batch,
+            Err(error) => {
+                let message = error.to_string();
+                if message.contains("spawn cct") || message.contains("No such file") {
+                    return;
+                }
+                panic!("KANU Schwaben transform failed: {error}");
+            }
+        };
+        assert_eq!(result.points.len(), pairs.len());
+
+        let mut sum = 0.0_f64;
+        let mut max = 0.0_f64;
+        for (out, pair) in result.points.iter().zip(pairs.iter()) {
+            let residual =
+                ((out.x - pair.utm_east).powi(2) + (out.y - pair.utm_north).powi(2)).sqrt();
+            sum += residual;
+            max = max.max(residual);
+        }
+        let mean = sum / pairs.len() as f64;
+        // Align with scripts/photolab-grid-golden.mjs (max 7 mm) and docs (mean ~3.8 mm).
+        assert!(
+            max <= 0.007,
+            "KANU Schwaben max residual {max:.4} m exceeds 7 mm (mean {mean:.4} m)"
+        );
+        assert!(
+            mean <= 0.005,
+            "KANU Schwaben mean residual {mean:.4} m exceeds 5 mm"
+        );
+    }
+
+    struct KanuPair {
+        gk4_east: f64,
+        gk4_north: f64,
+        utm_east: f64,
+        utm_north: f64,
+    }
+
+    fn parse_kanu_control_pairs(path: &Path) -> Vec<KanuPair> {
+        let text = std::fs::read_to_string(path).expect("read control pairs");
+        let mut pairs = Vec::new();
+        for (index, line) in text.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            // Skip header
+            if index == 0 && (line.contains("gk4") || line.contains("R(GK") || line.contains("PKt"))
+            {
+                continue;
+            }
+            let fields: Vec<&str> = line.split(';').collect();
+            if fields.len() < 5 {
+                continue;
+            }
+            // golden: id;gk4_east;gk4_north;utm32_east;utm32_north
+            // NT2V:    PKt.Nr.;R(GK4);H(GK4);E(UTM32;N(UTM32)  (note broken header)
+            let gk4_east = fields[1].trim().replace(',', ".").parse::<f64>();
+            let gk4_north = fields[2].trim().replace(',', ".").parse::<f64>();
+            let utm_east = fields[3].trim().replace(',', ".").parse::<f64>();
+            let utm_north = fields[4].trim().replace(',', ".").parse::<f64>();
+            if let (Ok(ge), Ok(gn), Ok(ue), Ok(un)) = (gk4_east, gk4_north, utm_east, utm_north) {
+                pairs.push(KanuPair {
+                    gk4_east: ge,
+                    gk4_north: gn,
+                    utm_east: ue,
+                    utm_north: un,
+                });
+            }
+        }
+        pairs
     }
 }

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { app } from 'electron';
@@ -31,20 +31,34 @@ function sidecarPath(): string {
 }
 
 function sidecarEnvironment(): NodeJS.ProcessEnv {
-  if (!app.isPackaged) return process.env;
+  const userGridRoot = resolve(app.getPath('userData'), 'proj-grids');
+  mkdirSync(userGridRoot, { recursive: true });
+  if (!app.isPackaged) {
+    return { ...process.env, HIMMELCAD_USER_PROJ_GRID_ROOT: userGridRoot };
+  }
   const platform = process.platform === 'win32' ? 'win32-x64' : 'linux-x64';
   const executable = (name: string) => (process.platform === 'win32' ? `${name}.exe` : name);
   const geoRoot = resolve(process.resourcesPath, 'workers', 'geo');
   const hasBundledGeoRuntime = existsSync(geoRoot);
   const dedodeRoot = resolve(process.resourcesPath, 'vendor', 'dedode', platform);
+  const dedodeSitePackages = resolve(dedodeRoot, 'python', 'lib', 'python3.12', 'site-packages');
   const libraryPath = [
     hasBundledGeoRuntime ? resolve(geoRoot, 'lib') : undefined,
     resolve(dedodeRoot, 'python', 'lib'),
+    resolve(dedodeSitePackages, 'onnxruntime', 'capi'),
+    resolve(dedodeSitePackages, 'numpy.libs'),
+    resolve(dedodeSitePackages, 'pillow.libs'),
     process.env.LD_LIBRARY_PATH,
   ]
     .filter((value): value is string => Boolean(value))
     .join(':');
-  const windowsPath = [hasBundledGeoRuntime ? resolve(geoRoot, 'bin') : undefined, process.env.PATH]
+  const windowsPath = [
+    hasBundledGeoRuntime ? resolve(geoRoot, 'bin') : undefined,
+    resolve(dedodeRoot, 'python'),
+    resolve(dedodeRoot, 'python', 'DLLs'),
+    resolve(dedodeRoot, 'python', 'Lib', 'site-packages', 'onnxruntime', 'capi'),
+    process.env.PATH,
+  ]
     .filter((value): value is string => Boolean(value))
     .join(';');
   return {
@@ -79,18 +93,28 @@ function sidecarEnvironment(): NodeJS.ProcessEnv {
       executable('brush_app'),
     ),
     HIMMELCAD_DEDODE_ROOT: dedodeRoot,
-    HIMMELCAD_DEDODE_WORKER: resolve(process.resourcesPath, 'workers', 'dedode_worker.py'),
+    HIMMELCAD_DEDODE_ONNX_ROOT: resolve(dedodeRoot, 'models'),
+    HIMMELCAD_DEDODE_WORKER: resolve(dedodeRoot, 'dedode_onnx_worker.py'),
     HIMMELCAD_DEDODE_PYTHON:
       process.env.HIMMELCAD_DEDODE_PYTHON ??
-      resolve(dedodeRoot, 'python', 'bin', process.platform === 'win32' ? 'python.exe' : 'python3'),
+      (process.platform === 'win32'
+        ? resolve(dedodeRoot, 'python', 'python.exe')
+        : resolve(dedodeRoot, 'python', 'bin', 'python3')),
+    HIMMELCAD_DEDODE_PYTHON_VERSION: '3.12.13',
     ...(existsSync(resolve(dedodeRoot, 'python'))
       ? { PYTHONHOME: resolve(dedodeRoot, 'python') }
       : {}),
     PROJ_NETWORK: 'OFF',
+    PYTHONNOUSERSITE: '1',
+    PYTHONDONTWRITEBYTECODE: '1',
+    PYTHONUTF8: '1',
+    HIMMELCAD_USER_PROJ_GRID_ROOT: userGridRoot,
     ...(hasBundledGeoRuntime
       ? {
           HIMMELCAD_GDAL_ROOT: geoRoot,
           HIMMELCAD_PROJ_ROOT: geoRoot,
+          PROJ_DATA: resolve(geoRoot, 'share', 'proj'),
+          GDAL_DATA: resolve(geoRoot, 'share', 'gdal'),
           GDAL_DRIVER_PATH: resolve(geoRoot, 'lib', 'gdalplugins'),
         }
       : {}),

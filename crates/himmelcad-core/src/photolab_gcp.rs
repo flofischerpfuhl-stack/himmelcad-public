@@ -1395,10 +1395,19 @@ mod tests {
             .expect("statistics should aggregate");
 
         let control = statistics.control.expect("control summary");
+        assert_eq!(control.east_rms_meters, Some(3.0));
+        assert_eq!(control.north_rms_meters, Some(4.0));
+        assert_eq!(control.horizontal_rms_meters, Some(5.0));
+        assert_eq!(control.height_rms_meters, Some(12.0));
         assert_eq!(control.spatial_3d_rms_meters, Some(13.0));
+        assert_eq!(control.reprojection_rms_pixels, 2.0);
         let checkpoint = statistics.checkpoint.expect("checkpoint summary");
+        assert_eq!(checkpoint.east_rms_meters, None);
+        assert_eq!(checkpoint.north_rms_meters, None);
         assert_eq!(checkpoint.height_rms_meters, Some(2.0));
         assert_eq!(checkpoint.horizontal_rms_meters, None);
+        assert_eq!(checkpoint.spatial_3d_rms_meters, None);
+        assert_eq!(checkpoint.reprojection_rms_pixels, 2.0);
     }
 
     #[test]

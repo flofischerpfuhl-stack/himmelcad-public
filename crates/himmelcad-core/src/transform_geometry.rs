@@ -332,9 +332,10 @@ pub fn classify_geometry(
     let id = geometry_id.map(str::to_owned);
 
     let (support, strategy) = match kind {
-        GeometryKind::PointSet | GeometryKind::Polyline | GeometryKind::Mesh => {
-            (TransformSupport::FullySupported, GeometryStrategy::MapVertices)
-        }
+        GeometryKind::PointSet | GeometryKind::Polyline | GeometryKind::Mesh => (
+            TransformSupport::FullySupported,
+            GeometryStrategy::MapVertices,
+        ),
         GeometryKind::Circle | GeometryKind::Arc => {
             if global_sim {
                 (
@@ -491,7 +492,11 @@ fn blocked(
     }
 }
 
-fn warn(code: GeometryWarningCode, message: impl Into<String>, geometry_id: Option<String>) -> GeometryTransformWarning {
+fn warn(
+    code: GeometryWarningCode,
+    message: impl Into<String>,
+    geometry_id: Option<String>,
+) -> GeometryTransformWarning {
     GeometryTransformWarning {
         code,
         message: message.into(),
@@ -518,7 +523,11 @@ pub fn circle_sample_count(radius: f64, policy: &DensifyPolicy) -> u32 {
 }
 
 /// Densify a circle into polyline vertices (closed if `close`).
-pub fn densify_circle(circle: Circle3, policy: &DensifyPolicy, close: bool) -> Result<Vec<WorldPoint>, GeometryTransformError> {
+pub fn densify_circle(
+    circle: Circle3,
+    policy: &DensifyPolicy,
+    close: bool,
+) -> Result<Vec<WorldPoint>, GeometryTransformError> {
     if !(circle.radius.is_finite() && circle.radius > 0.0) {
         return Err(GeometryTransformError::Invalid("circle radius"));
     }
@@ -546,7 +555,10 @@ pub fn densify_circle(circle: Circle3, policy: &DensifyPolicy, close: bool) -> R
 }
 
 /// Densify an arc into polyline vertices.
-pub fn densify_arc(arc: Arc3, policy: &DensifyPolicy) -> Result<Vec<WorldPoint>, GeometryTransformError> {
+pub fn densify_arc(
+    arc: Arc3,
+    policy: &DensifyPolicy,
+) -> Result<Vec<WorldPoint>, GeometryTransformError> {
     if !(arc.radius.is_finite() && arc.radius > 0.0) {
         return Err(GeometryTransformError::Invalid("arc radius"));
     }
@@ -572,7 +584,9 @@ pub fn densify_arc(arc: Arc3, policy: &DensifyPolicy) -> Result<Vec<WorldPoint>,
 /// Best-fit circle in XY from ≥3 points (non-iterative algebraic fit). Z = mean Z.
 pub fn fit_circle_xy(points: &[WorldPoint]) -> Result<Circle3, GeometryTransformError> {
     if points.len() < 3 {
-        return Err(GeometryTransformError::Invalid("need ≥3 points to fit circle"));
+        return Err(GeometryTransformError::Invalid(
+            "need ≥3 points to fit circle",
+        ));
     }
     // Kåsa fit: x^2 + y^2 + d x + e y + f = 0
     let mut sum_x = 0.0;
@@ -719,19 +733,55 @@ pub fn map_circle_similarity_2d(circle: Circle3, model: Similarity2D) -> Circle3
 #[must_use]
 pub fn geometry_edge_case_catalog() -> &'static [(&'static str, GeometryWarningCode)] {
     &[
-        ("Circle/arc under NTv2 becomes non-circular", GeometryWarningCode::CircleNotPreserved),
-        ("Best-fit circle drops eccentricity", GeometryWarningCode::CircleBestFitApproximation),
-        ("Line wall + arc wall junction opens after densify mismatch", GeometryWarningCode::ConnectivityRisk),
-        ("Camera orientation needs Jacobian, not point formula", GeometryWarningCode::OrientationLinearized),
-        ("Text height vs ground scale vs paper scale", GeometryWarningCode::TextScalePolicy),
-        ("Raster needs inverse warp + nodata", GeometryWarningCode::RasterWarpRequired),
-        ("Octree/tiles must be rebuilt", GeometryWarningCode::HierarchyMustRematerialize),
-        ("CSG/implicit solid needs tessellation", GeometryWarningCode::ImplicitRequiresTessellation),
-        ("Strong local scale gradient warps hatches/dimensions", GeometryWarningCode::StrongLocalScaleGradient),
-        ("Polygon self-intersection after non-linear map", GeometryWarningCode::TopologyRisk),
-        ("UV/textures not warped with vertices", GeometryWarningCode::AttributesNotWarped),
+        (
+            "Circle/arc under NTv2 becomes non-circular",
+            GeometryWarningCode::CircleNotPreserved,
+        ),
+        (
+            "Best-fit circle drops eccentricity",
+            GeometryWarningCode::CircleBestFitApproximation,
+        ),
+        (
+            "Line wall + arc wall junction opens after densify mismatch",
+            GeometryWarningCode::ConnectivityRisk,
+        ),
+        (
+            "Camera orientation needs Jacobian, not point formula",
+            GeometryWarningCode::OrientationLinearized,
+        ),
+        (
+            "Text height vs ground scale vs paper scale",
+            GeometryWarningCode::TextScalePolicy,
+        ),
+        (
+            "Raster needs inverse warp + nodata",
+            GeometryWarningCode::RasterWarpRequired,
+        ),
+        (
+            "Octree/tiles must be rebuilt",
+            GeometryWarningCode::HierarchyMustRematerialize,
+        ),
+        (
+            "CSG/implicit solid needs tessellation",
+            GeometryWarningCode::ImplicitRequiresTessellation,
+        ),
+        (
+            "Strong local scale gradient warps hatches/dimensions",
+            GeometryWarningCode::StrongLocalScaleGradient,
+        ),
+        (
+            "Polygon self-intersection after non-linear map",
+            GeometryWarningCode::TopologyRisk,
+        ),
+        (
+            "UV/textures not warped with vertices",
+            GeometryWarningCode::AttributesNotWarped,
+        ),
         ("Grid coverage holes", GeometryWarningCode::OutOfBounds),
-        ("Mixed IFC representations in one product", GeometryWarningCode::MixedRepresentation),
+        (
+            "Mixed IFC representations in one product",
+            GeometryWarningCode::MixedRepresentation,
+        ),
     ]
 }
 
@@ -764,12 +814,17 @@ mod tests {
             radius: 25.0,
             normal: WorldPoint::new(0.0, 0.0, 1.0),
         };
-        let pts = densify_circle(c, &DensifyPolicy {
-            max_chord_error_meters: 0.01,
-            max_segment_meters: 2.0,
-            min_circle_samples: 64,
-            max_samples: 10_000,
-        }, false).unwrap();
+        let pts = densify_circle(
+            c,
+            &DensifyPolicy {
+                max_chord_error_meters: 0.01,
+                max_segment_meters: 2.0,
+                min_circle_samples: 64,
+                max_samples: 10_000,
+            },
+            false,
+        )
+        .unwrap();
         let fit = fit_circle_xy(&pts).unwrap();
         assert!((fit.centre.x - 100.0).abs() < 1e-6);
         assert!((fit.centre.y - 200.0).abs() < 1e-6);
@@ -779,23 +834,21 @@ mod tests {
     #[test]
     fn ntv2_like_spec_forces_circle_approximation_warning() {
         let mut spec = identity_spec();
-        spec.stages = vec![TransformStage::Proj(
-            crate::transform::ProjCoordinateOp {
-                source: crate::photolab_crs::CrsWithEpoch {
-                    crs: crate::photolab_crs::CrsDefinition::Epsg(31468),
-                    coordinate_epoch: None,
-                },
-                target: crate::photolab_crs::CrsWithEpoch {
-                    crs: crate::photolab_crs::CrsDefinition::Epsg(25832),
-                    coordinate_epoch: None,
-                },
-                proj_pipeline: Some("+proj=noop".into()),
-                grids: vec![],
-                selection_policy: Default::default(),
-                expected_accuracy_mm: None,
-                ballpark: false,
+        spec.stages = vec![TransformStage::Proj(crate::transform::ProjCoordinateOp {
+            source: crate::photolab_crs::CrsWithEpoch {
+                crs: crate::photolab_crs::CrsDefinition::Epsg(31468),
+                coordinate_epoch: None,
             },
-        )];
+            target: crate::photolab_crs::CrsWithEpoch {
+                crs: crate::photolab_crs::CrsDefinition::Epsg(25832),
+                coordinate_epoch: None,
+            },
+            proj_pipeline: Some("+proj=noop".into()),
+            grids: vec![],
+            selection_policy: Default::default(),
+            expected_accuracy_mm: None,
+            ballpark: false,
+        })];
         let class = classify_geometry(
             GeometryKind::Circle,
             &spec,

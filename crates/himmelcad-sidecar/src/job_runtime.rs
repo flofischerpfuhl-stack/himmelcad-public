@@ -1,7 +1,15 @@
 //! Bounded Photolab worker orchestration for the sidecar.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    fs::{self, File, OpenOptions},
+    io,
+    path::PathBuf,
+    sync::Arc,
+    time::Instant,
+};
 
+use fs2::FileExt;
 use himmelcad_core::photolab_jobs::{
     CancellationToken, CheckpointDescriptor, JobError, JobProgress, NewPhotolabJob, PhotolabJob,
     PhotolabJobId, PhotolabJobState,
@@ -10,7 +18,27 @@ use serde::{Deserialize, Serialize};
 use tokio::{
     runtime::Handle,
     sync::{watch, Mutex, OwnedSemaphorePermit, Semaphore},
+    time::{sleep, Duration},
 };
+
+/// Immutable project identity captured when a job is admitted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobHistoryScope {
+    pub project_id: String,
+    pub project_root: PathBuf,
+}
+
+/// Project storage adapter used by the process-local scheduler.
+pub trait JobHistoryPersistence: Send + Sync {
+    /// Returns the project that currently owns newly admitted jobs.
+    fn current_scope(&self) -> Result<Option<JobHistoryScope>, String>;
+
+    /// Returns all durable records for the currently open project.
+    fn load_current(&self) -> Result<Vec<PhotolabJob>, String>;
+
+    /// Atomically upserts one lifecycle snapshot in its captured project.
+    fn persist(&self, scope: &JobHistoryScope, job: &PhotolabJob) -> Result<(), String>;
+}
 
 /// Bounded scheduling policy for one sidecar process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -197,6 +225,9 @@ struct ManagedJob {
     job: PhotolabJob,
     cancellation: CancellationToken,
     updates: watch::Sender<PhotolabJob>,
+    history_scope: Option<JobHistoryScope>,
+    history_dirty: bool,
+    last_history_persisted_at: Instant,
 }
 
 struct JobManagerInner {
@@ -204,6 +235,7 @@ struct JobManagerInner {
     capacity: usize,
     concurrency: Arc<Semaphore>,
     jobs: Mutex<BTreeMap<String, ManagedJob>>,
+    history: Option<Arc<dyn JobHistoryPersistence>>,
 }
 
 /// Thread-safe and Tokio-safe bounded job registry and supervisor.
@@ -226,13 +258,30 @@ impl JobManager {
     /// Creates a manager attached to the current Tokio runtime.
     pub fn new(config: JobManagerConfig) -> Result<Self, JobManagerError> {
         let runtime = Handle::try_current().map_err(|_| JobManagerError::NoTokioRuntime)?;
-        Self::with_runtime(config, runtime)
+        Self::with_runtime_and_history(config, runtime, None)
+    }
+
+    /// Creates a manager whose lifecycle records are durable per project.
+    pub fn new_with_history(
+        config: JobManagerConfig,
+        history: Arc<dyn JobHistoryPersistence>,
+    ) -> Result<Self, JobManagerError> {
+        let runtime = Handle::try_current().map_err(|_| JobManagerError::NoTokioRuntime)?;
+        Self::with_runtime_and_history(config, runtime, Some(history))
     }
 
     /// Creates a manager for an explicitly supplied runtime handle.
     pub fn with_runtime(
         config: JobManagerConfig,
         runtime: Handle,
+    ) -> Result<Self, JobManagerError> {
+        Self::with_runtime_and_history(config, runtime, None)
+    }
+
+    fn with_runtime_and_history(
+        config: JobManagerConfig,
+        runtime: Handle,
+        history: Option<Arc<dyn JobHistoryPersistence>>,
     ) -> Result<Self, JobManagerError> {
         let capacity = config.capacity()?;
         Ok(Self {
@@ -241,6 +290,7 @@ impl JobManager {
                 capacity,
                 concurrency: Arc::new(Semaphore::new(config.max_concurrency)),
                 jobs: Mutex::new(BTreeMap::new()),
+                history,
             }),
             runtime,
         })
@@ -258,6 +308,12 @@ impl JobManager {
         let job = PhotolabJob::new(request)?;
         let key = job.id.0.clone();
         let cancellation = CancellationToken::new();
+        let history_scope = self.current_history_scope()?;
+        if self.inner.history.is_some() && history_scope.is_none() {
+            return Err(JobManagerError::HistoryPersistence(
+                "no PhotoLab project is open for this job".into(),
+            ));
+        }
         {
             let mut jobs = self.inner.jobs.lock().await;
             if jobs.contains_key(&key) {
@@ -275,13 +331,22 @@ impl JobManager {
             }
             let (updates, _) = watch::channel(job.clone());
             jobs.insert(
-                key,
+                key.clone(),
                 ManagedJob {
                     job: job.clone(),
                     cancellation: cancellation.clone(),
                     updates,
+                    history_scope: history_scope.clone(),
+                    history_dirty: false,
+                    last_history_persisted_at: Instant::now(),
                 },
             );
+            if let (Some(history), Some(scope)) = (&self.inner.history, &history_scope) {
+                if let Err(message) = history.persist(scope, &job) {
+                    jobs.remove(&key);
+                    return Err(JobManagerError::HistoryPersistence(message));
+                }
+            }
         }
 
         let manager = self.clone();
@@ -293,37 +358,71 @@ impl JobManager {
     }
 
     /// Returns a stable snapshot sorted by job identifier.
-    pub async fn list(&self, params: ListJobsParams) -> Vec<PhotolabJob> {
-        self.inner
-            .jobs
-            .lock()
-            .await
-            .values()
-            .filter(|managed| params.include_terminal || !is_terminal(&managed.job.state))
-            .map(|managed| managed.job.clone())
-            .collect()
+    pub async fn list(&self, params: ListJobsParams) -> Result<Vec<PhotolabJob>, JobManagerError> {
+        let current_scope = self.current_history_scope()?;
+        let mut records = self
+            .inner
+            .history
+            .as_ref()
+            .map_or_else(|| Ok(Vec::new()), |history| history.load_current())
+            .map_err(JobManagerError::HistoryPersistence)?
+            .into_iter()
+            .map(|job| (job.id.0.clone(), job))
+            .collect::<BTreeMap<_, _>>();
+        let mut jobs = self.inner.jobs.lock().await;
+        for managed in jobs.values_mut() {
+            self.retry_history_persistence(managed);
+            if self.inner.history.is_some() && managed.history_scope != current_scope {
+                continue;
+            }
+            records.insert(managed.job.id.0.clone(), managed.job.clone());
+        }
+        Ok(records
+            .into_values()
+            .filter(|job| params.include_terminal || !is_terminal(&job.state))
+            .collect())
     }
 
     /// Returns the current authoritative record for one job.
     pub async fn status(&self, job_id: &PhotolabJobId) -> Result<PhotolabJob, JobManagerError> {
+        let current_scope = self.current_history_scope()?;
         let jobs = self.inner.jobs.lock().await;
-        jobs.get(&job_id.0)
+        if let Some(job) = jobs
+            .get(&job_id.0)
+            .filter(|managed| {
+                self.inner.history.is_none() || managed.history_scope == current_scope
+            })
             .map(|managed| managed.job.clone())
+        {
+            return Ok(job);
+        }
+        drop(jobs);
+        self.inner
+            .history
+            .as_ref()
+            .map_or_else(|| Ok(Vec::new()), |history| history.load_current())
+            .map_err(JobManagerError::HistoryPersistence)?
+            .into_iter()
+            .find(|job| job.id == *job_id)
             .ok_or_else(|| JobManagerError::JobNotFound(job_id.clone()))
     }
 
     /// Makes cancellation visible before returning to the caller.
     pub async fn cancel(&self, job_id: &PhotolabJobId) -> Result<CancelJobResult, JobManagerError> {
+        let current_scope = self.current_history_scope()?;
         let mut jobs = self.inner.jobs.lock().await;
         let managed = jobs
             .get_mut(&job_id.0)
+            .filter(|managed| {
+                self.inner.history.is_none() || managed.history_scope == current_scope
+            })
             .ok_or_else(|| JobManagerError::JobNotFound(job_id.clone()))?;
         let was_queued = managed.job.state == PhotolabJobState::Queued;
         let first_request = managed.job.request_cancel(&managed.cancellation)?;
         if was_queued {
             managed.job.transition_to(PhotolabJobState::Cancelled)?;
         }
-        publish(managed);
+        self.publish_durable(managed);
         Ok(CancelJobResult {
             first_request,
             job: managed.job.clone(),
@@ -345,7 +444,7 @@ impl JobManager {
             if was_queued {
                 let _ = managed.job.transition_to(PhotolabJobState::Cancelled);
             }
-            publish(managed);
+            self.publish_durable(managed);
             changed.push(managed.job.clone());
         }
         changed
@@ -384,6 +483,19 @@ impl JobManager {
                 .await;
             return;
         };
+        let compute_lease = match acquire_compute_lease(&cancellation).await {
+            Ok(Some(lease)) => lease,
+            Ok(None) => return,
+            Err(error) => {
+                self.fail_job(
+                    &job_id,
+                    "computeLease",
+                    &format!("failed to acquire the cross-process compute lease: {error}"),
+                )
+                .await;
+                return;
+            }
+        };
         if !self.mark_running(&job_id).await {
             return;
         }
@@ -403,6 +515,7 @@ impl JobManager {
         };
         let outcome = tokio::task::spawn_blocking(move || work(context)).await;
         self.finish_worker(&job_id, outcome, permit).await;
+        drop(compute_lease);
     }
 
     async fn mark_running(&self, job_id: &PhotolabJobId) -> bool {
@@ -415,9 +528,10 @@ impl JobManager {
         }
         if let Err(error) = managed.job.transition_to(PhotolabJobState::Running) {
             set_failed(managed, "invalidState", error.to_string());
+            self.publish_durable(managed);
             return false;
         }
-        publish(managed);
+        self.publish_durable(managed);
         true
     }
 
@@ -438,7 +552,10 @@ impl JobManager {
             Ok(Ok(())) if managed.job.state == PhotolabJobState::CancelRequested => {
                 transition_or_fail(managed, PhotolabJobState::Cancelled);
             }
-            Ok(Ok(())) => transition_or_fail(managed, PhotolabJobState::Completed),
+            Ok(Ok(())) => {
+                complete_progress(managed);
+                transition_or_fail(managed, PhotolabJobState::Completed);
+            }
             Ok(Err(JobWorkerError::Cancelled)) if managed.cancellation.is_cancel_requested() => {
                 if managed.job.state != PhotolabJobState::CancelRequested {
                     let _ = managed.job.request_cancel(&managed.cancellation);
@@ -455,14 +572,14 @@ impl JobManager {
             }
             Err(error) => set_failed(managed, "workerJoin", error.to_string()),
         }
-        publish(managed);
+        self.publish_durable(managed);
     }
 
     async fn fail_job(&self, job_id: &PhotolabJobId, code: &str, message: &str) {
         let mut jobs = self.inner.jobs.lock().await;
         if let Some(managed) = jobs.get_mut(&job_id.0) {
             set_failed(managed, code, message.into());
-            publish(managed);
+            self.publish_durable(managed);
         }
     }
 
@@ -475,8 +592,13 @@ impl JobManager {
         let managed = jobs
             .get_mut(&job_id.0)
             .ok_or_else(|| JobManagerError::JobNotFound(job_id.clone()))?;
+        let stage_changed = managed.job.progress.stage.index != progress.stage.index;
         managed.job.update_progress(progress)?;
-        publish(managed);
+        if stage_changed || managed.last_history_persisted_at.elapsed() >= Duration::from_secs(1) {
+            self.publish_durable(managed);
+        } else {
+            publish(managed);
+        }
         Ok(managed.job.clone())
     }
 
@@ -490,9 +612,90 @@ impl JobManager {
             .get_mut(&job_id.0)
             .ok_or_else(|| JobManagerError::JobNotFound(job_id.clone()))?;
         managed.job.record_checkpoint(checkpoint)?;
-        publish(managed);
+        self.publish_durable(managed);
         Ok(managed.job.clone())
     }
+
+    fn current_history_scope(&self) -> Result<Option<JobHistoryScope>, JobManagerError> {
+        self.inner
+            .history
+            .as_ref()
+            .map_or_else(|| Ok(None), |history| history.current_scope())
+            .map_err(JobManagerError::HistoryPersistence)
+    }
+
+    fn publish_durable(&self, managed: &mut ManagedJob) {
+        let (Some(history), Some(scope)) = (&self.inner.history, &managed.history_scope) else {
+            publish(managed);
+            return;
+        };
+        match history.persist(scope, &managed.job) {
+            Ok(()) => {
+                managed.history_dirty = false;
+                managed.last_history_persisted_at = Instant::now();
+            }
+            Err(error) => {
+                managed.history_dirty = true;
+                tracing::error!(
+                    job_id = managed.job.id.0,
+                    project_id = scope.project_id,
+                    %error,
+                    "failed to persist PhotoLab job lifecycle snapshot"
+                );
+            }
+        }
+        publish(managed);
+    }
+
+    fn retry_history_persistence(&self, managed: &mut ManagedJob) {
+        if !managed.history_dirty {
+            return;
+        }
+        let (Some(history), Some(scope)) = (&self.inner.history, &managed.history_scope) else {
+            return;
+        };
+        if let Err(error) = history.persist(scope, &managed.job) {
+            tracing::error!(
+                job_id = managed.job.id.0,
+                project_id = scope.project_id,
+                %error,
+                "failed to retry PhotoLab job lifecycle persistence"
+            );
+        } else {
+            managed.history_dirty = false;
+            managed.last_history_persisted_at = Instant::now();
+        }
+    }
+}
+
+async fn acquire_compute_lease(cancellation: &CancellationToken) -> io::Result<Option<File>> {
+    let path = compute_lease_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(path)?;
+    loop {
+        if cancellation.is_cancel_requested() {
+            return Ok(None);
+        }
+        match file.try_lock_exclusive() {
+            Ok(()) => return Ok(Some(file)),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                sleep(Duration::from_millis(100)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn compute_lease_path() -> PathBuf {
+    std::env::var_os("HIMMELCAD_COMPUTE_LEASE_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("himmelcad-photolab-compute.lock"))
 }
 
 fn publish(managed: &ManagedJob) {
@@ -509,6 +712,16 @@ fn is_terminal(state: &PhotolabJobState) -> bool {
 fn transition_or_fail(managed: &mut ManagedJob, state: PhotolabJobState) {
     if let Err(error) = managed.job.transition_to(state) {
         set_failed(managed, "invalidState", error.to_string());
+    }
+}
+
+fn complete_progress(managed: &mut ManagedJob) {
+    managed.job.progress.stage.index = managed.job.progress.stage.stage_count.saturating_sub(1);
+    if let Some(total) = managed.job.progress.metrics.total_units {
+        managed.job.progress.metrics.completed_units = total;
+    }
+    if let Some(total) = managed.job.progress.metrics.total_bytes {
+        managed.job.progress.metrics.completed_bytes = total;
     }
 }
 
@@ -532,6 +745,7 @@ pub enum JobManagerError {
     },
     JobNotFound(PhotolabJobId),
     UpdateChannelClosed(PhotolabJobId),
+    HistoryPersistence(String),
     Core(JobError),
 }
 
@@ -562,6 +776,9 @@ impl std::fmt::Display for JobManagerError {
             Self::UpdateChannelClosed(id) => {
                 write!(formatter, "job {id:?} update channel closed unexpectedly")
             }
+            Self::HistoryPersistence(message) => {
+                write!(formatter, "job history persistence failed: {message}")
+            }
             Self::Core(error) => error.fmt(formatter),
         }
     }
@@ -578,7 +795,10 @@ impl std::error::Error for JobManagerError {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc, Mutex as StdMutex,
+    };
 
     use himmelcad_core::{
         hash::ObjectHash,
@@ -589,6 +809,56 @@ mod tests {
     };
 
     use super::*;
+
+    #[derive(Default)]
+    struct MemoryHistory {
+        current: StdMutex<Option<JobHistoryScope>>,
+        records: StdMutex<BTreeMap<String, BTreeMap<String, PhotolabJob>>>,
+        persist_count: AtomicUsize,
+    }
+
+    impl MemoryHistory {
+        fn select(&self, project_id: &str) {
+            *self.current.lock().expect("history current") = Some(JobHistoryScope {
+                project_id: project_id.into(),
+                project_root: PathBuf::from(format!("/{project_id}")),
+            });
+        }
+    }
+
+    impl JobHistoryPersistence for MemoryHistory {
+        fn current_scope(&self) -> Result<Option<JobHistoryScope>, String> {
+            Ok(self
+                .current
+                .lock()
+                .map_err(|error| error.to_string())?
+                .clone())
+        }
+
+        fn load_current(&self) -> Result<Vec<PhotolabJob>, String> {
+            let project_id = self
+                .current
+                .lock()
+                .map_err(|error| error.to_string())?
+                .as_ref()
+                .map(|scope| scope.project_id.clone());
+            let records = self.records.lock().map_err(|error| error.to_string())?;
+            Ok(project_id
+                .and_then(|project_id| records.get(&project_id))
+                .map_or_else(Vec::new, |jobs| jobs.values().cloned().collect()))
+        }
+
+        fn persist(&self, scope: &JobHistoryScope, job: &PhotolabJob) -> Result<(), String> {
+            self.persist_count.fetch_add(1, Ordering::Relaxed);
+            self.records
+                .lock()
+                .map_err(|error| error.to_string())?
+                .entry(scope.project_id.clone())
+                .or_default()
+                .insert(job.id.0.clone(), job.clone());
+            Ok(())
+        }
+    }
 
     fn hash(value: &str) -> ObjectHash {
         ObjectHash::of_bytes(value.as_bytes())
@@ -627,6 +897,96 @@ mod tests {
             max_queued: queued,
         })
         .expect("manager")
+    }
+
+    #[tokio::test]
+    async fn durable_history_is_filtered_by_current_project_and_receives_terminal_state() {
+        let history = Arc::new(MemoryHistory::default());
+        history.select("project-a");
+        let manager = JobManager::new_with_history(
+            JobManagerConfig {
+                max_concurrency: 1,
+                max_queued: 0,
+            },
+            history.clone(),
+        )
+        .expect("manager");
+        manager
+            .start(request("project-a-job"), |_| Ok(()))
+            .await
+            .expect("start");
+        manager
+            .wait_for_terminal(&PhotolabJobId("project-a-job".into()))
+            .await
+            .expect("terminal");
+        assert!(matches!(
+            history
+                .load_current()
+                .expect("durable history")
+                .first()
+                .map(|job| &job.state),
+            Some(PhotolabJobState::Completed)
+        ));
+
+        history.select("project-b");
+        assert!(manager
+            .list(ListJobsParams {
+                include_terminal: true,
+            })
+            .await
+            .expect("project-b list")
+            .is_empty());
+        assert!(matches!(
+            manager.status(&PhotolabJobId("project-a-job".into())).await,
+            Err(JobManagerError::JobNotFound(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn frequent_progress_is_throttled_but_stage_and_terminal_are_durable() {
+        let history = Arc::new(MemoryHistory::default());
+        history.select("progress-project");
+        let manager = JobManager::new_with_history(
+            JobManagerConfig {
+                max_concurrency: 1,
+                max_queued: 0,
+            },
+            history.clone(),
+        )
+        .expect("manager");
+        let mut job = request("progress-job");
+        job.progress.stage.stage_count = 2;
+        manager
+            .start(job, move |context| {
+                for completed in 0..100 {
+                    context.progress.report_blocking(JobProgress {
+                        stage: PhotolabStage {
+                            kind: PhotolabStageKind::FeatureMatching,
+                            index: 1,
+                            stage_count: 2,
+                            label: "Match features".into(),
+                        },
+                        metrics: ProgressMetrics {
+                            completed_units: completed,
+                            total_units: Some(100),
+                            completed_bytes: completed * 10,
+                            total_bytes: Some(1_000),
+                        },
+                    })?;
+                }
+                Ok(())
+            })
+            .await
+            .expect("start");
+        manager
+            .wait_for_terminal(&PhotolabJobId("progress-job".into()))
+            .await
+            .expect("terminal");
+        let writes = history.persist_count.load(Ordering::Relaxed);
+        assert!(
+            (4..20).contains(&writes),
+            "queued, running, stage transition, and terminal should be durable without one write per progress event; got {writes} writes"
+        );
     }
 
     fn committed_checkpoint(job_id: &str) -> CheckpointDescriptor {
@@ -678,7 +1038,14 @@ mod tests {
             .expect("second queued");
         let full = manager.start(request("third"), |_| Ok(())).await;
         assert!(matches!(full, Err(JobManagerError::QueueFull { .. })));
-        assert_eq!(manager.list(ListJobsParams::default()).await.len(), 2);
+        assert_eq!(
+            manager
+                .list(ListJobsParams::default())
+                .await
+                .expect("list")
+                .len(),
+            2
+        );
         release_tx.send(()).expect("release first");
         manager
             .wait_for_terminal(&PhotolabJobId("first".into()))
@@ -688,6 +1055,48 @@ mod tests {
             .wait_for_terminal(&PhotolabJobId("second".into()))
             .await
             .expect("second finishes");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn compute_lease_serializes_workers_across_managers() {
+        let first_manager = manager(1, 0);
+        let second_manager = manager(1, 0);
+        let (first_started_tx, first_started_rx) = mpsc::channel();
+        let (release_first_tx, release_first_rx) = mpsc::channel();
+        first_manager
+            .start(request("lease-first"), move |_| {
+                first_started_tx.send(()).expect("signal first start");
+                release_first_rx.recv().expect("release first");
+                Ok(())
+            })
+            .await
+            .expect("first admitted");
+        first_started_rx.recv().expect("first running");
+
+        let (second_started_tx, second_started_rx) = mpsc::channel();
+        second_manager
+            .start(request("lease-second"), move |_| {
+                second_started_tx.send(()).expect("signal second start");
+                Ok(())
+            })
+            .await
+            .expect("second admitted");
+        assert!(second_started_rx
+            .recv_timeout(Duration::from_millis(250))
+            .is_err());
+
+        release_first_tx.send(()).expect("release first");
+        first_manager
+            .wait_for_terminal(&PhotolabJobId("lease-first".into()))
+            .await
+            .expect("first terminal");
+        second_started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("second starts after first releases the lease");
+        second_manager
+            .wait_for_terminal(&PhotolabJobId("lease-second".into()))
+            .await
+            .expect("second terminal");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -772,7 +1181,8 @@ mod tests {
             .expect("admitted");
         let terminal = manager.wait_for_terminal(&id).await.expect("terminal");
         assert_eq!(terminal.state, PhotolabJobState::Completed);
-        assert_eq!(terminal.progress.metrics.completed_units, 5);
+        assert_eq!(terminal.progress.metrics.completed_units, 10);
+        assert_eq!(terminal.progress.metrics.completed_bytes, 1_000);
         assert_eq!(terminal.last_checkpoint_sequence, Some(1));
     }
 
@@ -795,7 +1205,7 @@ mod tests {
             .expect("admitted");
         let terminal = manager.wait_for_terminal(&id).await.expect("terminal");
         assert_eq!(terminal.state, PhotolabJobState::Completed);
-        assert_eq!(terminal.progress.stage.index, 9);
+        assert_eq!(terminal.progress.stage.index, 64);
         assert_eq!(terminal.progress.stage.stage_count, 65);
     }
 

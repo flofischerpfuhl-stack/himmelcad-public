@@ -24,16 +24,20 @@ use std::{
 
 use himmelcad_core::{
     hash::ObjectHash,
-    photolab_images::{ExifOrientation, ImageDimensions, PhotoFormat},
+    photolab_images::{DjiBrownConradyCalibration, ExifOrientation, ImageDimensions, PhotoFormat},
     photolab_jobs::{
         CancellationToken, JobProgress, PhotolabStage, PhotolabStageKind, ProgressMetrics,
     },
+    photolab_masks::ImageMaskComputeScope,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::mesh_tiler::PreparedMeshProduct;
+
 use crate::image_commit::{CameraImageMetadataRecord, ProjectCameraImageRecord};
+use crate::image_mask_runtime::materialize_colmap_masks;
 use crate::job_runtime::{JobWorkerContext, JobWorkerError, JobWorkerResult};
 use crate::{
     dedode_colmap_bridge::{prepare_dedode_colmap_import, DedodeColmapBridgeError},
@@ -42,7 +46,7 @@ use crate::{
 };
 
 const TOOL_MANIFEST_SCHEMA_VERSION: u32 = 1;
-const OUTPUT_SUMMARY_SCHEMA_VERSION: u32 = 1;
+const OUTPUT_SUMMARY_SCHEMA_VERSION: u32 = 2;
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_SIGNATURE_BYTES: u64 = 64 * 1024;
 const LOG_TAIL_LINES: usize = 200;
@@ -277,6 +281,13 @@ pub struct ColmapRunRequest {
     pub job_id: String,
     pub project_root: PathBuf,
     pub camera_images: Vec<ProjectCameraImageRecord>,
+    /// Exact immutable mask selection for this camera/processing-set scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_mask_scope: Option<ImageMaskComputeScope>,
+    /// Explicit persisted calibration partitions. When present, these groups are kept as
+    /// separate COLMAP camera records even if their current seed values happen to match.
+    #[serde(default)]
+    pub calibration_groups: Vec<ColmapCalibrationGroup>,
     pub device: ColmapComputeDevice,
     pub pair_selection: ColmapPairSelection,
     pub mapping_store: MappingFeatureStore,
@@ -284,7 +295,8 @@ pub struct ColmapRunRequest {
     pub large_matching_backend: LargeMatchingBackend,
     pub aliked_max_features: u32,
     pub sift_max_features: u32,
-    /// Runs SIFT only after both ALIKED mappers fail, as required by the Fast profile.
+    /// Runs only the selected primary store until both mappers fail, then extracts the other
+    /// store as a rescue. Fast selects classical SIFT first and ALIKED as the neural rescue.
     pub sift_rescue_only: bool,
     pub max_image_size: u32,
     /// Hardware-adaptive worker count. This changes throughput and memory only.
@@ -294,6 +306,44 @@ pub struct ColmapRunRequest {
     /// Hardware-adaptive LightGlue worker count. This changes throughput and memory only.
     pub matching_worker_threads: u16,
     pub products: ColmapProductRequest,
+    /// Profile-explicit mapper behavior for reliable embedded calibration.
+    #[serde(default)]
+    pub intrinsics_refinement: ColmapIntrinsicsRefinement,
+}
+
+/// Controls whether mapper bundle adjustment may change embedded intrinsics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ColmapIntrinsicsRefinement {
+    /// Metadata-poor cameras use COLMAP's full focal and distortion refinement.
+    #[default]
+    Refine,
+    /// Every profile preserves reliable embedded focal, principal point and distortion.
+    /// Quality profiles add stronger matching/mapping backends, not calibration drift.
+    FreezeReliableEmbedded,
+}
+
+/// One immutable camera-intrinsics partition supplied by the project domain.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColmapCalibrationGroup {
+    pub group_id: String,
+    pub camera_entity_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<ColmapCalibrationSeed>,
+}
+
+/// Optional initial pinhole calibration for an explicit group.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColmapCalibrationSeed {
+    pub width_pixels: u32,
+    pub height_pixels: u32,
+    pub focal_pixels: f64,
+    pub principal_x_pixels: f64,
+    pub principal_y_pixels: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_brown_calibration: Option<DjiBrownConradyCalibration>,
 }
 
 impl ColmapRunRequest {
@@ -309,6 +359,20 @@ impl ColmapRunRequest {
                 "at least one image is required".into(),
             ));
         }
+        if let Some(scope) = self.image_mask_scope.as_ref() {
+            let mut requested = self
+                .camera_images
+                .iter()
+                .map(|camera| camera.entity_id.clone())
+                .collect::<Vec<_>>();
+            requested.sort_by(|left, right| left.0.cmp(&right.0));
+            if scope.camera_entity_ids != requested {
+                return Err(ColmapRuntimeError::InvalidRequest(
+                    "image-mask camera scope differs from the COLMAP request".into(),
+                ));
+            }
+        }
+        validate_explicit_calibration_groups(self)?;
         if self.aliked_max_features == 0 || self.sift_max_features == 0 {
             return Err(ColmapRuntimeError::InvalidRequest(
                 "feature limits must be greater than zero".into(),
@@ -376,20 +440,11 @@ pub struct ColmapProgressPlan {
 
 impl ColmapProgressPlan {
     fn for_request(request: &ColmapRunRequest) -> Self {
-        let mut stages = vec![
-            planned(PhotolabStageKind::Preparing, "COLMAP preflight"),
-            planned(PhotolabStageKind::FeatureExtraction, "Extract ALIKED"),
-            planned(
-                PhotolabStageKind::FeatureMatching,
-                "Match ALIKED with LightGlue",
-            ),
-            planned(
-                PhotolabStageKind::GeometricVerification,
-                "Verify ALIKED geometry",
-            ),
-        ];
+        let primary_store = FeatureStoreKind::from_mapping(request.mapping_store);
+        let mut stages = vec![planned(PhotolabStageKind::Preparing, "COLMAP preflight")];
+        stages.extend(feature_store_stages(primary_store));
         if !request.sift_rescue_only {
-            stages.extend(sift_stages());
+            stages.extend(feature_store_stages(primary_store.rescue()));
         }
         if matches!(
             request.large_matching_backend,
@@ -431,7 +486,7 @@ impl ColmapProgressPlan {
             ]);
         }
         if request.sift_rescue_only {
-            stages.extend(sift_stages());
+            stages.extend(feature_store_stages(primary_store.rescue()));
             stages.push(planned(
                 PhotolabStageKind::SparseReconstruction,
                 "Retry incremental reconstruction",
@@ -503,18 +558,28 @@ fn planned(kind: PhotolabStageKind, label: &str) -> ColmapPlannedStage {
     }
 }
 
-fn sift_stages() -> [ColmapPlannedStage; 3] {
-    [
-        planned(PhotolabStageKind::FeatureExtraction, "Extract SIFT"),
-        planned(
-            PhotolabStageKind::FeatureMatching,
-            "Match SIFT with LightGlue",
-        ),
-        planned(
-            PhotolabStageKind::GeometricVerification,
-            "Verify SIFT geometry",
-        ),
-    ]
+fn feature_store_stages(store: FeatureStoreKind) -> [ColmapPlannedStage; 3] {
+    match store {
+        FeatureStoreKind::Aliked => [
+            planned(PhotolabStageKind::FeatureExtraction, "Extract ALIKED"),
+            planned(
+                PhotolabStageKind::FeatureMatching,
+                "Match ALIKED with LightGlue",
+            ),
+            planned(
+                PhotolabStageKind::GeometricVerification,
+                "Verify ALIKED geometry",
+            ),
+        ],
+        FeatureStoreKind::Sift => [
+            planned(PhotolabStageKind::FeatureExtraction, "Extract SIFT"),
+            planned(PhotolabStageKind::FeatureMatching, "Match SIFT features"),
+            planned(
+                PhotolabStageKind::GeometricVerification,
+                "Verify SIFT geometry",
+            ),
+        ],
+    }
 }
 
 /// Mapper that produced the sparse model used by later stages.
@@ -642,6 +707,12 @@ pub struct ColmapOutputSummary {
     pub executable_sha256: ObjectHash,
     pub colmap_version: String,
     pub camera_entity_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_mask_scope_sha256: Option<ObjectHash>,
+    /// Exact intrinsics partition used by this solve. This is output lineage, not a lookup into
+    /// the project's potentially newer capture-group view.
+    #[serde(default)]
+    pub calibration_groups: Vec<ColmapCalibrationGroup>,
     pub selected_mapper: SelectedMapper,
     pub selected_feature_store: SelectedFeatureStore,
     pub mapping_candidates: Vec<MappingCandidateSummary>,
@@ -657,6 +728,8 @@ pub struct ColmapRunOutcome {
     pub summary_sha256: ObjectHash,
     pub summary: ColmapOutputSummary,
     pub sparse_potree: Option<PreparedPotreeCloud>,
+    pub prepared_mesh: Option<PreparedMeshProduct>,
+    pub prepared_textured_mesh: Option<PreparedMeshProduct>,
 }
 
 #[derive(Debug, Clone)]
@@ -936,17 +1009,40 @@ impl ColmapRuntime {
             &state.scratch,
             &context.cancellation,
         )?;
+        let materialized_images =
+            prepare_calibration_group_layout(request, &state.scratch, &materialized_images)?;
+        if let Some(mask_scope) = request.image_mask_scope.as_ref() {
+            let image_paths = request
+                .camera_images
+                .iter()
+                .zip(&materialized_images)
+                .map(|(camera, path)| (camera.entity_id.0.as_str(), path.as_path()))
+                .collect::<BTreeMap<_, _>>();
+            materialize_colmap_masks(
+                &project_root,
+                &mask_scope.masks,
+                &image_paths,
+                &state.scratch.join("masks"),
+                &context.cancellation,
+            )
+            .map_err(|error| ColmapRuntimeError::InvalidRequest(error.to_string()))?;
+        }
         write_camera_map(&state.scratch, &request.camera_images, &materialized_images)?;
         let image_directory = state.scratch.join("images");
         write_image_list(&state.scratch, &materialized_images)?;
         state.report_complete(context, "COLMAP preflight")?;
 
+        let primary_store = if request.sift_rescue_only {
+            FeatureStoreKind::from_mapping(request.mapping_store)
+        } else {
+            FeatureStoreKind::Aliked
+        };
         self.run_feature_store(
             request,
             context,
             &image_directory,
             &materialized_images,
-            FeatureStoreKind::Aliked,
+            primary_store,
             &mut state,
         )?;
         if !request.sift_rescue_only {
@@ -955,7 +1051,7 @@ impl ColmapRuntime {
                 context,
                 &image_directory,
                 &materialized_images,
-                FeatureStoreKind::Sift,
+                primary_store.rescue(),
                 &mut state,
             )?;
         }
@@ -975,16 +1071,22 @@ impl ColmapRuntime {
             match self.run_sparse_mapping(request, context, &image_directory, &mut state, false)? {
                 Some((mapper, store)) => (mapper, store, Vec::new()),
                 None => {
+                    let rescue_store = primary_store.rescue();
                     self.run_feature_store(
                         request,
                         context,
                         &image_directory,
                         &materialized_images,
-                        FeatureStoreKind::Sift,
+                        rescue_store,
                         &mut state,
                     )?;
-                    let (mapper, store) =
-                        self.run_sift_incremental_rescue(context, &image_directory, &mut state)?;
+                    let (mapper, store) = self.run_incremental_rescue(
+                        context,
+                        &image_directory,
+                        rescue_store,
+                        request.intrinsics_refinement,
+                        &mut state,
+                    )?;
                     (mapper, store, Vec::new())
                 }
             }
@@ -1048,6 +1150,11 @@ impl ColmapRuntime {
                 .iter()
                 .map(|camera| camera.entity_id.0.clone())
                 .collect(),
+            image_mask_scope_sha256: request
+                .image_mask_scope
+                .as_ref()
+                .map(|scope| scope.scope_sha256.clone()),
+            calibration_groups: request.calibration_groups.clone(),
             selected_mapper,
             selected_feature_store,
             mapping_candidates,
@@ -1064,6 +1171,8 @@ impl ColmapRuntime {
             summary_sha256,
             summary,
             sparse_potree: None,
+            prepared_mesh: None,
+            prepared_textured_mesh: None,
         })
     }
 
@@ -1280,6 +1389,27 @@ enum FeatureStoreKind {
 }
 
 impl FeatureStoreKind {
+    fn from_mapping(store: MappingFeatureStore) -> Self {
+        match store {
+            MappingFeatureStore::Aliked => Self::Aliked,
+            MappingFeatureStore::Sift => Self::Sift,
+        }
+    }
+
+    fn rescue(self) -> Self {
+        match self {
+            Self::Aliked => Self::Sift,
+            Self::Sift => Self::Aliked,
+        }
+    }
+
+    fn selected(self) -> SelectedFeatureStore {
+        match self {
+            Self::Aliked => SelectedFeatureStore::Aliked,
+            Self::Sift => SelectedFeatureStore::Sift,
+        }
+    }
+
     fn database_name(self) -> &'static str {
         match self {
             Self::Aliked => "aliked",
@@ -1304,7 +1434,7 @@ impl FeatureStoreKind {
     fn matching_label(self) -> &'static str {
         match self {
             Self::Aliked => "Match ALIKED with LightGlue",
-            Self::Sift => "Match SIFT with LightGlue",
+            Self::Sift => "Match SIFT features",
         }
     }
 
@@ -1319,7 +1449,7 @@ impl FeatureStoreKind {
 #[derive(Debug, Clone, PartialEq)]
 struct CameraExtractionGroup {
     dimensions: Option<ImageDimensions>,
-    calibration: Option<[f64; 3]>,
+    calibration: Option<ColmapCalibrationSeed>,
     image_names: Vec<PathBuf>,
 }
 
@@ -1443,24 +1573,13 @@ impl ColmapRuntime {
             &context.cancellation,
         )?;
         let groups = camera_extraction_groups(request, materialized_images)?;
-        for (group_index, group) in groups.iter().enumerate().filter(|_| !restored_extraction) {
+        if !restored_extraction {
             context.check_cancelled().map_err(map_worker_error)?;
-            let image_list = if groups.len() == 1 {
-                state.scratch.join("image-list.txt")
-            } else {
-                state.scratch.join(format!(
-                    "image-list-{}-{group_index}.txt",
-                    store.database_name()
-                ))
-            };
-            write_image_list_path(&image_list, &group.image_names)?;
-            let mut extraction = vec![
+            let common_extraction = vec![
                 os("--database_path"),
                 database.as_os_str().to_owned(),
                 os("--image_path"),
                 image_directory.as_os_str().to_owned(),
-                os("--image_list_path"),
-                image_list.as_os_str().to_owned(),
                 os("--FeatureExtraction.max_image_size"),
                 os(request.max_image_size.to_string()),
                 os("--FeatureExtraction.num_threads"),
@@ -1470,17 +1589,18 @@ impl ColmapRuntime {
                 os("--FeatureExtraction.gpu_index"),
                 os(request.device.gpu_indices()),
             ];
-            if let Some([focal, center_x, center_y]) = group.calibration {
-                extraction.extend([
-                    os("--ImageReader.camera_model"),
-                    os("SIMPLE_RADIAL"),
-                    os("--ImageReader.camera_params"),
-                    os(format!("{focal:.12},{center_x:.12},{center_y:.12},0")),
-                    os("--ImageReader.single_camera"),
-                    os("1"),
+            let mut common_extraction = common_extraction;
+            if request
+                .image_mask_scope
+                .as_ref()
+                .is_some_and(|scope| !scope.masks.is_empty())
+            {
+                common_extraction.extend([
+                    os("--ImageReader.mask_path"),
+                    state.scratch.join("masks").as_os_str().to_owned(),
                 ]);
             }
-            match store {
+            let extractor_options = match store {
                 FeatureStoreKind::Aliked => {
                     let (extractor_type, model_option, resource) = match request.aliked_variant {
                         AlikedModelVariant::N16Rot => (
@@ -1494,33 +1614,65 @@ impl ColmapRuntime {
                             ColmapResourceKind::AlikedN32Model,
                         ),
                     };
-                    extraction.extend([
+                    vec![
                         os("--FeatureExtraction.type"),
                         os(extractor_type),
                         os("--AlikedExtraction.max_num_features"),
                         os(request.aliked_max_features.to_string()),
                         os(model_option),
                         self.resource(resource).as_os_str().to_owned(),
-                    ]);
+                    ]
                 }
-                FeatureStoreKind::Sift => extraction.extend([
+                FeatureStoreKind::Sift => vec![
                     os("--FeatureExtraction.type"),
                     os("SIFT"),
                     os("--SiftExtraction.max_num_features"),
                     // COLMAP may emit two orientations per detected SIFT location.
                     // Interpret the PhotoLab budget as stored features, not raw locations.
                     os(request.sift_max_features.div_ceil(2).to_string()),
-                ]),
+                ],
+            };
+            let total_units = u64::try_from(materialized_images.len()).unwrap_or(u64::MAX);
+            let mut completed_units = 0_u64;
+            for (group_index, group) in groups.iter().enumerate() {
+                context.check_cancelled().map_err(map_worker_error)?;
+                let image_list = state.scratch.join(format!(
+                    "image-list-{}-{group_index:06}.txt",
+                    store.database_name()
+                ));
+                write_image_list_path(&image_list, &group.image_names)?;
+                let mut extraction = common_extraction.clone();
+                extraction.extend([
+                    os("--image_list_path"),
+                    image_list.as_os_str().to_owned(),
+                    os("--ImageReader.single_camera"),
+                    os("1"),
+                ]);
+                if let Some(calibration) = &group.calibration {
+                    let (model, parameters) = colmap_camera_model_and_params(calibration);
+                    extraction.extend([
+                        os("--ImageReader.camera_model"),
+                        os(model),
+                        os("--ImageReader.camera_params"),
+                        os(parameters),
+                    ]);
+                }
+                extraction.extend(extractor_options.clone());
+                let group_units = u64::try_from(group.image_names.len()).unwrap_or(u64::MAX);
+                self.execute_required_with_unit_range(
+                    &CommandSpec {
+                        kind: ColmapCommandKind::FeatureExtractor,
+                        stage_label: store.extraction_label(),
+                        args: extraction,
+                    },
+                    context,
+                    state,
+                    completed_units,
+                    group_units,
+                    total_units,
+                )?;
+                completed_units = completed_units.saturating_add(group_units);
             }
-            self.execute_required(
-                &CommandSpec {
-                    kind: ColmapCommandKind::FeatureExtractor,
-                    stage_label: store.extraction_label(),
-                    args: extraction,
-                },
-                context,
-                state,
-            )?;
         }
         if restored_extraction {
             state.report_complete(context, store.extraction_label())?;
@@ -1559,11 +1711,9 @@ impl ColmapRuntime {
             ]),
             FeatureStoreKind::Sift => matching.extend([
                 os("--FeatureMatching.type"),
-                os("SIFT_LIGHTGLUE"),
-                os("--SiftMatching.lightglue_model_path"),
-                self.resource(ColmapResourceKind::SiftLightGlueModel)
-                    .as_os_str()
-                    .to_owned(),
+                os("SIFT_BRUTEFORCE"),
+                os("--SiftMatching.cpu_brute_force_matcher"),
+                os("1"),
             ]),
         }
         self.execute_required(
@@ -1618,14 +1768,7 @@ impl ColmapRuntime {
                     .sha256
                     .clone(),
             ],
-            FeatureStoreKind::Sift => vec![self
-                .toolchain
-                .manifest
-                .resources
-                .get(&ColmapResourceKind::SiftLightGlueModel)
-                .expect("preflight requires the SIFT LightGlue model")
-                .sha256
-                .clone()],
+            FeatureStoreKind::Sift => Vec::new(),
         };
         let camera_inputs = request
             .camera_images
@@ -1639,11 +1782,18 @@ impl ColmapRuntime {
             })
             .collect::<Vec<_>>();
         let bytes = serde_json::to_vec(&(
-            1_u32,
+            // v5 also keys the exact scoped image-mask revision selection.
+            // group and includes typed FULL_OPENCV seeds in the key.
+            5_u32,
             &self.toolchain.executable_sha256,
             store.database_name(),
             model_hashes,
             camera_inputs,
+            &request.calibration_groups,
+            request
+                .image_mask_scope
+                .as_ref()
+                .map(|scope| &scope.scope_sha256),
             request.aliked_variant,
             request.aliked_max_features,
             request.sift_max_features,
@@ -1691,10 +1841,17 @@ impl ColmapRuntime {
             &CommandSpec {
                 kind: ColmapCommandKind::GlobalMapper,
                 stage_label: "Build global reconstruction",
-                args: mapper_args(&global_database, image_directory, &global_output),
+                args: mapper_args(
+                    &global_database,
+                    image_directory,
+                    &global_output,
+                    ColmapCommandKind::GlobalMapper,
+                    request.intrinsics_refinement,
+                ),
             },
             context,
             state,
+            None,
         )?;
         let global_succeeded = report.success && find_sparse_model(&global_output).is_some();
         state.command_reports.push(report);
@@ -1707,10 +1864,17 @@ impl ColmapRuntime {
             &CommandSpec {
                 kind: ColmapCommandKind::Mapper,
                 stage_label: "Build incremental fallback",
-                args: mapper_args(&selected_database, image_directory, &incremental_output),
+                args: mapper_args(
+                    &selected_database,
+                    image_directory,
+                    &incremental_output,
+                    ColmapCommandKind::Mapper,
+                    request.intrinsics_refinement,
+                ),
             },
             context,
             state,
+            None,
         )?;
         let selected_succeeded =
             incremental.success && find_sparse_model(&incremental_output).is_some();
@@ -1738,10 +1902,17 @@ impl ColmapRuntime {
             &CommandSpec {
                 kind: ColmapCommandKind::Mapper,
                 stage_label: "Build incremental fallback",
-                args: mapper_args(&rescue_database, image_directory, &rescue_output),
+                args: mapper_args(
+                    &rescue_database,
+                    image_directory,
+                    &rescue_output,
+                    ColmapCommandKind::Mapper,
+                    request.intrinsics_refinement,
+                ),
             },
             context,
             state,
+            None,
         )?;
         let rescue_succeeded = rescue.success && find_sparse_model(&rescue_output).is_some();
         state.command_reports.push(rescue);
@@ -1755,23 +1926,32 @@ impl ColmapRuntime {
         Err(ColmapRuntimeError::MissingOutput(rescue_output))
     }
 
-    fn run_sift_incremental_rescue(
+    fn run_incremental_rescue(
         &self,
         context: &JobWorkerContext,
         image_directory: &Path,
+        store: FeatureStoreKind,
+        intrinsics_refinement: ColmapIntrinsicsRefinement,
         state: &mut RunState,
     ) -> Result<(SelectedMapper, SelectedFeatureStore), ColmapRuntimeError> {
-        let database = state.scratch.join("features/sift/database.db");
+        let database = state.scratch.join(store.database_relative_path());
         ensure_file(&database)?;
         let output = state.scratch.join("sparse-rescue");
         let report = self.execute(
             &CommandSpec {
                 kind: ColmapCommandKind::Mapper,
                 stage_label: "Retry incremental reconstruction",
-                args: mapper_args(&database, image_directory, &output),
+                args: mapper_args(
+                    &database,
+                    image_directory,
+                    &output,
+                    ColmapCommandKind::Mapper,
+                    intrinsics_refinement,
+                ),
             },
             context,
             state,
+            None,
         )?;
         let model = find_sparse_model(&output);
         let succeeded = report.success && model.is_some();
@@ -1785,10 +1965,7 @@ impl ColmapRuntime {
             &selected_root,
             &context.cancellation,
         )?;
-        Ok((
-            SelectedMapper::IncrementalFallback,
-            SelectedFeatureStore::Sift,
-        ))
+        Ok((SelectedMapper::IncrementalFallback, store.selected()))
     }
 
     fn run_hybrid_sparse_mapping(
@@ -1842,6 +2019,7 @@ impl ColmapRuntime {
                 },
                 context,
                 state,
+                None,
             )?;
             let calibrated = calibration.success;
             state.command_reports.push(calibration);
@@ -1851,10 +2029,17 @@ impl ColmapRuntime {
                     &CommandSpec {
                         kind: ColmapCommandKind::GlobalMapper,
                         stage_label: "Build hybrid reconstructions",
-                        args: mapper_args(&global_database, image_directory, &output),
+                        args: mapper_args(
+                            &global_database,
+                            image_directory,
+                            &output,
+                            ColmapCommandKind::GlobalMapper,
+                            request.intrinsics_refinement,
+                        ),
                     },
                     context,
                     state,
+                    None,
                 )?;
                 let succeeded = report.success;
                 state.command_reports.push(report);
@@ -1870,10 +2055,17 @@ impl ColmapRuntime {
                 &CommandSpec {
                     kind: ColmapCommandKind::Mapper,
                     stage_label: "Build hybrid reconstructions",
-                    args: mapper_args(&database, image_directory, &output),
+                    args: mapper_args(
+                        &database,
+                        image_directory,
+                        &output,
+                        ColmapCommandKind::Mapper,
+                        request.intrinsics_refinement,
+                    ),
                 },
                 context,
                 state,
+                None,
             )?;
             let succeeded = report.success;
             state.command_reports.push(report);
@@ -2004,9 +2196,7 @@ impl ColmapRuntime {
             context,
             state,
         )?;
-        if !has_any(&output, &["cameras.bin", "cameras.txt"])
-            || !has_any(&output, &["images.bin", "images.txt"])
-        {
+        if !sparse_model_is_viable(&output) {
             return Err(ColmapRuntimeError::MissingOutput(output));
         }
         Ok(())
@@ -2189,11 +2379,43 @@ impl ColmapRuntime {
         context: &JobWorkerContext,
         state: &mut RunState,
     ) -> Result<(), ColmapRuntimeError> {
-        let report = self.execute(spec, context, state)?;
+        let report = self.execute(spec, context, state, None)?;
         if !report.success {
             return Err(command_failure(&report));
         }
         state.command_reports.push(report);
+        Ok(())
+    }
+
+    fn execute_required_with_unit_range(
+        &self,
+        spec: &CommandSpec,
+        context: &JobWorkerContext,
+        state: &mut RunState,
+        completed_before: u64,
+        group_units: u64,
+        total_units: u64,
+    ) -> Result<(), ColmapRuntimeError> {
+        let report = self.execute(
+            spec,
+            context,
+            state,
+            Some((completed_before, group_units, total_units)),
+        )?;
+        if !report.success {
+            return Err(command_failure(&report));
+        }
+        state.command_reports.push(report);
+        state.report_stage(
+            context,
+            spec.stage_label,
+            ProgressMetrics {
+                completed_units: completed_before.saturating_add(group_units),
+                total_units: Some(total_units),
+                completed_bytes: 0,
+                total_bytes: None,
+            },
+        )?;
         Ok(())
     }
 
@@ -2202,9 +2424,19 @@ impl ColmapRuntime {
         spec: &CommandSpec,
         context: &JobWorkerContext,
         state: &mut RunState,
+        expected_unit_range: Option<(u64, u64, u64)>,
     ) -> Result<ColmapCommandReport, ColmapRuntimeError> {
         context.check_cancelled().map_err(map_worker_error)?;
-        state.report_stage(context, spec.stage_label, ProgressMetrics::empty())?;
+        let initial_metrics = expected_unit_range.map_or_else(
+            ProgressMetrics::empty,
+            |(completed_before, _, global_total)| ProgressMetrics {
+                completed_units: completed_before,
+                total_units: Some(global_total),
+                completed_bytes: 0,
+                total_bytes: None,
+            },
+        );
+        state.report_stage(context, spec.stage_label, initial_metrics)?;
         let stage_index = u32::try_from(state.plan.index_of(spec.stage_label))
             .expect("COLMAP stage index fits u32");
         let argv = spec
@@ -2215,17 +2447,29 @@ impl ColmapRuntime {
         let started = Instant::now();
         let mut child = self.spawn_child(spec, &state.scratch)?;
         let mut progress_error = None;
-        let outcome = supervise_child(&mut child, &context.cancellation, |completed, _total| {
+        let outcome = supervise_child(&mut child, &context.cancellation, |completed, total| {
             if progress_error.is_none() {
+                let (completed_units, total_units) = expected_unit_range.map_or(
+                    (completed, Some(total)),
+                    |(completed_before, group_units, global_total)| {
+                        let scaled = if total == group_units {
+                            completed
+                        } else {
+                            completed.saturating_mul(group_units) / total.max(1)
+                        };
+                        (
+                            completed_before.saturating_add(scaled.min(group_units)),
+                            Some(global_total),
+                        )
+                    },
+                );
                 progress_error = state
                     .report_stage(
                         context,
                         spec.stage_label,
                         ProgressMetrics {
-                            completed_units: completed,
-                            // A COLMAP stage may contain several child commands. Their local
-                            // totals are not comparable and therefore must stay indeterminate.
-                            total_units: None,
+                            completed_units,
+                            total_units,
                             completed_bytes: 0,
                             total_bytes: None,
                         },
@@ -2279,7 +2523,7 @@ impl ColmapRuntime {
 
 fn camera_dji_calibration(
     camera: &ProjectCameraImageRecord,
-) -> Option<(ImageDimensions, [f64; 3])> {
+) -> Option<(ImageDimensions, ColmapCalibrationSeed)> {
     let metadata = &camera.metadata.inspected_photo.metadata;
     let dimensions = metadata.exif.dimensions?;
     if metadata
@@ -2290,25 +2534,152 @@ fn camera_dji_calibration(
         return None;
     }
     let xmp = &metadata.dji_xmp;
-    let calibration = [
-        xmp.calibrated_focal_length_pixels?,
-        xmp.calibrated_optical_center_x_pixels?,
-        xmp.calibrated_optical_center_y_pixels?,
-    ];
-    if !valid_calibration(
-        calibration,
-        dimensions.width_pixels,
-        dimensions.height_pixels,
-    ) {
-        return None;
-    }
+    let calibration = if let Some(full) = xmp
+        .dewarp_calibration
+        .as_ref()
+        .filter(|calibration| calibration.is_valid_for_dimensions(dimensions))
+    {
+        ColmapCalibrationSeed {
+            width_pixels: dimensions.width_pixels,
+            height_pixels: dimensions.height_pixels,
+            focal_pixels: full.focal_x_pixels,
+            principal_x_pixels: full.principal_x_pixels,
+            principal_y_pixels: full.principal_y_pixels,
+            full_brown_calibration: Some(full.clone()),
+        }
+    } else {
+        ColmapCalibrationSeed {
+            width_pixels: dimensions.width_pixels,
+            height_pixels: dimensions.height_pixels,
+            focal_pixels: xmp.calibrated_focal_length_pixels?,
+            principal_x_pixels: xmp.calibrated_optical_center_x_pixels?,
+            principal_y_pixels: xmp.calibrated_optical_center_y_pixels?,
+            full_brown_calibration: None,
+        }
+    };
+    valid_calibration_seed(&calibration)?;
     Some((dimensions, calibration))
 }
 
-fn calibrations_match(left: [f64; 3], right: [f64; 3]) -> bool {
-    left.into_iter()
-        .zip(right)
-        .all(|(observed, expected)| (observed - expected).abs() <= 0.01)
+fn calibrations_match(left: &ColmapCalibrationSeed, right: &ColmapCalibrationSeed) -> bool {
+    left.width_pixels == right.width_pixels
+        && left.height_pixels == right.height_pixels
+        && (left.focal_pixels - right.focal_pixels).abs() <= 0.01
+        && (left.principal_x_pixels - right.principal_x_pixels).abs() <= 0.01
+        && (left.principal_y_pixels - right.principal_y_pixels).abs() <= 0.01
+        && left.full_brown_calibration == right.full_brown_calibration
+}
+
+#[cfg(test)]
+fn shared_group_calibration(groups: &[CameraExtractionGroup]) -> Option<&ColmapCalibrationSeed> {
+    let first = groups.first()?;
+    let dimensions = first.dimensions?;
+    let calibration = first.calibration.as_ref()?;
+    groups
+        .iter()
+        .all(|group| {
+            group.dimensions == Some(dimensions)
+                && group
+                    .calibration
+                    .as_ref()
+                    .is_some_and(|candidate| calibrations_match(candidate, calibration))
+        })
+        .then_some(calibration)
+}
+
+fn colmap_camera_model_and_params(calibration: &ColmapCalibrationSeed) -> (&'static str, String) {
+    if let Some(full) = &calibration.full_brown_calibration {
+        // COLMAP FULL_OPENCV order:
+        // fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, k5, k6.
+        return (
+            "FULL_OPENCV",
+            format!(
+                "{:.12},{:.12},{:.12},{:.12},{:.12},{:.12},{:.12},{:.12},{:.12},0,0,0",
+                full.focal_x_pixels,
+                full.focal_y_pixels,
+                full.principal_x_pixels,
+                full.principal_y_pixels,
+                full.radial_distortion[0],
+                full.radial_distortion[1],
+                full.tangential_distortion[0],
+                full.tangential_distortion[1],
+                full.radial_distortion[2],
+            ),
+        );
+    }
+    (
+        "SIMPLE_RADIAL",
+        format!(
+            "{:.12},{:.12},{:.12},0",
+            calibration.focal_pixels,
+            calibration.principal_x_pixels,
+            calibration.principal_y_pixels
+        ),
+    )
+}
+
+fn prepare_calibration_group_layout(
+    request: &ColmapRunRequest,
+    scratch: &Path,
+    materialized_images: &[PathBuf],
+) -> Result<Vec<PathBuf>, ColmapRuntimeError> {
+    let mut groups = camera_extraction_groups(request, materialized_images)?;
+    let source_index = materialized_images
+        .iter()
+        .enumerate()
+        .map(|(index, path)| (path, index))
+        .collect::<BTreeMap<_, _>>();
+    // COLMAP's sequential matcher follows database/image-name order. Keep calibration folders
+    // ordered by their first source image so immutable group IDs cannot scramble a flight line.
+    groups.sort_by_key(|group| {
+        group
+            .image_names
+            .iter()
+            .filter_map(|name| source_index.get(name).copied())
+            .min()
+            .unwrap_or(usize::MAX)
+    });
+    let mut grouped_by_source = BTreeMap::new();
+    for (group_index, group) in groups.iter().enumerate() {
+        let group_directory = format!("calibration-{group_index:06}");
+        for source_name in &group.image_names {
+            let image_index = source_index.get(source_name).copied().ok_or_else(|| {
+                ColmapRuntimeError::InvalidRequest(
+                    "calibration layout references an unknown materialized image".into(),
+                )
+            })?;
+            let extension = source_name
+                .extension()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| ColmapRuntimeError::InvalidPath {
+                    path: source_name.clone(),
+                    reason: "materialized image extension is not UTF-8".into(),
+                })?;
+            let grouped_name =
+                PathBuf::from(&group_directory).join(format!("image-{image_index:08}.{extension}"));
+            let source = scratch.join("images").join(source_name);
+            let destination = scratch.join("images").join(&grouped_name);
+            fs::create_dir_all(
+                destination
+                    .parent()
+                    .expect("grouped image always has a parent"),
+            )?;
+            if fs::hard_link(&source, &destination).is_err() {
+                fs::copy(&source, &destination)?;
+            }
+            grouped_by_source.insert(source_name.clone(), grouped_name);
+        }
+    }
+    materialized_images
+        .iter()
+        .map(|source| {
+            grouped_by_source.get(source).cloned().ok_or_else(|| {
+                ColmapRuntimeError::InvalidRequest(
+                    "calibration groups do not cover every materialized image".into(),
+                )
+            })
+        })
+        .collect()
 }
 
 fn camera_extraction_groups(
@@ -2320,6 +2691,49 @@ fn camera_extraction_groups(
             "camera and materialized image counts differ".into(),
         ));
     }
+    if !request.calibration_groups.is_empty() {
+        let materialized_by_id = request
+            .camera_images
+            .iter()
+            .zip(materialized_images)
+            .map(|(camera, image)| (camera.entity_id.0.as_str(), image))
+            .collect::<BTreeMap<_, _>>();
+        let mut groups = Vec::with_capacity(request.calibration_groups.len());
+        for definition in &request.calibration_groups {
+            let image_names = definition
+                .camera_entity_ids
+                .iter()
+                .map(|id| {
+                    materialized_by_id
+                        .get(id.as_str())
+                        .cloned()
+                        .cloned()
+                        .ok_or_else(|| {
+                            ColmapRuntimeError::InvalidRequest(format!(
+                                "calibration group {} references an image outside the run",
+                                definition.group_id
+                            ))
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let (dimensions, calibration) = definition.seed.as_ref().map_or((None, None), |seed| {
+                (
+                    Some(ImageDimensions {
+                        width_pixels: seed.width_pixels,
+                        height_pixels: seed.height_pixels,
+                    }),
+                    Some(seed.clone()),
+                )
+            });
+            groups.push(CameraExtractionGroup {
+                dimensions,
+                calibration,
+                image_names,
+            });
+        }
+        return Ok(groups);
+    }
+
     let mut calibrated_groups = Vec::<CameraExtractionGroup>::new();
     let mut fallback_images = Vec::new();
     for (camera, image_name) in request.camera_images.iter().zip(materialized_images) {
@@ -2331,7 +2745,8 @@ fn camera_extraction_groups(
             group.dimensions == Some(dimensions)
                 && group
                     .calibration
-                    .is_some_and(|existing| calibrations_match(existing, calibration))
+                    .as_ref()
+                    .is_some_and(|existing| calibrations_match(existing, &calibration))
         }) {
             group.image_names.push(image_name.clone());
         } else {
@@ -2357,15 +2772,84 @@ fn camera_extraction_groups(
     Ok(calibrated_groups)
 }
 
-fn valid_calibration(calibration: [f64; 3], width: u32, height: u32) -> bool {
-    let [focal, center_x, center_y] = calibration;
-    calibration.iter().all(|value| value.is_finite())
-        && focal > 0.0
-        && focal <= f64::from(width.max(height)) * 10.0
-        && center_x >= 0.0
-        && center_x <= f64::from(width)
-        && center_y >= 0.0
-        && center_y <= f64::from(height)
+fn validate_explicit_calibration_groups(
+    request: &ColmapRunRequest,
+) -> Result<(), ColmapRuntimeError> {
+    if request.calibration_groups.is_empty() {
+        return Ok(());
+    }
+    let camera_ids = request
+        .camera_images
+        .iter()
+        .map(|camera| camera.entity_id.0.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut assigned = BTreeSet::new();
+    let mut group_ids = BTreeSet::new();
+    for group in &request.calibration_groups {
+        if group.group_id.trim().is_empty() || !group_ids.insert(group.group_id.as_str()) {
+            return Err(ColmapRuntimeError::InvalidRequest(
+                "calibration group ids must be non-empty and unique".into(),
+            ));
+        }
+        if group.camera_entity_ids.is_empty() {
+            return Err(ColmapRuntimeError::InvalidRequest(format!(
+                "calibration group {} is empty",
+                group.group_id
+            )));
+        }
+        for id in &group.camera_entity_ids {
+            if !camera_ids.contains(id.as_str()) || !assigned.insert(id.as_str()) {
+                return Err(ColmapRuntimeError::InvalidRequest(format!(
+                    "calibration group {} is not an exact camera partition",
+                    group.group_id
+                )));
+            }
+        }
+        if let Some(seed) = group.seed.as_ref() {
+            if valid_calibration_seed(seed).is_none() {
+                return Err(ColmapRuntimeError::InvalidRequest(format!(
+                    "calibration group {} has an invalid seed",
+                    group.group_id
+                )));
+            }
+        }
+    }
+    if assigned != camera_ids {
+        return Err(ColmapRuntimeError::InvalidRequest(
+            "explicit calibration groups must partition every run camera exactly".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn valid_calibration_seed(seed: &ColmapCalibrationSeed) -> Option<()> {
+    let width = seed.width_pixels;
+    let height = seed.height_pixels;
+    let values = [
+        seed.focal_pixels,
+        seed.principal_x_pixels,
+        seed.principal_y_pixels,
+    ];
+    let base_valid = width > 0
+        && height > 0
+        && values.iter().all(|value| value.is_finite())
+        && seed.focal_pixels > 0.0
+        && seed.focal_pixels <= f64::from(width.max(height)) * 10.0
+        && (0.0..=f64::from(width)).contains(&seed.principal_x_pixels)
+        && (0.0..=f64::from(height)).contains(&seed.principal_y_pixels);
+    (base_valid
+        && seed
+            .full_brown_calibration
+            .as_ref()
+            .is_none_or(|calibration| {
+                calibration.is_valid_for_dimensions(ImageDimensions {
+                    width_pixels: width,
+                    height_pixels: height,
+                }) && (calibration.focal_x_pixels - seed.focal_pixels).abs() <= 0.01
+                    && (calibration.principal_x_pixels - seed.principal_x_pixels).abs() <= 0.01
+                    && (calibration.principal_y_pixels - seed.principal_y_pixels).abs() <= 0.01
+            }))
+    .then_some(())
 }
 
 fn matching_command(
@@ -2382,15 +2866,39 @@ fn matching_command(
     }
 }
 
-fn mapper_args(database: &Path, images: &Path, output: &Path) -> Vec<OsString> {
-    vec![
+fn mapper_args(
+    database: &Path,
+    images: &Path,
+    output: &Path,
+    command: ColmapCommandKind,
+    intrinsics_refinement: ColmapIntrinsicsRefinement,
+) -> Vec<OsString> {
+    let mut args = vec![
         os("--database_path"),
         database.as_os_str().to_owned(),
         os("--image_path"),
         images.as_os_str().to_owned(),
         os("--output_path"),
         output.as_os_str().to_owned(),
-    ]
+    ];
+    let prefix = match command {
+        ColmapCommandKind::GlobalMapper => "GlobalMapper",
+        ColmapCommandKind::Mapper => "Mapper",
+        _ => return args,
+    };
+    let (refine_focal, refine_principal, refine_extra) = match intrinsics_refinement {
+        ColmapIntrinsicsRefinement::Refine => ("1", "0", "1"),
+        ColmapIntrinsicsRefinement::FreezeReliableEmbedded => ("0", "0", "0"),
+    };
+    args.extend([
+        os(format!("--{prefix}.ba_refine_focal_length")),
+        os(refine_focal),
+        os(format!("--{prefix}.ba_refine_principal_point")),
+        os(refine_principal),
+        os(format!("--{prefix}.ba_refine_extra_params")),
+        os(refine_extra),
+    ]);
+    args
 }
 
 fn command_failure(report: &ColmapCommandReport) -> ColmapRuntimeError {
@@ -3282,9 +3790,31 @@ fn find_sparse_model(root: &Path) -> Option<PathBuf> {
         .filter(|path| path.is_dir())
         .collect::<Vec<_>>();
     candidates.sort();
-    candidates.into_iter().find(|path| {
-        has_any(path, &["cameras.bin", "cameras.txt"])
-            && has_any(path, &["images.bin", "images.txt"])
+    candidates
+        .into_iter()
+        .find(|path| sparse_model_is_viable(path))
+}
+
+fn sparse_model_is_viable(path: &Path) -> bool {
+    sparse_table_has_records(path, "cameras")
+        && sparse_table_has_records(path, "images")
+        && sparse_table_has_records(path, "points3D")
+}
+
+fn sparse_table_has_records(path: &Path, stem: &str) -> bool {
+    let binary = path.join(format!("{stem}.bin"));
+    if binary
+        .metadata()
+        .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 8)
+    {
+        return true;
+    }
+    let text = path.join(format!("{stem}.txt"));
+    fs::read_to_string(text).is_ok_and(|contents| {
+        contents
+            .lines()
+            .map(str::trim)
+            .any(|line| !line.is_empty() && !line.starts_with('#'))
     })
 }
 
@@ -3471,19 +4001,12 @@ fn copy_directory_tree(
     Ok(())
 }
 
-fn has_any(directory: &Path, names: &[&str]) -> bool {
-    names.iter().any(|name| directory.join(name).is_file())
-}
-
 fn selected_sparse_path(
     scratch: &Path,
     selected_mapper: SelectedMapper,
 ) -> Result<PathBuf, ColmapRuntimeError> {
     let aligned = scratch.join("sparse-aligned");
-    if aligned.is_dir()
-        && has_any(&aligned, &["cameras.bin", "cameras.txt"])
-        && has_any(&aligned, &["images.bin", "images.txt"])
-    {
+    if aligned.is_dir() && sparse_model_is_viable(&aligned) {
         return Ok(aligned);
     }
     selected_sparse_unaligned_path(scratch, selected_mapper)
@@ -3494,10 +4017,7 @@ fn selected_sparse_unaligned_path(
     selected_mapper: SelectedMapper,
 ) -> Result<PathBuf, ColmapRuntimeError> {
     let hybrid = scratch.join("sparse-selected/0");
-    if hybrid.is_dir()
-        && has_any(&hybrid, &["cameras.bin", "cameras.txt"])
-        && has_any(&hybrid, &["images.bin", "images.txt"])
-    {
+    if hybrid.is_dir() && sparse_model_is_viable(&hybrid) {
         return Ok(hybrid);
     }
     let root = scratch.join(match selected_mapper {
@@ -3513,12 +4033,16 @@ fn summarize_artifacts(
     selected_mapper: SelectedMapper,
     cancellation: &CancellationToken,
 ) -> Result<Vec<ColmapArtifactSummary>, ColmapRuntimeError> {
-    let mut artifacts = vec![summarize_artifact(
-        ColmapArtifactKind::AlikedVerifiedDatabase,
-        scratch,
-        &scratch.join("features/aliked/database.db"),
-        cancellation,
-    )?];
+    let mut artifacts = Vec::new();
+    let aliked_database = scratch.join("features/aliked/database.db");
+    if aliked_database.is_file() {
+        artifacts.push(summarize_artifact(
+            ColmapArtifactKind::AlikedVerifiedDatabase,
+            scratch,
+            &aliked_database,
+            cancellation,
+        )?);
+    }
     let sift_database = scratch.join("features/sift/database.db");
     if sift_database.is_file() {
         artifacts.push(summarize_artifact(
@@ -3764,6 +4288,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn command_success_with_empty_sparse_tables_is_not_a_reconstruction() {
+        let directory = TestDirectory::new("empty-sparse-model");
+        let model = directory.0.join("0");
+        fs::create_dir_all(&model).expect("model directory");
+        for name in ["cameras.bin", "images.bin", "points3D.bin"] {
+            fs::write(model.join(name), 0_u64.to_le_bytes()).expect("empty COLMAP table");
+        }
+        assert!(find_sparse_model(&directory.0).is_none());
+        fs::write(model.join("cameras.bin"), [0_u8; 16]).expect("camera record");
+        fs::write(model.join("images.bin"), [0_u8; 16]).expect("image record");
+        fs::write(model.join("points3D.bin"), [0_u8; 16]).expect("point record");
+        assert_eq!(find_sparse_model(&directory.0), Some(model));
+    }
+
     fn write_project_object(project: &Path, bytes: &[u8]) -> ObjectHash {
         let hash = ObjectHash::of_bytes(bytes);
         let (prefix, remainder) = hash.as_str().split_at(2);
@@ -3949,6 +4488,8 @@ mod tests {
                 job_id: job_id.into(),
                 project_root: self.project.clone(),
                 camera_images: self.camera_images.clone(),
+                image_mask_scope: None,
+                calibration_groups: Vec::new(),
                 device: ColmapComputeDevice::Cpu,
                 pair_selection: ColmapPairSelection::Exhaustive,
                 mapping_store: MappingFeatureStore::Aliked,
@@ -3962,6 +4503,7 @@ mod tests {
                 aliked_matching_worker_threads: 1,
                 matching_worker_threads: 1,
                 products: ColmapProductRequest::default(),
+                intrinsics_refinement: ColmapIntrinsicsRefinement::Refine,
             }
         }
     }
@@ -3986,7 +4528,14 @@ mod tests {
         assert_eq!(one_group.len(), 1);
         assert_eq!(
             one_group[0].calibration,
-            Some([3_710.25, 2_641.5, 1_977.75])
+            Some(ColmapCalibrationSeed {
+                width_pixels: 5_280,
+                height_pixels: 3_956,
+                focal_pixels: 3_710.25,
+                principal_x_pixels: 2_641.5,
+                principal_y_pixels: 1_977.75,
+                full_brown_calibration: None,
+            })
         );
         rig.camera_images[1]
             .metadata
@@ -4016,6 +4565,137 @@ mod tests {
         .expect("keep uncalibrated fallback group");
         assert_eq!(fallback.len(), 2);
         assert!(fallback[1].calibration.is_none());
+    }
+
+    #[test]
+    fn dji_dewarp_seed_emits_exact_full_opencv_parameter_order() {
+        let full = DjiBrownConradyCalibration {
+            focal_x_pixels: 3713.771893164336,
+            focal_y_pixels: 3713.771893164336,
+            principal_x_pixels: 2660.720882112011,
+            principal_y_pixels: 1961.266654297148,
+            radial_distortion: [-0.107756512758, -0.000878853880, -0.015723478938],
+            tangential_distortion: [0.000130474491, -0.000011293710],
+            calibration_date: "2025-02-26".into(),
+            provenance: himmelcad_core::photolab_images::DjiCalibrationProvenance::DewarpData,
+        };
+        let seed = ColmapCalibrationSeed {
+            width_pixels: 5_280,
+            height_pixels: 3_956,
+            focal_pixels: full.focal_x_pixels,
+            principal_x_pixels: full.principal_x_pixels,
+            principal_y_pixels: full.principal_y_pixels,
+            full_brown_calibration: Some(full),
+        };
+
+        let (model, params) = colmap_camera_model_and_params(&seed);
+        assert_eq!(model, "FULL_OPENCV");
+        assert_eq!(
+            params,
+            "3713.771893164336,3713.771893164336,2660.720882112011,1961.266654297148,-0.107756512758,-0.000878853880,0.000130474491,-0.000011293710,-0.015723478938,0,0,0"
+        );
+    }
+
+    #[test]
+    fn mapper_intrinsics_flags_are_explicit_for_every_profile_policy() {
+        let args_for = |command, policy| {
+            mapper_args(
+                Path::new("database.db"),
+                Path::new("images"),
+                Path::new("sparse"),
+                command,
+                policy,
+            )
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+        };
+        let assert_flags = |args: &[String], prefix: &str, expected: [&str; 3]| {
+            for (name, value) in [
+                ("ba_refine_focal_length", expected[0]),
+                ("ba_refine_principal_point", expected[1]),
+                ("ba_refine_extra_params", expected[2]),
+            ] {
+                let key = format!("--{prefix}.{name}");
+                let index = args
+                    .iter()
+                    .position(|arg| arg == &key)
+                    .expect("mapper flag");
+                assert_eq!(args[index + 1], value);
+            }
+        };
+
+        assert_flags(
+            &args_for(
+                ColmapCommandKind::Mapper,
+                ColmapIntrinsicsRefinement::FreezeReliableEmbedded,
+            ),
+            "Mapper",
+            ["0", "0", "0"],
+        );
+        assert_flags(
+            &args_for(
+                ColmapCommandKind::GlobalMapper,
+                ColmapIntrinsicsRefinement::FreezeReliableEmbedded,
+            ),
+            "GlobalMapper",
+            ["0", "0", "0"],
+        );
+        assert_flags(
+            &args_for(
+                ColmapCommandKind::Mapper,
+                ColmapIntrinsicsRefinement::Refine,
+            ),
+            "Mapper",
+            ["1", "0", "1"],
+        );
+    }
+
+    #[test]
+    fn explicit_autofocus_groups_never_collapse_when_seeds_match() {
+        let rig = TestRig::new("explicit-calibration-groups", false, false);
+        let mut request = rig.request("explicit-calibration-groups-job");
+        let seed = ColmapCalibrationSeed {
+            width_pixels: 5_280,
+            height_pixels: 3_956,
+            focal_pixels: 4_100.0,
+            principal_x_pixels: 2_640.0,
+            principal_y_pixels: 1_978.0,
+            full_brown_calibration: None,
+        };
+        request.calibration_groups = vec![
+            ColmapCalibrationGroup {
+                group_id: "flight-one".into(),
+                camera_entity_ids: vec!["camera-a".into()],
+                seed: Some(seed.clone()),
+            },
+            ColmapCalibrationGroup {
+                group_id: "flight-two".into(),
+                camera_entity_ids: vec!["camera-b".into()],
+                seed: Some(seed),
+            },
+        ];
+        request.validate().expect("valid explicit partition");
+        let groups =
+            camera_extraction_groups(&request, &[PathBuf::from("a.jpg"), PathBuf::from("b.jpg")])
+                .expect("explicit extraction groups");
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].calibration, groups[1].calibration);
+        assert_eq!(
+            shared_group_calibration(&groups),
+            groups[0].calibration.as_ref()
+        );
+
+        let mut distinct = groups;
+        distinct[1].calibration = Some(ColmapCalibrationSeed {
+            width_pixels: 5_280,
+            height_pixels: 3_956,
+            focal_pixels: 4_200.0,
+            principal_x_pixels: 2_640.0,
+            principal_y_pixels: 1_978.0,
+            full_brown_calibration: None,
+        });
+        assert_eq!(shared_group_calibration(&distinct), None);
     }
 
     fn fake_colmap_script(fail_global: bool, slow_patch_match: bool) -> String {
@@ -4054,9 +4734,9 @@ case "$cmd" in
     if [ "{fail_global}" = "1" ]; then printf 'forced global failure\n' >&2; exit 9; fi
     out="$(value_for --output_path "$@")"
     /bin/mkdir -p "$out/0"
-    : > "$out/0/cameras.bin"
-    : > "$out/0/images.bin"
-    : > "$out/0/points3D.bin"
+    printf '0123456789abcdef' > "$out/0/cameras.bin"
+    printf '0123456789abcdef' > "$out/0/images.bin"
+    printf '0123456789abcdef' > "$out/0/points3D.bin"
     ;;
   mapper)
     db="$(value_for --database_path "$@")"
@@ -4065,9 +4745,9 @@ case "$cmd" in
     esac
     out="$(value_for --output_path "$@")"
     /bin/mkdir -p "$out/0"
-    : > "$out/0/cameras.bin"
-    : > "$out/0/images.bin"
-    : > "$out/0/points3D.bin"
+    printf '0123456789abcdef' > "$out/0/cameras.bin"
+    printf '0123456789abcdef' > "$out/0/images.bin"
+    printf '0123456789abcdef' > "$out/0/points3D.bin"
     ;;
   model_converter)
     input="$(value_for --input_path "$@")"
@@ -4240,7 +4920,7 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
             .expect("read invocation log");
         assert!(invocations.contains("--FeatureExtraction.type|ALIKED_N16ROT"));
         assert!(invocations.contains("--FeatureMatching.type|ALIKED_LIGHTGLUE"));
-        assert!(invocations.contains("--FeatureMatching.type|SIFT_LIGHTGLUE"));
+        assert!(invocations.contains("--FeatureMatching.type|SIFT_BRUTEFORCE"));
         assert_eq!(invocations.matches("CMD|geometric_verifier").count(), 2);
         assert!(invocations.contains("features/aliked/database.db"));
         assert!(invocations.contains("features/sift/database.db"));
@@ -4272,7 +4952,144 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
             .is_file());
         let invocations = fs::read_to_string(outcome.scratch_path.join("invocations.log"))
             .expect("read invocation log");
-        assert!(!invocations.contains("SIFT_LIGHTGLUE"));
+        assert!(!invocations.contains("--FeatureMatching.type|SIFT_BRUTEFORCE"));
+    }
+
+    #[tokio::test]
+    async fn fast_profile_can_use_classical_sift_before_neural_rescue() {
+        let rig = TestRig::new("fast-sift", false, false);
+        let mut request = rig.request("fast-sift-job");
+        request.mapping_store = MappingFeatureStore::Sift;
+        request.sift_rescue_only = true;
+
+        let outcome = run_successfully(rig.runtime(), request).await;
+        assert_eq!(
+            outcome.summary.selected_feature_store,
+            SelectedFeatureStore::Sift
+        );
+        let invocations = fs::read_to_string(outcome.scratch_path.join("invocations.log"))
+            .expect("read invocation log");
+        assert!(invocations.contains("--FeatureExtraction.type|SIFT"));
+        assert!(invocations.contains("--FeatureMatching.type|SIFT_BRUTEFORCE"));
+        assert!(!invocations.contains("ALIKED_N16ROT"));
+        assert!(!invocations.contains("ALIKED_LIGHTGLUE"));
+    }
+
+    #[tokio::test]
+    async fn feature_extraction_batches_distinct_calibration_groups() {
+        let rig = TestRig::new("batched-calibration-groups", false, false);
+        let mut request = rig.request("batched-calibration-groups-job");
+        request.sift_rescue_only = true;
+        let seed = ColmapCalibrationSeed {
+            width_pixels: 100,
+            height_pixels: 100,
+            focal_pixels: 80.0,
+            principal_x_pixels: 50.0,
+            principal_y_pixels: 50.0,
+            full_brown_calibration: None,
+        };
+        request.calibration_groups = vec![
+            ColmapCalibrationGroup {
+                group_id: "focus-two".into(),
+                camera_entity_ids: vec!["camera-b".into()],
+                seed: Some(seed.clone()),
+            },
+            ColmapCalibrationGroup {
+                group_id: "focus-one".into(),
+                camera_entity_ids: vec!["camera-a".into()],
+                seed: Some(seed),
+            },
+        ];
+
+        let outcome = run_successfully(rig.runtime(), request).await;
+        let invocations = fs::read_to_string(outcome.scratch_path.join("invocations.log"))
+            .expect("read invocation log");
+        assert_eq!(invocations.matches("CMD|feature_extractor").count(), 2);
+        assert!(invocations.contains("--ImageReader.single_camera|1"));
+        assert!(invocations.contains(
+            "--ImageReader.camera_params|80.000000000000,50.000000000000,50.000000000000,0"
+        ));
+        assert!(outcome
+            .scratch_path
+            .join("images/calibration-000000/image-00000000.jpg")
+            .is_file());
+        assert!(outcome
+            .scratch_path
+            .join("images/calibration-000001/image-00000001.jpg")
+            .is_file());
+    }
+
+    #[tokio::test]
+    async fn feature_and_mapper_commands_preserve_embedded_full_opencv_calibration() {
+        let rig = TestRig::new("full-opencv-command", false, false);
+        let mut request = rig.request("full-opencv-command-job");
+        request.sift_rescue_only = true;
+        request.intrinsics_refinement = ColmapIntrinsicsRefinement::FreezeReliableEmbedded;
+        let full = DjiBrownConradyCalibration {
+            focal_x_pixels: 80.0,
+            focal_y_pixels: 81.0,
+            principal_x_pixels: 50.25,
+            principal_y_pixels: 49.75,
+            radial_distortion: [-0.1, -0.002, -0.015],
+            tangential_distortion: [0.0003, -0.0004],
+            calibration_date: "2025-02-26".into(),
+            provenance: himmelcad_core::photolab_images::DjiCalibrationProvenance::DewarpData,
+        };
+        request.calibration_groups = vec![ColmapCalibrationGroup {
+            group_id: "dewarp".into(),
+            camera_entity_ids: vec!["camera-a".into(), "camera-b".into()],
+            seed: Some(ColmapCalibrationSeed {
+                width_pixels: 100,
+                height_pixels: 100,
+                focal_pixels: full.focal_x_pixels,
+                principal_x_pixels: full.principal_x_pixels,
+                principal_y_pixels: full.principal_y_pixels,
+                full_brown_calibration: Some(full),
+            }),
+        }];
+
+        let outcome = run_successfully(rig.runtime(), request).await;
+        let invocations = fs::read_to_string(outcome.scratch_path.join("invocations.log"))
+            .expect("read invocation log");
+        assert!(invocations.contains("--ImageReader.camera_model|FULL_OPENCV"));
+        assert!(invocations.contains(
+            "--ImageReader.camera_params|80.000000000000,81.000000000000,50.250000000000,49.750000000000,-0.100000000000,-0.002000000000,0.000300000000,-0.000400000000,-0.015000000000,0,0,0"
+        ));
+        assert!(invocations.contains("--GlobalMapper.ba_refine_focal_length|0"));
+        assert!(invocations.contains("--GlobalMapper.ba_refine_principal_point|0"));
+        assert!(invocations.contains("--GlobalMapper.ba_refine_extra_params|0"));
+    }
+
+    #[tokio::test]
+    async fn one_automatic_calibration_group_keeps_source_sequence() {
+        let rig = TestRig::new("automatic-calibration-order", false, false);
+        let mut request = rig.request("automatic-calibration-order-job");
+        request.sift_rescue_only = true;
+        request.calibration_groups = vec![ColmapCalibrationGroup {
+            group_id: "automatic-mission".into(),
+            // Domain records are immutable sets and need not arrive in capture order.
+            camera_entity_ids: vec!["camera-b".into(), "camera-a".into()],
+            seed: None,
+        }];
+
+        let outcome = run_successfully(rig.runtime(), request).await;
+        let image_list = fs::read_to_string(outcome.scratch_path.join("image-list.txt"))
+            .expect("read source-ordered image list");
+        assert_eq!(
+            image_list.lines().collect::<Vec<_>>(),
+            [
+                "calibration-000000/image-00000000.jpg",
+                "calibration-000000/image-00000001.jpg"
+            ]
+        );
+        assert!(outcome
+            .scratch_path
+            .join("images/calibration-000000/image-00000000.jpg")
+            .is_file());
+        assert!(outcome
+            .scratch_path
+            .join("images/calibration-000000/image-00000001.jpg")
+            .is_file());
     }
 
     #[tokio::test]
@@ -4287,7 +5104,7 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
         );
         let invocations = fs::read_to_string(outcome.scratch_path.join("invocations.log"))
             .expect("read invocation log");
-        assert!(invocations.contains("SIFT_LIGHTGLUE"));
+        assert!(invocations.contains("--FeatureMatching.type|SIFT_BRUTEFORCE"));
         assert!(invocations.contains("features/sift/database.db"));
     }
 

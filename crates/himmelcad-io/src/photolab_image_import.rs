@@ -10,10 +10,10 @@ use std::{
 use himmelcad_core::{
     hash::ObjectHash,
     photolab_images::{
-        CaptureTime, CaptureTimeReference, DiscoveredPhoto, DjiAttitudeDegrees, DjiRtkMetadata,
-        DjiXmpMetadata, ExifGpsPosition, ExifOrientation, ExifPhotoMetadata, ImageDimensions,
-        ImageImportWarning, ImageImportWarningCode, ImportedHeight, PhotoFormat, PhotoImportBatch,
-        PhotoMetadata,
+        CaptureTime, CaptureTimeReference, DiscoveredPhoto, DjiAttitudeDegrees,
+        DjiBrownConradyCalibration, DjiCalibrationProvenance, DjiRtkMetadata, DjiXmpMetadata,
+        ExifGpsPosition, ExifOrientation, ExifPhotoMetadata, ImageDimensions, ImageImportWarning,
+        ImageImportWarningCode, ImportedHeight, PhotoFormat, PhotoImportBatch, PhotoMetadata,
     },
 };
 use nom_exif::{EntryValue, Exif, ExifDateTime, ExifTag, MediaParser, MediaSource};
@@ -42,9 +42,33 @@ pub struct PhotoDiscovery {
 /// Recursively discovers supported photos without following symbolic links.
 #[must_use]
 pub fn discover_photo_files(inputs: &[PathBuf]) -> PhotoDiscovery {
+    let mut cancelled = || false;
+    let mut progress = |_: usize, _: usize| {};
+    discover_photo_files_with_progress(inputs, &mut cancelled, &mut progress)
+        .expect("discovery without cancellation must complete")
+}
+
+fn discover_photo_files_with_progress<C, P>(
+    inputs: &[PathBuf],
+    cancelled: &mut C,
+    progress: &mut P,
+) -> Option<PhotoDiscovery>
+where
+    C: FnMut() -> bool,
+    P: FnMut(usize, usize),
+{
     let mut discovery = PhotoDiscovery::default();
+    let mut folder_count = 0_usize;
     for input in inputs {
-        discover_path(input, &mut discovery);
+        if !discover_path(
+            input,
+            &mut discovery,
+            &mut folder_count,
+            cancelled,
+            progress,
+        ) {
+            return None;
+        }
     }
     discovery.candidates.sort_by(|left, right| {
         left.path
@@ -52,13 +76,41 @@ pub fn discover_photo_files(inputs: &[PathBuf]) -> PhotoDiscovery {
             .cmp(right.path.as_os_str())
             .then_with(|| format_rank(left.format).cmp(&format_rank(right.format)))
     });
-    discovery
+    Some(discovery)
 }
 
 /// Discovers, hashes and parses all supported photos. Individual failures become warnings.
 #[must_use]
 pub fn import_photo_files(inputs: &[PathBuf]) -> PhotoImportBatch {
-    let discovery = discover_photo_files(inputs);
+    import_photo_files_with_progress(inputs, || false, |_, _| {})
+        .expect("a photo import without cancellation cannot be cancelled")
+}
+
+/// Discovers, hashes and parses supported photos while reporting real per-file
+/// progress and checking for cooperative cancellation between files.
+///
+/// `None` is returned only after `cancelled` reports true. Callers must discard
+/// the partial in-memory batch in that case; no project state is modified here.
+pub fn import_photo_files_with_progress<C, P>(
+    inputs: &[PathBuf],
+    mut cancelled: C,
+    mut progress: P,
+) -> Option<PhotoImportBatch>
+where
+    C: FnMut() -> bool,
+    P: FnMut(f64, &str),
+{
+    progress(0.01, "Scanning folders · 0 images found");
+    let discovery = discover_photo_files_with_progress(
+        inputs,
+        &mut cancelled,
+        &mut |image_count, folder_count| {
+            progress(
+                0.01,
+                &format!("Scanning folders · {image_count} images found · {folder_count} folders"),
+            );
+        },
+    )?;
     let mut batch = PhotoImportBatch {
         photos: Vec::with_capacity(discovery.candidates.len()),
         warnings: discovery.warnings,
@@ -66,10 +118,46 @@ pub fn import_photo_files(inputs: &[PathBuf]) -> PhotoImportBatch {
     let mut first_path_by_hash = HashMap::<ObjectHash, String>::new();
     let mut exif_parser = MediaParser::new();
 
-    for candidate in discovery.candidates {
+    let total = discovery.candidates.len();
+    progress(0.05, &format!("Found {total} supported image file(s)"));
+    for (index, candidate) in discovery.candidates.into_iter().enumerate() {
+        if cancelled() {
+            return None;
+        }
         let source_path = path_string(&candidate.path);
-        let (sha256, byte_size) = match streaming_sha256(&candidate.path) {
-            Ok(result) => result,
+        let filename = candidate
+            .path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or(&source_path)
+            .to_owned();
+        progress(
+            0.05 + 0.9 * index as f64 / total.max(1) as f64,
+            &format!("Reading image {} of {total}: {filename}", index + 1),
+        );
+        let item_start = 0.05 + 0.9 * index as f64 / total.max(1) as f64;
+        let item_span = 0.9 / total.max(1) as f64;
+        let (sha256, byte_size) = match streaming_sha256_with_cancel(
+            &candidate.path,
+            &mut cancelled,
+            |completed, bytes| {
+                let local = if bytes == 0 {
+                    1.0
+                } else {
+                    completed as f64 / bytes as f64
+                };
+                progress(
+                    item_start + item_span * local.clamp(0.0, 1.0) * 0.8,
+                    &format!(
+                        "Hashing image {} of {total}: {filename} · {:.0}%",
+                        index + 1,
+                        local * 100.0
+                    ),
+                );
+            },
+        ) {
+            Ok(Some(result)) => result,
+            Ok(None) => return None,
             Err(error) => {
                 batch.warnings.push(warning(
                     &candidate.path,
@@ -79,6 +167,11 @@ pub fn import_photo_files(inputs: &[PathBuf]) -> PhotoImportBatch {
                 continue;
             }
         };
+
+        progress(
+            item_start + item_span * 0.82,
+            &format!("Reading metadata {} of {total}: {filename}", index + 1),
+        );
 
         let duplicate_of = first_path_by_hash.get(&sha256).cloned();
         if let Some(original) = duplicate_of.as_ref() {
@@ -93,7 +186,7 @@ pub fn import_photo_files(inputs: &[PathBuf]) -> PhotoImportBatch {
 
         let exif = parse_exif_metadata(&candidate.path, &mut exif_parser, &mut batch.warnings);
         let dji_xmp = if candidate.format == PhotoFormat::Jpeg {
-            parse_dji_xmp_from_jpeg(&candidate.path, &mut batch.warnings)
+            parse_dji_xmp_from_jpeg(&candidate.path, exif.dimensions, &mut batch.warnings)
         } else {
             DjiXmpMetadata::default()
         };
@@ -106,12 +199,34 @@ pub fn import_photo_files(inputs: &[PathBuf]) -> PhotoImportBatch {
             metadata: PhotoMetadata { exif, dji_xmp },
             duplicate_of,
         });
+        progress(
+            0.05 + 0.9 * (index + 1) as f64 / total.max(1) as f64,
+            &format!("Validated image {} of {total}: {filename}", index + 1),
+        );
     }
 
-    batch
+    if cancelled() {
+        None
+    } else {
+        progress(1.0, &format!("Validated {total} image file(s)"));
+        Some(batch)
+    }
 }
 
-fn discover_path(path: &Path, discovery: &mut PhotoDiscovery) {
+fn discover_path<C, P>(
+    path: &Path,
+    discovery: &mut PhotoDiscovery,
+    folder_count: &mut usize,
+    cancelled: &mut C,
+    progress: &mut P,
+) -> bool
+where
+    C: FnMut() -> bool,
+    P: FnMut(usize, usize),
+{
+    if cancelled() {
+        return false;
+    }
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) => {
@@ -120,7 +235,7 @@ fn discover_path(path: &Path, discovery: &mut PhotoDiscovery) {
                 ImageImportWarningCode::PathUnavailable,
                 format!("cannot inspect input path: {error}"),
             ));
-            return;
+            return true;
         }
     };
 
@@ -130,9 +245,11 @@ fn discover_path(path: &Path, discovery: &mut PhotoDiscovery) {
             ImageImportWarningCode::SymlinkSkipped,
             "symbolic links are not followed during photo discovery".to_owned(),
         ));
-        return;
+        return true;
     }
     if metadata.is_dir() {
+        *folder_count = folder_count.saturating_add(1);
+        progress(discovery.candidates.len(), *folder_count);
         let entries = match fs::read_dir(path) {
             Ok(entries) => entries,
             Err(error) => {
@@ -141,11 +258,14 @@ fn discover_path(path: &Path, discovery: &mut PhotoDiscovery) {
                     ImageImportWarningCode::DirectoryReadFailed,
                     format!("cannot read directory: {error}"),
                 ));
-                return;
+                return true;
             }
         };
         let mut paths = Vec::new();
         for entry in entries {
+            if cancelled() {
+                return false;
+            }
             match entry {
                 Ok(entry) => paths.push(entry.path()),
                 Err(error) => discovery.warnings.push(warning(
@@ -157,25 +277,31 @@ fn discover_path(path: &Path, discovery: &mut PhotoDiscovery) {
         }
         paths.sort();
         for child in paths {
-            discover_path(&child, discovery);
+            if !discover_path(&child, discovery, folder_count, cancelled, progress) {
+                return false;
+            }
         }
-        return;
+        return true;
     }
     if !metadata.is_file() {
-        return;
+        return true;
     }
 
     match photo_format(path) {
-        Some(format) => discovery.candidates.push(PhotoImportCandidate {
-            path: path.to_path_buf(),
-            format,
-        }),
+        Some(format) => {
+            discovery.candidates.push(PhotoImportCandidate {
+                path: path.to_path_buf(),
+                format,
+            });
+            progress(discovery.candidates.len(), *folder_count);
+        }
         None => discovery.warnings.push(warning(
             path,
             ImageImportWarningCode::UnsupportedFormat,
             "file extension is not a supported photo format".to_owned(),
         )),
     }
+    true
 }
 
 fn photo_format(path: &Path) -> Option<PhotoFormat> {
@@ -210,20 +336,36 @@ const fn format_rank(format: PhotoFormat) -> u8 {
     }
 }
 
-fn streaming_sha256(path: &Path) -> io::Result<(ObjectHash, u64)> {
+fn streaming_sha256_with_cancel<C, P>(
+    path: &Path,
+    cancelled: &mut C,
+    mut progress: P,
+) -> io::Result<Option<(ObjectHash, u64)>>
+where
+    C: FnMut() -> bool,
+    P: FnMut(u64, u64),
+{
+    let total_bytes = path.metadata()?.len();
     let mut reader = BufReader::with_capacity(HASH_BUFFER_BYTES, File::open(path)?);
     let mut digest = Sha256::new();
     let mut byte_size = 0_u64;
     let mut buffer = vec![0_u8; HASH_BUFFER_BYTES].into_boxed_slice();
     loop {
+        if cancelled() {
+            return Ok(None);
+        }
         let read = reader.read(&mut buffer)?;
         if read == 0 {
             break;
         }
         digest.update(&buffer[..read]);
         byte_size = byte_size.saturating_add(read as u64);
+        progress(byte_size, total_bytes);
     }
-    Ok((ObjectHash(hex::encode(digest.finalize())), byte_size))
+    Ok(Some((
+        ObjectHash(hex::encode(digest.finalize())),
+        byte_size,
+    )))
 }
 
 fn warning(path: &Path, code: ImageImportWarningCode, message: String) -> ImageImportWarning {
@@ -407,7 +549,11 @@ fn parse_exif_gps(
     })
 }
 
-fn parse_dji_xmp_from_jpeg(path: &Path, warnings: &mut Vec<ImageImportWarning>) -> DjiXmpMetadata {
+fn parse_dji_xmp_from_jpeg(
+    path: &Path,
+    dimensions: Option<ImageDimensions>,
+    warnings: &mut Vec<ImageImportWarning>,
+) -> DjiXmpMetadata {
     let file = match File::open(path) {
         Ok(file) => file,
         Err(error) => {
@@ -430,12 +576,13 @@ fn parse_dji_xmp_from_jpeg(path: &Path, warnings: &mut Vec<ImageImportWarning>) 
         return DjiXmpMetadata::default();
     }
 
-    scan_dji_xmp_segments(&mut reader, path, warnings)
+    scan_dji_xmp_segments(&mut reader, path, dimensions, warnings)
 }
 
 fn scan_dji_xmp_segments(
     reader: &mut (impl Read + Seek),
     path: &Path,
+    dimensions: Option<ImageDimensions>,
     warnings: &mut Vec<ImageImportWarning>,
 ) -> DjiXmpMetadata {
     let mut metadata = DjiXmpMetadata::default();
@@ -523,6 +670,7 @@ fn scan_dji_xmp_segments(
             &mut total_xmp_bytes,
             path,
             &mut metadata,
+            dimensions,
             warnings,
         ) {
             break;
@@ -539,6 +687,7 @@ fn process_jpeg_segment(
     total_xmp_bytes: &mut usize,
     path: &Path,
     metadata: &mut DjiXmpMetadata,
+    dimensions: Option<ImageDimensions>,
     warnings: &mut Vec<ImageImportWarning>,
 ) -> bool {
     let payload_length = usize::from(segment_length - 2);
@@ -576,7 +725,7 @@ fn process_jpeg_segment(
     }
     if is_xmp_payload(&payload) {
         *total_xmp_bytes += payload.len();
-        parse_dji_xmp_payload(&payload, path, metadata, warnings);
+        parse_dji_xmp_payload(&payload, path, metadata, dimensions, warnings);
     }
     true
 }
@@ -609,6 +758,7 @@ fn parse_dji_xmp_payload(
     payload: &[u8],
     path: &Path,
     metadata: &mut DjiXmpMetadata,
+    dimensions: Option<ImageDimensions>,
     warnings: &mut Vec<ImageImportWarning>,
 ) {
     if find_bytes(payload, b"<!DOCTYPE").is_some() || find_bytes(payload, b"<!ENTITY").is_some() {
@@ -623,7 +773,7 @@ fn parse_dji_xmp_payload(
     parse_dji_xmp_position(payload, path, metadata, warnings);
     parse_dji_xmp_attitudes(payload, path, metadata, warnings);
     parse_dji_xmp_rtk(payload, path, metadata, warnings);
-    parse_dji_xmp_calibration(payload, path, metadata, warnings);
+    parse_dji_xmp_calibration(payload, path, metadata, dimensions, warnings);
 }
 
 fn parse_dji_xmp_position(
@@ -745,6 +895,7 @@ fn parse_dji_xmp_calibration(
     payload: &[u8],
     path: &Path,
     metadata: &mut DjiXmpMetadata,
+    dimensions: Option<ImageDimensions>,
     warnings: &mut Vec<ImageImportWarning>,
 ) {
     if metadata.calibrated_focal_length_pixels.is_none() {
@@ -766,6 +917,94 @@ fn parse_dji_xmp_calibration(
             path,
             warnings,
         );
+    }
+    if metadata.dewarp_calibration.is_none() {
+        metadata.dewarp_calibration =
+            parse_dji_dewarp_calibration(payload, path, dimensions, warnings);
+    }
+}
+
+fn parse_dji_dewarp_calibration(
+    payload: &[u8],
+    path: &Path,
+    dimensions: Option<ImageDimensions>,
+    warnings: &mut Vec<ImageImportWarning>,
+) -> Option<DjiBrownConradyCalibration> {
+    let raw = match xmp_raw_value(payload, b"drone-dji:DewarpData") {
+        XmpRawValue::Absent => return None,
+        XmpRawValue::Invalid => {
+            warnings.push(warning(
+                path,
+                ImageImportWarningCode::MetadataValueInvalid,
+                "DJI XMP DewarpData is malformed".into(),
+            ));
+            return None;
+        }
+        XmpRawValue::Value(raw) => raw,
+    };
+    let Some(dimensions) = dimensions else {
+        warnings.push(warning(
+            path,
+            ImageImportWarningCode::MetadataValueInvalid,
+            "DJI XMP DewarpData cannot be applied without source image dimensions".into(),
+        ));
+        return None;
+    };
+    let Some(value) = std::str::from_utf8(raw)
+        .ok()
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && value.len() <= 512)
+    else {
+        warnings.push(warning(
+            path,
+            ImageImportWarningCode::MetadataValueInvalid,
+            "DJI XMP DewarpData is not valid bounded UTF-8".into(),
+        ));
+        return None;
+    };
+    let Some((calibration_date, parameters)) = value.split_once(';') else {
+        warnings.push(warning(
+            path,
+            ImageImportWarningCode::MetadataValueInvalid,
+            "DJI XMP DewarpData must contain a date and nine parameters".into(),
+        ));
+        return None;
+    };
+    let values = parameters
+        .split(',')
+        .map(str::trim)
+        .map(str::parse::<f64>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()
+        .filter(|values| values.len() == 9 && values.iter().all(|value| value.is_finite()));
+    let Some(values) = values else {
+        warnings.push(warning(
+            path,
+            ImageImportWarningCode::MetadataValueInvalid,
+            "DJI XMP DewarpData must contain exactly nine finite numeric parameters".into(),
+        ));
+        return None;
+    };
+    // DJI order: fx, fy, cx-offset, cy-offset, k1, k2, p1, p2, k3.
+    let calibration = DjiBrownConradyCalibration {
+        focal_x_pixels: values[0],
+        focal_y_pixels: values[1],
+        principal_x_pixels: f64::from(dimensions.width_pixels) * 0.5 + values[2],
+        principal_y_pixels: f64::from(dimensions.height_pixels) * 0.5 + values[3],
+        radial_distortion: [values[4], values[5], values[8]],
+        tangential_distortion: [values[6], values[7]],
+        calibration_date: calibration_date.trim().to_owned(),
+        provenance: DjiCalibrationProvenance::DewarpData,
+    };
+    if calibration.is_valid_for_dimensions(dimensions) {
+        Some(calibration)
+    } else {
+        warnings.push(warning(
+            path,
+            ImageImportWarningCode::MetadataValueInvalid,
+            "DJI XMP DewarpData is outside the finite image calibration bounds".into(),
+        ));
+        None
     }
 }
 
@@ -918,6 +1157,7 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use std::{
+        cell::Cell,
         fs,
         sync::atomic::{AtomicU64, Ordering},
     };
@@ -1092,7 +1332,7 @@ mod tests {
         fs::write(&path, jpeg_with_xmp(xml)).expect("JPEG fixture must be written");
         let mut warnings = Vec::new();
 
-        let metadata = parse_dji_xmp_from_jpeg(&path, &mut warnings);
+        let metadata = parse_dji_xmp_from_jpeg(&path, None, &mut warnings);
 
         assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
         assert_eq!(
@@ -1135,6 +1375,55 @@ mod tests {
             Some(0.025)
         );
         assert_eq!(metadata.calibrated_focal_length_pixels, Some(3666.4));
+    }
+
+    #[test]
+    fn parses_dji_dewarp_data_as_absolute_full_brown_calibration() {
+        let temp = TempDirectory::new();
+        let path = temp.path.join("dji-dewarp.jpg");
+        let xml = br#"<x:xmpmeta><rdf:Description
+            drone-dji:DewarpData="2025-02-26;3713.771893164336,3713.771893164336,20.720882112011,-16.733345702852,-0.107756512758,-0.000878853880,0.000130474491,-0.000011293710,-0.015723478938"/></x:xmpmeta>"#;
+        fs::write(&path, jpeg_with_xmp(xml)).expect("JPEG fixture must be written");
+        let dimensions = ImageDimensions {
+            width_pixels: 5_280,
+            height_pixels: 3_956,
+        };
+        let mut warnings = Vec::new();
+
+        let metadata = parse_dji_xmp_from_jpeg(&path, Some(dimensions), &mut warnings);
+        let calibration = metadata.dewarp_calibration.expect("DewarpData calibration");
+
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+        assert_eq!(calibration.provenance, DjiCalibrationProvenance::DewarpData);
+        assert_eq!(calibration.calibration_date, "2025-02-26");
+        assert!((calibration.focal_x_pixels - 3713.771893164336).abs() < 1.0e-12);
+        assert!((calibration.principal_x_pixels - 2660.720882112011).abs() < 1.0e-12);
+        assert!((calibration.principal_y_pixels - 1961.266654297148).abs() < 1.0e-12);
+        assert_eq!(
+            calibration.radial_distortion,
+            [-0.107756512758, -0.000878853880, -0.015723478938]
+        );
+        assert_eq!(
+            calibration.tangential_distortion,
+            [0.000130474491, -0.000011293710]
+        );
+        assert!(calibration.is_valid_for_dimensions(dimensions));
+    }
+
+    #[test]
+    fn rejects_non_finite_or_dimensionless_dji_dewarp_data() {
+        let temp = TempDirectory::new();
+        let path = temp.path.join("invalid-dewarp.jpg");
+        let xml = br#"<x:xmpmeta><rdf:Description drone-dji:DewarpData="2025-02-26;NaN,3713,0,0,0,0,0,0,0"/></x:xmpmeta>"#;
+        fs::write(&path, jpeg_with_xmp(xml)).expect("JPEG fixture must be written");
+        let mut warnings = Vec::new();
+
+        let metadata = parse_dji_xmp_from_jpeg(&path, None, &mut warnings);
+
+        assert!(metadata.dewarp_calibration.is_none());
+        assert!(warnings
+            .iter()
+            .any(|warning| warning.code == ImageImportWarningCode::MetadataValueInvalid));
     }
 
     #[test]
@@ -1182,7 +1471,7 @@ mod tests {
         fs::write(&path, jpeg_with_xmp(xml)).expect("JPEG fixture must be written");
         let mut warnings = Vec::new();
 
-        let metadata = parse_dji_xmp_from_jpeg(&path, &mut warnings);
+        let metadata = parse_dji_xmp_from_jpeg(&path, None, &mut warnings);
 
         assert!(metadata.is_empty());
         assert!(warnings
@@ -1212,5 +1501,42 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.code == ImageImportWarningCode::DuplicateContent));
+    }
+
+    #[test]
+    fn progress_is_monotonic_and_cancellation_discards_the_partial_batch() {
+        let temp = TempDirectory::new();
+        for index in 0..3 {
+            fs::write(
+                temp.path.join(format!("{index}.jpg")),
+                [index as u8, 1, 2, 3],
+            )
+            .expect("photo fixture must be written");
+        }
+        let cancel = Cell::new(false);
+        let last_progress = Cell::new(0.0_f64);
+        let messages = Cell::new(0_usize);
+
+        let batch = import_photo_files_with_progress(
+            std::slice::from_ref(&temp.path),
+            || cancel.get(),
+            |fraction, message| {
+                assert!(fraction >= last_progress.get());
+                assert!((0.0..=1.0).contains(&fraction));
+                assert!(!message.is_empty());
+                last_progress.set(fraction);
+                messages.set(messages.get() + 1);
+                if fraction > 0.3 {
+                    cancel.set(true);
+                }
+            },
+        );
+
+        assert!(
+            batch.is_none(),
+            "cancelled inspection must return no partial batch"
+        );
+        assert!(messages.get() >= 3);
+        assert!(last_progress.get() < 1.0);
     }
 }

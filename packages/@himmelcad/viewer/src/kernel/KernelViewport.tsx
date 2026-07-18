@@ -10,6 +10,7 @@ import type { KernelViewerScene } from './KernelViewerScene.js';
 import { KernelViewerSession, type KernelViewerSessionEvent } from './KernelViewerSession.js';
 import type {
   HimmelcadViewerWasmLoader,
+  KernelBackendPreference,
   KernelFrameOutcome,
   KernelPickCandidate,
   KernelResolvedHardwarePolicy,
@@ -31,10 +32,17 @@ export interface KernelViewportHandle {
 
 export interface KernelViewportProps {
   readonly wasmLoader: HimmelcadViewerWasmLoader;
+  readonly backend?: KernelBackendPreference;
   /** URL of the slim `himmelcad-decode-wasm` module used only inside workers. */
   readonly decodeWasmModuleUrl: string;
   /** Project-unit tolerance for exact authoritative clip-cap intersections. */
   readonly authoritativeSectionTolerance: number;
+  /**
+   * Keeps one window-sized presentation surface behind this clipped host.
+   * Panel layout then changes only the visible mask, never the camera or GPU
+   * target extent. An actual browser-window resize still reallocates normally.
+   */
+  readonly presentationMode?: 'container' | 'windowMask';
   readonly className?: string;
   readonly onReady?: (handle: KernelViewportHandle) => void;
   readonly onActivePick?: (
@@ -55,8 +63,10 @@ export interface KernelViewportProps {
 /** Thin React lifecycle adapter over the framework-free shared viewer session. */
 export function KernelViewport({
   wasmLoader,
+  backend,
   decodeWasmModuleUrl,
   authoritativeSectionTolerance,
+  presentationMode = 'container',
   className,
   onReady,
   onActivePick,
@@ -66,11 +76,13 @@ export function KernelViewport({
   onRuntimeQuality,
   onError,
 }: KernelViewportProps): JSX.Element {
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const root = rootRef.current;
+    if (!canvas || !root) return;
     const abort = new AbortController();
     let alive = true;
     let animationFrame: number | null = null;
@@ -78,6 +90,20 @@ export function KernelViewport({
     let session: KernelViewerSession | null = null;
     let hostInteracting = false;
     let resizeViewport: (() => void) | null = null;
+    const windowMasked = presentationMode === 'windowMask';
+
+    const syncWindowMask = (): void => {
+      if (!windowMasked) return;
+      const bounds = root.getBoundingClientRect();
+      canvas.style.left = `${-bounds.left}px`;
+      canvas.style.top = `${-bounds.top}px`;
+      canvas.style.width = `${globalThis.innerWidth}px`;
+      canvas.style.height = `${globalThis.innerHeight}px`;
+    };
+
+    // Establish the compositor geometry before the GPU surface is created so
+    // its first camera and target already use the stable presentation extent.
+    syncWindowMask();
 
     const fail = (error: unknown): void => {
       if (!alive || abort.signal.aborted) return;
@@ -131,8 +157,12 @@ export function KernelViewport({
         const created = await KernelViewerSession.create({
           canvas,
           wasmLoader,
+          ...(backend ? { backend } : {}),
           decodeWasmModuleUrl,
           authoritativeSectionTolerance,
+          ...(windowMasked
+            ? { initialWidth: globalThis.innerWidth, initialHeight: globalThis.innerHeight }
+            : {}),
           requestFrame,
           signal: abort.signal,
         });
@@ -149,16 +179,24 @@ export function KernelViewport({
         });
         const resize = (): void => {
           if (!alive || session === null) return;
+          if (windowMasked) {
+            syncWindowMask();
+            // CAD presentation stays at native physical resolution. Geometry
+            // detail remains adaptive, but interaction never reallocates a
+            // blurry fractional-resolution backbuffer.
+            const pixelRatio = Math.min(globalThis.devicePixelRatio || 1, 2);
+            session.resize(globalThis.innerWidth, globalThis.innerHeight, pixelRatio);
+            return;
+          }
           const bounds = canvas.getBoundingClientRect();
-          const renderScale = Math.min(
-            globalThis.devicePixelRatio || 1,
-            session.runtimeQuality.renderScale,
-          );
+          const renderScale =
+            (globalThis.devicePixelRatio || 1) * session.runtimeQuality.renderScale;
           session.resize(bounds.width, bounds.height, renderScale);
         };
         resizeViewport = resize;
-        resizeObserver = new ResizeObserver(resize);
-        resizeObserver.observe(canvas);
+        resizeObserver = new ResizeObserver(windowMasked ? syncWindowMask : resize);
+        resizeObserver.observe(windowMasked ? root : canvas);
+        if (windowMasked) globalThis.addEventListener('resize', resize);
         resize();
         onHardwarePolicy?.(created.hardwarePolicy);
         onReady?.({
@@ -189,10 +227,12 @@ export function KernelViewport({
       abort.abort();
       if (animationFrame !== null) cancelAnimationFrame(animationFrame);
       resizeObserver?.disconnect();
+      if (windowMasked && resizeViewport) globalThis.removeEventListener('resize', resizeViewport);
       session?.dispose();
     };
   }, [
     authoritativeSectionTolerance,
+    backend,
     decodeWasmModuleUrl,
     onActivePick,
     onCursorCoordinate,
@@ -201,12 +241,19 @@ export function KernelViewport({
     onHardwarePolicy,
     onReady,
     onRuntimeQuality,
+    presentationMode,
     wasmLoader,
   ]);
 
   return (
-    <div className={className ? `${styles.root} ${className}` : styles.root}>
-      <canvas ref={canvasRef} className={styles.canvas} />
+    <div
+      ref={rootRef}
+      className={`${styles.root}${presentationMode === 'windowMask' ? ` ${styles.windowMask}` : ''}${className ? ` ${className}` : ''}`}
+    >
+      <canvas
+        ref={canvasRef}
+        className={`${styles.canvas}${presentationMode === 'windowMask' ? ` ${styles.windowCanvas}` : ''}`}
+      />
     </div>
   );
 }

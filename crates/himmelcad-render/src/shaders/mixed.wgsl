@@ -5,7 +5,7 @@ struct FrameUniform {
     clip_volume_meta: array<vec4<u32>, 4>,
     viewport_size: vec2<f32>,
     clip_volume_count: u32,
-    _padding_0: u32,
+    point_size_scale: f32,
 }
 
 @group(0) @binding(0)
@@ -675,7 +675,7 @@ fn point_vertex_main(input: PointInstanceInput, @builtin(vertex_index) vertex_in
     let style_position = styled_position(input.position);
     let position = frame_position(style_position);
     let center = frame.view_projection * vec4<f32>(position, 1.0);
-    let ndc_offset = corner * input.point_size / frame.viewport_size;
+    let ndc_offset = corner * input.point_size * frame.point_size_scale / frame.viewport_size;
     var output: VertexOutput;
     output.clip_position = center + vec4<f32>(ndc_offset * center.w, 0.0, 0.0);
     output.render_position = position;

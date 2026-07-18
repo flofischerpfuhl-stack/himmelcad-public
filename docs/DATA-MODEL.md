@@ -95,6 +95,18 @@ The MVP needs only:
 - `PointCloud`
 - `PointCloudSegment`
 
+PhotoLab additionally persists acquisition and solve lineage. `CaptureGroup` freezes one mission
+or continuous camera setup. Its cameras are partitioned into `CameraCalibrationGroup` records so
+an autofocus or lens change never shares intrinsics implicitly. Independent `AlignmentRun` and
+GCP-optimization records can be connected only by an explicit `MergedAlignmentRun`; the merge
+retains all input runs, controls/overlap evidence and the union camera scope. See ADR 0014.
+
+Each `CameraImage` may select one immutable `ImageMaskRevision`. Set raster bits mean excluded
+original-image pixels; vector brush edits and parent hashes preserve edit history without mutating
+old revisions. `masked` is derived solely from a non-empty current raster. Alignment, merged
+alignment and MVS lineage freeze the exact camera/processing-set mask-scope hash, so masks outside
+a processing set do not invalidate it while any in-scope edit does. See ADR 0015.
+
 Open modeling decisions are tracked in `docs/OPEN-QUESTIONS.md`; most notably
 whether 2D/3D polylines share one kind and how strict specifications should be.
 

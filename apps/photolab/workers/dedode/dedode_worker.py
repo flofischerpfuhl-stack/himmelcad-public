@@ -57,13 +57,32 @@ def _preflight(source_root: pathlib.Path) -> int:
     return 0
 
 
-def _read_rgb(Image, np, torch, path: pathlib.Path, width: int, height: int, normalizer, device):
+def _read_rgb(Image, np, torch, path: pathlib.Path, width: int, height: int, normalizer, device, mask_path=None):
     with Image.open(path) as image:
         original_width, original_height = image.size
         resized = image.convert("RGB").resize((width, height))
         array = np.asarray(resized, dtype=np.float32) / np.float32(255.0)
+    valid = np.ones((height, width), dtype=bool)
+    if mask_path is not None:
+        with Image.open(mask_path) as mask:
+            if mask.size != (original_width, original_height):
+                raise ValueError("image mask dimensions differ from source pixels")
+            valid = np.asarray(
+                mask.convert("L").resize((width, height), Image.Resampling.NEAREST),
+                dtype=np.uint8,
+            ) > 127
+        array[~valid] = np.float32(0.5)
     tensor = torch.from_numpy(array).permute(2, 0, 1)
-    return normalizer(tensor).unsqueeze(0).to(device), original_width, original_height
+    return normalizer(tensor).unsqueeze(0).to(device), original_width, original_height, valid
+
+
+def _retain_unmasked_keypoints(np, keypoints, confidence, valid):
+    pixel_x = np.clip(((keypoints[:, 0] + 1.0) * 0.5 * valid.shape[1]).astype(np.int64), 0, valid.shape[1] - 1)
+    pixel_y = np.clip(((keypoints[:, 1] + 1.0) * 0.5 * valid.shape[0]).astype(np.int64), 0, valid.shape[0] - 1)
+    keep = valid[pixel_y, pixel_x]
+    if not np.any(keep):
+        raise ValueError("image mask excludes every DeDoDe feature location")
+    return keypoints[keep], confidence[keep]
 
 
 def _force_float32(torch, model) -> None:
@@ -227,13 +246,19 @@ def _run(request_path: pathlib.Path, source_root: pathlib.Path) -> int:
     completed_images: list[str] = []
     for index, image in enumerate(images):
         image_id = image["id"]
-        tensor, original_width, original_height = _read_rgb(
+        tensor, original_width, original_height, valid = _read_rgb(
             Image, np, torch, pathlib.Path(image["path"]),
-            int(request["inferenceWidth"]), int(request["inferenceHeight"]), detector.normalizer, device
+            int(request["inferenceWidth"]), int(request["inferenceHeight"]), detector.normalizer, device,
+            image.get("maskPath"),
         )
         detections = detector.detect({"image": tensor}, num_keypoints=int(request["maxKeypoints"]))
         keypoints = detections["keypoints"]
         confidence = detections["confidence"]
+        filtered_keypoints, filtered_confidence = _retain_unmasked_keypoints(
+            np, keypoints[0].float().cpu().numpy(), confidence[0].float().cpu().numpy(), valid
+        )
+        keypoints = torch.from_numpy(filtered_keypoints).to(device).unsqueeze(0)
+        confidence = torch.from_numpy(filtered_confidence).to(device).unsqueeze(0)
         descriptions = descriptor.describe_keypoints({"image": tensor}, keypoints)["descriptions"]
         _save_features(
             np, feature_root / f"{image_id}.npz",

@@ -88,6 +88,7 @@ pub fn read_project_camera_images(
     project_root: &Path,
     manifest: &PhotolabProjectManifest,
 ) -> Result<Vec<ProjectCameraImageRecord>, ImageCommitError> {
+    let mut legacy_axis_swap_by_transformation = BTreeMap::<String, bool>::new();
     let mut records = manifest
         .entities
         .values()
@@ -104,7 +105,47 @@ pub fn read_project_camera_images(
                     observed_hash: observed,
                 });
             }
-            let metadata = serde_json::from_slice::<CameraImageMetadataRecord>(&bytes)?;
+            let mut metadata = serde_json::from_slice::<CameraImageMetadataRecord>(&bytes)?;
+            if metadata.schema_version == 1 {
+                let swap = if let Some(value) = legacy_axis_swap_by_transformation
+                    .get(metadata.transformation_object_hash.as_str())
+                {
+                    *value
+                } else {
+                    let transformation_path =
+                        object_path(project_root, &metadata.transformation_object_hash);
+                    let transformation_bytes = fs::read(&transformation_path).map_err(|error| {
+                        io_error(
+                            "read image transformation object",
+                            &transformation_path,
+                            error,
+                        )
+                    })?;
+                    if ObjectHash::of_bytes(&transformation_bytes)
+                        != metadata.transformation_object_hash
+                    {
+                        return Err(ImageCommitError::ObjectHashMismatch {
+                            path: transformation_path,
+                            expected_hash: metadata.transformation_object_hash.clone(),
+                            observed_hash: ObjectHash::of_bytes(&transformation_bytes),
+                        });
+                    }
+                    let transformation = serde_json::from_slice::<FrozenImportTransformation>(
+                        &transformation_bytes,
+                    )?;
+                    let swap = pipeline_ends_with_axis_swap(&transformation.pipeline.proj_pipeline);
+                    legacy_axis_swap_by_transformation.insert(
+                        metadata.transformation_object_hash.as_str().to_owned(),
+                        swap,
+                    );
+                    swap
+                };
+                if swap {
+                    if let Some(reference) = metadata.projected_reference.as_mut() {
+                        std::mem::swap(&mut reference.easting, &mut reference.northing);
+                    }
+                }
+            }
             if metadata.source_object_hash.as_str().len() != 64 {
                 return Err(ImageCommitError::InvalidRequest(
                     "camera metadata contains an invalid source object hash",
@@ -171,9 +212,27 @@ pub fn commit_images_transaction(
     params: CommitImagesParams,
     cancellation: &CancellationToken,
 ) -> Result<CommitImagesResult, ImageCommitError> {
-    commit_images_with_cancel(project_root, manifest, params, || {
-        cancellation.is_cancel_requested()
-    })
+    commit_images_transaction_with_progress(project_root, manifest, params, cancellation, |_, _| {})
+}
+
+/// Transactional commit with observable, monotonic progress.
+pub fn commit_images_transaction_with_progress<P>(
+    project_root: &Path,
+    manifest: &mut PhotolabProjectManifest,
+    params: CommitImagesParams,
+    cancellation: &CancellationToken,
+    progress: P,
+) -> Result<CommitImagesResult, ImageCommitError>
+where
+    P: FnMut(f64, &str),
+{
+    commit_images_with_cancel_and_progress(
+        project_root,
+        manifest,
+        params,
+        || cancellation.is_cancel_requested(),
+        progress,
+    )
 }
 
 /// Transaction implementation with injectable cancellation for deterministic tests.
@@ -181,11 +240,26 @@ pub fn commit_images_with_cancel<C>(
     project_root: &Path,
     manifest: &mut PhotolabProjectManifest,
     params: CommitImagesParams,
-    mut is_cancelled: C,
+    is_cancelled: C,
 ) -> Result<CommitImagesResult, ImageCommitError>
 where
     C: FnMut() -> bool,
 {
+    commit_images_with_cancel_and_progress(project_root, manifest, params, is_cancelled, |_, _| {})
+}
+
+fn commit_images_with_cancel_and_progress<C, P>(
+    project_root: &Path,
+    manifest: &mut PhotolabProjectManifest,
+    params: CommitImagesParams,
+    mut is_cancelled: C,
+    mut progress: P,
+) -> Result<CommitImagesResult, ImageCommitError>
+where
+    C: FnMut() -> bool,
+    P: FnMut(f64, &str),
+{
+    progress(0.01, "Validating image import transaction");
     validate_request(&params)?;
     ensure_project_layout(project_root)?;
     check_cancelled(&mut is_cancelled)?;
@@ -209,7 +283,9 @@ where
         params.images,
         &params.transformation,
         &mut is_cancelled,
+        &mut progress,
     )?;
+    progress(0.9, "Preparing the atomic project update");
     let (candidate_manifest, result_items, affected, before_refs, after_refs) = prepare_manifest(
         manifest,
         &image_collection_id,
@@ -224,6 +300,7 @@ where
         rollback_published(&published)?;
         return Err(ImageCommitError::Cancelled);
     }
+    progress(0.97, "Publishing image metadata and project journal");
 
     let journal = PhotolabJournalEntry {
         sequence: candidate_manifest.command_sequence,
@@ -247,7 +324,7 @@ where
 
     let duplicate_count = result_items.iter().filter(|item| item.duplicate).count();
     let imported_entity_count = result_items.len().saturating_sub(duplicate_count);
-    Ok(CommitImagesResult {
+    let result = CommitImagesResult {
         operation_id: journal.command_id,
         images: result_items,
         imported_entity_count: u32::try_from(imported_entity_count).unwrap_or(u32::MAX),
@@ -255,10 +332,12 @@ where
         autosave_generation: manifest.autosave_generation,
         journal_sequence: journal.sequence,
         transformation_object_hash: batch.transformation_hash,
-    })
+    };
+    progress(1.0, "Images imported atomically");
+    Ok(result)
 }
 
-fn stage_image_batch<C>(
+fn stage_image_batch<C, P>(
     project_root: &Path,
     staging_root: &Path,
     manifest: &PhotolabProjectManifest,
@@ -266,9 +345,11 @@ fn stage_image_batch<C>(
     images: Vec<ImageCommitItem>,
     transformation: &FrozenImportTransformation,
     is_cancelled: &mut C,
+    progress: &mut P,
 ) -> Result<StagedImageBatch, ImageCommitError>
 where
     C: FnMut() -> bool,
+    P: FnMut(f64, &str),
 {
     let transformation_bytes = serde_json::to_vec(transformation)?;
     let transformation_hash = ObjectHash::of_bytes(&transformation_bytes);
@@ -279,7 +360,7 @@ where
         &transformation_bytes,
     )?;
     let (indexed_items, canonical) =
-        stage_verified_sources(project_root, staging_root, images, is_cancelled)?;
+        stage_verified_sources(project_root, staging_root, images, is_cancelled, progress)?;
     let (prepared_by_hash, mut object_hashes) = prepare_camera_metadata(
         project_root,
         staging_root,
@@ -299,14 +380,16 @@ where
 
 type CanonicalSources = BTreeMap<String, (ImageCommitItem, ObjectHash)>;
 
-fn stage_verified_sources<C>(
+fn stage_verified_sources<C, P>(
     project_root: &Path,
     staging_root: &Path,
     images: Vec<ImageCommitItem>,
     is_cancelled: &mut C,
+    progress: &mut P,
 ) -> Result<(Vec<(usize, ImageCommitItem)>, CanonicalSources), ImageCommitError>
 where
     C: FnMut() -> bool,
+    P: FnMut(f64, &str),
 {
     let mut indexed_items = images.into_iter().enumerate().collect::<Vec<_>>();
     indexed_items.sort_by(|left, right| {
@@ -317,8 +400,14 @@ where
             .then_with(|| left.0.cmp(&right.0))
     });
     let mut canonical = BTreeMap::new();
-    for (index, item) in &indexed_items {
+    let total = indexed_items.len();
+    for (completed, (index, item)) in indexed_items.iter().enumerate() {
         check_cancelled(is_cancelled)?;
+        let filename = source_file_name(&item.photo.source_path);
+        progress(
+            0.04 + 0.82 * completed as f64 / total.max(1) as f64,
+            &format!("Copying image {} of {total}: {filename}", completed + 1),
+        );
         let incoming = staging_root.join("incoming").join(format!("{index:08}"));
         let observed =
             copy_source_to_staging(Path::new(&item.photo.source_path), &incoming, is_cancelled)?;
@@ -341,6 +430,10 @@ where
         canonical
             .entry(observed.hash.as_str().to_owned())
             .or_insert_with(|| (item.clone(), observed.hash));
+        progress(
+            0.04 + 0.82 * (completed + 1) as f64 / total.max(1) as f64,
+            &format!("Verified image {} of {total}: {filename}", completed + 1),
+        );
     }
     Ok((indexed_items, canonical))
 }
@@ -377,7 +470,7 @@ fn prepare_camera_metadata(
             entity.version_hash.clone()
         } else {
             let metadata = CameraImageMetadataRecord {
-                schema_version: 1,
+                schema_version: 2,
                 source_object_hash: source_hash.clone(),
                 transformation_object_hash: transformation_hash.clone(),
                 inspected_photo: item.photo.clone(),
@@ -411,6 +504,16 @@ fn prepare_camera_metadata(
         );
     }
     Ok((prepared, object_hashes))
+}
+
+fn pipeline_ends_with_axis_swap(pipeline: &str) -> bool {
+    pipeline.rsplit("+step").next().is_some_and(|last| {
+        last.split_ascii_whitespace()
+            .any(|token| token == "+proj=axisswap")
+            && last
+                .split_ascii_whitespace()
+                .any(|token| token == "+order=2,1")
+    })
 }
 
 fn validate_request(params: &CommitImagesParams) -> Result<(), ImageCommitError> {
@@ -450,10 +553,11 @@ fn validate_request(params: &CommitImagesParams) -> Result<(), ImageCommitError>
                 ImageProductTag::Aligned
                     | ImageProductTag::DepthReady
                     | ImageProductTag::DepthStale
+                    | ImageProductTag::Masked
             )
         }) {
             return Err(ImageCommitError::InvalidRequest(
-                "alignment and depth tags cannot be set during image import",
+                "alignment, depth, and mask tags cannot be set during image import",
             ));
         }
     }
@@ -485,7 +589,9 @@ fn validate_frozen_transformation(
         if grid.official_filename.trim().is_empty() || grid.local_path.trim().is_empty() {
             return Err(ImageCommitError::InvalidTransformation);
         }
-        validate_hash(&grid.official_sha256, "CRS grid hash")?;
+        if let Some(hash) = &grid.official_sha256 {
+            validate_hash(hash, "CRS grid hash")?;
+        }
     }
     Ok(())
 }
@@ -969,7 +1075,7 @@ mod tests {
         FrozenOperationPipeline, GeographicArea, HeightReference, OperationSelectionPolicy,
         VerticalOperationMode,
     };
-    use himmelcad_core::photolab_images::{PhotoFormat, PhotoMetadata};
+    use himmelcad_core::photolab_images::{PhotoFormat, PhotoMetadata, ProjectedPhotoReference};
     use himmelcad_core::photolab_project::initial_photolab_manifest;
 
     use super::*;
@@ -1070,6 +1176,18 @@ mod tests {
             .values()
             .filter(|entity| entity.kind == EntityKind::CameraImage)
             .count()
+    }
+
+    #[test]
+    fn import_cannot_forge_the_derived_mask_tag() {
+        let directory = TestDirectory::new("masked-import-tag");
+        let bytes = b"camera image bytes";
+        let source = write_source(&directory.0, "masked.jpg", bytes);
+        let mut item = inspected(&source, bytes);
+        item.tags.insert(ImageProductTag::Masked);
+        let error = validate_request(&request("masked-import", vec![item]))
+            .expect_err("mask tag must come from a real mask revision");
+        assert!(matches!(error, ImageCommitError::InvalidRequest(_)));
     }
 
     #[test]
@@ -1204,5 +1322,76 @@ mod tests {
             0
         );
         assert!(!object_path(&directory.0, &ObjectHash::of_bytes(first_bytes)).exists());
+    }
+
+    #[test]
+    fn legacy_axis_swapped_camera_references_are_read_as_easting_northing() {
+        let directory = TestDirectory::new("legacy-axis-contract");
+        ensure_project_layout(&directory.0).expect("project layout");
+        let mut transformation = frozen_transformation();
+        transformation.pipeline.proj_pipeline =
+            "+proj=pipeline +step +proj=tmerc +step +proj=axisswap +order=2,1".to_owned();
+        let transformation_bytes = serde_json::to_vec(&transformation).expect("transformation");
+        let transformation_hash = ObjectHash::of_bytes(&transformation_bytes);
+        let transformation_path = object_path(&directory.0, &transformation_hash);
+        create_parent(&transformation_path).expect("transformation parent");
+        fs::write(&transformation_path, transformation_bytes).expect("transformation object");
+
+        let source_hash = ObjectHash::of_bytes(b"legacy-camera-source");
+        let metadata = CameraImageMetadataRecord {
+            schema_version: 1,
+            source_object_hash: source_hash,
+            transformation_object_hash: transformation_hash,
+            inspected_photo: DiscoveredPhoto {
+                source_path: "/legacy.jpg".to_owned(),
+                format: PhotoFormat::Jpeg,
+                byte_size: 1,
+                sha256: ObjectHash::of_bytes(b"legacy-camera-source"),
+                metadata: PhotoMetadata::default(),
+                duplicate_of: None,
+            },
+            projected_reference: Some(ProjectedPhotoReference {
+                source_latitude_degrees: 47.65,
+                source_longitude_degrees: 10.34,
+                source_height_meters: Some(783.0),
+                easting: 5_281_200.5,
+                northing: 4_375_550.25,
+                transformed_height_meters: Some(735.8),
+                transformation_decision_sha256: ObjectHash::of_bytes(b"decision"),
+            }),
+            status_tags: BTreeSet::new(),
+        };
+        let metadata_bytes = serde_json::to_vec(&metadata).expect("metadata");
+        let metadata_hash = ObjectHash::of_bytes(&metadata_bytes);
+        let metadata_path = object_path(&directory.0, &metadata_hash);
+        create_parent(&metadata_path).expect("metadata parent");
+        fs::write(&metadata_path, metadata_bytes).expect("metadata object");
+
+        let mut manifest = manifest();
+        let images = find_image_collection(&manifest).expect("image collection");
+        let camera_id = EntityId("project-test:image:legacy".to_owned());
+        manifest.entities.insert(
+            camera_id.0.clone(),
+            EntitySnapshot {
+                id: camera_id,
+                kind: EntityKind::CameraImage,
+                name: "legacy.jpg".to_owned(),
+                parent: Some(images),
+                children: Vec::new(),
+                visibility: VisibilityState::default(),
+                version_hash: metadata_hash,
+                bounds: None,
+            },
+        );
+
+        let records = read_project_camera_images(&directory.0, &manifest).expect("camera records");
+        let reference = records[0]
+            .metadata
+            .projected_reference
+            .as_ref()
+            .expect("projected reference");
+        assert_eq!(reference.easting, 4_375_550.25);
+        assert_eq!(reference.northing, 5_281_200.5);
+        assert_eq!(reference.transformed_height_meters, Some(735.8));
     }
 }

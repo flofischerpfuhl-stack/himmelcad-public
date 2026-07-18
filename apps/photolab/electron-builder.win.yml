@@ -15,11 +15,15 @@ extraResources:
     to: LICENSE.txt
   - from: ../../LICENSES/THIRD_PARTY.md
     to: THIRD_PARTY_NOTICES.md
-  - from: ../../target/release/himmelcad-sidecar.exe
+  - from: ../../.build/release-inventory/photolab-win32-x64.json
+    to: RELEASE_INVENTORY.json
+  - from: ../../target/x86_64-pc-windows-gnullvm/release/himmelcad-sidecar.exe
     to: himmelcad-sidecar.exe
-  - from: ../../target/release/himmelcad-portable-mvs.exe
+  - from: ../../target/x86_64-pc-windows-gnullvm/release/himmelcad-portable-mvs.exe
     to: himmelcad-portable-mvs.exe
-  - from: ../../vendor/colmap/win32-x64
+  - from: ../../target/x86_64-pc-windows-gnullvm/release/libunwind.dll
+    to: libunwind.dll
+  - from: ../../.build/photolab-runtime/win32-x64/workers/colmap
     to: vendor/colmap/win32-x64
   - from: ../../vendor/brush/win32-x64
     to: vendor/brush/win32-x64
@@ -27,17 +31,10 @@ extraResources:
     to: vendor/potreeconverter/win32-x64
   - from: ../../vendor/photolab-models
     to: vendor/photolab-models
-  - from: ../../vendor/dedode/win32-x64
+  - from: ../../.build/photolab-runtime/win32-x64/workers/dedode
     to: vendor/dedode/win32-x64
-    filter:
-      - '**/*'
-      - '!.venv/**'
-  - from: workers/dedode/dedode_worker.py
-    to: workers/dedode_worker.py
   - from: ../../.build/photolab-runtime/win32-x64/workers/geo
     to: workers/geo
-  - from: ../../.build/photolab-runtime/win32-x64/python
-    to: vendor/dedode/win32-x64/python
 win:
   icon: build/icon.ico
   target:

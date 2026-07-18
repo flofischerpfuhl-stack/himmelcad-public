@@ -1,6 +1,8 @@
 //! Read-only host capability probing for quality-equivalent resource planning.
 
-use std::{collections::BTreeSet, fs, process::Command};
+use std::process::Command;
+#[cfg(any(target_os = "linux", test))]
+use std::{collections::BTreeSet, fs};
 
 use himmelcad_core::photolab_models::{
     CpuCapabilities, CudaCapabilities, CudaComputeCapability, HardwareCapabilities,
@@ -72,6 +74,7 @@ fn host_memory_and_physical_cores(logical: u16) -> Result<(u64, u16), HardwarePr
     Err(HardwareProbeError::MissingMemory)
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn parse_linux_memory(text: &str) -> Option<u64> {
     text.lines().find_map(|line| {
         let mut fields = line.split_ascii_whitespace();
@@ -82,6 +85,7 @@ fn parse_linux_memory(text: &str) -> Option<u64> {
     })
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn parse_linux_physical_cores(text: &str) -> Option<u16> {
     let mut package = None;
     let mut core = None;

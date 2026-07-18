@@ -27,12 +27,14 @@ export interface LasImportSummary {
    * `metadata_url` instead.
    */
   potree_dir: string;
-  /** Short hash that identifies this entity inside the cache. */
+  /** Stable semantic identity of this imported entity. */
   entity_id: string;
+  /** Content-addressed identity of the immutable prepared dataset. */
+  dataset_id: string;
   /**
    * Renderer-reachable URL for the Potree 2.0 metadata file. The
    * three-loader fetches this and discovers `hierarchy.bin` / `octree.bin`
-   * relative to it. Built by the Electron host from `entity_id`.
+   * relative to it. Built by the Electron host from `dataset_id`.
    */
   metadata_url: string;
 }
@@ -52,6 +54,9 @@ export interface HimmelCADApi {
     call: <T = unknown>(method: string, params?: unknown) => Promise<T>;
     onStderr: (cb: (line: string) => void) => () => void;
   };
+  readonly dev: {
+    initialPointCloudPaths: () => Promise<string[]>;
+  };
   readonly dialog: {
     openLas: () => Promise<string[]>;
   };
@@ -59,6 +64,9 @@ export interface HimmelCADApi {
     paths: string[],
     progressKey?: string,
   ) => Promise<{ imports: LasImportSummary[] }>;
+  readonly cancelLasImport: (
+    operationId: string,
+  ) => Promise<{ operationId: string; cancellationRequested: boolean }>;
 }
 
 const api: HimmelCADApi = {
@@ -84,6 +92,9 @@ const api: HimmelCADApi = {
       return () => ipcRenderer.off('sidecar:stderr', listener);
     },
   },
+  dev: {
+    initialPointCloudPaths: () => ipcRenderer.invoke('dev:initial-point-cloud-paths'),
+  },
   dialog: {
     openLas: () => ipcRenderer.invoke('dialog:openLas'),
   },
@@ -91,6 +102,10 @@ const api: HimmelCADApi = {
     ipcRenderer.invoke('import:las', { paths, progressKey }) as Promise<{
       imports: LasImportSummary[];
     }>,
+  cancelLasImport: (operationId) =>
+    ipcRenderer.invoke('sidecar:call', 'import.las.cancel', {
+      operation_id: operationId,
+    }) as Promise<{ operationId: string; cancellationRequested: boolean }>,
 };
 
 contextBridge.exposeInMainWorld('himmelcad', api);

@@ -1,0 +1,49 @@
+.root {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: var(--hc-radius-island);
+  background: var(--hc-bg-island);
+  contain: layout paint style;
+  isolation: isolate;
+}
+
+.coordinates {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 2;
+  min-height: var(--hc-size-chip-h);
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-chip);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-chip);
+  box-shadow: var(--hc-shadow-chip);
+  font-family: var(--hc-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.coordinates span {
+  color: var(--hc-accent-base);
+  font-weight: 600;
+}
+
+.dropOverlay {
+  position: absolute;
+  inset: 12px;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  color: var(--hc-fg-strong);
+  background: var(--hc-accent-soft);
+  border: 2px dashed var(--hc-accent-base);
+  border-radius: var(--hc-radius-island);
+  pointer-events: none;
+  font-size: 14px;
+  letter-spacing: 0.06em;
+}

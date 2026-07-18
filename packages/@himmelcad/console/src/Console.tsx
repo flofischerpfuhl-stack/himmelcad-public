@@ -8,7 +8,7 @@ import {
   AVE_MARIA,
   BRAND_WORDMARK,
   CRUCIFIX_ASCII,
-  MADONNA_ASCII,
+  MADONNA_ASCII_HTML,
   PATER_NOSTER,
 } from './brandArt.js';
 import { consoleStore } from './store.js';
@@ -180,7 +180,11 @@ export function Console({
             <pre className={styles.liturgy}>{PATER_NOSTER}</pre>
             <pre className={styles.asciiArt}>{CRUCIFIX_ASCII}</pre>
             <pre className={styles.liturgy}>{AVE_MARIA}</pre>
-            <pre className={`${styles.asciiArt} ${styles.asciiArtDense}`}>{MADONNA_ASCII}</pre>
+            <pre
+              className={`${styles.asciiArt} ${styles.asciiArtDense} ${styles.asciiArtColor}`}
+              // Colored per-character art (user-supplied MARI image → HTML spans).
+              dangerouslySetInnerHTML={{ __html: MADONNA_ASCII_HTML }}
+            />
             <div className={styles.brandSplash}>{BRAND_WORDMARK}</div>
             <div className={styles.brandSubtitle}>{brandSubtitle}</div>
           </div>

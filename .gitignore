@@ -91,11 +91,16 @@ vendor/photolab-models/**/*.pth
 vendor/photolab-models/**/*.pt
 vendor/dedode/**/*.pth
 vendor/dedode/**/*.pt
+vendor/dedode/onnx/
 vendor/dedode/dev/
+
+# User-supplied photogrammetry/reference archives and extracted working copies.
+photolab/01_Transformation/
 vendor/colmap/*/bin/
 vendor/colmap/*/include/
 vendor/colmap/*/lib/
 vendor/colmap/*/share/
+vendor/msvc-runtime/*/*.dll
 vendor/three-loader/node_modules/
 
 # Local PhotoLab reference datasets and user-supplied test archives. Curated

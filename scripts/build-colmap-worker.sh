@@ -24,8 +24,18 @@ fi
 if [[ ! -d "$SOURCE/.git" ]]; then
   git clone --depth 1 --branch 4.1.0 https://github.com/colmap/colmap.git "$SOURCE"
 fi
-git -C "$SOURCE" reset --hard 4.1.0
-git -C "$SOURCE" apply "$ROOT/patches/colmap-4.1.0-no-copyleft.patch"
+if [[ "$(git -C "$SOURCE" rev-parse HEAD)" != "$(git -C "$SOURCE" rev-parse 4.1.0^{commit})" ]]; then
+  echo "Existing COLMAP source is not the pinned 4.1.0 commit: $SOURCE" >&2
+  exit 1
+fi
+if git -C "$SOURCE" apply --reverse --check "$ROOT/patches/colmap-4.1.0-no-copyleft.patch" 2>/dev/null; then
+  : # The audited patch is already present.
+elif git -C "$SOURCE" apply --check "$ROOT/patches/colmap-4.1.0-no-copyleft.patch"; then
+  git -C "$SOURCE" apply "$ROOT/patches/colmap-4.1.0-no-copyleft.patch"
+else
+  echo "COLMAP source contains changes outside the audited patch: $SOURCE" >&2
+  exit 1
+fi
 
 cmake -S "$SOURCE" -B "$BUILD" \
   -DCMAKE_BUILD_TYPE=Release \
@@ -46,4 +56,5 @@ cmake -S "$SOURCE" -B "$BUILD" \
   -DIPO_ENABLED=ON
 cmake --build "$BUILD" --parallel "${HIMMELCAD_BUILD_JOBS:-$(nproc)}"
 cmake --install "$BUILD"
+node "$ROOT/scripts/write-colmap-vendor-manifest.mjs" linux-x64 "$SOURCE"
 "$INSTALL/bin/colmap" -h

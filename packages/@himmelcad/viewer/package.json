@@ -14,6 +14,10 @@
       "types": "./src/kernel/index.ts",
       "default": "./src/kernel/index.ts"
     },
+    "./kernel/react": {
+      "types": "./src/kernel/KernelViewport.tsx",
+      "default": "./src/kernel/KernelViewport.tsx"
+    },
     "./legacy": {
       "types": "./src/legacy.ts",
       "default": "./src/legacy.ts"

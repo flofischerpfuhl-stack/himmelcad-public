@@ -373,7 +373,7 @@ function ImageLayerContent({
           onEditGcpObservation={onEditGcpObservation}
           onEditImageMask={onEditImageMask}
         />
-        <span>{fileName(photo)} · Original</span>
+        <span title={photo.sourcePath}>{fileName(photo)}</span>
       </div>
     );
   }
@@ -993,14 +993,14 @@ function ImageContentFrame({
         </OverlayChip>
       </div>
       {imageEntityId && (
-        <div className={styles.maskToolbar} aria-label="Image mask tools">
+        <div className={styles.maskToolbar} aria-label="Image exclusion mask tools">
           <OverlayChip
             as="button"
             active={maskTool === 'add'}
             onClick={() => setMaskTool((current) => (current === 'add' ? 'pan' : 'add'))}
             disabled={maskBusy}
             aria-label="Paint excluded area"
-            title="Paint excluded area"
+            title="Exclude areas from processing (cars, sky, people…)"
           >
             <Brush size={13} />
           </OverlayChip>
@@ -1010,23 +1010,26 @@ function ImageContentFrame({
             onClick={() => setMaskTool((current) => (current === 'remove' ? 'pan' : 'remove'))}
             disabled={maskBusy}
             aria-label="Restore masked area"
-            title="Restore masked area"
+            title="Erase mask — include area again"
           >
             <Eraser size={13} />
           </OverlayChip>
-          <label>
-            <span>Brush</span>
-            <input
-              type="range"
-              min="2"
-              max="500"
-              step="1"
-              value={maskRadius}
-              onChange={(event) => setMaskRadius(Number(event.currentTarget.value))}
-              disabled={maskBusy}
-            />
-            <code>{maskRadius}px</code>
-          </label>
+          {/* Size slider only when painting — keeps the bottom chrome calm. */}
+          {(maskTool === 'add' || maskTool === 'remove') && (
+            <label title="Brush radius in image pixels">
+              <span>Size</span>
+              <input
+                type="range"
+                min="2"
+                max="500"
+                step="1"
+                value={maskRadius}
+                onChange={(event) => setMaskRadius(Number(event.currentTarget.value))}
+                disabled={maskBusy}
+              />
+              <code>{maskRadius}px</code>
+            </label>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -1038,15 +1041,15 @@ function ImageContentFrame({
             }}
             disabled={maskBusy || !imageMask || imageMask.maskedPixelCount === 0}
             aria-label="Clear mask"
-            title="Clear mask"
+            title="Clear entire exclusion mask"
           >
             <Trash2 size={13} />
           </button>
           {maskBusy ? (
             <LoaderCircle className={styles.maskSpinner} size={13} />
-          ) : (
-            <code>{(imageMask?.maskedPixelCount ?? 0).toLocaleString('en-US')} px</code>
-          )}
+          ) : (imageMask?.maskedPixelCount ?? 0) > 0 ? (
+            <code title="Masked pixels">{(imageMask?.maskedPixelCount ?? 0).toLocaleString('en-US')} px</code>
+          ) : null}
         </div>
       )}
       <div

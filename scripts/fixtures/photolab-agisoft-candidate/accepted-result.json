@@ -1,0 +1,188 @@
+{
+  "schemaVersion": 1,
+  "success": true,
+  "goldenAgisoft": true,
+  "profile": "qualityHybrid",
+  "projectPath": "project.hcad",
+  "imageCount": 135,
+  "alignedCameraCount": 135,
+  "requestedProducts": ["depth", "dense", "dem", "ortho", "mesh", "splat"],
+  "candidateMetrics": {
+    "alignedImages": 135,
+    "targetEpsg": 31468,
+    "targetVerticalEpsg": 7837,
+    "sourceAlignmentEntityId": "project-golden:compute:alignment-quality:1",
+    "processingSetId": null,
+    "selectedProductEntityIds": {
+      "sparse": "product-sparse",
+      "depth": "product-depth",
+      "dense": "product-dense",
+      "dem": "product-dem",
+      "orthomosaic": "product-orthomosaic",
+      "mesh": "product-mesh",
+      "gaussianSplat": "product-splat"
+    },
+    "alignmentEvidence": {
+      "jobId": "alignment-quality",
+      "registeredImages": 135,
+      "sparsePoints": 156158,
+      "observations": 970914,
+      "reprojectionRmsPixels": 0.8
+    },
+    "gcpOptimizationEvidence": {
+      "operationId": "gcp-quality",
+      "artifactSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "snapshotSha256": "7757d41575cf1655cec44cb8c4dd3aee637925a0d93989aa9b9dcc1cb1432ee0",
+      "sourceAlignmentEntityId": "project-golden:compute:alignment-quality:1",
+      "processingSetId": null
+    },
+    "gcpObservationEvidence": {
+      "schemaVersion": 1,
+      "source": {
+        "gcpCsvSha256": "548dd3065f2c470b9d44a3ef4edce644f26399a4ae751b4b6e7d0f8a7600ad51",
+        "chunkDocumentSha256": "2f776c9c5d5c812bb43f3b2ace546c6741e31038acd7bcaf5e6c2549b837b575",
+        "frameDocumentSha256": "f9bb8c1bfd043b8bc4679596e16102dda9d31abe989eb61991f3b9de6294e7eb"
+      },
+      "manualObservationCount": 79,
+      "observationSetSha256": "32205e6ae087c23a31f2fdec22be4ab66aeef96e221881a83ff96679916c9f15",
+      "pointObservationCounts": {
+        "gcp260706.001": 15,
+        "gcp260706.002": 13,
+        "gcp260706.003": 12,
+        "gcp260706.004": 11,
+        "gcp260706.005": 15,
+        "gcp260706.006": 13
+      },
+      "controlPointNames": ["gcp260706.002", "gcp260706.003", "gcp260706.004", "gcp260706.006"],
+      "checkpointPointNames": ["gcp260706.001", "gcp260706.005"]
+    },
+    "reprojectionRmsPixels": 0.8,
+    "depthImageCount": 135,
+    "densePointCount": 59642494,
+    "denseFusionEvidence": {
+      "algorithm": "depthFootprintVoxelExternalMergeV1",
+      "rawSampleCount": 372840588,
+      "fusedSampleCount": 59642494,
+      "voxelSizeMeters": 0.00313357040974498,
+      "minimumRepresentativePixelFootprintMeters": 0.002516,
+      "medianRepresentativePixelFootprintMeters": 0.00313357040974498,
+      "maximumRepresentativePixelFootprintMeters": 0.004871,
+      "externalSortRuns": 1492,
+      "maximumBufferedSamples": 250000
+    },
+    "orthomosaicResolutionMetersPerPixel": 0.0075199430321273,
+    "orthomosaicBounds": {
+      "min": [4375461.75239552, 5281158.135],
+      "max": [4375608.564, 5281304.608426477]
+    },
+    "orthomosaicValidFraction": 0.55389,
+    "rasterStatistics": {
+      "dem": {
+        "widthPixels": 10000,
+        "heightPixels": 10000,
+        "resolutionMetersPerPixel": 0.015,
+        "bounds": { "min": [4375460, 5281157], "max": [4375610, 5281307] },
+        "bandCount": 1,
+        "canonicalWktSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "validFraction": null
+      },
+      "orthomosaic": {
+        "widthPixels": 19523,
+        "heightPixels": 19478,
+        "resolutionMetersPerPixel": 0.0075199430321273,
+        "bounds": {
+          "min": [4375461.75239552, 5281158.135],
+          "max": [4375608.564, 5281304.608426477]
+        },
+        "bandCount": 4,
+        "canonicalWktSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "validFraction": 0.55389
+      }
+    },
+    "controlSpatial3dRmseMeters": 0.0042,
+    "checkpointSpatial3dRmseMeters": 0.0095,
+    "gcpStatistics": {
+      "control": {
+        "pointCount": 4,
+        "eastRmsMeters": 0.0009,
+        "northRmsMeters": 0.002,
+        "heightRmsMeters": 0.0035,
+        "horizontalRmsMeters": 0.0022,
+        "spatial3dRmsMeters": 0.0042,
+        "reprojectionRmsPixels": 0.5
+      },
+      "checkpoint": {
+        "pointCount": 2,
+        "eastRmsMeters": 0.0024,
+        "northRmsMeters": 0.0055,
+        "heightRmsMeters": 0.0075,
+        "horizontalRmsMeters": 0.006,
+        "spatial3dRmsMeters": 0.0095,
+        "reprojectionRmsPixels": 0.6
+      }
+    },
+    "runtimeSeconds": {
+      "alignment": 1500,
+      "gcpOptimization": 30,
+      "depth": 1800,
+      "denseCloud": 1200,
+      "dem": 900,
+      "orthomosaic": 400,
+      "mesh": 120,
+      "gaussianSplat": 180
+    }
+  },
+  "products": [
+    {
+      "kind": "sparse",
+      "entityId": "product-sparse",
+      "relativePath": "colmap/alignment-quality/sparse-potree/octree/metadata.json",
+      "sourceAlignmentEntityId": "project-golden:compute:alignment-quality:1",
+      "processingSetId": null,
+      "pointCount": 156158
+    },
+    {
+      "kind": "depth",
+      "entityId": "product-depth",
+      "sourceAlignmentEntityId": "project-golden:compute:alignment-quality:1",
+      "processingSetId": null,
+      "relativePath": "mvs/dense-golden/output/index.json"
+    },
+    {
+      "kind": "dense",
+      "entityId": "product-dense",
+      "sourceAlignmentEntityId": "project-golden:compute:alignment-quality:1",
+      "processingSetId": null,
+      "relativePath": "mvs/dense-golden/potree/octree/metadata.json",
+      "pointCount": 59642494
+    },
+    {
+      "kind": "dem",
+      "entityId": "product-dem",
+      "sourceAlignmentEntityId": "project-golden:compute:alignment-quality:1",
+      "processingSetId": null,
+      "relativePath": "dem/manifest.json"
+    },
+    {
+      "kind": "orthomosaic",
+      "entityId": "product-orthomosaic",
+      "sourceAlignmentEntityId": "project-golden:compute:alignment-quality:1",
+      "processingSetId": null,
+      "relativePath": "orthomosaic/manifest.json"
+    },
+    {
+      "kind": "mesh",
+      "entityId": "product-mesh",
+      "sourceAlignmentEntityId": "project-golden:compute:alignment-quality:1",
+      "processingSetId": null,
+      "relativePath": "mesh/manifest.json"
+    },
+    {
+      "kind": "gaussianSplat",
+      "entityId": "product-splat",
+      "sourceAlignmentEntityId": "project-golden:compute:alignment-quality:1",
+      "processingSetId": null,
+      "relativePath": "splat/manifest.json"
+    }
+  ]
+}

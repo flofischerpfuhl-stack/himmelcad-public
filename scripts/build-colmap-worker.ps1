@@ -26,8 +26,20 @@ if (-not (Test-Path (Join-Path $VcpkgRoot "vcpkg.exe"))) {
 if (-not (Test-Path (Join-Path $Source ".git"))) {
   git clone --depth 1 --branch 4.1.0 https://github.com/colmap/colmap.git $Source
 }
-git -C $Source reset --hard 4.1.0
-git -C $Source apply (Join-Path $Root "patches/colmap-4.1.0-no-copyleft.patch")
+$Head = (git -C $Source rev-parse HEAD).Trim()
+$Pinned = (git -C $Source rev-parse "4.1.0^{commit}").Trim()
+if ($Head -ne $Pinned) {
+  throw "Existing COLMAP source is not the pinned 4.1.0 commit: $Source"
+}
+$Patch = Join-Path $Root "patches/colmap-4.1.0-no-copyleft.patch"
+git -C $Source apply --reverse --check $Patch 2>$null
+if ($LASTEXITCODE -ne 0) {
+  git -C $Source apply --check $Patch
+  if ($LASTEXITCODE -ne 0) {
+    throw "COLMAP source contains changes outside the audited patch: $Source"
+  }
+  git -C $Source apply $Patch
+}
 
 cmake -S $Source -B $Build `
   -DCMAKE_BUILD_TYPE=Release `

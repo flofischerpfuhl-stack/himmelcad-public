@@ -14,3 +14,17 @@
   touch-action: none;
   outline: none;
 }
+
+.windowMask {
+  contain: layout paint style;
+  isolation: isolate;
+  clip-path: inset(0 round var(--hc-radius-island));
+}
+
+.windowCanvas {
+  position: absolute;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+}

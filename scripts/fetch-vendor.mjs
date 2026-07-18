@@ -9,6 +9,7 @@
  *     node scripts/fetch-vendor.mjs
  *     node scripts/fetch-vendor.mjs --force        # re-download even if present
  *     node scripts/fetch-vendor.mjs --component=potreeconverter
+ *     node scripts/fetch-vendor.mjs --platform=win32-x64
  *
  * Per AGENTS.md §1.6, binary vendor assets live in `vendor/<name>/<platform>/`
  * and are NOT committed to git (see .gitignore). The verified manifest below
@@ -17,7 +18,7 @@
 import { createHash } from 'node:crypto';
 import { createWriteStream, mkdirSync, existsSync } from 'node:fs';
 import { writeFile, chmod, rm } from 'node:fs/promises';
-import { dirname, join, resolve as resolvePath } from 'node:path';
+import { basename, dirname, join, resolve as resolvePath } from 'node:path';
 import { tmpdir, platform, arch } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -58,19 +59,10 @@ const VENDOR_MANIFEST = {
         ],
       },
       'win32-x64': {
-        url: 'https://github.com/potree/PotreeConverter/releases/download/2.1.1/PotreeConverter_2.1.1_x64_windows.zip',
-        sha256: '8b4a70194fa85ceafa51e017b58e455cf3539edc9ab212b2c92b4a1f2b15e887',
-        archive: 'zip',
-        executables: [
-          { from: 'PotreeConverter_windows_x64/PotreeConverter.exe', to: 'PotreeConverter.exe', mode: 0o755 },
-          { from: 'PotreeConverter_windows_x64/laszip.dll', to: 'laszip.dll', mode: 0o644 },
-        ],
-        copyExtras: [
-          { from: 'PotreeConverter_windows_x64/licenses/license_potree_converter.txt', to: 'LICENSE-PotreeConverter.txt' },
-          { from: 'PotreeConverter_windows_x64/licenses/license_laszip.txt', to: 'LICENSE-laszip.txt' },
-          { from: 'PotreeConverter_windows_x64/licenses/license_brotli.txt', to: 'LICENSE-brotli.txt' },
-          { from: 'PotreeConverter_windows_x64/licenses/license_json.txt', to: 'LICENSE-json.txt' },
-        ],
+        // The upstream binary requires an external proprietary MSVC runtime.
+        // PhotoLab instead builds a static, permissive LLVM-MinGW closure.
+        sourceBuild: true,
+        buildCommand: 'pnpm photolab:build:potree:win',
       },
       'darwin-x64': {
         // No upstream prebuilt binary for macOS — needs to be built from source.
@@ -121,7 +113,10 @@ const VENDOR_ROOT = join(REPO_ROOT, 'vendor');
 // ---------------------------------------------------------------------------
 
 const args = parseArgs(process.argv.slice(2));
-const targetPlatform = `${platform()}-${arch()}`;
+const targetPlatform = args.platform ?? `${platform()}-${arch()}`;
+if (!/^(?:linux|win32|darwin)-(?:x64|arm64)$/.test(targetPlatform)) {
+  throw new Error(`unsupported vendor platform '${targetPlatform}'`);
+}
 const requestedComponents = args.component
   ? args.component.split(',')
   : Object.keys(VENDOR_MANIFEST);
@@ -245,7 +240,20 @@ async function writeMeta(name, entry, p, outDir) {
 async function writeSourceBuildPointer(name, entry, p, outDir) {
   const buildMd = join(outDir, 'BUILD.md');
   if (existsSync(buildMd) && !args.force) return;
-  const recipe = `# Building ${name} from source for ${targetPlatform}
+  const recipe = p.buildCommand
+    ? `# Building ${name} from source for ${targetPlatform}
+
+This platform uses a curated source build because the upstream binary has an
+unbundled runtime dependency. From the HimmelCAD repository root run:
+
+\`\`\`bash
+${p.buildCommand}
+\`\`\`
+
+The script pins the upstream commit, applies audited portability changes,
+checks the PE import closure and writes the vendor manifest deterministically.
+`
+    : `# Building ${name} from source for ${targetPlatform}
 
 Upstream does not ship a prebuilt binary for ${targetPlatform}. Until we add
 a CI build for this platform, build manually:
@@ -395,7 +403,7 @@ async function findFile(rootDir, target) {
       const full = join(dir, e.name);
       if (e.isDirectory()) {
         stack.push(full);
-      } else if (e.isFile() && e.name === target) {
+      } else if (e.isFile() && e.name === basename(target)) {
         return full;
       }
     }
@@ -408,10 +416,11 @@ async function findFile(rootDir, target) {
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const out = { force: false, component: null };
+  const out = { force: false, component: null, platform: null };
   for (const a of argv) {
     if (a === '--force') out.force = true;
     else if (a.startsWith('--component=')) out.component = a.slice('--component='.length);
+    else if (a.startsWith('--platform=')) out.platform = a.slice('--platform='.length);
   }
   return out;
 }

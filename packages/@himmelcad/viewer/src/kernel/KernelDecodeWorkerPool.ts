@@ -127,7 +127,7 @@ export class KernelDecodeWorkerPool {
     private readonly wasmModuleUrl: string,
     workers: number,
     private readonly createWorker: () => Worker = () => new Worker(
-      new URL('./KernelDecodeWorker.js', import.meta.url),
+      new URL('./KernelDecodeWorker.ts', import.meta.url),
       { type: 'module', name: 'himmelcad-streaming-decode' },
     ),
     private readonly workerRamBudgetBytes = 512 * 1024 * 1024,

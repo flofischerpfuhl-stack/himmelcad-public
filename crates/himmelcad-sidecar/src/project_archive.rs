@@ -1054,4 +1054,32 @@ mod tests {
             .contains("extract-staging")));
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn cancellation_during_pack_never_publishes_a_partial_destination() {
+        let root = temp("cancel-pack");
+        project(&root);
+        let archive = root.join("cancelled.hcadx");
+        let mut checks = 0_u32;
+        let result = pack_hcadx_with_cancel(
+            &root.join("sample.hcad"),
+            &archive,
+            PackArchiveOptions {
+                include_rebuildable_index: false,
+            },
+            || {
+                checks += 1;
+                checks > 6
+            },
+            |_| {},
+        );
+        assert!(matches!(result, Err(ProjectArchiveError::Cancelled)));
+        assert!(!archive.exists());
+        assert!(!fs::read_dir(&root).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("archive-tmp")));
+        fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -282,14 +282,21 @@ pub struct RasterViewLayer {
 
 /// Exact browser tile encoding.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "kind")]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
 pub enum RasterViewTileFormat {
     RgbaPng,
     GrayscalePng {
+        #[serde(alias = "minimum_elevation")]
         minimum_elevation: f64,
+        #[serde(alias = "maximum_elevation")]
         maximum_elevation: f64,
     },
     Float32Raw {
+        #[serde(alias = "byte_order")]
         byte_order: RasterByteOrder,
         width: u16,
         height: u16,
@@ -2551,6 +2558,34 @@ mod tests {
                 }],
             }),
         }
+    }
+
+    #[test]
+    fn reads_legacy_snake_case_view_tile_fields() {
+        let raw: RasterViewTileFormat = serde_json::from_str(
+            r#"{"kind":"float32Raw","byte_order":"littleEndian","width":512,"height":512}"#,
+        )
+        .expect("legacy raw view format");
+        assert_eq!(
+            raw,
+            RasterViewTileFormat::Float32Raw {
+                byte_order: RasterByteOrder::LittleEndian,
+                width: 512,
+                height: 512,
+            }
+        );
+
+        let preview: RasterViewTileFormat = serde_json::from_str(
+            r#"{"kind":"grayscalePng","minimum_elevation":687.0,"maximum_elevation":723.0}"#,
+        )
+        .expect("legacy preview view format");
+        assert_eq!(
+            preview,
+            RasterViewTileFormat::GrayscalePng {
+                minimum_elevation: 687.0,
+                maximum_elevation: 723.0,
+            }
+        );
     }
 
     #[test]

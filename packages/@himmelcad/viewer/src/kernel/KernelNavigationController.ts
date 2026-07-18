@@ -62,7 +62,6 @@ export class KernelNavigationController {
   private dragPivot: KernelWorldPoint | null = null;
   private lastClientX = 0;
   private lastClientY = 0;
-  private movedDuringDrag = false;
   private localSectionDepthActive = false;
   private rasterAnalysisKind: KernelRasterAnalysisView['kind'] | null = null;
   private disposed = false;
@@ -304,22 +303,21 @@ export class KernelNavigationController {
     this.dragPivot = this.cursorPresentationPosition;
     this.lastClientX = event.clientX;
     this.lastClientY = event.clientY;
-    this.movedDuringDrag = false;
     this.canvas.setPointerCapture(event.pointerId);
     this.pointerInteracting = true;
     this.reportInteraction();
-    this.queuePick(event.clientX, event.clientY);
   };
 
   private readonly onPointerMove = (event: PointerEvent): void => {
     if (this.disposed || this.enabled === false) return;
-    this.queuePick(event.clientX, event.clientY);
-    if (!this.dragMode) return;
+    if (!this.dragMode) {
+      this.queuePick(event.clientX, event.clientY);
+      return;
+    }
     const deltaX = clamp(event.clientX - this.lastClientX, -480, 480);
     const deltaY = clamp(event.clientY - this.lastClientY, -480, 480);
     this.lastClientX = event.clientX;
     this.lastClientY = event.clientY;
-    this.movedDuringDrag ||= Math.abs(deltaX) + Math.abs(deltaY) > 1;
     if (this.dragMode === 'orbit') {
       if (this.dragPivot) this.camera.orbitAround(-deltaX * 0.005, deltaY * 0.005, this.dragPivot);
       else this.camera.orbit(-deltaX * 0.005, deltaY * 0.005);
@@ -340,7 +338,9 @@ export class KernelNavigationController {
     this.dragPivot = null;
     this.pointerInteracting = false;
     this.reportInteraction();
-    if (!this.movedDuringDrag) this.queuePick(event.clientX, event.clientY);
+    // One fresh pick after the camera settles is enough. Rendering a complete
+    // ID/depth pass for every drag frame needlessly competes with navigation.
+    this.queuePick(event.clientX, event.clientY);
     if (this.canvas.hasPointerCapture(event.pointerId)) {
       this.canvas.releasePointerCapture(event.pointerId);
     }
@@ -352,18 +352,20 @@ export class KernelNavigationController {
     this.wheelInteracting = true;
     this.reportInteraction();
     if (this.wheelInteractionTimer !== null) clearTimeout(this.wheelInteractionTimer);
+    this.lastClientX = event.clientX;
+    this.lastClientY = event.clientY;
     this.wheelInteractionTimer = setTimeout(() => {
       this.wheelInteractionTimer = null;
       if (this.disposed) return;
       this.wheelInteracting = false;
       this.reportInteraction();
+      this.queuePick(this.lastClientX, this.lastClientY);
     }, 120);
     const factor = Math.pow(1.0015, clamp(event.deltaY, -2_000, 2_000));
     const anchor = this.cursorPresentationPosition;
     if (anchor) this.camera.zoomAt(factor, anchor);
     else this.camera.zoom(factor);
     this.uploadCamera();
-    this.queuePick(event.clientX, event.clientY);
   };
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {

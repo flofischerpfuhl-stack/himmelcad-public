@@ -14,8 +14,8 @@ use himmelcad_core::{
         classify_geometry, densify_arc, densify_circle, fit_circle_xy, mean_radius_xy,
         vec_normalize, Arc3, Circle3, CirclePolicy, GeometryKind, GeometryStrategy,
         GeometryTransformError, GeometryTransformPolicy, GeometryTransformWarning,
-        GeometryWarningCode, RasterGrid2D, TextAnchor, TextScalePolicy, TransformedText,
-        TransformSupport,
+        GeometryWarningCode, RasterGrid2D, TextAnchor, TextScalePolicy, TransformSupport,
+        TransformedText,
     },
 };
 
@@ -37,11 +37,7 @@ impl TransformRuntime {
         policy: &GeometryTransformPolicy,
         geometry_id: Option<&str>,
     ) -> himmelcad_core::transform_geometry::GeometryClassification {
-        let policy = frozen
-            .spec
-            .geometry_policy
-            .as_ref()
-            .unwrap_or(policy);
+        let policy = frozen.spec.geometry_policy.as_ref().unwrap_or(policy);
         classify_geometry(kind, &frozen.spec, policy, geometry_id)
     }
 
@@ -53,8 +49,10 @@ impl TransformRuntime {
         normals: Option<&[WorldPoint]>,
         policy: &GeometryTransformPolicy,
         cancellation: &CancellationToken,
-    ) -> Result<GeometryTransformResult<(Vec<WorldPoint>, Option<Vec<WorldPoint>>)>, TransformRuntimeError>
-    {
+    ) -> Result<
+        GeometryTransformResult<(Vec<WorldPoint>, Option<Vec<WorldPoint>>)>,
+        TransformRuntimeError,
+    > {
         let mapped = self.apply_points(frozen, positions, cancellation)?;
         let mut warnings = Vec::new();
         for w in &mapped.warnings {
@@ -157,8 +155,7 @@ impl TransformRuntime {
                 let samples = densify_circle(circle, &policy.densify, false)
                     .map_err(TransformRuntimeError::Geometry)?;
                 let mapped = self.apply_points(frozen, &samples, cancellation)?;
-                let centre_batch =
-                    self.apply_points(frozen, &[circle.centre], cancellation)?;
+                let centre_batch = self.apply_points(frozen, &[circle.centre], cancellation)?;
                 let centre = centre_batch.points[0];
                 let circle_out = match policy.circle {
                     CirclePolicy::FitCircleFromSamples => {
@@ -216,8 +213,7 @@ impl TransformRuntime {
                 GeometryTransformError::StrictBlocked(GeometryKind::Arc),
             ));
         }
-        let samples =
-            densify_arc(arc, &policy.densify).map_err(TransformRuntimeError::Geometry)?;
+        let samples = densify_arc(arc, &policy.densify).map_err(TransformRuntimeError::Geometry)?;
         let mapped = self.apply_points(frozen, &samples, cancellation)?;
         Ok(GeometryTransformResult {
             value: mapped.points,
@@ -234,12 +230,7 @@ impl TransformRuntime {
         cancellation: &CancellationToken,
     ) -> Result<GeometryTransformResult<TransformedText>, TransformRuntimeError> {
         let policy = frozen.spec.geometry_policy.as_ref().unwrap_or(policy);
-        let class = classify_geometry(
-            GeometryKind::Text,
-            &frozen.spec,
-            policy,
-            text.id.as_deref(),
-        );
+        let class = classify_geometry(GeometryKind::Text, &frozen.spec, policy, text.id.as_deref());
         let mapped = self.apply_points(frozen, &[text.position], cancellation)?;
         let position = mapped.points[0];
         // Local isotropic scale from Jacobian of unit X axis length.
@@ -263,12 +254,8 @@ impl TransformRuntime {
             TextScalePolicy::KeepDrawingHeight | TextScalePolicy::LeaveUnscaledWithWarning => {
                 text.height_meters
             }
-            TextScalePolicy::ScaleByLocalIsotropic => {
-                text.height_meters * (0.5 * (len_x + len_y))
-            }
-            TextScalePolicy::ScaleByLocalAreaSqrt => {
-                text.height_meters * (len_x * len_y).sqrt()
-            }
+            TextScalePolicy::ScaleByLocalIsotropic => text.height_meters * (0.5 * (len_x + len_y)),
+            TextScalePolicy::ScaleByLocalAreaSqrt => text.height_meters * (len_x * len_y).sqrt(),
         };
         let mut warnings = class.warnings;
         if (len_x - len_y).abs() > 0.02 * len_x.max(len_y) {
@@ -508,7 +495,11 @@ fn try_map_vector_empirical(
                 let c = model.rotation_radians.cos();
                 let s = model.rotation_radians.sin();
                 let sc = model.scale;
-                WorldPoint::new(sc * (c * out.x - s * out.y), sc * (s * out.x + c * out.y), out.z)
+                WorldPoint::new(
+                    sc * (c * out.x - s * out.y),
+                    sc * (s * out.x + c * out.y),
+                    out.z,
+                )
             }
             EmpiricalOp::Affine2D { model, .. } => WorldPoint::new(
                 model.a * out.x + model.b * out.y,

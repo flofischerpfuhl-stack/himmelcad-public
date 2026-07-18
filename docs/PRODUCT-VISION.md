@@ -31,7 +31,13 @@ The exact dependency rules live in `AGENTS.md` and
 
 ## Product Family
 
-### Builder
+The canonical product names are **HimmelCAD Builder**, **HimmelCAD Assembler**,
+**HimmelCAD PhotoLab**, **HimmelCAD WeltView**, **HimmelCAD TestFlight**, and
+**HimmelCAD ChronoGit**. Product UI, package metadata, release artifacts, and
+current documentation use these names; the shorter names below are only
+unambiguous prose shorthand.
+
+### HimmelCAD Builder
 
 The first implemented product foundation and the main 3D-first CAD. Further
 productization is paused while PhotoLab becomes the current delivery target.
@@ -39,7 +45,7 @@ Builder starts point-cloud-first, but its architecture must already
 allow tiled meshes, surfaces, CAD primitives, solids, BIM-like objects, photos, splats,
 attributes, scripting and future read-only browser viewing.
 
-### PhotoLab
+### HimmelCAD PhotoLab
 
 Current product focus: a near-full Agisoft Metashape alternative with an
 additional Gaussian-splat pipeline. The first finished product target includes
@@ -53,7 +59,7 @@ The binding product and implementation concept is documented in
 PhotoLab outputs must become normal HimmelCAD entities, not a separate
 one-off project type.
 
-### WeltView
+### HimmelCAD WeltView
 
 Browser-based read-only viewer for Builder projects. It must show the same
 entities and display modes as Builder where browser hardware allows it.
@@ -73,19 +79,22 @@ Open decision: whether large projects are always downloaded client-side,
 streamed over HTTP range requests, or served through a future backend. The
 viewer architecture must keep all three possible until that decision is made.
 
-### ChronoGit
+### HimmelCAD ChronoGit
 
 Possible future semantic version-control system for HimmelCAD projects. It is
 not committed as a product yet, but Builder must remain compatible with it:
 immutable objects, command journal, semantic entity IDs and meaningful diffs.
 
-### Composer
+### HimmelCAD Assembler
 
 Possible precision-mechanics / 3D-printing twin of Builder. Not currently
 planned for implementation, but entity and command design should avoid
 unnecessary civil/survey-only assumptions.
 
-### TestFlight
+There is deliberately no Assembler application directory yet. The name is
+reserved in product documentation until an implementation track is approved.
+
+### HimmelCAD TestFlight
 
 Possible simulation-oriented product: time-dependent 3D entities, interactive
 entities, scripted behavior and game-engine-like simulation workflows.

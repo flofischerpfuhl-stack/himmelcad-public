@@ -38,6 +38,8 @@ pub struct CommitGcpsParams {
     pub source_import: GcpCsvImportResult,
     pub transformed_points: Vec<GcpPoint>,
     pub transformation: FrozenImportTransformation,
+    #[serde(default)]
+    pub coordinates_already_in_project_crs: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -264,10 +266,11 @@ fn commit_gcps_staged(
     staging_root: &Path,
     cancellation: &CancellationToken,
 ) -> Result<CommitGcpsResult, GcpRuntimeError> {
-    if manifest
-        .reference_frame
-        .as_ref()
-        .is_some_and(|frame| frame.target != params.transformation.target)
+    if !params.coordinates_already_in_project_crs
+        && manifest
+            .reference_frame
+            .as_ref()
+            .is_some_and(|frame| frame.target != params.transformation.target)
     {
         return Err(GcpRuntimeError::ProjectReferenceMismatch);
     }
@@ -363,6 +366,7 @@ fn commit_gcps_staged(
             "sourceCsvSha256": source_csv_sha256,
             "transformationSha256": transformation_sha256,
             "collectionSha256": collection_sha256,
+            "coordinatesAlreadyInProjectCrs": params.coordinates_already_in_project_crs,
         }),
         affected,
         before_refs,
@@ -898,7 +902,9 @@ fn validate_transformation(
         if grid.official_filename.trim().is_empty() || grid.local_path.trim().is_empty() {
             return Err(GcpRuntimeError::InvalidCrsDecision);
         }
-        validate_hash(&grid.official_sha256)?;
+        if let Some(hash) = &grid.official_sha256 {
+            validate_hash(hash)?;
+        }
     }
     Ok(())
 }
@@ -928,7 +934,7 @@ fn prepare_gcp_manifest(
         .get_mut(&group_id.0)
         .ok_or(GcpRuntimeError::ReferenceGroupMissing)?;
     group.children = children;
-    group.name = format!("Referenz & GCPs · {}", group.children.len());
+    group.name = format!("Reference & GCPs · {}", group.children.len());
     group.version_hash = collection_hash.clone();
     touch_manifest(&mut candidate)?;
     Ok(candidate)
@@ -1054,7 +1060,9 @@ fn find_reference_group(manifest: &PhotolabProjectManifest) -> Result<EntityId, 
         .entities
         .values()
         .filter(|entity| {
-            entity.kind == EntityKind::Group && entity.name.starts_with("Referenz & GCPs")
+            entity.kind == EntityKind::Group
+                && (entity.name.starts_with("Reference & GCPs")
+                    || entity.name.starts_with("Referenz & GCPs"))
         })
         .map(|entity| entity.id.clone());
     let group = groups
@@ -1562,6 +1570,7 @@ mod tests {
                     transformed_points: source_import.points.clone(),
                     source_import,
                     transformation: transformation(),
+                    coordinates_already_in_project_crs: false,
                 },
                 &CancellationToken::new(),
             )
@@ -1677,6 +1686,32 @@ mod tests {
     }
 
     #[test]
+    fn user_confirmed_project_coordinates_are_not_rejected_by_crs_metadata() {
+        let mut fixture = Fixture::new();
+        let mut project_target = transformation().target;
+        project_target.horizontal.crs = CrsDefinition::Epsg(31468);
+        fixture.manifest.reference_frame = Some(ProjectReferenceFrame {
+            target: project_target,
+            established_by_transformation_sha256: ObjectHash::of_bytes(b"image-import"),
+        });
+        let source_import = fixture.import();
+        let result = commit_gcps_transaction(
+            &fixture.root,
+            &mut fixture.manifest,
+            CommitGcpsParams {
+                operation_id: "accepted-project-coordinates".into(),
+                transformed_points: source_import.points.clone(),
+                source_import,
+                transformation: transformation(),
+                coordinates_already_in_project_crs: true,
+            },
+            &CancellationToken::new(),
+        )
+        .expect("explicitly accepted project coordinates");
+        assert_eq!(result.points.len(), 2);
+    }
+
+    #[test]
     fn cancelled_import_does_not_mutate_manifest() {
         let mut fixture = Fixture::new();
         let source_import = fixture.import();
@@ -1691,6 +1726,7 @@ mod tests {
                 transformed_points: source_import.points.clone(),
                 source_import,
                 transformation: transformation(),
+                coordinates_already_in_project_crs: false,
             },
             &cancellation,
         )
@@ -1717,6 +1753,7 @@ mod tests {
                 source_import,
                 transformed_points,
                 transformation: transformation(),
+                coordinates_already_in_project_crs: false,
             },
             &CancellationToken::new(),
         )
@@ -1743,6 +1780,7 @@ mod tests {
                 transformed_points: source_import.points.clone(),
                 source_import,
                 transformation: transformation(),
+                coordinates_already_in_project_crs: false,
             },
             &CancellationToken::new(),
         )

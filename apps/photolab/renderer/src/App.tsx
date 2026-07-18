@@ -57,7 +57,13 @@ import photolabLogoUrl from '../../build/mark.png';
 
 import { AlignmentProfilePanel } from './AlignmentProfilePanel.js';
 import { AlignmentMergePanel } from './AlignmentMergePanel.js';
+import {
+  defaultOverridesForProfile,
+  type AlignmentPresetFile,
+  type AlignmentPresetOverrides,
+} from './alignmentPreset.js';
 import styles from './App.module.css';
+import { DefineAlignmentDialog } from './DefineAlignmentDialog.js';
 import { BatchConfiguratorPanel, type BatchPipelineStep } from './BatchConfiguratorPanel.js';
 import { CaptureGroupsPanel } from './CaptureGroupsPanel.js';
 import type { CaptureCalibrationDraft } from './captureGroupDraft.js';
@@ -163,7 +169,17 @@ export function App(): JSX.Element {
   const [coreReady, setCoreReady] = useState(false);
   const [hardware, setHardware] = useState<HardwareCapabilities | null>(null);
   const [profile, setProfile] = useState<AlignmentQualityProfile>('qualityHybrid');
+  const [alignmentOverrides, setAlignmentOverrides] = useState<AlignmentPresetOverrides>(() =>
+    defaultOverridesForProfile('qualityHybrid'),
+  );
+  const [selectedAlignmentPreset, setSelectedAlignmentPreset] =
+    useState<AlignmentPresetFile | null>(null);
+  const [selectedAlignmentPresetPath, setSelectedAlignmentPresetPath] = useState<string | null>(
+    null,
+  );
+  const [defineAlignmentOpen, setDefineAlignmentOpen] = useState(false);
   const [alignmentScope, setAlignmentScope] = useState<'all' | 'selection'>('all');
+  const alignmentProgressLogRef = useRef<Map<string, string>>(new Map());
   const [imageCount, setImageCount] = useState(DEFAULT_IMAGE_COUNT);
   const [resolved, setResolved] = useState<ResolvedAlignmentConfig | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
@@ -254,6 +270,10 @@ export function App(): JSX.Element {
   const activateStoredFunction = useLayoutStore((state) => state.activateFunction);
   const activate = useCallback(
     (functionId: string | null) => {
+      if (functionId === 'alignment.define') {
+        setDefineAlignmentOpen(true);
+        return;
+      }
       activateStoredFunction(functionId);
       if (functionId) setRightPanelTab('function');
     },
@@ -385,7 +405,13 @@ export function App(): JSX.Element {
     setResolveError(null);
     const started = performance.now();
     let commandId: string | null = null;
-    logEvent('info', 'renderer', `Resolving alignment profile ${profile} in the core`);
+    const resolveProfileName = selectedAlignmentPreset?.profile ?? profile;
+    const resolveOverrides = selectedAlignmentPreset?.overrides ?? alignmentOverrides;
+    logEvent(
+      'info',
+      'renderer',
+      `Resolving alignment profile ${resolveProfileName} in the core`,
+    );
     try {
       if (projectReady) {
         const journal = await api.sidecar.call<PhotolabJournalEntry>(
@@ -393,7 +419,7 @@ export function App(): JSX.Element {
           {
             commandKind: 'ResolvePhotolabAlignmentProfile',
             payload: {
-              profile,
+              profile: resolveProfileName,
               imageCount: alignmentImageCount,
               cameraEntityIds: alignmentScope === 'selection' ? selectedCameraIds : [],
             },
@@ -403,14 +429,16 @@ export function App(): JSX.Element {
         setAutosaveGeneration((generation) => generation + 1);
       }
       const config = await api.sidecar.call<ResolvedAlignmentConfig>('photolab.alignment.resolve', {
-        profile,
+        profile: resolveProfileName,
         imageCount: alignmentImageCount,
+        maxImageEdgeOverride: resolveOverrides.maxImageEdge,
+        keypointsPerMegapixelOverride: resolveOverrides.keypointsPerMegapixel,
       });
       setResolved(config);
       logEvent(
         'info',
         'sidecar',
-        `Alignment configuration frozen · ${config.configHash.slice(0, 16)} · ${(performance.now() - started).toFixed(1)} ms`,
+        `Alignment configuration frozen · ${config.configHash.slice(0, 16)} · edge ${config.maxImageEdge} · ${(performance.now() - started).toFixed(1)} ms`,
       );
       if (commandId) {
         await api.sidecar.call('photolab.project.journal.finish', {
@@ -444,7 +472,16 @@ export function App(): JSX.Element {
     } finally {
       setResolving(false);
     }
-  }, [alignmentImageCount, alignmentScope, profile, projectReady, selectedCameraIds]);
+  }, [
+    alignmentImageCount,
+    alignmentOverrides.maxImageEdge,
+    alignmentOverrides.keypointsPerMegapixel,
+    alignmentScope,
+    profile,
+    projectReady,
+    selectedAlignmentPreset,
+    selectedCameraIds,
+  ]);
 
   const acceptProject = useCallback(
     (
@@ -802,20 +839,24 @@ export function App(): JSX.Element {
     if (!operation) return;
     const started = performance.now();
     try {
-      const result = await api.project.save<{ savedGeneration: number; sourcePath: string }>(
-        operation,
-      );
-      setLastSavedGeneration(result.savedGeneration);
+      // First Save on Untitled opens Save As dialog. Returns full snapshot or null (cancel).
+      const result = await api.project.save<OpenPhotolabProjectResult | null>(operation);
+      if (!result) {
+        finishProjectFileOperation(operation.archiveOperationId);
+        return;
+      }
+      acceptProject(result);
       logEvent(
         'info',
         'sidecar',
-        `Project saved · generation ${result.savedGeneration} · ${(performance.now() - started).toFixed(1)} ms`,
+        `Project saved · ${result.session.sourcePath} · ${(performance.now() - started).toFixed(1)} ms`,
       );
       finishProjectFileOperation(operation.archiveOperationId);
     } catch (error) {
       showProjectFileOperationError(operation.archiveOperationId, error);
     }
   }, [
+    acceptProject,
     beginProjectFileOperation,
     finishProjectFileOperation,
     projectReady,
@@ -829,25 +870,24 @@ export function App(): JSX.Element {
     if (!operation) return;
     const started = performance.now();
     try {
-      const result = await api.project.saveAs<{
-        savedGeneration: number;
-        sourcePath: string;
-      }>(operation);
+      const result = await api.project.saveAs<OpenPhotolabProjectResult | null>(operation);
       if (!result) {
         finishProjectFileOperation(operation.archiveOperationId);
         return;
       }
-      setLastSavedGeneration(result.savedGeneration);
+      // Full snapshot refreshes title (no more "Untitled") and keeps session paths in sync.
+      acceptProject(result);
       logEvent(
         'info',
         'sidecar',
-        `Project archive written · ${result.sourcePath} · ${(performance.now() - started).toFixed(1)} ms`,
+        `Project archive written · ${result.session.sourcePath} · ${(performance.now() - started).toFixed(1)} ms`,
       );
       finishProjectFileOperation(operation.archiveOperationId);
     } catch (error) {
       showProjectFileOperationError(operation.archiveOperationId, error);
     }
   }, [
+    acceptProject,
     beginProjectFileOperation,
     finishProjectFileOperation,
     projectReady,
@@ -1309,6 +1349,32 @@ export function App(): JSX.Element {
           if (active) {
             setJobs(next);
             jobPollErrorLogged.current = false;
+            for (const job of next) {
+              if (job.kind !== 'alignPhotos') continue;
+              if (!['queued', 'running', 'pauseRequested'].includes(job.state.kind)) continue;
+              const total = job.progress.metrics.totalUnits;
+              const stageFrac = total
+                ? Math.min(1, job.progress.metrics.completedUnits / total)
+                : 0;
+              const overall = Math.min(
+                1,
+                (job.progress.stage.index + stageFrac) /
+                  Math.max(1, job.progress.stage.stageCount),
+              );
+              const stagePct = Math.round(stageFrac * 100);
+              const overallPct = Math.round(overall * 100);
+              const key = `${job.id}:${job.progress.stage.index}:${job.progress.stage.label}:${stagePct}:${overallPct}`;
+              if (alignmentProgressLogRef.current.get(job.id) === key) continue;
+              alignmentProgressLogRef.current.set(job.id, key);
+              logEvent(
+                'info',
+                'sidecar',
+                `Alignment · overall ${overallPct}% · stage ${job.progress.stage.index + 1}/${job.progress.stage.stageCount} “${job.progress.stage.label}” ${stagePct}%` +
+                  (total != null
+                    ? ` · units ${job.progress.metrics.completedUnits}/${total}`
+                    : ''),
+              );
+            }
           }
         })
         .catch((error: unknown) => {
@@ -1437,27 +1503,43 @@ export function App(): JSX.Element {
       setResolveError('At least two imported images are required.');
       return;
     }
+    if (!selectedAlignmentPreset) {
+      setResolveError('Select a predefined alignment preset (.hcalign) before starting.');
+      return;
+    }
     const operationId = `alignment-${crypto.randomUUID()}`;
     setAlignmentStarting(true);
     setResolveError(null);
     const started = performance.now();
+    const runProfile = selectedAlignmentPreset.profile;
+    const runOverrides = selectedAlignmentPreset.overrides;
     try {
       const config = await api.sidecar.call<ResolvedAlignmentConfig>('photolab.alignment.resolve', {
-        profile,
+        profile: runProfile,
         imageCount: alignmentImageCount,
+        maxImageEdgeOverride: runOverrides.maxImageEdge,
+        keypointsPerMegapixelOverride: runOverrides.keypointsPerMegapixel,
       });
       setResolved(config);
       const result = await api.sidecar.call<{ job: PhotolabJob }>('photolab.jobs.startAlignment', {
         operationId,
-        profile,
+        profile: runProfile,
         cameraEntityIds: alignmentScope === 'selection' ? selectedCameraIds : [],
         processingSetId: activeProcessingSetId,
+        overrides: {
+          maxImageEdge: runOverrides.maxImageEdge,
+          keypointsPerMegapixel: runOverrides.keypointsPerMegapixel,
+          sequentialOverlap: runOverrides.sequentialOverlap,
+          featureBudget: runOverrides.featureBudget,
+        },
       });
       setJobs((previous) => [...previous.filter((job) => job.id !== result.job.id), result.job]);
+      setBottomCollapsed(false);
+      setBottomTab('jobs');
       logEvent(
         'info',
         'sidecar',
-        `Photo alignment queued · ${profileLabel(profile)} · ${(performance.now() - started).toFixed(1)} ms`,
+        `Photo alignment queued · ${selectedAlignmentPreset.name} · ${profileLabel(runProfile)} · edge ${config.maxImageEdge} · budget ${runOverrides.featureBudget ?? 'auto'} · ${(performance.now() - started).toFixed(1)} ms`,
       );
     } catch (error) {
       const message = errorMessage(error);
@@ -1471,9 +1553,11 @@ export function App(): JSX.Element {
     alignmentScope,
     alignmentStarting,
     activeProcessingSetId,
-    profile,
     projectReady,
+    selectedAlignmentPreset,
     selectedCameraIds,
+    setBottomCollapsed,
+    setBottomTab,
   ]);
 
   const startProduct = useCallback(
@@ -2630,7 +2714,7 @@ export function App(): JSX.Element {
           <TitleBar
             appName="himmel:CAD"
             productLabel="PHOTOLAB"
-            projectLabel={project.name}
+            // Project name lives in the left tree only — not in the titlebar.
             brandMark={<img className={styles.brandLogo} src={photolabLogoUrl} alt="" />}
             controls={windowControls}
           />
@@ -2775,7 +2859,6 @@ export function App(): JSX.Element {
               />
             ) : activeFunctionId === 'alignment.run' ? (
               <AlignmentProfilePanel
-                profile={profile}
                 imageCount={alignmentImageCount}
                 totalImageCount={projectImages.length}
                 selectedImageCount={selectedCameraIds.length}
@@ -2787,30 +2870,46 @@ export function App(): JSX.Element {
                 scope={alignmentScope}
                 processingSets={processingSets}
                 captureGroups={captureGroups}
-                calibrationGroups={calibrationGroups}
                 activeProcessingSetId={activeProcessingSetId}
+                selectedPreset={selectedAlignmentPreset}
+                selectedPresetPath={selectedAlignmentPresetPath}
                 resolving={resolving}
                 starting={alignmentStarting}
-                savingProcessingSet={processingSetSaving}
+                confirmingGroups={captureGroupSaving}
                 canStart={projectReady && alignmentImageCount >= 2}
-                resolved={resolved}
                 error={resolveError}
-                onProfileChange={(next) => {
-                  setProfile(next);
-                  setResolved(null);
-                }}
                 onScopeChange={(next) => {
                   setAlignmentScope(next);
                   setActiveProcessingSetId(null);
                   setResolved(null);
                 }}
                 onProcessingSetChange={activateProcessingSet}
-                onStart={() => void startAlignment()}
-                onSaveProcessingSet={() => void saveProcessingSet()}
-                onReviewGroups={() => {
-                  activateStoredFunction('alignment.groups');
-                  setRightPanelTab('function');
+                onPresetSelected={(preset, path) => {
+                  setSelectedAlignmentPreset(preset);
+                  setSelectedAlignmentPresetPath(path);
+                  setProfile(preset.profile);
+                  setAlignmentOverrides(preset.overrides);
+                  setResolved(null);
+                  logEvent(
+                    'info',
+                    'renderer',
+                    `Alignment preset selected · ${preset.name} · ${path}`,
+                  );
                 }}
+                onPresetCleared={() => {
+                  setSelectedAlignmentPreset(null);
+                  setSelectedAlignmentPresetPath(null);
+                  setResolved(null);
+                }}
+                onStart={() => void startAlignment()}
+                onConfirmPendingGroups={(ids) => {
+                  void (async () => {
+                    for (const id of ids) {
+                      await confirmCaptureGroup(id);
+                    }
+                  })();
+                }}
+                onDefineAlignment={() => setDefineAlignmentOpen(true)}
               />
             ) : activeFunctionId === 'alignment.optimize' ? (
               <GcpOptimizationPanel
@@ -3102,6 +3201,16 @@ export function App(): JSX.Element {
                 setImageRemovalBusy(false);
                 setPendingImageRemoval(null);
               });
+            }}
+          />
+        </FloatingTaskIsland>
+      )}
+      {defineAlignmentOpen && (
+        <FloatingTaskIsland onRequestClose={() => setDefineAlignmentOpen(false)}>
+          <DefineAlignmentDialog
+            onClose={() => setDefineAlignmentOpen(false)}
+            onSaved={({ name, path }) => {
+              logEvent('info', 'renderer', `Alignment preset saved · ${name} · ${path}`);
             }}
           />
         </FloatingTaskIsland>

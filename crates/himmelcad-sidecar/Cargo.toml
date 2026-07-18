@@ -26,7 +26,10 @@ sha2.workspace = true
 hex.workspace = true
 zip.workspace = true
 fs2 = "0.4.3"
-image = { version = "0.25.8", default-features = false, features = ["jpeg", "png"] }
+image = { version = "0.25.8", default-features = false, features = ["jpeg", "png", "tiff"] }
+
+[dev-dependencies]
+gltf.workspace = true
 
 [lints]
 workspace = true

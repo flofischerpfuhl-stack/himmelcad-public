@@ -969,6 +969,7 @@ mod tests {
             profile,
             image_count: 20,
             max_image_edge_override: None,
+            keypoints_per_megapixel_override: None,
         })
         .expect("profile should resolve")
     }

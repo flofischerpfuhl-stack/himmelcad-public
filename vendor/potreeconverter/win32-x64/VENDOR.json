@@ -1,0 +1,20 @@
+{
+  "name": "potreeconverter",
+  "upstream": "https://github.com/potree/PotreeConverter",
+  "license": "BSD-2-Clause",
+  "version": "2.1.1",
+  "commit": "d9387d52807bf8936fe98096b9992ea13b50ba94",
+  "platform": "win32-x64",
+  "toolchain": "llvm-mingw-20260407",
+  "patches": [
+    "portable sequential standard-algorithm overloads where libc++ has no PSTL",
+    "static LASzip and C++ runtime closure",
+    "portable Win32 headers/functions and checked integer narrowing",
+    "HierarchyBuilder leaf assignment correction"
+  ],
+  "artifacts": {
+    "PotreeConverter.exe": {
+      "sha256": "6698bd0ddf65b6f12264720f6efc8f02e279a221028224f2365c7427447ea755"
+    }
+  }
+}

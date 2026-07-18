@@ -40,6 +40,8 @@ pub struct SurfaceFrame<'a> {
     pub clip_volumes: &'a [&'a ClipVolume],
     /// Resident mixed-entity batches admitted for this frame.
     pub batches: &'a [&'a GpuDrawBatch],
+    /// View-local point diameter multiplier; does not mutate resident geometry.
+    pub point_size_scale: f32,
     /// Linear clear color. The final presentation pass applies exactly one sRGB transfer.
     pub clear_color: wgpu::Color,
     /// Optional cursor neighborhood to copy from the ID/depth attachments.
@@ -517,6 +519,7 @@ impl<'window> GpuSurfaceHost<'window> {
                 frame.floating_origin,
                 frame.clip_volumes,
                 [self.configuration.width, self.configuration.height],
+                frame.point_size_scale,
             )?;
             let prepared_batches =
                 self.prepare_batches(frame.batches, frame.view_projection, frame.floating_origin)?;
@@ -569,6 +572,7 @@ impl<'window> GpuSurfaceHost<'window> {
             frame.floating_origin,
             frame.clip_volumes,
             [self.configuration.width, self.configuration.height],
+            frame.point_size_scale,
         )?;
         let prepared_batches =
             self.prepare_batches(frame.batches, frame.view_projection, frame.floating_origin)?;

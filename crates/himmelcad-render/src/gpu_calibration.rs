@@ -280,6 +280,7 @@ impl GpuCalibrationSession {
             },
             &[],
             [TARGET_EDGE, TARGET_EDGE],
+            1.0,
         )?;
         let color_view = self
             .color_texture

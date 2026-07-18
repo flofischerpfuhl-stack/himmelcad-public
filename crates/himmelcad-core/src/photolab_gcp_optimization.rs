@@ -325,8 +325,12 @@ pub struct GcpSolverOptions {
     pub maximum_tie_points: u32,
     /// A-priori standard deviation of a measured image coordinate.
     pub reprojection_sigma_pixels: f64,
+    /// A-priori standard deviation of an explicitly measured GCP marker.
+    pub gcp_reprojection_sigma_pixels: f64,
     /// Refines camera rotations and centers while preserving a fixed gauge.
     pub refine_camera_extrinsics: bool,
+    /// Refines one shared interior orientation per input calibration group.
+    pub refine_shared_intrinsics: bool,
 }
 
 impl Default for GcpSolverOptions {
@@ -334,11 +338,13 @@ impl Default for GcpSolverOptions {
         Self {
             transform_mode: GcpTransformMode::Auto,
             robust_loss: GcpRobustLoss::default(),
-            maximum_iterations: 50,
-            convergence_tolerance: 1.0e-10,
+            maximum_iterations: 200,
+            convergence_tolerance: 1.0e-8,
             maximum_tie_points: 50_000,
             reprojection_sigma_pixels: 1.0,
+            gcp_reprojection_sigma_pixels: 0.25,
             refine_camera_extrinsics: true,
+            refine_shared_intrinsics: true,
         }
     }
 }
@@ -456,6 +462,15 @@ struct TriangulatedPoint {
 struct BundleObservation {
     camera_index: usize,
     measured: ImageCoordinate,
+    sigma_pixels: f64,
+    is_gcp_marker: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct IntrinsicGroupKey {
+    width_pixels: u32,
+    height_pixels: u32,
+    parameters: [u64; 9],
 }
 
 #[derive(Debug, Clone)]
@@ -497,10 +512,11 @@ where
 
 /// Runs similarity initialization followed by weighted robust bundle adjustment.
 ///
-/// The first camera pose and, when present, the second camera center form a
+/// Three spatial survey controls remove the similarity gauge. Without that
+/// support, the first camera pose and (when present) second camera center form a
 /// deterministic gauge. Survey priors are applied only to controls and honor
-/// their independent XY/Z role masks. Intrinsics remain fixed because they are
-/// not safely observable from the frozen GCP snapshot alone.
+/// their independent XY/Z role masks. Interior orientation is refined once per
+/// input calibration group against the sparse tie-point graph and GCP markers.
 #[allow(clippy::too_many_lines)]
 pub fn optimize_gcp_bundle_alignment<F>(
     snapshot: &GcpOptimizationSnapshot,
@@ -560,15 +576,18 @@ where
     let mut transform = initial_transform(&controls, effective_mode);
     let mut lambda = 1.0e-6;
     let mut current_objective = objective(&controls, transform, options.robust_loss);
-    let mut converged = false;
     let mut iterations = 0_u16;
-    for iteration in 0..options.maximum_iterations {
+    let similarity_iteration_limit = options.maximum_iterations.min(50);
+    // The seven-parameter initializer is tiny and should settle quickly; keep
+    // the larger iteration budget for the coupled camera/point adjustment.
+    for iteration in 0..similarity_iteration_limit {
         check_progress(
             &mut progress,
             GcpOptimizationProgress {
                 phase: GcpOptimizationPhase::Optimize,
                 completed_units: u32::from(iteration),
-                total_units: u32::from(options.maximum_iterations).saturating_mul(2),
+                total_units: u32::from(similarity_iteration_limit)
+                    .saturating_add(u32::from(options.maximum_iterations)),
                 iteration: Some(iteration),
                 objective: Some(current_objective),
             },
@@ -602,7 +621,6 @@ where
         current_objective = candidate_objective;
         iterations = iteration + 1;
         if vector_norm_7(delta) <= options.convergence_tolerance {
-            converged = true;
             break;
         }
     }
@@ -616,7 +634,7 @@ where
         tie_points,
         &optimized_cameras,
         transform,
-        options.maximum_tie_points,
+        options,
     )?;
     let bundle_camera_indices = optimized_cameras
         .iter()
@@ -628,6 +646,7 @@ where
         &triangulated,
         snapshot,
         &bundle_camera_indices,
+        options.gcp_reprojection_sigma_pixels,
     );
     let bundle = run_bundle_adjustment(
         &mut optimized_cameras,
@@ -636,11 +655,15 @@ where
         &snapshot.scope.camera_reference_image_ids,
         options,
         iterations,
+        u32::from(similarity_iteration_limit).saturating_add(u32::from(options.maximum_iterations)),
         &mut progress,
     )?;
     current_objective = bundle.objective;
     iterations = iterations.saturating_add(bundle.iterations);
-    converged |= bundle.converged;
+    // Once bundle adjustment runs, its terminal state is authoritative. A
+    // settled seven-parameter initializer must never mask a stalled camera /
+    // point adjustment.
+    let converged = bundle.converged;
 
     let mut points = Vec::with_capacity(triangulated.len());
     let mut residuals = Vec::with_capacity(triangulated.len());
@@ -741,7 +764,7 @@ fn build_bundle_points(
     tie_points: &[GcpBundleTiePoint],
     cameras: &[OptimizedGcpCamera],
     transform: GcpSimilarityTransform,
-    maximum_tie_points: u32,
+    options: GcpSolverOptions,
 ) -> Result<Vec<BundlePoint>, GcpOptimizationError> {
     let camera_indices = cameras
         .iter()
@@ -750,7 +773,7 @@ fn build_bundle_points(
         .collect::<BTreeMap<_, _>>();
     let mut points = Vec::with_capacity(
         gcps.len().saturating_add(
-            usize::try_from(maximum_tie_points)
+            usize::try_from(options.maximum_tie_points)
                 .unwrap_or(usize::MAX)
                 .min(tie_points.len()),
         ),
@@ -766,7 +789,7 @@ fn build_bundle_points(
         });
     }
     // GCP image observations are attached by the caller after triangulation.
-    let limit = usize::try_from(maximum_tie_points).unwrap_or(usize::MAX);
+    let limit = usize::try_from(options.maximum_tie_points).unwrap_or(usize::MAX);
     let mut seen_tracks = BTreeSet::new();
     for tie_point in tie_points.iter().take(limit) {
         if !seen_tracks.insert(tie_point.track_id)
@@ -794,6 +817,8 @@ fn build_bundle_points(
                 observations.push(BundleObservation {
                     camera_index: *camera_index,
                     measured: measurement.coordinate,
+                    sigma_pixels: options.reprojection_sigma_pixels,
+                    is_gcp_marker: false,
                 });
             }
         }
@@ -815,6 +840,7 @@ fn attach_gcp_bundle_observations(
     triangulated: &[TriangulatedPoint],
     snapshot: &GcpOptimizationSnapshot,
     camera_indices: &BTreeMap<ImageId, usize>,
+    sigma_pixels: f64,
 ) {
     let point_indices = triangulated
         .iter()
@@ -836,6 +862,8 @@ fn attach_gcp_bundle_observations(
             .push(BundleObservation {
                 camera_index: *camera_index,
                 measured,
+                sigma_pixels,
+                is_gcp_marker: true,
             });
     }
 }
@@ -847,6 +875,7 @@ fn run_bundle_adjustment<F>(
     selected_camera_ids: &[ImageId],
     options: GcpSolverOptions,
     iteration_offset: u16,
+    progress_total_units: u32,
     progress: &mut F,
 ) -> Result<BundleOutcome, GcpOptimizationError>
 where
@@ -868,28 +897,42 @@ where
             })
         })
         .collect::<Vec<_>>();
+    let intrinsic_groups = build_intrinsic_groups(source_cameras);
+    let observations = camera_observation_index(cameras.len(), points);
+    // Start the nonlinear solve on the declared control datum. This is a
+    // graduated initialization only: after the short anchoring stage the
+    // controls are released again and their declared survey uncertainties are
+    // honored by the final weighted adjustment.
+    initialize_control_targets(points);
     let mut current_objective = bundle_objective(cameras, points, &camera_priors, options);
     let refinable = vec![true; cameras.len()];
-    let gauge = refinable
-        .iter()
-        .enumerate()
-        .filter_map(|(index, active)| active.then_some(index))
-        .take(2)
-        .collect::<Vec<_>>();
+    let gauge = if controls_anchor_bundle(points) {
+        Vec::new()
+    } else {
+        refinable
+            .iter()
+            .enumerate()
+            .filter_map(|(index, active)| active.then_some(index))
+            .take(2)
+            .collect::<Vec<_>>()
+    };
     let mut converged = false;
     let mut iterations = 0_u16;
+    let anchored_iterations = options.maximum_iterations.min(10);
+    let mut stable_sweeps = 0_u8;
     for iteration in 0..options.maximum_iterations {
+        let controls_anchored = iteration < anchored_iterations;
         check_progress(
             progress,
             GcpOptimizationProgress {
                 phase: GcpOptimizationPhase::Optimize,
                 completed_units: u32::from(iteration_offset.saturating_add(iteration)),
-                total_units: u32::from(options.maximum_iterations).saturating_mul(2),
+                total_units: progress_total_units,
                 iteration: Some(iteration_offset.saturating_add(iteration)),
                 objective: Some(current_objective),
             },
         )?;
-        let mut largest_step = 0.0_f64;
+        let mut accepted_updates = 0_u32;
         for point_index in 0..points.len() {
             if point_index % 256 == 0 {
                 check_progress(
@@ -897,17 +940,17 @@ where
                     GcpOptimizationProgress {
                         phase: GcpOptimizationPhase::Optimize,
                         completed_units: u32::from(iteration_offset.saturating_add(iteration)),
-                        total_units: u32::from(options.maximum_iterations).saturating_mul(2),
+                        total_units: progress_total_units,
                         iteration: Some(iteration_offset.saturating_add(iteration)),
                         objective: Some(current_objective),
                     },
                 )?;
             }
-            largest_step =
-                largest_step.max(refine_bundle_point(point_index, cameras, points, options));
+            let step =
+                refine_bundle_point(point_index, cameras, points, options, controls_anchored);
+            accepted_updates += u32::from(step > 0.0);
         }
         if options.refine_camera_extrinsics {
-            let observations = camera_observation_index(cameras.len(), points);
             for camera_index in 0..cameras.len() {
                 if !refinable[camera_index] || gauge.first() == Some(&camera_index) {
                     continue;
@@ -918,13 +961,13 @@ where
                         GcpOptimizationProgress {
                             phase: GcpOptimizationPhase::Optimize,
                             completed_units: u32::from(iteration_offset.saturating_add(iteration)),
-                            total_units: u32::from(options.maximum_iterations).saturating_mul(2),
+                            total_units: progress_total_units,
                             iteration: Some(iteration_offset.saturating_add(iteration)),
                             objective: Some(current_objective),
                         },
                     )?;
                 }
-                largest_step = largest_step.max(refine_bundle_camera(
+                let step = refine_bundle_camera(
                     camera_index,
                     &observations[camera_index],
                     cameras,
@@ -932,16 +975,50 @@ where
                     camera_priors[camera_index],
                     options,
                     gauge.get(1) == Some(&camera_index),
-                ));
+                );
+                accepted_updates += u32::from(step > 0.0);
+            }
+        }
+        if options.refine_shared_intrinsics {
+            for group in &intrinsic_groups {
+                let step = refine_intrinsic_group(
+                    group,
+                    cameras,
+                    &observations,
+                    points,
+                    source_cameras,
+                    options,
+                );
+                accepted_updates += u32::from(step > 0.0);
             }
         }
         let objective = bundle_objective(cameras, points, &camera_priors, options);
         iterations = iteration + 1;
         let objective_change = (current_objective - objective).abs();
+        let relative_objective_change = objective_change / (1.0 + current_objective.abs());
         current_objective = objective;
-        if largest_step <= options.convergence_tolerance.sqrt()
-            && objective_change <= options.convergence_tolerance * (1.0 + objective.abs())
+        // A complete block-coordinate sweep mixes metres, radians and normalized
+        // interior-orientation increments, so a single maximum-step threshold is
+        // not dimensionally meaningful. Convergence is instead a sustained
+        // relative objective plateau (or several sweeps with no accepted block
+        // update). Requiring four complete sweeps avoids one-off line-search
+        // stalls while reporting an honest numerical terminal state.
+        // The option is also the parameter-step tolerance of the compact
+        // seven-parameter initializer. Its square root is the dimensionless
+        // relative-cost tolerance for this much larger sparse bundle.
+        if controls_anchored {
+            // The initial control lock deliberately creates a flat objective:
+            // it must never be mistaken for convergence before the controls
+            // have participated as weighted bundle unknowns at least once.
+            stable_sweeps = 0;
+        } else if relative_objective_change <= 3.0 * options.convergence_tolerance.sqrt()
+            || accepted_updates == 0
         {
+            stable_sweeps = stable_sweeps.saturating_add(1);
+        } else {
+            stable_sweeps = 0;
+        }
+        if !controls_anchored && stable_sweeps >= 4 {
             converged = true;
             break;
         }
@@ -954,17 +1031,355 @@ where
     })
 }
 
+fn initialize_control_targets(points: &mut [BundlePoint]) {
+    for point in points {
+        let Some(survey) = &point.survey else {
+            continue;
+        };
+        if survey.role.uses_xy() {
+            point.world[0] = survey.coordinate.east_meters;
+            point.world[1] = survey.coordinate.north_meters;
+        }
+        if survey.role.uses_z() {
+            point.world[2] = survey.coordinate.height_meters;
+        }
+    }
+}
+
 fn camera_observation_index(
     camera_count: usize,
     points: &[BundlePoint],
-) -> Vec<Vec<(usize, ImageCoordinate)>> {
+) -> Vec<Vec<(usize, ImageCoordinate, f64, bool)>> {
     let mut result = vec![Vec::new(); camera_count];
     for (point_index, point) in points.iter().enumerate() {
         for observation in &point.observations {
-            result[observation.camera_index].push((point_index, observation.measured));
+            result[observation.camera_index].push((
+                point_index,
+                observation.measured,
+                observation.sigma_pixels,
+                observation.is_gcp_marker,
+            ));
         }
     }
     result
+}
+
+fn controls_anchor_bundle(points: &[BundlePoint]) -> bool {
+    let controls = points
+        .iter()
+        .filter_map(|point| point.survey.as_ref())
+        .filter(|point| point.role.uses_xy() && point.role.uses_z())
+        .map(|point| {
+            [
+                point.coordinate.east_meters,
+                point.coordinate.north_meters,
+                point.coordinate.height_meters,
+            ]
+        })
+        .collect::<Vec<_>>();
+    if controls.len() < 3 {
+        return false;
+    }
+    let baseline = sub3(controls[1], controls[0]);
+    controls.iter().skip(2).any(|point| {
+        let offset = sub3(*point, controls[0]);
+        norm3(cross3(baseline, offset)) > 1.0e-6
+    })
+}
+
+fn build_intrinsic_groups(cameras: &[GcpCameraModel]) -> Vec<Vec<usize>> {
+    let mut groups = BTreeMap::<IntrinsicGroupKey, Vec<usize>>::new();
+    for (index, camera) in cameras.iter().enumerate() {
+        let parameters = [
+            camera.focal_x_pixels.to_bits(),
+            camera.focal_y_pixels.to_bits(),
+            camera.principal_x_pixels.to_bits(),
+            camera.principal_y_pixels.to_bits(),
+            camera.radial_distortion[0].to_bits(),
+            camera.radial_distortion[1].to_bits(),
+            camera.radial_distortion[2].to_bits(),
+            camera.tangential_distortion[0].to_bits(),
+            camera.tangential_distortion[1].to_bits(),
+        ];
+        groups
+            .entry(IntrinsicGroupKey {
+                width_pixels: camera.width_pixels,
+                height_pixels: camera.height_pixels,
+                parameters,
+            })
+            .or_default()
+            .push(index);
+    }
+    groups.into_values().collect()
+}
+
+fn refine_intrinsic_group(
+    group: &[usize],
+    cameras: &mut [OptimizedGcpCamera],
+    observations: &[Vec<(usize, ImageCoordinate, f64, bool)>],
+    points: &[BundlePoint],
+    source_cameras: &[GcpCameraModel],
+    options: GcpSolverOptions,
+) -> f64 {
+    let Some(&first_index) = group.first() else {
+        return 0.0;
+    };
+    let mut normal = [[0.0; 8]; 8];
+    let mut gradient = [0.0; 8];
+    let mut usable = 0_usize;
+    for &camera_index in group {
+        let camera = &cameras[camera_index];
+        for (point_index, measured, sigma_pixels, is_gcp_marker) in &observations[camera_index] {
+            let point = points[*point_index].world;
+            let Ok((projected, jacobian)) = intrinsic_projection_jacobian(camera, point) else {
+                continue;
+            };
+            let residual = [
+                projected.x_pixels - measured.x_pixels,
+                projected.y_pixels - measured.y_pixels,
+            ];
+            let normalized = residual[0].hypot(residual[1]) / sigma_pixels;
+            let weight = robust_weight(
+                observation_loss(options.robust_loss, *is_gcp_marker),
+                normalized,
+            ) / sigma_pixels.powi(2);
+            accumulate_2d_normal(&mut normal, &mut gradient, jacobian, residual, weight);
+            usable += 1;
+        }
+    }
+    if usable < 32 {
+        return 0.0;
+    }
+    accumulate_intrinsic_prior(
+        &mut normal,
+        &mut gradient,
+        &cameras[first_index],
+        &source_cameras[first_index],
+    );
+    damp_diagonal(&mut normal, 1.0e-4);
+    let Some(delta) = solve_linear(normal, gradient.map(|value| -value)) else {
+        return 0.0;
+    };
+    let old_cost = intrinsic_group_objective(
+        group,
+        cameras,
+        observations,
+        points,
+        &source_cameras[first_index],
+        options,
+    );
+    for divisor in [1.0, 2.0, 4.0, 8.0, 16.0] {
+        let step = delta.map(|value| value / divisor);
+        let mut candidates = group
+            .iter()
+            .map(|index| perturb_intrinsics(&cameras[*index], step))
+            .collect::<Vec<_>>();
+        if !valid_intrinsic_candidate(&candidates[0], &source_cameras[first_index]) {
+            continue;
+        }
+        let candidate_cost = intrinsic_group_candidate_objective(
+            group,
+            &candidates,
+            observations,
+            points,
+            &source_cameras[first_index],
+            options,
+        );
+        if candidate_cost <= old_cost {
+            for (&camera_index, candidate) in group.iter().zip(candidates.drain(..)) {
+                cameras[camera_index] = candidate;
+            }
+            return normalized_intrinsic_step(step, &cameras[first_index]);
+        }
+    }
+    0.0
+}
+
+fn intrinsic_projection_jacobian(
+    camera: &OptimizedGcpCamera,
+    point: [f64; 3],
+) -> Result<(ImageCoordinate, [[f64; 8]; 2]), GcpOptimizationError> {
+    let camera_point = mat3_transpose_vec(
+        camera.camera_to_world_rotation,
+        sub3(point, camera.center_world_meters),
+    );
+    if camera_point[2] <= MIN_DEPTH {
+        return Err(GcpOptimizationError::PointBehindCamera);
+    }
+    let normalized = [
+        camera_point[0] / camera_point[2],
+        camera_point[1] / camera_point[2],
+    ];
+    let radius2 = normalized[0].powi(2) + normalized[1].powi(2);
+    let radius4 = radius2.powi(2);
+    let radius6 = radius2.powi(3);
+    let distorted = distort(
+        normalized,
+        camera.radial_distortion,
+        camera.tangential_distortion,
+    );
+    let projected = ImageCoordinate {
+        x_pixels: camera.focal_x_pixels * distorted[0] + camera.principal_x_pixels,
+        y_pixels: camera.focal_y_pixels * distorted[1] + camera.principal_y_pixels,
+    };
+    let x = normalized[0];
+    let y = normalized[1];
+    Ok((
+        projected,
+        [
+            [
+                camera.focal_x_pixels * distorted[0],
+                1.0,
+                0.0,
+                camera.focal_x_pixels * x * radius2,
+                camera.focal_x_pixels * x * radius4,
+                camera.focal_x_pixels * x * radius6,
+                camera.focal_x_pixels * 2.0 * x * y,
+                camera.focal_x_pixels * (radius2 + 2.0 * x * x),
+            ],
+            [
+                camera.focal_y_pixels * distorted[1],
+                0.0,
+                1.0,
+                camera.focal_y_pixels * y * radius2,
+                camera.focal_y_pixels * y * radius4,
+                camera.focal_y_pixels * y * radius6,
+                camera.focal_y_pixels * (radius2 + 2.0 * y * y),
+                camera.focal_y_pixels * 2.0 * x * y,
+            ],
+        ],
+    ))
+}
+
+fn accumulate_intrinsic_prior(
+    normal: &mut [[f64; 8]; 8],
+    gradient: &mut [f64; 8],
+    camera: &OptimizedGcpCamera,
+    source: &GcpCameraModel,
+) {
+    let residuals = [
+        (camera.focal_x_pixels / source.focal_x_pixels).ln(),
+        camera.principal_x_pixels - source.principal_x_pixels,
+        camera.principal_y_pixels - source.principal_y_pixels,
+        camera.radial_distortion[0] - source.radial_distortion[0],
+        camera.radial_distortion[1] - source.radial_distortion[1],
+        camera.radial_distortion[2] - source.radial_distortion[2],
+        camera.tangential_distortion[0] - source.tangential_distortion[0],
+        camera.tangential_distortion[1] - source.tangential_distortion[1],
+    ];
+    let sigmas = [
+        0.25,
+        f64::from(source.width_pixels) * 0.1,
+        f64::from(source.height_pixels) * 0.1,
+        0.25,
+        0.25,
+        0.25,
+        0.1,
+        0.1,
+    ];
+    for index in 0..8 {
+        let weight = 1.0 / sigmas[index].powi(2);
+        normal[index][index] += weight;
+        gradient[index] += weight * residuals[index];
+    }
+}
+
+fn perturb_intrinsics(camera: &OptimizedGcpCamera, delta: [f64; 8]) -> OptimizedGcpCamera {
+    let mut candidate = camera.clone();
+    let focal_scale = delta[0].exp();
+    candidate.focal_x_pixels *= focal_scale;
+    candidate.focal_y_pixels *= focal_scale;
+    candidate.principal_x_pixels += delta[1];
+    candidate.principal_y_pixels += delta[2];
+    candidate.radial_distortion[0] += delta[3];
+    candidate.radial_distortion[1] += delta[4];
+    candidate.radial_distortion[2] += delta[5];
+    candidate.tangential_distortion[0] += delta[6];
+    candidate.tangential_distortion[1] += delta[7];
+    candidate
+}
+
+fn valid_intrinsic_candidate(camera: &OptimizedGcpCamera, source: &GcpCameraModel) -> bool {
+    let focal_ratio = camera.focal_x_pixels / source.focal_x_pixels;
+    (0.5..=2.0).contains(&focal_ratio)
+        && camera.principal_x_pixels.abs() <= f64::from(camera.width_pixels) * 1.5
+        && camera.principal_y_pixels.abs() <= f64::from(camera.height_pixels) * 1.5
+        && camera
+            .radial_distortion
+            .iter()
+            .chain(camera.tangential_distortion.iter())
+            .all(|value| value.is_finite() && value.abs() <= 2.0)
+}
+
+fn normalized_intrinsic_step(delta: [f64; 8], camera: &OptimizedGcpCamera) -> f64 {
+    let scaled = [
+        delta[0],
+        delta[1] / f64::from(camera.width_pixels),
+        delta[2] / f64::from(camera.height_pixels),
+        delta[3],
+        delta[4],
+        delta[5],
+        delta[6],
+        delta[7],
+    ];
+    scaled.iter().map(|value| value * value).sum::<f64>().sqrt()
+}
+
+fn intrinsic_group_objective(
+    group: &[usize],
+    cameras: &[OptimizedGcpCamera],
+    observations: &[Vec<(usize, ImageCoordinate, f64, bool)>],
+    points: &[BundlePoint],
+    source: &GcpCameraModel,
+    options: GcpSolverOptions,
+) -> f64 {
+    let candidate_cameras = group
+        .iter()
+        .map(|index| cameras[*index].clone())
+        .collect::<Vec<_>>();
+    intrinsic_group_candidate_objective(
+        group,
+        &candidate_cameras,
+        observations,
+        points,
+        source,
+        options,
+    )
+}
+
+fn intrinsic_group_candidate_objective(
+    group: &[usize],
+    candidates: &[OptimizedGcpCamera],
+    observations: &[Vec<(usize, ImageCoordinate, f64, bool)>],
+    points: &[BundlePoint],
+    source: &GcpCameraModel,
+    options: GcpSolverOptions,
+) -> f64 {
+    let reprojection = group
+        .iter()
+        .zip(candidates)
+        .map(|(camera_index, camera)| {
+            camera_objective(camera, &observations[*camera_index], points, None, options)
+        })
+        .sum::<f64>();
+    let camera = &candidates[0];
+    let residuals = [
+        (camera.focal_x_pixels / source.focal_x_pixels).ln() / 0.25,
+        (camera.principal_x_pixels - source.principal_x_pixels)
+            / (f64::from(source.width_pixels) * 0.1),
+        (camera.principal_y_pixels - source.principal_y_pixels)
+            / (f64::from(source.height_pixels) * 0.1),
+        (camera.radial_distortion[0] - source.radial_distortion[0]) / 0.25,
+        (camera.radial_distortion[1] - source.radial_distortion[1]) / 0.25,
+        (camera.radial_distortion[2] - source.radial_distortion[2]) / 0.25,
+        (camera.tangential_distortion[0] - source.tangential_distortion[0]) / 0.1,
+        (camera.tangential_distortion[1] - source.tangential_distortion[1]) / 0.1,
+    ];
+    reprojection
+        + residuals
+            .iter()
+            .map(|value| 0.5 * value * value)
+            .sum::<f64>()
 }
 
 fn refine_bundle_point(
@@ -972,8 +1387,12 @@ fn refine_bundle_point(
     cameras: &[OptimizedGcpCamera],
     points: &mut [BundlePoint],
     options: GcpSolverOptions,
+    hold_controls: bool,
 ) -> f64 {
     let point = &points[point_index];
+    if hold_controls && point.survey.is_some() {
+        return 0.0;
+    }
     if point.observations.len() < 2 && point.survey.is_none() {
         return 0.0;
     }
@@ -988,9 +1407,12 @@ fn refine_bundle_point(
             projected.x_pixels - observation.measured.x_pixels,
             projected.y_pixels - observation.measured.y_pixels,
         ];
-        let normalized = residual[0].hypot(residual[1]) / options.reprojection_sigma_pixels;
-        let weight = robust_weight(options.robust_loss, normalized)
-            / options.reprojection_sigma_pixels.powi(2);
+        let sigma = observation.sigma_pixels;
+        let normalized = residual[0].hypot(residual[1]) / sigma;
+        let weight = robust_weight(
+            observation_loss(options.robust_loss, observation.is_gcp_marker),
+            normalized,
+        ) / sigma.powi(2);
         let jacobian = numeric_point_jacobian(camera, point.world, projected);
         accumulate_2d_normal(&mut normal, &mut gradient, jacobian, residual, weight);
     }
@@ -1000,7 +1422,7 @@ fn refine_bundle_point(
             &mut gradient,
             point.world,
             survey,
-            options.robust_loss,
+            bundle_survey_loss(options.robust_loss),
         );
     }
     damp_diagonal(&mut normal, 1.0e-5);
@@ -1008,20 +1430,22 @@ fn refine_bundle_point(
         return 0.0;
     };
     let old_cost = point_objective(cameras, point, options);
-    let candidate = add3(point.world, delta);
-    let mut candidate_point = point.clone();
-    candidate_point.world = candidate;
-    if point_objective(cameras, &candidate_point, options) <= old_cost {
-        points[point_index].world = candidate;
-        norm3(delta)
-    } else {
-        0.0
+    for divisor in [1.0, 2.0, 4.0, 8.0, 16.0, 32.0] {
+        let step = scale3(delta, 1.0 / divisor);
+        let candidate = add3(point.world, step);
+        let mut candidate_point = point.clone();
+        candidate_point.world = candidate;
+        if point_objective(cameras, &candidate_point, options) <= old_cost {
+            points[point_index].world = candidate;
+            return norm3(step);
+        }
     }
+    0.0
 }
 
 fn refine_bundle_camera(
     camera_index: usize,
-    observations: &[(usize, ImageCoordinate)],
+    observations: &[(usize, ImageCoordinate, f64, bool)],
     cameras: &mut [OptimizedGcpCamera],
     points: &[BundlePoint],
     reference_prior: Option<CameraReferencePrior>,
@@ -1034,7 +1458,7 @@ fn refine_bundle_camera(
     let camera = &cameras[camera_index];
     let mut normal = [[0.0; 6]; 6];
     let mut gradient = [0.0; 6];
-    for (point_index, measured) in observations {
+    for (point_index, measured, sigma_pixels, is_gcp_marker) in observations {
         let point = points[*point_index].world;
         let Ok(projected) = project_world(camera, point) else {
             continue;
@@ -1043,9 +1467,11 @@ fn refine_bundle_camera(
             projected.x_pixels - measured.x_pixels,
             projected.y_pixels - measured.y_pixels,
         ];
-        let normalized = residual[0].hypot(residual[1]) / options.reprojection_sigma_pixels;
-        let weight = robust_weight(options.robust_loss, normalized)
-            / options.reprojection_sigma_pixels.powi(2);
+        let normalized = residual[0].hypot(residual[1]) / sigma_pixels;
+        let weight = robust_weight(
+            observation_loss(options.robust_loss, *is_gcp_marker),
+            normalized,
+        ) / sigma_pixels.powi(2);
         let mut jacobian = numeric_camera_jacobian(camera, point, projected);
         // The second camera center fixes the reconstruction baseline and scale.
         if fix_center {
@@ -1074,13 +1500,16 @@ fn refine_bundle_camera(
         return 0.0;
     };
     let old_cost = camera_objective(camera, observations, points, reference_prior, options);
-    let candidate = perturb_camera(camera, delta);
-    if camera_objective(&candidate, observations, points, reference_prior, options) <= old_cost {
-        cameras[camera_index] = candidate;
-        delta.iter().map(|value| value * value).sum::<f64>().sqrt()
-    } else {
-        0.0
+    for divisor in [1.0, 2.0, 4.0, 8.0, 16.0, 32.0] {
+        let step = delta.map(|value| value / divisor);
+        let candidate = perturb_camera(camera, step);
+        if camera_objective(&candidate, observations, points, reference_prior, options) <= old_cost
+        {
+            cameras[camera_index] = candidate;
+            return step.iter().map(|value| value * value).sum::<f64>().sqrt();
+        }
     }
+    0.0
 }
 
 fn numeric_point_jacobian(
@@ -1177,7 +1606,7 @@ fn accumulate_survey_prior(
         }
         sum.sqrt()
     };
-    let robust = robust_weight(loss, normalized);
+    let robust = robust_weight(bundle_survey_loss(loss), normalized);
     for axis in 0..3 {
         if (axis < 2 && !survey.role.uses_xy()) || (axis == 2 && !survey.role.uses_z()) {
             continue;
@@ -1201,8 +1630,11 @@ fn point_objective(
             let projected = project_world(&cameras[observation.camera_index], point.world).ok()?;
             let norm = (projected.x_pixels - observation.measured.x_pixels)
                 .hypot(projected.y_pixels - observation.measured.y_pixels)
-                / options.reprojection_sigma_pixels;
-            Some(robust_cost(options.robust_loss, norm))
+                / observation.sigma_pixels;
+            Some(robust_cost(
+                observation_loss(options.robust_loss, observation.is_gcp_marker),
+                norm,
+            ))
         })
         .sum::<f64>();
     reprojection
@@ -1214,7 +1646,7 @@ fn point_objective(
                 ray_rms: 0.0,
             };
             robust_cost(
-                options.robust_loss,
+                bundle_survey_loss(options.robust_loss),
                 masked_normalized_norm(
                     &pseudo,
                     sub3(
@@ -1240,20 +1672,20 @@ fn point_objective(
 
 fn camera_objective(
     camera: &OptimizedGcpCamera,
-    observations: &[(usize, ImageCoordinate)],
+    observations: &[(usize, ImageCoordinate, f64, bool)],
     points: &[BundlePoint],
     reference_prior: Option<CameraReferencePrior>,
     options: GcpSolverOptions,
 ) -> f64 {
     let reprojection = observations
         .iter()
-        .filter_map(|(point_index, measured)| {
+        .filter_map(|(point_index, measured, sigma_pixels, is_gcp_marker)| {
             let projected = project_world(camera, points[*point_index].world).ok()?;
             Some(robust_cost(
-                options.robust_loss,
+                observation_loss(options.robust_loss, *is_gcp_marker),
                 (projected.x_pixels - measured.x_pixels)
                     .hypot(projected.y_pixels - measured.y_pixels)
-                    / options.reprojection_sigma_pixels,
+                    / sigma_pixels,
             ))
         })
         .sum::<f64>();
@@ -1335,6 +1767,8 @@ fn validate_options(options: GcpSolverOptions) -> Result<(), GcpOptimizationErro
         || options.maximum_tie_points > 1_000_000
         || !options.reprojection_sigma_pixels.is_finite()
         || options.reprojection_sigma_pixels <= 0.0
+        || !options.gcp_reprojection_sigma_pixels.is_finite()
+        || options.gcp_reprojection_sigma_pixels <= 0.0
     {
         return Err(GcpOptimizationError::InvalidOptions);
     }
@@ -1810,7 +2244,7 @@ fn normal_equations(
             .height_stddev_meters
             .max(MIN_SIGMA_METERS);
         let normalized_norm = masked_normalized_norm(point, residual, sigma_xy, sigma_z);
-        let robust = robust_weight(loss, normalized_norm);
+        let robust = robust_weight(survey_loss(loss), normalized_norm);
         for axis in 0..3 {
             if (axis < 2 && !point.definition.role.uses_xy())
                 || (axis == 2 && !point.definition.role.uses_z())
@@ -1874,7 +2308,7 @@ fn objective(
                     .height_stddev_meters
                     .max(MIN_SIGMA_METERS),
             );
-            robust_cost(loss, normalized)
+            robust_cost(survey_loss(loss), normalized)
         })
         .sum()
 }
@@ -1905,6 +2339,46 @@ fn robust_weight(loss: GcpRobustLoss, norm: f64) -> f64 {
             }
         }
         GcpRobustLoss::Cauchy { scale_sigma } => 1.0 / (1.0 + (norm / scale_sigma).powi(2)),
+    }
+}
+
+fn survey_loss(loss: GcpRobustLoss) -> GcpRobustLoss {
+    match loss {
+        GcpRobustLoss::Huber { threshold_sigma } => GcpRobustLoss::Huber {
+            threshold_sigma: threshold_sigma * 10.0,
+        },
+        GcpRobustLoss::Cauchy { scale_sigma } => GcpRobustLoss::Cauchy {
+            scale_sigma: scale_sigma * 10.0,
+        },
+    }
+}
+
+/// Survey coordinates and manually placed image markers are explicit user
+/// measurements, not automatically generated feature matches. Keep them
+/// influential while the initially unreferenced reconstruction is still far
+/// from the survey frame; the enlarged robust transition still limits truly
+/// gross input mistakes instead of silently discarding the measurements that
+/// are supposed to anchor the bundle.
+fn bundle_survey_loss(loss: GcpRobustLoss) -> GcpRobustLoss {
+    scale_robust_loss(loss, 200.0)
+}
+
+fn observation_loss(loss: GcpRobustLoss, is_gcp_marker: bool) -> GcpRobustLoss {
+    if is_gcp_marker {
+        scale_robust_loss(loss, 32.0)
+    } else {
+        loss
+    }
+}
+
+fn scale_robust_loss(loss: GcpRobustLoss, factor: f64) -> GcpRobustLoss {
+    match loss {
+        GcpRobustLoss::Huber { threshold_sigma } => GcpRobustLoss::Huber {
+            threshold_sigma: threshold_sigma * factor,
+        },
+        GcpRobustLoss::Cauchy { scale_sigma } => GcpRobustLoss::Cauchy {
+            scale_sigma: scale_sigma * factor,
+        },
     }
 }
 
@@ -2164,6 +2638,14 @@ fn mat3_mul(left: [f64; 9], right: [f64; 9]) -> [f64; 9] {
 
 fn dot3(left: [f64; 3], right: [f64; 3]) -> f64 {
     left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
+}
+
+fn cross3(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {
+    [
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    ]
 }
 
 fn norm3(value: [f64; 3]) -> f64 {
@@ -2588,8 +3070,38 @@ mod tests {
             true_cameras[2].center_reconstruction,
         ));
         assert!(after < before * 0.5, "before={before}, after={after}");
+        assert!(result.converged);
         assert_eq!(result.tie_points.len(), 6);
-        assert_eq!(result.fixed_gauge_camera_count, 2);
+        assert_eq!(result.fixed_gauge_camera_count, 0);
+    }
+
+    #[test]
+    fn settled_initializer_does_not_mask_an_unfinished_bundle() {
+        let cameras = [
+            look_down_camera(1, -4.0, -3.0),
+            look_down_camera(2, 4.0, -3.0),
+            look_down_camera(3, 0.0, 4.0),
+        ];
+        let controls = [
+            [-1.5, -1.0, 0.0],
+            [1.5, -1.0, 0.2],
+            [-1.0, 1.5, -0.1],
+            [1.0, 1.5, 0.3],
+        ];
+        let result = optimize_gcp_bundle_alignment(
+            &identity_snapshot(&controls, &cameras, None),
+            &cameras,
+            &synthetic_tie_points(&cameras, false),
+            GcpSolverOptions {
+                transform_mode: GcpTransformMode::TranslationOnly,
+                maximum_iterations: 1,
+                ..GcpSolverOptions::default()
+            },
+            |_| GcpSolveControl::Continue,
+        )
+        .expect("single-sweep bundle adjustment");
+        assert!(!result.converged);
+        assert_eq!(result.iterations, 2);
     }
 
     #[test]
@@ -2703,6 +3215,105 @@ mod tests {
                 .expect("controls")
                 .active_component_rms_meters
                 < 1.0e-6
+        );
+    }
+
+    #[test]
+    fn checkpoint_coordinates_do_not_change_the_survey_estimate() {
+        let cameras = [
+            look_down_camera(1, -4.0, -3.0),
+            look_down_camera(2, 4.0, -3.0),
+            look_down_camera(3, 0.0, 4.0),
+        ];
+        let controls = [[-1.5, -1.0, 0.0], [1.5, -1.0, 0.2], [-1.0, 1.5, -0.1]];
+        let options = GcpSolverOptions {
+            transform_mode: GcpTransformMode::TranslationOnly,
+            maximum_iterations: 30,
+            ..GcpSolverOptions::default()
+        };
+        let baseline = optimize_gcp_bundle_alignment(
+            &identity_snapshot(&controls, &cameras, Some([0.0, 0.0, 0.0])),
+            &cameras,
+            &synthetic_tie_points(&cameras, false),
+            options,
+            |_| GcpSolveControl::Continue,
+        )
+        .expect("baseline checkpoint bundle");
+        let displaced = optimize_gcp_bundle_alignment(
+            &identity_snapshot(&controls, &cameras, Some([500.0, -300.0, 100.0])),
+            &cameras,
+            &synthetic_tie_points(&cameras, false),
+            options,
+            |_| GcpSolveControl::Continue,
+        )
+        .expect("displaced checkpoint bundle");
+
+        assert_eq!(baseline.transform, displaced.transform);
+        assert_eq!(baseline.cameras, displaced.cameras);
+        assert_eq!(baseline.points, displaced.points);
+        assert_eq!(
+            baseline.statistics.control, displaced.statistics.control,
+            "checkpoint coordinates entered the control estimate"
+        );
+        assert_ne!(
+            baseline.statistics.checkpoint, displaced.statistics.checkpoint,
+            "checkpoint coordinates must still affect evaluation"
+        );
+    }
+
+    #[test]
+    fn controls_are_released_before_bundle_convergence_is_reported() {
+        let cameras = [
+            look_down_camera(1, -4.0, -3.0),
+            look_down_camera(2, 4.0, -3.0),
+            look_down_camera(3, 0.0, 4.0),
+        ];
+        let controls = [
+            [-1.5, -1.0, 0.0],
+            [1.5, -1.0, 0.2],
+            [-1.0, 1.5, -0.1],
+            [1.0, 1.5, 0.3],
+        ];
+        let mut data = identity_snapshot(&controls, &cameras, None);
+        for point in &mut data.points {
+            point.point.uncertainty.horizontal_stddev_meters = 0.5;
+            point.point.uncertainty.height_stddev_meters = 0.5;
+        }
+        for observation in &mut data.observations {
+            if observation.image_id != ImageId(3) {
+                continue;
+            }
+            if let GcpObservationState::Manual { coordinate } = &mut observation.state {
+                coordinate.x_pixels += 24.0;
+                coordinate.y_pixels -= 12.0;
+            }
+        }
+
+        let result = optimize_gcp_bundle_alignment(
+            &data,
+            &cameras,
+            &[],
+            GcpSolverOptions {
+                transform_mode: GcpTransformMode::TranslationOnly,
+                maximum_iterations: 30,
+                refine_camera_extrinsics: false,
+                refine_shared_intrinsics: false,
+                ..GcpSolverOptions::default()
+            },
+            |_| GcpSolveControl::Continue,
+        )
+        .expect("released-control bundle adjustment");
+
+        assert!(result.converged);
+        assert!(
+            result
+                .statistics
+                .control
+                .as_ref()
+                .expect("control statistics")
+                .active_component_rms_meters
+                > 1.0e-4,
+            "controls stayed artificially fixed at their survey priors"
         );
     }
 

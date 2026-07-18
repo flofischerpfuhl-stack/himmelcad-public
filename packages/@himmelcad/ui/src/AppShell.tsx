@@ -1,8 +1,8 @@
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 
 import { EdgeStrip } from './EdgeStrip.js';
 import { Splitter } from './Splitter.js';
-import { useLayoutStore } from './useLayoutStore.js';
+import { clampBottomPanelToViewport, useLayoutStore } from './useLayoutStore.js';
 import styles from './AppShell.module.css';
 
 export interface AppShellProps {
@@ -42,6 +42,12 @@ export function AppShell(props: AppShellProps): JSX.Element {
   const toggleLeft = useLayoutStore((s) => s.toggleLeftPanel);
   const toggleRight = useLayoutStore((s) => s.toggleRightPanel);
   const toggleBottom = useLayoutStore((s) => s.toggleBottomPanel);
+
+  useEffect(() => {
+    clampBottomPanelToViewport();
+    window.addEventListener('resize', clampBottomPanelToViewport);
+    return () => window.removeEventListener('resize', clampBottomPanelToViewport);
+  }, []);
 
   return (
     <div className={styles.root}>

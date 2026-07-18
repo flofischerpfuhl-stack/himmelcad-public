@@ -135,6 +135,17 @@
   letter-spacing: 0;
 }
 
+/* Colored MARI/Madonna: per-character inline rgb; no black plate — console bg shows through. */
+.asciiArtColor {
+  background: transparent;
+  color: var(--hc-fg-muted);
+  padding: 4px 16px 10px;
+  font-size: 7px;
+  line-height: 1;
+  letter-spacing: 0;
+}
+/* Inline style="color:rgb(...)" on each span wins over inherited color. */
+
 .brandSplash {
   font-family: var(--hc-font-display-3d);
   font-size: 48px;

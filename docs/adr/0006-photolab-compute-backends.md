@@ -63,8 +63,9 @@ distributions require the same independent audit.
    worker. The approved source is Parskatt/DeDoDe commit
    `6d156183f4dc84cd704ae779eebc8350995c5b06`; releases pin Detector-L-v2,
    Descriptor-G and DINOv2 ViT-L/14 by URL, byte length and SHA-256. The signed
-   platform manifest inventories bundled CPython, PyTorch, torchvision, source,
-   entrypoint and every runtime file. Runtime downloads are forbidden.
+   platform manifest inventories the exported ONNX graphs, bundled ONNX Runtime,
+   minimal CPython worker, entrypoint and every runtime file. PyTorch is a
+   build-time parity oracle only. Runtime downloads are forbidden.
 10. DeDoDe extracts each image once, persists a checkpointed feature store and
     evaluates only a typed pair list. Dual-softmax is evaluated in bounded
     blocks with the same feature count, threshold and FP32 policy on CPU and
@@ -76,6 +77,10 @@ distributions require the same independent audit.
     release packaging additionally requires the signed complete-file manifest.
     The byte-level interchange and validation rules are specified in
     `docs/photolab-dedode-worker.md`.
+12. Release inference uses ONNX Runtime 1.24.4 and exact FP32 exports at both
+    profile sizes (784 and 1176). Descriptor block products run through MLAS;
+    the accompanying NumPy is built without BLAS/LAPACK, so no libgfortran,
+    libquadmath, libgomp or lower-quality fallback enters Linux or Windows.
 
 ## Release gates
 

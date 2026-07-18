@@ -22,13 +22,18 @@ use himmelcad_core::{
     photolab_jobs::{
         CancellationToken, JobProgress, PhotolabStage, PhotolabStageKind, ProgressMetrics,
     },
+    photolab_masks::{ImageMaskComputeScope, ImageMaskRaster},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::image_mask_runtime::{materialize_colmap_masks, read_compute_mask_raster};
 use crate::{
-    colmap_runtime::{materialize_project_images, ManifestSignatureVerifier, ToolLicenseRecord},
+    colmap_runtime::{
+        materialize_project_images, ColmapRuntimeError, ManifestSignatureVerifier,
+        ToolLicenseRecord,
+    },
     image_commit::ProjectCameraImageRecord,
     job_runtime::{JobWorkerContext, JobWorkerError},
 };
@@ -52,6 +57,8 @@ const OFFICIAL_DESCRIPTOR_SHA256: &str =
 const OFFICIAL_DINOV2_SHA256: &str =
     "d5383ea8f4877b2472eb973e0fd72d557c7da5d3611bd527ceeb1d7162cbf428";
 const DEDODE_CODE_COMMIT: &str = "6d156183f4dc84cd704ae779eebc8350995c5b06";
+const DEDODE_ONNX_MANIFEST_SHA256: &str =
+    "747d3a26c54d24b46acee82c05c51913987d2e8b0b5ea231767e7e7197ea366b";
 
 static NEXT_SCRATCH_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -62,6 +69,12 @@ pub enum DedodeResourceKind {
     DetectorV2Weights,
     DescriptorGWeights,
     Dinov2VitL14Weights,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DedodeRuntimeBackend {
+    Pytorch,
+    OnnxRuntime,
 }
 
 /// Every signed file carries its own size, digest, origin and license.
@@ -121,6 +134,50 @@ pub struct DevDedodeRuntimeConfig {
     pub allowed_project_roots: Vec<PathBuf>,
 }
 
+/// Hash-audited ONNX development/runtime tree without PyTorch or OpenMP.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DevDedodeOnnxRuntimeConfig {
+    pub python_executable: PathBuf,
+    pub worker_path: PathBuf,
+    pub model_root: PathBuf,
+    pub expected_python_version: String,
+    pub expected_onnxruntime_version: String,
+    pub expected_numpy_version: String,
+    pub expected_pillow_version: String,
+    pub scratch_root: PathBuf,
+    pub allowed_project_roots: Vec<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DedodeOnnxModelManifest {
+    schema_version: u32,
+    backend: String,
+    format: String,
+    opset: u32,
+    numeric_mode: String,
+    source_commit: String,
+    profiles: Vec<DedodeOnnxProfile>,
+    source_weights: BTreeMap<String, String>,
+    files: Vec<DedodeOnnxModelFile>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DedodeOnnxProfile {
+    width: u32,
+    height: u32,
+    max_keypoints: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DedodeOnnxModelFile {
+    path: PathBuf,
+    bytes: u64,
+    sha256: ObjectHash,
+}
+
 /// Device changes throughput only; descriptor, detector and numeric mode stay fixed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -144,6 +201,8 @@ pub struct DedodeRunRequest {
     pub job_id: String,
     pub project_root: PathBuf,
     pub camera_images: Vec<ProjectCameraImageRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_mask_scope: Option<ImageMaskComputeScope>,
     pub pairs: Vec<DedodeImagePair>,
     pub device: DedodeComputeDevice,
     pub max_keypoints: u32,
@@ -161,6 +220,19 @@ impl DedodeRunRequest {
             return Err(DedodeRuntimeError::InvalidRequest(
                 "at least two images are required".into(),
             ));
+        }
+        if let Some(scope) = self.image_mask_scope.as_ref() {
+            let mut requested = self
+                .camera_images
+                .iter()
+                .map(|camera| camera.entity_id.clone())
+                .collect::<Vec<_>>();
+            requested.sort_by(|left, right| left.0.cmp(&right.0));
+            if scope.camera_entity_ids != requested {
+                return Err(DedodeRuntimeError::InvalidRequest(
+                    "image-mask camera scope differs from the DeDoDe request".into(),
+                ));
+            }
         }
         if self.pairs.is_empty() {
             return Err(DedodeRuntimeError::InvalidRequest(
@@ -287,6 +359,7 @@ struct VerifiedToolchain {
     worker: PathBuf,
     source_root: PathBuf,
     resources: BTreeMap<DedodeResourceKind, PathBuf>,
+    backend: DedodeRuntimeBackend,
     trusted_release: bool,
 }
 
@@ -366,6 +439,7 @@ impl DedodeRuntime {
                 worker,
                 source_root,
                 resources,
+                backend: DedodeRuntimeBackend::Pytorch,
                 trusted_release: true,
             }),
             scratch_root: prepare_scratch_root(&config.scratch_root)?,
@@ -447,6 +521,89 @@ impl DedodeRuntime {
                 worker,
                 source_root,
                 resources,
+                backend: DedodeRuntimeBackend::Pytorch,
+                trusted_release: false,
+            }),
+            scratch_root: prepare_scratch_root(&config.scratch_root)?,
+            allowed_project_roots: Arc::new(canonical_roots(&config.allowed_project_roots)?),
+        })
+    }
+
+    /// Probes the full-quality ONNX graphs and a runtime with no PyTorch dependency.
+    pub fn development_onnx_preflight(
+        config: &DevDedodeOnnxRuntimeConfig,
+    ) -> Result<Self, DedodeRuntimeError> {
+        let executable = canonical_file(&config.python_executable)?;
+        let worker = canonical_file(&config.worker_path)?;
+        let model_root = canonical_directory(&config.model_root)?;
+        verify_onnx_model_inventory(&model_root)?;
+        for relative in [
+            "dedode-detector-l-v2.onnx",
+            "dedode-block-similarity.onnx",
+            "784x784/dedode-descriptor-g.onnx",
+            "1176x1176/dedode-descriptor-g.onnx",
+        ] {
+            canonical_file_inside(&model_root.join(relative), &model_root)?;
+        }
+        probe_onnx_worker(
+            &executable,
+            &worker,
+            &model_root,
+            &config.expected_python_version,
+            &config.expected_onnxruntime_version,
+            &config.expected_numpy_version,
+            &config.expected_pillow_version,
+        )?;
+        let model_files = [
+            "dedode-detector-l-v2.onnx",
+            "dedode-block-similarity.onnx",
+            "784x784/dedode-descriptor-g.onnx",
+            "1176x1176/dedode-descriptor-g.onnx",
+        ];
+        let files = model_files
+            .iter()
+            .map(|relative| {
+                let path = canonical_file_inside(&model_root.join(relative), &model_root)?;
+                Ok(DedodeFileRecord {
+                    relative_path: PathBuf::from(relative),
+                    sha256: hash_file(&path, None)?,
+                    bytes: fs::metadata(path)?.len(),
+                    source_url: "generated-from-pinned-dedode-v2-g".into(),
+                    spdx_expression: "MIT AND Apache-2.0".into(),
+                })
+            })
+            .collect::<Result<Vec<_>, DedodeRuntimeError>>()?;
+        let manifest = DedodeToolManifest {
+            schema_version: MANIFEST_SCHEMA_VERSION,
+            tool_id: "dedode-v2-g-onnx-dev-untrusted".into(),
+            version: format!("v2-g+{DEDODE_CODE_COMMIT}+onnxruntime"),
+            python_version: config.expected_python_version.clone(),
+            torch_version: config.expected_onnxruntime_version.clone(),
+            torchvision_version: format!(
+                "numpy-{}+pillow-{}",
+                config.expected_numpy_version, config.expected_pillow_version
+            ),
+            executable_path: executable.clone(),
+            worker_path: worker.clone(),
+            dedode_source_root: model_root.clone(),
+            files,
+            resources: BTreeMap::new(),
+            licenses: vec![ToolLicenseRecord {
+                component: "UNTRUSTED-DEV-DEDoDe-ONNX".into(),
+                version: DEDODE_CODE_COMMIT.into(),
+                spdx_expression: "MIT AND Apache-2.0".into(),
+            }],
+        };
+        let manifest_sha256 = ObjectHash::of_bytes(&serde_json::to_vec(&manifest)?);
+        Ok(Self {
+            toolchain: Arc::new(VerifiedToolchain {
+                manifest,
+                manifest_sha256,
+                executable,
+                worker,
+                source_root: model_root,
+                resources: BTreeMap::new(),
+                backend: DedodeRuntimeBackend::OnnxRuntime,
                 trusted_release: false,
             }),
             scratch_root: prepare_scratch_root(&config.scratch_root)?,
@@ -487,9 +644,36 @@ impl DedodeRuntime {
             &scratch,
             &context.cancellation,
         )
-        .map_err(|error| DedodeRuntimeError::ImageMaterialization(error.to_string()))?;
-        let worker_request =
-            build_worker_request(request, &scratch, &materialized, &self.toolchain.resources)?;
+        .map_err(|error| {
+            if matches!(error, ColmapRuntimeError::Cancelled) {
+                DedodeRuntimeError::Cancelled
+            } else {
+                DedodeRuntimeError::ImageMaterialization(error.to_string())
+            }
+        })?;
+        if let Some(mask_scope) = request.image_mask_scope.as_ref() {
+            let image_paths = request
+                .camera_images
+                .iter()
+                .zip(&materialized)
+                .map(|(camera, path)| (camera.entity_id.0.as_str(), path.as_path()))
+                .collect::<BTreeMap<_, _>>();
+            materialize_colmap_masks(
+                &project_root,
+                &mask_scope.masks,
+                &image_paths,
+                &scratch.join("masks"),
+                &context.cancellation,
+            )
+            .map_err(|error| DedodeRuntimeError::InvalidRequest(error.to_string()))?;
+        }
+        let worker_request = build_worker_request(
+            request,
+            &scratch,
+            &materialized,
+            &self.toolchain.resources,
+            self.toolchain.backend,
+        )?;
         let request_path = scratch.join("run-request.json");
         write_json_atomic(&request_path, &worker_request)?;
         report_progress(
@@ -622,6 +806,12 @@ impl DedodeRuntime {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        #[cfg(unix)]
+        if self.toolchain.backend == DedodeRuntimeBackend::OnnxRuntime {
+            if let Some(python_root) = self.toolchain.executable.parent().and_then(Path::parent) {
+                command.env("LD_LIBRARY_PATH", python_root.join("lib"));
+            }
+        }
         #[cfg(windows)]
         if let Some(system_root) = std::env::var_os("SystemRoot") {
             command.env("SystemRoot", system_root);
@@ -646,9 +836,12 @@ struct WorkerRequest<'a> {
     match_threshold: f32,
     match_block_size: u32,
     checkpoint_interval_pairs: u32,
-    detector_v2_weights: &'a Path,
-    descriptor_g_weights: &'a Path,
-    dinov2_vitl14_weights: &'a Path,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detector_v2_weights: Option<&'a Path>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    descriptor_g_weights: Option<&'a Path>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dinov2_vitl14_weights: Option<&'a Path>,
 }
 
 #[derive(Debug, Serialize)]
@@ -656,6 +849,8 @@ struct WorkerRequest<'a> {
 struct WorkerImage<'a> {
     id: &'a str,
     path: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mask_path: Option<PathBuf>,
 }
 
 fn build_worker_request<'a>(
@@ -663,6 +858,7 @@ fn build_worker_request<'a>(
     scratch: &'a Path,
     materialized: &[PathBuf],
     resources: &'a BTreeMap<DedodeResourceKind, PathBuf>,
+    backend: DedodeRuntimeBackend,
 ) -> Result<WorkerRequest<'a>, DedodeRuntimeError> {
     if materialized.len() != request.camera_images.len() {
         return Err(DedodeRuntimeError::InvalidRequest(
@@ -676,6 +872,13 @@ fn build_worker_request<'a>(
         .map(|(camera, relative)| WorkerImage {
             id: camera.entity_id.0.as_str(),
             path: scratch.join("images").join(relative),
+            mask_path: request.image_mask_scope.as_ref().and_then(|scope| {
+                scope
+                    .masks
+                    .iter()
+                    .any(|mask| mask.image_entity_id == camera.entity_id)
+                    .then(|| dedode_mask_path(scratch, relative))
+            }),
         })
         .collect();
     Ok(WorkerRequest {
@@ -692,13 +895,26 @@ fn build_worker_request<'a>(
         match_threshold: request.match_threshold,
         match_block_size: request.match_block_size,
         checkpoint_interval_pairs: request.checkpoint_interval_pairs,
-        detector_v2_weights: required_resource(resources, DedodeResourceKind::DetectorV2Weights)?,
-        descriptor_g_weights: required_resource(resources, DedodeResourceKind::DescriptorGWeights)?,
-        dinov2_vitl14_weights: required_resource(
-            resources,
-            DedodeResourceKind::Dinov2VitL14Weights,
-        )?,
+        detector_v2_weights: (backend == DedodeRuntimeBackend::Pytorch)
+            .then(|| required_resource(resources, DedodeResourceKind::DetectorV2Weights))
+            .transpose()?,
+        descriptor_g_weights: (backend == DedodeRuntimeBackend::Pytorch)
+            .then(|| required_resource(resources, DedodeResourceKind::DescriptorGWeights))
+            .transpose()?,
+        dinov2_vitl14_weights: (backend == DedodeRuntimeBackend::Pytorch)
+            .then(|| required_resource(resources, DedodeResourceKind::Dinov2VitL14Weights))
+            .transpose()?,
     })
+}
+
+fn dedode_mask_path(scratch: &Path, relative: &Path) -> PathBuf {
+    scratch.join("masks").join(relative).with_extension(format!(
+        "{}.png",
+        relative
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("image")
+    ))
 }
 
 fn required_resource(
@@ -844,6 +1060,65 @@ fn validate_release_manifest(manifest: &DedodeToolManifest) -> Result<(), Dedode
             return Err(DedodeRuntimeError::OfficialWeightPinMismatch(kind));
         }
     }
+    Ok(())
+}
+
+fn verify_onnx_model_inventory(model_root: &Path) -> Result<(), DedodeRuntimeError> {
+    let parent = model_root.parent().ok_or_else(|| {
+        DedodeRuntimeError::InvalidConfig("ONNX model root has no runtime parent".into())
+    })?;
+    let manifest_path = canonical_file_inside(&parent.join("ONNX_MODELS.json"), parent)?;
+    let bytes = read_bounded(&manifest_path, MAX_MANIFEST_BYTES)?;
+    let observed_manifest = ObjectHash::of_bytes(&bytes);
+    if observed_manifest.as_str() != DEDODE_ONNX_MANIFEST_SHA256 {
+        return Err(DedodeRuntimeError::HashMismatch {
+            path: manifest_path,
+            expected: ObjectHash(DEDODE_ONNX_MANIFEST_SHA256.into()),
+            observed: observed_manifest,
+        });
+    }
+    let manifest: DedodeOnnxModelManifest = serde_json::from_slice(&bytes)?;
+    let expected_profiles = [(784, 784, 20_000), (1_176, 1_176, 40_000)];
+    if manifest.schema_version != 1
+        || manifest.backend != "dedode-v2-g"
+        || manifest.format != "ONNX external data"
+        || manifest.opset != 17
+        || manifest.numeric_mode != "float32"
+        || manifest.source_commit != DEDODE_CODE_COMMIT
+        || manifest.profiles.len() != expected_profiles.len()
+        || !manifest
+            .profiles
+            .iter()
+            .zip(expected_profiles)
+            .all(|(profile, expected)| {
+                (profile.width, profile.height, profile.max_keypoints) == expected
+            })
+        || manifest.source_weights.get("detector").map(String::as_str)
+            != Some(OFFICIAL_DETECTOR_SHA256)
+        || manifest
+            .source_weights
+            .get("descriptor")
+            .map(String::as_str)
+            != Some(OFFICIAL_DESCRIPTOR_SHA256)
+        || manifest.source_weights.get("dinov2").map(String::as_str) != Some(OFFICIAL_DINOV2_SHA256)
+    {
+        return Err(DedodeRuntimeError::InvalidConfig(
+            "DeDoDe ONNX manifest differs from the approved full-quality export".into(),
+        ));
+    }
+    let records = manifest
+        .files
+        .into_iter()
+        .map(|record| DedodeFileRecord {
+            relative_path: record.path,
+            sha256: record.sha256,
+            bytes: record.bytes,
+            source_url: "generated-from-pinned-dedode-v2-g".into(),
+            spdx_expression: "MIT AND Apache-2.0".into(),
+        })
+        .collect::<Vec<_>>();
+    let inventory = verify_inventory(model_root, &records, None)?;
+    verify_no_unlisted_files(model_root, &inventory, &[])?;
     Ok(())
 }
 
@@ -1020,6 +1295,10 @@ fn probe_worker(
         .env("PYTHONHASHSEED", "0")
         .env("LC_ALL", "C")
         .stdin(Stdio::null());
+    #[cfg(unix)]
+    if let Some(python_root) = executable.parent().and_then(Path::parent) {
+        command.env("LD_LIBRARY_PATH", python_root.join("lib"));
+    }
     #[cfg(windows)]
     if let Some(system_root) = std::env::var_os("SystemRoot") {
         command.env("SystemRoot", system_root);
@@ -1041,6 +1320,80 @@ fn probe_worker(
         return Err(DedodeRuntimeError::WorkerProbeMismatch(format!(
             "expected Python {expected_python}, torch {expected_torch}, torchvision {expected_torchvision}; observed Python {}, torch {}, torchvision {}",
             probe.python_version, probe.torch_version, probe.torchvision_version
+        )));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OnnxWorkerPreflight {
+    schema_version: u32,
+    python_version: String,
+    runtime_backend: String,
+    runtime_version: String,
+    numpy_version: String,
+    pillow_version: String,
+    dedode_imported: bool,
+    network_disabled: bool,
+}
+
+fn probe_onnx_worker(
+    executable: &Path,
+    worker: &Path,
+    model_root: &Path,
+    expected_python: &str,
+    expected_runtime: &str,
+    expected_numpy: &str,
+    expected_pillow: &str,
+) -> Result<(), DedodeRuntimeError> {
+    let mut command = Command::new(executable);
+    command
+        .arg("-I")
+        .arg("-B")
+        .arg("-s")
+        .arg(worker)
+        .arg("--preflight")
+        .arg("--dedode-source")
+        .arg(model_root)
+        .env_clear()
+        .env("HF_HUB_OFFLINE", "1")
+        .env("TRANSFORMERS_OFFLINE", "1")
+        .env("DEDODE_NO_NETWORK", "1")
+        .env("PYTHONHASHSEED", "0")
+        .env("LC_ALL", "C")
+        .stdin(Stdio::null());
+    #[cfg(unix)]
+    if let Some(python_root) = executable.parent().and_then(Path::parent) {
+        command.env("LD_LIBRARY_PATH", python_root.join("lib"));
+    }
+    #[cfg(windows)]
+    if let Some(system_root) = std::env::var_os("SystemRoot") {
+        command.env("SystemRoot", system_root);
+    }
+    let output = command.output()?;
+    if !output.status.success() {
+        return Err(DedodeRuntimeError::WorkerProbeFailed(
+            String::from_utf8_lossy(&output.stderr).trim().into(),
+        ));
+    }
+    let probe: OnnxWorkerPreflight = serde_json::from_slice(&output.stdout)?;
+    if probe.schema_version != 1
+        || !probe.dedode_imported
+        || !probe.network_disabled
+        || probe.runtime_backend != "onnxruntime"
+        || probe.python_version != expected_python
+        || probe.runtime_version != expected_runtime
+        || probe.numpy_version != expected_numpy
+        || probe.pillow_version != expected_pillow
+    {
+        return Err(DedodeRuntimeError::WorkerProbeMismatch(format!(
+            "expected Python {expected_python}, ONNX Runtime {expected_runtime}, NumPy {expected_numpy}, Pillow {expected_pillow}; observed Python {}, backend {} {}, NumPy {}, Pillow {}",
+            probe.python_version,
+            probe.runtime_backend,
+            probe.runtime_version,
+            probe.numpy_version,
+            probe.pillow_version
         )));
     }
     Ok(())
@@ -1129,6 +1482,22 @@ fn parse_match_container(
             )
         })
         .collect::<BTreeMap<_, _>>();
+    let mask_rasters = request
+        .image_mask_scope
+        .as_ref()
+        .map(|scope| {
+            scope
+                .masks
+                .iter()
+                .map(|mask| {
+                    read_compute_mask_raster(&request.project_root, mask)
+                        .map(|raster| (mask.image_entity_id.0.as_str(), raster))
+                        .map_err(|error| DedodeRuntimeError::InvalidRequest(error.to_string()))
+                })
+                .collect::<Result<BTreeMap<_, _>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
     let mut seen = BTreeSet::new();
     let mut output = Vec::with_capacity(pair_count);
     for _ in 0..pair_count {
@@ -1137,6 +1506,7 @@ fn parse_match_container(
             request,
             &requested,
             &image_sizes,
+            &mask_rasters,
             &mut seen,
         )?);
     }
@@ -1159,6 +1529,7 @@ fn parse_pair_record(
     request: &DedodeRunRequest,
     requested: &BTreeMap<(String, String), &DedodeImagePair>,
     image_sizes: &BTreeMap<&str, (u32, u32)>,
+    mask_rasters: &BTreeMap<&str, ImageMaskRaster>,
     seen: &mut BTreeSet<(String, String)>,
 ) -> Result<DedodePairMatches, DedodeRuntimeError> {
     let image_a = read_string(reader)?;
@@ -1211,11 +1582,24 @@ fn parse_pair_record(
                 "invalid coordinate, confidence or non-mutual feature index".into(),
             ));
         }
+        if coordinate_is_masked(mask_rasters.get(image_a.as_str()), item.x_a, item.y_a)
+            || coordinate_is_masked(mask_rasters.get(image_b.as_str()), item.x_b, item.y_b)
+        {
+            continue;
+        }
         matches.push(item);
     }
     Ok(DedodePairMatches {
         pair: (*pair).clone(),
         matches,
+    })
+}
+
+fn coordinate_is_masked(mask: Option<&ImageMaskRaster>, x: f32, y: f32) -> bool {
+    mask.is_some_and(|mask| {
+        let x = x.floor().clamp(0.0, mask.width().saturating_sub(1) as f32) as u32;
+        let y = y.floor().clamp(0.0, mask.height().saturating_sub(1) as f32) as u32;
+        mask.is_masked(x, y)
     })
 }
 
@@ -1745,6 +2129,7 @@ mod tests {
             job_id: "job-1".into(),
             project_root: "/project".into(),
             camera_images: vec![fake_camera("camera-a"), fake_camera("camera-b")],
+            image_mask_scope: None,
             pairs: vec![DedodeImagePair {
                 image_a: "camera-a".into(),
                 image_b: "camera-b".into(),

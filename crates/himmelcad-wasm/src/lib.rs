@@ -348,6 +348,7 @@ pub struct WasmViewer {
     view_projection: [[f32; 4]; 4],
     floating_origin: WorldVec3,
     clear_color: wgpu::Color,
+    point_size_scale: f32,
     render_world: RenderWorld,
     batches: BTreeMap<RenderProxyId, Vec<GpuDrawBatch>>,
     representation_registry: GeometryRepresentationRegistry,
@@ -1442,6 +1443,7 @@ async fn create_wasm_viewer(
             b: 0.025,
             a: 1.0,
         },
+        point_size_scale: 1.0,
         render_world: RenderWorld::new(),
         batches: BTreeMap::new(),
         representation_registry: GeometryRepresentationRegistry::new(),
@@ -5182,6 +5184,17 @@ impl WasmViewer {
         Ok(())
     }
 
+    /// Sets a view-local point diameter without rebuilding resident point tiles.
+    pub fn set_point_size(&mut self, point_size: f32) -> Result<(), JsValue> {
+        if !point_size.is_finite() || !(0.25..=20.0).contains(&point_size) {
+            return Err(JsValue::from_str(
+                "point size must be finite and between 0.25 and 20 physical pixels",
+            ));
+        }
+        self.point_size_scale = point_size;
+        Ok(())
+    }
+
     /// Presents one frame. Geometry registration is performed through the
     /// versioned render-world bridge, not through JavaScript scene objects.
     pub fn render(&mut self) -> Result<String, JsValue> {
@@ -6753,6 +6766,18 @@ impl WasmViewer {
                 + self.prepared_datasets.len(),
         );
         let mut preview_selections = BTreeMap::<String, Vec<TileSelection>>::new();
+        // Potree nodes are additive samples with `geometric_error` equal to
+        // their nominal point spacing. Coverage therefore requires spacing
+        // below the rendered point diameter, not merely below a generic 2 px
+        // mesh error. 0.65 also covers the diagonal gaps of a near-grid sample
+        // distribution once idle detail reaches its ordinary scale of one.
+        let potree_view = TileSelectionView {
+            maximum_screen_space_error: (view.maximum_screen_space_error
+                * f64::from(self.point_size_scale)
+                * 0.65)
+                .clamp(0.125, 8.0),
+            ..view
+        };
         // Metadata-only hierarchies can exist without a visible canonical
         // entity. They have no mutable presentation and therefore use identity.
         for source in self.explicit_tilesets.values_mut() {
@@ -6836,7 +6861,7 @@ impl WasmViewer {
             selections.push(
                 TileSelector::select_with_clips_and_transforms(
                     source,
-                    view,
+                    potree_view,
                     &clip_volumes,
                     source_to_project,
                     presentation,
@@ -6853,7 +6878,7 @@ impl WasmViewer {
                     .push(
                         TileSelector::select_with_clips_and_transforms(
                             source,
-                            view,
+                            potree_view,
                             &clip_volumes,
                             *source_to_project,
                             presentation,
@@ -7150,6 +7175,7 @@ impl WasmViewer {
                 floating_origin: self.floating_origin,
                 clip_volumes: &clip_volumes,
                 batches: &batches,
+                point_size_scale: self.point_size_scale,
                 clear_color: self.clear_color,
                 pick,
             })

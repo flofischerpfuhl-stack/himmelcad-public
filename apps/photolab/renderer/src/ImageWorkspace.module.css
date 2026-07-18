@@ -125,17 +125,19 @@
   overflow: visible;
 }
 
-/* Mask tools: still bottom-left stack, above zoom */
+/* Mask tools: bottom-right so they never stack on zoom/layers (bottom-left). */
 .maskToolbar {
   position: absolute;
-  z-index: 5;
-  left: 10px;
-  bottom: 82px;
+  z-index: 6;
+  right: 10px;
+  left: auto;
+  bottom: 42px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
-  max-width: calc(100% - 220px);
+  justify-content: flex-end;
+  max-width: min(480px, calc(100% - 24px));
   cursor: default;
 }
 .maskToolbar label {
@@ -173,17 +175,24 @@
   }
 }
 
+/* Filename: bottom-right, never under layer chips. */
 .imageCanvas > span {
   position: absolute;
-  left: 8px;
+  left: auto;
+  right: 8px;
   bottom: 8px;
+  max-width: min(48%, 360px);
   padding: 4px 7px;
   border-radius: var(--hc-radius-sm);
   color: var(--hc-fg-default);
   background: var(--hc-bg-overlay);
   font-family: var(--hc-font-mono);
   font-size: 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   pointer-events: none;
+  z-index: 5;
 }
 
 .depthCanvas {

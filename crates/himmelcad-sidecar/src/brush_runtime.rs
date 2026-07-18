@@ -2039,7 +2039,18 @@ printf '[00:01] 3000/3000 Steps\n' >&2
             )
             .await
             .expect("start");
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        let checkpoint_deadline = Instant::now() + Duration::from_secs(2);
+        while recovery_runtime
+            .recovery_checkpoints("splat-cancel", &settings)
+            .expect("probe recovery checkpoint")
+            .is_empty()
+        {
+            assert!(
+                Instant::now() < checkpoint_deadline,
+                "fake worker did not publish its recovery checkpoint"
+            );
+            tokio::time::sleep(Duration::from_millis(15)).await;
+        }
         let started = Instant::now();
         manager.cancel(&id).await.expect("cancel");
         let terminal = manager.wait_for_terminal(&id).await.expect("terminal");

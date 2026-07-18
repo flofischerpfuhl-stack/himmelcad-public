@@ -95,7 +95,7 @@ storage shape compatible; do not implement ChronoGit.
 
 ### Reserved products
 
-**HimmelCAD Composer**, **HimmelCAD TestFlight**, and **HimmelCAD ChronoGit**
+**HimmelCAD Assembler**, **HimmelCAD TestFlight**, and **HimmelCAD ChronoGit**
 remain reserved names only. No application directories, no feature work, and no
 agent tasks unless the owner opens an explicit decision gate.
 

@@ -6,10 +6,14 @@ const electronCli = resolve(process.cwd(), 'node_modules/electron/cli.js');
 const environment = { ...process.env };
 delete environment.ELECTRON_RUN_AS_NODE;
 
-const child = spawn(process.execPath, [electronCli, ...process.argv.slice(2)], {
+const child = spawn(
+  process.execPath,
+  [electronCli, '--remote-debugging-port=9223', ...process.argv.slice(2)],
+  {
   env: environment,
   stdio: 'inherit',
-});
+  },
+);
 
 child.on('error', (error) => {
   console.error(`[electron-launcher] ${error.message}`);

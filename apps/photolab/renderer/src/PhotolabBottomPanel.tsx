@@ -176,14 +176,36 @@ function JobsView({
                 </span>
               </div>
               <div className={styles.jobStage}>
-                <span>{job.progress.stage.label}</span>
+                <span>
+                  Stage {job.progress.stage.index + 1}/{job.progress.stage.stageCount}:{' '}
+                  {job.progress.stage.label}
+                  {stageFraction(job) != null
+                    ? ` · ${Math.round((stageFraction(job) as number) * 100)}% of stage`
+                    : ''}
+                </span>
                 <span>{compactProgress(job, telemetry, now)}</span>
               </div>
-              <div className={styles.progressTrack}>
+              <div className={styles.progressTrack} title="Overall job progress">
                 <span className={styles.progressFill} style={{ width: `${fraction * 100}%` }} />
               </div>
+              {stageFraction(job) != null && (
+                <div
+                  className={`${styles.progressTrack} ${styles.progressTrackStage}`}
+                  title="Current stage progress"
+                >
+                  <span
+                    className={`${styles.progressFill} ${styles.progressFillStage}`}
+                    style={{ width: `${(stageFraction(job) as number) * 100}%` }}
+                  />
+                </div>
+              )}
             </div>
-            <span className={styles.percent}>{Math.round(fraction * 100)}%</span>
+            <span className={styles.percent} title="Overall · stage">
+              {Math.round(fraction * 100)}%
+              {stageFraction(job) != null
+                ? ` · ${Math.round((stageFraction(job) as number) * 100)}%`
+                : ''}
+            </span>
             <button
               type="button"
               className={styles.cancel}
@@ -373,10 +395,13 @@ function observeJob(
 
 function compactProgress(job: PhotolabJob, telemetry: JobTelemetry, now: number): string {
   const { completedUnits, totalUnits } = job.progress.metrics;
+  const overallPct = Math.round(overallFraction(job) * 100);
+  const stagePct = stageFraction(job);
   const work =
     totalUnits == null
-      ? ''
-      : `${completedUnits.toLocaleString('en-US')}/${totalUnits.toLocaleString('en-US')}`;
+      ? `overall ${overallPct}%`
+      : `overall ${overallPct}% · stage ${completedUnits.toLocaleString('en-US')}/${totalUnits.toLocaleString('en-US')}` +
+        (stagePct != null ? ` (${Math.round(stagePct * 100)}%)` : '');
   const eta = stageEta(telemetry);
   const elapsed = formatDuration(Math.max(0, now - (job.startedAtUnixMs ?? job.createdAtUnixMs)));
   return [work, eta === 'Estimating…' || eta === '—' ? null : `ETA ${eta}`, elapsed]
@@ -699,12 +724,17 @@ function LineageOverview({
   );
 }
 
-function overallFraction(job: PhotolabJob): number {
+function stageFraction(job: PhotolabJob): number | null {
   const total = job.progress.metrics.totalUnits;
-  const stageFraction = total ? Math.min(1, job.progress.metrics.completedUnits / total) : 0;
+  if (total == null || total <= 0) return null;
+  return Math.min(1, job.progress.metrics.completedUnits / total);
+}
+
+function overallFraction(job: PhotolabJob): number {
+  const within = stageFraction(job) ?? 0;
   return Math.min(
     1,
-    (job.progress.stage.index + stageFraction) / Math.max(1, job.progress.stage.stageCount),
+    (job.progress.stage.index + within) / Math.max(1, job.progress.stage.stageCount),
   );
 }
 

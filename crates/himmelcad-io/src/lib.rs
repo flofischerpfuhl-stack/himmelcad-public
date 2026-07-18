@@ -95,7 +95,8 @@ pub use las_import::{
     PreparedPotreeFile, PreparedPotreeManifest,
 };
 pub use photolab_image_import::{
-    discover_photo_files, import_photo_files, PhotoDiscovery, PhotoImportCandidate,
+    discover_photo_files, import_photo_files, import_photo_files_with_progress, PhotoDiscovery,
+    PhotoImportCandidate,
 };
 
 /// Builds the production canonical import registry shared by desktop hosts.

@@ -3,9 +3,19 @@
   "datasetId": "agisoft-sulzberg-2026-07-06",
   "sourceApplication": "Agisoft Metashape",
   "projectRelativePath": "260706_Sulzberg_SUMA_UrGel",
+  "sourceReport": {
+    "relativePath": "02_Export/Bericht_260706_Sulzberg_SUMA_UrGel_260706_Sulzberg_SUMA_UrGel.pdf",
+    "pageCount": 8,
+    "createdAt": "2026-07-07T08:43:56+02:00",
+    "application": "Agisoft Metashape Professional",
+    "applicationVersion": "2.1.0 build 17532",
+    "operatingSystem": "Windows 64 bit"
+  },
   "referenceFrame": {
     "horizontalCrs": "EPSG:31468",
     "horizontalName": "DHDN / 3-degree Gauss-Kruger zone 4",
+    "verticalCrs": "EPSG:7837",
+    "verticalName": "DHHN2016 height",
     "zUp": true,
     "requiresAccurateDatumGridForWgs84Import": true
   },
@@ -21,11 +31,24 @@
   },
   "alignment": {
     "tiePoints": 156158,
+    "candidateTiePoints": 183450,
     "projections": 970914,
     "reprojectionRmsPixels": 0.83,
+    "effectiveReprojectionErrorNormalized": 0.261768,
+    "effectiveReprojectionRmsPixels": 0.829932,
+    "maximumReprojectionErrorNormalized": 0.987237,
+    "maximumReprojectionErrorPixels": 62.6265,
+    "meanKeypointSizePixels": 3.30746,
+    "averageTiePointMultiplicity": 6.28765,
+    "accuracy": "high",
+    "genericPreselection": true,
+    "referencePreselection": false,
     "keyPointLimit": 80000,
     "tiePointLimitPerMegapixel": 1000,
     "tiePointLimit": 8000,
+    "excludeStationaryTiePoints": true,
+    "guidedMatching": false,
+    "adaptiveCameraModelFitting": false,
     "matchingSeconds": 165,
     "alignmentSeconds": 76,
     "optimizationSeconds": 5
@@ -38,7 +61,17 @@
     "k2": -0.00895695,
     "k3": -0.0114412,
     "p1": -0.0000443446,
-    "p2": 0.0000838936
+    "p2": 0.0000838936,
+    "standardErrors": {
+      "fPixels": 0.062,
+      "cxPixels": 0.018,
+      "cyPixels": 0.017,
+      "k1": 0.000021,
+      "k2": 0.000054,
+      "k3": 0.000042,
+      "p1": 8.4e-7,
+      "p2": 8.2e-7
+    }
   },
   "gcps": {
     "total": 6,
@@ -57,22 +90,56 @@
       "height": 0.00784287,
       "horizontal": 0.00632951,
       "spatial3d": 0.0100784
+    },
+    "controlReprojectionRmsPixels": 0.758,
+    "checkpointReprojectionRmsPixels": 0.795,
+    "controlObservationCounts": [42, 42, 31, 42],
+    "checkpointObservationCounts": [39, 43],
+    "manualObservationEvidence": {
+      "source": {
+        "gcpCsvSha256": "548dd3065f2c470b9d44a3ef4edce644f26399a4ae751b4b6e7d0f8a7600ad51",
+        "chunkDocumentSha256": "2f776c9c5d5c812bb43f3b2ace546c6741e31038acd7bcaf5e6c2549b837b575",
+        "frameDocumentSha256": "f9bb8c1bfd043b8bc4679596e16102dda9d31abe989eb61991f3b9de6294e7eb"
+      },
+      "manualObservationCount": 79,
+      "observationSetSha256": "32205e6ae087c23a31f2fdec22be4ab66aeef96e221881a83ff96679916c9f15",
+      "pointObservationCounts": {
+        "gcp260706.001": 15,
+        "gcp260706.002": 13,
+        "gcp260706.003": 12,
+        "gcp260706.004": 11,
+        "gcp260706.005": 15,
+        "gcp260706.006": 13
+      },
+      "controlPointNames": ["gcp260706.002", "gcp260706.003", "gcp260706.004", "gcp260706.006"],
+      "checkpointPointNames": ["gcp260706.001", "gcp260706.005"]
     }
   },
   "depth": {
     "imageCount": 135,
     "quality": "high",
+    "imageDownscale": 2,
+    "effectiveMaximumImageDimension": 2640,
     "filter": "mild",
+    "filterMode": 0,
     "maximumNeighbors": 16,
-    "runtimeSeconds": 583,
-    "peakMemoryBytes": 5025111736
+    "runtimeSeconds": 583
   },
   "denseCloud": {
     "reportPointCount": 59642494,
     "exportedLasPointCount": 59639872,
+    "fusion": {
+      "requiredAlgorithm": "depthFootprintVoxelExternalMergeV1"
+    },
     "hasColor": true,
     "hasNormals": true,
     "hasConfidence": true,
+    "buildParameters": {
+      "maximumNeighbors": 100,
+      "pointSpacing": 0.1,
+      "resolutionMeters": 0.00313357040974498,
+      "uniformSampling": false
+    },
     "bounds": {
       "min": [4375465.2058, 5281171.141, 693.0004],
       "max": [4375599.2036, 5281299.1106, 725.2435]
@@ -80,7 +147,12 @@
   },
   "dem": {
     "resolutionMetersPerPixel": 0.015,
-    "densityPointsPerSquareCentimeter": 0.442
+    "densityPointsPerSquareCentimeter": 0.442,
+    "reportWidthPixels": 10091,
+    "reportHeightPixels": 10465,
+    "source": "depth maps",
+    "interpolation": true,
+    "reportedElevationRangeMeters": [687, 723]
   },
   "orthomosaic": {
     "widthPixels": 19523,
@@ -88,18 +160,78 @@
     "resolutionMetersPerPixel": 0.0075199430321273,
     "bands": 4,
     "overviewLevels": 7,
+    "validPixelFraction": 0.55389,
+    "reportWidthPixels": 19523,
+    "reportHeightPixels": 19479,
+    "reportColorBands": 3,
+    "blendMode": "mosaic",
+    "surface": "DEM",
+    "fillHoles": true,
+    "ghostingFilter": false,
     "bounds": {
       "min": [4375461.75239552, 5281158.135],
       "max": [4375608.564, 5281304.608426477]
     }
   },
+  "referencePerformance": {
+    "hardwareClass": "Agisoft report workstation (not hardware-comparable to the development laptop)",
+    "hardware": {
+      "cpu": "Intel Xeon Gold 5220R CPU @ 2.20GHz",
+      "ramGigabytes": 127.63,
+      "gpu": "NVIDIA RTX A4000",
+      "operatingSystem": "Windows 64 bit"
+    },
+    "alignmentMatchingSeconds": 165,
+    "alignmentMappingSeconds": 76,
+    "alignmentOptimizationSeconds": 5,
+    "depthSeconds": 583,
+    "denseCloudSeconds": 971,
+    "demSeconds": 891,
+    "orthomosaicSeconds": 337,
+    "reportedPeakMemory": {
+      "matching": { "value": 998.34, "unit": "MB" },
+      "alignment": { "value": 2.88, "unit": "GB" },
+      "depth": { "value": 4.68, "unit": "GB" },
+      "denseCloud": { "value": 17.93, "unit": "GB" },
+      "dem": { "value": 8.98, "unit": "GB" },
+      "orthomosaic": { "value": 2.39, "unit": "GB" }
+    }
+  },
+  "candidateContract": {
+    "requiredProfile": "qualityHybrid",
+    "requiredProductKinds": [
+      "sparse",
+      "depth",
+      "dense",
+      "dem",
+      "orthomosaic",
+      "mesh",
+      "gaussianSplat"
+    ],
+    "requiredRuntimeStages": [
+      "alignment",
+      "gcpOptimization",
+      "depth",
+      "denseCloud",
+      "dem",
+      "orthomosaic",
+      "mesh",
+      "gaussianSplat"
+    ]
+  },
   "acceptance": {
     "alignedImageRatioMinimum": 1.0,
-    "reprojectionRmsPixelsMaximum": 0.83,
+    "reprojectionRmsPixelsMaximum": 0.829932,
+    "controlReprojectionRmsPixelsMaximum": 0.758,
+    "checkpointReprojectionRmsPixelsMaximum": 0.795,
     "checkpointSpatial3dRmseMetersMaximum": 0.0100784,
     "controlSpatial3dRmseMetersMaximum": 0.00459873,
+    "demResolutionRelativeTolerance": 0.02,
     "orthomosaicResolutionRelativeTolerance": 0.02,
     "orthomosaicBoundsToleranceMeters": 0.05,
-    "densePointCountRelativeTolerance": 0.05
+    "orthomosaicBoundsExpansionMaximumPixels": 512,
+    "orthomosaicValidFractionMinimum": 0.526,
+    "densePointCountRelativeTolerance": 0.05,
+    "fastAlignmentRuntimeSecondsMaximum": 3600
   }
 }

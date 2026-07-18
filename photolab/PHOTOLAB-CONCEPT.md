@@ -43,6 +43,8 @@ Metashape-Chunks vermischen Organisation, Rechenzustand und alternative Ergebnis
 | --- | --- | --- |
 | Projekt | gemeinsamer Container, Objektstore, CRS-Katalog, Jobs | kanonisch über Commands |
 | Survey/Block | zusammenhängendes Aufnahme- und Rekonstruktionssystem | editierbare Metadaten, versionierte Geometrie |
+| Capture Group | eingefrorene Mission beziehungsweise Aufnahme-/Autofokus-Session mit exakter Bildmitgliedschaft | immutable |
+| Camera Calibration Group | exakte Intrinsics-Gruppe innerhalb einer Capture Group; Fokus-/Zoomwechsel bleiben getrennt | immutable |
 | Sammlung | reine Baumorganisation/Tags, z. B. Flug 1 oder Schrägbilder | frei organisierbar |
 | Verarbeitungsset | benannte Bildauswahl als Query oder eingefrorener Snapshot | versioniert |
 | Alignment Run | Posen, Kalibrierung, Tracks, Sparse Cloud und QA für exakt einen Input-Snapshot | immutable |
@@ -50,6 +52,15 @@ Metashape-Chunks vermischen Organisation, Rechenzustand und alternative Ergebnis
 | Merge Run | registriert mehrere Surveys/Alignment Runs über Tracks, GCPs oder Referenz | immutable |
 
 Das vermeidet die häufige Unklarheit „welches aktive Asset gehört zu welchem Chunk?“ und ermöglicht echte Reproduzierbarkeit.
+
+Ein Zwischenlanden mit neu gesetztem Autofokus erzeugt deshalb mindestens eine neue
+`Camera Calibration Group`. Die betroffenen Bildmengen können bis einschließlich GCP-Optimierung
+getrennt verarbeitet werden. Ein anschließender Merge ist explizit: Bei Bildüberlappung misst der
+gemeinsame Solve echte Cross-Run-Tracks; ohne Bildüberlappung verbinden mindestens drei in allen
+Blöcken verwendete Controls die bereits optimierten Kameras im gemeinsamen Survey-Frame. Der
+zweite Fall behauptet bewusst kein Cross-Block-Bundle-Adjustment, weil keine verbindenden
+Bildbeobachtungen existieren. Folgeprodukte wählen den veröffentlichten Merge Run explizit als
+Quelle.
 
 ### 2.3 Organisation und Berechnung bleiben getrennt
 
@@ -77,8 +88,9 @@ Die UX fragt wie gewünscht zuerst nach dem Höhenbezug und danach nach der Lage
 - PROJ und seine EPSG-Datenbank liefern Kandidaten, Area of Use, Operationsgenauigkeit und benötigte Grid-Namen.
 - `ALLOW_BALLPARK=NO` und `ONLY_BEST=YES` sind der vermessungstaugliche Standard. Eine Ballpark-Operation ist nur nach expliziter Warnungsbestätigung zulässig.
 - Fehlende Grids erscheinen mit offiziellem Namen, Abdeckung, Quelle, Lizenz und Prüfsumme. Frei redistribuierbare, häufige Grids können nach Lizenzprüfung gebündelt werden; andere lädt der User von der Behörde oder wählt lokal aus.
+- Ein ausdrücklich gewähltes lokales Grid darf einen abweichenden Dateinamen tragen. PhotoLab kopiert es einmal in sein lokales Grid-Register, getrennt nach horizontaler und vertikaler Rolle. Eine erneute Wahl desselben registrierten Namens verwendet diese unveränderliche lokale Kopie ohne erneutes Hashen oder Kopieren. PhotoLab prüft tatsächliche Abdeckung, Format und Transformationsrichtung und validiert die eingefrorene Pipeline mit einer Vorwärts-/Rückwärtsprobe. Eine veröffentlichte Genauigkeit wird nicht allein aus Dateiname oder Dateiendung abgeleitet.
 - Netzwerkdownload ist opt-in, wird gecacht und protokolliert. Projektarchive können verwendete Grids einbetten, sofern deren Lizenz das erlaubt.
-- Originalkoordinaten, transformierte Koordinaten, Pipeline als PROJJSON/WKT2, Grid-Hashes und PROJ-/EPSG-Datenbankversion werden gespeichert.
+- Originalkoordinaten, transformierte Koordinaten, Pipeline als PROJJSON/WKT2, registrierte Grid-Rolle/-Datei und PROJ-/EPSG-Datenbankversion werden gespeichert. Offizielle gebündelte Grids dürfen zusätzlich ihre veröffentlichte Inventar-Prüfsumme tragen; benutzergewählte Grids blockieren den Workflow nicht durch eine vollständige Datei-Hashprüfung.
 - Dynamische Datumsangaben benötigen eine Koordinatenepoche. Fehlende Epoche wird nicht erfunden.
 - DJI-„AbsoluteAltitude“ oder ähnliche Felder werden nicht pauschal als Ellipsoid- oder Geoid-Höhe interpretiert; Importprofile tragen Geräte-/Firmwarewissen und eine Konfidenz.
 
@@ -115,10 +127,11 @@ Nicht ein einziges neuronales Modell wird als unfehlbarer Standard fest eingebau
   tragende, geometrisch schwierige oder zwischen den Sparse-Pfaden
   widersprüchliche Kanten. Erst die jeweils geometrisch verifizierten Inlier
   werden zusammengeführt.
-- **Fast:** ALIKED + LightGlue ist primär; SIFT und weitere Backends werden nur
-  für kritische Graphkanten, schwache Paare, starke Rotation/Skalenänderung und
-  unbekannte Domains aktiviert. Dieser Modus ist eine sichtbare Userwahl und
-  kein automatischer Low-Hardware-Qualitätsabfall.
+- **Fast:** Der native SIFT-Pfad verarbeitet einen begrenzten, nach der
+  Aufnahmefolge geordneten Pair Graph; ALIKED + LightGlue und weitere Backends
+  werden für gescheiterte Rekonstruktionen oder explizite Problemkanten als
+  Rescue aktiviert. Dieser Modus ist eine sichtbare Userwahl und kein
+  automatischer Low-Hardware-Qualitätsabfall.
 - **Maximum Robustness:** Quality Hybrid mit erweitertem Pair Graph, höheren
   Featurebudgets und DeDoDe-v2-G auf allen Kandidatenpaaren; danach
   Dense Rescue für verbleibende Problemkanten. Dieser Modus priorisiert

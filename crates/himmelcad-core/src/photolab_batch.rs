@@ -1478,6 +1478,7 @@ mod tests {
                 profile: AlignmentQualityProfile::QualityHybrid,
                 image_count: 2,
                 max_image_edge_override: None,
+                keypoints_per_megapixel_override: None,
             })
             .expect("alignment config"),
             use_reference_positions: true,

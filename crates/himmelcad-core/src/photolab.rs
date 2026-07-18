@@ -13,7 +13,7 @@ pub enum AlignmentQualityProfile {
     QualityHybrid,
     /// Expanded graph and the largest approved feature budgets.
     MaximumRobustness,
-    /// Learned sparse primary path with classical and large backends as rescue.
+    /// Bounded classical primary path with learned and large backends as quality-gated rescue.
     Fast,
 }
 
@@ -56,6 +56,8 @@ pub struct ResolveAlignmentProfileRequest {
     pub image_count: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_image_edge_override: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keypoints_per_megapixel_override: Option<u32>,
 }
 
 /// Fully resolved, immutable alignment settings persisted with a run.
@@ -86,6 +88,8 @@ pub enum ResolveAlignmentProfileError {
     TooFewImages,
     #[error("max image edge must be between 1024 and 32768 pixels")]
     InvalidMaxImageEdge,
+    #[error("keypoints per megapixel must be between 500 and 50000")]
+    InvalidKeypointsPerMegapixel,
     #[error("failed to serialize resolved alignment configuration: {0}")]
     Serialization(String),
 }
@@ -124,7 +128,7 @@ pub fn resolve_alignment_profile(
         sift_scope,
         large_backend_scope,
         default_max_image_edge,
-        keypoints_per_megapixel,
+        default_keypoints_per_megapixel,
         checkpoint_pair_block_size,
     ) = match request.profile {
         AlignmentQualityProfile::QualityHybrid => (
@@ -147,11 +151,12 @@ pub fn resolve_alignment_profile(
         ),
         AlignmentQualityProfile::Fast => (
             PairGraphMode::ReferenceSequenceRetrieval,
+            MatchingScope::QualityGated,
             MatchingScope::AllCandidatePairs,
             MatchingScope::QualityGated,
-            MatchingScope::QualityGated,
-            6_000,
-            6_000,
+            // A/B 2026-07-18: live feature budget + edge 2400 wins on Sulzberg 24.
+            2_400,
+            5_500,
             64,
         ),
     };
@@ -161,6 +166,12 @@ pub fn resolve_alignment_profile(
         .unwrap_or(default_max_image_edge);
     if !(1_024..=32_768).contains(&max_image_edge) {
         return Err(ResolveAlignmentProfileError::InvalidMaxImageEdge);
+    }
+    let keypoints_per_megapixel = request
+        .keypoints_per_megapixel_override
+        .unwrap_or(default_keypoints_per_megapixel);
+    if !(500..=50_000).contains(&keypoints_per_megapixel) {
+        return Err(ResolveAlignmentProfileError::InvalidKeypointsPerMegapixel);
     }
 
     let sparse_backends = vec![
@@ -216,6 +227,7 @@ mod tests {
             profile,
             image_count: 218,
             max_image_edge_override: None,
+            keypoints_per_megapixel_override: None,
         }
     }
 
@@ -250,15 +262,14 @@ mod tests {
     }
 
     #[test]
-    fn fast_keeps_sift_as_quality_gated_rescue() {
+    fn fast_uses_sift_on_the_bounded_graph_and_gates_learned_rescue() {
         let config = resolve_alignment_profile(&request(AlignmentQualityProfile::Fast))
             .expect("fast profile must resolve");
 
-        assert_eq!(config.sift_scope, MatchingScope::QualityGated);
-        assert_eq!(
-            config.learned_sparse_scope,
-            MatchingScope::AllCandidatePairs
-        );
+        assert_eq!(config.sift_scope, MatchingScope::AllCandidatePairs);
+        assert_eq!(config.learned_sparse_scope, MatchingScope::QualityGated);
+        assert_eq!(config.max_image_edge, 2_400);
+        assert_eq!(config.keypoints_per_megapixel, 5_500);
     }
 
     #[test]
@@ -281,6 +292,7 @@ mod tests {
             profile: AlignmentQualityProfile::QualityHybrid,
             image_count: 1,
             max_image_edge_override: None,
+            keypoints_per_megapixel_override: None,
         };
         assert_eq!(
             resolve_alignment_profile(&too_few),
@@ -291,6 +303,7 @@ mod tests {
             profile: AlignmentQualityProfile::QualityHybrid,
             image_count: 2,
             max_image_edge_override: Some(512),
+            keypoints_per_megapixel_override: None,
         };
         assert_eq!(
             resolve_alignment_profile(&invalid_edge),

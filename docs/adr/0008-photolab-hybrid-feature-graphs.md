@@ -29,6 +29,13 @@ Trackbildung und Sparse Reconstruction zuständig.
   DeDoDe-Paare werden importiert und anschließend geometrisch geprüft.
 - Im Hybridmodus werden globale und inkrementelle Rekonstruktionen für alle
   drei getrennt verifizierten Feature-Graphen ausgeführt.
+- „Alle Kandidatenpaare“ bezeichnet den vor dem Lauf eingefrorenen Pair Graph,
+  nicht automatisch alle quadratischen Bildkombinationen. `Quality Hybrid`
+  verwendet für geordnete Aufnahmefolgen einen beidseitig überlappenden
+  Sequenzgraphen mit 24 Nachbarn; ALIKED/LightGlue und SIFT verarbeiten jede
+  dieser Kanten unabhängig. Nur `Maximum Robustness` verlangt den
+  vollständigen quadratischen Graphen. Kalibriergruppen dürfen die
+  Aufnahmefolge dabei nicht umsortieren.
 - Jede erfolgreiche Rekonstruktion wird mit `model_converter` in das
   öffentliche COLMAP-Textformat überführt. Die Auswahl erfolgt deterministisch
   nach registrierten Bildern, gültigen Beobachtungen, 3D-Punkten und kleinerem
@@ -49,4 +56,3 @@ Rechenzeit und Speicher, kann aber niemals allein wegen einer internen
 Tie-Break-Entscheidung ein statistisch schwächeres Modell auswählen. Eine
 spätere echte Track-Level-Fusion braucht einen eigenen, getesteten
 Multi-Descriptor-Trackbuilder und eine neue ADR.
-

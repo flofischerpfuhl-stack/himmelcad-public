@@ -13,7 +13,7 @@ const roots = [
 ];
 const extensions = new Set(['.ts', '.tsx', '.html', '.rs']);
 const germanUiWords = new RegExp(
-  String.raw`[ÄÖÜäöüß]|\b(?:Abbrechen|Abbruch|Aktuelle|Alle Bilder|Ausrichtung|Ansicht|Befehle|Bilder|Dichte Punktwolke|Duplikate|Eigenschaften|Exportieren|Fehler|fehlt|Genauigkeit|gesichert|gesperrt|geprüft|Hardwareplan|Höhe|initialisiert|Kameras|Karte|Kein Bild|Konsole|Lage|Messungen|Orthomosaik|Profil|Projektarchiv|Punktwolke|Speichern|Texturatlas|Tiefenbilder|Verarbeitungssatz|Vermutet|Warnungen|Zurück)\b`,
+  String.raw`[ÄÖÜäöüß]|\b(?:Abbrechen|Abbruch|Aktuelle|Alle Bilder|Ausrichtung|Ansicht|Befehle|Bilder|Dichte Punktwolke|Duplikate|Eigenschaften|Exportieren|Fehler|fehlt|Genauigkeit|gesichert|gesperrt|geprüft|Hardwareplan|Höhe|initialisiert|Kameras|Karte|Kein Bild|Konsole|Lage|Messungen|Orthomosaik|Profil|Projektarchiv|Punktwolke|Speichern|Texturatlas|Tiefenbilder|Unbenannt|Verarbeitungssatz|Vermutet|Warnungen|Zurück)\b`,
   'u',
 );
 const violations = [];

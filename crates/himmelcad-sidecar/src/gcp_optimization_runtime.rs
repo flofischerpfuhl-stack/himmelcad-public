@@ -161,8 +161,8 @@ where
         return Err(GcpOptimizationRuntimeError::Cancelled);
     }
     let artifact = GcpOptimizationArtifact {
-        schema_version: 2,
-        solver: "himmelcad-weighted-robust-bundle-adjustment-v2-fixed-intrinsics".into(),
+        schema_version: 3,
+        solver: "himmelcad-weighted-robust-bundle-adjustment-v3-shared-intrinsics".into(),
         input_sha256: input_sha256.clone(),
         snapshot_sha256: params.snapshot_sha256,
         result,

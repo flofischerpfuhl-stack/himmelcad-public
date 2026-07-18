@@ -2318,6 +2318,7 @@ mod tests {
                 options.floating_origin.world(),
                 &[],
                 [8, 8],
+                1.0,
             )
             .expect("frame");
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

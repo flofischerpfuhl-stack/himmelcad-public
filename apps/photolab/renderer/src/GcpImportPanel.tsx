@@ -4,7 +4,6 @@ import type {
   GcpRole,
   ProjectCameraImageRecord,
 } from '@himmelcad/data';
-import { Checkbox, CrsTransformPair, Radio, Select } from '@himmelcad/ui';
 import {
   AlertTriangle,
   Check,
@@ -12,17 +11,39 @@ import {
   Grid3X3,
   LoaderCircle,
   MapPinned,
-  X,
+  Search,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-import styles from './GcpImportPanel.module.css';
 import {
-  CrsPicker,
+  ChatBubble,
+  ChatCard,
+  ChatChoices,
+  ChatFooter,
+  ChatFooterSpacer,
+  ChipGroup,
+  EmptyPick,
+  ImportChatRoot,
+  ImportChatStream,
+  Metric,
+  Metrics,
+  ProgressBar,
+  importChatStyles as chat,
+} from './ImportChat.js';
+import {
+  listWorkflows,
+  saveWorkflow,
+  toStoredGrid,
+  enrichGridPaths,
+  warningsForOperation,
+  type GcpImportWorkflow,
+} from './importWorkflow.js';
+import {
   HORIZONTAL_CRS_PRESETS,
   type CrsOperationCandidate,
   type CrsOperationDiscovery,
   type CrsOperationQuery,
+  type CrsPreset,
   type ImageImportDecision,
   type ImageImportProgress,
   type LocalGridSelection,
@@ -49,6 +70,98 @@ export interface GcpImportPanelProps {
   onError: (message: string) => void;
 }
 
+type TransformMode = 'none' | 'separate' | 'combined';
+type YesNo = 'yes' | 'no';
+type Phase =
+  | 'pick'
+  | 'preview'
+  | 'mode'
+  | 'vertical_ask'
+  | 'vertical_setup'
+  | 'horizontal_ask'
+  | 'horizontal_setup'
+  | 'horizontal_grid'
+  | 'combined_setup'
+  | 'combined_grid'
+  | 'operations'
+  | 'review';
+
+const DELIMITER_OPTIONS = [
+  { id: ';', label: 'Semicolon ;' },
+  { id: ',', label: 'Comma ,' },
+  { id: '\t', label: 'Tab' },
+  { id: ' ', label: 'Space' },
+  { id: '|', label: 'Pipe |' },
+];
+
+const DECIMAL_OPTIONS = [
+  { id: 'comma', label: 'Comma 1,23' },
+  { id: 'point', label: 'Point 1.23' },
+];
+
+const HEADER_OPTIONS = [
+  { id: 'yes', label: 'Has header row' },
+  { id: 'no', label: 'No header' },
+];
+
+const ROLE_OPTIONS: { id: GcpRole; label: string }[] = [
+  { id: 'controlXyz', label: 'Control XYZ' },
+  { id: 'controlXy', label: 'Control XY' },
+  { id: 'controlZ', label: 'Control Z' },
+  { id: 'checkpointXyz', label: 'Checkpoint XYZ' },
+  { id: 'checkpointXy', label: 'Checkpoint XY' },
+  { id: 'checkpointZ', label: 'Checkpoint Z' },
+  { id: 'disabled', label: 'Disabled' },
+];
+
+const STDDEV_H_OPTIONS = [
+  { id: '0.01', label: '1 cm' },
+  { id: '0.02', label: '2 cm' },
+  { id: '0.05', label: '5 cm' },
+  { id: '0.1', label: '10 cm' },
+  { id: '0.5', label: '50 cm' },
+];
+
+const STDDEV_Z_OPTIONS = [
+  { id: '0.02', label: '2 cm' },
+  { id: '0.03', label: '3 cm' },
+  { id: '0.05', label: '5 cm' },
+  { id: '0.1', label: '10 cm' },
+  { id: '0.5', label: '50 cm' },
+];
+
+const VERTICAL_PRESETS: readonly CrsPreset[] = [
+  {
+    code: 4979,
+    name: 'WGS 84 ellipsoidal height',
+    region: 'Global',
+    hint: 'Ellipsoidal height (GPS / RTK)',
+  },
+  { code: 7837, name: 'DHHN2016 height', region: 'Germany', hint: 'Normal height, GCG2016' },
+  { code: 5783, name: 'DHHN92 height', region: 'Germany', hint: 'Normal height' },
+  { code: 3855, name: 'EGM2008 height', region: 'Global', hint: 'Gravity-related height' },
+  { code: 5773, name: 'EGM96 height', region: 'Global', hint: 'Gravity-related height' },
+  { code: 5728, name: 'LN02 height', region: 'Switzerland', hint: 'Swiss national height' },
+  { code: 5621, name: 'EVRF2007 height', region: 'Europe', hint: 'European vertical reference' },
+  {
+    code: 99999,
+    name: 'Local / relative height',
+    region: 'Local',
+    hint: 'Relative / device frame · no geoid',
+  },
+];
+
+const POPULAR_HORIZONTAL = [25832, 25833, 31468, 4326, 31467] as const;
+const POPULAR_VERTICAL = [4979, 7837, 5783, 3855, 99999] as const;
+
+const MODE_LABEL: Record<TransformMode, string> = {
+  none: 'None — already project CRS',
+  separate: 'Separate — height then horizontal',
+  combined: 'Combined — site cal / joint 3D',
+};
+
+const RECENT_PREFIX = 'himmelcad.photolab.recentCrs.';
+
 export function GcpImportPanel({
   path,
   projectTargetCrs,
@@ -64,7 +177,7 @@ export function GcpImportPanel({
   onCancel,
   onError,
 }: GcpImportPanelProps): JSX.Element {
-  const [step, setStep] = useState(1);
+  const [phase, setPhase] = useState<Phase>('pick');
   const [delimiter, setDelimiter] = useState(';');
   const [decimalSeparator, setDecimalSeparator] = useState<'point' | 'comma'>('comma');
   const [hasHeader, setHasHeader] = useState(true);
@@ -73,13 +186,17 @@ export function GcpImportPanel({
   const [horizontalStddev, setHorizontalStddev] = useState(0.02);
   const [heightStddev, setHeightStddev] = useState(0.03);
   const [preview, setPreview] = useState<GcpCsvPreview | null>(null);
-  const [transformCoordinates, setTransformCoordinates] = useState(false);
+  const [mode, setMode] = useState<TransformMode | null>(null);
+  const [doVertical, setDoVertical] = useState<YesNo | null>(null);
+  const [doHorizontal, setDoHorizontal] = useState<YesNo | null>(null);
   const [sourceCrsEpsg, setSourceCrsEpsg] = useState(25832);
+  const [sourceVerticalEpsg, setSourceVerticalEpsg] = useState(4979);
+  const [targetVerticalEpsg, setTargetVerticalEpsg] = useState(7837);
+  const [siteCalPath, setSiteCalPath] = useState<string | null>(null);
   const targetCrsEpsg = parseEpsgCode(projectTargetCrs) ?? 25832;
   const sourceCrs = `EPSG:${sourceCrsEpsg}`;
   const targetCrs = `EPSG:${targetCrsEpsg}`;
-  const defaultArea = useMemo(() => projectImageArea(projectImages), [projectImages]);
-  const area = defaultArea;
+  const area = useMemo(() => projectImageArea(projectImages), [projectImages]);
   const [discovery, setDiscovery] = useState<CrsOperationDiscovery | null>(null);
   const [discoveryQueryKey, setDiscoveryQueryKey] = useState<string | null>(null);
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null);
@@ -87,6 +204,13 @@ export function GcpImportPanel({
   const [localBusy, setLocalBusy] = useState(false);
   const [localGrid, setLocalGrid] = useState<LocalGridSelection | null>(null);
   const preferencesHydrated = useRef(false);
+  const lastPreviewKey = useRef<string | null>(null);
+
+  /** True only when a real horizontal CRS change is requested. */
+  const transformCoordinates =
+    mode === 'combined' || (mode === 'separate' && doHorizontal === 'yes');
+  /** No convert / already project CRS — skip operation picker entirely. */
+  const identityImport = mode === 'none' || (mode === 'separate' && doHorizontal === 'no');
 
   useEffect(() => {
     if (preferencesHydrated.current) return;
@@ -104,6 +228,19 @@ export function GcpImportPanel({
       })
       .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (path && phase === 'pick') setPhase('preview');
+    if (!path) {
+      setPhase('pick');
+      setPreview(null);
+      setMode(null);
+      setDoVertical(null);
+      setDoHorizontal(null);
+      setDiscovery(null);
+      setSiteCalPath(null);
+    }
+  }, [path, phase]);
 
   const mapping = useMemo<GcpCsvImportMapping>(
     () => ({
@@ -131,6 +268,62 @@ export function GcpImportPanel({
       role,
     ],
   );
+
+  const mappingKey = JSON.stringify({
+    path,
+    delimiter,
+    decimalSeparator,
+    hasHeader,
+    columns,
+    role,
+    horizontalStddev,
+    heightStddev,
+  });
+
+  useEffect(() => {
+    if (!path || phase === 'pick') return;
+    if (lastPreviewKey.current === mappingKey) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setLocalBusy(true);
+      setError(null);
+      void onPreview(path, mapping)
+        .then((nextPreview) => {
+          if (cancelled) return;
+          lastPreviewKey.current = mappingKey;
+          setPreview(nextPreview);
+          if (nextPreview.errors.length === 0) {
+            void window.himmelcad?.preferences.gcpCsv
+              .save({
+                delimiter: delimiter.slice(0, 1) || ';',
+                decimalSeparator,
+                hasHeader,
+                columns,
+                role,
+                horizontalStddev,
+                heightStddev,
+              })
+              .catch(() => undefined);
+          }
+        })
+        .catch((reason: unknown) => {
+          if (cancelled) return;
+          const detail = message(reason);
+          setError(detail);
+          onError(detail);
+          setPreview(null);
+        })
+        .finally(() => {
+          if (!cancelled) setLocalBusy(false);
+        });
+    }, 80);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mappingKey, path, phase]);
+
   const query = useMemo(
     () =>
       buildQuery(
@@ -144,57 +337,19 @@ export function GcpImportPanel({
   const selectedOperation =
     discovery?.candidates.find((item) => item.operationId === selectedOperationId) ?? null;
   const operationReady =
-    discoveryQueryKey === JSON.stringify(query) &&
-    selectedOperation != null &&
-    !selectedOperation.ballpark &&
-    selectedOperation.requiredGrids.every((grid) => grid.availability.state === 'presentVerified');
+    identityImport ||
+    (discoveryQueryKey === JSON.stringify(query) &&
+      selectedOperation != null &&
+      !selectedOperation.ballpark &&
+      selectedOperation.requiredGrids.every((grid) => grid.availability.state === 'presentVerified'));
 
-  const mappingInputKey = JSON.stringify({
-    columns,
-    decimalSeparator,
-    delimiter,
-    hasHeader,
-    heightStddev,
-    horizontalStddev,
-    role,
-  });
+  const siteCalBlocked = mode === 'combined' && siteCalPath != null;
+  // Only discover PROJ ops when a real transform is needed and we're on the ops/review path.
+  const needsDiscovery =
+    transformCoordinates && !siteCalBlocked && (phase === 'operations' || phase === 'review');
 
   useEffect(() => {
-    setPreview(null);
-  }, [mappingInputKey]);
-
-  const refreshPreview = async () => {
-    if (!path) return;
-    setLocalBusy(true);
-    setError(null);
-    try {
-      const nextPreview = await onPreview(path, mapping);
-      setPreview(nextPreview);
-      if (nextPreview.errors.length === 0) {
-        void window.himmelcad?.preferences.gcpCsv
-          .save({
-            delimiter: delimiter.slice(0, 1) || ';',
-            decimalSeparator,
-            hasHeader,
-            columns,
-            role,
-            horizontalStddev,
-            heightStddev,
-          })
-          .catch(() => undefined);
-      }
-      setStep(3);
-    } catch (reason) {
-      const detail = message(reason);
-      setError(detail);
-      onError(detail);
-    } finally {
-      setLocalBusy(false);
-    }
-  };
-
-  useEffect(() => {
-    if (step !== 4) return;
+    if (!needsDiscovery || siteCalBlocked) return;
     let cancelled = false;
     const queryKey = JSON.stringify(query);
     const timer = window.setTimeout(() => {
@@ -205,15 +360,7 @@ export function GcpImportPanel({
           if (cancelled) return;
           setDiscovery(result);
           setDiscoveryQueryKey(queryKey);
-          const preferred = result.candidates.find(
-            (item) =>
-              item.bestAvailable &&
-              !item.ballpark &&
-              item.requiredGrids.every((grid) => grid.availability.state === 'presentVerified'),
-          );
-          setSelectedOperationId(
-            preferred?.operationId ?? result.candidates[0]?.operationId ?? null,
-          );
+          setSelectedOperationId(null);
           if (result.candidates.length === 0) {
             const detail = 'No accurate coordinate operation covers the GCP and project area.';
             setError(detail);
@@ -232,12 +379,12 @@ export function GcpImportPanel({
         .finally(() => {
           if (!cancelled) setLocalBusy(false);
         });
-    }, 180);
+    }, 60);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [onDiscoverCrs, onError, query, step]);
+  }, [needsDiscovery, onDiscoverCrs, onError, query, siteCalBlocked]);
 
   const chooseGrid = async (): Promise<void> => {
     setLocalBusy(true);
@@ -251,7 +398,9 @@ export function GcpImportPanel({
         throw new Error(
           `${selected.filename} does not cover the GCP/project area. Select a grid whose coverage contains the image positions.`,
         );
-      setLocalGrid(selected);
+      const enriched = enrichGridPaths(selected, null);
+      setLocalGrid(enriched);
+      rememberGrid('horizontal', enriched);
       setDiscoveryQueryKey(null);
     } catch (reason) {
       const detail = message(reason);
@@ -262,8 +411,177 @@ export function GcpImportPanel({
     }
   };
 
+  const clearFrom = (step: Phase) => {
+    setError(null);
+    setDiscovery(null);
+    setDiscoveryQueryKey(null);
+    setSelectedOperationId(null);
+    if (step === 'preview' || step === 'mode') {
+      setMode(null);
+      setDoVertical(null);
+      setDoHorizontal(null);
+      setSiteCalPath(null);
+      setLocalGrid(null);
+    }
+    if (step === 'vertical_ask') {
+      setDoVertical(null);
+      setDoHorizontal(null);
+      setLocalGrid(null);
+    }
+    if (step === 'vertical_setup') {
+      setDoHorizontal(null);
+      setLocalGrid(null);
+    }
+    if (step === 'horizontal_ask') {
+      setDoHorizontal(null);
+      setLocalGrid(null);
+    }
+    if (step === 'combined_setup') {
+      setSiteCalPath(null);
+      setLocalGrid(null);
+    }
+    setPhase(step);
+  };
+
+  const onMode = (id: string) => {
+    const next = id as TransformMode;
+    setMode(next);
+    setDoVertical(null);
+    setDoHorizontal(null);
+    setSiteCalPath(null);
+    setLocalGrid(null);
+    setDiscovery(null);
+    setDiscoveryQueryKey(null);
+    setSelectedOperationId(null);
+    if (next === 'none') {
+      // Already project CRS — import values as-is, no operation pick.
+      setSourceCrsEpsg(targetCrsEpsg);
+      setDoVertical('no');
+      setDoHorizontal('no');
+      setPhase('review');
+      return;
+    }
+    if (next === 'separate') {
+      setPhase('vertical_ask');
+      return;
+    }
+    setPhase('combined_setup');
+  };
+
+  const onVerticalAsk = (id: string) => {
+    const answer = id as YesNo;
+    setDoVertical(answer);
+    if (answer === 'yes') setPhase('vertical_setup');
+    else setPhase('horizontal_ask');
+  };
+
+  const confirmVerticalSetup = () => {
+    // GCP commit path currently preserves height values; record choice for audit UI only.
+    rememberCrs('vertical', sourceVerticalEpsg);
+    rememberCrs('vertical', targetVerticalEpsg);
+    setPhase('horizontal_ask');
+  };
+
+  const onHorizontalAsk = (id: string) => {
+    const answer = id as YesNo;
+    setDoHorizontal(answer);
+    if (answer === 'yes') setPhase('horizontal_setup');
+    else {
+      // Horizontal already project CRS — no PROJ operation needed.
+      setSourceCrsEpsg(targetCrsEpsg);
+      setLocalGrid(null);
+      setDiscovery(null);
+      setDiscoveryQueryKey(null);
+      setSelectedOperationId(null);
+      setPhase('review');
+    }
+  };
+
+  const confirmHorizontalSetup = () => {
+    rememberCrs('horizontal', sourceCrsEpsg);
+    rememberCrs('horizontal', targetCrsEpsg);
+    const remembered = loadRememberedGrid('horizontal');
+    if (remembered) setLocalGrid(remembered);
+    setPhase('horizontal_grid');
+  };
+
+  const confirmHorizontalGrid = () => {
+    if (localGrid) rememberGrid('horizontal', localGrid);
+    setPhase('operations');
+  };
+
+  const skipHorizontalGrid = () => setPhase('operations');
+
+  const confirmCombined = () => {
+    if (siteCalPath) {
+      setError(
+        'Trimble .cal / .dc site-calibration import is not implemented yet. Clear the file to continue with a CRS operation.',
+      );
+      return;
+    }
+    rememberCrs('horizontal', sourceCrsEpsg);
+    const remembered = loadRememberedGrid('horizontal');
+    if (remembered) setLocalGrid(remembered);
+    setPhase('combined_grid');
+  };
+
+  const confirmCombinedGrid = () => {
+    if (localGrid) rememberGrid('horizontal', localGrid);
+    setPhase('operations');
+  };
+
+  const pickSiteCal = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.cal,.dc,.jxl,.xml,text/*';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const pathLike =
+        'path' in file && typeof (file as { path?: string }).path === 'string'
+          ? (file as { path: string }).path
+          : file.name;
+      setSiteCalPath(pathLike);
+    };
+    input.click();
+  };
+
   const commit = async () => {
-    if (!path || !selectedOperation || !discovery) return;
+    if (!path) return;
+    if (identityImport) {
+      // Silently freeze an identity CRS op (same source/target). No UI pick.
+      setLocalBusy(true);
+      setError(null);
+      try {
+        const result = await onDiscoverCrs(query);
+        const identity =
+          result.candidates.find(
+            (c) =>
+              !c.ballpark &&
+              c.requiredGrids.length === 0 &&
+              (c.expectedAccuracyMm == null || c.expectedAccuracyMm <= 1),
+          ) ??
+          result.candidates.find((c) => !c.ballpark && c.requiredGrids.length === 0) ??
+          result.candidates.find((c) => !c.ballpark);
+        if (!identity) {
+          throw new Error(
+            'Could not freeze an identity CRS operation for import without transform.',
+          );
+        }
+        setDiscovery(result);
+        setDiscoveryQueryKey(JSON.stringify(query));
+        setSelectedOperationId(identity.operationId);
+        await onCommit(path, mapping, buildDecision(query, identity, result), true);
+      } catch (reason: unknown) {
+        const detail = message(reason);
+        setError(detail);
+        onError(detail);
+      } finally {
+        setLocalBusy(false);
+      }
+      return;
+    }
+    if (!selectedOperation || !discovery) return;
     await onCommit(
       path,
       mapping,
@@ -272,154 +590,232 @@ export function GcpImportPanel({
     );
   };
 
-  const previewReady = preview?.errors.length === 0;
-  const canVisitStep = (candidate: number): boolean => {
-    if (candidate === 1) return true;
-    if (candidate === 2) return path != null;
-    if (candidate === 3 || candidate === 4) return previewReady;
-    return previewReady && operationReady;
-  };
-  const next = async (): Promise<void> => {
-    if (step === 1 && path) setStep(2);
-    else if (step === 2) await refreshPreview();
-    else if (step === 3 && previewReady) setStep(4);
-    else if (step === 4 && operationReady) setStep(5);
-    else if (step === 5) await commit();
-  };
-  const nextDisabled =
-    busy ||
-    localBusy ||
-    (step === 1 && !path) ||
-    (step === 3 && !previewReady) ||
-    (step === 4 && !operationReady) ||
-    (step === 5 && (!previewReady || !operationReady));
+  const previewReady = preview != null && preview.errors.length === 0;
+  const fileLabel = path ? fileName(path) : null;
+  const locked = busy || localBusy;
+
+  const columnOptions = useMemo(() => {
+    if (preview?.header.length) {
+      return preview.header.map((header, index) => ({
+        id: hasHeader ? header : String(index),
+        label: hasHeader ? header : `Col ${index}`,
+      }));
+    }
+    return [0, 1, 2, 3, 4, 5, 6, 7].map((index) => ({
+      id: String(index),
+      label: `Col ${index}`,
+    }));
+  }, [hasHeader, preview?.header]);
+
+  const scrollKey = [
+    phase,
+    path ?? '',
+    preview?.validPointCount ?? 0,
+    mode ?? '',
+    doVertical ?? '',
+    doHorizontal ?? '',
+    localBusy,
+    busy,
+    discovery?.candidates.length ?? 0,
+    error ?? '',
+  ].join('|');
+
+  if (!path) {
+    return (
+      <ImportChatRoot title="GCP Import" onClose={onCancel} closeLabel="Close GCP import" busy={busy}>
+        <EmptyPick
+          icon={
+            externalError ? (
+              <AlertTriangle size={34} className={chat.warningText} />
+            ) : (
+              <FileSpreadsheet size={34} />
+            )
+          }
+          title={externalError ?? 'GCP coordinate file'}
+          detail="Select a CSV or text file with ground control points."
+        >
+          <button
+            type="button"
+            className={`${chat.choice} ${chat.choicePrimary}`}
+            onClick={onChooseFile}
+            disabled={busy}
+          >
+            <FileSpreadsheet size={14} /> Select file
+          </button>
+        </EmptyPick>
+      </ImportChatRoot>
+    );
+  }
+
+  const showVerticalSetup =
+    mode === 'separate' &&
+    doVertical === 'yes' &&
+    phaseOrder(phase) >= phaseOrder('vertical_setup');
+  const showHorizontalSetup =
+    mode === 'separate' &&
+    doHorizontal === 'yes' &&
+    phaseOrder(phase) >= phaseOrder('horizontal_setup');
+  const showCombined = mode === 'combined' && phaseOrder(phase) >= phaseOrder('combined_setup');
+  const showOps =
+    transformCoordinates && phaseOrder(phase) >= phaseOrder('operations');
+  const showReview = phase === 'review';
 
   return (
-    <section className={styles.root}>
-      <header className={styles.header} data-task-drag-handle>
-        <h2 className={styles.functionTitle}>GCP Import</h2>
-        <button type="button" onClick={onCancel} aria-label="Close GCP import">
-          <X size={16} />
-        </button>
-      </header>
-      <ol className={styles.steps}>
-        {['File', 'Columns', 'Preview', 'CRS', 'Import'].map((label, index) => {
-          const number = index + 1;
-          return (
-            <li key={label} className={step === number ? styles.activeStep : ''}>
-              <button
-                type="button"
-                disabled={!canVisitStep(number)}
-                onClick={() => setStep(number)}
-              >
-                <span>{number < step ? <Check size={11} /> : number}</span>
-                {label}
-              </button>
-            </li>
-          );
-        })}
-      </ol>
-
-      {step === 1 && (
-        <div className={styles.page}>
-          <FileSpreadsheet size={30} />
-          <h3>GCP coordinate file</h3>
-          <p>{path ?? 'No CSV or text file selected yet.'}</p>
-          <button type="button" className={styles.secondary} onClick={onChooseFile} disabled={busy}>
-            Select file
-          </button>
-        </div>
-      )}
-
-      {step === 2 && (
-        <div className={styles.page}>
-          <h3>CSV and columns</h3>
-          <Field label="Delimiter">
-            <input
-              value={delimiter}
-              maxLength={1}
-              onChange={(event) => setDelimiter(event.currentTarget.value)}
-            />
-          </Field>
-          <Field label="Decimal separator">
-            <Select
-              value={decimalSeparator}
-              onChange={(event) =>
-                setDecimalSeparator(event.currentTarget.value as 'point' | 'comma')
-              }
+    <ImportChatRoot
+      title="GCP Import"
+      onClose={onCancel}
+      closeLabel="Close GCP import"
+      busy={busy || localBusy}
+      footer={
+        phase === 'review' ? (
+          <ChatFooter>
+            <button
+              type="button"
+              className={chat.ghostBtn}
+              disabled={busy || localBusy}
+              onClick={() => {
+                const workflow: GcpImportWorkflow = {
+                  schemaVersion: 1,
+                  id: crypto.randomUUID(),
+                  name: `GCP · ${mode ?? 'none'} · ${new Date().toLocaleString()}`,
+                  description: '',
+                  kind: 'gcp',
+                  savedAt: new Date().toISOString(),
+                  mode: mode ?? 'none',
+                  doVertical,
+                  doHorizontal,
+                  sourceCrsEpsg,
+                  sourceVerticalEpsg,
+                  targetVerticalEpsg,
+                  gridPolicy: transformCoordinates ? 'ntv2' : null,
+                  horizontalGrid: localGrid ? toStoredGrid(localGrid) : null,
+                  delimiter,
+                  decimalSeparator,
+                  hasHeader,
+                  columns,
+                  role,
+                  horizontalStddev,
+                  heightStddev,
+                };
+                const result = saveWorkflow(workflow);
+                if (!result.ok) onError(result.error);
+              }}
             >
-              <option value="comma">Comma</option>
-              <option value="point">Point</option>
-            </Select>
-          </Field>
-          <Toggle
-            label="First row contains column names"
-            checked={hasHeader}
-            onChange={setHasHeader}
+              Save import workflow
+            </button>
+            <ChatFooterSpacer />
+            <button
+              type="button"
+              className={chat.primaryBtn}
+              disabled={
+                !previewReady || !operationReady || busy || localBusy || siteCalBlocked
+              }
+              onClick={() => void commit()}
+            >
+              {busy ? <LoaderCircle className={chat.spinner} size={14} /> : <Check size={14} />}
+              {busy ? 'Importing…' : `Import ${preview?.validPointCount ?? 0} GCPs`}
+            </button>
+          </ChatFooter>
+        ) : null
+      }
+    >
+      <ImportChatStream scrollKey={scrollKey}>
+        {(error ?? externalError) && (
+          <ChatBubble role="system" tone="error" title="Import problem">
+            {error ?? externalError}
+          </ChatBubble>
+        )}
+
+        <ChatBubble role="system" tone="ok" title="File selected" detail={fileLabel ?? path} />
+
+        <ChatCard
+          title="CSV mapping & preview"
+          onRevert={phase !== 'preview' ? () => clearFrom('preview') : undefined}
+          revertDisabled={locked}
+          actions={
+            localBusy ? (
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontSize: 10,
+                  color: 'var(--hc-fg-muted)',
+                }}
+              >
+                <LoaderCircle className={chat.spinner} size={13} /> Reading…
+              </span>
+            ) : null
+          }
+        >
+          <ChipGroup
+            label="Delimiter"
+            value={delimiter}
+            disabled={locked}
+            onChange={setDelimiter}
+            options={DELIMITER_OPTIONS}
+          />
+          <ChipGroup
+            label="Decimals"
+            value={decimalSeparator}
+            disabled={locked}
+            onChange={(id) => setDecimalSeparator(id as 'point' | 'comma')}
+            options={DECIMAL_OPTIONS}
+          />
+          <ChipGroup
+            label="Header"
+            value={hasHeader ? 'yes' : 'no'}
+            disabled={locked}
+            onChange={(id) => {
+              setHasHeader(id === 'yes');
+              if (id === 'no') setColumns({ name: '0', east: '1', north: '2', height: '3' });
+            }}
+            options={HEADER_OPTIONS}
           />
           {(['name', 'east', 'north', 'height'] as const).map((key) => (
-            <Field key={key} label={columnLabel(key)}>
-              <input
-                value={columns[key]}
-                list={preview ? 'gcp-headers' : undefined}
-                onChange={(event) => setColumns({ ...columns, [key]: event.currentTarget.value })}
-              />
-            </Field>
+            <ChipGroup
+              key={key}
+              label={columnLabel(key)}
+              value={columns[key]}
+              disabled={locked}
+              onChange={(id) => setColumns({ ...columns, [key]: id })}
+              options={columnOptions}
+            />
           ))}
-          {preview && (
-            <datalist id="gcp-headers">
-              {preview.header.map((header) => (
-                <option key={header} value={header} />
-              ))}
-            </datalist>
-          )}
-          <Field label="Default role">
-            <Select
-              value={role}
-              onChange={(event) => setRole(event.currentTarget.value as GcpRole)}
-            >
-              <option value="controlXyz">Control · horizontal + height</option>
-              <option value="controlXy">Control · horizontal only</option>
-              <option value="controlZ">Control · height only</option>
-              <option value="checkpointXyz">Checkpoint · horizontal + height</option>
-              <option value="checkpointXy">Checkpoint · horizontal only</option>
-              <option value="checkpointZ">Checkpoint · height only</option>
-              <option value="disabled">Disabled</option>
-            </Select>
-          </Field>
-          <NumberField
-            label="σ horizontal [m]"
-            value={horizontalStddev}
-            onChange={setHorizontalStddev}
+          <ChipGroup
+            label="Default role"
+            value={role}
+            disabled={locked}
+            onChange={(id) => setRole(id as GcpRole)}
+            options={ROLE_OPTIONS}
           />
-          <NumberField label="σ height [m]" value={heightStddev} onChange={setHeightStddev} />
-          {localBusy && (
-            <div className={styles.validating} role="status">
-              <LoaderCircle className={styles.spinner} size={14} /> Reading and validating preview…
-            </div>
-          )}
-        </div>
-      )}
+          <ChipGroup
+            label="σ horizontal"
+            value={String(horizontalStddev)}
+            disabled={locked}
+            onChange={(id) => setHorizontalStddev(Number(id))}
+            options={ensureOption(STDDEV_H_OPTIONS, horizontalStddev)}
+          />
+          <ChipGroup
+            label="σ height"
+            value={String(heightStddev)}
+            disabled={locked}
+            onChange={(id) => setHeightStddev(Number(id))}
+            options={ensureOption(STDDEV_Z_OPTIONS, heightStddev)}
+          />
 
-      {step === 3 && (
-        <div className={styles.page}>
-          <h3>Preview</h3>
-          {!preview ? (
-            <div className={styles.notice}>
-              <AlertTriangle size={14} /> Return to Columns and press Next to create the preview.
-            </div>
-          ) : (
+          {preview ? (
             <>
-              <div className={styles.metrics}>
-                <Metric label="Data rows" value={preview.dataRowCount} />
-                <Metric label="Valid" value={preview.validPointCount} />
+              <Metrics>
+                <Metric label="Data rows" value={String(preview.dataRowCount)} />
+                <Metric label="Valid" value={String(preview.validPointCount)} />
                 <Metric
                   label="Errors"
-                  value={preview.errors.length}
+                  value={String(preview.errors.length)}
                   warning={preview.errors.length > 0}
                 />
-              </div>
-              <div className={styles.tableWrap}>
+              </Metrics>
+              <div className={chat.tableWrap}>
                 <table>
                   <thead>
                     <tr>
@@ -443,234 +839,790 @@ export function GcpImportPanel({
                   </tbody>
                 </table>
               </div>
-              {preview.errors.map((item) => (
-                <div key={`${item.sourceLine}:${item.field}`} className={styles.error}>
+              {preview.errors.slice(0, 12).map((item) => (
+                <div key={`${item.sourceLine}:${item.field}`} className={chat.errorInline}>
                   Row {item.sourceLine} · {item.field}: {item.message}
                 </div>
               ))}
+              {preview.errors.length === 0 && (
+                <div className={chat.successInline}>
+                  <Check size={14} /> Preview valid · {preview.validPointCount} points
+                </div>
+              )}
             </>
+          ) : (
+            <div style={{ color: 'var(--hc-fg-muted)', fontSize: 10, marginTop: 8 }}>
+              {localBusy ? 'Building preview…' : 'Adjust mapping to load preview.'}
+            </div>
           )}
-        </div>
-      )}
+        </ChatCard>
 
-      {step === 4 && (
-        <div className={styles.page}>
-          <h3>
-            <MapPinned size={15} /> Coordinate reference
-          </h3>
-          <div className={styles.crsSummary}>
-            <span>Project reference</span>
-            <strong>{targetCrs}</strong>
-          </div>
-          <CrsTransformPair
+        {previewReady && (
+          <>
+            <ChatBubble
+              role="system"
+              title="Coordinate transform"
+              onRevert={mode != null ? () => clearFrom('mode') : undefined}
+              revertDisabled={locked || mode == null}
+            />
+            {mode == null && listWorkflows('gcp').length > 0 && (
+              <ChatCard title="Saved workflows">
+                <div className={chat.chipGroup}>
+                  {listWorkflows('gcp').slice(0, 5).map((workflow) => (
+                    <button
+                      key={workflow.id}
+                      type="button"
+                      className={chat.chip}
+                      disabled={locked}
+                      title={workflow.name}
+                      onClick={() => {
+                        if (workflow.kind !== 'gcp') return;
+                        setMode(workflow.mode);
+                        setDoVertical(workflow.doVertical);
+                        setDoHorizontal(workflow.doHorizontal);
+                        setSourceCrsEpsg(workflow.sourceCrsEpsg);
+                        setDelimiter(workflow.delimiter);
+                        setDecimalSeparator(workflow.decimalSeparator);
+                        setHasHeader(workflow.hasHeader);
+                        setColumns(workflow.columns);
+                        setRole(workflow.role as typeof role);
+                        setHorizontalStddev(workflow.horizontalStddev);
+                        setHeightStddev(workflow.heightStddev);
+                        if (workflow.horizontalGrid) {
+                          setLocalGrid({
+                            filename: workflow.horizontalGrid.filename,
+                            localPath: workflow.horizontalGrid.absolutePath || workflow.horizontalGrid.localPath,
+                            absolutePath: workflow.horizontalGrid.absolutePath,
+                            relativePath: workflow.horizontalGrid.relativePath,
+                            kind: workflow.horizontalGrid.kind,
+                            driver: workflow.horizontalGrid.driver,
+                            coverage: workflow.horizontalGrid.coverage,
+                          });
+                        }
+                        setPhase(workflow.mode === 'none' ? 'review' : 'horizontal_setup');
+                      }}
+                    >
+                      {workflow.name.length > 42 ? `${workflow.name.slice(0, 40)}…` : workflow.name}
+                    </button>
+                  ))}
+                </div>
+              </ChatCard>
+            )}
+            <ChatChoices
+              resolvedId={mode}
+              disabled={locked || mode != null}
+              onSelect={onMode}
+              onRevert={mode != null ? () => clearFrom('mode') : undefined}
+              revertDisabled={locked}
+              options={[
+                { id: 'none', label: 'None', primary: true },
+                { id: 'separate', label: 'Separate' },
+                { id: 'combined', label: 'Combined' },
+              ]}
+            />
+            {mode != null && (
+              <ChatBubble role="user" onRevert={() => clearFrom('mode')} revertDisabled={locked}>
+                {MODE_LABEL[mode]}
+              </ChatBubble>
+            )}
+          </>
+        )}
+
+        {mode === 'separate' && phaseOrder(phase) >= phaseOrder('vertical_ask') && (
+          <>
+            <ChatBubble
+              role="system"
+              title="Transform height?"
+              onRevert={() => clearFrom('vertical_ask')}
+              revertDisabled={locked}
+            />
+            <ChatChoices
+              resolvedId={doVertical}
+              disabled={locked || doVertical != null}
+              onSelect={onVerticalAsk}
+              onRevert={doVertical != null ? () => clearFrom('vertical_ask') : undefined}
+              revertDisabled={locked}
+              options={[
+                { id: 'no', label: 'No — preserve heights', primary: true },
+                { id: 'yes', label: 'Yes — label height CRS' },
+              ]}
+            />
+            {doVertical != null && (
+              <ChatBubble
+                role="user"
+                onRevert={() => clearFrom('vertical_ask')}
+                revertDisabled={locked}
+              >
+                {doVertical === 'yes' ? 'Height CRS labeled' : 'Preserve heights'}
+              </ChatBubble>
+            )}
+          </>
+        )}
+
+        {showVerticalSetup && (
+          <ChatCard
+            title="Height CRS"
+            onRevert={() => clearFrom('vertical_setup')}
+            revertDisabled={locked}
+          >
+            <CrsSearchPair
+              sourceLabel="Source"
+              targetLabel="Target"
+              sourceValue={sourceVerticalEpsg}
+              targetValue={targetVerticalEpsg}
+              presets={VERTICAL_PRESETS}
+              popular={POPULAR_VERTICAL}
+              recentKey="vertical"
+              disabled={locked || phase !== 'vertical_setup'}
+              onSourceChange={setSourceVerticalEpsg}
+              onTargetChange={setTargetVerticalEpsg}
+            />
+            {phase === 'vertical_setup' && (
+              <div className={chat.toolbar}>
+                <button
+                  type="button"
+                  className={`${chat.choice} ${chat.choicePrimary}`}
+                  disabled={locked}
+                  onClick={confirmVerticalSetup}
+                >
+                  Continue
+                </button>
+              </div>
+            )}
+          </ChatCard>
+        )}
+
+        {mode === 'separate' && phaseOrder(phase) >= phaseOrder('horizontal_ask') && (
+          <>
+            <ChatBubble
+              role="system"
+              title="Transform horizontal coordinates?"
+              onRevert={() => clearFrom('horizontal_ask')}
+              revertDisabled={locked}
+            />
+            <ChatChoices
+              resolvedId={doHorizontal}
+              disabled={locked || doHorizontal != null}
+              onSelect={onHorizontalAsk}
+              onRevert={doHorizontal != null ? () => clearFrom('horizontal_ask') : undefined}
+              revertDisabled={locked}
+              options={[
+                { id: 'no', label: 'No — already project CRS', primary: true },
+                { id: 'yes', label: 'Yes — transform horizontal' },
+              ]}
+            />
+            {doHorizontal != null && (
+              <ChatBubble
+                role="user"
+                onRevert={() => clearFrom('horizontal_ask')}
+                revertDisabled={locked}
+              >
+                {doHorizontal === 'yes' ? 'Transform horizontal' : 'Already project CRS'}
+              </ChatBubble>
+            )}
+          </>
+        )}
+
+        {showHorizontalSetup && (
+          <ChatCard
             title="Horizontal transform"
-            hint="Left: CRS stored in the CSV. Right: project target CRS. Uncheck transform only when values are already in the project CRS."
-            noTransform={!transformCoordinates}
-            onNoTransformChange={(noTransform) => setTransformCoordinates(!noTransform)}
-            noTransformLabel="No transform — CSV is already in project CRS"
-            source={
-              <CrsPicker
-                label="CSV source CRS"
+            onRevert={() => clearFrom('horizontal_setup')}
+            revertDisabled={locked}
+          >
+            <div className={chat.crsPair}>
+              <CrsSearchColumn
+                label="Source"
                 value={sourceCrsEpsg}
                 presets={HORIZONTAL_CRS_PRESETS}
+                popular={POPULAR_HORIZONTAL}
+                recentKey="horizontal"
+                disabled={locked || phaseOrder(phase) > phaseOrder('horizontal_setup')}
                 onChange={setSourceCrsEpsg}
               />
-            }
-            target={
-              <div className={styles.crsSummary}>
-                <span>Project target</span>
-                <strong>{targetCrs}</strong>
+              <div className={chat.crsColumn}>
+                <div className={chat.crsColumnLabel}>Project target</div>
+                <div className={chat.crsSelected}>
+                  <strong>{targetCrs}</strong>
+                  <small>Locked to project reference</small>
+                </div>
               </div>
-            }
-          />
-          {transformCoordinates && sourceCrs !== targetCrs && (
-            <div className={styles.gridSelector}>
+            </div>
+            {phase === 'horizontal_setup' && (
+              <div className={chat.toolbar}>
+                <button
+                  type="button"
+                  className={`${chat.choice} ${chat.choicePrimary}`}
+                  disabled={locked}
+                  onClick={confirmHorizontalSetup}
+                >
+                  Continue
+                </button>
+              </div>
+            )}
+          </ChatCard>
+        )}
+
+        {mode === 'separate' &&
+          doHorizontal === 'yes' &&
+          phaseOrder(phase) >= phaseOrder('horizontal_grid') && (
+          <>
+            <ChatBubble
+              role="system"
+              title="Horizontal datum grid"
+              onRevert={() => clearFrom('horizontal_grid')}
+              revertDisabled={locked}
+            />
+            <ChatCard
+              title="Horizontal grid file"
+              onRevert={() => clearFrom('horizontal_grid')}
+              revertDisabled={locked}
+            >
+              <div className={chat.gridRow}>
+                <Grid3X3 size={16} />
+                <div>
+                  <strong>NTv2 / GTG grid</strong>
+                  <span>
+                    {localGrid
+                      ? `${localGrid.filename} · previously selected`
+                      : 'Bundled grids used when they cover the project.'}
+                  </span>
+                  {gridProgress?.phase === 'grid' && <ProgressBar value={gridProgress.fraction} />}
+                  {localGrid && <code title={localGrid.localPath}>{localGrid.localPath}</code>}
+                </div>
+                <button
+                  type="button"
+                  className={chat.ghostBtn}
+                  disabled={locked || phase !== 'horizontal_grid'}
+                  onClick={() => void chooseGrid()}
+                >
+                  {localGrid ? 'Change…' : 'Choose grid…'}
+                </button>
+              </div>
+              {phase === 'horizontal_grid' && (
+                <div className={chat.toolbar}>
+                  <button
+                    type="button"
+                    className={`${chat.choice} ${chat.choicePrimary}`}
+                    disabled={locked}
+                    onClick={confirmHorizontalGrid}
+                  >
+                    Continue
+                  </button>
+                  <button
+                    type="button"
+                    className={chat.choice}
+                    disabled={locked}
+                    onClick={skipHorizontalGrid}
+                  >
+                    Use bundled / none
+                  </button>
+                </div>
+              )}
+            </ChatCard>
+          </>
+        )}
+
+        {showCombined && (
+          <ChatCard
+            title="Combined transform"
+            onRevert={() => clearFrom('combined_setup')}
+            revertDisabled={locked}
+          >
+            <div className={chat.gridRow}>
               <Grid3X3 size={16} />
-              <span>
-                <strong>Datum transformation grid</strong>
-                <small>
-                  {localGrid
-                    ? `${localGrid.filename} · registered locally`
-                    : 'Bundled official grids are used when they cover the project.'}
-                </small>
-                {gridProgress?.phase === 'grid' && <ProgressBar value={gridProgress.fraction} />}
-              </span>
+              <div>
+                <strong>Site calibration file</strong>
+                <span>
+                  .cal / .dc parser is not implemented. Leave empty to use PROJ source → {targetCrs}.
+                </span>
+                {siteCalPath && <code>{fileName(siteCalPath)}</code>}
+              </div>
               <button
                 type="button"
-                className={styles.secondary}
-                disabled={localBusy}
-                onClick={() => void chooseGrid()}
+                className={chat.ghostBtn}
+                disabled={locked || phase !== 'combined_setup'}
+                onClick={pickSiteCal}
               >
-                {gridProgress?.phase === 'grid' && (
-                  <LoaderCircle className={styles.spinner} size={13} />
-                )}
-                {localGrid ? 'Change file' : 'Choose grid file…'}
+                {siteCalPath ? 'Change…' : 'Choose .cal / .dc…'}
               </button>
             </div>
-          )}
-          {localBusy && (
-            <div className={styles.validating}>
-              <LoaderCircle className={styles.spinner} size={14} /> Validating coordinate operation…
+            {siteCalPath && (
+              <div className={chat.errorInline}>
+                <AlertTriangle size={14} /> .cal / .dc reading is not implemented. Core has 7-param
+                Similarity3D, but no Trimble site-cal importer yet.
+              </div>
+            )}
+            {siteCalPath && (
+              <div className={chat.toolbar}>
+                <button type="button" className={chat.choice} onClick={() => setSiteCalPath(null)}>
+                  Clear file · use CRS operation
+                </button>
+              </div>
+            )}
+            <div className={chat.crsPair}>
+              <CrsSearchColumn
+                label="Source CRS"
+                value={sourceCrsEpsg}
+                presets={HORIZONTAL_CRS_PRESETS}
+                popular={POPULAR_HORIZONTAL}
+                recentKey="horizontal"
+                disabled={locked || phase !== 'combined_setup'}
+                onChange={setSourceCrsEpsg}
+              />
+              <div className={chat.crsColumn}>
+                <div className={chat.crsColumnLabel}>Target</div>
+                <div className={chat.crsSelected}>
+                  <strong>{targetCrs}</strong>
+                  <small>Project reference</small>
+                </div>
+              </div>
             </div>
-          )}
-          {transformCoordinates &&
-            discovery?.candidates.map((candidate) => (
-              <label key={candidate.operationId} className={styles.operation}>
-                <Radio
-                  checked={selectedOperationId === candidate.operationId}
-                  onChange={() => setSelectedOperationId(candidate.operationId)}
-                />
-                <span>
-                  <strong>{candidate.name}</strong>
-                  <small>
-                    {candidate.expectedAccuracyMm == null
-                      ? 'Accuracy not specified'
-                      : `${candidate.expectedAccuracyMm.toFixed(1)} mm`}
-                    {candidate.ballpark ? ' · ballpark blocked' : ''}
-                  </small>
-                </span>
-              </label>
-            ))}
-        </div>
-      )}
+            {phase === 'combined_setup' && (
+              <div className={chat.toolbar}>
+                <button
+                  type="button"
+                  className={`${chat.choice} ${chat.choicePrimary}`}
+                  disabled={locked || !!siteCalPath}
+                  onClick={confirmCombined}
+                >
+                  Continue with CRS operation
+                </button>
+              </div>
+            )}
+          </ChatCard>
+        )}
 
-      {step === 5 && (
-        <div className={styles.page}>
-          <h3>Review import</h3>
-          <div className={styles.crsSummary}>
-            <span>Points</span>
-            <strong>{preview?.validPointCount ?? 0}</strong>
-          </div>
-          <div className={styles.crsSummary}>
-            <span>Coordinate handling</span>
-            <strong>
-              {transformCoordinates ? `${sourceCrs} → ${targetCrs}` : `Use values as ${targetCrs}`}
-            </strong>
-          </div>
-          {busy && (
-            <div className={styles.validating} role="status">
-              <LoaderCircle className={styles.spinner} size={14} /> Importing ground control points…
-            </div>
-          )}
-          {!localBusy && !operationReady && (
-            <div className={styles.error}>
-              {error ?? 'No valid coordinate operation is selected.'}
-            </div>
-          )}
-        </div>
-      )}
+        {mode === 'combined' && phaseOrder(phase) >= phaseOrder('combined_grid') && (
+          <>
+            <ChatBubble
+              role="system"
+              title="Horizontal datum grid"
+              onRevert={() => clearFrom('combined_grid')}
+              revertDisabled={locked}
+            />
+            <ChatCard
+              title="Grid file"
+              onRevert={() => clearFrom('combined_grid')}
+              revertDisabled={locked}
+            >
+              <div className={chat.gridRow}>
+                <Grid3X3 size={16} />
+                <div>
+                  <strong>NTv2 / GTG grid</strong>
+                  <span>
+                    {localGrid
+                      ? `${localGrid.filename} · previously selected`
+                      : 'Optional when PROJ needs a local grid.'}
+                  </span>
+                  {localGrid && <code title={localGrid.localPath}>{localGrid.localPath}</code>}
+                </div>
+                <button
+                  type="button"
+                  className={chat.ghostBtn}
+                  disabled={locked || phase !== 'combined_grid'}
+                  onClick={() => void chooseGrid()}
+                >
+                  {localGrid ? 'Change…' : 'Choose grid…'}
+                </button>
+              </div>
+              {phase === 'combined_grid' && (
+                <div className={chat.toolbar}>
+                  <button
+                    type="button"
+                    className={`${chat.choice} ${chat.choicePrimary}`}
+                    disabled={locked}
+                    onClick={confirmCombinedGrid}
+                  >
+                    Continue
+                  </button>
+                </div>
+              )}
+            </ChatCard>
+          </>
+        )}
 
-      {(error ?? externalError) && (
-        <div className={styles.error} role="alert">
-          <AlertTriangle size={14} /> {error ?? externalError}
-        </div>
-      )}
-      <footer className={styles.footer}>
-        <button type="button" onClick={onCancel}>
-          Cancel
-        </button>
-        <div>
-          <button
-            type="button"
-            disabled={step <= 1}
-            onClick={() => setStep((value) => Math.max(1, value - 1))}
+        {showOps && (
+          <ChatCard
+            title="Coordinate operation"
+            onRevert={() =>
+              clearFrom(
+                mode === 'combined'
+                  ? 'combined_setup'
+                  : mode === 'separate'
+                    ? doHorizontal === 'yes'
+                      ? 'horizontal_setup'
+                      : 'mode'
+                    : 'mode',
+              )
+            }
+            revertDisabled={locked}
           >
-            Back
-          </button>
-          <button
-            type="button"
-            className={step === 5 ? styles.primary : undefined}
-            disabled={nextDisabled}
-            onClick={() => void next()}
-          >
-            {localBusy
-              ? 'Working…'
-              : step === 5
-                ? busy
-                  ? 'Importing…'
-                  : `Import ${preview?.validPointCount ?? 0} GCPs`
-                : 'Next'}
-          </button>
-        </div>
-      </footer>
-    </section>
+            {siteCalBlocked ? (
+              <div className={chat.errorInline}>
+                <AlertTriangle size={14} /> Site-cal file selected but parser is missing.
+              </div>
+            ) : localBusy && !discovery ? (
+              <>
+                <strong style={{ fontSize: 11 }}>Validating with PROJ…</strong>
+                <ProgressBar value={0} indeterminate indeterminateLabel="Validating…" />
+              </>
+            ) : discovery ? (
+              <>
+                <p style={{ margin: '0 0 8px', color: 'var(--hc-fg-muted)', fontSize: 11 }}>
+                  Choose one operation. Notes appear only after you select.
+                </p>
+                <div className={chat.operationList}>
+                  {discovery.candidates.map((candidate) => (
+                    <button
+                      key={candidate.operationId}
+                      type="button"
+                      className={`${chat.operation} ${
+                        candidate.operationId === selectedOperationId ? chat.operationActive : ''
+                      }`}
+                      disabled={busy}
+                      onClick={() => setSelectedOperationId(candidate.operationId)}
+                    >
+                      <MapPinned size={14} />
+                      <span>
+                        <strong>{candidate.name}</strong>
+                        <small>
+                          {candidate.requiredGrids.length > 0
+                            ? `Grids: ${candidate.requiredGrids.map((g) => g.officialFilename).join(', ')}`
+                            : 'No local grid required'}
+                          {' · '}
+                          {candidate.expectedAccuracyMm == null
+                            ? 'Accuracy not specified'
+                            : `${candidate.expectedAccuracyMm.toFixed(1)} mm`}
+                        </small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                {selectedOperation &&
+                  warningsForOperation(discovery.warnings, selectedOperation.name).map((warning) => (
+                    <div key={warning} className={chat.warnInline}>
+                      <AlertTriangle size={14} />
+                      <span>{warning}</span>
+                    </div>
+                  ))}
+                {phase === 'operations' && selectedOperationId && (
+                  <div className={chat.toolbar}>
+                    <button
+                      type="button"
+                      className={`${chat.choice} ${chat.choicePrimary}`}
+                      disabled={busy || localBusy || !selectedOperation || selectedOperation.ballpark}
+                      onClick={() => setPhase('review')}
+                    >
+                      Continue with this operation
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : error ? (
+              <div className={chat.errorInline}>
+                <AlertTriangle size={14} /> {error}
+              </div>
+            ) : (
+              <small style={{ color: 'var(--hc-fg-muted)' }}>Waiting…</small>
+            )}
+          </ChatCard>
+        )}
+
+        {showReview && (
+          <ChatCard title="Summary" onRevert={() => clearFrom('preview')} revertDisabled={locked}>
+            <div className={chat.reviewGrid}>
+              <Metric label="Points" value={String(preview?.validPointCount ?? 0)} />
+              <Metric
+                label="Coordinates"
+                value={transformCoordinates ? `${sourceCrs} → ${targetCrs}` : `As ${targetCrs}`}
+              />
+              <Metric label="Mode" value={mode ? MODE_LABEL[mode] : '—'} />
+              <Metric
+                label="Decimals"
+                value={decimalSeparator === 'comma' ? 'Comma' : 'Point'}
+              />
+            </div>
+            {busy && (
+              <div className={chat.successInline} style={{ color: 'var(--hc-fg-muted)' }}>
+                <LoaderCircle className={chat.spinner} size={14} /> Importing…
+              </div>
+            )}
+          </ChatCard>
+        )}
+      </ImportChatStream>
+    </ImportChatRoot>
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }): JSX.Element {
-  return (
-    <label className={styles.field}>
-      <span>{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function NumberField({
-  label,
-  value,
-  min = 0,
-  max,
-  step = 0.001,
-  onChange,
+function CrsSearchPair({
+  sourceLabel,
+  targetLabel,
+  sourceValue,
+  targetValue,
+  presets,
+  popular,
+  recentKey,
+  disabled,
+  onSourceChange,
+  onTargetChange,
 }: {
-  label: string;
-  value: number;
-  min?: number;
-  max?: number;
-  step?: number;
-  onChange: (value: number) => void;
+  sourceLabel: string;
+  targetLabel: string;
+  sourceValue: number;
+  targetValue: number;
+  presets: readonly CrsPreset[];
+  popular: readonly number[];
+  recentKey: string;
+  disabled?: boolean | undefined;
+  onSourceChange: (code: number) => void;
+  onTargetChange: (code: number) => void;
 }): JSX.Element {
   return (
-    <Field label={label}>
-      <input
-        type="number"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(event) => onChange(Number(event.currentTarget.value))}
+    <div className={chat.crsPair}>
+      <CrsSearchColumn
+        label={sourceLabel}
+        value={sourceValue}
+        presets={presets}
+        popular={popular}
+        recentKey={recentKey}
+        disabled={disabled === true}
+        onChange={onSourceChange}
       />
-    </Field>
-  );
-}
-
-function Toggle({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (value: boolean) => void;
-}): JSX.Element {
-  return (
-    <label className={styles.toggle}>
-      <Checkbox
-        checked={checked}
-        onChange={(event) => onChange(event.currentTarget.checked)}
+      <CrsSearchColumn
+        label={targetLabel}
+        value={targetValue}
+        presets={presets}
+        popular={popular}
+        recentKey={recentKey}
+        disabled={disabled === true}
+        onChange={onTargetChange}
       />
-      <span aria-hidden="true" />
-      {label}
-    </label>
-  );
-}
-
-function Metric({
-  label,
-  value,
-  warning = false,
-}: {
-  label: string;
-  value: number;
-  warning?: boolean;
-}): JSX.Element {
-  return (
-    <div className={warning ? styles.metricWarning : styles.metric}>
-      <span>{label}</span>
-      <strong>{value.toLocaleString('en-US')}</strong>
     </div>
   );
+}
+
+function CrsSearchColumn({
+  label,
+  value,
+  presets,
+  popular,
+  recentKey,
+  disabled = false,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  presets: readonly CrsPreset[];
+  popular: readonly number[];
+  recentKey: string;
+  disabled?: boolean | undefined;
+  onChange: (code: number) => void;
+}): JSX.Element {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const [dropdownRect, setDropdownRect] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
+  const root = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLDivElement | null>(null);
+
+  const openSuggest = () => {
+    const el = searchRef.current;
+    if (!el) {
+      setOpen(true);
+      return;
+    }
+    const rect = el.getBoundingClientRect();
+    setDropdownRect({
+      top: rect.bottom + 2,
+      left: rect.left,
+      width: rect.width,
+    });
+    setOpen(true);
+  };
+  const selected = presets.find((p) => p.code === value);
+  const recent = loadRecent(recentKey);
+  const focusCodes = (recent.length > 0 ? recent : [...popular]).slice(0, 5);
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) {
+      return focusCodes.map(
+        (code) =>
+          presets.find((p) => p.code === code) ?? {
+            code,
+            name: `EPSG:${code}`,
+            region: 'Custom',
+            hint: 'Recent or popular',
+          },
+      );
+    }
+    const tokens = q.split(/\s+/).filter(Boolean);
+    const fromPresets = presets.filter((p) =>
+      tokens.every((t) =>
+        `${p.code} ${p.name} ${p.region} ${p.hint}`.toLowerCase().includes(t),
+      ),
+    );
+    const custom = /^(?:epsg:\s*)?(\d{3,7})$/i.exec(query.trim());
+    const customCode = custom ? Number(custom[1]) : null;
+    const list = [...fromPresets];
+    if (
+      customCode != null &&
+      !list.some((p) => p.code === customCode) &&
+      Number.isFinite(customCode)
+    ) {
+      list.unshift({
+        code: customCode,
+        name: `Custom EPSG:${customCode}`,
+        region: 'Custom',
+        hint: 'Resolved by PROJ',
+      });
+    }
+    return list.slice(0, 12);
+  }, [focusCodes, presets, query]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (event: MouseEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  return (
+    <div className={chat.crsColumn} ref={root}>
+      <div className={chat.crsColumnLabel}>{label}</div>
+      <div className={chat.crsSelected}>
+        <strong>{selected?.name ?? `EPSG:${value}`}</strong>
+        <small>
+          EPSG:{value}
+          {selected ? ` · ${selected.hint}` : ''}
+        </small>
+      </div>
+      <div className={chat.crsSearch} ref={searchRef}>
+        <Search size={13} />
+        <input
+          type="search"
+          value={query}
+          disabled={disabled}
+          placeholder="Search name or EPSG…"
+          onFocus={openSuggest}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            openSuggest();
+          }}
+        />
+      </div>
+      {open && !disabled && dropdownRect && (
+        <div
+          className={chat.crsSuggest}
+          role="listbox"
+          style={{
+            position: 'fixed',
+            top: dropdownRect.top,
+            left: dropdownRect.left,
+            width: dropdownRect.width,
+            right: 'auto',
+          }}
+        >
+          <div className={chat.crsSuggestMeta}>
+            {query.trim() ? 'Search results' : recent.length > 0 ? 'Recent' : 'Popular'}
+          </div>
+          {matches.map((preset) => (
+            <button
+              type="button"
+              key={preset.code}
+              className={preset.code === value ? chat.crsSuggestActive : ''}
+              onClick={() => {
+                onChange(preset.code);
+                rememberCrs(recentKey, preset.code);
+                setQuery('');
+                setOpen(false);
+              }}
+            >
+              <strong>{preset.name}</strong>
+              <small>
+                EPSG:{preset.code} · {preset.region}
+              </small>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function loadRecent(key: string): number[] {
+  try {
+    const raw = localStorage.getItem(RECENT_PREFIX + key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((n): n is number => typeof n === 'number').slice(0, 5);
+  } catch {
+    return [];
+  }
+}
+
+function rememberCrs(key: string, code: number): void {
+  try {
+    const next = [code, ...loadRecent(key).filter((c) => c !== code)].slice(0, 5);
+    localStorage.setItem(RECENT_PREFIX + key, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+}
+
+function phaseOrder(phase: Phase): number {
+  const order: Phase[] = [
+    'pick',
+    'preview',
+    'mode',
+    'vertical_ask',
+    'vertical_setup',
+    'horizontal_ask',
+    'horizontal_setup',
+    'horizontal_grid',
+    'combined_setup',
+    'combined_grid',
+    'operations',
+    'review',
+  ];
+  return order.indexOf(phase);
+}
+
+const GRID_MEMORY_PREFIX = 'himmelcad.photolab.lastGrid.';
+
+function loadRememberedGrid(kind: 'horizontal' | 'vertical'): LocalGridSelection | null {
+  try {
+    const raw = localStorage.getItem(GRID_MEMORY_PREFIX + kind);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as LocalGridSelection;
+    if (!parsed?.localPath || !parsed?.filename) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function rememberGrid(kind: 'horizontal' | 'vertical', selection: LocalGridSelection): void {
+  try {
+    localStorage.setItem(GRID_MEMORY_PREFIX + kind, JSON.stringify(selection));
+  } catch {
+    /* ignore */
+  }
+}
+
+function ensureOption(
+  options: { id: string; label: string }[],
+  value: number,
+): { id: string; label: string }[] {
+  const id = String(value);
+  if (options.some((option) => option.id === id)) return options;
+  return [...options, { id, label: `${value} m` }];
 }
 
 function selector(value: string, hasHeader: boolean, headers: readonly string[] | undefined) {
@@ -690,7 +1642,7 @@ function buildQuery(
     source: { crs: parseCrs(source) },
     target: { crs: parseCrs(target) },
     areaOfInterest,
-    selectionPolicy: { allowBallpark: false, onlyBest: true },
+    selectionPolicy: { allowBallpark: false, onlyBest: false },
     gridCatalog: localGrid
       ? [
           {
@@ -722,35 +1674,8 @@ function buildQuery(
               northLatitude: 55.35,
             },
           },
-          {
-            kind: 'ntv2',
-            officialFilename: 'de_lgvl_saarland_SeTa2016.tif',
-            officialSha256: '529acdef6f5634669087de3dfc7923ab0100a9a7d94fa5e5b4aadb7ec4226c6c',
-            license: {
-              licenseName: 'Creative Commons Attribution 4.0',
-              spdxExpression: 'CC-BY-4.0',
-              source: 'https://cdn.proj.org/de_lgvl_saarland_README.txt',
-              redistributionAllowed: true,
-            },
-            coverage: {
-              westLongitude: 6.345,
-              southLatitude: 49.1,
-              eastLongitude: 7.455,
-              northLatitude: 49.6466667,
-            },
-          },
         ],
   };
-}
-
-function ProgressBar({ value }: { value: number }): JSX.Element {
-  const percent = Math.round(Math.max(0, Math.min(1, value)) * 100);
-  return (
-    <div className={styles.progress}>
-      <span style={{ width: `${percent}%` }} />
-      <code>{percent}%</code>
-    </div>
-  );
 }
 
 function containsArea(
@@ -813,8 +1738,8 @@ function buildDecision(
     horizontal: { source: query.source, target: query.target },
     vertical: { source: { kind: 'unknown' }, target: { kind: 'unknown' }, mode: 'preserveValues' },
     areaOfInterest: query.areaOfInterest,
-    operation,
-    selectionPolicy: query.selectionPolicy,
+    operation: { ...operation, bestAvailable: true },
+    selectionPolicy: { allowBallpark: false, onlyBest: false },
     databaseVersions: discovery.audit.versions,
   };
 }
@@ -832,4 +1757,8 @@ function roleLabel(role: GcpRole): string {
 
 function message(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
+}
+
+function fileName(path: string): string {
+  return path.split(/[\\/]/).at(-1) ?? path;
 }

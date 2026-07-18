@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HimmelCAD — Specs &amp; Plan Tool · Implementation Plan</title>
+<style>
+  :root {
+    --bg: #0c0e12;
+    --bg2: #141820;
+    --bg3: #1a2030;
+    --fg: #e8eaef;
+    --muted: #9aa3b2;
+    --border: #2a3344;
+    --accent: #1597f2;
+    --ok: #3dba7a;
+    --warn: #d4a017;
+    --code-bg: #0a0c10;
+    --radius: 10px;
+    --font: "Inter", system-ui, -apple-system, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font: 15px/1.55 var(--font);
+    color: var(--fg);
+    background: var(--bg);
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 20px 80px; }
+  header.hero {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: linear-gradient(160deg, var(--bg3), var(--bg2));
+    padding: 28px 28px 22px;
+    margin-bottom: 28px;
+  }
+  header.hero h1 {
+    margin: 0 0 8px;
+    font-size: 1.75rem;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+  }
+  header.hero .meta {
+    color: var(--muted);
+    font-size: 0.92rem;
+  }
+  header.hero .meta code {
+    font-family: var(--mono);
+    font-size: 0.85em;
+    color: var(--fg);
+  }
+  .badge-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .badge {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--muted);
+  }
+  .badge.accent { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); color: var(--accent); }
+  .badge.ok { border-color: color-mix(in srgb, var(--ok) 50%, var(--border)); color: var(--ok); }
+  nav.toc {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg2);
+    padding: 16px 20px;
+    margin-bottom: 32px;
+  }
+  nav.toc h2 { margin: 0 0 10px; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  nav.toc ol { margin: 0; padding-left: 1.25rem; columns: 2; column-gap: 28px; }
+  nav.toc li { margin: 0.2rem 0; break-inside: avoid; }
+  nav.toc a { color: var(--fg); text-decoration: none; font-size: 0.92rem; }
+  nav.toc a:hover { color: var(--accent); }
+  @media (max-width: 720px) { nav.toc ol { columns: 1; } }
+  h2 {
+    margin: 2.2rem 0 0.75rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border);
+    font-size: 1.35rem;
+  }
+  h2:first-of-type { border-top: 0; }
+  h3 { margin: 1.4rem 0 0.5rem; font-size: 1.08rem; }
+  h4 { margin: 1rem 0 0.4rem; font-size: 0.98rem; color: var(--muted); }
+  p, li { color: color-mix(in srgb, var(--fg) 92%, var(--muted)); }
+  a { color: var(--accent); }
+  strong { color: var(--fg); font-weight: 600; }
+  code, .mono {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.05em 0.35em;
+  }
+  pre {
+    overflow: auto;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    font: 12.5px/1.45 var(--mono);
+    color: var(--fg);
+  }
+  pre code { border: 0; background: none; padding: 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+    margin: 0.8rem 0 1.2rem;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: var(--bg3); color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  tr:nth-child(even) td { background: color-mix(in srgb, var(--bg2) 70%, transparent); }
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--bg2);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    padding: 12px 16px;
+    margin: 1rem 0;
+  }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout.ok { border-left-color: var(--ok); }
+  .callout p:first-child { margin-top: 0; }
+  .callout p:last-child { margin-bottom: 0; }
+  .grid2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+  .card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg2);
+    padding: 14px 16px;
+  }
+  .card h4 { margin-top: 0; color: var(--fg); }
+  .flow {
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+  }
+  ul.dense li { margin: 0.25rem 0; }
+  footer {
+    margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>Specs &amp; Plan Tool — Implementation Plan</h1>
+  <p class="meta">
+    HimmelCAD Builder · Produkt-Design + technische Umsetzung<br />
+    Status: <strong>Review draft</strong> · 2026-07-18 · vor Implementierung freigeben<br />
+    Scope: <code>(1) Spezifikationsverwaltung</code> · <code>(2) Plan-Popup / Sheet Composer</code><br />
+    Quellen: ADR 0016, DATA-MODEL, PROJECT-FORMAT, DESIGN-SYSTEM, Fernwork (<code>17_fernwork</code>), CAD-Industry-Patterns
+  </p>
+  <div class="badge-row">
+    <span class="badge accent">Builder-first</span>
+    <span class="badge">kein Render/Codex-View</span>
+    <span class="badge ok">baut auf LineType/Hatch/Layer auf</span>
+    <span class="badge">Fernwork-inspiriert</span>
+    <span class="badge">Review vor Code</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <h2>Inhalt</h2>
+  <ol>
+    <li><a href="#s1">Zusammenfassung &amp; Ziele</a></li>
+    <li><a href="#s2">Recherche-Ergebnisse</a></li>
+    <li><a href="#s3">Begriffe &amp; Produktmodell</a></li>
+    <li><a href="#s4">Teil 1 — Spezifikationsverwaltung</a></li>
+    <li><a href="#s5">Teil 2 — Plan Tool</a></li>
+    <li><a href="#s6">Zusammenspiel Specs ↔ Plan ↔ Viewport</a></li>
+    <li><a href="#s7">User Journeys (ausführlich)</a></li>
+    <li><a href="#s8">Datenmodell &amp; Dateiformate</a></li>
+    <li><a href="#s9">Architektur &amp; Module</a></li>
+    <li><a href="#s10">UI-Vertrag (DESIGN-SYSTEM)</a></li>
+    <li><a href="#s11">Implementierungsphasen (PR-Plan)</a></li>
+    <li><a href="#s12">Tests &amp; Akzeptanz</a></li>
+    <li><a href="#s13">Offene Review-Entscheidungen</a></li>
+    <li><a href="#s14">Risiken &amp; Nicht-Ziele</a></li>
+  </ol>
+</nav>
+
+<!-- ============================================================ -->
+<h2 id="s1">1. Zusammenfassung &amp; Ziele</h2>
+
+<p>
+Dieses Dokument spezifiziert zwei zusammenhängende Builder-Capabilities, die heute
+<strong>nicht</strong> existieren: ein <strong>Spezifikationssystem</strong> (wie etwas
+gezeichnet/dargestellt/plotiert wird) und ein <strong>Plan-Tool</strong> (wie aus dem 3D/2.5D-Modell
+druckbare Planblätter entstehen). Beide sollen sich anfühlen wie
+<strong>CAD + PowerPoint</strong>: präzise, snappend, vorlagenbasiert — nicht wie ein reines Whiteboard.
+</p>
+
+<div class="grid2">
+  <div class="card">
+    <h4>Ziel 1 — Specs</h4>
+    <p>Benannte, wiederverwendbare Darstellungs- und Plot-Regeln (Farbe, Strich, Stärke, Schraffur, Text, Dimension, Layer-Defaults). Bibliothek pro Projekt + User-Library. Popup-Verwaltung. Zuweisung an Entities/Layer. Dateiformat <code>.hcspec</code> / Library-Export.</p>
+  </div>
+  <div class="card">
+    <h4>Ziel 2 — Plan</h4>
+    <p>Großes Task-Island: Blatt (Papier), CAD-Ausschnitt (Vektor + Raster), Rahmen, Stempel, Bemaßung, PDF-Export. Interaktion: Rahmen über Viewport ziehen, Snap an Blattkante; Stempel snappt an Rahmen. Inspiriert von Fernwork Canvas (Excalidraw-Shell) + PDF-Workbench.</p>
+  </div>
+</div>
+
+<div class="callout">
+  <p><strong>Leitprinzip:</strong> Specs sind die gemeinsame Sprache. Pläne <em>konsumieren</em> Specs
+  (Rahmenlinien, Stempel-Textstile, Plot-Strichstärken). Ohne Specs wird Plan-Tool zum One-off-Hack.</p>
+</div>
+
+<p><strong>Non-Goals v1:</strong> Assembler-Mechanik, voller Civil-Alignment-Editor, Cloud-Library-Marketplace,
+echter 3D-to-2D-Section-Cutter (kann v2), Codex-Viewer-Fork (Plan nutzt Snapshots/API, ändert Render-Core nicht).</p>
+
+<!-- ============================================================ -->
+<h2 id="s2">2. Recherche-Ergebnisse</h2>
+
+<h3>2.1 Was HimmelCAD bereits hat (Kernel)</h3>
+<table>
+  <tr><th>Baustein</th><th>Status</th><th>Relevanz</th></tr>
+  <tr><td><code>hcad.layer@1</code> + <code>layer_ids[]</code></td><td>Modell + Commands</td><td>Org + Präsentation; Spec-Zuweisung hier andocken</td></tr>
+  <tr><td><code>style_ref: ObjectHash?</code></td><td>Opaker Hash</td><td>Zu generischem Style-Blob; braucht Schema</td></tr>
+  <tr><td><code>LineTypeResource</code></td><td>Implementiert</td><td>Muster für Strichelung (Dash/Gap)</td></tr>
+  <tr><td><code>HatchPatternResource</code></td><td>Implementiert</td><td>Flächenfüllung</td></tr>
+  <tr><td><code>AnnotationStyleResource</code></td><td>Implementiert</td><td>Text/Dimension-Defaults</td></tr>
+  <tr><td>RenderStyle (Stroke/Fill/ColorMode)</td><td>Render-Core</td><td>Laufzeit-Darstellung — nicht Plot-Library</td></tr>
+  <tr><td>DXF Layer/Entity Style Import</td><td>IO intermediate</td><td>Import-Provenance, ByLayer-Namen</td></tr>
+  <tr><td>Built-in Entities (curve, area, point-cloud, splat, text, dimension, block…)</td><td>ADR 0016</td><td>Was Specs adressieren müssen</td></tr>
+  <tr><td>Plan/Layout/Paper-Space</td><td><strong>fehlt</strong></td><td>Plan-Tool muss neu</td></tr>
+  <tr><td>PDF Plansheets</td><td>nur PhotoLab Report <code>printToPDF</code></td><td>Technik-Pfad, kein CAD-Plan</td></tr>
+  <tr><td>Specification als Produkttyp</td><td>nur Prose (DATA-MODEL, OPEN-Q6)</td><td>Dieses Dokument finalisiert</td></tr>
+</table>
+
+<p>Canonical entity envelope (relevant fields):</p>
+<pre><code>CanonicalEntity {
+  id, revision, type_id, name,
+  layer_ids[], placement?,
+  components_ref, attributes_ref, relations_ref,
+  style_ref?,   // ← heute opaker Content-Hash
+  schema_version, version_hash
+}</code></pre>
+
+<h3>2.2 Industry patterns (AutoCAD / Civil / MicroStation)</h3>
+<table>
+  <tr><th>Konzept</th><th>Bedeutung</th><th>HimmelCAD-Mapping</th></tr>
+  <tr><td>Layer</td><td>Organisation + Default-Farbe/Linetype/Plot</td><td><code>hcad.layer@1</code> + LayerStyle in Spec-Library</td></tr>
+  <tr><td>Color (ACI / TrueColor / ByLayer / ByBlock)</td><td>Auflösungskette</td><td>StyleResolve: Entity → Block → Layer → ProjectDefault</td></tr>
+  <tr><td>Linetype</td><td>Dash-Muster in Drawing Units</td><td><code>LineTypeResource</code></td></tr>
+  <tr><td>Lineweight</td><td>Plot-mm, oft skaliert</td><td><strong>neu</strong> LineWeight enum / mm table</td></tr>
+  <tr><td>Plot style (CTB/STB)</td><td>Farbe→Stift beim Plot</td><td>Plan v1: einfaches PlotProfile; v2 CTB-ähnlich</td></tr>
+  <tr><td>Text / Dim / MLeader style</td><td>Annotation-Standards</td><td>erweitern <code>AnnotationStyleResource</code></td></tr>
+  <tr><td>Paper space / Layout</td><td>Blätter mit Viewports</td><td>Plan Document Model (neu)</td></tr>
+  <tr><td>Title block / Xref</td><td>Rahmen + Attribute</td><td>Frame Template + Stamp (Blöcke)</td></tr>
+  <tr><td>Viewport scale</td><td>1:500 etc.</td><td>PlanViewport.scale</td></tr>
+</table>
+
+<div class="callout warn">
+  <p><strong>OPEN-QUESTIONS Q6:</strong> Specs nur Darstellung vs. geometry-driving (Wand aus Linie)?
+  <strong>Entscheidung v1:</strong> Specs sind <em>presentation + plot + annotation defaults</em>,
+  <strong>nicht</strong> Civil-Generatoren. Geometry-driving bleibt Phase später / Assembler-nah.</p>
+</div>
+
+<h3>2.3 Fernwork — was wir stehlen</h3>
+<p>Pfad: <code>/home/oem/Dokumente/003_Projekte/17_fernwork</code> (Live: fernwork.net)</p>
+
+<table>
+  <tr><th>Baustein</th><th>Pfad / Pattern</th><th>Plan-Nutzung</th></tr>
+  <tr><td>Excalidraw-Shell</td><td><code>vendor/build/src/excalidraw-shell.jsx</code> — <strong>kein Git-Fork</strong>, npm 0.18 + esbuild-Bundle, UIOptions aus, eigene Toolbar</td><td>Annotations-Layer / freies Zeichnen auf dem Blatt; <em>nicht</em> Geometrie-Autorität</td></tr>
+  <tr><td>Vendor-Shell Pattern</td><td>Thin React shell → committed <code>oo-*.js</code></td><td>Plan-Canvas als gebündelte Island-App im Electron-Renderer</td></tr>
+  <tr><td>PDF Workbench</td><td><code>pdf-tools-shell.jsx</code> (~12k LOC): Tools, Drawer, Undo, Continuous Viewport, Overlays</td><td>Tool-Modi, Side-Drawer (Seiten, Stempel-Bibliothek), Undo</td></tr>
+  <tr><td>Hybrid Project <code>.fwdoc</code></td><td>Original-Bytes + Edit-Scene</td><td><code>.hcplan</code> = Sheet + Viewport-Snapshots + Annotation Scene</td></tr>
+  <tr><td>Stamps / Sign / Watermark</td><td>PDF-Overlays flatten on export</td><td>Planstempel, Nordpfeil, Maßstab, Plankopf-Felder</td></tr>
+  <tr><td>Vector viewer + Calibration</td><td>DXF view, measure, set scale</td><td>Viewport-Maßstab / Kalibrierung wenn Raster ohne CRS</td></tr>
+  <tr><td>Export-Ehrlichkeit</td><td>Fidelity labels (true-edit vs fallback)</td><td>PDF: „Vektor-CAD“ vs „Raster-Unterlage“ transparent melden</td></tr>
+</table>
+
+<div class="callout ok">
+  <p><strong>Wichtig:</strong> Excalidraw ist Whiteboard (keine echten Units/Georef). CAD-Autorität bleibt
+  <code>himmelcad-core</code>. Excalidraw (oder schlankerer Canvas) nur für <em>Blatt-Annotationen und Rahmen-Editor</em>.</p>
+</div>
+
+<h3>2.4 Entity-Typen, die Specs/Plan betreffen</h3>
+<table>
+  <tr><th>type_id</th><th>Spec-Aspekte</th><th>Plan-Darstellung</th></tr>
+  <tr><td><code>hcad.curve@1</code></td><td>Stroke color, linetype, lineweight</td><td>Vektor-Pfad</td></tr>
+  <tr><td><code>hcad.area@1</code></td><td>Fill hatch/color + boundary stroke</td><td>Vektor-Polygon + Hatch</td></tr>
+  <tr><td><code>hcad.point@1</code></td><td>Symbol, size, color</td><td>Vektor-Symbol / Kreuz</td></tr>
+  <tr><td><code>hcad.point-cloud@1</code></td><td>Point size, color mode</td><td><strong>Raster</strong>-Snapshot (LOD)</td></tr>
+  <tr><td><code>hcad.gaussian-splat-cloud@1</code></td><td>Display mode</td><td><strong>Raster</strong>-Snapshot</td></tr>
+  <tr><td><code>hcad.raster-image@1</code> / Ortho</td><td>Opacity, clip</td><td>Raster (ggf. georef)</td></tr>
+  <tr><td><code>hcad.elevation-surface@1</code></td><td>Contour style / hillshade</td><td>Raster oder Vektor-Konturen (v2)</td></tr>
+  <tr><td><code>hcad.text@1</code> / <code>label@1</code> / <code>dimension@1</code></td><td>Annotation style</td><td>Vektor-Text / Maßkette</td></tr>
+  <tr><td><code>hcad.block@2</code></td><td>Block member style inherit</td><td>Explodiert/instanziert als Vektor</td></tr>
+  <tr><td><code>hcad.layer@1</code></td><td>Layer defaults (ByLayer chain)</td><td>Layer-Sichtbarkeit im Viewport</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="s3">3. Begriffe &amp; Produktmodell</h2>
+
+<table>
+  <tr><th>Begriff</th><th>Definition</th></tr>
+  <tr><td><strong>Resource</strong></td><td>Content-adressiertes Immutable (LineType, Hatch, Font-Metrik) — bereits im Kernel</td></tr>
+  <tr><td><strong>Style</strong></td><td>Aufgelöste Darstellungseigenschaften eines Entities (Farbe, Strich, …) nach Resolve-Kette</td></tr>
+  <tr><td><strong>Specification (Spec)</strong></td><td>Benanntes, versioniertes <em>Bündel</em> aus Defaults + optionalen Resource-Refs + Codes (für Normen/Projekte). „Straßenrand — Bestand“ → Layer-Vorschlag, Farbe, Linetype, Lineweight, Plot</td></tr>
+  <tr><td><strong>Spec Library</strong></td><td>Katalog von Specs (Projekt-lokal + User-global). Export <code>.hcspecpack</code></td></tr>
+  <tr><td><strong>Layer Style</strong></td><td>Defaults auf <code>hcad.layer</code> (ByLayer-Quelle)</td></tr>
+  <tr><td><strong>Plan Document</strong></td><td>Ein oder mehrere Sheets + Viewports + Annotation-Scene + Metadaten</td></tr>
+  <tr><td><strong>Sheet</strong></td><td>Papierblatt (A4/A3/…, Orientierung, Ränder)</td></tr>
+  <tr><td><strong>Viewport</strong></td><td>Fenster aufs Modell (Camera/Clip/Scale/Layer-Filter) + gebundene Snapshots</td></tr>
+  <tr><td><strong>Frame Template</strong></td><td>Plankopf/Rahmen aus Vektorlinien + Textfeldern (kein Whiteboard-Frame)</td></tr>
+  <tr><td><strong>Stamp</strong></td><td>Wiederverwendbares Overlay (Nordpfeil, Maßstab, Stempel „Entwurf“, Firmensignet)</td></tr>
+  <tr><td><strong>Plot Profile</strong></td><td>Wie Farben/Stärken auf Papier gemappt werden (Mono, Farbe, Stifttabelle)</td></tr>
+</table>
+
+<pre class="flow">Resolve (Anzeige / Plot):
+
+  Entity.override
+       ↓ (fehlt)
+  Entity.style_ref / Spec assignment
+       ↓ (ByLayer)
+  Layer.style / Layer.defaultSpec
+       ↓ (fehlt)
+  ProjectDefaults
+       ↓
+  Built-in fallback (neutral grey, continuous, 0.25 mm)
+
+Plot Profile applied last (optional remap color → pen weight).</pre>
+
+<!-- ============================================================ -->
+<h2 id="s4">4. Teil 1 — Spezifikationsverwaltung</h2>
+
+<h3>4.1 User-facing Capability</h3>
+<p>
+Ribbon Builder: <strong>Manage → Specifications</strong> (oder <strong>Format → Specs</strong>).
+Öffnet <strong>nicht-modales Task-Island</strong> (wie PhotoLab Import / Define Alignment — DESIGN-SYSTEM:
+Viewport bleibt bedienbar).
+</p>
+
+<h3>4.2 Popup-Layout (Wireframe)</h3>
+<pre class="flow">┌──────────────────────────────── Spezifikationen ─[×]─┐
+│ [Projekt] [Benutzer]     🔍 Suche      [Import][Export]│
+├──────────────┬───────────────────────────────────────┤
+│ Categories   │  Detail: „RK Bestand“                 │
+│ ▸ Linien     │  Code:     RK-BEST                     │
+│   · RK Best. │  Name:     Straßenrand Bestand         │
+│   · RK Neu   │  Farbe:    [■] #C0C0C0   ByLayer □    │
+│ ▸ Flächen    │  Linetype: [Dashed ── ──]  Preview     │
+│ ▸ Punkte     │  Lineweight: 0.35 mm                   │
+│ ▸ Annotation │  Layer default: 0_BESTAND_RK           │
+│ ▸ Layer-Defs │  Plot:     Farbe | Stift 3             │
+│ ▸ Plot       │  Notes:    …                           │
+│              │  [Duplizieren] [Löschen] [Als Standard]│
+├──────────────┴───────────────────────────────────────┤
+│ Assigned usage: 128 entities · 3 layers               │
+│ [Auf Auswahl anwenden]              [Schließen]       │
+└──────────────────────────────────────────────────────┘</pre>
+
+<h3>4.3 Spec-Kategorien (v1)</h3>
+<table>
+  <tr><th>Kategorie</th><th>Felder</th></tr>
+  <tr><td><strong>CurveSpec</strong></td><td>color, colorSource (override|byLayer|byBlock), lineTypeRef?, lineTypeScale, lineWeightMm, plotVisible</td></tr>
+  <tr><td><strong>AreaSpec</strong></td><td>boundary CurveSpec-ref oder inline; fill: none|solid|hatchRef; hatchScale/angle; opacity</td></tr>
+  <tr><td><strong>PointSpec</strong></td><td>symbol (cross|dot|triangle|custom block), size (world|screen), color</td></tr>
+  <tr><td><strong>AnnotationSpec</strong></td><td>wrap/extend AnnotationStyleResource: font, height, color, precision, terminator</td></tr>
+  <tr><td><strong>DimensionSpec</strong></td><td>extends Annotation; arrow style, extension line offsets, unit suffix</td></tr>
+  <tr><td><strong>LayerSpec</strong></td><td>default Curve/Area/Point specs; isPlottable; isFrozen; description; code</td></tr>
+  <tr><td><strong>PlotProfile</strong></td><td>mode color|grayscale|mono; optional pen table (color→weight)</td></tr>
+</table>
+
+<h3>4.4 Benennung, Codes, Versionierung</h3>
+<ul class="dense">
+  <li><strong>id:</strong> stabil UUID / <code>spec_…</code> im Projekt</li>
+  <li><strong>code:</strong> kurzer projektspezifischer Schlüssel (<code>RK-BEST</code>, max 32, unique in Library) — für Filter, Import-Mapping, Normen</li>
+  <li><strong>name:</strong> menschenlesbar, mehrsprachig optional später</li>
+  <li><strong>content_hash:</strong> bei jeder inhaltlichen Änderung neu (immutable object pattern)</li>
+  <li><strong>revision:</strong> monotone Versionsnummer in der Library für Diff/UI</li>
+  <li><strong>source:</strong> <code>project</code> | <code>userLibrary</code> | <code>importedPack</code> | <code>dxfImport</code></li>
+</ul>
+
+<div class="callout">
+  <p><strong>Dateiformate:</strong></p>
+  <ul class="dense">
+    <li><code>.hcspec</code> — einzelne Spec (JSON body, analog <code>.hcalign</code>)</li>
+    <li><code>.hcspecpack</code> — Library-Export (mehrere Specs + embedded LineType/Hatch resources)</li>
+    <li>Im <code>.hcad</code>/<code>.hcadx</code>: unter <code>objects/</code> content-addressed + Catalog-Index im Manifest-Abschnitt <code>specCatalogHash</code></li>
+  </ul>
+</div>
+
+<h3>4.5 Commands (Core)</h3>
+<pre><code>// Vorschlag Command-IDs
+specs.library.ensureDefault
+specs.upsert          { library: project|user, spec }
+specs.delete          { specId }
+specs.assignToEntities { entityIds[], specId }  // sets style_ref + optional attributes
+specs.assignToLayer    { layerId, layerSpecId }
+specs.resolvePreview   { entityId } → ResolvedStyle  // für UI-Vorschau
+specs.importPack / exportPack
+</code></pre>
+
+<p>Alle schreibenden Operationen nur über Command-Journal (AGENTS.md). Keine UI-Mutation am Store.</p>
+
+<h3>4.6 Defaults &amp; Bootstrap</h3>
+<p>Beim ersten Öffnen einer Spec-Library:</p>
+<ul class="dense">
+  <li>Built-in pack: Continuous, Dashed, Center, Hidden (klassische Linetypes)</li>
+  <li>Lineweights: 0.00 (default), 0.13, 0.18, 0.25, 0.35, 0.50, 0.70, 1.00 mm</li>
+  <li>Farbpalette: TrueColor + 8 neutrale CAD-Graus + Accent nur für Selection (nicht Spec-Default)</li>
+  <li>Optional: „Vermessung DE“ Starter-Pack (Bestand/Neu/Abbruch-Layer-Specs) — hinter Feature-Flag</li>
+</ul>
+
+<h3>4.7 Interaktion mit DXF-Import</h3>
+<ul class="dense">
+  <li>Import erzeugt <em>provisional</em> Specs aus DXF Layer/Linetype-Namen (source=<code>dxfImport</code>)</li>
+  <li>User kann im Spec-Popup „Map to project Spec“ machen (RK → RK-BEST)</li>
+  <li>Kein stilles Überschreiben projektinterner Specs</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="s5">5. Teil 2 — Plan Tool</h2>
+
+<h3>5.1 Produktgefühl (CAD × PowerPoint)</h3>
+<table>
+  <tr><th>CAD-Gefühl</th><th>PowerPoint-Gefühl</th></tr>
+  <tr><td>Maßstab, Units, Snap, Ortho, echte Geometrie</td><td>Folien = Sheets, Drag-Drop Stempel, Align-Guides</td></tr>
+  <tr><td>Layer-Sichtbarkeit im Viewport</td><td>Vorlagen (Rahmen/Stempel) aus Bibliothek ziehen</td></tr>
+  <tr><td>Plot-Strichstärken / Mono</td><td>Anfassen, verschieben, gruppieren, z-order</td></tr>
+  <tr><td>Viewport-Clip = Modellausschnitt</td><td>„Slide master“ = Frame Template</td></tr>
+</table>
+
+<h3>5.2 Einstieg User</h3>
+<ol>
+  <li>Im Viewport gewünschten Ausschnitt wählen (Selection / View framed / active clip).</li>
+  <li>Ribbon <strong>Output → Create Plan</strong> (oder Kontext „Create plan from view“).</li>
+  <li>Task-Island öffnet sich (groß, <em>nicht</em> modal dimmend — DESIGN-SYSTEM: View darf bleiben, aber Fokus auf Island).</li>
+  <li>Wizard-lite (eine Seite, keine Chat-Bubbles):
+    <ul>
+      <li>Papier: A4/A3/A1/A0, Hoch/Quer</li>
+      <li>Maßstab: 1:100 / 1:250 / 1:500 / custom</li>
+      <li>Plot profile: Farbe / Graustufen / Mono</li>
+      <li>Optional: Frame-Template vorwählen</li>
+    </ul>
+  </li>
+  <li>Sheet erscheint mit:
+    <ul>
+      <li>Papier-Rechteck</li>
+      <li>einem Model-Viewport (Inhalt aus Schritt 1)</li>
+      <li>leerem oder Template-Rahmen</li>
+    </ul>
+  </li>
+</ol>
+
+<h3>5.3 Plan-Island Layout</h3>
+<pre class="flow">┌─ Plan: „Lageplan Flurstück 12“ ──────────────────────[−][×]─┐
+│ Tools: Select│Pan│Viewport│Frame│Stamp│Text│Dim│Line│…       │
+├──────────┬────────────────────────────────────┬──────────────┤
+│ Library  │         Sheet canvas               │ Properties   │
+│ ▸ Frames │  ┌────────────────────────────┐    │ Viewport 1   │
+│  · A3-QH │  │ ╔══════════════════════╗   │    │ Scale 1:500  │
+│  · A1-L  │  │ ║   [Model Viewport]   ║   │    │ Layers…      │
+│ ▸ Stamps │  │ ║   points=raster      ║   │    │ CRS label    │
+│  · Nord  │  │ ║   curves=vector      ║   │    │              │
+│  · Maßst.│  │ ╚══════════════════════╝   │    │ Frame        │
+│  · Logo  │  │   Plankopf fields…         │    │ Snap: edge   │
+│ ▸ Specs  │  └────────────────────────────┘    │              │
+│ (preview)│  Sheets: [1] [+]                    │ Export PDF   │
+└──────────┴────────────────────────────────────┴──────────────┘</pre>
+
+<h3>5.4 Drei Inhalts-Schichten im Viewport</h3>
+<table>
+  <tr><th>Schicht</th><th>Inhalt</th><th>Erzeugung</th></tr>
+  <tr><td><strong>Vector model</strong></td><td>Curves, areas, points, text, dimensions, blocks</td><td>Tessellation/Export aus Core in Sheet-Koordinaten (mm)</td></tr>
+  <tr><td><strong>Raster underlay</strong></td><td>Point cloud, splats, heavy meshes, orthophoto</td><td>Offline-Render-Snapshot (GPU/CPU) bei fester View-Matrix + DPI; gecacht per content hash</td></tr>
+  <tr><td><strong>Annotation / chrome</strong></td><td>Rahmen, Stempel, freie Skizze, Notizen</td><td>Plan-Editor Scene (Excalidraw-ähnlich oder eigenes Element-Modell)</td></tr>
+</table>
+
+<div class="callout">
+  <p><strong>Viewport-Update:</strong> Wenn User den Viewport verschiebt/skaliert, invalidiert der Raster-Cache und wird asynchron neu gerendert (Progress in Status). Vektor-Layer live transformieren (billig).</p>
+</div>
+
+<h3>5.5 Rahmen (Frame Templates)</h3>
+<ul class="dense">
+  <li>Frame = Gruppe aus Linien/Polylines + optionalen Textfeldern (Attribute: Projektname, Datum, Maßstab, Bearbeiter, Blatt-Nr.)</li>
+  <li>Erstellung: im Plan-Editor „Create frame from selection“ oder dedizierter Frame-Editor (gleiche Island, Modus)</li>
+  <li>Gespeichert in User/Project Library als <code>FrameTemplate</code> (Vektor in Blatt-mm, Anchor-Punkte: corners, title-block region)</li>
+  <li><strong>Snap:</strong> beim Platzieren magnetisch an Sheet-Edges und Margins (PowerPoint-Align + CAD-Snap)</li>
+  <li>Felder binden an Plan-Metadaten und Spec-Codes (Maßstab-Feld folgt Viewport)</li>
+</ul>
+
+<h3>5.6 Stempel</h3>
+<ul class="dense">
+  <li>Typen: North arrow, Scale bar, Legend (auto from used Specs), Text stamp (ENTWURF), Company block, QR (optional later)</li>
+  <li>Snap an Frame-Anker („title-block-right“, „corner-bl“) und an andere Stempel</li>
+  <li>Fernwork-Pattern: Stamp library + place + flatten on PDF export</li>
+</ul>
+
+<h3>5.7 Interaktionsdetails (erwartet der User)</h3>
+<table>
+  <tr><th>Aktion</th><th>Verhalten</th></tr>
+  <tr><td>Viewport-Rechteck ziehen</td><td>Definiert Clip im Modell; hält Aspect optional; zeigt Live-Maßstab</td></tr>
+  <tr><td>Doppelklick Viewport</td><td>„Activate model space“ — pan/zoom im Modell, Rahmen dimmed (CAD paper/model toggle light)</td></tr>
+  <tr><td>Esc</td><td>zurück Sheet-Edit / Tool abbrechen</td></tr>
+  <tr><td>Align-Guides</td><td>beim Verschieben von Rahmen/Stempel: Mittel, Kanten, Abstände (PPT)</td></tr>
+  <tr><td>Ortho / Snap</td><td>Toggle in Statusleiste der Island</td></tr>
+  <tr><td>Layer-Filter Viewport</td><td>Checkbox-Liste; speichert pro Viewport</td></tr>
+  <tr><td>Export PDF</td><td>Multi-Sheet; Vektor wo möglich; Raster eingebettet; Metadaten Titel/Autor</td></tr>
+  <tr><td>Save Plan</td><td>im Projekt <code>plans/</code> oder <code>.hcplan</code> Side-car; Command journal</td></tr>
+</table>
+
+<h3>5.8 Excalidraw: Ja, aber begrenzt</h3>
+<table>
+  <tr><th>Nutzen Excalidraw-Shell</th><th>Nicht nutzen für</th></tr>
+  <tr><td>Schnelle Skizzen, Callouts, freie Annotation auf dem Blatt</td><td>Model-Geometry, Maßstäbe, DXF-Einheiten</td></tr>
+  <tr><td>Fernwork-Theme + disabled cloud library</td><td>Plankopf als „Frame Tool“ (eigene Frame-Templates!)</td></tr>
+  <tr><td>Export PNG/SVG von Annotation-Layer</td><td>Final PDF (pdf-lib/print pipeline)</td></tr>
+</table>
+<p>
+<strong>Empfehlung:</strong> Plan-Canvas = <em>eigenes</em> Sheet-Modell (Rects, Groups, Anchors, mm).
+Optional <strong>Annotation sub-layer</strong> via eingebetteter Excalidraw-Scene pro Sheet (Fernwork-Shell-Pattern), serialisiert im Plan-Dokument.
+Alternative v1: nur eigenes Element-Set (line, poly, text, image, stamp) ohne Excalidraw — weniger Abhängigkeit, mehr CAD-Kontrolle. Review-Entscheidung §13.
+</p>
+
+<h3>5.9 PDF-Pipeline</h3>
+<pre class="flow">PlanDocument
+  → for each Sheet:
+       1. Create PDF page (pdf-lib) paper size
+       2. Draw vector model layer (paths, text) in mm→pt
+       3. Embed raster underlays (JPEG/PNG) with clip
+       4. Draw frame + stamps (vector)
+       5. Draw annotation layer (vectorize or embed SVG)
+  → Write PDF bytes
+  → Optional Electron save dialog / project artifact
+
+Fidelity report:
+  - vectorEntityCount, rasterTileCount
+  - warnings: missing fonts, oversized raster, non-plot layers hidden
+</pre>
+
+<!-- ============================================================ -->
+<h2 id="s6">6. Zusammenspiel Specs ↔ Plan ↔ Viewport</h2>
+
+<pre class="flow">┌─────────────┐     assign      ┌──────────────┐
+│ Spec Library│───────────────►│ Entities     │
+│ (.hcspec*)  │                 │ + Layers     │
+└──────┬──────┘                 └──────┬───────┘
+       │ uses styles                    │ resolve
+       ▼                                ▼
+┌─────────────┐   capture view   ┌──────────────┐
+│ Plan Tool   │◄────────────────│ 3D Viewport  │
+│ Viewports   │   (matrix+clip)  │ (Codex/render)│
+└──────┬──────┘                 └──────────────┘
+       │ export
+       ▼
+   PDF / .hcplan
+
+Legend in Plan auto-builds from Specs used by visible entities in Viewports.
+Frame text field „Maßstab“ binds to active Viewport.scale.
+PlotProfile from Spec library applied at export.
+</pre>
+
+<p>
+<strong>Builder Viewport (3D)</strong> bleibt Source of Truth für Modell-Navigation.
+Plan speichert <em>ViewDescriptor</em> (camera or top-down ortho, clip polygon, layer filter, style epoch hash),
+nicht live-link zu jeder Mesh-Revision ohne User-Refresh (explizites „Update from model“).
+</p>
+
+<!-- ============================================================ -->
+<h2 id="s7">7. User Journeys (ausführlich)</h2>
+
+<h3>J1 — Neue Spec anlegen und zuweisen</h3>
+<ol>
+  <li>User öffnet Specs-Island.</li>
+  <li>„Neu → CurveSpec“, Code <code>GEB-BEST</code>, Name „Gebäude Bestand“, Linetype Continuous, Weight 0.35, Farbe grau.</li>
+  <li>Speichern (Journal).</li>
+  <li>Im Viewport Polylinien selektieren → Properties oder Specs-Island „Auf Auswahl anwenden“.</li>
+  <li>Viewport zeigt neuen Stroke (RenderStyle aus Resolve).</li>
+</ol>
+
+<h3>J2 — DXF-Import mappt auf Specs</h3>
+<ol>
+  <li>Import DXF erzeugt provisional Specs/Layers.</li>
+  <li>User öffnet Specs, filtert source=dxfImport, mapped „GEBAEUDE“ → <code>GEB-BEST</code>.</li>
+  <li>Re-resolve; eine konsistente Projektnorm.</li>
+</ol>
+
+<h3>J3 — Lageplan 1:500 erzeugen</h3>
+<ol>
+  <li>User top-view, zoomt auf Grundstück, Create Plan.</li>
+  <li>Wählt A3 quer, 1:500, Template „A3-Lageplan-QH“.</li>
+  <li>Viewport füllt Zeichenbereich; Rahmen snapt an Ränder.</li>
+  <li>Zieht Nordpfeil + Maßstabsbalken; Align an Rahmen-Anker.</li>
+  <li>Legende generiert aus verwendeten Specs.</li>
+  <li>Export PDF → Ablage im Projekt + optional OS-Dialog.</li>
+</ol>
+
+<h3>J4 — Rahmen-Template bauen</h3>
+<ol>
+  <li>Plan-Island → „Edit frames“.</li>
+  <li>Zeichnet Linien (mit CurveSpecs!), platziert Textfelder mit Platzhaltern <code>{{project.name}}</code>, <code>{{plan.scale}}</code>.</li>
+  <li>„Save as Frame Template“ → User library.</li>
+  <li>Nächster Plan: Template aus Library droppen → snapt.</li>
+</ol>
+
+<h3>J5 — Punktwolke im Plan</h3>
+<ol>
+  <li>Viewport enthält PointCloud + Grenzen (Kurven).</li>
+  <li>Plan: Kurven = Vektor, Cloud = Raster-Tile bei 150–300 dpi.</li>
+  <li>User ändert Maßstab 1:500→1:250 → Raster-Regen (Progress), Vektor scharf bleibt.</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="s8">8. Datenmodell &amp; Dateiformate</h2>
+
+<h3>8.1 Spec (JSON / serde camelCase)</h3>
+<pre><code>{
+  "formatVersion": 1,
+  "kind": "specification",
+  "id": "spec_…",
+  "code": "RK-BEST",
+  "name": "Straßenrand Bestand",
+  "category": "curve",
+  "revision": 3,
+  "source": "project",
+  "curve": {
+    "color": { "kind": "rgb", "r": 180, "g": 180, "b": 180 },
+    "colorSource": "override",
+    "lineTypeRef": { "resourceId": "…", "schemaId": "hcad.resource.line-type@1", "contentHash": "…" },
+    "lineTypeScale": 1.0,
+    "lineWeightMm": 0.35,
+    "plotVisible": true
+  },
+  "defaultLayerCode": "0_BESTAND_RK",
+  "notes": "",
+  "contentHash": "…"
+}</code></pre>
+
+<h3>8.2 Plan Document</h3>
+<pre><code>{
+  "formatVersion": 1,
+  "kind": "planDocument",
+  "id": "plan_…",
+  "name": "Lageplan Flurstück 12",
+  "projectId": "…",
+  "plotProfileId": "…",
+  "sheets": [{
+    "id": "sheet_1",
+    "paper": { "size": "A3", "orientation": "landscape", "marginMm": 10 },
+    "viewports": [{
+      "id": "vp1",
+      "rectMm": { "x": 20, "y": 25, "w": 350, "h": 220 },
+      "view": {
+        "mode": "topOrtho",
+        "worldCenter": […],
+        "rotationDeg": 0,
+        "scale": 500,
+        "layerFilter": { "mode": "exclude", "layerIds": [] },
+        "styleEpoch": "hash-of-resolved-styles"
+      },
+      "snapshots": {
+        "rasterUnderlayHash": "…",
+        "vectorSceneHash": "…"
+      }
+    }],
+    "frameInstance": { "templateId": "…", "placementMm": {…}, "fieldValues": {…} },
+    "stamps": [ { "stampId": "north", "anchor": "frame:tr", "offsetMm": [..] } ],
+    "annotationScene": { "engine": "excalidraw|native", "data": {…} }
+  }],
+  "contentHash": "…"
+}</code></pre>
+
+<p>Dateiendungen: <code>.hcplan</code> (ein Plan), optional embedded in <code>.hcadx</code> under <code>plans/</code>.</p>
+
+<!-- ============================================================ -->
+<h2 id="s9">9. Architektur &amp; Module</h2>
+
+<pre class="flow">crates/himmelcad-core/
+  specs/          # Spec types, library, resolve, validate, hash
+  plan/           # PlanDocument, Sheet, Viewport, FrameTemplate, Stamp
+
+crates/himmelcad-io/   (optional later)
+  plan_pdf.rs     # vector+raster compose — or keep in sidecar first
+
+crates/himmelcad-sidecar/
+  specs_runtime.rs
+  plan_runtime.rs   # snapshot render requests, pdf export jobs
+
+apps/builder/renderer/
+  SpecsIsland.tsx          # Task island UI
+  PlanIsland.tsx           # Large task island
+  plan/                    # canvas, tools, snap, libraries
+  specs/                   # forms, previews
+
+packages/@himmelcad/data
+  # TS types mirrored from core (ts-rs or hand sync)
+
+Reuse PhotoLab:
+  FloatingTaskIsland (non-modal)
+  Design tokens / Select / no native dialogs
+
+Reuse Fernwork patterns (port ideas, not necessarily code):
+  vendor shell for heavy canvas
+  stamp library UX
+  hybrid project file
+  pdf-lib export composition
+</pre>
+
+<div class="callout warn">
+  <p><strong>Render/Codex-Grenze:</strong> Snapshot-Erzeugung für Raster-Underlays ruft eine
+  <em>stabile Sidecar-API</em> an („render top-down orthographic image of entities X at transform T“).
+  Implementierung der API kann vorübergehend CPU-Fallback oder bestehende Viewer-Hooks nutzen —
+  <strong>keine</strong> parallele Änderung an Codex-Render-Pfaden in derselben Session ohne Absprache.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s10">10. UI-Vertrag (DESIGN-SYSTEM)</h2>
+<ul class="dense">
+  <li>Task-Islands: <strong>nicht modal</strong> (kein Dimmer), drag handle, Display-Titel wie ImportChat header metrics wenn Insel-Chrome, Function-Panel-Dichte für kleine Forms</li>
+  <li>Keine Chat-Bubbles, keine Wizard-Novel</li>
+  <li>Controls: shared <code>Select</code>, <code>Checkbox</code>; Höhe <code>--hc-size-control-h</code></li>
+  <li>Eine UI-Schriftgröße-Familie (11/10); Mono nur Codes/Hashes</li>
+  <li>Primary button = neutral press, nicht Accent-Wash</li>
+  <li>Console: Start/Ende/Dauer jeder Export- und Snapshot-OP; progressKey bei &gt;1s</li>
+  <li>Ribbon EN labels (product English UI check)</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="s11">11. Implementierungsphasen (PR-Plan)</h2>
+
+<p>Überambitioniert, topologisch sortiert. Jede Phase shippable Tests.</p>
+
+<table>
+  <tr><th>Phase</th><th>Deliverable</th><th>Done when</th></tr>
+  <tr><td><strong>P0</strong></td><td>Dieses Doc reviewed; Entscheidungen §13 closed</td><td>User-OK</td></tr>
+  <tr><td><strong>P1 Spec Core</strong></td><td>Rust types Curve/Area/Point/Layer/PlotProfile Spec; validate; hash; library CRUD in memory</td><td><code>cargo test -p himmelcad-core specs::</code></td></tr>
+  <tr><td><strong>P2 Spec Persist</strong></td><td><code>.hcspec</code> / <code>.hcspecpack</code>; project catalog hash; journal commands</td><td>Roundtrip tests</td></tr>
+  <tr><td><strong>P3 Spec Resolve</strong></td><td>Resolve-Kette → ResolvedStyle; map to RenderStyle bridge (read-path)</td><td>Unit tests + golden resolve</td></tr>
+  <tr><td><strong>P4 Spec UI</strong></td><td>Builder SpecsIsland; apply to selection; import/export</td><td>Manual + tsc; no native dialogs</td></tr>
+  <tr><td><strong>P5 Plan Model</strong></td><td>PlanDocument/Sheet/Viewport/Frame/Stamp types + validate</td><td>cargo tests</td></tr>
+  <tr><td><strong>P6 Plan UI Shell</strong></td><td>PlanIsland layout, paper, empty viewport rect, snap to sheet</td><td>Interactive smoke without model</td></tr>
+  <tr><td><strong>P7 Viewport Capture</strong></td><td>Vector extract API (curves/areas) in sheet mm; optional raster stub</td><td>Fixture project → scene</td></tr>
+  <tr><td><strong>P8 Frames &amp; Stamps</strong></td><td>Templates library, anchors, field binding, legend from Specs</td><td>Place/snap tests</td></tr>
+  <tr><td><strong>P9 PDF Export</strong></td><td>pdf-lib compose multi-sheet; fidelity report; save dialog</td><td>PDF opens; visual checklist</td></tr>
+  <tr><td><strong>P10 Annotation Layer</strong></td><td>Native tools or Excalidraw-shell embed (per §13)</td><td>Roundtrip scene in .hcplan</td></tr>
+  <tr><td><strong>P11 Raster Underlay</strong></td><td>Real snapshot job + cache invalidation</td><td>Cloud visible in PDF</td></tr>
+  <tr><td><strong>P12 DXF Spec map</strong></td><td>Provisional specs from DXF + mapping UI</td><td>Import sample maps cleanly</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="s12">12. Tests &amp; Akzeptanz</h2>
+<ul class="dense">
+  <li><strong>Core:</strong> validate ranges (lineweight 0–2.11 mm), unique codes, resolve order, pack roundtrip</li>
+  <li><strong>IO:</strong> .hcspec / .hcplan JSON schema denial of unknown fields</li>
+  <li><strong>Plan geometry:</strong> scale 1:500 → 1 m world = 2 mm paper</li>
+  <li><strong>Snap:</strong> frame edge within ε snaps to sheet margin</li>
+  <li><strong>PDF:</strong> page size points match A3; vector path count &gt; 0 for curve fixtures</li>
+  <li><strong>No Codex:</strong> CI path does not require GPU viewer</li>
+  <li><strong>Product names / English UI</strong> checks remain green</li>
+</ul>
+
+<p><strong>Akzeptanz-Demo (Review-Signoff später):</strong> Spez anlegen → Linie zuweisen → Plan 1:500 mit Rahmen+Nord+PDF.</p>
+
+<!-- ============================================================ -->
+<h2 id="s13">13. Offene Review-Entscheidungen (bitte abhaken)</h2>
+<table>
+  <tr><th>#</th><th>Frage</th><th>Vorschlag</th></tr>
+  <tr><td>D1</td><td>Specs geometry-driving in v1?</td><td><strong>Nein</strong> — nur presentation/plot</td></tr>
+  <tr><td>D2</td><td>Excalidraw im Plan v1?</td><td><strong>Optional P10</strong>; P6–P9 native first, less risk</td></tr>
+  <tr><td>D3</td><td>Plan modal?</td><td><strong>Non-modal</strong> large island (wie Import)</td></tr>
+  <tr><td>D4</td><td>Live-link Viewport ↔ Model?</td><td><strong>Explicit refresh</strong> + cached snapshots</td></tr>
+  <tr><td>D5</td><td>User library location</td><td><code>Documents/HimmelCAD/spec-library/</code> + project embed</td></tr>
+  <tr><td>D6</td><td>Default language UI</td><td>English labels (product UI policy)</td></tr>
+  <tr><td>D7</td><td>Principal lineweight unit</td><td>mm on paper for plot; screen px derived</td></tr>
+  <tr><td>D8</td><td>Who implements raster snapshot API?</td><td>Sidecar contract first; CPU top-down stub acceptable for P7</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="s14">14. Risiken &amp; Nicht-Ziele</h2>
+<table>
+  <tr><th>Risiko</th><th>Mitigation</th></tr>
+  <tr><td>Scope explosion „full AutoCAD paper space“</td><td>Phasen P5–P9 hard cap; multi-viewport per sheet v2</td></tr>
+  <tr><td>Excalidraw units mismatch</td><td>Never use as model authority; mm sheet space only</td></tr>
+  <tr><td>Huge point clouds in PDF</td><td>DPI cap, tile, downsample, fidelity warning</td></tr>
+  <tr><td>Style_ref opacity vs structured Spec</td><td>Migrate: style_ref points to hashed Spec payload</td></tr>
+  <tr><td>Codex collision on snapshots</td><td>API boundary; no render crate drive-by</td></tr>
+  <tr><td>Builder still legacy EntityKind</td><td>Specs/Plan write canonical path; bridge as needed</td></tr>
+</table>
+
+<footer>
+  Dokument: <code>docs/implementation-plans/specs-and-plan-tool.html</code><br />
+  Nach Review: Implementierung startet bei P1 (außer du priorisierst anders).<br />
+  Research: Fernwork 17_fernwork (Excalidraw-Shell, PDF-Workbench, .fwdoc, stamps);
+  HimmelCAD ADR 0016, DATA-MODEL, DESIGN-SYSTEM, PROJECT-FORMAT, canonical_resources.
+</footer>
+
+</div>
+</body>
+</html>

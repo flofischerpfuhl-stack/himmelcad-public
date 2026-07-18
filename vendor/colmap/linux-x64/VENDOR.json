@@ -1,0 +1,2103 @@
+{
+  "name": "HimmelCAD COLMAP worker",
+  "upstream": "https://github.com/colmap/colmap",
+  "version": "4.1.0",
+  "commit": "fa8e3b3ff591552855f8ad2806723c80f963f69c",
+  "patchSha256": "da8074b603ab616e273f219e1e913ae0388dd83048dd15cb1f713dc23aa41e36",
+  "vcpkgCommit": "03e366fb91e38b9432ebd5f8cc79f7c8f55e96ab",
+  "llvmMingw": "20260407-ucrt",
+  "platform": "linux-x64",
+  "license": "BSD-3-Clause and permissive audited transitive closure",
+  "files": [
+    {
+      "path": "bin/colmap",
+      "bytes": 78809280,
+      "sha256": "6499acc1f8482ff48be35a2133130efd1d623adda3d02b601b79f873a73f822b"
+    },
+    {
+      "path": "include/colmap/controllers/automatic_reconstruction.h",
+      "bytes": 5726,
+      "sha256": "81f41c91c1bed5b260a29851f5238b52ff7b7f9b2600b581f71cbdb2ba54a4a2"
+    },
+    {
+      "path": "include/colmap/controllers/base_option_manager.h",
+      "bytes": 10157,
+      "sha256": "516d2f0a6bc77f067717d2e1597853f78b9133588921e24436bd5bc0b9ed53d0"
+    },
+    {
+      "path": "include/colmap/controllers/bundle_adjustment.h",
+      "bytes": 2196,
+      "sha256": "7614513b1fdb07534e199469b2e5eeee805a33ec220be126a8e99b457b943119"
+    },
+    {
+      "path": "include/colmap/controllers/feature_extraction.h",
+      "bytes": 2452,
+      "sha256": "eab54a873a541685d35790da9ce9f35404b3ef94703783bc10679999052c52fe"
+    },
+    {
+      "path": "include/colmap/controllers/feature_matching.h",
+      "bytes": 7681,
+      "sha256": "4eb54402a99dcb48f3e30e71932336432691d9f4b8ca5620a6a45b82d2cbf054"
+    },
+    {
+      "path": "include/colmap/controllers/feature_matching_utils.h",
+      "bytes": 5176,
+      "sha256": "831d5b1b7b240c677ea5b8915c4d2a7abb24ded43d0b6a8b4a188d630d3e9022"
+    },
+    {
+      "path": "include/colmap/controllers/global_pipeline.h",
+      "bytes": 3072,
+      "sha256": "ec96f64e14f54b176460a0f12745fa830a9b60f082bf3859bed0e275eec5c17f"
+    },
+    {
+      "path": "include/colmap/controllers/hierarchical_pipeline.h",
+      "bytes": 3491,
+      "sha256": "12b51f7e445fec1126a7c4204ce781c04832689ed52689bea79c511d43cc6941"
+    },
+    {
+      "path": "include/colmap/controllers/image_reader.h",
+      "bytes": 5180,
+      "sha256": "054dfa5fa953541fb4bd9c3aa382fced5e0a836b3f64cd319dd3376006afbae4"
+    },
+    {
+      "path": "include/colmap/controllers/incremental_pipeline.h",
+      "bytes": 10637,
+      "sha256": "db483c13da6d2c1ea08e4b3c7e3929fca42f16dea97bfd692697bfdbb3b70dde"
+    },
+    {
+      "path": "include/colmap/controllers/matcher_cache.h",
+      "bytes": 5090,
+      "sha256": "ab05da6c5f655bea73be3f9a40e89cc3c6bb1c11d90a1e34414bd14ee05cc915"
+    },
+    {
+      "path": "include/colmap/controllers/option_manager.h",
+      "bytes": 7246,
+      "sha256": "34977eb200ef167a4cb753d8cb69936f2dcf9fc364a76e0deb87ac57bc1ca1fb"
+    },
+    {
+      "path": "include/colmap/controllers/pairing.h",
+      "bytes": 14255,
+      "sha256": "c01956542910272ec4cebd662b597ebbef7277d7b7fcb3ec5fa4836616f0d6a2"
+    },
+    {
+      "path": "include/colmap/controllers/reconstruction_clustering.h",
+      "bytes": 2746,
+      "sha256": "5cf5a856823cebc2f32fe25bbab17041a3dbc54df30f50ddbaa01da6297a5d96"
+    },
+    {
+      "path": "include/colmap/controllers/rotation_averaging.h",
+      "bytes": 3441,
+      "sha256": "cac9cdb60ac0067b169be5a1770d5a3bf8e23c3e47a0f418b7afa8a3aacbfef7"
+    },
+    {
+      "path": "include/colmap/controllers/undistorters.h",
+      "bytes": 8384,
+      "sha256": "f102a416c9d01cb7ad22a1f38a6e98b49d35f7d963bde52303002543943269f1"
+    },
+    {
+      "path": "include/colmap/estimators/alignment.h",
+      "bytes": 5549,
+      "sha256": "5ea461559c72e2335f36c576e234d66174741ab209279a72a446c506e4f69a6d"
+    },
+    {
+      "path": "include/colmap/estimators/bundle_adjustment.h",
+      "bytes": 10751,
+      "sha256": "17e2aabaacaf062dc56af26cb999d827abcc648a50b20c40a0c398a048ca78c6"
+    },
+    {
+      "path": "include/colmap/estimators/bundle_adjustment_caspar.h",
+      "bytes": 5062,
+      "sha256": "4738409fc1bf2a469fa08af4b8584dffd7a911b9eb7152aa128a2f30d265faca"
+    },
+    {
+      "path": "include/colmap/estimators/bundle_adjustment_ceres.h",
+      "bytes": 5646,
+      "sha256": "30c5aea77af370ba94aaf6b2025dbfaa3dcab4bc75048de1bd21a2a7bdf27e1f"
+    },
+    {
+      "path": "include/colmap/estimators/caspar/caspar_model_adapter.h",
+      "bytes": 49007,
+      "sha256": "c44297af31df2aa1c79f25e8637858ded438109536ed35a241c78b952b195096"
+    },
+    {
+      "path": "include/colmap/estimators/coordinate_frame.h",
+      "bytes": 4139,
+      "sha256": "bb979e86f26b2db6ca7ff4c0a9e27720ee466bb15666b0e6915ee76924c8d737"
+    },
+    {
+      "path": "include/colmap/estimators/cost_functions/alignment.h",
+      "bytes": 3028,
+      "sha256": "59fe537d78768a7c91c5a6dba14f30158710ee9cd1a6199f7dd0af3588d77095"
+    },
+    {
+      "path": "include/colmap/estimators/cost_functions/calibration.h",
+      "bytes": 8760,
+      "sha256": "e23a0c574ce41c76ff1f9dc541d9fdd5674bdafa01a8737bafe51ed855573cb2"
+    },
+    {
+      "path": "include/colmap/estimators/cost_functions/manifold.h",
+      "bytes": 5078,
+      "sha256": "9ff7e0d82e84082d852e5414a7083bbf1b22af51436494097bb4bb23737b967b"
+    },
+    {
+      "path": "include/colmap/estimators/cost_functions/motion_averaging.h",
+      "bytes": 4988,
+      "sha256": "a0a60225083156fe655cee67e23f2b2d30c1d7e0a5f41939be4c2c88a5830f7b"
+    },
+    {
+      "path": "include/colmap/estimators/cost_functions/pose_prior.h",
+      "bytes": 7548,
+      "sha256": "c1213f55db78a0208aa6561a9bc112f8add63b50c7b0cb66088579920dd735e9"
+    },
+    {
+      "path": "include/colmap/estimators/cost_functions/reprojection_error.h",
+      "bytes": 17083,
+      "sha256": "1020e8bb231c49800d960de1aea1dd2e91372e5c6bad59bf58efdb5960e6b380"
+    },
+    {
+      "path": "include/colmap/estimators/cost_functions/sampson_error.h",
+      "bytes": 3762,
+      "sha256": "e24e5a5ca2ed167e146b8b38774721c926f6f5d276e6eb60e0313ae4530bbaf2"
+    },
+    {
+      "path": "include/colmap/estimators/cost_functions/utils.h",
+      "bytes": 6353,
+      "sha256": "2993cfb2112d3a7afb4d3e6ea327d395b75a51b903d4454fd8496415d93f6cd8"
+    },
+    {
+      "path": "include/colmap/estimators/covariance.h",
+      "bytes": 6624,
+      "sha256": "ca6de9a66a23c05a36dba343dfa0bf011ba3a373cbd2c9851fcdf2dff631c2f7"
+    },
+    {
+      "path": "include/colmap/estimators/generalized_pose.h",
+      "bytes": 7356,
+      "sha256": "9dd7d2cbedf09b11ddcd8e5d09024a618a3b2a52d84883c28eaff93394866333"
+    },
+    {
+      "path": "include/colmap/estimators/global_positioning.h",
+      "bytes": 4213,
+      "sha256": "b1ad2857224b88a512df5f03879389e7c2f8cd1deab56ed7fbc825ef2db27bc0"
+    },
+    {
+      "path": "include/colmap/estimators/gravity_refinement.h",
+      "bytes": 1929,
+      "sha256": "500a7df358503bc02f5f1f936997d929fedcd934847299ae3fa13cf2877c7652"
+    },
+    {
+      "path": "include/colmap/estimators/pose.h",
+      "bytes": 9558,
+      "sha256": "9c36ea730ffc372dae2e6829be7583504f783726bc3b35e70f3aee47ad320d8a"
+    },
+    {
+      "path": "include/colmap/estimators/rotation_averaging.h",
+      "bytes": 5884,
+      "sha256": "50659f2736986529d8e1df7d371e0ef09f1555bad304913c2d8897379557a959"
+    },
+    {
+      "path": "include/colmap/estimators/rotation_averaging_impl.h",
+      "bytes": 5352,
+      "sha256": "190b193e02381922e7d5c657df47f684ba76ab45a2b782217eece0a1c2398db1"
+    },
+    {
+      "path": "include/colmap/estimators/solvers/absolute_pose.h",
+      "bytes": 9332,
+      "sha256": "2d339a7e78da0d68e2d80270b9acb612a0ec4f856c8262b763d5c6db1c5cd7ed"
+    },
+    {
+      "path": "include/colmap/estimators/solvers/affine_transform.h",
+      "bytes": 2990,
+      "sha256": "d110e56276845e2b69fbe8dcbfa31936bdb528614d10e5bb044682c37c96fba3"
+    },
+    {
+      "path": "include/colmap/estimators/solvers/essential_matrix.h",
+      "bytes": 5015,
+      "sha256": "51201b5743b0396b6b2dce1fd964e359bf68700b9afa6cdc27abf60bafb44889"
+    },
+    {
+      "path": "include/colmap/estimators/solvers/essential_matrix_coeffs.h",
+      "bytes": 13941,
+      "sha256": "1f95249c1a8da95eec75f27bb042fc1d686f07004f528385a0ea2fdf11a644c8"
+    },
+    {
+      "path": "include/colmap/estimators/solvers/essential_matrix_poly.h",
+      "bytes": 152334,
+      "sha256": "640f8d8d0dd265b70b2c4aa4d02c0936b51e44581a3f941aa44fef09ac7502ae"
+    },
+    {
+      "path": "include/colmap/estimators/solvers/euclidean_transform.h",
+      "bytes": 2346,
+      "sha256": "a4744789c6efcb0dbc208ac0e08ec314f83e21964233b960c67712ef476ee0f1"
+    },
+    {
+      "path": "include/colmap/estimators/solvers/fundamental_matrix.h",
+      "bytes": 5161,
+      "sha256": "f2c523056df4d9e9370d2a50f33820b46df052e1130210ba51c9a4c0e4821829"
+    },
+    {
+      "path": "include/colmap/estimators/solvers/generalized_absolute_pose.h",
+      "bytes": 3603,
+      "sha256": "5435754890e08b3bf47b0fbebcf760a6a1a58596b0ac1143d90a73b1eeccac87"
+    },
+    {
+      "path": "include/colmap/estimators/solvers/generalized_relative_pose.h",
+      "bytes": 4558,
+      "sha256": "047eee47ba2e12a20fdd4097028a36576b5f8417ef8ec58f7cf25ba7b009d568"
+    },
+    {
+      "path": "include/colmap/estimators/solvers/homography_matrix.h",
+      "bytes": 3320,
+      "sha256": "6068ff3bf5dd650c985b18f37dacaf54c053e63bd79051aea990828b63edad75"
+    },
+    {
+      "path": "include/colmap/estimators/solvers/poselib_utils.h",
+      "bytes": 2255,
+      "sha256": "2b46d4d6267fdd1101f6485ed75c4fb265dce697b2587c151f415f0058f8ecf9"
+    },
+    {
+      "path": "include/colmap/estimators/solvers/similarity_transform.h",
+      "bytes": 6780,
+      "sha256": "d8e0a5e2f526656b84ea142acabc2a0866e8d0847b4ffe33b35b77e7d23d6bcd"
+    },
+    {
+      "path": "include/colmap/estimators/solvers/translation_transform.h",
+      "bytes": 4327,
+      "sha256": "0f9d9f25b070d5457defff428cb7f09688b8a6cf7213a9a96e509b1251e8a33e"
+    },
+    {
+      "path": "include/colmap/estimators/triangulation.h",
+      "bytes": 6134,
+      "sha256": "23483e34a836f60feb0f8e8f564b39159eb836fcd14ce1d90b5a3768c79bbffb"
+    },
+    {
+      "path": "include/colmap/estimators/two_view_geometry.h",
+      "bytes": 10169,
+      "sha256": "0bad2a8a47da619afad6513aa1c8e06f42bb50cd5654cbbce253c846cc6a13c8"
+    },
+    {
+      "path": "include/colmap/estimators/view_graph_calibration.h",
+      "bytes": 4005,
+      "sha256": "f64a34126bae7dba767de7428f8bb9c8b6fb37d5345d53df6dbfb7371511bf46"
+    },
+    {
+      "path": "include/colmap/exe/database.h",
+      "bytes": 1872,
+      "sha256": "71d7af2c95c5ba81cb7bea5de004d7624d2e5c938945736e17617392be3fa1c2"
+    },
+    {
+      "path": "include/colmap/exe/feature.h",
+      "bytes": 4793,
+      "sha256": "1dd908c9e81ce691395cf06fd42c950de7ab8a4be3a1b46934454368c1a78040"
+    },
+    {
+      "path": "include/colmap/exe/gui.h",
+      "bytes": 1981,
+      "sha256": "a35ebfef567e332522b875fee59853f1a56eaee4e47e86d02432de6c24b02557"
+    },
+    {
+      "path": "include/colmap/exe/image.h",
+      "bytes": 1974,
+      "sha256": "ef5f0a3afedbad252a2b9fd1ffb1aea5d8850d9a25e1b27fd3bc936bc5230261"
+    },
+    {
+      "path": "include/colmap/exe/model.h",
+      "bytes": 2683,
+      "sha256": "c8933fa8e90e5bd561999915171f985d857329db213929ade2b87a51cafc5585"
+    },
+    {
+      "path": "include/colmap/exe/mvs.h",
+      "bytes": 2980,
+      "sha256": "bcc26a9db77d2956eb63431663f6f014259e966faa286ab286a19170bde12389"
+    },
+    {
+      "path": "include/colmap/exe/sfm.h",
+      "bytes": 3472,
+      "sha256": "376c054f6a608015f72c8581342160dfb0b928d1c50208f9f3bc9d4cbb963841"
+    },
+    {
+      "path": "include/colmap/exe/vocab_tree.h",
+      "bytes": 1783,
+      "sha256": "f9a034947e77ec68679bf2101608eabf1280c4cac7df36fac2c3fcb869da176d"
+    },
+    {
+      "path": "include/colmap/feature/aliked.h",
+      "bytes": 3446,
+      "sha256": "8d76962be1ceb3c5a3a8fe7fbb5a12c5d66a88f65387a2aa71968535a24013fd"
+    },
+    {
+      "path": "include/colmap/feature/extractor.h",
+      "bytes": 3981,
+      "sha256": "a850bbb0a7be84b218b449a351a20107648115884858d3bd10f424fe9d3b165a"
+    },
+    {
+      "path": "include/colmap/feature/index.h",
+      "bytes": 2340,
+      "sha256": "8f5831d6eabb48170b531e57531440f5d23b2a19c2ef03fa81860430e43cb359"
+    },
+    {
+      "path": "include/colmap/feature/matcher.h",
+      "bytes": 5062,
+      "sha256": "41fef96425e43eb184d128b8e2cfcb3a3cff256750e3c692a9a9451137909492"
+    },
+    {
+      "path": "include/colmap/feature/onnx_matchers.h",
+      "bytes": 3072,
+      "sha256": "7bda6b949b136237ab655fd51a1785e138d68e43dc8a77be16eaea20804295d5"
+    },
+    {
+      "path": "include/colmap/feature/onnx_utils.h",
+      "bytes": 3740,
+      "sha256": "d2821d7dd77ec71af6bd8e25e8b06ca44856136e5e03021cb9f1e8aceab97399"
+    },
+    {
+      "path": "include/colmap/feature/resources.h",
+      "bytes": 3375,
+      "sha256": "ad2da556379288f24cab1e2db99d71574c9cc45afc23127a5c835bb03c541b0c"
+    },
+    {
+      "path": "include/colmap/feature/sift.h",
+      "bytes": 6635,
+      "sha256": "b0ad6aa18f4b52138d73701dc1cb8fd81d88931b2b61e862e98e28043e2fae2d"
+    },
+    {
+      "path": "include/colmap/feature/types.h",
+      "bytes": 7361,
+      "sha256": "627f281f61fa6889a53f184f1c0749429e6d890113f87748b1396d62e6e9d83c"
+    },
+    {
+      "path": "include/colmap/feature/utils.h",
+      "bytes": 2973,
+      "sha256": "5e2113ad47f4e08ab69c6ac3c0ca4c5447a8f8dc033b959cc05b752486a35c17"
+    },
+    {
+      "path": "include/colmap/geometry/bbox.h",
+      "bytes": 2089,
+      "sha256": "123900b7fc07f8abe708174ef517774cf1829f6f89ac199e149ac4214d9e0c58"
+    },
+    {
+      "path": "include/colmap/geometry/essential_matrix.h",
+      "bytes": 7918,
+      "sha256": "67ed2798556daaf6826a477cb91f5974c26a38bd10408efb6a8d73e137b4874f"
+    },
+    {
+      "path": "include/colmap/geometry/gps.h",
+      "bytes": 4472,
+      "sha256": "145c97637673f3298a28738c87feb0c785766b6a577a5c53463bffbc1b60baf3"
+    },
+    {
+      "path": "include/colmap/geometry/homography_matrix.h",
+      "bytes": 5421,
+      "sha256": "1656ae452ce0164c6541a9320f9ccc5721a71356c87e73c73f08f7e3076f17e8"
+    },
+    {
+      "path": "include/colmap/geometry/normalization.h",
+      "bytes": 3018,
+      "sha256": "545f2601f165d88bd6aa12ad00f1dc9cd046b70f3d4053c02c38de9eaabf4c48"
+    },
+    {
+      "path": "include/colmap/geometry/pose.h",
+      "bytes": 7013,
+      "sha256": "6e7eb06b8f0b5f540cfbf74dd795354ee8456a3da454bcfac05e6b2f743d02b6"
+    },
+    {
+      "path": "include/colmap/geometry/pose_prior.h",
+      "bytes": 3695,
+      "sha256": "6406df07261e240c339f412a93bece66800c614110741bc1affe47a828e1aabf"
+    },
+    {
+      "path": "include/colmap/geometry/rigid3.h",
+      "bytes": 8115,
+      "sha256": "2df3d1c19b027dc7a7324568a8afa63e24118616d7ce3e9f73af502a604a4b10"
+    },
+    {
+      "path": "include/colmap/geometry/rigid3_matchers.h",
+      "bytes": 3920,
+      "sha256": "1f38b2e5f8fa292bac63cc4bbe946f0e1107e31e0c6778b4a48963f31257d275"
+    },
+    {
+      "path": "include/colmap/geometry/sim3.h",
+      "bytes": 5715,
+      "sha256": "0e45b6e332baaa2fb45eeeec25ceb9f8d69c32af58efd64ccd9939e675a81db0"
+    },
+    {
+      "path": "include/colmap/geometry/sim3_matchers.h",
+      "bytes": 4265,
+      "sha256": "e5b6eae39c5f3a3ea45cb1dc70f484413b464440936a13ea0f65d7393e723eda"
+    },
+    {
+      "path": "include/colmap/geometry/triangulation.h",
+      "bytes": 7641,
+      "sha256": "4c25eabc6aa8cee7c2a6b73367e7cc36819028be7337c4eabdcb3bb62e35def9"
+    },
+    {
+      "path": "include/colmap/image/line.h",
+      "bytes": 2361,
+      "sha256": "c7174b444544925231d7f7b3e39d1527e6909abd1297b3bbb68732758978be2b"
+    },
+    {
+      "path": "include/colmap/image/undistortion.h",
+      "bytes": 6333,
+      "sha256": "327a28427c603dd24a75150157e5029b0776c2598afd613cddb5765252fc130c"
+    },
+    {
+      "path": "include/colmap/image/warp.h",
+      "bytes": 4044,
+      "sha256": "07c95ce372e3a6f7718f7a2f370fcfb683a0a912a94114b3f815333e2a58868c"
+    },
+    {
+      "path": "include/colmap/math/connected_components.h",
+      "bytes": 3551,
+      "sha256": "17ff5abb3bb347a9eeac91c67c91723ab60acc574ce6133b4954d69c089b6b88"
+    },
+    {
+      "path": "include/colmap/math/graph_cut.h",
+      "bytes": 8159,
+      "sha256": "51138f9f31a51efa0fe0cb6aa9ded31cb46f7ecb1cbf5889cfe37f26cbec18cf"
+    },
+    {
+      "path": "include/colmap/math/math.h",
+      "bytes": 9439,
+      "sha256": "f85a5942ffe604c95da0937dd5620eb2736ad4a981ba56b46b3cfd1289b47656"
+    },
+    {
+      "path": "include/colmap/math/matrix.h",
+      "bytes": 3063,
+      "sha256": "5dde0df1a922b0afda3d5b3163a564b823961ad6ba59ab3e96b0059f05e3f9ca"
+    },
+    {
+      "path": "include/colmap/math/polynomial.h",
+      "bytes": 4798,
+      "sha256": "a5d05e55fbadf52222d10425dce6cbe6e3a3368756976c160c6d2b7535204ef0"
+    },
+    {
+      "path": "include/colmap/math/random.h",
+      "bytes": 4435,
+      "sha256": "cec1b85afed740b152d74f790c995932656a86bcf043b2e2f6f30d8f68a1f268"
+    },
+    {
+      "path": "include/colmap/math/spanning_tree.h",
+      "bytes": 3310,
+      "sha256": "f0517f498e7763b5a454fdc40c8b4ec808db19bc5689e09b2b89f499a95d6295"
+    },
+    {
+      "path": "include/colmap/math/union_find.h",
+      "bytes": 3342,
+      "sha256": "d8ce3f3fd47052e693c60dcc0009b5a8a0cd5dd23345e4a938c6be30c614c5d9"
+    },
+    {
+      "path": "include/colmap/mvs/advancing_front_meshing.h",
+      "bytes": 4576,
+      "sha256": "ccfbed459ae1c4452b65a3449a0f0404a0a68acc85344ca75d05404242d34bb3"
+    },
+    {
+      "path": "include/colmap/mvs/consistency_graph.h",
+      "bytes": 2849,
+      "sha256": "4d81f0215faa59207cdc11427b083d150fc7526d761200d0665eda8322503e5c"
+    },
+    {
+      "path": "include/colmap/mvs/cuda_flip.h",
+      "bytes": 4438,
+      "sha256": "08148312195042696f923cb01182290c57e3174233d84c113dbc4d4cbd788cea"
+    },
+    {
+      "path": "include/colmap/mvs/cuda_rotate.h",
+      "bytes": 3576,
+      "sha256": "265e01e836da889530289f424f91a8cb92bd29978bde168724ab23889a39405a"
+    },
+    {
+      "path": "include/colmap/mvs/cuda_texture.h",
+      "bytes": 6271,
+      "sha256": "cc05fde8ddbb2543264a8a0ea4a0d8acfc7a22a2020fb61dde3622b577a477f5"
+    },
+    {
+      "path": "include/colmap/mvs/cuda_transpose.h",
+      "bytes": 4488,
+      "sha256": "1ebe5bbdea901e5f227042c77fdbdbc4a590a557008ea8201093d4cfbe503100"
+    },
+    {
+      "path": "include/colmap/mvs/delaunay_meshing.h",
+      "bytes": 4176,
+      "sha256": "f79ed4182a3447a00a60af35f55704f5aec5a6d3f21110d5c58a444723c46b0b"
+    },
+    {
+      "path": "include/colmap/mvs/depth_map.h",
+      "bytes": 2763,
+      "sha256": "536e81409a713b40ff63cd6355343893bca240e10390eb3ed5e268d1651ee7b9"
+    },
+    {
+      "path": "include/colmap/mvs/fusion.h",
+      "bytes": 7275,
+      "sha256": "838e5a0693931fe314af9f9fd4ff1eca8cf1a05d570c577feecadc79e6637834"
+    },
+    {
+      "path": "include/colmap/mvs/gpu_mat.h",
+      "bytes": 15255,
+      "sha256": "c3ee6bef2b012cf1572b4789212aa52aba08bcfa3f312bb2d141ac98f240296b"
+    },
+    {
+      "path": "include/colmap/mvs/gpu_mat_prng.h",
+      "bytes": 1900,
+      "sha256": "9dabcfb73862f8ec5bae611c93e1da687df7c624ab5fd7c5a4030f3fbdea3e50"
+    },
+    {
+      "path": "include/colmap/mvs/gpu_mat_ref_image.h",
+      "bytes": 3564,
+      "sha256": "4e869dd8f099ed7765de2a37eb4312072e04ecace7aa2313fea3c71272803f48"
+    },
+    {
+      "path": "include/colmap/mvs/image.h",
+      "bytes": 4260,
+      "sha256": "5e38c07b2d1c508ebe72c3c845c37b675704f2c367fca3a5cb61ec5591c41136"
+    },
+    {
+      "path": "include/colmap/mvs/mat.h",
+      "bytes": 4369,
+      "sha256": "214931a020c1dc5e350c957a0b509b6eedae897bd6b3d3c5cfa81cb5453b3f5f"
+    },
+    {
+      "path": "include/colmap/mvs/mesh_simplification.h",
+      "bytes": 2479,
+      "sha256": "bc08dbb3e49bc06b86ca834ed791411dcc332c53e33c82aee518242286138521"
+    },
+    {
+      "path": "include/colmap/mvs/model.h",
+      "bytes": 4178,
+      "sha256": "6dafbdc1e926425df153b11309ad995eb9986c3dfdf9c1aed9f6f0d0b2174980"
+    },
+    {
+      "path": "include/colmap/mvs/normal_map.h",
+      "bytes": 2117,
+      "sha256": "46f731322423b9818ea5235588d634b752f13c34f6623e94d6af5fe26f37f731"
+    },
+    {
+      "path": "include/colmap/mvs/patch_match.h",
+      "bytes": 5651,
+      "sha256": "d5f0cdc77034060f146dd7d84f7d53e3d8817e74b1e73e9f8f4066ee83f6a51a"
+    },
+    {
+      "path": "include/colmap/mvs/patch_match_cuda.h",
+      "bytes": 5038,
+      "sha256": "3d86f1c6c3dd49e54e6e65f2389c2c0937e7af376647bd351138248bcce4a555"
+    },
+    {
+      "path": "include/colmap/mvs/patch_match_options.h",
+      "bytes": 4977,
+      "sha256": "1199a8ce27b0926840fceccc803ae8681744a51330f120ae48aa7ed9119af81a"
+    },
+    {
+      "path": "include/colmap/mvs/poisson_meshing.h",
+      "bytes": 3075,
+      "sha256": "0c4722f08cec22e577f2ddd573e62270ce2fcf56ede72a885d17e12dd2204248"
+    },
+    {
+      "path": "include/colmap/mvs/texture_mapping.h",
+      "bytes": 4176,
+      "sha256": "10991730348443a42a5301a36f087c5aad4f84a401a4b04787a1e3f24c935901"
+    },
+    {
+      "path": "include/colmap/mvs/workspace.h",
+      "bytes": 5070,
+      "sha256": "99800e8fade248dbb907ee45bca7757a19b3e9cc1ebdc909abc380838bc05192"
+    },
+    {
+      "path": "include/colmap/optim/combination_sampler.h",
+      "bytes": 2349,
+      "sha256": "ea4cecbb9b1252a032c232b502a53378102d4ba4e0bf5e937bba8db60745678e"
+    },
+    {
+      "path": "include/colmap/optim/least_absolute_deviations.h",
+      "bytes": 3997,
+      "sha256": "1243bebe7234cf638a4a4afbace4d85219cfd7b4fb39fdc0f903009c25240c66"
+    },
+    {
+      "path": "include/colmap/optim/loransac.h",
+      "bytes": 13336,
+      "sha256": "d2dd44d13b2b25ff97ca2af37ecde2fda84e877448ca3743e0940267e58dfd1e"
+    },
+    {
+      "path": "include/colmap/optim/progressive_sampler.h",
+      "bytes": 2746,
+      "sha256": "8821bde0e584156d58c4ed46e6449aef00efaa0642e15767b37910e79f96417d"
+    },
+    {
+      "path": "include/colmap/optim/random_sampler.h",
+      "bytes": 2236,
+      "sha256": "856c74f3d78ecece0e3975582fe81284a01fb7fd0827a59991e4bdc7e2219f50"
+    },
+    {
+      "path": "include/colmap/optim/ransac.h",
+      "bytes": 12747,
+      "sha256": "e42087440b3e13b091c1328b0c0fa71eaaf4b96c2ed0f112136f74d9116b912a"
+    },
+    {
+      "path": "include/colmap/optim/sampler.h",
+      "bytes": 3740,
+      "sha256": "0470b6e0d5b53bf5da09f9e4756ac3f8db5f386da27c8b527270af37299f5801"
+    },
+    {
+      "path": "include/colmap/optim/sparse_cholesky.h",
+      "bytes": 2813,
+      "sha256": "e1a453f01cf97941f64f41f7cccee29b66ef3f42b15327b463650d63c489210a"
+    },
+    {
+      "path": "include/colmap/optim/sprt.h",
+      "bytes": 2947,
+      "sha256": "ef3990e4cb3b661269744fecd2a5fb437644eec0250e18bc483a56b0218d184a"
+    },
+    {
+      "path": "include/colmap/optim/support_measurement.h",
+      "bytes": 4058,
+      "sha256": "0af3f50318b7444c9867d9223df9a0910e21dec4aa361c0079fd00410d709455"
+    },
+    {
+      "path": "include/colmap/retrieval/geometry.h",
+      "bytes": 2771,
+      "sha256": "1a74d09a48af90091da86c3baecd2ebb19994b06b984f6fbfdf2462ad52215f6"
+    },
+    {
+      "path": "include/colmap/retrieval/inverted_file.h",
+      "bytes": 13956,
+      "sha256": "ce2a481ec983581ed15543fa0cc6fde54f1fab375442a03b8d3693a396bc457a"
+    },
+    {
+      "path": "include/colmap/retrieval/inverted_file_entry.h",
+      "bytes": 3961,
+      "sha256": "1265c9248b3feb7878f7f5ca980b2d712fa3eb0a8b1981363299af7fd9c73e22"
+    },
+    {
+      "path": "include/colmap/retrieval/inverted_index.h",
+      "bytes": 16356,
+      "sha256": "93d69b57ccf75ba2788a9ec3226c812f5736511048cd3585089cf06b2364e495"
+    },
+    {
+      "path": "include/colmap/retrieval/resources.h",
+      "bytes": 3049,
+      "sha256": "8f667cb37ca5a4b416b7df510429ab6740348b9a19bcfabffb2ad5986249cf6e"
+    },
+    {
+      "path": "include/colmap/retrieval/utils.h",
+      "bytes": 3341,
+      "sha256": "a4ebc5fb5d97b3fdbdf5beedacb7024f7b962ae0d2c1a28cd958a7f21e4de728"
+    },
+    {
+      "path": "include/colmap/retrieval/visual_index.h",
+      "bytes": 6259,
+      "sha256": "1dff0d5bb850141b88bdf463235ffeb608e9d514b40f71f22d90ee6d5b6a4447"
+    },
+    {
+      "path": "include/colmap/retrieval/vote_and_verify.h",
+      "bytes": 3287,
+      "sha256": "1a3a3f83d5546b8757c53c4e4e06768f2fc21de81737a87b81486c6d96fe864c"
+    },
+    {
+      "path": "include/colmap/scene/camera.h",
+      "bytes": 11490,
+      "sha256": "a8617d0c2b57e5ece62a5a8c5a4701e20c10ab7b0ba7f5d67263187086ca8105"
+    },
+    {
+      "path": "include/colmap/scene/correspondence_graph.h",
+      "bytes": 10047,
+      "sha256": "44f5b159836aa7c66a5ba2b6773a099aec6215f2bd69a59fe1e25ee48c8b1171"
+    },
+    {
+      "path": "include/colmap/scene/database.h",
+      "bytes": 14708,
+      "sha256": "3d0a1426c1af465a1e53cae16d40f2651a4e8e16b3e2f490ff049286da9978d9"
+    },
+    {
+      "path": "include/colmap/scene/database_cache.h",
+      "bytes": 8318,
+      "sha256": "77d5f46119d2128f93b6d531f50fed05c2068d351e9d6961f890dc69118cedf6"
+    },
+    {
+      "path": "include/colmap/scene/database_sqlite.h",
+      "bytes": 1986,
+      "sha256": "5868e4a07651a6ba0d4a93c810163cc6f2fa90b29042b8a3cc5d509a5dd2b0af"
+    },
+    {
+      "path": "include/colmap/scene/frame.h",
+      "bytes": 7959,
+      "sha256": "6f10519b224f6a97b81007e3c8012c38bbeb851d6de076bd4edff6df35a85e22"
+    },
+    {
+      "path": "include/colmap/scene/image.h",
+      "bytes": 10744,
+      "sha256": "6204dadb0e459884f534673ae28ecb9ed81cdb2d1ef80b719431431624ae568f"
+    },
+    {
+      "path": "include/colmap/scene/point2d.h",
+      "bytes": 3008,
+      "sha256": "8d287e6c1b96e42270ac7b7885dfe61598a52a97223c373868de60f1799553fa"
+    },
+    {
+      "path": "include/colmap/scene/point3d.h",
+      "bytes": 2941,
+      "sha256": "dee8359e643b207187e6a61ac96f063510a5bfdc8e0b3e28f905312b9325938d"
+    },
+    {
+      "path": "include/colmap/scene/pose_graph.h",
+      "bytes": 6895,
+      "sha256": "e65dd56afe9c98cf8759271841c8bdadbb090a70899df420797304d3e1df0f26"
+    },
+    {
+      "path": "include/colmap/scene/projection.h",
+      "bytes": 4233,
+      "sha256": "b4ff4b3a6fb34da97309a2948be15c65b228470d5ce9b2a550b133787fd33cbb"
+    },
+    {
+      "path": "include/colmap/scene/reconstruction.h",
+      "bytes": 17785,
+      "sha256": "b58b7f58e2f5e2a8b6db28859c179013f9ca3f939e337f51464479073688d848"
+    },
+    {
+      "path": "include/colmap/scene/reconstruction_clustering.h",
+      "bytes": 3787,
+      "sha256": "7116da86a76ab2062b2f62450f02a828832614aad0f41cd5076f6825ddf4569b"
+    },
+    {
+      "path": "include/colmap/scene/reconstruction_io.h",
+      "bytes": 5974,
+      "sha256": "90ed33b7407311f45c824e5e1b54e8c6578637d56c1cfce58cb6dc428ed105d4"
+    },
+    {
+      "path": "include/colmap/scene/reconstruction_io_binary.h",
+      "bytes": 3916,
+      "sha256": "03e6f2d40a2c38d9fee28287afd99a803841e4ba0918bf6ade9e49d87fbcb154"
+    },
+    {
+      "path": "include/colmap/scene/reconstruction_io_text.h",
+      "bytes": 3827,
+      "sha256": "99c1b12be6dc2315e275ed45c1e0a6b11f7feeb6f597cd6dd3195e37dabad972"
+    },
+    {
+      "path": "include/colmap/scene/reconstruction_io_utils.h",
+      "bytes": 2806,
+      "sha256": "a749c25c515b2fa5855eb7c574a3207b3c8153d23f77323b397cd1bea402cf64"
+    },
+    {
+      "path": "include/colmap/scene/reconstruction_manager.h",
+      "bytes": 2555,
+      "sha256": "b234f2a6803d6ccea33830054af38ac037dbcc582beea50ae99a84c761e745c8"
+    },
+    {
+      "path": "include/colmap/scene/reconstruction_matchers.h",
+      "bytes": 8214,
+      "sha256": "649cd55c558a0e27b7d4986fbc5759536d9ce0bc92439f40bdf20ffb8a9b07e0"
+    },
+    {
+      "path": "include/colmap/scene/reconstruction_pruning.h",
+      "bytes": 1847,
+      "sha256": "a779be1ed6bd5d719a718d0c4ea51c6e91c5b3fc20ed7ef3628b3d8b924a5e03"
+    },
+    {
+      "path": "include/colmap/scene/rig.h",
+      "bytes": 4768,
+      "sha256": "4c3400bc4a1d36641b7c31ae9b387665c1c53077c79d2798abd4b7e88de2cde1"
+    },
+    {
+      "path": "include/colmap/scene/scene_clustering.h",
+      "bytes": 3637,
+      "sha256": "02870095f158aff4ed09536476f675ac00e943f35b545ebc2b41494968584d1b"
+    },
+    {
+      "path": "include/colmap/scene/synthetic.h",
+      "bytes": 5407,
+      "sha256": "8500a85f1d30666ab8d85ba9dbae9b830492f0b1afbb2eb110262a4a025bbe06"
+    },
+    {
+      "path": "include/colmap/scene/track.h",
+      "bytes": 5458,
+      "sha256": "8c131bc70de010143e12b34de9e1074347f0f9728169f12a1e902ee48f12ea4a"
+    },
+    {
+      "path": "include/colmap/scene/two_view_geometry.h",
+      "bytes": 3156,
+      "sha256": "477a596a4bfccd597e5b93b82b9583986c62f0ba2663b5a5dfbcf83716368ee2"
+    },
+    {
+      "path": "include/colmap/scene/visibility_pyramid.h",
+      "bytes": 3662,
+      "sha256": "23069f873a9444c41687cd45b0d85a5cb47ea0dfe2ac12067aa2eee4390066bb"
+    },
+    {
+      "path": "include/colmap/sensor/bitmap.h",
+      "bytes": 10814,
+      "sha256": "3754381ba9d1aca1939060170911ce180e54ad1cbe38d5d079ede3a8df7991e6"
+    },
+    {
+      "path": "include/colmap/sensor/database.h",
+      "bytes": 2212,
+      "sha256": "08fb9f1843786cb629fd79d300013bf367694eca922381f2abace811e7740f1f"
+    },
+    {
+      "path": "include/colmap/sensor/models.h",
+      "bytes": 96246,
+      "sha256": "242d629a3b03e748146aba9f63f22ca04d8513dd4d11d58169fd0fd7353f74c6"
+    },
+    {
+      "path": "include/colmap/sensor/rig.h",
+      "bytes": 8345,
+      "sha256": "92efd3c7c8b2743331b807f5b83f99a76783dc3b63db54f64422a9ad936d4f40"
+    },
+    {
+      "path": "include/colmap/sensor/specs.h",
+      "bytes": 1996,
+      "sha256": "544f5e433abc84d15e4ec3e9fd0c7c2d200e44498640985c439a771950b870d8"
+    },
+    {
+      "path": "include/colmap/sfm/global_mapper.h",
+      "bytes": 6227,
+      "sha256": "2ba46ed40317b20667622ae4e9fd953bbbbbdb34278ab711a2e613a244b882fd"
+    },
+    {
+      "path": "include/colmap/sfm/incremental_mapper.h",
+      "bytes": 16747,
+      "sha256": "11db638cafff38f3e92afd37c47ae1a707ccd47912bacfd1ef18aa63ca41a50b"
+    },
+    {
+      "path": "include/colmap/sfm/incremental_mapper_impl.h",
+      "bytes": 4497,
+      "sha256": "c5b6ddb45a5e3d080cb1fbca98a450b2262e5c04e70a65d8c0cbf13592b5c224"
+    },
+    {
+      "path": "include/colmap/sfm/incremental_triangulator.h",
+      "bytes": 9956,
+      "sha256": "d101af8076605d149de68ff58dfa2ab914f55d0bcd5bb880435be472258634fa"
+    },
+    {
+      "path": "include/colmap/sfm/observation_manager.h",
+      "bytes": 11575,
+      "sha256": "5fd7375f9cc35f141487e783818441fcd2779135c6c7332cb36e3295de331b7f"
+    },
+    {
+      "path": "include/colmap/thirdparty/LSD/lsd.h",
+      "bytes": 14631,
+      "sha256": "02edcbb6e7b19dfd7117ae1a13b9b5810c74e1cf69ea5492eafe7ccc65026eaa"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Allocator.h",
+      "bytes": 4261,
+      "sha256": "c382bfb158c955195254da9de85c8720dc215c3094703bd035cae6a5412a24bf"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Array.h",
+      "bytes": 7258,
+      "sha256": "f122cf43ecc19eded562d8fa19f2e2b2289ae9e20cf7ad84591188a386fc43a6"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Array.inl",
+      "bytes": 15094,
+      "sha256": "e23201b6d94c73b9bccc27484f01669c9f4f45c6f85ce2563b107a8d80aa62fd"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/BSplineData.h",
+      "bytes": 30805,
+      "sha256": "c61adbe2015e177c096cc6f37f012aa5dabd4b91ae2c96d13c9636472b240061"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/BSplineData.inl",
+      "bytes": 32014,
+      "sha256": "dd796249fca89f90f454f61e8dfbfaa68960820d204cb58015afebb6d6908323"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/BinaryNode.h",
+      "bytes": 3927,
+      "sha256": "d7189ab751baee117fc00b1ae7339af62f28f73520b9826c0802764bde4903c2"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/BlockedVector.h",
+      "bytes": 10947,
+      "sha256": "c546988716582785169929fa5bc64db130e6a232d41104c31186f970e16a5135"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/CmdLineParser.h",
+      "bytes": 4180,
+      "sha256": "7961affc2369bba493020f2f7304632cb80248ea99a233ef65b5ac4b64d8994f"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/CmdLineParser.inl",
+      "bytes": 12129,
+      "sha256": "98d2243b4278c31378831ccb4885100b65ac01644b29f9b311bce98db74e3d05"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/DataStream.h",
+      "bytes": 12255,
+      "sha256": "2d297578abe37f461f8fa3b343e4c20d417a8b2f0e806fc4114e82995042eed6"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/DataStream.imp.h",
+      "bytes": 13433,
+      "sha256": "e9f2a0fb601a234a18cf0ee6ee21c59990643f5d0cffbd7dabe8dc0156442172"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/DataStream.imp.inl",
+      "bytes": 8551,
+      "sha256": "ab21e0ee1f9ba57add00b869aaa3fe48be1c4b30f962b77318c49c0c019003bd"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/DataStream.inl",
+      "bytes": 17137,
+      "sha256": "303f9976d19dfebdd7522f05ba2bc80043630f9227649acf92d96040602df0f7"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Extrapolator.h",
+      "bytes": 10859,
+      "sha256": "de486f2633f6c78f3c95c7b13e02c73fe6972386743c90808b82add05b6b833e"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/FEMTree.Evaluation.inl",
+      "bytes": 59370,
+      "sha256": "eafb269c7104582bdc17c76d2b21b72d08e2a892ba5e54121511f681e7a623f0"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/FEMTree.Initialize.inl",
+      "bytes": 56245,
+      "sha256": "586ed835bfe35275077912463b1a7d024ff464be563862fdc3dbd9bd870542ec"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/FEMTree.LevelSet.2D.inl",
+      "bytes": 58786,
+      "sha256": "dc68c08f4070776f5a080a9b1f78397d57080fa7e27c58d6fd18447c00b3b727"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/FEMTree.LevelSet.3D.inl",
+      "bytes": 123489,
+      "sha256": "b1e06bc9cbe27738814d425918e7976f2ddb6a5173f7126d8a9949e64fe2a456"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/FEMTree.LevelSet.inl",
+      "bytes": 36400,
+      "sha256": "a4ac25f56d474ad3f9d3d68fbc1edd3804cb5facb02fb5b62669b735e5ff559f"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/FEMTree.SortedTreeNodes.inl",
+      "bytes": 5656,
+      "sha256": "e63a72a7b8e86f6bec348bda9e231e78ef5c939be7a24f33cd60f18d01a8e990"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/FEMTree.System.inl",
+      "bytes": 183038,
+      "sha256": "02298f51a76f8493988a2057edb8b1ec0afb0bd257fc9f9477e922b049f270a3"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/FEMTree.WeightedSamples.inl",
+      "bytes": 25096,
+      "sha256": "bd81790e364f7f45c24813847628aeca90043d5d758d5a9585a47802a8549040"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/FEMTree.h",
+      "bytes": 247359,
+      "sha256": "f91c9afb659f8d993c1cee4a4283b9483c226ff0881cd76f3da1e3ecd0f636bb"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/FEMTree.inl",
+      "bytes": 98088,
+      "sha256": "41cd3870ccde05d9bf1a566b765ff283d352626d4516e0ca80541be2312c6ffa"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Factor.h",
+      "bytes": 5272,
+      "sha256": "f4c877eb92aadab967cbb1aa1447f3b4d60c7f646a698f3e8c160c37fcf332f9"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Geometry.h",
+      "bytes": 42908,
+      "sha256": "567806df6b199e4709774e27fee2f4ed9b9362901d4de0b1c2d6c3c4be84bb5f"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Geometry.inl",
+      "bytes": 4024,
+      "sha256": "c535e5b4b5077fa6f8f1f0d9f98a4a244ab0e079986ffc43664cec3f2fe01052"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Image.h",
+      "bytes": 21561,
+      "sha256": "ce85f8fbcce113d0dcb17f54dc01d8a3faa6401688020af60e6a07b0bcce79b9"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/JPEG.h",
+      "bytes": 2996,
+      "sha256": "4329c8ab363802f6511c8bb43445610f890f3cd230179f8d919f0df6e755d6d8"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/JPEG.inl",
+      "bytes": 5086,
+      "sha256": "a9a9ae15de559b39ce81628649908d722b4e86831cd0adfd9be60b2fe7803750"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/LinearSolvers.h",
+      "bytes": 23063,
+      "sha256": "75b393d86ac9464943fc13435d24e6318b0ef52cf9c52963a906323a59448415"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/MAT.h",
+      "bytes": 2952,
+      "sha256": "f93d3c639383a4ed57b82d3f91ee5bad0c228c6a37a5fe43fc8b441a99afd43e"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/MAT.inl",
+      "bytes": 6429,
+      "sha256": "3062c10cb69112e2002c04c6f6f225b293a5b24e351be6782017b2c8d474836c"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/MarchingCubes.h",
+      "bytes": 49442,
+      "sha256": "d6e48ae27f347f488fbdc4b8328ac047f4d945afcc4fca1fb75f36eff69ab757"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/MergePlyClientServer.h",
+      "bytes": 2701,
+      "sha256": "322225503147ee1132283909c7c5fefbac0e37ff4bbf324ef0e188890d13ba79"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/MergePlyClientServer.inl",
+      "bytes": 19591,
+      "sha256": "76eeb8f7f8978769401749b8fe7cc230a40b4bffd2eba10775298747e3f9b9f1"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/MultiThreading.h",
+      "bytes": 7547,
+      "sha256": "9dd13fd1d4cb42a811003f7ea38344a7d9e8ddeaa813515da0105344d1be882d"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/MyAtomic.h",
+      "bytes": 13529,
+      "sha256": "cfe930346b7c5a2a9b94b95b768c1b3b7502526396d607e9153aff762e4f4cc4"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/MyExceptions.h",
+      "bytes": 4773,
+      "sha256": "28427f5a9107cdc836a3843da49fc16d6e1a737a680f34bbfefa9cbb4a5e8405"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/MyMiscellany.h",
+      "bytes": 11204,
+      "sha256": "5e91bee676f808a8bf2e2ee6c23a92fd6b731240a34fe3c27587247faf2dd15a"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/NestedVector.h",
+      "bytes": 9825,
+      "sha256": "9d5c3722d484ec06448c1c7a6b993448317cfa53a29509c35907cff1ba7db348"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/PNG.h",
+      "bytes": 2623,
+      "sha256": "21cd6c930c1131bf68184f331c42a791d0afe749db4a4cc27f79913107950a66"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/PNG.inl",
+      "bytes": 6287,
+      "sha256": "e255f2768cc29bf092a265caddf86fe66944cae0dbe09d85f55e51373f5fac18"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/PPolynomial.h",
+      "bytes": 4270,
+      "sha256": "1f92418a1b817170985d71510d566e59cb0721930f182826591d2cd9e8bcfd40"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/PPolynomial.inl",
+      "bytes": 13951,
+      "sha256": "e20d1b00b0fce07285bbd4cde1d772cfdcb2acb327c678c7f52828fe78fd6cc3"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/ParameterPack.h",
+      "bytes": 17204,
+      "sha256": "8b53c028abb7658ebfcb3b102df4acef82dd7f5a0561d82c06eb6cbfd1a13131"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Ply.h",
+      "bytes": 5597,
+      "sha256": "115df9d5db41b17e5ec21353b801cd1b5c84230fc38e0f60075ebd1aef8f982f"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Ply.inl",
+      "bytes": 24799,
+      "sha256": "2261e62e21d69385fcbb3edafd597db8319231268b3ab4680d40bde386610557"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/PlyFile.h",
+      "bytes": 10770,
+      "sha256": "9e266824502f9253d9f8bdb1027431f689d711552bbe1876a6c5fe00e77f3e87"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/PlyFile.inl",
+      "bytes": 63984,
+      "sha256": "30b96b7a0727f6ff170263d5db3695d8a0e5d63e5a758c59f2ced45cbdd924dd"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/PointExtent.h",
+      "bytes": 3932,
+      "sha256": "f8b79cb0a7bb8ac249a9371f6ddc8c81400c4c6fecce3b21484414b5e9fe5144"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/PointExtent.inl",
+      "bytes": 7383,
+      "sha256": "116e70f2d5cb9a77dfa5d31c7c90d5db7b0537314df5f4a0c399b1f195a7a6fb"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/PointPartition.h",
+      "bytes": 5777,
+      "sha256": "9ca83650c255cc16f8aef0a04f4bc057329be6498529d681bb2a87e8f6772094"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/PointPartition.inl",
+      "bytes": 21039,
+      "sha256": "a4320daeca18c9aee75cee1dd096b35d225829a93ec3b00ec6f3254a8101128d"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/PointPartitionClientServer.h",
+      "bytes": 2678,
+      "sha256": "23c2e404e2ae85bd0bd8ad7c826dd0d830b4d979242cdfb465b4ef19ff16fa4d"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/PointPartitionClientServer.inl",
+      "bytes": 19698,
+      "sha256": "3d621b6b693e5379914e6c1ae762d212ca2bdfcee92386fab0e5ae304c2f34b0"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/PoissonRecon.client.inl",
+      "bytes": 72294,
+      "sha256": "57ef3936c2b8d0d9f9872e54c16d13dbb07ca55a730b5fffbe7a60320d50cc83"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/PoissonRecon.h",
+      "bytes": 48,
+      "sha256": "7fb2d7387be913ceae3c5931236b7fdd18495cb7d169cd1f804bcf8a41610e2d"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/PoissonRecon.server.inl",
+      "bytes": 34849,
+      "sha256": "9687786331f753003e80fa92a46b683602ba2726db336f6989a1082bf2094e32"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/PoissonReconClientServer.h",
+      "bytes": 3678,
+      "sha256": "aab4368e90b0654e830d8395ef3b3dfef652b4eb693581f9019fea4843938205"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/PoissonReconClientServer.inl",
+      "bytes": 16679,
+      "sha256": "5bc1334b5b5d16df07e32ee1916ac7f1e37075d88df35c963a47d2a5b8d914aa"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Polynomial.h",
+      "bytes": 4490,
+      "sha256": "a040933c6266ac692bfdee60156eec99d09f69aa28a32fd127f27187a367063a"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Polynomial.inl",
+      "bytes": 12099,
+      "sha256": "c1090783bfbdb2a4f27d23151fc2118b0d5342ddabbe5071c80b5014d23b93b0"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/PreProcessor.h",
+      "bytes": 3054,
+      "sha256": "57a763b67cc432657261018e8f72b46104a6973b82e171ae64e85e1cd286ce33"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Rasterizer.h",
+      "bytes": 5232,
+      "sha256": "f01692e9db9862530f9fdfafa9c08eca5e9b85fb54676a25a4890a0383c8ece4"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Rasterizer.inl",
+      "bytes": 10874,
+      "sha256": "5a7c17375860e63b7f6d423b29e4f7be1365bd2a6cfb7bc9b69ef057aa4c44b0"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Reconstructors.h",
+      "bytes": 68447,
+      "sha256": "c9d8841bbd16d60b832483413469db5aed6efdbf356a7e4971b1690faf8fd213"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Reconstructors.streams.h",
+      "bytes": 22616,
+      "sha256": "da5dbc19b31fab14b8914832a4e68ae9b3460666f2e6d3ce2443864f576ea686"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/RegularGrid.h",
+      "bytes": 15522,
+      "sha256": "f323a2f63e90162d6be6de2213bc0800b91397779d8d139ead5fc80b8c4b97ba"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/RegularGrid.inl",
+      "bytes": 8237,
+      "sha256": "41756e06232a405fd8ff21ba38a4720e7ef1b7d844ad1e2345a9b4ab73427475"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/RegularTree.h",
+      "bytes": 25652,
+      "sha256": "108c0396b217a08e6236a0d143be74caecc3a0d7879f2a206aae6ad3999530df"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/RegularTree.inl",
+      "bytes": 59254,
+      "sha256": "0b328a9b2b9874ca83fc431ecbce15f5d98f6b1abb90ea729fa80783a4b30ed3"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Socket.h",
+      "bytes": 6415,
+      "sha256": "914973a40cf4b668154288d3c3ea63457255c67cccac6417f75722779d540381"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Socket.inl",
+      "bytes": 7960,
+      "sha256": "ca39ea2e587f996f49949eb722470172eec4630a22beb1b1191772bd58a2972e"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/SparseMatrix.h",
+      "bytes": 7998,
+      "sha256": "d701d0758470fcc4d6ef80a3b4c99edcc961e77704a1ca51c83602af8a1364d2"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/SparseMatrix.inl",
+      "bytes": 25211,
+      "sha256": "5a33647ae798f66d5dbf6664f21bd0aea39fe69b17f3a4472bc9d13193e0d99c"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/SparseMatrixInterface.h",
+      "bytes": 8978,
+      "sha256": "355a4a18ec966a5493957d7f43df884e7de87342240a6ad20cd0ec19bb1cf42e"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/SparseMatrixInterface.inl",
+      "bytes": 14507,
+      "sha256": "5aa1e1fdc4604d1220fabac5d2136463fafbeb840b79ab27993af4c6f5c81b83"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Streams.h",
+      "bytes": 5862,
+      "sha256": "32e7bb3be66d4c4d2d998fbc22d8fdb859b52b2929d992df6078b976ea41d8c5"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/SurfaceTrimmer.h",
+      "bytes": 50,
+      "sha256": "dbcf7105fde436fe68198f7ea8b4cf306bc500430b725ac93f758d2bd67ac2fa"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/VertexFactory.h",
+      "bytes": 35521,
+      "sha256": "ff6c294420ce9b3d83f3da1b9b2945138e4bf8d928dec6dde2279f8b0b26dddc"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/VertexFactory.inl",
+      "bytes": 25706,
+      "sha256": "2aed0c37f72ff46c6c3c5d7d09a1f45e84d9e0a95d4966c3cbde0a3246586f36"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Window.h",
+      "bytes": 16494,
+      "sha256": "49164708b7523249fe6046840f8a3e7905cc18a57b04f51e5069f012eb66ff68"
+    },
+    {
+      "path": "include/colmap/thirdparty/PoissonRecon/Window.inl",
+      "bytes": 8334,
+      "sha256": "5f48431af4c833f6e2e22530484fef249b33743bdc211c800dffcd181c13bce2"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/CLTexImage.h",
+      "bytes": 2784,
+      "sha256": "c06ddd7f55338e8af8a3519f265a083b5a73b9d86db1dbdbddbf9244b7dddf49"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/CuTexImage.h",
+      "bytes": 2370,
+      "sha256": "af56d4c345e5e40cba96f0bba39876fd57fdf80c01e148f43c9b15ee6efb3842"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/FrameBufferObject.h",
+      "bytes": 1609,
+      "sha256": "394ba45e696adc21c33dbb6b97df2c828c75f83f710c69e5eb866fc37e3fcc06"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/GLTexImage.h",
+      "bytes": 5689,
+      "sha256": "f91ba54bdbd717b8ac339e26cf3bdaaecea2f31faf5dec8d8611d94b12349efa"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/GlobalUtil.h",
+      "bytes": 4802,
+      "sha256": "ea139c8403e909c609222837668c0731493489230419254bea4d133ddcbe8a6d"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/LiteWindow.h",
+      "bytes": 252,
+      "sha256": "1c5df5149fb9b84051693529fce5437fc7f52bc56e39f85174f607249b57dc5a"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/ProgramCG.h",
+      "bytes": 5963,
+      "sha256": "42419251e8471b01287a7d69c0d8d1f93a1c3a96baad5b7bba864335643450a9"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/ProgramCL.h",
+      "bytes": 6110,
+      "sha256": "d3162a7aa19fa09133689996c18fbd47384a09b11bd108ad5150f6f00599ffd1"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/ProgramCU.h",
+      "bytes": 3397,
+      "sha256": "75b1306a1f2f22c10d034dc0f8d97b52a7ba60283c8b43fc2425f7592e7735c5"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/ProgramGLSL.h",
+      "bytes": 9404,
+      "sha256": "94fda6072326c2bee501477506f71ab081f0695ca0d83ac8bfc8f438526e11b5"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/ProgramGPU.h",
+      "bytes": 1963,
+      "sha256": "b16b76f5d067e5b2eefc95b6f153afa7fdca15810a49e6a1af4c62ff39c5291e"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/PyramidCL.h",
+      "bytes": 2708,
+      "sha256": "128a20f557561803dfe69944b68be6f6310c2ea7d2bf4329e4327fa8bd7275d0"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/PyramidCU.h",
+      "bytes": 2910,
+      "sha256": "7b1d3fcdd5faabaaa1dd7d868a7f08b8d4790659abc05b7476d595a6248c8eda"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/PyramidGL.h",
+      "bytes": 3840,
+      "sha256": "147a4b90b571ed2d996adabbcf2a46a43c75e7fa2fd8c070f50d4ec023c0354a"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/ShaderMan.h",
+      "bytes": 3307,
+      "sha256": "537fb9aa1b79d775c156cdbad7cb7763c4196a6ed5cb56e3cb21a64360c8a990"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/SiftGPU.h",
+      "bytes": 15030,
+      "sha256": "1eebb7bca362ca97228ce344d85642b06464fd4ee1232130bdfebfb5ac32a4f3"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/SiftMatch.h",
+      "bytes": 2878,
+      "sha256": "9349ea4bd40c8d95db634fa7bedcc1ec0c630bd2e44f4e7c5daf7bb8c57c52a0"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/SiftMatchCU.h",
+      "bytes": 2222,
+      "sha256": "35f387011e93a49716494d4ed50ac78693b08b101cb1c484fc5aad098e888850"
+    },
+    {
+      "path": "include/colmap/thirdparty/SiftGPU/SiftPyramid.h",
+      "bytes": 6330,
+      "sha256": "f5703e9a0884e7d528850a7041f51e653dbd8c6a3af1b3b1cd594410ff7ed58d"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/aib.h",
+      "bytes": 3553,
+      "sha256": "5b28b7c0cd5f9424b89d1c127a724ced285d9274ff9703fa526204fb311510c4"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/array.h",
+      "bytes": 2654,
+      "sha256": "cf6fdf209f6bbab5df7da4c392b51439853481dd9e6e68b2b1755d537b42cd50"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/covdet.h",
+      "bytes": 9234,
+      "sha256": "3d475f2a7f8033b7dc525b61a467b95da1ff8554ba801fd233f816a4a1bae200"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/dsift.h",
+      "bytes": 11052,
+      "sha256": "be9e5435148b619f9ae459d8a10b8c3726433dcc94dd791ce5855e33b0a83839"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/fisher.h",
+      "bytes": 1536,
+      "sha256": "a51dace3138b29cebf6c45c16a4040f23e383e0178d2b01869b5fddf4fff922c"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/float.h",
+      "bytes": 3258,
+      "sha256": "485241061eaf6b118982aadd5f99186ff6ef672c538cd8ec55b17f10c9d180bc"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/generic.h",
+      "bytes": 6729,
+      "sha256": "ac22f8e9baa84237a99358145d06fc11111b94c7e0ad4df453621ec684a312fa"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/getopt_long.h",
+      "bytes": 1479,
+      "sha256": "1988dc902f01d624717c1dc19f8ec63cd809454796a45a3d7df742bb7c41a4c7"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/gmm.h",
+      "bytes": 4424,
+      "sha256": "2b3a9a83a9e4edeb12597590f4ff2ea574ed2b092340e7b34eeee5d4ea05b9a3"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/heap-def.h",
+      "bytes": 13645,
+      "sha256": "f21d1d7629a813a54ba3cb7f87d12199794a99f80683f975072b5c1833b72960"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/hikmeans.h",
+      "bytes": 2202,
+      "sha256": "a4f0ce6276d5d5dad0d4a6ea680a3c7276ba7b5c527e1e8e46052e512fee115d"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/hog.h",
+      "bytes": 2776,
+      "sha256": "d911c99874e48725f23ca09bca25e756b3b0f6148d074628d07c5d5fc7676402"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/homkermap.h",
+      "bytes": 2592,
+      "sha256": "fe1ebcc561a9a126cebd69cf3176860ed54361180019cf850a1df2f044437066"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/host.h",
+      "bytes": 17020,
+      "sha256": "08dbdee979dfb041c4cd25cac1472141b92f7e074fa9ffe34104f54786538197"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/ikmeans.h",
+      "bytes": 2676,
+      "sha256": "2a52d5683884691625bc49fe03ee32600dd7b278cb82af7ee26e1bc216a7b953"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/imopv.h",
+      "bytes": 6075,
+      "sha256": "e8f1bd04e685f99e8ce705647170d7c06705d4896b8114e8ae87722ae3a093bd"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/imopv_sse2.h",
+      "bytes": 1768,
+      "sha256": "3d62c1fe804dd21c0b4fc6246aca1d7d2396f41cd1346b0bfa56c919be3a068b"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/kdtree.h",
+      "bytes": 5706,
+      "sha256": "fe45bab07c9b7519ece921648ae88c212410035fe0dcbc3f61e14f9c3e43dbff"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/kmeans.h",
+      "bytes": 13287,
+      "sha256": "84e24fef6ebdfb9bae8f4d223f45450d862a4c441e512f072236cc29173a6708"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/lbp.h",
+      "bytes": 1147,
+      "sha256": "f11479181de09bfe10e6b4e095e8431613cbe20143f3f1de3f99a2bea9287125"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/liop.h",
+      "bytes": 2280,
+      "sha256": "53d0285493bb94558509f2268f58f08ba6970191ab811adeab6e013d5f435a6d"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/mathop.h",
+      "bytes": 18371,
+      "sha256": "6144652d313275f03b5e39159614ca9152f94a07d40b43f23d97608ac715bcee"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/mathop_avx.h",
+      "bytes": 1374,
+      "sha256": "773fbcc1a27382ead41558028790b9e9e8ae63d42b90f4f5a8dad31ad4020a84"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/mathop_sse2.h",
+      "bytes": 1963,
+      "sha256": "8bd38be9649ca9b0455e3d19f1eeeaa71454e81318f779a1e5eb0c3b47e70e7e"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/mser.h",
+      "bytes": 13492,
+      "sha256": "29c62eed9d441da598f996dfd51730d7853bd8ae112de0c7ad94b30430ec1cc0"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/pgm.h",
+      "bytes": 2356,
+      "sha256": "943090052a9e1861e265ff171afefc8e0d81923ce10c535b0e5dc6e5490e0e19"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/qsort-def.h",
+      "bytes": 5124,
+      "sha256": "7151255fa1b4c1ae52abd8c364fd34fef65ea6efc048acd3c158be5a261ab599"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/quickshift.h",
+      "bytes": 5487,
+      "sha256": "1701f44a61be1c9bd92e7f9dd4a66f678822977f0f3264c2d36307c0d18d3644"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/random.h",
+      "bytes": 4088,
+      "sha256": "3317cfd9dfba543a3d88b36bb1ddb6ad8364d6ce9d9591a2e659a10e5c74e24c"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/rodrigues.h",
+      "bytes": 778,
+      "sha256": "c6aa58076a46bc9c1839bee566b24c2773a8a45fd55fbead3b091f35eaef8119"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/scalespace.h",
+      "bytes": 3563,
+      "sha256": "80ae40aff6857493990197222d82cc158c36df5f9909c7bdf5cea5cfffd99485"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/shuffle-def.h",
+      "bytes": 2518,
+      "sha256": "71ae3f4638bf43a5385fd0d2a00b72cd21e78bd8d9d8e8ac7b4b4b9de45981a6"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/sift.h",
+      "bytes": 11779,
+      "sha256": "a34d887347ae4bf8d6f96cbcd021da26ae292601966e361ac149ab570728c16f"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/slic.h",
+      "bytes": 698,
+      "sha256": "0e9443f036977813d473a7b9b6aafb952b11787d4b302cc3580adc5f12b86126"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/stringop.h",
+      "bytes": 2243,
+      "sha256": "1ff9ecf4c71348167c16593cd5de35ef0ff16d39de0a742eaf716c250a20333f"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/svm.h",
+      "bytes": 8009,
+      "sha256": "115cd3f71bd24be5457af55f5744f3b2d9b2117404651f382e6a5d489d0b1cfd"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/svmdataset.h",
+      "bytes": 2752,
+      "sha256": "4bb71687dbbe9392934ea9ca89d48c472d86a2d8f47c74c07aa905c5805fed9a"
+    },
+    {
+      "path": "include/colmap/thirdparty/VLFeat/vlad.h",
+      "bytes": 1284,
+      "sha256": "a2acbe2e2f7a66f9c3ab7b07cf3b0705591234c09f9906a4fbc1e4afe15adf56"
+    },
+    {
+      "path": "include/colmap/ui/automatic_reconstruction_widget.h",
+      "bytes": 2329,
+      "sha256": "a81634b1896c3f904ac4cd1f5538e713d20833a7d2a8fb8f921348aabf7b6fd8"
+    },
+    {
+      "path": "include/colmap/ui/bundle_adjustment_widget.h",
+      "bytes": 2342,
+      "sha256": "e65e77599de77e3dd6775b58e8e16d22a9bc6ad169129de63a9fc5cccce4293b"
+    },
+    {
+      "path": "include/colmap/ui/colormaps.h",
+      "bytes": 6782,
+      "sha256": "518786b1a72eee67e4f41edf64187f1771debe42b255bc8cec0d57f21ad50a79"
+    },
+    {
+      "path": "include/colmap/ui/database_management_widget.h",
+      "bytes": 5593,
+      "sha256": "1bbec58adb164c7f8e9e3c8a9cfd852d52f41610c0e4574037455e290d8cbd4e"
+    },
+    {
+      "path": "include/colmap/ui/dense_reconstruction_widget.h",
+      "bytes": 3540,
+      "sha256": "35c0d08e31355652327a71781a818c2f69a8ccf6a689352ebe91f6125a6c31b1"
+    },
+    {
+      "path": "include/colmap/ui/feature_extraction_widget.h",
+      "bytes": 2526,
+      "sha256": "2a35250cd22c7fa76fb6caa96f797adc5b531402e0b5ecc0457368d34412f193"
+    },
+    {
+      "path": "include/colmap/ui/feature_matching_widget.h",
+      "bytes": 2061,
+      "sha256": "d46c457567a5ebf6ae698a53fb16e46fd3681e27da950753034c3d81fa9179c7"
+    },
+    {
+      "path": "include/colmap/ui/image_viewer_widget.h",
+      "bytes": 4363,
+      "sha256": "f27897285493bddd49922929832e545ef3354f588d6f11346b922e71eccb7e38"
+    },
+    {
+      "path": "include/colmap/ui/license_widget.h",
+      "bytes": 2034,
+      "sha256": "2a743089d54a02153788ccf822a6d51634de25aad74e8be11e587078a187c1a8"
+    },
+    {
+      "path": "include/colmap/ui/line_painter.h",
+      "bytes": 2365,
+      "sha256": "43fc958964fabbba1c044ff5ced0e28cbecae0652f7f351970b5e195333e4857"
+    },
+    {
+      "path": "include/colmap/ui/log_widget.h",
+      "bytes": 2244,
+      "sha256": "f99a57fe885a4c64acfe4090c443d4b743f3995e87f82bdd7401159686086426"
+    },
+    {
+      "path": "include/colmap/ui/main_window.h",
+      "bytes": 7711,
+      "sha256": "dda8fdf2e47eebb2b69900c9a11e6cae7ab99de8144dbc70bddc29bf7c2300e0"
+    },
+    {
+      "path": "include/colmap/ui/match_matrix_widget.h",
+      "bytes": 1994,
+      "sha256": "2a1de6a45a446022f3cc5f5a3bfd03b52769d940f07a70fa39a24c2e7000d4a2"
+    },
+    {
+      "path": "include/colmap/ui/mesh_painter.h",
+      "bytes": 3436,
+      "sha256": "3b2f91a2ff240c91ff5d4a4c8339ad63cbc61714c8fff5bbb23d0cf563b30796"
+    },
+    {
+      "path": "include/colmap/ui/model_viewer_widget.h",
+      "bytes": 7647,
+      "sha256": "687186965fa4233751c4833378f2caf139a833cecce8f0755c812c4b232a46a2"
+    },
+    {
+      "path": "include/colmap/ui/movie_grabber_widget.h",
+      "bytes": 3004,
+      "sha256": "f03f3331b5405eb02771aa625d262023885f3c402f782a0be30024e967691480"
+    },
+    {
+      "path": "include/colmap/ui/options_widget.h",
+      "bytes": 4489,
+      "sha256": "d004517ba0b3e1aebb1c274b9715945a837cf494942e8100e7120ba2475b4da1"
+    },
+    {
+      "path": "include/colmap/ui/point_painter.h",
+      "bytes": 2338,
+      "sha256": "35b0d213d36adac14e24ae522b14adffd42969fb77bc136e57d4bb57a5428e34"
+    },
+    {
+      "path": "include/colmap/ui/point_viewer_widget.h",
+      "bytes": 2818,
+      "sha256": "ef0e27f5b26b8db4f61ddc7a739d5335d93ce283e749b143970f144f98828295"
+    },
+    {
+      "path": "include/colmap/ui/project_widget.h",
+      "bytes": 2537,
+      "sha256": "f76196db7593a541ebc44a89cc4beff9f519cd389f5c0af69e34ef8d4f978f29"
+    },
+    {
+      "path": "include/colmap/ui/qt_utils.h",
+      "bytes": 2575,
+      "sha256": "e9c24deb24cacaf5f81003bcbab6ad89d8720ada4992bfd53e99103e9e793b43"
+    },
+    {
+      "path": "include/colmap/ui/reconstruction_manager_widget.h",
+      "bytes": 2196,
+      "sha256": "435fd2c37e2a2e30c53387b4a1e3f973cfb41c763284133fef36d3e1c1940b07"
+    },
+    {
+      "path": "include/colmap/ui/reconstruction_options_widget.h",
+      "bytes": 1948,
+      "sha256": "6a0b0f0a1ed1534b0d45014dec3dd9e4d84333e1fceacda290c62aa1faa533fa"
+    },
+    {
+      "path": "include/colmap/ui/reconstruction_stats_widget.h",
+      "bytes": 2029,
+      "sha256": "ab81658719e1b02b83fdca43953310131d91c5c0088e4ff11cb1326664db58c4"
+    },
+    {
+      "path": "include/colmap/ui/render_options.h",
+      "bytes": 2996,
+      "sha256": "779812038fded44d023eaa8a030cd96ad0d7e5e9d0e8efcc65108d4d2478b9e9"
+    },
+    {
+      "path": "include/colmap/ui/render_options_widget.h",
+      "bytes": 3242,
+      "sha256": "fd60ddd3ccc6c148722e8057aef5a21927b465e5fd932dd57ede69cd495aee6c"
+    },
+    {
+      "path": "include/colmap/ui/thread_control_widget.h",
+      "bytes": 2234,
+      "sha256": "129b9c64ee2ee122e33523c5a99ec5c91ef2dc35073d3e6eca6d477d4e097aa8"
+    },
+    {
+      "path": "include/colmap/ui/triangle_painter.h",
+      "bytes": 2389,
+      "sha256": "4a94e6ff381d200aa27abbd6b951c5171f90d7a9144189625c9b437aa08e0d68"
+    },
+    {
+      "path": "include/colmap/ui/undistortion_widget.h",
+      "bytes": 2516,
+      "sha256": "e66c74ae3da3accc2abdd34e69f4f7beb5203723313ed67826046480f08257ef"
+    },
+    {
+      "path": "include/colmap/util/base_controller.h",
+      "bytes": 3018,
+      "sha256": "2cc0a03038b4941b00d5408f1f8099063a10b210429272401111dd2422513c6f"
+    },
+    {
+      "path": "include/colmap/util/cache.h",
+      "bytes": 13996,
+      "sha256": "29463e1a497ad793bc721a28248bf0458546d149a018c277f1258119429a1d1a"
+    },
+    {
+      "path": "include/colmap/util/controller_thread.h",
+      "bytes": 2945,
+      "sha256": "c522ca09bc191e8536350482eb29f77bb6ffa6b691a38cd5e40b817dcc1d74d0"
+    },
+    {
+      "path": "include/colmap/util/cuda.h",
+      "bytes": 1777,
+      "sha256": "62487872905ef02585886846e5110c787a49e19f856ecf26f4868d123bcfbe89"
+    },
+    {
+      "path": "include/colmap/util/cudacc.h",
+      "bytes": 2331,
+      "sha256": "83123a1f1cbf6b139fc4cfe44263ed465a950400dc7e10ccda5ca90399d8fbc7"
+    },
+    {
+      "path": "include/colmap/util/eigen_alignment.h",
+      "bytes": 5837,
+      "sha256": "fdbfebbe2d35436564474be1cc069465b7811aaa2059b57c7c6fe76244333eef"
+    },
+    {
+      "path": "include/colmap/util/eigen_matchers.h",
+      "bytes": 3849,
+      "sha256": "ddd3c9060c47bd0a99951cf569afa560f4d87786b591d2cfaa6fe88d01ea8baf"
+    },
+    {
+      "path": "include/colmap/util/endian.h",
+      "bytes": 4697,
+      "sha256": "d9cc88ffe20e8b888f18169731e336f71ce439b9ef1832aab2503a1427479eb7"
+    },
+    {
+      "path": "include/colmap/util/enum_utils.h",
+      "bytes": 4954,
+      "sha256": "6d402d4a4a8e35a57965517892755d692be4364d8b11ef9e028ef0e1d3eae323"
+    },
+    {
+      "path": "include/colmap/util/file.h",
+      "bytes": 8366,
+      "sha256": "c33175f86a0a44256865df4e5e8a4370cf0cd1db7f5fea75d46fe8038576e27f"
+    },
+    {
+      "path": "include/colmap/util/glog_macros.h",
+      "bytes": 2703,
+      "sha256": "8985abb9758e2b81b2e8df8d753a7a9f852ef18b031a53da4ef190741b1da27c"
+    },
+    {
+      "path": "include/colmap/util/logging.h",
+      "bytes": 8651,
+      "sha256": "d83515dbcbda1d6b7042515637b5db93157d96a9a1e2cd212b5af4dad8d48b39"
+    },
+    {
+      "path": "include/colmap/util/misc.h",
+      "bytes": 4958,
+      "sha256": "72fe5019b590b9c11c945f3658cbf129b6bcb8e49f65f8176241c67c5fc401f0"
+    },
+    {
+      "path": "include/colmap/util/oiio_utils.h",
+      "bytes": 198,
+      "sha256": "3d5d2a2a8fb67e2c00192872e73ef30d367bd948dbaa6df58870ce61da780673"
+    },
+    {
+      "path": "include/colmap/util/opengl_utils.h",
+      "bytes": 3505,
+      "sha256": "89dd2e99a44a93e4b9c0ea47d8a336fccf2c2d41689939a7ceab0754db2cf507"
+    },
+    {
+      "path": "include/colmap/util/ply.h",
+      "bytes": 4530,
+      "sha256": "6381ec90637564a76bafbd8672108b8eedf509d2855ad3095035ab54f70af595"
+    },
+    {
+      "path": "include/colmap/util/string.h",
+      "bytes": 4412,
+      "sha256": "2f2182e929bd5bd29546f69ce04a8e51dfcefbb6c44d893a51cee8adce1decaa"
+    },
+    {
+      "path": "include/colmap/util/testing.h",
+      "bytes": 1765,
+      "sha256": "17ad38706be2156cf55cd02af12e7e5c2e22776b7b2b614b2a5c0b316563b90e"
+    },
+    {
+      "path": "include/colmap/util/threading.h",
+      "bytes": 13683,
+      "sha256": "63e0a910294d232560574cbc19573a5f265dfca468523e5436e229831ccb84a7"
+    },
+    {
+      "path": "include/colmap/util/timer.h",
+      "bytes": 2215,
+      "sha256": "35bfcd0c5dada2019a270d8dfd47f011de0c912655ab7ed5cf06ddf58410e53e"
+    },
+    {
+      "path": "include/colmap/util/types.h",
+      "bytes": 13383,
+      "sha256": "751fbaf5a2bf1db233cdffcf0b75acbda9ad7c77ae4e147174b124f73319dc08"
+    },
+    {
+      "path": "include/colmap/util/version.h",
+      "bytes": 2139,
+      "sha256": "00c80a7ea3e4c0db4ad3a0ed7605f463957d81c5cf7a89b534033d6b34fd0a28"
+    },
+    {
+      "path": "include/onnxruntime/core/providers/custom_op_context.h",
+      "bytes": 296,
+      "sha256": "c1f2a96c0de1978b0f2fbf60bf1b2d50c6412d487c1f5d68ac5ffa8e01b46ee4"
+    },
+    {
+      "path": "include/onnxruntime/core/providers/resource.h",
+      "bytes": 365,
+      "sha256": "65480b7886a180f09f40999aaead120e41cb872b2efa187938d610bfe1977473"
+    },
+    {
+      "path": "include/onnxruntime/cpu_provider_factory.h",
+      "bytes": 397,
+      "sha256": "0de52d129c718c07ee71a16b4953d8d483df019746a11caad77a0650a2f4ed47"
+    },
+    {
+      "path": "include/onnxruntime/onnxruntime_c_api.h",
+      "bytes": 373908,
+      "sha256": "9ed0d7054a4e74249467365b25b415d36f51a44a6349e2a994a1812e4723d1e2"
+    },
+    {
+      "path": "include/onnxruntime/onnxruntime_cxx_api.h",
+      "bytes": 156761,
+      "sha256": "5eb8809db561261210ffcafcf9823873f0603fd799542797b6b728bb3f75e5f6"
+    },
+    {
+      "path": "include/onnxruntime/onnxruntime_cxx_inline.h",
+      "bytes": 144392,
+      "sha256": "022f4559009a35b157bc05a1aae9a59a2603a17e535d9410a49d0f9187f18039"
+    },
+    {
+      "path": "include/onnxruntime/onnxruntime_env_config_keys.h",
+      "bytes": 1315,
+      "sha256": "2d531fef7dd4ffd22f35d219e1a795dbaa1c94a4a7fd29397c0982232e4ca332"
+    },
+    {
+      "path": "include/onnxruntime/onnxruntime_ep_c_api.h",
+      "bytes": 102494,
+      "sha256": "e94ac3490697bdb107844fa9d403952ee7136134132a057eae5c1207b57ce352"
+    },
+    {
+      "path": "include/onnxruntime/onnxruntime_ep_device_ep_metadata_keys.h",
+      "bytes": 1460,
+      "sha256": "825b5e3010771fccdf9f6297530a1b1697f3da6837ee47872c82b9c644468c22"
+    },
+    {
+      "path": "include/onnxruntime/onnxruntime_float16.h",
+      "bytes": 17991,
+      "sha256": "88b242845d25981633a0bbd1c148e273cf8bfb016ea3f57c4af41a06530f72b0"
+    },
+    {
+      "path": "include/onnxruntime/onnxruntime_lite_custom_op.h",
+      "bytes": 61254,
+      "sha256": "f8c42f24286a94c003fdc76563f9e692f39d560c138bdf23063b1482a201d613"
+    },
+    {
+      "path": "include/onnxruntime/onnxruntime_run_options_config_keys.h",
+      "bytes": 2952,
+      "sha256": "973037c14b0f1af0854ae25cd676776f79dbcfd2a6791f6ee17a5374c2a62550"
+    },
+    {
+      "path": "include/onnxruntime/onnxruntime_session_options_config_keys.h",
+      "bytes": 27758,
+      "sha256": "d34ff56586cae3260d9f9f71bf7f9c4560ee9cfed0e15b67e3603f5c24a0d6e6"
+    },
+    {
+      "path": "include/onnxruntime/provider_options.h",
+      "bytes": 480,
+      "sha256": "cb7206ffd06ba31b9f7e5f6089a6206f0c720c10c3adcc61db7f829c86691cfc"
+    },
+    {
+      "path": "lib/libPoseLib.a",
+      "bytes": 6375602,
+      "sha256": "dd7dde61adac3f672fbab6e51fd66e90d238fee54479d614b9f6357332280c3d"
+    },
+    {
+      "path": "lib/libcolmap_controllers.a",
+      "bytes": 3778006,
+      "sha256": "e3af6db3a5e6f7c99a29b5ec1afb7bffbc856a64625511b97d62ea995a6a66c1"
+    },
+    {
+      "path": "lib/libcolmap_estimators.a",
+      "bytes": 6097980,
+      "sha256": "503a441acaa2e59acbc902e79c2f951cf6bf993ce49f6402b5f6fbf0b1c522b3"
+    },
+    {
+      "path": "lib/libcolmap_estimators_solvers.a",
+      "bytes": 2119582,
+      "sha256": "ff38fc67983994124cae96630cecf278ff8fc9af5537f4230ffeb39e9cb96e6b"
+    },
+    {
+      "path": "lib/libcolmap_exe.a",
+      "bytes": 1506380,
+      "sha256": "3db7734ace5bb27304d9c054f86ac58b679f2b643f95e8f0f443115647265ab2"
+    },
+    {
+      "path": "lib/libcolmap_feature.a",
+      "bytes": 966654,
+      "sha256": "978db8c80fe731422a600638ff9305d07f55d470a3da5c0a7312e46df8222d2b"
+    },
+    {
+      "path": "lib/libcolmap_feature_types.a",
+      "bytes": 65670,
+      "sha256": "ba2aa0d38c395916f9c73bc78f8bf6906569d499d3bf1564a5c7e6143f0bd06d"
+    },
+    {
+      "path": "lib/libcolmap_geometry.a",
+      "bytes": 827418,
+      "sha256": "8edc1cf296410c2348141fd0b5980b110b0502e40cb427c30112363fa2267de2"
+    },
+    {
+      "path": "lib/libcolmap_image.a",
+      "bytes": 320360,
+      "sha256": "cee7f2e43c7a220a1e84bd4fa02cdea28dc1a04885ef09436ad8ac0715cc63b6"
+    },
+    {
+      "path": "lib/libcolmap_math.a",
+      "bytes": 432620,
+      "sha256": "ec27c67e66a4bbf40354d895da832bfe882ed526a7df5ca7846a262a883a231c"
+    },
+    {
+      "path": "lib/libcolmap_mvs.a",
+      "bytes": 1404210,
+      "sha256": "604072449cc49c3d1d2bedc192d9ed604dd67a58f85091e472f94c8457fa2480"
+    },
+    {
+      "path": "lib/libcolmap_optim.a",
+      "bytes": 309276,
+      "sha256": "acc23a916c68ed2fc372ab9dfd73bbbfd03f91ae164dfe608c4e0f1032bc8ce5"
+    },
+    {
+      "path": "lib/libcolmap_poisson_recon.a",
+      "bytes": 39660016,
+      "sha256": "a4771e4eac8acbdbc8f2ddc91eee4fc2657b6c5ebe109abb646902bb3b00c92a"
+    },
+    {
+      "path": "lib/libcolmap_retrieval.a",
+      "bytes": 715030,
+      "sha256": "3952543f85c191cdcc69d8f0f2826c2682967fe6047fb675e4c01e84776dbe13"
+    },
+    {
+      "path": "lib/libcolmap_scene.a",
+      "bytes": 3080084,
+      "sha256": "82325cbf5f7a22de355350a7d78c2956d519525ee937f8beb26b1cfdf77ef08b"
+    },
+    {
+      "path": "lib/libcolmap_scene_types.a",
+      "bytes": 236272,
+      "sha256": "5416f38ac70bfda9851ec18e8d20cb4cbd62cf4f27594fc14a88850ae5abf993"
+    },
+    {
+      "path": "lib/libcolmap_sensor.a",
+      "bytes": 826140,
+      "sha256": "0cb1b17511f612fe165c0b3e85e6981dea641bdf64618ed71efb0bf0e9926a23"
+    },
+    {
+      "path": "lib/libcolmap_sfm.a",
+      "bytes": 1066470,
+      "sha256": "db92d90d81bbe971c8ff4ff04014ba1f1943cbb67c5d4eab4bf29b4c3b29309a"
+    },
+    {
+      "path": "lib/libcolmap_util.a",
+      "bytes": 623852,
+      "sha256": "eabbdf798fff61b19418f1a77835d535bf9ae64e953de3a5e04630e8505ddf6b"
+    },
+    {
+      "path": "lib/libcolmap_vlfeat.a",
+      "bytes": 540474,
+      "sha256": "aae44009220852794e51a5a9efa1970bc2d9fb4e8a7af8e0e0f5589fe7dae7d6"
+    },
+    {
+      "path": "lib/libfaiss.a",
+      "bytes": 16294358,
+      "sha256": "b6d29ec0f11d4665b08097b95d2375827b262f7e0143fda620fc91df29b439df"
+    },
+    {
+      "path": "lib/libonnxruntime.so.1.24.4",
+      "bytes": 22159232,
+      "sha256": "d132535d051344ff5c64c9c200004150559049a81ed330eb4422c1962fb6b7e4"
+    },
+    {
+      "path": "lib/libonnxruntime_providers_shared.so",
+      "bytes": 14632,
+      "sha256": "086ec1d5388f64153d9c63470d126693db9a182c8ce236d3a1119068471b8a0d"
+    },
+    {
+      "path": "share/applications/COLMAP.desktop",
+      "bytes": 240,
+      "sha256": "038bb7ddb73220045088bb171bf3ef85535864ad9496244b438324ac26a17831"
+    },
+    {
+      "path": "share/colmap/cmake/FindCHOLMOD.cmake",
+      "bytes": 4650,
+      "sha256": "a502aec157fb4efc0ee0649399261839ac3003e72e5d9c81267a3524a7c917b7"
+    },
+    {
+      "path": "share/colmap/cmake/FindCryptoPP.cmake",
+      "bytes": 3432,
+      "sha256": "85af77fd76451fac9dcae9fa574c1db1eb458dcf1e23e2fe1de2daa3fbac2f24"
+    },
+    {
+      "path": "share/colmap/cmake/FindDependencies.cmake",
+      "bytes": 20450,
+      "sha256": "ba48de8a469b487f97b596bf2f36e8766cf8c079650e23b617073be7ff8c80b9"
+    },
+    {
+      "path": "share/colmap/cmake/FindGlew.cmake",
+      "bytes": 3570,
+      "sha256": "9559ff67a5967a6f6d52ed27a0a9eb84f75c7b49103e3cb9013287556a616303"
+    },
+    {
+      "path": "share/colmap/cmake/FindGlog.cmake",
+      "bytes": 4182,
+      "sha256": "e4c60904d55b9da01f683c18024ece490cfcaf833c7e8f93c2f4161ca30045d4"
+    },
+    {
+      "path": "share/colmap/cmake/FindMetis.cmake",
+      "bytes": 3783,
+      "sha256": "a4149c0ca4c085db41d8518bbd5f5dc0fb2c82c8c4b55c04150354de8ef1d5f5"
+    },
+    {
+      "path": "share/colmap/cmake/Findonnxruntime.cmake",
+      "bytes": 5858,
+      "sha256": "f2eebe3c0175e9845d45051ec180c68768eea2fdaa84c347c8c5f7b745fa0566"
+    },
+    {
+      "path": "share/colmap/colmap-config-version.cmake",
+      "bytes": 1793,
+      "sha256": "0a7a6c6b061d81a16b3d71067f93029408202d17b14f040ddb93cc2ebd9ce15f"
+    },
+    {
+      "path": "share/colmap/colmap-config.cmake",
+      "bytes": 4197,
+      "sha256": "431136878c4cdb3602219d1b789ef3a42fd2847951956e35da58db60c3e9b95e"
+    },
+    {
+      "path": "share/colmap/colmap-targets-release.cmake",
+      "bytes": 11282,
+      "sha256": "4a6a592630e049b5ebf9143b1a44d316263e731ff0c948c0b0e39ef37aa7c085"
+    },
+    {
+      "path": "share/colmap/colmap-targets.cmake",
+      "bytes": 15136,
+      "sha256": "f4c3d241bf19f50863321ed4653595ba8dbe93fcab15516a96f5207a01e4d543"
+    },
+    {
+      "path": "share/onnxruntime/cmake/onnxruntimeConfig.cmake",
+      "bytes": 939,
+      "sha256": "880b8c3ceae1ac013b7442b852ae4f7674a439803a2f8dcb875f5043913e62bc"
+    },
+    {
+      "path": "share/onnxruntime/cmake/onnxruntimeConfigVersion.cmake",
+      "bytes": 2765,
+      "sha256": "7ad8c514b2bb6729f05e96a8c83b571a1b413853c00f60102beeb3a43445ece2"
+    },
+    {
+      "path": "share/onnxruntime/cmake/onnxruntimeTargets-release.cmake",
+      "bytes": 917,
+      "sha256": "eb7f54f0cc19514d3efd2df76c7dc9247a2f9eb8ebe7399c1571524260814fc8"
+    },
+    {
+      "path": "share/onnxruntime/cmake/onnxruntimeTargets.cmake",
+      "bytes": 4173,
+      "sha256": "0b84a062f97cfdb408a8eb17e5a2cc72df2bb171521785ff2f67aae39310da2a"
+    }
+  ]
+}

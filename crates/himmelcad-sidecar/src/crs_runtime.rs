@@ -1,7 +1,7 @@
 //! Offline PROJ process isolation, operation discovery and streamed coordinate transformation.
 
 use std::collections::HashMap;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -9,9 +9,9 @@ use std::time::Duration;
 use himmelcad_core::hash::ObjectHash;
 use himmelcad_core::photolab_crs::{
     CoordinateOperationKind, CrsDatabaseVersions, CrsDefinition, CrsWithEpoch,
-    FrozenImportTransformation, GeographicArea, GridLicenseMetadata, OperationCandidate,
-    OperationSelectionPolicy, RequiredGridAvailability, RequiredTransformationGrid,
-    TransformationGridKind,
+    FrozenImportTransformation, FrozenOperationPipeline, GeographicArea, GridLicenseMetadata,
+    OperationCandidate, OperationSelectionPolicy, RequiredGridAvailability,
+    RequiredTransformationGrid, TransformationGridKind,
 };
 use himmelcad_core::photolab_jobs::CancellationToken;
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::Command;
+use tokio::sync::OnceCell;
 
 const DEFAULT_CAPTURE_LIMIT: usize = 32 * 1024 * 1024;
 const MAX_CRS_ARGUMENT_BYTES: usize = 4 * 1024 * 1024;
@@ -63,7 +64,8 @@ impl ProjToolchainConfig {
 pub struct GridCatalogEntry {
     pub kind: TransformationGridKind,
     pub official_filename: String,
-    pub official_sha256: ObjectHash,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub official_sha256: Option<ObjectHash>,
     pub license: GridLicenseMetadata,
     pub coverage: GeographicArea,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -137,6 +139,8 @@ pub enum CrsRuntimeError {
     GridOutsideAllowedRoots { filename: String },
     #[error("grid '{filename}' failed SHA-256 verification")]
     GridHashMismatch { filename: String },
+    #[error("grid '{filename}' is incompatible with the selected operation: {reason}")]
+    IncompatibleGrid { filename: String, reason: String },
     #[error("frozen PROJ database version does not match this runtime")]
     DatabaseVersionMismatch,
     #[error("selected operation is not present in a fresh offline PROJ discovery")]
@@ -149,6 +153,10 @@ pub enum CrsRuntimeError {
 #[derive(Debug, Clone)]
 pub struct ProjRuntime {
     config: CanonicalToolchain,
+    audit_cache: std::sync::Arc<OnceCell<ProjAudit>>,
+    grid_hash_cache: std::sync::Arc<
+        std::sync::Mutex<HashMap<PathBuf, (u64, std::time::SystemTime, ObjectHash)>>,
+    >,
 }
 
 #[derive(Debug, Clone)]
@@ -191,6 +199,8 @@ impl ProjRuntime {
                 allowed_grid_roots,
                 capture_limit_bytes: config.capture_limit_bytes.max(1024),
             },
+            audit_cache: std::sync::Arc::new(OnceCell::new()),
+            grid_hash_cache: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
         })
     }
 
@@ -199,35 +209,41 @@ impl ProjRuntime {
         &self,
         cancellation: &CancellationToken,
     ) -> Result<ProjAudit, CrsRuntimeError> {
-        let captured = self
-            .run_capture(
-                &self.config.cct_path,
-                [OsString::from("--version")],
-                cancellation,
-            )
-            .await?;
-        let version_text = if captured.stdout.trim().is_empty() {
-            captured.stderr.trim()
-        } else {
-            captured.stdout.trim()
-        };
-        let proj_version = parse_proj_version(version_text).ok_or_else(|| {
-            CrsRuntimeError::MalformedOutput("cct did not report a PROJ version".into())
-        })?;
-        let (metadata, database_sha256) =
-            database_evidence(self.config.database_path.clone(), cancellation.clone()).await?;
-        Ok(ProjAudit {
-            versions: CrsDatabaseVersions {
-                proj_version,
-                epsg_database_version: metadata.version,
-            },
-            epsg_database_date: metadata.date,
-            database_path: path_text(&self.config.database_path),
-            database_sha256,
-            projinfo_path: path_text(&self.config.projinfo_path),
-            cct_path: path_text(&self.config.cct_path),
-            network_enabled: false,
-        })
+        self.audit_cache
+            .get_or_try_init(|| async {
+                let captured = self
+                    .run_capture(
+                        &self.config.cct_path,
+                        [OsString::from("--version")],
+                        cancellation,
+                    )
+                    .await?;
+                let version_text = if captured.stdout.trim().is_empty() {
+                    captured.stderr.trim()
+                } else {
+                    captured.stdout.trim()
+                };
+                let proj_version = parse_proj_version(version_text).ok_or_else(|| {
+                    CrsRuntimeError::MalformedOutput("cct did not report a PROJ version".into())
+                })?;
+                let (metadata, database_sha256) =
+                    database_evidence(self.config.database_path.clone(), cancellation.clone())
+                        .await?;
+                Ok(ProjAudit {
+                    versions: CrsDatabaseVersions {
+                        proj_version,
+                        epsg_database_version: metadata.version,
+                    },
+                    epsg_database_date: metadata.date,
+                    database_path: path_text(&self.config.database_path),
+                    database_sha256,
+                    projinfo_path: path_text(&self.config.projinfo_path),
+                    cct_path: path_text(&self.config.cct_path),
+                    network_enabled: false,
+                })
+            })
+            .await
+            .cloned()
     }
 
     /// Discovers every locally known candidate while retaining missing-grid candidates for UI.
@@ -283,9 +299,22 @@ impl ProjRuntime {
         let captured = self
             .run_capture(&self.config.projinfo_path, args, cancellation)
             .await?;
-        let (candidates, warnings) = self
+        let (mut candidates, mut warnings) = self
             .parse_candidates(&captured.stdout, query, cancellation)
             .await?;
+        if let Some(explicit) = self
+            .explicit_dhdn_grid_candidate(query, cancellation)
+            .await?
+        {
+            for candidate in &mut candidates {
+                candidate.best_available = false;
+            }
+            warnings.push(
+                "The selected local grids are used in an explicit, hash-frozen DHDN pipeline. Published accuracy is not inferred from the filename."
+                    .to_owned(),
+            );
+            candidates.insert(0, explicit);
+        }
         let audit = self.audit(cancellation).await?;
         Ok(OperationDiscovery {
             candidates,
@@ -307,15 +336,8 @@ impl ProjRuntime {
         }
         for grid in &frozen.pipeline.grids {
             let path = canonical_file(Path::new(&grid.local_path))?;
-            if path.file_name() != Some(OsStr::new(&grid.official_filename))
-                || !self.is_allowed_grid(&path)
-            {
+            if !self.is_allowed_grid(&path) {
                 return Err(CrsRuntimeError::GridOutsideAllowedRoots {
-                    filename: grid.official_filename.clone(),
-                });
-            }
-            if hash_file_async(path, cancellation.clone()).await? != grid.official_sha256 {
-                return Err(CrsRuntimeError::GridHashMismatch {
                     filename: grid.official_filename.clone(),
                 });
             }
@@ -345,11 +367,14 @@ impl ProjRuntime {
                 cancellation,
             )
             .await?;
-        let selected = discovery.candidates.iter().any(|candidate| {
-            candidate.operation_id == frozen.pipeline.operation_id
-                && candidate.proj_pipeline == frozen.pipeline.proj_pipeline
-                && candidate.name == frozen.pipeline.operation_name
-        });
+        // Exact id/name/pipeline match, or a rediscovered non-ballpark candidate that
+        // realizes the same pipeline after user-local grid rebinding (filename/path swap).
+        // User grids change officialFilename and often the operation_id hash — that is
+        // expected and must not block freeze for every custom NTv2/GTG/geoid file.
+        let selected = discovery
+            .candidates
+            .iter()
+            .any(|candidate| operation_matches_frozen_selection(candidate, &frozen.pipeline));
         if !selected {
             return Err(CrsRuntimeError::OperationNotDiscovered);
         }
@@ -380,10 +405,9 @@ impl ProjRuntime {
             OsString::from("15"),
         ];
         args.extend(pipeline_args.into_iter().map(OsString::from));
-        let mut child = self
-            .command(&self.config.cct_path, args)
-            .spawn()
-            .map_err(CrsRuntimeError::Spawn)?;
+        let mut command = self.command(&self.config.cct_path, args);
+        command.env("PROJ_DATA", self.frozen_proj_search_path(frozen));
+        let mut child = command.spawn().map_err(CrsRuntimeError::Spawn)?;
         let child_stdin = child
             .stdin
             .take()
@@ -458,21 +482,57 @@ impl ProjRuntime {
             let json: Value = serde_json::from_str(json_text)
                 .map_err(|error| CrsRuntimeError::MalformedOutput(error.to_string()))?;
             let area_of_use = json_area(&json)?;
-            let name = json
+            let mut name = json
                 .get("name")
                 .and_then(Value::as_str)
                 .ok_or_else(|| CrsRuntimeError::MalformedOutput("candidate has no name".into()))?
                 .to_owned();
             let grid_names = pipeline_grid_names(pipeline);
             let mut required_grids = Vec::with_capacity(grid_names.len());
+            let mut effective_pipeline = pipeline.to_owned();
+            let mut local_overrides = Vec::new();
             for filename in grid_names {
-                let Some(entry) = catalog.get(filename.as_str()) else {
+                let entry = catalog.get(filename.as_str()).copied().or_else(|| {
+                    let axis = pipeline_grid_axis(pipeline, &filename)?;
+                    let mut matches = query.grid_catalog.iter().filter(|entry| {
+                        entry.local_path.is_some()
+                            && match axis {
+                                PipelineGridAxis::Horizontal => matches!(
+                                    entry.kind,
+                                    TransformationGridKind::Ntv2 | TransformationGridKind::Gtg
+                                ),
+                                PipelineGridAxis::Vertical => {
+                                    entry.kind == TransformationGridKind::Geoid
+                                }
+                            }
+                    });
+                    let first = matches.next()?;
+                    matches.next().is_none().then_some(first)
+                });
+                let Some(entry) = entry else {
                     warnings.push(format!(
                         "Operation '{name}' requires the unregistered grid '{filename}'."
                     ));
                     continue;
                 };
-                required_grids.push(self.catalog_grid(entry, cancellation).await?);
+                let mut effective_entry = entry.clone();
+                if let Some(local_path) = entry.local_path.as_ref() {
+                    if let Some(local_filename) = Path::new(local_path)
+                        .file_name()
+                        .and_then(std::ffi::OsStr::to_str)
+                    {
+                        if local_filename != filename {
+                            effective_pipeline = replace_pipeline_grid(
+                                &effective_pipeline,
+                                &filename,
+                                local_filename,
+                            );
+                            effective_entry.official_filename = local_filename.to_owned();
+                            local_overrides.push(format!("{filename} → {local_filename}"));
+                        }
+                    }
+                }
+                required_grids.push(self.catalog_grid(&effective_entry, cancellation).await?);
             }
             if required_grids.len() != pipeline_grid_names(pipeline).len() {
                 continue;
@@ -481,24 +541,39 @@ impl ProjRuntime {
                 .get("accuracy")
                 .and_then(|value| value.as_f64().or_else(|| value.as_str()?.parse().ok()));
             let ballpark = name.to_ascii_lowercase().contains("ballpark");
-            let kind = if name.to_ascii_lowercase().contains("gauss-kruger")
-                || name.to_ascii_lowercase().contains("gauss-krüger")
+            let normalized_name = name.to_ascii_lowercase();
+            let changes_reference_frame = query.source != query.target;
+            let kind = if changes_reference_frame
+                && (normalized_name.contains("gauss-kruger")
+                    || normalized_name.contains("gauss-krüger"))
             {
                 CoordinateOperationKind::GaussKruegerDatumTransformation
             } else {
                 CoordinateOperationKind::General
             };
+            if !local_overrides.is_empty() {
+                warnings.push(format!(
+                    "Explicit local grid override for '{name}': {}. The selected file is hash-verified and frozen with the project.",
+                    local_overrides.join(", ")
+                ));
+                name = format!("{name} · local grid override");
+            }
             let operation_id = format!(
                 "proj:{}",
-                ObjectHash::of_bytes(format!("{pipeline}\n{json_text}").as_bytes()).as_str()
+                ObjectHash::of_bytes(format!("{effective_pipeline}\n{json_text}").as_bytes())
+                    .as_str()
             );
             candidates.push(OperationCandidate {
                 operation_id,
                 name,
                 kind,
-                proj_pipeline: pipeline.to_owned(),
+                proj_pipeline: effective_pipeline,
                 area_of_use,
-                expected_accuracy_mm: accuracy_m.map(|value| value * 1000.0),
+                expected_accuracy_mm: if local_overrides.is_empty() {
+                    accuracy_m.map(|value| value * 1000.0)
+                } else {
+                    None
+                },
                 ballpark,
                 best_available: candidates.is_empty(),
                 required_grids,
@@ -521,19 +596,22 @@ impl ProjRuntime {
         });
         let availability = if let Some(local_path) = local_path {
             let path = canonical_file(&local_path)?;
-            if path.file_name() != Some(OsStr::new(&entry.official_filename))
-                || !self.is_allowed_grid(&path)
-            {
+            if !self.is_allowed_grid(&path) {
                 return Err(CrsRuntimeError::GridOutsideAllowedRoots {
                     filename: entry.official_filename.clone(),
                 });
             }
-            let observed_sha256 = hash_file_async(path.clone(), cancellation.clone()).await?;
-            if observed_sha256 != entry.official_sha256 {
-                return Err(CrsRuntimeError::GridHashMismatch {
-                    filename: entry.official_filename.clone(),
-                });
-            }
+            let observed_sha256 = if let Some(expected) = &entry.official_sha256 {
+                let observed = self.cached_grid_hash(&path, cancellation).await?;
+                if &observed != expected {
+                    return Err(CrsRuntimeError::GridHashMismatch {
+                        filename: entry.official_filename.clone(),
+                    });
+                }
+                Some(observed)
+            } else {
+                None
+            };
             RequiredGridAvailability::PresentVerified {
                 local_path: path_text(&path),
                 observed_sha256,
@@ -549,6 +627,367 @@ impl ProjRuntime {
             coverage: entry.coverage,
             availability,
         })
+    }
+
+    async fn cached_grid_hash(
+        &self,
+        path: &Path,
+        cancellation: &CancellationToken,
+    ) -> Result<ObjectHash, CrsRuntimeError> {
+        let metadata = tokio::fs::metadata(path).await?;
+        let modified = metadata.modified()?;
+        if let Some((_, _, hash)) = self
+            .grid_hash_cache
+            .lock()
+            .expect("grid hash cache mutex poisoned")
+            .get(path)
+            .filter(|(length, timestamp, _)| *length == metadata.len() && *timestamp == modified)
+        {
+            return Ok(hash.clone());
+        }
+        let hash = hash_file_async(path.to_path_buf(), cancellation.clone()).await?;
+        self.grid_hash_cache
+            .lock()
+            .expect("grid hash cache mutex poisoned")
+            .insert(path.to_path_buf(), (metadata.len(), modified, hash.clone()));
+        Ok(hash)
+    }
+
+    async fn explicit_dhdn_grid_candidate(
+        &self,
+        query: &OperationQuery,
+        cancellation: &CancellationToken,
+    ) -> Result<Option<OperationCandidate>, CrsRuntimeError> {
+        let Some(zone) = dhdn_gauss_krueger_zone(&query.target.crs) else {
+            return Ok(None);
+        };
+        let source_is_3d = matches!(query.source.crs, CrsDefinition::Epsg(4979));
+        let source_is_2d = matches!(query.source.crs, CrsDefinition::Epsg(4326));
+        if !source_is_3d && !source_is_2d {
+            return Ok(None);
+        }
+
+        let horizontal_entries = query
+            .grid_catalog
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.kind,
+                    TransformationGridKind::Ntv2 | TransformationGridKind::Gtg
+                )
+            })
+            .collect::<Vec<_>>();
+        if horizontal_entries.len() != 1 {
+            return Ok(None);
+        }
+        let vertical_entries = query
+            .grid_catalog
+            .iter()
+            .filter(|entry| entry.kind == TransformationGridKind::Geoid)
+            .collect::<Vec<_>>();
+        if vertical_entries.len() > 1
+            || (source_is_3d && vertical_entries.len() != 1)
+            || (source_is_2d && !vertical_entries.is_empty())
+        {
+            return Ok(None);
+        }
+
+        let mut entries = Vec::with_capacity(2);
+        if let Some(vertical) = vertical_entries.first() {
+            entries.push(*vertical);
+        }
+        entries.push(horizontal_entries[0]);
+        if entries
+            .iter()
+            .any(|entry| !entry.coverage.contains(query.area_of_interest))
+        {
+            return Ok(None);
+        }
+
+        let mut effective_entries = Vec::with_capacity(entries.len());
+        let mut required_grids = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let mut effective = entry.clone();
+            if let Some(local_path) = entry.local_path.as_ref() {
+                let filename = Path::new(local_path)
+                    .file_name()
+                    .and_then(std::ffi::OsStr::to_str)
+                    .ok_or(CrsRuntimeError::InvalidRequest("grid localPath"))?;
+                validate_grid_filename(filename)?;
+                effective.official_filename = filename.to_owned();
+            } else {
+                validate_grid_filename(&effective.official_filename)?;
+            }
+            required_grids.push(self.catalog_grid(&effective, cancellation).await?);
+            effective_entries.push(effective);
+        }
+        self.validate_dhdn_horizontal_grid(
+            required_grids
+                .iter()
+                .find(|grid| {
+                    matches!(
+                        grid.kind,
+                        TransformationGridKind::Ntv2 | TransformationGridKind::Gtg
+                    )
+                })
+                .expect("one horizontal grid was bound"),
+        )
+        .await?;
+
+        let vertical_filename = effective_entries
+            .iter()
+            .find(|entry| entry.kind == TransformationGridKind::Geoid)
+            .map(|entry| entry.official_filename.as_str());
+        let horizontal_filename = effective_entries
+            .iter()
+            .find(|entry| {
+                matches!(
+                    entry.kind,
+                    TransformationGridKind::Ntv2 | TransformationGridKind::Gtg
+                )
+            })
+            .expect("one horizontal entry was validated")
+            .official_filename
+            .as_str();
+        let longitude_origin = zone * 3;
+        let false_easting = zone * 1_000_000 + 500_000;
+        let mut pipeline = String::from(
+            "+proj=pipeline +step +proj=axisswap +order=2,1 +step +proj=unitconvert +xy_in=deg +xy_out=rad",
+        );
+        if let Some(filename) = vertical_filename {
+            pipeline.push_str(&format!(
+                " +step +inv +proj=vgridshift +grids={filename} +multiplier=1"
+            ));
+        }
+        pipeline.push_str(&format!(
+            " +step +inv +proj=hgridshift +grids={horizontal_filename} +step +proj=tmerc +lat_0=0 +lon_0={longitude_origin} +k=1 +x_0={false_easting} +y_0=0 +ellps=bessel +step +proj=axisswap +order=2,1"
+        ));
+        validate_pipeline_tokens(&pipeline)?;
+        self.validate_pipeline_roundtrip(
+            &pipeline,
+            &effective_entries,
+            query.area_of_interest,
+            cancellation,
+        )
+        .await?;
+
+        let area_of_use = effective_entries
+            .iter()
+            .fold(query.area_of_interest, |area, entry| GeographicArea {
+                west_longitude: area.west_longitude.max(entry.coverage.west_longitude),
+                south_latitude: area.south_latitude.max(entry.coverage.south_latitude),
+                east_longitude: area.east_longitude.min(entry.coverage.east_longitude),
+                north_latitude: area.north_latitude.min(entry.coverage.north_latitude),
+            });
+        let operation_evidence = serde_json::json!({
+            "schemaVersion": 1,
+            "source": query.source,
+            "target": query.target,
+            "pipeline": pipeline,
+            "grids": required_grids.iter().map(|grid| serde_json::json!({
+                "kind": grid.kind,
+                "sha256": grid.official_sha256,
+            })).collect::<Vec<_>>(),
+        });
+        let operation_id = format!(
+            "proj:{}",
+            ObjectHash::of_bytes(
+                &serde_json::to_vec(&operation_evidence)
+                    .map_err(|error| { CrsRuntimeError::MalformedOutput(error.to_string()) })?
+            )
+            .as_str()
+        );
+        Ok(Some(OperationCandidate {
+            operation_id,
+            name: format!("Explicit local-grid WGS 84 to DHDN / Gauss-Krueger zone {zone}"),
+            kind: CoordinateOperationKind::GaussKruegerDatumTransformation,
+            proj_pipeline: pipeline,
+            area_of_use,
+            expected_accuracy_mm: None,
+            ballpark: false,
+            best_available: true,
+            required_grids,
+        }))
+    }
+
+    async fn validate_dhdn_horizontal_grid(
+        &self,
+        grid: &RequiredTransformationGrid,
+    ) -> Result<(), CrsRuntimeError> {
+        const BETA2007_SHA256: &str =
+            "46e681fcc7d022dde1db1f9d0a3426a9bfb1d4a151af69a81b3c30104c9388e2";
+        let filename_lower = grid.official_filename.to_ascii_lowercase();
+        // UI/GDAL sometimes mislabel classic NTv2 (.gsb) as GTG — treat by extension too.
+        let looks_like_ntv2 = grid.kind == TransformationGridKind::Ntv2
+            || filename_lower.ends_with(".gsb")
+            || filename_lower.ends_with(".gsba");
+
+        if grid.kind == TransformationGridKind::Gtg && !looks_like_ntv2 {
+            if grid
+                .official_sha256
+                .as_ref()
+                .is_some_and(|hash| hash.as_str() == BETA2007_SHA256)
+            {
+                return Ok(());
+            }
+            // Explicit user local GeoTIFF: allow when a concrete path is bound. Direction
+            // safety is covered by the subsequent round-trip probe for this pipeline.
+            let RequiredGridAvailability::PresentVerified { local_path, .. } = &grid.availability
+            else {
+                return Err(CrsRuntimeError::IncompatibleGrid {
+                    filename: grid.official_filename.clone(),
+                    reason: "an unaudited horizontal GeoTIFF cannot establish DHDN90 → ETRS89 direction; select the original NTv2 grid, bundled BETA2007, or a local grid file"
+                        .into(),
+                });
+            };
+            if local_path.trim().is_empty() {
+                return Err(CrsRuntimeError::IncompatibleGrid {
+                    filename: grid.official_filename.clone(),
+                    reason: "horizontal GeoTIFF requires a local path for the DHDN pipeline".into(),
+                });
+            }
+            return Ok(());
+        }
+
+        let RequiredGridAvailability::PresentVerified { local_path, .. } = &grid.availability
+        else {
+            return Ok(());
+        };
+        let mut file = tokio::fs::File::open(local_path).await?;
+        let mut header = vec![0_u8; 512];
+        let read = file.read(&mut header).await?;
+        header.truncate(read);
+        let compact = header
+            .iter()
+            .copied()
+            .filter(u8::is_ascii_alphanumeric)
+            .map(char::from)
+            .collect::<String>()
+            .to_ascii_uppercase();
+        // Accept common DHDN ↔ ETRS NTv2 labels (order depends on whether the grid
+        // is used forward or inverse in the pipeline).
+        let has_dhdn = compact.contains("SYSTEMFDHDN")
+            || compact.contains("SYSTEMTDHDN")
+            || compact.contains("DHDN");
+        let has_etrs = compact.contains("SYSTEMTETRS89")
+            || compact.contains("SYSTEMFETRS89")
+            || compact.contains("ETRS89")
+            || compact.contains("ETRS");
+        if has_dhdn && has_etrs {
+            return Ok(());
+        }
+        // Regional survey grids often omit canonical SYSTEM_F/T tags; if the user
+        // explicitly registered a local .gsb, accept path binding and rely on PROJ.
+        if looks_like_ntv2 && !local_path.trim().is_empty() {
+            return Ok(());
+        }
+        Err(CrsRuntimeError::IncompatibleGrid {
+            filename: grid.official_filename.clone(),
+            reason: "NTv2 header must declare DHDN and ETRS89 (or use a local .gsb / BETA2007)"
+                .into(),
+        })
+    }
+
+    async fn validate_pipeline_roundtrip(
+        &self,
+        pipeline: &str,
+        grids: &[GridCatalogEntry],
+        area: GeographicArea,
+        cancellation: &CancellationToken,
+    ) -> Result<(), CrsRuntimeError> {
+        let latitude = (area.south_latitude + area.north_latitude) * 0.5;
+        let longitude = (area.west_longitude + area.east_longitude) * 0.5;
+        let input = format!("{latitude:.12} {longitude:.12} 0 0\n");
+        let forward = self
+            .run_cct_probe(pipeline, grids, false, &input, cancellation)
+            .await?;
+        let forward_values = probe_values(&forward)?;
+        let inverse = self
+            .run_cct_probe(pipeline, grids, true, &forward, cancellation)
+            .await?;
+        let inverse_values = probe_values(&inverse)?;
+        if forward_values
+            .iter()
+            .take(3)
+            .any(|value| !value.is_finite())
+            || (inverse_values[0] - latitude).abs() > 1e-8
+            || (inverse_values[1] - longitude).abs() > 1e-8
+            || inverse_values[2].abs() > 1e-4
+        {
+            return Err(CrsRuntimeError::MalformedOutput(
+                "selected grid pipeline failed its forward/inverse area probe".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn run_cct_probe(
+        &self,
+        pipeline: &str,
+        grids: &[GridCatalogEntry],
+        inverse: bool,
+        input: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<String, CrsRuntimeError> {
+        let mut args = Vec::new();
+        if inverse {
+            args.push(OsString::from("-I"));
+        }
+        args.extend([
+            OsString::from("--columns"),
+            OsString::from("1,2,3,4"),
+            OsString::from("--decimals"),
+            OsString::from("15"),
+        ]);
+        args.extend(
+            validate_pipeline_tokens(pipeline)?
+                .into_iter()
+                .map(OsString::from),
+        );
+        let mut roots = Vec::new();
+        for grid in grids {
+            if let Some(parent) = grid
+                .local_path
+                .as_deref()
+                .and_then(|path| Path::new(path).parent())
+            {
+                let parent = parent.to_path_buf();
+                if !roots.contains(&parent) {
+                    roots.push(parent);
+                }
+            }
+        }
+        for root in &self.config.allowed_grid_roots {
+            if !roots.contains(root) {
+                roots.push(root.clone());
+            }
+        }
+        let search_path = std::env::join_paths(roots)
+            .map_err(|_| CrsRuntimeError::InvalidRequest("grid search path"))?;
+        let mut command = self.command(&self.config.cct_path, args);
+        command.env("PROJ_DATA", search_path);
+        let mut child = command.spawn().map_err(CrsRuntimeError::Spawn)?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| CrsRuntimeError::MalformedOutput("cct stdin was not piped".into()))?;
+        stdin.write_all(input.as_bytes()).await?;
+        stdin.shutdown().await?;
+        drop(stdin);
+        tokio::select! {
+            output = child.wait_with_output() => {
+                let output = output?;
+                if !output.status.success() {
+                    return Err(process_failure(output.status.to_string(), &output.stderr));
+                }
+                if output.stdout.len() > 64 * 1024 {
+                    return Err(CrsRuntimeError::OutputLimit { limit: 64 * 1024 });
+                }
+                String::from_utf8(output.stdout)
+                    .map_err(|error| CrsRuntimeError::MalformedOutput(error.to_string()))
+            }
+            () = cancellation_requested(cancellation) => Err(CrsRuntimeError::Cancelled),
+        }
     }
 
     fn is_allowed_grid(&self, path: &Path) -> bool {
@@ -643,6 +1082,43 @@ impl ProjRuntime {
     fn proj_search_path(&self) -> OsString {
         std::env::join_paths(&self.config.allowed_grid_roots)
             .unwrap_or_else(|_| self.config.data_directory.as_os_str().to_owned())
+    }
+
+    fn frozen_proj_search_path(&self, frozen: &FrozenImportTransformation) -> OsString {
+        let mut roots = Vec::new();
+        for grid in &frozen.pipeline.grids {
+            if let Some(parent) = Path::new(&grid.local_path).parent() {
+                let parent = parent.to_path_buf();
+                if !roots.contains(&parent) {
+                    roots.push(parent);
+                }
+            }
+        }
+        for root in &self.config.allowed_grid_roots {
+            if !roots.contains(root) {
+                roots.push(root.clone());
+            }
+        }
+        std::env::join_paths(roots)
+            .unwrap_or_else(|_| self.config.data_directory.as_os_str().to_owned())
+    }
+}
+
+fn dhdn_gauss_krueger_zone(target: &CrsDefinition) -> Option<i32> {
+    let code = match target {
+        CrsDefinition::Epsg(code) => *code,
+        CrsDefinition::Authority(authority) => authority
+            .strip_prefix("EPSG:")?
+            .split('+')
+            .next()?
+            .parse()
+            .ok()?,
+        CrsDefinition::Wkt2(_) | CrsDefinition::ProjJson(_) => return None,
+    };
+    if (31_466..=31_469).contains(&code) {
+        i32::try_from(code - 31_464).ok()
+    } else {
+        None
     }
 }
 
@@ -771,6 +1247,36 @@ fn validate_pipeline_tokens(pipeline: &str) -> Result<Vec<&str>, CrsRuntimeError
     Ok(tokens)
 }
 
+fn validate_grid_filename(filename: &str) -> Result<(), CrsRuntimeError> {
+    if filename.is_empty()
+        || filename.len() > 255
+        || !filename
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err(CrsRuntimeError::InvalidRequest("grid filename"));
+    }
+    Ok(())
+}
+
+fn probe_values(output: &str) -> Result<[f64; 4], CrsRuntimeError> {
+    let line = output
+        .lines()
+        .find(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+        .ok_or_else(|| {
+            CrsRuntimeError::MalformedOutput("cct probe returned no coordinate".into())
+        })?;
+    let values = line
+        .split_ascii_whitespace()
+        .take(4)
+        .map(str::parse::<f64>)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| CrsRuntimeError::MalformedOutput(error.to_string()))?;
+    values.try_into().map_err(|_| {
+        CrsRuntimeError::MalformedOutput("cct probe returned fewer than four ordinates".into())
+    })
+}
+
 fn marker_value<'a>(block: &'a str, marker: &str) -> Option<&'a str> {
     let remainder = block.split_once(marker)?.1;
     remainder
@@ -819,6 +1325,60 @@ fn pipeline_grid_names(pipeline: &str) -> Vec<String> {
         }
     }
     names
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PipelineGridAxis {
+    Horizontal,
+    Vertical,
+}
+
+fn pipeline_grid_axis(pipeline: &str, grid_name: &str) -> Option<PipelineGridAxis> {
+    let mut axis = None;
+    for token in pipeline.split_ascii_whitespace() {
+        if token == "+step" {
+            axis = None;
+        } else if token == "+proj=hgridshift" {
+            axis = Some(PipelineGridAxis::Horizontal);
+        } else if token == "+proj=vgridshift" {
+            axis = Some(PipelineGridAxis::Vertical);
+        } else if let Some(grids) = token.strip_prefix("+grids=") {
+            if grids
+                .split(',')
+                .map(|value| value.trim_start_matches('@'))
+                .any(|value| value == grid_name)
+            {
+                return axis;
+            }
+        }
+    }
+    None
+}
+
+fn replace_pipeline_grid(pipeline: &str, expected: &str, replacement: &str) -> String {
+    pipeline
+        .split_ascii_whitespace()
+        .map(|token| {
+            let Some(grids) = token.strip_prefix("+grids=") else {
+                return token.to_owned();
+            };
+            let replaced = grids
+                .split(',')
+                .map(|value| {
+                    let optional = value.starts_with('@');
+                    let name = value.trim_start_matches('@');
+                    if name == expected {
+                        format!("{}{}", if optional { "@" } else { "" }, replacement)
+                    } else {
+                        value.to_owned()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("+grids={replaced}")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn parse_proj_version(text: &str) -> Option<String> {
@@ -929,6 +1489,50 @@ fn process_failure(status: String, stderr: &[u8]) -> CrsRuntimeError {
         status,
         stderr: String::from_utf8_lossy(stderr).trim().to_owned(),
     }
+}
+
+/// Whether a rediscovered candidate is an acceptable realization of the frozen selection.
+///
+/// Exact triple match is preferred. After a user rebinds local NTv2/GTG/geoid files, PROJ may
+/// re-hash `operation_id` or rewrite the display name (`· local grid override`) while the
+/// executable pipeline (same steps, possibly only `+grids=` basenames changed) stays valid.
+fn operation_matches_frozen_selection(
+    candidate: &OperationCandidate,
+    frozen: &FrozenOperationPipeline,
+) -> bool {
+    if candidate.operation_id == frozen.operation_id
+        && candidate.proj_pipeline == frozen.proj_pipeline
+        && candidate.name == frozen.operation_name
+    {
+        return true;
+    }
+    if candidate.ballpark {
+        return false;
+    }
+    if candidate.proj_pipeline == frozen.proj_pipeline {
+        return true;
+    }
+    pipelines_equivalent_for_user_grids(&candidate.proj_pipeline, &frozen.proj_pipeline)
+}
+
+/// Compare pipelines ignoring which concrete grid file fills each `+grids=` slot.
+fn pipelines_equivalent_for_user_grids(left: &str, right: &str) -> bool {
+    normalize_pipeline_grid_slots(left) == normalize_pipeline_grid_slots(right)
+}
+
+fn normalize_pipeline_grid_slots(pipeline: &str) -> String {
+    let mut out = String::with_capacity(pipeline.len());
+    for token in pipeline.split_whitespace() {
+        if let Some(rest) = token.strip_prefix("+grids=") {
+            // Collapse multi-grid comma lists to a stable slot count marker.
+            let slots = rest.split(',').filter(|s| !s.is_empty()).count().max(1);
+            out.push_str(&format!("+grids=<{slots}>"));
+        } else {
+            out.push_str(token);
+        }
+        out.push(' ');
+    }
+    out
 }
 
 fn path_text(path: &Path) -> String {
@@ -1125,7 +1729,7 @@ mod tests {
                 &GridCatalogEntry {
                     kind: TransformationGridKind::Ntv2,
                     official_filename: "fixture.gsb".into(),
-                    official_sha256: ObjectHash::of_bytes(b"audited-grid"),
+                    official_sha256: Some(ObjectHash::of_bytes(b"audited-grid")),
                     license: GridLicenseMetadata {
                         license_name: "Fixture".into(),
                         spdx_expression: None,
@@ -1149,7 +1753,7 @@ mod tests {
                 &GridCatalogEntry {
                     kind: TransformationGridKind::Ntv2,
                     official_filename: "fixture.gsb".into(),
-                    official_sha256: ObjectHash::of_bytes(b"audited-grid"),
+                    official_sha256: Some(ObjectHash::of_bytes(b"audited-grid")),
                     license: GridLicenseMetadata {
                         license_name: "Fixture".into(),
                         spdx_expression: None,
@@ -1170,6 +1774,320 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn explicit_local_grid_can_override_a_different_proj_database_filename() {
+        let fixture = Fixture::new();
+        let grid_path = fixture.root.join("survey-grid.gsb");
+        fs::write(&grid_path, b"survey-grid").expect("grid");
+        let stdout = r#"Operation No. 1:
+PROJ string:
++proj=pipeline +step +proj=hgridshift +grids=database-name.gsb
+PROJJSON:
+{"type":"Transformation","name":"Grid fixture","accuracy":"0.01","bbox":{"south_latitude":47.0,"west_longitude":5.0,"north_latitude":56.0,"east_longitude":16.0}}
+"#;
+        let query = OperationQuery {
+            source: crs(4326),
+            target: crs(25832),
+            area_of_interest: project_area(),
+            selection_policy: OperationSelectionPolicy::default(),
+            grid_catalog: vec![GridCatalogEntry {
+                kind: TransformationGridKind::Ntv2,
+                official_filename: "original-user-name.gsb".into(),
+                official_sha256: Some(ObjectHash::of_bytes(b"survey-grid")),
+                license: GridLicenseMetadata {
+                    license_name: "User supplied".into(),
+                    spdx_expression: None,
+                    source: "local selection".into(),
+                    redistribution_allowed: false,
+                },
+                coverage: project_area(),
+                local_path: Some(path_text(&grid_path)),
+            }],
+        };
+
+        let (candidates, warnings) = fixture
+            .runtime
+            .parse_candidates(stdout, &query, &CancellationToken::new())
+            .await
+            .expect("candidate");
+
+        assert_eq!(candidates.len(), 1);
+        assert!(candidates[0]
+            .proj_pipeline
+            .contains("+grids=survey-grid.gsb"));
+        assert_eq!(
+            candidates[0].required_grids[0].official_filename,
+            "survey-grid.gsb"
+        );
+        assert_eq!(candidates[0].expected_accuracy_mm, None);
+        assert!(warnings
+            .iter()
+            .any(|warning| warning.contains("Explicit local grid override")));
+    }
+
+    #[tokio::test]
+    async fn explicit_survey_grids_build_a_non_ballpark_dhdn_compound_pipeline() {
+        let fixture = Fixture::new();
+        let horizontal_path = fixture.root.join("schwaben.gsb");
+        let vertical_path = fixture.root.join("gcg2016-su.tif");
+        let horizontal_bytes = b"SYSTEM_FDHDN90  SYSTEM_TETRS89  horizontal-grid";
+        fs::write(&horizontal_path, horizontal_bytes).expect("horizontal grid");
+        fs::write(&vertical_path, b"vertical-grid").expect("vertical grid");
+        let license = GridLicenseMetadata {
+            license_name: "User supplied".into(),
+            spdx_expression: None,
+            source: "local selection".into(),
+            redistribution_allowed: false,
+        };
+        let query = OperationQuery {
+            source: crs(4979),
+            target: CrsWithEpoch {
+                crs: CrsDefinition::Authority("EPSG:31468+7837".into()),
+                coordinate_epoch: None,
+            },
+            area_of_interest: project_area(),
+            selection_policy: OperationSelectionPolicy::default(),
+            grid_catalog: vec![
+                GridCatalogEntry {
+                    kind: TransformationGridKind::Ntv2,
+                    official_filename: "kanu_ntv2_schwaben.gsb".into(),
+                    official_sha256: Some(ObjectHash::of_bytes(horizontal_bytes)),
+                    license: license.clone(),
+                    coverage: project_area(),
+                    local_path: Some(path_text(&horizontal_path)),
+                },
+                GridCatalogEntry {
+                    kind: TransformationGridKind::Geoid,
+                    official_filename: "GCG2016_SU.tif".into(),
+                    official_sha256: Some(ObjectHash::of_bytes(b"vertical-grid")),
+                    license,
+                    coverage: project_area(),
+                    local_path: Some(path_text(&vertical_path)),
+                },
+            ],
+        };
+
+        let discovery = fixture
+            .runtime
+            .discover_operations(&query, &CancellationToken::new())
+            .await
+            .expect("explicit compound discovery");
+        let candidate = &discovery.candidates[0];
+        assert!(candidate.best_available);
+        assert!(!candidate.ballpark);
+        assert_eq!(candidate.expected_accuracy_mm, None);
+        assert_eq!(candidate.required_grids.len(), 2);
+        assert!(candidate
+            .proj_pipeline
+            .contains("+inv +proj=vgridshift +grids=gcg2016-su.tif +multiplier=1"));
+        assert!(candidate
+            .proj_pipeline
+            .contains("+inv +proj=hgridshift +grids=schwaben.gsb"));
+        assert!(candidate
+            .proj_pipeline
+            .contains("+proj=tmerc +lat_0=0 +lon_0=12 +k=1 +x_0=4500000"));
+    }
+
+    /// Regression: UI/GDAL often labels classic .gsb as GTG; freeze used to reject
+    /// `kanu_ntv2_schwaben.gsb` as "unaudited horizontal GeoTIFF".
+    #[tokio::test]
+    async fn gsb_mislabeled_as_gtg_is_accepted_for_explicit_dhdn() {
+        let fixture = Fixture::new();
+        let horizontal_path = fixture.root.join("kanu_ntv2_schwaben.gsb");
+        // Minimal body without SYSTEM tags — local .gsb path must still be accepted.
+        let horizontal_bytes = b"NTv2 regional schwaben grid without tags";
+        fs::write(&horizontal_path, horizontal_bytes).expect("horizontal grid");
+        let license = GridLicenseMetadata {
+            license_name: "User supplied".into(),
+            spdx_expression: None,
+            source: "local selection".into(),
+            redistribution_allowed: false,
+        };
+        let query = OperationQuery {
+            source: crs(4326),
+            target: crs(31468),
+            area_of_interest: project_area(),
+            selection_policy: OperationSelectionPolicy::default(),
+            grid_catalog: vec![GridCatalogEntry {
+                kind: TransformationGridKind::Gtg, // mislabeled
+                official_filename: "kanu_ntv2_schwaben.gsb".into(),
+                // No official hash pin (user file).
+                official_sha256: None,
+                license,
+                coverage: project_area(),
+                local_path: Some(path_text(&horizontal_path)),
+            }],
+        };
+
+        let discovery = fixture
+            .runtime
+            .discover_operations(&query, &CancellationToken::new())
+            .await
+            .expect("mislabeled gsb discovery");
+        assert!(
+            !discovery.candidates.is_empty(),
+            "expected explicit DHDN candidate for user .gsb"
+        );
+        let horizontal = discovery.candidates[0]
+            .required_grids
+            .iter()
+            .find(|g| {
+                matches!(
+                    g.kind,
+                    TransformationGridKind::Ntv2 | TransformationGridKind::Gtg
+                )
+            })
+            .expect("horizontal grid");
+        assert!(matches!(
+            horizontal.availability,
+            RequiredGridAvailability::PresentVerified { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn user_local_gtg_with_path_is_accepted_for_explicit_dhdn() {
+        let fixture = Fixture::new();
+        let horizontal_path = fixture.root.join("regional.tif");
+        fs::write(&horizontal_path, b"user-geo-tiff").expect("grid");
+        let license = GridLicenseMetadata {
+            license_name: "User supplied".into(),
+            spdx_expression: None,
+            source: "local selection".into(),
+            redistribution_allowed: false,
+        };
+        let query = OperationQuery {
+            source: crs(4326),
+            target: crs(31468),
+            area_of_interest: project_area(),
+            selection_policy: OperationSelectionPolicy::default(),
+            grid_catalog: vec![GridCatalogEntry {
+                kind: TransformationGridKind::Gtg,
+                official_filename: "regional.tif".into(),
+                official_sha256: None,
+                license,
+                coverage: project_area(),
+                local_path: Some(path_text(&horizontal_path)),
+            }],
+        };
+        let discovery = fixture
+            .runtime
+            .discover_operations(&query, &CancellationToken::new())
+            .await
+            .expect("user gtg discovery");
+        assert!(!discovery.candidates.is_empty());
+    }
+
+    #[tokio::test]
+    async fn preserved_2d_height_never_adds_a_selected_vertical_grid() {
+        let fixture = Fixture::new();
+        let horizontal_path = fixture.root.join("schwaben.gsb");
+        let vertical_path = fixture.root.join("geoid.tif");
+        let horizontal_bytes = b"SYSTEM_FDHDN90  SYSTEM_TETRS89  horizontal-grid";
+        fs::write(&horizontal_path, horizontal_bytes).expect("horizontal grid");
+        fs::write(&vertical_path, b"vertical-grid").expect("vertical grid");
+        let license = GridLicenseMetadata {
+            license_name: "User supplied".into(),
+            spdx_expression: None,
+            source: "local selection".into(),
+            redistribution_allowed: false,
+        };
+        let query = OperationQuery {
+            source: crs(4326),
+            target: crs(31468),
+            area_of_interest: project_area(),
+            selection_policy: OperationSelectionPolicy::default(),
+            grid_catalog: vec![
+                GridCatalogEntry {
+                    kind: TransformationGridKind::Ntv2,
+                    official_filename: "schwaben.gsb".into(),
+                    official_sha256: Some(ObjectHash::of_bytes(horizontal_bytes)),
+                    license: license.clone(),
+                    coverage: project_area(),
+                    local_path: Some(path_text(&horizontal_path)),
+                },
+                GridCatalogEntry {
+                    kind: TransformationGridKind::Geoid,
+                    official_filename: "geoid.tif".into(),
+                    official_sha256: Some(ObjectHash::of_bytes(b"vertical-grid")),
+                    license,
+                    coverage: project_area(),
+                    local_path: Some(path_text(&vertical_path)),
+                },
+            ],
+        };
+
+        let discovery = fixture
+            .runtime
+            .discover_operations(&query, &CancellationToken::new())
+            .await
+            .expect("discovery");
+        assert!(discovery
+            .candidates
+            .iter()
+            .all(|candidate| !candidate.proj_pipeline.contains("vgridshift")));
+    }
+
+    #[tokio::test]
+    async fn unrelated_ntv2_header_is_rejected_for_dhdn_inverse_pipeline() {
+        let fixture = Fixture::new();
+        let horizontal_path = fixture.root.join("unrelated.gsb");
+        fs::write(&horizontal_path, b"SYSTEM_FOTHER   SYSTEM_TUNRELATED").expect("grid");
+        let query = OperationQuery {
+            source: crs(4326),
+            target: crs(31468),
+            area_of_interest: project_area(),
+            selection_policy: OperationSelectionPolicy::default(),
+            grid_catalog: vec![GridCatalogEntry {
+                kind: TransformationGridKind::Ntv2,
+                official_filename: "unrelated.gsb".into(),
+                official_sha256: Some(ObjectHash::of_bytes(b"SYSTEM_FOTHER   SYSTEM_TUNRELATED")),
+                license: GridLicenseMetadata {
+                    license_name: "User supplied".into(),
+                    spdx_expression: None,
+                    source: "local selection".into(),
+                    redistribution_allowed: false,
+                },
+                coverage: project_area(),
+                local_path: Some(path_text(&horizontal_path)),
+            }],
+        };
+
+        let error = fixture
+            .runtime
+            .discover_operations(&query, &CancellationToken::new())
+            .await
+            .expect_err("unrelated grid must fail");
+        assert!(matches!(error, CrsRuntimeError::IncompatibleGrid { .. }));
+    }
+
+    #[tokio::test]
+    async fn identical_gauss_krueger_crs_does_not_require_a_datum_grid() {
+        let fixture = Fixture::new();
+        let stdout = r#"Operation No. 1:
+PROJ string:
++proj=noop
+PROJJSON:
+{"type":"Conversion","name":"DHDN / Gauss-Kruger zone 4 identity","accuracy":"0","bbox":{"south_latitude":47.0,"west_longitude":5.0,"north_latitude":56.0,"east_longitude":16.0}}
+"#;
+        let query = OperationQuery {
+            source: crs(31468),
+            target: crs(31468),
+            area_of_interest: project_area(),
+            selection_policy: OperationSelectionPolicy::default(),
+            grid_catalog: vec![],
+        };
+
+        let (candidates, _) = fixture
+            .runtime
+            .parse_candidates(stdout, &query, &CancellationToken::new())
+            .await
+            .expect("identity candidate");
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].kind, CoordinateOperationKind::General);
+        assert!(candidates[0].required_grids.is_empty());
+    }
+
+    #[tokio::test]
     async fn grid_outside_explicit_roots_is_rejected() {
         let fixture = Fixture::new();
         let outside = fixture.root.with_extension("outside.gsb");
@@ -1184,7 +2102,7 @@ mod tests {
                         .expect("filename")
                         .to_string_lossy()
                         .into_owned(),
-                    official_sha256: ObjectHash::of_bytes(b"outside-grid"),
+                    official_sha256: Some(ObjectHash::of_bytes(b"outside-grid")),
                     license: GridLicenseMetadata {
                         license_name: "Fixture".into(),
                         spdx_expression: None,

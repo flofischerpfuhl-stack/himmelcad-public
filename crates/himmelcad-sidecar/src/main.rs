@@ -10,7 +10,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::BufReader as StdBufReader;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use himmelcad_core::canonical_document::EntityVersionRef;
@@ -23,6 +24,7 @@ use tokio::sync::mpsc;
 use himmelcad_core::hash::ObjectHash;
 use himmelcad_core::photolab::{
     resolve_alignment_profile, AlignmentQualityProfile, ResolveAlignmentProfileRequest,
+    ResolvedAlignmentConfig,
 };
 use himmelcad_core::photolab_crs::FrozenImportTransformation;
 use himmelcad_core::photolab_crs::{CrsDefinition, HeightReference};
@@ -40,25 +42,36 @@ use himmelcad_core::photolab_jobs::{
 };
 use himmelcad_core::photolab_matching::ImageId;
 use himmelcad_io::{
-    import_gcp_csv_file, import_las_file_with_progress, import_photo_files, preview_gcp_csv_file,
-    ConverterProgress,
+    import_gcp_csv_file, import_las_file_with_progress_and_cancel,
+    import_photo_files_with_progress, preview_gcp_csv_file, ConverterProgress,
 };
 
 use crate::project_runtime::{
-    AppendJournalParams, CancelArchiveParams, CreateProcessingSetParams, CreateProjectParams,
-    FinishJournalParams, MoveEntityParams, OpenProjectParams, ProductLineage, ProjectRuntime,
-    PublishedRasterKind, RenameEntityParams, SaveProjectAsParams, SetEntityVisibilityParams,
+    AppendJournalParams, CancelArchiveParams, CancelImageMaskParams, ConfirmCaptureGroupParams,
+    CreateAlignmentMergeParams, CreateCaptureGroupParams, CreateProcessingSetParams,
+    CreateProjectParams, EditImageMaskParams, FinishJournalParams, MoveEntityParams,
+    OpenProjectParams, ProductLineage, ProjectRuntime, PublishedRasterKind,
+    RemoveCameraImagesParams, RenameEntityParams, SaveProjectAsParams, SetEntityVisibilityParams,
+};
+use himmelcad_sidecar::alignment_merge_runtime::{
+    build_shared_control_merge, resume_shared_control_merge, resume_solved_merge,
+    write_merge_checkpoint, AlignmentMergeCheckpoint, AlignmentMergeCheckpointState,
+    SharedControlInput,
 };
 use himmelcad_sidecar::brush_runtime::{
     BrushRunRequest, BrushRuntime, BrushTrainingSettings, DevBrushRuntimeConfig,
 };
+#[cfg(test)]
+use himmelcad_sidecar::colmap_runtime::ColmapCalibrationSeed;
 use himmelcad_sidecar::colmap_runtime::{
-    AlikedModelVariant, ColmapArtifactKind, ColmapComputeDevice, ColmapMesher, ColmapPairSelection,
-    ColmapProductRequest, ColmapResourceKind, ColmapRunOutcome, ColmapRunRequest, ColmapRuntime,
-    DedodeV2GPolicy, DevColmapRuntimeConfig, LargeMatchingBackend, MappingFeatureStore,
+    AlikedModelVariant, ColmapArtifactKind, ColmapCalibrationGroup, ColmapComputeDevice,
+    ColmapIntrinsicsRefinement, ColmapPairSelection, ColmapProductRequest, ColmapResourceKind,
+    ColmapRunOutcome, ColmapRunRequest, ColmapRuntime, DedodeV2GPolicy, DevColmapRuntimeConfig,
+    LargeMatchingBackend, MappingFeatureStore,
 };
 use himmelcad_sidecar::dedode_runtime::{
-    DedodeComputeDevice, DedodeImagePair, DedodeRunRequest, DedodeRuntime, DevDedodeRuntimeConfig,
+    DedodeComputeDevice, DedodeImagePair, DedodeRunRequest, DedodeRuntime,
+    DevDedodeOnnxRuntimeConfig, DevDedodeRuntimeConfig,
 };
 use himmelcad_sidecar::dense_raster_prep::{
     inspect_raster_wkt, inspect_vector_wkt, prepare_dense_potree, prepare_dense_vector,
@@ -73,6 +86,10 @@ use himmelcad_sidecar::gcp_runtime::{
 };
 use himmelcad_sidecar::hardware_runtime::probe_hardware;
 use himmelcad_sidecar::image_commit::{CancelImageCommitParams, CommitImagesParams};
+use himmelcad_sidecar::image_quality_runtime::{
+    analyze_project_images, ImageQualityConfiguration, ImageQualityRuntimeError, ImageQualityScope,
+    IMAGE_QUALITY_ALGORITHM_VERSION,
+};
 use himmelcad_sidecar::job_runtime::{
     JobIdParams, JobManager, JobManagerConfig, JobWorkerContext, JobWorkerError, ListJobsParams,
 };
@@ -81,10 +98,16 @@ use himmelcad_sidecar::mvs_runtime::{
     DevMvsRuntimeConfig, MvsCapability, MvsComputeDevice, MvsRunRequest, MvsRuntime, MvsSettings,
 };
 use himmelcad_sidecar::mvs_scene::{
-    load_gcp_bundle_tie_points, prepare_gcp_cameras, prepare_mvs_scene,
+    load_gcp_bundle_tie_points, load_prepared_mvs_scene, prepare_gcp_cameras, prepare_mvs_scene,
+    prepare_mvs_scene_with_masks_and_progress, PreparedMvsScene,
 };
 use himmelcad_sidecar::orthophoto_prep::{
     prepare_camera_orthophotos, CameraBlendMode, OrthophotoPreparation, OrthophotoPreparationError,
+};
+use himmelcad_sidecar::prepared_triangle_mesh::PreparedTriangleMeshOptions;
+use himmelcad_sidecar::prepared_triangle_mesh_ply::{
+    build_prepared_triangle_mesh_from_colmap_textured_directory,
+    build_prepared_triangle_mesh_from_ply,
 };
 use himmelcad_sidecar::product_export::{export_product, ProductExportError, ProductExportRequest};
 use himmelcad_sidecar::raster_runtime::{
@@ -140,11 +163,73 @@ struct ImportLasParams {
     cache_dir: Option<String>,
     #[serde(default)]
     progress_key: Option<String>,
+    #[serde(default)]
+    operation_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CancelLasImportParams {
+    operation_id: String,
+}
+
+#[derive(Default)]
+struct LasImportOperations {
+    active: Mutex<BTreeMap<String, Arc<AtomicBool>>>,
+}
+
+impl LasImportOperations {
+    fn begin(self: &Arc<Self>, operation_id: String) -> anyhow::Result<ActiveLasImport> {
+        anyhow::ensure!(!operation_id.trim().is_empty(), "operation_id is empty");
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let mut active = self.active.lock().expect("LAS import mutex poisoned");
+        match active.entry(operation_id.clone()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(cancellation.clone());
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {
+                anyhow::bail!("LAS import operation is already active: {operation_id}");
+            }
+        }
+        Ok(ActiveLasImport {
+            operation_id,
+            cancellation,
+            operations: Arc::clone(self),
+        })
+    }
+
+    fn cancel(&self, operation_id: &str) -> bool {
+        let active = self.active.lock().expect("LAS import mutex poisoned");
+        let Some(cancellation) = active.get(operation_id) else {
+            return false;
+        };
+        cancellation.store(true, Ordering::Release);
+        true
+    }
+}
+
+struct ActiveLasImport {
+    operation_id: String,
+    cancellation: Arc<AtomicBool>,
+    operations: Arc<LasImportOperations>,
+}
+
+impl Drop for ActiveLasImport {
+    fn drop(&mut self) {
+        self.operations
+            .active
+            .lock()
+            .expect("LAS import mutex poisoned")
+            .remove(&self.operation_id);
+    }
 }
 
 #[derive(Debug, Deserialize)]
 struct InspectPhotolabImagesParams {
     paths: Vec<String>,
+    #[serde(default)]
+    operation_id: Option<String>,
+    #[serde(default)]
+    progress_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -163,6 +248,21 @@ struct CommitGcpCsvParams {
     path: String,
     mapping: GcpCsvImportMapping,
     transformation: FrozenImportTransformation,
+    #[serde(default)]
+    coordinates_already_in_project_crs: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AlignmentJobOverrides {
+    #[serde(default)]
+    max_image_edge: Option<u32>,
+    #[serde(default)]
+    keypoints_per_megapixel: Option<u32>,
+    #[serde(default)]
+    sequential_overlap: Option<u32>,
+    #[serde(default)]
+    feature_budget: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -172,6 +272,28 @@ struct StartAlignmentJobParams {
     profile: AlignmentQualityProfile,
     #[serde(default)]
     camera_entity_ids: Vec<String>,
+    #[serde(default)]
+    processing_set_id: Option<EntityId>,
+    #[serde(default)]
+    overrides: AlignmentJobOverrides,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartImageQualityJobParams {
+    operation_id: String,
+    #[serde(default)]
+    camera_entity_ids: Vec<String>,
+    #[serde(default)]
+    processing_set_id: Option<EntityId>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartAlignmentMergeJobParams {
+    operation_id: String,
+    merge_entity_id: EntityId,
+    profile: AlignmentQualityProfile,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -184,11 +306,17 @@ enum ProductRunConfiguration {
     Depth {
         image_downscale: u32,
         filter: String,
+        #[serde(default = "default_mvs_maximum_neighbors")]
+        maximum_neighbors: u32,
         reuse_compatible_maps: bool,
     },
     Dense {
         #[serde(default = "default_dense_image_downscale")]
         image_downscale: u32,
+        #[serde(default = "default_mvs_filter")]
+        filter: String,
+        #[serde(default = "default_mvs_maximum_neighbors")]
+        maximum_neighbors: u32,
         minimum_views: u32,
         retain_confidence: bool,
         calculate_colors: bool,
@@ -227,6 +355,14 @@ const fn default_dense_image_downscale() -> u32 {
     2
 }
 
+fn default_mvs_filter() -> String {
+    "moderate".into()
+}
+
+const fn default_mvs_maximum_neighbors() -> u32 {
+    6
+}
+
 const fn default_splat_maximum_resolution() -> u32 {
     1_920
 }
@@ -238,6 +374,8 @@ struct StartProductJobParams {
     configuration: ProductRunConfiguration,
     #[serde(default)]
     processing_set_id: Option<EntityId>,
+    #[serde(default)]
+    source_alignment_entity_id: Option<EntityId>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -270,6 +408,8 @@ struct StartBatchJobParams {
     steps: Vec<BatchPipelineStep>,
     #[serde(default)]
     camera_entity_ids: Vec<String>,
+    #[serde(default)]
+    processing_set_id: Option<EntityId>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -309,6 +449,9 @@ struct AlignedGcpCameraRecord {
     entity_id: String,
     image_name: String,
     source_object_hash: ObjectHash,
+    /// True when COLMAP's model aligner already expressed the camera centre and
+    /// rotation in the frozen project Easting/Northing/Height frame.
+    center_in_project_world: bool,
     camera: GcpCameraModel,
 }
 
@@ -323,8 +466,10 @@ struct PreparedMvsProductJob {
     job: NewPhotolabJob,
     runtime: MvsRuntime,
     operation_id: String,
+    project_root: PathBuf,
     alignment_dataset: PathBuf,
     scene_root: PathBuf,
+    reusable_scene_manifest: Option<(PathBuf, ObjectHash)>,
     colmap_executable: PathBuf,
     coordinate_frame_id: String,
     settings: MvsSettings,
@@ -333,6 +478,7 @@ struct PreparedMvsProductJob {
     project_transform: Option<GcpSimilarityTransform>,
     optimized_cameras: Option<Vec<OptimizedGcpCamera>>,
     camera_entity_ids: Vec<String>,
+    image_mask_scope: himmelcad_core::photolab_masks::ImageMaskComputeScope,
     lineage: ProductLineage,
 }
 
@@ -365,6 +511,7 @@ struct PreparedMeshJob {
     textured: bool,
     target_face_count: u64,
     interpolate_holes: bool,
+    texture_size: u32,
     lineage: ProductLineage,
 }
 
@@ -376,8 +523,9 @@ const fn default_gcp_preview_rows() -> usize {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                tracing_subscriber::EnvFilter::new("info,parse_gps=warn,nom_exif=warn")
+            }),
         )
         .with_writer(std::io::stderr)
         .init();
@@ -390,8 +538,12 @@ async fn main() -> Result<()> {
     let stdin = tokio::io::stdin();
     let mut reader = BufReader::new(stdin).lines();
     let projects = Arc::new(ProjectRuntime::default());
-    let jobs = Arc::new(JobManager::new(default_job_manager_config())?);
+    let jobs = Arc::new(JobManager::new_with_history(
+        default_job_manager_config(),
+        projects.clone(),
+    )?);
     let crs = Arc::new(default_crs_service()?);
+    let las_imports = Arc::new(LasImportOperations::default());
     let (response_tx, mut response_rx) = mpsc::channel::<RpcResponse>(256);
     let writer = tokio::spawn(async move {
         let mut stdout = tokio::io::stdout();
@@ -411,11 +563,12 @@ async fn main() -> Result<()> {
         let projects = Arc::clone(&projects);
         let jobs = Arc::clone(&jobs);
         let crs = Arc::clone(&crs);
+        let las_imports = Arc::clone(&las_imports);
         let response_tx = response_tx.clone();
         let parsed = serde_json::from_str::<RpcRequest>(&line);
         tokio::spawn(async move {
             let response = match parsed {
-                Ok(req) => handle(req, projects, jobs, crs).await,
+                Ok(req) => handle(req, projects, jobs, crs, las_imports).await,
                 Err(err) => RpcResponse {
                     jsonrpc: "2.0",
                     id: serde_json::Value::Null,
@@ -446,6 +599,7 @@ async fn handle(
     projects: Arc<ProjectRuntime>,
     jobs: Arc<JobManager>,
     crs: Arc<CrsService>,
+    las_imports: Arc<LasImportOperations>,
 ) -> RpcResponse {
     if req.jsonrpc != "2.0" {
         return rpc_err(req.id, -32600, "invalid jsonrpc version");
@@ -477,7 +631,7 @@ async fn handle(
             error: None,
         },
         "import.las" => match serde_json::from_value::<ImportLasParams>(req.params.clone()) {
-            Ok(params) => match handle_import_las(params).await {
+            Ok(params) => match handle_import_las(params, las_imports).await {
                 Ok(value) => RpcResponse {
                     jsonrpc: "2.0",
                     id: req.id,
@@ -488,6 +642,18 @@ async fn handle(
             },
             Err(e) => rpc_err(req.id, -32602, &format!("invalid params: {e}")),
         },
+        "import.las.cancel" => {
+            match serde_json::from_value::<CancelLasImportParams>(req.params.clone()) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    Ok::<_, anyhow::Error>(serde_json::json!({
+                        "operationId": params.operation_id,
+                        "cancellationRequested": las_imports.cancel(&params.operation_id),
+                    })),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
         "photolab.alignment.resolve" => {
             match serde_json::from_value::<ResolveAlignmentProfileRequest>(req.params.clone()) {
                 Ok(params) => match resolve_alignment_profile(&params) {
@@ -540,11 +706,14 @@ async fn handle_image_rpc(
 ) -> RpcResponse {
     match req.method.as_str() {
         "photolab.images.list" => rpc_blocking(req.id, move || projects.list_camera_images()).await,
+        "photolab.images.quality.list" => {
+            rpc_blocking(req.id, move || projects.list_image_quality_analyses()).await
+        }
         "photolab.images.inspect" => {
             rpc_blocking_with_params::<InspectPhotolabImagesParams, _, _>(
                 req.id,
                 req.params,
-                |params| {
+                move |params| {
                     if params.paths.is_empty() {
                         anyhow::bail!("at least one image or directory path is required");
                     }
@@ -553,16 +722,54 @@ async fn handle_image_rpc(
                         .into_iter()
                         .map(PathBuf::from)
                         .collect::<Vec<_>>();
-                    Ok(import_photo_files(&paths))
+                    let operation_id = params.operation_id;
+                    let cancellation = operation_id
+                        .as_deref()
+                        .map(|id| projects.begin_image_inspection(id))
+                        .transpose()?;
+                    let progress_key = params.progress_key;
+                    let result = import_photo_files_with_progress(
+                        &paths,
+                        || {
+                            cancellation
+                                .as_ref()
+                                .is_some_and(|token| token.is_cancel_requested())
+                        },
+                        |fraction, message| {
+                            emit_progress(progress_key.as_deref(), fraction, message)
+                        },
+                    );
+                    if let Some(operation_id) = operation_id.as_deref() {
+                        projects.finish_image_inspection(operation_id);
+                    }
+                    result.context("image inspection cancelled")
                 },
             )
             .await
         }
+        "photolab.images.inspect.cancel" => {
+            rpc_blocking_with_params::<CancelImageCommitParams, _, _>(
+                req.id,
+                req.params,
+                move |params| Ok(projects.cancel_image_inspection(params)),
+            )
+            .await
+        }
         "photolab.images.commit" => {
+            let progress_key = req
+                .params
+                .get("progressKey")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
             match serde_json::from_value::<CommitImagesParams>(req.params) {
                 Ok(params) => match enrich_projected_references(params, crs).await {
                     Ok(params) => {
-                        rpc_blocking(req.id, move || projects.commit_images(params)).await
+                        rpc_blocking(req.id, move || {
+                            projects.commit_images_with_progress(params, |fraction, message| {
+                                emit_progress(progress_key.as_deref(), fraction, message);
+                            })
+                        })
+                        .await
                     }
                     Err(error) => rpc_err(req.id, -32000, &error.to_string()),
                 },
@@ -608,7 +815,10 @@ async fn enrich_projected_references(
     let output = crs
         .transform_text(&operation_id, &params.transformation, &input)
         .await?;
-    let coordinates = parse_transformed_coordinates(&output)?;
+    let coordinates = parse_transformed_coordinates(
+        &output,
+        pipeline_ends_with_axis_swap(&params.transformation.pipeline.proj_pipeline),
+    )?;
     if coordinates.len() != indices.len() {
         anyhow::bail!(
             "PROJ returned {} coordinates for {} image references",
@@ -640,7 +850,10 @@ async fn enrich_projected_references(
     Ok(params)
 }
 
-fn parse_transformed_coordinates(output: &str) -> anyhow::Result<Vec<[f64; 3]>> {
+fn parse_transformed_coordinates(
+    output: &str,
+    swap_output_axes: bool,
+) -> anyhow::Result<Vec<[f64; 3]>> {
     let mut coordinates = Vec::new();
     for line in output.lines().filter(|line| !line.trim().is_empty()) {
         let values = line
@@ -654,7 +867,11 @@ fn parse_transformed_coordinates(output: &str) -> anyhow::Result<Vec<[f64; 3]>> 
         if !easting.is_finite() || !northing.is_finite() || !height.is_finite() {
             anyhow::bail!("PROJ output contains a non-finite coordinate");
         }
-        coordinates.push([*easting, *northing, *height]);
+        coordinates.push(if swap_output_axes {
+            [*northing, *easting, *height]
+        } else {
+            [*easting, *northing, *height]
+        });
     }
     Ok(coordinates)
 }
@@ -726,6 +943,9 @@ async fn handle_gcp_rpc(
             )
             .await
         }
+        "photolab.gcp.optimization.list" => {
+            rpc_blocking(req.id, move || projects.list_gcp_optimizations()).await
+        }
         "photolab.gcp.alignedCameras" => {
             rpc_blocking_with_params::<AlignedGcpCamerasParams, _, _>(
                 req.id,
@@ -773,6 +993,9 @@ fn latest_gcp_optimization_for_scope(
     projects.latest_gcp_optimization_for_lineage(&ProductLineage {
         source_alignment_entity_id: alignment.source_alignment_entity_id,
         processing_set_id: alignment.processing_set_id,
+        gcp_optimization_entity_id: None,
+        gcp_optimization_snapshot_sha256: None,
+        image_mask_scope_sha256: alignment.image_mask_scope_sha256,
     })
 }
 
@@ -958,6 +1181,14 @@ fn load_aligned_gcp_cameras(
     let alignment = projects
         .latest_alignment_dataset_for_processing_set(processing_set_id)?
         .root;
+    let aligned_model = alignment.join("sparse-aligned");
+    let center_in_project_world = aligned_model.is_dir()
+        && ["cameras.bin", "cameras.txt"]
+            .iter()
+            .any(|name| aligned_model.join(name).is_file())
+        && ["images.bin", "images.txt"]
+            .iter()
+            .any(|name| aligned_model.join(name).is_file());
     let output = context
         .working_path
         .join(".photolab/cache/gcp-camera-catalog");
@@ -1001,6 +1232,7 @@ fn load_aligned_gcp_cameras(
             entity_id: project_camera.entity_id.0.clone(),
             image_name: project_camera.name.clone(),
             source_object_hash: project_camera.metadata.source_object_hash.clone(),
+            center_in_project_world,
             camera: entry.camera,
         });
     }
@@ -1018,6 +1250,15 @@ async fn transform_gcp_import(
     let mapping = params.mapping;
     let source_import =
         tokio::task::spawn_blocking(move || import_gcp_csv_file(&path, mapping)).await??;
+    if params.coordinates_already_in_project_crs {
+        return Ok(CommitGcpsParams {
+            operation_id: params.operation_id,
+            transformed_points: source_import.points.clone(),
+            source_import,
+            transformation: params.transformation,
+            coordinates_already_in_project_crs: true,
+        });
+    }
     let mut input = String::new();
     // GCP CSV columns are explicitly East/North, while an authoritative EPSG
     // pipeline may start in North/East axis order (for example EPSG:31468).
@@ -1044,7 +1285,10 @@ async fn transform_gcp_import(
             &input,
         )
         .await?;
-    let coordinates = parse_transformed_coordinates(&output)?;
+    let coordinates = parse_transformed_coordinates(
+        &output,
+        pipeline_ends_with_axis_swap(&params.transformation.pipeline.proj_pipeline),
+    )?;
     if coordinates.len() != source_import.points.len() {
         anyhow::bail!(
             "PROJ returned {} coordinates for {} GCPs",
@@ -1071,6 +1315,7 @@ async fn transform_gcp_import(
         source_import,
         transformed_points,
         transformation: params.transformation,
+        coordinates_already_in_project_crs: false,
     })
 }
 
@@ -1082,6 +1327,16 @@ fn pipeline_starts_with_axis_swap(pipeline: &str) -> bool {
             .split_ascii_whitespace()
             .any(|token| token == "+proj=axisswap")
             && first
+                .split_ascii_whitespace()
+                .any(|token| token == "+order=2,1")
+    })
+}
+
+fn pipeline_ends_with_axis_swap(pipeline: &str) -> bool {
+    pipeline.rsplit("+step").next().is_some_and(|last| {
+        last.split_ascii_whitespace()
+            .any(|token| token == "+proj=axisswap")
+            && last
                 .split_ascii_whitespace()
                 .any(|token| token == "+order=2,1")
     })
@@ -1172,6 +1427,33 @@ async fn handle_project_rpc(
             })
             .await
         }
+        "photolab.project.images.remove" => {
+            rpc_blocking_with_params::<RemoveCameraImagesParams, _, _>(
+                req.id,
+                req.params,
+                move |params| projects.remove_camera_images(params),
+            )
+            .await
+        }
+        "photolab.project.imageMask.list" => {
+            rpc_blocking(req.id, move || projects.list_image_masks()).await
+        }
+        "photolab.project.imageMask.edit" => {
+            rpc_blocking_with_params::<EditImageMaskParams, _, _>(
+                req.id,
+                req.params,
+                move |params| projects.edit_image_mask(params),
+            )
+            .await
+        }
+        "photolab.project.imageMask.cancel" => {
+            rpc_blocking_with_params::<CancelImageMaskParams, _, _>(
+                req.id,
+                req.params,
+                move |params| Ok::<_, anyhow::Error>(projects.cancel_image_mask(params)),
+            )
+            .await
+        }
         "photolab.project.processingSet.list" => {
             rpc_blocking(req.id, move || projects.list_processing_sets()).await
         }
@@ -1180,6 +1462,42 @@ async fn handle_project_rpc(
                 req.id,
                 req.params,
                 move |params| projects.create_processing_set(params),
+            )
+            .await
+        }
+        "photolab.project.captureGroup.list" => {
+            rpc_blocking(req.id, move || projects.list_capture_groups()).await
+        }
+        "photolab.project.calibrationGroup.list" => {
+            rpc_blocking(req.id, move || projects.list_calibration_groups()).await
+        }
+        "photolab.project.captureGroup.create" => {
+            rpc_blocking_with_params::<CreateCaptureGroupParams, _, _>(
+                req.id,
+                req.params,
+                move |params| projects.create_capture_group(params),
+            )
+            .await
+        }
+        "photolab.project.captureGroup.confirm" => {
+            rpc_blocking_with_params::<ConfirmCaptureGroupParams, _, _>(
+                req.id,
+                req.params,
+                move |params| projects.confirm_capture_group(params),
+            )
+            .await
+        }
+        "photolab.project.alignmentMerge.list" => {
+            rpc_blocking(req.id, move || projects.list_alignment_merges()).await
+        }
+        "photolab.project.alignmentMerge.candidates" => {
+            rpc_blocking(req.id, move || projects.list_alignment_merge_candidates()).await
+        }
+        "photolab.project.alignmentMerge.create" => {
+            rpc_blocking_with_params::<CreateAlignmentMergeParams, _, _>(
+                req.id,
+                req.params,
+                move |params| projects.create_alignment_merge(params),
             )
             .await
         }
@@ -1406,10 +1724,45 @@ async fn handle_job_rpc(
                 Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
             }
         }
+        "photolab.jobs.startImageQuality" => {
+            match serde_json::from_value::<StartImageQualityJobParams>(req.params) {
+                Ok(params) => match prepare_image_quality_job(params, &projects) {
+                    Ok((job, project_root, cameras, scope, configuration)) => {
+                        let publisher = Arc::clone(&projects);
+                        let job_id = job.id.0.clone();
+                        let result = jobs
+                            .start(job, move |context| {
+                                let analyses = analyze_project_images(
+                                    &project_root,
+                                    &job_id,
+                                    &cameras,
+                                    &scope,
+                                    &configuration,
+                                    &context,
+                                )
+                                .map_err(image_quality_worker_error)?;
+                                context.check_cancelled()?;
+                                publisher
+                                    .publish_image_quality_analyses(&job_id, analyses)
+                                    .map_err(|error| JobWorkerError::Failed {
+                                        code: "projectPublish".into(),
+                                        message: error.to_string(),
+                                    })?;
+                                Ok(())
+                            })
+                            .await
+                            .map_err(anyhow::Error::from);
+                        rpc_result(req.id, result)
+                    }
+                    Err(error) => rpc_err(req.id, -32000, &error.to_string()),
+                },
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
         "photolab.jobs.startAlignment" => {
             match serde_json::from_value::<StartAlignmentJobParams>(req.params) {
                 Ok(params) => match prepare_alignment_job(params, &projects) {
-                    Ok((job, request, runtime, dedode)) => {
+                    Ok((job, request, runtime, dedode, processing_set_id)) => {
                         let combined_stage_count = job.progress.stage.stage_count;
                         let colmap_stage_base = if dedode.is_some() { 3 } else { 0 };
                         let publisher = Arc::clone(&projects);
@@ -1443,13 +1796,190 @@ async fn handle_job_rpc(
                                 }
                                 .map_err(himmelcad_sidecar::job_runtime::JobWorkerError::from)?;
                                 prepare_alignment_sparse_potree(&mut outcome, &context)?;
+                                prepare_alignment_mesh(&mut outcome, &context)?;
                                 context.check_cancelled()?;
-                                publisher.publish_colmap_outcome(outcome).map_err(|error| {
-                                    himmelcad_sidecar::job_runtime::JobWorkerError::Failed {
-                                        code: "projectPublish".into(),
-                                        message: error.to_string(),
+                                publisher
+                                    .publish_colmap_outcome_for_processing_set(
+                                        outcome,
+                                        processing_set_id,
+                                    )
+                                    .map_err(|error| {
+                                        himmelcad_sidecar::job_runtime::JobWorkerError::Failed {
+                                            code: "projectPublish".into(),
+                                            message: error.to_string(),
+                                        }
+                                    })?;
+                                Ok(())
+                            })
+                            .await
+                            .map_err(anyhow::Error::from);
+                        rpc_result(req.id, result)
+                    }
+                    Err(error) => rpc_err(req.id, -32000, &error.to_string()),
+                },
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        "photolab.jobs.startAlignmentMerge" => {
+            match serde_json::from_value::<StartAlignmentMergeJobParams>(req.params) {
+                Ok(params) => match prepare_alignment_merge_job(params, &projects) {
+                    Ok((
+                        job,
+                        request,
+                        runtime,
+                        dedode,
+                        merge_entity_id,
+                        resumed,
+                        resumed_shared,
+                        shared_control_only,
+                    )) => {
+                        let combined_stage_count = job.progress.stage.stage_count;
+                        let colmap_stage_base = if dedode.is_some() { 3 } else { 0 };
+                        let checkpoint_project_root = request.project_root.clone();
+                        let checkpoint_operation_id = request.job_id.clone();
+                        let checkpoint_input_hash = job.input_hash.clone();
+                        let checkpoint_config_hash = job.config_hash.clone();
+                        let publisher = Arc::clone(&projects);
+                        let result = jobs
+                            .start(job, move |context| {
+                                if shared_control_only {
+                                    context.progress.report_blocking(JobProgress {
+                                        stage: PhotolabStage { kind: PhotolabStageKind::Preparing, index: 0, stage_count: 3, label: "Validate shared controls".into() },
+                                        metrics: ProgressMetrics { completed_units: 1, total_units: Some(1), completed_bytes: 0, total_bytes: None },
+                                    }).map_err(JobWorkerError::from)?;
+                                    let merge = publisher.alignment_merge_compute_context(&merge_entity_id).map_err(|error| worker_error("alignmentMergeInput", &error.to_string()))?;
+                                    let scopes = merge.record.input_alignment_entity_ids.iter().map(|alignment_id| {
+                                        let cameras = merge.input_camera_scopes.get(&alignment_id.0).cloned().unwrap_or_default().into_iter().collect::<BTreeSet<_>>();
+                                        (alignment_id.clone(), cameras)
+                                    }).collect::<Vec<_>>();
+                                    let shared_inputs = scopes.iter().map(|(alignment_id, cameras)| {
+                                        let optimization = merge.optimization_records.get(&alignment_id.0).with_context(|| format!("shared-control merge has no published GCP optimization for {}", alignment_id.0))?;
+                                        anyhow::ensure!(optimization.artifact.result.converged, "GCP optimization for {} did not converge", alignment_id.0);
+                                        let dataset = merge.input_dataset_roots.get(&alignment_id.0).context("shared-control merge lost an input dataset")?;
+                                        Ok(SharedControlInput { alignment_id, dataset_root: dataset, camera_entity_ids: cameras, transform: optimization.artifact.result.transform, optimized_cameras: &optimization.artifact.result.cameras })
+                                    }).collect::<anyhow::Result<Vec<_>>>().map_err(|error| worker_error("alignmentMergeInput", &error.to_string()))?;
+                                    context.progress.report_blocking(JobProgress {
+                                        stage: PhotolabStage { kind: PhotolabStageKind::SparseReconstruction, index: 1, stage_count: 3, label: "Assemble optimized survey blocks".into() },
+                                        metrics: ProgressMetrics::empty(),
+                                    }).map_err(JobWorkerError::from)?;
+                                    let outcome = if let Some(outcome) = resumed_shared {
+                                        outcome
+                                    } else {
+                                        build_shared_control_merge(&checkpoint_project_root, &checkpoint_operation_id, &shared_inputs, &context.cancellation).map_err(|error| {
+                                            if matches!(error, himmelcad_sidecar::alignment_merge_runtime::AlignmentMergeRuntimeError::Cancelled) { JobWorkerError::Cancelled } else { worker_error("sharedControlMerge", &error.to_string()) }
+                                        })?
+                                    };
+                                    let scratch_relative_path = outcome.scratch_path.strip_prefix(&checkpoint_project_root).map_err(|_| worker_error("alignmentMergeCheckpoint", "shared-control merge scratch escaped the project"))?.to_path_buf();
+                                    write_merge_checkpoint(&checkpoint_project_root, &AlignmentMergeCheckpoint { schema_version: 1, operation_id: checkpoint_operation_id.clone(), merge_entity_id: merge_entity_id.clone(), input_hash: checkpoint_input_hash.clone(), config_hash: checkpoint_config_hash.clone(), state: AlignmentMergeCheckpointState::Solved, scratch_relative_path: Some(scratch_relative_path), summary_sha256: Some(outcome.dataset_sha256.clone()) }).map_err(|error| worker_error("alignmentMergeCheckpoint", &error.to_string()))?;
+                                    context.check_cancelled()?;
+                                    context.progress.report_blocking(JobProgress {
+                                        stage: PhotolabStage { kind: PhotolabStageKind::Finalizing, index: 2, stage_count: 3, label: "Publish common survey frame".into() },
+                                        metrics: ProgressMetrics::empty(),
+                                    }).map_err(JobWorkerError::from)?;
+                                    publisher.publish_shared_control_merge_outcome(&merge_entity_id, outcome, &checkpoint_operation_id).map_err(|error| worker_error("alignmentMergePublish", &error.to_string()))?;
+                                    let _ = write_merge_checkpoint(&checkpoint_project_root, &AlignmentMergeCheckpoint { schema_version: 1, operation_id: checkpoint_operation_id, merge_entity_id, input_hash: checkpoint_input_hash, config_hash: checkpoint_config_hash, state: AlignmentMergeCheckpointState::Published, scratch_relative_path: None, summary_sha256: None });
+                                    return Ok(());
+                                }
+                                let solve = resumed.map_or_else(
+                                    || match dedode {
+                                        Some((dedode_runtime, dedode_request)) => {
+                                            let dedode_context = context
+                                                .with_progress_window(0, combined_stage_count);
+                                            let dedode_outcome = dedode_runtime
+                                                .run(&dedode_request, &dedode_context)
+                                                .map_err(JobWorkerError::from);
+                                            dedode_outcome.and_then(|dedode_outcome| {
+                                                context.check_cancelled()?;
+                                                runtime
+                                                    .run_with_dedode(
+                                                        &request,
+                                                        &dedode_outcome,
+                                                        &context.with_progress_window(
+                                                            colmap_stage_base,
+                                                            combined_stage_count,
+                                                        ),
+                                                    )
+                                                    .map_err(JobWorkerError::from)
+                                            })
+                                        }
+                                        None => runtime
+                                            .run(
+                                                &request,
+                                                &context.with_progress_window(
+                                                    colmap_stage_base,
+                                                    combined_stage_count,
+                                                ),
+                                            )
+                                            .map_err(JobWorkerError::from),
+                                    },
+                                    Ok,
+                                );
+                                let outcome = match solve {
+                                    Ok(outcome) => outcome,
+                                    Err(error) => {
+                                        if matches!(error, JobWorkerError::Cancelled) {
+                                            let _ = write_merge_checkpoint(
+                                                &checkpoint_project_root,
+                                                &AlignmentMergeCheckpoint {
+                                                    schema_version: 1,
+                                                    operation_id: checkpoint_operation_id.clone(),
+                                                    merge_entity_id: merge_entity_id.clone(),
+                                                    input_hash: checkpoint_input_hash.clone(),
+                                                    config_hash: checkpoint_config_hash.clone(),
+                                                    state: AlignmentMergeCheckpointState::Cancelled,
+                                                    scratch_relative_path: None,
+                                                    summary_sha256: None,
+                                                },
+                                            );
+                                        }
+                                        return Err(error);
                                     }
+                                };
+                                let scratch_relative_path = outcome
+                                    .scratch_path
+                                    .strip_prefix(&checkpoint_project_root)
+                                    .map_err(|_| {
+                                        worker_error(
+                                            "alignmentMergeCheckpoint",
+                                            "merge scratch path escaped the project",
+                                        )
+                                    })?
+                                    .to_path_buf();
+                                write_merge_checkpoint(
+                                    &checkpoint_project_root,
+                                    &AlignmentMergeCheckpoint {
+                                        schema_version: 1,
+                                        operation_id: checkpoint_operation_id.clone(),
+                                        merge_entity_id: merge_entity_id.clone(),
+                                        input_hash: checkpoint_input_hash.clone(),
+                                        config_hash: checkpoint_config_hash.clone(),
+                                        state: AlignmentMergeCheckpointState::Solved,
+                                        scratch_relative_path: Some(scratch_relative_path),
+                                        summary_sha256: Some(outcome.summary_sha256.clone()),
+                                    },
+                                )
+                                .map_err(|error| {
+                                    worker_error("alignmentMergeCheckpoint", &error.to_string())
                                 })?;
+                                context.check_cancelled()?;
+                                publisher
+                                    .publish_alignment_merge_outcome(&merge_entity_id, outcome)
+                                    .map_err(|error| {
+                                        worker_error("alignmentMergePublish", &error.to_string())
+                                    })?;
+                                let _ = write_merge_checkpoint(
+                                    &checkpoint_project_root,
+                                    &AlignmentMergeCheckpoint {
+                                        schema_version: 1,
+                                        operation_id: checkpoint_operation_id,
+                                        merge_entity_id,
+                                        input_hash: checkpoint_input_hash,
+                                        config_hash: checkpoint_config_hash,
+                                        state: AlignmentMergeCheckpointState::Published,
+                                        scratch_relative_path: None,
+                                        summary_sha256: None,
+                                    },
+                                );
                                 Ok(())
                             })
                             .await
@@ -1475,7 +2005,7 @@ async fn handle_job_rpc(
                                         himmelcad_sidecar::job_runtime::JobWorkerError::from,
                                     )?;
                                     let project_transform = publisher
-                                        .latest_gcp_optimization()
+                                        .latest_gcp_optimization_for_lineage(&lineage)
                                         .map_err(|error| {
                                             worker_error("projectRead", &error.to_string())
                                         })?
@@ -1518,29 +2048,7 @@ async fn handle_job_rpc(
                             let publisher = Arc::clone(&projects);
                             let result = jobs
                                 .start(prepared.job.clone(), move |context| {
-                                    let scene = prepare_mvs_scene(
-                                        &prepared.colmap_executable,
-                                        &prepared.alignment_dataset,
-                                        &prepared.scene_root,
-                                        &prepared.coordinate_frame_id,
-                                        prepared.settings.maximum_image_dimension,
-                                        prepared.project_transform,
-                                        prepared.optimized_cameras.as_deref(),
-                                        &context.cancellation,
-                                    )
-                                    .map_err(|error| {
-                                        if matches!(
-                                            error,
-                                            himmelcad_sidecar::mvs_scene::MvsSceneError::Cancelled
-                                        ) {
-                                            himmelcad_sidecar::job_runtime::JobWorkerError::Cancelled
-                                        } else {
-                                            himmelcad_sidecar::job_runtime::JobWorkerError::Failed {
-                                                code: "mvsScenePreparation".into(),
-                                                message: error.to_string(),
-                                            }
-                                        }
-                                    })?;
+                                    let scene = prepare_or_reuse_mvs_scene(&prepared, &context)?;
                                     let resume = if prepared.reuse_compatible_maps {
                                         prepared.runtime.compatible_resume_checkpoint(
                                             &scene.manifest_sha256,
@@ -1560,12 +2068,13 @@ async fn handle_job_rpc(
                                         fuse_dense_point_cloud: prepared.fuse_dense_point_cloud,
                                         resume,
                                     };
-                                    let mut outcome = prepared
-                                        .runtime
-                                        .run(&request, &context)
-                                        .map_err(himmelcad_sidecar::job_runtime::JobWorkerError::from)?;
+                                    let mut outcome =
+                                        prepared.runtime.run(&request, &context).map_err(
+                                            himmelcad_sidecar::job_runtime::JobWorkerError::from,
+                                        )?;
                                     if let Some(dense) = outcome.output.dense_point_cloud.as_ref() {
-                                        let dense_path = outcome.output_path.join(&dense.relative_path);
+                                        let dense_path =
+                                            outcome.output_path.join(&dense.relative_path);
                                         let potree = prepare_dense_potree(
                                             &dense_path,
                                             &outcome.scratch_path.join("potree"),
@@ -1580,14 +2089,15 @@ async fn handle_job_rpc(
                                         .publish_mvs_outcome(
                                             outcome,
                                             &prepared.camera_entity_ids,
+                                            &prepared.image_mask_scope.scope_sha256,
                                             &prepared.lineage,
                                         )
                                         .map_err(|error| {
-                                        himmelcad_sidecar::job_runtime::JobWorkerError::Failed {
-                                            code: "projectPublish".into(),
-                                            message: error.to_string(),
-                                        }
-                                    })?;
+                                            himmelcad_sidecar::job_runtime::JobWorkerError::Failed {
+                                                code: "projectPublish".into(),
+                                                message: error.to_string(),
+                                            }
+                                        })?;
                                     Ok(())
                                 })
                                 .await
@@ -1634,34 +2144,16 @@ async fn handle_job_rpc(
                         Err(error) => rpc_err(req.id, -32000, &error.to_string()),
                     }
                 }
-                Ok(params) => match prepare_colmap_product_job(params, &projects) {
-                    Ok((job, request, runtime)) => {
-                        let publisher = Arc::clone(&projects);
-                        let result = jobs
-                            .start(job, move |context| {
-                                let outcome = runtime.run(&request, &context).map_err(
-                                    himmelcad_sidecar::job_runtime::JobWorkerError::from,
-                                )?;
-                                context.check_cancelled()?;
-                                publisher.publish_colmap_outcome(outcome).map_err(|error| {
-                                    himmelcad_sidecar::job_runtime::JobWorkerError::Failed {
-                                        code: "projectPublish".into(),
-                                        message: error.to_string(),
-                                    }
-                                })?;
-                                Ok(())
-                            })
-                            .await
-                            .map_err(anyhow::Error::from);
-                        rpc_result(req.id, result)
-                    }
-                    Err(error) => rpc_err(req.id, -32000, &error.to_string()),
-                },
+                Ok(_) => rpc_err(
+                    req.id,
+                    -32603,
+                    "product configuration did not match a registered runtime",
+                ),
                 Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
             }
         }
         "photolab.jobs.list" => match serde_json::from_value::<ListJobsParams>(req.params) {
-            Ok(params) => rpc_result(req.id, Ok::<_, anyhow::Error>(jobs.list(params).await)),
+            Ok(params) => rpc_result(req.id, jobs.list(params).await.map_err(anyhow::Error::from)),
             Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
         },
         "photolab.jobs.status" => match serde_json::from_value::<JobIdParams>(req.params) {
@@ -1706,7 +2198,41 @@ fn prepare_batch_job(
         "batch needs 1..=32 steps"
     );
     let context = projects.compute_context()?;
-    let bytes = serde_json::to_vec(&(&params.steps, &params.camera_entity_ids))?;
+    if let Some(processing_set_id) = params.processing_set_id.as_ref() {
+        let processing_set = projects
+            .list_processing_sets()?
+            .into_iter()
+            .find(|set| &set.entity_id == processing_set_id)
+            .context("batch processing set does not exist")?;
+        let mut requested = params.camera_entity_ids.clone();
+        requested.sort();
+        requested.dedup();
+        let frozen = processing_set
+            .camera_entity_ids
+            .iter()
+            .map(|id| id.0.clone())
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            requested == frozen,
+            "batch camera selection differs from its immutable processing set"
+        );
+    }
+    let bytes = serde_json::to_vec(&(
+        &params.steps,
+        &params.camera_entity_ids,
+        &params.processing_set_id,
+    ))?;
+    let batch_camera_entity_ids = if params.camera_entity_ids.is_empty() {
+        context
+            .camera_images
+            .iter()
+            .map(|camera| camera.entity_id.0.clone())
+            .collect::<Vec<_>>()
+    } else {
+        params.camera_entity_ids.clone()
+    };
+    let image_mask_scope = projects
+        .image_mask_compute_scope(&batch_camera_entity_ids, params.processing_set_id.as_ref())?;
     let stage_count = 1_u32.saturating_add(u32::try_from(params.steps.len())?.saturating_mul(32));
     Ok(NewPhotolabJob {
         id: PhotolabJobId(params.operation_id.clone()),
@@ -1715,6 +2241,7 @@ fn prepare_batch_job(
         input_hash: ObjectHash::of_bytes(&serde_json::to_vec(&(
             &context.manifest.project_id,
             &context.camera_images,
+            &image_mask_scope.scope_sha256,
         ))?),
         progress: JobProgress {
             stage: PhotolabStage {
@@ -1743,8 +2270,13 @@ fn run_batch_pipeline(
         .map_err(|error| worker_error("projectRead", &error.to_string()))?;
     let steps_sha256 = batch_steps_hash(&params.steps, &params.camera_entity_ids)
         .map_err(|error| worker_error("batchCheckpoint", &error.to_string()))?;
-    let input_sha256 = batch_input_hash(projects, &compute_context)
-        .map_err(|error| worker_error("batchCheckpoint", &error.to_string()))?;
+    let input_sha256 = batch_input_hash(
+        projects,
+        &compute_context,
+        &params.camera_entity_ids,
+        params.processing_set_id.as_ref(),
+    )
+    .map_err(|error| worker_error("batchCheckpoint", &error.to_string()))?;
     let checkpoint_root = compute_context
         .working_path
         .join(".photolab/batch")
@@ -1760,11 +2292,13 @@ fn run_batch_pipeline(
         let base = 1 + u32::try_from(index).unwrap_or(u32::MAX).saturating_mul(32);
         match step.clone() {
             BatchPipelineStep::Alignment { profile } => {
-                let (_, request, runtime, dedode) = prepare_alignment_job(
+                let (_, request, runtime, dedode, processing_set_id) = prepare_alignment_job(
                     StartAlignmentJobParams {
                         operation_id: format!("{}-{:02}-alignment", params.operation_id, index),
                         profile,
                         camera_entity_ids: params.camera_entity_ids.clone(),
+                        processing_set_id: params.processing_set_id.clone(),
+                        overrides: AlignmentJobOverrides::default(),
                     },
                     projects,
                 )
@@ -1782,9 +2316,10 @@ fn run_batch_pipeline(
                 }
                 .map_err(JobWorkerError::from)?;
                 prepare_alignment_sparse_potree(&mut outcome, context)?;
+                prepare_alignment_mesh(&mut outcome, context)?;
                 context.check_cancelled()?;
                 projects
-                    .publish_colmap_outcome(outcome)
+                    .publish_colmap_outcome_for_processing_set(outcome, processing_set_id)
                     .map_err(|error| worker_error("projectPublish", &error.to_string()))?;
             }
             BatchPipelineStep::Product { configuration } => execute_batch_product(
@@ -1792,6 +2327,7 @@ fn run_batch_pipeline(
                 index,
                 configuration,
                 &params.camera_entity_ids,
+                params.processing_set_id.as_ref(),
                 context,
                 projects,
                 base,
@@ -1829,6 +2365,7 @@ fn execute_batch_product(
     index: usize,
     configuration: ProductRunConfiguration,
     camera_entity_ids: &[String],
+    processing_set_id: Option<&EntityId>,
     context: &JobWorkerContext,
     projects: &ProjectRuntime,
     base: u32,
@@ -1847,24 +2384,15 @@ fn execute_batch_product(
                 StartProductJobParams {
                     operation_id,
                     configuration: config,
-                    processing_set_id: None,
+                    processing_set_id: processing_set_id.cloned(),
+                    source_alignment_entity_id: None,
                 },
                 projects,
                 Some(camera_entity_ids),
             )
             .map_err(|error| worker_error("batchPrepare", &error.to_string()))?;
             let node = context.with_progress_window(base, total);
-            let scene = prepare_mvs_scene(
-                &prepared.colmap_executable,
-                &prepared.alignment_dataset,
-                &prepared.scene_root,
-                &prepared.coordinate_frame_id,
-                prepared.settings.maximum_image_dimension,
-                prepared.project_transform,
-                prepared.optimized_cameras.as_deref(),
-                &node.cancellation,
-            )
-            .map_err(|error| worker_error("mvsScenePreparation", &error.to_string()))?;
+            let scene = prepare_or_reuse_mvs_scene(&prepared, &node)?;
             let resume = if prepared.reuse_compatible_maps {
                 prepared
                     .runtime
@@ -1900,7 +2428,12 @@ fn execute_batch_product(
                 );
             }
             projects
-                .publish_mvs_outcome(outcome, &prepared.camera_entity_ids, &prepared.lineage)
+                .publish_mvs_outcome(
+                    outcome,
+                    &prepared.camera_entity_ids,
+                    &prepared.image_mask_scope.scope_sha256,
+                    &prepared.lineage,
+                )
                 .map_err(|error| worker_error("projectPublish", &error.to_string()))?;
         }
         config @ ProductRunConfiguration::Dem { .. }
@@ -1909,7 +2442,8 @@ fn execute_batch_product(
                 StartProductJobParams {
                     operation_id,
                     configuration: config,
-                    processing_set_id: None,
+                    processing_set_id: processing_set_id.cloned(),
+                    source_alignment_entity_id: None,
                 },
                 projects,
                 Some(camera_entity_ids),
@@ -1923,7 +2457,8 @@ fn execute_batch_product(
                 StartProductJobParams {
                     operation_id,
                     configuration: config,
-                    processing_set_id: None,
+                    processing_set_id: processing_set_id.cloned(),
+                    source_alignment_entity_id: None,
                 },
                 projects,
                 Some(camera_entity_ids),
@@ -1937,7 +2472,8 @@ fn execute_batch_product(
                 StartProductJobParams {
                     operation_id,
                     configuration: config,
-                    processing_set_id: None,
+                    processing_set_id: processing_set_id.cloned(),
+                    source_alignment_entity_id: None,
                 },
                 projects,
                 Some(camera_entity_ids),
@@ -1946,7 +2482,7 @@ fn execute_batch_product(
             let node = context.with_progress_window(base, total);
             let mut outcome = runtime.run(&request, &node).map_err(JobWorkerError::from)?;
             let transform = projects
-                .latest_gcp_optimization()
+                .latest_gcp_optimization_for_lineage(&lineage)
                 .map_err(|error| worker_error("projectRead", &error.to_string()))?
                 .map(|record| record.artifact.result.transform);
             outcome.prepared_splats = Some(
@@ -1999,12 +2535,26 @@ fn batch_steps_hash(
 fn batch_input_hash(
     projects: &ProjectRuntime,
     context: &crate::project_runtime::ProjectComputeContext,
+    camera_entity_ids: &[String],
+    processing_set_id: Option<&EntityId>,
 ) -> anyhow::Result<ObjectHash> {
     let gcp_hash = projects.list_gcps()?.map(|(hash, _)| hash);
+    let selected_camera_entity_ids = if camera_entity_ids.is_empty() {
+        context
+            .camera_images
+            .iter()
+            .map(|camera| camera.entity_id.0.clone())
+            .collect::<Vec<_>>()
+    } else {
+        camera_entity_ids.to_vec()
+    };
+    let image_mask_scope =
+        projects.image_mask_compute_scope(&selected_camera_entity_ids, processing_set_id)?;
     Ok(ObjectHash::of_bytes(&serde_json::to_vec(&(
         &context.manifest.project_id,
         &context.camera_images,
         gcp_hash,
+        image_mask_scope.scope_sha256,
     ))?))
 }
 
@@ -2053,6 +2603,9 @@ fn prepare_gcp_optimization_job(
     let lineage = ProductLineage {
         source_alignment_entity_id: alignment.source_alignment_entity_id.clone(),
         processing_set_id: alignment.processing_set_id.clone(),
+        gcp_optimization_entity_id: None,
+        gcp_optimization_snapshot_sha256: None,
+        image_mask_scope_sha256: alignment.image_mask_scope_sha256.clone(),
     };
     let alignment_dataset = alignment.root;
     let camera_root = context
@@ -2214,29 +2767,66 @@ fn prepare_alignment_job(
     ColmapRunRequest,
     ColmapRuntime,
     Option<(DedodeRuntime, DedodeRunRequest)>,
+    Option<EntityId>,
 )> {
     let context = projects.compute_context()?;
-    let camera_images =
-        select_alignment_cameras(&context.camera_images, &params.camera_entity_ids)?;
+    let processing_set_id = params.processing_set_id.clone();
+    let requested_camera_ids = if let Some(entity_id) = processing_set_id.as_ref() {
+        let processing_set = projects
+            .list_processing_sets()?
+            .into_iter()
+            .find(|record| &record.entity_id == entity_id)
+            .with_context(|| format!("unknown processing set {}", entity_id.0))?;
+        let frozen = processing_set
+            .camera_entity_ids
+            .into_iter()
+            .map(|id| id.0)
+            .collect::<Vec<_>>();
+        if !params.camera_entity_ids.is_empty() {
+            let mut requested = params.camera_entity_ids.clone();
+            requested.sort();
+            anyhow::ensure!(
+                requested == frozen,
+                "alignment camera selection differs from its immutable processing set"
+            );
+        }
+        frozen
+    } else {
+        params.camera_entity_ids.clone()
+    };
+    let camera_images = select_alignment_cameras(&context.camera_images, &requested_camera_ids)?;
+    let camera_scope_ids = camera_images
+        .iter()
+        .map(|camera| camera.entity_id.0.clone())
+        .collect::<Vec<_>>();
+    let image_mask_scope =
+        projects.image_mask_compute_scope(&camera_scope_ids, processing_set_id.as_ref())?;
     let image_count = u32::try_from(camera_images.len())
         .context("project image count exceeds supported alignment range")?;
     let resolved = resolve_alignment_profile(&ResolveAlignmentProfileRequest {
         profile: params.profile,
         image_count,
-        max_image_edge_override: None,
+        max_image_edge_override: params.overrides.max_image_edge,
+        keypoints_per_megapixel_override: params.overrides.keypoints_per_megapixel,
     })?;
     let feature_worker_threads = colmap_feature_worker_threads(resolved.max_image_edge);
-    let request = ColmapRunRequest {
+    let feature_budget = params
+        .overrides
+        .feature_budget
+        .map(|budget| budget.clamp(1_024, 64_000))
+        .unwrap_or_else(|| alignment_feature_budget(params.profile, &resolved));
+    let mut request = ColmapRunRequest {
         job_id: params.operation_id.clone(),
         project_root: context.working_path.clone(),
         camera_images: camera_images.clone(),
+        image_mask_scope: Some(image_mask_scope.clone()),
+        calibration_groups: Vec::new(),
         device: ColmapComputeDevice::Cpu,
-        pair_selection: if params.profile == AlignmentQualityProfile::Fast {
-            ColmapPairSelection::Sequential { overlap: 12 }
-        } else {
-            ColmapPairSelection::Exhaustive
-        },
-        mapping_store: MappingFeatureStore::Aliked,
+        pair_selection: alignment_pair_selection(
+            params.profile,
+            params.overrides.sequential_overlap,
+        ),
+        mapping_store: alignment_primary_store(params.profile),
         aliked_variant: if params.profile == AlignmentQualityProfile::Fast {
             AlikedModelVariant::N16Rot
         } else {
@@ -2251,31 +2841,36 @@ fn prepare_alignment_job(
                 policy: DedodeV2GPolicy::AllPairs,
             },
         },
-        aliked_max_features: match params.profile {
-            AlignmentQualityProfile::Fast => 8_000,
-            AlignmentQualityProfile::QualityHybrid => 16_000,
-            AlignmentQualityProfile::MaximumRobustness => 32_000,
-        },
-        sift_max_features: match params.profile {
-            AlignmentQualityProfile::Fast => 8_000,
-            AlignmentQualityProfile::QualityHybrid => 16_000,
-            AlignmentQualityProfile::MaximumRobustness => 32_000,
-        },
+        aliked_max_features: feature_budget,
+        sift_max_features: feature_budget,
         sift_rescue_only: params.profile == AlignmentQualityProfile::Fast,
         max_image_size: resolved.max_image_edge,
         feature_worker_threads,
         aliked_matching_worker_threads: colmap_aliked_matching_worker_threads(),
         matching_worker_threads: colmap_matching_worker_threads(),
         products: ColmapProductRequest::default(),
+        intrinsics_refinement: ColmapIntrinsicsRefinement::Refine,
     };
+    request.calibration_groups = projects.calibration_groups_for_camera_scope(
+        &camera_images
+            .iter()
+            .map(|camera| camera.entity_id.0.clone())
+            .collect::<Vec<_>>(),
+    )?;
+    request.intrinsics_refinement =
+        alignment_intrinsics_refinement(params.profile, &request.calibration_groups);
     let input_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
         &context.manifest.project_id,
         &camera_images,
+        &image_mask_scope.scope_sha256,
     ))?);
     let mut job = NewPhotolabJob {
         id: PhotolabJobId(params.operation_id),
         kind: PhotolabJobKind::AlignPhotos,
-        config_hash: resolved.config_hash,
+        config_hash: ObjectHash::of_bytes(&serde_json::to_vec(&(
+            &resolved.config_hash,
+            &request.calibration_groups,
+        ))?),
         input_hash: input_hash.clone(),
         progress: request.progress_plan().initial_progress(),
     };
@@ -2295,6 +2890,7 @@ fn prepare_alignment_job(
                         job_id: format!("{}-dedode", request.job_id),
                         project_root: context.working_path,
                         camera_images: request.camera_images.clone(),
+                        image_mask_scope: request.image_mask_scope.clone(),
                         pairs,
                         device: DedodeComputeDevice::Cpu,
                         max_keypoints: if params.profile
@@ -2346,7 +2942,316 @@ fn prepare_alignment_job(
             metrics: ProgressMetrics::empty(),
         };
     }
-    Ok((job, request, runtime, dedode))
+    Ok((job, request, runtime, dedode, processing_set_id))
+}
+
+fn alignment_intrinsics_refinement(
+    _profile: AlignmentQualityProfile,
+    groups: &[ColmapCalibrationGroup],
+) -> ColmapIntrinsicsRefinement {
+    if groups.iter().any(|group| {
+        group
+            .seed
+            .as_ref()
+            .is_some_and(|seed| seed.full_brown_calibration.is_some())
+    }) {
+        // COLMAP exposes BA refinement as a run-wide policy. All profiles freeze
+        // a run containing reliable embedded calibration: matching robustness is
+        // profile-dependent, while calibrated focal/principal/distortion are not.
+        return ColmapIntrinsicsRefinement::FreezeReliableEmbedded;
+    }
+    ColmapIntrinsicsRefinement::Refine
+}
+
+/// Stored-feature budget for ALIKED/SIFT extractors.
+///
+/// Uses `keypoints_per_megapixel * approx_resized_megapixels` from the resolved
+/// profile, clamped per profile so Fast stays interactive. (Previously a fixed
+/// constant ignored `keypoints_per_megapixel` entirely — dead knob.)
+fn alignment_feature_budget(
+    profile: AlignmentQualityProfile,
+    resolved: &ResolvedAlignmentConfig,
+) -> u32 {
+    let edge = u64::from(resolved.max_image_edge.max(1));
+    // Assume ~4:3 frame after long-edge resize.
+    let approx_mp_x100 = edge.saturating_mul(edge).saturating_mul(3) / 4 / 10_000;
+    let from_density =
+        approx_mp_x100.saturating_mul(u64::from(resolved.keypoints_per_megapixel.max(1))) / 100;
+    let (floor, ceil) = match profile {
+        AlignmentQualityProfile::Fast => (2_048, 8_192),
+        AlignmentQualityProfile::QualityHybrid => (8_192, 24_000),
+        AlignmentQualityProfile::MaximumRobustness => (12_000, 48_000),
+    };
+    from_density.clamp(floor, ceil) as u32
+}
+
+fn alignment_pair_selection(
+    profile: AlignmentQualityProfile,
+    sequential_overlap_override: Option<u32>,
+) -> ColmapPairSelection {
+    let clamp_overlap = |default: u32| sequential_overlap_override.unwrap_or(default).clamp(2, 128);
+    match profile {
+        // 12 was too short for typical drone strip side-lap (neighbours in the next
+        // line often sit >12 frames away in capture order). 20 keeps Fast cheap but
+        // recovers most cross-strip pairs without exhaustive matching.
+        AlignmentQualityProfile::Fast => ColmapPairSelection::Sequential {
+            overlap: clamp_overlap(20),
+        },
+        // Both sparse backends still independently process every edge of the frozen candidate
+        // graph. A bounded flight-sequence graph avoids quadratic LightGlue work here; the
+        // exhaustive graph remains an explicit Maximum Robustness choice.
+        AlignmentQualityProfile::QualityHybrid => ColmapPairSelection::Sequential {
+            overlap: clamp_overlap(24),
+        },
+        AlignmentQualityProfile::MaximumRobustness => ColmapPairSelection::Exhaustive,
+    }
+}
+
+const fn alignment_primary_store(profile: AlignmentQualityProfile) -> MappingFeatureStore {
+    match profile {
+        AlignmentQualityProfile::Fast => MappingFeatureStore::Sift,
+        AlignmentQualityProfile::QualityHybrid | AlignmentQualityProfile::MaximumRobustness => {
+            MappingFeatureStore::Aliked
+        }
+    }
+}
+
+fn prepare_alignment_merge_job(
+    params: StartAlignmentMergeJobParams,
+    projects: &ProjectRuntime,
+) -> anyhow::Result<(
+    NewPhotolabJob,
+    ColmapRunRequest,
+    ColmapRuntime,
+    Option<(DedodeRuntime, DedodeRunRequest)>,
+    EntityId,
+    Option<ColmapRunOutcome>,
+    Option<himmelcad_sidecar::alignment_merge_runtime::SharedControlMergeOutcome>,
+    bool,
+)> {
+    let merge = projects.alignment_merge_compute_context(&params.merge_entity_id)?;
+    let shared_control_only = merge.record.connections.iter().all(|connection| {
+        matches!(
+            connection,
+            crate::project_runtime::AlignmentMergeConnection::SharedControls { .. }
+        )
+    });
+    let camera_entity_ids = merge
+        .record
+        .camera_entity_ids
+        .iter()
+        .map(|id| id.0.clone())
+        .collect::<Vec<_>>();
+    let (mut job, mut request, runtime, dedode, _) = prepare_alignment_job(
+        StartAlignmentJobParams {
+            operation_id: params.operation_id,
+            profile: if shared_control_only {
+                AlignmentQualityProfile::Fast
+            } else {
+                params.profile
+            },
+            camera_entity_ids,
+            processing_set_id: None,
+            overrides: AlignmentJobOverrides::default(),
+        },
+        projects,
+    )?;
+    // A sequential graph ordered by import time can entirely miss a flight boundary. Merge
+    // evidence must therefore be discovered by an exhaustive cross-run candidate graph.
+    request.pair_selection = ColmapPairSelection::Exhaustive;
+    request.calibration_groups = merge.calibration_groups;
+    job.kind = PhotolabJobKind::MergeAlignments;
+    if shared_control_only {
+        job.progress = JobProgress {
+            stage: PhotolabStage {
+                kind: PhotolabStageKind::Preparing,
+                index: 0,
+                stage_count: 3,
+                label: "Validate shared controls".into(),
+            },
+            metrics: ProgressMetrics::empty(),
+        };
+    }
+    job.config_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
+        &request,
+        &merge.record.lineage_sha256,
+    ))?);
+    job.input_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
+        &merge.record.entity_id,
+        &merge.record.lineage_sha256,
+        &merge.input_camera_scopes,
+    ))?);
+    let resumed = if shared_control_only {
+        None
+    } else {
+        resume_solved_merge(
+            &request.project_root,
+            &request.job_id,
+            &params.merge_entity_id,
+            &job.input_hash,
+            &job.config_hash,
+        )?
+    };
+    let resumed_shared = if shared_control_only {
+        resume_shared_control_merge(
+            &request.project_root,
+            &request.job_id,
+            &params.merge_entity_id,
+            &job.input_hash,
+            &job.config_hash,
+        )?
+    } else {
+        None
+    };
+    if resumed.is_none() && resumed_shared.is_none() {
+        write_merge_checkpoint(
+            &request.project_root,
+            &AlignmentMergeCheckpoint {
+                schema_version: 1,
+                operation_id: request.job_id.clone(),
+                merge_entity_id: params.merge_entity_id.clone(),
+                input_hash: job.input_hash.clone(),
+                config_hash: job.config_hash.clone(),
+                state: AlignmentMergeCheckpointState::Running,
+                scratch_relative_path: None,
+                summary_sha256: None,
+            },
+        )?;
+    }
+    Ok((
+        job,
+        request,
+        runtime,
+        dedode,
+        params.merge_entity_id,
+        resumed,
+        resumed_shared,
+        shared_control_only,
+    ))
+}
+
+fn prepare_image_quality_job(
+    params: StartImageQualityJobParams,
+    projects: &ProjectRuntime,
+) -> anyhow::Result<(
+    NewPhotolabJob,
+    PathBuf,
+    Vec<himmelcad_sidecar::image_commit::ProjectCameraImageRecord>,
+    ImageQualityScope,
+    ImageQualityConfiguration,
+)> {
+    anyhow::ensure!(
+        !params.operation_id.trim().is_empty(),
+        "image-quality operation id is empty"
+    );
+    let context = projects.compute_context()?;
+    anyhow::ensure!(
+        !context.camera_images.is_empty(),
+        "image-quality analysis needs at least one imported image"
+    );
+    let (requested_ids, membership_sha256) = if let Some(processing_set_id) =
+        &params.processing_set_id
+    {
+        let record = projects
+            .list_processing_sets()?
+            .into_iter()
+            .find(|record| record.entity_id == *processing_set_id)
+            .with_context(|| format!("processing set {} does not exist", processing_set_id.0))?;
+        let member_ids = record
+            .camera_entity_ids
+            .iter()
+            .map(|id| id.0.clone())
+            .collect::<Vec<_>>();
+        if !params.camera_entity_ids.is_empty() {
+            let requested = params.camera_entity_ids.iter().collect::<BTreeSet<_>>();
+            let members = member_ids.iter().collect::<BTreeSet<_>>();
+            anyhow::ensure!(
+                requested == members,
+                "explicit image scope must exactly match the selected processing set"
+            );
+        }
+        (member_ids, Some(record.membership_sha256))
+    } else if params.camera_entity_ids.is_empty() {
+        (
+            context
+                .camera_images
+                .iter()
+                .map(|camera| camera.entity_id.0.clone())
+                .collect(),
+            None,
+        )
+    } else {
+        (params.camera_entity_ids, None)
+    };
+    let requested = requested_ids.iter().collect::<BTreeSet<_>>();
+    anyhow::ensure!(
+        requested.len() == requested_ids.len(),
+        "image-quality camera scope contains duplicate ids"
+    );
+    let cameras = context
+        .camera_images
+        .iter()
+        .filter(|camera| requested.contains(&camera.entity_id.0))
+        .cloned()
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        cameras.len() == requested.len(),
+        "image-quality camera scope references an unknown image"
+    );
+    anyhow::ensure!(!cameras.is_empty(), "image-quality camera scope is empty");
+    let scope = ImageQualityScope {
+        processing_set_id: params.processing_set_id,
+        processing_set_membership_sha256: membership_sha256,
+    };
+    let configuration = ImageQualityConfiguration::default();
+    configuration.validate().map_err(anyhow::Error::from)?;
+    let config_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
+        IMAGE_QUALITY_ALGORITHM_VERSION,
+        &configuration,
+    ))?);
+    let input_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
+        &context.manifest.project_id,
+        cameras
+            .iter()
+            .map(|camera| (&camera.entity_id, &camera.metadata.source_object_hash))
+            .collect::<Vec<_>>(),
+        &scope,
+    ))?);
+    let total_units = u64::try_from(cameras.len()).unwrap_or(u64::MAX);
+    let total_bytes = cameras.iter().fold(0_u64, |sum, camera| {
+        sum.saturating_add(camera.metadata.inspected_photo.byte_size)
+    });
+    let job = NewPhotolabJob {
+        id: PhotolabJobId(params.operation_id),
+        kind: PhotolabJobKind::AnalyzeImageQuality,
+        config_hash,
+        input_hash,
+        progress: JobProgress {
+            stage: PhotolabStage {
+                kind: PhotolabStageKind::ImageAnalysis,
+                index: 0,
+                stage_count: 1,
+                label: "Analyze image quality".into(),
+            },
+            metrics: ProgressMetrics {
+                completed_units: 0,
+                total_units: Some(total_units),
+                completed_bytes: 0,
+                total_bytes: Some(total_bytes),
+            },
+        },
+    };
+    Ok((job, context.working_path, cameras, scope, configuration))
+}
+
+fn image_quality_worker_error(error: ImageQualityRuntimeError) -> JobWorkerError {
+    match error {
+        ImageQualityRuntimeError::Cancelled => JobWorkerError::Cancelled,
+        other => JobWorkerError::Failed {
+            code: "imageQuality".into(),
+            message: other.to_string(),
+        },
+    }
 }
 
 fn select_alignment_cameras(
@@ -2380,6 +3285,39 @@ fn select_alignment_cameras(
 
 fn development_dedode_runtime(project_root: &Path) -> anyhow::Result<DedodeRuntime> {
     let workspace = discover_workspace_root()?;
+    let configured_model_root = std::env::var_os("HIMMELCAD_DEDODE_ONNX_ROOT").map(PathBuf::from);
+    let development_model_root = workspace.join("vendor/dedode/onnx");
+    let development_python = if cfg!(windows) {
+        workspace.join(".build/dedode-runtime/win32-x64/python/python.exe")
+    } else {
+        workspace.join(".build/dedode-runtime/linux-x64/python/bin/python3.12")
+    };
+    if configured_model_root.is_some()
+        || (development_model_root.is_dir() && development_python.is_file())
+    {
+        let model_root = configured_model_root.unwrap_or(development_model_root);
+        let worker_path = std::env::var_os("HIMMELCAD_DEDODE_WORKER")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                workspace.join("apps/photolab/workers/dedode/dedode_onnx_worker.py")
+            });
+        let python_executable = std::env::var_os("HIMMELCAD_DEDODE_PYTHON")
+            .map(PathBuf::from)
+            .unwrap_or(development_python);
+        return DedodeRuntime::development_onnx_preflight(&DevDedodeOnnxRuntimeConfig {
+            python_executable,
+            worker_path,
+            model_root,
+            expected_python_version: std::env::var("HIMMELCAD_DEDODE_PYTHON_VERSION")
+                .unwrap_or_else(|_| "3.12.13".into()),
+            expected_onnxruntime_version: "1.24.4".into(),
+            expected_numpy_version: "2.2.6".into(),
+            expected_pillow_version: "11.3.0".into(),
+            scratch_root: project_root.join(".photolab/scratch/dedode"),
+            allowed_project_roots: vec![project_root.to_path_buf()],
+        })
+        .map_err(anyhow::Error::from);
+    }
     let root = std::env::var_os("HIMMELCAD_DEDODE_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| workspace.join("vendor/dedode/dev"));
@@ -2441,104 +3379,58 @@ fn dedode_pair_graph(
     Ok(pairs)
 }
 
-fn prepare_colmap_product_job(
-    params: StartProductJobParams,
-    projects: &ProjectRuntime,
-) -> anyhow::Result<(NewPhotolabJob, ColmapRunRequest, ColmapRuntime)> {
-    let context = projects.compute_context()?;
-    if context.camera_images.len() < 2 {
-        anyhow::bail!("at least two imported images are required");
+fn prepare_or_reuse_mvs_scene(
+    prepared: &PreparedMvsProductJob,
+    context: &JobWorkerContext,
+) -> Result<PreparedMvsScene, JobWorkerError> {
+    if let Some((manifest_path, manifest_sha256)) = &prepared.reusable_scene_manifest {
+        context
+            .progress
+            .report_blocking(MvsRuntime::scene_preparation_progress(
+                prepared.fuse_dense_point_cloud,
+                1,
+                1,
+            ))
+            .map_err(|error| worker_error("mvsSceneProgress", &error.to_string()))?;
+        return load_prepared_mvs_scene(manifest_path, manifest_sha256, &context.cancellation)
+            .map_err(|error| worker_error("mvsScenePreparation", &error.to_string()));
     }
-    let config_bytes = serde_json::to_vec(&params.configuration)?;
-    let (kind, products) = match &params.configuration {
-        ProductRunConfiguration::Depth {
-            image_downscale, ..
-        } => {
-            anyhow::ensure!(
-                [1, 2, 4, 8].contains(image_downscale),
-                "invalid image downscale"
-            );
-            (
-                PhotolabJobKind::BuildDepthMaps,
-                ColmapProductRequest {
-                    depth_maps: true,
-                    max_image_size: 12_800 / image_downscale,
-                    ..ColmapProductRequest::default()
-                },
-            )
+    prepare_mvs_scene_with_masks_and_progress(
+        &prepared.colmap_executable,
+        &prepared.alignment_dataset,
+        &prepared.scene_root,
+        &prepared.coordinate_frame_id,
+        prepared.settings.maximum_image_dimension,
+        prepared.project_transform,
+        prepared.optimized_cameras.as_deref(),
+        &prepared.project_root,
+        &prepared.image_mask_scope,
+        prepared.camera_entity_ids.len(),
+        &context.cancellation,
+        |completed, total| {
+            context
+                .progress
+                .report_blocking(MvsRuntime::scene_preparation_progress(
+                    prepared.fuse_dense_point_cloud,
+                    completed,
+                    total,
+                ))
+                .map(|_| ())
+                .map_err(|error| {
+                    himmelcad_sidecar::mvs_scene::MvsSceneError::Progress(error.to_string())
+                })
+        },
+    )
+    .map_err(|error| {
+        if matches!(
+            error,
+            himmelcad_sidecar::mvs_scene::MvsSceneError::Cancelled
+        ) {
+            JobWorkerError::Cancelled
+        } else {
+            worker_error("mvsScenePreparation", &error.to_string())
         }
-        ProductRunConfiguration::Dense { minimum_views, .. } => {
-            anyhow::ensure!(
-                *minimum_views >= 2 && *minimum_views <= 16,
-                "invalid minimum views"
-            );
-            (
-                PhotolabJobKind::BuildDensePointCloud,
-                ColmapProductRequest {
-                    depth_maps: true,
-                    dense_point_cloud: true,
-                    ..ColmapProductRequest::default()
-                },
-            )
-        }
-        ProductRunConfiguration::Mesh {
-            target_face_count,
-            build_texture,
-            ..
-        } => {
-            anyhow::ensure!(*target_face_count >= 10_000, "invalid target face count");
-            (
-                PhotolabJobKind::BuildMesh,
-                ColmapProductRequest {
-                    depth_maps: true,
-                    dense_point_cloud: true,
-                    mesh: Some(ColmapMesher::Poisson),
-                    texture_mesh: *build_texture,
-                    ..ColmapProductRequest::default()
-                },
-            )
-        }
-        ProductRunConfiguration::Dem { .. } => {
-            anyhow::bail!("DEM requires a prepared dense/mesh dataset; raster job integration is still initializing")
-        }
-        ProductRunConfiguration::Ortho { .. } => {
-            anyhow::bail!("orthomosaic requires prepared camera warp sources; raster job integration is still initializing")
-        }
-        ProductRunConfiguration::Splat { .. } => {
-            anyhow::bail!("Gaussian Splat worker integration is still initializing")
-        }
-    };
-    let device = colmap_dense_device()?;
-    let request = ColmapRunRequest {
-        job_id: params.operation_id.clone(),
-        project_root: context.working_path.clone(),
-        camera_images: context.camera_images.clone(),
-        device,
-        pair_selection: ColmapPairSelection::Exhaustive,
-        mapping_store: MappingFeatureStore::Aliked,
-        aliked_variant: AlikedModelVariant::N32,
-        large_matching_backend: LargeMatchingBackend::Disabled,
-        aliked_max_features: 16_000,
-        sift_max_features: 16_000,
-        sift_rescue_only: false,
-        max_image_size: 8_000,
-        feature_worker_threads: colmap_feature_worker_threads(8_000),
-        aliked_matching_worker_threads: colmap_aliked_matching_worker_threads(),
-        matching_worker_threads: colmap_matching_worker_threads(),
-        products,
-    };
-    let mut input_material =
-        serde_json::to_vec(&(&context.manifest.project_id, &context.camera_images))?;
-    input_material.extend_from_slice(&config_bytes);
-    let job = NewPhotolabJob {
-        id: PhotolabJobId(params.operation_id),
-        kind,
-        config_hash: ObjectHash::of_bytes(&config_bytes),
-        input_hash: ObjectHash::of_bytes(&input_material),
-        progress: request.progress_plan().initial_progress(),
-    };
-    let runtime = development_colmap_runtime(&context.working_path)?;
-    Ok((job, request, runtime))
+    })
 }
 
 fn prepare_mvs_product_job(
@@ -2567,6 +3459,7 @@ fn prepare_mvs_product_job(
         ProductRunConfiguration::Depth {
             image_downscale,
             filter,
+            maximum_neighbors,
             reuse_compatible_maps,
         } => {
             anyhow::ensure!(
@@ -2575,20 +3468,12 @@ fn prepare_mvs_product_job(
             );
             settings.maximum_image_dimension =
                 source_maximum_dimension.div_ceil(image_downscale).max(256);
-            match filter.as_str() {
-                "mild" => {
-                    settings.minimum_confidence = 0.2;
-                    settings.geometric_relative_tolerance = 0.025;
-                    settings.minimum_consistent_views = 2;
-                }
-                "moderate" => {}
-                "aggressive" => {
-                    settings.minimum_confidence = 0.5;
-                    settings.geometric_relative_tolerance = 0.006;
-                    settings.minimum_consistent_views = 4;
-                }
-                _ => anyhow::bail!("invalid depth filter"),
-            }
+            anyhow::ensure!(
+                (2..=16).contains(&maximum_neighbors),
+                "invalid maximum neighbors"
+            );
+            settings.matching_views = u8::try_from(maximum_neighbors)?;
+            apply_mvs_depth_filter(&mut settings, &filter)?;
             (
                 PhotolabJobKind::BuildDepthMaps,
                 false,
@@ -2597,6 +3482,8 @@ fn prepare_mvs_product_job(
         }
         ProductRunConfiguration::Dense {
             image_downscale,
+            filter,
+            maximum_neighbors,
             minimum_views,
             retain_confidence,
             calculate_colors,
@@ -2606,9 +3493,14 @@ fn prepare_mvs_product_job(
                 "invalid image downscale"
             );
             anyhow::ensure!((2..=16).contains(&minimum_views), "invalid minimum views");
+            anyhow::ensure!(
+                (2..=16).contains(&maximum_neighbors) && minimum_views <= maximum_neighbors,
+                "invalid maximum neighbors"
+            );
             settings.maximum_image_dimension =
                 source_maximum_dimension.div_ceil(image_downscale).max(256);
-            settings.matching_views = u8::try_from(minimum_views.max(6))?;
+            apply_mvs_depth_filter(&mut settings, &filter)?;
+            settings.matching_views = u8::try_from(maximum_neighbors)?;
             settings.minimum_consistent_views = u8::try_from(minimum_views)?;
             settings.retain_confidence_attribute = retain_confidence;
             settings.calculate_colors = calculate_colors;
@@ -2619,6 +3511,7 @@ fn prepare_mvs_product_job(
     let alignment = resolve_product_alignment(
         projects,
         params.processing_set_id.as_ref(),
+        params.source_alignment_entity_id.as_ref(),
         required_camera_scope,
     )?;
     anyhow::ensure!(
@@ -2626,6 +3519,14 @@ fn prepare_mvs_product_job(
         "portable multi-view stereo needs at least three cameras in the selected alignment"
     );
     let alignment_dataset = alignment.root.clone();
+    let image_mask_scope = projects.image_mask_compute_scope(
+        &alignment.camera_entity_ids,
+        alignment.processing_set_id.as_ref(),
+    )?;
+    anyhow::ensure!(
+        alignment.image_mask_scope_sha256 == image_mask_scope.scope_sha256,
+        "image masks changed after the selected alignment; rerun alignment before building depth products"
+    );
     let scene_parent = context.working_path.join(".photolab").join("mvs-scenes");
     std::fs::create_dir_all(&scene_parent)?;
     let scene_root = scene_parent.join(&params.operation_id);
@@ -2644,18 +3545,24 @@ fn prepare_mvs_product_job(
         MvsCapability::DenseFusion,
         MvsCapability::OfflineOnly,
     ]);
+    let published_mvs_root = context.working_path.join("datasets/mvs");
+    std::fs::create_dir_all(&published_mvs_root)?;
     let runtime = MvsRuntime::development_preflight(&DevMvsRuntimeConfig {
         executable,
         version: "1.0.0".into(),
         capabilities,
         scratch_root: context.working_path.join(".photolab/scratch/mvs"),
         allowed_scene_roots: vec![scene_parent],
+        allowed_resume_roots: vec![published_mvs_root],
     })?;
-    let lineage = ProductLineage {
+    let mut lineage = ProductLineage {
         source_alignment_entity_id: alignment.source_alignment_entity_id.clone(),
         processing_set_id: alignment.processing_set_id.clone(),
+        gcp_optimization_entity_id: None,
+        gcp_optimization_snapshot_sha256: None,
+        image_mask_scope_sha256: alignment.image_mask_scope_sha256.clone(),
     };
-    let gcp_optimization = projects.latest_gcp_optimization_for_lineage(&lineage)?;
+    let gcp_optimization = pin_latest_product_gcp_optimization(projects, &mut lineage)?;
     let project_transform = gcp_optimization
         .as_ref()
         .map(|record| record.artifact.result.transform);
@@ -2663,7 +3570,28 @@ fn prepare_mvs_product_job(
         .as_ref()
         .map(|record| record.artifact_sha256.clone());
     let optimized_cameras = gcp_optimization.map(|record| record.artifact.result.cameras);
-    let placeholder_request = MvsRunRequest {
+    let settings_sha256 = ObjectHash::of_bytes(&serde_json::to_vec(&settings)?);
+    let reusable_scene_manifest = if reuse_compatible_maps {
+        projects
+            .latest_compatible_depth_mvs_dataset_for_lineage(
+                &lineage,
+                &settings_sha256,
+                &image_mask_scope.scope_sha256,
+            )?
+            .map(|(_, record)| {
+                (
+                    context
+                        .working_path
+                        .join(".photolab/mvs-scenes")
+                        .join(&record.job_id)
+                        .join("scene.json"),
+                    record.output.scene_manifest_sha256,
+                )
+            })
+    } else {
+        None
+    };
+    let planned_request = MvsRunRequest {
         job_id: params.operation_id.clone(),
         scene_manifest_path: scene_root.join("scene.json"),
         scene_manifest_sha256: ObjectHash::of_bytes(b"pending-scene"),
@@ -2680,20 +3608,23 @@ fn prepare_mvs_product_job(
         &alignment.source_alignment_entity_id,
         &alignment.processing_set_id,
         &gcp_artifact_sha256,
+        &image_mask_scope.scope_sha256,
     ))?);
     let job = NewPhotolabJob {
         id: PhotolabJobId(params.operation_id.clone()),
         kind,
         config_hash: ObjectHash::of_bytes(&config_bytes),
         input_hash: ObjectHash::of_bytes(&input),
-        progress: MvsRuntime::initial_progress(&placeholder_request),
+        progress: MvsRuntime::initial_progress(&planned_request),
     };
     Ok(PreparedMvsProductJob {
         job,
         runtime,
         operation_id: params.operation_id,
+        project_root: context.working_path.clone(),
         alignment_dataset,
         scene_root,
+        reusable_scene_manifest,
         colmap_executable: development_colmap_executable()?,
         coordinate_frame_id: context.manifest.project_id,
         settings,
@@ -2702,19 +3633,46 @@ fn prepare_mvs_product_job(
         project_transform,
         optimized_cameras,
         camera_entity_ids: alignment.camera_entity_ids,
+        image_mask_scope,
         lineage,
     })
+}
+
+fn apply_mvs_depth_filter(settings: &mut MvsSettings, filter: &str) -> anyhow::Result<()> {
+    match filter {
+        "mild" => {
+            settings.minimum_confidence = 0.2;
+            settings.geometric_relative_tolerance = 0.025;
+            settings.minimum_consistent_views = 2;
+        }
+        "moderate" => {}
+        "aggressive" => {
+            settings.minimum_confidence = 0.5;
+            settings.geometric_relative_tolerance = 0.006;
+            settings.minimum_consistent_views = 4;
+        }
+        _ => anyhow::bail!("invalid depth filter"),
+    }
+    Ok(())
 }
 
 fn resolve_product_alignment(
     projects: &ProjectRuntime,
     processing_set_id: Option<&EntityId>,
+    source_alignment_entity_id: Option<&EntityId>,
     required_camera_scope: Option<&[String]>,
 ) -> anyhow::Result<crate::project_runtime::PublishedAlignmentDataset> {
     anyhow::ensure!(
         processing_set_id.is_none() || required_camera_scope.is_none(),
         "a product cannot combine a processing set with a separate batch camera scope"
     );
+    anyhow::ensure!(
+        source_alignment_entity_id.is_none() || required_camera_scope.is_none(),
+        "a batch camera scope cannot override an explicit source alignment"
+    );
+    if let Some(alignment_id) = source_alignment_entity_id {
+        return projects.alignment_dataset_by_entity_id(alignment_id, processing_set_id);
+    }
     if let Some(camera_scope) = required_camera_scope {
         let context = projects.compute_context()?;
         let selected = select_alignment_cameras(&context.camera_images, camera_scope)?;
@@ -2726,6 +3684,62 @@ fn resolve_product_alignment(
     } else {
         projects.latest_alignment_dataset_for_processing_set(processing_set_id)
     }
+}
+
+fn validated_product_gcp_optimization(
+    record: Option<crate::project_runtime::GcpOptimizationPublicationRecord>,
+) -> anyhow::Result<Option<crate::project_runtime::GcpOptimizationPublicationRecord>> {
+    let Some(record) = record else {
+        return Ok(None);
+    };
+    let result = &record.artifact.result;
+    let control = result
+        .statistics
+        .control
+        .as_ref()
+        .context("GCP optimization has no control-point accuracy statistics")?;
+    let minimum_controls = if matches!(
+        result.effective_mode,
+        himmelcad_core::photolab_gcp_optimization::GcpTransformMode::Similarity7
+    ) {
+        3
+    } else {
+        2
+    };
+    anyhow::ensure!(
+        result.converged,
+        "GCP optimization '{}' did not converge and cannot drive downstream products",
+        record.operation_id
+    );
+    anyhow::ensure!(
+        control.point_count >= minimum_controls,
+        "GCP optimization '{}' has {} controls; {} are required for its transform mode",
+        record.operation_id,
+        control.point_count,
+        minimum_controls
+    );
+    anyhow::ensure!(
+        control.reprojection_rms_pixels.is_finite() && control.reprojection_rms_pixels <= 5.0,
+        "GCP optimization '{}' has {:.3} px control reprojection RMS; resolve marker outliers before building downstream products",
+        record.operation_id,
+        control.reprojection_rms_pixels
+    );
+    Ok(Some(record))
+}
+
+fn pin_latest_product_gcp_optimization(
+    projects: &ProjectRuntime,
+    lineage: &mut ProductLineage,
+) -> anyhow::Result<Option<crate::project_runtime::GcpOptimizationPublicationRecord>> {
+    let Some(entry) = projects.latest_gcp_optimization_entry_for_lineage(lineage)? else {
+        return Ok(None);
+    };
+    let entity_id = entry.entity_id;
+    let record = validated_product_gcp_optimization(Some(entry.optimization))?
+        .context("validated GCP optimization disappeared")?;
+    lineage.gcp_optimization_entity_id = Some(entity_id);
+    lineage.gcp_optimization_snapshot_sha256 = Some(record.snapshot_sha256.clone());
+    Ok(Some(record))
 }
 
 fn portable_mvs_threads() -> u16 {
@@ -2774,6 +3788,63 @@ fn prepare_alignment_sparse_potree(
         .map(|path| PathBuf::from("sparse-potree").join(path));
     outcome.sparse_potree = Some(prepared);
     Ok(())
+}
+
+fn prepare_alignment_mesh(
+    outcome: &mut ColmapRunOutcome,
+    context: &JobWorkerContext,
+) -> Result<(), JobWorkerError> {
+    if let Some(source) = outcome
+        .summary
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.kind == ColmapArtifactKind::Mesh)
+    {
+        let relative_root = PathBuf::from("prepared-mesh");
+        let prepared = build_prepared_triangle_mesh_from_ply(
+            &outcome.scratch_path.join(&source.relative_path),
+            &outcome.scratch_path.join(&relative_root),
+            PreparedTriangleMeshOptions::default(),
+            &context.cancellation,
+        )
+        .map_err(|error| worker_error("meshPreparation", &error.to_string()))?;
+        outcome.prepared_mesh = Some(prefix_prepared_mesh_product(prepared, &relative_root));
+    }
+    if let Some(source) = outcome
+        .summary
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.kind == ColmapArtifactKind::TexturedMesh)
+    {
+        let relative_root = PathBuf::from("prepared-textured-mesh");
+        let prepared = build_prepared_triangle_mesh_from_colmap_textured_directory(
+            &outcome.scratch_path.join(&source.relative_path),
+            &outcome.scratch_path.join(&relative_root),
+            PreparedTriangleMeshOptions::default(),
+            &context.cancellation,
+        )
+        .map_err(|error| worker_error("texturedMeshPreparation", &error.to_string()))?;
+        outcome.prepared_textured_mesh =
+            Some(prefix_prepared_mesh_product(prepared, &relative_root));
+    }
+    Ok(())
+}
+
+fn prefix_prepared_mesh_product(
+    mut prepared: himmelcad_sidecar::mesh_tiler::PreparedMeshProduct,
+    relative_root: &Path,
+) -> himmelcad_sidecar::mesh_tiler::PreparedMeshProduct {
+    prepared.manifest_relative_path = relative_root.join(prepared.manifest_relative_path);
+    prepared.preparation_descriptor_relative_path = prepared
+        .preparation_descriptor_relative_path
+        .map(|path| relative_root.join(path));
+    prepared.kernel_manifest_relative_path = prepared
+        .kernel_manifest_relative_path
+        .map(|path| relative_root.join(path));
+    if let Some(topology) = prepared.section_topology.as_mut() {
+        topology.manifest_relative_path = relative_root.join(&topology.manifest_relative_path);
+    }
+    prepared
 }
 
 fn prepare_product_export_job(
@@ -2833,13 +3904,17 @@ fn prepare_raster_product_job(
     let alignment = resolve_product_alignment(
         projects,
         params.processing_set_id.as_ref(),
+        params.source_alignment_entity_id.as_ref(),
         required_camera_scope,
     )?;
-    let lineage = ProductLineage {
+    let mut lineage = ProductLineage {
         source_alignment_entity_id: alignment.source_alignment_entity_id.clone(),
         processing_set_id: alignment.processing_set_id.clone(),
+        gcp_optimization_entity_id: None,
+        gcp_optimization_snapshot_sha256: None,
+        image_mask_scope_sha256: alignment.image_mask_scope_sha256.clone(),
     };
-    let gcp_optimization = projects.latest_gcp_optimization_for_lineage(&lineage)?;
+    let gcp_optimization = pin_latest_product_gcp_optimization(projects, &mut lineage)?;
     let (kind, dense_ply, dem_dataset, alignment_dataset, colmap_executable, input_evidence) =
         match params.configuration {
             ProductRunConfiguration::Dem { .. } => {
@@ -2874,6 +3949,7 @@ fn prepare_raster_product_job(
         &config_bytes,
         &lineage.source_alignment_entity_id,
         &lineage.processing_set_id,
+        &lineage.image_mask_scope_sha256,
         gcp_optimization
             .as_ref()
             .map(|record| record.artifact_sha256.clone()),
@@ -2931,22 +4007,31 @@ fn prepare_mesh_job(
         target_face_count,
         interpolate_holes,
         build_texture,
-        ..
+        texture_size,
     } = params.configuration
     else {
         anyhow::bail!("mesh configuration required")
     };
     anyhow::ensure!(target_face_count >= 10_000, "invalid target face count");
+    anyhow::ensure!(
+        matches!(texture_size, 2048 | 4096 | 8192 | 16384),
+        "invalid texture detail budget"
+    );
     let context = projects.compute_context()?;
     let alignment = resolve_product_alignment(
         projects,
         params.processing_set_id.as_ref(),
+        params.source_alignment_entity_id.as_ref(),
         required_camera_scope,
     )?;
-    let lineage = ProductLineage {
+    let mut lineage = ProductLineage {
         source_alignment_entity_id: alignment.source_alignment_entity_id,
         processing_set_id: alignment.processing_set_id,
+        gcp_optimization_entity_id: None,
+        gcp_optimization_snapshot_sha256: None,
+        image_mask_scope_sha256: alignment.image_mask_scope_sha256,
     };
+    pin_latest_product_gcp_optimization(projects, &mut lineage)?;
     let (dem_root, dem) =
         projects.latest_raster_dataset_for_lineage(PublishedRasterKind::Dem, &lineage)?;
     let (texture_dataset_root, texture_summary) = if build_texture {
@@ -2956,13 +4041,18 @@ fn prepare_mesh_job(
     } else {
         (None, None)
     };
-    let config_hash =
-        ObjectHash::of_bytes(&serde_json::to_vec(&(target_face_count, build_texture))?);
+    let config_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
+        target_face_count,
+        interpolate_holes,
+        build_texture,
+        texture_size,
+    ))?);
     let input_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
         &dem.job_id,
         &texture_dataset_root,
         &lineage.source_alignment_entity_id,
         &lineage.processing_set_id,
+        &lineage.image_mask_scope_sha256,
     ))?);
     let job = NewPhotolabJob {
         id: PhotolabJobId(params.operation_id.clone()),
@@ -2990,6 +4080,7 @@ fn prepare_mesh_job(
         textured: build_texture,
         target_face_count,
         interpolate_holes,
+        texture_size,
         lineage,
     })
 }
@@ -3014,6 +4105,7 @@ fn run_mesh_job(
         prepared.texture_summary.as_ref(),
         prepared.target_face_count,
         prepared.interpolate_holes,
+        prepared.texture_size,
         &context.cancellation,
     )
     .map_err(map_mesh_tiler_error)?;
@@ -3055,7 +4147,7 @@ fn run_raster_product(
             return Err(worker_error(
                 "invalidRasterConfig",
                 "unexpected raster configuration",
-            ))
+            ));
         }
     };
     if !gsd.is_finite() || gsd <= 0.0 || tile_size_pixels != 512 {
@@ -3145,7 +4237,16 @@ fn run_raster_product(
                 prepared.optimized_cameras.as_deref(),
                 &context.cancellation,
             )
-            .map_err(|error| worker_error("orthophotoScene", &error.to_string()))?;
+            .map_err(|error| {
+                if matches!(
+                    error,
+                    himmelcad_sidecar::mvs_scene::MvsSceneError::Cancelled
+                ) {
+                    JobWorkerError::Cancelled
+                } else {
+                    worker_error("orthophotoScene", &error.to_string())
+                }
+            })?;
             let crs = dem_summary.crs.clone();
             let frozen_wkt = inspect_raster_wkt(
                 &tools.gdalinfo,
@@ -3264,7 +4365,7 @@ fn run_raster_product(
             return Err(worker_error(
                 "invalidRasterConfig",
                 "unexpected raster configuration",
-            ))
+            ));
         }
     };
     let config_hash = ObjectHash::of_bytes(
@@ -3613,14 +4714,19 @@ fn prepare_brush_product_job(
     let alignment = resolve_product_alignment(
         projects,
         params.processing_set_id.as_ref(),
+        params.source_alignment_entity_id.as_ref(),
         required_camera_scope,
     )?;
     let project_root = projects.compute_context()?.working_path;
     let dataset_root = prepare_brush_scene(&alignment.root, &project_root, &params.operation_id)?;
-    let lineage = ProductLineage {
+    let mut lineage = ProductLineage {
         source_alignment_entity_id: alignment.source_alignment_entity_id,
         processing_set_id: alignment.processing_set_id,
+        gcp_optimization_entity_id: None,
+        gcp_optimization_snapshot_sha256: None,
+        image_mask_scope_sha256: alignment.image_mask_scope_sha256,
     };
+    pin_latest_product_gcp_optimization(projects, &mut lineage)?;
     let settings = BrushTrainingSettings {
         iterations,
         spherical_harmonics_degree,
@@ -3645,6 +4751,7 @@ fn prepare_brush_product_job(
             dataset_root.to_string_lossy(),
             &lineage.source_alignment_entity_id,
             &lineage.processing_set_id,
+            &lineage.image_mask_scope_sha256,
         ))?),
         progress: request.progress_plan().initial_progress(),
     };
@@ -3727,24 +4834,6 @@ fn materialize_regular_tree(source: &Path, destination: &Path) -> anyhow::Result
         }
     }
     Ok(())
-}
-
-fn colmap_dense_device() -> anyhow::Result<ColmapComputeDevice> {
-    if let Some(indices) = std::env::var_os("HIMMELCAD_COLMAP_CUDA_GPUS") {
-        let parsed = indices
-            .to_string_lossy()
-            .split(',')
-            .map(str::trim)
-            .map(str::parse::<u32>)
-            .collect::<Result<Vec<_>, _>>()?;
-        anyhow::ensure!(!parsed.is_empty(), "HIMMELCAD_COLMAP_CUDA_GPUS is empty");
-        return Ok(ColmapComputeDevice::Cuda {
-            gpu_indices: parsed,
-        });
-    }
-    anyhow::bail!(
-        "the curated COLMAP worker needs CUDA for PatchMatch; configure HIMMELCAD_COLMAP_CUDA_GPUS or select the portable MVS worker"
-    )
 }
 
 fn development_colmap_runtime(project_root: &Path) -> anyhow::Result<ColmapRuntime> {
@@ -3876,9 +4965,15 @@ fn colmap_feature_worker_threads(max_image_edge: u32) -> u16 {
 
 fn colmap_matching_worker_threads() -> u16 {
     const GIB: u64 = 1024 * 1024 * 1024;
+    // Native SIFT brute-force matching keeps compact descriptor blocks per worker.  Treating
+    // every worker like a neural matcher previously reserved 8 GiB and forced this 31 GiB,
+    // four-core workstation down to one thread.  The measured resident set for the real
+    // Sulzberg workload is below 256 MiB for one worker; a conservative 2 GiB allowance keeps
+    // enough headroom for COLMAP, the renderer and the OS while using all physical cores.
+    const RESERVED_PER_SIFT_WORKER: u64 = 2 * GIB;
     probe_hardware()
         .map(|hardware| {
-            let memory_workers = (hardware.ram_bytes / 2 / (8 * GIB)).max(1);
+            let memory_workers = (hardware.ram_bytes / 2 / RESERVED_PER_SIFT_WORKER).max(1);
             u16::try_from(
                 usize::from(hardware.cpu.physical_cores)
                     .min(usize::try_from(memory_workers).unwrap_or(usize::MAX)),
@@ -3927,6 +5022,12 @@ fn default_crs_service() -> anyhow::Result<CrsService> {
         let grid_root = workspace.join("vendor").join("proj-data");
         if grid_root.is_dir() {
             config.allowed_grid_roots.push(grid_root);
+        }
+    }
+    if let Some(user_grid_root) = std::env::var_os("HIMMELCAD_USER_PROJ_GRID_ROOT") {
+        let user_grid_root = PathBuf::from(user_grid_root);
+        if user_grid_root.is_dir() {
+            config.allowed_grid_roots.push(user_grid_root);
         }
     }
     Ok(CrsService::new(ProjRuntime::open(config)?))
@@ -3981,7 +5082,10 @@ fn rpc_result<T: Serialize>(id: serde_json::Value, result: anyhow::Result<T>) ->
     }
 }
 
-async fn handle_import_las(params: ImportLasParams) -> anyhow::Result<serde_json::Value> {
+async fn handle_import_las(
+    params: ImportLasParams,
+    operations: Arc<LasImportOperations>,
+) -> anyhow::Result<serde_json::Value> {
     if params.paths.is_empty() {
         anyhow::bail!("paths is empty");
     }
@@ -3995,6 +5099,12 @@ async fn handle_import_las(params: ImportLasParams) -> anyhow::Result<serde_json
     // the JSON-RPC dispatch loop.
     let mut summaries = Vec::with_capacity(params.paths.len());
     let progress_key = params.progress_key.clone();
+    let operation_id = params
+        .operation_id
+        .clone()
+        .or_else(|| progress_key.clone())
+        .unwrap_or_else(|| format!("las-import-{}", unix_timestamp_millis()));
+    let active_operation = operations.begin(operation_id.clone())?;
     emit_progress(
         progress_key.as_deref(),
         0.01,
@@ -4014,18 +5124,24 @@ async fn handle_import_las(params: ImportLasParams) -> anyhow::Result<serde_json
             .unwrap_or(&raw)
             .to_string();
         let progress_key_for_file = progress_key.clone();
+        let cancellation = Arc::clone(&active_operation.cancellation);
         let summary = tokio::task::spawn_blocking(move || {
             let progress_key_for_callback = progress_key_for_file.clone();
             let file_name_for_callback = file_name.clone();
-            import_las_file_with_progress(&path, &cache_dir_clone, move |p| {
-                emit_import_progress(
-                    progress_key_for_callback.as_deref(),
-                    index,
-                    total,
-                    &file_name_for_callback,
-                    &p,
-                );
-            })
+            import_las_file_with_progress_and_cancel(
+                &path,
+                &cache_dir_clone,
+                move |p| {
+                    emit_import_progress(
+                        progress_key_for_callback.as_deref(),
+                        index,
+                        total,
+                        &file_name_for_callback,
+                        &p,
+                    );
+                },
+                move || cancellation.load(Ordering::Acquire),
+            )
         })
         .await??;
         tracing::info!(
@@ -4041,7 +5157,13 @@ async fn handle_import_las(params: ImportLasParams) -> anyhow::Result<serde_json
         0.85,
         &format!("Conversion finished for {total} LAS/LAZ file(s)"),
     );
-    Ok(serde_json::json!({ "imports": summaries }))
+    Ok(serde_json::json!({ "operationId": operation_id, "imports": summaries }))
+}
+
+fn unix_timestamp_millis() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis())
 }
 
 fn emit_import_progress(
@@ -4096,6 +5218,142 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn las_import_cancellation_is_generation_scoped_and_removed_on_finish() {
+        let operations = Arc::new(LasImportOperations::default());
+        let active = operations
+            .begin("import-1".to_string())
+            .expect("begin import");
+        assert!(!active.cancellation.load(Ordering::Acquire));
+        assert!(operations.cancel("import-1"));
+        assert!(active.cancellation.load(Ordering::Acquire));
+        assert!(operations.begin("import-1".to_string()).is_err());
+        assert!(operations.cancel("import-1"));
+        drop(active);
+        assert!(!operations.cancel("import-1"));
+        assert!(operations.begin("import-1".to_string()).is_ok());
+    }
+
+    #[test]
+    fn fast_alignment_uses_an_explicit_bounded_feature_budget() {
+        let fast = resolve_alignment_profile(&ResolveAlignmentProfileRequest {
+            profile: AlignmentQualityProfile::Fast,
+            image_count: 24,
+            max_image_edge_override: None,
+            keypoints_per_megapixel_override: None,
+        })
+        .expect("fast profile");
+        // 2400 edge × 5500 kp/MPx still saturates Fast ceil (interactive cap).
+        assert_eq!(
+            alignment_feature_budget(AlignmentQualityProfile::Fast, &fast),
+            8_192
+        );
+        let qh = resolve_alignment_profile(&ResolveAlignmentProfileRequest {
+            profile: AlignmentQualityProfile::QualityHybrid,
+            image_count: 24,
+            max_image_edge_override: None,
+            keypoints_per_megapixel_override: None,
+        })
+        .expect("qh profile");
+        assert_eq!(
+            alignment_feature_budget(AlignmentQualityProfile::QualityHybrid, &qh),
+            24_000
+        );
+        let mr = resolve_alignment_profile(&ResolveAlignmentProfileRequest {
+            profile: AlignmentQualityProfile::MaximumRobustness,
+            image_count: 24,
+            max_image_edge_override: None,
+            keypoints_per_megapixel_override: None,
+        })
+        .expect("mr profile");
+        assert_eq!(
+            alignment_feature_budget(AlignmentQualityProfile::MaximumRobustness, &mr),
+            48_000
+        );
+        // Density is live: tiny edge + low kp → floor.
+        let tiny = resolve_alignment_profile(&ResolveAlignmentProfileRequest {
+            profile: AlignmentQualityProfile::Fast,
+            image_count: 24,
+            max_image_edge_override: Some(1_024),
+            keypoints_per_megapixel_override: None,
+        })
+        .expect("tiny edge");
+        // Override only changes edge; kp still 5500 → still hits floor or mid.
+        let budget_tiny = alignment_feature_budget(AlignmentQualityProfile::Fast, &tiny);
+        assert!((2_048..=8_192).contains(&budget_tiny));
+        assert_eq!(
+            alignment_primary_store(AlignmentQualityProfile::Fast),
+            MappingFeatureStore::Sift
+        );
+        assert_eq!(
+            alignment_primary_store(AlignmentQualityProfile::QualityHybrid),
+            MappingFeatureStore::Aliked
+        );
+        assert_eq!(
+            alignment_pair_selection(AlignmentQualityProfile::Fast, None),
+            ColmapPairSelection::Sequential { overlap: 20 }
+        );
+        assert_eq!(
+            alignment_pair_selection(AlignmentQualityProfile::Fast, Some(16)),
+            ColmapPairSelection::Sequential { overlap: 16 }
+        );
+        assert_eq!(
+            alignment_pair_selection(AlignmentQualityProfile::QualityHybrid, None),
+            ColmapPairSelection::Sequential { overlap: 24 }
+        );
+        assert_eq!(
+            alignment_pair_selection(AlignmentQualityProfile::MaximumRobustness, Some(40)),
+            ColmapPairSelection::Exhaustive
+        );
+    }
+
+    #[test]
+    fn alignment_profiles_apply_explicit_embedded_intrinsics_policy() {
+        let full = himmelcad_core::photolab_images::DjiBrownConradyCalibration {
+            focal_x_pixels: 3713.0,
+            focal_y_pixels: 3713.0,
+            principal_x_pixels: 2660.0,
+            principal_y_pixels: 1961.0,
+            radial_distortion: [-0.1, -0.001, -0.015],
+            tangential_distortion: [0.0001, -0.00001],
+            calibration_date: "2025-02-26".into(),
+            provenance: himmelcad_core::photolab_images::DjiCalibrationProvenance::DewarpData,
+        };
+        let groups = vec![ColmapCalibrationGroup {
+            group_id: "embedded".into(),
+            camera_entity_ids: vec!["camera-a".into()],
+            seed: Some(ColmapCalibrationSeed {
+                width_pixels: 5280,
+                height_pixels: 3956,
+                focal_pixels: full.focal_x_pixels,
+                principal_x_pixels: full.principal_x_pixels,
+                principal_y_pixels: full.principal_y_pixels,
+                full_brown_calibration: Some(full),
+            }),
+        }];
+
+        assert_eq!(
+            alignment_intrinsics_refinement(AlignmentQualityProfile::Fast, &groups),
+            ColmapIntrinsicsRefinement::FreezeReliableEmbedded
+        );
+        assert_eq!(
+            alignment_intrinsics_refinement(AlignmentQualityProfile::QualityHybrid, &groups),
+            ColmapIntrinsicsRefinement::FreezeReliableEmbedded
+        );
+        assert_eq!(
+            alignment_intrinsics_refinement(AlignmentQualityProfile::MaximumRobustness, &groups),
+            ColmapIntrinsicsRefinement::FreezeReliableEmbedded
+        );
+        assert_eq!(
+            alignment_intrinsics_refinement(AlignmentQualityProfile::QualityHybrid, &[]),
+            ColmapIntrinsicsRefinement::Refine
+        );
+        assert_eq!(
+            alignment_intrinsics_refinement(AlignmentQualityProfile::Fast, &[]),
+            ColmapIntrinsicsRefinement::Refine
+        );
+    }
+
     fn sample_steps() -> Vec<BatchPipelineStep> {
         vec![
             BatchPipelineStep::Alignment {
@@ -4104,6 +5362,8 @@ mod tests {
             BatchPipelineStep::Product {
                 configuration: ProductRunConfiguration::Dense {
                     image_downscale: 2,
+                    filter: "moderate".into(),
+                    maximum_neighbors: 6,
                     minimum_views: 3,
                     retain_confidence: true,
                     calculate_colors: true,
@@ -4118,6 +5378,7 @@ mod tests {
             "kind": "depth",
             "imageDownscale": 8,
             "filter": "moderate",
+            "maximumNeighbors": 6,
             "reuseCompatibleMaps": true
         }))
         .expect("renderer product configuration");
@@ -4129,6 +5390,20 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn agisoft_high_depth_settings_preserve_scale_and_mild_filtering() {
+        let mut settings = MvsSettings::default();
+        settings.maximum_image_dimension = 5_280_u32.div_ceil(2);
+        settings.matching_views = 16;
+        apply_mvs_depth_filter(&mut settings, "mild").expect("mild filter");
+
+        assert_eq!(settings.maximum_image_dimension, 2_640);
+        assert_eq!(settings.matching_views, 16);
+        assert_eq!(settings.minimum_consistent_views, 2);
+        assert_eq!(settings.minimum_confidence, 0.2);
+        assert_eq!(settings.geometric_relative_tolerance, 0.025);
     }
 
     #[test]
@@ -4258,5 +5533,21 @@ mod tests {
         assert_eq!(adaptive_job_concurrency(16, 8, 32 * GIB), 2);
         assert_eq!(adaptive_job_concurrency(32, 16, 128 * GIB), 8);
         assert_eq!(adaptive_job_concurrency(64, 32, 8 * GIB), 1);
+    }
+
+    #[test]
+    fn transformed_coordinates_are_normalized_to_easting_northing_height() {
+        let pipeline = "+proj=pipeline +step +proj=tmerc +step +proj=axisswap +order=2,1";
+        assert!(pipeline_ends_with_axis_swap(pipeline));
+        assert_eq!(
+            parse_transformed_coordinates("5281200.5 4527550.25 735.8\n", true)
+                .expect("coordinates"),
+            vec![[4527550.25, 5281200.5, 735.8]],
+        );
+        assert_eq!(
+            parse_transformed_coordinates("4527550.25 5281200.5 735.8\n", false)
+                .expect("coordinates"),
+            vec![[4527550.25, 5281200.5, 735.8]],
+        );
     }
 }

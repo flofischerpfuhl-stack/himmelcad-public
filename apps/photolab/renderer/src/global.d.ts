@@ -91,6 +91,42 @@ interface PhotolabDesktopApi {
     load: <T = unknown>() => Promise<T | null>;
     save: (value: unknown) => Promise<boolean>;
   };
+  readonly workflows: {
+    defaultDir: () => Promise<string>;
+    list: () => Promise<
+      Array<{
+        name: string;
+        path: string;
+        savedAt: string;
+        kind?: string;
+        description?: string;
+      }>
+    >;
+    loadPath: (path: string) => Promise<{ path: string; workflow: unknown }>;
+    open: () => Promise<{ path: string; workflow: unknown } | null>;
+    save: (request: {
+      suggestedName?: string;
+      workflow: unknown;
+    }) => Promise<{ path: string; name: string } | null>;
+  };
+  readonly alignmentPresets: {
+    defaultDir: () => Promise<string>;
+    list: () => Promise<
+      Array<{
+        name: string;
+        path: string;
+        savedAt: string;
+        profile?: string;
+        description?: string;
+      }>
+    >;
+    loadPath: (path: string) => Promise<{ path: string; preset: unknown }>;
+    open: () => Promise<{ path: string; preset: unknown } | null>;
+    save: (request: {
+      suggestedName?: string;
+      preset: unknown;
+    }) => Promise<{ path: string; name: string } | null>;
+  };
   readonly reports: {
     save: (request: {
       format: 'html' | 'pdf';

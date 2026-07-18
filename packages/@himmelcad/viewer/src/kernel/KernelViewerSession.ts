@@ -27,7 +27,9 @@ import {
   type KernelViewerEntityHandle,
 } from './KernelViewerScene.js';
 import type {
+  CanonicalEntity,
   CanonicalResourceRef,
+  GeometryObject,
   HatchPatternResource,
   LineTypeResource,
   TextureResource,
@@ -329,6 +331,25 @@ export class KernelViewerSession {
     this.options.requestFrame?.();
   }
 
+  /** Changes point presentation without touching canonical state or tile residency. */
+  setPointSize(pointSize: number): void {
+    this.assertReady();
+    this.viewerState.setPointSize(pointSize);
+    this.options.requestFrame?.();
+  }
+
+  /** Rust-authoritative content hash used by product import adapters. */
+  geometryObjectContentHash(geometry: GeometryObject): string {
+    this.assertReady();
+    return this.viewerState.geometryObjectContentHash(geometry);
+  }
+
+  /** Rust-authoritative entity-envelope hash used by product import adapters. */
+  canonicalEntityVersionHash(entity: CanonicalEntity): string {
+    this.assertReady();
+    return this.viewerState.canonicalEntityVersionHash(entity);
+  }
+
   loadPotree(
     input: KernelPotreeDatasetAdmission,
     options: KernelViewerLoadOptions = {},
@@ -590,7 +611,10 @@ export class KernelViewerSession {
         resourceBudget: this.policyState.resources,
         frameBudget: work.frame,
         detailScale: this.qualityState.detailScale,
-        maximumScreenSpaceError: 2,
+        // One physical pixel is the format-neutral baseline. Potree tightens
+        // this further from its live point diameter inside the kernel so a
+        // 1 px presentation cannot settle on a visibly sparse hierarchy level.
+        maximumScreenSpaceError: 1,
         maximumTraversedNodes: work.maximumTraversedNodes,
       });
       const uploadedBytes = this.streamingState.execute(plan);
@@ -619,6 +643,9 @@ export class KernelViewerSession {
         plan.actions.some(
           (action) => action.kind !== 'fetchTile' && action.kind !== 'fetchHierarchyPage',
         ) ||
+        (!interactionActive &&
+          (this.qualityState.renderScale + 1e-4 < this.policyState.maximumRenderScale ||
+            this.qualityState.detailScale + 1e-4 < this.policyState.maximumDetailScale)) ||
         outcome.status === 'recreateSurface'
       ) {
         this.options.requestFrame?.();

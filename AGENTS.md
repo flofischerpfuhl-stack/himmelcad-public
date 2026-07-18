@@ -32,7 +32,7 @@ nachfragen, dann coden.
   Kernel-Arbeit an Entities (ADR 0016) und Render-Core (ADR 0017). Builder
   bleibt das CAD-Produkt, weitere CAD-Feature-Productization ist pausiert.
 - **Produktfamilie:** HimmelCAD Builder, HimmelCAD PhotoLab, HimmelCAD
-  WeltView. **Composer, TestFlight und ChronoGit sind nur reservierte Namen**
+  WeltView. **Assembler, TestFlight und ChronoGit sind nur reservierte Namen**
   bis zu einem expliziten Decision Gate — keine Implementierung, keine
   Agent-Aufgaben dafuer. Details: `docs/PRODUCT-VISION.md` und
   `docs/CURRENT-DIRECTION.md`.

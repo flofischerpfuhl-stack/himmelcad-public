@@ -3,7 +3,7 @@
 HimmelCAD is an offline-first 3D, CAD, and photogrammetry platform. Its active
 desktop products are **HimmelCAD Builder** and **HimmelCAD PhotoLab**;
 **HimmelCAD WeltView** is the shared browser viewer. **HimmelCAD ChronoGit**,
-**HimmelCAD Composer**, and **HimmelCAD TestFlight** remain reserved product
+**HimmelCAD Assembler**, and **HimmelCAD TestFlight** remain reserved product
 tracks.
 
 The project is designed around three constraints from day one:
@@ -21,11 +21,11 @@ The project is designed around three constraints from day one:
 | HimmelCAD PhotoLab   | Offline photogrammetry, survey products, meshes, and Gaussian splats              | Active productization                        |
 | HimmelCAD WeltView   | Browser viewer for shared HimmelCAD projects and measurements                     | Shared viewer foundation                     |
 | HimmelCAD ChronoGit  | Semantic versioning and diffing for CAD projects                                  | Reserved feasibility track                   |
-| HimmelCAD Composer   | Precision-mechanics and manufacturing-oriented sibling product                    | Reserved; no application yet                 |
+| HimmelCAD Assembler   | Precision-mechanics and manufacturing-oriented sibling product                    | Reserved; no application yet                 |
 | HimmelCAD TestFlight | Scripted simulations such as runoff, wind, and vehicle sweep paths                | Reserved feasibility track                   |
 
 The implemented application roots are `apps/builder`, `apps/photolab`, and
-`apps/weltview`. Composer, TestFlight, and ChronoGit are reserved product names;
+`apps/weltview`. Assembler, TestFlight, and ChronoGit are reserved product names;
 they do not currently have application directories.
 
 ## Branding

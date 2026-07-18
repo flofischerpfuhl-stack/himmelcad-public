@@ -1499,8 +1499,7 @@ fn validate_dense_ply(path: &Path) -> Result<DensePlySummary, MvsRuntimeError> {
                     match coordinate_width {
                         Some(existing) if existing != coord_width => {
                             return Err(MvsRuntimeError::InvalidOutput(
-                                "dense PLY coordinate properties must share one scalar type"
-                                    .into(),
+                                "dense PLY coordinate properties must share one scalar type".into(),
                             ));
                         }
                         None => coordinate_width = Some(coord_width),
@@ -1538,9 +1537,7 @@ fn validate_dense_ply(path: &Path) -> Result<DensePlySummary, MvsRuntimeError> {
         MvsRuntimeError::InvalidOutput("dense PLY is missing coordinate properties".into())
     })?;
     if !format_ok
-        || !["x", "y", "z"]
-            .iter()
-            .all(|name| required.contains(*name))
+        || !["x", "y", "z"].iter().all(|name| required.contains(*name))
         || coordinate_offsets.iter().any(Option::is_none)
     {
         return Err(MvsRuntimeError::InvalidOutput(
@@ -1581,11 +1578,14 @@ fn validate_dense_ply(path: &Path) -> Result<DensePlySummary, MvsRuntimeError> {
                     "dense PLY coordinate layout is inconsistent".into(),
                 ));
             }
-            let finite = match coordinate_width {
-                4 => f32::from_le_bytes(record[start..end].try_into().expect("4 bytes")).is_finite(),
-                8 => f64::from_le_bytes(record[start..end].try_into().expect("8 bytes")).is_finite(),
-                _ => false,
-            };
+            let finite =
+                match coordinate_width {
+                    4 => f32::from_le_bytes(record[start..end].try_into().expect("4 bytes"))
+                        .is_finite(),
+                    8 => f64::from_le_bytes(record[start..end].try_into().expect("8 bytes"))
+                        .is_finite(),
+                    _ => false,
+                };
             if !finite {
                 return Err(MvsRuntimeError::InvalidOutput(
                     "dense PLY contains non-finite coordinates".into(),

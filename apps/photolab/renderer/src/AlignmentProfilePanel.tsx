@@ -1,17 +1,27 @@
 import type {
-  AlignmentQualityProfile,
-  CameraCalibrationGroupRecord,
   CaptureGroupRecord,
   EntityId,
   ProcessingSetRecord,
   ResolvedAlignmentConfig,
 } from '@himmelcad/data';
-
-import styles from './AlignmentProfilePanel.module.css';
 import { Select } from '@himmelcad/ui';
+import { useCallback, useEffect, useState } from 'react';
+
+import {
+  parseAlignmentPreset,
+  type AlignmentPresetFile,
+} from './alignmentPreset.js';
+import styles from './AlignmentProfilePanel.module.css';
+
+export interface AlignmentPresetListItem {
+  name: string;
+  path: string;
+  savedAt: string;
+  profile?: string;
+  description?: string;
+}
 
 export interface AlignmentProfilePanelProps {
-  profile: AlignmentQualityProfile;
   imageCount: number;
   totalImageCount: number;
   selectedImageCount: number;
@@ -19,30 +29,24 @@ export interface AlignmentProfilePanelProps {
   scope: 'all' | 'selection';
   processingSets: readonly ProcessingSetRecord[];
   captureGroups: readonly CaptureGroupRecord[];
-  calibrationGroups: readonly CameraCalibrationGroupRecord[];
   activeProcessingSetId: EntityId | null;
+  selectedPreset: AlignmentPresetFile | null;
+  selectedPresetPath: string | null;
   resolving: boolean;
   starting: boolean;
-  savingProcessingSet: boolean;
+  confirmingGroups: boolean;
   canStart: boolean;
-  resolved: ResolvedAlignmentConfig | null;
   error: string | null;
-  onProfileChange: (profile: AlignmentQualityProfile) => void;
   onScopeChange: (scope: 'all' | 'selection') => void;
   onProcessingSetChange: (processingSetId: EntityId) => void;
+  onPresetSelected: (preset: AlignmentPresetFile, path: string) => void;
+  onPresetCleared: () => void;
   onStart: () => void;
-  onSaveProcessingSet: () => void;
-  onReviewGroups: () => void;
+  onConfirmPendingGroups: (captureGroupIds: EntityId[]) => void;
+  onDefineAlignment: () => void;
 }
 
-const PROFILE_DESCRIPTION: Record<AlignmentQualityProfile, string> = {
-  qualityHybrid: 'Independent neural and classical matching with quality-driven rescue.',
-  maximumRobustness: 'Maximum pair coverage and feature budget, including DeDoDe.',
-  fast: 'Fast matching with rescue only on diagnosed weak connections.',
-};
-
 export function AlignmentProfilePanel({
-  profile,
   imageCount,
   totalImageCount,
   selectedImageCount,
@@ -50,41 +54,106 @@ export function AlignmentProfilePanel({
   scope,
   processingSets,
   captureGroups,
-  calibrationGroups,
   activeProcessingSetId,
+  selectedPreset,
+  selectedPresetPath,
   resolving,
   starting,
-  savingProcessingSet,
+  confirmingGroups,
   canStart,
-  resolved,
   error,
-  onProfileChange,
   onScopeChange,
   onProcessingSetChange,
+  onPresetSelected,
+  onPresetCleared,
   onStart,
-  onSaveProcessingSet,
-  onReviewGroups,
+  onConfirmPendingGroups,
+  onDefineAlignment,
 }: AlignmentProfilePanelProps): JSX.Element {
+  const [presets, setPresets] = useState<AlignmentPresetListItem[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
+  const [loadBusy, setLoadBusy] = useState(false);
+
+  const refreshList = useCallback(async (): Promise<void> => {
+    const api = window.himmelcad;
+    if (!api?.alignmentPresets) return;
+    try {
+      setPresets(await api.alignmentPresets.list());
+      setListError(null);
+    } catch (err) {
+      setListError(err instanceof Error ? err.message : String(err));
+      setPresets([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshList();
+  }, [refreshList]);
+
+  const applyRaw = (raw: unknown, path: string): void => {
+    const parsed = parseAlignmentPreset(raw);
+    if (!parsed.ok) {
+      setListError(parsed.errors.join('\n'));
+      onPresetCleared();
+      return;
+    }
+    setListError(null);
+    onPresetSelected(parsed.preset, path);
+  };
+
+  const selectFromList = async (path: string): Promise<void> => {
+    if (!path) {
+      onPresetCleared();
+      return;
+    }
+    const api = window.himmelcad;
+    if (!api?.alignmentPresets) return;
+    setLoadBusy(true);
+    setListError(null);
+    try {
+      const result = await api.alignmentPresets.loadPath(path);
+      applyRaw(result.preset, result.path);
+    } catch (err) {
+      setListError(err instanceof Error ? err.message : String(err));
+      onPresetCleared();
+    } finally {
+      setLoadBusy(false);
+    }
+  };
+
+  const openFile = async (): Promise<void> => {
+    const api = window.himmelcad;
+    if (!api?.alignmentPresets) return;
+    setLoadBusy(true);
+    setListError(null);
+    try {
+      const result = await api.alignmentPresets.open();
+      if (!result) return;
+      applyRaw(result.preset, result.path);
+      await refreshList();
+    } catch (err) {
+      setListError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadBusy(false);
+    }
+  };
+
   const scopeCameraSet = new Set(scopeCameraIds);
-  const scopedCalibrationGroups = calibrationGroups.filter((group) =>
-    group.cameraEntityIds.some((entityId) => scopeCameraSet.has(entityId)),
-  );
-  const coveredImageCount = new Set(
-    scopedCalibrationGroups.flatMap((group) =>
-      group.cameraEntityIds.filter((entityId) => scopeCameraSet.has(entityId)),
-    ),
-  ).size;
-  const needsReviewCount = captureGroups.filter(
+  const pendingGroups = captureGroups.filter(
     (group) =>
       group.reviewStatus === 'needsReview' &&
       group.cameraEntityIds.some((entityId) => scopeCameraSet.has(entityId)),
-  ).length;
+  );
+  const hasPreset = selectedPreset != null && selectedPresetPath != null;
+  const busy = loadBusy || confirmingGroups || resolving || starting;
+
   return (
     <div className={styles.root}>
       <section className={styles.section}>
         <div className={styles.sectionTitle}>Align Photos</div>
+
         <label className={styles.field}>
-          <span>Input Scope</span>
+          <span>Scope</span>
           <Select
             className={styles.control}
             value={
@@ -101,10 +170,10 @@ export function AlignmentProfilePanel({
           >
             <option value="all">All images · {totalImageCount}</option>
             <option value="selection" disabled={selectedImageCount < 2}>
-              Current selection · {selectedImageCount}
+              Selection · {selectedImageCount}
             </option>
             {processingSets.length > 0 && (
-              <optgroup label="Saved processing sets">
+              <optgroup label="Processing sets">
                 {processingSets.map((processingSet) => (
                   <option
                     key={processingSet.entityId}
@@ -117,139 +186,79 @@ export function AlignmentProfilePanel({
             )}
           </Select>
         </label>
-        {activeProcessingSetId && (
-          <ProcessingSetSummary
-            processingSet={
-              processingSets.find((candidate) => candidate.entityId === activeProcessingSetId) ??
-              null
-            }
-          />
-        )}
+
         <label className={styles.field}>
-          <span>Images</span>
-          <input className={styles.control} type="number" value={imageCount} readOnly />
-        </label>
-        <label className={styles.field}>
-          <span>Quality profile</span>
+          <span>Preset</span>
           <Select
             className={styles.control}
-            value={profile}
-            onChange={(event) =>
-              onProfileChange(event.currentTarget.value as AlignmentQualityProfile)
-            }
+            value={selectedPresetPath ?? ''}
+            disabled={loadBusy}
+            onChange={(event) => void selectFromList(event.currentTarget.value)}
           >
-            <option value="qualityHybrid">Quality Hybrid · recommended</option>
-            <option value="maximumRobustness">Maximum Robustness</option>
-            <option value="fast">Fast · adaptive rescue</option>
+            <option value="">Select…</option>
+            {presets.map((item) => (
+              <option key={item.path} value={item.path}>
+                {item.name}
+                {item.profile ? ` · ${item.profile}` : ''}
+              </option>
+            ))}
           </Select>
         </label>
-        <div className={styles.hint}>{PROFILE_DESCRIPTION[profile]}</div>
-      </section>
 
-      <section className={styles.section} aria-label="Camera intrinsics sharing plan">
-        <div className={styles.sectionTitle}>Camera intrinsics</div>
-        <div className={styles.scopeSummary}>
-          <strong>
-            {scopedCalibrationGroups.length} intrinsics group
-            {scopedCalibrationGroups.length === 1 ? '' : 's'} in this scope
-          </strong>
-          <span>
-            {coveredImageCount} of {scopeCameraIds.length} scoped images covered
-            {needsReviewCount > 0 ? ` · ${needsReviewCount} capture groups need review` : ''}
-          </span>
+        <div className={styles.links}>
+          <button type="button" className={styles.link} disabled={loadBusy} onClick={() => void openFile()}>
+            Open file…
+          </button>
+          <button type="button" className={styles.link} disabled={loadBusy} onClick={() => void refreshList()}>
+            Refresh
+          </button>
+          <button type="button" className={styles.link} onClick={onDefineAlignment}>
+            Define Alignment…
+          </button>
         </div>
-        {scopedCalibrationGroups.slice(0, 8).map((group) => (
-          <ResolvedRow
-            key={group.entityId}
-            label={group.name}
-            value={`${group.cameraEntityIds.filter((id) => scopeCameraSet.has(id)).length} images · ${group.groupingBasis}`}
-          />
-        ))}
-        {scopedCalibrationGroups.length > 8 && (
-          <div className={styles.hint}>{scopedCalibrationGroups.length - 8} more groups</div>
+
+        {hasPreset && selectedPreset && (
+          <div className={styles.meta}>
+            {profileLabel(selectedPreset.profile)} · {imageCount} images
+          </div>
         )}
-        <button className={styles.action} type="button" onClick={onReviewGroups}>
-          {needsReviewCount > 0 ? 'Review detected groups' : 'Review groups'}
-        </button>
       </section>
 
-      {resolved && (
-        <section className={styles.resolved} aria-label="Core-resolved configuration">
-          <div className={styles.sectionTitle}>Core-validated plan</div>
-          <ResolvedRow label="Sparse" value={resolved.sparseBackends.join(' + ')} />
-          <ResolvedRow label="SIFT Scope" value={labelScope(resolved.siftScope)} />
-          <ResolvedRow
-            label="Large backend"
-            value={`${resolved.largeBackend} · ${labelScope(resolved.largeBackendScope)}`}
-          />
-          <ResolvedRow label="Image edge" value={`${resolved.maxImageEdge.toLocaleString()} px`} />
-          <ResolvedRow
-            label="Features"
-            value={`${resolved.keypointsPerMegapixel.toLocaleString()} / Mpx`}
-          />
-          <ResolvedRow
-            label="Checkpoint"
-            value={`${resolved.checkpointPairBlockSize} pair work units`}
-          />
-          <div className={styles.resolvedRow}>
-            <span>Config Hash</span>
-            <span className={styles.hash} title={resolved.configHash}>
-              {resolved.configHash.slice(0, 16)}…
-            </span>
+      {pendingGroups.length > 0 && (
+        <section className={styles.section}>
+          <div className={styles.sectionTitle}>Camera groups</div>
+          <div className={styles.meta}>
+            {pendingGroups.length === 1
+              ? '1 detected mission not confirmed yet'
+              : `${pendingGroups.length} detected missions not confirmed yet`}
           </div>
+          <button
+            type="button"
+            className={styles.action}
+            disabled={busy}
+            onClick={() => onConfirmPendingGroups(pendingGroups.map((g) => g.entityId))}
+          >
+            {confirmingGroups ? 'Confirming…' : 'Confirm grouping'}
+          </button>
         </section>
       )}
 
-      {error && <div className={styles.error}>{error}</div>}
-      {needsReviewCount > 0 && (
+      {(error || listError) && (
         <div className={styles.error} role="alert">
-          Confirm or replace the detected intrinsics groups before alignment. A landing or
-          autofocus change must not share camera parameters implicitly.
+          {error ?? listError}
         </div>
       )}
-      {scope === 'selection' && selectedImageCount >= 2 && (
-        <button
-          className={styles.action}
-          type="button"
-          disabled={savingProcessingSet}
-          onClick={onSaveProcessingSet}
-        >
-          {savingProcessingSet ? 'Saving processing set…' : 'Save selection as processing set'}
-        </button>
-      )}
+
       <button
-        className={styles.action}
         type="button"
-        disabled={!canStart || needsReviewCount > 0 || resolving || starting}
+        className={styles.actionPrimary}
+        disabled={
+          !canStart || !hasPreset || pendingGroups.length > 0 || resolving || starting || loadBusy
+        }
         onClick={onStart}
       >
-        {resolving
-          ? 'Validating configuration…'
-          : starting
-            ? 'Validating and queueing…'
-            : 'Start alignment'}
+        {starting ? 'Starting…' : resolving ? 'Validating…' : 'Start alignment'}
       </button>
-    </div>
-  );
-}
-
-function ProcessingSetSummary({
-  processingSet,
-}: {
-  processingSet: ProcessingSetRecord | null;
-}): JSX.Element {
-  if (!processingSet) return <></>;
-  return (
-    <div className={styles.scopeSummary}>
-      <strong>{processingSet.name}</strong>
-      <span>
-        Immutable scope · {processingSet.cameraEntityIds.length} cameras ·{' '}
-        {processingSet.captureGroupIds?.length ?? 0} capture groups ·{' '}
-        {processingSet.calibrationGroupIds?.length ?? 0} calibration groups ·{' '}
-        <code title={processingSet.membershipSha256}>
-          {processingSet.membershipSha256.slice(0, 12)}
-        </code>
-      </span>
     </div>
   );
 }
@@ -266,15 +275,11 @@ function decodeProcessingSetValue(value: string): EntityId | null {
     : null;
 }
 
-function ResolvedRow({ label, value }: { label: string; value: string }): JSX.Element {
-  return (
-    <div className={styles.resolvedRow}>
-      <span>{label}</span>
-      <span>{value}</span>
-    </div>
-  );
+function profileLabel(profile: AlignmentPresetFile['profile']): string {
+  if (profile === 'qualityHybrid') return 'Quality Hybrid';
+  if (profile === 'maximumRobustness') return 'Maximum Robustness';
+  return 'Fast';
 }
 
-function labelScope(scope: ResolvedAlignmentConfig['siftScope']): string {
-  return scope === 'allCandidatePairs' ? 'all candidate pairs' : 'quality-driven';
-}
+// Keep type import used for props compatibility when parent still types resolved.
+export type { ResolvedAlignmentConfig };
