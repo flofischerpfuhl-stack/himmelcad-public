@@ -833,6 +833,13 @@ export interface KernelEntityPresentationBatch {
         readonly [number, number, number, number],
       ]
     | null;
+  readonly sourcePbr: {
+    readonly emissive: readonly [number, number, number];
+    readonly metallic: number;
+    readonly roughness: number;
+  } | null;
+  readonly sourcePbrTextureFlags: number | null;
+  readonly sourcePbrUvRows: readonly (readonly [number, number, number, number])[] | null;
   readonly usesSourceTexture: boolean;
 }
 
@@ -3633,6 +3640,29 @@ function isEntityPresentationBatch(value: unknown): value is KernelEntityPresent
       (Array.isArray(value.sourceMaterialUvRows) &&
         value.sourceMaterialUvRows.length === 2 &&
         value.sourceMaterialUvRows.every(
+          (row) =>
+            Array.isArray(row) &&
+            row.length === 4 &&
+            row.every(
+              (component) => typeof component === 'number' && Number.isFinite(component),
+            ),
+        ))) &&
+    (value.sourcePbr === null ||
+      (isRecord(value.sourcePbr) &&
+        Array.isArray(value.sourcePbr.emissive) &&
+        value.sourcePbr.emissive.length === 3 &&
+        value.sourcePbr.emissive.every(
+          (component) => typeof component === 'number' && Number.isFinite(component),
+        ) &&
+        typeof value.sourcePbr.metallic === 'number' &&
+        Number.isFinite(value.sourcePbr.metallic) &&
+        typeof value.sourcePbr.roughness === 'number' &&
+        Number.isFinite(value.sourcePbr.roughness))) &&
+    (value.sourcePbrTextureFlags === null || Number.isSafeInteger(value.sourcePbrTextureFlags)) &&
+    (value.sourcePbrUvRows === null ||
+      (Array.isArray(value.sourcePbrUvRows) &&
+        value.sourcePbrUvRows.length === 10 &&
+        value.sourcePbrUvRows.every(
           (row) =>
             Array.isArray(row) &&
             row.length === 4 &&

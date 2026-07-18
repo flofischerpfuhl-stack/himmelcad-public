@@ -528,6 +528,17 @@ try {
     ),
     [false, true],
   );
+  assert.deepEqual(
+    state.presentationBindings.canonicalMaterials.map((batch) => batch.sourcePbrTextureFlags),
+    [0, 15],
+  );
+  assert(
+    Math.abs(state.presentationBindings.canonicalMaterials[1].sourcePbr.metallic - 0.7) < 1e-6,
+  );
+  assert(
+    Math.abs(state.presentationBindings.canonicalMaterials[1].sourcePbr.roughness - 0.55) < 1e-6,
+  );
+  assert.equal(state.presentationBindings.canonicalMaterials[1].sourcePbrUvRows.length, 10);
   assert.equal(state.canonicalDocument?.generation, 3);
   assert.equal(state.canonicalDocument?.journalEntries, 3);
   assert.equal(state.canonicalDocument?.restoredName, state.canonicalDocument?.replayedName);

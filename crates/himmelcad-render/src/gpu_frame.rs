@@ -6,7 +6,7 @@ use std::mem::size_of;
 use std::sync::{Arc, Mutex};
 
 use bytemuck::{Pod, Zeroable};
-use glam::{DMat3, DMat4};
+use glam::{DMat3, DMat4, Mat4};
 use himmelcad_core::canonical_resources::{
     HatchPatternKind, HatchPatternLine, LineTypeElement, LineTypePattern,
 };
@@ -1091,6 +1091,42 @@ impl GpuTextureTransform {
     }
 }
 
+/// One canonical material channel bound to an immutable GPU texture revision.
+#[derive(Debug, Clone, Copy)]
+pub struct GpuCanonicalTextureBinding<'a> {
+    /// Resident immutable texture and its exact sampler.
+    pub texture: &'a GpuTextureResource,
+    /// Channel-local transform applied to the authored first UV set.
+    pub transform: GpuTextureTransform,
+}
+
+/// Exact canonical material state installed independently from view styling.
+#[derive(Debug, Clone, Copy)]
+pub struct GpuCanonicalMaterial<'a> {
+    /// Linear base-color and opacity factor.
+    pub base_color: [f32; 4],
+    /// Linear emissive factor; values above one remain valid HDR emission.
+    pub emissive: [f32; 3],
+    /// Metallic factor in the inclusive zero-to-one range.
+    pub metallic: f32,
+    /// Perceptual roughness factor in the inclusive zero-to-one range.
+    pub roughness: f32,
+    /// Alpha interpretation shared by color and pick passes.
+    pub alpha_mode: GpuAlphaMode,
+    /// Whether both authored triangle orientations are rendered and picked.
+    pub double_sided: bool,
+    /// Optional base-color/opacity texture.
+    pub base_color_texture: Option<GpuCanonicalTextureBinding<'a>>,
+    /// Optional tangent-space normal texture.
+    pub normal_texture: Option<GpuCanonicalTextureBinding<'a>>,
+    /// Optional roughness-green/metallic-blue texture.
+    pub metallic_roughness_texture: Option<GpuCanonicalTextureBinding<'a>>,
+    /// Optional emissive texture.
+    pub emissive_texture: Option<GpuCanonicalTextureBinding<'a>>,
+    /// Optional red-channel ambient-occlusion texture.
+    pub occlusion_texture: Option<GpuCanonicalTextureBinding<'a>>,
+}
+
 /// Borrowed device-ready two-dimensional texture with tightly packed mipmaps.
 #[derive(Debug, Clone, Copy)]
 pub struct GpuTextureMipChainData<'a> {
@@ -1148,12 +1184,64 @@ impl ImmutableGpuTextureResource for GpuTextureResource {
     }
 }
 
+#[derive(Debug, Clone)]
+struct GpuPbrAuxiliaryTextures {
+    normal: GpuTextureResource,
+    metallic_roughness: GpuTextureResource,
+    emissive: GpuTextureResource,
+    occlusion: GpuTextureResource,
+}
+
+#[derive(Debug, Clone)]
+struct GpuMaterialTextures {
+    base_color: GpuTextureResource,
+    auxiliary: GpuPbrAuxiliaryTextures,
+}
+
+const GPU_MATERIAL_TEXTURE_CHANNELS: usize = 5;
+const GPU_MATERIAL_UV_ROWS: usize = GPU_MATERIAL_TEXTURE_CHANNELS * 2;
+
+fn canonical_uv_rows(
+    material: &GpuCanonicalMaterial<'_>,
+) -> Result<[[f32; 4]; GPU_MATERIAL_UV_ROWS], GpuFrameError> {
+    let mut rows = [[0.0; 4]; GPU_MATERIAL_UV_ROWS];
+    for (index, binding) in [
+        material.base_color_texture,
+        material.normal_texture,
+        material.metallic_roughness_texture,
+        material.emissive_texture,
+        material.occlusion_texture,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let transform = binding.map_or_else(GpuTextureTransform::default, |value| value.transform);
+        let transformed = transform.rows()?;
+        rows[index * 2] = transformed[0];
+        rows[index * 2 + 1] = transformed[1];
+    }
+    Ok(rows)
+}
+
+fn identity_uv_rows() -> [[f32; 4]; GPU_MATERIAL_UV_ROWS] {
+    let identity = GpuTextureTransform::default()
+        .rows()
+        .expect("identity UV transform is valid");
+    let mut rows = [[0.0; 4]; GPU_MATERIAL_UV_ROWS];
+    for channel in 0..GPU_MATERIAL_TEXTURE_CHANNELS {
+        rows[channel * 2] = identity[0];
+        rows[channel * 2 + 1] = identity[1];
+    }
+    rows
+}
+
 /// Per-batch style state referencing a potentially shared immutable texture.
 #[derive(Debug, Clone)]
 pub struct GpuMaterial {
     bind_group: wgpu::BindGroup,
     source_texture_resource: GpuTextureResource,
     active_texture_resource: GpuTextureResource,
+    source_textures: GpuMaterialTextures,
     line_type_resource: GpuLineTypeResource,
     hatch_resource: GpuHatchResource,
     uniform: wgpu::Buffer,
@@ -1161,7 +1249,12 @@ pub struct GpuMaterial {
     transparent: bool,
     style: GpuPresentationStyle,
     source_color: [f32; 4],
-    source_uv_rows: [[f32; 4]; 2],
+    source_emissive: [f32; 3],
+    source_metallic: f32,
+    source_roughness: f32,
+    source_texture_flags: u32,
+    source_pbr: bool,
+    source_uv_rows: [[f32; 4]; GPU_MATERIAL_UV_ROWS],
     interaction_translation: [f32; 3],
     source_linear_rows: [[f32; 4]; 3],
     source_normal_rows: [[f32; 4]; 3],
@@ -1191,6 +1284,13 @@ impl MaterialOriginState {
 }
 
 impl GpuMaterial {
+    fn active_textures(&self) -> GpuMaterialTextures {
+        GpuMaterialTextures {
+            base_color: self.active_texture_resource.clone(),
+            auxiliary: self.source_textures.auxiliary.clone(),
+        }
+    }
+
     fn rewrite_uniform(&self, queue: &wgpu::Queue) {
         let origin_delta = batch_origin_delta(self.batch_origin, self.frame_origin)
             .expect("validated material origins remain representable");
@@ -1201,6 +1301,11 @@ impl GpuMaterial {
                 self.alpha_mode,
                 &self.style,
                 self.source_color,
+                self.source_emissive,
+                self.source_metallic,
+                self.source_roughness,
+                self.source_texture_flags,
+                self.source_pbr,
                 self.source_uv_rows,
                 self.interaction_translation,
                 origin_delta,
@@ -1280,11 +1385,15 @@ impl GpuMaterial {
         layout: &wgpu::BindGroupLayout,
         texture: &GpuTextureResource,
     ) {
+        let active_textures = GpuMaterialTextures {
+            base_color: texture.clone(),
+            auxiliary: self.source_textures.auxiliary.clone(),
+        };
         let bind_group = create_material_bind_group(
             device,
             layout,
             "himmelcad-presentation-texture",
-            texture,
+            &active_textures,
             &self.line_type_resource,
             &self.hatch_resource,
             &self.uniform,
@@ -1298,32 +1407,71 @@ impl GpuMaterial {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
-        texture: Option<&GpuTextureResource>,
-        color: [f32; 4],
-        alpha_mode: GpuAlphaMode,
-        texture_transform: GpuTextureTransform,
+        defaults: &GpuMaterialTextures,
+        source: &GpuCanonicalMaterial<'_>,
     ) -> Result<(), GpuFrameError> {
-        if color
+        if source
+            .base_color
             .iter()
             .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
+            || source
+                .emissive
+                .iter()
+                .any(|value| !value.is_finite() || *value < 0.0)
+            || !source.metallic.is_finite()
+            || !(0.0..=1.0).contains(&source.metallic)
+            || !source.roughness.is_finite()
+            || !(0.0..=1.0).contains(&source.roughness)
         {
             return Err(GpuFrameError::InvalidStyle);
         }
-        let source_uv_rows = texture_transform.rows()?;
-        let texture = texture
-            .cloned()
-            .unwrap_or_else(|| self.source_texture_resource.clone());
-        self.source_texture_resource = texture.clone();
-        self.active_texture_resource = texture.clone();
-        self.source_color = color;
+        let source_uv_rows = canonical_uv_rows(source)?;
+        let base_color = source.base_color_texture.map_or_else(
+            || defaults.base_color.clone(),
+            |binding| binding.texture.clone(),
+        );
+        let auxiliary = GpuPbrAuxiliaryTextures {
+            normal: source.normal_texture.map_or_else(
+                || defaults.auxiliary.normal.clone(),
+                |binding| binding.texture.clone(),
+            ),
+            metallic_roughness: source.metallic_roughness_texture.map_or_else(
+                || defaults.auxiliary.metallic_roughness.clone(),
+                |binding| binding.texture.clone(),
+            ),
+            emissive: source.emissive_texture.map_or_else(
+                || defaults.auxiliary.emissive.clone(),
+                |binding| binding.texture.clone(),
+            ),
+            occlusion: source.occlusion_texture.map_or_else(
+                || defaults.auxiliary.occlusion.clone(),
+                |binding| binding.texture.clone(),
+            ),
+        };
+        let textures = GpuMaterialTextures {
+            base_color: base_color.clone(),
+            auxiliary,
+        };
+        self.source_texture_resource = base_color.clone();
+        self.active_texture_resource = base_color;
+        self.source_textures = textures.clone();
+        self.source_color = source.base_color;
+        self.source_emissive = source.emissive;
+        self.source_metallic = source.metallic;
+        self.source_roughness = source.roughness;
+        self.source_texture_flags = u32::from(source.normal_texture.is_some())
+            | (u32::from(source.metallic_roughness_texture.is_some()) << 1)
+            | (u32::from(source.emissive_texture.is_some()) << 2)
+            | (u32::from(source.occlusion_texture.is_some()) << 3);
+        self.source_pbr = true;
         self.source_uv_rows = source_uv_rows;
-        self.alpha_mode = alpha_mode;
-        self.transparent = alpha_mode == GpuAlphaMode::Blend || self.style.opacity < 1.0;
+        self.alpha_mode = source.alpha_mode;
+        self.transparent = source.alpha_mode == GpuAlphaMode::Blend || self.style.opacity < 1.0;
         self.bind_group = create_material_bind_group(
             device,
             layout,
             "himmelcad-source-material",
-            &texture,
+            &textures,
             &self.line_type_resource,
             &self.hatch_resource,
             &self.uniform,
@@ -1342,7 +1490,7 @@ impl GpuMaterial {
             device,
             layout,
             "himmelcad-line-type-resource",
-            &self.active_texture_resource,
+            &self.active_textures(),
             resource,
             &self.hatch_resource,
             &self.uniform,
@@ -1360,7 +1508,7 @@ impl GpuMaterial {
             device,
             layout,
             "himmelcad-hatch-resource",
-            &self.active_texture_resource,
+            &self.active_textures(),
             &self.line_type_resource,
             resource,
             &self.uniform,
@@ -1970,7 +2118,35 @@ impl GpuDrawBatch {
     pub fn source_material_uv_rows(&self) -> Option<[[f32; 4]; 2]> {
         self.material
             .as_ref()
-            .map(|material| material.source_uv_rows)
+            .map(|material| [material.source_uv_rows[0], material.source_uv_rows[1]])
+    }
+
+    /// Canonical metallic, roughness and emissive factors retained by the GPU material.
+    #[must_use]
+    pub fn source_pbr_factors(&self) -> Option<([f32; 3], f32, f32)> {
+        self.material.as_ref().and_then(|material| {
+            material.source_pbr.then_some((
+                material.source_emissive,
+                material.source_metallic,
+                material.source_roughness,
+            ))
+        })
+    }
+
+    /// Bit set for each resident canonical auxiliary PBR channel in slot order.
+    #[must_use]
+    pub fn source_pbr_texture_flags(&self) -> Option<u32> {
+        self.material
+            .as_ref()
+            .and_then(|material| material.source_pbr.then_some(material.source_texture_flags))
+    }
+
+    /// Channel-local UV rows in base/normal/metallic-roughness/emissive/occlusion order.
+    #[must_use]
+    pub fn source_pbr_uv_rows(&self) -> Option<[[f32; 4]; GPU_MATERIAL_UV_ROWS]> {
+        self.material
+            .as_ref()
+            .and_then(|material| material.source_pbr.then_some(material.source_uv_rows))
     }
 
     pub(crate) fn vertex_count_usize(&self) -> usize {
@@ -1993,24 +2169,18 @@ impl GpuDrawBatch {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         renderer: &GpuSharedRenderer,
-        texture: Option<&GpuTextureResource>,
-        color: [f32; 4],
-        alpha_mode: GpuAlphaMode,
-        texture_transform: GpuTextureTransform,
-        double_sided: bool,
+        source: &GpuCanonicalMaterial<'_>,
     ) -> Result<(), GpuFrameError> {
         let material = self.material.as_mut().ok_or(GpuFrameError::InvalidStyle)?;
         material.set_source_material(
             device,
             queue,
             &renderer.material_bind_group_layout,
-            texture,
-            color,
-            alpha_mode,
-            texture_transform,
+            &renderer.default_material.source_textures,
+            source,
         )?;
         self.transparent = material.transparent;
-        self.double_sided = double_sided;
+        self.double_sided = source.double_sided;
         Ok(())
     }
 
@@ -3263,7 +3433,13 @@ impl GpuDrawBatch {
         )?;
         material.source_texture_resource = source.source_texture_resource.clone();
         material.active_texture_resource = source.active_texture_resource.clone();
+        material.source_textures = source.source_textures.clone();
         material.source_color = source.source_color;
+        material.source_emissive = source.source_emissive;
+        material.source_metallic = source.source_metallic;
+        material.source_roughness = source.source_roughness;
+        material.source_texture_flags = source.source_texture_flags;
+        material.source_pbr = source.source_pbr;
         material.source_uv_rows = source.source_uv_rows;
         material.rebind_line_type_resource(
             device,
@@ -4032,6 +4208,70 @@ impl GpuSharedRenderer {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 8,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 9,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 10,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 11,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 12,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
                 ],
             });
         let default_texture = create_texture_resource(
@@ -4045,6 +4285,62 @@ impl GpuSharedRenderer {
             },
         )
         .expect("one-pixel default texture is valid");
+        let default_normal_texture = create_texture_resource_with_options(
+            device,
+            queue,
+            "himmelcad-default-normal",
+            GpuTextureData {
+                width: 1,
+                height: 1,
+                rgba8: &[128, 128, 255, 255],
+            },
+            GpuTextureColorSpace::Linear,
+            GpuTextureSamplerIdentity::REPEAT_LINEAR,
+        )
+        .expect("one-pixel neutral normal texture is valid");
+        let default_metallic_roughness_texture = create_texture_resource_with_options(
+            device,
+            queue,
+            "himmelcad-default-metallic-roughness",
+            GpuTextureData {
+                width: 1,
+                height: 1,
+                rgba8: &[255, 255, 0, 255],
+            },
+            GpuTextureColorSpace::Linear,
+            GpuTextureSamplerIdentity::REPEAT_LINEAR,
+        )
+        .expect("one-pixel dielectric rough texture is valid");
+        let default_emissive_texture = create_texture_resource(
+            device,
+            queue,
+            "himmelcad-default-emissive",
+            GpuTextureData {
+                width: 1,
+                height: 1,
+                rgba8: &[0, 0, 0, 255],
+            },
+        )
+        .expect("one-pixel black emissive texture is valid");
+        let default_occlusion_texture = create_texture_resource_with_options(
+            device,
+            queue,
+            "himmelcad-default-occlusion",
+            GpuTextureData {
+                width: 1,
+                height: 1,
+                rgba8: &[255; 4],
+            },
+            GpuTextureColorSpace::Linear,
+            GpuTextureSamplerIdentity::REPEAT_LINEAR,
+        )
+        .expect("one-pixel unoccluded texture is valid");
+        let default_auxiliary_textures = GpuPbrAuxiliaryTextures {
+            normal: default_normal_texture,
+            metallic_roughness: default_metallic_roughness_texture,
+            emissive: default_emissive_texture,
+            occlusion: default_occlusion_texture,
+        };
         let default_line_type_resource = GpuLineTypeResource::upload(
             device,
             queue,
@@ -4071,6 +4367,7 @@ impl GpuSharedRenderer {
             &material_bind_group_layout,
             "himmelcad-default-material",
             &default_texture,
+            &default_auxiliary_textures,
             &default_line_type_resource,
             &default_hatch_resource,
             GpuAlphaMode::Opaque,
@@ -4154,6 +4451,7 @@ impl GpuSharedRenderer {
             &self.material_bind_group_layout,
             label,
             &texture,
+            &self.default_material.source_textures.auxiliary,
             &self.default_line_type_resource,
             &self.default_hatch_resource,
             alpha_mode,
@@ -4204,6 +4502,7 @@ impl GpuSharedRenderer {
             &self.material_bind_group_layout,
             label,
             &texture,
+            &self.default_material.source_textures.auxiliary,
             &self.default_line_type_resource,
             &self.default_hatch_resource,
             alpha_mode,
@@ -4229,6 +4528,7 @@ impl GpuSharedRenderer {
             &self.material_bind_group_layout,
             label,
             &texture,
+            &self.default_material.source_textures.auxiliary,
             &self.default_line_type_resource,
             &self.default_hatch_resource,
             alpha_mode,
@@ -4314,6 +4614,7 @@ impl GpuSharedRenderer {
             &self.material_bind_group_layout,
             label,
             texture,
+            &self.default_material.source_textures.auxiliary,
             &self.default_line_type_resource,
             &self.default_hatch_resource,
             alpha_mode,
@@ -4831,6 +5132,7 @@ impl OitRenderer {
 #[repr(C)]
 struct FrameUniform {
     view_projection: [[f32; 4]; 4],
+    inverse_view_projection: [[f32; 4]; 4],
     clip_planes: [[f32; 4]; MAX_CLIP_PLANES],
     clip_volume_meta: [[u32; 4]; MAX_CLIP_VOLUMES],
     viewport_size: [f32; 2],
@@ -4847,7 +5149,10 @@ struct MaterialUniform {
     gradient_count: u32,
     base_color: [f32; 4],
     source_color: [f32; 4],
-    source_uv_rows: [[f32; 4]; 2],
+    source_emissive: [f32; 4],
+    source_pbr_values: [f32; 4],
+    source_texture_flags: [u32; 4],
+    source_uv_rows: [[f32; 4]; GPU_MATERIAL_UV_ROWS],
     style_values: [f32; 4],
     height_values: [f32; 4],
     gradient_colors: [[f32; 4]; MAX_GPU_GRADIENT_COLORS],
@@ -4870,7 +5175,12 @@ impl MaterialUniform {
         alpha_mode: GpuAlphaMode,
         style: &GpuPresentationStyle,
         source_color: [f32; 4],
-        source_uv_rows: [[f32; 4]; 2],
+        source_emissive: [f32; 3],
+        source_metallic: f32,
+        source_roughness: f32,
+        source_texture_flags: u32,
+        source_pbr: bool,
+        source_uv_rows: [[f32; 4]; GPU_MATERIAL_UV_ROWS],
         interaction_translation: [f32; 3],
         batch_origin_delta: [f32; 3],
         source_linear_rows: [[f32; 4]; 3],
@@ -4887,6 +5197,19 @@ impl MaterialUniform {
             gradient_count: style.gradient_count,
             base_color: style.base_color,
             source_color,
+            source_emissive: [
+                source_emissive[0],
+                source_emissive[1],
+                source_emissive[2],
+                0.0,
+            ],
+            source_pbr_values: [
+                source_metallic,
+                source_roughness,
+                if source_pbr { 1.0 } else { 0.0 },
+                0.0,
+            ],
+            source_texture_flags: [source_texture_flags, 0, 0, 0],
             source_uv_rows,
             style_values: [
                 style.opacity,
@@ -4982,8 +5305,18 @@ impl FrameUniform {
         {
             return Err(GpuFrameError::NonFiniteFrameValue);
         }
+        let inverse_view_projection = Mat4::from_cols_array_2d(&view_projection).inverse();
+        let inverse_view_projection = inverse_view_projection.to_cols_array_2d();
+        if inverse_view_projection
+            .iter()
+            .flatten()
+            .any(|value| !value.is_finite())
+        {
+            return Err(GpuFrameError::NonFiniteFrameValue);
+        }
         let mut result = Self {
             view_projection,
+            inverse_view_projection,
             viewport_size: [f32::from(viewport_width), f32::from(viewport_height)],
             ..Self::zeroed()
         };
@@ -5244,6 +5577,7 @@ fn create_material_from_texture(
     layout: &wgpu::BindGroupLayout,
     label: &str,
     texture: &GpuTextureResource,
+    auxiliary_textures: &GpuPbrAuxiliaryTextures,
     line_type_resource: &GpuLineTypeResource,
     hatch_resource: &GpuHatchResource,
     alpha_mode: GpuAlphaMode,
@@ -5256,9 +5590,12 @@ fn create_material_from_texture(
         alpha_mode,
         style,
         [1.0; 4],
-        GpuTextureTransform::default()
-            .rows()
-            .expect("identity UV transform is valid"),
+        [0.0; 3],
+        0.0,
+        1.0,
+        0,
+        false,
+        identity_uv_rows(),
         [0.0; 3],
         origin_delta,
         IDENTITY_AFFINE_ROWS,
@@ -5271,11 +5608,15 @@ fn create_material_from_texture(
         bytemuck::bytes_of(&material_uniform),
         wgpu::BufferUsages::UNIFORM,
     );
+    let textures = GpuMaterialTextures {
+        base_color: texture.clone(),
+        auxiliary: auxiliary_textures.clone(),
+    };
     let bind_group = create_material_bind_group(
         device,
         layout,
         label,
-        texture,
+        &textures,
         line_type_resource,
         hatch_resource,
         &uniform,
@@ -5284,6 +5625,7 @@ fn create_material_from_texture(
         bind_group,
         source_texture_resource: texture.clone(),
         active_texture_resource: texture.clone(),
+        source_textures: textures,
         line_type_resource: line_type_resource.clone(),
         hatch_resource: hatch_resource.clone(),
         uniform,
@@ -5291,9 +5633,12 @@ fn create_material_from_texture(
         transparent: alpha_mode == GpuAlphaMode::Blend || style.opacity < 1.0,
         style: *style,
         source_color: [1.0; 4],
-        source_uv_rows: GpuTextureTransform::default()
-            .rows()
-            .expect("identity UV transform is valid"),
+        source_emissive: [0.0; 3],
+        source_metallic: 0.0,
+        source_roughness: 1.0,
+        source_texture_flags: 0,
+        source_pbr: false,
+        source_uv_rows: identity_uv_rows(),
         interaction_translation: [0.0; 3],
         source_linear_rows: IDENTITY_AFFINE_ROWS,
         source_normal_rows: IDENTITY_AFFINE_ROWS,
@@ -5306,7 +5651,7 @@ fn create_material_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     label: &str,
-    texture: &GpuTextureResource,
+    textures: &GpuMaterialTextures,
     line_type_resource: &GpuLineTypeResource,
     hatch_resource: &GpuHatchResource,
     uniform: &wgpu::Buffer,
@@ -5317,11 +5662,13 @@ fn create_material_bind_group(
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&texture.0.allocation.view),
+                resource: wgpu::BindingResource::TextureView(
+                    &textures.base_color.0.allocation.view,
+                ),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::Sampler(&texture.0.sampler),
+                resource: wgpu::BindingResource::Sampler(&textures.base_color.0.sampler),
             },
             wgpu::BindGroupEntry {
                 binding: 2,
@@ -5334,6 +5681,48 @@ fn create_material_bind_group(
             wgpu::BindGroupEntry {
                 binding: 4,
                 resource: wgpu::BindingResource::TextureView(&hatch_resource.0.view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: wgpu::BindingResource::TextureView(
+                    &textures.auxiliary.normal.0.allocation.view,
+                ),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: wgpu::BindingResource::Sampler(&textures.auxiliary.normal.0.sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: wgpu::BindingResource::TextureView(
+                    &textures.auxiliary.metallic_roughness.0.allocation.view,
+                ),
+            },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: wgpu::BindingResource::Sampler(
+                    &textures.auxiliary.metallic_roughness.0.sampler,
+                ),
+            },
+            wgpu::BindGroupEntry {
+                binding: 9,
+                resource: wgpu::BindingResource::TextureView(
+                    &textures.auxiliary.emissive.0.allocation.view,
+                ),
+            },
+            wgpu::BindGroupEntry {
+                binding: 10,
+                resource: wgpu::BindingResource::Sampler(&textures.auxiliary.emissive.0.sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 11,
+                resource: wgpu::BindingResource::TextureView(
+                    &textures.auxiliary.occlusion.0.allocation.view,
+                ),
+            },
+            wgpu::BindGroupEntry {
+                binding: 12,
+                resource: wgpu::BindingResource::Sampler(&textures.auxiliary.occlusion.0.sampler),
             },
         ],
     })

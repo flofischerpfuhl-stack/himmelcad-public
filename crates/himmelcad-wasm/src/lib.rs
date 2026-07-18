@@ -94,11 +94,12 @@ use himmelcad_render::{
     DeviceCalibration, ElevationRasterPickRefiner, EntityCompilationOptions, EvaluatedMeshRecipe,
     EvaluatedMeshRepresentation, FillMode, FloatingOrigin, FrameTelemetrySample,
     FrameTelemetryWindow, GaussianSplatPickRefiner, GeometryRepresentationRegistry, GlyphAtlas,
-    GlyphMetrics, GpuAlphaMode, GpuCalibrationProgress, GpuCalibrationSession, GpuDrawBatch,
-    GpuHatchPattern, GpuHatchPatternData, GpuHatchResource, GpuIndexedMeshGeometry,
-    GpuLineTypePattern, GpuLineTypeResource, GpuModelResourceIdentity, GpuPresentationStyle,
-    GpuSurfaceHost, GpuTextureAddressMode, GpuTextureColorSpace, GpuTextureData,
-    GpuTextureFilterMode, GpuTextureResource, GpuTextureResourceCache, GpuTextureResourceIdentity,
+    GlyphMetrics, GpuAlphaMode, GpuCalibrationProgress, GpuCalibrationSession,
+    GpuCanonicalMaterial, GpuCanonicalTextureBinding, GpuDrawBatch, GpuHatchPattern,
+    GpuHatchPatternData, GpuHatchResource, GpuIndexedMeshGeometry, GpuLineTypePattern,
+    GpuLineTypeResource, GpuModelResourceIdentity, GpuPresentationStyle, GpuSurfaceHost,
+    GpuTextureAddressMode, GpuTextureColorSpace, GpuTextureData, GpuTextureFilterMode,
+    GpuTextureResource, GpuTextureResourceCache, GpuTextureResourceIdentity,
     GpuTextureResourceStage, GpuTextureSamplerIdentity, GpuTextureTransform, HardwareInventory,
     HardwarePolicyResolver, HierarchySource, ImplicitThreeDTilesHierarchySource,
     InstancedTriangleMeshPickRefiner, MeshPickRefiner, PickCandidate, PickCycle,
@@ -2406,6 +2407,16 @@ impl WasmViewer {
                 .flatten()
                 .enumerate()
             {
+                let source_pbr =
+                    batch
+                        .source_pbr_factors()
+                        .map(|(emissive, metallic, roughness)| {
+                            serde_json::json!({
+                                "emissive": emissive,
+                                "metallic": metallic,
+                                "roughness": roughness,
+                            })
+                        });
                 batches.push(serde_json::json!({
                     "proxyId": proxy_id.0,
                     "batchIndex": batch_index,
@@ -2420,6 +2431,9 @@ impl WasmViewer {
                     "sourceMaterialColor": batch.source_material_color(),
                     "sourceMaterialDoubleSided": batch.source_material_double_sided(),
                     "sourceMaterialUvRows": batch.source_material_uv_rows(),
+                    "sourcePbr": source_pbr,
+                    "sourcePbrTextureFlags": batch.source_pbr_texture_flags(),
+                    "sourcePbrUvRows": batch.source_pbr_uv_rows(),
                     "usesSourceTexture": batch.source_texture_allocation_key()
                         == batch.active_texture_allocation_key(),
                 }));
@@ -8125,48 +8139,54 @@ fn apply_canonical_mesh_material(
             material_ref.resource_id
         )
     })?;
-    let base_color_binding = material
-        .texture_bindings
-        .iter()
-        .find(|binding| binding.slot == MaterialTextureSlot::BaseColor);
-    let texture = base_color_binding
-        .map(|binding| {
-            if binding.texture_coordinate_set != 0 {
-                return Err(format!(
-                    "canonical base-color texture '{}' requires an unavailable UV set",
-                    binding.texture.resource_id
-                ));
-            }
-            if !batch.has_declared_texture_coordinates() {
-                return Err(format!(
-                    "canonical base-color texture '{}' requires declared mesh UVs",
-                    binding.texture.resource_id
-                ));
-            }
-            resources.catalog.texture(&binding.texture).ok_or_else(|| {
-                format!(
-                    "exact texture revision '{}' is not registered",
-                    binding.texture.resource_id
-                )
-            })?;
-            let key = canonical_resource_ref_key(&binding.texture)?;
-            resources.gpu_textures.get(&key).ok_or_else(|| {
-                format!(
-                    "exact GPU texture revision '{}' is not registered",
-                    binding.texture.resource_id
-                )
+    let resolve_texture = |slot| -> Result<Option<GpuCanonicalTextureBinding<'_>>, String> {
+        material
+            .texture_bindings
+            .iter()
+            .find(|binding| binding.slot == slot)
+            .map(|binding| {
+                if binding.texture_coordinate_set != 0 {
+                    return Err(format!(
+                        "canonical {:?} texture '{}' requires an unavailable UV set",
+                        slot, binding.texture.resource_id
+                    ));
+                }
+                if !batch.has_declared_texture_coordinates() {
+                    return Err(format!(
+                        "canonical {:?} texture '{}' requires declared mesh UVs",
+                        slot, binding.texture.resource_id
+                    ));
+                }
+                resources.catalog.texture(&binding.texture).ok_or_else(|| {
+                    format!(
+                        "exact texture revision '{}' is not registered",
+                        binding.texture.resource_id
+                    )
+                })?;
+                let key = canonical_resource_ref_key(&binding.texture)?;
+                let texture = resources.gpu_textures.get(&key).ok_or_else(|| {
+                    format!(
+                        "exact GPU texture revision '{}' is not registered",
+                        binding.texture.resource_id
+                    )
+                })?;
+                let transform =
+                    binding
+                        .transform
+                        .map_or_else(GpuTextureTransform::default, |value| GpuTextureTransform {
+                            offset: value.offset,
+                            scale: value.scale,
+                            rotation: value.rotation,
+                        });
+                Ok(GpuCanonicalTextureBinding { texture, transform })
             })
-        })
-        .transpose()?;
-    let texture_transform = base_color_binding
-        .and_then(|binding| binding.transform)
-        .map_or_else(GpuTextureTransform::default, |transform| {
-            GpuTextureTransform {
-                offset: transform.offset,
-                scale: transform.scale,
-                rotation: transform.rotation,
-            }
-        });
+            .transpose()
+    };
+    let base_color_texture = resolve_texture(MaterialTextureSlot::BaseColor)?;
+    let normal_texture = resolve_texture(MaterialTextureSlot::Normal)?;
+    let metallic_roughness_texture = resolve_texture(MaterialTextureSlot::MetallicRoughness)?;
+    let emissive_texture = resolve_texture(MaterialTextureSlot::Emissive)?;
+    let occlusion_texture = resolve_texture(MaterialTextureSlot::Occlusion)?;
     let alpha_mode = match material.alpha_mode {
         MaterialAlphaMode::Opaque => GpuAlphaMode::Opaque,
         MaterialAlphaMode::Mask => GpuAlphaMode::Mask {
@@ -8181,16 +8201,24 @@ fn apply_canonical_mesh_material(
             host.device(),
             host.queue(),
             host.renderer(),
-            texture,
-            [
-                material.base_color.red,
-                material.base_color.green,
-                material.base_color.blue,
-                material.base_color.alpha,
-            ],
-            alpha_mode,
-            texture_transform,
-            material.double_sided,
+            &GpuCanonicalMaterial {
+                base_color: [
+                    material.base_color.red,
+                    material.base_color.green,
+                    material.base_color.blue,
+                    material.base_color.alpha,
+                ],
+                emissive: material.emissive,
+                metallic: material.metallic,
+                roughness: material.roughness,
+                alpha_mode,
+                double_sided: material.double_sided,
+                base_color_texture,
+                normal_texture,
+                metallic_roughness_texture,
+                emissive_texture,
+                occlusion_texture,
+            },
         )
         .map_err(|error| error.to_string())
 }

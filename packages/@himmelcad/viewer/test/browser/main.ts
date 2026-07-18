@@ -2609,9 +2609,18 @@ function verifyResolvedPresentationBindings(
     canonicalMaterials[0]?.sourceMaterialColor?.[0] !== 1 ||
     canonicalMaterials[1]?.sourceMaterialColor?.[1] !== 1 ||
     Math.abs((canonicalMaterials[1]?.sourceMaterialUvRows?.[0]?.[2] ?? 0) - 0.125) > 1e-6 ||
-    Math.abs((canonicalMaterials[1]?.sourceMaterialUvRows?.[1]?.[2] ?? 0) + 0.25) > 1e-6
+    Math.abs((canonicalMaterials[1]?.sourceMaterialUvRows?.[1]?.[2] ?? 0) + 0.25) > 1e-6 ||
+    canonicalMaterials[0]?.sourcePbrTextureFlags !== 0 ||
+    canonicalMaterials[1]?.sourcePbrTextureFlags !== 15 ||
+    Math.abs((canonicalMaterials[1]?.sourcePbr?.metallic ?? 0) - 0.7) > 1e-6 ||
+    Math.abs((canonicalMaterials[1]?.sourcePbr?.roughness ?? 0) - 0.55) > 1e-6 ||
+    Math.abs((canonicalMaterials[1]?.sourcePbr?.emissive[0] ?? 0) - 0.12) > 1e-6 ||
+    Math.abs((canonicalMaterials[1]?.sourcePbrUvRows?.[2]?.[2] ?? 0) - 0.05) > 1e-6 ||
+    Math.abs((canonicalMaterials[1]?.sourcePbrUvRows?.[3]?.[2] ?? 0) - 0.1) > 1e-6 ||
+    Math.abs((canonicalMaterials[1]?.sourcePbrUvRows?.[8]?.[2] ?? 0) + 0.05) > 1e-6 ||
+    Math.abs((canonicalMaterials[1]?.sourcePbrUvRows?.[9]?.[2] ?? 0) + 0.1) > 1e-6
   ) {
-    throw new Error('canonical mesh material table did not resolve exact slots/colors/textures');
+    throw new Error('canonical mesh material table did not resolve exact slots/PBR channels');
   }
   const unsealedOldLineType: LineTypeResource = {
     schemaId: 'hcad.resource.line-type@1',
@@ -3573,36 +3582,77 @@ async function run(): Promise<void> {
     schemaId: crossHatch.schemaId,
     contentHash: crossHatch.contentHash,
   };
-  const materialPixels = new Uint8Array([
-    255, 255, 255, 255, 32, 220, 255, 255,
-    255, 80, 48, 255, 255, 255, 255, 255,
-  ]);
-  const materialPixelsHash = await sha256Bytes(materialPixels);
-  const unsealedTexture: TextureResource = {
-    schemaId: 'hcad.resource.texture@1',
-    resourceId: 'browser-material-checker',
-    contentHash: '00'.repeat(32),
-    pixels: {
-      objectHash: materialPixelsHash,
-      mediaType: 'application/x-himmelcad-decoded-rgba8',
-      byteLength: materialPixels.byteLength,
-    },
-    colorSpace: 'srgb',
-    wrapU: 'mirroredRepeat',
-    wrapV: 'clampToEdge',
-    magFilter: 'nearest',
-    minFilter: 'linear',
+  const registerMaterialTexture = async (
+    resourceId: string,
+    colorSpace: TextureResource['colorSpace'],
+    pixels: Uint8Array,
+  ): Promise<CanonicalResourceRef> => {
+    const unsealed: TextureResource = {
+      schemaId: 'hcad.resource.texture@1',
+      resourceId,
+      contentHash: '00'.repeat(32),
+      pixels: {
+        objectHash: await sha256Bytes(pixels),
+        mediaType: 'application/x-himmelcad-decoded-rgba8',
+        byteLength: pixels.byteLength,
+      },
+      colorSpace,
+      wrapU: 'mirroredRepeat',
+      wrapV: 'clampToEdge',
+      magFilter: 'nearest',
+      minFilter: 'linear',
+    };
+    const texture: TextureResource = {
+      ...unsealed,
+      contentHash: viewer.textureResourceContentHash(unsealed),
+    };
+    viewer.registerCanonicalTextureResource(texture, 2, 2, pixels);
+    return {
+      resourceId: texture.resourceId,
+      schemaId: texture.schemaId,
+      contentHash: texture.contentHash,
+    };
   };
-  const texture: TextureResource = {
-    ...unsealedTexture,
-    contentHash: viewer.textureResourceContentHash(unsealedTexture),
-  };
-  const textureRef: CanonicalResourceRef = {
-    resourceId: texture.resourceId,
-    schemaId: texture.schemaId,
-    contentHash: texture.contentHash,
-  };
-  viewer.registerCanonicalTextureResource(texture, 2, 2, materialPixels);
+  const textureRef = await registerMaterialTexture(
+    'browser-material-checker',
+    'srgb',
+    new Uint8Array([
+      255, 255, 255, 255, 32, 220, 255, 255,
+      255, 80, 48, 255, 255, 255, 255, 255,
+    ]),
+  );
+  const normalTextureRef = await registerMaterialTexture(
+    'browser-material-normal',
+    'data',
+    new Uint8Array([
+      128, 128, 255, 255, 172, 128, 246, 255,
+      128, 172, 246, 255, 96, 128, 251, 255,
+    ]),
+  );
+  const metallicRoughnessTextureRef = await registerMaterialTexture(
+    'browser-material-metallic-roughness',
+    'data',
+    new Uint8Array([
+      255, 48, 224, 255, 255, 128, 160, 255,
+      255, 208, 96, 255, 255, 255, 0, 255,
+    ]),
+  );
+  const emissiveTextureRef = await registerMaterialTexture(
+    'browser-material-emissive',
+    'srgb',
+    new Uint8Array([
+      255, 64, 16, 255, 64, 128, 255, 255,
+      32, 255, 96, 255, 255, 255, 255, 255,
+    ]),
+  );
+  const occlusionTextureRef = await registerMaterialTexture(
+    'browser-material-occlusion',
+    'data',
+    new Uint8Array([
+      255, 255, 255, 255, 192, 255, 255, 255,
+      96, 255, 255, 255, 32, 255, 255, 255,
+    ]),
+  );
   const unsealedSurveyMaterial: MaterialResource = {
     schemaId: 'hcad.resource.material@1',
     resourceId: 'browser-survey-red',
@@ -3627,9 +3677,9 @@ async function run(): Promise<void> {
     contentHash: '00'.repeat(32),
     name: 'Survey checker',
     baseColor: { red: 0.28, green: 1, blue: 0.48, alpha: 1 },
-    emissive: [0, 0, 0],
-    metallic: 0,
-    roughness: 0.65,
+    emissive: [0.12, 0.04, 0.02],
+    metallic: 0.7,
+    roughness: 0.55,
     alphaMode: 'opaque',
     alphaCutoff: null,
     doubleSided: true,
@@ -3639,6 +3689,30 @@ async function run(): Promise<void> {
         texture: textureRef,
         textureCoordinateSet: 0,
         transform: { offset: [0.125, -0.25], scale: [1.5, 0.75], rotation: Math.PI / 6 },
+      },
+      {
+        slot: 'normal',
+        texture: normalTextureRef,
+        textureCoordinateSet: 0,
+        transform: { offset: [0.05, 0.1], scale: [0.8, 1.2], rotation: -Math.PI / 8 },
+      },
+      {
+        slot: 'metallicRoughness',
+        texture: metallicRoughnessTextureRef,
+        textureCoordinateSet: 0,
+        transform: { offset: [-0.15, 0.2], scale: [2, 2], rotation: Math.PI / 10 },
+      },
+      {
+        slot: 'emissive',
+        texture: emissiveTextureRef,
+        textureCoordinateSet: 0,
+        transform: { offset: [0.2, 0.05], scale: [1, 0.5], rotation: 0 },
+      },
+      {
+        slot: 'occlusion',
+        texture: occlusionTextureRef,
+        textureCoordinateSet: 0,
+        transform: { offset: [-0.05, -0.1], scale: [0.6, 0.9], rotation: Math.PI / 12 },
       },
     ],
   };

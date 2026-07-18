@@ -1,5 +1,6 @@
 struct FrameUniform {
     view_projection: mat4x4<f32>,
+    inverse_view_projection: mat4x4<f32>,
     clip_planes: array<vec4<f32>, 24>,
     clip_volume_meta: array<vec4<u32>, 4>,
     viewport_size: vec2<f32>,
@@ -17,7 +18,10 @@ struct MaterialUniform {
     gradient_count: u32,
     base_color: vec4<f32>,
     source_color: vec4<f32>,
-    source_uv_rows: array<vec4<f32>, 2>,
+    source_emissive: vec4<f32>,
+    source_pbr_values: vec4<f32>,
+    source_texture_flags: vec4<u32>,
+    source_uv_rows: array<vec4<f32>, 10>,
     style_values: vec4<f32>,
     height_values: vec4<f32>,
     gradient_colors: array<vec4<f32>, 256>,
@@ -45,6 +49,22 @@ var<uniform> material: MaterialUniform;
 var line_type_texture: texture_2d<f32>;
 @group(1) @binding(4)
 var hatch_texture: texture_2d<f32>;
+@group(1) @binding(5)
+var normal_texture: texture_2d<f32>;
+@group(1) @binding(6)
+var normal_sampler: sampler;
+@group(1) @binding(7)
+var metallic_roughness_texture: texture_2d<f32>;
+@group(1) @binding(8)
+var metallic_roughness_sampler: sampler;
+@group(1) @binding(9)
+var emissive_texture: texture_2d<f32>;
+@group(1) @binding(10)
+var emissive_sampler: sampler;
+@group(1) @binding(11)
+var occlusion_texture: texture_2d<f32>;
+@group(1) @binding(12)
+var occlusion_sampler: sampler;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -204,11 +224,12 @@ fn styled_color(source: vec4<f32>, height: f32, shape_kind: u32) -> vec4<f32> {
     return color;
 }
 
-fn source_texture_coordinate(uv: vec2<f32>) -> vec2<f32> {
+fn source_texture_coordinate(uv: vec2<f32>, channel: u32) -> vec2<f32> {
     let homogeneous = vec3<f32>(uv, 1.0);
+    let first_row = min(channel, 4u) * 2u;
     return vec2<f32>(
-        dot(material.source_uv_rows[0].xyz, homogeneous),
-        dot(material.source_uv_rows[1].xyz, homogeneous),
+        dot(material.source_uv_rows[first_row].xyz, homogeneous),
+        dot(material.source_uv_rows[first_row + 1u].xyz, homogeneous),
     );
 }
 
@@ -535,7 +556,7 @@ fn mesh_vertex_main(input: MeshVertexInput) -> VertexOutput {
     output.color = input.color;
     output.proxy_slot = input.proxy_slot;
     output.primitive_slot = input.primitive_slot;
-    output.tex_coord = source_texture_coordinate(input.tex_coord);
+    output.tex_coord = input.tex_coord;
     output.shape_coord = vec2<f32>(0.0, 0.0);
     output.shape_kind = 0u;
     output.style_position = source_style_position;
@@ -565,7 +586,7 @@ fn instanced_mesh_vertex_main(
     output.color = input.color;
     output.proxy_slot = instance.proxy_slot;
     output.primitive_slot = input.primitive_slot + instance.primitive_offset;
-    output.tex_coord = source_texture_coordinate(input.tex_coord);
+    output.tex_coord = input.tex_coord;
     output.shape_coord = vec2<f32>(0.0, 0.0);
     output.shape_kind = 0u;
     output.style_position = source_style_position;
@@ -873,6 +894,131 @@ fn is_clipped(position: vec3<f32>) -> bool {
     return false;
 }
 
+fn presentation_normal(source: vec3<f32>) -> vec3<f32> {
+    var normal = source;
+    if (length(normal) <= 1.0e-7) {
+        normal = vec3<f32>(0.0, 0.0, 1.0);
+    }
+    return normalize(vec3<f32>(
+        normal.xy,
+        normal.z / max(material.style_values.y, 1.0e-7),
+    ));
+}
+
+fn tangent_space_normal(
+    geometry_normal: vec3<f32>,
+    render_position: vec3<f32>,
+    uv: vec2<f32>,
+) -> vec3<f32> {
+    let map = textureSample(normal_texture, normal_sampler, uv).xyz * 2.0 - vec3<f32>(1.0);
+    let position_dx = dpdx(render_position);
+    let position_dy = dpdy(render_position);
+    let uv_dx = dpdx(uv);
+    let uv_dy = dpdy(uv);
+    let perpendicular_y = cross(position_dy, geometry_normal);
+    let perpendicular_x = cross(geometry_normal, position_dx);
+    let tangent = perpendicular_y * uv_dx.x + perpendicular_x * uv_dy.x;
+    let bitangent = perpendicular_y * uv_dx.y + perpendicular_x * uv_dy.y;
+    let maximum_length = max(dot(tangent, tangent), dot(bitangent, bitangent));
+    if (maximum_length <= 1.0e-12 || dot(map, map) <= 1.0e-12) {
+        return geometry_normal;
+    }
+    let inverse_scale = inverseSqrt(maximum_length);
+    return normalize(
+        tangent * (map.x * inverse_scale)
+            + bitangent * (map.y * inverse_scale)
+            + geometry_normal * map.z,
+    );
+}
+
+fn unproject_view_point(ndc: vec2<f32>, depth: f32) -> vec3<f32> {
+    let homogeneous = frame.inverse_view_projection * vec4<f32>(ndc, depth, 1.0);
+    return homogeneous.xyz / homogeneous.w;
+}
+
+fn fragment_view_direction(fragment_position: vec4<f32>) -> vec3<f32> {
+    let ndc = vec2<f32>(
+        fragment_position.x * 2.0 / frame.viewport_size.x - 1.0,
+        1.0 - fragment_position.y * 2.0 / frame.viewport_size.y,
+    );
+    let near_point = unproject_view_point(ndc, 1.0);
+    let farther_point = unproject_view_point(ndc, 0.5);
+    return normalize(near_point - farther_point);
+}
+
+fn fresnel_schlick(cosine: f32, reflectance: vec3<f32>) -> vec3<f32> {
+    let grazing = pow(clamp(1.0 - cosine, 0.0, 1.0), 5.0);
+    return reflectance + (vec3<f32>(1.0) - reflectance) * grazing;
+}
+
+fn geometry_schlick_ggx(n_dot_direction: f32, roughness: f32) -> f32 {
+    let radius = roughness + 1.0;
+    let k = radius * radius / 8.0;
+    return n_dot_direction / max(n_dot_direction * (1.0 - k) + k, 1.0e-6);
+}
+
+fn pbr_color(input: VertexOutput, base: vec4<f32>) -> vec4<f32> {
+    let texture_flags = material.source_texture_flags.x;
+    let normal_uv = source_texture_coordinate(input.tex_coord, 1u);
+    var normal = presentation_normal(input.normal);
+    if ((texture_flags & 1u) != 0u) {
+        normal = tangent_space_normal(normal, input.render_position, normal_uv);
+    }
+    var metallic = material.source_pbr_values.x;
+    var roughness = material.source_pbr_values.y;
+    if ((texture_flags & 2u) != 0u) {
+        let sampled = textureSample(
+            metallic_roughness_texture,
+            metallic_roughness_sampler,
+            source_texture_coordinate(input.tex_coord, 2u),
+        );
+        roughness *= sampled.g;
+        metallic *= sampled.b;
+    }
+    metallic = clamp(metallic, 0.0, 1.0);
+    roughness = clamp(roughness, 0.045, 1.0);
+    var emissive = material.source_emissive.rgb;
+    if ((texture_flags & 4u) != 0u) {
+        emissive *= textureSample(
+            emissive_texture,
+            emissive_sampler,
+            source_texture_coordinate(input.tex_coord, 3u),
+        ).rgb;
+    }
+    var occlusion = 1.0;
+    if ((texture_flags & 8u) != 0u) {
+        occlusion = textureSample(
+            occlusion_texture,
+            occlusion_sampler,
+            source_texture_coordinate(input.tex_coord, 4u),
+        ).r;
+    }
+
+    let view = fragment_view_direction(input.clip_position);
+    let light = normalize(vec3<f32>(0.35, -0.45, 0.82));
+    let halfway = normalize(view + light);
+    let n_dot_light = max(dot(normal, light), 0.0);
+    let n_dot_view = max(dot(normal, view), 0.0);
+    let n_dot_halfway = max(dot(normal, halfway), 0.0);
+    let halfway_dot_view = max(dot(halfway, view), 0.0);
+    let alpha = roughness * roughness;
+    let alpha_squared = alpha * alpha;
+    let denominator = n_dot_halfway * n_dot_halfway * (alpha_squared - 1.0) + 1.0;
+    let distribution = alpha_squared / max(3.14159265 * denominator * denominator, 1.0e-6);
+    let geometry = geometry_schlick_ggx(n_dot_view, roughness)
+        * geometry_schlick_ggx(n_dot_light, roughness);
+    let base_reflectance = mix(vec3<f32>(0.04), base.rgb, metallic);
+    let fresnel = fresnel_schlick(halfway_dot_view, base_reflectance);
+    let specular = distribution * geometry * fresnel
+        / max(4.0 * n_dot_view * n_dot_light, 1.0e-6);
+    let diffuse_weight = (vec3<f32>(1.0) - fresnel) * (1.0 - metallic);
+    let direct = (diffuse_weight * base.rgb / 3.14159265 + specular)
+        * vec3<f32>(2.2)
+        * n_dot_light;
+    let ambient = base.rgb * (0.18 * occlusion);
+    return vec4<f32>(ambient + direct + emissive, base.a);
+}
+
 fn resolved_fragment_color(input: VertexOutput, stroke_world_per_pixel: f32) -> vec4<f32> {
     if ((input.shape_kind < 3u && material.style_values.w < 0.5)
         || !stroke_fragment_visible(input, stroke_world_per_pixel)) {
@@ -884,8 +1030,12 @@ fn resolved_fragment_color(input: VertexOutput, stroke_world_per_pixel: f32) -> 
     if (input.shape_kind == 1u && dot(input.shape_coord, input.shape_coord) > 1.0) {
         discard;
     }
+    let base_uv = source_texture_coordinate(input.tex_coord, 0u);
     var color = styled_color(input.color, input.style_position.z, input.shape_kind)
-        * textureSample(base_color_texture, base_color_sampler, input.tex_coord);
+        * textureSample(base_color_texture, base_color_sampler, base_uv);
+    if (material.source_pbr_values.z > 0.5 && material.color_mode == 0u) {
+        color = pbr_color(input, color);
+    }
     color = apply_hatch(color, input.style_position);
     if (input.shape_kind == 2u) {
         color.a *= exp(-0.5 * dot(input.shape_coord, input.shape_coord));
@@ -955,7 +1105,11 @@ fn pick_fragment(input: VertexOutput) -> PickOutput {
         discard;
     }
     let pick_color = styled_color(input.color, input.style_position.z, input.shape_kind)
-        * textureSample(base_color_texture, base_color_sampler, input.tex_coord);
+        * textureSample(
+            base_color_texture,
+            base_color_sampler,
+            source_texture_coordinate(input.tex_coord, 0u),
+        );
     if ((material.alpha_mode == 1u && pick_color.a < material.alpha_cutoff)
         || pick_color.a <= 0.0) {
         discard;

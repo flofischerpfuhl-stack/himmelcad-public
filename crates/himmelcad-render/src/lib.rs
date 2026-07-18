@@ -90,15 +90,15 @@ pub use geometry_representation_provider::{
 pub use gpu::{adapter_capabilities, enabled_backends, BackendPolicy};
 pub use gpu_calibration::{GpuCalibrationProgress, GpuCalibrationSession};
 pub use gpu_frame::{
-    GpuAlphaMode, GpuDrawBatch, GpuFrameError, GpuFrameTargets, GpuHatchPattern,
-    GpuHatchPatternData, GpuHatchResource, GpuHitNeighborhoodReadback, GpuHitPixel, GpuHitReadback,
-    GpuHitSample, GpuIndexedMeshGeometry, GpuLineTypePattern, GpuLineTypeResource, GpuMaterial,
-    GpuMeshInstanceInput, GpuMeshVertexInput, GpuPickReadback, GpuPickReadbackError,
-    GpuPointVertex, GpuPresentationStyle, GpuPrimitive, GpuScreenTextVertex, GpuSharedRenderer,
-    GpuSplatVertex, GpuTextureData, GpuTextureMipChainData, GpuTextureResource,
-    GpuTextureTransform, GpuVertex, GPU_POINT_VERTEX_STRIDE_BYTES, MAX_CLIP_PLANES,
-    MAX_CLIP_VOLUMES, MAX_GPU_GRADIENT_COLORS, MAX_GPU_HATCH_TEXELS, MAX_GPU_LINE_TYPE_ELEMENTS,
-    MAX_HIT_NEIGHBORHOOD_RADIUS, SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
+    GpuAlphaMode, GpuCanonicalMaterial, GpuCanonicalTextureBinding, GpuDrawBatch, GpuFrameError,
+    GpuFrameTargets, GpuHatchPattern, GpuHatchPatternData, GpuHatchResource,
+    GpuHitNeighborhoodReadback, GpuHitPixel, GpuHitReadback, GpuHitSample, GpuIndexedMeshGeometry,
+    GpuLineTypePattern, GpuLineTypeResource, GpuMaterial, GpuMeshInstanceInput, GpuMeshVertexInput,
+    GpuPickReadback, GpuPickReadbackError, GpuPointVertex, GpuPresentationStyle, GpuPrimitive,
+    GpuScreenTextVertex, GpuSharedRenderer, GpuSplatVertex, GpuTextureData, GpuTextureMipChainData,
+    GpuTextureResource, GpuTextureTransform, GpuVertex, GPU_POINT_VERTEX_STRIDE_BYTES,
+    MAX_CLIP_PLANES, MAX_CLIP_VOLUMES, MAX_GPU_GRADIENT_COLORS, MAX_GPU_HATCH_TEXELS,
+    MAX_GPU_LINE_TYPE_ELEMENTS, MAX_HIT_NEIGHBORHOOD_RADIUS, SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
     SORTED_ALPHA_SPLAT_BLOCK_SIZE, SORTED_ALPHA_UPLOAD_BYTES_PER_FRAME,
 };
 pub use gpu_frame_timing::GpuFrameTimingDiagnostics;

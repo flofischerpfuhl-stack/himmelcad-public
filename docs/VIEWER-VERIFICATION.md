@@ -830,8 +830,27 @@ and pipeline contracts without rebuilding mesh buffers, and pick rendering
 uses the same culling decision as color rendering. The forced WebGL2 run used
 the physical Intel HD Graphics 630 and reported 3.0 ms maximum CPU submit; the
 WebGPU CPU adapter is again a correctness-only result and reported 3.2 ms.
-Additional UV sets and the remaining PBR texture channels are still outside
-this checkpoint.
+
+The next material checkpoint resolves every channel in the current canonical
+PBR contract: base color/opacity, tangent-space normal,
+roughness-green/metallic-blue, emissive and red-channel occlusion. Every
+channel retains its own immutable texture/sampler revision and affine UV
+transform. Tangent frames are reconstructed from position/UV derivatives, so
+normal maps do not require a tangent-buffer rewrite; vertical exaggeration
+changes only the presentation normal. Source mode uses camera-direction-aware
+GGX direct lighting, while explicit color and height overrides remain
+presentation states rather than mutating the source material. Missing channels
+bind semantic 1x1 defaults, and view texture overrides still replace only the
+active base-color binding.
+
+The five-channel fixture passed the complete 315-test render suite and both
+explicit browser backends with all 26 entities and 34 proxies. Forced WebGL2 on
+the physical Intel HD Graphics 630 reported 3.5 ms maximum CPU submit; the
+WebGPU CPU adapter correctness run reported 1.3 ms. Both gates retained exact
+material slots, all per-channel UV rows, all four auxiliary texture-presence
+flags, mixed-scene picking and source-texture restoration. Additional authored
+UV sets remain outside this checkpoint because canonical inline meshes expose
+only their first UV set today.
 
 ## Candidate external data
 
