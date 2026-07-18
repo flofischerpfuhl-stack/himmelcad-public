@@ -13,15 +13,16 @@ const KIND_PRIORITY: Record<SnapKind, number> = {
 };
 
 const SOURCE_PRIORITY: Record<NonNullable<SnapResult['source']>, number> = {
-  cad: 0,
-  mesh: 1,
-  'textured-mesh': 2,
-  surface: 3,
-  dgm: 4,
-  'point-cloud': 5,
-  splat: 6,
-  grid: 7,
-  fallback: 8,
+  camera: 0,
+  cad: 1,
+  mesh: 2,
+  'textured-mesh': 3,
+  surface: 4,
+  dgm: 5,
+  'point-cloud': 6,
+  splat: 7,
+  grid: 8,
+  fallback: 9,
 };
 
 const DEFAULT_KIND_MASK: Record<SnapKind, boolean> = {
@@ -35,6 +36,7 @@ const DEFAULT_KIND_MASK: Record<SnapKind, boolean> = {
 };
 
 const DEFAULT_SOURCE_MASK: Record<SnapSource, boolean> = {
+  camera: true,
   cad: true,
   mesh: true,
   'textured-mesh': true,

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HimmelCAD synthetic scale gate</title>
+    <style>
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #03070b; }
+      canvas { display: block; width: 100%; height: 100%; }
+      output {
+        position: fixed; top: 12px; left: 12px; padding: 8px 10px;
+        color: #d7ecff; background: rgba(4, 9, 15, 0.82);
+        font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="viewer" width="1280" height="720"></canvas>
+    <output id="status">building the logical AHN4 hierarchy…</output>
+    <script type="module" src="/bundle.js"></script>
+  </body>
+</html>

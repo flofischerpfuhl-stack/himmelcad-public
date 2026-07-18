@@ -14,10 +14,10 @@ import {
 import {
   BufferAttribute,
   BufferGeometry,
+  Box3,
   CanvasTexture,
   Color,
   Group,
-  GridHelper,
   LineBasicMaterial,
   LineSegments,
   Points,
@@ -36,12 +36,15 @@ import { CameraController } from './camera/CameraController.js';
 import { PickingPass } from './picking/PickingPass.js';
 import { GaussianSplatDataset } from './products/GaussianSplatDataset.js';
 import type { GaussianSplatDatasetOptions } from './products/GaussianSplatDataset.js';
+import { resolvePotreeAssetUrl } from './products/PotreeAssetUrl.js';
 import { RasterPyramidDataset } from './products/RasterPyramidDataset.js';
 import type { RasterPyramidDatasetOptions } from './products/RasterPyramidDataset.js';
 import { TiledMeshDataset } from './products/TiledMeshDataset.js';
 import type { TiledMeshDatasetOptions } from './products/TiledMeshDataset.js';
 import { SceneGraph } from './scene/SceneGraph.js';
+import { isFiniteCoordinate3, toRenderLocal } from './spatial/renderCoordinates.js';
 import { FallbackSnapProvider } from './snapping/FallbackSnapProvider.js';
+import { CameraSnapProvider } from './snapping/CameraSnapProvider.js';
 import { PotreeSnapProvider } from './snapping/PotreeSnapProvider.js';
 import { SnappingService } from './snapping/SnappingService.js';
 import { RenderBudget } from './streaming/RenderBudget.js';
@@ -78,6 +81,7 @@ const INTERACTIVE_GPU_UPLOAD_CAP = 3;
 const RECOVERY_GPU_UPLOAD_CAP = 1;
 const STREAMING_SETTLE_MS = 220;
 const CONTEXT_RECOVERY_THROTTLE_MS = 1_500;
+const CONTEXT_RECREATE_TIMEOUT_MS = 2_000;
 const MAX_POINTER_DELTA_PX = 480;
 const DEFAULT_MIN_NODE_PIXEL_SIZE = 80;
 
@@ -86,6 +90,7 @@ export type ViewportNavigationMode = 'orbit3d' | 'lockedTopDown2d';
 
 interface RenderableProductDataset extends TiledDataset {
   readonly root: Object3D;
+  readonly renderOffset?: readonly [number, number, number];
   dispose(): void;
 }
 
@@ -130,6 +135,7 @@ export interface ViewportHandle {
       renderOffset: [number, number, number];
       bounds: { min: [number, number, number]; max: [number, number, number] };
       pointCount: number;
+      loadToken?: string;
       pointSize?: number;
       pointBudget?: number;
     },
@@ -142,30 +148,44 @@ export interface ViewportHandle {
   unregisterTiledDataset: (dataset: TiledDataset) => void;
   loadRasterPyramid: (
     manifestUrl: string,
-    options: Omit<RasterPyramidDatasetOptions, 'id'> & { readonly entityId: EntityId },
+    options: Omit<RasterPyramidDatasetOptions, 'id'> & {
+      readonly entityId: EntityId;
+      readonly loadToken?: string;
+    },
   ) => Promise<RasterPyramidDataset>;
   loadTiledMesh: (
     manifestUrl: string,
-    options: Omit<TiledMeshDatasetOptions, 'id'> & { readonly entityId: EntityId },
+    options: Omit<TiledMeshDatasetOptions, 'id'> & {
+      readonly entityId: EntityId;
+      readonly loadToken?: string;
+    },
   ) => Promise<TiledMeshDataset>;
   loadGaussianSplats: (
     sourceUrl: string,
     options: Omit<GaussianSplatDatasetOptions, 'id'> & {
       readonly entityId: EntityId;
+      readonly loadToken?: string;
       readonly format?: 'prepared' | 'brushPly';
     },
   ) => Promise<GaussianSplatDataset>;
   configureRenderBudget: (limits: Partial<RenderBudgetLimits>) => void;
   setNavigationMode: (mode: ViewportNavigationMode) => void;
+  resetProjectScene: (offset: readonly [number, number, number]) => void;
+  setSceneRenderOffset: (offset: readonly [number, number, number]) => void;
   setCameraImageRectangles: (rectangles: readonly CameraImageRectangle[]) => void;
   setGcpMarkers: (markers: readonly GcpMarker[]) => void;
   frameAll: () => void;
+  frameSelection: (entityIds: readonly EntityId[]) => boolean;
 }
 
 export interface ViewportProps {
+  renderOffset?: readonly [number, number, number];
+  navigationMode?: ViewportNavigationMode;
+  pointBudget?: number;
   onCursorSnap?: (snap: SnapResult | null) => void;
   onDropFiles?: (paths: string[]) => void;
   onLog?: (level: 'info' | 'warn' | 'error', message: string) => void;
+  onContextRecreate?: () => void;
 }
 
 /**
@@ -186,7 +206,15 @@ export interface ViewportProps {
  * flicker or cloud movement. Only an actual window resize triggers setSize.
  */
 export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewport(
-  { onCursorSnap, onDropFiles, onLog },
+  {
+    renderOffset = [0, 0, 0],
+    navigationMode = 'orbit3d',
+    pointBudget = DEFAULT_POINT_BUDGET,
+    onCursorSnap,
+    onDropFiles,
+    onLog,
+    onContextRecreate,
+  },
   handleRef,
 ): JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -203,17 +231,29 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
   const potreeRef = useRef<Potree | null>(null);
   const cloudsRef = useRef<Map<EntityId, PointCloudOctree>>(new Map());
   const pointSizeRef = useRef(DEFAULT_POINT_SIZE);
-  const pointBudgetRef = useRef(DEFAULT_POINT_BUDGET);
+  const pointBudgetRef = useRef(pointBudget);
   const renderBudgetRef = useRef<RenderBudget>(new RenderBudget());
   const tileStreamingRef = useRef<TileStreamingService>(
     new TileStreamingService(renderBudgetRef.current),
   );
   const productDatasetsRef = useRef<Map<EntityId, RenderableProductDataset>>(new Map());
+  const layerLoadTokensRef = useRef<Map<EntityId, string>>(new Map());
+  const layerLoadSequenceRef = useRef(0);
   const nodeLoadConcurrencyRef = useRef(detectNodeLoadConcurrency());
   const streamingProfileRef = useRef<StreamingProfile>('normal');
-  const navigationModeRef = useRef<ViewportNavigationMode>('orbit3d');
+  const navigationModeRef = useRef<ViewportNavigationMode>(navigationMode);
   const cameraRectanglesRef = useRef<LineSegments | null>(null);
+  const cameraRectangleDataRef = useRef<readonly CameraImageRectangle[]>([]);
+  const cameraSnapProviderRef = useRef<CameraSnapProvider | null>(null);
+  const framedCameraRectanglesRef = useRef(false);
   const gcpMarkersRef = useRef<Group | null>(null);
+  const gcpMarkerDataRef = useRef<readonly GcpMarker[]>([]);
+  const datasetBoundsRef = useRef<
+    Map<
+      EntityId,
+      { min: readonly [number, number, number]; max: readonly [number, number, number] }
+    >
+  >(new Map());
 
   // Imperative refs for the cursor overlay. The overlay is updated directly
   // from the rAF tick inside `useEffect` — never via React state — so that
@@ -236,6 +276,10 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
   useEffect(() => {
     onLogRef.current = onLog;
   }, [onLog]);
+  const onContextRecreateRef = useRef(onContextRecreate);
+  useEffect(() => {
+    onContextRecreateRef.current = onContextRecreate;
+  }, [onContextRecreate]);
 
   const [dragOver, setDragOver] = useState(false);
   const [contextMessage, setContextMessage] = useState<string | null>(null);
@@ -259,18 +303,20 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
     let contextLost = false;
     let settleTimer: number | null = null;
     let recoveryTimer: number | null = null;
+    let recreateTimer: number | null = null;
 
     const scene = new SceneGraph();
+    scene.resetRenderOffset(renderOffset[0], renderOffset[1], renderOffset[2]);
     sceneRef.current = scene;
-    const grid = new GridHelper(50, 50, 0x3c3f41, 0x25262a);
-    grid.rotation.x = Math.PI / 2;
-    scene.root.add(grid);
-
     const camera = new CameraController(window.innerWidth, window.innerHeight);
+    camera.setLockedTopDown(navigationModeRef.current === 'lockedTopDown2d');
     camera.frame({ x: -25, y: -25, z: -1 } as never, { x: 25, y: 25, z: 1 } as never);
     cameraRef.current = camera;
 
     const snapping = new SnappingService();
+    const cameraSnapping = new CameraSnapProvider();
+    cameraSnapProviderRef.current = cameraSnapping;
+    snapping.register(cameraSnapping);
     snapping.register(new FallbackSnapProvider());
     snappingRef.current = snapping;
 
@@ -361,9 +407,22 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
       setContextMessage('GPU context reset. Restoring viewport...');
       onLogRef.current?.('warn', 'GPU context reset; viewport is restoring automatically');
       console.error('[viewport] WebGL context lost; waiting for browser restore');
+      if (recreateTimer) window.clearTimeout(recreateTimer);
+      recreateTimer = window.setTimeout(() => {
+        recreateTimer = null;
+        onLogRef.current?.(
+          'warn',
+          'GPU context was not restored by Chromium; recreating the viewport safely',
+        );
+        onContextRecreateRef.current?.();
+      }, CONTEXT_RECREATE_TIMEOUT_MS);
     };
 
     const onWebGLContextRestored = () => {
+      if (recreateTimer) {
+        window.clearTimeout(recreateTimer);
+        recreateTimer = null;
+      }
       contextLost = false;
       renderer.setPixelRatio(dpr);
       renderer.setClearColor(new Color('#15171a'));
@@ -446,7 +505,9 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
         // rotation happens in pointermove via `orbitAround`, which
         // rotates cameraPos and target *together* around `pivot` so
         // the cursor point stays in its current screen pixel.
-        orbitPivot = snapToScenePivot(lastStableSnap ?? lastAppliedSnap);
+        const orbitStart = queryCursor(e, container, scene, camera, snapping, picking);
+        applyCursor(orbitStart.active);
+        orbitPivot = snapToScenePivot(orbitStart.active ?? lastStableSnap ?? lastAppliedSnap);
       } else if (e.button === 0 || e.button === 1 || e.button === 2) {
         // MMB and RMB both pan. MMB matches Rhino/Blender/SketchUp/CAD
         // muscle memory; RMB stays for users on a 2-button mouse and
@@ -682,6 +743,7 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
       window.removeEventListener('resize', applyWindowSize);
       if (settleTimer) window.clearTimeout(settleTimer);
       if (recoveryTimer) window.clearTimeout(recoveryTimer);
+      if (recreateTimer) window.clearTimeout(recreateTimer);
       canvas.removeEventListener('webglcontextlost', onWebGLContextLost);
       canvas.removeEventListener('webglcontextrestored', onWebGLContextRestored);
       canvas.removeEventListener('pointerdown', onPointerDown);
@@ -699,10 +761,15 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
       tileStreaming.dispose();
       for (const dataset of productDatasetsRef.current.values()) dataset.dispose();
       productDatasetsRef.current.clear();
+      layerLoadTokensRef.current.clear();
       disposeCameraRectangles(cameraRectanglesRef.current);
       cameraRectanglesRef.current = null;
+      cameraRectangleDataRef.current = [];
+      cameraSnapProviderRef.current = null;
       disposeGcpMarkers(gcpMarkersRef.current);
       gcpMarkersRef.current = null;
+      gcpMarkerDataRef.current = [];
+      datasetBoundsRef.current.clear();
       pickingRef.current = null;
       renderer.dispose();
       rendererRef.current = null;
@@ -719,6 +786,9 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
       const camera = cameraRef.current;
       const snapping = snappingRef.current;
       if (!scene || !camera || !snapping) throw new Error('viewport not ready');
+      const loadToken =
+        opts.loadToken ?? `${opts.entityId}:${String(++layerLoadSequenceRef.current)}`;
+      layerLoadTokensRef.current.set(opts.entityId, loadToken);
 
       let potree = potreeRef.current;
       if (!potree) {
@@ -738,19 +808,19 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
       // calls getUrl(...) for every relative path inside the octree
       // (hierarchy.bin, octree.bin) — we just resolve them against the
       // metadata URL so they share the same hcad-cache:// scope.
-      const baseUrl = metadataUrl.replace(/[^/]*$/, '');
       const getUrl = (relative: string): Promise<string> => {
-        if (
-          relative.startsWith('http://') ||
-          relative.startsWith('https://') ||
-          relative.startsWith('hcad-cache://')
-        ) {
-          return Promise.resolve(relative);
-        }
-        return Promise.resolve(baseUrl + relative);
+        // Potree asks the resolver for the metadata URL itself before it asks
+        // for hierarchy.bin and octree.bin.  Product URLs are already absolute
+        // custom-scheme URLs; prepending baseUrl a second time produces an
+        // invalid `.../hcad-product://...` path and a misleading 403 response.
+        return Promise.resolve(resolvePotreeAssetUrl(metadataUrl, relative));
       };
 
       const cloud = await potree.loadPointCloud(metadataUrl, getUrl);
+      if (layerLoadTokensRef.current.get(opts.entityId) !== loadToken) {
+        cloud.dispose();
+        throw new Error('Stale point-cloud load superseded by a newer entity generation.');
+      }
       cloud.name = `pc:${opts.entityId}`;
       // three-loader expects the on-screen point size in pixels.
       cloud.material.size = opts.pointSize ?? pointSizeRef.current;
@@ -763,15 +833,20 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
         scene.setRenderOffset(opts.renderOffset[0], opts.renderOffset[1], opts.renderOffset[2]);
       }
       const sceneOff = scene.getRenderOffset();
-      cloud.position.set(
-        opts.renderOffset[0] - sceneOff[0],
-        opts.renderOffset[1] - sceneOff[1],
-        opts.renderOffset[2] - sceneOff[2],
-      );
+      const cloudAnchor = toRenderLocal(opts.renderOffset, sceneOff);
+      if (!cloudAnchor) {
+        cloud.dispose();
+        throw new Error(
+          'Point cloud origin is outside the active PhotoLab reference frame. Check product lineage and CRS.',
+        );
+      }
+      cloud.position.set(cloudAnchor[0], cloudAnchor[1], cloudAnchor[2]);
       cloud.updateMatrixWorld(true);
 
       scene.scene.add(cloud);
       cloudsRef.current.set(opts.entityId, cloud);
+      datasetBoundsRef.current.set(opts.entityId, opts.bounds);
+      if (isFirst) scene.lockRenderOffset();
       applyPotreeStreamingProfile(
         potree,
         cloudsRef.current.values(),
@@ -811,13 +886,14 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
     [],
   );
 
-  const removeLayer = useCallback<ViewportHandle['removeLayer']>((entityId) => {
+  const removeLayerResources = useCallback((entityId: EntityId) => {
     const cloud = cloudsRef.current.get(entityId);
     if (cloud) {
       sceneRef.current?.scene.remove(cloud);
       cloud.dispose();
       cloudsRef.current.delete(entityId);
     }
+    datasetBoundsRef.current.delete(entityId);
     const id = `pc:${entityId}`;
     snappingRef.current?.unregister(`${id}:potree-snap`);
     // Legacy SceneGraph layer + snap id (pre-Potree, none should exist post-2.5
@@ -834,6 +910,14 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
       productDatasetsRef.current.delete(entityId);
     }
   }, []);
+
+  const removeLayer = useCallback<ViewportHandle['removeLayer']>(
+    (entityId) => {
+      layerLoadTokensRef.current.delete(entityId);
+      removeLayerResources(entityId);
+    },
+    [removeLayerResources],
+  );
 
   const setPointSize = useCallback<ViewportHandle['setPointSize']>((sizePx) => {
     const next = Math.max(0.25, Math.min(20, sizePx));
@@ -858,6 +942,10 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
     }
   }, []);
 
+  useEffect(() => {
+    setPointBudget(pointBudget);
+  }, [pointBudget, setPointBudget]);
+
   const setSnapTargets = useCallback<ViewportHandle['setSnapTargets']>((mask) => {
     snappingRef.current?.configureTargets(mask);
   }, []);
@@ -874,13 +962,17 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
   );
 
   const attachProductDataset = useCallback(
-    <T extends RenderableProductDataset>(entityId: EntityId, dataset: T): T => {
+    <T extends RenderableProductDataset>(entityId: EntityId, dataset: T, loadToken: string): T => {
       const scene = sceneRef.current;
       if (!scene) {
         dataset.dispose();
         throw new Error('viewport not ready');
       }
-      removeLayer(entityId);
+      if (layerLoadTokensRef.current.get(entityId) !== loadToken) {
+        dataset.dispose();
+        throw new Error('Stale product load superseded by a newer entity generation.');
+      }
+      removeLayerResources(entityId);
       const rootTile = dataset.getTile(dataset.rootTile);
       if (rootTile && cloudsRef.current.size === 0 && productDatasetsRef.current.size === 0) {
         const world = (rootTile as { worldBounds?: { min: { x: number; y: number; z: number } } })
@@ -894,47 +986,82 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
         }
       }
       dataset.setNavigationMode?.(navigationModeRef.current);
+      const datasetOffset = dataset.renderOffset;
+      if (datasetOffset) {
+        const localOrigin = toRenderLocal(datasetOffset, scene.getRenderOffset());
+        if (!localOrigin) {
+          dataset.dispose();
+          throw new Error(
+            'Product origin is outside the active PhotoLab reference frame. Check product lineage and CRS.',
+          );
+        }
+        dataset.root.position.set(localOrigin[0], localOrigin[1], localOrigin[2]);
+      }
       productDatasetsRef.current.set(entityId, dataset);
       scene.root.add(dataset.root);
+      scene.lockRenderOffset();
       tileStreamingRef.current.register(dataset);
       if (rootTile) {
+        const position = dataset.root.position;
         cameraRef.current?.frame(
-          new Vector3(rootTile.bounds.min.x, rootTile.bounds.min.y, rootTile.bounds.min.z),
-          new Vector3(rootTile.bounds.max.x, rootTile.bounds.max.y, rootTile.bounds.max.z),
+          new Vector3(
+            rootTile.bounds.min.x + position.x,
+            rootTile.bounds.min.y + position.y,
+            rootTile.bounds.min.z + position.z,
+          ),
+          new Vector3(
+            rootTile.bounds.max.x + position.x,
+            rootTile.bounds.max.y + position.y,
+            rootTile.bounds.max.z + position.z,
+          ),
         );
       }
       return dataset;
     },
-    [removeLayer],
+    [removeLayerResources],
   );
 
   const loadRasterPyramid = useCallback<ViewportHandle['loadRasterPyramid']>(
     async (manifestUrl, options) => {
-      const { entityId, ...datasetOptions } = options;
+      const { entityId, loadToken: requestedLoadToken, ...datasetOptions } = options;
+      const loadToken =
+        requestedLoadToken ?? `${entityId}:${String(++layerLoadSequenceRef.current)}`;
+      layerLoadTokensRef.current.set(entityId, loadToken);
       const dataset = await RasterPyramidDataset.load(manifestUrl, {
         ...datasetOptions,
         id: `raster:${entityId}`,
       });
-      return attachProductDataset(entityId, dataset);
+      return attachProductDataset(entityId, dataset, loadToken);
     },
     [attachProductDataset],
   );
 
   const loadTiledMesh = useCallback<ViewportHandle['loadTiledMesh']>(
     async (manifestUrl, options) => {
-      const { entityId, ...datasetOptions } = options;
+      const { entityId, loadToken: requestedLoadToken, ...datasetOptions } = options;
+      const loadToken =
+        requestedLoadToken ?? `${entityId}:${String(++layerLoadSequenceRef.current)}`;
+      layerLoadTokensRef.current.set(entityId, loadToken);
       const dataset = await TiledMeshDataset.load(manifestUrl, {
         ...datasetOptions,
         id: `mesh:${entityId}`,
       });
-      return attachProductDataset(entityId, dataset);
+      return attachProductDataset(entityId, dataset, loadToken);
     },
     [attachProductDataset],
   );
 
   const loadGaussianSplats = useCallback<ViewportHandle['loadGaussianSplats']>(
     async (sourceUrl, options) => {
-      const { entityId, format = 'prepared', ...datasetOptions } = options;
+      const {
+        entityId,
+        loadToken: requestedLoadToken,
+        format = 'prepared',
+        ...datasetOptions
+      } = options;
+      const loadToken =
+        requestedLoadToken ?? `${entityId}:${String(++layerLoadSequenceRef.current)}`;
+      layerLoadTokensRef.current.set(entityId, loadToken);
       const typedOptions: GaussianSplatDatasetOptions = {
         ...datasetOptions,
         id: `splat:${entityId}`,
@@ -943,7 +1070,7 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
         format === 'brushPly'
           ? await GaussianSplatDataset.loadBrushPly(sourceUrl, typedOptions)
           : await GaussianSplatDataset.load(sourceUrl, typedOptions);
-      return attachProductDataset(entityId, dataset);
+      return attachProductDataset(entityId, dataset, loadToken);
     },
     [attachProductDataset],
   );
@@ -958,17 +1085,96 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
     for (const dataset of productDatasetsRef.current.values()) dataset.setNavigationMode?.(mode);
   }, []);
 
+  const resetProjectScene = useCallback<ViewportHandle['resetProjectScene']>((offset) => {
+    const scene = sceneRef.current;
+    if (!scene || !isFiniteCoordinate3(offset)) return;
+    const rectangles = cameraRectanglesRef.current;
+    if (rectangles) {
+      scene.scene.remove(rectangles);
+      disposeCameraRectangles(rectangles);
+    }
+    cameraRectanglesRef.current = null;
+    cameraRectangleDataRef.current = [];
+    cameraSnapProviderRef.current?.update([], offset);
+    const markers = gcpMarkersRef.current;
+    if (markers) {
+      scene.scene.remove(markers);
+      disposeGcpMarkers(markers);
+    }
+    gcpMarkersRef.current = null;
+    gcpMarkerDataRef.current = [];
+    datasetBoundsRef.current.clear();
+    framedCameraRectanglesRef.current = false;
+    scene.resetRenderOffset(offset[0], offset[1], offset[2]);
+  }, []);
+
+  const setSceneRenderOffset = useCallback<ViewportHandle['setSceneRenderOffset']>((offset) => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    if (!isFiniteCoordinate3(offset)) {
+      onLogRef.current?.('error', 'Ignored a non-finite PhotoLab render origin.');
+      return;
+    }
+    const effectiveOffset = scene.setRenderOffset(offset[0], offset[1], offset[2]);
+    cameraSnapProviderRef.current?.update(cameraRectangleDataRef.current, effectiveOffset);
+    const previous = cameraRectanglesRef.current;
+    if (previous) {
+      scene.scene.remove(previous);
+      disposeCameraRectangles(previous);
+      cameraRectanglesRef.current = buildCameraRectangles(
+        cameraRectangleDataRef.current,
+        effectiveOffset,
+      );
+      if (cameraRectanglesRef.current) scene.scene.add(cameraRectanglesRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    setSceneRenderOffset([renderOffset[0], renderOffset[1], renderOffset[2]]);
+  }, [renderOffset[0], renderOffset[1], renderOffset[2], setSceneRenderOffset]);
+
+  useEffect(() => {
+    setNavigationMode(navigationMode);
+  }, [navigationMode, setNavigationMode]);
+
   const setCameraImageRectangles = useCallback<ViewportHandle['setCameraImageRectangles']>(
     (rectangles) => {
       const scene = sceneRef.current;
       if (!scene) return;
+      const renderOffset = scene.getRenderOffset();
+      const valid = rectangles.filter((rectangle) =>
+        isPlausibleCameraRectangle(rectangle, renderOffset),
+      );
+      const rejected = rectangles.length - valid.length;
+      if (rejected > 0) {
+        onLogRef.current?.(
+          'error',
+          `Ignored ${rejected} camera rectangle${rejected === 1 ? '' : 's'} outside the active reference frame. Alignment-local coordinates must be transformed to world Easting/Northing/Height before rendering.`,
+        );
+      }
+      onLogRef.current?.(
+        'info',
+        `Camera layer updated · ${valid.length}/${rectangles.length} rectangles · origin ${renderOffset.map((value) => value.toFixed(3)).join(', ')}`,
+      );
+      cameraRectangleDataRef.current = valid;
       const previous = cameraRectanglesRef.current;
       if (previous) {
         scene.scene.remove(previous);
         disposeCameraRectangles(previous);
       }
-      cameraRectanglesRef.current = buildCameraRectangles(rectangles, scene.getRenderOffset());
-      if (cameraRectanglesRef.current) scene.scene.add(cameraRectanglesRef.current);
+      cameraRectanglesRef.current = buildCameraRectangles(valid, renderOffset);
+      cameraSnapProviderRef.current?.update(valid, renderOffset);
+      if (cameraRectanglesRef.current) {
+        scene.scene.add(cameraRectanglesRef.current);
+        scene.lockRenderOffset();
+      }
+      if (!framedCameraRectanglesRef.current) {
+        const bounds = cameraRectangleBounds(valid, renderOffset);
+        if (bounds) {
+          cameraRef.current?.frame(bounds.min, bounds.max);
+          framedCameraRectanglesRef.current = true;
+        }
+      }
     },
     [],
   );
@@ -976,18 +1182,58 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
   const setGcpMarkers = useCallback<ViewportHandle['setGcpMarkers']>((markers) => {
     const scene = sceneRef.current;
     if (!scene) return;
+    const renderOffset = scene.getRenderOffset();
+    const valid = markers.filter(
+      (marker) =>
+        marker.name.trim() !== '' && toRenderLocal(marker.position, renderOffset) !== null,
+    );
+    const rejected = markers.length - valid.length;
+    if (rejected > 0) {
+      onLogRef.current?.(
+        'error',
+        `Ignored ${rejected} GCP marker${rejected === 1 ? '' : 's'} outside the active reference frame.`,
+      );
+    }
+    gcpMarkerDataRef.current = valid;
     const previous = gcpMarkersRef.current;
     if (previous) {
       scene.scene.remove(previous);
       disposeGcpMarkers(previous);
     }
-    gcpMarkersRef.current = buildGcpMarkers(markers, scene.getRenderOffset());
-    if (gcpMarkersRef.current) scene.scene.add(gcpMarkersRef.current);
+    gcpMarkersRef.current = buildGcpMarkers(valid, renderOffset);
+    if (gcpMarkersRef.current) {
+      scene.scene.add(gcpMarkersRef.current);
+      scene.lockRenderOffset();
+    }
+  }, []);
+
+  const frameEntities = useCallback((entityIds?: ReadonlySet<EntityId>): boolean => {
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (!scene || !camera) return false;
+    const bounds = collectSceneBounds(
+      scene.getRenderOffset(),
+      entityIds,
+      cameraRectangleDataRef.current,
+      gcpMarkerDataRef.current,
+      datasetBoundsRef.current,
+      productDatasetsRef.current,
+    );
+    if (!bounds) return false;
+    camera.frame(bounds.min, bounds.max);
+    return true;
   }, []);
 
   const frameAll = useCallback<ViewportHandle['frameAll']>(() => {
-    cameraRef.current?.frame(new Vector3(-25, -25, -1), new Vector3(25, 25, 1));
-  }, []);
+    if (!frameEntities()) {
+      cameraRef.current?.frame(new Vector3(-25, -25, -1), new Vector3(25, 25, 1));
+    }
+  }, [frameEntities]);
+
+  const frameSelection = useCallback<ViewportHandle['frameSelection']>(
+    (entityIds) => entityIds.length > 0 && frameEntities(new Set(entityIds)),
+    [frameEntities],
+  );
 
   useImperativeHandle(
     handleRef,
@@ -1004,9 +1250,12 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
       loadGaussianSplats,
       configureRenderBudget,
       setNavigationMode,
+      resetProjectScene,
+      setSceneRenderOffset,
       setCameraImageRectangles,
       setGcpMarkers,
       frameAll,
+      frameSelection,
     }),
     [
       loadPotreePointCloud,
@@ -1021,9 +1270,12 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
       loadGaussianSplats,
       configureRenderBudget,
       setNavigationMode,
+      resetProjectScene,
+      setSceneRenderOffset,
       setCameraImageRectangles,
       setGcpMarkers,
       frameAll,
+      frameSelection,
     ],
   );
 
@@ -1251,8 +1503,19 @@ function buildCameraRectangles(
   const valid = rectangles.filter(isValidCameraRectangle);
   if (valid.length === 0) return null;
   const positions = new Float32Array(valid.length * 16 * 3);
+  const colors = new Float32Array(valid.length * 16 * 3);
   let cursor = 0;
+  let colorCursor = 0;
   for (const rectangle of valid) {
+    const color = new Color(
+      themeColor(
+        rectangle.depthReady
+          ? '--hc-success'
+          : rectangle.aligned
+            ? '--hc-accent-base'
+            : '--hc-warning',
+      ),
+    );
     const points = [rectangle.cameraCenter, ...rectangle.corners] as const;
     const edges = [
       [1, 2],
@@ -1274,14 +1537,20 @@ function buildCameraRectangles(
       positions[cursor++] = end[0] - renderOffset[0];
       positions[cursor++] = end[1] - renderOffset[1];
       positions[cursor++] = end[2] - renderOffset[2];
+      for (let component = 0; component < 2; component += 1) {
+        colors[colorCursor++] = color.r;
+        colors[colorCursor++] = color.g;
+        colors[colorCursor++] = color.b;
+      }
     }
   }
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new BufferAttribute(colors, 3));
   const material = new LineBasicMaterial({
-    color: themeColor('--hc-fg-muted'),
+    vertexColors: true,
     transparent: true,
-    opacity: 0.72,
+    opacity: 0.88,
   });
   const lines = new LineSegments(geometry, material);
   lines.name = 'photolab:camera-image-rectangles';
@@ -1289,10 +1558,128 @@ function buildCameraRectangles(
   return lines;
 }
 
+function cameraRectangleBounds(
+  rectangles: readonly CameraImageRectangle[],
+  renderOffset: readonly [number, number, number],
+): { min: Vector3; max: Vector3 } | null {
+  const points = rectangles
+    .filter(isValidCameraRectangle)
+    .flatMap((rectangle) => [rectangle.cameraCenter, ...rectangle.corners]);
+  if (points.length === 0) return null;
+  const min = new Vector3(
+    Number.POSITIVE_INFINITY,
+    Number.POSITIVE_INFINITY,
+    Number.POSITIVE_INFINITY,
+  );
+  const max = new Vector3(
+    Number.NEGATIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+  );
+  for (const point of points) {
+    min.min(
+      new Vector3(
+        point[0] - renderOffset[0],
+        point[1] - renderOffset[1],
+        point[2] - renderOffset[2],
+      ),
+    );
+    max.max(
+      new Vector3(
+        point[0] - renderOffset[0],
+        point[1] - renderOffset[1],
+        point[2] - renderOffset[2],
+      ),
+    );
+  }
+  if (min.distanceTo(max) < 0.01) max.addScalar(1);
+  return { min, max };
+}
+
 function isValidCameraRectangle(rectangle: CameraImageRectangle): boolean {
   return [rectangle.cameraCenter, ...rectangle.corners].every((point) =>
     point.every(Number.isFinite),
   );
+}
+
+function isPlausibleCameraRectangle(
+  rectangle: CameraImageRectangle,
+  renderOffset: readonly [number, number, number],
+): boolean {
+  return (
+    isValidCameraRectangle(rectangle) &&
+    [rectangle.cameraCenter, ...rectangle.corners].every(
+      (point) => toRenderLocal(point, renderOffset) !== null,
+    )
+  );
+}
+
+function collectSceneBounds(
+  renderOffset: readonly [number, number, number],
+  entityIds: ReadonlySet<EntityId> | undefined,
+  rectangles: readonly CameraImageRectangle[],
+  markers: readonly GcpMarker[],
+  worldBounds: ReadonlyMap<
+    EntityId,
+    { min: readonly [number, number, number]; max: readonly [number, number, number] }
+  >,
+  products: ReadonlyMap<EntityId, RenderableProductDataset>,
+): { min: Vector3; max: Vector3 } | null {
+  const box = new Box3();
+  box.makeEmpty();
+  const includes = (entityId: EntityId): boolean => !entityIds || entityIds.has(entityId);
+  const addWorldPoint = (point: readonly [number, number, number]): void => {
+    const local = toRenderLocal(point, renderOffset);
+    if (local) box.expandByPoint(new Vector3(local[0], local[1], local[2]));
+  };
+
+  for (const rectangle of rectangles) {
+    if (!includes(rectangle.entityId)) continue;
+    for (const point of [rectangle.cameraCenter, ...rectangle.corners]) addWorldPoint(point);
+  }
+  for (const marker of markers) {
+    if (!includes(marker.entityId)) continue;
+    const local = toRenderLocal(marker.position, renderOffset);
+    if (!local) continue;
+    const point = new Vector3(local[0], local[1], local[2]);
+    box.expandByPoint(point);
+    // A survey marker is point geometry, but framing it at sub-metre scale makes
+    // its world-space label fill the entire viewport. Give isolated selections a
+    // stable site-context envelope while leaving full-scene bounds unchanged.
+    if (entityIds) {
+      box.expandByPoint(point.clone().addScalar(10));
+      box.expandByPoint(point.clone().addScalar(-10));
+    }
+  }
+  for (const [entityId, bounds] of worldBounds) {
+    if (!includes(entityId)) continue;
+    addWorldPoint(bounds.min);
+    addWorldPoint(bounds.max);
+  }
+  for (const [entityId, dataset] of products) {
+    if (!includes(entityId)) continue;
+    const tile = dataset.getTile(dataset.rootTile);
+    if (!tile) continue;
+    const position = dataset.root.position;
+    box.expandByPoint(
+      new Vector3(
+        tile.bounds.min.x + position.x,
+        tile.bounds.min.y + position.y,
+        tile.bounds.min.z + position.z,
+      ),
+    );
+    box.expandByPoint(
+      new Vector3(
+        tile.bounds.max.x + position.x,
+        tile.bounds.max.y + position.y,
+        tile.bounds.max.z + position.z,
+      ),
+    );
+  }
+
+  if (box.isEmpty()) return null;
+  if (box.min.distanceTo(box.max) < 0.01) box.expandByScalar(0.5);
+  return { min: box.min.clone(), max: box.max.clone() };
 }
 
 function disposeCameraRectangles(lines: LineSegments | null): void {

@@ -57,3 +57,157 @@ export { PointCloudLayer, decodePointCache } from './scene/PointCloudLayer.js';
 export type { PointCloudData, CacheLayout } from './scene/PointCloudLayer.js';
 export { PointOctree, fitPlane, intersectRayPlane } from './spatial/index.js';
 export type { OctreeNode, KnnHit, RayHit, LocalPlane } from './spatial/index.js';
+export { kernelStreamingWorkPolicy, WgpuKernelViewer } from './kernel/WgpuKernelViewer.js';
+export { KernelCanonicalDocument } from './kernel/KernelCanonicalDocument.js';
+export type {
+  KernelClipCapAttachmentOptions,
+  KernelPreparedTopologyRegistration,
+} from './kernel/WgpuKernelViewer.js';
+export {
+  assertValidKernelLocalOrthographicViewFrame,
+  KernelCameraController,
+} from './kernel/KernelCameraController.js';
+export type {
+  KernelCameraTransitionPair,
+  KernelCameraVector,
+  KernelLocalOrthographicViewFrame,
+  KernelPerspectiveViewpoint,
+} from './kernel/KernelCameraController.js';
+export { localSectionClipVolume } from './kernel/KernelLocalSectionView.js';
+export type {
+  KernelLocalSectionClip,
+  KernelLocalSectionDepth,
+  KernelLocalSectionView,
+} from './kernel/KernelLocalSectionView.js';
+export { KernelNavigationController } from './kernel/KernelNavigationController.js';
+export type { KernelNavigationCallbacks } from './kernel/KernelNavigationController.js';
+export { KernelViewport } from './kernel/KernelViewport.js';
+export type { KernelViewportHandle, KernelViewportProps } from './kernel/KernelViewport.js';
+export { KernelStreamingDriver } from './kernel/KernelStreamingDriver.js';
+export { KernelViewerEntityHandle, KernelViewerScene } from './kernel/KernelViewerScene.js';
+export type { KernelPreparedHierarchyAdmission } from './kernel/KernelViewerScene.js';
+export { admitCanonicalPotreeDataset } from './kernel/KernelPotreeDatasetAdmission.js';
+export { admitCanonicalPreparedMeshDataset } from './kernel/KernelPreparedMeshDatasetAdmission.js';
+export type {
+  KernelPreparedMeshDatasetAdmission,
+  KernelPreparedMeshDatasetResult,
+} from './kernel/KernelPreparedMeshDatasetAdmission.js';
+export { admitCanonicalPreparedTinDataset } from './kernel/KernelPreparedTinDatasetAdmission.js';
+export type {
+  KernelPreparedTinDatasetAdmission,
+  KernelPreparedTinDatasetResult,
+} from './kernel/KernelPreparedTinDatasetAdmission.js';
+export { evaluateCanonicalSectionTopology } from './kernel/KernelSectionTopologyEvaluation.js';
+export type {
+  KernelSectionTopologyEvaluationRequest,
+  KernelSectionTopologyPartitionLocation,
+} from './kernel/KernelSectionTopologyEvaluation.js';
+export { KernelClipCapCoordinator } from './kernel/KernelClipCapCoordinator.js';
+export type {
+  KernelClipCapFetcher,
+  KernelClipCapSource,
+  KernelClipCapUpdate,
+} from './kernel/KernelClipCapCoordinator.js';
+export type { KernelPotreeDatasetAdmission } from './kernel/KernelPotreeDatasetAdmission.js';
+export type {
+  KernelRuntimeQualityAdjustment,
+  KernelRuntimeQualityState,
+} from './kernel/KernelRuntimeQualityGovernor.js';
+export type {
+  KernelFetch,
+  KernelRasterDecoderParameters,
+  KernelResidentMetadata,
+  KernelStreamingDriverDiagnostics,
+  KernelStreamingRuntimeLimits,
+  KernelStreamingTarget,
+} from './kernel/KernelStreamingDriver.js';
+export type {
+  HimmelcadViewerWasmLoader,
+  HimmelcadViewerWasmModule,
+  KernelCameraFrame,
+  KernelBoundingVolume,
+  KernelCanvasExtent,
+  KernelContentReference,
+  KernelClipPlane,
+  KernelClipVolume,
+  KernelDeviceCapabilities,
+  KernelCanonicalEntityMutation,
+  KernelCanonicalRetirementMutation,
+  KernelCanonicalRenderAdmission,
+  KernelCanonicalStreamMetadata,
+  KernelEvaluatedMeshAdmission,
+  KernelAreaInterpolationResourceAdmission,
+  KernelAreaInterpolationDependency,
+  KernelAlignmentPreviewBuildRequest,
+  KernelAlignmentPreviewChangedPartition,
+  KernelAlignmentPreviewConfig,
+  KernelAlignmentPreviewMutation,
+  KernelAlignmentPreviewRoadBodyPart,
+  KernelAlignmentPreviewSlopePart,
+  KernelAlignmentPreviewUpdateRequest,
+  KernelAlignmentStationRange,
+  KernelEntityMutation,
+  KernelEntityCommandJournal,
+  KernelEntityCommandJournalEntry,
+  KernelEntityCommandJournalKind,
+  KernelEntityCommandMutation,
+  KernelTransformEntityCommand,
+  KernelFrameOutcome,
+  KernelFrameBudget,
+  KernelHardwareInventory,
+  KernelDeviceCalibration,
+  KernelResolvedHardwarePolicy,
+  KernelGaussianSplatContentMetadata,
+  KernelGeometryObject,
+  KernelAnnotationStyle,
+  KernelBlockDefinition,
+  KernelBlockMember,
+  KernelGlyphAtlasMetadata,
+  KernelGlyphMetrics,
+  KernelHatchPattern,
+  KernelPickAddress,
+  KernelPickCandidate,
+  KernelPickResult,
+  KernelGltfFeatureMetadata,
+  KernelPotreeContentMetadata,
+  KernelResidencyTicket,
+  KernelResourceBudget,
+  KernelResourceCost,
+  KernelRasterContentMetadata,
+  KernelSectionMutation,
+  KernelAuthoritativeSectionProduct,
+  KernelAuthoritativeSectionEvaluationManifest,
+  KernelAuthoritativeSectionSource,
+  KernelSectionContour,
+  KernelEvaluatedSectionRequest,
+  KernelLocalSectionRequest,
+  KernelSectionProduct,
+  KernelSectionMaterialRegionBinding,
+  KernelSectionRegion,
+  KernelSectionRequest,
+  KernelSectionSegment,
+  KernelSectionTopologyBounds,
+  KernelSectionTopologyPart,
+  KernelLineTypePattern,
+  KernelRenderStyle,
+  KernelStrokeColor,
+  KernelStrokeMode,
+  KernelStrokeStyle,
+  KernelStrokeWidth,
+  KernelSnapKind,
+  KernelThreeDTilesContentMetadata,
+  KernelThreeDTilesMetadataCatalog,
+  KernelTileDescriptor,
+  KernelStreamingAction,
+  KernelStreamingFrameOptions,
+  KernelStreamingFramePlan,
+  KernelStreamingPublish,
+  KernelStreamingRuntimeState,
+  KernelStreamingWorkPolicy,
+  KernelTileKey,
+  KernelWorldCamera,
+  KernelWorldPoint,
+  WasmViewerBinding,
+  WasmCanonicalDocumentBinding,
+} from './kernel/WgpuKernelViewer.js';
+export type * from './kernel/generated/index.js';

@@ -1,0 +1,19 @@
+[package]
+name = "himmelcad-decode-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "CPU-only transferable streaming decoder workers for HimmelCAD."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+himmelcad-render = { path = "../himmelcad-render" }
+serde.workspace = true
+serde_json.workspace = true
+wasm-bindgen.workspace = true
+
+[lints]
+workspace = true

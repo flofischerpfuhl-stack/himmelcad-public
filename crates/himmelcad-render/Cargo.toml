@@ -1,0 +1,42 @@
+[package]
+name = "himmelcad-render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Backend-neutral render-world, streaming and device-policy contracts for HimmelCAD."
+
+[dependencies]
+base64 = "0.22"
+bincode.workspace = true
+"brotli-decompressor" = "5.0"
+bevy_basisu_loader_sys.workspace = true
+bytemuck.workspace = true
+draco-gltf.workspace = true
+earcut.workspace = true
+futures-channel = "0.3"
+glam.workspace = true
+gltf.workspace = true
+gltf-v1 = { version = "0.4.0", features = ["KHR_materials_common"] }
+himmelcad-core = { path = "../himmelcad-core" }
+image = { version = "0.25.8", default-features = false, features = ["jpeg", "png"] }
+indexmap = "2.7"
+meshopt-rs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wgpu = { version = "30.0.0", default-features = false, features = ["std", "wgsl", "vulkan", "gles", "metal", "dx12"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+wgpu = { version = "30.0.0", default-features = false, features = ["std", "wgsl", "webgpu", "webgl"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+draco-core = { version = "1.0.3", features = ["encoder"] }
+tokio.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HimmelCAD kernel browser validation</title>
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #04070b;
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      output {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        max-width: calc(100vw - 24px);
+        padding: 8px 10px;
+        border: 1px solid rgba(133, 197, 255, 0.35);
+        border-radius: 8px;
+        color: #d7ecff;
+        background: rgba(4, 9, 15, 0.82);
+        font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="viewer" width="1280" height="720"></canvas>
+    <output id="status">initializing real WASM kernel…</output>
+    <script type="module" src="/bundle.js"></script>
+  </body>
+</html>

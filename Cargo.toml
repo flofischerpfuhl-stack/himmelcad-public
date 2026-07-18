@@ -2,7 +2,9 @@
 resolver = "2"
 members = [
     "crates/himmelcad-core",
+    "crates/himmelcad-decode-wasm",
     "crates/himmelcad-io",
+    "crates/himmelcad-render",
     "crates/himmelcad-spatial",
     "crates/himmelcad-sidecar",
     "crates/himmelcad-wasm",
@@ -29,8 +31,9 @@ missing_panics_doc = "allow"
 must_use_candidate = "allow"
 
 [workspace.dependencies]
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
+bincode = "1.3"
 thiserror = "1"
 anyhow = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util", "sync", "fs"] }
@@ -38,10 +41,16 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ts-rs = { version = "10", features = ["serde-compat"] }
 glam = { version = "0.29", features = ["serde"] }
+gltf = { version = "1.4.1", default-features = false, features = ["utils", "extensions", "extras", "allow_empty_texture"] }
 sha2 = "0.10"
 hex = "0.4"
 parking_lot = "0.12"
 bytes = "1"
+bytemuck = { version = "1", features = ["derive"] }
+bevy_basisu_loader_sys = "0.4.4"
+earcut = "0.4.10"
+draco-gltf = { version = "0.1.0", default-features = false }
+meshopt-rs = { version = "0.1.2", features = ["experimental"] }
 nom-exif = { version = "3.6.1", default-features = false }
 zip = { version = "8.6.0", default-features = false }
 wasm-bindgen = "0.2"

@@ -3,6 +3,7 @@ use sha2::{Digest, Sha256};
 
 /// Content-addressable object hash. SHA-256, hex-encoded.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[serde(transparent)]
 pub struct ObjectHash(pub String);
 

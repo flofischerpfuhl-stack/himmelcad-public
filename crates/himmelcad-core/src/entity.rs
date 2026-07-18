@@ -5,6 +5,7 @@ use crate::hash::ObjectHash;
 /// Stable semantic identity for an entity. Survives renames, edits, and
 /// derivations. Generated server-side; never reused.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[serde(transparent)]
 pub struct EntityId(pub String);
 
@@ -17,8 +18,11 @@ pub enum EntityKind {
     ImageCollection,
     CameraImage,
     CameraCalibration,
+    CaptureGroup,
+    CameraCalibrationGroup,
     ProcessingSet,
     AlignmentRun,
+    MergedAlignmentRun,
     DepthMap,
     GroundControlPoint,
     Orthomosaic,

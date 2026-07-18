@@ -138,7 +138,7 @@ export class TileStreamingService {
       this.lastTouchedMs.set(candidate.key, nowMs);
 
       if (
-        !candidate.dataset.isLoaded(candidate.tile.id) &&
+        candidate.dataset.getTileLoadState(candidate.tile.id) === 'unloaded' &&
         !this.pendingKeys.has(candidate.key) &&
         this.pendingKeys.size < this.options.maxConcurrentLoads &&
         newLoads < this.options.maxNewLoadsPerUpdate

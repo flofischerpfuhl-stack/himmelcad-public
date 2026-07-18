@@ -17,6 +17,15 @@ hex.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 las = { version = "0.9", features = ["laz"] }
+e57 = { version = "=0.11.13", features = ["crc32c"] }
+quick-xml = "=0.41.0"
+dxf = { version = "=0.6.1", features = ["serialize"] }
+geotiff-reader = { version = "=0.7.0", default-features = false, features = ["local"] }
+tiff-reader = { version = "=0.7.0", default-features = false, features = ["jpeg", "zstd"] }
+
+[dev-dependencies]
+geotiff-writer = "=0.7.0"
+ndarray = "=0.17.2"
 
 [lints]
 workspace = true

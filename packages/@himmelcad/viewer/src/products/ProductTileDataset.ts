@@ -20,7 +20,8 @@ export abstract class ProductTileDataset implements TiledDataset {
   readonly id: string;
   readonly kind: GeometryDatasetKind;
   readonly rootTile: TileId;
-  protected readonly renderOffset: readonly [number, number, number];
+  /** World `[Easting, Northing, Height]` represented by this dataset's local origin. */
+  readonly renderOffset: readonly [number, number, number];
   protected readonly states = new Map<TileId, TileLoadState>();
   protected readonly objects = new Map<TileId, Object3D>();
   protected readonly abortControllers = new Map<TileId, AbortController>();
@@ -54,6 +55,7 @@ export abstract class ProductTileDataset implements TiledDataset {
 
   prepareFrame(ctx: ScreenSpaceErrorContext): void {
     ctx.camera.updateMatrixWorld();
+    this.root.updateMatrixWorld(true);
     this.projectionView.multiplyMatrices(
       ctx.camera.projectionMatrix,
       ctx.camera.matrixWorldInverse,
@@ -65,14 +67,15 @@ export abstract class ProductTileDataset implements TiledDataset {
     const bounds = tile.bounds;
     this.testBox.min.set(bounds.min.x, bounds.min.y, bounds.min.z);
     this.testBox.max.set(bounds.max.x, bounds.max.y, bounds.max.z);
+    this.testBox.applyMatrix4(this.root.matrixWorld);
     return this.frustum.intersectsBox(this.testBox);
   }
 
   computeScreenSpaceError(tile: Tile, ctx: ScreenSpaceErrorContext): number {
     const bounds = tile.bounds;
-    const centerX = (bounds.min.x + bounds.max.x) * 0.5;
-    const centerY = (bounds.min.y + bounds.max.y) * 0.5;
-    const centerZ = (bounds.min.z + bounds.max.z) * 0.5;
+    const centerX = (bounds.min.x + bounds.max.x) * 0.5 + this.root.position.x;
+    const centerY = (bounds.min.y + bounds.max.y) * 0.5 + this.root.position.y;
+    const centerZ = (bounds.min.z + bounds.max.z) * 0.5 + this.root.position.z;
     const dx = ctx.camera.position.x - centerX;
     const dy = ctx.camera.position.y - centerY;
     const dz = ctx.camera.position.z - centerZ;

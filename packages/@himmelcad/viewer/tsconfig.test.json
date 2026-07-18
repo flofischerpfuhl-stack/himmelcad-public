@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "rootDir": ".",
+    "outDir": "./dist/viewer-tests",
+    "baseUrl": ".",
+    "paths": {
+      "@himmelcad/data": ["test/data-shim.d.ts"]
+    }
+  },
+  "include": ["test"]
+}

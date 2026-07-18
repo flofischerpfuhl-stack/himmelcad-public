@@ -123,7 +123,9 @@ export class RasterPyramidDataset extends ProductTileDataset {
       }
       terrainSource = {
         manifest: parseRasterPyramidManifest(await terrainResponse.json()),
-        baseUrl: new URL('.', options.terrainManifestUrl).toString(),
+        // Raster manifests live in `<dataset>/pyramid/manifest.json`, while
+        // their view-layer templates are rooted at `<dataset>/view/...`.
+        baseUrl: new URL('../', options.terrainManifestUrl).toString(),
       };
     }
     return new RasterPyramidDataset(manifestUrl, manifest, options, terrainSource);
@@ -145,7 +147,9 @@ export class RasterPyramidDataset extends ProductTileDataset {
     this.manifest = manifest;
     this.manifestUrl = manifestUrl;
     this.options = options;
-    this.baseUrl = new URL('.', manifestUrl).toString();
+    // See the manifest contract above: templates are dataset-root relative,
+    // not relative to the nested `pyramid/` directory containing the JSON.
+    this.baseUrl = new URL('../', manifestUrl).toString();
     this.highestLevel = highestLevel;
     this.terrainSource = terrainSource;
   }
@@ -158,7 +162,7 @@ export class RasterPyramidDataset extends ProductTileDataset {
     const level = this.manifest.levels[address.level];
     if (!level || address.column >= level.columns || address.row >= level.rows) return null;
     const worldBounds = rasterTileBounds(this.manifest, level, address.column, address.row);
-    const zRange = this.elevationRangeFor(address, level);
+    const zRange = this.elevationRangeFor(level);
     worldBounds.min.z = zRange[0];
     worldBounds.max.z = zRange[1];
     const localBounds = this.localBounds(worldBounds);
@@ -238,7 +242,7 @@ export class RasterPyramidDataset extends ProductTileDataset {
         heights,
         this.noDataForHeights(),
         this.navigationMode,
-        this.flatSurfaceElevation(address, level) - this.renderOffset[2],
+        this.flatSurfaceElevation(level) - this.renderOffset[2],
         this.renderOffset[2],
       );
       const material = new MeshBasicMaterial({
@@ -282,17 +286,49 @@ export class RasterPyramidDataset extends ProductTileDataset {
         ? { manifest: this.manifest, baseUrl: this.baseUrl }
         : this.terrainSource;
     if (!source) return null;
-    const level = source.manifest.levels[address.level];
+    const displayLevel = this.manifest.levels[address.level];
+    if (!displayLevel) return null;
+    const level = closestTerrainLevel(source.manifest, displayLevel.gsd);
     if (!level) return null;
     const raw = level.viewLayers.find((layer) => layer.format.kind === 'float32Raw');
     if (!raw || raw.format.kind !== 'float32Raw') return null;
+    const displayBounds = rasterTileBounds(
+      this.manifest,
+      displayLevel,
+      address.column,
+      address.row,
+    );
+    const centerEast = (displayBounds.min.x + displayBounds.max.x) * 0.5;
+    const centerNorth = (displayBounds.min.y + displayBounds.max.y) * 0.5;
+    const terrainBounds = level.bounds;
+    if (
+      centerEast < terrainBounds.minimumEast ||
+      centerEast > terrainBounds.maximumEast ||
+      centerNorth < terrainBounds.minimumNorth ||
+      centerNorth > terrainBounds.maximumNorth
+    ) {
+      return null;
+    }
+    const tileWidth =
+      (terrainBounds.maximumEast - terrainBounds.minimumEast) / Math.max(1, level.columns);
+    const tileHeight =
+      (terrainBounds.maximumNorth - terrainBounds.minimumNorth) / Math.max(1, level.rows);
+    const terrainColumn = Math.min(
+      level.columns - 1,
+      Math.max(0, Math.floor((centerEast - terrainBounds.minimumEast) / tileWidth)),
+    );
+    // Raster rows are north-to-south, matching rasterTileBounds().
+    const terrainRow = Math.min(
+      level.rows - 1,
+      Math.max(0, Math.floor((terrainBounds.maximumNorth - centerNorth) / tileHeight)),
+    );
     return {
       url: substituteTileUrl(
         source.baseUrl,
         raw.urlTemplate,
-        address.level,
-        address.column,
-        address.row,
+        level.level,
+        terrainColumn,
+        terrainRow,
       ),
       format: raw.format,
     };
@@ -304,22 +340,33 @@ export class RasterPyramidDataset extends ProductTileDataset {
       : (this.terrainSource?.manifest.grid.noData ?? { kind: 'nan' });
   }
 
-  private elevationRangeFor(
-    address: RasterTileAddress,
-    level: RasterLevelManifest,
-  ): readonly [number, number] {
+  private elevationRangeFor(level: RasterLevelManifest): readonly [number, number] {
     if (this.options.kind === 'dem') return elevationRange(level);
-    const terrainLevel = this.terrainSource?.manifest.levels[address.level];
+    const terrainLevel = this.terrainSource
+      ? closestTerrainLevel(this.terrainSource.manifest, level.gsd)
+      : undefined;
     if (terrainLevel) return elevationRange(terrainLevel);
     const elevation = this.options.surfaceElevation ?? 0;
     return [elevation, elevation];
   }
 
-  private flatSurfaceElevation(address: RasterTileAddress, level: RasterLevelManifest): number {
+  private flatSurfaceElevation(level: RasterLevelManifest): number {
     if (this.options.surfaceElevation !== undefined) return this.options.surfaceElevation;
-    const range = this.elevationRangeFor(address, level);
+    const range = this.elevationRangeFor(level);
     return (range[0] + range[1]) * 0.5;
   }
+}
+
+function closestTerrainLevel(
+  manifest: RasterPyramidManifest,
+  targetGsd: number,
+): RasterLevelManifest | undefined {
+  return manifest.levels.reduce<RasterLevelManifest | undefined>((best, candidate) => {
+    if (!best) return candidate;
+    return Math.abs(candidate.gsd - targetGsd) < Math.abs(best.gsd - targetGsd)
+      ? candidate
+      : best;
+  }, undefined);
 }
 
 function disposeDecodedTexture(texture: Texture | null): void {
@@ -620,11 +667,22 @@ function parseViewLayer(value: unknown, field: string): RasterViewLayerManifest 
   } else if (kind === 'grayscalePng') {
     parsedFormat = {
       kind,
-      minimumElevation: finiteNumber(format['minimumElevation'], `${field}.minimumElevation`),
-      maximumElevation: finiteNumber(format['maximumElevation'], `${field}.maximumElevation`),
+      minimumElevation: finiteNumber(
+        format['minimumElevation'] ?? format['minimum_elevation'],
+        `${field}.minimumElevation`,
+      ),
+      maximumElevation: finiteNumber(
+        format['maximumElevation'] ?? format['maximum_elevation'],
+        `${field}.maximumElevation`,
+      ),
     };
   } else if (kind === 'float32Raw') {
-    const byteOrder = stringValue(format['byteOrder'], `${field}.byteOrder`);
+    // Schema-v1 development builds serialized enum fields in snake_case. Keep those projects
+    // readable while all newly published manifests use the canonical camelCase contract.
+    const byteOrder = stringValue(
+      format['byteOrder'] ?? format['byte_order'],
+      `${field}.byteOrder`,
+    );
     if (byteOrder !== 'littleEndian' && byteOrder !== 'bigEndian') {
       throw new Error(`Unsupported raster byte order: ${byteOrder}`);
     }

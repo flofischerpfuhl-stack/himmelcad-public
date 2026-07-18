@@ -1,4 +1,4 @@
-//! Spatial indexing primitives for HimmelCAD.
+//! Spatial indexing primitives for `HimmelCAD`.
 //!
 //! Cursor coordinates, picking, segmentation, and (later) tile streaming all
 //! depend on these. The crate is plain Rust with `glam`, no platform deps,

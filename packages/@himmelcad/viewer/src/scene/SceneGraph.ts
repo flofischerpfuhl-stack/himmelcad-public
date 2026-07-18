@@ -33,13 +33,27 @@ export class SceneGraph {
 
   /**
    * Record the render offset (world coordinate corresponding to local zero).
-   * Idempotent — only the FIRST call wins, so all subsequent imports stay in
-   * the same local frame as the first one.
+   * Setting and locking are separate: an empty PhotoLab project may first
+   * publish a placeholder offset and replace it when its reference frame is
+   * established. The viewport locks only when real render geometry is added.
    */
-  setRenderOffset(x: number, y: number, z: number): void {
-    if (this.renderOffsetLocked) return;
+  setRenderOffset(x: number, y: number, z: number): [number, number, number] {
+    if (this.renderOffsetLocked) return this.getRenderOffset();
+    if (![x, y, z].every(Number.isFinite)) return this.getRenderOffset();
     this.renderOffset = [x, y, z];
+    return this.getRenderOffset();
+  }
+
+  lockRenderOffset(): void {
     this.renderOffsetLocked = true;
+  }
+
+  /** Start a new project reference frame after the previous scene was cleared. */
+  resetRenderOffset(x: number, y: number, z: number): [number, number, number] {
+    if (![x, y, z].every(Number.isFinite)) return this.getRenderOffset();
+    this.renderOffsetLocked = false;
+    this.renderOffset = [x, y, z];
+    return this.getRenderOffset();
   }
 
   getRenderOffset(): [number, number, number] {

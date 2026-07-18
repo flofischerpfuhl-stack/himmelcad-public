@@ -65,7 +65,10 @@ pub(crate) enum StepError {
 }
 
 impl StepIndex {
-    pub(crate) fn build(path: &Path, mut cancelled: impl FnMut() -> bool) -> Result<Self, StepError> {
+    pub(crate) fn build(
+        path: &Path,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<Self, StepError> {
         let file = File::open(path)?;
         let byte_length = file.metadata()?.len();
         if byte_length == 0 || byte_length > MAX_FILE_BYTES {
@@ -78,9 +81,10 @@ impl StepIndex {
         let mut record_start = 0_u64;
         let mut record = Vec::new();
         let mut in_string = false;
+        let mut string_quote_pending = false;
         let mut in_comment = false;
         let mut previous = 0_u8;
-        let mut chunk = [0_u8; 256 * 1024];
+        let mut chunk = vec![0_u8; 256 * 1024].into_boxed_slice();
         loop {
             if cancelled() {
                 return Err(StepError::Syntax("cancelled"));
@@ -90,7 +94,12 @@ impl StepIndex {
                 break;
             }
             for &byte in &chunk[..count] {
-                if record.is_empty() && !byte.is_ascii_whitespace() {
+                if record.is_empty() && byte.is_ascii_whitespace() {
+                    previous = byte;
+                    offset += 1;
+                    continue;
+                }
+                if record.is_empty() {
                     record_start = offset;
                 }
                 record.push(byte);
@@ -101,47 +110,62 @@ impl StepIndex {
                     if previous == b'*' && byte == b'/' {
                         in_comment = false;
                     }
-                } else if in_string {
+                } else if in_string && !string_quote_pending {
                     if byte == b'\'' {
+                        string_quote_pending = true;
+                    }
+                } else if in_string && byte == b'\'' {
+                    string_quote_pending = false;
+                } else {
+                    if in_string {
                         in_string = false;
+                        string_quote_pending = false;
                     }
-                } else if previous == b'/' && byte == b'*' {
-                    in_comment = true;
-                } else if byte == b'\'' {
-                    in_string = true;
-                } else if byte == b';' {
-                    let text = std::str::from_utf8(&record)
-                        .map_err(|_| StepError::Syntax("SPF must be UTF-8/ASCII compatible"))?;
-                    let trimmed = text.trim();
-                    if schema.is_none() && trimmed.to_ascii_uppercase().starts_with("FILE_SCHEMA") {
-                        schema = Some(parse_schema(trimmed)?);
-                    }
-                    if trimmed.starts_with('#') {
-                        let (id, entity_type) = record_identity(trimmed)?;
-                        if records.len() >= MAX_RECORDS {
-                            return Err(StepError::RecordLimit);
-                        }
-                        if records
-                            .insert(
-                                id,
-                                RecordLocation {
-                                    offset: record_start,
-                                    length: record.len() as u64,
-                                    entity_type,
-                                },
-                            )
-                            .is_some()
+                    if previous == b'/' && byte == b'*' {
+                        in_comment = true;
+                    } else if byte == b'\'' {
+                        in_string = true;
+                    } else if byte == b';' {
+                        let text = std::str::from_utf8(&record)
+                            .map_err(|_| StepError::Syntax("SPF must be UTF-8/ASCII compatible"))?;
+                        let trimmed = text.trim();
+                        let semantic = strip_comments(trimmed)?;
+                        let semantic = semantic.trim();
+                        if schema.is_none()
+                            && semantic.to_ascii_uppercase().starts_with("FILE_SCHEMA")
                         {
-                            return Err(StepError::Syntax("duplicate STEP instance id"));
+                            schema = Some(parse_schema(semantic)?);
                         }
+                        if semantic.starts_with('#') {
+                            let (id, entity_type) = record_identity(semantic)?;
+                            if records.len() >= MAX_RECORDS {
+                                return Err(StepError::RecordLimit);
+                            }
+                            if records
+                                .insert(
+                                    id,
+                                    RecordLocation {
+                                        offset: record_start,
+                                        length: record.len() as u64,
+                                        entity_type,
+                                    },
+                                )
+                                .is_some()
+                            {
+                                return Err(StepError::Syntax("duplicate STEP instance id"));
+                            }
+                        }
+                        record.clear();
                     }
-                    record.clear();
                 }
                 previous = byte;
                 offset += 1;
             }
         }
-        if in_string || in_comment || record.iter().any(|byte| !byte.is_ascii_whitespace()) {
+        if (in_string && !string_quote_pending)
+            || in_comment
+            || record.iter().any(|byte| !byte.is_ascii_whitespace())
+        {
             return Err(StepError::Syntax("unterminated STEP token or record"));
         }
         let schema = schema.ok_or(StepError::Syntax("FILE_SCHEMA is missing"))?;
@@ -157,7 +181,10 @@ impl StepIndex {
     }
 
     pub(crate) fn record(&self, id: u64) -> Result<StepRecord, StepError> {
-        let location = self.records.get(&id).ok_or(StepError::MissingReference(id))?;
+        let location = self
+            .records
+            .get(&id)
+            .ok_or(StepError::MissingReference(id))?;
         let mut file = File::open(&self.path)?;
         file.seek(SeekFrom::Start(location.offset))?;
         let length = usize::try_from(location.length).map_err(|_| StepError::RecordSize)?;
@@ -186,7 +213,9 @@ fn parse_schema(record: &str) -> Result<String, StepError> {
 }
 
 fn record_identity(record: &str) -> Result<(u64, String), StepError> {
-    let equal = record.find('=').ok_or(StepError::Syntax("record lacks '='"))?;
+    let equal = record
+        .find('=')
+        .ok_or(StepError::Syntax("record lacks '='"))?;
     let id = record[1..equal]
         .trim()
         .parse::<u64>()
@@ -211,8 +240,12 @@ fn parse_record(bytes: &[u8]) -> Result<StepRecord, StepError> {
     let source = strip_comments(source)?;
     let trimmed = source.trim();
     let (id, entity_type) = record_identity(trimmed)?;
-    let open = trimmed.find('(').ok_or(StepError::Syntax("arguments are missing"))?;
-    let close = trimmed.rfind(')').ok_or(StepError::Syntax("arguments are unterminated"))?;
+    let open = trimmed
+        .find('(')
+        .ok_or(StepError::Syntax("arguments are missing"))?;
+    let close = trimmed
+        .rfind(')')
+        .ok_or(StepError::Syntax("arguments are unterminated"))?;
     let mut parser = ValueParser::new(&trimmed[open + 1..close]);
     let arguments = parser.parse_sequence(None)?;
     parser.skip_space();
@@ -238,7 +271,9 @@ fn strip_comments(source: &str) -> Result<String, StepError> {
             index += 1;
         } else if !in_string && index + 1 < bytes.len() && &bytes[index..index + 2] == b"/*" {
             let rest = &source[index + 2..];
-            let end = rest.find("*/").ok_or(StepError::Syntax("unterminated comment"))?;
+            let end = rest
+                .find("*/")
+                .ok_or(StepError::Syntax("unterminated comment"))?;
             output.push(' ');
             index += end + 4;
         } else {
@@ -351,7 +386,9 @@ impl<'a> ValueParser<'a> {
         self.cursor += 1;
         let mut output = String::new();
         loop {
-            let byte = self.peek().ok_or(StepError::Syntax("unterminated string"))?;
+            let byte = self
+                .peek()
+                .ok_or(StepError::Syntax("unterminated string"))?;
             self.cursor += 1;
             if byte == b'\'' {
                 if self.peek() == Some(b'\'') {

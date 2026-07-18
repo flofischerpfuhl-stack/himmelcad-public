@@ -1,6 +1,6 @@
 //! Wire contract between the Rust core and any frontend (Electron renderer or
-//! WeltView WASM). When the `ts-bindings` feature is enabled, `cargo test`
-//! emits TypeScript types into `packages/@himmelcad/data/src/generated/`.
+//! `WeltView` WASM). Canonical entity bindings are emitted separately by the
+//! `generate_entity_bindings` binary into the viewer-local kernel contract.
 
 use serde::{Deserialize, Serialize};
 
