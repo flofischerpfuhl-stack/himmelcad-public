@@ -964,6 +964,8 @@ pub struct GpuMeshVertexInput {
     pub normal: [f32; 3],
     /// First texture-coordinate set.
     pub tex_coord: [f32; 2],
+    /// Authored texture-coordinate sets UV1 through UV7, zero-filled when absent.
+    pub additional_tex_coords: [[f32; 2]; 7],
     /// Linear vertex-color multiplier.
     pub color: [f32; 4],
 }
@@ -983,34 +985,18 @@ pub struct GpuMeshInstanceInput {
     pub proxy_slot: u32,
     /// Stable source primitive offset for this instance.
     pub primitive_offset: u32,
-    /// First inverse-transposed normal row.
-    pub normal_row_0: [f32; 4],
-    /// Second inverse-transposed normal row.
-    pub normal_row_1: [f32; 4],
-    /// Third inverse-transposed normal row.
-    pub normal_row_2: [f32; 4],
-    _padding: [u32; 2],
 }
 
 impl GpuMeshInstanceInput {
     /// Creates one validated-layout instance record.
     #[must_use]
-    pub fn new(
-        rows: [[f32; 4]; 3],
-        normal_rows: [[f32; 4]; 3],
-        proxy_slot: u32,
-        primitive_offset: u32,
-    ) -> Self {
+    pub fn new(rows: [[f32; 4]; 3], proxy_slot: u32, primitive_offset: u32) -> Self {
         Self {
             row_0: rows[0],
             row_1: rows[1],
             row_2: rows[2],
             proxy_slot,
             primitive_offset,
-            normal_row_0: normal_rows[0],
-            normal_row_1: normal_rows[1],
-            normal_row_2: normal_rows[2],
-            _padding: [0; 2],
         }
     }
 }
@@ -1040,7 +1026,7 @@ pub struct GpuTextureData<'a> {
     pub rgba8: &'a [u8],
 }
 
-/// Canonical affine transform applied to the first mesh UV set.
+/// Canonical affine transform applied to one selected mesh UV set.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GpuTextureTransform {
     /// UV translation after scale and rotation.
@@ -1096,7 +1082,9 @@ impl GpuTextureTransform {
 pub struct GpuCanonicalTextureBinding<'a> {
     /// Resident immutable texture and its exact sampler.
     pub texture: &'a GpuTextureResource,
-    /// Channel-local transform applied to the authored first UV set.
+    /// Zero-based authored UV set selected by this material channel.
+    pub texture_coordinate_set: u8,
+    /// Channel-local transform applied after selecting the authored UV set.
     pub transform: GpuTextureTransform,
 }
 
@@ -1216,7 +1204,8 @@ fn canonical_uv_rows(
     .enumerate()
     {
         let transform = binding.map_or_else(GpuTextureTransform::default, |value| value.transform);
-        let transformed = transform.rows()?;
+        let mut transformed = transform.rows()?;
+        transformed[0][3] = binding.map_or(0.0, |value| f32::from(value.texture_coordinate_set));
         rows[index * 2] = transformed[0];
         rows[index * 2 + 1] = transformed[1];
     }
@@ -1607,7 +1596,10 @@ struct GpuMeshVertex {
     proxy_slot: u32,
     primitive_slot: u32,
     normal: [i8; 4],
-    tex_coord: [f32; 2],
+    tex_coord_0_1: [f32; 4],
+    tex_coord_2_3: [f32; 4],
+    tex_coord_4_5: [f32; 4],
+    tex_coord_6_7: [f32; 4],
 }
 
 #[derive(Debug)]
@@ -1775,7 +1767,7 @@ pub struct GpuDrawBatch {
     splat_sort: Option<Arc<Mutex<SplatSortState>>>,
     mesh_instance_sort: Option<Arc<Mutex<MeshInstanceSortState>>>,
     shared_mesh_geometry: Option<GpuIndexedMeshGeometry>,
-    declared_texture_coordinates: bool,
+    declared_texture_coordinate_sets: u8,
     source_material_slot: Option<u32>,
     double_sided: bool,
 }
@@ -2078,14 +2070,28 @@ impl GpuDrawBatch {
     /// coordinates. This is explicit metadata and is never inferred from UV values.
     #[must_use]
     pub fn with_declared_texture_coordinates(mut self, declared: bool) -> Self {
-        self.declared_texture_coordinates = declared;
+        self.declared_texture_coordinate_sets = u8::from(declared);
+        self
+    }
+
+    /// Declares the number of authored UV sets carried by the immutable vertex layout.
+    #[must_use]
+    pub fn with_declared_texture_coordinate_sets(mut self, count: u8) -> Self {
+        debug_assert!(count <= 8);
+        self.declared_texture_coordinate_sets = count;
         self
     }
 
     /// Whether this batch may safely bind a presentation texture.
     #[must_use]
     pub fn has_declared_texture_coordinates(&self) -> bool {
-        self.declared_texture_coordinates
+        self.declared_texture_coordinate_sets != 0
+    }
+
+    /// Number of authored UV sets available to canonical material channels.
+    #[must_use]
+    pub fn declared_texture_coordinate_sets(&self) -> u8 {
+        self.declared_texture_coordinate_sets
     }
 
     /// Tags a compact mesh batch with its canonical material-table slot.
@@ -2240,7 +2246,7 @@ impl GpuDrawBatch {
         renderer: &GpuSharedRenderer,
         texture: Option<&GpuTextureResource>,
     ) -> Result<(), GpuFrameError> {
-        if texture.is_some() && !self.declared_texture_coordinates {
+        if texture.is_some() && self.declared_texture_coordinate_sets == 0 {
             return Err(GpuFrameError::MissingTextureCoordinates);
         }
         let material = self.material.as_mut().ok_or(GpuFrameError::InvalidStyle)?;
@@ -2474,7 +2480,10 @@ impl GpuDrawBatch {
                         proxy_slot: vertex.proxy_slot,
                         primitive_slot: vertex.primitive_slot,
                         normal: [0, 0, 127, 0],
-                        tex_coord: [0.0; 2],
+                        tex_coord_0_1: [0.0; 4],
+                        tex_coord_2_3: [0.0; 4],
+                        tex_coord_4_5: [0.0; 4],
+                        tex_coord_6_7: [0.0; 4],
                     })
                     .collect::<Vec<_>>();
                 let count = u32::try_from(mesh_vertices.len())
@@ -2511,7 +2520,7 @@ impl GpuDrawBatch {
             splat_sort: None,
             mesh_instance_sort: None,
             shared_mesh_geometry: None,
-            declared_texture_coordinates: false,
+            declared_texture_coordinate_sets: 0,
             source_material_slot: None,
             double_sided: true,
         })
@@ -2576,7 +2585,7 @@ impl GpuDrawBatch {
             splat_sort: None,
             mesh_instance_sort: None,
             shared_mesh_geometry: None,
-            declared_texture_coordinates: false,
+            declared_texture_coordinate_sets: 0,
             source_material_slot: None,
             double_sided: true,
         })
@@ -2638,7 +2647,7 @@ impl GpuDrawBatch {
             splat_sort: None,
             mesh_instance_sort: None,
             shared_mesh_geometry: None,
-            declared_texture_coordinates: false,
+            declared_texture_coordinate_sets: 0,
             source_material_slot: None,
             double_sided: true,
         })
@@ -2775,7 +2784,7 @@ impl GpuDrawBatch {
             splat_sort: None,
             mesh_instance_sort: None,
             shared_mesh_geometry: None,
-            declared_texture_coordinates: false,
+            declared_texture_coordinate_sets: 0,
             source_material_slot: None,
             double_sided: true,
         })
@@ -2836,7 +2845,7 @@ impl GpuDrawBatch {
                 .then(|| Arc::new(Mutex::new(SplatSortState::new(splats)))),
             mesh_instance_sort: None,
             shared_mesh_geometry: None,
-            declared_texture_coordinates: false,
+            declared_texture_coordinate_sets: 0,
             source_material_slot: None,
             double_sided: true,
         })
@@ -2893,7 +2902,7 @@ impl GpuDrawBatch {
             splat_sort: None,
             mesh_instance_sort: None,
             shared_mesh_geometry: None,
-            declared_texture_coordinates: false,
+            declared_texture_coordinate_sets: 0,
             source_material_slot: None,
             double_sided: true,
         })
@@ -3015,7 +3024,7 @@ impl GpuDrawBatch {
             splat_sort: None,
             mesh_instance_sort: None,
             shared_mesh_geometry: None,
-            declared_texture_coordinates: false,
+            declared_texture_coordinate_sets: 0,
             source_material_slot: None,
             double_sided: true,
         })
@@ -3070,9 +3079,6 @@ impl GpuDrawBatch {
                     .iter()
                     .chain(&instance.row_1)
                     .chain(&instance.row_2)
-                    .chain(&instance.normal_row_0)
-                    .chain(&instance.normal_row_1)
-                    .chain(&instance.normal_row_2)
                     .any(|value| !value.is_finite())
         }) {
             return Err(GpuFrameError::InvalidMeshIndices);
@@ -3144,9 +3150,6 @@ impl GpuDrawBatch {
                         .iter()
                         .chain(&instance.row_1)
                         .chain(&instance.row_2)
-                        .chain(&instance.normal_row_0)
-                        .chain(&instance.normal_row_1)
-                        .chain(&instance.normal_row_2)
                         .any(|value| !value.is_finite())
             })
         {
@@ -3199,7 +3202,7 @@ impl GpuDrawBatch {
                 )))
             }),
             shared_mesh_geometry: Some(geometry.clone()),
-            declared_texture_coordinates: false,
+            declared_texture_coordinate_sets: 0,
             source_material_slot: None,
             double_sided: true,
         })
@@ -3244,9 +3247,6 @@ impl GpuDrawBatch {
                     .iter()
                     .chain(&instance.row_1)
                     .chain(&instance.row_2)
-                    .chain(&instance.normal_row_0)
-                    .chain(&instance.normal_row_1)
-                    .chain(&instance.normal_row_2)
                     .any(|value| !value.is_finite())
         }) {
             return Err(GpuFrameError::InvalidMeshIndices);
@@ -3297,7 +3297,7 @@ impl GpuDrawBatch {
                 source_sort.model_center,
             )))),
             shared_mesh_geometry: self.shared_mesh_geometry.clone(),
-            declared_texture_coordinates: self.declared_texture_coordinates,
+            declared_texture_coordinate_sets: self.declared_texture_coordinate_sets,
             source_material_slot: self.source_material_slot,
             double_sided: self.double_sided,
         })
@@ -3492,7 +3492,7 @@ impl GpuDrawBatch {
             splat_sort: self.splat_sort.clone(),
             mesh_instance_sort,
             shared_mesh_geometry: self.shared_mesh_geometry.clone(),
-            declared_texture_coordinates: self.declared_texture_coordinates,
+            declared_texture_coordinate_sets: self.declared_texture_coordinate_sets,
             source_material_slot: self.source_material_slot,
             double_sided: self.double_sided,
         })
@@ -5817,13 +5817,16 @@ fn vertex_layout(primitive: GpuPrimitive) -> wgpu::VertexBufferLayout<'static> {
         8 => Float32x2,
         9 => Uint32x2
     ];
-    const MESH_ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+    const MESH_ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
         0 => Float32x3,
         1 => Unorm8x4,
         2 => Uint32,
         3 => Uint32,
         4 => Snorm8x4,
-        5 => Float32x2
+        5 => Float32x4,
+        6 => Float32x4,
+        7 => Float32x4,
+        8 => Float32x4
     ];
     const SPLAT_ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
         0 => Float32x3,
@@ -5886,15 +5889,12 @@ fn vertex_layout(primitive: GpuPrimitive) -> wgpu::VertexBufferLayout<'static> {
 }
 
 fn mesh_instance_layout() -> wgpu::VertexBufferLayout<'static> {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
-        6 => Float32x4,
-        7 => Float32x4,
-        8 => Float32x4,
-        9 => Uint32,
-        10 => Uint32,
+    const ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
+        9 => Float32x4,
+        10 => Float32x4,
         11 => Float32x4,
-        12 => Float32x4,
-        13 => Float32x4
+        12 => Uint32,
+        13 => Uint32
     ];
     wgpu::VertexBufferLayout {
         array_stride: u64::try_from(size_of::<GpuMeshInstanceInput>())
@@ -6140,6 +6140,16 @@ fn float_color_channel(value: f32) -> u8 {
 }
 
 fn mesh_vertex(input: &GpuMeshVertexInput, proxy_slot: u32, primitive_slot: u32) -> GpuMeshVertex {
+    let coordinates = [
+        input.tex_coord,
+        input.additional_tex_coords[0],
+        input.additional_tex_coords[1],
+        input.additional_tex_coords[2],
+        input.additional_tex_coords[3],
+        input.additional_tex_coords[4],
+        input.additional_tex_coords[5],
+        input.additional_tex_coords[6],
+    ];
     GpuMeshVertex {
         position: input.position,
         color: input.color.map(float_color_channel),
@@ -6151,7 +6161,30 @@ fn mesh_vertex(input: &GpuMeshVertexInput, proxy_slot: u32, primitive_slot: u32)
             snorm_channel(input.normal[2]),
             0,
         ],
-        tex_coord: input.tex_coord,
+        tex_coord_0_1: [
+            coordinates[0][0],
+            coordinates[0][1],
+            coordinates[1][0],
+            coordinates[1][1],
+        ],
+        tex_coord_2_3: [
+            coordinates[2][0],
+            coordinates[2][1],
+            coordinates[3][0],
+            coordinates[3][1],
+        ],
+        tex_coord_4_5: [
+            coordinates[4][0],
+            coordinates[4][1],
+            coordinates[5][0],
+            coordinates[5][1],
+        ],
+        tex_coord_6_7: [
+            coordinates[6][0],
+            coordinates[6][1],
+            coordinates[7][0],
+            coordinates[7][1],
+        ],
     }
 }
 
@@ -6294,7 +6327,7 @@ mod tests {
 
     #[test]
     fn mesh_instance_layout_matches_shader_offsets() {
-        assert_eq!(std::mem::size_of::<GpuMeshInstanceInput>(), 112);
+        assert_eq!(std::mem::size_of::<GpuMeshInstanceInput>(), 56);
         assert_eq!(std::mem::offset_of!(GpuMeshInstanceInput, row_0), 0);
         assert_eq!(std::mem::offset_of!(GpuMeshInstanceInput, row_1), 16);
         assert_eq!(std::mem::offset_of!(GpuMeshInstanceInput, row_2), 32);
@@ -6303,15 +6336,37 @@ mod tests {
             std::mem::offset_of!(GpuMeshInstanceInput, primitive_offset),
             52
         );
-        assert_eq!(std::mem::offset_of!(GpuMeshInstanceInput, normal_row_0), 56);
-        assert_eq!(std::mem::offset_of!(GpuMeshInstanceInput, normal_row_1), 72);
-        assert_eq!(std::mem::offset_of!(GpuMeshInstanceInput, normal_row_2), 88);
         let sorted_block_bytes =
             SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE * std::mem::size_of::<GpuMeshInstanceInput>();
         let upload_budget = usize::try_from(SORTED_ALPHA_UPLOAD_BYTES_PER_FRAME)
             .expect("four MiB fits supported targets");
         assert!(sorted_block_bytes <= upload_budget);
         assert!(sorted_block_bytes + std::mem::size_of::<GpuMeshInstanceInput>() > upload_budget);
+    }
+
+    #[test]
+    fn mesh_vertex_packs_all_eight_authored_uv_sets_without_loss() {
+        let input = GpuMeshVertexInput {
+            position: [0.0; 3],
+            normal: [0.0, 0.0, 1.0],
+            tex_coord: [0.0, 1.0],
+            additional_tex_coords: [
+                [2.0, 3.0],
+                [4.0, 5.0],
+                [6.0, 7.0],
+                [8.0, 9.0],
+                [10.0, 11.0],
+                [12.0, 13.0],
+                [14.0, 15.0],
+            ],
+            color: [1.0; 4],
+        };
+
+        let packed = super::mesh_vertex(&input, 1, 0);
+        assert_eq!(packed.tex_coord_0_1, [0.0, 1.0, 2.0, 3.0]);
+        assert_eq!(packed.tex_coord_2_3, [4.0, 5.0, 6.0, 7.0]);
+        assert_eq!(packed.tex_coord_4_5, [8.0, 9.0, 10.0, 11.0]);
+        assert_eq!(packed.tex_coord_6_7, [12.0, 13.0, 14.0, 15.0]);
     }
 
     #[test]
@@ -6374,11 +6429,6 @@ mod tests {
                     [0.0, 1.0, 0.0, 0.0],
                     [0.0, 0.0, 1.0, depth],
                 ],
-                [
-                    [1.0, 0.0, 0.0, 0.0],
-                    [0.0, 1.0, 0.0, 0.0],
-                    [0.0, 0.0, 1.0, 0.0],
-                ],
                 7,
                 primitive_offset,
             )
@@ -6437,18 +6487,21 @@ mod tests {
                 position: [-1.0, -1.0, 0.0],
                 normal: [0.0, 0.0, 1.0],
                 tex_coord: [0.0, 0.0],
+                additional_tex_coords: [[0.0; 2]; 7],
                 color: [1.0; 4],
             },
             GpuMeshVertexInput {
                 position: [1.0, -1.0, 0.0],
                 normal: [0.0, 0.0, 1.0],
                 tex_coord: [1.0, 0.0],
+                additional_tex_coords: [[0.0; 2]; 7],
                 color: [1.0; 4],
             },
             GpuMeshVertexInput {
                 position: [0.0, 1.0, 0.0],
                 normal: [0.0, 0.0, 1.0],
                 tex_coord: [0.5, 1.0],
+                additional_tex_coords: [[0.0; 2]; 7],
                 color: [1.0; 4],
             },
         ];
@@ -6458,11 +6511,6 @@ mod tests {
                     [1.0, 0.0, 0.0, 0.0],
                     [0.0, 1.0, 0.0, 0.0],
                     [0.0, 0.0, 1.0, depth],
-                ],
-                [
-                    [1.0, 0.0, 0.0, 0.0],
-                    [0.0, 1.0, 0.0, 0.0],
-                    [0.0, 0.0, 1.0, 0.0],
                 ],
                 7,
                 primitive_offset,
@@ -7201,6 +7249,7 @@ mod tests {
                 ],
                 normal: [0.0, 0.0, 1.0],
                 tex_coord: [0.0, 0.0],
+                additional_tex_coords: [[0.0; 2]; 7],
                 color: [1.0; 4],
             })
             .collect::<Vec<_>>();
@@ -7296,11 +7345,6 @@ mod tests {
             GpuMeshInstanceInput::new(
                 [
                     [1.0, 0.0, 0.0, x],
-                    [0.0, 1.0, 0.0, 0.0],
-                    [0.0, 0.0, 1.0, 0.0],
-                ],
-                [
-                    [1.0, 0.0, 0.0, 0.0],
                     [0.0, 1.0, 0.0, 0.0],
                     [0.0, 0.0, 1.0, 0.0],
                 ],
@@ -7878,6 +7922,7 @@ mod tests {
             position,
             normal: [0.0, 0.0, 1.0],
             tex_coord: [0.0; 2],
+            additional_tex_coords: [[0.0; 2]; 7],
             color: [1.0, 0.5, 0.25, 1.0],
         }
     }

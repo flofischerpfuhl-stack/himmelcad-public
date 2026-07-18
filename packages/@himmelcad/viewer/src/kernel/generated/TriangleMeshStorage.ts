@@ -19,9 +19,9 @@ indices: Array<number>,
  */
 normals: Array<Vector3> | null,
 /**
- * Optional first texture-coordinate set.
+ * Optional ordered texture-coordinate sets; set indices are canonical.
  */
-textureCoordinates: Array<[number, number]> | null, } | { "kind": "resource",
+textureCoordinates: Array<Array<[number, number]>> | null, } | { "kind": "resource",
 /**
  * Immutable resource and its declared format.
  */

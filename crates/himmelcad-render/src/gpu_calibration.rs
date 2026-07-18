@@ -359,6 +359,7 @@ fn calibration_triangles(
                 position,
                 normal: [0.0, 0.0, 1.0],
                 tex_coord: [0.5, 0.5],
+                additional_tex_coords: [[0.0; 2]; 7],
                 color: [0.6, 0.7, 0.8, 1.0],
             });
         }

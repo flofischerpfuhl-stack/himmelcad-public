@@ -313,6 +313,7 @@ fn build_world_batch(
                 position: floating_origin.world_to_render(world_position(world)),
                 normal,
                 tex_coord: texture_coordinate,
+                additional_tex_coords: [[0.0; 2]; 7],
                 color: layout.color,
             });
         }

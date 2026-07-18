@@ -2846,6 +2846,7 @@ function verifyResolvedPresentationBindings(
     Math.abs((canonicalMaterials[1]?.sourcePbr?.emissive[0] ?? 0) - 0.12) > 1e-6 ||
     Math.abs((canonicalMaterials[1]?.sourcePbrUvRows?.[2]?.[2] ?? 0) - 0.05) > 1e-6 ||
     Math.abs((canonicalMaterials[1]?.sourcePbrUvRows?.[3]?.[2] ?? 0) - 0.1) > 1e-6 ||
+    canonicalMaterials[1]?.sourcePbrUvRows?.[6]?.[3] !== 7 ||
     Math.abs((canonicalMaterials[1]?.sourcePbrUvRows?.[8]?.[2] ?? 0) + 0.05) > 1e-6 ||
     Math.abs((canonicalMaterials[1]?.sourcePbrUvRows?.[9]?.[2] ?? 0) + 0.1) > 1e-6
   ) {
@@ -3366,12 +3367,14 @@ function entityZoo(): LegacyEntityRequest[] {
                 13, 12, 9, 10, 14, 9, 14, 13, 10, 11, 15, 10, 15, 14, 11, 8, 12, 11, 12, 15,
               ],
               normals: null,
-              textureCoordinates: [
+              textureCoordinates: Array.from({ length: 8 }, (_, set) => ([
                 [0, 0], [1, 0], [1, 1], [0, 1],
                 [0, 0], [1, 0], [1, 1], [0, 1],
                 [0, 0], [1, 0], [1, 1], [0, 1],
                 [0, 0], [1, 0], [1, 1], [0, 1],
-              ],
+              ] as Array<[number, number]>).map(
+                ([u, v]) => [u * (1 - set * 0.03) + set * 0.01, v],
+              )),
             },
             closedManifold: true,
             triangleMaterialSlots: [
@@ -3940,7 +3943,7 @@ async function run(): Promise<void> {
       {
         slot: 'emissive',
         texture: emissiveTextureRef,
-        textureCoordinateSet: 0,
+        textureCoordinateSet: 7,
         transform: { offset: [0.2, 0.05], scale: [1, 0.5], rotation: 0 },
       },
       {

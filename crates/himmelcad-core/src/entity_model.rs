@@ -427,8 +427,8 @@ pub enum TriangleMeshStorage {
         indices: Vec<u32>,
         /// Optional per-vertex unit normals.
         normals: Option<Vec<Vector3>>,
-        /// Optional first texture-coordinate set.
-        texture_coordinates: Option<Vec<[f64; 2]>>,
+        /// Optional ordered texture-coordinate sets; set indices are canonical.
+        texture_coordinates: Option<Vec<Vec<[f64; 2]>>>,
     },
     /// Large prepared mesh resource such as glTF/GLB or 3D Tiles content.
     Resource {

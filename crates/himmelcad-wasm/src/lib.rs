@@ -8051,7 +8051,7 @@ fn apply_canonical_mesh_material(
             .iter()
             .find(|binding| binding.slot == slot)
             .map(|binding| {
-                if binding.texture_coordinate_set != 0 {
+                if binding.texture_coordinate_set >= batch.declared_texture_coordinate_sets() {
                     return Err(format!(
                         "canonical {:?} texture '{}' requires an unavailable UV set",
                         slot, binding.texture.resource_id
@@ -8084,7 +8084,11 @@ fn apply_canonical_mesh_material(
                             scale: value.scale,
                             rotation: value.rotation,
                         });
-                Ok(GpuCanonicalTextureBinding { texture, transform })
+                Ok(GpuCanonicalTextureBinding {
+                    texture,
+                    texture_coordinate_set: binding.texture_coordinate_set,
+                    transform,
+                })
             })
             .transpose()
     };
@@ -9227,7 +9231,7 @@ fn raster_triangle_mesh(
             positions,
             indices,
             normals: Some(normals),
-            texture_coordinates: Some(texture_coordinates),
+            texture_coordinates: Some(vec![texture_coordinates]),
         },
         closed_manifold: false,
         triangle_material_slots: None,

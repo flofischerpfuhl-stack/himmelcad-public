@@ -989,6 +989,7 @@ fn vertex(
         position,
         normal: [0.0; 3],
         tex_coord,
+        additional_tex_coords: [[0.0; 2]; 7],
         color: [1.0; 4],
     })
 }

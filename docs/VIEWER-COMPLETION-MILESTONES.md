@@ -163,9 +163,15 @@ von echten V2-Lücken:
   elliptische, parabolische und hyperbolische Bögen im kanonischen Rust-Vertrag
   ab; Bindings, adaptive Tessellation und analytische Source-Snaps teilen diesen
   Typ auf WebGPU und WebGL2.
-- Reale verbleibende Schema-Lücken sind mehrere authored UV-Sets für
-  Inline-Meshes sowie ein typisierter Vererbungs-/Override-Vertrag für
-  Blockinstanz-Attribute und -Stile statt eines opaken Override-Hashes.
+- Der dritte V2-Slice erweitert Inline-Meshes auf acht geordnete authored
+  UV-Sets, synchron zum bereits kanonischen Materialindexbereich `0..=7`.
+  Jeder PBR-Kanal wählt und transformiert seinen eigenen Satz im gemeinsamen
+  WebGPU-/WebGL2-Shader. Vier gepackte Vertexattribute und aus der affinen
+  Instanzmatrix rekonstruierte Normaltransformation halten den portablen
+  16-Attribut-Vertrag ein, ohne die kanonische Breite zu reduzieren.
+- Die reale verbleibende Schema-Lücke ist ein typisierter
+  Vererbungs-/Override-Vertrag für Blockinstanz-Attribute und -Stile statt eines
+  opaken Override-Hashes.
 - Reale verbleibende Gate-Lücken sind die Aufnahme jeder vorhandenen
   Kurvenvariante und Plane-/Definition-Variante in den gemeinsamen Browser-Zoo,
   manipulierte Referenzfälle für die neuen Breiten und der vollständige

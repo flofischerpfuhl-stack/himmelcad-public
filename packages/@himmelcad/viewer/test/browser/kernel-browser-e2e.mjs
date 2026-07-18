@@ -549,6 +549,12 @@ try {
     Math.abs(state.presentationBindings.canonicalMaterials[1].sourcePbr.roughness - 0.55) < 1e-6,
   );
   assert.equal(state.presentationBindings.canonicalMaterials[1].sourcePbrUvRows.length, 10);
+  assert.deepEqual(
+    [0, 2, 4, 6, 8].map(
+      (row) => state.presentationBindings.canonicalMaterials[1].sourcePbrUvRows[row][3],
+    ),
+    [0, 0, 0, 7, 0],
+  );
   assert.equal(state.canonicalDocument?.generation, 3);
   assert.equal(state.canonicalDocument?.journalEntries, 3);
   assert.equal(state.canonicalDocument?.restoredName, state.canonicalDocument?.replayedName);

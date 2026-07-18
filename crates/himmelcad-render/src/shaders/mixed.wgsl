@@ -86,6 +86,10 @@ struct VertexOutput {
     @location(8) normal: vec3<f32>,
     @location(9) source_render_position: vec3<f32>,
     @location(10) stroke_half_width: f32,
+    @location(11) normal_tex_coord: vec2<f32>,
+    @location(12) metallic_roughness_tex_coord: vec2<f32>,
+    @location(13) emissive_tex_coord: vec2<f32>,
+    @location(14) occlusion_tex_coord: vec2<f32>,
 }
 
 struct MeshVertexInput {
@@ -94,18 +98,18 @@ struct MeshVertexInput {
     @location(2) proxy_slot: u32,
     @location(3) primitive_slot: u32,
     @location(4) normal: vec4<f32>,
-    @location(5) tex_coord: vec2<f32>,
+    @location(5) tex_coord_0_1: vec4<f32>,
+    @location(6) tex_coord_2_3: vec4<f32>,
+    @location(7) tex_coord_4_5: vec4<f32>,
+    @location(8) tex_coord_6_7: vec4<f32>,
 }
 
 struct MeshInstanceInput {
-    @location(6) row_0: vec4<f32>,
-    @location(7) row_1: vec4<f32>,
-    @location(8) row_2: vec4<f32>,
-    @location(9) proxy_slot: u32,
-    @location(10) primitive_offset: u32,
-    @location(11) normal_row_0: vec4<f32>,
-    @location(12) normal_row_1: vec4<f32>,
-    @location(13) normal_row_2: vec4<f32>,
+    @location(9) row_0: vec4<f32>,
+    @location(10) row_1: vec4<f32>,
+    @location(11) row_2: vec4<f32>,
+    @location(12) proxy_slot: u32,
+    @location(13) primitive_offset: u32,
 }
 
 struct PointInstanceInput {
@@ -224,13 +228,45 @@ fn styled_color(source: vec4<f32>, height: f32, shape_kind: u32) -> vec4<f32> {
     return color;
 }
 
-fn source_texture_coordinate(uv: vec2<f32>, channel: u32) -> vec2<f32> {
-    let homogeneous = vec3<f32>(uv, 1.0);
+fn mesh_texture_coordinate(input: MeshVertexInput, uv_set: u32) -> vec2<f32> {
+    switch uv_set {
+        case 1u: { return input.tex_coord_0_1.zw; }
+        case 2u: { return input.tex_coord_2_3.xy; }
+        case 3u: { return input.tex_coord_2_3.zw; }
+        case 4u: { return input.tex_coord_4_5.xy; }
+        case 5u: { return input.tex_coord_4_5.zw; }
+        case 6u: { return input.tex_coord_6_7.xy; }
+        case 7u: { return input.tex_coord_6_7.zw; }
+        default: { return input.tex_coord_0_1.xy; }
+    }
+}
+
+fn mesh_channel_texture_coordinate(input: MeshVertexInput, channel: u32) -> vec2<f32> {
     let first_row = min(channel, 4u) * 2u;
+    let uv_set = u32(round(material.source_uv_rows[first_row].w));
+    let uv = mesh_texture_coordinate(input, uv_set);
+    let homogeneous = vec3<f32>(uv, 1.0);
     return vec2<f32>(
         dot(material.source_uv_rows[first_row].xyz, homogeneous),
         dot(material.source_uv_rows[first_row + 1u].xyz, homogeneous),
     );
+}
+
+fn instance_normal_vector(instance: MeshInstanceInput, normal: vec3<f32>) -> vec3<f32> {
+    let row_0 = instance.row_0.xyz;
+    let row_1 = instance.row_1.xyz;
+    let row_2 = instance.row_2.xyz;
+    let cofactor_0 = cross(row_1, row_2);
+    let determinant = dot(row_0, cofactor_0);
+    if (abs(determinant) <= 1e-20) {
+        return normal;
+    }
+    let cofactor_normal = vec3<f32>(
+        dot(cofactor_0, normal),
+        dot(cross(row_2, row_0), normal),
+        dot(cross(row_0, row_1), normal),
+    );
+    return cofactor_normal * select(-1.0, 1.0, determinant >= 0.0);
 }
 
 fn categorical_point_color(value: u32) -> vec3<f32> {
@@ -536,6 +572,10 @@ fn vertex_main(input: VertexInput) -> VertexOutput {
     output.proxy_slot = input.proxy_slot;
     output.primitive_slot = input.primitive_slot;
     output.tex_coord = vec2<f32>(0.0, 0.0);
+    output.normal_tex_coord = vec2<f32>(0.0, 0.0);
+    output.metallic_roughness_tex_coord = vec2<f32>(0.0, 0.0);
+    output.emissive_tex_coord = vec2<f32>(0.0, 0.0);
+    output.occlusion_tex_coord = vec2<f32>(0.0, 0.0);
     output.shape_coord = vec2<f32>(0.0, 0.0);
     output.shape_kind = 0u;
     output.style_position = source_style_position;
@@ -556,7 +596,11 @@ fn mesh_vertex_main(input: MeshVertexInput) -> VertexOutput {
     output.color = input.color;
     output.proxy_slot = input.proxy_slot;
     output.primitive_slot = input.primitive_slot;
-    output.tex_coord = input.tex_coord;
+    output.tex_coord = mesh_channel_texture_coordinate(input, 0u);
+    output.normal_tex_coord = mesh_channel_texture_coordinate(input, 1u);
+    output.metallic_roughness_tex_coord = mesh_channel_texture_coordinate(input, 2u);
+    output.emissive_tex_coord = mesh_channel_texture_coordinate(input, 3u);
+    output.occlusion_tex_coord = mesh_channel_texture_coordinate(input, 4u);
     output.shape_coord = vec2<f32>(0.0, 0.0);
     output.shape_kind = 0u;
     output.style_position = source_style_position;
@@ -586,16 +630,15 @@ fn instanced_mesh_vertex_main(
     output.color = input.color;
     output.proxy_slot = instance.proxy_slot;
     output.primitive_slot = input.primitive_slot + instance.primitive_offset;
-    output.tex_coord = input.tex_coord;
+    output.tex_coord = mesh_channel_texture_coordinate(input, 0u);
+    output.normal_tex_coord = mesh_channel_texture_coordinate(input, 1u);
+    output.metallic_roughness_tex_coord = mesh_channel_texture_coordinate(input, 2u);
+    output.emissive_tex_coord = mesh_channel_texture_coordinate(input, 3u);
+    output.occlusion_tex_coord = mesh_channel_texture_coordinate(input, 4u);
     output.shape_coord = vec2<f32>(0.0, 0.0);
     output.shape_kind = 0u;
     output.style_position = source_style_position;
-    let homogeneous_normal = vec4<f32>(input.normal.xyz, 0.0);
-    output.normal = source_normal_vector(vec3<f32>(
-        dot(instance.normal_row_0, homogeneous_normal),
-        dot(instance.normal_row_1, homogeneous_normal),
-        dot(instance.normal_row_2, homogeneous_normal),
-    ));
+    output.normal = source_normal_vector(instance_normal_vector(instance, input.normal.xyz));
     output.stroke_half_width = 0.0;
     return output;
 }
@@ -613,6 +656,10 @@ fn native_point_vertex_main(input: PointInstanceInput) -> VertexOutput {
     output.proxy_slot = input.proxy_slot;
     output.primitive_slot = input.primitive_slot;
     output.tex_coord = vec2<f32>(0.0, 0.0);
+    output.normal_tex_coord = vec2<f32>(0.0, 0.0);
+    output.metallic_roughness_tex_coord = vec2<f32>(0.0, 0.0);
+    output.emissive_tex_coord = vec2<f32>(0.0, 0.0);
+    output.occlusion_tex_coord = vec2<f32>(0.0, 0.0);
     output.shape_coord = vec2<f32>(0.0, 0.0);
     output.shape_kind = 0u;
     output.style_position = source_style_position;
@@ -637,6 +684,10 @@ fn point_vertex_main(input: PointInstanceInput, @builtin(vertex_index) vertex_in
     output.proxy_slot = input.proxy_slot;
     output.primitive_slot = input.primitive_slot;
     output.tex_coord = vec2<f32>(0.0, 0.0);
+    output.normal_tex_coord = vec2<f32>(0.0, 0.0);
+    output.metallic_roughness_tex_coord = vec2<f32>(0.0, 0.0);
+    output.emissive_tex_coord = vec2<f32>(0.0, 0.0);
+    output.occlusion_tex_coord = vec2<f32>(0.0, 0.0);
     output.shape_coord = corner;
     output.shape_kind = 1u;
     output.style_position = source_style_position;
@@ -772,6 +823,10 @@ fn line_vertex_main(input: LineInstanceInput, @builtin(vertex_index) vertex_inde
         input.path_distance.x + along * input.path_distance.y,
         f32(input.path_meta.x),
     );
+    output.normal_tex_coord = vec2<f32>(0.0, 0.0);
+    output.metallic_roughness_tex_coord = vec2<f32>(0.0, 0.0);
+    output.emissive_tex_coord = vec2<f32>(0.0, 0.0);
+    output.occlusion_tex_coord = vec2<f32>(0.0, 0.0);
     output.shape_coord = corner;
     output.shape_kind = shape_kind;
     output.style_position = mix(source_start, source_end, along);
@@ -845,6 +900,10 @@ fn splat_vertex_main(input: SplatInstanceInput, @builtin(vertex_index) vertex_in
     output.proxy_slot = input.proxy_slot;
     output.primitive_slot = input.primitive_slot;
     output.tex_coord = vec2<f32>(0.0, 0.0);
+    output.normal_tex_coord = vec2<f32>(0.0, 0.0);
+    output.metallic_roughness_tex_coord = vec2<f32>(0.0, 0.0);
+    output.emissive_tex_coord = vec2<f32>(0.0, 0.0);
+    output.occlusion_tex_coord = vec2<f32>(0.0, 0.0);
     output.shape_coord = corner;
     output.shape_kind = 2u;
     output.style_position = source_style_position;
@@ -868,6 +927,10 @@ fn screen_text_vertex_main(input: ScreenTextVertexInput) -> VertexOutput {
     output.proxy_slot = input.proxy_slot;
     output.primitive_slot = input.primitive_slot;
     output.tex_coord = input.tex_coord;
+    output.normal_tex_coord = vec2<f32>(0.0, 0.0);
+    output.metallic_roughness_tex_coord = vec2<f32>(0.0, 0.0);
+    output.emissive_tex_coord = vec2<f32>(0.0, 0.0);
+    output.occlusion_tex_coord = vec2<f32>(0.0, 0.0);
     output.shape_coord = vec2<f32>(0.0, 0.0);
     output.shape_kind = 0u;
     output.style_position = source_style_position;
@@ -959,7 +1022,7 @@ fn geometry_schlick_ggx(n_dot_direction: f32, roughness: f32) -> f32 {
 
 fn pbr_color(input: VertexOutput, base: vec4<f32>) -> vec4<f32> {
     let texture_flags = material.source_texture_flags.x;
-    let normal_uv = source_texture_coordinate(input.tex_coord, 1u);
+    let normal_uv = input.normal_tex_coord;
     var normal = presentation_normal(input.normal);
     if ((texture_flags & 1u) != 0u) {
         normal = tangent_space_normal(normal, input.render_position, normal_uv);
@@ -970,7 +1033,7 @@ fn pbr_color(input: VertexOutput, base: vec4<f32>) -> vec4<f32> {
         let sampled = textureSample(
             metallic_roughness_texture,
             metallic_roughness_sampler,
-            source_texture_coordinate(input.tex_coord, 2u),
+            input.metallic_roughness_tex_coord,
         );
         roughness *= sampled.g;
         metallic *= sampled.b;
@@ -982,7 +1045,7 @@ fn pbr_color(input: VertexOutput, base: vec4<f32>) -> vec4<f32> {
         emissive *= textureSample(
             emissive_texture,
             emissive_sampler,
-            source_texture_coordinate(input.tex_coord, 3u),
+            input.emissive_tex_coord,
         ).rgb;
     }
     var occlusion = 1.0;
@@ -990,7 +1053,7 @@ fn pbr_color(input: VertexOutput, base: vec4<f32>) -> vec4<f32> {
         occlusion = textureSample(
             occlusion_texture,
             occlusion_sampler,
-            source_texture_coordinate(input.tex_coord, 4u),
+            input.occlusion_tex_coord,
         ).r;
     }
 
@@ -1030,9 +1093,8 @@ fn resolved_fragment_color(input: VertexOutput, stroke_world_per_pixel: f32) -> 
     if (input.shape_kind == 1u && dot(input.shape_coord, input.shape_coord) > 1.0) {
         discard;
     }
-    let base_uv = source_texture_coordinate(input.tex_coord, 0u);
     var color = styled_color(input.color, input.style_position.z, input.shape_kind)
-        * textureSample(base_color_texture, base_color_sampler, base_uv);
+        * textureSample(base_color_texture, base_color_sampler, input.tex_coord);
     if (material.source_pbr_values.z > 0.5 && material.color_mode == 0u) {
         color = pbr_color(input, color);
     }
@@ -1108,7 +1170,7 @@ fn pick_fragment(input: VertexOutput) -> PickOutput {
         * textureSample(
             base_color_texture,
             base_color_sampler,
-            source_texture_coordinate(input.tex_coord, 0u),
+            input.tex_coord,
         );
     if ((material.alpha_mode == 1u && pick_color.a < material.alpha_cutoff)
         || pick_color.a <= 0.0) {

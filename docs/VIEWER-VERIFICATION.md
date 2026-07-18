@@ -1019,6 +1019,33 @@ browser backends verify the exact f64 conic midpoint in the 30-entity/38-proxy
 scene. Forced WebGL2 on the physical Intel HD Graphics 630 reports 2.9 ms
 maximum CPU submit; the WebGPU CPU adapter correctness run reports 1.3 ms.
 
+### V2 authored UV-set checkpoint
+
+Canonical inline meshes now retain up to eight ordered authored UV sets, which
+matches the existing per-channel material index range `0..=7`. Validation
+requires every present set to be finite and vertex-complete and rejects an
+empty set list, cardinality drift and a ninth set. The generated TypeScript
+binding carries the same nested set structure. Material resolution rejects a
+channel only when its selected set is not actually declared by that mesh.
+
+The shared vertex layout packs UV0 through UV7 into four `vec4` attributes.
+Each of the five PBR channels selects its authored set and applies its affine
+transform in the common vertex shader, so source material changes still do not
+rebuild geometry. Instanced meshes reconstruct the exact inverse-transposed
+normal direction from their affine rows in the shader; this reduces the
+instance layout from 112 to 56 bytes and keeps all vertex locations within the
+WebGL2 minimum while retaining the full canonical UV range on both backends.
+
+The complete Render-Core suite passes 317/317, viewer-WASM passes 7/7 and all
+71 viewer-package tests pass. Generated-binding drift, the browser TypeScript
+contract and the WASM target check are green. Both explicit browser backends
+select authored UV7 for the emissive channel in the 30-entity/38-proxy scene.
+Forced WebGL2 on the physical Intel HD Graphics 630 reports 3.3 ms maximum CPU
+submit. The repeated WebGPU CPU-adapter correctness run passes under concurrent
+PhotoLab/COLMAP CPU saturation and reports 4.0 ms; this contended measurement is
+evidence of correctness only and does not replace the established performance
+gate.
+
 ## Candidate external data
 
 - USGS 3DEP public-domain EPT for billion-point streaming.

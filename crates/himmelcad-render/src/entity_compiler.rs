@@ -1201,36 +1201,49 @@ fn mesh_part(
     let generated_normals = normals
         .is_none()
         .then(|| generated_vertex_normals(&world_positions, indices));
+    let texture_coordinate_sets = texture_coordinates.as_deref().unwrap_or(&[]);
     let vertices = world_positions
         .iter()
         .enumerate()
-        .map(|(index, position)| GpuMeshVertexInput {
-            position: options.floating_origin.world_to_render(*position),
-            normal: normals
-                .as_ref()
-                .and_then(|normals| normals.get(index))
-                .map(|normal| {
-                    let transformed = normal_matrix * model_vec(*normal);
-                    let normalized = transformed.normalize_or_zero();
-                    [
-                        normalized.x as f32,
-                        normalized.y as f32,
-                        normalized.z as f32,
-                    ]
-                })
-                .or_else(|| {
-                    generated_normals
-                        .as_ref()
-                        .and_then(|generated| generated.get(index).copied())
-                })
-                .unwrap_or([0.0, 0.0, 1.0]),
-            tex_coord: texture_coordinates
-                .as_ref()
-                .and_then(|coordinates| coordinates.get(index))
-                .map_or([0.0; 2], |coordinates| {
-                    [coordinates[0] as f32, coordinates[1] as f32]
-                }),
-            color: [1.0; 4],
+        .map(|(index, position)| {
+            let mut additional_tex_coords = [[0.0; 2]; 7];
+            for (target, coordinates) in additional_tex_coords
+                .iter_mut()
+                .zip(texture_coordinate_sets.iter().skip(1))
+            {
+                if let Some(coordinates) = coordinates.get(index) {
+                    *target = [coordinates[0] as f32, coordinates[1] as f32];
+                }
+            }
+            GpuMeshVertexInput {
+                position: options.floating_origin.world_to_render(*position),
+                normal: normals
+                    .as_ref()
+                    .and_then(|normals| normals.get(index))
+                    .map(|normal| {
+                        let transformed = normal_matrix * model_vec(*normal);
+                        let normalized = transformed.normalize_or_zero();
+                        [
+                            normalized.x as f32,
+                            normalized.y as f32,
+                            normalized.z as f32,
+                        ]
+                    })
+                    .or_else(|| {
+                        generated_normals
+                            .as_ref()
+                            .and_then(|generated| generated.get(index).copied())
+                    })
+                    .unwrap_or([0.0, 0.0, 1.0]),
+                tex_coord: texture_coordinate_sets
+                    .first()
+                    .and_then(|coordinates| coordinates.get(index))
+                    .map_or([0.0; 2], |coordinates| {
+                        [coordinates[0] as f32, coordinates[1] as f32]
+                    }),
+                additional_tex_coords,
+                color: [1.0; 4],
+            }
         })
         .collect::<Vec<_>>();
     let material_slots = mesh
@@ -1253,7 +1266,9 @@ fn mesh_part(
             indices,
             options.style.opacity < 1.0,
         )?
-        .with_declared_texture_coordinates(texture_coordinates.is_some())]
+        .with_declared_texture_coordinate_sets(
+            u8::try_from(texture_coordinate_sets.len()).expect("validated UV-set count fits u8"),
+        )]
     } else {
         compact_material_mesh_batches(
             device,
@@ -1263,7 +1278,7 @@ fn mesh_part(
             &vertices,
             indices,
             &material_slots,
-            texture_coordinates.is_some(),
+            u8::try_from(texture_coordinate_sets.len()).expect("validated UV-set count fits u8"),
             options.style.opacity < 1.0,
         )?
     };
@@ -1302,7 +1317,7 @@ fn compact_material_mesh_batches(
     vertices: &[GpuMeshVertexInput],
     indices: &[u32],
     material_slots: &[u32],
-    declared_texture_coordinates: bool,
+    declared_texture_coordinate_sets: u8,
     transparent: bool,
 ) -> Result<Vec<GpuDrawBatch>, EntityCompilationError> {
     let mut groups = BTreeMap::<u32, (Vec<u32>, Vec<u32>)>::new();
@@ -1347,7 +1362,7 @@ fn compact_material_mesh_batches(
                 &primitive_ids,
                 transparent,
             )?
-            .with_declared_texture_coordinates(declared_texture_coordinates)
+            .with_declared_texture_coordinate_sets(declared_texture_coordinate_sets)
             .with_source_material_slot(material_slot),
         );
     }

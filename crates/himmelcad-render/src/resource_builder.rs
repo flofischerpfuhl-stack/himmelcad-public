@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
-use glam::{DMat3, DMat4};
+use glam::DMat4;
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -248,6 +248,9 @@ pub fn gpu_indexed_geometry_identity(glb: &DecodedGlb) -> GpuModelResourceIdenti
                 hash.update(value.to_bits().to_le_bytes());
             }
             for value in vertex.tex_coord {
+                hash.update(value.to_bits().to_le_bytes());
+            }
+            for value in vertex.additional_tex_coords.into_iter().flatten() {
                 hash.update(value.to_bits().to_le_bytes());
             }
             for value in vertex.color {
@@ -602,30 +605,11 @@ fn build_three_d_tiles_node(
                                 rows[row][column] = f64_to_f32_instance(source_rows[row][column])?;
                             }
                         }
-                        let linear = DMat3::from_mat4(transform);
-                        let normal = if linear.determinant().abs() > f64::MIN_POSITIVE {
-                            linear.inverse().transpose()
-                        } else {
-                            DMat3::IDENTITY
-                        };
-                        let source_normal_rows = normal.transpose().to_cols_array_2d();
-                        let mut normal_rows = [[0.0_f32; 4]; 3];
-                        for row in 0..3 {
-                            for column in 0..3 {
-                                normal_rows[row][column] =
-                                    f64_to_f32_instance(source_normal_rows[row][column])?;
-                            }
-                        }
                         let primitive_offset = local_index
                             .checked_mul(total_triangles)
                             .and_then(|value| u32::try_from(value).ok())
                             .ok_or(GpuFrameError::TooManyVertices)?;
-                        Ok(GpuMeshInstanceInput::new(
-                            rows,
-                            normal_rows,
-                            slot,
-                            primitive_offset,
-                        ))
+                        Ok(GpuMeshInstanceInput::new(rows, slot, primitive_offset))
                     })
                     .collect::<Result<Vec<_>, ResourceBuildError>>()?;
                 let identity = gpu_indexed_geometry_identity(&model.glb);
@@ -1230,6 +1214,7 @@ fn mesh_vertices(primitive: &DecodedMeshPrimitive) -> Vec<GpuMeshVertexInput> {
             position: vertex.position,
             normal: vertex.normal,
             tex_coord: vertex.tex_coord,
+            additional_tex_coords: [[0.0; 2]; 7],
             color: std::array::from_fn(|channel| {
                 vertex.color[channel] * primitive.material.base_color_factor[channel]
             }),

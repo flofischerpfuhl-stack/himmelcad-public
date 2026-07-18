@@ -616,9 +616,13 @@ fn validate_mesh(mesh: &TriangleMeshGeometry) -> Result<(), EntityValidationErro
                 || normals
                     .as_ref()
                     .is_some_and(|normals| normals.len() != positions.len())
-                || texture_coordinates
-                    .as_ref()
-                    .is_some_and(|coordinates| coordinates.len() != positions.len())
+                || texture_coordinates.as_ref().is_some_and(|sets| {
+                    sets.is_empty()
+                        || sets.len() > 8
+                        || sets
+                            .iter()
+                            .any(|coordinates| coordinates.len() != positions.len())
+                })
                 || mesh.triangle_material_slots.as_ref().is_some_and(|slots| {
                     slots.len() != indices.len() / 3 || mesh.materials.is_none()
                 })
@@ -632,8 +636,11 @@ fn validate_mesh(mesh: &TriangleMeshGeometry) -> Result<(), EntityValidationErro
                 normals
                     .iter()
                     .any(|normal| validate_direction(*normal).is_err())
-            }) || texture_coordinates.as_ref().is_some_and(|coordinates| {
-                coordinates.iter().flatten().any(|value| !value.is_finite())
+            }) || texture_coordinates.as_ref().is_some_and(|sets| {
+                sets.iter()
+                    .flatten()
+                    .flatten()
+                    .any(|value| !value.is_finite())
             }) {
                 return Err(EntityValidationError::InvalidMesh);
             }
@@ -1951,6 +1958,59 @@ mod tests {
             validate_geometry_object(&GeometryObject::Surface3d {
                 mesh: Box::new(missing_table),
             }),
+            Err(EntityValidationError::InvalidMesh)
+        );
+    }
+
+    #[test]
+    fn inline_mesh_accepts_eight_complete_finite_uv_sets_and_rejects_drift() {
+        let geometry = |texture_coordinates| GeometryObject::Surface3d {
+            mesh: Box::new(TriangleMeshGeometry {
+                storage: TriangleMeshStorage::Inline {
+                    positions: vec![
+                        Vector3 {
+                            x: 0.0,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        Vector3 {
+                            x: 1.0,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                        Vector3 {
+                            x: 0.0,
+                            y: 1.0,
+                            z: 0.0,
+                        },
+                    ],
+                    indices: vec![0, 1, 2],
+                    normals: None,
+                    texture_coordinates,
+                },
+                closed_manifold: false,
+                triangle_material_slots: None,
+                materials: None,
+            }),
+        };
+        let uv0 = vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]];
+        let uv1 = vec![[0.1, 0.2], [0.9, 0.2], [0.1, 0.8]];
+        let eight_sets = (0..8)
+            .map(|index| if index == 1 { uv1.clone() } else { uv0.clone() })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            validate_geometry_object(&geometry(Some(eight_sets.clone()))),
+            Ok(())
+        );
+        assert_eq!(
+            validate_geometry_object(&geometry(Some(vec![uv0.clone(), vec![[0.0, 0.0]; 2]]))),
+            Err(EntityValidationError::InvalidMesh)
+        );
+        assert_eq!(
+            validate_geometry_object(&geometry(Some(
+                eight_sets.into_iter().chain([uv1]).collect()
+            ))),
             Err(EntityValidationError::InvalidMesh)
         );
     }

@@ -195,6 +195,7 @@ pub fn build_cad_area_batches(
                     position: floating_origin.world_to_render(*position),
                     normal: [0.0, 0.0, 1.0],
                     tex_coord: [0.0; 2],
+                    additional_tex_coords: [[0.0; 2]; 7],
                     color: fill_color,
                 })
                 .collect::<Vec<_>>();

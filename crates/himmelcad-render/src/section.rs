@@ -871,6 +871,7 @@ pub fn build_section_region_batch(
             position: options.floating_origin.world_to_render(*position),
             normal,
             tex_coord: [0.0; 2],
+            additional_tex_coords: [[0.0; 2]; 7],
             color: options.linear_color,
         })
         .collect::<Vec<_>>();
@@ -1238,8 +1239,8 @@ mod tests {
         CanonicalResourceRef, MATERIAL_TABLE_RESOURCE_SCHEMA_ID,
     };
     use himmelcad_core::entity_model::{
-        CsgNode, GeometryObject, SolidGeometry, SolidPrimitive, Transform3d,
-        TriangleMeshGeometry, TriangleMeshStorage, Vector3,
+        CsgNode, GeometryObject, SolidGeometry, SolidPrimitive, Transform3d, TriangleMeshGeometry,
+        TriangleMeshStorage, Vector3,
     };
     use himmelcad_core::hash::ObjectHash;
     use std::collections::BTreeMap;
