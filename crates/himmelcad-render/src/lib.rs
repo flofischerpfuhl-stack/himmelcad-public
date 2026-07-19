@@ -135,9 +135,9 @@ pub use precision::{
     CameraProjection, FloatingOrigin, FloatingOriginError, OriginShift, TilePlacement, WorldCamera,
 };
 pub use providers::{
-    decode_elevation_raster, decode_encoded_elevation_raster, decode_gaussian_splat_ply,
-    decode_glb, decode_glb_intrinsic, decode_gltf_intrinsic_with_resources,
-    decode_gltf_with_resources, decode_three_d_tiles_content,
+    decode_elevation_raster, decode_encoded_elevation_raster, decode_gaussian_splat_interleaved_v1,
+    decode_gaussian_splat_ply, decode_glb, decode_glb_intrinsic,
+    decode_gltf_intrinsic_with_resources, decode_gltf_with_resources, decode_three_d_tiles_content,
     decode_three_d_tiles_content_intrinsic, decode_three_d_tiles_content_intrinsic_with_resources,
     decode_three_d_tiles_content_with_resources, inspect_gltf_dependencies,
     potree_point_world_position, refine_decoded_potree_point_pick, refine_potree_point_pick,

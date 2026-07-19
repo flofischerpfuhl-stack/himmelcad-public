@@ -3,7 +3,8 @@
 #![forbid(unsafe_code)]
 
 use himmelcad_render::{
-    decode_artifact_input_hash, decode_encoded_elevation_raster, decode_gaussian_splat_ply,
+    decode_artifact_input_hash, decode_encoded_elevation_raster,
+    decode_gaussian_splat_interleaved_v1, decode_gaussian_splat_ply,
     decode_three_d_tiles_content_intrinsic_with_resources, encode_decode_artifact,
     AssetBundleLimits, BoundingVolume, DecodedStreamingPayload, EncodedElevationRasterInput,
     PotreePointLayout, PreparedRasterTileContract, ResolvedAssetEntry, SharedAssetBlobCache,
@@ -45,6 +46,15 @@ struct PotreeMetadata {
 #[serde(rename_all = "camelCase")]
 struct GaussianMetadata {
     maximum_splats: usize,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GaussianDecodeParameters {
+    #[serde(default)]
+    encoding: Option<String>,
+    #[serde(default)]
+    origin: Option<[f64; 3]>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,9 +149,25 @@ pub fn decode_streaming_payload(
         }
         "gaussianSplats" => {
             let metadata: GaussianMetadata = parse(metadata_json)?;
-            DecodedStreamingPayload::GaussianSplats(
-                decode_gaussian_splat_ply(primary, metadata.maximum_splats).map_err(js_error)?,
-            )
+            let parameters = if decode_parameters_json.is_empty() {
+                GaussianDecodeParameters::default()
+            } else {
+                parse(decode_parameters_json)?
+            };
+            let decoded = if parameters.encoding.as_deref() == Some("hcsplatInterleavedV1") {
+                let [x, y, z] = parameters
+                    .origin
+                    .ok_or_else(|| error("HCSP v1 decode requires a tile origin"))?;
+                decode_gaussian_splat_interleaved_v1(
+                    primary,
+                    metadata.maximum_splats,
+                    himmelcad_render::WorldVec3 { x, y, z },
+                )
+                .map_err(js_error)?
+            } else {
+                decode_gaussian_splat_ply(primary, metadata.maximum_splats).map_err(js_error)?
+            };
+            DecodedStreamingPayload::GaussianSplats(decoded)
         }
         "raster" => {
             let metadata: RasterMetadata = parse(metadata_json)?;

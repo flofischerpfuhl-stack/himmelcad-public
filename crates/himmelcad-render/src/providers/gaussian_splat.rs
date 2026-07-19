@@ -10,6 +10,7 @@ use crate::{WorldAabb, WorldVec3};
 
 const HEADER_LIMIT: usize = 1024 * 1024;
 const SH_C0: f64 = 0.282_094_791_773_878_14;
+const INTERLEAVED_V1_STRIDE: usize = 44;
 
 /// One decoded anisotropic Gaussian in tile-local coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -198,6 +199,113 @@ pub fn decode_gaussian_splat_ply(
         source_positions: source_positions.into(),
         maximum_scale,
     })
+}
+
+/// Decodes the compact tiled HCSP v1 payload produced by PhotoLab.
+///
+/// Layout per splat is local XYZ f32, linear scale XYZ f32, normalized XYZW
+/// f32 and RGBA8. The manifest-authored f64 origin restores authoritative
+/// source positions without expanding the on-disk tile to PLY.
+pub fn decode_gaussian_splat_interleaved_v1(
+    bytes: &[u8],
+    maximum_splats: usize,
+    origin: WorldVec3,
+) -> Result<DecodedGaussianSplats, GaussianSplatDecodeError> {
+    if bytes.is_empty()
+        || bytes.len() > crate::decode_limits::MAX_ENCODED_CONTENT_BYTES
+        || bytes.len() % INTERLEAVED_V1_STRIDE != 0
+    {
+        return Err(GaussianSplatDecodeError::InvalidVertexCount);
+    }
+    let count = bytes.len() / INTERLEAVED_V1_STRIDE;
+    if count == 0 || count > maximum_splats || count > u32::MAX as usize {
+        return Err(GaussianSplatDecodeError::InvalidVertexCount);
+    }
+    let mut splats = Vec::with_capacity(count);
+    let mut source_positions = Vec::with_capacity(count);
+    let mut minimum = [f64::INFINITY; 3];
+    let mut maximum = [f64::NEG_INFINITY; 3];
+    let mut maximum_scale = 0.0_f32;
+    for record in bytes.chunks_exact(INTERLEAVED_V1_STRIDE) {
+        let position = [
+            read_f32(record, 0),
+            read_f32(record, 4),
+            read_f32(record, 8),
+        ];
+        let scale = [
+            read_f32(record, 12),
+            read_f32(record, 16),
+            read_f32(record, 20),
+        ];
+        let mut rotation = [
+            read_f32(record, 24),
+            read_f32(record, 28),
+            read_f32(record, 32),
+            read_f32(record, 36),
+        ];
+        if position.iter().any(|value| !value.is_finite())
+            || scale
+                .iter()
+                .any(|value| !value.is_finite() || *value <= 0.0)
+            || rotation.iter().any(|value| !value.is_finite())
+        {
+            return Err(GaussianSplatDecodeError::InvalidValue);
+        }
+        let rotation_length = rotation
+            .iter()
+            .map(|value| value * value)
+            .sum::<f32>()
+            .sqrt();
+        if !rotation_length.is_finite() || rotation_length <= 1.0e-8 {
+            return Err(GaussianSplatDecodeError::InvalidValue);
+        }
+        for value in &mut rotation {
+            *value /= rotation_length;
+        }
+        let source = WorldVec3 {
+            x: origin.x + f64::from(position[0]),
+            y: origin.y + f64::from(position[1]),
+            z: origin.z + f64::from(position[2]),
+        };
+        for (axis, coordinate) in [source.x, source.y, source.z].into_iter().enumerate() {
+            minimum[axis] = minimum[axis].min(coordinate);
+            maximum[axis] = maximum[axis].max(coordinate);
+        }
+        maximum_scale = maximum_scale.max(scale.into_iter().fold(0.0, f32::max));
+        source_positions.push(source);
+        splats.push(DecodedGaussianSplat {
+            position,
+            scale,
+            rotation,
+            color: [record[40], record[41], record[42], record[43]],
+        });
+    }
+    Ok(DecodedGaussianSplats {
+        origin,
+        bounds: WorldAabb {
+            min: WorldVec3 {
+                x: minimum[0],
+                y: minimum[1],
+                z: minimum[2],
+            },
+            max: WorldVec3 {
+                x: maximum[0],
+                y: maximum[1],
+                z: maximum[2],
+            },
+        },
+        splats,
+        source_positions: source_positions.into(),
+        maximum_scale,
+    })
+}
+
+fn read_f32(bytes: &[u8], offset: usize) -> f32 {
+    f32::from_le_bytes(
+        bytes[offset..offset + 4]
+            .try_into()
+            .expect("HCSP record contains each requested f32"),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -474,7 +582,47 @@ fn color(row: &[f64], properties: &[Property]) -> [u8; 4] {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_gaussian_splat_ply, GaussianSplatDecodeError};
+    use super::{
+        decode_gaussian_splat_interleaved_v1, decode_gaussian_splat_ply, GaussianSplatDecodeError,
+    };
+    use crate::WorldVec3;
+
+    #[test]
+    fn decodes_compact_photolab_tile_without_expanding_to_ply() {
+        let mut bytes = [0_u8; 44];
+        for (offset, value) in [
+            (0, 1.25_f32),
+            (4, -2.5),
+            (8, 3.75),
+            (12, 0.1),
+            (16, 0.2),
+            (20, 0.3),
+            (24, 0.0),
+            (28, 0.0),
+            (32, 0.0),
+            (36, 2.0),
+        ] {
+            bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        bytes[40..44].copy_from_slice(&[10, 20, 30, 200]);
+        let decoded = decode_gaussian_splat_interleaved_v1(
+            &bytes,
+            1,
+            WorldVec3 {
+                x: 4_000_000.0,
+                y: 5_000_000.0,
+                z: 600.0,
+            },
+        )
+        .expect("decode compact tile");
+
+        assert_eq!(decoded.splats[0].position, [1.25, -2.5, 3.75]);
+        assert_eq!(decoded.splats[0].rotation, [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(decoded.splats[0].color, [10, 20, 30, 200]);
+        assert_eq!(decoded.source_positions[0].x, 4_000_001.25);
+        assert_eq!(decoded.source_positions[0].y, 4_999_997.5);
+        assert_eq!(decoded.source_positions[0].z, 603.75);
+    }
 
     #[test]
     fn decodes_ascii_3dgs_and_preserves_f64_origin() {

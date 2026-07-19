@@ -401,6 +401,11 @@ pub struct WasmViewer {
     implicit_tilesets: BTreeMap<String, ImplicitThreeDTilesHierarchySource>,
     potree_datasets: BTreeMap<String, PotreeHierarchySource>,
     prepared_datasets: BTreeMap<String, PreparedHierarchySource>,
+    /// Last traversal-complete render frontier per primary dataset.
+    ///
+    /// A bounded traversal is still useful for request admission, but its
+    /// partial render list must never replace a previously complete frame.
+    complete_streaming_frontiers: BTreeMap<String, BTreeSet<TileKey>>,
     registered_dataset_contracts: BTreeMap<String, WasmRegisteredDatasetContract>,
     entity_styles: BTreeMap<String, (RenderStyle, f64)>,
     entity_interactions: BTreeMap<String, EntityInteractionState>,
@@ -1376,6 +1381,26 @@ struct WasmStreamingFramePlanResponse<'a> {
 }
 
 #[cfg(target_arch = "wasm32")]
+fn stabilize_primary_streaming_selection(
+    dataset_id: &str,
+    mut selection: TileSelection,
+    complete_frontiers: &mut BTreeMap<String, BTreeSet<TileKey>>,
+) -> TileSelection {
+    if selection.work_limit_reached {
+        if let Some(previous) = complete_frontiers.get(dataset_id) {
+            selection.render.clear();
+            selection.render.extend(previous.iter().cloned());
+        }
+    } else {
+        complete_frontiers.insert(
+            dataset_id.to_owned(),
+            selection.render.iter().cloned().collect(),
+        );
+    }
+    selection
+}
+
+#[cfg(target_arch = "wasm32")]
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WasmHardwarePolicyRequest {
@@ -1497,6 +1522,7 @@ async fn create_wasm_viewer(
         implicit_tilesets: BTreeMap::new(),
         potree_datasets: BTreeMap::new(),
         prepared_datasets: BTreeMap::new(),
+        complete_streaming_frontiers: BTreeMap::new(),
         registered_dataset_contracts: BTreeMap::new(),
         entity_styles: BTreeMap::new(),
         entity_interactions: BTreeMap::new(),
@@ -4432,6 +4458,7 @@ impl WasmViewer {
             self.implicit_tilesets.remove(dataset_id);
             self.potree_datasets.remove(dataset_id);
             self.prepared_datasets.remove(dataset_id);
+            self.complete_streaming_frontiers.remove(dataset_id);
             self.registered_dataset_contracts.remove(dataset_id);
         }
         self.sync_external_asset_cache_cost();
@@ -6790,17 +6817,20 @@ impl WasmViewer {
                 .get(&dataset_id)
                 .copied()
                 .unwrap_or((WorldTransform::IDENTITY, PresentationTransform::IDENTITY));
-            selections.push(
-                TileSelector::select_with_clips_and_transforms(
-                    source,
-                    view,
-                    &clip_volumes,
-                    source_to_project,
-                    presentation,
-                    |key| residency.residency(key),
-                )
-                .map_err(|error| error.to_string())?,
-            );
+            let selection = TileSelector::select_with_clips_and_transforms(
+                source,
+                view,
+                &clip_volumes,
+                source_to_project,
+                presentation,
+                |key| residency.residency(key),
+            )
+            .map_err(|error| error.to_string())?;
+            selections.push(stabilize_primary_streaming_selection(
+                &dataset_id.0,
+                selection,
+                &mut self.complete_streaming_frontiers,
+            ));
             for (preview_id, source_to_project) in
                 preview_transforms.get(&dataset_id).into_iter().flatten()
             {
@@ -6826,17 +6856,20 @@ impl WasmViewer {
                 .get(&dataset_id)
                 .copied()
                 .unwrap_or((WorldTransform::IDENTITY, PresentationTransform::IDENTITY));
-            selections.push(
-                TileSelector::select_with_clips_and_transforms(
-                    source,
-                    view,
-                    &clip_volumes,
-                    source_to_project,
-                    presentation,
-                    |key| residency.residency(key),
-                )
-                .map_err(|error| error.to_string())?,
-            );
+            let selection = TileSelector::select_with_clips_and_transforms(
+                source,
+                view,
+                &clip_volumes,
+                source_to_project,
+                presentation,
+                |key| residency.residency(key),
+            )
+            .map_err(|error| error.to_string())?;
+            selections.push(stabilize_primary_streaming_selection(
+                &dataset_id.0,
+                selection,
+                &mut self.complete_streaming_frontiers,
+            ));
             for (preview_id, source_to_project) in
                 preview_transforms.get(&dataset_id).into_iter().flatten()
             {
@@ -6862,17 +6895,20 @@ impl WasmViewer {
                 .get(&dataset_id)
                 .copied()
                 .unwrap_or((WorldTransform::IDENTITY, PresentationTransform::IDENTITY));
-            selections.push(
-                TileSelector::select_with_clips_and_transforms(
-                    source,
-                    potree_view,
-                    &clip_volumes,
-                    source_to_project,
-                    presentation,
-                    |key| residency.residency(key),
-                )
-                .map_err(|error| error.to_string())?,
-            );
+            let selection = TileSelector::select_with_clips_and_transforms(
+                source,
+                potree_view,
+                &clip_volumes,
+                source_to_project,
+                presentation,
+                |key| residency.residency(key),
+            )
+            .map_err(|error| error.to_string())?;
+            selections.push(stabilize_primary_streaming_selection(
+                &dataset_id.0,
+                selection,
+                &mut self.complete_streaming_frontiers,
+            ));
             for (preview_id, source_to_project) in
                 preview_transforms.get(&dataset_id).into_iter().flatten()
             {
@@ -6898,17 +6934,20 @@ impl WasmViewer {
                 .get(&dataset_id)
                 .copied()
                 .unwrap_or((WorldTransform::IDENTITY, PresentationTransform::IDENTITY));
-            selections.push(
-                TileSelector::select_with_clips_and_transforms(
-                    source,
-                    view,
-                    &clip_volumes,
-                    source_to_project,
-                    presentation,
-                    |key| residency.residency(key),
-                )
-                .map_err(|error| error.to_string())?,
-            );
+            let selection = TileSelector::select_with_clips_and_transforms(
+                source,
+                view,
+                &clip_volumes,
+                source_to_project,
+                presentation,
+                |key| residency.residency(key),
+            )
+            .map_err(|error| error.to_string())?;
+            selections.push(stabilize_primary_streaming_selection(
+                &dataset_id.0,
+                selection,
+                &mut self.complete_streaming_frontiers,
+            ));
             for (preview_id, source_to_project) in
                 preview_transforms.get(&dataset_id).into_iter().flatten()
             {

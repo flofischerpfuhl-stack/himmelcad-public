@@ -607,18 +607,13 @@ export class KernelViewerSession {
       this.advanceCalibration();
       const interactionActive = interacting || this.navigationInteracting;
       const work = kernelStreamingWorkPolicy(this.policyState, interactionActive);
-      // Navigation may temporarily trade hierarchy detail for latency, but a
-      // stationary CAD view must always converge to the device policy's full
-      // detail ceiling. Feeding the reduced runtime value back into idle tile
-      // selection made a slow frame permanently suppress finer Potree nodes,
-      // so waiting at one location could never improve the image again.
-      const streamingDetailScale = interactionActive
-        ? this.qualityState.detailScale
-        : this.policyState.maximumDetailScale;
       const plan = this.viewerState.planStreamingFrame({
         resourceBudget: this.policyState.resources,
         frameBudget: work.frame,
-        detailScale: streamingDetailScale,
+        // Camera motion may reduce *new* I/O/decode/upload work, but it must
+        // never select a coarser render frontier. Otherwise resident ADD tiles
+        // disappear on pointer-down and reappear on settle as visible flicker.
+        detailScale: this.policyState.maximumDetailScale,
         // Two physical pixels is the neutral mesh/raster baseline. Potree uses
         // its own point-diameter coverage target inside the kernel, so point
         // quality no longer forces every other provider to over-refine.

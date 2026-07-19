@@ -82,8 +82,8 @@ pub use geotiff_provider::{
     UNSUPPORTED_NODATA, UNSUPPORTED_SAMPLE_LAYOUT,
 };
 pub use ifc_provider::{
-    IfcCanonicalProvider, IFC4X3_FORMAT_ID, IFC4_FORMAT_ID, IFC_PROVIDER_ID, LOSS_NOT_EXACT_SOURCE,
-    LOSS_UNSUPPORTED_GEOMETRY,
+    IfcCanonicalProvider, IFC2X3_FORMAT_ID, IFC4X3_FORMAT_ID, IFC4_FORMAT_ID, IFC_PROVIDER_ID,
+    LOSS_NOT_EXACT_SOURCE, LOSS_UNSUPPORTED_GEOMETRY,
 };
 pub use landxml::{
     LandXmlCoordinateSystem, LandXmlError, LandXmlImportReport, LandXmlProvider, LandXmlUnits,

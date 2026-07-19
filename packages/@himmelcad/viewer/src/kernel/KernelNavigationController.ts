@@ -75,6 +75,7 @@ export class KernelNavigationController {
   private transitionGeneration = 0;
   private enabled = true;
   private pointerInteracting = false;
+  private pointerMotionTimer: ReturnType<typeof setTimeout> | null = null;
   private wheelInteracting = false;
   private transitionInteracting = false;
   private reportedInteracting = false;
@@ -108,6 +109,8 @@ export class KernelNavigationController {
     this.dragMode = null;
     this.dragPivot = null;
     this.pointerInteracting = false;
+    if (this.pointerMotionTimer !== null) clearTimeout(this.pointerMotionTimer);
+    this.pointerMotionTimer = null;
     this.transitionInteracting = false;
     if (this.wheelInteractionTimer !== null) clearTimeout(this.wheelInteractionTimer);
     this.wheelInteractionTimer = null;
@@ -280,6 +283,7 @@ export class KernelNavigationController {
     this.disposed = true;
     this.transitionGeneration += 1;
     if (this.wheelInteractionTimer !== null) clearTimeout(this.wheelInteractionTimer);
+    if (this.pointerMotionTimer !== null) clearTimeout(this.pointerMotionTimer);
     this.canvas.removeEventListener('pointerdown', this.onPointerDown);
     this.canvas.removeEventListener('pointermove', this.onPointerMove);
     this.canvas.removeEventListener('pointerup', this.onPointerUp);
@@ -304,8 +308,9 @@ export class KernelNavigationController {
     this.lastClientX = event.clientX;
     this.lastClientY = event.clientY;
     this.canvas.setPointerCapture(event.pointerId);
-    this.pointerInteracting = true;
-    this.reportInteraction();
+    // A captured pointer is input state, not camera motion. Streaming work is
+    // throttled only after a non-zero camera change; merely holding a button
+    // must leave the render and request frontiers unchanged.
   };
 
   private readonly onPointerMove = (event: PointerEvent): void => {
@@ -318,6 +323,8 @@ export class KernelNavigationController {
     const deltaY = clamp(event.clientY - this.lastClientY, -480, 480);
     this.lastClientX = event.clientX;
     this.lastClientY = event.clientY;
+    if (deltaX === 0 && deltaY === 0) return;
+    this.reportPointerMotion();
     if (this.dragMode === 'orbit') {
       if (this.dragPivot) this.camera.orbitAround(-deltaX * 0.005, deltaY * 0.005, this.dragPivot);
       else this.camera.orbit(-deltaX * 0.005, deltaY * 0.005);
@@ -337,6 +344,8 @@ export class KernelNavigationController {
     this.dragMode = null;
     this.dragPivot = null;
     this.pointerInteracting = false;
+    if (this.pointerMotionTimer !== null) clearTimeout(this.pointerMotionTimer);
+    this.pointerMotionTimer = null;
     this.reportInteraction();
     // One fresh pick after the camera settles is enough. Rendering a complete
     // ID/depth pass for every drag frame needlessly competes with navigation.
@@ -451,6 +460,18 @@ export class KernelNavigationController {
     if (interacting === this.reportedInteracting) return;
     this.reportedInteracting = interacting;
     this.callbacks.onInteractionChanged?.(interacting);
+  }
+
+  private reportPointerMotion(): void {
+    this.pointerInteracting = true;
+    this.reportInteraction();
+    if (this.pointerMotionTimer !== null) clearTimeout(this.pointerMotionTimer);
+    this.pointerMotionTimer = setTimeout(() => {
+      this.pointerMotionTimer = null;
+      if (this.disposed) return;
+      this.pointerInteracting = false;
+      this.reportInteraction();
+    }, 120);
   }
 
   private physicalPointer(clientX: number, clientY: number): readonly [number, number] {

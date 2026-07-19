@@ -1,4 +1,4 @@
-//! Canonical IFC4/IFC4.3 STEP provider with exact-source authority.
+//! Canonical IFC2X3/IFC4/IFC4.3 STEP provider with exact-source authority.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
@@ -35,6 +35,8 @@ use crate::ifc_step::{StepError, StepIndex, StepRecord, StepValue};
 
 /// Stable canonical IFC provider identity.
 pub const IFC_PROVIDER_ID: &str = "hcad.io.ifc-spf@1";
+/// Exact IFC2X3 STEP format identity.
+pub const IFC2X3_FORMAT_ID: &str = "hcad.format.ifc2x3-spf@1";
 /// Exact IFC4 STEP format identity.
 pub const IFC4_FORMAT_ID: &str = "hcad.format.ifc4-spf@1";
 /// Exact IFC4.3 STEP format identity.
@@ -66,8 +68,13 @@ impl IfcCanonicalProvider {
                 schema_version: CANONICAL_IO_SCHEMA_VERSION,
                 provider_id: IFC_PROVIDER_ID.to_owned(),
                 provider_version: env!("CARGO_PKG_VERSION").to_owned(),
-                display_name: "Industry Foundation Classes (IFC4 / IFC4.3 STEP)".to_owned(),
-                format_ids: vec![IFC4_FORMAT_ID.to_owned(), IFC4X3_FORMAT_ID.to_owned()],
+                display_name: "Industry Foundation Classes (IFC2X3 / IFC4 / IFC4.3 STEP)"
+                    .to_owned(),
+                format_ids: vec![
+                    IFC2X3_FORMAT_ID.to_owned(),
+                    IFC4_FORMAT_ID.to_owned(),
+                    IFC4X3_FORMAT_ID.to_owned(),
+                ],
                 extensions: vec!["ifc".to_owned()],
                 media_types: vec![IFC_MEDIA_TYPE.to_owned()],
                 capabilities: vec![FormatCapability::Import, FormatCapability::Export],
@@ -149,6 +156,8 @@ impl CanonicalImportProvider for IfcCanonicalProvider {
         }
         let format_id = if prefix.contains("IFC4X3") {
             IFC4X3_FORMAT_ID
+        } else if prefix.contains("IFC2X3") {
+            IFC2X3_FORMAT_ID
         } else {
             IFC4_FORMAT_ID
         };
@@ -163,7 +172,10 @@ impl CanonicalImportProvider for IfcCanonicalProvider {
         request: CanonicalImportRequest<'_>,
         context: &mut dyn ProviderOperationContext,
     ) -> Result<CanonicalImportPackage, ProviderContractError> {
-        if !matches!(request.format_id, IFC4_FORMAT_ID | IFC4X3_FORMAT_ID) {
+        if !matches!(
+            request.format_id,
+            IFC2X3_FORMAT_ID | IFC4_FORMAT_ID | IFC4X3_FORMAT_ID
+        ) {
             return Err(ProviderContractError::UnsupportedFormat);
         }
         let options: IfcImportOptions =
@@ -183,6 +195,8 @@ impl CanonicalImportProvider for IfcCanonicalProvider {
             StepIndex::build(request.source, || context.is_cancelled()).map_err(step_error)?;
         let expected_format = if index.schema.starts_with("IFC4X3") {
             IFC4X3_FORMAT_ID
+        } else if index.schema == "IFC2X3" {
+            IFC2X3_FORMAT_ID
         } else {
             IFC4_FORMAT_ID
         };
@@ -234,7 +248,10 @@ impl CanonicalExportProvider for IfcCanonicalProvider {
         &self,
         request: CanonicalExportRequest<'_>,
     ) -> Result<CanonicalExportPlan, ProviderContractError> {
-        if !matches!(request.format_id, IFC4_FORMAT_ID | IFC4X3_FORMAT_ID) {
+        if !matches!(
+            request.format_id,
+            IFC2X3_FORMAT_ID | IFC4_FORMAT_ID | IFC4X3_FORMAT_ID
+        ) {
             return Err(ProviderContractError::UnsupportedFormat);
         }
         let options: IfcExportOptions =
@@ -841,6 +858,7 @@ fn append_item(
     match record.entity_type.as_str() {
         "IFCTRIANGULATEDFACESET" => append_triangulated(index, &record, transform, mesh)?,
         "IFCPOLYGONALFACESET" => append_polygonal(index, &record, transform, mesh)?,
+        "IFCFACETEDBREP" => append_faceted_brep(index, &record, transform, mesh)?,
         "IFCMAPPEDITEM" => {
             let source = record
                 .arguments
@@ -886,6 +904,100 @@ fn append_item(
         unsupported => mesh.unsupported.push(unsupported.to_owned()),
     }
     active.remove(&id);
+    Ok(())
+}
+
+fn append_faceted_brep(
+    index: &StepIndex,
+    record: &StepRecord,
+    transform: Transform3d,
+    mesh: &mut MeshBuild,
+) -> Result<(), ProviderContractError> {
+    let shell_id = record
+        .arguments
+        .first()
+        .and_then(reference_value)
+        .ok_or_else(|| provider_message("IfcFacetedBrep outer shell is missing"))?;
+    let shell = index.record(shell_id).map_err(step_error)?;
+    if shell.entity_type != "IFCCLOSEDSHELL" {
+        return Err(provider_message(
+            "IfcFacetedBrep requires an IfcClosedShell",
+        ));
+    }
+    let face_refs = shell
+        .arguments
+        .first()
+        .and_then(list_references)
+        .ok_or_else(|| provider_message("IfcClosedShell faces are missing"))?;
+    for face_id in face_refs {
+        let face = index.record(face_id).map_err(step_error)?;
+        if face.entity_type != "IFCFACE" {
+            return Err(provider_message("IfcClosedShell contains a non-face item"));
+        }
+        let bound_refs = face
+            .arguments
+            .first()
+            .and_then(list_references)
+            .ok_or_else(|| provider_message("IfcFace bounds are missing"))?;
+        if bound_refs.len() != 1 {
+            // Holes require constrained triangulation. Retain exact source authority
+            // instead of silently filling an inner bound.
+            mesh.unsupported.push("IFCFACEBOUND".to_owned());
+            continue;
+        }
+        let bound = index.record(bound_refs[0]).map_err(step_error)?;
+        if bound.entity_type != "IFCFACEOUTERBOUND" {
+            mesh.unsupported.push(bound.entity_type);
+            continue;
+        }
+        let loop_id = bound
+            .arguments
+            .first()
+            .and_then(reference_value)
+            .ok_or_else(|| provider_message("IfcFaceOuterBound loop is missing"))?;
+        let polygon_loop = index.record(loop_id).map_err(step_error)?;
+        if polygon_loop.entity_type != "IFCPOLYLOOP" {
+            mesh.unsupported.push(polygon_loop.entity_type);
+            continue;
+        }
+        let point_refs = polygon_loop
+            .arguments
+            .first()
+            .and_then(list_references)
+            .ok_or_else(|| provider_message("IfcPolyLoop points are missing"))?;
+        let mut points = point_refs
+            .into_iter()
+            .map(|point_id| cartesian_point(index, point_id))
+            .collect::<Result<Vec<_>, _>>()?;
+        if points.first() == points.last() {
+            points.pop();
+        }
+        let mut polygon = (0..points.len()).collect::<Vec<_>>();
+        if matches!(bound.arguments.get(1), Some(StepValue::Enum(value)) if value == "F") {
+            polygon.reverse();
+        }
+        ensure_mesh_budget(mesh, points.len(), points.len().saturating_sub(2))?;
+        let base = u32::try_from(mesh.positions.len())
+            .map_err(|_| provider_message("IFC vertex index overflow"))?;
+        let triangles = match triangulate_planar_polygon(&points, &polygon) {
+            Ok(triangles) => triangles,
+            Err(_) => {
+                // A malformed or non-planar loop is not safe to fan-fill. Mark
+                // only this product as source-authoritative fallback so one bad
+                // Revit face cannot abort every other exact IFC entity.
+                mesh.unsupported.push("IFCPOLYLOOP".to_owned());
+                continue;
+            }
+        };
+        mesh.positions.extend(
+            points
+                .into_iter()
+                .map(|point| transform_point(transform, point)),
+        );
+        for [a, b, c] in triangles {
+            mesh.indices.extend([base + a, base + b, base + c]);
+        }
+    }
     Ok(())
 }
 
@@ -2091,6 +2203,103 @@ mod tests {
             },
             _ => panic!("mesh"),
         }
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn imports_ifc2x3_faceted_brep_without_filling_inner_bounds() {
+        let root = temp_root();
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("faceted.ifc");
+        let text = "ISO-10303-21;HEADER;FILE_SCHEMA(('IFC2X3'));ENDSEC;DATA;\
+#1=IFCCARTESIANPOINT((0.,0.,0.));#2=IFCCARTESIANPOINT((2.,0.,0.));\
+#3=IFCCARTESIANPOINT((0.,2.,0.));#4=IFCPOLYLOOP((#1,#2,#3));\
+#5=IFCFACEOUTERBOUND(#4,.T.);#6=IFCFACE((#5));#7=IFCCLOSEDSHELL((#6));\
+#8=IFCFACETEDBREP(#7);#9=IFCSHAPEREPRESENTATION($,'Body','Brep',(#8));\
+#10=IFCPRODUCTDEFINITIONSHAPE($,$,(#9));\
+#11=IFCBUILDINGELEMENTPROXY('0abcdefghijklmnopqrstu',$,'Faceted',$,$,$,#10,$,$);\
+ENDSEC;END-ISO-10303-21;";
+        fs::write(&source, text).unwrap();
+        let provider = IfcCanonicalProvider::new(root.join("resources"));
+        let probe = provider
+            .probe(ImportProbeRequest {
+                path: &source,
+                prefix: text.as_bytes(),
+                media_type: None,
+            })
+            .unwrap()
+            .expect("IFC2X3 probe");
+        assert_eq!(probe.format_id, IFC2X3_FORMAT_ID);
+        let package = provider
+            .import(
+                CanonicalImportRequest {
+                    source: &source,
+                    format_id: IFC2X3_FORMAT_ID,
+                    options: &serde_json::json!({}),
+                },
+                &mut Context::default(),
+            )
+            .expect("IFC2X3 import");
+        let body = package
+            .admissions
+            .iter()
+            .find(|value| value.representation_slot == "body")
+            .expect("renderable faceted body");
+        match &body.resolved_geometry {
+            GeometryObject::Surface3d { mesh } => match &mesh.storage {
+                TriangleMeshStorage::Inline {
+                    positions, indices, ..
+                } => {
+                    assert_eq!(positions.len(), 3);
+                    assert_eq!(indices, &[0, 1, 2]);
+                }
+                _ => panic!("faceted BRep must stay inline"),
+            },
+            _ => panic!("faceted BRep must become a surface"),
+        }
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    #[ignore = "explicit real-world IFC compatibility gate"]
+    fn imports_explicit_real_ifc_fixture_with_at_least_one_renderable_body() {
+        let source = std::env::var_os("HCAD_IFC_FIXTURE")
+            .map(PathBuf::from)
+            .expect("HCAD_IFC_FIXTURE must name an IFC file");
+        let root = temp_root();
+        fs::create_dir_all(&root).unwrap();
+        let provider = IfcCanonicalProvider::new(root.join("resources"));
+        let mut prefix = vec![0_u8; 64 * 1024];
+        let read = std::io::Read::read(&mut fs::File::open(&source).unwrap(), &mut prefix).unwrap();
+        prefix.truncate(read);
+        let probe = provider
+            .probe(ImportProbeRequest {
+                path: &source,
+                prefix: &prefix,
+                media_type: Some(IFC_MEDIA_TYPE),
+            })
+            .unwrap()
+            .expect("real IFC probe");
+        let package = provider
+            .import(
+                CanonicalImportRequest {
+                    source: &source,
+                    format_id: &probe.format_id,
+                    options: &serde_json::json!({
+                        "acceptedLossCodes": [LOSS_UNSUPPORTED_GEOMETRY],
+                    }),
+                },
+                &mut Context::default(),
+            )
+            .expect("real IFC import");
+        package.validate().expect("real IFC canonical package");
+        assert!(
+            package
+                .admissions
+                .iter()
+                .any(|value| value.representation_slot == "body"),
+            "fixture must publish at least one renderable body"
+        );
         fs::remove_dir_all(root).ok();
     }
 

@@ -642,6 +642,7 @@ export class KernelStreamingDriver {
             throw new Error('Gaussian hierarchy did not provide a positive splat count');
           }
           validatedPrimitiveCount = maximumSplats;
+          decodeParametersJson = JSON.stringify(payload.reference.decoderParameters ?? {});
         } else if (payload.reference.kind === 'raster') {
           rasterParameters = parseRasterParameters(payload.reference.decoderParameters);
         }

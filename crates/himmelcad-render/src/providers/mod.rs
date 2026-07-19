@@ -30,8 +30,8 @@ pub use elevation_raster::{
     PREPARED_RASTER_SURFACE_TILE_SCHEMA_VERSION, PREPARED_RASTER_TILE_SCHEMA_VERSION,
 };
 pub use gaussian_splat::{
-    decode_gaussian_splat_ply, DecodedGaussianSplat, DecodedGaussianSplats,
-    GaussianSplatDecodeError,
+    decode_gaussian_splat_interleaved_v1, decode_gaussian_splat_ply, DecodedGaussianSplat,
+    DecodedGaussianSplats, GaussianSplatDecodeError,
 };
 pub use gltf_content::{
     decode_glb, decode_glb_intrinsic, decode_gltf_intrinsic_with_resources,

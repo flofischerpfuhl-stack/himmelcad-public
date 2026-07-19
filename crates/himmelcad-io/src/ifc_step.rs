@@ -204,7 +204,7 @@ impl StepIndex {
 
 fn parse_schema(record: &str) -> Result<String, StepError> {
     let upper = record.to_ascii_uppercase();
-    for supported in ["IFC4X3_ADD2", "IFC4X3", "IFC4"] {
+    for supported in ["IFC4X3_ADD2", "IFC4X3", "IFC4", "IFC2X3"] {
         if upper.contains(&format!("'{supported}'")) {
             return Ok(supported.to_owned());
         }
