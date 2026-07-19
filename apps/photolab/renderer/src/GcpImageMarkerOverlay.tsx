@@ -1,5 +1,11 @@
 import { Ban, Crosshair, Link2, Trash2, Unlock } from 'lucide-react';
-import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 
 import styles from './GcpImageMarkerOverlay.module.css';
 
@@ -103,7 +109,7 @@ export function GcpImageMarkerOverlay({
   function startDrag(event: ReactPointerEvent, marker: GcpImageMarker): void {
     if (disabled || marker.state === 'blockedMuted') return;
     event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
+    rootRef.current?.setPointerCapture(event.pointerId);
     onSelectPoint?.(marker.pointId);
     setDrag({ pointerId: event.pointerId, marker, coordinate: marker.coordinate });
   }
@@ -116,7 +122,9 @@ export function GcpImageMarkerOverlay({
 
   function finishDrag(event: ReactPointerEvent): void {
     if (drag?.pointerId !== event.pointerId) return;
-    event.currentTarget.releasePointerCapture(event.pointerId);
+    if (rootRef.current?.hasPointerCapture(event.pointerId)) {
+      rootRef.current.releasePointerCapture(event.pointerId);
+    }
     onCommitMeasurement({
       pointId: drag.marker.pointId,
       imageId: drag.marker.imageId,
@@ -166,21 +174,22 @@ export function GcpImageMarkerOverlay({
             ? drag.coordinate
             : marker.coordinate;
         const effectiveState = drag?.marker === marker ? 'manualGreen' : marker.state;
+        const fullCrosshair = selectedPointId === marker.pointId;
         return (
           <button
             key={`${marker.pointId}:${marker.imageId}`}
             type="button"
-            className={`${styles.marker} ${styles[effectiveState]} ${
-              selectedPointId === marker.pointId ? styles.selected : ''
-            }`}
+            className={`${styles.marker} ${
+              fullCrosshair ? styles.fullMarker : styles.compactMarker
+            } ${styles[effectiveState]} ${fullCrosshair ? styles.selected : ''}`}
             style={{
-              left: `${(coordinate.xPixels / imageWidthPixels) * 100}%`,
-              top: `${(coordinate.yPixels / imageHeightPixels) * 100}%`,
-            }}
+              '--gcp-x': `${(coordinate.xPixels / imageWidthPixels) * 100}%`,
+              '--gcp-y': `${(coordinate.yPixels / imageHeightPixels) * 100}%`,
+            } as CSSProperties}
             disabled={disabled || marker.state === 'blockedMuted'}
             aria-label={`${marker.pointName}, ${stateLabel(effectiveState)}`}
             title={markerTitle(marker)}
-            onPointerDown={(event) => startDrag(event, marker)}
+            onPointerDown={fullCrosshair ? undefined : (event) => startDrag(event, marker)}
             onDoubleClick={() =>
               onCommitMeasurement({
                 pointId: marker.pointId,
@@ -190,8 +199,24 @@ export function GcpImageMarkerOverlay({
               })
             }
           >
-            <Crosshair size={17} strokeWidth={1.6} />
-            <span>{marker.pointName}</span>
+            {fullCrosshair ? (
+              <>
+                <span
+                  className={styles.horizontalAxis}
+                  aria-hidden="true"
+                  onPointerDown={(event) => startDrag(event, marker)}
+                />
+                <span
+                  className={styles.verticalAxis}
+                  aria-hidden="true"
+                  onPointerDown={(event) => startDrag(event, marker)}
+                />
+                <span className={styles.intersection} aria-hidden="true" />
+              </>
+            ) : (
+              <span className={styles.compactCrosshair} aria-hidden="true" />
+            )}
+            <span className={styles.markerLabel}>{marker.pointName}</span>
           </button>
         );
       })}

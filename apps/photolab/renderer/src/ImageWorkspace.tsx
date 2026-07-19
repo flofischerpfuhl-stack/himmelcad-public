@@ -1314,11 +1314,29 @@ function markersForCamera(
   return [...markers.values()];
 }
 
-function initialGcpProjection(
+export function initialGcpProjection(
   camera: AlignedGcpCameraRecord,
   image: ProjectCameraImageRecord,
   coordinate: { eastMeters: number; northMeters: number; heightMeters: number },
 ): { xPixels: number; yPixels: number } | null {
+  if (camera.centerInProjectWorld) {
+    const center = camera.camera.centerReconstruction;
+    const cameraToWorld = camera.camera.cameraToReconstructionRotation;
+    const delta: [number, number, number] = [
+      coordinate.eastMeters - center[0],
+      coordinate.northMeters - center[1],
+      coordinate.heightMeters - center[2],
+    ];
+    // The catalog stores row-major R(camera -> project world). Transposing it
+    // yields COLMAP camera coordinates (+X right, +Y down, +Z forward).
+    return projectCameraCoordinate(camera, [
+      cameraToWorld[0] * delta[0] + cameraToWorld[3] * delta[1] + cameraToWorld[6] * delta[2],
+      cameraToWorld[1] * delta[0] + cameraToWorld[4] * delta[1] + cameraToWorld[7] * delta[2],
+      cameraToWorld[2] * delta[0] + cameraToWorld[5] * delta[1] + cameraToWorld[8] * delta[2],
+    ]);
+  }
+
+  // A not-yet-world-aligned model still gets a coarse EXIF seed.
   const reference = image.metadata.projectedReference;
   const attitude =
     image.metadata.inspectedPhoto.metadata.djiXmp.gimbalAttitude ??
@@ -1346,7 +1364,15 @@ function initialGcpProjection(
   const x = dot3(delta, right);
   const y = dot3(delta, down);
   const z = dot3(delta, forward);
-  if (!Number.isFinite(z) || z <= 0.01) return null;
+  return projectCameraCoordinate(camera, [x, y, z]);
+}
+
+function projectCameraCoordinate(
+  camera: AlignedGcpCameraRecord,
+  coordinate: readonly [number, number, number],
+): { xPixels: number; yPixels: number } | null {
+  const [x, y, z] = coordinate;
+  if (![x, y, z].every(Number.isFinite) || z <= 0.01) return null;
   const normalizedX = x / z;
   const normalizedY = y / z;
   const [k1, k2, k3] = camera.camera.radialDistortion;
@@ -1363,7 +1389,9 @@ function initialGcpProjection(
     2 * p2 * normalizedX * normalizedY;
   const xPixels = camera.camera.focalXPixels * distortedX + camera.camera.principalXPixels;
   const yPixels = camera.camera.focalYPixels * distortedY + camera.camera.principalYPixels;
-  return xPixels >= 0 &&
+  return Number.isFinite(xPixels) &&
+    Number.isFinite(yPixels) &&
+    xPixels >= 0 &&
     yPixels >= 0 &&
     xPixels < camera.camera.widthPixels &&
     yPixels < camera.camera.heightPixels

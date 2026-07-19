@@ -44,12 +44,6 @@ import {
   useLayoutStore,
   type WindowControls,
 } from '@himmelcad/ui';
-import {
-  Viewport,
-  type CameraImageRectangle,
-  type GcpMarker,
-  type ViewportHandle,
-} from '@himmelcad/viewer';
 import { AlertTriangle, LoaderCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -83,10 +77,17 @@ import type {
   ImageImportDecision,
   LocalGridSelection,
 } from './ImageImportPanel.js';
-import { ImageWorkspace } from './ImageWorkspace.js';
+import { ImageWorkspace, initialGcpProjection } from './ImageWorkspace.js';
 import { ImagePropertiesPanel } from './ImagePropertiesPanel.js';
 import { SelectionPropertiesPanel } from './SelectionPropertiesPanel.js';
 import { PhotolabBottomPanel, type BottomTab } from './PhotolabBottomPanel.js';
+import {
+  PhotolabKernelViewport,
+  type CameraImageRectangle,
+  type GcpMarker,
+  type PhotolabKernelViewportHandle,
+  type PreparedMeshDescriptor,
+} from './PhotolabKernelViewport.js';
 import { ProjectDiagnosticsPanel, type ProjectDiagnosticsKind } from './ProjectDiagnosticsPanel.js';
 import {
   ProductPanel,
@@ -129,6 +130,7 @@ interface ProjectProductDatasetRecord {
     | 'binaryPly'
     | 'potreeV2';
   visible: boolean;
+  preparedMesh?: PreparedMeshDescriptor;
   boundsMin?: [number, number, number];
   boundsMax?: [number, number, number];
   renderOffset?: [number, number, number];
@@ -164,7 +166,6 @@ export function App(): JSX.Element {
     Readonly<Record<EntityId, ProductLayerStatus>>
   >({});
   const [productLayerRetryGeneration, setProductLayerRetryGeneration] = useState(0);
-  const [viewportRecoveryGeneration, setViewportRecoveryGeneration] = useState(0);
   const [snap, setSnap] = useState<SnapResult | null>(null);
   const [coreReady, setCoreReady] = useState(false);
   const [hardware, setHardware] = useState<HardwareCapabilities | null>(null);
@@ -246,7 +247,7 @@ export function App(): JSX.Element {
   const [sceneNavigationMode, setSceneNavigationMode] = useState<'orbit3d' | 'lockedTopDown2d'>(
     'orbit3d',
   );
-  const viewportRef = useRef<ViewportHandle | null>(null);
+  const viewportRef = useRef<PhotolabKernelViewportHandle | null>(null);
   const initialBootstrapRequested = useRef(false);
   const jobPollErrorLogged = useRef(false);
   const activeImageCommitId = useRef<string | null>(null);
@@ -290,22 +291,6 @@ export function App(): JSX.Element {
     },
     [setBottomCollapsed],
   );
-  const recreateViewportAfterContextLoss = useCallback(() => {
-    const staleLayerIds = new Set([...loadedProductIds.current, ...loadingProductIds.current]);
-    for (const entityId of staleLayerIds) productLoadGenerations.current.invalidate(entityId);
-    loadedProductIds.current.clear();
-    loadingProductIds.current.clear();
-    productLoadGenerations.current.reset();
-    setProductLayerStatuses({});
-    setSnap(null);
-    setViewportRecoveryGeneration((generation) => generation + 1);
-    setProductLayerRetryGeneration((generation) => generation + 1);
-    logEvent(
-      'warn',
-      'renderer',
-      'Viewport recreated after an unrecoverable GPU context reset; streaming resumes with a conservative point budget',
-    );
-  }, []);
   useEffect(() => {
     activeProjectFileOperation.current = projectFileOperation;
   }, [projectFileOperation]);
@@ -351,6 +336,18 @@ export function App(): JSX.Element {
     }
     for (const projection of gcpOptimization?.artifact.result.projections ?? []) {
       if (projection.pointId === focusedGcpId) imageIds.add(projection.imageId);
+    }
+    const point = gcpCollection?.[1].points.find(
+      ({ point: candidate }) => candidate.id === focusedGcpId,
+    )?.point;
+    if (point) {
+      const imagesByEntity = new Map(projectImages.map((image) => [image.entityId, image]));
+      for (const camera of alignedGcpCameras) {
+        const image = imagesByEntity.get(camera.entityId);
+        if (image && initialGcpProjection(camera, image, point.coordinate)) {
+          imageIds.add(camera.imageId);
+        }
+      }
     }
     const entities = new Set(
       alignedGcpCameras
@@ -1876,7 +1873,6 @@ export function App(): JSX.Element {
     project.renderOffset.y,
     project.renderOffset.z,
     sceneNavigationMode,
-    viewportRecoveryGeneration,
     workspaceMode,
   ]);
 
@@ -1938,7 +1934,6 @@ export function App(): JSX.Element {
     project.entities,
     project.renderOffset,
     projectImages,
-    viewportRecoveryGeneration,
     workspaceMode,
   ]);
 
@@ -1964,7 +1959,7 @@ export function App(): JSX.Element {
       ];
     });
     viewportRef.current?.setGcpMarkers(markers);
-  }, [gcpCollection, project.entities, viewportRecoveryGeneration, workspaceMode]);
+  }, [gcpCollection, project.entities, workspaceMode]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -1990,7 +1985,6 @@ export function App(): JSX.Element {
       viewport.removeLayer(entityId);
       loadingProductIds.current.delete(entityId);
     }
-    const dem = productDatasets.find((dataset) => dataset.kind === 'dem' && dataset.visible);
     for (const dataset of productDatasets) {
       if (!dataset.visible) continue;
       if (loadedProductIds.current.has(dataset.entityId)) continue;
@@ -2005,11 +1999,6 @@ export function App(): JSX.Element {
         [dataset.entityId]: { state: 'loading', name: layerName },
       }));
       const url = projectProductUrl(dataset.relativePath);
-      const renderOffset: [number, number, number] = [
-        project.renderOffset.x,
-        project.renderOffset.y,
-        project.renderOffset.z,
-      ];
       const loading =
         (dataset.kind === 'dense' || dataset.kind === 'sparse') &&
         dataset.format === 'potreeV2' &&
@@ -2021,7 +2010,6 @@ export function App(): JSX.Element {
               entityId: dataset.entityId,
               sourceName: dataset.kind === 'sparse' ? 'Sparse Point Cloud' : 'Dense Point Cloud',
               loadToken,
-              renderOffset: dataset.renderOffset,
               bounds: { min: dataset.boundsMin, max: dataset.boundsMax },
               pointCount: dataset.pointCount,
             })
@@ -2030,23 +2018,14 @@ export function App(): JSX.Element {
                 entityId: dataset.entityId,
                 loadToken,
                 format: dataset.format === 'brushPly' ? 'brushPly' : 'prepared',
-                renderOffset,
               })
-            : dataset.kind === 'mesh'
-              ? viewport.loadTiledMesh(url, {
-                  entityId: dataset.entityId,
-                  loadToken,
-                  renderOffset,
-                })
+            : dataset.kind === 'mesh' && dataset.preparedMesh
+              ? viewport.loadPreparedMesh(dataset.preparedMesh, projectProductUrl, loadToken)
               : dataset.kind === 'dem' || dataset.kind === 'orthomosaic'
                 ? viewport.loadRasterPyramid(url, {
                     entityId: dataset.entityId,
                     loadToken,
                     kind: dataset.kind,
-                    renderOffset,
-                    ...(dataset.kind === 'orthomosaic' && dem
-                      ? { terrainManifestUrl: projectProductUrl(dem.relativePath) }
-                      : {}),
                   })
                 : null;
       if (!loading) {
@@ -2115,7 +2094,7 @@ export function App(): JSX.Element {
           logEvent('error', 'renderer', `Product could not be loaded: ${message}`);
         });
     }
-  }, [productDatasets, productLayerRetryGeneration, project.entities, project.renderOffset]);
+  }, [productDatasets, productLayerRetryGeneration, project.entities]);
 
   const retryProductLayer = useCallback((entityId: EntityId) => {
     productLoadGenerations.current.invalidate(entityId);
@@ -3006,19 +2985,11 @@ export function App(): JSX.Element {
                 className={`${styles.sceneWorkspace} ${workspaceMode === 'images' ? styles.workspacePaneHidden : ''}`}
                 aria-hidden={workspaceMode === 'images'}
               >
-                <Viewport
-                  key={`${project.projectId}:${String(viewportRecoveryGeneration)}`}
+                <PhotolabKernelViewport
+                  key={project.projectId}
                   ref={viewportRef}
-                  renderOffset={[
-                    project.renderOffset.x,
-                    project.renderOffset.y,
-                    project.renderOffset.z,
-                  ]}
-                  navigationMode={sceneNavigationMode}
-                  pointBudget={viewportRecoveryGeneration === 0 ? 8_000_000 : 2_000_000}
                   onCursorSnap={setSnap}
                   onLog={(level, message) => logEvent(level, 'renderer', message)}
-                  onContextRecreate={recreateViewportAfterContextLoss}
                 />
                 {Object.entries(productLayerStatuses).length > 0 && (
                   <div className={styles.productLayerStatus} aria-live="polite">
