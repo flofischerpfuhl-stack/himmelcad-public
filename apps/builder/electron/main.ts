@@ -25,6 +25,7 @@ const CACHE_CORS_HEADERS = {
   'access-control-expose-headers': 'accept-ranges, content-length, content-range',
 } as const;
 app.setName('HimmelCAD Builder');
+if (process.platform === 'linux') app.setDesktopName('himmelcad-builder.desktop');
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -126,6 +127,7 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 async function createWindow(): Promise<void> {
+  const applicationIcon = nativeImage.createFromPath(resolve(__dirname, '../../build/icon.png'));
   const win = new BrowserWindow({
     title: 'HimmelCAD Builder',
     width: 1480,
@@ -133,7 +135,7 @@ async function createWindow(): Promise<void> {
     minWidth: 980,
     minHeight: 620,
     backgroundColor: '#101114',
-    icon: resolve(__dirname, '../../build/icon.png'),
+    icon: applicationIcon,
     frame: false,
     titleBarStyle: 'hidden',
     autoHideMenuBar: true,
@@ -146,6 +148,11 @@ async function createWindow(): Promise<void> {
       webgl: true,
     },
   });
+
+  // Some Linux window managers ignore the constructor hint until the native
+  // window exists. Re-apply it here; setDesktopName above supplies the matching
+  // WM_CLASS/desktop-file identity used by Linux launchers.
+  if (!applicationIcon.isEmpty()) win.setIcon(applicationIcon);
 
   mainWindow = win;
 

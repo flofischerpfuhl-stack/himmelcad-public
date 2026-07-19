@@ -143,7 +143,8 @@
   z-index: 6;
   right: 10px;
   left: auto;
-  bottom: 42px;
+  /* Filename and GCP legend each own a row below the mask controls. */
+  bottom: calc(30px + var(--hc-size-chip-h) + var(--hc-size-chip-h));
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -191,8 +192,11 @@
 .imageCanvas > span {
   position: absolute;
   left: auto;
-  right: 8px;
-  bottom: 8px;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  min-height: var(--hc-size-chip-h);
   max-width: min(48%, 360px);
   padding: 4px 7px;
   border-radius: var(--hc-radius-sm);

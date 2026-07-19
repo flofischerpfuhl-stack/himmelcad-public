@@ -256,6 +256,8 @@ export function App(): JSX.Element {
   const activeGridProgressKey = useRef<string | null>(null);
   const activeProjectFileOperation = useRef<ProjectFileOperationState | null>(null);
   const activeGcpOperationId = useRef<string | null>(null);
+  const gcpCollectionRef = useRef<readonly [ObjectHash, GcpCollectionRecord] | null>(null);
+  const gcpMeasurementQueueRef = useRef<Promise<void>>(Promise.resolve());
   const lastLoadedGcpOptimizationJobId = useRef<string | null>(null);
   const loadedProductIds = useRef<Set<EntityId>>(new Set());
   const loadingProductIds = useRef<Set<EntityId>>(new Set());
@@ -280,6 +282,10 @@ export function App(): JSX.Element {
     },
     [activateStoredFunction],
   );
+
+  useEffect(() => {
+    gcpCollectionRef.current = gcpCollection;
+  }, [gcpCollection]);
   const toggleBottom = useLayoutStore((state) => state.toggleBottomPanel);
   const setBottomCollapsed = useLayoutStore((state) => state.setBottomPanelCollapsed);
   const setRightCollapsed = useLayoutStore((state) => state.setRightPanelCollapsed);
@@ -1686,41 +1692,51 @@ export function App(): JSX.Element {
   );
 
   const commitGcpMeasurement = useCallback(
-    async (measurement: GcpManualMeasurement) => {
-      const api = window.himmelcad;
-      if (!api || !gcpCollection) return;
-      const operationId = `gcp-measure-${crypto.randomUUID()}`;
-      try {
-        const result = await api.sidecar.call<{
-          collectionSha256: ObjectHash;
-          autosaveGeneration: number;
-          insertedCount: number;
-          replacedCount: number;
-        }>('photolab.gcp.observation.upsertAssisted', {
-          operationId,
-          expectedCollectionSha256: gcpCollection[0],
-          observation: {
-            pointId: measurement.pointId,
-            imageId: measurement.imageId,
-            state: { state: 'manual', coordinate: measurement.coordinate },
-          },
-          maximumSeedDistancePixels: 3,
-        });
-        setAutosaveGeneration(result.autosaveGeneration);
-        const updated = await api.sidecar.call<readonly [ObjectHash, GcpCollectionRecord] | null>(
-          'photolab.gcp.list',
-        );
-        setGcpCollection(updated);
-        logEvent(
-          'info',
-          'sidecar',
-          `GCP measurement saved · ${measurement.pointId} · ${result.insertedCount + result.replacedCount - 1} tie-point projections`,
-        );
-      } catch (error) {
-        logEvent('error', 'sidecar', `GCP measurement failed: ${errorMessage(error)}`);
-      }
+    (measurement: GcpManualMeasurement): Promise<boolean> => {
+      const operation = gcpMeasurementQueueRef.current.then(async (): Promise<boolean> => {
+        const api = window.himmelcad;
+        const currentCollection = gcpCollectionRef.current;
+        if (!api || !currentCollection) return false;
+        const operationId = `gcp-measure-${crypto.randomUUID()}`;
+        try {
+          const result = await api.sidecar.call<{
+            collectionSha256: ObjectHash;
+            autosaveGeneration: number;
+            insertedCount: number;
+            replacedCount: number;
+          }>('photolab.gcp.observation.upsertAssisted', {
+            operationId,
+            expectedCollectionSha256: currentCollection[0],
+            observation: {
+              pointId: measurement.pointId,
+              imageId: measurement.imageId,
+              state: { state: 'manual', coordinate: measurement.coordinate },
+            },
+            maximumSeedDistancePixels: 3,
+          });
+          setAutosaveGeneration(result.autosaveGeneration);
+          const updated = await api.sidecar.call<readonly [ObjectHash, GcpCollectionRecord] | null>(
+            'photolab.gcp.list',
+          );
+          // Advance the concurrency token before the next queued drag starts;
+          // waiting for React's next render would reuse the stale revision.
+          gcpCollectionRef.current = updated;
+          setGcpCollection(updated);
+          logEvent(
+            'info',
+            'sidecar',
+            `GCP measurement saved · ${measurement.pointId} · ${result.insertedCount + result.replacedCount - 1} tie-point projections`,
+          );
+          return true;
+        } catch (error) {
+          logEvent('error', 'sidecar', `GCP measurement failed: ${errorMessage(error)}`);
+          return false;
+        }
+      });
+      gcpMeasurementQueueRef.current = operation.then(() => undefined, () => undefined);
+      return operation;
     },
-    [gcpCollection],
+    [],
   );
 
   const editGcpObservation = useCallback(
@@ -3022,7 +3038,7 @@ export function App(): JSX.Element {
                   gcpCollection={gcpCollection?.[1] ?? null}
                   gcpOptimization={gcpOptimization}
                   focusedGcpId={focusedGcpId}
-                  onCommitGcpMeasurement={(measurement) => void commitGcpMeasurement(measurement)}
+                  onCommitGcpMeasurement={commitGcpMeasurement}
                   onEditGcpObservation={(marker, edit) => void editGcpObservation(marker, edit)}
                   onEditImageMask={editImageMask}
                   depthDatasets={productDatasets.filter((dataset) => dataset.kind === 'depth')}

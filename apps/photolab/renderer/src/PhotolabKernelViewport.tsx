@@ -377,33 +377,31 @@ export const PhotolabKernelViewport = forwardRef<
       setCameraImageRectangles(rectangles) {
         void (async () => {
           const kernel = await readyRef.current.promise;
-          const admissions: KernelCanonicalRenderAdmission[] = [];
-          for (const rectangle of rectangles) {
+          const admissions = rectangles.map((rectangle) => {
             const points = [rectangle.cameraCenter, ...rectangle.corners] as const;
             const pairs = [
               [1, 2], [2, 3], [3, 4], [4, 1], [0, 1], [0, 2], [0, 3], [0, 4],
             ] as const;
-            for (const [index, [from, to]] of pairs.entries()) {
-              const id = `${rectangle.entityId}:camera-line:${index}` as EntityId;
-              admissions.push(
-                canonicalRenderAdmission(
-                  kernel,
-                  id,
-                  'Camera footprint',
-                  {
-                    kind: 'curve',
-                    curve: {
-                      kind: 'lineSegment',
-                      start: tuplePosition(points[from]),
-                      end: tuplePosition(points[to]),
-                    },
-                  },
-                  renderStyle(rectangle.aligned ? [0.28, 0.7, 1, 1] : [0.55, 0.58, 0.64, 1]),
-                  nextAnnotationRevision(id),
-                ),
-              );
-            }
-          }
+            const id = `${rectangle.entityId}:camera-footprint` as EntityId;
+            return canonicalRenderAdmission(
+              kernel,
+              id,
+              'Camera footprint',
+              {
+                kind: 'curve',
+                curve: {
+                  kind: 'composite',
+                  segments: pairs.map(([from, to]) => ({
+                    kind: 'lineSegment' as const,
+                    start: tuplePosition(points[from]),
+                    end: tuplePosition(points[to]),
+                  })),
+                },
+              },
+              renderStyle(rectangle.aligned ? [0.28, 0.7, 1, 1] : [0.55, 0.58, 0.64, 1]),
+              nextAnnotationRevision(id),
+            );
+          });
           await replaceAnnotations('camera', admissions);
         })().catch((error: unknown) =>
           callbacksRef.current.onLog('error', `Camera overlays could not be published: ${errorMessage(error)}`),
@@ -477,6 +475,7 @@ export const PhotolabKernelViewport = forwardRef<
 
   const handleReady = useCallback((handle: KernelViewportHandle) => {
     kernelRef.current = handle;
+    if (import.meta.env.DEV) Object.assign(window, { __hcadPhotolabKernel: handle });
     const font = createGcpGlyphAtlas();
     handle.session.registerGlyphAtlas(GCP_FONT_HASH, font.metadata, font.rgba8);
     handle.session.setClearColor([0.008, 0.011, 0.016, 1]);
@@ -507,6 +506,7 @@ export const PhotolabKernelViewport = forwardRef<
         wasmLoader={wasmLoader}
         backend="automatic"
         presentationMode="windowMask"
+        enableGpuPicking={false}
         decodeWasmModuleUrl={decodeWasmUrl}
         authoritativeSectionTolerance={0.001}
         onReady={handleReady}

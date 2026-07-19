@@ -474,7 +474,11 @@ impl PotreeHierarchySource {
                     });
                 }
             }
-            let contents = if is_proxy {
+            // PotreeConverter can retain structurally reachable empty leaves
+            // (zero points, zero-byte range). They are valid hierarchy nodes,
+            // but they are not stream content: emitting `bytes=0--1` for such
+            // a node turns the harmless leaf into a permanent HTTP 416.
+            let contents = if is_proxy || point_count == 0 || byte_length == 0 {
                 Vec::new()
             } else {
                 vec![ContentReference {
@@ -1151,6 +1155,40 @@ mod tests {
         assert_close(bounds.max.x, 104.0);
         assert_close(bounds.max.y, 204.0);
         assert_close(bounds.max.z, 304.0);
+    }
+
+    #[test]
+    fn keeps_zero_point_leaves_out_of_the_stream_request_frontier() {
+        let metadata = br#"{
+          "version":"2.0",
+          "hierarchy":{"firstChunkSize":44,"stepSize":5,"depth":1},
+          "spacing":4.0,
+          "boundingBox":{"min":[0.0,0.0,0.0],"max":[8.0,8.0,8.0]},
+          "offset":[0.0,0.0,0.0],
+          "scale":[0.001,0.001,0.001],
+          "encoding":"DEFAULT",
+          "attributes":[
+            {"name":"position","size":12,"numElements":3,"type":"int32"},
+            {"name":"rgba","size":6,"numElements":3,"type":"uint16"}
+          ]
+        }"#;
+        let mut hierarchy = Vec::new();
+        hierarchy.extend(record(0, 1, 100, 0, 1_800));
+        hierarchy.extend(record(1, 0, 0, 0, 0));
+        let mut source = PotreeHierarchySource::from_bytes(
+            DatasetId("empty-leaf-cloud".to_owned()),
+            "hcad://cloud/metadata.json",
+            metadata,
+            &hierarchy,
+        )
+        .expect("valid hierarchy with an empty leaf");
+
+        let child = source
+            .tile(&TileId("r0".to_owned()))
+            .expect("lookup")
+            .expect("empty leaf");
+        assert!(child.contents.is_empty());
+        assert!(child.children.is_empty());
     }
 
     #[test]

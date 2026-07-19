@@ -288,6 +288,9 @@ export class KernelViewerSession {
       target,
       this.camera,
       {
+        ...(callbacks.enableGpuPicking !== undefined
+          ? { enableGpuPicking: callbacks.enableGpuPicking }
+          : {}),
         ...(callbacks.onActivePick ? { onActivePick: callbacks.onActivePick } : {}),
         ...(callbacks.onCameraChanged ? { onCameraChanged: callbacks.onCameraChanged } : {}),
         ...(callbacks.onCursorCoordinate

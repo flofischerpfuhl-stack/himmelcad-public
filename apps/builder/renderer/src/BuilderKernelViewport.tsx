@@ -55,7 +55,9 @@ const POINT_CLOUD_STYLE: KernelRenderStyle = {
 };
 const IFC_STYLE: KernelRenderStyle = {
   ...POINT_CLOUD_STYLE,
-  baseColor: [0.74, 0.78, 0.84, 1],
+  // Linear-light neutral blue-grey. The old near-white fallback compressed
+  // most lighting contrast after sRGB presentation and made faces look flat.
+  baseColor: [0.38, 0.46, 0.58, 1],
 };
 const RASTER_STYLE: KernelRenderStyle = {
   ...POINT_CLOUD_STYLE,

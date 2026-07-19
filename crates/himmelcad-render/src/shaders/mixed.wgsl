@@ -1058,7 +1058,14 @@ fn pbr_color(input: VertexOutput, base: vec4<f32>) -> vec4<f32> {
     }
 
     let view = fragment_view_direction(input.clip_position);
-    let light = normalize(vec3<f32>(0.35, -0.45, 0.82));
+    // A CAD model must remain legible while orbiting. The former world-fixed
+    // lamp could move behind the object relative to the camera and turn whole
+    // façades into a flat dark mass. The inverse view-projection columns give
+    // us the camera's screen-right/up basis without another uniform or texture
+    // lookup, so this compact studio rig follows the view at negligible cost.
+    let camera_right = normalize(frame.inverse_view_projection[0].xyz);
+    let camera_up = normalize(frame.inverse_view_projection[1].xyz);
+    let light = normalize(view + camera_right * 0.28 + camera_up * 0.38);
     let halfway = normalize(view + light);
     let n_dot_light = max(dot(normal, light), 0.0);
     let n_dot_view = max(dot(normal, view), 0.0);
@@ -1076,10 +1083,18 @@ fn pbr_color(input: VertexOutput, base: vec4<f32>) -> vec4<f32> {
         / max(4.0 * n_dot_view * n_dot_light, 1.0e-6);
     let diffuse_weight = (vec3<f32>(1.0) - fresnel) * (1.0 - metallic);
     let direct = (diffuse_weight * base.rgb / 3.14159265 + specular)
-        * vec3<f32>(2.2)
+        * vec3<f32>(1.9)
         * n_dot_light;
-    let ambient = base.rgb * (0.18 * occlusion);
-    return vec4<f32>(ambient + direct + emissive, base.a);
+    // A cheap opposite-side fill separates adjacent BIM faces while the
+    // Z-up hemisphere keeps undersides darker than roofs. Unlike an extra PBR
+    // light this is only two dot products and adds no draw calls.
+    let fill_light = normalize(view - camera_right * 0.62 + camera_up * 0.12);
+    let fill = base.rgb
+        * (1.0 - metallic)
+        * (0.16 * max(dot(normal, fill_light), 0.0));
+    let sky = clamp(normal.z * 0.5 + 0.5, 0.0, 1.0);
+    let ambient = base.rgb * ((0.20 + 0.10 * sky) * occlusion);
+    return vec4<f32>(ambient + fill + direct + emissive, base.a);
 }
 
 fn resolved_fragment_color(input: VertexOutput, stroke_world_per_pixel: f32) -> vec4<f32> {

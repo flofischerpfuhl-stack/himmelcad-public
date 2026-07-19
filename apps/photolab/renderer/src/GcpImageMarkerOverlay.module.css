@@ -15,7 +15,7 @@
 }
 
 .predictionEllipse {
-  fill: var(--hc-bg-chip);
+  fill: none;
   stroke: var(--hc-info);
   stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
@@ -92,21 +92,9 @@
   pointer-events: stroke;
 }
 
-.horizontalHit {
-  cursor: ns-resize;
-}
-
+.horizontalHit,
 .verticalHit {
-  cursor: ew-resize;
-}
-
-.intersection {
-  fill: color-mix(in srgb, var(--hc-bg-overlay) 82%, transparent);
-  stroke: currentColor;
-  vector-effect: non-scaling-stroke;
-  stroke-width: 1.5;
-  pointer-events: none;
-  shape-rendering: geometricPrecision;
+  cursor: move;
 }
 
 .compactCrosshair {
@@ -162,9 +150,12 @@
 
 .legend {
   position: absolute;
-  right: 8px;
-  bottom: 8px;
+  right: 10px;
+  /* Filename owns the bottom row; keep status in its own row above it. */
+  bottom: calc(20px + var(--hc-size-chip-h));
   display: flex;
+  align-items: center;
+  min-height: var(--hc-size-chip-h);
   gap: 8px;
   padding: 5px 7px;
   color: var(--hc-fg-muted);

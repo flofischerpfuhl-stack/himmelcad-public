@@ -34,6 +34,12 @@ export interface KernelNavigationTarget {
 }
 
 export interface KernelNavigationCallbacks {
+  /**
+   * Disable asynchronous GPU hover picking for hosts that only need camera
+   * navigation and a target-plane cursor. This avoids holding an exclusive
+   * wasm readback borrow on graphics backends where a pick map may stall.
+   */
+  readonly enableGpuPicking?: boolean;
   readonly onActivePick?: (
     candidate: KernelPickCandidate | null,
     index: number,
@@ -392,6 +398,10 @@ export class KernelNavigationController {
   private queuePick(clientX: number, clientY: number): void {
     if (this.enabled === false) return;
     this.latestPickPosition = this.physicalPointer(clientX, clientY);
+    if (this.callbacks.enableGpuPicking === false) {
+      this.publishTargetPlaneCursor(this.latestPickPosition);
+      return;
+    }
     if (this.pickPending) {
       this.pickAgain = true;
       return;
@@ -417,13 +427,7 @@ export class KernelNavigationController {
           if (nearestIndex >= 0) {
             this.activateCandidate(nearestIndex);
           } else {
-            this.activeCandidateIndex = 0;
-            const ndc = this.physicalPointerNdc(position[0], position[1]);
-            const targetPlaneCoordinate = this.camera.worldPointOnTargetPlane(ndc[0], ndc[1]);
-            this.cursorCoordinate = targetPlaneCoordinate;
-            this.cursorPresentationPosition = targetPlaneCoordinate;
-            this.callbacks.onCursorCoordinate?.(targetPlaneCoordinate, 'targetPlane');
-            this.callbacks.onActivePick?.(null, 0, 0);
+            this.publishTargetPlaneCursor(position);
           }
         }
       }
@@ -434,6 +438,17 @@ export class KernelNavigationController {
         requestAnimationFrame(() => void this.executePick());
       }
     }
+  }
+
+  private publishTargetPlaneCursor(position: readonly [number, number]): void {
+    this.activeCandidateIndex = 0;
+    this.candidates = [];
+    const ndc = this.physicalPointerNdc(position[0], position[1]);
+    const targetPlaneCoordinate = this.camera.worldPointOnTargetPlane(ndc[0], ndc[1]);
+    this.cursorCoordinate = targetPlaneCoordinate;
+    this.cursorPresentationPosition = targetPlaneCoordinate;
+    this.callbacks.onCursorCoordinate?.(targetPlaneCoordinate, 'targetPlane');
+    this.callbacks.onActivePick?.(null, 0, 0);
   }
 
   private uploadCamera(): void {

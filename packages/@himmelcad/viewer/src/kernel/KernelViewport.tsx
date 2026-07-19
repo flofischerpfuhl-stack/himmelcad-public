@@ -43,6 +43,7 @@ export interface KernelViewportProps {
    * target extent. An actual browser-window resize still reallocates normally.
    */
   readonly presentationMode?: 'container' | 'windowMask';
+  readonly enableGpuPicking?: boolean;
   readonly className?: string;
   readonly onReady?: (handle: KernelViewportHandle) => void;
   readonly onActivePick?: (
@@ -67,6 +68,7 @@ export function KernelViewport({
   decodeWasmModuleUrl,
   authoritativeSectionTolerance,
   presentationMode = 'container',
+  enableGpuPicking = true,
   className,
   onReady,
   onActivePick,
@@ -174,6 +176,7 @@ export function KernelViewport({
         created.subscribe(observeSession);
         created.camera.frame({ x: -25, y: -25, z: -1 }, { x: 25, y: 25, z: 1 });
         const navigation = created.attachNavigation({
+          enableGpuPicking,
           ...(onActivePick ? { onActivePick } : {}),
           ...(onCursorCoordinate ? { onCursorCoordinate } : {}),
         });
@@ -234,6 +237,7 @@ export function KernelViewport({
     authoritativeSectionTolerance,
     backend,
     decodeWasmModuleUrl,
+    enableGpuPicking,
     onActivePick,
     onCursorCoordinate,
     onError,

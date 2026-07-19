@@ -52,7 +52,7 @@ export interface ImageWorkspaceProps {
   gcpCollection: GcpCollectionRecord | null;
   gcpOptimization: GcpOptimizationPublicationRecord | null;
   focusedGcpId: string | null;
-  onCommitGcpMeasurement: (measurement: GcpManualMeasurement) => void;
+  onCommitGcpMeasurement: (measurement: GcpManualMeasurement) => Promise<boolean>;
   onEditGcpObservation: (marker: GcpImageMarker, edit: GcpObservationEdit) => void;
   onEditImageMask: (
     imageEntityId: EntityId,
@@ -310,7 +310,7 @@ function ImageLayerContent({
   gcpCollection: GcpCollectionRecord | null;
   gcpOptimization: GcpOptimizationPublicationRecord | null;
   focusedGcpId: string | null;
-  onCommitGcpMeasurement: (measurement: GcpManualMeasurement) => void;
+  onCommitGcpMeasurement: (measurement: GcpManualMeasurement) => Promise<boolean>;
   onEditGcpObservation: (marker: GcpImageMarker, edit: GcpObservationEdit) => void;
   onEditImageMask: ImageWorkspaceProps['onEditImageMask'];
   depthProduct: { index: MvsOutputIndex; basePath: string } | null;
@@ -803,7 +803,7 @@ function ImageContentFrame({
   focusedGcpId: string | null;
   onError: () => void;
   onMaskError: (message: string) => void;
-  onCommitGcpMeasurement: (measurement: GcpManualMeasurement) => void;
+  onCommitGcpMeasurement: (measurement: GcpManualMeasurement) => Promise<boolean>;
   onEditGcpObservation: (marker: GcpImageMarker, edit: GcpObservationEdit) => void;
   onEditImageMask: ImageWorkspaceProps['onEditImageMask'];
 }): JSX.Element {
@@ -1035,8 +1035,8 @@ function ImageContentFrame({
               <code>{maskRadius}px</code>
             </label>
           )}
-          <button
-            type="button"
+          <OverlayChip
+            as="button"
             onClick={() => {
               if (!imageMask || imageMask.maskedPixelCount === 0) return;
               setMaskBusy(true);
@@ -1049,7 +1049,7 @@ function ImageContentFrame({
             title="Clear entire exclusion mask"
           >
             <Trash2 size={13} />
-          </button>
+          </OverlayChip>
           {maskBusy ? (
             <LoaderCircle className={styles.maskSpinner} size={13} />
           ) : (imageMask?.maskedPixelCount ?? 0) > 0 ? (

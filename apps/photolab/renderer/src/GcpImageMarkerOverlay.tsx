@@ -1,5 +1,6 @@
 import { Ban, Crosshair, Link2, Trash2, Unlock } from 'lucide-react';
 import {
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -48,7 +49,7 @@ export interface GcpImageMarkerOverlayProps {
   selectedPointId?: string;
   disabled?: boolean;
   onSelectPoint?: (pointId: string) => void;
-  onCommitMeasurement: (measurement: GcpManualMeasurement) => void;
+  onCommitMeasurement: (measurement: GcpManualMeasurement) => Promise<boolean>;
   onEditObservation?: (marker: GcpImageMarker, action: 'block' | 'unblock' | 'remove') => void;
 }
 
@@ -56,8 +57,12 @@ interface DragState {
   pointerId: number;
   marker: GcpImageMarker;
   coordinate: GcpImageCoordinate;
-  axis: 'horizontal' | 'vertical' | 'both';
   grabOffset: GcpImageCoordinate;
+}
+
+interface OptimisticCoordinate {
+  coordinate: GcpImageCoordinate;
+  revision: number;
 }
 
 /**
@@ -79,6 +84,11 @@ export function GcpImageMarkerOverlay({
 }: GcpImageMarkerOverlayProps): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+  const optimisticRevisionRef = useRef(0);
+  const [optimisticCoordinates, setOptimisticCoordinates] = useState(
+    () => new Map<string, OptimisticCoordinate>(),
+  );
   const visibleMarkers = useMemo(
     () =>
       markers.filter(
@@ -92,6 +102,20 @@ export function GcpImageMarkerOverlay({
       ),
     [imageHeightPixels, imageWidthPixels, markers],
   );
+
+  useEffect(() => {
+    setOptimisticCoordinates((current) => {
+      let next: Map<string, OptimisticCoordinate> | null = null;
+      for (const marker of markers) {
+        const key = markerKey(marker);
+        const optimistic = current.get(key);
+        if (!optimistic || !coordinatesMatch(marker.coordinate, optimistic.coordinate)) continue;
+        next ??= new Map(current);
+        next.delete(key);
+      }
+      return next ?? current;
+    });
+  }, [markers]);
 
   function coordinateFromPointer(event: ReactPointerEvent): GcpImageCoordinate | null {
     const bounds = rootRef.current?.getBoundingClientRect();
@@ -117,61 +141,85 @@ export function GcpImageMarkerOverlay({
   function startDrag(
     event: ReactPointerEvent,
     marker: GcpImageMarker,
-    axis: DragState['axis'],
   ): void {
     if (disabled || marker.state === 'blockedMuted') return;
+    event.preventDefault();
+    event.stopPropagation();
     const pointer = coordinateFromPointer(event);
     if (!pointer) return;
     rootRef.current?.setPointerCapture(event.pointerId);
     onSelectPoint?.(marker.pointId);
-    setDrag({
+    const coordinate = optimisticCoordinates.get(markerKey(marker))?.coordinate ?? marker.coordinate;
+    const next: DragState = {
       pointerId: event.pointerId,
       marker,
-      coordinate: marker.coordinate,
-      axis,
+      coordinate,
       grabOffset: {
-        xPixels: marker.coordinate.xPixels - pointer.xPixels,
-        yPixels: marker.coordinate.yPixels - pointer.yPixels,
+        xPixels: coordinate.xPixels - pointer.xPixels,
+        yPixels: coordinate.yPixels - pointer.yPixels,
       },
-    });
+    };
+    dragRef.current = next;
+    setDrag(next);
   }
 
   function moveDrag(event: ReactPointerEvent): void {
-    if (drag?.pointerId !== event.pointerId) return;
+    const current = dragRef.current;
+    if (current?.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
     const pointer = coordinateFromPointer(event);
     if (!pointer) return;
-    const xPixels =
-      drag.axis === 'horizontal'
-        ? drag.coordinate.xPixels
-        : pointer.xPixels + drag.grabOffset.xPixels;
-    const yPixels =
-      drag.axis === 'vertical'
-        ? drag.coordinate.yPixels
-        : pointer.yPixels + drag.grabOffset.yPixels;
-    setDrag({
-      ...drag,
+    const xPixels = pointer.xPixels + current.grabOffset.xPixels;
+    const yPixels = pointer.yPixels + current.grabOffset.yPixels;
+    const next: DragState = {
+      ...current,
       coordinate: {
         xPixels: Math.max(0, Math.min(imageWidthPixels - Number.EPSILON, xPixels)),
         yPixels: Math.max(0, Math.min(imageHeightPixels - Number.EPSILON, yPixels)),
       },
-    });
+    };
+    dragRef.current = next;
+    setDrag(next);
   }
 
   function finishDrag(event: ReactPointerEvent): void {
-    if (drag?.pointerId !== event.pointerId) return;
+    const completed = dragRef.current;
+    if (completed?.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
     if (rootRef.current?.hasPointerCapture(event.pointerId)) {
       rootRef.current.releasePointerCapture(event.pointerId);
     }
-    onCommitMeasurement({
-      pointId: drag.marker.pointId,
-      imageId: drag.marker.imageId,
-      state: 'manual',
-      coordinate: drag.coordinate,
+    const key = markerKey(completed.marker);
+    const revision = ++optimisticRevisionRef.current;
+    setOptimisticCoordinates((current) => {
+      const next = new Map(current);
+      next.set(key, { coordinate: completed.coordinate, revision });
+      return next;
     });
+    dragRef.current = null;
     setDrag(null);
+    void onCommitMeasurement({
+      pointId: completed.marker.pointId,
+      imageId: completed.marker.imageId,
+      state: 'manual',
+      coordinate: completed.coordinate,
+    }).then((saved) => {
+      if (saved) return;
+      setOptimisticCoordinates((current) => {
+        if (current.get(key)?.revision !== revision) return current;
+        const next = new Map(current);
+        next.delete(key);
+        return next;
+      });
+    });
   }
 
-  function cancelDrag(): void {
+  function cancelDrag(event: ReactPointerEvent): void {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    event.stopPropagation();
+    dragRef.current = null;
     setDrag(null);
   }
 
@@ -207,8 +255,12 @@ export function GcpImageMarkerOverlay({
         const coordinate =
           drag?.marker.pointId === marker.pointId && drag.marker.imageId === marker.imageId
             ? drag.coordinate
-            : marker.coordinate;
-        const effectiveState = drag?.marker === marker ? 'manualGreen' : marker.state;
+            : (optimisticCoordinates.get(markerKey(marker))?.coordinate ?? marker.coordinate);
+        const effectiveState =
+          (drag?.marker.pointId === marker.pointId && drag.marker.imageId === marker.imageId) ||
+          optimisticCoordinates.has(markerKey(marker))
+            ? 'manualGreen'
+            : marker.state;
         const fullCrosshair = selectedPointId === marker.pointId;
         return (
           <button
@@ -225,10 +277,10 @@ export function GcpImageMarkerOverlay({
             aria-label={`${marker.pointName}, ${stateLabel(effectiveState)}`}
             title={markerTitle(marker)}
             onPointerDown={
-              fullCrosshair ? undefined : (event) => startDrag(event, marker, 'both')
+              fullCrosshair ? undefined : (event) => startDrag(event, marker)
             }
             onDoubleClick={() =>
-              onCommitMeasurement({
+              void onCommitMeasurement({
                 pointId: marker.pointId,
                 imageId: marker.imageId,
                 state: 'manual',
@@ -254,7 +306,7 @@ export function GcpImageMarkerOverlay({
                   y1={imageOffsetY + coordinate.yPixels * viewScale}
                   x2={imageOffsetX + imageWidthPixels * viewScale}
                   y2={imageOffsetY + coordinate.yPixels * viewScale}
-                  onPointerDown={(event) => startDrag(event, marker, 'horizontal')}
+                  onPointerDown={(event) => startDrag(event, marker)}
                 />
                 <line
                   className={styles.axisVisual}
@@ -269,13 +321,7 @@ export function GcpImageMarkerOverlay({
                   y1={imageOffsetY}
                   x2={imageOffsetX + coordinate.xPixels * viewScale}
                   y2={imageOffsetY + imageHeightPixels * viewScale}
-                  onPointerDown={(event) => startDrag(event, marker, 'vertical')}
-                />
-                <circle
-                  className={styles.intersection}
-                  cx={imageOffsetX + coordinate.xPixels * viewScale}
-                  cy={imageOffsetY + coordinate.yPixels * viewScale}
-                  r={6}
+                  onPointerDown={(event) => startDrag(event, marker)}
                 />
               </svg>
             ) : (
@@ -355,4 +401,15 @@ function markerTitle(marker: GcpImageMarker): string {
       : ` · ${(marker.confidencePerMille / 10).toLocaleString('en-US')} %`;
   const reason = marker.blockedReason ? ` · ${marker.blockedReason}` : '';
   return `${marker.pointName} · ${stateLabel(marker.state)}${confidence}${reason}`;
+}
+
+function markerKey(marker: Pick<GcpImageMarker, 'pointId' | 'imageId'>): string {
+  return `${marker.pointId}:${marker.imageId}`;
+}
+
+function coordinatesMatch(left: GcpImageCoordinate, right: GcpImageCoordinate): boolean {
+  return (
+    Math.abs(left.xPixels - right.xPixels) <= 1e-4 &&
+    Math.abs(left.yPixels - right.yPixels) <= 1e-4
+  );
 }
