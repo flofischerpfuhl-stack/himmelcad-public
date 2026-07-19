@@ -1146,6 +1146,39 @@ void test('explicit browser backend selection crosses the versioned wasm boundar
   );
 });
 
+void test('concurrent viewport mounts serialize the non-reentrant wasm constructor', async () => {
+  const firstCanvas = {
+    width: 1,
+    height: 1,
+    clientWidth: 1,
+    clientHeight: 1,
+  } as HTMLCanvasElement;
+  const secondCanvas = { ...firstCanvas } as HTMLCanvasElement;
+  let activeConstructors = 0;
+  let maximumActiveConstructors = 0;
+  const loader = (): Promise<HimmelcadViewerWasmModule> =>
+    Promise.resolve({
+      WasmViewer: {
+        create: () => Promise.reject(new Error('explicit WebGL2 must use create_with_backend')),
+        create_with_backend: async (canvas) => {
+          activeConstructors += 1;
+          maximumActiveConstructors = Math.max(maximumActiveConstructors, activeConstructors);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          activeConstructors -= 1;
+          return minimalBinding(canvas, () => {});
+        },
+      },
+    });
+
+  const [first, second] = await Promise.all([
+    WgpuKernelViewer.create(firstCanvas, loader, 1, 1, 'webgl2'),
+    WgpuKernelViewer.create(secondCanvas, loader, 1, 1, 'webgl2'),
+  ]);
+  assert.equal(maximumActiveConstructors, 1);
+  first.dispose();
+  second.dispose();
+});
+
 void test('framework-free session owns create, frame, device rebuild and dispose', async () => {
   const canvas = {
     width: 1,

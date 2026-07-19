@@ -119,6 +119,8 @@ export const PhotolabKernelViewport = forwardRef<
   const boundsRef = useRef(new Map<EntityId, Bounds>());
   const cameraAnnotationIdsRef = useRef(new Set<EntityId>());
   const gcpAnnotationIdsRef = useRef(new Set<EntityId>());
+  const annotationRevisionsRef = useRef(new Map<EntityId, number>());
+  const slotGenerationsRef = useRef(new Map<EntityId, number>());
   const callbacksRef = useRef({ onCursorSnap, onLog });
   const navigationModeRef = useRef<'orbit3d' | 'lockedTopDown2d'>('orbit3d');
   callbacksRef.current = { onCursorSnap, onLog };
@@ -126,10 +128,26 @@ export const PhotolabKernelViewport = forwardRef<
 
   const unload = useCallback((entityId: EntityId) => {
     const handle = handlesRef.current.get(entityId);
-    if (handle?.loaded) handle.unload();
+    if (handle?.loaded) {
+      const mutation = handle.unload();
+      const tombstone = mutation.tombstones.find(
+        (candidate) =>
+          candidate.key.slot.entityId === entityId &&
+          candidate.key.slot.representationSlot === 'primary',
+      );
+      if (tombstone) slotGenerationsRef.current.set(entityId, tombstone.generation);
+    }
     handlesRef.current.delete(entityId);
     boundsRef.current.delete(entityId);
   }, []);
+
+  const currentAdmission = useCallback(
+    (admission: CanonicalRepresentationAdmission): CanonicalRepresentationAdmission => ({
+      ...admission,
+      expectedGeneration: slotGenerationsRef.current.get(admission.entity.id as EntityId) ?? null,
+    }),
+    [],
+  );
 
   const frameBounds = useCallback((bounds: Bounds): void => {
     const kernel = kernelRef.current;
@@ -147,6 +165,12 @@ export const PhotolabKernelViewport = forwardRef<
     if (all.length > 0) frameBounds(all.reduce(unionBounds));
   }, [frameBounds]);
 
+  const nextAnnotationRevision = useCallback((entityId: EntityId): number => {
+    const revision = (annotationRevisionsRef.current.get(entityId) ?? 0) + 1;
+    annotationRevisionsRef.current.set(entityId, revision);
+    return revision;
+  }, []);
+
   const replaceAnnotations = useCallback(
     async (
       category: 'camera' | 'gcp',
@@ -156,14 +180,22 @@ export const PhotolabKernelViewport = forwardRef<
       const ids = category === 'camera' ? cameraAnnotationIdsRef.current : gcpAnnotationIdsRef.current;
       for (const id of ids) unload(id);
       ids.clear();
-      for (const handle of kernel.session.loadCanonical(admissions)) {
+      if (admissions.length === 0) {
+        kernel.requestFrame();
+        return;
+      }
+      const current = admissions.map((item) => ({
+        ...item,
+        admission: currentAdmission(item.admission),
+      }));
+      for (const handle of kernel.session.loadCanonical(current)) {
         const id = handle.entityId as EntityId;
         handlesRef.current.set(id, handle);
         ids.add(id);
       }
       kernel.requestFrame();
     },
-    [unload],
+    [currentAdmission, unload],
   );
 
   useImperativeHandle(
@@ -183,13 +215,15 @@ export const PhotolabKernelViewport = forwardRef<
             elementCount: options.pointCount,
           },
         };
-        const admission = canonicalRepresentationAdmission(
-          kernel,
-          options.entityId,
-          options.sourceName,
-          geometry,
-        );
         unload(options.entityId);
+        const admission = currentAdmission(
+          canonicalRepresentationAdmission(
+            kernel,
+            options.entityId,
+            options.sourceName,
+            geometry,
+          ),
+        );
         const handle = await kernel.session.loadPotree(
           { datasetId, metadataUri: metadataUrl, admission, style: SOURCE_STYLE },
           { operationId: options.loadToken ?? `photolab/potree/${options.entityId}` },
@@ -211,7 +245,7 @@ export const PhotolabKernelViewport = forwardRef<
               preparationResource: descriptor.preparationDescriptorResource,
               sectionTopologyUri: resolveProjectUrl(descriptor.sectionTopologyRelativePath),
               sectionTopologyResource: descriptor.sectionTopologyResource,
-              admission: descriptor.canonicalAdmission,
+              admission: currentAdmission(descriptor.canonicalAdmission),
               providerId: descriptor.providerId,
               providerVersion: descriptor.providerVersion,
               style: MESH_STYLE,
@@ -265,7 +299,14 @@ export const PhotolabKernelViewport = forwardRef<
           formatId: 'himmelcad-prepared-hierarchy@1',
           manifestUri: viewerManifestUrl,
           manifestBytes,
-          admissions: [{ ...admission, datasetId, style: RASTER_STYLE }],
+          admissions: [
+            {
+              ...admission,
+              admission: currentAdmission(admission.admission),
+              datasetId,
+              style: RASTER_STYLE,
+            },
+          ],
         });
         if (!handle) throw new Error('raster hierarchy published no canonical handle');
         handlesRef.current.set(options.entityId, handle);
@@ -303,7 +344,14 @@ export const PhotolabKernelViewport = forwardRef<
           formatId: 'himmelcad-prepared-hierarchy@1',
           manifestUri: manifestUrl,
           manifestBytes,
-          admissions: [{ ...admission, datasetId, style: SOURCE_STYLE }],
+          admissions: [
+            {
+              ...admission,
+              admission: currentAdmission(admission.admission),
+              datasetId,
+              style: SOURCE_STYLE,
+            },
+          ],
         });
         if (!handle) throw new Error('splat hierarchy published no canonical handle');
         handlesRef.current.set(options.entityId, handle);
@@ -347,6 +395,7 @@ export const PhotolabKernelViewport = forwardRef<
                     },
                   },
                   renderStyle(rectangle.aligned ? [0.28, 0.7, 1, 1] : [0.55, 0.58, 0.64, 1]),
+                  nextAnnotationRevision(id),
                 ),
               );
             }
@@ -368,6 +417,7 @@ export const PhotolabKernelViewport = forwardRef<
               renderStyle(
                 marker.role.startsWith('checkpoint') ? [1, 0.68, 0.12, 1] : [1, 0.2, 0.25, 1],
               ),
+              nextAnnotationRevision(marker.entityId),
             ),
           );
           await replaceAnnotations('gcp', admissions);
@@ -386,11 +436,42 @@ export const PhotolabKernelViewport = forwardRef<
         return true;
       },
     }),
-    [frameAll, frameBounds, replaceAnnotations, unload],
+    [
+      currentAdmission,
+      frameAll,
+      frameBounds,
+      nextAnnotationRevision,
+      replaceAnnotations,
+      unload,
+    ],
   );
 
   useEffect(() => () => {
     for (const handle of handlesRef.current.values()) if (handle.loaded) handle.unload();
+  }, []);
+
+  const handleReady = useCallback((handle: KernelViewportHandle) => {
+    kernelRef.current = handle;
+    handle.session.setClearColor([0.008, 0.011, 0.016, 1]);
+    handle.navigation.setLockedTopDown(navigationModeRef.current === 'lockedTopDown2d', 0);
+    readyRef.current.resolve(handle);
+    callbacksRef.current.onLog(
+      'info',
+      `Shared viewer ready (${handle.hardwarePolicy.deploymentProfile}, ${handle.session.diagnostics().capabilities.backend})`,
+    );
+  }, []);
+
+  const handlePick = useCallback((candidate: KernelPickCandidate | null) => {
+    callbacksRef.current.onCursorSnap(snapFromCandidate(candidate));
+  }, []);
+
+  const handleCursor = useCallback((coordinate: { x: number; y: number; z: number | null }) => {
+    setCursor({ x: coordinate.x, y: coordinate.y, z: coordinate.z ?? 0 });
+  }, []);
+
+  const handleError = useCallback((error: Error) => {
+    readyRef.current.reject(error);
+    callbacksRef.current.onLog('error', errorChain(error));
   }, []);
 
   return (
@@ -401,24 +482,10 @@ export const PhotolabKernelViewport = forwardRef<
         presentationMode="windowMask"
         decodeWasmModuleUrl={decodeWasmUrl}
         authoritativeSectionTolerance={0.001}
-        onReady={(handle) => {
-          kernelRef.current = handle;
-          handle.session.setClearColor([0.008, 0.011, 0.016, 1]);
-          handle.navigation.setLockedTopDown(navigationModeRef.current === 'lockedTopDown2d', 0);
-          readyRef.current.resolve(handle);
-          callbacksRef.current.onLog(
-            'info',
-            `Shared viewer ready (${handle.hardwarePolicy.deploymentProfile}, ${handle.session.diagnostics().capabilities.backend})`,
-          );
-        }}
-        onActivePick={(candidate) => callbacksRef.current.onCursorSnap(snapFromCandidate(candidate))}
-        onCursorCoordinate={(coordinate) =>
-          setCursor({ x: coordinate.x, y: coordinate.y, z: coordinate.z ?? 0 })
-        }
-        onError={(error) => {
-          readyRef.current.reject(error);
-          callbacksRef.current.onLog('error', error.message);
-        }}
+        onReady={handleReady}
+        onActivePick={handlePick}
+        onCursorCoordinate={handleCursor}
+        onError={handleError}
       />
       <output className={styles.coordinates} aria-label="Cursor coordinates">
         {cursor
@@ -505,6 +572,7 @@ function canonicalRepresentationAdmission(
   entityId: EntityId,
   name: string,
   geometry: GeometryObject,
+  revision = 1,
 ): CanonicalRepresentationAdmission {
   const selected: Representation = {
     role: 'canonical',
@@ -514,7 +582,7 @@ function canonicalRepresentationAdmission(
   };
   const base = {
     id: entityId,
-    revision: 1,
+    revision,
     typeId: geometryTypeId(geometry),
     name,
     owner: null,
@@ -547,8 +615,9 @@ function canonicalRenderAdmission(
   name: string,
   geometry: GeometryObject,
   style?: KernelRenderStyle,
+  revision = 1,
 ): KernelCanonicalRenderAdmission {
-  const admission = canonicalRepresentationAdmission(kernel, entityId, name, geometry);
+  const admission = canonicalRepresentationAdmission(kernel, entityId, name, geometry, revision);
   return style === undefined ? { admission } : { admission, style };
 }
 
@@ -651,6 +720,16 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 function assertCurrentLoad(_token?: string): void {}
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+function errorChain(error: unknown): string {
+  const messages: string[] = [];
+  let current: unknown = error;
+  while (current != null && messages.length < 6) {
+    const message = errorMessage(current);
+    if (!messages.includes(message)) messages.push(message);
+    current = current instanceof Error ? current.cause : null;
+  }
+  return messages.join(' · caused by: ');
 }
 function createDeferred<T>(): {
   promise: Promise<T>;

@@ -1373,6 +1373,27 @@ export interface KernelCanvasExtent {
  * React components own layout and animation policy; this class owns only the
  * versioned WASM boundary, physical target sizing and validated frame state.
  */
+// wasm-bindgen's async wgpu constructor temporarily owns JS closures that are
+// not re-entrant. React StrictMode can overlap a cancelled mount with its
+// replacement, and device recovery can coincide with another viewport start.
+// Serialize only this rare constructor boundary; frames, traversal and tile
+// streaming remain completely independent and pay no per-frame cost.
+let viewerCreationTail: Promise<void> = Promise.resolve();
+
+async function serializeViewerCreation<T>(create: () => Promise<T>): Promise<T> {
+  const previous = viewerCreationTail;
+  let release!: () => void;
+  viewerCreationTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    return await create();
+  } finally {
+    release();
+  }
+}
+
 export class WgpuKernelViewer {
   readonly capabilities: KernelDeviceCapabilities;
   private disposed = false;
@@ -1417,23 +1438,25 @@ export class WgpuKernelViewer {
     initialHeight = canvas.clientHeight,
     backend: KernelBackendPreference = 'automatic',
   ): Promise<WgpuKernelViewer> {
-    const module = await loader();
-    if (module.default !== undefined) await module.default();
-    const width = finiteExtent(initialWidth);
-    const height = finiteExtent(initialHeight);
-    if (backend !== 'automatic' && module.WasmViewer.create_with_backend === undefined) {
-      throw new Error('loaded viewer kernel does not support explicit backend selection');
-    }
-    const resolvedBackend =
-      backend === 'automatic' && module.WasmViewer.create_with_backend !== undefined
-        ? await reliableAutomaticBrowserBackend()
-        : backend;
-    const binding =
-      resolvedBackend === 'automatic'
-        ? await module.WasmViewer.create(canvas, width, height)
-        : await module.WasmViewer.create_with_backend!(canvas, width, height, resolvedBackend);
-    const capabilities = parseCapabilities(binding.capabilities_json());
-    return new WgpuKernelViewer(canvas, binding, capabilities);
+    return serializeViewerCreation(async () => {
+      const module = await loader();
+      if (module.default !== undefined) await module.default();
+      const width = finiteExtent(initialWidth);
+      const height = finiteExtent(initialHeight);
+      if (backend !== 'automatic' && module.WasmViewer.create_with_backend === undefined) {
+        throw new Error('loaded viewer kernel does not support explicit backend selection');
+      }
+      const resolvedBackend =
+        backend === 'automatic' && module.WasmViewer.create_with_backend !== undefined
+          ? await reliableAutomaticBrowserBackend()
+          : backend;
+      const binding =
+        resolvedBackend === 'automatic'
+          ? await module.WasmViewer.create(canvas, width, height)
+          : await module.WasmViewer.create_with_backend!(canvas, width, height, resolvedBackend);
+      const capabilities = parseCapabilities(binding.capabilities_json());
+      return new WgpuKernelViewer(canvas, binding, capabilities);
+    });
   }
 
   /** Attaches the single authoritative clip-cap transport for this viewer lifetime. */
