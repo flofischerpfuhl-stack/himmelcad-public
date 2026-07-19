@@ -34,12 +34,6 @@ export interface KernelNavigationTarget {
 }
 
 export interface KernelNavigationCallbacks {
-  /**
-   * Disable asynchronous GPU hover picking for hosts that only need camera
-   * navigation and a target-plane cursor. This avoids holding an exclusive
-   * wasm readback borrow on graphics backends where a pick map may stall.
-   */
-  readonly enableGpuPicking?: boolean;
   readonly onActivePick?: (
     candidate: KernelPickCandidate | null,
     index: number,
@@ -398,10 +392,6 @@ export class KernelNavigationController {
   private queuePick(clientX: number, clientY: number): void {
     if (this.enabled === false) return;
     this.latestPickPosition = this.physicalPointer(clientX, clientY);
-    if (this.callbacks.enableGpuPicking === false) {
-      this.publishTargetPlaneCursor(this.latestPickPosition);
-      return;
-    }
     if (this.pickPending) {
       this.pickAgain = true;
       return;

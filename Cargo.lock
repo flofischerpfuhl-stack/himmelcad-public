@@ -1024,6 +1024,7 @@ dependencies = [
  "glam",
  "himmelcad-core",
  "himmelcad-render",
+ "js-sys",
  "serde",
  "serde_json",
  "wasm-bindgen",

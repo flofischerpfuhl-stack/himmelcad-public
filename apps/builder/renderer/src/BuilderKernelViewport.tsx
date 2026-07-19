@@ -238,7 +238,6 @@ export const BuilderKernelViewport = forwardRef<
       },
       async loadCanonicalPackage(package_, translation) {
         const kernel = await readyRef.current.promise;
-        await kernel.session.readbacksSettled();
         const normalized = package_.admissions
           .filter(
             (admission) =>

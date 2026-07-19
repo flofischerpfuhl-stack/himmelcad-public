@@ -223,13 +223,8 @@ export class KernelViewerSession {
   private deviceGeneration = 1;
   private navigationState: KernelNavigationController | null = null;
   private navigationInteracting = false;
-  private activeReadbacks = 0;
-  private readbackCompletion: Promise<void> = Promise.resolve();
-  private releaseReadbackCompletion: (() => void) | null = null;
-  private pendingNavigationCamera: {
-    readonly camera: KernelWorldCamera;
-    readonly origin: readonly [number, number, number];
-  } | null = null;
+  private pendingPickMappings = 0;
+  private readonly pickMappingWaiters = new Set<() => void>();
 
   private constructor(
     private readonly options: KernelViewerSessionOptions,
@@ -288,9 +283,6 @@ export class KernelViewerSession {
       target,
       this.camera,
       {
-        ...(callbacks.enableGpuPicking !== undefined
-          ? { enableGpuPicking: callbacks.enableGpuPicking }
-          : {}),
         ...(callbacks.onActivePick ? { onActivePick: callbacks.onActivePick } : {}),
         ...(callbacks.onCameraChanged ? { onCameraChanged: callbacks.onCameraChanged } : {}),
         ...(callbacks.onCursorCoordinate
@@ -606,26 +598,15 @@ export class KernelViewerSession {
     return this.performPick(x, y, radius);
   }
 
-  /**
-   * Waits until the asynchronous GPU pick readback has released wasm-bindgen's
-   * exclusive Rust borrow. Hosts use this before publishing a synchronous
-   * batch of canonical overlays.
-   */
+  /** Waits for current pick mappings without blocking viewer mutation or presentation. */
   async readbacksSettled(): Promise<void> {
     this.assertAlive();
-    await this.readbackCompletion;
+    if (this.pendingPickMappings === 0) return;
+    await new Promise<void>((resolve) => this.pickMappingWaiters.add(resolve));
   }
 
   frame(interacting = false): KernelFrameOutcome {
     this.assertAlive();
-    // `render_pick(&mut self)` owns the wasm binding until WebGPU has mapped
-    // its tiny readback buffer. Calling any other Rust method during that
-    // window is rejected by wasm-bindgen as unsafe recursive aliasing. Skipping
-    // one or two presents is both cheaper and visually preferable to poisoning
-    // the viewer session with a re-entrant call.
-    if (this.activeReadbacks > 0) {
-      return { status: 'skipped', reason: 'gpuPickReadback' };
-    }
     if (this.recoveryReason !== null) {
       this.startDeviceRecovery();
       return { status: 'recreateDevice', reason: this.recoveryReason };
@@ -671,6 +652,7 @@ export class KernelViewerSession {
         });
       }
       if (
+        this.pendingPickMappings > 0 ||
         plan.actions.some(
           (action) => action.kind !== 'fetchTile' && action.kind !== 'fetchHierarchyPage',
         ) ||
@@ -691,7 +673,7 @@ export class KernelViewerSession {
 
   async settled(): Promise<void> {
     this.assertAlive();
-    await this.readbackCompletion;
+    await this.readbacksSettled();
     await this.recovery;
     await Promise.all([this.streamingState.settled(), this.viewerState.clipCapsSettled()]);
   }
@@ -722,6 +704,8 @@ export class KernelViewerSession {
     this.viewerState.detachClipCapCoordinator();
     this.streamingState.dispose();
     this.viewerState.dispose();
+    for (const resolve of this.pickMappingWaiters) resolve();
+    this.pickMappingWaiters.clear();
     this.emit({ type: 'disposed' });
     this.listeners.clear();
   }
@@ -879,26 +863,21 @@ export class KernelViewerSession {
   }
 
   private async performPick(x: number, y: number, radius: number): Promise<KernelPickResult> {
-    if (this.activeReadbacks === 0) {
-      this.readbackCompletion = new Promise<void>((resolve) => {
-        this.releaseReadbackCompletion = resolve;
-      });
-    }
-    this.activeReadbacks += 1;
+    this.pendingPickMappings += 1;
     try {
-      return await this.viewerState.pick(x, y, radius);
+      const result = this.viewerState.pick(x, y, radius);
+      // WebGL2 advances mapped-buffer callbacks from device polls. Keep the
+      // ordinary frame loop alive until the mapping settles; unlike the former
+      // monolithic WASM borrow, every one of these frames remains presentable.
+      this.options.requestFrame?.();
+      return await result;
     } finally {
-      this.activeReadbacks = Math.max(0, this.activeReadbacks - 1);
-      if (this.activeReadbacks === 0) {
-        const pending = this.pendingNavigationCamera;
-        this.pendingNavigationCamera = null;
-        this.releaseReadbackCompletion?.();
-        this.releaseReadbackCompletion = null;
-        if (!this.disposed && pending) {
-          this.viewerState.setWorldCamera(pending.camera, pending.origin);
-        }
-        if (!this.disposed) this.options.requestFrame?.();
+      this.pendingPickMappings = Math.max(0, this.pendingPickMappings - 1);
+      if (this.pendingPickMappings === 0) {
+        for (const resolve of this.pickMappingWaiters) resolve();
+        this.pickMappingWaiters.clear();
       }
+      if (!this.disposed) this.options.requestFrame?.();
     }
   }
 
@@ -906,10 +885,6 @@ export class KernelViewerSession {
     camera: KernelWorldCamera,
     origin: readonly [number, number, number],
   ): void {
-    if (this.activeReadbacks > 0) {
-      this.pendingNavigationCamera = { camera, origin };
-      return;
-    }
     this.viewerState.setWorldCamera(camera, origin);
   }
 

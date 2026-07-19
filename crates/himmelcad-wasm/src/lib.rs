@@ -104,21 +104,22 @@ use himmelcad_render::{
     GpuTextureResourceIdentity, GpuTextureResourceStage, GpuTextureSamplerIdentity,
     GpuTextureTransform, HardwareDeploymentProfile, HardwareInventory, HardwarePolicyResolver,
     HierarchySource, ImplicitThreeDTilesHierarchySource, InstancedTriangleMeshPickRefiner,
-    MeshPickRefiner, PickCandidate, PickCycle, PickRefinementRequest, PotreeHierarchySource,
-    PotreePointLayout, PreparedAssetBundle, PreparedGpuTextureResources, PreparedHierarchySource,
-    PreparedRasterTileContract, PresentationTransform, QualityAdjustment, RasterAnalysisView,
-    RenderProxy, RenderProxyId, RenderProxyKind, RenderStyle, RenderWorld, ResidencyTicket,
-    ResolvedAssetEntry, ResolvedGeometryRepresentationAdmission, ResourceBudget, ResourceCost,
-    RuntimeQualityGovernor, RuntimeQualityState, SectionBatchOptions, SectionHatchStyle,
-    SectionMaterialRegionBinding, SectionPlane, SectionProduct, SectionRegion, SectionTopologyPart,
-    SectionTopologyPartitionData, SectionTopologySnapshotKey, SharedAssetBlobCache, SnapKind,
-    StreamingCoordinator, StreamingRuntimeLimits, StrokeMode, SurfaceFrame, SurfaceFrameOutcome,
-    SurfacePickRequest, TessellatedCurve, TessellatedCurvePath, TessellatedCurveSegment,
-    TextAlignment, TextBatchOptions, TextLayoutOptions, TextLayoutSpace, ThreeDTilesContentKind,
-    ThreeDTilesHierarchySource, TileId, TileKey, TileSelection, TileSelectionView, TileSelector,
-    TimingSample, TriangleMeshPickInstance, TriangleMeshPickRefiner, TriangleMeshPickSource,
-    UnresolvedHeightDisplay, WorldAabb, WorldCamera, WorldTransform, WorldVec3,
-    GPU_POINT_VERTEX_STRIDE_BYTES, SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
+    MeshPickRefiner, PickCandidate, PickCycle, PickRefinementRequest, PickToken,
+    PotreeHierarchySource, PotreePointLayout, PreparedAssetBundle, PreparedGpuTextureResources,
+    PreparedHierarchySource, PreparedRasterTileContract, PresentationTransform, QualityAdjustment,
+    RasterAnalysisView, RenderProxy, RenderProxyId, RenderProxyKind, RenderStyle, RenderWorld,
+    ResidencyTicket, ResolvedAssetEntry, ResolvedGeometryRepresentationAdmission, ResourceBudget,
+    ResourceCost, RuntimeQualityGovernor, RuntimeQualityState, SectionBatchOptions,
+    SectionHatchStyle, SectionMaterialRegionBinding, SectionPlane, SectionProduct, SectionRegion,
+    SectionTopologyPart, SectionTopologyPartitionData, SectionTopologySnapshotKey,
+    SharedAssetBlobCache, SnapKind, StreamingCoordinator, StreamingRuntimeLimits, StrokeMode,
+    SurfaceFrame, SurfaceFrameOutcome, SurfacePickRequest, TessellatedCurve, TessellatedCurvePath,
+    TessellatedCurveSegment, TextAlignment, TextBatchOptions, TextLayoutOptions, TextLayoutSpace,
+    ThreeDTilesContentKind, ThreeDTilesHierarchySource, TileId, TileKey, TileSelection,
+    TileSelectionView, TileSelector, TimingSample, TriangleMeshPickInstance,
+    TriangleMeshPickRefiner, TriangleMeshPickSource, UnresolvedHeightDisplay, WorldAabb,
+    WorldCamera, WorldTransform, WorldVec3, GPU_POINT_VERTEX_STRIDE_BYTES,
+    SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
 };
 #[cfg(target_arch = "wasm32")]
 use web_sys::HtmlCanvasElement;
@@ -440,6 +441,36 @@ pub struct WasmViewer {
     runtime_quality: Option<RuntimeQualityGovernor>,
     frame_telemetry: FrameTelemetryWindow,
     alignment_preview_sessions: AlignmentPreviewSessionStore,
+}
+
+/// Immutable state captured when a GPU pick frame is submitted.
+///
+/// The payload crosses the asynchronous mapping boundary instead of borrowing
+/// `WasmViewer`. This is essential on WebGL2: mapping completion is driven by
+/// later device polls, so the viewer must remain available to present frames.
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WasmPickReadbackPayload {
+    generation: u64,
+    camera: WorldCamera,
+    floating_origin: WorldVec3,
+    view_projection: [[f64; 4]; 4],
+    inverse_view_projection: [[f64; 4]; 4],
+    viewport: [u32; 2],
+    cursor_pixel: [u32; 2],
+    radius: u32,
+    hits: Vec<WasmPickHitPixel>,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WasmPickHitPixel {
+    pixel: [u32; 2],
+    proxy_slot: u32,
+    primitive_slot: u32,
+    reverse_z_depth: f32,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -5231,57 +5262,37 @@ impl WasmViewer {
         Ok(frame_outcome_json(&outcome).to_string())
     }
 
-    /// Renders and asynchronously maps one bounded cursor neighborhood from the
-    /// exact ID/reverse-Z attachments.
-    pub async fn render_pick(&mut self, x: u32, y: u32, radius: u32) -> Result<String, JsValue> {
+    /// Submits one bounded cursor neighborhood and returns a mapping promise.
+    ///
+    /// This method deliberately returns before the GPU readback completes. An
+    /// `async fn render_pick(&mut self)` keeps wasm-bindgen's exclusive dynamic
+    /// borrow alive across `.await`; on the WebGL2 backend the mapping callback
+    /// itself needs subsequent frame polls, producing a permanent deadlock.
+    /// The promise below owns only the readback buffers and immutable frame
+    /// snapshot, leaving the viewer free to render, navigate and mutate.
+    pub fn begin_render_pick(
+        &mut self,
+        x: u32,
+        y: u32,
+        radius: u32,
+    ) -> Result<js_sys::Promise, JsValue> {
         let camera_frame = self.camera_frame.ok_or_else(|| {
             JsValue::from_str(
                 "set_world_camera_json must be called before coordinate-aware picking",
             )
         })?;
         let generation = self.render_world.generation();
-        let out_of_memory_scope = self
-            .host
-            .device()
-            .push_error_scope(wgpu::ErrorFilter::OutOfMemory);
-        let internal_scope = self
-            .host
-            .device()
-            .push_error_scope(wgpu::ErrorFilter::Internal);
-        let validation_scope = self
-            .host
-            .device()
-            .push_error_scope(wgpu::ErrorFilter::Validation);
+        let viewport = self.host.extent();
         let outcome = self
             .submit_frame(Some(SurfacePickRequest {
                 pixel: [x, y],
                 radius,
             }))
             .map_err(js_error)?;
-        let validation = validation_scope.pop();
-        let internal = internal_scope.pop();
-        let out_of_memory = out_of_memory_scope.pop();
         self.host
             .device()
             .poll(wgpu::PollType::Poll)
             .map_err(js_error)?;
-        if let Some(error) = validation.await {
-            return Err(JsValue::from_str(&format!(
-                "GPU pick validation failed: {error}"
-            )));
-        }
-        if let Some(error) = internal.await {
-            return Err(JsValue::from_str(&format!(
-                "GPU pick internal failure: {error}"
-            )));
-        }
-        if let Some(error) = out_of_memory.await {
-            self.host
-                .require_device_recovery(GpuRecoveryReason::OutOfMemory);
-            return Err(JsValue::from_str(&format!(
-                "GPU pick ran out of memory: {error}"
-            )));
-        }
         let SurfaceFrameOutcome::Picked {
             hit_readback: readback,
         } = outcome
@@ -5290,41 +5301,93 @@ impl WasmViewer {
                 "pick frame was not presented with a readback",
             ));
         };
-        let pixels = readback.resolve().await.map_err(js_error)?;
-        if generation != self.render_world.generation() {
+        Ok(wasm_bindgen_futures::future_to_promise(async move {
+            let pixels = readback.resolve().await.map_err(js_error)?;
+            let payload = WasmPickReadbackPayload {
+                generation,
+                camera: camera_frame.camera,
+                floating_origin: camera_frame.floating_origin,
+                view_projection: camera_frame.view_projection.to_cols_array_2d(),
+                inverse_view_projection: camera_frame.inverse_view_projection.to_cols_array_2d(),
+                viewport,
+                cursor_pixel: [x, y],
+                radius,
+                hits: pixels
+                    .into_iter()
+                    .map(|hit| WasmPickHitPixel {
+                        pixel: hit.pixel,
+                        proxy_slot: hit.sample.token.proxy_slot,
+                        primitive_slot: hit.sample.token.primitive_slot,
+                        reverse_z_depth: hit.sample.reverse_z_depth,
+                    })
+                    .collect(),
+            };
+            serde_json::to_string(&payload)
+                .map(|json| JsValue::from_str(&json))
+                .map_err(js_error)
+        }))
+    }
+
+    /// Resolves one completed pick snapshot against the current render world.
+    /// Any intervening scene mutation invalidates the immutable GPU IDs before
+    /// they can be interpreted as current entities.
+    pub fn finish_render_pick(&self, payload_json: &str) -> Result<String, JsValue> {
+        let payload: WasmPickReadbackPayload =
+            serde_json::from_str(payload_json).map_err(js_error)?;
+        if payload.generation != self.render_world.generation() {
             return Ok(serde_json::json!({
-                "generation": generation,
+                "generation": payload.generation,
                 "stale": true,
                 "candidates": []
             })
             .to_string());
         }
+        let camera_frame = CameraFrame {
+            camera: payload.camera,
+            floating_origin: payload.floating_origin,
+            view_projection: DMat4::from_cols_array_2d(&payload.view_projection),
+            inverse_view_projection: DMat4::from_cols_array_2d(&payload.inverse_view_projection),
+        };
+        let pixels = payload
+            .hits
+            .into_iter()
+            .map(|hit| himmelcad_render::GpuHitPixel {
+                pixel: hit.pixel,
+                sample: himmelcad_render::GpuHitSample {
+                    token: PickToken {
+                        proxy_slot: hit.proxy_slot,
+                        primitive_slot: hit.primitive_slot,
+                    },
+                    reverse_z_depth: hit.reverse_z_depth,
+                },
+            })
+            .collect::<Vec<_>>();
         let candidates = reconstruct_coarse_pick_candidates(
             &self.render_world,
             camera_frame,
-            self.host.extent(),
-            [x, y],
+            payload.viewport,
+            payload.cursor_pixel,
             &pixels,
         )
         .map_err(js_error)?;
         let candidates = refine_pick_candidates(
             self,
             &camera_frame,
-            self.host.extent(),
-            [x, y],
-            radius,
+            payload.viewport,
+            payload.cursor_pixel,
+            payload.radius,
             &candidates,
         )
         .map_err(js_error)?;
         let mut cycle = PickCycle::new();
-        cycle.replace(generation, candidates);
+        cycle.replace(payload.generation, candidates);
         let candidates = cycle
             .candidates()
             .iter()
             .map(|candidate| public_pick_candidate(self, candidate))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(serde_json::json!({
-            "generation": generation,
+            "generation": payload.generation,
             "stale": false,
             "candidates": candidates
         })

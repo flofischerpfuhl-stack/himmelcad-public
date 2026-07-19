@@ -196,7 +196,8 @@ export interface WasmViewerBinding {
   render(): string;
   recover_surface?(): void;
   request_device_recovery_for_test?(reason: string): void;
-  render_pick(x: number, y: number, radius: number): Promise<string>;
+  begin_render_pick(x: number, y: number, radius: number): Promise<string>;
+  finish_render_pick(payloadJson: string): string;
   capabilities_json(): string;
   hardware_policy_json(requestJson: string): string;
   runtime_quality_json(): string;
@@ -3030,7 +3031,14 @@ export class WgpuKernelViewer {
       );
     }
     const requestedGeneration = this.binding.world_generation();
-    const value: unknown = JSON.parse(await this.binding.render_pick(x, y, radius));
+    // GPU mapping must not keep the mutable WASM viewer borrowed. WebGL2
+    // completes map callbacks from later device polls, which are driven by the
+    // ordinary frame loop while this promise is pending.
+    const payload = await this.binding.begin_render_pick(x, y, radius);
+    if (this.disposed) {
+      return { generation: Number(requestedGeneration), stale: true, candidates: [] };
+    }
+    const value: unknown = JSON.parse(this.binding.finish_render_pick(payload));
     const result = parsePickResult(value);
     if (
       this.disposed ||

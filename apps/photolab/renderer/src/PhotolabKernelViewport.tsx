@@ -180,7 +180,6 @@ export const PhotolabKernelViewport = forwardRef<
       admissions: readonly KernelCanonicalRenderAdmission[],
     ): Promise<void> => {
       const kernel = await readyRef.current.promise;
-      await kernel.session.readbacksSettled();
       const ids = category === 'camera' ? cameraAnnotationIdsRef.current : gcpAnnotationIdsRef.current;
       for (const id of ids) unload(id);
       ids.clear();
@@ -506,7 +505,6 @@ export const PhotolabKernelViewport = forwardRef<
         wasmLoader={wasmLoader}
         backend="automatic"
         presentationMode="windowMask"
-        enableGpuPicking={false}
         decodeWasmModuleUrl={decodeWasmUrl}
         authoritativeSectionTolerance={0.001}
         onReady={handleReady}

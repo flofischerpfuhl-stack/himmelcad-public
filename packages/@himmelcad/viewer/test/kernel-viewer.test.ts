@@ -372,29 +372,30 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
     recover_surface(): void {
       calls.push(['recoverSurface']);
     },
-    render_pick(): Promise<string> {
-      return Promise.resolve(
-        JSON.stringify({
-          generation: 2,
-          stale: false,
-          candidates: [
-            {
-              address: {
-                entityId: 'point-1',
-                renderProxyId: 'point-1@1',
-                datasetId: null,
-                tileId: null,
-                primitiveId: 0,
-              },
-              worldPosition: { x: 1, y: 2, z: 3 },
-              presentationPosition: { x: 1, y: 2, z: 3 },
-              snapKind: 'point',
-              pixelDistance: 0,
-              depth: 0.25,
+    begin_render_pick(): Promise<string> {
+      return Promise.resolve('{}');
+    },
+    finish_render_pick(): string {
+      return JSON.stringify({
+        generation: 2,
+        stale: false,
+        candidates: [
+          {
+            address: {
+              entityId: 'point-1',
+              renderProxyId: 'point-1@1',
+              datasetId: null,
+              tileId: null,
+              primitiveId: 0,
             },
-          ],
-        }),
-      );
+            worldPosition: { x: 1, y: 2, z: 3 },
+            presentationPosition: { x: 1, y: 2, z: 3 },
+            snapKind: 'point',
+            pixelDistance: 0,
+            depth: 0.25,
+          },
+        ],
+      });
     },
     capabilities_json(): string {
       return JSON.stringify({
@@ -1349,6 +1350,42 @@ void test('automatic backend routes a browser fallback adapter to WebGL2', async
   }
 });
 
+void test('pending WebGL2 pick mapping never owns or blocks the mutable viewer', async () => {
+  const canvas = { width: 64, height: 64, clientWidth: 64, clientHeight: 64 } as HTMLCanvasElement;
+  const binding = minimalBinding(canvas, () => {});
+  let finishMapping = (_payload: string): void => {
+    assert.fail('pick mapping resolver was not installed');
+  };
+  let renderedWhilePending = 0;
+  let mutatedWhilePending = 0;
+  binding.begin_render_pick = () =>
+    new Promise<string>((resolve) => {
+      finishMapping = resolve;
+    });
+  binding.finish_render_pick = () =>
+    JSON.stringify({ generation: 0, stale: false, candidates: [] });
+  binding.render = () => {
+    renderedWhilePending += 1;
+    return JSON.stringify({ status: 'presented', reconfigured: false });
+  };
+  binding.set_clear_color = () => {
+    mutatedWhilePending += 1;
+  };
+  const viewer = await WgpuKernelViewer.create(canvas, () =>
+    Promise.resolve({ WasmViewer: { create: () => Promise.resolve(binding) } }),
+  );
+
+  const pendingPick = viewer.pick(16, 16, 4);
+  await Promise.resolve();
+  viewer.setClearColor([0.1, 0.2, 0.3, 1]);
+  assert.deepEqual(viewer.render(), { status: 'presented', reconfigured: false });
+  assert.equal(mutatedWhilePending, 1);
+  assert.equal(renderedWhilePending, 1);
+  finishMapping('{}');
+  assert.deepEqual(await pendingPick, { generation: 0, stale: false, candidates: [] });
+  viewer.dispose();
+});
+
 function canonicalAdmission(
   entityId: string,
   geometry: KernelGeometryObject,
@@ -1573,8 +1610,9 @@ function minimalBinding(
     set_clip_volumes_json(): void {},
     world_generation: () => 0n,
     render: () => JSON.stringify({ status: 'skipped', reason: 'Suspended' }),
-    render_pick: () =>
-      Promise.resolve(JSON.stringify({ generation: 0, stale: false, candidates: [] })),
+    begin_render_pick: () => Promise.resolve('{}'),
+    finish_render_pick: () =>
+      JSON.stringify({ generation: 0, stale: false, candidates: [] }),
     capabilities_json: () =>
       JSON.stringify({
         adapterName: 'test',
