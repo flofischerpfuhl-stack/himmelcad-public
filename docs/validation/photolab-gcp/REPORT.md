@@ -52,6 +52,8 @@ Twelve deterministic, exact-projection measurements were added as workflow-valid
 
 ![Manual image observation](17-manual-gcp-full-cross.png)
 
+![Final loaded development project](19-final-loaded-dev.png)
+
 The active cross is now a sibling of the transformed image layer. Its geometry is recomputed in viewport pixels, so browser layer scaling cannot rasterize it; line thickness, hit width, center and label remain screen-constant. Dragging an axis preserves the original cursor-to-center offset instead of snapping the center beneath the pointer.
 
 ## Verification
