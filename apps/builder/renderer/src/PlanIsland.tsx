@@ -8,6 +8,7 @@ import {
   type PaperConfig,
   type PlanLibrary,
 } from '@himmelcad/plan';
+import { Select } from '@himmelcad/ui';
 import { X } from 'lucide-react';
 import { lazy, Suspense, useMemo, useRef, useState } from 'react';
 
@@ -93,7 +94,7 @@ export function PlanIsland({ onClose }: { onClose: () => void }): JSX.Element {
       <div className={styles.toolbar}>
         <label>
           Paper
-          <select
+          <Select
             className={styles.control}
             value={paper.sizeId}
             onChange={(e) => setPaper((p) => ({ ...p, sizeId: e.currentTarget.value }))}
@@ -104,11 +105,11 @@ export function PlanIsland({ onClose }: { onClose: () => void }): JSX.Element {
               </option>
             ))}
             <option value="custom">Custom</option>
-          </select>
+          </Select>
         </label>
         <label>
           Orientation
-          <select
+          <Select
             className={styles.control}
             value={paper.orientation}
             onChange={(e) =>
@@ -120,7 +121,7 @@ export function PlanIsland({ onClose }: { onClose: () => void }): JSX.Element {
           >
             <option value="landscape">Landscape</option>
             <option value="portrait">Portrait</option>
-          </select>
+          </Select>
         </label>
         {paper.sizeId === 'custom' && (
           <>

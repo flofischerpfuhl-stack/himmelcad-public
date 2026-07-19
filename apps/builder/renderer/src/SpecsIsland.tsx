@@ -12,6 +12,7 @@ import {
   type Specification,
   SPEC_ENTITY_KINDS,
 } from '@himmelcad/specs';
+import { Checkbox, Select } from '@himmelcad/ui';
 import { X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
@@ -237,7 +238,7 @@ export function SpecsIsland({ onClose }: { onClose: () => void }): JSX.Element {
               </label>
               <label className={styles.field}>
                 <span>Material</span>
-                <select
+                <Select
                   className={styles.control}
                   value={selected.defaultMaterialId ?? ''}
                   onChange={(e) => {
@@ -264,7 +265,7 @@ export function SpecsIsland({ onClose }: { onClose: () => void }): JSX.Element {
                       {m.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
 
               <div className={styles.sectionTitle}>Entity presentations</div>
@@ -274,14 +275,11 @@ export function SpecsIsland({ onClose }: { onClose: () => void }): JSX.Element {
                   <div key={kind} className={styles.kindCard}>
                     <div className={styles.kindHead}>
                       <strong>{kind}</strong>
-                      <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                        <input
-                          type="checkbox"
+                      <Checkbox
+                          label="Enabled"
                           checked={on}
                           onChange={(e) => toggleKind(kind, e.currentTarget.checked)}
-                        />
-                        Enabled
-                      </label>
+                      />
                     </div>
                     {on && kind === 'curve' && selected.presentations.curve?.kind === 'curve' && (
                       <CurveFields
@@ -385,7 +383,7 @@ function CurveFields({
       </label>
       <label className={styles.field}>
         <span>Linetype</span>
-        <select
+        <Select
           className={styles.control}
           value={value.linetypeId ?? ''}
           onChange={(e) => {
@@ -404,7 +402,7 @@ function CurveFields({
               {lt.name}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
     </>
   );
@@ -445,7 +443,7 @@ function AreaFields({
       </label>
       <label className={styles.field}>
         <span>Hatch</span>
-        <select
+        <Select
           className={styles.control}
           value={value.hatchId ?? ''}
           onChange={(e) => {
@@ -464,7 +462,7 @@ function AreaFields({
               {h.name}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
     </>
   );

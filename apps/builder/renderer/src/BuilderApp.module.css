@@ -1,0 +1,39 @@
+.brandLogo {
+  display: block;
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+}
+
+.themeToggle {
+  min-height: 18px;
+  padding: 0 8px;
+  color: var(--hc-fg-muted);
+  font: 500 10px/1 var(--hc-font-ui);
+  background: var(--hc-bg-island-lo);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  cursor: pointer;
+}
+
+.themeToggle:hover {
+  color: var(--hc-fg-strong);
+  background: var(--hc-hover-bg);
+}
+
+.properties {
+  display: grid;
+  gap: 6px;
+  padding: 2px;
+}
+
+.properties span {
+  color: var(--hc-fg-muted);
+  font-size: 11px;
+}
+
+.properties strong {
+  color: var(--hc-fg-strong);
+  font-size: 12px;
+  font-weight: 600;
+}

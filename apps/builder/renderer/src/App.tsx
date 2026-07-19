@@ -25,6 +25,7 @@ import { PlanIsland } from './PlanIsland.js';
 import { ribbonTabs } from './ribbon.js';
 import { applyImportToProject, createEmptyProject, type ImportSummary } from './project.js';
 import { SpecsIsland } from './SpecsIsland.js';
+import styles from './BuilderApp.module.css';
 
 const SIDECAR_PROGRESS_PREFIX = '__HC_PROGRESS__';
 const DEFAULT_POINT_SIZE = 1;
@@ -37,11 +38,20 @@ export function App(): JSX.Element {
   const [pointSize, setPointSize] = useState(DEFAULT_POINT_SIZE);
   const [specsOpen, setSpecsOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
+  const [rightPanelTab, setRightPanelTab] = useState<'function' | 'properties'>('function');
+  const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() =>
+    document.documentElement.classList.contains('hc-theme-light') ? 'light' : 'dark',
+  );
   const activeFunctionId = useLayoutStore((s) => s.activeFunctionId);
   const activate = useLayoutStore((s) => s.activateFunction);
   const toggleBottom = useLayoutStore((s) => s.toggleBottomPanel);
   const viewportRef = useRef<BuilderKernelViewportHandle | null>(null);
   const initialImportStartedRef = useRef(false);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('hc-theme-dark', themeMode === 'dark');
+    document.documentElement.classList.toggle('hc-theme-light', themeMode === 'light');
+  }, [themeMode]);
 
   useEffect(() => {
     logEvent('info', 'renderer', 'Builder renderer mounted');
@@ -296,9 +306,22 @@ export function App(): JSX.Element {
       },
       { id: 'quality', content: 'Quality: adaptive', align: 'right' as const },
       { id: 'units', content: 'm', align: 'right' as const },
+      {
+        id: 'theme',
+        content: (
+          <button
+            type="button"
+            className={styles.themeToggle}
+            onClick={() => setThemeMode((mode) => (mode === 'dark' ? 'light' : 'dark'))}
+          >
+            {themeMode === 'dark' ? 'Light' : 'Dark'}
+          </button>
+        ),
+        align: 'right' as const,
+      },
       { id: 'panels', content: <PanelToggles />, align: 'right' as const },
     ],
-    [activeFunctionId, importing, pointSize, project.entities, selected.size, snap],
+    [activeFunctionId, importing, pointSize, project.entities, selected.size, snap, themeMode],
   );
 
   const windowControls = useMemo<WindowControls | null>(() => {
@@ -322,11 +345,7 @@ export function App(): JSX.Element {
             productLabel="Builder"
             projectLabel={project.name}
             brandMark={
-              <img
-                src={builderLogoUrl}
-                alt=""
-                style={{ width: 26, height: 26, objectFit: 'contain' }}
-              />
+              <img className={styles.brandLogo} src={builderLogoUrl} alt="" />
             }
             controls={windowControls}
           />
@@ -337,6 +356,21 @@ export function App(): JSX.Element {
           <FunctionPanel
             activeFunctionId={activeFunctionId}
             title={functionTitle(activeFunctionId)}
+            activeTab={rightPanelTab}
+            onActiveTabChange={setRightPanelTab}
+            propertiesTitle={selected.size === 1 ? project.entities[[...selected][0]!]?.name : undefined}
+            properties={
+              selected.size > 0 ? (
+                <div className={styles.properties}>
+                  <span>{selected.size === 1 ? 'Selected entity' : 'Selection'}</span>
+                  <strong>
+                    {selected.size === 1
+                      ? (project.entities[[...selected][0]!]?.name ?? 'Unknown')
+                      : `${selected.size} entities`}
+                  </strong>
+                </div>
+              ) : null
+            }
           >
             {functionBody(activeFunctionId, pointSize, setPointSize)}
           </FunctionPanel>
@@ -353,6 +387,8 @@ export function App(): JSX.Element {
             onLog={(level, message) => logEvent(level, 'renderer', message)}
           />
         }
+        floatingLeftTabs
+        floatingRightTabs
         statusBar={<StatusBar items={statusItems} />}
       />
       {specsOpen ? (
