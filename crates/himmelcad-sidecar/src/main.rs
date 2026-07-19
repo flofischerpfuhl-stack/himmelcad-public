@@ -8,7 +8,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::BufReader as StdBufReader;
+use std::io::{BufReader as StdBufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -18,6 +18,7 @@ use himmelcad_core::canonical_document::EntityVersionRef;
 use himmelcad_core::canonical_resources::CanonicalResourceRef;
 use himmelcad_core::entity::EntityId;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
@@ -43,7 +44,9 @@ use himmelcad_core::photolab_jobs::{
 use himmelcad_core::photolab_matching::ImageId;
 use himmelcad_io::{
     import_gcp_csv_file, import_las_file_with_progress_and_cancel,
-    import_photo_files_with_progress, preview_gcp_csv_file, ConverterProgress,
+    import_photo_files_with_progress, preview_gcp_csv_file, CanonicalImportProvider,
+    CanonicalImportRequest, ConverterProgress, IfcCanonicalProvider, ProviderOperationContext,
+    ProviderProgress, IFC2X3_FORMAT_ID, IFC4X3_FORMAT_ID, IFC4_FORMAT_ID,
 };
 
 use crate::project_runtime::{
@@ -170,6 +173,38 @@ struct ImportLasParams {
 #[derive(Debug, Deserialize)]
 struct CancelLasImportParams {
     operation_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImportIfcParams {
+    path: String,
+    #[serde(default)]
+    cache_dir: Option<String>,
+    #[serde(default = "default_ifc_namespace")]
+    import_namespace: String,
+}
+
+fn default_ifc_namespace() -> String {
+    "builder".to_owned()
+}
+
+#[derive(Default)]
+struct LoggingProviderContext;
+
+impl ProviderOperationContext for LoggingProviderContext {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(&mut self, progress: ProviderProgress) {
+        tracing::info!(
+            phase = progress.phase,
+            completed = progress.completed,
+            total = progress.total,
+            message = progress.message,
+            "canonical import progress"
+        );
+    }
 }
 
 #[derive(Default)]
@@ -654,6 +689,10 @@ async fn handle(
                 Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
             }
         }
+        "import.ifc" => match serde_json::from_value::<ImportIfcParams>(req.params.clone()) {
+            Ok(params) => rpc_blocking(req.id, move || handle_import_ifc(params)).await,
+            Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+        },
         "photolab.alignment.resolve" => {
             match serde_json::from_value::<ResolveAlignmentProfileRequest>(req.params.clone()) {
                 Ok(params) => match resolve_alignment_profile(&params) {
@@ -5080,6 +5119,84 @@ fn rpc_result<T: Serialize>(id: serde_json::Value, result: anyhow::Result<T>) ->
         },
         Err(error) => rpc_err(id, -32000, &error.to_string()),
     }
+}
+
+fn handle_import_ifc(
+    params: ImportIfcParams,
+) -> anyhow::Result<himmelcad_io::CanonicalImportPackage> {
+    let source = PathBuf::from(params.path);
+    anyhow::ensure!(
+        source.is_file(),
+        "IFC source does not exist: {}",
+        source.display()
+    );
+    anyhow::ensure!(
+        !params.import_namespace.trim().is_empty(),
+        "IFC import namespace is empty"
+    );
+    let mut prefix = vec![0_u8; 128 * 1024];
+    let mut source_file = std::fs::File::open(&source)
+        .with_context(|| format!("failed to read IFC source {}", source.display()))?;
+    let prefix_length = source_file.read(&mut prefix)?;
+    let prefix = String::from_utf8_lossy(&prefix[..prefix_length]).to_ascii_uppercase();
+    let format_id = if prefix.contains("IFC4X3") {
+        IFC4X3_FORMAT_ID
+    } else if prefix.contains("IFC2X3") {
+        IFC2X3_FORMAT_ID
+    } else {
+        IFC4_FORMAT_ID
+    };
+    let cache_dir = params.cache_dir.map_or_else(
+        || {
+            std::env::temp_dir()
+                .join("himmelcad-cache")
+                .join("canonical")
+        },
+        PathBuf::from,
+    );
+    std::fs::create_dir_all(&cache_dir)?;
+    let mut hasher = Sha256::new();
+    let mut hash_file = std::fs::File::open(&source)?;
+    let mut hash_buffer = vec![0_u8; 1024 * 1024];
+    loop {
+        let count = hash_file.read(&mut hash_buffer)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&hash_buffer[..count]);
+    }
+    let package_path = cache_dir
+        .join("ifc-packages")
+        .join(format!("{}.json", hex::encode(hasher.finalize())));
+    if package_path.is_file() {
+        let package = serde_json::from_slice::<himmelcad_io::CanonicalImportPackage>(
+            &std::fs::read(&package_path)?,
+        )?;
+        return Ok(package);
+    }
+    let provider = IfcCanonicalProvider::new(cache_dir);
+    let options = serde_json::json!({
+        "acceptedLossCodes": ["hcad.loss.ifc.unsupported-geometry@1"],
+        "importNamespace": params.import_namespace,
+    });
+    let mut context = LoggingProviderContext;
+    let package = provider
+        .import(
+            CanonicalImportRequest {
+                source: &source,
+                format_id,
+                options: &options,
+            },
+            &mut context,
+        )
+        .map_err(anyhow::Error::from)?;
+    if let Some(parent) = package_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let temporary = package_path.with_extension("json.tmp");
+    std::fs::write(&temporary, serde_json::to_vec(&package)?)?;
+    std::fs::rename(temporary, package_path)?;
+    Ok(package)
 }
 
 async fn handle_import_las(

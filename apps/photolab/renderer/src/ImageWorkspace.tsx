@@ -357,6 +357,7 @@ function ImageLayerContent({
       <div className={styles.imageCanvas}>
         <ImageContentFrame
           source={`hcad-image://project/${photo.sha256}?format=${photo.format}`}
+          previewSource={`hcad-image://project/${photo.sha256}?format=${photo.format}&preview=1`}
           alt={fileName(photo)}
           width={camera?.camera.widthPixels ?? dimensions?.widthPixels ?? 1}
           height={camera?.camera.heightPixels ?? dimensions?.heightPixels ?? 1}
@@ -777,6 +778,7 @@ function projectProductUrl(relativePath: string): string {
 
 function ImageContentFrame({
   source,
+  previewSource,
   alt,
   width,
   height,
@@ -791,6 +793,7 @@ function ImageContentFrame({
   onEditImageMask,
 }: {
   source: string;
+  previewSource: string;
   alt: string;
   width: number;
   height: number;
@@ -811,6 +814,7 @@ function ImageContentFrame({
   const [maskRadius, setMaskRadius] = useState(36);
   const [maskBusy, setMaskBusy] = useState(false);
   const [activeStroke, setActiveStroke] = useState<readonly ImageMaskPoint[]>([]);
+  const [fullResolutionReady, setFullResolutionReady] = useState(false);
   const strokeRef = useRef<{ pointerId: number; points: ImageMaskPoint[] } | null>(null);
   const fitMode = useRef(true);
   const lastViewportSize = useRef({ width: 0, height: 0 });
@@ -840,6 +844,7 @@ function ImageContentFrame({
   }, [commitTransform, container, height, width]);
   useEffect(() => {
     fitMode.current = true;
+    setFullResolutionReady(false);
     const animationFrame = requestAnimationFrame(fit);
     return () => cancelAnimationFrame(animationFrame);
   }, [fit, source]);
@@ -1060,7 +1065,22 @@ function ImageContentFrame({
           transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
         }}
       >
-        <img src={source} alt={alt} draggable={false} onError={onError} />
+        <img
+          className={styles.imagePreview}
+          src={previewSource}
+          alt=""
+          draggable={false}
+          aria-hidden="true"
+        />
+        <img
+          className={`${styles.imageOriginal} ${fullResolutionReady ? styles.imageOriginalReady : ''}`}
+          src={source}
+          alt={alt}
+          draggable={false}
+          decoding="async"
+          onLoad={() => setFullResolutionReady(true)}
+          onError={onError}
+        />
         {imageMask?.rasterObjectHash && imageMask.maskedPixelCount > 0 && (
           <ImageMaskOverlay
             rasterObjectHash={imageMask.rasterObjectHash}
@@ -1081,28 +1101,31 @@ function ImageContentFrame({
             />
           </svg>
         )}
-        {markers.length > 0 && (
-          <GcpImageMarkerOverlay
-            imageWidthPixels={width}
-            imageHeightPixels={height}
-            markers={markers}
-            {...(focusedGcpId ? { selectedPointId: focusedGcpId } : {})}
-            onCommitMeasurement={onCommitGcpMeasurement}
-            onEditObservation={(marker, action) =>
-              onEditGcpObservation(
-                marker,
-                action === 'block'
-                  ? {
-                      action,
-                      coordinate: marker.coordinate,
-                      reason: 'Excluded by user',
-                    }
-                  : { action },
-              )
-            }
-          />
-        )}
       </div>
+      {markers.length > 0 && (
+        <GcpImageMarkerOverlay
+          imageWidthPixels={width}
+          imageHeightPixels={height}
+          viewScale={transform.scale}
+          imageOffsetX={transform.x}
+          imageOffsetY={transform.y}
+          markers={markers}
+          {...(focusedGcpId ? { selectedPointId: focusedGcpId } : {})}
+          onCommitMeasurement={onCommitGcpMeasurement}
+          onEditObservation={(marker, action) =>
+            onEditGcpObservation(
+              marker,
+              action === 'block'
+                ? {
+                    action,
+                    coordinate: marker.coordinate,
+                    reason: 'Excluded by user',
+                  }
+                : { action },
+            )
+          }
+        />
+      )}
     </div>
   );
 }
@@ -1377,6 +1400,7 @@ function projectCameraCoordinate(
   const normalizedY = y / z;
   const [k1, k2, k3] = camera.camera.radialDistortion;
   const [p1, p2] = camera.camera.tangentialDistortion;
+  if (!distortionIsInvertibleAt(normalizedX, normalizedY, k1, k2, k3, p1, p2)) return null;
   const r2 = normalizedX * normalizedX + normalizedY * normalizedY;
   const radial = 1 + k1 * r2 + k2 * r2 * r2 + k3 * r2 * r2 * r2;
   const distortedX =
@@ -1397,6 +1421,32 @@ function projectCameraCoordinate(
     yPixels < camera.camera.heightPixels
     ? { xPixels, yPixels }
     : null;
+}
+
+function distortionIsInvertibleAt(
+  x: number,
+  y: number,
+  k1: number,
+  k2: number,
+  k3: number,
+  p1: number,
+  p2: number,
+): boolean {
+  const r2 = x * x + y * y;
+  const r4 = r2 * r2;
+  const r6 = r4 * r2;
+  const radial = 1 + k1 * r2 + k2 * r4 + k3 * r6;
+  const radialDerivative = 1 + 3 * k1 * r2 + 5 * k2 * r4 + 7 * k3 * r6;
+  if (!Number.isFinite(radial) || radial <= 0 || radialDerivative <= 0) return false;
+
+  const gradientScale = 2 * (k1 + 2 * k2 * r2 + 3 * k3 * r4);
+  const radialX = x * gradientScale;
+  const radialY = y * gradientScale;
+  const dxDx = radial + x * radialX + 2 * p1 * y + 6 * p2 * x;
+  const dxDy = x * radialY + 2 * p1 * x + 2 * p2 * y;
+  const dyDx = y * radialX + 2 * p1 * x + 2 * p2 * y;
+  const dyDy = radial + y * radialY + 6 * p1 * y + 2 * p2 * x;
+  return dxDx * dyDy - dxDy * dyDx > 1e-8;
 }
 
 function dot3(left: readonly number[], right: readonly number[]): number {

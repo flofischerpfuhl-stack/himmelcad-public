@@ -21,8 +21,9 @@
   width: 16px;
   height: 16px;
   border: 1px solid var(--hc-border-strong);
-  border-radius: var(--hc-radius-sm);
-  background: var(--hc-bg-input);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--hc-bg-input) 92%, var(--hc-fg-default) 8%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--hc-fg-strong) 5%, transparent);
   transition:
     border-color var(--hc-motion-fast),
     background var(--hc-motion-fast);
@@ -31,18 +32,35 @@
 .box[data-checked='true'] {
   border-color: var(--hc-accent-base);
   background: var(--hc-accent-base);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 18%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--hc-accent-base) 14%, transparent);
 }
 
-.box[data-checked='true']::after {
-  content: '';
+.box svg {
   position: absolute;
-  left: 4px;
-  top: 1px;
-  width: 5px;
-  height: 9px;
-  border: solid var(--hc-fg-on-accent);
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: var(--hc-fg-on-accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+  transform: scale(0.72);
+  transition:
+    opacity var(--hc-motion-fast),
+    transform var(--hc-motion-fast);
+}
+
+.box[data-checked='true'] svg {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.root:hover:not(:has(input:disabled)) .box {
+  border-color: color-mix(in srgb, var(--hc-accent-base) 58%, var(--hc-border-strong));
 }
 
 .input {

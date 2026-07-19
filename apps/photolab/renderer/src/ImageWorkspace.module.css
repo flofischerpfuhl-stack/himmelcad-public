@@ -110,6 +110,18 @@
   pointer-events: none;
   user-select: none;
 }
+.imagePreview,
+.imageOriginal {
+  position: absolute;
+  inset: 0;
+}
+.imageOriginal {
+  opacity: 0;
+  transition: opacity 90ms linear;
+}
+.imageOriginalReady {
+  opacity: 1;
+}
 .maskOverlay,
 .activeMaskStroke {
   position: absolute;

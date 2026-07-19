@@ -18,6 +18,7 @@ import builderLogoUrl from '../../build/mark.png';
 
 import {
   BuilderKernelViewport,
+  type BuilderCanonicalImportPackage,
   type BuilderKernelViewportHandle,
 } from './BuilderKernelViewport.js';
 import { FloatingTaskIsland } from './FloatingTaskIsland.js';
@@ -47,6 +48,13 @@ export function App(): JSX.Element {
   const toggleBottom = useLayoutStore((s) => s.toggleBottomPanel);
   const viewportRef = useRef<BuilderKernelViewportHandle | null>(null);
   const initialImportStartedRef = useRef(false);
+  const initialMixedSceneStartedRef = useRef(false);
+  const entityGroupsRef = useRef({
+    cloud: [] as EntityId[],
+    ifc: [] as EntityId[],
+    orthophoto: [] as EntityId[],
+    mesh: [] as EntityId[],
+  });
 
   useEffect(() => {
     document.documentElement.classList.toggle('hc-theme-dark', themeMode === 'dark');
@@ -123,6 +131,7 @@ export function App(): JSX.Element {
           `${summary.source_name}: loaded ${summary.point_count_loaded.toLocaleString()} / ${summary.point_count_total.toLocaleString()} points`,
         );
         const entityId = summary.entity_id as EntityId;
+        entityGroupsRef.current.cloud.push(entityId);
         await viewportRef.current?.loadPotreePointCloud(summary.metadata_url, {
           entityId,
           datasetId: summary.dataset_id,
@@ -167,12 +176,139 @@ export function App(): JSX.Element {
     initialImportStartedRef.current = true;
     const api = window.himmelcad;
     if (!api) return;
-    void api.dev.initialPointCloudPaths().then(async (paths) => {
+    void api.dev.initialPreparedPointCloud().then(async (prepared) => {
+      if (prepared) {
+        const entityId = prepared.entityId as EntityId;
+        const bounds = {
+          min: prepared.boundsMin as [number, number, number],
+          max: prepared.boundsMax as [number, number, number],
+        };
+        await viewportRef.current?.loadPotreePointCloud(prepared.metadataUrl, {
+          entityId,
+          datasetId: prepared.datasetId,
+          sourceName: prepared.sourceName,
+          bounds,
+          pointCount: prepared.pointCount,
+        });
+        entityGroupsRef.current.cloud.push(entityId);
+        setProject((previous) =>
+          applyImportToProject(previous, {
+            entityId,
+            kind: 'PointCloud',
+            name: prepared.sourceName,
+            bounds,
+            pointCount: prepared.pointCount,
+          }),
+        );
+        logEvent('info', 'renderer', `Prepared point cloud loaded · ${prepared.pointCount.toLocaleString()} points`);
+        return;
+      }
+      const paths = await api.dev.initialPointCloudPaths();
       if (paths.length === 0) return;
       logEvent('info', 'renderer', `Loading development point cloud: ${paths[0] ?? ''}`);
       await importLasFiles(paths);
     });
   }, [importLasFiles]);
+
+  useEffect(() => {
+    if (initialMixedSceneStartedRef.current) return;
+    initialMixedSceneStartedRef.current = true;
+    const api = window.himmelcad;
+    if (!api) return;
+    void api.dev.initialMixedScene().then(async (scene) => {
+      if (!scene) return;
+      if (scene.ifcPath) {
+        logEvent('info', 'renderer', `Loading development IFC: ${scene.ifcPath}`);
+        const package_ = await api.sidecar.call<BuilderCanonicalImportPackage>('import.ifc', {
+          path: scene.ifcPath,
+          import_namespace: 'builder-alte-akademie',
+        });
+        const ids = await viewportRef.current?.loadCanonicalPackage(package_, [
+          691112.11, 5334890.385, 517.62,
+        ]);
+        entityGroupsRef.current.ifc = [...(ids ?? [])];
+        const treeId = 'alte-akademie-ifc' as EntityId;
+        setProject((previous) =>
+          applyImportToProject(previous, {
+            entityId: treeId,
+            kind: 'IfcElement',
+            name: 'Alte Akademie · IFC model',
+            bounds: {
+              min: [691067.873, 5334794.44, 482.831],
+              max: [691306.253, 5335032.82, 721.211],
+            },
+            pointCount: 0,
+          }),
+        );
+        logEvent('info', 'renderer', `IFC loaded · ${ids?.length ?? 0} canonical entities`);
+      }
+      if (scene.orthophoto) {
+        const [a, d, b, e, c, f] = scene.orthophoto.worldFile;
+        if ([a, d, b, e, c, f].some((value) => value == null || !Number.isFinite(value))) {
+          throw new Error('development orthophoto world file is invalid');
+        }
+        const entityId = 'alte-akademie-orthophoto' as EntityId;
+        await viewportRef.current?.loadRasterImage(scene.orthophoto.url, {
+          entityId,
+          sourceName: 'Alte Akademie · Orthomosaic 20 cm',
+          origin: [c!, f!, 482.75],
+          columnStep: [a!, d!, 0],
+          rowStep: [b!, e!, 0],
+          rasterSize: [scene.orthophoto.width, scene.orthophoto.height],
+          tiles: scene.orthophoto.tiles.map((tile) => ({
+            ...tile,
+            depthUrl: tile.demUrl,
+          })),
+        });
+        entityGroupsRef.current.orthophoto = [entityId];
+        setProject((previous) =>
+          applyImportToProject(previous, {
+            entityId,
+            kind: 'Orthomosaic',
+            name: 'Orthomosaic · 20 cm',
+            bounds: {
+              min: [691064.265, 5334758.3, 482.75],
+              max: [691289.676, 5335057.515, 482.75],
+            },
+            pointCount: 0,
+          }),
+        );
+        logEvent('info', 'renderer', 'Georeferenced orthomosaic loaded');
+        if (scene.demUrl) {
+          const meshEntityId = 'alte-akademie-textured-terrain' as EntityId;
+          await viewportRef.current?.loadDrapedRaster(scene.orthophoto.url, scene.demUrl, {
+            entityId: meshEntityId,
+            sourceName: 'Alte Akademie · Orthophoto textured terrain',
+            origin: [c!, f!, 0],
+            columnStep: [a!, d!, 0],
+            rowStep: [b!, e!, 0],
+            rasterSize: [scene.orthophoto.width, scene.orthophoto.height],
+            tiles: scene.orthophoto.tiles.map((tile) => ({
+              ...tile,
+              depthUrl: tile.demUrl,
+            })),
+          });
+          entityGroupsRef.current.mesh = [meshEntityId];
+          setProject((previous) =>
+            applyImportToProject(previous, {
+              entityId: meshEntityId,
+              kind: 'TexturedMesh',
+              name: 'Textured terrain · DEM + orthomosaic',
+              bounds: {
+                min: [691064.265, 5334758.3, 482.035],
+                max: [691289.676, 5335057.515, 560.356],
+              },
+              pointCount: 0,
+            }),
+          );
+          logEvent('info', 'renderer', 'Textured terrain loaded · DEM sampled from dense reconstruction');
+        }
+      }
+      viewportRef.current?.frameAll();
+    }).catch((error: unknown) => {
+      logEvent('error', 'renderer', `Mixed development scene failed: ${String(error)}`);
+    });
+  }, []);
 
   // Hook ribbon actions to real handlers.
   useEffect(() => {
@@ -222,6 +358,27 @@ export function App(): JSX.Element {
     });
   };
 
+  const onVisibilityChange = useCallback((id: EntityId, visible: boolean) => {
+    const groups = entityGroupsRef.current;
+    const entityIds = id === project.rootEntity
+      ? [...groups.cloud, ...groups.ifc, ...groups.orthophoto, ...groups.mesh]
+      : id === ('alte-akademie-ifc' as EntityId)
+        ? groups.ifc
+        : [id];
+    viewportRef.current?.setEntityVisibility(entityIds, visible);
+    setProject((previous) => {
+      const entity = previous.entities[id];
+      if (!entity) return previous;
+      return {
+        ...previous,
+        entities: {
+          ...previous.entities,
+          [id]: { ...entity, visibility: { ...entity.visibility, visible } },
+        },
+      };
+    });
+  }, [project.rootEntity]);
+
   const onCommand = useCallback(
     (raw: string) => {
       const trimmed = raw.trim();
@@ -236,7 +393,7 @@ export function App(): JSX.Element {
             source: 'renderer',
             timestamp: Date.now(),
             message:
-              'commands: help · clear · import.las · view.frame · view.point-size <px> · ribbon.<id>',
+              'commands: help · clear · import.las · view.frame · view.point-size <px> · view.top · view.orbit · view.clip.horizontal <z> · view.clip.vertical-x <x> · view.clip.vertical-y <y> · view.clip.clear · view.opacity <group> <0..1> · view.exaggeration <group> <factor> · ribbon.<id>',
           });
           return;
         case 'clear':
@@ -261,6 +418,56 @@ export function App(): JSX.Element {
           const next = Number(rest[0]);
           if (Number.isFinite(next)) setPointSize(clamp(next, 0.25, 20));
           else activate('view.point-size');
+          return;
+        }
+        case 'view.top':
+          viewportRef.current?.setNavigationMode('lockedTopDown2d');
+          return;
+        case 'view.orbit':
+          viewportRef.current?.setNavigationMode('orbit3d');
+          return;
+        case 'view.clip.clear':
+          viewportRef.current?.setClipVolumes([]);
+          return;
+        case 'view.clip.horizontal':
+        case 'view.clip.vertical-x':
+        case 'view.clip.vertical-y': {
+          const value = Number(rest[0]);
+          if (!Number.isFinite(value)) {
+            logEvent('warn', 'renderer', `${head_} requires a project coordinate`);
+            return;
+          }
+          const normal =
+            head_.toLowerCase() === 'view.clip.horizontal'
+              ? { x: 0, y: 0, z: 1 }
+              : head_.toLowerCase() === 'view.clip.vertical-x'
+                ? { x: 1, y: 0, z: 0 }
+                : { x: 0, y: 1, z: 0 };
+          viewportRef.current?.setClipVolumes([
+            {
+              id: 'builder-user-section',
+              planes: [{ normal, distance: -value }],
+              operation: 'keepInside',
+              previewCap: true,
+              enabled: true,
+            },
+          ]);
+          return;
+        }
+        case 'view.opacity':
+        case 'view.exaggeration': {
+          const group = rest[0] as keyof typeof entityGroupsRef.current;
+          const value = Number(rest[1]);
+          const ids = entityGroupsRef.current[group];
+          if (!ids || !Number.isFinite(value)) {
+            logEvent('warn', 'renderer', `${head_} requires cloud|ifc|orthophoto|mesh and a value`);
+            return;
+          }
+          viewportRef.current?.setEntityAppearance(ids, {
+            ...(head_.toLowerCase() === 'view.opacity'
+              ? { opacity: clamp(value, 0, 1) }
+              : { verticalExaggeration: clamp(value, 0.01, 100) }),
+          });
           return;
         }
         default:
@@ -351,7 +558,14 @@ export function App(): JSX.Element {
           />
         }
         ribbon={<Ribbon tabs={ribbonTabs} />}
-        leftPanel={<EntityTree project={project} selectedIds={selected} onSelect={onSelect} />}
+        leftPanel={
+          <EntityTree
+            project={project}
+            selectedIds={selected}
+            onSelect={onSelect}
+            onVisibilityChange={onVisibilityChange}
+          />
+        }
         rightPanel={
           <FunctionPanel
             activeFunctionId={activeFunctionId}

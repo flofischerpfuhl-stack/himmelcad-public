@@ -56,6 +56,33 @@ export interface HimmelCADApi {
   };
   readonly dev: {
     initialPointCloudPaths: () => Promise<string[]>;
+    initialPreparedPointCloud: () => Promise<{
+      entityId: string;
+      datasetId: string;
+      sourceName: string;
+      pointCount: number;
+      boundsMin: number[];
+      boundsMax: number[];
+      metadataUrl: string;
+    } | null>;
+    initialMixedScene: () => Promise<{
+      ifcPath: string | null;
+      orthophoto: {
+        url: string;
+        worldFile: number[];
+        width: number;
+        height: number;
+        tiles: Array<{
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+          imageUrl: string;
+          demUrl: string | null;
+        }>;
+      } | null;
+      demUrl: string | null;
+    } | null>;
   };
   readonly dialog: {
     openLas: () => Promise<string[]>;
@@ -94,6 +121,8 @@ const api: HimmelCADApi = {
   },
   dev: {
     initialPointCloudPaths: () => ipcRenderer.invoke('dev:initial-point-cloud-paths'),
+    initialPreparedPointCloud: () => ipcRenderer.invoke('dev:initial-prepared-point-cloud'),
+    initialMixedScene: () => ipcRenderer.invoke('dev:initial-mixed-scene'),
   },
   dialog: {
     openLas: () => ipcRenderer.invoke('dialog:openLas'),

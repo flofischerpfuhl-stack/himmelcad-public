@@ -15,6 +15,7 @@ import type {
   GeometryResource,
   HimmelcadViewerWasmLoader,
   KernelCanonicalRenderAdmission,
+  KernelGlyphAtlasMetadata,
   KernelPickCandidate,
   KernelRenderStyle,
   KernelViewerEntityHandle,
@@ -27,6 +28,8 @@ import styles from './PhotolabKernelViewport.module.css';
 const EMPTY_HASH_A = '01'.repeat(32);
 const EMPTY_HASH_B = '02'.repeat(32);
 const EMPTY_HASH_C = '03'.repeat(32);
+const GCP_FONT_HASH = '4743502d6c6162656c2d61746c61732d76310000000000000000000000000000';
+const GCP_FONT_MEDIA_TYPE = 'application/x-himmelcad-glyph-atlas';
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] as const;
 
 const viewerWasmUrl = new URL('viewer-wasm/himmelcad_wasm.js', window.location.href).href;
@@ -177,6 +180,7 @@ export const PhotolabKernelViewport = forwardRef<
       admissions: readonly KernelCanonicalRenderAdmission[],
     ): Promise<void> => {
       const kernel = await readyRef.current.promise;
+      await kernel.session.readbacksSettled();
       const ids = category === 'camera' ? cameraAnnotationIdsRef.current : gcpAnnotationIdsRef.current;
       for (const id of ids) unload(id);
       ids.clear();
@@ -408,18 +412,39 @@ export const PhotolabKernelViewport = forwardRef<
       setGcpMarkers(markers) {
         void (async () => {
           const kernel = await readyRef.current.promise;
-          const admissions = markers.map((marker) =>
-            canonicalRenderAdmission(
-              kernel,
-              marker.entityId,
-              marker.name,
-              { kind: 'point', position: tuplePosition(marker.position) },
-              renderStyle(
-                marker.role.startsWith('checkpoint') ? [1, 0.68, 0.12, 1] : [1, 0.2, 0.25, 1],
+          const admissions = markers.flatMap((marker) => {
+            const color = marker.role.startsWith('checkpoint')
+              ? [1, 0.68, 0.12, 1] as const
+              : [1, 0.2, 0.25, 1] as const;
+            const labelId = `${marker.entityId}:label` as EntityId;
+            return [
+              canonicalRenderAdmission(
+                kernel,
+                marker.entityId,
+                marker.name,
+                { kind: 'point', position: tuplePosition(marker.position) },
+                renderStyle(color),
+                nextAnnotationRevision(marker.entityId),
               ),
-              nextAnnotationRevision(marker.entityId),
-            ),
-          );
+              canonicalRenderAdmission(
+                kernel,
+                labelId,
+                `${marker.name} label`,
+                {
+                  kind: 'text',
+                  text: {
+                    text: `  ${marker.name}`,
+                    anchor: tuplePosition(marker.position),
+                    space: 'screen',
+                    height: 13,
+                    font: resource(GCP_FONT_HASH, GCP_FONT_MEDIA_TYPE, GCP_FONT_ATLAS_BYTES),
+                  },
+                },
+                renderStyle(color),
+                nextAnnotationRevision(labelId),
+              ),
+            ];
+          });
           await replaceAnnotations('gcp', admissions);
         })().catch((error: unknown) =>
           callbacksRef.current.onLog('error', `GCP overlays could not be published: ${errorMessage(error)}`),
@@ -452,6 +477,8 @@ export const PhotolabKernelViewport = forwardRef<
 
   const handleReady = useCallback((handle: KernelViewportHandle) => {
     kernelRef.current = handle;
+    const font = createGcpGlyphAtlas();
+    handle.session.registerGlyphAtlas(GCP_FONT_HASH, font.metadata, font.rgba8);
     handle.session.setClearColor([0.008, 0.011, 0.016, 1]);
     handle.navigation.setLockedTopDown(navigationModeRef.current === 'lockedTopDown2d', 0);
     readyRef.current.resolve(handle);
@@ -626,7 +653,75 @@ function geometryTypeId(geometry: GeometryObject): string {
   if (geometry.kind === 'gaussianSplatCloud') return 'hcad.gaussian-splat-cloud@1';
   if (geometry.kind === 'rasterImage') return 'hcad.raster-image@1';
   if (geometry.kind === 'curve') return 'hcad.curve@1';
+  if (geometry.kind === 'text') return 'hcad.text@1';
+  if (geometry.kind === 'label') return 'hcad.label@1';
   return 'hcad.point@1';
+}
+
+const GCP_FONT_CELL_WIDTH = 20;
+const GCP_FONT_CELL_HEIGHT = 28;
+const GCP_FONT_COLUMNS = 16;
+const GCP_FONT_CHARACTERS = Array.from({ length: 95 }, (_, index) =>
+  String.fromCharCode(index + 32),
+).join('');
+const GCP_FONT_ROWS = Math.ceil(GCP_FONT_CHARACTERS.length / GCP_FONT_COLUMNS);
+const GCP_FONT_ATLAS_BYTES =
+  GCP_FONT_COLUMNS * GCP_FONT_CELL_WIDTH * GCP_FONT_ROWS * GCP_FONT_CELL_HEIGHT * 4;
+
+function createGcpGlyphAtlas(): {
+  readonly metadata: KernelGlyphAtlasMetadata;
+  readonly rgba8: Uint8Array;
+} {
+  const width = GCP_FONT_COLUMNS * GCP_FONT_CELL_WIDTH;
+  const height = GCP_FONT_ROWS * GCP_FONT_CELL_HEIGHT;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) throw new Error('2D canvas is unavailable for the GCP label atlas');
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = '#ffffff';
+  context.font = '600 20px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+  context.textBaseline = 'alphabetic';
+  const glyphs: Record<string, {
+    readonly atlasMin: readonly [number, number];
+    readonly atlasMax: readonly [number, number];
+    readonly planeMin: readonly [number, number];
+    readonly planeMax: readonly [number, number];
+    readonly advance: number;
+  }> = {};
+  for (const [index, character] of [...GCP_FONT_CHARACTERS].entries()) {
+    const column = index % GCP_FONT_COLUMNS;
+    const row = Math.floor(index / GCP_FONT_COLUMNS);
+    const x = column * GCP_FONT_CELL_WIDTH;
+    const y = row * GCP_FONT_CELL_HEIGHT;
+    if (character !== ' ') context.fillText(character, x + 2, y + 21);
+    glyphs[character] = character === ' '
+      ? {
+          atlasMin: [x, y],
+          atlasMax: [x, y],
+          planeMin: [0, 0],
+          planeMax: [0, 0],
+          advance: 0.55,
+        }
+      : {
+          atlasMin: [x, y],
+          atlasMax: [x + GCP_FONT_CELL_WIDTH, y + GCP_FONT_CELL_HEIGHT],
+          planeMin: [0, -0.25],
+          planeMax: [0.72, 0.75],
+          advance: 0.72,
+        };
+  }
+  return {
+    metadata: {
+      width,
+      height,
+      lineHeight: 1.15,
+      glyphs,
+      fallback: '?',
+    },
+    rgba8: new Uint8Array(context.getImageData(0, 0, width, height).data),
+  };
 }
 
 function resource(objectHash: string, mediaType: string, byteLength: number): GeometryResource {

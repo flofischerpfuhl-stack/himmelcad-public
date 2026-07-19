@@ -529,26 +529,51 @@ where
     } else {
         GpuAlphaMode::Opaque
     };
-    let material = renderer.create_solid_styled_material(
+    let flat_material = renderer.create_solid_styled_material(
         device,
         queue,
         &format!("{label}-style"),
         alpha_mode,
         gpu_style,
     )?;
+    let lights_mesh_surfaces = matches!(
+        geometry,
+        GeometryObject::Alignment { .. }
+            | GeometryObject::Surface3d { .. }
+            | GeometryObject::Solid { .. }
+            | GeometryObject::ElevationSurface { .. }
+    );
+    let lit_material = lights_mesh_surfaces
+        .then(|| {
+            renderer.create_lit_solid_styled_material(
+                device,
+                queue,
+                &format!("{label}-lit-style"),
+                alpha_mode,
+                gpu_style,
+            )
+        })
+        .transpose()?;
     Ok(parts
         .into_iter()
-        .map(|part| CompiledEntityPart {
-            kind: part.kind,
-            bounds: part.bounds,
-            cost: part.cost,
-            batch: part.batch.with_material(material.clone()),
-            additional_batches: part
-                .additional_batches
-                .into_iter()
-                .map(|batch| batch.with_material(material.clone()))
-                .collect(),
-            source_material_table: part.source_material_table,
+        .map(|part| {
+            let material = if part.kind == RenderProxyKind::Triangles {
+                lit_material.as_ref().unwrap_or(&flat_material)
+            } else {
+                &flat_material
+            };
+            CompiledEntityPart {
+                kind: part.kind,
+                bounds: part.bounds,
+                cost: part.cost,
+                batch: part.batch.with_material(material.clone()),
+                additional_batches: part
+                    .additional_batches
+                    .into_iter()
+                    .map(|batch| batch.with_material(material.clone()))
+                    .collect(),
+                source_material_table: part.source_material_table,
+            }
         })
         .collect())
 }

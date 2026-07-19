@@ -767,10 +767,10 @@ export function ImageImportPanel({
       ? op.requiredGrids.map((grid) => {
           const path = gridLocalPath(grid);
           return {
-            kind: grid.kind,
+            ...(grid.kind === undefined ? {} : { kind: grid.kind }),
             officialFilename: grid.officialFilename,
-            license: grid.license,
-            coverage: grid.coverage,
+            ...(grid.license === undefined ? {} : { license: grid.license }),
+            ...(grid.coverage === undefined ? {} : { coverage: grid.coverage }),
             availability: path
               ? ({ state: 'presentVerified' as const, local_path: path })
               : ({ state: 'missing' as const }),
@@ -1751,7 +1751,7 @@ export function ImageImportPanel({
                   <AlertTriangle size={14} />
                   <span>
                     No project-specific local grid was selected (bundled/default only). Accuracy may
-                    be reduced for historic datums such as DHDN / Gauss-Krüger.
+                      be reduced for historic datums such as DHDN / Gauss-Krueger.
                     {selectedOperation?.expectedAccuracyMm != null
                       ? ` Published figure ≈ ±${selectedOperation.expectedAccuracyMm.toFixed(0)} mm.`
                       : ''}
@@ -2536,7 +2536,7 @@ export function rewritePipelineGridToken(
   if (!fromFilename || !toFilename || fromFilename === toFilename) return pipeline;
   const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // Match +grids=... tokens; swap exact basename occurrences.
-  return pipeline.replace(/\+grids=([^\s]+)/g, (full, list: string) => {
+  return pipeline.replace(/\+grids=([^\s]+)/g, (_full, list: string) => {
     const parts = list.split(',').map((part) => {
       const base = part.replace(/^.*[/\\]/, '');
       if (base === fromFilename || part === fromFilename) return toFilename;

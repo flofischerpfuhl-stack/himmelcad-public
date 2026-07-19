@@ -21,6 +21,9 @@ use crate::photolab_matching::ImageId;
 const MIN_DEPTH: f64 = 1.0e-9;
 const MIN_SIGMA_METERS: f64 = 1.0e-6;
 const MATRIX_EPSILON: f64 = 1.0e-12;
+// Invalid candidates must never beat a valid reprojection merely because the
+// projector cannot produce a sample for them.
+const INVALID_PROJECTION_COST: f64 = 1.0e12;
 
 /// Calibrated pinhole camera in reconstruction coordinates.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -573,7 +576,7 @@ where
         .collect::<Vec<_>>();
     let effective_mode = effective_mode(options.transform_mode, &controls)?;
     let active = active_parameters(effective_mode, &controls);
-    let mut transform = initial_transform(&controls, effective_mode);
+    let mut transform = initial_transform(&controls, effective_mode, options.robust_loss);
     let mut lambda = 1.0e-6;
     let mut current_objective = objective(&controls, transform, options.robust_loss);
     let mut iterations = 0_u16;
@@ -1626,15 +1629,18 @@ fn point_objective(
     let reprojection = point
         .observations
         .iter()
-        .filter_map(|observation| {
-            let projected = project_world(&cameras[observation.camera_index], point.world).ok()?;
+        .map(|observation| {
+            let Ok(projected) = project_world(&cameras[observation.camera_index], point.world)
+            else {
+                return INVALID_PROJECTION_COST;
+            };
             let norm = (projected.x_pixels - observation.measured.x_pixels)
                 .hypot(projected.y_pixels - observation.measured.y_pixels)
                 / observation.sigma_pixels;
-            Some(robust_cost(
+            robust_cost(
                 observation_loss(options.robust_loss, observation.is_gcp_marker),
                 norm,
-            ))
+            )
         })
         .sum::<f64>();
     reprojection
@@ -1679,14 +1685,16 @@ fn camera_objective(
 ) -> f64 {
     let reprojection = observations
         .iter()
-        .filter_map(|(point_index, measured, sigma_pixels, is_gcp_marker)| {
-            let projected = project_world(camera, points[*point_index].world).ok()?;
-            Some(robust_cost(
+        .map(|(point_index, measured, sigma_pixels, is_gcp_marker)| {
+            let Ok(projected) = project_world(camera, points[*point_index].world) else {
+                return INVALID_PROJECTION_COST;
+            };
+            robust_cost(
                 observation_loss(options.robust_loss, *is_gcp_marker),
                 (projected.x_pixels - measured.x_pixels)
                     .hypot(projected.y_pixels - measured.y_pixels)
                     / sigma_pixels,
-            ))
+            )
         })
         .sum::<f64>();
     reprojection
@@ -1833,9 +1841,21 @@ fn triangulate_observations(
                 .map_or_else(|| GcpPointId(String::new()), |value| value.point_id.clone()),
         ));
     }
+    // Solving the ray normal equations directly in a projected CRS (E/N in
+    // the millions of metres) loses the small baseline/depth terms to
+    // cancellation. Rebase the centres near the cameras, solve there, then
+    // restore the frozen world frame. The projection matrix is translation
+    // invariant, so this changes only numerical conditioning.
+    let ray_count = u32::try_from(rays.len()).unwrap_or(u32::MAX);
+    let local_origin = scale3(
+        rays.iter()
+            .fold([0.0; 3], |sum, (center, _)| add3(sum, *center)),
+        1.0 / f64::from(ray_count),
+    );
     let mut matrix = [[0.0; 3]; 3];
     let mut rhs = [0.0; 3];
     for (center, direction) in &rays {
+        let local_center = sub3(*center, local_origin);
         let projection = [
             [
                 1.0 - direction[0] * direction[0],
@@ -1854,13 +1874,14 @@ fn triangulate_observations(
             ],
         ];
         for row in 0..3 {
-            rhs[row] += dot3(projection[row], *center);
+            rhs[row] += dot3(projection[row], local_center);
             for column in 0..3 {
                 matrix[row][column] += projection[row][column];
             }
         }
     }
-    let point = solve_3(matrix, rhs).ok_or(GcpOptimizationError::DegenerateRays)?;
+    let local_point = solve_3(matrix, rhs).ok_or(GcpOptimizationError::DegenerateRays)?;
+    let point = add3(local_point, local_origin);
     let ray_sum = rays
         .iter()
         .map(|(center, direction)| {
@@ -1869,7 +1890,6 @@ fn triangulate_observations(
             dot3(perpendicular, perpendicular)
         })
         .sum::<f64>();
-    let ray_count = u32::try_from(rays.len()).unwrap_or(u32::MAX);
     Ok((point, (ray_sum / f64::from(ray_count)).sqrt()))
 }
 
@@ -1994,15 +2014,40 @@ fn project_camera_coordinate(
     if point[2] <= MIN_DEPTH {
         return Err(GcpOptimizationError::PointBehindCamera);
     }
-    let normalized = distort(
-        [point[0] / point[2], point[1] / point[2]],
-        radial,
-        tangential,
-    );
+    let undistorted = [point[0] / point[2], point[1] / point[2]];
+    if !distortion_is_invertible_at(undistorted, radial, tangential) {
+        return Err(GcpOptimizationError::InvalidObservationCoordinate);
+    }
+    let normalized = distort(undistorted, radial, tangential);
     Ok(ImageCoordinate {
         x_pixels: focal_x * normalized[0] + principal_x,
         y_pixels: focal_y * normalized[1] + principal_y,
     })
+}
+
+fn distortion_is_invertible_at(point: [f64; 2], radial: [f64; 3], tangential: [f64; 2]) -> bool {
+    let [x, y] = point;
+    let radius2 = x * x + y * y;
+    let radius4 = radius2 * radius2;
+    let radius6 = radius4 * radius2;
+    let radial_scale = 1.0 + radial[0] * radius2 + radial[1] * radius4 + radial[2] * radius6;
+    let radial_derivative =
+        1.0 + 3.0 * radial[0] * radius2 + 5.0 * radial[1] * radius4 + 7.0 * radial[2] * radius6;
+    if !radial_scale.is_finite() || radial_scale <= 0.0 || radial_derivative <= 0.0 {
+        return false;
+    }
+
+    let radial_gradient_scale =
+        2.0 * (radial[0] + 2.0 * radial[1] * radius2 + 3.0 * radial[2] * radius4);
+    let radial_x = x * radial_gradient_scale;
+    let radial_y = y * radial_gradient_scale;
+    let [p1, p2] = tangential;
+    let dx_dx = radial_scale + x * radial_x + 2.0 * p1 * y + 6.0 * p2 * x;
+    let dx_dy = x * radial_y + 2.0 * p1 * x + 2.0 * p2 * y;
+    let dy_dx = y * radial_x + 2.0 * p1 * x + 2.0 * p2 * y;
+    let dy_dy = radial_scale + y * radial_y + 6.0 * p1 * y + 2.0 * p2 * x;
+    let determinant = dx_dx * dy_dy - dx_dy * dy_dx;
+    determinant.is_finite() && determinant > 1.0e-8
 }
 
 fn effective_mode(
@@ -2035,38 +2080,130 @@ fn active_parameters(mode: GcpTransformMode, controls: &[&TriangulatedPoint]) ->
 fn initial_transform(
     controls: &[&TriangulatedPoint],
     mode: GcpTransformMode,
+    loss: GcpRobustLoss,
 ) -> GcpSimilarityTransform {
     let spatial = controls
         .iter()
         .filter(|point| point.definition.role.uses_xy() && point.definition.role.uses_z())
         .copied()
         .collect::<Vec<_>>();
-    let mut transform = if mode == GcpTransformMode::Similarity7 {
-        horn_similarity(&spatial).unwrap_or_else(GcpSimilarityTransform::identity)
+
+    // A sparse reconstruction may already be expressed in project-world
+    // coordinates. In that case one inaccurate marker must not rotate and
+    // shrink the entire camera rig before the robust optimizer even starts.
+    // The component-wise median is a cheap, deterministic translation-only
+    // hypothesis and remains valid for mixed XY/Z control roles.
+    let translation = median_translation(controls);
+    let mut candidates = vec![GcpSimilarityTransform {
+        translation_meters: translation,
+        ..GcpSimilarityTransform::identity()
+    }];
+
+    if mode == GcpTransformMode::Similarity7 {
+        if let Some(transform) = horn_similarity(&spatial) {
+            candidates.push(transform);
+        }
+
+        // Deterministic RANSAC-style seeds make the seven-parameter start
+        // robust without adding work to the frame loop or the iterative
+        // solver. GCP sets are normally small; the cap bounds pathological
+        // imports while still covering many independent triples.
+        const MAX_TRIPLE_HYPOTHESES: usize = 256;
+        let mut hypotheses = 0_usize;
+        'outer: for first in 0..spatial.len() {
+            for second in (first + 1)..spatial.len() {
+                for third in (second + 1)..spatial.len() {
+                    if let Some(transform) =
+                        horn_similarity(&[spatial[first], spatial[second], spatial[third]])
+                    {
+                        candidates.push(transform);
+                    }
+                    hypotheses += 1;
+                    if hypotheses >= MAX_TRIPLE_HYPOTHESES {
+                        break 'outer;
+                    }
+                }
+            }
+        }
+    }
+
+    candidates
+        .into_iter()
+        .min_by(|left, right| {
+            let left_trimmed = initializer_objective(controls, *left, loss);
+            let right_trimmed = initializer_objective(controls, *right, loss);
+            left_trimmed.total_cmp(&right_trimmed).then_with(|| {
+                objective(controls, *left, loss).total_cmp(&objective(controls, *right, loss))
+            })
+        })
+        .unwrap_or_else(GcpSimilarityTransform::identity)
+}
+
+fn initializer_objective(
+    controls: &[&TriangulatedPoint],
+    transform: GcpSimilarityTransform,
+    loss: GcpRobustLoss,
+) -> f64 {
+    let mut costs = controls
+        .iter()
+        .map(|point| {
+            let mapped = transform.apply(point.reconstruction);
+            let target = [
+                point.definition.coordinate.east_meters,
+                point.definition.coordinate.north_meters,
+                point.definition.coordinate.height_meters,
+            ];
+            let normalized = masked_normalized_norm(
+                point,
+                sub3(mapped, target),
+                point
+                    .definition
+                    .uncertainty
+                    .horizontal_stddev_meters
+                    .max(MIN_SIGMA_METERS),
+                point
+                    .definition
+                    .uncertainty
+                    .height_stddev_meters
+                    .max(MIN_SIGMA_METERS),
+            );
+            robust_cost(survey_loss(loss), normalized)
+        })
+        .collect::<Vec<_>>();
+    costs.sort_by(f64::total_cmp);
+
+    // Trim at most the worst fifth, but always retain every point when only
+    // the minimum three spatial controls are available.
+    let retained = if costs.len() < 4 {
+        costs.len()
     } else {
-        GcpSimilarityTransform::identity()
+        costs.len() - (costs.len() / 5).max(1)
     };
-    let mut sums = [0.0; 3];
-    let mut counts = [0_u32; 3];
+    costs.into_iter().take(retained).sum()
+}
+
+fn median_translation(controls: &[&TriangulatedPoint]) -> [f64; 3] {
+    let mut deltas = [Vec::new(), Vec::new(), Vec::new()];
     for control in controls {
-        let mapped = transform.apply(control.reconstruction);
         if control.definition.role.uses_xy() {
-            sums[0] += control.definition.coordinate.east_meters - mapped[0];
-            sums[1] += control.definition.coordinate.north_meters - mapped[1];
-            counts[0] += 1;
-            counts[1] += 1;
+            deltas[0].push(control.definition.coordinate.east_meters - control.reconstruction[0]);
+            deltas[1].push(control.definition.coordinate.north_meters - control.reconstruction[1]);
         }
         if control.definition.role.uses_z() {
-            sums[2] += control.definition.coordinate.height_meters - mapped[2];
-            counts[2] += 1;
+            deltas[2].push(control.definition.coordinate.height_meters - control.reconstruction[2]);
         }
     }
-    for axis in 0..3 {
-        if counts[axis] > 0 {
-            transform.translation_meters[axis] += sums[axis] / f64::from(counts[axis]);
-        }
+
+    let mut translation = [0.0; 3];
+    for (axis, values) in deltas.iter_mut().enumerate() {
+        values.sort_by(f64::total_cmp);
+        translation[axis] = match values.len() {
+            0 => 0.0,
+            length if length % 2 == 1 => values[length / 2],
+            length => (values[length / 2 - 1] + values[length / 2]) * 0.5,
+        };
     }
-    transform
+    translation
 }
 
 fn horn_similarity(points: &[&TriangulatedPoint]) -> Option<GcpSimilarityTransform> {
@@ -2760,6 +2897,72 @@ mod tests {
         )
     }
 
+    #[test]
+    fn objective_penalizes_points_that_move_behind_the_camera() {
+        let camera = transform_camera(
+            &look_down_camera(1, 0.0, 0.0),
+            GcpSimilarityTransform::identity(),
+        );
+        let measured = project_world(&camera, [0.0, 0.0, 0.0]).expect("visible point");
+        let mut point = BundlePoint {
+            track_id: None,
+            reconstruction: [0.0, 0.0, 0.0],
+            world: [0.0, 0.0, 0.0],
+            observations: vec![BundleObservation {
+                camera_index: 0,
+                measured,
+                sigma_pixels: 1.0,
+                is_gcp_marker: true,
+            }],
+            survey: None,
+        };
+        let options = GcpSolverOptions::default();
+        let visible_cost = point_objective(std::slice::from_ref(&camera), &point, options);
+        point.world = [0.0, 0.0, 20.0];
+        let invalid_cost = point_objective(std::slice::from_ref(&camera), &point, options);
+        assert_eq!(visible_cost, 0.0);
+        assert_eq!(invalid_cost, INVALID_PROJECTION_COST);
+    }
+
+    #[test]
+    fn similarity_initializer_ignores_one_gross_triangulation_outlier() {
+        let coordinates = [
+            [0.0, 0.0, 0.0],
+            [10.0, 0.0, 0.2],
+            [0.0, 10.0, -0.1],
+            [10.0, 10.0, 0.3],
+            [5.0, 4.0, -0.2],
+            [8.0, 3.0, 0.4],
+        ];
+        let mut points = coordinates
+            .iter()
+            .enumerate()
+            .map(|(index, coordinate)| TriangulatedPoint {
+                definition: identity_frame_point(
+                    &format!("R{index}"),
+                    *coordinate,
+                    GcpRole::ControlXyz,
+                ),
+                participation: OptimizationPointParticipation::Control,
+                reconstruction: *coordinate,
+                ray_rms: 0.0,
+            })
+            .collect::<Vec<_>>();
+        points[5].reconstruction = [100.0, -200.0, 50.0];
+        let controls = points.iter().collect::<Vec<_>>();
+
+        let transform = initial_transform(
+            &controls,
+            GcpTransformMode::Similarity7,
+            GcpRobustLoss::default(),
+        );
+
+        assert!((transform.scale - 1.0).abs() < 1.0e-8);
+        for (point, expected) in points.iter().take(5).zip(coordinates) {
+            assert!(norm3(sub3(transform.apply(point.reconstruction), expected)) < 1.0e-7);
+        }
+    }
+
     fn point(id: &str, reconstruction: [f64; 3], role: GcpRole) -> (GcpPoint, [f64; 3]) {
         let world = [
             2.0 * reconstruction[0] + 500.0,
@@ -3380,6 +3583,64 @@ mod tests {
         let observations = data.observations.iter().collect::<Vec<_>>();
         let (triangulated, _) = triangulate_observations(&observations, &map).expect("triangulate");
         assert!(norm3(sub3(triangulated, points[0].1)) < 1.0e-8);
+    }
+
+    #[test]
+    fn projected_crs_triangulation_is_numerically_stable() {
+        let target = [4_375_526.105, 5_281_233.931, 706.982];
+        let rotation = [1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, -1.0];
+        let cameras = [
+            camera(1, [target[0] - 18.0, target[1] - 4.0, 736.0], rotation),
+            camera(2, [target[0] + 17.0, target[1] - 3.0, 735.5], rotation),
+            camera(3, [target[0] + 2.0, target[1] + 16.0, 736.5], rotation),
+        ];
+        let observations = cameras
+            .iter()
+            .map(|camera| GcpObservation {
+                point_id: GcpPointId("WORLD".into()),
+                image_id: camera.image_id,
+                state: GcpObservationState::Manual {
+                    coordinate: project_reconstruction(camera, target).expect("visible"),
+                },
+            })
+            .collect::<Vec<_>>();
+        let camera_map = validate_cameras(&cameras).expect("camera map");
+        let references = observations.iter().collect::<Vec<_>>();
+
+        let (triangulated, ray_rms) =
+            triangulate_observations(&references, &camera_map).expect("stable triangulation");
+
+        assert!(norm3(sub3(triangulated, target)) < 1.0e-7);
+        assert!(ray_rms < 1.0e-7);
+    }
+
+    #[test]
+    fn projection_rejects_the_folded_part_of_a_radial_model() {
+        let radial = [-0.107_756_512_758, -0.000_878_853_88, -0.015_723_478_938];
+        let tangential = [0.000_130_474_491, -0.000_011_293_71];
+
+        assert!(project_camera_coordinate(
+            [0.2, -0.3, 1.0],
+            3_713.0,
+            3_713.0,
+            2_640.0,
+            1_978.0,
+            radial,
+            tangential,
+        )
+        .is_ok());
+        assert_eq!(
+            project_camera_coordinate(
+                [0.82, -1.64, 1.0],
+                3_713.0,
+                3_713.0,
+                2_640.0,
+                1_978.0,
+                radial,
+                tangential,
+            ),
+            Err(GcpOptimizationError::InvalidObservationCoordinate)
+        );
     }
 
     #[test]

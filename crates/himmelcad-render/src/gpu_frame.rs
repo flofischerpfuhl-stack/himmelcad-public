@@ -907,6 +907,34 @@ pub struct GpuPointVertex {
 /// per-point byte estimates behind.
 pub const GPU_POINT_VERTEX_STRIDE_BYTES: u64 = size_of::<GpuPointVertex>() as u64;
 
+// LAS/Potree RGB is conventionally display-referred sRGB. The shared renderer
+// composites in linear light and performs the output transfer once in the
+// presentation pass, so decode the compact channels before GPU upload. A LUT
+// avoids adding three transfer-function evaluations to the hot point shader.
+const SRGB_U8_TO_LINEAR_U8: [u8; 256] = [
+    0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3,
+    4, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 8, 8, 8, 8, 9, 9, 9, 10, 10, 10, 11, 11, 12,
+    12, 12, 13, 13, 13, 14, 14, 15, 15, 16, 16, 17, 17, 17, 18, 18, 19, 19, 20, 20, 21, 22, 22, 23,
+    23, 24, 24, 25, 25, 26, 27, 27, 28, 29, 29, 30, 30, 31, 32, 32, 33, 34, 35, 35, 36, 37, 37, 38,
+    39, 40, 41, 41, 42, 43, 44, 45, 45, 46, 47, 48, 49, 50, 51, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+    60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 76, 77, 78, 79, 80, 81, 82, 84, 85,
+    86, 87, 88, 90, 91, 92, 93, 95, 96, 97, 99, 100, 101, 103, 104, 105, 107, 108, 109, 111, 112,
+    114, 115, 116, 118, 119, 121, 122, 124, 125, 127, 128, 130, 131, 133, 134, 136, 138, 139, 141,
+    142, 144, 146, 147, 149, 151, 152, 154, 156, 157, 159, 161, 163, 164, 166, 168, 170, 171, 173,
+    175, 177, 179, 181, 183, 184, 186, 188, 190, 192, 194, 196, 198, 200, 202, 204, 206, 208, 210,
+    212, 214, 216, 218, 220, 222, 224, 226, 229, 231, 233, 235, 237, 239, 242, 244, 246, 248, 250,
+    253, 255,
+];
+
+fn srgb_point_color_to_linear(color: [u8; 4]) -> [u8; 4] {
+    [
+        SRGB_U8_TO_LINEAR_U8[usize::from(color[0])],
+        SRGB_U8_TO_LINEAR_U8[usize::from(color[1])],
+        SRGB_U8_TO_LINEAR_U8[usize::from(color[2])],
+        color[3],
+    ]
+}
+
 /// One anisotropic Gaussian instance in stable tile-local coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
 #[repr(C)]
@@ -2721,6 +2749,7 @@ impl GpuDrawBatch {
             civil_attributes,
             1.0,
             true,
+            true,
         )
     }
 
@@ -2737,7 +2766,7 @@ impl GpuDrawBatch {
         point_size: f32,
     ) -> Result<Self, GpuFrameError> {
         Self::new_points_with_civil_and_size_and_queue(
-            device, queue, label, proxy_slot, positions, colors, None, point_size, false,
+            device, queue, label, proxy_slot, positions, colors, None, point_size, false, false,
         )
     }
 
@@ -2752,6 +2781,7 @@ impl GpuDrawBatch {
         civil_attributes: Option<&[PackedCivilPointAttributes]>,
         point_size: f32,
         force_point_sprites: bool,
+        source_colors_srgb: bool,
     ) -> Result<Self, GpuFrameError> {
         if positions.is_empty() {
             return Err(GpuFrameError::EmptyBatch);
@@ -2781,7 +2811,11 @@ impl GpuDrawBatch {
                     });
                 Ok(GpuPointVertex {
                     position: *position,
-                    color: *color,
+                    color: if source_colors_srgb {
+                        srgb_point_color_to_linear(*color)
+                    } else {
+                        *color
+                    },
                     proxy_slot,
                     primitive_slot: u32::try_from(primitive_slot)
                         .map_err(|_| GpuFrameError::TooManyVertices)?,
@@ -4579,6 +4613,26 @@ impl GpuSharedRenderer {
         )
     }
 
+    /// Creates an untextured material with neutral, non-metallic lighting for
+    /// authored solid and surface geometry. Point, stroke and raster callers
+    /// deliberately keep the unlit material path.
+    pub fn create_lit_solid_styled_material(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        label: &str,
+        alpha_mode: GpuAlphaMode,
+        style: GpuPresentationStyle,
+    ) -> Result<GpuMaterial, GpuFrameError> {
+        let mut material =
+            self.create_solid_styled_material(device, queue, label, alpha_mode, style)?;
+        material.source_pbr = true;
+        material.source_metallic = 0.0;
+        material.source_roughness = 0.82;
+        material.rewrite_uniform(queue);
+        Ok(material)
+    }
+
     /// Uploads a complete device-ready mip chain and creates a styled material.
     pub fn create_styled_mip_chain_material(
         &self,
@@ -6330,12 +6384,12 @@ fn sample_gradient(colors: &[[f32; 4]], index: usize, output_count: usize) -> [f
 mod tests {
     use super::{
         affine_rows, batch_origin_delta, decode_hit_neighborhood, hit_neighborhood_buffer_layout,
-        resolve_batch_geometry, FrameUniform, GpuAlphaMode, GpuDrawBatch, GpuFrameError,
-        GpuIndexedMeshGeometry, GpuMeshInstanceInput, GpuMeshVertexInput, GpuPointVertex,
-        GpuPrimitive, GpuScreenTextVertex, GpuSharedRenderer, GpuSplatVertex, GpuTextureData,
-        GpuVertex, MeshInstanceSortState, SplatSortState, GPU_POINT_VERTEX_STRIDE_BYTES,
-        SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE, SORTED_ALPHA_SPLAT_BLOCK_SIZE,
-        SORTED_ALPHA_UPLOAD_BYTES_PER_FRAME,
+        resolve_batch_geometry, srgb_point_color_to_linear, FrameUniform, GpuAlphaMode,
+        GpuDrawBatch, GpuFrameError, GpuIndexedMeshGeometry, GpuMeshInstanceInput,
+        GpuMeshVertexInput, GpuPointVertex, GpuPrimitive, GpuScreenTextVertex, GpuSharedRenderer,
+        GpuSplatVertex, GpuTextureData, GpuVertex, MeshInstanceSortState, SplatSortState,
+        GPU_POINT_VERTEX_STRIDE_BYTES, SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
+        SORTED_ALPHA_SPLAT_BLOCK_SIZE, SORTED_ALPHA_UPLOAD_BYTES_PER_FRAME,
     };
     use crate::{
         build_cad_curve_batch_with_width, tessellate_curve, ClipOperation, ClipPlane, ClipVolume,
@@ -6346,6 +6400,14 @@ mod tests {
     use himmelcad_core::canonical_resources::{CanonicalResourceRef, LINE_TYPE_RESOURCE_SCHEMA_ID};
     use himmelcad_core::entity_model::{CurveGeometry, Position};
     use himmelcad_core::hash::ObjectHash;
+
+    #[test]
+    fn potree_srgb_channels_are_decoded_before_linear_compositing() {
+        assert_eq!(
+            srgb_point_color_to_linear([0, 128, 255, 73]),
+            [0, 55, 255, 73]
+        );
+    }
 
     fn line_type_ref(resource_id: &str) -> CanonicalResourceRef {
         CanonicalResourceRef {

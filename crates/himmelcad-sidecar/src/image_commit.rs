@@ -273,6 +273,7 @@ where
     let staging = StagingGuard::new(staging_path);
     create_directory(&staging.path.join("incoming"), "create incoming staging")?;
     create_directory(&staging.path.join("objects"), "create object staging")?;
+    create_directory(&staging.path.join("previews"), "create preview staging")?;
 
     let image_collection_id = find_image_collection(manifest)?;
     let batch = stage_image_batch(
@@ -295,7 +296,8 @@ where
         &params.transformation,
     )?;
     check_cancelled(&mut is_cancelled)?;
-    let published = publish_staged_objects(project_root, &staging.path, &batch.object_hashes)?;
+    let mut published = publish_staged_objects(project_root, &staging.path, &batch.object_hashes)?;
+    published.extend(publish_staged_previews(project_root, &staging.path)?);
     if is_cancelled() {
         rollback_published(&published)?;
         return Err(ImageCommitError::Cancelled);
@@ -427,6 +429,11 @@ where
             &observed.hash,
             &canonical,
         )?;
+        stage_image_preview(
+            Path::new(&item.photo.source_path),
+            staging_root,
+            &observed.hash,
+        );
         canonical
             .entry(observed.hash.as_str().to_owned())
             .or_insert_with(|| (item.clone(), observed.hash));
@@ -436,6 +443,26 @@ where
         );
     }
     Ok((indexed_items, canonical))
+}
+
+fn stage_image_preview(source: &Path, staging_root: &Path, hash: &ObjectHash) {
+    let destination = staging_root
+        .join("previews")
+        .join(format!("{}.jpg", hash.as_str()));
+    if destination.is_file() {
+        return;
+    }
+    let Ok(reader) = image::ImageReader::open(source) else {
+        return;
+    };
+    let Ok(reader) = reader.with_guessed_format() else {
+        return;
+    };
+    let Ok(image) = reader.decode() else {
+        return;
+    };
+    let preview = image.thumbnail(1_600, 1_600).to_rgb8();
+    let _ = preview.save_with_format(destination, image::ImageFormat::Jpeg);
 }
 
 fn stage_verified_source_object(
@@ -837,6 +864,33 @@ fn publish_staged_objects(
     Ok(published)
 }
 
+fn publish_staged_previews(
+    project_root: &Path,
+    staging_root: &Path,
+) -> Result<Vec<PathBuf>, ImageCommitError> {
+    let source_root = staging_root.join("previews");
+    let destination_root = project_root.join("previews");
+    create_directory(&destination_root, "create project previews")?;
+    let mut published = Vec::new();
+    for entry in fs::read_dir(&source_root)
+        .map_err(|error| io_error("read staged previews", &source_root, error))?
+    {
+        let entry = entry.map_err(|error| io_error("read staged preview", &source_root, error))?;
+        let source = entry.path();
+        if !source.is_file() {
+            continue;
+        }
+        let destination = destination_root.join(entry.file_name());
+        if destination.is_file() {
+            continue;
+        }
+        rename(&source, &destination, "publish image preview")?;
+        published.push(destination);
+    }
+    sync_directory(&destination_root)?;
+    Ok(published)
+}
+
 fn rollback_published(paths: &[PathBuf]) -> Result<(), ImageCommitError> {
     for path in paths.iter().rev() {
         if path.is_file() {
@@ -918,7 +972,7 @@ fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<(), ImageCom
 }
 
 fn ensure_project_layout(root: &Path) -> Result<(), ImageCommitError> {
-    for child in ["objects", "journal", "tmp"] {
+    for child in ["objects", "journal", "previews", "tmp"] {
         create_directory(&root.join(child), "create project directory")?;
     }
     Ok(())

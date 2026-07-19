@@ -291,6 +291,16 @@ where
 }
 
 fn triangulate(rings: &[Vec<WorldVec3>]) -> Result<TessellatedAreaFill, CadAreaError> {
+    let outer = rings.first().ok_or(CadAreaError::InvalidLoop)?;
+    let normal = spatial_ring_normal(outer).ok_or(CadAreaError::Triangulation)?;
+    let dominant_axis = if normal[0].abs() >= normal[1].abs() && normal[0].abs() >= normal[2].abs()
+    {
+        0
+    } else if normal[1].abs() >= normal[2].abs() {
+        1
+    } else {
+        2
+    };
     let mut vertices = Vec::new();
     let mut hole_indices = Vec::new();
     for (ring_index, ring) in rings.iter().enumerate() {
@@ -300,13 +310,35 @@ fn triangulate(rings: &[Vec<WorldVec3>]) -> Result<TessellatedAreaFill, CadAreaE
         }
         vertices.extend_from_slice(ring);
     }
-    let coordinates = vertices.iter().map(|position| [position.x, position.y]);
+    let coordinates = vertices.iter().map(|position| match dominant_axis {
+        0 => [position.y, position.z],
+        1 => [position.x, position.z],
+        _ => [position.x, position.y],
+    });
     let mut indices = Vec::new();
     Earcut::<f64>::new().earcut(coordinates, &hole_indices, &mut indices);
     if indices.is_empty() || !indices.len().is_multiple_of(3) {
         return Err(CadAreaError::Triangulation);
     }
     Ok(TessellatedAreaFill { vertices, indices })
+}
+
+/// Newell normal for a planar spatial ring. Selecting its dominant component
+/// yields a stable 2D projection for horizontal, vertical and oblique fills.
+fn spatial_ring_normal(ring: &[WorldVec3]) -> Option<[f64; 3]> {
+    if ring.len() < 3 {
+        return None;
+    }
+    let mut normal = [0.0; 3];
+    for index in 0..ring.len() {
+        let current = ring[index];
+        let next = ring[(index + 1) % ring.len()];
+        normal[0] += (current.y - next.y) * (current.z + next.z);
+        normal[1] += (current.z - next.z) * (current.x + next.x);
+        normal[2] += (current.x - next.x) * (current.y + next.y);
+    }
+    let magnitude_squared = normal.iter().map(|value| value * value).sum::<f64>();
+    (magnitude_squared.is_finite() && magnitude_squared > f64::EPSILON).then_some(normal)
 }
 
 fn distance_xy(left: WorldVec3, right: WorldVec3) -> f64 {
@@ -413,5 +445,51 @@ mod tests {
             panic!("polyline fixture");
         };
         assert_eq!(positions[1].z, None, "source revision remains unchanged");
+    }
+
+    #[test]
+    fn vertical_spatial_area_uses_its_own_plane_for_triangulation() {
+        let area = AreaGeometry {
+            outer: CurveLoop {
+                uses: vec![CurveUse::Inline {
+                    curve: CurveGeometry::Polyline {
+                        positions: vec![
+                            Position {
+                                x: 2.0,
+                                y: 0.0,
+                                z: Some(0.0),
+                            },
+                            Position {
+                                x: 2.0,
+                                y: 4.0,
+                                z: Some(0.0),
+                            },
+                            Position {
+                                x: 2.0,
+                                y: 4.0,
+                                z: Some(3.0),
+                            },
+                            Position {
+                                x: 2.0,
+                                y: 0.0,
+                                z: Some(3.0),
+                            },
+                        ],
+                        closed: true,
+                    },
+                    reversed: false,
+                }],
+            },
+            holes: Vec::new(),
+        };
+
+        let compiled = tessellate_area(
+            &area,
+            options(UnresolvedHeightDisplay::Reject),
+            AreaFillMode::TriangulateResolved,
+            |_, _| None,
+        )
+        .expect("vertical fill");
+        assert_eq!(compiled.fill.expect("fill").indices.len(), 6);
     }
 }

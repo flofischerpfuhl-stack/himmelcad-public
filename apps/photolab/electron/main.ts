@@ -15,7 +15,7 @@ import {
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 
-import { BrowserWindow, app, dialog, ipcMain, protocol } from 'electron';
+import { BrowserWindow, app, dialog, ipcMain, nativeImage, protocol } from 'electron';
 
 import {
   callSidecar,
@@ -36,6 +36,10 @@ const pendingProductExports = new Map<
   string,
   { entityId: string; destinationPath: string; createdAt: number }
 >();
+const previewGenerationTasks = new Map<string, Promise<void>>();
+const previewGenerationWaiters: Array<() => void> = [];
+let activePreviewGenerations = 0;
+const MAX_PARALLEL_PREVIEW_GENERATIONS = 2;
 
 interface ProjectArchiveOperationRequest {
   archiveOperationId: string;
@@ -99,6 +103,7 @@ const RENDERER_SIDECAR_METHODS = new Set([
   'photolab.gcp.commit',
   'photolab.gcp.list',
   'photolab.gcp.observation.upsert',
+  'photolab.gcp.observation.edit',
   'photolab.gcp.observation.upsertAssisted',
   'photolab.gcp.optimization.snapshot',
   'photolab.gcp.optimization.latest',
@@ -1396,8 +1401,25 @@ function registerProjectProtocols(): void {
     if (url.host !== 'project' || !/^[a-f0-9]{64}$/.test(hash) || !currentWorkingPath) {
       return new Response('forbidden', { status: 403 });
     }
-    const root = resolve(currentWorkingPath, 'objects');
-    const imagePath = resolve(root, hash.slice(0, 2), hash.slice(2));
+    const previewRequested = url.searchParams.get('preview') === '1';
+    let root = resolve(currentWorkingPath, previewRequested ? 'previews' : 'objects');
+    let imagePath = previewRequested
+      ? resolve(root, `${hash}.jpg`)
+      : resolve(root, hash.slice(0, 2), hash.slice(2));
+    if (previewRequested) {
+      try {
+        if (!(await stat(imagePath)).isFile()) throw new Error('preview unavailable');
+      } catch {
+        const objectRoot = resolve(currentWorkingPath, 'objects');
+        const sourceImagePath = resolve(objectRoot, hash.slice(0, 2), hash.slice(2));
+        try {
+          await ensureProjectPreview(hash, sourceImagePath, imagePath);
+        } catch {
+          root = objectRoot;
+          imagePath = sourceImagePath;
+        }
+      }
+    }
     const relativeImagePath = relative(root, imagePath);
     if (relativeImagePath.startsWith('..') || isAbsolute(relativeImagePath)) {
       return new Response('forbidden', { status: 403 });
@@ -1408,7 +1430,9 @@ function registerProjectProtocols(): void {
       const body = Readable.toWeb(createReadStream(imagePath)) as ReadableStream;
       return new Response(body, {
         headers: {
-          'content-type': imageContentType(url.searchParams.get('format')),
+          'content-type': previewRequested
+            ? 'image/jpeg'
+            : imageContentType(url.searchParams.get('format')),
           'content-length': String(metadata.size),
           'cache-control': 'private, max-age=31536000, immutable',
           'x-content-type-options': 'nosniff',
@@ -1419,6 +1443,54 @@ function registerProjectProtocols(): void {
     }
   });
   protocol.handle('hcad-product', serveProjectProduct);
+}
+
+async function ensureProjectPreview(
+  hash: string,
+  sourceImagePath: string,
+  previewPath: string,
+): Promise<void> {
+  const existing = previewGenerationTasks.get(hash);
+  if (existing) return existing;
+  const task = withPreviewGenerationSlot(async () => {
+    try {
+      if ((await stat(previewPath)).isFile()) return;
+    } catch {
+      // Missing previews are expected for projects created before preview import.
+    }
+    const decoded = nativeImage.createFromBuffer(await readFile(sourceImagePath));
+    if (decoded.isEmpty()) throw new Error('preview decoder returned an empty image');
+    const dimensions = decoded.getSize();
+    const scale = Math.min(1, 1600 / Math.max(dimensions.width, dimensions.height));
+    const thumbnail = scale < 1
+      ? decoded.resize({
+          width: Math.max(1, Math.round(dimensions.width * scale)),
+          height: Math.max(1, Math.round(dimensions.height * scale)),
+          quality: 'best',
+        })
+      : decoded;
+    await mkdir(dirname(previewPath), { recursive: true });
+    await writeFile(previewPath, thumbnail.toJPEG(86));
+  });
+  previewGenerationTasks.set(hash, task);
+  try {
+    await task;
+  } finally {
+    previewGenerationTasks.delete(hash);
+  }
+}
+
+async function withPreviewGenerationSlot<T>(operation: () => Promise<T>): Promise<T> {
+  if (activePreviewGenerations >= MAX_PARALLEL_PREVIEW_GENERATIONS) {
+    await new Promise<void>((resolveSlot) => previewGenerationWaiters.push(resolveSlot));
+  }
+  activePreviewGenerations += 1;
+  try {
+    return await operation();
+  } finally {
+    activePreviewGenerations -= 1;
+    previewGenerationWaiters.shift()?.();
+  }
 }
 
 async function serveProjectProduct(request: Request): Promise<Response> {

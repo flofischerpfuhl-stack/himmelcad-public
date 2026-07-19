@@ -182,7 +182,7 @@ export function App(): JSX.Element {
   const [alignmentScope, setAlignmentScope] = useState<'all' | 'selection'>('all');
   const alignmentProgressLogRef = useRef<Map<string, string>>(new Map());
   const [imageCount, setImageCount] = useState(DEFAULT_IMAGE_COUNT);
-  const [resolved, setResolved] = useState<ResolvedAlignmentConfig | null>(null);
+  const [, setResolved] = useState<ResolvedAlignmentConfig | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
   const [resolving, setResolving] = useState(false);
   const [alignmentStarting, setAlignmentStarting] = useState(false);
@@ -2165,53 +2165,6 @@ export function App(): JSX.Element {
       `${processingSet.name} activated · ${processingSet.cameraEntityIds.length} cameras · immutable scope`,
     );
   }, []);
-
-  const saveProcessingSet = useCallback(async () => {
-    const api = window.himmelcad;
-    if (!api || processingSetSaving || selectedCameraIds.length < 2) return;
-    const cameraEntityIds = [...selectedCameraIds];
-    const existing = findMatchingProcessingSet(processingSets, cameraEntityIds);
-    if (existing) {
-      applyProcessingSet(existing);
-      logEvent('info', 'renderer', `${existing.name} already contains this exact image selection.`);
-      return;
-    }
-    const sortedCameraEntityIds = [...cameraEntityIds].sort();
-    const name = `Processing Set ${processingSets.length + 1}`;
-    const previousIds = new Set(processingSets.map((processingSet) => processingSet.entityId));
-    setProcessingSetSaving(true);
-    try {
-      const opened = await api.sidecar.call<OpenPhotolabProjectResult>(
-        'photolab.project.processingSet.create',
-        { name, cameraEntityIds },
-      );
-      acceptProject(opened);
-      const refreshed = await api.sidecar.call<ProcessingSetRecord[]>(
-        'photolab.project.processingSet.list',
-      );
-      setProcessingSets(refreshed);
-      const created = refreshed.find(
-        (processingSet) =>
-          !previousIds.has(processingSet.entityId) &&
-          processingSet.cameraEntityIds.length === cameraEntityIds.length &&
-          [...processingSet.cameraEntityIds]
-            .sort()
-            .every((entityId, index) => entityId === sortedCameraEntityIds[index]),
-      );
-      setSelected(new Set(cameraEntityIds));
-      setAlignmentScope('selection');
-      setActiveProcessingSetId(created?.entityId ?? null);
-      logEvent(
-        'info',
-        'sidecar',
-        `${name} saved · ${cameraEntityIds.length} immutable camera references`,
-      );
-    } catch (error) {
-      logEvent('error', 'sidecar', `Processing set could not be saved: ${errorMessage(error)}`);
-    } finally {
-      setProcessingSetSaving(false);
-    }
-  }, [acceptProject, applyProcessingSet, processingSetSaving, processingSets, selectedCameraIds]);
 
   const createCaptureGroup = useCallback(
     async (

@@ -854,8 +854,20 @@ pub fn build_elevation_raster_batch(
 }
 
 fn raster_alpha_mode(rgba8: &[u8]) -> GpuAlphaMode {
-    if rgba8.chunks_exact(4).any(|pixel| pixel[3] != 255) {
+    let mut has_transparent = false;
+    let mut has_partial = false;
+    for alpha in rgba8.chunks_exact(4).map(|pixel| pixel[3]) {
+        has_transparent |= alpha == 0;
+        has_partial |= alpha != 0 && alpha != 255;
+    }
+    if has_partial {
         GpuAlphaMode::Blend
+    } else if has_transparent {
+        // Orthophoto and elevation-raster borders conventionally encode
+        // NoData with binary alpha. Treating one such texel as a reason to put
+        // the complete tile into the transparent pass disables depth writes
+        // for every visible terrain triangle and breaks mesh/IFC occlusion.
+        GpuAlphaMode::Mask { cutoff: 0.5 }
     } else {
         GpuAlphaMode::Opaque
     }
@@ -1207,13 +1219,17 @@ mod tests {
     use crate::GpuAlphaMode;
 
     #[test]
-    fn raster_alpha_selects_blending_only_for_non_opaque_texels() {
+    fn raster_alpha_preserves_depth_for_binary_nodata_masks() {
         assert_eq!(
             raster_alpha_mode(&[10, 20, 30, 255, 40, 50, 60, 255]),
             GpuAlphaMode::Opaque
         );
         assert_eq!(
             raster_alpha_mode(&[10, 20, 30, 255, 40, 50, 60, 0]),
+            GpuAlphaMode::Mask { cutoff: 0.5 }
+        );
+        assert_eq!(
+            raster_alpha_mode(&[10, 20, 30, 255, 40, 50, 60, 127]),
             GpuAlphaMode::Blend
         );
     }

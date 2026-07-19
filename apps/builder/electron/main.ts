@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
-import { BrowserWindow, app, dialog, ipcMain, protocol, session } from 'electron';
+import { BrowserWindow, app, dialog, ipcMain, nativeImage, protocol, session } from 'electron';
 
 import {
   callSidecar,
@@ -16,6 +16,10 @@ import {
 const isDev = !app.isPackaged;
 const CACHE_DIR = resolve(tmpdir(), 'himmelcad-cache');
 const DEV_POINT_CLOUD = process.env.HCAD_DEV_POINT_CLOUD?.trim() ?? '';
+const DEV_IFC = process.env.HCAD_DEV_IFC?.trim() ?? '';
+const DEV_ORTHOPHOTO = process.env.HCAD_DEV_ORTHOPHOTO?.trim() ?? '';
+const DEV_DEM = process.env.HCAD_DEV_DEM?.trim() ?? '';
+const DEV_POTREE_DATASET = process.env.HCAD_DEV_POTREE_DATASET?.trim() ?? '';
 const CACHE_CORS_HEADERS = {
   'access-control-allow-origin': '*',
   'access-control-expose-headers': 'accept-ranges, content-length, content-range',
@@ -23,6 +27,73 @@ const CACHE_CORS_HEADERS = {
 app.setName('HimmelCAD Builder');
 
 let mainWindow: BrowserWindow | null = null;
+
+interface DevelopmentRasterTile {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly imageUrl: string;
+  readonly demUrl: string | null;
+}
+
+async function prepareDevelopmentRasterTiles(
+  imagePath: string,
+  demPath: string | null,
+  targetDirectory: string,
+): Promise<{ readonly width: number; readonly height: number; readonly tiles: DevelopmentRasterTile[] }> {
+  const image = nativeImage.createFromPath(imagePath);
+  if (image.isEmpty()) throw new Error(`unable to decode development orthophoto: ${imagePath}`);
+  const { width, height } = image.getSize();
+  const dem = demPath ? await fs.readFile(demPath) : null;
+  if (dem && dem.byteLength !== width * height * Float32Array.BYTES_PER_ELEMENT) {
+    throw new Error(
+      `development DEM dimensions do not match orthophoto (${dem.byteLength} bytes for ${width}×${height})`,
+    );
+  }
+  const tileDirectory = resolve(targetDirectory, 'raster-tiles');
+  await fs.mkdir(tileDirectory, { recursive: true });
+  const tileSize = 256;
+  // Raster meshes sample pixel centers. Adjacent tiles therefore share one
+  // border row/column so their generated topology closes without hairline gaps.
+  const tileStride = tileSize - 1;
+  const tiles: DevelopmentRasterTile[] = [];
+  for (let y = 0; y < height; y += tileStride) {
+    for (let x = 0; x < width; x += tileStride) {
+      const tileWidth = Math.min(tileSize, width - x);
+      const tileHeight = Math.min(tileSize, height - y);
+      const stem = `tile-${x}-${y}`;
+      const imageTarget = resolve(tileDirectory, `${stem}.png`);
+      await fs.writeFile(imageTarget, image.crop({ x, y, width: tileWidth, height: tileHeight }).toPNG());
+      let demUrl: string | null = null;
+      if (dem) {
+        const tileDem = Buffer.allocUnsafe(tileWidth * tileHeight * Float32Array.BYTES_PER_ELEMENT);
+        for (let row = 0; row < tileHeight; row += 1) {
+          const sourceStart = ((y + row) * width + x) * Float32Array.BYTES_PER_ELEMENT;
+          const targetStart = row * tileWidth * Float32Array.BYTES_PER_ELEMENT;
+          dem.copy(
+            tileDem,
+            targetStart,
+            sourceStart,
+            sourceStart + tileWidth * Float32Array.BYTES_PER_ELEMENT,
+          );
+        }
+        const demTarget = resolve(tileDirectory, `${stem}.bil`);
+        await fs.writeFile(demTarget, tileDem);
+        demUrl = `hcad-cache://local/dev-alte-akademie/raster-tiles/${stem}.bil`;
+      }
+      tiles.push({
+        x,
+        y,
+        width: tileWidth,
+        height: tileHeight,
+        imageUrl: `hcad-cache://local/dev-alte-akademie/raster-tiles/${stem}.png`,
+        demUrl,
+      });
+    }
+  }
+  return { width, height, tiles };
+}
 
 // Disable Chromium's MMB (middle-mouse-button) auto-scroll so we can use
 // MMB-drag for camera pan, like every other CAD/3D tool. Renderer-side
@@ -248,6 +319,74 @@ function registerIpc(): void {
   ipcMain.handle('dev:initial-point-cloud-paths', () =>
     isDev && DEV_POINT_CLOUD.length > 0 ? [resolve(DEV_POINT_CLOUD)] : [],
   );
+  ipcMain.handle('dev:initial-prepared-point-cloud', async () => {
+    if (!isDev || DEV_POTREE_DATASET.length === 0) return null;
+    if (!/^potree-[a-f0-9]{64}$/.test(DEV_POTREE_DATASET)) {
+      throw new Error('HCAD_DEV_POTREE_DATASET is invalid');
+    }
+    const metadataPath = resolve(CACHE_DIR, DEV_POTREE_DATASET, 'metadata.json');
+    const metadata = JSON.parse(await fs.readFile(metadataPath, 'utf8')) as {
+      name?: string;
+      points?: number;
+      boundingBox?: { min?: number[]; max?: number[] };
+    };
+    return {
+      entityId: `entity-${DEV_POTREE_DATASET.slice('potree-'.length)}`,
+      datasetId: DEV_POTREE_DATASET,
+      sourceName: metadata.name ?? 'Prepared point cloud',
+      pointCount: metadata.points ?? 0,
+      boundsMin: metadata.boundingBox?.min ?? [0, 0, 0],
+      boundsMax: metadata.boundingBox?.max ?? [0, 0, 0],
+      metadataUrl: `hcad-cache://local/${DEV_POTREE_DATASET}/metadata.json`,
+    };
+  });
+  ipcMain.handle('dev:initial-mixed-scene', async () => {
+    if (!isDev) return null;
+    const ifcPath = DEV_IFC.length > 0 ? resolve(DEV_IFC) : null;
+    const orthophotoPath = DEV_ORTHOPHOTO.length > 0 ? resolve(DEV_ORTHOPHOTO) : null;
+    const demPath = DEV_DEM.length > 0 ? resolve(DEV_DEM) : null;
+    let orthophoto: {
+      url: string;
+      worldFile: number[];
+      width: number;
+      height: number;
+      tiles: DevelopmentRasterTile[];
+    } | null = null;
+    if (orthophotoPath) {
+      const extension = orthophotoPath.slice(orthophotoPath.lastIndexOf('.'));
+      const targetDirectory = resolve(CACHE_DIR, 'dev-alte-akademie');
+      const target = resolve(targetDirectory, `orthophoto${extension}`);
+      await fs.mkdir(targetDirectory, { recursive: true });
+      await fs.copyFile(orthophotoPath, target);
+      const worldFilePath = orthophotoPath.replace(/\.[^.]+$/, '.tfw');
+      const worldFile = (await fs.readFile(worldFilePath, 'utf8'))
+        .trim()
+        .split(/\s+/)
+        .map(Number);
+      if (worldFile.length !== 6 || worldFile.some((value) => !Number.isFinite(value))) {
+        throw new Error(`invalid orthophoto world file: ${worldFilePath}`);
+      }
+      const prepared = await prepareDevelopmentRasterTiles(
+        orthophotoPath,
+        demPath,
+        targetDirectory,
+      );
+      orthophoto = {
+        url: `hcad-cache://local/dev-alte-akademie/orthophoto${extension}`,
+        worldFile,
+        ...prepared,
+      };
+    }
+    let demUrl: string | null = null;
+    if (demPath) {
+      const targetDirectory = resolve(CACHE_DIR, 'dev-alte-akademie');
+      const target = resolve(targetDirectory, 'terrain.bil');
+      await fs.mkdir(targetDirectory, { recursive: true });
+      if (demPath !== target) await fs.copyFile(demPath, target);
+      demUrl = 'hcad-cache://local/dev-alte-akademie/terrain.bil';
+    }
+    return { ifcPath, orthophoto, demUrl };
+  });
   ipcMain.handle('sidecar:call', async (_e, method: string, params: unknown) => {
     return callSidecar({ method, params });
   });

@@ -35,8 +35,10 @@ export function GcpImagesPanel({
             >
               <span className={styles.preview}>
                 <img
-                  src={`hcad-image://project/${image.metadata.sourceObjectHash}?format=${photo.format}`}
+                  src={`hcad-image://project/${image.metadata.sourceObjectHash}?format=${photo.format}&preview=1`}
                   alt=""
+                  loading="lazy"
+                  decoding="async"
                 />
                 <ImageIcon size={15} aria-hidden="true" />
               </span>

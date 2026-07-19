@@ -41,6 +41,9 @@ export interface GcpManualMeasurement {
 export interface GcpImageMarkerOverlayProps {
   imageWidthPixels: number;
   imageHeightPixels: number;
+  viewScale?: number;
+  imageOffsetX?: number;
+  imageOffsetY?: number;
   markers: readonly GcpImageMarker[];
   selectedPointId?: string;
   disabled?: boolean;
@@ -53,6 +56,8 @@ interface DragState {
   pointerId: number;
   marker: GcpImageMarker;
   coordinate: GcpImageCoordinate;
+  axis: 'horizontal' | 'vertical' | 'both';
+  grabOffset: GcpImageCoordinate;
 }
 
 /**
@@ -62,6 +67,9 @@ interface DragState {
 export function GcpImageMarkerOverlay({
   imageWidthPixels,
   imageHeightPixels,
+  viewScale = 1,
+  imageOffsetX = 0,
+  imageOffsetY = 0,
   markers,
   selectedPointId,
   disabled = false,
@@ -93,31 +101,60 @@ export function GcpImageMarkerOverlay({
         0,
         Math.min(
           imageWidthPixels - Number.EPSILON,
-          ((event.clientX - bounds.left) / bounds.width) * imageWidthPixels,
+          (event.clientX - bounds.left - imageOffsetX) / viewScale,
         ),
       ),
       yPixels: Math.max(
         0,
         Math.min(
           imageHeightPixels - Number.EPSILON,
-          ((event.clientY - bounds.top) / bounds.height) * imageHeightPixels,
+          (event.clientY - bounds.top - imageOffsetY) / viewScale,
         ),
       ),
     };
   }
 
-  function startDrag(event: ReactPointerEvent, marker: GcpImageMarker): void {
+  function startDrag(
+    event: ReactPointerEvent,
+    marker: GcpImageMarker,
+    axis: DragState['axis'],
+  ): void {
     if (disabled || marker.state === 'blockedMuted') return;
-    event.preventDefault();
+    const pointer = coordinateFromPointer(event);
+    if (!pointer) return;
     rootRef.current?.setPointerCapture(event.pointerId);
     onSelectPoint?.(marker.pointId);
-    setDrag({ pointerId: event.pointerId, marker, coordinate: marker.coordinate });
+    setDrag({
+      pointerId: event.pointerId,
+      marker,
+      coordinate: marker.coordinate,
+      axis,
+      grabOffset: {
+        xPixels: marker.coordinate.xPixels - pointer.xPixels,
+        yPixels: marker.coordinate.yPixels - pointer.yPixels,
+      },
+    });
   }
 
   function moveDrag(event: ReactPointerEvent): void {
     if (drag?.pointerId !== event.pointerId) return;
-    const coordinate = coordinateFromPointer(event);
-    if (coordinate) setDrag({ ...drag, coordinate });
+    const pointer = coordinateFromPointer(event);
+    if (!pointer) return;
+    const xPixels =
+      drag.axis === 'horizontal'
+        ? drag.coordinate.xPixels
+        : pointer.xPixels + drag.grabOffset.xPixels;
+    const yPixels =
+      drag.axis === 'vertical'
+        ? drag.coordinate.yPixels
+        : pointer.yPixels + drag.grabOffset.yPixels;
+    setDrag({
+      ...drag,
+      coordinate: {
+        xPixels: Math.max(0, Math.min(imageWidthPixels - Number.EPSILON, xPixels)),
+        yPixels: Math.max(0, Math.min(imageHeightPixels - Number.EPSILON, yPixels)),
+      },
+    });
   }
 
   function finishDrag(event: ReactPointerEvent): void {
@@ -149,8 +186,6 @@ export function GcpImageMarkerOverlay({
     >
       <svg
         className={styles.ellipses}
-        viewBox={`0 0 ${imageWidthPixels} ${imageHeightPixels}`}
-        preserveAspectRatio="none"
         aria-hidden="true"
       >
         {visibleMarkers.map((marker) => {
@@ -159,11 +194,11 @@ export function GcpImageMarkerOverlay({
             <ellipse
               key={`${marker.pointId}:${marker.imageId}`}
               className={styles.predictionEllipse}
-              cx={marker.coordinate.xPixels}
-              cy={marker.coordinate.yPixels}
-              rx={marker.uncertainty.semiMajorPixels}
-              ry={marker.uncertainty.semiMinorPixels}
-              transform={`rotate(${marker.uncertainty.angleDegrees} ${marker.coordinate.xPixels} ${marker.coordinate.yPixels})`}
+              cx={imageOffsetX + marker.coordinate.xPixels * viewScale}
+              cy={imageOffsetY + marker.coordinate.yPixels * viewScale}
+              rx={marker.uncertainty.semiMajorPixels * viewScale}
+              ry={marker.uncertainty.semiMinorPixels * viewScale}
+              transform={`rotate(${marker.uncertainty.angleDegrees} ${imageOffsetX + marker.coordinate.xPixels * viewScale} ${imageOffsetY + marker.coordinate.yPixels * viewScale})`}
             />
           );
         })}
@@ -183,13 +218,15 @@ export function GcpImageMarkerOverlay({
               fullCrosshair ? styles.fullMarker : styles.compactMarker
             } ${styles[effectiveState]} ${fullCrosshair ? styles.selected : ''}`}
             style={{
-              '--gcp-x': `${(coordinate.xPixels / imageWidthPixels) * 100}%`,
-              '--gcp-y': `${(coordinate.yPixels / imageHeightPixels) * 100}%`,
+              '--gcp-x': `${imageOffsetX + coordinate.xPixels * viewScale}px`,
+              '--gcp-y': `${imageOffsetY + coordinate.yPixels * viewScale}px`,
             } as CSSProperties}
             disabled={disabled || marker.state === 'blockedMuted'}
             aria-label={`${marker.pointName}, ${stateLabel(effectiveState)}`}
             title={markerTitle(marker)}
-            onPointerDown={fullCrosshair ? undefined : (event) => startDrag(event, marker)}
+            onPointerDown={
+              fullCrosshair ? undefined : (event) => startDrag(event, marker, 'both')
+            }
             onDoubleClick={() =>
               onCommitMeasurement({
                 pointId: marker.pointId,
@@ -200,19 +237,47 @@ export function GcpImageMarkerOverlay({
             }
           >
             {fullCrosshair ? (
-              <>
-                <span
-                  className={styles.horizontalAxis}
-                  aria-hidden="true"
-                  onPointerDown={(event) => startDrag(event, marker)}
+              <svg
+                className={styles.fullCrosshair}
+                aria-hidden="true"
+              >
+                <line
+                  className={styles.axisVisual}
+                  x1={imageOffsetX}
+                  y1={imageOffsetY + coordinate.yPixels * viewScale}
+                  x2={imageOffsetX + imageWidthPixels * viewScale}
+                  y2={imageOffsetY + coordinate.yPixels * viewScale}
                 />
-                <span
-                  className={styles.verticalAxis}
-                  aria-hidden="true"
-                  onPointerDown={(event) => startDrag(event, marker)}
+                <line
+                  className={`${styles.axisHit} ${styles.horizontalHit}`}
+                  x1={imageOffsetX}
+                  y1={imageOffsetY + coordinate.yPixels * viewScale}
+                  x2={imageOffsetX + imageWidthPixels * viewScale}
+                  y2={imageOffsetY + coordinate.yPixels * viewScale}
+                  onPointerDown={(event) => startDrag(event, marker, 'horizontal')}
                 />
-                <span className={styles.intersection} aria-hidden="true" />
-              </>
+                <line
+                  className={styles.axisVisual}
+                  x1={imageOffsetX + coordinate.xPixels * viewScale}
+                  y1={imageOffsetY}
+                  x2={imageOffsetX + coordinate.xPixels * viewScale}
+                  y2={imageOffsetY + imageHeightPixels * viewScale}
+                />
+                <line
+                  className={`${styles.axisHit} ${styles.verticalHit}`}
+                  x1={imageOffsetX + coordinate.xPixels * viewScale}
+                  y1={imageOffsetY}
+                  x2={imageOffsetX + coordinate.xPixels * viewScale}
+                  y2={imageOffsetY + imageHeightPixels * viewScale}
+                  onPointerDown={(event) => startDrag(event, marker, 'vertical')}
+                />
+                <circle
+                  className={styles.intersection}
+                  cx={imageOffsetX + coordinate.xPixels * viewScale}
+                  cy={imageOffsetY + coordinate.yPixels * viewScale}
+                  r={6}
+                />
+              </svg>
             ) : (
               <span className={styles.compactCrosshair} aria-hidden="true" />
             )}
