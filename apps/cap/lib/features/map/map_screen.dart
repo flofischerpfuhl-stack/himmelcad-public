@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:lucide_icons/lucide_icons.dart';
+
 import 'package:provider/provider.dart';
 
 import '../../data/models.dart';
@@ -17,12 +17,15 @@ class MapScreen extends StatefulWidget {
     required this.onOpenMenu,
     required this.onOpenCapture,
     required this.onOpenJob,
+    this.enableNetworkTiles = true,
   });
 
   final VoidCallback onOpenSettings;
   final VoidCallback onOpenMenu;
   final VoidCallback onOpenCapture;
   final void Function(Job job) onOpenJob;
+  /// Disable satellite tiles in widget tests (no HTTP).
+  final bool enableNetworkTiles;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -39,7 +42,9 @@ class _MapScreenState extends State<MapScreen> {
     final project = store.activeProject;
     final jobs = project.jobs.where((j) => j.showOnMap).toList();
 
-    return Stack(
+    return Material(
+      color: const Color(0xFF101114),
+      child: Stack(
       children: [
         FlutterMap(
           mapController: _map,
@@ -51,11 +56,12 @@ class _MapScreenState extends State<MapScreen> {
             onTap: (_, __) => setState(() => _projectMenu = false),
           ),
           children: [
-            TileLayer(
-              urlTemplate:
-                  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-              userAgentPackageName: 'de.himmelcad.cap',
-            ),
+            if (widget.enableNetworkTiles)
+              TileLayer(
+                urlTemplate:
+                    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                userAgentPackageName: 'de.himmelcad.cap',
+              ),
             PolylineLayer(
               polylines: [
                 for (final j in jobs)
@@ -105,7 +111,7 @@ class _MapScreenState extends State<MapScreen> {
               children: [
                 IconButton(
                   onPressed: widget.onOpenMenu,
-                  icon: const Icon(LucideIcons.menu, size: 20),
+                  icon: const Icon(Icons.menu, size: 20),
                 ),
                 Expanded(
                   child: InkWell(
@@ -127,7 +133,7 @@ class _MapScreenState extends State<MapScreen> {
                             ),
                           ),
                           const SizedBox(width: 4),
-                          const Icon(LucideIcons.chevronDown, size: 16),
+                          const Icon(Icons.keyboard_arrow_down, size: 16),
                         ],
                       ),
                     ),
@@ -135,7 +141,7 @@ class _MapScreenState extends State<MapScreen> {
                 ),
                 IconButton(
                   onPressed: widget.onOpenSettings,
-                  icon: const Icon(LucideIcons.settings, size: 20),
+                  icon: const Icon(Icons.settings, size: 20),
                 ),
               ],
             ),
@@ -156,7 +162,7 @@ class _MapScreenState extends State<MapScreen> {
                       dense: true,
                       title: Text(p.name, style: const TextStyle(fontSize: 13)),
                       trailing: p.id == project.id
-                          ? const Icon(LucideIcons.check, size: 16)
+                          ? const Icon(Icons.check, size: 16)
                           : null,
                       onTap: () async {
                         await store.setActiveProject(p.id);
@@ -193,7 +199,7 @@ class _MapScreenState extends State<MapScreen> {
                         : const LatLng(48.1378, 11.5755);
                     _map.move(c, 17);
                   },
-                  icon: const Icon(LucideIcons.locateFixed, size: 20),
+                  icon: const Icon(Icons.my_location, size: 20),
                 ),
               ),
               const Spacer(),
@@ -228,6 +234,7 @@ class _MapScreenState extends State<MapScreen> {
           ),
         ),
       ],
+    ),
     );
   }
 

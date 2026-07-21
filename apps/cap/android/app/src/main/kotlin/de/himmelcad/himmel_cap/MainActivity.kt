@@ -117,7 +117,7 @@ class MainActivity : FlutterActivity() {
                 android.location.GnssMeasurementRequest.Builder()
                     .setFullTracking(true)
                     .build()
-            lm.registerGnssMeasurementsCallback(mainExecutor, req, cb)
+            lm.registerGnssMeasurementsCallback(req, mainExecutor, cb)
         } else {
             lm.registerGnssMeasurementsCallback(cb, mainHandler)
         }

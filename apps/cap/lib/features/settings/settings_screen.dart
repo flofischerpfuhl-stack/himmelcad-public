@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:lucide_icons/lucide_icons.dart';
+
 import 'package:provider/provider.dart';
 
 import '../../data/models.dart';
@@ -25,7 +25,7 @@ class SettingsScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(LucideIcons.chevronLeft),
+          icon: const Icon(Icons.chevron_left),
           onPressed: onBack,
         ),
         title: Text(l10n.settings, style: Theme.of(context).textTheme.titleLarge),
@@ -63,7 +63,7 @@ class SettingsScreen extends StatelessWidget {
             for (final p in store.rtkProfiles)
               ListTile(
                 leading: Icon(
-                  p.active ? LucideIcons.circleDot : LucideIcons.circle,
+                  p.active ? Icons.radio_button_checked : Icons.radio_button_unchecked,
                   color: p.active ? HcTokens.accent : null,
                   size: 18,
                 ),
@@ -77,7 +77,7 @@ class SettingsScreen extends StatelessWidget {
                 onTap: () => store.setActiveRtk(p.id),
               ),
             ListTile(
-              leading: const Icon(LucideIcons.plus),
+              leading: const Icon(Icons.add),
               title: Text(l10n.addProfile),
               onTap: () => _addRtk(context, store),
             ),

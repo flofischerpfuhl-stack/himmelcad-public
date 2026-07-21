@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:lucide_icons/lucide_icons.dart';
+
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -30,7 +30,7 @@ class JobScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(LucideIcons.chevronLeft),
+          icon: const Icon(Icons.chevron_left),
           onPressed: onBack,
         ),
         title: Text('Job', style: Theme.of(context).textTheme.titleLarge),

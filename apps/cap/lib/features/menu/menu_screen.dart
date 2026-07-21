@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:lucide_icons/lucide_icons.dart';
+
 import 'package:provider/provider.dart';
 
 import '../../data/models.dart';
@@ -39,7 +39,7 @@ class _MenuScreenState extends State<MenuScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(LucideIcons.chevronLeft),
+          icon: const Icon(Icons.chevron_left),
           onPressed: widget.onBack,
         ),
         title: Text(l10n.jobs, style: Theme.of(context).textTheme.titleLarge),
@@ -56,8 +56,8 @@ class _MenuScreenState extends State<MenuScreen> {
                     leading: IconButton(
                       icon: Icon(
                         _expanded.contains(p.id)
-                            ? LucideIcons.chevronDown
-                            : LucideIcons.chevronRight,
+                            ? Icons.keyboard_arrow_down
+                            : Icons.chevron_right,
                         size: 18,
                       ),
                       onPressed: () {

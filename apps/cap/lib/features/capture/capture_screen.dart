@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-import 'package:lucide_icons/lucide_icons.dart';
+
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
@@ -117,6 +117,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
   Future<void> _captureStill() async {
     final cam = _camera;
     if (cam == null || !cam.value.isInitialized || !_recording) return;
+    final g = mounted ? context.read<GnssEngine>().lastSample : null;
     try {
       final shot = await cam.takePicture();
       final dir = await getTemporaryDirectory();
@@ -125,7 +126,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
       );
       await dest.parent.create(recursive: true);
       await File(shot.path).copy(dest.path);
-      final g = context.read<GnssEngine>().lastSample;
+      if (!mounted) return;
       final idx = _frameFiles.length;
       _frameFiles.add(dest);
       final sh = g?.sigmaH ?? 5.0;
@@ -142,7 +143,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
           timestampUtc: DateTime.now().toUtc(),
         ),
       );
-      if (mounted) setState(() => _frames = _frameFiles.length);
+      setState(() => _frames = _frameFiles.length);
     } catch (e) {
       debugPrint('still: $e');
     }
@@ -171,16 +172,22 @@ class _CaptureScreenState extends State<CaptureScreen> {
   }
 
   Future<void> _packInBackground() async {
+    if (!mounted) return;
+    final store = context.read<AppStore>();
+    final g = context.read<GnssEngine>().lastSample;
+    final projectName = store.activeProject.name;
+    final projectId = store.activeProject.id;
+    final frames = List<File>.of(_frameFiles);
+    final poses = List<PoseLine>.of(_poses);
+    final track = List<GnssSample>.of(_track);
     try {
       for (var i = 1; i <= 8; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 120));
         if (mounted) setState(() => _progress = i / 10);
       }
-      final store = context.read<AppStore>();
-      final g = context.read<GnssEngine>().lastSample;
       final job = Job(
         id: newId(),
-        projectId: store.activeProject.id,
+        projectId: projectId,
         name: _nameCtrl.text,
         createdAt: DateTime.now(),
         description: _descCtrl.text.trim(),
@@ -188,15 +195,15 @@ class _CaptureScreenState extends State<CaptureScreen> {
         quality: g?.fixType.name ?? 'single',
         sigmaH: g?.sigmaH ?? 5,
         sigmaV: g?.sigmaV ?? 10,
-        path: _track.map((e) => e.latLng).toList(),
-        frameCount: _frameFiles.length,
+        path: track.map((e) => e.latLng).toList(),
+        frameCount: frames.length,
       );
       final file = await HcapPacker().pack(
         job: job,
-        projectName: store.activeProject.name,
-        frameFiles: List.of(_frameFiles),
-        poses: List.of(_poses),
-        trajectory: List.of(_track),
+        projectName: projectName,
+        frameFiles: frames,
+        poses: poses,
+        trajectory: track,
       );
       if (!mounted) return;
       setState(() {
@@ -280,7 +287,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
                     widget.onBack();
                   }
                 },
-                icon: const Icon(LucideIcons.chevronLeft),
+                icon: const Icon(Icons.chevron_left),
               ),
             ),
           ),

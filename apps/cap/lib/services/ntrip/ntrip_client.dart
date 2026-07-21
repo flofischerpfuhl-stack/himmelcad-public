@@ -131,13 +131,21 @@ class NtripClient extends ChangeNotifier {
     await _socket?.close();
     _socket = null;
     connected = false;
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
+
+  bool _disposed = false;
 
   @override
   void dispose() {
-    disconnect();
-    _rtcmController.close();
+    _disposed = true;
+    _sub?.cancel();
+    _sub = null;
+    _socket?.destroy();
+    _socket = null;
+    if (!_rtcmController.isClosed) {
+      _rtcmController.close();
+    }
     super.dispose();
   }
 }
