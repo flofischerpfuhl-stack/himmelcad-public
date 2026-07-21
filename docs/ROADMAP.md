@@ -11,6 +11,11 @@ work. In parallel, the shared foundation is being cut over to ADR 0016
 ChronoGit tax freezes, and reserved-product freezes live in
 `docs/CURRENT-DIRECTION.md`.
 
+**HimmelCAD Cap** (mobile capture → `.himmelcap` → PhotoLab) is a preparation
+track documented in `docs/himmelcap/ROADMAP.md` (phases C0–C6). Cap does not
+replace PhotoLab milestones; it is an upstream field product for non-surveyors
+without professional equipment (ADR 0027).
+
 The detailed PhotoLab sequence and decision gates live in
 `photolab/PHOTOLAB-CONCEPT.md` and `photolab/implementation-plan.html`; the
 older numeric phase order below is retained as historical product-family
@@ -46,6 +51,7 @@ Status: partially implemented.
 - Monorepo:
   - `apps/builder`
   - `apps/photolab`
+  - `apps/cap` (HimmelCAD Cap mobile capture; prep skeleton until stack gate)
   - `apps/weltview`
   - `packages/@himmelcad/ui`
   - `packages/@himmelcad/viewer`

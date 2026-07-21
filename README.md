@@ -2,9 +2,10 @@
 
 HimmelCAD is an offline-first 3D, CAD, and photogrammetry platform. Its active
 desktop products are **HimmelCAD Builder** and **HimmelCAD PhotoLab**;
-**HimmelCAD WeltView** is the shared browser viewer. **HimmelCAD ChronoGit**,
-**HimmelCAD Assembler**, and **HimmelCAD TestFlight** remain reserved product
-tracks.
+**HimmelCAD Cap** (shorthand **himmel:cap**) is the mobile capture upstream for
+PhotoLab (preparation track). **HimmelCAD WeltView** is the shared browser
+viewer. **HimmelCAD ChronoGit**, **HimmelCAD Assembler**, and
+**HimmelCAD TestFlight** remain reserved product tracks.
 
 The project is designed around three constraints from day one:
 
@@ -19,14 +20,16 @@ The project is designed around three constraints from day one:
 | -------------------- | --------------------------------------------------------------------------------- | -------------------------------------------- |
 | HimmelCAD Builder    | Desktop CAD for point clouds, 3D entities, segmentation, measurement, and drawing | Foundation maintained; productization paused |
 | HimmelCAD PhotoLab   | Offline photogrammetry, survey products, meshes, and Gaussian splats              | Active productization                        |
+| HimmelCAD Cap        | Mobile phone capture → `.himmelcap` sessions for PhotoLab (non-surveyor field use) | Preparation track; docs + schemas            |
 | HimmelCAD WeltView   | Browser viewer for shared HimmelCAD projects and measurements                     | Shared viewer foundation                     |
 | HimmelCAD ChronoGit  | Semantic versioning and diffing for CAD projects                                  | Reserved feasibility track                   |
-| HimmelCAD Assembler   | Precision-mechanics and manufacturing-oriented sibling product                    | Reserved; no application yet                 |
+| HimmelCAD Assembler  | Precision-mechanics and manufacturing-oriented sibling product                    | Reserved; no application yet                 |
 | HimmelCAD TestFlight | Scripted simulations such as runoff, wind, and vehicle sweep paths                | Reserved feasibility track                   |
 
 The implemented application roots are `apps/builder`, `apps/photolab`, and
-`apps/weltview`. Assembler, TestFlight, and ChronoGit are reserved product names;
-they do not currently have application directories.
+`apps/weltview`. Cap lives at `apps/cap/` as a documentation/skeleton root until
+the mobile stack gate. Assembler, TestFlight, and ChronoGit are reserved product
+names without full application trees.
 
 ## Branding
 
@@ -70,6 +73,8 @@ un-carded mark.
 - `docs/adr/0017-unified-render-core.md` - unified render-core direction.
 - `docs/adr/0018-canonical-io-provider-contract.md` - provider-neutral canonical import/export boundary.
 - `docs/adr/0019-canonical-document-authority.md` - document commands versus view attachment/residency.
+- `docs/himmelcap/` - HimmelCAD Cap product, roadmap, format, and importer design.
+- `docs/adr/0027-himmelcap-capture-product.md` - Cap as phone-only PhotoLab upstream.
 
 ## License
 

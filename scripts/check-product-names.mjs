@@ -146,6 +146,7 @@ const canonicalProductNames = [
   'HimmelCAD Builder',
   'HimmelCAD Assembler',
   'HimmelCAD PhotoLab',
+  'HimmelCAD Cap',
   'HimmelCAD WeltView',
   'HimmelCAD TestFlight',
   'HimmelCAD ChronoGit',

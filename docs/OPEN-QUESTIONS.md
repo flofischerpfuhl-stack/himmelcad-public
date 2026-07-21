@@ -24,6 +24,9 @@ not smuggle in accidental product decisions.
   `docs/CURRENT-DIRECTION.md`.
 - **Reserved products:** Assembler, TestFlight, and ChronoGit stay names-only
   until an explicit gate. Agents must not implement them.
+- **HimmelCAD Cap** is an accepted product (ADR 0027) in **preparation**:
+  docs/schemas only until UI brief + mobile stack gate. Phone-only MVP; no
+  required external RTK; `.himmelcap` → PhotoLab importer.
 - **Entity base model:** ADR 0016 — versioned `type_id`, representations,
   optional Z (`None` never means zero). Lines/circles/arcs are curve
   representations, not separate base kinds.
@@ -83,3 +86,19 @@ not smuggle in accidental product decisions.
     event streams, simulation states, or all of them?
     **Deferred:** TestFlight is reserved/out of scope until its decision gate.
     Do not expand the core schema solely for this question.
+
+## HimmelCAD Cap
+
+20. ~~Which mobile stack should Cap use?~~ **Recommendation (not yet gated):**
+    Flutter in `apps/cap/` + Kotlin/Swift platform channels for raw GNSS and
+    camera lock; format/importer stay in monorepo. Owner still confirms before
+    C3 code. See `docs/himmelcap/ARCHITECTURE.md`.
+21. Should Cap UI strings be German-first for field crews, English-first for
+    family consistency with PhotoLab, or bilingual from day one?
+22. Final `.himmelcap` container: ZIP only, or also exploded directory for
+    desktop drop? (Draft allows both for tests.)
+23. Android on-device RTK/NTRIP engine: which license-clean library or service
+    SDK is acceptable under `AGENTS.md`?
+24. After field validation (roadmap C5), what absolute accuracy sentence is
+    allowed in marketing and in-app copy?
+25. Distribution: public store, enterprise sideload, or both for MVP?

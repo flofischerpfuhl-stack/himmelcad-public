@@ -1,8 +1,9 @@
 /**
  * Hand-written contract types for the renderer.
- * Generated counterparts (from Rust via ts-rs) will land in src/generated/
- * and re-export through this barrel. Until the Rust contract crate ships,
- * these definitions are authoritative for the renderer-only skeleton.
+ * Canonical entity/geometry contracts are generated from Rust into
+ * `src/generated/` and exposed separately as `@himmelcad/data/canonical`.
+ * The types below are legacy PhotoLab/UI projections and must not be used as
+ * an alternate canonical document authority.
  */
 
 export type EntityId = string & { readonly __brand: 'EntityId' };
@@ -85,6 +86,13 @@ export interface Vec3 {
   z: number;
 }
 
+/** Source coordinate whose height may be explicitly unknown. */
+export interface SourcePosition3 {
+  x: number;
+  y: number;
+  z: number | null;
+}
+
 export interface Bounds3 {
   min: Vec3;
   max: Vec3;
@@ -127,6 +135,7 @@ export interface PhotolabProjectManifest {
   rootEntity: EntityId;
   entities: Record<string, EntitySnapshot>;
   renderOffset: Vec3;
+  spatialReference: PhotolabSpatialReference;
   referenceFrame?: {
     target: unknown;
     establishedByTransformationSha256: ObjectHash;
@@ -202,8 +211,65 @@ export interface CameraCalibrationSeed {
   principalYPixels?: number;
 }
 
+export interface GcpIntrinsicParameterMask {
+  f: boolean;
+  cx: boolean;
+  cy: boolean;
+  k1: boolean;
+  k2: boolean;
+  k3: boolean;
+  p1: boolean;
+  p2: boolean;
+}
+
+export interface GcpIntrinsicPriorStddev {
+  focalLogScale: number;
+  principalXPixels: number;
+  principalYPixels: number;
+  k1: number;
+  k2: number;
+  k3: number;
+  p1: number;
+  p2: number;
+}
+
+export type GcpIntrinsicsPolicy =
+  | { kind: 'auto' }
+  | { kind: 'fixed' }
+  | {
+      kind: 'prior';
+      parameters: GcpIntrinsicParameterMask;
+      stddev: GcpIntrinsicPriorStddev;
+    }
+  | { kind: 'custom'; parameters: GcpIntrinsicParameterMask };
+
+export interface GcpIntrinsicsGroupDiagnostics {
+  calibrationGroupId: string;
+  policy: GcpIntrinsicsPolicy;
+  cameraCount: number;
+  observationCount: number;
+  occupiedQuadrants: number;
+  radialCoverage: number;
+  baselineDepthRatio: number;
+  relativeDepthRange: number;
+  effectiveParameters: GcpIntrinsicParameterMask;
+  stages: {
+    parameters: GcpIntrinsicParameterMask;
+    accepted: boolean;
+    rejection?:
+      | 'insufficientObservations'
+      | 'insufficientRadialCoverage'
+      | 'insufficientQuadrants'
+      | 'insufficientBaseline'
+      | 'insufficientDepthDiversity'
+      | 'illConditioned'
+      | 'singular';
+    conditionNumber?: number;
+  }[];
+}
+
 export interface CameraCalibrationGroupRecord {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   entityId: EntityId;
   captureGroupId: EntityId;
   name: string;
@@ -214,6 +280,7 @@ export interface CameraCalibrationGroupRecord {
   automatic?: boolean;
   evidence?: string[];
   initialCalibration?: CameraCalibrationSeed;
+  intrinsicsPolicy?: GcpIntrinsicsPolicy;
 }
 
 export interface CaptureGroupRecord {
@@ -359,6 +426,173 @@ export type PhotoFormat =
   | 'fujifilmRaf'
   | 'phaseOneIiq';
 
+export type CaptureMedium = 'stillImage' | 'video' | 'videoFrame';
+export type CaptureDeviceClass =
+  | 'smartphone'
+  | 'systemCamera'
+  | 'drone'
+  | 'actionCamera'
+  | 'scanner'
+  | 'unknown';
+export type CaptureClassificationBasis =
+  | 'embeddedMetadata'
+  | 'containerMetadata'
+  | 'extensionFallback'
+  | 'derivedArtifact';
+
+export interface CaptureSourceProfile {
+  schemaVersion: number;
+  medium: CaptureMedium;
+  deviceClass: CaptureDeviceClass;
+  basis: CaptureClassificationBasis;
+  make?: string;
+  model?: string;
+  lensModel?: string;
+}
+
+export type CaptureDecodeOperation = 'decode' | 'transcodeToTiff' | 'transcodeToPng';
+export type CaptureDecodeSupport =
+  | { state: 'builtIn' }
+  | { state: 'systemTool'; tool: string; version: string }
+  | { state: 'unsupported'; reason: string };
+
+export interface CaptureDecodeCapability {
+  format: PhotoFormat;
+  operation: CaptureDecodeOperation;
+  support: CaptureDecodeSupport;
+  preservesSourceObject: boolean;
+}
+
+export interface CaptureSystemToolCapability {
+  available: boolean;
+  executable?: string;
+  version?: string;
+}
+
+export interface CaptureCapabilityInventory {
+  schemaVersion: number;
+  decoders: CaptureDecodeCapability[];
+  ffprobe: CaptureSystemToolCapability;
+  ffmpeg: CaptureSystemToolCapability;
+}
+
+export interface CapturePositionPrior {
+  latitudeDegrees: number;
+  longitudeDegrees: number;
+  heightMeters?: number;
+  covarianceEnuM2: [number, number, number, number, number, number, number, number, number];
+  source: 'exifGps' | 'vendorRtk' | 'videoContainer' | 'himmelCap';
+  role: 'priorOnly';
+}
+
+export interface DerivedCaptureArtifactProvenance {
+  sourceObjectHash: ObjectHash;
+  artifactObjectHash: ObjectHash;
+  operation: string;
+  algorithmVersion: string;
+  parametersSha256: ObjectHash;
+  sourceTimestampMicroseconds?: number;
+  sourceFrameIndex?: number;
+  systemTool?: string;
+  systemToolVersion?: string;
+}
+
+export type MetricLengthUnit = 'millimeter' | 'centimeter' | 'meter' | 'inch' | 'foot';
+export type PhotolabSpatialReference =
+  | { kind: 'localMetric'; unit: MetricLengthUnit; axes: 'rightHandedZUp' }
+  | { kind: 'crsBacked' };
+
+export interface TriangulatedScaleEndpoint {
+  endpointId: string;
+  positionProjectUnits: [number, number, number];
+  covarianceProjectUnits2: [number, number, number, number, number, number, number, number, number];
+  observationCount: number;
+  maximumIntersectionAngleDegrees: number;
+}
+
+export interface LocalScaleConstraint {
+  constraintId: string;
+  first: TriangulatedScaleEndpoint;
+  second: TriangulatedScaleEndpoint;
+  targetLength: number;
+  targetUnit: MetricLengthUnit;
+  targetStandardDeviation: number;
+  lineageSha256: ObjectHash;
+}
+
+export interface LocalScaleEvaluation {
+  observable: boolean;
+  reasons: (
+    | 'nonFiniteInput'
+    | 'endpointNotTriangulated'
+    | 'weakRayIntersection'
+    | 'coincidentEndpoints'
+    | 'invalidTargetLength'
+    | 'invalidCovariance'
+  )[];
+  reconstructedDistanceProjectUnits?: number;
+  targetDistanceMeters?: number;
+  scaleMetersPerProjectUnit?: number;
+  scaleStandardDeviation?: number;
+}
+
+export interface VideoFrameCandidate {
+  frameIndex: number;
+  timestampMicroseconds: number;
+  widthPixels: number;
+  heightPixels: number;
+  sharpness: number;
+  motion: number;
+  overlap: number;
+}
+
+export interface VideoFrameSelectionPolicy {
+  maximumFrames: number;
+  minimumIntervalMicroseconds: number;
+  minimumWidthPixels: number;
+  minimumHeightPixels: number;
+  minimumSharpness: number;
+  maximumMotion: number;
+  minimumOverlap: number;
+  maximumOverlap: number;
+}
+
+export interface VideoFrameSelection {
+  algorithmVersion: string;
+  selected: VideoFrameCandidate[];
+  rejectedCount: number;
+}
+
+export interface VideoSourceProbe {
+  schemaVersion: number;
+  sourcePath: string;
+  sourceObjectHash: ObjectHash;
+  byteSize: number;
+  formatName: string;
+  durationMicroseconds: number;
+  videoCodec: string;
+  widthPixels: number;
+  heightPixels: number;
+  averageFrameRate: string;
+  ffprobeVersion: string;
+  rawContainerMetadata: unknown;
+}
+
+export interface PreparedVideoFrames {
+  source: VideoSourceProbe;
+  sourceArchivePath: string;
+  selection: VideoFrameSelection;
+  images: PhotoImportBatch;
+  checkpointPath: string;
+}
+
+export interface PreparedStillImage {
+  sourceObjectHash: ObjectHash;
+  sourceByteSize: number;
+  originalFormat: PhotoFormat;
+  image: DiscoveredPhoto;
+}
+
 export interface ImportedHeight {
   meters: number;
   semanticReference: 'unknown';
@@ -434,6 +668,10 @@ export interface DiscoveredPhoto {
   byteSize: number;
   sha256: ObjectHash;
   metadata: PhotoMetadata;
+  captureSource: CaptureSourceProfile;
+  decoderCapability?: CaptureDecodeCapability;
+  positionPrior?: CapturePositionPrior;
+  derivedProvenance?: DerivedCaptureArtifactProvenance;
   duplicateOf?: string;
 }
 
@@ -449,7 +687,8 @@ export type ImageImportWarningCode =
   | 'xmpScanLimitReached'
   | 'xmpMalformed'
   | 'xmpUnsafeXmlIgnored'
-  | 'duplicateContent';
+  | 'duplicateContent'
+  | 'decoderUnavailable';
 
 export interface ImageImportWarning {
   sourcePath: string;
@@ -712,6 +951,48 @@ export interface GcpObservation {
   state: GcpObservationState;
 }
 
+/** Fixed-camera, revision-bound feedback; never an optimized alignment. */
+export interface GcpLocalEstimateArtifact {
+  schemaVersion: number;
+  artifactSha256: ObjectHash;
+  estimate: {
+    schemaVersion: number;
+    collectionSha256: ObjectHash;
+    cameraStateSha256: ObjectHash;
+    pointId: string;
+    coordinateCameraState: [number, number, number];
+    covarianceCameraState: [number, number, number, number, number, number, number, number, number];
+    residuals: {
+      imageId: number;
+      measured: GcpImageCoordinate;
+      predicted: GcpImageCoordinate;
+      deltaPixels: [number, number];
+      normPixels: number;
+      robustWeight: number;
+    }[];
+    projections: {
+      pointId: string;
+      imageId: number;
+      coordinate: GcpImageCoordinate;
+      uncertainty: {
+        semiMajorPixels: number;
+        semiMinorPixels: number;
+        angleDegrees: number;
+      };
+    }[];
+    diagnostics: {
+      usableObservationCount: number;
+      effectiveObservationCount: number;
+      iterationCount: number;
+      normalConditionNumber: number;
+      reprojectionRmsPixels: number;
+      reprojectionMaxPixels: number;
+      rayIntersectionRms: number;
+    };
+    publishesAlignment: false;
+  };
+}
+
 export type GcpObservationEdit =
   | { action: 'block'; coordinate: GcpImageCoordinate; reason: string }
   | { action: 'unblock' }
@@ -777,6 +1058,7 @@ export interface GcpOptimizationPublicationRecord {
       effectiveMode: 'auto' | 'translationOnly' | 'similarity7';
       cameras: {
         imageId: number;
+        calibrationGroupId: string;
         widthPixels: number;
         heightPixels: number;
         focalXPixels: number;
@@ -798,6 +1080,7 @@ export interface GcpOptimizationPublicationRecord {
         ];
         centerWorldMeters: [number, number, number];
       }[];
+      intrinsicsDiagnostics?: GcpIntrinsicsGroupDiagnostics[];
       residuals: {
         pointId: string;
         role: Exclude<GcpRole, 'disabled'>;
@@ -847,6 +1130,8 @@ export interface AlignedGcpCameraRecord {
   centerInProjectWorld: boolean;
   camera: {
     imageId: number;
+    calibrationGroupId: string;
+    intrinsicsPolicy: GcpIntrinsicsPolicy;
     widthPixels: number;
     heightPixels: number;
     focalXPixels: number;
@@ -949,7 +1234,8 @@ export interface SnapTargetMask {
 }
 
 export interface SnapResult {
-  position: Vec3;
+  /** Authoritative acquisition coordinate; `null` never implies zero. */
+  position: SourcePosition3;
   kind: SnapKind;
   entity: EntityId | null;
   confidence: number;

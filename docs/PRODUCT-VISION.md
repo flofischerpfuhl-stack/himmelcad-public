@@ -32,10 +32,11 @@ The exact dependency rules live in `AGENTS.md` and
 ## Product Family
 
 The canonical product names are **HimmelCAD Builder**, **HimmelCAD Assembler**,
-**HimmelCAD PhotoLab**, **HimmelCAD WeltView**, **HimmelCAD TestFlight**, and
-**HimmelCAD ChronoGit**. Product UI, package metadata, release artifacts, and
-current documentation use these names; the shorter names below are only
-unambiguous prose shorthand.
+**HimmelCAD PhotoLab**, **HimmelCAD Cap**, **HimmelCAD WeltView**,
+**HimmelCAD TestFlight**, and **HimmelCAD ChronoGit**. Product UI, package
+metadata, release artifacts, and current documentation use these names; the
+shorter names below are only unambiguous prose shorthand. **HimmelCAD Cap** may
+appear in marketing and UI as **himmel:cap**.
 
 ### HimmelCAD Builder
 
@@ -58,6 +59,18 @@ The binding product and implementation concept is documented in
 
 PhotoLab outputs must become normal HimmelCAD entities, not a separate
 one-off project type.
+
+### HimmelCAD Cap
+
+Mobile capture app (Android and iOS) for **non-surveyors** without professional
+field equipment. Operators record a scene with a video-like UX; the app writes
+a single **`.himmelcap`** session package after short on-device processing.
+PhotoLab imports that package with weighted GNSS priors. MVP accuracy path is
+**phone-only** (dual-frequency handset recommended; optional NTRIP on Android).
+External RTK accessories and mandatory GCPs are out of MVP scope.
+
+Binding docs: `docs/himmelcap/` and ADR 0027. Application root: `apps/cap/`
+(stack reserved until UI brief + stack gate). Marketing shorthand: **himmel:cap**.
 
 ### HimmelCAD WeltView
 
@@ -206,3 +219,7 @@ Python/AI agents should be able to:
 
 Scripts must not directly mutate the canonical store or bypass journaled
 commands.
+ADR 0024 makes this operational through generated sync/async clients, paginated
+queries, bounded bulk-data leases and explicit capabilities. Network access is
+off by default, and installed LLM CLI harnesses remain adapters rather than
+project authorities.
