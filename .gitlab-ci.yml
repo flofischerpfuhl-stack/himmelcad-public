@@ -68,6 +68,12 @@ rust:clippy:
   script:
     - cargo clippy --workspace --all-targets -- -D warnings
 
+rust:himmelcap-import:
+  extends: .rust
+  stage: lint
+  script:
+    - cargo test -p himmelcad-io hcap_import --locked
+
 rust:test:
   extends: .rust
   stage: test
