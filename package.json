@@ -47,6 +47,7 @@
     "photolab:test:project-files": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/test-photolab-project-file-operations.mjs",
     "photolab:test:report-pdf": "node scripts/test-photolab-report-pdf.mjs",
     "photolab:test:capture-groups": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/test-photolab-capture-groups.mjs",
+    "photolab:test:himmelcap": "node scripts/test-photolab-himmelcap-import.mjs",
     "photolab:test:alignment-merge": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/test-photolab-alignment-merge.mjs",
     "photolab:test:viewer-lifecycle": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/test-photolab-viewer-lifecycle.mjs",
     "photolab:test:product-viewer": "node scripts/photolab-product-viewer-e2e.mjs",

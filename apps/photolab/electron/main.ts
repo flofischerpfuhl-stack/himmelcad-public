@@ -97,6 +97,9 @@ const RENDERER_SIDECAR_METHODS = new Set([
   'photolab.images.commit.cancel',
   'photolab.images.inspect',
   'photolab.images.inspect.cancel',
+  'photolab.himmelcap.inspect',
+  'photolab.himmelcap.cancel',
+  'photolab.himmelcap.release',
   'photolab.images.list',
   'photolab.images.quality.list',
   'photolab.gcp.preview',
@@ -589,8 +592,7 @@ function registerIpc(): void {
                 ? parsed.name
                 : name.replace(/\.(hcimport|json)$/i, ''),
             path,
-            savedAt:
-              typeof parsed.savedAt === 'string' ? parsed.savedAt : st.mtime.toISOString(),
+            savedAt: typeof parsed.savedAt === 'string' ? parsed.savedAt : st.mtime.toISOString(),
           };
           if (typeof parsed.kind === 'string') item.kind = parsed.kind;
           if (typeof parsed.description === 'string') item.description = parsed.description;
@@ -729,8 +731,7 @@ function registerIpc(): void {
                 ? parsed.name
                 : name.replace(/\.hcalign$/i, ''),
             path,
-            savedAt:
-              typeof parsed.savedAt === 'string' ? parsed.savedAt : st.mtime.toISOString(),
+            savedAt: typeof parsed.savedAt === 'string' ? parsed.savedAt : st.mtime.toISOString(),
           };
           if (typeof parsed.profile === 'string') item.profile = parsed.profile;
           if (typeof parsed.description === 'string') item.description = parsed.description;
@@ -991,6 +992,28 @@ function registerIpc(): void {
       properties: ['openFile', 'multiSelections'],
       filters: [
         {
+          name: 'PhotoLab imports',
+          extensions: [
+            'hcap',
+            'jpg',
+            'jpeg',
+            'tif',
+            'tiff',
+            'dng',
+            'png',
+            'heic',
+            'heif',
+            'avif',
+            'cr3',
+            'raf',
+            'iiq',
+          ],
+        },
+        {
+          name: 'HimmelCAD Cap project',
+          extensions: ['hcap'],
+        },
+        {
           name: 'PhotoLab Images',
           extensions: [
             'jpg',
@@ -1030,6 +1053,26 @@ function registerIpc(): void {
     if (selection.canceled || !selectedPath) return null;
     await preferences.rememberDirectory('image', selectedPath);
     return [selectedPath];
+  });
+  ipcMain.handle('himmelcap:select-file', async () => {
+    const options: Electron.OpenDialogOptions = {
+      title: 'Import HimmelCAD Cap Project',
+      defaultPath: await preferredDirectory('image'),
+      properties: ['openFile'],
+      filters: [
+        {
+          name: 'HimmelCAD Cap project',
+          extensions: ['hcap'],
+        },
+      ],
+    };
+    const selection = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    const selectedPath = selection.filePaths[0];
+    if (selection.canceled || !selectedPath) return null;
+    await preferences.rememberDirectory('image', dirname(selectedPath));
+    return selectedPath;
   });
   ipcMain.handle(
     'grids:select',
@@ -1462,13 +1505,14 @@ async function ensureProjectPreview(
     if (decoded.isEmpty()) throw new Error('preview decoder returned an empty image');
     const dimensions = decoded.getSize();
     const scale = Math.min(1, 1600 / Math.max(dimensions.width, dimensions.height));
-    const thumbnail = scale < 1
-      ? decoded.resize({
-          width: Math.max(1, Math.round(dimensions.width * scale)),
-          height: Math.max(1, Math.round(dimensions.height * scale)),
-          quality: 'best',
-        })
-      : decoded;
+    const thumbnail =
+      scale < 1
+        ? decoded.resize({
+            width: Math.max(1, Math.round(dimensions.width * scale)),
+            height: Math.max(1, Math.round(dimensions.height * scale)),
+            quality: 'best',
+          })
+        : decoded;
     await mkdir(dirname(previewPath), { recursive: true });
     await writeFile(previewPath, thumbnail.toJPEG(86));
   });

@@ -43,10 +43,11 @@ use himmelcad_core::photolab_jobs::{
 };
 use himmelcad_core::photolab_matching::ImageId;
 use himmelcad_io::{
-    import_gcp_csv_file, import_las_file_with_progress_and_cancel,
-    import_photo_files_with_progress, preview_gcp_csv_file, CanonicalImportProvider,
-    CanonicalImportRequest, ConverterProgress, IfcCanonicalProvider, ProviderOperationContext,
-    ProviderProgress, IFC2X3_FORMAT_ID, IFC4X3_FORMAT_ID, IFC4_FORMAT_ID,
+    hcap_import::import_hcap_path_with_progress, import_gcp_csv_file,
+    import_las_file_with_progress_and_cancel, import_photo_files_with_progress,
+    preview_gcp_csv_file, CanonicalImportProvider, CanonicalImportRequest, ConverterProgress,
+    IfcCanonicalProvider, ProviderOperationContext, ProviderProgress, IFC2X3_FORMAT_ID,
+    IFC4X3_FORMAT_ID, IFC4_FORMAT_ID,
 };
 
 use crate::project_runtime::{
@@ -651,6 +652,9 @@ async fn handle(
     if req.method.starts_with("photolab.images.") {
         return handle_image_rpc(req, projects, &crs).await;
     }
+    if req.method.starts_with("photolab.himmelcap.") {
+        return handle_himmelcap_rpc(req, projects).await;
+    }
     if req.method.starts_with("photolab.gcp.") {
         return handle_gcp_rpc(req, projects, &crs).await;
     }
@@ -724,6 +728,104 @@ async fn handle(
         }
         "photolab.hardware.probe" => {
             rpc_blocking(req.id, || probe_hardware().map_err(anyhow::Error::from)).await
+        }
+        other => rpc_err(req.id, -32601, &format!("method not found: {other}")),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InspectHimmelcapParams {
+    path: String,
+    operation_id: String,
+    #[serde(default)]
+    progress_key: Option<String>,
+}
+
+fn himmelcap_staging_path(operation_id: &str) -> PathBuf {
+    let digest = hex::encode(Sha256::digest(operation_id.as_bytes()));
+    std::env::temp_dir()
+        .join("himmelcad-photolab")
+        .join("himmelcap")
+        .join(digest)
+}
+
+async fn handle_himmelcap_rpc(
+    req: RpcRequest,
+    projects: Arc<ProjectRuntime>,
+) -> RpcResponse {
+    match req.method.as_str() {
+        "photolab.himmelcap.inspect" => {
+            rpc_blocking_with_params::<InspectHimmelcapParams, _, _>(
+                req.id,
+                req.params,
+                move |params| {
+                    anyhow::ensure!(
+                        !params.operation_id.trim().is_empty(),
+                        "operationId must not be empty"
+                    );
+                    let source = PathBuf::from(params.path);
+                    let staging = himmelcap_staging_path(&params.operation_id);
+                    let cancellation = projects.begin_image_inspection(&params.operation_id)?;
+                    let result = import_hcap_path_with_progress(
+                        &source,
+                        &staging,
+                        || cancellation.is_cancel_requested(),
+                        |fraction, message| {
+                            emit_progress(params.progress_key.as_deref(), fraction, message)
+                        },
+                    );
+                    projects.finish_image_inspection(&params.operation_id);
+                    if result.is_err() && staging.exists() {
+                        if let Err(error) = std::fs::remove_dir_all(&staging) {
+                            tracing::warn!(
+                                %error,
+                                path = %staging.display(),
+                                "failed to clean rejected HimmelCAD Cap staging directory"
+                            );
+                        }
+                    }
+                    result.map_err(anyhow::Error::from)
+                },
+            )
+            .await
+        }
+        "photolab.himmelcap.cancel" => {
+            rpc_blocking_with_params::<CancelImageCommitParams, _, _>(
+                req.id,
+                req.params,
+                move |params| Ok(projects.cancel_image_inspection(params)),
+            )
+            .await
+        }
+        "photolab.himmelcap.release" => {
+            rpc_blocking_with_params::<CancelImageCommitParams, _, _>(
+                req.id,
+                req.params,
+                move |params| {
+                    anyhow::ensure!(
+                        !params.operation_id.trim().is_empty(),
+                        "operationId must not be empty"
+                    );
+                    let staging = himmelcap_staging_path(&params.operation_id);
+                    let released = if staging.exists() {
+                        std::fs::remove_dir_all(&staging).with_context(|| {
+                            format!(
+                                "failed to release HimmelCAD Cap staging directory {}",
+                                staging.display()
+                            )
+                        })?;
+                        true
+                    } else {
+                        false
+                    };
+                    Ok(serde_json::json!({
+                        "operationId": params.operation_id,
+                        "released": released,
+                    }))
+                },
+            )
+            .await
         }
         other => rpc_err(req.id, -32601, &format!("method not found: {other}")),
     }

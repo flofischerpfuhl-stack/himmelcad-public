@@ -1,4 +1,9 @@
-import type { ExifGpsPosition, PhotoImportBatch, PhotoMetadata } from '@himmelcad/data';
+import type {
+  ExifGpsPosition,
+  HcapImportPreview,
+  PhotoImportBatch,
+  PhotoMetadata,
+} from '@himmelcad/data';
 import {
   AlertTriangle,
   Check,
@@ -7,6 +12,7 @@ import {
   Grid3X3,
   LoaderCircle,
   MapPinned,
+  PackageOpen,
   Search,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -173,8 +179,10 @@ export interface ImageImportPanelProps {
   progress: ImageImportProgress | null;
   gridProgress: ImageImportProgress | null;
   error: string | null;
+  himmelcap: HcapImportPreview | null;
   onChooseMoreFiles: () => void;
   onChooseFolder: () => void;
+  onChooseHimmelcap: () => void;
   onSelectGrid: (kind: 'horizontal' | 'vertical') => Promise<LocalGridSelection | null>;
   onDiscoverCrs: (query: CrsOperationQuery) => Promise<CrsOperationDiscovery>;
   onCommit: (decision: ImageImportDecision) => Promise<void>;
@@ -319,8 +327,10 @@ export function ImageImportPanel({
   progress,
   gridProgress,
   error,
+  himmelcap,
   onChooseMoreFiles,
   onChooseFolder,
+  onChooseHimmelcap,
   onSelectGrid,
   onDiscoverCrs,
   onCommit,
@@ -401,9 +411,7 @@ export function ImageImportPanel({
         sourceVerticalEpsg,
         transformHeight,
         targetVerticalEpsg,
-        sourceHorizontalEpsg: transformHorizontal
-          ? sourceHorizontalEpsg
-          : targetHorizontalEpsg,
+        sourceHorizontalEpsg: transformHorizontal ? sourceHorizontalEpsg : targetHorizontalEpsg,
         targetHorizontalEpsg,
         verticalGrid,
         horizontalGrid,
@@ -737,7 +745,6 @@ export function ImageImportPanel({
     onError('7-parameter combined transform is not yet connected to image import commit.');
   };
 
-
   const refreshFileWorkflows = async () => {
     try {
       const api = window.himmelcad;
@@ -772,8 +779,8 @@ export function ImageImportPanel({
             ...(grid.license === undefined ? {} : { license: grid.license }),
             ...(grid.coverage === undefined ? {} : { coverage: grid.coverage }),
             availability: path
-              ? ({ state: 'presentVerified' as const, local_path: path })
-              : ({ state: 'missing' as const }),
+              ? { state: 'presentVerified' as const, local_path: path }
+              : { state: 'missing' as const },
           };
         })
       : [];
@@ -801,9 +808,7 @@ export function ImageImportPanel({
             kind: op.kind,
             projPipeline: op.projPipeline,
             areaOfUse: op.areaOfUse,
-            ...(op.expectedAccuracyMm != null
-              ? { expectedAccuracyMm: op.expectedAccuracyMm }
-              : {}),
+            ...(op.expectedAccuracyMm != null ? { expectedAccuracyMm: op.expectedAccuracyMm } : {}),
             ballpark: op.ballpark,
             bestAvailable: true as const,
             requiredGrids,
@@ -1041,13 +1046,13 @@ export function ImageImportPanel({
               <FileImage size={34} />
             )
           }
-          title={error ?? progress?.message ?? 'Choose images or a folder'}
+          title={error ?? progress?.message ?? 'Choose images, a folder or a Cap project'}
           detail={
             error
               ? 'No image or project data was changed.'
               : busy
                 ? 'EXIF, XMP, DJI, GPS and RTK metadata are retained. Nothing is committed yet.'
-                : 'Select a folder or image files to inspect metadata before import.'
+                : 'Select a .hcap project, folder or image files to inspect metadata before import.'
           }
         >
           {error || !busy ? (
@@ -1061,6 +1066,9 @@ export function ImageImportPanel({
                 onClick={onChooseFolder}
               >
                 <FolderOpen size={14} /> Choose folder
+              </button>
+              <button type="button" className={chat.choice} onClick={onChooseHimmelcap}>
+                <PackageOpen size={14} /> Import .hcap
               </button>
             </>
           ) : (
@@ -1108,6 +1116,15 @@ export function ImageImportPanel({
           detail={`${batch.photos.length} found · ${batch.photos.length - usablePhotos.length} duplicates · ${gpsCount} GPS · ${rtkCount} RTK`}
         />
 
+        {himmelcap && (
+          <ChatBubble
+            role="system"
+            tone={himmelcap.warnings.length > 0 ? 'warn' : 'ok'}
+            title={`${himmelcap.displayName} · verified Cap project`}
+            detail={`${himmelcap.frameCount} frames · ${himmelcap.poseCount} position priors · schema v${himmelcap.schemaVersion}${himmelcap.packageProfile ? ` · ${himmelcap.packageProfile}` : ''}${himmelcap.warnings.length > 0 ? ` · ${himmelcap.warnings.join(' · ')}` : ''}`}
+          />
+        )}
+
         <ChatCard
           title="Preview"
           onRevert={phase !== 'preview' ? () => clearFrom('preview') : undefined}
@@ -1118,7 +1135,7 @@ export function ImageImportPanel({
                 type="button"
                 className={chat.ghostBtn}
                 onClick={onChooseMoreFiles}
-                disabled={locked}
+                disabled={locked || himmelcap != null}
               >
                 <FileImage size={13} /> Add
               </button>
@@ -1126,10 +1143,20 @@ export function ImageImportPanel({
                 type="button"
                 className={chat.ghostBtn}
                 onClick={onChooseFolder}
-                disabled={locked}
+                disabled={locked || himmelcap != null}
               >
                 <FolderOpen size={13} /> Folder
               </button>
+              {!himmelcap && (
+                <button
+                  type="button"
+                  className={chat.ghostBtn}
+                  onClick={onChooseHimmelcap}
+                  disabled={locked}
+                >
+                  <PackageOpen size={13} /> .hcap
+                </button>
+              )}
             </div>
           }
         >
@@ -1290,61 +1317,68 @@ export function ImageImportPanel({
           doVertical === 'yes' &&
           phaseOrder(phase) >= phaseOrder('vertical_grid') &&
           heightSourceFromVerticalEpsg(sourceVerticalEpsg) !== 'deviceProfile' && (
-          <ChatCard
-            title="Geoid / height grid"
-            onRevert={() => clearFrom('vertical_setup')}
-            revertDisabled={locked}
-          >
-            <p style={{ margin: '0 0 8px', color: 'var(--hc-fg-muted)', fontSize: 11, lineHeight: 1.45 }}>
-              Height transform needs a geoid. Choose a local file or keep the bundled default.
-            </p>
-            <GridSelector
-              title="Geoid file"
-              description={
-                verticalGrid
-                  ? `${verticalGrid.filename} · ${verticalGrid.localPath}`
-                  : targetVerticalEpsg === 7837
-                    ? `${GCG2016.officialFilename} · bundled default if no file chosen`
-                    : 'No local file — bundled/PROJ default'
-              }
-              bundled={targetVerticalEpsg === 7837 ? GCG2016.officialFilename : null}
-              selected={verticalGrid}
-              progress={gridProgress}
-              busy={locked}
-              onChoose={() => void chooseGrid('vertical')}
-            />
-            {phase === 'vertical_grid' && (
-              <div className={chat.toolbar}>
-                <button
-                  type="button"
-                  className={`${chat.choice} ${chat.choicePrimary}`}
-                  disabled={locked}
-                  onClick={() => confirmVerticalGrid(Boolean(verticalGrid))}
-                >
-                  {verticalGrid ? 'Continue with this file' : 'Continue with default / bundled'}
-                </button>
-                {verticalGrid && (
+            <ChatCard
+              title="Geoid / height grid"
+              onRevert={() => clearFrom('vertical_setup')}
+              revertDisabled={locked}
+            >
+              <p
+                style={{
+                  margin: '0 0 8px',
+                  color: 'var(--hc-fg-muted)',
+                  fontSize: 11,
+                  lineHeight: 1.45,
+                }}
+              >
+                Height transform needs a geoid. Choose a local file or keep the bundled default.
+              </p>
+              <GridSelector
+                title="Geoid file"
+                description={
+                  verticalGrid
+                    ? `${verticalGrid.filename} · ${verticalGrid.localPath}`
+                    : targetVerticalEpsg === 7837
+                      ? `${GCG2016.officialFilename} · bundled default if no file chosen`
+                      : 'No local file — bundled/PROJ default'
+                }
+                bundled={targetVerticalEpsg === 7837 ? GCG2016.officialFilename : null}
+                selected={verticalGrid}
+                progress={gridProgress}
+                busy={locked}
+                onChoose={() => void chooseGrid('vertical')}
+              />
+              {phase === 'vertical_grid' && (
+                <div className={chat.toolbar}>
                   <button
                     type="button"
-                    className={chat.choice}
+                    className={`${chat.choice} ${chat.choicePrimary}`}
                     disabled={locked}
-                    onClick={() => confirmVerticalGrid(false)}
+                    onClick={() => confirmVerticalGrid(Boolean(verticalGrid))}
                   >
-                    Clear · use default
+                    {verticalGrid ? 'Continue with this file' : 'Continue with default / bundled'}
                   </button>
-                )}
-              </div>
-            )}
-            {!verticalGrid && phase === 'vertical_grid' && (
-              <div className={chat.warnInline}>
-                <AlertTriangle size={14} />
-                <span>
-                  Without a local survey-grade geoid the height transform may be less accurate.
-                </span>
-              </div>
-            )}
-          </ChatCard>
-        )}
+                  {verticalGrid && (
+                    <button
+                      type="button"
+                      className={chat.choice}
+                      disabled={locked}
+                      onClick={() => confirmVerticalGrid(false)}
+                    >
+                      Clear · use default
+                    </button>
+                  )}
+                </div>
+              )}
+              {!verticalGrid && phase === 'vertical_grid' && (
+                <div className={chat.warnInline}>
+                  <AlertTriangle size={14} />
+                  <span>
+                    Without a local survey-grade geoid the height transform may be less accurate.
+                  </span>
+                </div>
+              )}
+            </ChatCard>
+          )}
 
         {mode === 'separate' && phaseOrder(phase) >= phaseOrder('horizontal_ask') && (
           <>
@@ -1401,7 +1435,6 @@ export function ImageImportPanel({
           </ChatCard>
         )}
 
-
         {/* Combined: first choose method */}
         {mode === 'combined' && phaseOrder(phase) >= phaseOrder('combined_method') && (
           <>
@@ -1427,9 +1460,7 @@ export function ImageImportPanel({
             />
             {(phase === 'combined_cal' || phase === 'combined_helmert') && (
               <ChatBubble role="user">
-                {phase === 'combined_cal'
-                  ? 'Site calibration file'
-                  : 'Manual 7-parameter Helmert'}
+                {phase === 'combined_cal' ? 'Site calibration file' : 'Manual 7-parameter Helmert'}
               </ChatBubble>
             )}
           </>
@@ -1442,8 +1473,8 @@ export function ImageImportPanel({
             revertDisabled={locked}
           >
             <p style={{ margin: '0 0 10px', color: 'var(--hc-fg-muted)', fontSize: 11 }}>
-              One joint transform from a Trimble .cal / .dc (or JobXML). Not a dual EPSG CRS
-              setup — use Separate for that.
+              One joint transform from a Trimble .cal / .dc (or JobXML). Not a dual EPSG CRS setup —
+              use Separate for that.
             </p>
             <div className={chat.gridRow}>
               <Grid3X3 size={16} />
@@ -1481,8 +1512,8 @@ export function ImageImportPanel({
             revertDisabled={locked}
           >
             <p style={{ margin: '0 0 10px', color: 'var(--hc-fg-muted)', fontSize: 11 }}>
-              Single joint 3D similarity (tx ty tz, rx ry rz, scale). Applied as one transform —
-              not separate height + horizontal CRS steps.
+              Single joint 3D similarity (tx ty tz, rx ry rz, scale). Applied as one transform — not
+              separate height + horizontal CRS steps.
             </p>
             <div
               style={{
@@ -1567,10 +1598,7 @@ export function ImageImportPanel({
                 <Metrics>
                   <Metric label="Candidates" value={String(discovery.candidates.length)} />
                   <Metric label="PROJ" value={discovery.audit.versions.projVersion} />
-                  <Metric
-                    label="EPSG DB"
-                    value={discovery.audit.versions.epsgDatabaseVersion}
-                  />
+                  <Metric label="EPSG DB" value={discovery.audit.versions.epsgDatabaseVersion} />
                 </Metrics>
                 <p style={{ margin: '0 0 8px', color: 'var(--hc-fg-muted)', fontSize: 11 }}>
                   Choose one operation. Notes appear only after you select.
@@ -1647,84 +1675,90 @@ export function ImageImportPanel({
           </ChatCard>
         )}
 
-
         {/* NTv2 only after PROJ op pick, and only if that op lists a horizontal grid */}
         {selectedOperation &&
           opNeedsHorizontalGrid(selectedOperation) &&
           phaseOrder(phase) >= phaseOrder('op_horizontal_grid') && (
-          <ChatCard
-            title="Horizontal datum grid (NTv2 / GTG)"
-            onRevert={() => clearFrom('operations')}
-            revertDisabled={locked}
-          >
-            <p style={{ margin: '0 0 8px', color: 'var(--hc-fg-muted)', fontSize: 11, lineHeight: 1.45 }}>
-              This PROJ operation lists a horizontal shift grid. Choose a local NTv2/GTG file, or
-              keep the bundled/default.
-            </p>
-            <div className={chat.warnInline} style={{ marginBottom: 8 }}>
-              <AlertTriangle size={14} />
-              <span>
-                Pipeline expects:{' '}
-                {selectedOperation.requiredGrids
-                  .filter((g) => !isVerticalGridFilename(g.officialFilename))
-                  .map((g) => g.officialFilename)
-                  .join(', ')}
-              </span>
-            </div>
-            <GridSelector
-              title="NTv2 / GTG file (optional override)"
-              description={
-                horizontalGrid
-                  ? `${horizontalGrid.filename} · ${horizontalGrid.localPath}`
-                  : 'Using bundled/default if available'
-              }
-              bundled={
-                selectedOperation.requiredGrids.find(
-                  (g) => !isVerticalGridFilename(g.officialFilename),
-                )?.officialFilename ?? null
-              }
-              selected={horizontalGrid}
-              progress={gridProgress}
-              busy={locked || phase !== 'op_horizontal_grid'}
-              onChoose={() => void chooseGrid('horizontal')}
-            />
-            {phase === 'op_horizontal_grid' && (
-              <>
-                <div className={chat.toolbar}>
-                  <button
-                    type="button"
-                    className={`${chat.choice} ${chat.choicePrimary}`}
-                    disabled={locked}
-                    onClick={() => confirmOpHorizontalGrid(Boolean(horizontalGrid))}
-                  >
-                    {horizontalGrid
-                      ? 'Continue with this file'
-                      : 'Continue with default / bundled'}
-                  </button>
-                  {horizontalGrid && (
+            <ChatCard
+              title="Horizontal datum grid (NTv2 / GTG)"
+              onRevert={() => clearFrom('operations')}
+              revertDisabled={locked}
+            >
+              <p
+                style={{
+                  margin: '0 0 8px',
+                  color: 'var(--hc-fg-muted)',
+                  fontSize: 11,
+                  lineHeight: 1.45,
+                }}
+              >
+                This PROJ operation lists a horizontal shift grid. Choose a local NTv2/GTG file, or
+                keep the bundled/default.
+              </p>
+              <div className={chat.warnInline} style={{ marginBottom: 8 }}>
+                <AlertTriangle size={14} />
+                <span>
+                  Pipeline expects:{' '}
+                  {selectedOperation.requiredGrids
+                    .filter((g) => !isVerticalGridFilename(g.officialFilename))
+                    .map((g) => g.officialFilename)
+                    .join(', ')}
+                </span>
+              </div>
+              <GridSelector
+                title="NTv2 / GTG file (optional override)"
+                description={
+                  horizontalGrid
+                    ? `${horizontalGrid.filename} · ${horizontalGrid.localPath}`
+                    : 'Using bundled/default if available'
+                }
+                bundled={
+                  selectedOperation.requiredGrids.find(
+                    (g) => !isVerticalGridFilename(g.officialFilename),
+                  )?.officialFilename ?? null
+                }
+                selected={horizontalGrid}
+                progress={gridProgress}
+                busy={locked || phase !== 'op_horizontal_grid'}
+                onChoose={() => void chooseGrid('horizontal')}
+              />
+              {phase === 'op_horizontal_grid' && (
+                <>
+                  <div className={chat.toolbar}>
                     <button
                       type="button"
-                      className={chat.choice}
+                      className={`${chat.choice} ${chat.choicePrimary}`}
                       disabled={locked}
-                      onClick={() => confirmOpHorizontalGrid(false)}
+                      onClick={() => confirmOpHorizontalGrid(Boolean(horizontalGrid))}
                     >
-                      Clear · use default
+                      {horizontalGrid
+                        ? 'Continue with this file'
+                        : 'Continue with default / bundled'}
                     </button>
-                  )}
-                </div>
-                {!horizontalGrid && (
-                  <div className={chat.warnInline}>
-                    <AlertTriangle size={14} />
-                    <span>
-                      Without a local NTv2 the horizontal datum shift can be coarse (often
-                      decimetres for DHDN ↔ ETRS). Prefer a regional grid when available.
-                    </span>
+                    {horizontalGrid && (
+                      <button
+                        type="button"
+                        className={chat.choice}
+                        disabled={locked}
+                        onClick={() => confirmOpHorizontalGrid(false)}
+                      >
+                        Clear · use default
+                      </button>
+                    )}
                   </div>
-                )}
-              </>
-            )}
-          </ChatCard>
-        )}
+                  {!horizontalGrid && (
+                    <div className={chat.warnInline}>
+                      <AlertTriangle size={14} />
+                      <span>
+                        Without a local NTv2 the horizontal datum shift can be coarse (often
+                        decimetres for DHDN ↔ ETRS). Prefer a regional grid when available.
+                      </span>
+                    </div>
+                  )}
+                </>
+              )}
+            </ChatCard>
+          )}
 
         {showReview && (
           <>
@@ -1751,7 +1785,7 @@ export function ImageImportPanel({
                   <AlertTriangle size={14} />
                   <span>
                     No project-specific local grid was selected (bundled/default only). Accuracy may
-                      be reduced for historic datums such as DHDN / Gauss-Krueger.
+                    be reduced for historic datums such as DHDN / Gauss-Krueger.
                     {selectedOperation?.expectedAccuracyMm != null
                       ? ` Published figure ≈ ±${selectedOperation.expectedAccuracyMm.toFixed(0)} mm.`
                       : ''}
@@ -1780,9 +1814,7 @@ export function ImageImportPanel({
                 />
                 <Metric
                   label="Operation"
-                  value={
-                    mode === 'none' ? 'None (identity)' : (selectedOperation?.name ?? '—')
-                  }
+                  value={mode === 'none' ? 'None (identity)' : (selectedOperation?.name ?? '—')}
                 />
                 <Metric
                   label="Grids"
@@ -1847,7 +1879,9 @@ export function ImageImportPanel({
                                 c.requiredGrids.length === 0 &&
                                 (c.expectedAccuracyMm == null || c.expectedAccuracyMm <= 1),
                             ) ??
-                            result.candidates.find((c) => !c.ballpark && c.requiredGrids.length === 0) ??
+                            result.candidates.find(
+                              (c) => !c.ballpark && c.requiredGrids.length === 0,
+                            ) ??
                             result.candidates.find((c) => !c.ballpark);
                           if (!identity) {
                             throw new Error(
@@ -1974,7 +2008,6 @@ export function ImageImportPanel({
             </div>
           </ChatCard>
         )}
-
       </ImportChatStream>
     </ImportChatRoot>
   );
@@ -2112,9 +2145,7 @@ function CrsSearchColumn({
     }
     const tokens = q.split(/\s+/).filter(Boolean);
     const fromPresets = presets.filter((p) =>
-      tokens.every((t) =>
-        `${p.code} ${p.name} ${p.region} ${p.hint}`.toLowerCase().includes(t),
-      ),
+      tokens.every((t) => `${p.code} ${p.name} ${p.region} ${p.hint}`.toLowerCase().includes(t)),
     );
     const custom = /^(?:epsg:\s*)?(\d{3,7})$/i.exec(query.trim());
     const customCode = custom ? Number(custom[1]) : null;
@@ -2182,11 +2213,7 @@ function CrsSearchColumn({
           }}
         >
           <div className={chat.crsSuggestMeta}>
-            {query.trim()
-              ? 'Search results'
-              : recent.length > 0
-                ? 'Recent'
-                : 'Popular'}
+            {query.trim() ? 'Search results' : recent.length > 0 ? 'Recent' : 'Popular'}
           </div>
           {matches.map((preset) => (
             <button
@@ -2206,9 +2233,7 @@ function CrsSearchColumn({
               </small>
             </button>
           ))}
-          {matches.length === 0 && (
-            <div className={chat.crsSuggestMeta}>No matches</div>
-          )}
+          {matches.length === 0 && <div className={chat.crsSuggestMeta}>No matches</div>}
         </div>
       )}
     </div>
@@ -2536,17 +2561,19 @@ export function rewritePipelineGridToken(
   if (!fromFilename || !toFilename || fromFilename === toFilename) return pipeline;
   const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // Match +grids=... tokens; swap exact basename occurrences.
-  return pipeline.replace(/\+grids=([^\s]+)/g, (_full, list: string) => {
-    const parts = list.split(',').map((part) => {
-      const base = part.replace(/^.*[/\\]/, '');
-      if (base === fromFilename || part === fromFilename) return toFilename;
-      return part;
-    });
-    if (parts.join(',') === list && list.includes(fromFilename)) {
-      return `+grids=${list.split(fromFilename).join(toFilename)}`;
-    }
-    return `+grids=${parts.join(',')}`;
-  }).replace(new RegExp(escape(fromFilename), 'g'), toFilename);
+  return pipeline
+    .replace(/\+grids=([^\s]+)/g, (_full, list: string) => {
+      const parts = list.split(',').map((part) => {
+        const base = part.replace(/^.*[/\\]/, '');
+        if (base === fromFilename || part === fromFilename) return toFilename;
+        return part;
+      });
+      if (parts.join(',') === list && list.includes(fromFilename)) {
+        return `+grids=${list.split(fromFilename).join(toFilename)}`;
+      }
+      return `+grids=${parts.join(',')}`;
+    })
+    .replace(new RegExp(escape(fromFilename), 'g'), toFilename);
 }
 
 function normalizeRequiredGridForFreeze(
@@ -2574,11 +2601,7 @@ function normalizeRequiredGridForFreeze(
   const path = userPath || existingPath || catalogHit?.localPath?.trim() || null;
   const license = grid.license ?? defaultGridLicense(user?.filename ?? grid.officialFilename);
   const filename = user?.filename ?? grid.officialFilename;
-  const kind = normalizeGridKind(
-    grid.kind ?? user?.kind,
-    filename,
-    vertical,
-  );
+  const kind = normalizeGridKind(grid.kind ?? user?.kind, filename, vertical);
   const coverage = grid.coverage ?? user?.coverage ?? area;
 
   if (!path) {

@@ -14,6 +14,7 @@ import type {
   GcpOptimizationSnapshotResult,
   GcpObservationEdit,
   HardwareCapabilities,
+  HcapImportPreview,
   EditImageMaskParams,
   EditImageMaskResult,
   ImageQualityAnalysisRecord,
@@ -197,6 +198,7 @@ export function App(): JSX.Element {
   const [lastSavedGeneration, setLastSavedGeneration] = useState(0);
   const [jobs, setJobs] = useState<readonly PhotolabJob[]>([]);
   const [imageImportBatch, setImageImportBatch] = useState<PhotoImportBatch | null>(null);
+  const [himmelcapImport, setHimmelcapImport] = useState<HcapImportPreview | null>(null);
   const [projectImages, setProjectImages] = useState<readonly ProjectCameraImageRecord[]>([]);
   const [imageQualityAnalyses, setImageQualityAnalyses] = useState<
     readonly ImageQualityAnalysisRecord[]
@@ -252,6 +254,8 @@ export function App(): JSX.Element {
   const jobPollErrorLogged = useRef(false);
   const activeImageCommitId = useRef<string | null>(null);
   const activeImageInspectId = useRef<string | null>(null);
+  const activeHimmelcapInspectId = useRef<string | null>(null);
+  const himmelcapStagingOperationId = useRef<string | null>(null);
   const activeImageProgressKey = useRef<string | null>(null);
   const activeGridProgressKey = useRef<string | null>(null);
   const activeProjectFileOperation = useRef<ProjectFileOperationState | null>(null);
@@ -330,9 +334,11 @@ export function App(): JSX.Element {
     const scoped = activeProcessingSetId
       ? candidates.filter((analysis) => analysis.processingSetId === activeProcessingSetId)
       : projectWide;
-    return [...(scoped.length > 0 ? scoped : projectWide)].sort(
-      (left, right) => right.analyzedAtUnixMs - left.analyzedAtUnixMs,
-    )[0] ?? null;
+    return (
+      [...(scoped.length > 0 ? scoped : projectWide)].sort(
+        (left, right) => right.analyzedAtUnixMs - left.analyzedAtUnixMs,
+      )[0] ?? null
+    );
   }, [activeProcessingSetId, imageQualityAnalyses, selectedImage]);
   const focusedGcpImages = useMemo(() => {
     if (!focusedGcpId) return [];
@@ -392,9 +398,8 @@ export function App(): JSX.Element {
   );
   const activeProductProcessingSetId = useMemo(
     () =>
-      alignmentMergeCandidates.find(
-        (candidate) => candidate.entityId === activeProductAlignmentId,
-      )?.processingSetId ?? null,
+      alignmentMergeCandidates.find((candidate) => candidate.entityId === activeProductAlignmentId)
+        ?.processingSetId ?? null,
     [activeProductAlignmentId, alignmentMergeCandidates],
   );
 
@@ -410,11 +415,7 @@ export function App(): JSX.Element {
     let commandId: string | null = null;
     const resolveProfileName = selectedAlignmentPreset?.profile ?? profile;
     const resolveOverrides = selectedAlignmentPreset?.overrides ?? alignmentOverrides;
-    logEvent(
-      'info',
-      'renderer',
-      `Resolving alignment profile ${resolveProfileName} in the core`,
-    );
+    logEvent('info', 'renderer', `Resolving alignment profile ${resolveProfileName} in the core`);
     try {
       if (projectReady) {
         const journal = await api.sidecar.call<PhotolabJournalEntry>(
@@ -589,7 +590,11 @@ export function App(): JSX.Element {
           .then((records) => commitIfCurrent(() => setImageMasks(records)))
           .catch((error: unknown) => {
             commitIfCurrent(() =>
-              logEvent('error', 'sidecar', `Image masks could not be loaded: ${errorMessage(error)}`),
+              logEvent(
+                'error',
+                'sidecar',
+                `Image masks could not be loaded: ${errorMessage(error)}`,
+              ),
             );
           });
         if (
@@ -897,6 +902,73 @@ export function App(): JSX.Element {
     showProjectFileOperationError,
   ]);
 
+  const releaseHimmelcapStaging = useCallback(async () => {
+    const operationId = himmelcapStagingOperationId.current;
+    const api = window.himmelcad;
+    if (!operationId || !api) return;
+    await api.sidecar.call('photolab.himmelcap.release', { operationId });
+    if (himmelcapStagingOperationId.current === operationId) {
+      himmelcapStagingOperationId.current = null;
+      setHimmelcapImport(null);
+    }
+  }, []);
+
+  const inspectHimmelcap = useCallback(
+    async (selectedPath?: string) => {
+      const api = window.himmelcad;
+      if (!api || imageImportBusy) return;
+      const path = selectedPath ?? (await api.himmelcap.selectFile());
+      if (!path) return;
+      await releaseHimmelcapStaging();
+      const operationId = `himmelcap-inspect-${crypto.randomUUID()}`;
+      const progressKey = `image-import:${operationId}`;
+      activeHimmelcapInspectId.current = operationId;
+      activeImageProgressKey.current = progressKey;
+      setImageImportBusy(true);
+      setImageImportError(null);
+      setImageImportProgress({
+        fraction: 0,
+        message: 'Verifying HimmelCAD Cap project…',
+        phase: 'inspect',
+        indeterminate: false,
+      });
+      const started = performance.now();
+      try {
+        const preview = await api.sidecar.call<HcapImportPreview>('photolab.himmelcap.inspect', {
+          path,
+          operationId,
+          progressKey,
+        });
+        himmelcapStagingOperationId.current = operationId;
+        setHimmelcapImport(preview);
+        setImageImportBatch(preview.batch);
+        logEvent(
+          preview.warnings.length > 0 ? 'warn' : 'info',
+          'sidecar',
+          `${preview.displayName} verified · ${preview.frameCount} frames · ${preview.poseCount} position priors · ${(performance.now() - started).toFixed(1)} ms`,
+        );
+      } catch (error) {
+        const message = errorMessage(error);
+        setImageImportError(message.toLowerCase().includes('cancel') ? null : message);
+        setImageImportBatch(null);
+        setHimmelcapImport(null);
+        logEvent(
+          message.toLowerCase().includes('cancel') ? 'warn' : 'error',
+          'sidecar',
+          message.toLowerCase().includes('cancel')
+            ? 'HimmelCAD Cap inspection cancelled'
+            : `HimmelCAD Cap validation failed: ${message}`,
+        );
+      } finally {
+        activeHimmelcapInspectId.current = null;
+        activeImageProgressKey.current = null;
+        setImageImportBusy(false);
+        setImageImportProgress(null);
+      }
+    },
+    [imageImportBusy, releaseHimmelcapStaging],
+  );
+
   const inspectImages = useCallback(
     async (source: 'files' | 'folder') => {
       const api = window.himmelcad;
@@ -911,6 +983,12 @@ export function App(): JSX.Element {
         const paths =
           source === 'files' ? await api.images.selectFiles() : await api.images.selectFolder();
         if (!paths) return;
+        if (paths.length === 1 && paths[0]?.toLocaleLowerCase().endsWith('.hcap')) {
+          await inspectHimmelcap(paths[0]);
+          return;
+        }
+        await releaseHimmelcapStaging();
+        setHimmelcapImport(null);
         const operationId = `image-inspect-${crypto.randomUUID()}`;
         const progressKey = `image-import:${operationId}`;
         activeImageInspectId.current = operationId;
@@ -952,7 +1030,7 @@ export function App(): JSX.Element {
         setImageImportProgress(null);
       }
     },
-    [imageImportBusy],
+    [imageImportBusy, inspectHimmelcap, releaseHimmelcapStaging],
   );
 
   const discoverImageCrs = useCallback(async (query: CrsOperationQuery) => {
@@ -1001,6 +1079,7 @@ export function App(): JSX.Element {
           importedEntityCount: number;
           duplicateCount: number;
           autosaveGeneration: number;
+          images: { entityId: EntityId; duplicate: boolean }[];
         }>('photolab.images.commit', {
           operationId,
           progressKey: activeImageProgressKey.current,
@@ -1014,6 +1093,31 @@ export function App(): JSX.Element {
             ],
           })),
         });
+        if (himmelcapImport) {
+          const cameraEntityIds = [...new Set(result.images.map((image) => image.entityId))];
+          if (cameraEntityIds.length < 2) {
+            throw new Error('The Cap project did not produce at least two distinct project images');
+          }
+          const requestedGroupName = himmelcapImport.displayName.trim().slice(0, 120);
+          const groupName =
+            requestedGroupName.length > 0
+              ? requestedGroupName
+              : `HimmelCAD Cap ${himmelcapImport.sessionId}`;
+          await api.sidecar.call<OpenPhotolabProjectResult>(
+            'photolab.project.captureGroup.create',
+            {
+              name: groupName,
+              cameraEntityIds,
+              calibrationGroups: [
+                {
+                  name: 'HimmelCAD Cap camera',
+                  cameraEntityIds,
+                  groupingBasis: 'missionAutofocus',
+                },
+              ],
+            },
+          );
+        }
         const opened = await api.sidecar.call<OpenPhotolabProjectResult>(
           'photolab.project.snapshot',
         );
@@ -1025,6 +1129,18 @@ export function App(): JSX.Element {
         setAutosaveGeneration(result.autosaveGeneration);
         setWorkspaceMode('images');
         setImageImportBatch(null);
+        setHimmelcapImport(null);
+        if (himmelcapStagingOperationId.current) {
+          try {
+            await releaseHimmelcapStaging();
+          } catch (error) {
+            logEvent(
+              'warn',
+              'sidecar',
+              `Cap staging cleanup will be retried later: ${errorMessage(error)}`,
+            );
+          }
+        }
         logEvent(
           'info',
           'sidecar',
@@ -1041,14 +1157,29 @@ export function App(): JSX.Element {
         setImageImportProgress(null);
       }
     },
-    [acceptProject, imageImportBatch, imageImportBusy, projectReady],
+    [
+      acceptProject,
+      himmelcapImport,
+      imageImportBatch,
+      imageImportBusy,
+      projectReady,
+      releaseHimmelcapStaging,
+    ],
   );
 
   const cancelImageImport = useCallback(async () => {
     const inspectionId = activeImageInspectId.current;
+    const himmelcapInspectionId = activeHimmelcapInspectId.current;
     const operationId = activeImageCommitId.current;
     const api = window.himmelcad;
     try {
+      if (himmelcapInspectionId && api) {
+        await api.sidecar.call('photolab.himmelcap.cancel', {
+          operationId: himmelcapInspectionId,
+        });
+        logEvent('warn', 'sidecar', 'HimmelCAD Cap inspection cancellation requested');
+        return;
+      }
       if (inspectionId && api) {
         await api.sidecar.call('photolab.images.inspect.cancel', { operationId: inspectionId });
         logEvent('warn', 'sidecar', 'Image inspection cancellation requested');
@@ -1067,13 +1198,15 @@ export function App(): JSX.Element {
         logEvent('warn', 'sidecar', 'Image import cancellation requested');
         return;
       }
+      await releaseHimmelcapStaging();
       setImageImportBatch(null);
+      setHimmelcapImport(null);
       setImageImportProgress(null);
       setImageImportError(null);
     } catch (error) {
       reportPanelError(`Image import could not be cancelled: ${errorMessage(error)}`);
     }
-  }, [reportPanelError]);
+  }, [releaseHimmelcapStaging, reportPanelError]);
 
   const selectTransformationGrid = useCallback(
     async (kind: 'horizontal' | 'vertical'): Promise<LocalGridSelection | null> => {
@@ -1361,8 +1494,7 @@ export function App(): JSX.Element {
                 : 0;
               const overall = Math.min(
                 1,
-                (job.progress.stage.index + stageFrac) /
-                  Math.max(1, job.progress.stage.stageCount),
+                (job.progress.stage.index + stageFrac) / Math.max(1, job.progress.stage.stageCount),
               );
               const stagePct = Math.round(stageFrac * 100);
               const overallPct = Math.round(overall * 100);
@@ -1373,9 +1505,7 @@ export function App(): JSX.Element {
                 'info',
                 'sidecar',
                 `Alignment · overall ${overallPct}% · stage ${job.progress.stage.index + 1}/${job.progress.stage.stageCount} “${job.progress.stage.label}” ${stagePct}%` +
-                  (total != null
-                    ? ` · units ${job.progress.metrics.completedUnits}/${total}`
-                    : ''),
+                  (total != null ? ` · units ${job.progress.metrics.completedUnits}/${total}` : ''),
               );
             }
           }
@@ -1733,7 +1863,10 @@ export function App(): JSX.Element {
           return false;
         }
       });
-      gcpMeasurementQueueRef.current = operation.then(() => undefined, () => undefined);
+      gcpMeasurementQueueRef.current = operation.then(
+        () => undefined,
+        () => undefined,
+      );
       return operation;
     },
     [],
@@ -2893,9 +3026,7 @@ export function App(): JSX.Element {
                 projectTargetCrs={projectTargetCrs}
                 gcpOptimization={gcpOptimization}
                 imageQualityStarting={imageQualityStarting}
-                onAnalyzeImageQuality={(processingSetId) =>
-                  void startImageQuality(processingSetId)
-                }
+                onAnalyzeImageQuality={(processingSetId) => void startImageQuality(processingSetId)}
               />
             ) : productOperation ? (
               <ProductPanel
@@ -3082,8 +3213,10 @@ export function App(): JSX.Element {
             progress={imageImportProgress}
             gridProgress={gridSelectionProgress}
             error={imageImportError}
+            himmelcap={himmelcapImport}
             onChooseMoreFiles={() => void inspectImages('files')}
             onChooseFolder={() => void inspectImages('folder')}
+            onChooseHimmelcap={() => void inspectHimmelcap()}
             onSelectGrid={selectTransformationGrid}
             onDiscoverCrs={discoverImageCrs}
             onCommit={commitImageImport}

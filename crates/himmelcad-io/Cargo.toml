@@ -25,6 +25,7 @@ geotiff-reader = { version = "=0.7.0", default-features = false, features = ["lo
 tiff-reader = { version = "=0.7.0", default-features = false, features = ["jpeg", "zstd"] }
 image = { version = "0.25.8", default-features = false, features = ["png"] }
 ndarray = "=0.17.2"
+zip = { workspace = true, features = ["deflate"] }
 
 [dev-dependencies]
 geotiff-writer = "=0.7.0"

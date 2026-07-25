@@ -16,6 +16,7 @@ pub mod dxf_provider;
 pub mod e57_import;
 pub mod gaussian_splat_provider;
 pub mod gcp_import;
+pub mod hcap_import;
 mod geotiff_preparation;
 pub mod geotiff_provider;
 pub mod ifc_provider;

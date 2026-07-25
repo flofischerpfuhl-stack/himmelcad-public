@@ -55,6 +55,9 @@ export interface PhotolabDesktopApi {
     selectFiles: () => Promise<string[] | null>;
     selectFolder: () => Promise<string[] | null>;
   };
+  readonly himmelcap: {
+    selectFile: () => Promise<string | null>;
+  };
   readonly grids: {
     select: {
       (
@@ -189,6 +192,9 @@ const api: PhotolabDesktopApi = {
   images: {
     selectFiles: () => ipcRenderer.invoke('images:select-files'),
     selectFolder: () => ipcRenderer.invoke('images:select-folder'),
+  },
+  himmelcap: {
+    selectFile: () => ipcRenderer.invoke('himmelcap:select-file'),
   },
   grids: {
     select: (kindOrProgressKey?: string, progressKey?: string) =>

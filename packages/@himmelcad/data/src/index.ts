@@ -462,6 +462,19 @@ export interface PhotoImportBatch {
   warnings: ImageImportWarning[];
 }
 
+/** Verified, staged HimmelCAD Cap session returned before project mutation. */
+export interface HcapImportPreview {
+  sessionId: string;
+  displayName: string;
+  schemaVersion: number;
+  packageProfile?: string;
+  createdAt?: string;
+  frameCount: number;
+  poseCount: number;
+  warnings: string[];
+  batch: PhotoImportBatch;
+}
+
 export type ImageProductTag =
   | 'qualityWarning'
   | 'aligned'

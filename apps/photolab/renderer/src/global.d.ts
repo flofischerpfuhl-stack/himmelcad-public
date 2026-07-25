@@ -53,6 +53,9 @@ interface PhotolabDesktopApi {
     selectFiles: () => Promise<string[] | null>;
     selectFolder: () => Promise<string[] | null>;
   };
+  readonly himmelcap: {
+    selectFile: () => Promise<string | null>;
+  };
   readonly grids: {
     select: {
       (
