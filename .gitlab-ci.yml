@@ -72,7 +72,12 @@ rust:himmelcap-import:
   extends: .rust
   stage: lint
   script:
-    - cargo test -p himmelcad-io hcap_import --locked
+    - cargo test -p himmelcad-io hcap_import
+  artifacts:
+    when: always
+    paths:
+      - Cargo.lock
+    expire_in: 1 day
 
 rust:test:
   extends: .rust
