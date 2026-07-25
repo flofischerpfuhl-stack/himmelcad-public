@@ -8,7 +8,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File},
     io::{Read, Seek},
-    path::{Component, Path, PathBuf},
+    path::{Component, Path},
 };
 
 use himmelcad_core::photolab_images::{
@@ -581,7 +581,10 @@ fn path_string(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Cursor, Write};
+    use std::{
+        io::{Cursor, Write},
+        path::PathBuf,
+    };
 
     use zip::write::SimpleFileOptions;
 
