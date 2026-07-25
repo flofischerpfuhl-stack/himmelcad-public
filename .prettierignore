@@ -4,6 +4,8 @@ build/
 target/
 .vite/
 libs/
+vendor/
+packages/excalidraw-plan/
 packages/@himmelcad/data/src/generated/
 pnpm-lock.yaml
 *.min.*

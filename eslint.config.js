@@ -13,6 +13,8 @@ export default tseslint.config(
       '**/target/**',
       '**/.vite/**',
       'libs/**',
+      'vendor/**',
+      'packages/excalidraw-plan/**',
       'packages/@himmelcad/data/src/generated/**',
     ],
   },

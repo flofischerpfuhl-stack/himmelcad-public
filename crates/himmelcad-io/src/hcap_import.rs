@@ -11,11 +11,9 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use himmelcad_core::{
-    photolab_images::{
-        CaptureTime, CaptureTimeReference, DjiRtkMetadata, ExifGpsPosition, ImportedHeight,
-        PhotoImportBatch,
-    },
+use himmelcad_core::photolab_images::{
+    CaptureTime, CaptureTimeReference, DjiRtkMetadata, ExifGpsPosition, ImportedHeight,
+    PhotoImportBatch,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -216,12 +214,11 @@ where
         );
     }
 
-    let mut batch = import_photo_files_with_progress(
-        &staged_paths,
-        &mut cancelled,
-        |fraction, message| progress(0.60 + fraction * 0.38, message),
-    )
-    .ok_or(HcapImportError::Cancelled)?;
+    let mut batch =
+        import_photo_files_with_progress(&staged_paths, &mut cancelled, |fraction, message| {
+            progress(0.60 + fraction * 0.38, message)
+        })
+        .ok_or(HcapImportError::Cancelled)?;
 
     let mut warnings = Vec::new();
     for photo in &mut batch.photos {
@@ -476,10 +473,7 @@ fn validate_pose(pose: &HcapPose, line: usize) -> Result<(), HcapImportError> {
         && pose.longitude_degrees.is_finite()
         && (-180.0..=180.0).contains(&pose.longitude_degrees)
         && pose.height_meters.is_none_or(f64::is_finite);
-    let valid_covariance = pose
-        .covariance_enu_m2
-        .iter()
-        .all(|value| value.is_finite())
+    let valid_covariance = pose.covariance_enu_m2.iter().all(|value| value.is_finite())
         && pose.covariance_enu_m2[0] >= 0.0
         && pose.covariance_enu_m2[4] >= 0.0
         && pose.covariance_enu_m2[8] >= 0.0;
@@ -654,10 +648,8 @@ mod tests {
     }
 
     fn write_package(bytes: &[u8], name: &str) -> (PathBuf, PathBuf) {
-        let root = std::env::temp_dir().join(format!(
-            "himmelcad-hcap-test-{}-{name}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("himmelcad-hcap-test-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         let source = root.join("test.hcap");

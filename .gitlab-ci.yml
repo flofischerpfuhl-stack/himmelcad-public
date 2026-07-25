@@ -6,10 +6,11 @@ stages:
   - licenses
 
 variables:
-  PNPM_HOME: "$CI_PROJECT_DIR/.pnpm-store"
-  CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
-  CARGO_TERM_COLOR: "always"
-  RUST_BACKTRACE: "1"
+  PNPM_HOME: '$CI_PROJECT_DIR/.pnpm-store'
+  CARGO_HOME: '$CI_PROJECT_DIR/.cargo'
+  CARGO_TERM_COLOR: 'always'
+  RUST_BACKTRACE: '1'
+  NODE_OPTIONS: '--max-old-space-size=4096'
 
 default:
   interruptible: true
@@ -31,6 +32,7 @@ default:
 .rust:
   image: rust:1.82-bookworm
   before_script:
+    - apt-get update && apt-get install -y --no-install-recommends libclang-dev && rm -rf /var/lib/apt/lists/*
     - rustup component add rustfmt clippy
     - rustup target add wasm32-unknown-unknown
   cache:

@@ -750,10 +750,7 @@ fn himmelcap_staging_path(operation_id: &str) -> PathBuf {
         .join(digest)
 }
 
-async fn handle_himmelcap_rpc(
-    req: RpcRequest,
-    projects: Arc<ProjectRuntime>,
-) -> RpcResponse {
+async fn handle_himmelcap_rpc(req: RpcRequest, projects: Arc<ProjectRuntime>) -> RpcResponse {
     match req.method.as_str() {
         "photolab.himmelcap.inspect" => {
             rpc_blocking_with_params::<InspectHimmelcapParams, _, _>(
