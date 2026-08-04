@@ -17,9 +17,11 @@
     "dev:vite": "vite",
     "dev:electron": "tsc -p tsconfig.electron.json && wait-on http://localhost:5173 && node ../../scripts/run-electron.mjs .",
     "build:sidecar": "node ../../scripts/run-cargo.mjs build --release --bin himmelcad-sidecar --manifest-path ../../Cargo.toml",
+    "build:sidecar:win": "node ../../scripts/build-photolab-windows-rust.mjs",
     "build": "pnpm build:sidecar && pnpm prepare:viewer && vite build && tsc -p tsconfig.electron.json",
+    "build:win": "pnpm build:sidecar:win && pnpm prepare:viewer && vite build && tsc -p tsconfig.electron.json",
     "package:linux": "pnpm build && electron-builder --config electron-builder.linux.yml --linux x64",
-    "package:win": "pnpm build && electron-builder --config electron-builder.win.yml --win x64",
+    "package:win": "pnpm build:win && electron-builder --config electron-builder.win.yml --win x64",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit"
   },
   "dependencies": {
@@ -31,6 +33,7 @@
     "@himmelcad/theme": "workspace:*",
     "@himmelcad/ui": "workspace:*",
     "@himmelcad/viewer": "workspace:*",
+    "electron-updater": "6.8.9",
     "lucide-react": "^0.460.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

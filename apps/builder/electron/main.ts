@@ -12,6 +12,7 @@ import {
   startSidecar,
   stopSidecar,
 } from './sidecar';
+import { startDesktopUpdater } from './updater';
 
 const isDev = !app.isPackaged;
 const CACHE_DIR = resolve(tmpdir(), 'himmelcad-cache');
@@ -42,7 +43,11 @@ async function prepareDevelopmentRasterTiles(
   imagePath: string,
   demPath: string | null,
   targetDirectory: string,
-): Promise<{ readonly width: number; readonly height: number; readonly tiles: DevelopmentRasterTile[] }> {
+): Promise<{
+  readonly width: number;
+  readonly height: number;
+  readonly tiles: DevelopmentRasterTile[];
+}> {
   const image = nativeImage.createFromPath(imagePath);
   if (image.isEmpty()) throw new Error(`unable to decode development orthophoto: ${imagePath}`);
   const { width, height } = image.getSize();
@@ -65,7 +70,10 @@ async function prepareDevelopmentRasterTiles(
       const tileHeight = Math.min(tileSize, height - y);
       const stem = `tile-${x}-${y}`;
       const imageTarget = resolve(tileDirectory, `${stem}.png`);
-      await fs.writeFile(imageTarget, image.crop({ x, y, width: tileWidth, height: tileHeight }).toPNG());
+      await fs.writeFile(
+        imageTarget,
+        image.crop({ x, y, width: tileWidth, height: tileHeight }).toPNG(),
+      );
       let demUrl: string | null = null;
       if (dem) {
         const tileDem = Buffer.allocUnsafe(tileWidth * tileHeight * Float32Array.BYTES_PER_ELEMENT);
@@ -302,6 +310,7 @@ void app.whenReady().then(async () => {
   registerIpc();
   await startSidecar();
   await createWindow();
+  startDesktopUpdater(() => mainWindow);
 });
 
 function registerIpc(): void {
@@ -366,10 +375,7 @@ function registerIpc(): void {
       await fs.mkdir(targetDirectory, { recursive: true });
       await fs.copyFile(orthophotoPath, target);
       const worldFilePath = orthophotoPath.replace(/\.[^.]+$/, '.tfw');
-      const worldFile = (await fs.readFile(worldFilePath, 'utf8'))
-        .trim()
-        .split(/\s+/)
-        .map(Number);
+      const worldFile = (await fs.readFile(worldFilePath, 'utf8')).trim().split(/\s+/).map(Number);
       if (worldFile.length !== 6 || worldFile.some((value) => !Number.isFinite(value))) {
         throw new Error(`invalid orthophoto world file: ${worldFilePath}`);
       }

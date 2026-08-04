@@ -3,6 +3,12 @@ productName: HimmelCAD Builder
 artifactName: HimmelCAD-Builder-${version}-${arch}.${ext}
 directories:
   output: release
+publish:
+  provider: github
+  owner: flofischerpfuhl-stack
+  repo: himmelcad-public
+  channel: builder
+  releaseType: release
 files:
   - dist/electron/**
   - dist/renderer/**

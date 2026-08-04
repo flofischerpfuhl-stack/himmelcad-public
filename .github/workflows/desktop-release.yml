@@ -1,0 +1,280 @@
+name: Desktop alpha update
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-alpha-release
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '9.12.0'
+  RUST_BACKTRACE: '1'
+  CARGO_TERM_COLOR: always
+
+jobs:
+  contract:
+    if: github.repository == 'flofischerpfuhl-stack/himmelcad-public'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install JavaScript dependencies
+        run: |
+          corepack enable
+          corepack prepare pnpm@${PNPM_VERSION} --activate
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Verify updater contract
+        run: pnpm desktop:test:auto-update
+      - name: Verify Electron type safety
+        run: |
+          pnpm --filter @himmelcad/builder exec tsc -p tsconfig.electron.json --noEmit
+          pnpm --filter @himmelcad/photolab exec tsc -p tsconfig.electron.json --noEmit
+
+  prepare-release:
+    needs: contract
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      photolab: ${{ steps.release.outputs.photolab }}
+    steps:
+      - name: Create private draft
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PHOTOLAB_READY: ${{ vars.PHOTOLAB_RUNTIME_BUNDLES_READY }}
+        run: |
+          version="0.1.${GITHUB_RUN_NUMBER}"
+          tag="desktop-v${version}"
+          photolab=false
+          if [[ "$PHOTOLAB_READY" == 'true' ]]; then photolab=true; fi
+          gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes 2>/dev/null || true
+          gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --draft \
+            --title "HimmelCAD Alpha ${version}" \
+            --notes "Automatic alpha build from GitLab main commit ${GITHUB_SHA}."
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "photolab=$photolab" >> "$GITHUB_OUTPUT"
+
+  builder-linux:
+    needs: prepare-release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libfuse2
+          rustup toolchain install 1.88 --profile minimal
+          rustup target add --toolchain 1.88 wasm32-unknown-unknown
+          rustup default 1.88
+          cargo install wasm-bindgen-cli --version 0.2.120 --locked
+          corepack enable
+          corepack prepare pnpm@${PNPM_VERSION} --activate
+          pnpm install --frozen-lockfile --ignore-scripts
+          node scripts/fetch-vendor.mjs --platform=linux-x64
+          node scripts/fetch-photolab-models.mjs
+      - name: Build Builder packages
+        run: |
+          node scripts/set-desktop-release-version.mjs '${{ needs.prepare-release.outputs.version }}'
+          pnpm --filter @himmelcad/builder package:linux -- --publish never
+      - name: Upload directly to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+        run: |
+          mapfile -d '' assets < <(find apps/builder/release -maxdepth 1 -type f -print0)
+          test "${#assets[@]}" -gt 0
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+
+  builder-windows:
+    needs: prepare-release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install cross-build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends cmake ninja-build wine64
+          rustup toolchain install 1.88 --profile minimal
+          rustup target add --toolchain 1.88 wasm32-unknown-unknown x86_64-pc-windows-gnullvm
+          rustup default 1.88
+          cargo install wasm-bindgen-cli --version 0.2.120 --locked
+          corepack enable
+          corepack prepare pnpm@${PNPM_VERSION} --activate
+          pnpm install --frozen-lockfile --ignore-scripts
+          node scripts/fetch-llvm-mingw.mjs
+          node scripts/fetch-vendor.mjs --platform=win32-x64 --component=brush
+          node scripts/fetch-photolab-models.mjs
+          node scripts/build-potreeconverter-windows.mjs
+      - name: Build Builder packages
+        run: |
+          node scripts/set-desktop-release-version.mjs '${{ needs.prepare-release.outputs.version }}'
+          pnpm --filter @himmelcad/builder package:win -- --publish never
+      - name: Upload directly to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+        run: |
+          mapfile -d '' assets < <(find apps/builder/release -maxdepth 1 -type f -print0)
+          test "${#assets[@]}" -gt 0
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+
+  photolab-linux:
+    if: needs.prepare-release.outputs.photolab == 'true'
+    needs: prepare-release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Restore audited PhotoLab runtime inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA256: ${{ vars.PHOTOLAB_RUNTIME_LINUX_SHA256 }}
+        run: |
+          [[ "$EXPECTED_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          mkdir -p .build/runtime-bundle
+          gh release download desktop-runtime-v1 --repo "$GITHUB_REPOSITORY" \
+            --pattern photolab-runtime-linux-x64.tar.zst --dir .build/runtime-bundle
+          echo "$EXPECTED_SHA256  .build/runtime-bundle/photolab-runtime-linux-x64.tar.zst" | sha256sum --check --strict
+          tar --use-compress-program=unzstd -xf .build/runtime-bundle/photolab-runtime-linux-x64.tar.zst
+      - name: Build PhotoLab packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libfuse2
+          rustup toolchain install 1.88 --profile minimal
+          rustup target add --toolchain 1.88 wasm32-unknown-unknown
+          rustup default 1.88
+          cargo install wasm-bindgen-cli --version 0.2.120 --locked
+          corepack enable
+          corepack prepare pnpm@${PNPM_VERSION} --activate
+          pnpm install --frozen-lockfile --ignore-scripts
+          node scripts/fetch-vendor.mjs --platform=linux-x64
+          node scripts/fetch-photolab-models.mjs
+          node scripts/set-desktop-release-version.mjs '${{ needs.prepare-release.outputs.version }}'
+          pnpm --filter @himmelcad/photolab package:linux -- --publish never
+          pnpm --filter @himmelcad/photolab smoke:package:linux
+      - name: Upload directly to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+        run: |
+          mapfile -d '' assets < <(find apps/photolab/release -maxdepth 1 -type f -print0)
+          test "${#assets[@]}" -gt 0
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+
+  photolab-windows:
+    if: needs.prepare-release.outputs.photolab == 'true'
+    needs: prepare-release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Restore audited PhotoLab runtime inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA256: ${{ vars.PHOTOLAB_RUNTIME_WINDOWS_SHA256 }}
+        run: |
+          [[ "$EXPECTED_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          mkdir -p .build/runtime-bundle
+          gh release download desktop-runtime-v1 --repo "$GITHUB_REPOSITORY" \
+            --pattern photolab-runtime-win32-x64.tar.zst --dir .build/runtime-bundle
+          echo "$EXPECTED_SHA256  .build/runtime-bundle/photolab-runtime-win32-x64.tar.zst" | sha256sum --check --strict
+          tar --use-compress-program=unzstd -xf .build/runtime-bundle/photolab-runtime-win32-x64.tar.zst
+      - name: Build PhotoLab packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends cmake ninja-build wine64
+          rustup toolchain install 1.88 --profile minimal
+          rustup target add --toolchain 1.88 wasm32-unknown-unknown x86_64-pc-windows-gnullvm
+          rustup default 1.88
+          cargo install wasm-bindgen-cli --version 0.2.120 --locked
+          corepack enable
+          corepack prepare pnpm@${PNPM_VERSION} --activate
+          pnpm install --frozen-lockfile --ignore-scripts
+          node scripts/fetch-llvm-mingw.mjs
+          node scripts/fetch-vendor.mjs --platform=win32-x64 --component=brush
+          node scripts/fetch-photolab-models.mjs
+          node scripts/build-potreeconverter-windows.mjs
+          node scripts/set-desktop-release-version.mjs '${{ needs.prepare-release.outputs.version }}'
+          pnpm --filter @himmelcad/photolab package:win -- --publish never
+          pnpm --filter @himmelcad/photolab smoke:package:win:static
+      - name: Upload directly to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+        run: |
+          mapfile -d '' assets < <(find apps/photolab/release -maxdepth 1 -type f -print0)
+          test "${#assets[@]}" -gt 0
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+
+  publish-or-clean-up:
+    if: always() && needs.prepare-release.result == 'success'
+    needs:
+      - prepare-release
+      - builder-linux
+      - builder-windows
+      - photolab-linux
+      - photolab-windows
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+      PHOTOLAB_READY: ${{ needs.prepare-release.outputs.photolab }}
+      BUILDER_LINUX_RESULT: ${{ needs.builder-linux.result }}
+      BUILDER_WINDOWS_RESULT: ${{ needs.builder-windows.result }}
+      PHOTOLAB_LINUX_RESULT: ${{ needs.photolab-linux.result }}
+      PHOTOLAB_WINDOWS_RESULT: ${{ needs.photolab-windows.result }}
+    steps:
+      - name: Publish only a complete updater release
+        run: |
+          failed=false
+          [[ "$BUILDER_LINUX_RESULT" == success ]] || failed=true
+          [[ "$BUILDER_WINDOWS_RESULT" == success ]] || failed=true
+          if [[ "$PHOTOLAB_READY" == true ]]; then
+            [[ "$PHOTOLAB_LINUX_RESULT" == success ]] || failed=true
+            [[ "$PHOTOLAB_WINDOWS_RESULT" == success ]] || failed=true
+          fi
+
+          assets="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          for required in builder.yml builder-linux.yml; do
+            grep -Fxq "$required" <<< "$assets" || failed=true
+          done
+          grep -Eq '^HimmelCAD-Builder-.+-setup\.exe$' <<< "$assets" || failed=true
+          grep -Eq '^HimmelCAD-Builder-.+\.AppImage$' <<< "$assets" || failed=true
+          if [[ "$PHOTOLAB_READY" == true ]]; then
+            for required in photolab.yml photolab-linux.yml; do
+              grep -Fxq "$required" <<< "$assets" || failed=true
+            done
+            grep -Eq '^HimmelCAD-PhotoLab-.+-setup\.exe$' <<< "$assets" || failed=true
+            grep -Eq '^HimmelCAD-PhotoLab-.+\.AppImage$' <<< "$assets" || failed=true
+          fi
+
+          if [[ "$failed" == true ]]; then
+            gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+            echo 'Incomplete release was deleted; no client will be offered a partial update.' >&2
+            exit 1
+          fi
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false

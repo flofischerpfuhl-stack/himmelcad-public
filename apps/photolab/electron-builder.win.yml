@@ -2,6 +2,12 @@ appId: de.himmelcad.photolab
 productName: HimmelCAD PhotoLab
 directories:
   output: release
+publish:
+  provider: github
+  owner: flofischerpfuhl-stack
+  repo: himmelcad-public
+  channel: photolab
+  releaseType: release
 files:
   - dist/electron/**
   - dist/renderer/**

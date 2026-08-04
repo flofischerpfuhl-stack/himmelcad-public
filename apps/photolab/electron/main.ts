@@ -25,6 +25,7 @@ import {
   stopSidecar,
 } from './sidecar';
 import { PhotolabPreferencesService, type DirectoryPreference } from './preferences';
+import { startDesktopUpdater } from './updater';
 
 const isDev = !app.isPackaged;
 app.setName('HimmelCAD PhotoLab');
@@ -1666,6 +1667,7 @@ void app.whenReady().then(async () => {
   await createWindow();
   const releaseSmokeReport = process.env.HIMMELCAD_RELEASE_SMOKE_REPORT?.trim();
   if (releaseSmokeReport) await runReleaseStartSmoke(resolve(releaseSmokeReport));
+  else startDesktopUpdater(() => mainWindow);
 });
 
 app.on('window-all-closed', () => {

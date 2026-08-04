@@ -53,6 +53,8 @@
     "photolab:test:product-viewer": "node scripts/photolab-product-viewer-e2e.mjs",
     "photolab:test:dialog-policy": "node scripts/test-photolab-dialog-policy.mjs",
     "photolab:test:release-contract": "node scripts/test-photolab-release-contract.mjs",
+    "desktop:test:auto-update": "node scripts/test-desktop-auto-update.mjs",
+    "desktop:fetch:llvm-mingw": "node scripts/fetch-llvm-mingw.mjs",
     "photolab:smoke:package:linux": "node scripts/photolab-package-smoke.mjs linux-x64 apps/photolab/release/linux-unpacked --mode=native",
     "photolab:smoke:package:win:static": "node scripts/photolab-package-smoke.mjs win32-x64 apps/photolab/release/win-unpacked --mode=static",
     "photolab:smoke:package:win:wine": "node scripts/photolab-package-smoke.mjs win32-x64 apps/photolab/release/win-unpacked --mode=wine-workers",
