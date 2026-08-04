@@ -24,8 +24,9 @@ for (const product of products) {
   );
   assert.ok('scripts' in manifest && manifest.scripts && typeof manifest.scripts === 'object');
   assert.equal(manifest.dependencies['electron-updater'], '6.8.9');
-  const linuxPackage = manifest.scripts['package:linux'];
-  const windowsPackage = manifest.scripts['package:win'];
+  const scripts = /** @type {Record<string, unknown>} */ (manifest.scripts);
+  const linuxPackage = scripts['package:linux'];
+  const windowsPackage = scripts['package:win'];
   assert.ok(typeof linuxPackage === 'string');
   assert.ok(typeof windowsPackage === 'string');
   assert.match(linuxPackage, /--linux --x64 --publish never/);
@@ -47,6 +48,9 @@ for (const product of products) {
     assert.match(config, /repo: himmelcad-public/);
     assert.match(config, new RegExp(`channel: ${product.channel}`));
     assert.match(config, /releaseType: release/);
+    if (product.path === 'builder' && platform === 'win') {
+      assert.match(config, /target\/x86_64-pc-windows-gnullvm\/release\/himmelcad-sidecar\.exe/);
+    }
   }
 }
 

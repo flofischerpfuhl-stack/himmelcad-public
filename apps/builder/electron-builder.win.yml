@@ -22,7 +22,7 @@ extraResources:
     to: LICENSE.txt
   - from: ../../LICENSES/THIRD_PARTY.md
     to: THIRD_PARTY_NOTICES.md
-  - from: ../../target/release/himmelcad-sidecar.exe
+  - from: ../../target/x86_64-pc-windows-gnullvm/release/himmelcad-sidecar.exe
     to: himmelcad-sidecar.exe
   - from: ../../vendor/potreeconverter/win32-x64
     to: vendor/potreeconverter/win32-x64

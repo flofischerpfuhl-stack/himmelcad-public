@@ -113,7 +113,7 @@ jobs:
       - name: Install cross-build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends cmake ninja-build wine64
+          sudo apt-get install --yes --no-install-recommends cmake ninja-build wine
           rustup toolchain install 1.88 --profile minimal
           rustup target add --toolchain 1.88 wasm32-unknown-unknown x86_64-pc-windows-gnullvm
           rustup default 1.88
@@ -206,7 +206,7 @@ jobs:
       - name: Build PhotoLab packages
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends cmake ninja-build wine64
+          sudo apt-get install --yes --no-install-recommends cmake ninja-build wine
           rustup toolchain install 1.88 --profile minimal
           rustup target add --toolchain 1.88 wasm32-unknown-unknown x86_64-pc-windows-gnullvm
           rustup default 1.88
@@ -273,7 +273,7 @@ jobs:
           fi
 
           if [[ "$failed" == true ]]; then
-            gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+            gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes
             echo 'Incomplete release was deleted; no client will be offered a partial update.' >&2
             exit 1
           fi
