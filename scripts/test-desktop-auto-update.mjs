@@ -64,6 +64,8 @@ assert.match(workflow, /gh release edit[\s\S]+--draft=false --prerelease=false/)
 assert.match(workflow, /Incomplete release was deleted/);
 assert.match(workflow, /PHOTOLAB_RUNTIME_BUNDLES_READY/);
 assert.match(workflow, /package:win:update/);
+assert.match(workflow, /wine32:i386/);
+assert.match(workflow, /xvfb-run --auto-servernum/);
 assert.doesNotMatch(workflow, /upload-artifact|cloudflare|\bR2\b/i);
 
 const temporaryWorkspace = mkdtempSync(join(tmpdir(), 'himmelcad-release-version-'));

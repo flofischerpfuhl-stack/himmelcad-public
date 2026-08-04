@@ -112,8 +112,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - name: Install cross-build dependencies
         run: |
+          sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends cmake ninja-build
+          sudo apt-get install --yes --no-install-recommends cmake ninja-build wine wine32:i386 wine64 xvfb
           rustup toolchain install 1.88 --profile minimal
           rustup target add --toolchain 1.88 wasm32-unknown-unknown x86_64-pc-windows-gnullvm
           rustup default 1.88
@@ -128,7 +129,7 @@ jobs:
       - name: Build Builder packages
         run: |
           node scripts/set-desktop-release-version.mjs '${{ needs.prepare-release.outputs.version }}'
-          pnpm --filter @himmelcad/builder package:win:update
+          xvfb-run --auto-servernum pnpm --filter @himmelcad/builder package:win:update
       - name: Upload directly to draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -205,8 +206,9 @@ jobs:
           tar --use-compress-program=unzstd -xf .build/runtime-bundle/photolab-runtime-win32-x64.tar.zst
       - name: Build PhotoLab packages
         run: |
+          sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends cmake ninja-build
+          sudo apt-get install --yes --no-install-recommends cmake ninja-build wine wine32:i386 wine64 xvfb
           rustup toolchain install 1.88 --profile minimal
           rustup target add --toolchain 1.88 wasm32-unknown-unknown x86_64-pc-windows-gnullvm
           rustup default 1.88
@@ -219,7 +221,7 @@ jobs:
           node scripts/fetch-photolab-models.mjs
           node scripts/build-potreeconverter-windows.mjs
           node scripts/set-desktop-release-version.mjs '${{ needs.prepare-release.outputs.version }}'
-          pnpm --filter @himmelcad/photolab package:win:update
+          xvfb-run --auto-servernum pnpm --filter @himmelcad/photolab package:win:update
           pnpm --filter @himmelcad/photolab smoke:package:win:static
       - name: Upload directly to draft release
         env:
