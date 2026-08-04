@@ -22,7 +22,14 @@ for (const product of products) {
       typeof manifest.dependencies === 'object' &&
       'electron-updater' in manifest.dependencies,
   );
+  assert.ok('scripts' in manifest && manifest.scripts && typeof manifest.scripts === 'object');
   assert.equal(manifest.dependencies['electron-updater'], '6.8.9');
+  const linuxPackage = manifest.scripts['package:linux'];
+  const windowsPackage = manifest.scripts['package:win'];
+  assert.ok(typeof linuxPackage === 'string');
+  assert.ok(typeof windowsPackage === 'string');
+  assert.match(linuxPackage, /--linux --x64 --publish never/);
+  assert.match(windowsPackage, /--win --x64 --publish never/);
 
   const main = readFileSync(join(root, 'electron', 'main.ts'), 'utf8');
   const updater = readFileSync(join(root, 'electron', 'updater.ts'), 'utf8');

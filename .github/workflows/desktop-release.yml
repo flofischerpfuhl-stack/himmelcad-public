@@ -92,7 +92,7 @@ jobs:
       - name: Build Builder packages
         run: |
           node scripts/set-desktop-release-version.mjs '${{ needs.prepare-release.outputs.version }}'
-          pnpm --filter @himmelcad/builder package:linux -- --publish never
+          pnpm --filter @himmelcad/builder package:linux
       - name: Upload directly to draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -128,7 +128,7 @@ jobs:
       - name: Build Builder packages
         run: |
           node scripts/set-desktop-release-version.mjs '${{ needs.prepare-release.outputs.version }}'
-          pnpm --filter @himmelcad/builder package:win -- --publish never
+          pnpm --filter @himmelcad/builder package:win
       - name: Upload directly to draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -172,7 +172,7 @@ jobs:
           node scripts/fetch-vendor.mjs --platform=linux-x64
           node scripts/fetch-photolab-models.mjs
           node scripts/set-desktop-release-version.mjs '${{ needs.prepare-release.outputs.version }}'
-          pnpm --filter @himmelcad/photolab package:linux -- --publish never
+          pnpm --filter @himmelcad/photolab package:linux
           pnpm --filter @himmelcad/photolab smoke:package:linux
       - name: Upload directly to draft release
         env:
@@ -219,7 +219,7 @@ jobs:
           node scripts/fetch-photolab-models.mjs
           node scripts/build-potreeconverter-windows.mjs
           node scripts/set-desktop-release-version.mjs '${{ needs.prepare-release.outputs.version }}'
-          pnpm --filter @himmelcad/photolab package:win -- --publish never
+          pnpm --filter @himmelcad/photolab package:win
           pnpm --filter @himmelcad/photolab smoke:package:win:static
       - name: Upload directly to draft release
         env:

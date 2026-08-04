@@ -28,8 +28,8 @@
     "smoke:install:linux": "node ../../scripts/photolab-install-smoke.mjs linux-x64",
     "smoke:install:win": "node ../../scripts/photolab-install-smoke.mjs win32-x64",
     "build": "pnpm build:sidecar && pnpm prepare:viewer && vite build && tsc -p tsconfig.electron.json",
-    "package:linux": "pnpm build && pnpm stage:linux && pnpm audit:release:linux && electron-builder --config electron-builder.linux.yml --linux x64",
-    "package:win": "pnpm build:sidecar:win && vite build && tsc -p tsconfig.electron.json && pnpm stage:win && pnpm audit:release:win && electron-builder --config electron-builder.win.yml --win --x64",
+    "package:linux": "pnpm build && pnpm stage:linux && pnpm audit:release:linux && electron-builder --config electron-builder.linux.yml --linux --x64 --publish never",
+    "package:win": "pnpm build:sidecar:win && vite build && tsc -p tsconfig.electron.json && pnpm stage:win && pnpm audit:release:win && electron-builder --config electron-builder.win.yml --win --x64 --publish never",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit && node ../../scripts/check-photolab-english-ui.mjs"
   },
   "dependencies": {
