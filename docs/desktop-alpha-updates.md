@@ -7,8 +7,10 @@ draft, checks the product-specific update metadata, and only then publishes the 
 No Cloudflare service is used.
 
 Windows users must install the `setup.exe` package and Linux users must run the AppImage
-to receive automatic updates. Portable Windows executables and Debian packages are
-published for convenience but cannot replace themselves atomically.
+to receive automatic updates. Debian packages are published for convenience but cannot
+replace themselves atomically. Portable Windows executables remain available through the
+manual packaging command; the continuous update release deliberately builds only NSIS,
+because a portable executable cannot replace itself reliably.
 
 ## PhotoLab runtime bootstrap
 

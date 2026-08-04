@@ -27,10 +27,13 @@ for (const product of products) {
   const scripts = /** @type {Record<string, unknown>} */ (manifest.scripts);
   const linuxPackage = scripts['package:linux'];
   const windowsPackage = scripts['package:win'];
+  const windowsUpdatePackage = scripts['package:win:update'];
   assert.ok(typeof linuxPackage === 'string');
   assert.ok(typeof windowsPackage === 'string');
+  assert.ok(typeof windowsUpdatePackage === 'string');
   assert.match(linuxPackage, /--linux --x64 --publish never/);
   assert.match(windowsPackage, /--win --x64 --publish never/);
+  assert.match(windowsUpdatePackage, /--win nsis --x64 --publish never/);
 
   const main = readFileSync(join(root, 'electron', 'main.ts'), 'utf8');
   const updater = readFileSync(join(root, 'electron', 'updater.ts'), 'utf8');
@@ -60,6 +63,7 @@ assert.match(workflow, /gh release create[\s\S]+--draft/);
 assert.match(workflow, /gh release edit[\s\S]+--draft=false --prerelease=false/);
 assert.match(workflow, /Incomplete release was deleted/);
 assert.match(workflow, /PHOTOLAB_RUNTIME_BUNDLES_READY/);
+assert.match(workflow, /package:win:update/);
 assert.doesNotMatch(workflow, /upload-artifact|cloudflare|\bR2\b/i);
 
 const temporaryWorkspace = mkdtempSync(join(tmpdir(), 'himmelcad-release-version-'));
