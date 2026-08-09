@@ -7,7 +7,7 @@ import type {
   RegistrationTargetSample,
 } from '@himmelcad/app';
 import type { SnapResult } from '@himmelcad/data';
-import { ImportRegistrationWizard } from '@himmelcad/ui';
+import { ImportRegistrationWizard, type ImportRegistrationFormatContext } from '@himmelcad/ui';
 import type { CanonicalRepresentationAdmission } from '@himmelcad/viewer/kernel';
 import { useEffect, useRef, useState } from 'react';
 
@@ -50,6 +50,8 @@ export function BuilderImportRegistrationIsland({
   const [sourceSnap, setSourceSnap] = useState<SnapResult | null>(null);
   const [targetSnap, setTargetSnap] = useState<SnapResult | null>(null);
   const [pendingSource, setPendingSource] = useState<RegistrationPoint | null>(null);
+  const [format, setFormat] = useState<ImportRegistrationFormatContext | null>(null);
+  const [probeError, setProbeError] = useState<string | null>(null);
   const [currentAdmissions, setCurrentAdmissions] = useState<
     readonly CanonicalRepresentationAdmission[]
   >([]);
@@ -60,6 +62,32 @@ export function BuilderImportRegistrationIsland({
   const sourceViewport = useRef<BuilderKernelViewportHandle | null>(null);
   const projectViewport = useRef<BuilderKernelViewportHandle | null>(null);
   const stagedResidency = useRef<StagedResidency | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.all([session.probeImport(sourcePath), session.listIoFormats()]).then(
+      ([selection, formats]) => {
+        if (!active) return;
+        const descriptor = formats.find(
+          (candidate) =>
+            candidate.providerId === selection.providerId &&
+            candidate.formatIds.includes(selection.formatId),
+        );
+        setFormat({
+          formatId: selection.formatId,
+          displayName: descriptor?.displayName ?? selection.providerId,
+          confidence: selection.confidence,
+        });
+        setProbeError(null);
+      },
+      (error: unknown) => {
+        if (active) setProbeError(error instanceof Error ? error.message : String(error));
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [session, sourcePath]);
 
   useEffect(() => {
     if (!state) return;
@@ -99,19 +127,32 @@ export function BuilderImportRegistrationIsland({
     })();
     void window.himmelcad?.canonicalProject.residencyBootstrap().then(async (bootstrap) => {
       if (!active) return;
-      const admissions = bootstrap.entries
-        .filter((entry) => entry.dataset === null)
-        .map((entry) => entry.admission)
-        .filter(isAdmissionLike);
+      const admissions = bootstrap.entries.map((entry) => entry.admission).filter(isAdmissionLike);
       setCurrentAdmissions(admissions);
-      if (admissions.length > 0) {
+      const inlineAdmissions: CanonicalRepresentationAdmission[] = [];
+      for (const entry of bootstrap.entries) {
+        if (!isAdmissionLike(entry.admission)) continue;
+        if (
+          entry.dataset?.formatId === 'potree@2' &&
+          entry.admission.resolvedGeometry.kind === 'pointCloud'
+        ) {
+          await projectViewport.current?.loadPotreePointCloud(entry.dataset.metadataUrl, {
+            datasetId: entry.dataset.datasetId,
+            admission: entry.admission,
+            bounds: await readPotreeBounds(entry.dataset.metadataUrl),
+          });
+        } else if (entry.dataset === null) {
+          inlineAdmissions.push(entry.admission);
+        }
+      }
+      if (inlineAdmissions.length > 0) {
         await projectViewport.current?.loadCanonicalPackage({
           providerId: 'hcad.registration-current-preview@1',
           providerVersion: '1',
-          admissions,
+          admissions: inlineAdmissions,
         });
-        projectViewport.current?.frameAll();
       }
+      projectViewport.current?.frameAll();
     });
     return () => {
       active = false;
@@ -218,8 +259,13 @@ export function BuilderImportRegistrationIsland({
     <ImportRegistrationWizard
       sourceLabel={sourcePath.split(/[\\/]/).at(-1) ?? sourcePath}
       projectLabel={projectLabel}
+      format={format}
+      probeError={probeError}
       state={state}
       pointPairs={pairs}
+      nextPickSide={pendingSource ? 'target' : 'source'}
+      sourcePickReady={sourceSnap !== null}
+      targetPickReady={targetSnap !== null}
       busy={busy}
       onStage={(recipe) => void stage(recipe)}
       onRequestPick={requestPick}

@@ -31,5 +31,28 @@ export { EmptyState } from './EmptyState.js';
 export type { EmptyStateProps } from './EmptyState.js';
 export { CrsTransformPair } from './CrsTransformPair.js';
 export type { CrsTransformPairProps } from './CrsTransformPair.js';
+export {
+  ChatBubble,
+  ChatCard,
+  ChatChoices,
+  ChatFooter,
+  ChatFooterSpacer,
+  ChipGroup,
+  EmptyPick,
+  ImportChatRoot,
+  ImportChatStream,
+  Metric,
+  Metrics,
+  ProgressBar,
+  importChatStyles,
+} from './ImportChat.js';
+export type { ChatChoice, ChatTone } from './ImportChat.js';
+export { importRegistrationProfile } from './importRegistrationProfile.js';
+export type {
+  ImportRegistrationFamily,
+  ImportRegistrationFormatContext,
+  ImportRegistrationProfile,
+  RegistrationMethodId,
+} from './importRegistrationProfile.js';
 export { ImportRegistrationWizard } from './ImportRegistrationWizard.js';
 export type { ImportRegistrationWizardProps } from './ImportRegistrationWizard.js';

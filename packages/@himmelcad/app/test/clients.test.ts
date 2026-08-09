@@ -290,7 +290,7 @@ const recipe = {
   label: 'Point pairs',
   method: {
     kind: 'pointPairs',
-    model: 'similarity3d',
+    model: 'similarity3D',
     robust: {
       maximumIterations: 20,
       huberDeltaMeters: 0.05,

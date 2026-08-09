@@ -20,7 +20,12 @@ pub const MAX_ICP_SAMPLES_PER_CLOUD: usize = 2_048;
 
 /// Persistable method selection. Interactive observations are intentionally absent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum RegistrationMethod {
     /// Source coordinates are already correct or are transformed by a frozen CRS recipe.
     SourceCoordinates {

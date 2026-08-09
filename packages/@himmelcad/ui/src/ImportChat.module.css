@@ -16,6 +16,11 @@
   -webkit-font-smoothing: antialiased;
 }
 
+.root[data-layout='wide'] {
+  width: min(1120px, calc(100vw - 64px));
+  height: min(820px, calc(100vh - 64px));
+}
+
 .header {
   display: flex;
   align-items: center;

@@ -58,6 +58,10 @@ export class PhotolabExternalImportSession {
     return this.io.listAllFormats();
   }
 
+  probe(sourcePath: string) {
+    return this.io.probe({ sourcePath });
+  }
+
   async stage(sourcePath: string, recipe: RegistrationRecipe, options: JsonValue = {}) {
     const selection = await this.io.probe({ sourcePath });
     return this.registration.stage({

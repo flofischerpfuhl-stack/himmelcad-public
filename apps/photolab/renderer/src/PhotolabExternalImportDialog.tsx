@@ -7,7 +7,7 @@ import type {
   RegistrationTargetSample,
 } from '@himmelcad/app';
 import type { EntityId, SnapResult } from '@himmelcad/data';
-import { ImportRegistrationWizard } from '@himmelcad/ui';
+import { ImportRegistrationWizard, type ImportRegistrationFormatContext } from '@himmelcad/ui';
 import type { CanonicalRepresentationAdmission } from '@himmelcad/viewer/kernel';
 import { useEffect, useRef, useState } from 'react';
 
@@ -51,6 +51,8 @@ export function PhotolabExternalImportDialog({
   const [sourceSnap, setSourceSnap] = useState<SnapResult | null>(null);
   const [targetSnap, setTargetSnap] = useState<SnapResult | null>(null);
   const [pendingSource, setPendingSource] = useState<RegistrationPoint | null>(null);
+  const [format, setFormat] = useState<ImportRegistrationFormatContext | null>(null);
+  const [probeError, setProbeError] = useState<string | null>(null);
   const [preparedSourceSamples, setPreparedSourceSamples] = useState<readonly RegistrationPoint[]>(
     [],
   );
@@ -61,6 +63,32 @@ export function PhotolabExternalImportDialog({
   const sourceViewport = useRef<PhotolabKernelViewportHandle | null>(null);
   const projectViewport = useRef<PhotolabKernelViewportHandle | null>(null);
   const stagedSession = useRef<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.all([session.probe(sourcePath), session.listFormats()]).then(
+      ([selection, formats]) => {
+        if (!active) return;
+        const descriptor = formats.find(
+          (candidate) =>
+            candidate.providerId === selection.providerId &&
+            candidate.formatIds.includes(selection.formatId),
+        );
+        setFormat({
+          formatId: selection.formatId,
+          displayName: descriptor?.displayName ?? selection.providerId,
+          confidence: selection.confidence,
+        });
+        setProbeError(null);
+      },
+      (error: unknown) => {
+        if (active) setProbeError(error instanceof Error ? error.message : String(error));
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [session, sourcePath]);
 
   useEffect(() => {
     void (async () => {
@@ -245,8 +273,13 @@ export function PhotolabExternalImportDialog({
     <ImportRegistrationWizard
       sourceLabel={sourcePath.split(/[\\/]/).at(-1) ?? sourcePath}
       projectLabel={projectLabel}
+      format={format}
+      probeError={probeError}
       state={state}
       pointPairs={pairs}
+      nextPickSide={pendingSource ? 'target' : 'source'}
+      sourcePickReady={sourceSnap !== null}
+      targetPickReady={targetSnap !== null}
       busy={busy}
       onStage={(recipe) => void stage(recipe)}
       onRequestPick={requestPick}

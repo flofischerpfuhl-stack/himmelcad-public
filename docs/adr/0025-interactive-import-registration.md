@@ -39,6 +39,29 @@ Site-calibration import fails closed. HimmelCAD accepts its own
 rotation units. It does not infer semantics from opaque proprietary `.dc`
 binary data.
 
+The shared registration UI uses PhotoLab's chat-led sequence for every
+canonical provider: probe, explain the detected format, choose one applicable
+placement method, stage, interact/review and commit. Product hosts provide the
+live source and project views; they do not fork the conversation or the
+registration state machine. Format profiles only constrain affordances:
+
+| Format family              | Default                 | Additional reviewed affordances                                         |
+| -------------------------- | ----------------------- | ----------------------------------------------------------------------- |
+| LAS, LAZ, E57 point clouds | fresh point pairs       | source coordinates, manual placement, bounded ICP                       |
+| IFC BIM                    | origin + project north  | source coordinates, manual placement, geometry pairs, bounded ICP       |
+| DXF, DWG CAD               | origin + project north  | source coordinates, manual placement, CAD geometry pairs                |
+| LandXML Civil              | source coordinates      | origin + north, manual placement, surface/alignment pairs               |
+| GeoTIFF/COG                | embedded source mapping | manual placement, raster sample pairs                                   |
+| SLPK/I3S                   | source coordinates      | manual placement, prepared-mesh pairs, bounded ICP                      |
+| Gaussian splats            | source coordinates      | manual placement and point pairs when the renderer supplies exact picks |
+
+Point-cloud point picking is a first-class dual-view operation. A source pick
+must be followed by exactly one project pick before another source pick is
+accepted. Committed project point clouds are materialized in the target view
+through the same streamed Potree residency path; they are not copied into UI
+memory. Format profiles never authorize implicit reprojection, unit conversion
+or scale correction.
+
 ## Consequences
 
 - Provider probing/version freezing and format options have one implementation.

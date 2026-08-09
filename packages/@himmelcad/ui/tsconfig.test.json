@@ -9,5 +9,5 @@
     "sourceMap": false,
     "types": ["node"]
   },
-  "include": ["src/useLayoutStore.ts", "test"]
+  "include": ["src/importRegistrationProfile.ts", "src/useLayoutStore.ts", "test"]
 }

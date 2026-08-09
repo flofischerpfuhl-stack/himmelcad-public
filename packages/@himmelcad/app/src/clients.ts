@@ -129,7 +129,7 @@ export type RegistrationRecipeMethod =
   | { readonly kind: 'manualPlacement'; readonly transform: RegistrationSimilarity3d }
   | {
       readonly kind: 'pointPairs';
-      readonly model: 'translation3d' | 'rigid3d' | 'similarity3d';
+      readonly model: 'translation3D' | 'rigid3D' | 'similarity3D';
       readonly robust: RegistrationRobustFitOptions;
       readonly offerIcpRefinement: boolean;
     }
