@@ -28,6 +28,8 @@ pub struct GeometryTransformResult<T> {
     pub warnings: Vec<GeometryTransformWarning>,
 }
 
+type VertexTransformResult = GeometryTransformResult<(Vec<WorldPoint>, Option<Vec<WorldPoint>>)>;
+
 impl TransformRuntime {
     /// Classify geometry under this frozen transform + policy.
     pub fn classify(
@@ -49,10 +51,7 @@ impl TransformRuntime {
         normals: Option<&[WorldPoint]>,
         policy: &GeometryTransformPolicy,
         cancellation: &CancellationToken,
-    ) -> Result<
-        GeometryTransformResult<(Vec<WorldPoint>, Option<Vec<WorldPoint>>)>,
-        TransformRuntimeError,
-    > {
+    ) -> Result<VertexTransformResult, TransformRuntimeError> {
         let mapped = self.apply_points(frozen, positions, cancellation)?;
         let mut warnings = Vec::new();
         for w in &mapped.warnings {
@@ -442,6 +441,7 @@ fn sample_bilinear(raster: &RasterGrid2D, p: WorldPoint) -> Option<f64> {
     )
 }
 
+#[allow(clippy::too_many_arguments)] // Coefficients retain the conventional 3x3 determinant layout.
 fn solve3(
     a00: f64,
     a01: f64,
@@ -544,8 +544,10 @@ mod tests {
     fn densify_circle_under_similarity_can_best_fit() {
         let runtime = TransformRuntime::new(TransformRuntimeConfig::system());
         let cancel = CancellationToken::new();
-        let mut policy = GeometryTransformPolicy::default();
-        policy.circle = CirclePolicy::PreserveAsCircleBestFit;
+        let policy = GeometryTransformPolicy {
+            circle: CirclePolicy::PreserveAsCircleBestFit,
+            ..GeometryTransformPolicy::default()
+        };
         let spec = TransformSpec {
             schema_version: TRANSFORM_SPEC_SCHEMA_VERSION,
             composition: TransformCompositionMode::Joint3D,
@@ -589,8 +591,10 @@ mod tests {
     fn text_scales_with_similarity() {
         let runtime = TransformRuntime::new(TransformRuntimeConfig::system());
         let cancel = CancellationToken::new();
-        let mut policy = GeometryTransformPolicy::default();
-        policy.text_scale = TextScalePolicy::ScaleByLocalIsotropic;
+        let policy = GeometryTransformPolicy {
+            text_scale: TextScalePolicy::ScaleByLocalIsotropic,
+            ..GeometryTransformPolicy::default()
+        };
         let spec = TransformSpec {
             schema_version: TRANSFORM_SPEC_SCHEMA_VERSION,
             composition: TransformCompositionMode::Joint3D,

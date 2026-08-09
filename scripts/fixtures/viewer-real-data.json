@@ -35,7 +35,11 @@
       "sourceCrsWkt2": "GEODCRS[\"WGS 84\",DATUM[\"World Geodetic System 1984\",ELLIPSOID[\"WGS 84\",6378137,298.257223563,LENGTHUNIT[\"metre\",1]]],CS[Cartesian,3],AXIS[\"geocentric X\",geocentricX,ORDER[1]],AXIS[\"geocentric Y\",geocentricY,ORDER[2]],AXIS[\"geocentric Z\",geocentricZ,ORDER[3]],LENGTHUNIT[\"metre\",1]]",
       "sourceCrsReason": null,
       "units": "metre",
-      "bounds": { "kind": "orientedBox", "centerLocal": [0, 0, 10], "halfAxesLocal": [100, 100, 10] },
+      "bounds": {
+        "kind": "orientedBox",
+        "centerLocal": [0, 0, 10],
+        "halfAxesLocal": [100, 100, 10]
+      },
       "derivation": "None; exact upstream tileset JSON"
     },
     {
@@ -52,7 +56,10 @@
       "sourceCrsWkt2": "GEODCRS[\"WGS 84\",DATUM[\"World Geodetic System 1984\",ELLIPSOID[\"WGS 84\",6378137,298.257223563,LENGTHUNIT[\"metre\",1]]],CS[Cartesian,3],AXIS[\"geocentric X\",geocentricX,ORDER[1]],AXIS[\"geocentric Y\",geocentricY,ORDER[2]],AXIS[\"geocentric Z\",geocentricZ,ORDER[3]],LENGTHUNIT[\"metre\",1]]",
       "sourceCrsReason": null,
       "units": "metre",
-      "bounds": { "minLocal": [-80.42656524665654, -100, 0], "maxLocal": [98.54353443998843, 84.12997680064291, 13.410263679921627] },
+      "bounds": {
+        "minLocal": [-80.42656524665654, -100, 0],
+        "maxLocal": [98.54353443998843, 84.12997680064291, 13.410263679921627]
+      },
       "derivation": "None; exact upstream b3dm bytes"
     },
     {
@@ -69,7 +76,11 @@
       "sourceCrsWkt2": "GEODCRS[\"WGS 84\",DATUM[\"World Geodetic System 1984\",ELLIPSOID[\"WGS 84\",6378137,298.257223563,LENGTHUNIT[\"metre\",1]]],CS[Cartesian,3],AXIS[\"geocentric X\",geocentricX,ORDER[1]],AXIS[\"geocentric Y\",geocentricY,ORDER[2]],AXIS[\"geocentric Z\",geocentricZ,ORDER[3]],LENGTHUNIT[\"metre\",1]]",
       "sourceCrsReason": null,
       "units": "metre",
-      "bounds": { "kind": "orientedBox", "centerLocal": [0, 0, 0], "halfAxesLocal": [100, 100, 15] },
+      "bounds": {
+        "kind": "orientedBox",
+        "centerLocal": [0, 0, 0],
+        "halfAxesLocal": [100, 100, 15]
+      },
       "derivation": "None; exact upstream i3dm bytes"
     },
     {
@@ -86,7 +97,15 @@
       "sourceCrsWkt2": "GEODCRS[\"WGS 84\",DATUM[\"World Geodetic System 1984\",ELLIPSOID[\"WGS 84\",6378137,298.257223563,LENGTHUNIT[\"metre\",1]]],CS[ellipsoidal,2],AXIS[\"geodetic latitude (Lat)\",north,ORDER[1]],AXIS[\"geodetic longitude (Lon)\",east,ORDER[2]],ANGLEUNIT[\"radian\",1]]",
       "sourceCrsReason": null,
       "units": "metre",
-      "bounds": { "kind": "geodeticRegion", "west": -1.3197004795898053, "south": 0.6988582109, "east": -1.3196595204101946, "north": 0.6988897891, "minimumHeight": 0, "maximumHeight": 30 },
+      "bounds": {
+        "kind": "geodeticRegion",
+        "west": -1.3197004795898053,
+        "south": 0.6988582109,
+        "east": -1.3196595204101946,
+        "north": 0.6988897891,
+        "minimumHeight": 0,
+        "maximumHeight": 30
+      },
       "derivation": "None; exact upstream tileset JSON"
     },
     {
@@ -105,7 +124,15 @@
       "sourceCrsWkt2": "GEODCRS[\"WGS 84\",DATUM[\"World Geodetic System 1984\",ELLIPSOID[\"WGS 84\",6378137,298.257223563,LENGTHUNIT[\"metre\",1]]],CS[Cartesian,3],AXIS[\"geocentric X\",geocentricX,ORDER[1]],AXIS[\"geocentric Y\",geocentricY,ORDER[2]],AXIS[\"geocentric Z\",geocentricZ,ORDER[3]],LENGTHUNIT[\"metre\",1]]",
       "sourceCrsReason": null,
       "units": "metre",
-      "bounds": { "kind": "geodeticRegion", "west": -1.3197004795898053, "south": 0.6988582109, "east": -1.3196595204101946, "north": 0.6988897891, "minimumHeight": 0, "maximumHeight": 30 },
+      "bounds": {
+        "kind": "geodeticRegion",
+        "west": -1.3197004795898053,
+        "south": 0.6988582109,
+        "east": -1.3196595204101946,
+        "north": 0.6988897891,
+        "minimumHeight": 0,
+        "maximumHeight": 30
+      },
       "transform": { "kind": "replaceTrailingNulWithSpace" },
       "derivation": "The final legacy NUL URI-padding byte is replaced with the specification-required ASCII space; every other upstream byte is unchanged"
     },
@@ -175,7 +202,12 @@
       "sourceCrsWkt2": "COMPOUNDCRS[\"ETRS89 / UTM zone 33N + DHHN2016 height\",PROJCRS[\"ETRS89 / UTM zone 33N\",BASEGEOGCRS[\"ETRS89\",DATUM[\"European Terrestrial Reference System 1989\",ELLIPSOID[\"GRS 1980\",6378137,298.257222101]],ID[\"EPSG\",4258]],CONVERSION[\"UTM zone 33N\",METHOD[\"Transverse Mercator\",ID[\"EPSG\",9807]],PARAMETER[\"Latitude of natural origin\",0],PARAMETER[\"Longitude of natural origin\",15],PARAMETER[\"Scale factor at natural origin\",0.9996],PARAMETER[\"False easting\",500000],PARAMETER[\"False northing\",0]],CS[Cartesian,2],AXIS[\"E\",east],AXIS[\"N\",north],LENGTHUNIT[\"metre\",1],ID[\"EPSG\",25833]],VERTCRS[\"DHHN2016 height\",VDATUM[\"Deutsches Haupthoehennetz 2016\"],CS[vertical,1],AXIS[\"H\",up],LENGTHUNIT[\"metre\",1],ID[\"EPSG\",7837]]]",
       "sourceCrsReason": null,
       "units": "metre",
-      "bounds": { "min": [250000, 5888000], "max": [251000, 5889000], "pixelSize": 1, "pixelInterpretation": "area with sample at pixel center" },
+      "bounds": {
+        "min": [250000, 5888000],
+        "max": [251000, 5889000],
+        "pixelSize": 1,
+        "pixelInterpretation": "area with sample at pixel center"
+      },
       "derivation": "The explicit real-DGM section gate extracts a checksum-pinned 512-row window; the downloaded ZIP remains unchanged"
     },
     {
@@ -193,7 +225,12 @@
       "sourceCrsWkt2": "COMPOUNDCRS[\"ETRS89 / UTM zone 33N + DHHN2016 height\",PROJCRS[\"ETRS89 / UTM zone 33N\",BASEGEOGCRS[\"ETRS89\",DATUM[\"European Terrestrial Reference System 1989\",ELLIPSOID[\"GRS 1980\",6378137,298.257222101]],ID[\"EPSG\",4258]],CONVERSION[\"UTM zone 33N\",METHOD[\"Transverse Mercator\",ID[\"EPSG\",9807]],PARAMETER[\"Latitude of natural origin\",0],PARAMETER[\"Longitude of natural origin\",15],PARAMETER[\"Scale factor at natural origin\",0.9996],PARAMETER[\"False easting\",500000],PARAMETER[\"False northing\",0]],CS[Cartesian,2],AXIS[\"E\",east],AXIS[\"N\",north],LENGTHUNIT[\"metre\",1],ID[\"EPSG\",25833]],VERTCRS[\"DHHN2016 height\",VDATUM[\"Deutsches Haupthoehennetz 2016\"],CS[vertical,1],AXIS[\"H\",up],LENGTHUNIT[\"metre\",1],ID[\"EPSG\",7837]]]",
       "sourceCrsReason": null,
       "units": "metre",
-      "bounds": { "min": [251000, 5888000], "max": [252000, 5889000], "pixelSize": 1, "pixelInterpretation": "area with sample at pixel center" },
+      "bounds": {
+        "min": [251000, 5888000],
+        "max": [252000, 5889000],
+        "pixelSize": 1,
+        "pixelInterpretation": "area with sample at pixel center"
+      },
       "derivation": "The explicit real-DGM section gate extracts a checksum-pinned 512-row window; the downloaded ZIP remains unchanged"
     }
   ]

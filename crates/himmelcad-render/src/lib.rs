@@ -106,8 +106,9 @@ pub use gpu_resource_identity::{
     GpuTextureUploadFormat, GpuTextureUploadLayout, GpuUploadedTextureIdentityInput,
 };
 pub use gpu_surface::{
-    GpuRecoveryReason, GpuSurfaceError, GpuSurfaceHost, SurfaceFrame, SurfaceFrameOutcome,
-    SurfacePickRequest, SurfaceSkipReason,
+    GpuCaptureError, GpuRecoveryReason, GpuRgbaReadback, GpuSurfaceError, GpuSurfaceHost,
+    SurfaceCaptureRequest, SurfaceFrame, SurfaceFrameOutcome, SurfacePickRequest,
+    SurfaceSkipReason, MAX_CAPTURE_DIMENSION, MAX_CAPTURE_PIXELS, MAX_CAPTURE_RGBA_BYTES,
 };
 pub use gpu_texture_cache::{
     GpuTextureResourceCache, GpuTextureResourceCacheError, GpuTextureResourceCacheStats,
@@ -430,7 +431,7 @@ impl WorldTransform {
         }
         let value = DMat3::from_mat4(DMat4::from_cols_array(&self.0))
             * DVec3::new(vector.x, vector.y, vector.z);
-        value.is_finite().then(|| WorldVec3 {
+        value.is_finite().then_some(WorldVec3 {
             x: value.x,
             y: value.y,
             z: value.z,

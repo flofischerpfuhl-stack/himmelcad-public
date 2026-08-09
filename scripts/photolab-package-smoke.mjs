@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { accessSync, constants, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import process from 'node:process';
@@ -191,9 +199,7 @@ function runtimeEnvironment(resourcesRoot, target) {
     ...(target === 'win32-x64'
       ? { PATH: [...pathEntries, process.env.PATH].filter(Boolean).join(';') }
       : {
-          LD_LIBRARY_PATH: [...pathEntries, process.env.LD_LIBRARY_PATH]
-            .filter(Boolean)
-            .join(':'),
+          LD_LIBRARY_PATH: [...pathEntries, process.env.LD_LIBRARY_PATH].filter(Boolean).join(':'),
         }),
   };
 }
@@ -210,7 +216,11 @@ function runWorkerProbes(resourcesRoot, target, environment, prefix) {
       ['EPSG:4326'],
       /GEOGCRS\["WGS 84"|\+datum=WGS84/i,
     ],
-    [join(resourcesRoot, 'workers', 'geo', 'bin', `gdalinfo${suffix}`), ['--version'], /GDAL\s+3\./i],
+    [
+      join(resourcesRoot, 'workers', 'geo', 'bin', `gdalinfo${suffix}`),
+      ['--version'],
+      /GDAL\s+3\./i,
+    ],
     [
       dedodePython,
       [
@@ -240,7 +250,9 @@ function runWorkerProbes(resourcesRoot, target, environment, prefix) {
     }
     const output = `${result.stdout}\n${result.stderr}`;
     if (!expected.test(output)) {
-      fail(`worker probe returned an unexpected version for ${basename(command)}: ${output.trim()}`);
+      fail(
+        `worker probe returned an unexpected version for ${basename(command)}: ${output.trim()}`,
+      );
     }
   }
 }
@@ -249,7 +261,9 @@ function findCommand(candidates) {
   for (const candidate of candidates) {
     try {
       const command = process.platform === 'win32' ? 'where.exe' : 'which';
-      const output = execFileSync(command, [candidate], { encoding: 'utf8' }).trim().split(/\r?\n/)[0];
+      const output = execFileSync(command, [candidate], { encoding: 'utf8' })
+        .trim()
+        .split(/\r?\n/)[0];
       if (output) return output;
     } catch {
       // Try the next candidate.

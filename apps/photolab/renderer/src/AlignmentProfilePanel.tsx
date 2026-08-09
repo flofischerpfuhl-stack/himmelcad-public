@@ -7,10 +7,7 @@ import type {
 import { Select } from '@himmelcad/ui';
 import { useCallback, useEffect, useState } from 'react';
 
-import {
-  parseAlignmentPreset,
-  type AlignmentPresetFile,
-} from './alignmentPreset.js';
+import { parseAlignmentPreset, type AlignmentPresetFile } from './alignmentPreset.js';
 import styles from './AlignmentProfilePanel.module.css';
 
 export interface AlignmentPresetListItem {
@@ -206,10 +203,20 @@ export function AlignmentProfilePanel({
         </label>
 
         <div className={styles.links}>
-          <button type="button" className={styles.link} disabled={loadBusy} onClick={() => void openFile()}>
+          <button
+            type="button"
+            className={styles.link}
+            disabled={loadBusy}
+            onClick={() => void openFile()}
+          >
             Open file…
           </button>
-          <button type="button" className={styles.link} disabled={loadBusy} onClick={() => void refreshList()}>
+          <button
+            type="button"
+            className={styles.link}
+            disabled={loadBusy}
+            onClick={() => void refreshList()}
+          >
             Refresh
           </button>
           <button type="button" className={styles.link} onClick={onDefineAlignment}>

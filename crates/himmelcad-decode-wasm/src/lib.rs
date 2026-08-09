@@ -226,13 +226,20 @@ pub fn decode_streaming_payload(
     encode_decode_artifact(input_hash, payload).map_err(js_error)
 }
 
+type RasterBandSlices<'a> = (
+    &'a [u8],
+    Option<&'a [u8]>,
+    Option<&'a [u8]>,
+    Option<&'a [u8]>,
+);
+
 fn split_raster_bands(
     packed: &[u8],
     elevation_length: usize,
     validity_length: usize,
     confidence_length: usize,
     triangle_mask_length: usize,
-) -> Result<(&[u8], Option<&[u8]>, Option<&[u8]>, Option<&[u8]>), &'static str> {
+) -> Result<RasterBandSlices<'_>, &'static str> {
     let validity_end = elevation_length
         .checked_add(validity_length)
         .ok_or("raster side-band byte length overflow")?;

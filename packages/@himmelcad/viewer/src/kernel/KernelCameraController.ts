@@ -20,6 +20,11 @@ interface LocalOrthographicState {
   readonly up: Vec3;
 }
 
+interface LocalReturnState extends OrbitState {
+  readonly lockedTopDown: boolean;
+  readonly orthographicSpan: number;
+}
+
 interface OrientedPerspectiveState {
   readonly eye: Vec3;
   readonly baseForward: Vec3;
@@ -85,10 +90,10 @@ export class KernelCameraController {
   private verticalFovRadians = DEFAULT_FOV;
   private lockedTopDown = false;
   private orthographicSpan = 50;
-  private savedOrbit = { yaw: 0, pitch: Math.PI / 4, distance: 50 };
   private localOrthographic: LocalOrthographicState | null = null;
-  private localReturn: OrbitState | null = null;
+  private localReturn: LocalReturnState | null = null;
   private orientedPerspective: OrientedPerspectiveState | null = null;
+  private projectionDepthRange: { readonly near: number; readonly far: number } | null = null;
 
   constructor(width: number, height: number) {
     this.width = positiveExtent(width);
@@ -105,8 +110,11 @@ export class KernelCameraController {
     const eye = this.eye();
     const panorama = this.orientedPerspective;
     const viewDistance = panorama?.targetDistance ?? this.distance;
-    const near = Math.max(1e-5, Math.min(10, viewDistance / 10_000));
-    const far = Math.max(1_000_000, Math.min(MAX_DISTANCE, viewDistance * 10_000));
+    const near =
+      this.projectionDepthRange?.near ?? Math.max(1e-5, Math.min(10, viewDistance / 10_000));
+    const far =
+      this.projectionDepthRange?.far ??
+      Math.max(1_000_000, Math.min(MAX_DISTANCE, viewDistance * 10_000));
     return {
       eye: point(eye),
       target: point(this.viewTarget()),
@@ -125,6 +133,31 @@ export class KernelCameraController {
             far,
           },
     };
+  }
+
+  /**
+   * Replaces the complete interactive camera from one external world-space
+   * camera. The viewport owns aspect, so a serialized/stale input aspect is
+   * never allowed to distort the live surface.
+   */
+  adoptWorldCamera(camera: KernelWorldCamera): KernelWorldCamera {
+    const adopted = validateWorldCameraAdoption(camera);
+
+    this.target = adopted.target;
+    this.yaw = adopted.yaw;
+    this.pitch = adopted.pitch;
+    this.distance = adopted.distance;
+    this.lockedTopDown = adopted.lockedTopDown;
+    this.orthographicSpan = adopted.orthographicSpan;
+    this.localOrthographic = adopted.localOrthographic;
+    this.localReturn = null;
+    this.orientedPerspective = adopted.orientedPerspective;
+    this.projectionDepthRange = adopted.projectionDepthRange;
+    if (adopted.verticalFovRadians !== null) {
+      this.verticalFovRadians = adopted.verticalFovRadians;
+    }
+
+    return this.worldCamera();
   }
 
   targetPoint(): KernelWorldPoint {
@@ -313,14 +346,15 @@ export class KernelCameraController {
     if (enabled) {
       this.restoreOrientedPerspective();
       this.restoreLocalPerspective();
-      this.savedOrbit = { yaw: this.yaw, pitch: this.pitch, distance: this.distance };
       this.orthographicSpan = 2 * this.distance * Math.tan(this.verticalFovRadians / 2);
       this.lockedTopDown = true;
     } else {
-      this.yaw = this.savedOrbit.yaw;
-      this.pitch = this.savedOrbit.pitch;
-      // Preserve the target-plane scale changed by orthographic zoom. Restoring
-      // the entry distance would visibly jump when the projection morph ends.
+      // Unlock the current plan camera instead of restoring a stale orbit.
+      // A near-polar perspective endpoint preserves north-up and makes the
+      // next orbit gesture feel like releasing a constraint, without crossing
+      // the Z-up singularity.
+      this.yaw = 0;
+      this.pitch = PITCH_LIMIT;
       this.distance = clampDistance(
         this.orthographicSpan / (2 * Math.tan(this.verticalFovRadians / 2)),
       );
@@ -360,7 +394,6 @@ export class KernelCameraController {
     this.pitch = pitch;
     this.distance = distance;
     this.verticalFovRadians = verticalFovRadians;
-    this.savedOrbit = { yaw: this.yaw, pitch: this.pitch, distance: this.distance };
     return { from, to: this.worldCamera() };
   }
 
@@ -368,7 +401,11 @@ export class KernelCameraController {
   setOrientedPerspectiveViewpoint(
     viewpoint: KernelOrientedPerspectiveViewpoint,
   ): KernelCameraTransitionPair {
-    if (!finitePoint(viewpoint.eye) || !finitePoint(viewpoint.target) || !finiteVector(viewpoint.up)) {
+    if (
+      !finitePoint(viewpoint.eye) ||
+      !finitePoint(viewpoint.target) ||
+      !finiteVector(viewpoint.up)
+    ) {
       throw new RangeError('oriented viewpoint eye, target and up must be finite');
     }
     const eye = vector(viewpoint.eye);
@@ -434,18 +471,11 @@ export class KernelCameraController {
     const from = this.worldCamera();
     this.restoreOrientedPerspective();
     if (this.localOrthographic === null) {
-      if (this.lockedTopDown) {
-        this.localReturn = {
-          target: copy(this.target),
-          yaw: this.savedOrbit.yaw,
-          pitch: this.savedOrbit.pitch,
-          distance: clampDistance(
-            this.orthographicSpan / (2 * Math.tan(this.verticalFovRadians / 2)),
-          ),
-        };
-      } else {
-        this.localReturn = this.orbitState();
-      }
+      this.localReturn = {
+        ...this.orbitState(),
+        lockedTopDown: this.lockedTopDown,
+        orthographicSpan: this.orthographicSpan,
+      };
     }
     this.lockedTopDown = false;
     this.target = validated.origin;
@@ -465,6 +495,11 @@ export class KernelCameraController {
   /** True for locked top-down and arbitrary local orthographic camera views. */
   isOrthographicView(): boolean {
     return this.lockedTopDown || this.localOrthographic !== null;
+  }
+
+  /** True only for the global north-up plan lock, not local section frames. */
+  isLockedTopDown(): boolean {
+    return this.lockedTopDown;
   }
 
   recommendedFloatingOrigin(gridSize = 1_024): readonly [number, number, number] {
@@ -508,16 +543,8 @@ export class KernelCameraController {
   private orientedBasis(): { readonly forward: Vec3; readonly right: Vec3; readonly up: Vec3 } {
     const panorama = this.orientedPerspective;
     if (!panorama) return this.basis();
-    const yawedRight = rotateAroundAxis(
-      panorama.baseRight,
-      panorama.baseUp,
-      panorama.yaw,
-    );
-    const yawedForward = rotateAroundAxis(
-      panorama.baseForward,
-      panorama.baseUp,
-      panorama.yaw,
-    );
+    const yawedRight = rotateAroundAxis(panorama.baseRight, panorama.baseUp, panorama.yaw);
+    const yawedForward = rotateAroundAxis(panorama.baseForward, panorama.baseUp, panorama.yaw);
     const forward = normalize(rotateAroundAxis(yawedForward, yawedRight, panorama.pitch));
     const right = normalize(yawedRight);
     return { forward, right, up: normalize(cross(right, forward)) };
@@ -542,6 +569,8 @@ export class KernelCameraController {
     this.yaw = saved.yaw;
     this.pitch = saved.pitch;
     this.distance = saved.distance;
+    this.lockedTopDown = saved.lockedTopDown;
+    this.orthographicSpan = saved.orthographicSpan;
   }
 
   private restoreOrientedPerspective(): void {
@@ -554,6 +583,113 @@ export class KernelCameraController {
     this.distance = panorama.returnOrbit.distance;
     this.verticalFovRadians = panorama.returnVerticalFovRadians;
   }
+}
+
+interface ValidatedWorldCameraAdoption {
+  readonly target: Vec3;
+  readonly yaw: number;
+  readonly pitch: number;
+  readonly distance: number;
+  readonly lockedTopDown: boolean;
+  readonly orthographicSpan: number;
+  readonly localOrthographic: LocalOrthographicState | null;
+  readonly orientedPerspective: OrientedPerspectiveState | null;
+  readonly verticalFovRadians: number | null;
+  readonly projectionDepthRange: { readonly near: number; readonly far: number };
+}
+
+function validateWorldCameraAdoption(camera: KernelWorldCamera): ValidatedWorldCameraAdoption {
+  if (!finitePoint(camera.eye) || !finitePoint(camera.target) || !finitePoint(camera.up)) {
+    throw new RangeError('world camera eye, target and up must be finite');
+  }
+  const eye = vector(camera.eye);
+  const target = vector(camera.target);
+  const relative = subtract(eye, target);
+  const distance = length(relative);
+  if (distance < MIN_DISTANCE || distance > MAX_DISTANCE) {
+    throw new RangeError('world camera eye and target must be distinct and supported');
+  }
+  const normal = scale(relative, 1 / distance);
+  const authoredUp = normalize(vector(camera.up));
+  const right = normalize(cross(scale(normal, -1), authoredUp));
+  if (length(authoredUp) <= Number.EPSILON || length(right) <= Number.EPSILON) {
+    throw new RangeError('world camera up must define a stable camera basis');
+  }
+  const up = normalize(cross(right, scale(normal, -1)));
+  const near = camera.projection.near;
+  const far = camera.projection.far;
+  if (!Number.isFinite(near) || !Number.isFinite(far) || near <= 0 || far <= near) {
+    throw new RangeError('world camera projection requires finite 0 < near < far');
+  }
+
+  const pitch = Math.asin(clamp(normal[2], -1, 1));
+  const yaw = Math.atan2(normal[0], -normal[1]);
+  if (camera.projection.kind === 'orthographic') {
+    const verticalSpan = camera.projection.verticalSpan;
+    if (
+      !Number.isFinite(verticalSpan) ||
+      verticalSpan < MIN_DISTANCE ||
+      verticalSpan > MAX_DISTANCE
+    ) {
+      throw new RangeError('world camera orthographic span is outside the supported finite range');
+    }
+    const lockedTopDown =
+      vectorsNearlyEqual(normal, [0, 0, 1]) && vectorsNearlyEqual(up, [0, 1, 0]);
+    return {
+      target,
+      yaw,
+      pitch,
+      distance,
+      lockedTopDown,
+      orthographicSpan: verticalSpan,
+      localOrthographic: lockedTopDown ? null : { normal, up },
+      orientedPerspective: null,
+      verticalFovRadians: null,
+      projectionDepthRange: { near, far },
+    };
+  }
+
+  const verticalFovRadians = camera.projection.verticalFovRadians;
+  if (
+    !Number.isFinite(verticalFovRadians) ||
+    verticalFovRadians < 1e-3 ||
+    verticalFovRadians > Math.PI - 1e-3
+  ) {
+    throw new RangeError('world camera perspective FOV is outside the supported range');
+  }
+  const standardForward = scale(normal, -1);
+  const standardRight = normalize(cross(standardForward, [0, 0, 1]));
+  const standardUp = normalize(cross(standardRight, standardForward));
+  const isStandardOrbit = Math.abs(pitch) <= PITCH_LIMIT && vectorsNearlyEqual(up, standardUp);
+  return {
+    target,
+    yaw,
+    pitch,
+    distance,
+    lockedTopDown: false,
+    orthographicSpan: 2 * distance * Math.tan(verticalFovRadians / 2),
+    localOrthographic: null,
+    orientedPerspective: isStandardOrbit
+      ? null
+      : {
+          eye,
+          baseForward: standardForward,
+          baseRight: right,
+          baseUp: up,
+          targetDistance: distance,
+          returnOrbit: { target, yaw, pitch: clamp(pitch, -PITCH_LIMIT, PITCH_LIMIT), distance },
+          returnVerticalFovRadians: verticalFovRadians,
+          yaw: 0,
+          pitch: 0,
+          verticalFovRadians,
+        },
+    verticalFovRadians,
+    projectionDepthRange: { near, far },
+  };
+}
+
+function vectorsNearlyEqual(left: Vec3, right: Vec3): boolean {
+  return distanceBetween(left, right) <= ORTHONORMAL_TOLERANCE * 10;
 }
 
 function validateLocalOrthographicFrame(frame: KernelLocalOrthographicViewFrame): {

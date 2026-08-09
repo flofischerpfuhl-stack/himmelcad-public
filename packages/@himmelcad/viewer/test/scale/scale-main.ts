@@ -29,6 +29,8 @@ declare global {
 interface ScaleServerStats {
   readonly rangeRequests: number;
   readonly requestedBytes: number;
+  readonly physicalPageRangeRequests: number;
+  readonly repeatedPhysicalRangeRequests: number;
   readonly uniqueNodes: number;
   readonly duplicateNodeRequests: number;
   readonly requestedNodeIds: readonly string[];
@@ -138,6 +140,7 @@ interface ScaleGateState {
     readonly drainedCosts: readonly KernelResourceCost[];
     readonly reloadCosts: readonly KernelResourceCost[];
     readonly reloadRequestDeltas: readonly number[];
+    readonly reloadAvoidedNetworkDeltas: readonly number[];
   } | null;
 }
 
@@ -917,12 +920,14 @@ async function run(): Promise<void> {
   const drainedCosts: KernelResourceCost[] = [];
   const reloadCosts: KernelResourceCost[] = [];
   const reloadRequestDeltas: number[] = [];
+  const reloadAvoidedNetworkDeltas: number[] = [];
   const plateauCycles = SOFTWARE_CORRECTNESS ? 2 : 3;
   const plateauTarget = corners[0];
   for (let cycle = 0; cycle < plateauCycles; cycle += 1) {
     drainedCosts.push(await recycleCanonicalScene());
 
     const requestsBeforeReload = driver.diagnostics().startedRequests;
+    const avoidedBeforeReload = avoidedNetworkFetches(driver.diagnostics());
     viewer.setWorldCamera(camera(plateauTarget, 240, -0.8), [
       plateauTarget.x,
       plateauTarget.y,
@@ -945,15 +950,25 @@ async function run(): Promise<void> {
     }
     const reloaded = viewer.streamingRuntime();
     const requestDelta = driver.diagnostics().startedRequests - requestsBeforeReload;
-    if (reloaded.residencyStageCounts.resident === 0 || requestDelta === 0) {
+    const avoidedNetworkDelta = avoidedNetworkFetches(driver.diagnostics()) - avoidedBeforeReload;
+    if (
+      reloaded.residencyStageCounts.resident === 0 ||
+      (requestDelta === 0 && avoidedNetworkDelta === 0)
+    ) {
       throw new Error(
-        `drained residency did not reload from immutable providers: ${JSON.stringify({ reloaded, requestDelta })}`,
+        `drained residency did not reload from immutable providers or RAM-warm artifacts: ${JSON.stringify({ reloaded, requestDelta, avoidedNetworkDelta })}`,
       );
     }
     reloadCosts.push(reloaded.residencyCost);
     reloadRequestDeltas.push(requestDelta);
+    reloadAvoidedNetworkDeltas.push(avoidedNetworkDelta);
   }
-  state.residencyPlateau = { drainedCosts, reloadCosts, reloadRequestDeltas };
+  state.residencyPlateau = {
+    drainedCosts,
+    reloadCosts,
+    reloadRequestDeltas,
+    reloadAvoidedNetworkDeltas,
+  };
   assertResidencyPlateau(reloadCosts, budget);
 
   state.phase = 'assertions';
@@ -1086,14 +1101,24 @@ async function run(): Promise<void> {
     state.serverStats.rangeRequests +
     state.serverStats.hierarchyPageRangeRequests +
     state.serverStats.preparedContentRequests;
+  const streamingTelemetry = state.driverDiagnostics.streamingTelemetry;
+  const avoidedFetches = avoidedNetworkFetches(state.driverDiagnostics);
+  const coalescedOrCachedPageReads =
+    streamingTelemetry.physicalPages.hits + streamingTelemetry.physicalPages.coalescedWaiters;
   if (
+    state.driverDiagnostics.startedRequests + state.driverDiagnostics.cancelledBeforeStartRequests >
+      contentActions ||
     state.driverDiagnostics.startedRequests +
-      state.driverDiagnostics.cancelledBeforeStartRequests !==
+      state.driverDiagnostics.cancelledBeforeStartRequests +
+      avoidedFetches +
+      coalescedOrCachedPageReads <
       contentActions ||
     startedContentRequests > state.driverDiagnostics.startedRequests ||
     state.driverDiagnostics.startedRequests - startedContentRequests >
       state.driverDiagnostics.abortedAfterStartRequests ||
-    state.serverStats.duplicateNodeRequests === 0
+    state.serverStats.physicalPageRangeRequests !== streamingTelemetry.physicalPages.networkPages ||
+    streamingTelemetry.ramWarmCache.hits === 0 ||
+    streamingTelemetry.lifecycle.point.avoidedWorkerDecodes === 0
   ) {
     throw new Error(
       `virtual Range endpoint did not prove selective re-fetch/cancellation: ${JSON.stringify({ server: state.serverStats, driver: state.driverDiagnostics, contentActions })}`,
@@ -1164,6 +1189,13 @@ async function run(): Promise<void> {
   status.textContent = `${LOGICAL_POINTS.toLocaleString()} points + ${LOGICAL_TRIANGLES.toLocaleString()} triangles + ${LOGICAL_SPLATS.toLocaleString()} splats`;
   driver.dispose();
   viewer.dispose();
+}
+
+function avoidedNetworkFetches(diagnostics: KernelStreamingDriverDiagnostics): number {
+  return Object.values(diagnostics.streamingTelemetry.lifecycle).reduce(
+    (total, lifecycle) => total + lifecycle.avoidedNetworkFetches,
+    0,
+  );
 }
 
 void run().catch((error: unknown) => {

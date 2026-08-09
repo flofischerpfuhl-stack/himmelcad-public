@@ -35,6 +35,35 @@ interface PhotolabDesktopApi {
     call: <T = unknown>(method: string, params?: unknown) => Promise<T>;
     onStderr: (cb: (line: string) => void) => () => void;
   };
+  readonly agentHarness: AgentHarnessHostTransport;
+  readonly providerCredentials: ProviderCredentialRendererTransport;
+  readonly automationViewHost: {
+    register: (
+      handler: (method: string, params: unknown) => unknown | Promise<unknown>,
+    ) => () => void;
+  };
+  readonly externalImport: {
+    projectRoot: () => Promise<string>;
+    selectFiles: (extensions: readonly string[]) => Promise<string[]>;
+    materialize: (sessionId: string) => Promise<{
+      readonly schemaVersion: 1;
+      readonly sessionId: string;
+      readonly datasets: readonly {
+        readonly datasetId: string;
+        readonly formatId: string;
+        readonly entityId: string;
+        readonly representationSlot: string;
+        readonly metadataUrl: string;
+        readonly artifacts: readonly {
+          readonly relativePath: string;
+          readonly resourceId: string;
+          readonly url: string;
+        }[];
+      }[];
+    }>;
+    revoke: (sessionId: string) => Promise<boolean>;
+    residency: <T = unknown>() => Promise<T>;
+  };
   readonly preferences: {
     readonly gcpCsv: {
       get: () => Promise<GcpCsvImportDefaults>;
@@ -155,3 +184,5 @@ declare global {
 }
 
 export {};
+import type { AgentHarnessHostTransport } from '@himmelcad/agent';
+import type { ProviderCredentialRendererTransport } from '@himmelcad/agent';

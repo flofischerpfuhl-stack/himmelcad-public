@@ -2,6 +2,7 @@ import type { EntityId, EntityKind, EntitySnapshot, ProjectSnapshot } from '@him
 import {
   Box,
   CircleDot,
+  ArrowUpToLine,
   Eye,
   EyeOff,
   Folder,
@@ -11,7 +12,13 @@ import {
   Sparkles,
   Spline,
 } from 'lucide-react';
-import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from 'react';
 
 import styles from './EntityTree.module.css';
 import { ExpandChevron } from './ExpandChevron.js';
@@ -55,6 +62,7 @@ export function EntityTree({
   const [selectionAnchor, setSelectionAnchor] = useState<EntityId | null>(null);
   const [activeParentId, setActiveParentId] = useState<EntityId | null>(null);
   const [localNavTab, setLocalNavTab] = useState<LeftNavTabId>(leftNavTab);
+  const treeBodyRef = useRef<HTMLDivElement>(null);
   const navTab = onLeftNavTabChange ? leftNavTab : localNavTab;
   const setNavTab = (tab: LeftNavTabId): void => {
     if (onLeftNavTabChange) onLeftNavTabChange(tab);
@@ -125,7 +133,9 @@ export function EntityTree({
         {nav}
         <div className={styles.islandBody}>
           <div className={styles.header}>
-            <span className={styles.headerLabel}>{navTab === 'layers' ? 'Layers' : 'Imported from'}</span>
+            <span className={styles.headerLabel}>
+              {navTab === 'layers' ? 'Layers' : 'Imported from'}
+            </span>
             <span className={styles.headerName}>{project.name}</span>
           </div>
           <div className={styles.placeholderPane}>
@@ -147,67 +157,77 @@ export function EntityTree({
     <div className={styles.root}>
       {nav}
       <div className={styles.islandBody}>
-      <div className={styles.header}>
-        <span className={styles.headerLabel}>Project</span>
-        <span className={styles.headerName}>{project.name}</span>
-      </div>
-      <div
-        className={styles.body}
-        role="tree"
-        tabIndex={0}
-        onKeyDown={(event) => {
-          if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'a') return;
-          const parent = activeParentId ? project.entities[activeParentId] : undefined;
-          if (!parent) return;
-          event.preventDefault();
-          const ids = parent.children.filter((id) => project.entities[id]);
-          if (onSelectMany) onSelectMany(ids);
-          else ids.forEach((id) => onSelect(id, 'add'));
-        }}
-      >
-        <TreeNode
-          id={project.rootEntity}
-          entities={project.entities}
-          depth={0}
-          selectedIds={selectedIds}
-          onSelect={(id, event) => {
-            const node = project.entities[id];
-            const parentId = node?.parent ?? null;
-            const siblings = parentId ? project.entities[parentId]?.children ?? [] : [id];
-            if (event.shiftKey && selectionAnchor && parentId === activeParentId) {
-              const anchorIndex = siblings.indexOf(selectionAnchor);
-              const currentIndex = siblings.indexOf(id);
-              if (anchorIndex >= 0 && currentIndex >= 0) {
-                const range = siblings.slice(
-                  Math.min(anchorIndex, currentIndex),
-                  Math.max(anchorIndex, currentIndex) + 1,
-                );
-                if (onSelectMany) onSelectMany(range);
-                else range.forEach((rangeId) => onSelect(rangeId, 'add'));
-                return;
+        <div className={styles.header}>
+          <span className={styles.headerLabel}>Project</span>
+          <span className={styles.headerName}>{project.name}</span>
+          <button
+            type="button"
+            className={styles.scrollTop}
+            onClick={() => treeBodyRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+            title="Scroll tree to top"
+            aria-label="Scroll entity tree to top"
+          >
+            <ArrowUpToLine size={13} />
+          </button>
+        </div>
+        <div
+          ref={treeBodyRef}
+          className={styles.body}
+          role="tree"
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'a') return;
+            const parent = activeParentId ? project.entities[activeParentId] : undefined;
+            if (!parent) return;
+            event.preventDefault();
+            const ids = parent.children.filter((id) => project.entities[id]);
+            if (onSelectMany) onSelectMany(ids);
+            else ids.forEach((id) => onSelect(id, 'add'));
+          }}
+        >
+          <TreeNode
+            id={project.rootEntity}
+            entities={project.entities}
+            depth={0}
+            selectedIds={selectedIds}
+            onSelect={(id, event) => {
+              const node = project.entities[id];
+              const parentId = node?.parent ?? null;
+              const siblings = parentId ? (project.entities[parentId]?.children ?? []) : [id];
+              if (event.shiftKey && selectionAnchor && parentId === activeParentId) {
+                const anchorIndex = siblings.indexOf(selectionAnchor);
+                const currentIndex = siblings.indexOf(id);
+                if (anchorIndex >= 0 && currentIndex >= 0) {
+                  const range = siblings.slice(
+                    Math.min(anchorIndex, currentIndex),
+                    Math.max(anchorIndex, currentIndex) + 1,
+                  );
+                  if (onSelectMany) onSelectMany(range);
+                  else range.forEach((rangeId) => onSelect(rangeId, 'add'));
+                  return;
+                }
               }
-            }
-            onSelect(id, event.metaKey || event.ctrlKey ? 'toggle' : 'replace');
-            setSelectionAnchor(id);
-            setActiveParentId(parentId);
-          }}
-          editingId={editingId}
-          onEditingChange={setEditingId}
-          onRename={onRename}
-          onMove={onMove}
-          onVisibilityChange={onVisibilityChange}
-          onContextMenu={(id, x, y) => {
-            if (!selectedIds.has(id)) onSelect(id, 'replace');
-            setSelectionAnchor(id);
-            setActiveParentId(project.entities[id]?.parent ?? null);
-            setContext({
-              id,
-              x: Math.max(4, Math.min(x, window.innerWidth - 226)),
-              y: Math.max(4, Math.min(y, window.innerHeight - 170)),
-            });
-          }}
-        />
-      </div>
+              onSelect(id, event.metaKey || event.ctrlKey ? 'toggle' : 'replace');
+              setSelectionAnchor(id);
+              setActiveParentId(parentId);
+            }}
+            editingId={editingId}
+            onEditingChange={setEditingId}
+            onRename={onRename}
+            onMove={onMove}
+            onVisibilityChange={onVisibilityChange}
+            onContextMenu={(id, x, y) => {
+              if (!selectedIds.has(id)) onSelect(id, 'replace');
+              setSelectionAnchor(id);
+              setActiveParentId(project.entities[id]?.parent ?? null);
+              setContext({
+                id,
+                x: Math.max(4, Math.min(x, window.innerWidth - 226)),
+                y: Math.max(4, Math.min(y, window.innerHeight - 170)),
+              });
+            }}
+          />
+        </div>
       </div>
       {context && project.entities[context.id] && (
         <div

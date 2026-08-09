@@ -467,7 +467,7 @@ pub fn build_shared_control_merge(
             let new_image_id = next_image_id;
             next_image_id += 1;
             image_ids.insert(old_image_id, new_image_id);
-            let relative = PathBuf::from(format!("{}/image.jpg", format!("{new_image_id:08}")));
+            let relative = PathBuf::from(format!("{new_image_id:08}/image.jpg"));
             let target = images_root.join(&relative);
             fs::create_dir_all(target.parent().unwrap()).map_err(|source| {
                 AlignmentMergeRuntimeError::Io {
@@ -1109,6 +1109,7 @@ mod tests {
     fn optimized_camera(center: [f64; 3]) -> OptimizedGcpCamera {
         OptimizedGcpCamera {
             image_id: ImageId(1),
+            calibration_group_id: "merge-test-camera".into(),
             width_pixels: 100,
             height_pixels: 80,
             focal_x_pixels: 1.0,

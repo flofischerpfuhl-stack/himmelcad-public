@@ -56,5 +56,7 @@ for (const artifact of artifacts) {
 }
 
 async function sha256(path) {
-  return createHash('sha256').update(await readFile(path)).digest('hex');
+  return createHash('sha256')
+    .update(await readFile(path))
+    .digest('hex');
 }

@@ -165,6 +165,9 @@ pub fn prepare_gcp_cameras(
                 image_name: image.name,
                 camera: GcpCameraModel {
                     image_id: ImageId(image_id),
+                    calibration_group_id: format!("colmap-camera-{}", image.camera_id),
+                    intrinsics_policy:
+                        himmelcad_core::photolab_gcp_optimization::GcpIntrinsicsPolicy::Auto,
                     width_pixels: calibration.width,
                     height_pixels: calibration.height,
                     focal_x_pixels: calibration.fx,
@@ -357,6 +360,7 @@ fn parse_model_value<T: std::str::FromStr>(value: &str, label: &str) -> Result<T
 }
 
 /// Runs only fixed COLMAP conversion commands and parses public text model files.
+#[allow(clippy::too_many_arguments)] // Stable scene-preparation API keeps tool and calibration inputs explicit.
 pub fn prepare_mvs_scene(
     colmap_executable: &Path,
     alignment_dataset: &Path,
@@ -1597,6 +1601,7 @@ mod tests {
         };
         let optimized = OptimizedGcpCamera {
             image_id: ImageId(7),
+            calibration_group_id: "optimized-test-camera".into(),
             width_pixels: 1000,
             height_pixels: 800,
             focal_x_pixels: 1000.0,

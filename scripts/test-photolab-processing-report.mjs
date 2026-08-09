@@ -108,9 +108,7 @@ const html = buildProcessingReportHtml({
       cameraEntityIds: ['camera-1', 'camera-2'],
       processingSetId: 'processing-set-1',
       calibrationGroupIds: ['calibration-1'],
-      calibrationGroups: [
-        { groupId: 'calibration-1', cameraEntityIds: ['camera-1', 'camera-2'] },
-      ],
+      calibrationGroups: [{ groupId: 'calibration-1', cameraEntityIds: ['camera-1', 'camera-2'] }],
     },
   ],
   gcpOptimizations: [

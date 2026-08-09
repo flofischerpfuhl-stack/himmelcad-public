@@ -85,7 +85,9 @@
   color: var(--hc-fg-muted);
   background: transparent;
   border: none;
-  transition: background var(--hc-motion-fast), color var(--hc-motion-fast);
+  transition:
+    background var(--hc-motion-fast),
+    color var(--hc-motion-fast);
 }
 
 .control:hover {

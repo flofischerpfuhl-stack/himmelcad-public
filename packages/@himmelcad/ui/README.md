@@ -4,13 +4,13 @@ Shared UI modules for all HimmelCAD products. **Use these — never invent one-o
 
 ## Control modules (mandatory for forms)
 
-| Module | Use for | Native forbidden |
-| --- | --- | --- |
-| `Checkbox` | boolean fields | `<input type="checkbox">` |
-| `Radio` | exclusive choices | `<input type="radio">` |
-| `Select` | dropdowns (custom listbox, **not** OS popup) | bare `<select>` |
-| `EmptyState` | empty Jobs/Accuracy/etc. | ad-hoc empty UIs |
-| `ExpandChevron` | collapse/expand (right = collapsed, down = open) | inverted chevrons |
+| Module          | Use for                                          | Native forbidden          |
+| --------------- | ------------------------------------------------ | ------------------------- |
+| `Checkbox`      | boolean fields                                   | `<input type="checkbox">` |
+| `Radio`         | exclusive choices                                | `<input type="radio">`    |
+| `Select`        | dropdowns (custom listbox, **not** OS popup)     | bare `<select>`           |
+| `EmptyState`    | empty Jobs/Accuracy/etc.                         | ad-hoc empty UIs          |
+| `ExpandChevron` | collapse/expand (right = collapsed, down = open) | inverted chevrons         |
 
 ## Shell modules
 

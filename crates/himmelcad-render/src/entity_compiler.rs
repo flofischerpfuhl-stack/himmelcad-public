@@ -1983,7 +1983,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolved_alignment_slope_compiles_as_its_own_mesh_pick_proxy() {
-        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder();
+        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder().await;
         let Some((device, queue)) = test_device().await else {
             return;
         };
@@ -2204,7 +2204,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn mixed_height_curve_compiles_with_explicit_view_plane_on_real_gpu() {
-        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder();
+        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder().await;
         let Some((device, queue)) = test_device().await else {
             return;
         };

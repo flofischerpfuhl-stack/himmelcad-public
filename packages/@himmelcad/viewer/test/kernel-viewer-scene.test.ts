@@ -135,3 +135,136 @@ test('device recovery replays only live canonical entities and keeps handles bou
   kept.setVisible(true);
   assert.deepEqual(newCalls.at(-1), ['visible', 'kept', true]);
 });
+
+test('plan-only entities prewarm before reveal and stay hidden in 3D', async () => {
+  const calls: unknown[][] = [];
+  const viewer = {
+    publishCanonicalRepresentations(): unknown {
+      calls.push(['load']);
+      return { entities: 1, slots: 1, proxies: 1, generation: 1, bindings: [] };
+    },
+    setEntityVisibility(entityId: string, visible: boolean): number {
+      calls.push(['visible', entityId, visible]);
+      return 1;
+    },
+  } as unknown as WgpuKernelViewer;
+  const scene = new KernelViewerScene(viewer, {} as KernelStreamingDriver);
+  scene.loadCanonical([
+    {
+      admission: { entity: { id: 'plan-annotation' } },
+    } as unknown as KernelCanonicalRenderAdmission,
+  ]);
+  let prewarmed = false;
+  let prewarmCalls = 0;
+  scene.setEntityViewPolicy('plan-annotation', {
+    availability: 'planOnly',
+    prewarm: async () => {
+      prewarmCalls += 1;
+      await Promise.resolve();
+      prewarmed = true;
+    },
+  });
+
+  assert.deepEqual(calls.at(-1), ['visible', 'plan-annotation', false]);
+  await Promise.all([scene.prepareViewMode('2d'), scene.prepareViewMode('2.5d')]);
+  assert.equal(prewarmed, true);
+  assert.equal(prewarmCalls, 1);
+  scene.commitViewMode('2d');
+  assert.deepEqual(calls.at(-1), ['visible', 'plan-annotation', true]);
+
+  const callsBeforeSemanticSwitch = calls.length;
+  await scene.prepareViewMode('2.5d');
+  scene.commitViewMode('2.5d');
+  assert.equal(calls.length, callsBeforeSemanticSwitch);
+  assert.equal(calls.filter((call) => call[0] === 'load').length, 1);
+  scene.commitViewMode('3d');
+  assert.deepEqual(calls.at(-1), ['visible', 'plan-annotation', false]);
+});
+
+test('canonical support positions with missing height are admitted only to plan modes', () => {
+  const calls: unknown[][] = [];
+  const viewer = {
+    publishCanonicalRepresentations(): unknown {
+      calls.push(['load']);
+      return { entities: 2, slots: 2, proxies: 2, generation: 1, bindings: [] };
+    },
+    setEntityVisibility(entityId: string, visible: boolean): number {
+      calls.push(['visible', entityId, visible]);
+      return 1;
+    },
+  } as unknown as WgpuKernelViewer;
+  const scene = new KernelViewerScene(viewer, {} as KernelStreamingDriver);
+
+  scene.loadCanonical([
+    {
+      admission: {
+        entity: { id: 'heightless-line' },
+        resolvedGeometry: {
+          kind: 'curve',
+          curve: {
+            kind: 'lineSegment',
+            start: { x: 10, y: 20, z: null },
+            end: { x: 30, y: 40, z: 12 },
+          },
+        },
+      },
+    } as unknown as KernelCanonicalRenderAdmission,
+    {
+      admission: {
+        entity: { id: 'spatial-line' },
+        resolvedGeometry: {
+          kind: 'curve',
+          curve: {
+            kind: 'lineSegment',
+            start: { x: 10, y: 20, z: 11 },
+            end: { x: 30, y: 40, z: 12 },
+          },
+        },
+      },
+    } as unknown as KernelCanonicalRenderAdmission,
+  ]);
+
+  assert.equal(scene.entityHasKnownSourceHeight('heightless-line'), false);
+  assert.equal(scene.entityHasKnownSourceHeight('spatial-line'), true);
+  assert.deepEqual(calls, [['load'], ['visible', 'heightless-line', false]]);
+
+  scene.commitViewMode('2.5d');
+  assert.deepEqual(calls.at(-1), ['visible', 'heightless-line', true]);
+});
+
+test('prepared plan-only hierarchy is hidden before its first requested frame', () => {
+  const calls: unknown[][] = [];
+  const viewer = {
+    registerPreparedDatasetAndPublishCanonicalRepresentations(): unknown {
+      calls.push(['load']);
+      return { entities: 1, slots: 1, proxies: 1, generation: 1, bindings: [] };
+    },
+    setEntityVisibility(entityId: string, visible: boolean): number {
+      calls.push(['visible', entityId, visible]);
+      return 1;
+    },
+  } as unknown as WgpuKernelViewer;
+  const scene = new KernelViewerScene(viewer, {} as KernelStreamingDriver, () => {
+    calls.push(['frame']);
+  });
+
+  scene.loadPreparedHierarchy({
+    datasetId: 'ortho-dataset',
+    formatId: 'himmelcad-prepared-hierarchy@1',
+    manifestUri: 'project://ortho/manifest.json',
+    manifestBytes: new Uint8Array(),
+    admissions: [
+      {
+        admission: {
+          entity: { id: 'ortho' },
+          resolvedGeometry: { kind: 'rasterImage' },
+        },
+      } as unknown as KernelCanonicalRenderAdmission,
+    ],
+    viewPolicies: {
+      ortho: { availability: 'planOnly', sourceHeight: 'unknown' },
+    },
+  });
+
+  assert.deepEqual(calls, [['load'], ['visible', 'ortho', false], ['frame']]);
+});

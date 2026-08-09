@@ -23,6 +23,8 @@ extraResources:
     to: THIRD_PARTY_NOTICES.md
   - from: ../../target/release/himmelcad-sidecar
     to: himmelcad-sidecar
+  - from: ../../.build/automation-runtime/linux-x64
+    to: automation-runtime/linux-x64
   - from: ../../vendor/potreeconverter/linux-x64
     to: vendor/potreeconverter/linux-x64
 linux:

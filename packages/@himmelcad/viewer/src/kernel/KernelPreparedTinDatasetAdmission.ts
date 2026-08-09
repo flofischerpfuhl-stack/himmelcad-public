@@ -24,7 +24,7 @@ export interface KernelPreparedTinDatasetAdmission {
   readonly style?: KernelRenderStyle;
 }
 
-export interface KernelPreparedTinDatasetResult extends KernelPreparedMeshDatasetResult {}
+export type KernelPreparedTinDatasetResult = KernelPreparedMeshDatasetResult;
 
 interface PreparedTinAdmissionTarget {
   geometryObjectContentHash(geometry: CanonicalRepresentationAdmission['resolvedGeometry']): string;

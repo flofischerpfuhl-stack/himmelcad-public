@@ -31,4 +31,5 @@ export { EmptyState } from './EmptyState.js';
 export type { EmptyStateProps } from './EmptyState.js';
 export { CrsTransformPair } from './CrsTransformPair.js';
 export type { CrsTransformPairProps } from './CrsTransformPair.js';
-
+export { ImportRegistrationWizard } from './ImportRegistrationWizard.js';
+export type { ImportRegistrationWizardProps } from './ImportRegistrationWizard.js';

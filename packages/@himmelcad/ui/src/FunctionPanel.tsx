@@ -25,6 +25,8 @@ export function FunctionPanel({
   onActiveTabChange,
 }: FunctionPanelProps): JSX.Element {
   const collapseRight = useLayoutStore((s) => s.toggleRightPanel);
+  const openFunctionIds = useLayoutStore((s) => s.openFunctionIds);
+  const activateFunction = useLayoutStore((s) => s.activateFunction);
   const collapseButton = (
     <button
       type="button"
@@ -37,8 +39,9 @@ export function FunctionPanel({
     </button>
   );
 
-  const functionAvailable = activeFunctionId != null || children != null;
-  const propertiesAvailable = properties != null;
+  const functionAvailable =
+    openFunctionIds.length > 0 || activeFunctionId != null || children != null;
+  const propertiesAvailable = true;
   const selectedTab =
     activeTab === 'properties' && propertiesAvailable
       ? 'properties'
@@ -48,61 +51,80 @@ export function FunctionPanel({
           ? 'properties'
           : 'function';
 
-  if (!functionAvailable && !propertiesAvailable) {
-    return (
-      <div className={styles.root}>
-        <div className={styles.header}>
-          <IslandTabs
-            ariaLabel="Right panel"
-            value="function"
-            onChange={() => undefined}
-            items={[{ id: 'function', label: 'Function', disabled: true }]}
-          />
-          {collapseButton}
-        </div>
-        <div className={styles.islandBody}>
-          <div className={styles.empty}>
-            <Settings2 size={28} strokeWidth={1.4} color="var(--hc-fg-subtle)" />
-            <div className={styles.emptyTitle}>No active function</div>
-            <div className={styles.emptyHint}>
-              Activate a function from the ribbon. Its parameters appear here.
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const functionIds =
+    openFunctionIds.length > 0 ? openFunctionIds : activeFunctionId ? [activeFunctionId] : [];
+  const selectedId =
+    selectedTab === 'properties' || activeFunctionId === null
+      ? 'properties'
+      : `function:${activeFunctionId}`;
   return (
     <div className={styles.root}>
       <div className={styles.header}>
         <IslandTabs
           ariaLabel="Right panel"
-          value={selectedTab}
-          onChange={(id) => onActiveTabChange?.(id as 'function' | 'properties')}
+          value={selectedId}
+          onChange={(id) => {
+            if (id === 'properties') {
+              onActiveTabChange?.('properties');
+              return;
+            }
+            const functionId = id.slice('function:'.length);
+            activateFunction(functionId);
+            onActiveTabChange?.('function');
+          }}
           items={[
-            {
-              id: 'function',
-              label: 'Function',
-              disabled: !functionAvailable,
-              showDot: Boolean(activeFunctionId && selectedTab !== 'function'),
-            },
             {
               id: 'properties',
               label: 'Properties',
               disabled: !propertiesAvailable,
             },
+            ...functionIds.map((id) => ({
+              id: `function:${id}`,
+              label: id === activeFunctionId ? (title ?? functionLabel(id)) : functionLabel(id),
+              showDot: Boolean(id === activeFunctionId && selectedTab === 'properties'),
+            })),
           ]}
         />
         {collapseButton}
       </div>
       <div className={styles.islandBody}>
-        <div className={styles.contextName} title={selectedTab === 'function' ? title : propertiesTitle}>
+        <div
+          className={styles.contextName}
+          title={selectedTab === 'function' ? title : propertiesTitle}
+        >
           {selectedTab === 'function'
-            ? title ?? activeFunctionId ?? 'Function'
-            : propertiesTitle ?? 'Selection'}
+            ? (title ?? activeFunctionId ?? 'Function')
+            : (propertiesTitle ?? 'Selection')}
         </div>
-        <div className={styles.body}>{selectedTab === 'function' ? children : properties}</div>
+        <div className={styles.body}>
+          {selectedTab === 'function' ? (
+            children
+          ) : properties != null ? (
+            properties
+          ) : (
+            <div className={styles.empty}>
+              <Settings2 size={28} strokeWidth={1.4} color="var(--hc-fg-subtle)" />
+              <div className={styles.emptyTitle}>No selection</div>
+              <div className={styles.emptyHint}>Select entities to inspect their properties.</div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
+}
+
+function functionLabel(id: string): string {
+  const parts = id.split(/[._:-]+/).filter(Boolean);
+  const appNamespaces = new Set([
+    'view',
+    'import',
+    'output',
+    'select',
+    'inspect',
+    'segment',
+    'project',
+  ]);
+  const visible = parts.length > 1 && appNamespaces.has(parts[0]!) ? parts.slice(1) : parts;
+  return visible.map((part) => part[0]?.toUpperCase() + part.slice(1)).join(' ');
 }

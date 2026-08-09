@@ -92,7 +92,18 @@ export class PointOctree {
     const bounds = boundingCube(positions);
     const nodes: OctreeNode[] = [];
     if (n > 0) {
-      buildRecurse(positions, indices, nodes, 0, n, bounds.min, bounds.max, 0, leafCapacity, maxDepth);
+      buildRecurse(
+        positions,
+        indices,
+        nodes,
+        0,
+        n,
+        bounds.min,
+        bounds.max,
+        0,
+        leafCapacity,
+        maxDepth,
+      );
     } else {
       nodes.push({
         boundsMin: bounds.min,
@@ -318,7 +329,14 @@ function buildRecurse(
   for (let i = lo; i < hi; i++) {
     const pi = indices[i] ?? 0;
     const base = pi * 3;
-    const o = octantIndex(positions[base] ?? 0, positions[base + 1] ?? 0, positions[base + 2] ?? 0, cx, cy, cz);
+    const o = octantIndex(
+      positions[base] ?? 0,
+      positions[base + 1] ?? 0,
+      positions[base + 2] ?? 0,
+      cx,
+      cy,
+      cz,
+    );
     counts[o] = (counts[o] ?? 0) + 1;
   }
   const starts = new Uint32Array(8);
@@ -332,7 +350,14 @@ function buildRecurse(
   for (let i = lo; i < hi; i++) {
     const pi = indices[i] ?? 0;
     const base = pi * 3;
-    const o = octantIndex(positions[base] ?? 0, positions[base + 1] ?? 0, positions[base + 2] ?? 0, cx, cy, cz);
+    const o = octantIndex(
+      positions[base] ?? 0,
+      positions[base + 1] ?? 0,
+      positions[base + 2] ?? 0,
+      cx,
+      cy,
+      cz,
+    );
     const dst = (cursors[o] ?? 0) - rangeStart;
     cursors[o] = (cursors[o] ?? 0) + 1;
     scratch[dst] = pi;

@@ -1,4 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { AgentHarnessHostTransport } from '@himmelcad/agent/src/transport.js';
+import type { ProviderCredentialRendererTransport } from '@himmelcad/agent/src/providerCredentials.js';
 
 export interface GcpCsvImportDefaults {
   delimiter: string;
@@ -22,6 +24,23 @@ export interface ProjectArchiveOperationRequest {
   progressKey: string;
 }
 
+export interface StagedResidencyMaterialization {
+  readonly schemaVersion: 1;
+  readonly sessionId: string;
+  readonly datasets: readonly {
+    readonly datasetId: string;
+    readonly formatId: string;
+    readonly entityId: string;
+    readonly representationSlot: string;
+    readonly metadataUrl: string;
+    readonly artifacts: readonly {
+      readonly relativePath: string;
+      readonly resourceId: string;
+      readonly url: string;
+    }[];
+  }[];
+}
+
 export interface PhotolabDesktopApi {
   readonly version: string;
   readonly platform: NodeJS.Platform;
@@ -36,6 +55,20 @@ export interface PhotolabDesktopApi {
     status: () => Promise<boolean>;
     call: <T = unknown>(method: string, params?: unknown) => Promise<T>;
     onStderr: (cb: (line: string) => void) => () => void;
+  };
+  readonly agentHarness: AgentHarnessHostTransport;
+  readonly providerCredentials: ProviderCredentialRendererTransport;
+  readonly automationViewHost: {
+    register: (
+      handler: (method: string, params: unknown) => unknown | Promise<unknown>,
+    ) => () => void;
+  };
+  readonly externalImport: {
+    projectRoot: () => Promise<string>;
+    selectFiles: (extensions: readonly string[]) => Promise<string[]>;
+    materialize: (sessionId: string) => Promise<StagedResidencyMaterialization>;
+    revoke: (sessionId: string) => Promise<boolean>;
+    residency: <T = unknown>() => Promise<T>;
   };
   readonly preferences: {
     readonly gcpCsv: {
@@ -57,6 +90,9 @@ export interface PhotolabDesktopApi {
   };
   readonly himmelcap: {
     selectFile: () => Promise<string | null>;
+  };
+  readonly capture: {
+    selectVideo: () => Promise<string | null>;
   };
   readonly grids: {
     select: {
@@ -174,6 +210,71 @@ const api: PhotolabDesktopApi = {
       return () => ipcRenderer.off('sidecar:stderr', listener);
     },
   },
+  agentHarness: {
+    request: (request) => ipcRenderer.invoke('automation:agent:request', request),
+    subscribe: (sessionId, onPayload) => {
+      const listener = (
+        _event: unknown,
+        message: { readonly sessionId?: unknown; readonly payload?: unknown },
+      ): void => {
+        if (message?.sessionId === sessionId) onPayload(message.payload);
+      };
+      ipcRenderer.on('automation:agent:event', listener);
+      void ipcRenderer.invoke('automation:agent:subscribe', sessionId);
+      return () => {
+        ipcRenderer.off('automation:agent:event', listener);
+        void ipcRenderer.invoke('automation:agent:unsubscribe', sessionId);
+      };
+    },
+    subscribeProductApprovals: (onRequest) => {
+      const listener = (_event: unknown, request: Parameters<typeof onRequest>[0]): void =>
+        onRequest(request);
+      ipcRenderer.on('automation:confirmation-request', listener);
+      return () => ipcRenderer.off('automation:confirmation-request', listener);
+    },
+    respondProductApproval: async (requestId, decision) => {
+      ipcRenderer.send('automation:confirmation-response', { requestId, decision });
+    },
+  },
+  providerCredentials: {
+    status: (provider) => ipcRenderer.invoke('automation:provider-credentials:status', provider),
+    replace: (request) => ipcRenderer.invoke('automation:provider-credentials:replace', request),
+    clearSession: (provider) =>
+      ipcRenderer.invoke('automation:provider-credentials:clear-session', provider),
+    delete: (provider) => ipcRenderer.invoke('automation:provider-credentials:delete', provider),
+  },
+  automationViewHost: {
+    register: (handler) => {
+      const listener = (
+        _event: unknown,
+        message: {
+          readonly requestId?: unknown;
+          readonly method?: unknown;
+          readonly params?: unknown;
+        },
+      ): void => {
+        if (typeof message?.requestId !== 'string' || typeof message.method !== 'string') return;
+        void Promise.resolve(handler(message.method, message.params)).then(
+          (result) =>
+            ipcRenderer.send('automation:view-response', { requestId: message.requestId, result }),
+          (error: unknown) =>
+            ipcRenderer.send('automation:view-response', {
+              requestId: message.requestId,
+              error: { message: error instanceof Error ? error.message : String(error) },
+            }),
+        );
+      };
+      ipcRenderer.on('automation:view-request', listener);
+      return () => ipcRenderer.off('automation:view-request', listener);
+    },
+  },
+  externalImport: {
+    projectRoot: () => ipcRenderer.invoke('external-import:project-root'),
+    selectFiles: (extensions) => ipcRenderer.invoke('external-import:select', extensions),
+    materialize: (sessionId) => ipcRenderer.invoke('registration-staged:materialize', sessionId),
+    revoke: (sessionId) => ipcRenderer.invoke('registration-staged:revoke', sessionId),
+    residency: () => ipcRenderer.invoke('external-import:residency'),
+  },
   preferences: {
     gcpCsv: {
       get: () => ipcRenderer.invoke('preferences:gcp-csv:get'),
@@ -195,6 +296,9 @@ const api: PhotolabDesktopApi = {
   },
   himmelcap: {
     selectFile: () => ipcRenderer.invoke('himmelcap:select-file'),
+  },
+  capture: {
+    selectVideo: () => ipcRenderer.invoke('capture:select-video'),
   },
   grids: {
     select: (kindOrProgressKey?: string, progressKey?: string) =>

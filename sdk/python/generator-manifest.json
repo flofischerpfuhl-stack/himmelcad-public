@@ -1,0 +1,28 @@
+{
+  "contractInputs": {
+    "crates/himmelcad-core/src/app_protocol.rs": "4e9b5febc3b11c8f9bc131c74d8c49c89c8ece0ee9364988120ef67c1d5c0eed",
+    "crates/himmelcad-core/src/canonical_document.rs": "cb80db19b4ff45355c82c5b7bb823df727bd96955a8b8a92720a3421bf316fd7",
+    "packages/@himmelcad/app/src/canonicalProtocol.ts": "976a73b1c0a1be7b22e37986800579b21ae5f472e27816b1729b751b4906644a",
+    "packages/@himmelcad/app/src/protocol.ts": "fdb7bbc6460ec599472b707c9c14ac31983021ba87888a5dddf6170124241ba7",
+    "packages/@himmelcad/app/src/view.ts": "d4cac6e0f5d4ddd6971c3a41e7b7e8390dbb4b375a83b80fb9f6dedf78385137",
+    "packages/@himmelcad/data/src/generated/CanonicalEntity.ts": "162c7d0dbc5809ced08cc631310ef4ba0615d7429159fe8ee32635c63a21eb62",
+    "packages/@himmelcad/data/src/generated/CanonicalEntityEdit.ts": "6dee4ee7c0011222c10b90c1b88b74bbf52e28e125e6b87fd2707b59311cf52d",
+    "packages/@himmelcad/data/src/generated/CanonicalEntityMutation.ts": "749a5dab2a578ab99a655d9426ac10246f6cb08d7ec97d087f5e7310f214b77f",
+    "schemas/automation/fixtures/automation-wire-v1.json": "0861944bfcfd302e1345c5ff3b1c8537de3fdefd9cc23fabca913bb984701f02"
+  },
+  "generatorSha256": "3b01f5308ab727255f11a0b299f788c84f3a87a1c066558cd60d8dc27e9a9e04",
+  "generatorVersion": "1.0.0",
+  "minimumPython": "3.12",
+  "outputs": {
+    "README.md": "bd9aeb35d1f5b8d2c0e1c76303ac10c0877619e718034ddf3ab57b3ce92cb9dc",
+    "pyproject.toml": "75fd998505ffacbf590e30efbca67d7d24dd73a96ecadcd9a05fdfa65aa473bc",
+    "src/himmelcad/__init__.py": "968a2d64774ce4c30171897c9f7e1c9d2fe4bc2ef82b6658850ce49dc11361e1",
+    "src/himmelcad/client.py": "e6b360c5e1a34f7ee8ddc34b195dec55601b05994acf21d440e0cd060e974ba6",
+    "src/himmelcad/errors.py": "36c56157ef4bedb312d2280d5d465cd3f011a2876dbe70d9c862920084ad117a",
+    "src/himmelcad/leases.py": "4ba4f4a0371236b1fa9b213ced5c8955fffaf70e8341d94dd247ffd7b9cc6069",
+    "src/himmelcad/models.py": "c2f13afaa953e53cb8996f4b9e6334e7dcf69a1548efbb8ea1749d38fa9fc1a0",
+    "src/himmelcad/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "schemaId": "hcad.automation-schema@1",
+  "schemaSha256": "cbc5fc448da6411a971adddb1aafcf282da01b846c2906414abddaa82af1219c"
+}

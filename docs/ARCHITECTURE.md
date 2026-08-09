@@ -188,6 +188,9 @@ Internally, HimmelCAD uses kartesische coordinates only:
   integration only,
 - no implicit reprojection, no implicit NTv2 grids, no implicit scale correction.
 
+ADR 0023 also permits a first-class local metric project frame: metres and
+correct relative scale do not imply a CRS, map origin, north or gravity.
+
 If imported files are far apart, the app may warn and later offer an explicit
 transform workflow. It must not silently change coordinates.
 
@@ -310,3 +313,5 @@ Python scripting uses a shared out-of-process scripting sidecar plus SDK. It
 must use the same command/entity contracts as the UI. Direct mutation of project
 state from scripts would break undo/redo, ChronoGit and replay. Heavy Python
 compute belongs in a sidecar/process boundary, not in the renderer.
+The versioned protocol, bulk-data leases, capability model and harness boundary
+are defined by ADR 0024.

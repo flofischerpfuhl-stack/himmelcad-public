@@ -1,14 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 
@@ -74,7 +67,10 @@ replace('Converter/libs/laszip/CMakeLists.txt', [
   ['add_library(laszip SHARED ${source_files})', 'add_library(laszip STATIC ${source_files})'],
 ]);
 replace('Converter/modules/unsuck/unsuck.hpp', [
-  ['constexpr auto fseek_64_all_platforms = _fseeki64;', 'inline auto fseek_64_all_platforms = _fseeki64;'],
+  [
+    'constexpr auto fseek_64_all_platforms = _fseeki64;',
+    'inline auto fseek_64_all_platforms = _fseeki64;',
+  ],
 ]);
 replace('Converter/modules/unsuck/unsuck_platform_specific.cpp', [
   ['#include "TCHAR.h"', '#include "tchar.h"'],
@@ -109,9 +105,10 @@ run('cmake', ['--build', build, '--parallel', process.env.HIMMELCAD_BUILD_JOBS ?
 
 const binary = join(build, 'PotreeConverter.exe');
 if (!existsSync(binary)) throw new Error(`PotreeConverter output is missing: ${binary}`);
-const imports = execFileSync(objdump, ['-p', binary], { encoding: 'utf8' })
-  .match(/DLL Name:\s*([^\s]+)/g)
-  ?.map((line) => line.replace(/^.*DLL Name:\s*/, '')) ?? [];
+const imports =
+  execFileSync(objdump, ['-p', binary], { encoding: 'utf8' })
+    .match(/DLL Name:\s*([^\s]+)/g)
+    ?.map((line) => line.replace(/^.*DLL Name:\s*/, '')) ?? [];
 const unexpected = imports.find(
   (name) =>
     !/^(?:api-ms-win-|ext-ms-win-)|^(?:kernel32|kernelbase|ntdll|ucrtbase)\.dll$/i.test(name),

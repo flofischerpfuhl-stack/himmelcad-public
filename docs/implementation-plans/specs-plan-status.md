@@ -2,6 +2,12 @@
 
 Started after review defaults (2026-07-18).
 
+Rebased after owner review (2026-07-19): the plan prototype is
+**Excalidraw-first**. Excalidraw remains the primary sheet interaction engine;
+HimmelCAD supplies paper units, multi-sheet metadata, model-view descriptors,
+templates and deterministic exports around it. See
+`docs/PROGRAM-MILESTONES-2026-07-19.md`.
+
 ## Independence
 
 Neither feature is wired to HimmelCAD core entities, layers, or the render viewer yet.
@@ -21,7 +27,8 @@ Both are Builder subtools (task islands), English UI, local persistence.
 ## Plan (`@himmelcad/plan` + Excalidraw)
 
 - **Not** infinite canvas: A0–A4, Letter, Tabloid, Custom mm; portrait/landscape
-- Excalidraw for draw/text/shapes/images (npm 0.18 for runtime)
+- Excalidraw for the complete PowerPoint-like sheet interaction: selection,
+  draw/text/shapes/images, grouping, transforms, snapping and responsive canvas
 - **Source fork** tree: `packages/excalidraw-plan` (v0.18.0) + `HCAD_FORK.md`
 - Group → local **library** (insert later)
 - No model/view import; no dimensions/point labels (view domain)
@@ -30,7 +37,10 @@ Both are Builder subtools (task islands), English UI, local persistence.
 
 ## Next (when you return)
 
-1. Native paper bounds inside the Excalidraw fork (disable infinite scroll)
-2. Better multi-select group + snap guides
-3. Spec attribute editor UI for free-form key/value
-4. Optional later: bind drawFolder to model tree
+1. Add a thin `PlanDocument` wrapper with physical paper and multi-sheet state
+   while keeping Excalidraw scene coordinates and interactions intact
+2. Add paper bounds, page navigation and export clipping around the canvas
+3. Build frame/title-block/stamp libraries as ordinary selectable Excalidraw
+   groups plus typed HimmelCAD metadata
+4. Add model-view descriptors and deterministic PDF/SVG/image export
+5. Add the Spec attribute editor and later bind `drawFolder` to the model tree

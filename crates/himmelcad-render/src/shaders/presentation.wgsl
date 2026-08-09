@@ -32,6 +32,13 @@ fn fragment_encoded(@builtin(position) position: vec4<f32>) -> @location(0) vec4
 }
 
 @fragment
+fn fragment_encoded_straight_alpha(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let linear = textureLoad(linear_frame, vec2<i32>(position.xy), 0);
+    let straight = select(vec3<f32>(0.0), linear.rgb / max(linear.a, 1.0e-6), linear.a > 1.0e-6);
+    return vec4<f32>(linear_to_srgb(straight), linear.a);
+}
+
+@fragment
 fn fragment_linear(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     return textureLoad(linear_frame, vec2<i32>(position.xy), 0);
 }

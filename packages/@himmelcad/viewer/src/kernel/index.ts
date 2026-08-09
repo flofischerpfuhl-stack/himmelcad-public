@@ -23,10 +23,33 @@ export type {
   KernelLocalSectionDepth,
   KernelLocalSectionView,
 } from './KernelLocalSectionView.js';
+export {
+  assertViewingBox,
+  moveViewingBox,
+  placeViewingBoxCenter,
+  resizeViewingBox,
+  rotateViewingBox,
+  setViewingBoxMode,
+  viewingBoxAxes,
+  viewingBoxClipVolume,
+  viewingBoxFromViewport,
+} from './KernelViewingBox.js';
+export type {
+  KernelViewingBoxAxis,
+  KernelViewingBoxMode,
+  KernelViewingBoxState,
+  KernelViewingBoxViewportSeed,
+} from './KernelViewingBox.js';
 export { KernelNavigationController } from './KernelNavigationController.js';
 export type {
   KernelNavigationCallbacks,
   KernelNavigationTarget,
+  KernelViewMode,
+} from './KernelNavigationController.js';
+export {
+  isPlanViewMode,
+  projectPickCandidateForViewMode,
+  projectTargetPlaneCoordinate,
 } from './KernelNavigationController.js';
 export type {
   KernelLoadControl,
@@ -51,9 +74,15 @@ export type {
   KernelStreamingRuntimeLimits,
 } from './KernelStreamingDriver.js';
 export { KernelViewerEntityHandle, KernelViewerScene } from './KernelViewerScene.js';
-export type { KernelPreparedHierarchyAdmission } from './KernelViewerScene.js';
+export type {
+  KernelEntityViewAvailability,
+  KernelEntityViewPolicy,
+  KernelPreparedHierarchyAdmission,
+} from './KernelViewerScene.js';
 export { KernelViewerSession, KernelViewerSessionError } from './KernelViewerSession.js';
 export type {
+  KernelPresentedFrameOptions,
+  KernelPresentedFrameOutcome,
   KernelViewerLoadOptions,
   KernelViewerSessionDiagnostics,
   KernelViewerSessionErrorCode,
@@ -97,6 +126,9 @@ export type {
   KernelRasterDepthDistanceMeasurement,
   KernelRasterDepthMeasurement,
   KernelRasterDepthPick,
+  KernelRgbaCaptureCapabilities,
+  KernelRgbaCaptureRequest,
+  KernelRgbaCaptureResult,
   KernelRenderStyle,
   KernelResolvedHardwarePolicy,
   KernelResourceBudget,

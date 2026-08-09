@@ -194,7 +194,9 @@ export function SpecsIsland({ onClose }: { onClose: () => void }): JSX.Element {
 
         <div className={styles.detail}>
           {!selected ? (
-            <div style={{ fontSize: 11, color: 'var(--hc-fg-muted)' }}>Select or add a specification.</div>
+            <div style={{ fontSize: 11, color: 'var(--hc-fg-muted)' }}>
+              Select or add a specification.
+            </div>
           ) : (
             <>
               <label className={styles.field}>
@@ -276,9 +278,9 @@ export function SpecsIsland({ onClose }: { onClose: () => void }): JSX.Element {
                     <div className={styles.kindHead}>
                       <strong>{kind}</strong>
                       <Checkbox
-                          label="Enabled"
-                          checked={on}
-                          onChange={(e) => toggleKind(kind, e.currentTarget.checked)}
+                        label="Enabled"
+                        checked={on}
+                        onChange={(e) => toggleKind(kind, e.currentTarget.checked)}
                       />
                     </div>
                     {on && kind === 'curve' && selected.presentations.curve?.kind === 'curve' && (
@@ -328,7 +330,11 @@ export function SpecsIsland({ onClose }: { onClose: () => void }): JSX.Element {
         <button type="button" className={styles.button} onClick={exportJson}>
           Export JSON
         </button>
-        <button type="button" className={`${styles.button} ${styles.buttonPrimary}`} onClick={onClose}>
+        <button
+          type="button"
+          className={`${styles.button} ${styles.buttonPrimary}`}
+          onClick={onClose}
+        >
           Close
         </button>
       </footer>

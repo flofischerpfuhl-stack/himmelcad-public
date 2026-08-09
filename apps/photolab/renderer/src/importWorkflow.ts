@@ -121,7 +121,8 @@ export function listWorkflows(kind: 'image' | 'gcp'): ImportWorkflow[] {
       .filter((item) => item && item.kind === kind && item.schemaVersion === 1)
       .map((item) => ({
         ...item,
-        description: 'description' in item && typeof item.description === 'string' ? item.description : '',
+        description:
+          'description' in item && typeof item.description === 'string' ? item.description : '',
       }))
       .sort((a, b) => (a.savedAt < b.savedAt ? 1 : -1));
   } catch {
@@ -129,7 +130,11 @@ export function listWorkflows(kind: 'image' | 'gcp'): ImportWorkflow[] {
   }
 }
 
-export function workflowNameExists(kind: 'image' | 'gcp', name: string, exceptId?: string): boolean {
+export function workflowNameExists(
+  kind: 'image' | 'gcp',
+  name: string,
+  exceptId?: string,
+): boolean {
   const normalized = name.trim().toLowerCase();
   if (!normalized) return false;
   return listWorkflows(kind).some(
@@ -137,7 +142,9 @@ export function workflowNameExists(kind: 'image' | 'gcp', name: string, exceptId
   );
 }
 
-export function saveWorkflow(workflow: ImportWorkflow): { ok: true } | { ok: false; error: string } {
+export function saveWorkflow(
+  workflow: ImportWorkflow,
+): { ok: true } | { ok: false; error: string } {
   const name = workflow.name.trim();
   if (!name) return { ok: false, error: 'Name is required.' };
   if (workflowNameExists(workflow.kind, name, workflow.id)) {
@@ -168,9 +175,7 @@ export function enrichGridPaths(
   selection: LocalGridSelection,
   projectDir: string | null,
 ): LocalGridSelection {
-  const absolutePath = isAbsolute(selection.localPath)
-    ? selection.localPath
-    : selection.localPath;
+  const absolutePath = isAbsolute(selection.localPath) ? selection.localPath : selection.localPath;
   const relativePath =
     projectDir && absolutePath.startsWith(projectDir)
       ? absolutePath.slice(projectDir.length).replace(/^[/\\]/, '')
@@ -231,10 +236,7 @@ export async function resolveStoredGrid(
   return null;
 }
 
-export function warningsForOperation(
-  warnings: readonly string[],
-  operationName: string,
-): string[] {
+export function warningsForOperation(warnings: readonly string[], operationName: string): string[] {
   const base = operationName.replace(/\s*·\s*local grid override\s*$/i, '').trim();
   return warnings.filter(
     (warning) =>

@@ -132,7 +132,8 @@ function ImageStatusView({
   const scopedImages = useMemo(() => {
     if (scope === 'all') return images;
     const members = new Set(
-      processingSets.find((processingSet) => processingSet.entityId === scope)?.cameraEntityIds ?? [],
+      processingSets.find((processingSet) => processingSet.entityId === scope)?.cameraEntityIds ??
+        [],
     );
     return images.filter((image) => members.has(image.entityId));
   }, [images, processingSets, scope]);
@@ -164,9 +165,8 @@ function ImageStatusView({
   const unavailable = [...latestByImage.values()].filter(
     (analysis) => analysis.outcome.status === 'unavailable',
   ).length;
-  const countStatus = (
-    tag: ProjectCameraImageRecord['metadata']['statusTags'][number],
-  ): number => scopedImages.filter((image) => image.metadata.statusTags.includes(tag)).length;
+  const countStatus = (tag: ProjectCameraImageRecord['metadata']['statusTags'][number]): number =>
+    scopedImages.filter((image) => image.metadata.statusTags.includes(tag)).length;
   const activeJob = [...jobs]
     .reverse()
     .find(
@@ -269,7 +269,11 @@ function ImageStatusView({
           ],
         ]}
       />
-      <List title="Per-image status and measurements" rows={rows} empty="No images in this scope." />
+      <List
+        title="Per-image status and measurements"
+        rows={rows}
+        empty="No images in this scope."
+      />
     </PanelRoot>
   );
 }

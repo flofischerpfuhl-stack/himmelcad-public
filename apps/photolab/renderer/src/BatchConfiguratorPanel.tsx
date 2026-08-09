@@ -703,10 +703,7 @@ function ToggleField({
 }): JSX.Element {
   return (
     <label className={styles.toggle}>
-      <Checkbox
-        checked={checked}
-        onChange={(event) => onChange(event.currentTarget.checked)}
-      />
+      <Checkbox checked={checked} onChange={(event) => onChange(event.currentTarget.checked)} />
       <span />
       <strong>{label}</strong>
     </label>

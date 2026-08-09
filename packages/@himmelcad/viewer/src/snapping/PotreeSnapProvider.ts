@@ -1,4 +1,12 @@
-import { Box3, BufferAttribute, PerspectiveCamera, type Points, Ray, Sphere, Vector3 } from 'three';
+import {
+  Box3,
+  type BufferAttribute,
+  PerspectiveCamera,
+  type Points,
+  type Ray,
+  Sphere,
+  Vector3,
+} from 'three';
 import type { PointCloudOctree, PointCloudOctreeNode, PickPoint } from '@himmelcad/three-loader';
 
 import type { EntityId, GeometryTargetRef, SnapResult } from '@himmelcad/data';
@@ -339,7 +347,7 @@ function encodePickCandidateId(layerId: string, hit: PickPoint): string {
 
 function estimateDepthHint(input: SnapQueryInput, camera: PerspectiveCamera): number {
   const prev = input.previous;
-  if (prev) {
+  if (prev && prev.position.z !== null) {
     PROJECTED_PREV.set(
       prev.position.x - input.sceneRenderOffset[0],
       prev.position.y - input.sceneRenderOffset[1],

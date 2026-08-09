@@ -107,9 +107,9 @@ impl MeshBounds {
     }
 
     fn include_point(&mut self, position: [f64; 3]) {
-        for axis in 0..3 {
-            self.minimum[axis] = self.minimum[axis].min(position[axis]);
-            self.maximum[axis] = self.maximum[axis].max(position[axis]);
+        for (axis, coordinate) in position.into_iter().enumerate() {
+            self.minimum[axis] = self.minimum[axis].min(coordinate);
+            self.maximum[axis] = self.maximum[axis].max(coordinate);
         }
     }
 

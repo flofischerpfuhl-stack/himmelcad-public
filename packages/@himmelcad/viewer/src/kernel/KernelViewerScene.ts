@@ -20,6 +20,18 @@ import type {
   KernelPreparedTopologyRegistration,
   WgpuKernelViewer,
 } from './WgpuKernelViewer.js';
+import { isPlanViewMode, type KernelViewMode } from './KernelNavigationController.js';
+
+export type KernelEntityViewAvailability = 'allModes' | 'planOnly';
+
+/** Presentation admission kept separate from the canonical entity envelope. */
+export interface KernelEntityViewPolicy {
+  readonly availability: KernelEntityViewAvailability;
+  /** Unknown height remains null even when 2.5D retains Source Z. */
+  readonly sourceHeight?: 'known' | 'unknown';
+  /** Resolves only when the entity can be revealed without a blank frame. */
+  readonly prewarm?: () => void | Promise<void>;
+}
 
 /** Generic prepared hierarchy admission used by raster and splat providers. */
 export interface KernelPreparedHierarchyAdmission {
@@ -29,6 +41,8 @@ export interface KernelPreparedHierarchyAdmission {
   readonly manifestBytes: Uint8Array;
   readonly admissions: readonly KernelCanonicalRenderAdmission[];
   readonly topology?: readonly KernelPreparedTopologyRegistration[];
+  /** View admission applied before the hierarchy's first renderable frame. */
+  readonly viewPolicies?: Readonly<Record<string, KernelEntityViewPolicy>>;
 }
 
 type KernelSceneReplayEntry =
@@ -89,6 +103,11 @@ export class KernelViewerScene {
   private streamingState: KernelStreamingDriver;
   private replayEntries: KernelSceneReplayEntry[] = [];
   private readonly visibility = new Map<string, boolean>();
+  private readonly viewPolicies = new Map<string, KernelEntityViewPolicy>();
+  private readonly inferredViewPolicies = new Set<string>();
+  private readonly planPrewarmed = new Set<string>();
+  private readonly planPrewarmPromises = new Map<string, Promise<void>>();
+  private viewMode: KernelViewMode = '3d';
   private recovering = false;
 
   constructor(
@@ -105,6 +124,7 @@ export class KernelViewerScene {
   ): readonly KernelViewerEntityHandle[] {
     this.assertMutable();
     this.viewerState.publishCanonicalRepresentations(admissions);
+    this.applyInferredViewPolicies(admissions);
     this.replaceReplayEntities(entityIdsForAdmissions(admissions), {
       kind: 'canonical',
       admissions: replaySnapshot(admissions),
@@ -127,6 +147,7 @@ export class KernelViewerScene {
       options.signal,
       options.onProgress,
     );
+    this.applyInferredViewPolicies([{ admission: input.admission }]);
     this.replaceReplayEntities([input.admission.entity.id], {
       kind: 'potree',
       input: replaySnapshot(input),
@@ -149,6 +170,7 @@ export class KernelViewerScene {
       options.signal,
       options.onProgress,
     );
+    this.applyInferredViewPolicies([{ admission: input.admission }]);
     this.replaceReplayEntities([input.admission.entity.id], {
       kind: 'preparedMesh',
       input: replaySnapshot(input),
@@ -171,6 +193,7 @@ export class KernelViewerScene {
       options.signal,
       options.onProgress,
     );
+    this.applyInferredViewPolicies([{ admission: input.admission }]);
     this.replaceReplayEntities([input.admission.entity.id], {
       kind: 'preparedTin',
       input: replaySnapshot(input),
@@ -184,6 +207,7 @@ export class KernelViewerScene {
     input: KernelPreparedHierarchyAdmission,
   ): readonly KernelViewerEntityHandle[] {
     this.assertMutable();
+    assertDeclaredViewPolicies(input.admissions, input.viewPolicies);
     this.viewerState.registerPreparedDatasetAndPublishCanonicalRepresentations(
       input.datasetId,
       input.formatId,
@@ -192,6 +216,8 @@ export class KernelViewerScene {
       input.admissions,
       input.topology,
     );
+    this.applyDeclaredViewPolicies(input.viewPolicies);
+    this.applyInferredViewPolicies(input.admissions);
     this.replaceReplayEntities(entityIdsForAdmissions(input.admissions), {
       kind: 'preparedHierarchy',
       input: replaySnapshot(input),
@@ -203,8 +229,84 @@ export class KernelViewerScene {
 
   setEntityVisibility(entityId: string, visible: boolean): void {
     this.assertMutable();
-    this.viewerState.setEntityVisibility(entityId, visible);
     this.visibility.set(entityId, visible);
+    this.viewerState.setEntityVisibility(entityId, this.effectiveVisibility(entityId));
+    this.requestFrame();
+  }
+
+  /** Registers plan-only admission without changing canonical geometry truth. */
+  setEntityViewPolicy(entityId: string, policy: KernelEntityViewPolicy): void {
+    this.assertMutable();
+    this.inferredViewPolicies.delete(entityId);
+    this.viewPolicies.set(entityId, policy);
+    this.planPrewarmed.delete(entityId);
+    this.planPrewarmPromises.delete(entityId);
+    this.viewerState.setEntityVisibility(entityId, this.effectiveVisibility(entityId));
+    this.requestFrame();
+  }
+
+  clearEntityViewPolicy(entityId: string): void {
+    this.assertMutable();
+    this.viewPolicies.delete(entityId);
+    this.inferredViewPolicies.delete(entityId);
+    this.planPrewarmed.delete(entityId);
+    this.planPrewarmPromises.delete(entityId);
+    this.viewerState.setEntityVisibility(entityId, this.effectiveVisibility(entityId));
+    this.requestFrame();
+  }
+
+  currentViewMode(): KernelViewMode {
+    return this.viewMode;
+  }
+
+  entityHasKnownSourceHeight(entityId: string): boolean {
+    return this.viewPolicies.get(entityId)?.sourceHeight !== 'unknown';
+  }
+
+  /** Prepares every hidden plan-only entity exactly once before reveal. */
+  async prepareViewMode(mode: KernelViewMode): Promise<void> {
+    this.assertMutable();
+    if (!isPlanViewMode(mode)) return;
+    const pending: Promise<void>[] = [];
+    for (const [entityId, policy] of this.viewPolicies) {
+      if (
+        policy.availability !== 'planOnly' ||
+        this.planPrewarmed.has(entityId) ||
+        policy.prewarm === undefined
+      ) {
+        continue;
+      }
+      const inFlight = this.planPrewarmPromises.get(entityId);
+      if (inFlight) {
+        pending.push(inFlight);
+        continue;
+      }
+      const prewarm = Promise.resolve(policy.prewarm())
+        .then(() => {
+          if (this.viewPolicies.get(entityId) === policy) this.planPrewarmed.add(entityId);
+        })
+        .finally(() => {
+          if (this.planPrewarmPromises.get(entityId) === prewarm) {
+            this.planPrewarmPromises.delete(entityId);
+          }
+        });
+      this.planPrewarmPromises.set(entityId, prewarm);
+      pending.push(prewarm);
+    }
+    await Promise.all(pending);
+  }
+
+  /** Atomically applies view-dependent visibility after preparation. */
+  commitViewMode(mode: KernelViewMode): void {
+    this.assertMutable();
+    if (mode === this.viewMode) return;
+    const sceneAvailabilityChanged = isPlanViewMode(mode) !== isPlanViewMode(this.viewMode);
+    this.viewMode = mode;
+    if (!sceneAvailabilityChanged) return;
+    const entityIds = new Set([...this.visibility.keys(), ...this.viewPolicies.keys()]);
+    for (const entityId of entityIds) {
+      this.viewerState.setEntityVisibility(entityId, this.effectiveVisibility(entityId));
+    }
     this.requestFrame();
   }
 
@@ -217,6 +319,10 @@ export class KernelViewerScene {
       this.streamingState.detachDataset(datasetId);
     this.removeReplayEntities(new Set([entityId]));
     this.visibility.delete(entityId);
+    this.viewPolicies.delete(entityId);
+    this.inferredViewPolicies.delete(entityId);
+    this.planPrewarmed.delete(entityId);
+    this.planPrewarmPromises.delete(entityId);
     this.requestFrame();
     return mutation;
   }
@@ -265,7 +371,9 @@ export class KernelViewerScene {
             break;
         }
       }
-      for (const [entityId, visible] of this.visibility) {
+      const visibleEntities = new Set([...this.visibility.keys(), ...this.viewPolicies.keys()]);
+      for (const entityId of visibleEntities) {
+        const visible = this.effectiveVisibility(entityId);
         if (!visible) viewer.setEntityVisibility(entityId, false);
       }
       options.restoreViewState?.();
@@ -318,6 +426,63 @@ export class KernelViewerScene {
   private assertMutable(): void {
     if (this.recovering) throw new Error('viewer scene is recovering its GPU device');
   }
+
+  /**
+   * A canonical Position with `z: null` is authored plan geometry, not a point
+   * on an arbitrary visible surface. Keep that source fact separate from the
+   * renderer's locked-plan presentation elevation.
+   */
+  private applyInferredViewPolicies(admissions: readonly KernelCanonicalRenderAdmission[]): void {
+    const unknownHeightByEntity = new Map<string, boolean>();
+    for (const item of admissions) {
+      const entityId = item.admission.entity.id;
+      unknownHeightByEntity.set(
+        entityId,
+        (unknownHeightByEntity.get(entityId) ?? false) ||
+          canonicalGeometryHasUnknownSourceHeight(item.admission.resolvedGeometry),
+      );
+    }
+
+    for (const [entityId, unknownHeight] of unknownHeightByEntity) {
+      let visibilityMayHaveChanged = false;
+      if (unknownHeight) {
+        if (!this.viewPolicies.has(entityId) || this.inferredViewPolicies.has(entityId)) {
+          this.viewPolicies.set(entityId, {
+            availability: 'planOnly',
+            sourceHeight: 'unknown',
+          });
+          this.inferredViewPolicies.add(entityId);
+          visibilityMayHaveChanged = true;
+        }
+      } else if (this.inferredViewPolicies.delete(entityId)) {
+        this.viewPolicies.delete(entityId);
+        visibilityMayHaveChanged = true;
+      }
+
+      if (visibilityMayHaveChanged) {
+        this.viewerState.setEntityVisibility(entityId, this.effectiveVisibility(entityId));
+      }
+    }
+  }
+
+  private applyDeclaredViewPolicies(
+    policies: Readonly<Record<string, KernelEntityViewPolicy>> | undefined,
+  ): void {
+    if (!policies) return;
+    for (const [entityId, policy] of Object.entries(policies)) {
+      this.viewPolicies.set(entityId, policy);
+      this.inferredViewPolicies.delete(entityId);
+      this.planPrewarmed.delete(entityId);
+      this.planPrewarmPromises.delete(entityId);
+      this.viewerState.setEntityVisibility(entityId, this.effectiveVisibility(entityId));
+    }
+  }
+
+  private effectiveVisibility(entityId: string): boolean {
+    const requested = this.visibility.get(entityId) ?? true;
+    const policy = this.viewPolicies.get(entityId);
+    return requested && (policy?.availability !== 'planOnly' || isPlanViewMode(this.viewMode));
+  }
 }
 
 function handlesForAdmissions(
@@ -340,6 +505,37 @@ function entityIdsForAdmissions(
   return new Set(admissions.map((item) => item.admission.entity.id));
 }
 
+function assertDeclaredViewPolicies(
+  admissions: readonly KernelCanonicalRenderAdmission[],
+  policies: Readonly<Record<string, KernelEntityViewPolicy>> | undefined,
+): void {
+  if (!policies) return;
+  const admittedEntities = entityIdsForAdmissions(admissions);
+  for (const entityId of Object.keys(policies)) {
+    if (!admittedEntities.has(entityId)) {
+      throw new Error(`view policy references entity ${entityId} outside its hierarchy admission`);
+    }
+  }
+}
+
 function replaySnapshot<T>(value: T): T {
   return structuredClone(value);
+}
+
+/** Only canonical Position uses nullable Z; Vector3 and presentation frames do not. */
+function canonicalGeometryHasUnknownSourceHeight(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(canonicalGeometryHasUnknownSourceHeight);
+  if (value === null || typeof value !== 'object') return false;
+  const record = value as Readonly<Record<string, unknown>>;
+  if (
+    Object.prototype.hasOwnProperty.call(record, 'x') &&
+    Object.prototype.hasOwnProperty.call(record, 'y') &&
+    Object.prototype.hasOwnProperty.call(record, 'z') &&
+    typeof record.x === 'number' &&
+    typeof record.y === 'number' &&
+    record.z === null
+  ) {
+    return true;
+  }
+  return Object.values(record).some(canonicalGeometryHasUnknownSourceHeight);
 }

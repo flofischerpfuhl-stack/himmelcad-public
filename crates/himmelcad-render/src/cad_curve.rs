@@ -188,6 +188,10 @@ pub fn build_cad_curve_batch(
 }
 
 /// Uploads an authored curve with an explicit physical-pixel line width.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "public upload API keeps the GPU context and authored curve parameters explicit"
+)]
 pub fn build_cad_curve_batch_with_width(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

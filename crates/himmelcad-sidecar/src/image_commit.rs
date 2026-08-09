@@ -9,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use himmelcad_core::entity::{EntityId, EntityKind, EntitySnapshot, Vec3, VisibilityState};
 use himmelcad_core::hash::ObjectHash;
+use himmelcad_core::photolab_capture::PhotolabSpatialReference;
 use himmelcad_core::photolab_crs::FrozenImportTransformation;
 use himmelcad_core::photolab_images::{DiscoveredPhoto, ProjectedPhotoReference};
 use himmelcad_core::photolab_jobs::CancellationToken;
@@ -40,7 +41,10 @@ pub struct ImageCommitItem {
 pub struct CommitImagesParams {
     pub operation_id: String,
     pub images: Vec<ImageCommitItem>,
-    pub transformation: FrozenImportTransformation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transformation: Option<FrozenImportTransformation>,
+    #[serde(default)]
+    pub local_metric: bool,
 }
 
 /// Cancellation request for one active image commit.
@@ -282,7 +286,7 @@ where
         manifest,
         &image_collection_id,
         params.images,
-        &params.transformation,
+        params.transformation.as_ref(),
         &mut is_cancelled,
         &mut progress,
     )?;
@@ -293,7 +297,7 @@ where
         &batch.indexed_items,
         &batch.prepared_by_hash,
         &batch.transformation_hash,
-        &params.transformation,
+        params.transformation.as_ref(),
     )?;
     check_cancelled(&mut is_cancelled)?;
     let mut published = publish_staged_objects(project_root, &staging.path, &batch.object_hashes)?;
@@ -339,13 +343,14 @@ where
     Ok(result)
 }
 
+#[allow(clippy::too_many_arguments)] // Atomic staging keeps all commit inputs explicit.
 fn stage_image_batch<C, P>(
     project_root: &Path,
     staging_root: &Path,
     manifest: &PhotolabProjectManifest,
     collection_id: &EntityId,
     images: Vec<ImageCommitItem>,
-    transformation: &FrozenImportTransformation,
+    transformation: Option<&FrozenImportTransformation>,
     is_cancelled: &mut C,
     progress: &mut P,
 ) -> Result<StagedImageBatch, ImageCommitError>
@@ -353,7 +358,16 @@ where
     C: FnMut() -> bool,
     P: FnMut(f64, &str),
 {
-    let transformation_bytes = serde_json::to_vec(transformation)?;
+    let transformation_bytes = if let Some(transformation) = transformation {
+        serde_json::to_vec(transformation)?
+    } else {
+        serde_json::to_vec(&serde_json::json!({
+            "schemaVersion": 1,
+            "kind": "localMetric",
+            "unit": "meter",
+            "axes": "rightHandedZUp"
+        }))?
+    };
     let transformation_hash = ObjectHash::of_bytes(&transformation_bytes);
     stage_bytes_object(
         project_root,
@@ -559,7 +573,15 @@ fn validate_request(params: &CommitImagesParams) -> Result<(), ImageCommitError>
             "at least one inspected image is required",
         ));
     }
-    validate_frozen_transformation(&params.transformation)?;
+    match (&params.transformation, params.local_metric) {
+        (Some(transformation), false) => validate_frozen_transformation(transformation)?,
+        (None, true) => {}
+        _ => {
+            return Err(ImageCommitError::InvalidRequest(
+                "choose exactly one image reference: transformation or localMetric",
+            ));
+        }
+    }
     for item in &params.images {
         if item.photo.source_path.trim().is_empty() || item.photo.byte_size == 0 {
             return Err(ImageCommitError::InvalidRequest(
@@ -716,27 +738,47 @@ fn prepare_manifest(
     indexed_items: &[(usize, ImageCommitItem)],
     prepared: &BTreeMap<String, PreparedImage>,
     transformation_hash: &ObjectHash,
-    transformation: &FrozenImportTransformation,
+    transformation: Option<&FrozenImportTransformation>,
 ) -> Result<ManifestPreparation, ImageCommitError> {
     let mut candidate = manifest.clone();
-    if let Some(reference_frame) = &candidate.reference_frame {
-        if reference_frame.target != transformation.target {
-            return Err(ImageCommitError::ProjectReferenceMismatch);
+    if let Some(transformation) = transformation {
+        candidate.spatial_reference = PhotolabSpatialReference::CrsBacked;
+        if let Some(reference_frame) = &candidate.reference_frame {
+            if reference_frame.target != transformation.target {
+                return Err(ImageCommitError::ProjectReferenceMismatch);
+            }
+        } else {
+            candidate.reference_frame = Some(ProjectReferenceFrame {
+                target: transformation.target.clone(),
+                established_by_transformation_sha256: transformation_hash.clone(),
+            });
+            if let Some(reference) = indexed_items
+                .iter()
+                .find_map(|(_, item)| item.projected_reference.as_ref())
+            {
+                candidate.render_offset = Vec3 {
+                    x: reference.easting,
+                    y: reference.northing,
+                    z: reference.transformed_height_meters.unwrap_or_default(),
+                };
+            }
         }
     } else {
-        candidate.reference_frame = Some(ProjectReferenceFrame {
-            target: transformation.target.clone(),
-            established_by_transformation_sha256: transformation_hash.clone(),
-        });
-        if let Some(reference) = indexed_items
-            .iter()
-            .find_map(|(_, item)| item.projected_reference.as_ref())
+        if candidate.reference_frame.is_some()
+            || !matches!(
+                candidate.spatial_reference,
+                PhotolabSpatialReference::LocalMetric { .. }
+            )
         {
-            candidate.render_offset = Vec3 {
-                x: reference.easting,
-                y: reference.northing,
-                z: reference.transformed_height_meters.unwrap_or_default(),
-            };
+            return Err(ImageCommitError::ProjectReferenceMismatch);
+        }
+        if indexed_items
+            .iter()
+            .any(|(_, item)| item.projected_reference.is_some())
+        {
+            return Err(ImageCommitError::InvalidRequest(
+                "local metric image imports cannot contain projected references",
+            ));
         }
     }
     let collection_before = candidate
@@ -1205,6 +1247,10 @@ mod tests {
                 byte_size: u64::try_from(bytes.len()).expect("fixture size"),
                 sha256: ObjectHash::of_bytes(bytes),
                 metadata: PhotoMetadata::default(),
+                capture_source: Default::default(),
+                decoder_capability: None,
+                position_prior: None,
+                derived_provenance: None,
                 duplicate_of: None,
             },
             projected_reference: None,
@@ -1216,7 +1262,8 @@ mod tests {
         CommitImagesParams {
             operation_id: operation_id.to_owned(),
             images,
-            transformation: frozen_transformation(),
+            transformation: Some(frozen_transformation()),
+            local_metric: false,
         }
     }
 
@@ -1288,6 +1335,38 @@ mod tests {
         assert_eq!(repeated.imported_entity_count, 0);
         assert_eq!(repeated.duplicate_count, 1);
         assert_eq!(camera_count(&manifest), 1);
+    }
+
+    #[test]
+    fn local_metric_images_commit_without_a_crs_or_projected_reference() {
+        let directory = TestDirectory::new("local-metric");
+        let bytes = b"ordinary phone image";
+        let source = write_source(&directory.0, "phone.jpg", bytes);
+        let mut manifest = manifest();
+        let params = CommitImagesParams {
+            operation_id: "local-metric".into(),
+            images: vec![inspected(&source, bytes)],
+            transformation: None,
+            local_metric: true,
+        };
+
+        let result = commit_images_with_cancel(&directory.0, &mut manifest, params, || false)
+            .expect("local metric image commit");
+
+        assert!(manifest.reference_frame.is_none());
+        assert!(matches!(
+            manifest.spatial_reference,
+            PhotolabSpatialReference::LocalMetric { .. }
+        ));
+        let reference: serde_json::Value = serde_json::from_slice(
+            &fs::read(object_path(
+                &directory.0,
+                &result.transformation_object_hash,
+            ))
+            .expect("local reference object"),
+        )
+        .expect("local reference JSON");
+        assert_eq!(reference["kind"], "localMetric");
     }
 
     #[test]
@@ -1402,6 +1481,10 @@ mod tests {
                 byte_size: 1,
                 sha256: ObjectHash::of_bytes(b"legacy-camera-source"),
                 metadata: PhotoMetadata::default(),
+                capture_source: Default::default(),
+                decoder_capability: None,
+                position_prior: None,
+                derived_provenance: None,
                 duplicate_of: None,
             },
             projected_reference: Some(ProjectedPhotoReference {

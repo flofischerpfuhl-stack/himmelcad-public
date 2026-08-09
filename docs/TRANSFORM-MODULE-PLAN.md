@@ -49,7 +49,7 @@ Das neue Modul **erweitert** das: von „Import-CRS-Entscheidung“ zu einem **a
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ UI / Import Wizard / Align-Review / Batch-Job               │
+│ Product-hosted interactive registration / Align review      │
 │  - Mode: getrennt Lage+Höhe | gemeinsame 3D | Hybrid        │
 │  - Pick-UI: gemeinsame Punkte, visueller Manipulator        │
 └──────────────────────────┬──────────────────────────────────┘
@@ -64,7 +64,7 @@ Das neue Modul **erweitert** das: von „Import-CRS-Entscheidung“ zu einem **a
 │  - PROJ pipelines (Lage, Höhe, compound)                    │
 │  - empirische Fit-Solver (Helmert/Affine/TPS/…)             │
 │  - ICP/GICP-Fine-Registration (Punktwolken)                 │
-│  - Site-Calibration-Importer (.cal / .dc / JobXML)          │
+│  - Expliziter Site-Cal-Text/JSON-Reader; opaque .dc failt   │
 │  - apply_stream: f64 XYZ in/out, batch, cancel, checkpoint  │
 └──────────────────────────┬──────────────────────────────────┘
                            │ PointStream API
@@ -74,6 +74,11 @@ Das neue Modul **erweitert** das: von „Import-CRS-Entscheidung“ zu einem **a
 │  photolab_product_adapter | gcp_adapter | camera_pose_adapter│
 └─────────────────────────────────────────────────────────────┘
 ```
+
+Der interaktive Pre-Commit-Lifecycle ist in ADR 0025 festgelegt. Ein
+unbeaufsichtigter Executor ist ein separater Consumer: Er erhält nur eine
+bereits eingefrorene `TransformSpec` und darf weder Pick-UI öffnen noch einen
+`NeedsUserInput`-Zustand erzeugen. Siehe ADR 0021.
 
 ### 2.2 Zentrale API (Skizze)
 
@@ -337,7 +342,7 @@ Nach Accept:
 
 ---
 
-## 5. UI/UX-Fluss (PhotoLab / Builder gemeinsam)
+## 5. Wiederverwendbare Registrierung, produktgehostete UI
 
 ```
 [1] Modus wählen: Getrennt | Gemeinsam 3D | Hybrid
@@ -360,6 +365,12 @@ Nach Accept:
 Temporärer Layer „Import (pre-transform)“ + Bestand. Pick-Modus: Punkt A im Bestand, Punkt A' im Import. Mindestanzahl je Modell. Snap: Vertex, GCP, Cloud-Punkt (octree pick), Mesh-Vertex.
 
 Design-System: Twin-Blöcke Höhe/Lage bleiben; darunter „Gemeinsame 3D“-Panel nur im Joint-Modus.
+
+Core, Solver, TransformSpec, Preview-Verträge und UI-Controls sind gemeinsam.
+Builder und PhotoLab hosten diese Controls in ihrem Produktkontext; es gibt
+keinen privaten Builder-Importkern und keinen interaktiven PhotoLab-Batchknoten.
+Eine gespeicherte Registrierungs-Recipe bewahrt Methode und Parameter, verlangt
+aber frische Picks, solange deren Inputs nicht neu aufgelöst wurden.
 
 ---
 
@@ -485,7 +496,10 @@ Design-System: Twin-Blöcke Höhe/Lage bleiben; darunter „Gemeinsame 3D“-Pan
 2. **Dürfen Nachbarschaftstrafos exportiert werden** (z. B. als dense displacement grid)?  
 3. **ICP-Abhängigkeit:** pure Rust vs. kleine C++/nalgebra-only Implementierung (Lizenz, Build)?  
 4. **Trimble .dc/.cal:** lohnt Reverse-Engineering in V1 oder nur kanonisch + CSV-Parameter?  
-5. **Builder vs PhotoLab:** gleiches Modul, getrennte Wizards oder ein „Transform Studio“-Fenster?  
+5. ~~**Builder vs PhotoLab:** gleiches Modul, getrennte Wizards oder ein „Transform Studio“-Fenster?~~
+   **Entschieden:** ein gemeinsamer Transform-/Registrierungsvertrag und
+   wiederverwendbare Controls, produktgehostete interaktive Abläufe; kein
+   privater Importkern.
 6. **Ground scale factor** als First-Class-Parameter der Site Cal?  
 
 ---

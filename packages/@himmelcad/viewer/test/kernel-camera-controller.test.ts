@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { KernelCameraController } from '../src/kernel/KernelCameraController.js';
-import type { KernelWorldPoint } from '../src/kernel/WgpuKernelViewer.js';
+import type { KernelWorldCamera, KernelWorldPoint } from '../src/kernel/WgpuKernelViewer.js';
 
 void test('kernel CAD orbit and zoom preserve the authored cursor pivot', () => {
   const controller = new KernelCameraController(1_600, 900);
@@ -44,11 +44,13 @@ void test('top-down mode produces a matched orthographic transition and blocks o
 
 void test('returning from top-down preserves the orthographic zoom scale', () => {
   const controller = new KernelCameraController(1_000, 500);
+  controller.orbit(0.73, -0.2);
   const entry = controller.worldCamera();
   assert.equal(entry.projection.kind, 'perspective');
   const initialDistance = distance(entry.eye, entry.target);
 
   controller.setLockedTopDown(true);
+  controller.panPixels(40, -25);
   controller.zoom(0.25);
   const topDown = controller.worldCamera();
   assert.equal(topDown.projection.kind, 'orthographic');
@@ -58,6 +60,10 @@ void test('returning from top-down preserves the orthographic zoom scale', () =>
   assert.equal(exit.from.projection.kind, 'orthographic');
   assert.equal(exit.to.projection.kind, 'perspective');
   assert.ok(Math.abs(distance(exit.to.eye, exit.to.target) - initialDistance * 0.25) < 1e-10);
+  assert.deepEqual(exit.to.target, exit.from.target);
+  assert.ok(Math.abs(exit.to.eye.x - exit.to.target.x) < 1e-10);
+  assert.ok(exit.to.eye.y < exit.to.target.y);
+  assert.notDeepEqual(exit.to.eye, entry.eye);
 
   if (exit.from.projection.kind === 'orthographic' && exit.to.projection.kind === 'perspective') {
     const perspectiveSpanAtTarget =
@@ -66,6 +72,26 @@ void test('returning from top-down preserves the orthographic zoom scale', () =>
       Math.tan(exit.to.projection.verticalFovRadians / 2);
     assert.ok(Math.abs(perspectiveSpanAtTarget - exit.from.projection.verticalSpan) < 1e-10);
   }
+});
+
+void test('a local section entered from plan restores that exact plan camera', () => {
+  const controller = new KernelCameraController(1_200, 800);
+  controller.frame({ x: 10, y: 20, z: 30 }, { x: 110, y: 220, z: 80 });
+  controller.setLockedTopDown(true);
+  controller.panPixels(17, -23);
+  controller.zoom(0.4);
+  const plan = controller.worldCamera();
+
+  controller.setLocalOrthographicFrame({
+    origin: { x: 50, y: 60, z: 70 },
+    normal: { x: 1, y: 0, z: 0 },
+    up: { x: 0, y: 0, z: 1 },
+    verticalSpan: 30,
+  });
+  controller.clearLocalOrthographicFrame();
+
+  assert.deepEqual(controller.worldCamera(), plan);
+  assert.equal(controller.isLockedTopDown(), true);
 });
 
 void test('civil-coordinate top-down zoom remains usable far below object scale', () => {
@@ -208,6 +234,57 @@ void test('a user-authored perspective standpoint preserves exact world eye, tar
     RangeError,
   );
   assert.deepEqual(controller.worldCamera(), beforeInvalid);
+});
+
+void test('external camera adoption keeps projection state but derives live viewport aspect', () => {
+  const controller = new KernelCameraController(1_600, 900);
+  const external: KernelWorldCamera = {
+    eye: { x: 500_030, y: 5_399_960, z: 120 },
+    target: { x: 500_000, y: 5_400_000, z: 100 },
+    up: { x: 0, y: 0, z: 4 },
+    projection: {
+      kind: 'perspective',
+      verticalFovRadians: Math.PI / 2.7,
+      aspect: 99,
+      near: 0.25,
+      far: 2_000_000,
+    },
+  };
+
+  const adopted = controller.adoptWorldCamera(external);
+
+  assert.ok(distance(adopted.eye, external.eye) < 1e-8);
+  assert.deepEqual(adopted.target, external.target);
+  assert.equal(adopted.projection.aspect, 16 / 9);
+  assert.equal(adopted.projection.near, external.projection.near);
+  assert.equal(adopted.projection.far, external.projection.far);
+  if (adopted.projection.kind === 'perspective') {
+    assert.equal(adopted.projection.verticalFovRadians, Math.PI / 2.7);
+  }
+
+  controller.orbit(0.1, -0.05);
+  assert.deepEqual(controller.worldCamera().target, external.target);
+  assert.notDeepEqual(controller.worldCamera().eye, adopted.eye);
+});
+
+void test('invalid external camera adoption is atomic', () => {
+  const controller = new KernelCameraController(800, 600);
+  controller.frame({ x: -10, y: -20, z: -5 }, { x: 20, y: 40, z: 15 });
+  const before = controller.worldCamera();
+
+  assert.throws(
+    () =>
+      controller.adoptWorldCamera({
+        ...before,
+        up: {
+          x: before.target.x - before.eye.x,
+          y: before.target.y - before.eye.y,
+          z: before.target.z - before.eye.z,
+        },
+      }),
+    RangeError,
+  );
+  assert.deepEqual(controller.worldCamera(), before);
 });
 
 void test('panorama camera keeps its scan station fixed and zooms only its field of view', () => {

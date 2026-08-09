@@ -274,7 +274,7 @@ export class PointCloudSnapProvider implements SnapProvider {
  */
 function estimateDepthHint(input: SnapQueryInput, camera: PerspectiveCamera): number {
   const prev = input.previous;
-  if (prev) {
+  if (prev && prev.position.z !== null) {
     PROJECTED_PREV.set(
       prev.position.x - input.sceneRenderOffset[0],
       prev.position.y - input.sceneRenderOffset[1],

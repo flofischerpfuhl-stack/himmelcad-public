@@ -319,7 +319,7 @@ mod tests {
 
     #[tokio::test]
     async fn transcodes_pinned_etc1s_ktx2_with_the_uncompressed_fallback() {
-        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder();
+        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder().await;
         bevy_basisu_loader_sys::basisu_init().await;
         let fixture: String = include_str!("../test-data/alpha0-etc1s-mips.ktx2.b64")
             .chars()
@@ -356,7 +356,7 @@ mod tests {
 
     #[tokio::test]
     async fn transcodes_pinned_uastc_zstd_ktx2_with_complete_mips() {
-        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder();
+        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder().await;
         bevy_basisu_loader_sys::basisu_init().await;
         // KhronosGroup/glTF-Sample-Assets, CarConcept/Rib_N.ktx2 at main on
         // 2026-07-16. SHA-256:

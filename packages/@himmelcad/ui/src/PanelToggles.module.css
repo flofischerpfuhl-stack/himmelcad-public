@@ -12,7 +12,9 @@
   height: 18px;
   color: var(--hc-fg-subtle);
   border-radius: var(--hc-radius-sm);
-  transition: background var(--hc-motion-fast), color var(--hc-motion-fast);
+  transition:
+    background var(--hc-motion-fast),
+    color var(--hc-motion-fast);
 }
 
 .btn:hover {

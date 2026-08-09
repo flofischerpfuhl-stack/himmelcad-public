@@ -2,7 +2,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 
 const workspace = resolve(import.meta.dirname, '..');
@@ -62,7 +62,10 @@ if (platform === 'win32-x64') {
     ['msvcp140_1.dll', 'bfad5aef4c63a669e3c140655cdfdf395b6c979b400a447bd5dcb65ed8826c3d'],
     ['vcruntime140.dll', 'd5e4d9a3e835fa679450145d6a7d94e36573a509317111904d9b3712c30d9066'],
     ['vcruntime140_1.dll', '1f2d41c4aa5db0bc33ebf7b66d72943a817d7ce6cbe880502a9403823633093f'],
-    ['LICENSE-Microsoft-VC-Runtime.rtf', '8099dc3cf9502c335da829e5c755948a12e3e6de490eb492a99deb673d883d8b'],
+    [
+      'LICENSE-Microsoft-VC-Runtime.rtf',
+      '8099dc3cf9502c335da829e5c755948a12e3e6de490eb492a99deb673d883d8b',
+    ],
   ]);
   for (const [name, hash] of vcRuntimeHashes) {
     approvedArtifactHashes.set(join(dedodeRoot, 'python', name), hash);
@@ -210,8 +213,7 @@ for (const path of files) {
     if (forbidden) fail(`${relativePath} links forbidden runtime ${forbidden}`);
     const unresolved = dependencies.find(
       (dependency) =>
-        !windowsSystemDependency(dependency) &&
-        !windowsRuntimeDependencyExists(path, dependency),
+        !windowsSystemDependency(dependency) && !windowsRuntimeDependencyExists(path, dependency),
     );
     if (unresolved) fail(`${relativePath} has unbundled Windows dependency ${unresolved}`);
     record.dynamicDependencies = dependencies;

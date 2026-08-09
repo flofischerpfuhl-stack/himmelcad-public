@@ -1890,8 +1890,10 @@ printf '[00:01] 3000/3000 Steps\n' >&2
 
     #[test]
     fn settings_and_path_components_are_bounded() {
-        let mut settings = BrushTrainingSettings::default();
-        settings.spherical_harmonics_degree = 4;
+        let settings = BrushTrainingSettings {
+            spherical_harmonics_degree: 4,
+            ..BrushTrainingSettings::default()
+        };
         assert!(settings.validate().is_err());
         assert!(validate_component("jobId", "../escape").is_err());
         assert_eq!(

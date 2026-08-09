@@ -348,6 +348,7 @@ fn scaled_camera(camera: &MvsPinholeCamera, scale: f64) -> MvsPinholeCamera {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Depth-pyramid inputs mirror one immutable scene view.
 fn estimate_image_pyramid(
     reference: &LoadedView,
     neighbors: &[LoadedView],
@@ -717,6 +718,7 @@ struct ReferencePatch {
     values: [f32; 289],
 }
 
+#[allow(clippy::too_many_arguments)] // PatchMatch level state is kept explicit for worker determinism.
 fn estimate_level(
     reference: &GrayImage,
     reference_mask: &GrayImage,

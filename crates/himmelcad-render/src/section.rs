@@ -508,6 +508,10 @@ pub(crate) fn transform_section_positions_in_place(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "section finalization validates a complete provenance record at one boundary"
+)]
 pub(crate) fn finish_authoritative_section_product(
     entity_id: &str,
     dataset_id: Option<&str>,

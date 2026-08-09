@@ -14,9 +14,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
+use himmelcad_core::app_protocol::{
+    AppProtocolError, AppProtocolRequest, AppProtocolRequestEnvelope, AppProtocolResponse,
+    AppProtocolResponseEnvelope, APP_PROTOCOL_SCHEMA_ID,
+};
 use himmelcad_core::canonical_document::EntityVersionRef;
 use himmelcad_core::canonical_resources::CanonicalResourceRef;
-use himmelcad_core::entity::EntityId;
+use himmelcad_core::entity::{EntityId, EntityKind};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -27,6 +31,7 @@ use himmelcad_core::photolab::{
     resolve_alignment_profile, AlignmentQualityProfile, ResolveAlignmentProfileRequest,
     ResolvedAlignmentConfig,
 };
+use himmelcad_core::photolab_capture::{evaluate_local_scale, LocalScaleConstraint};
 use himmelcad_core::photolab_crs::FrozenImportTransformation;
 use himmelcad_core::photolab_crs::{CrsDefinition, HeightReference};
 use himmelcad_core::photolab_gcp::{
@@ -42,11 +47,17 @@ use himmelcad_core::photolab_jobs::{
     ProgressMetrics,
 };
 use himmelcad_core::photolab_matching::ImageId;
+use himmelcad_core::registration::{
+    IcpMode, IcpOptions, RegistrationPointPair, RegistrationRecipe, RegistrationTargetSample,
+};
+use himmelcad_core::transform::{Similarity3D, WorldPoint};
 use himmelcad_io::{
-    hcap_import::import_hcap_path_with_progress, import_gcp_csv_file,
-    import_las_file_with_progress_and_cancel, import_photo_files_with_progress,
-    preview_gcp_csv_file, CanonicalImportProvider, CanonicalImportRequest, ConverterProgress,
-    IfcCanonicalProvider, ProviderOperationContext, ProviderProgress, IFC2X3_FORMAT_ID,
+    canonical_builtin_import_registry, hcap_import::import_hcap_path_with_progress,
+    import_gcp_csv_file, import_las_file_with_progress_and_cancel,
+    import_photo_files_with_progress, preview_gcp_csv_file, CanonicalExportPlan,
+    CanonicalExportRequest, CanonicalImportProvider, CanonicalImportRequest, CanonicalStagedImport,
+    ConverterProgress, IfcCanonicalProvider, ImportProbeRequest, ImportProviderSelection,
+    ProviderOperationContext, ProviderProgress, StagedArtifactRoots, IFC2X3_FORMAT_ID,
     IFC4X3_FORMAT_ID, IFC4_FORMAT_ID,
 };
 
@@ -56,14 +67,24 @@ use crate::project_runtime::{
     CreateProjectParams, EditImageMaskParams, FinishJournalParams, MoveEntityParams,
     OpenProjectParams, ProductLineage, ProjectRuntime, PublishedRasterKind,
     RemoveCameraImagesParams, RenameEntityParams, SaveProjectAsParams, SetEntityVisibilityParams,
+    UpdateCalibrationGroupIntrinsicsParams,
 };
 use himmelcad_sidecar::alignment_merge_runtime::{
     build_shared_control_merge, resume_shared_control_merge, resume_solved_merge,
     write_merge_checkpoint, AlignmentMergeCheckpoint, AlignmentMergeCheckpointState,
     SharedControlInput,
 };
+use himmelcad_sidecar::automation_runtime::{
+    AutomationRuntime, BulkReadRequest, BulkReleaseRequest, CasDescribeRequest,
+    CommandStatusRequest, CommandValidateRequest, EntityPageRequest,
+};
 use himmelcad_sidecar::brush_runtime::{
     BrushRunRequest, BrushRuntime, BrushTrainingSettings, DevBrushRuntimeConfig,
+};
+use himmelcad_sidecar::canonical_app_runtime::CanonicalAppRuntime;
+use himmelcad_sidecar::capture_runtime::{
+    prepare_still_image, prepare_video_frames, probe_capture_capabilities, CaptureToolConfig,
+    PrepareStillImageRequest, PrepareVideoFramesRequest,
 };
 #[cfg(test)]
 use himmelcad_sidecar::colmap_runtime::ColmapCalibrationSeed;
@@ -81,6 +102,9 @@ use himmelcad_sidecar::dense_raster_prep::{
     inspect_raster_wkt, inspect_vector_wkt, prepare_dense_potree, prepare_dense_vector,
     prepare_sparse_potree, DenseRasterPrepError,
 };
+use himmelcad_sidecar::gcp_local_estimate_runtime::{
+    ComputeGcpLocalEstimateParams, ReadGcpLocalEstimateParams,
+};
 use himmelcad_sidecar::gcp_optimization_runtime::{
     run_gcp_optimization, GcpOptimizationRuntimeError, RunGcpOptimizationParams,
 };
@@ -94,6 +118,7 @@ use himmelcad_sidecar::image_quality_runtime::{
     analyze_project_images, ImageQualityConfiguration, ImageQualityRuntimeError, ImageQualityScope,
     IMAGE_QUALITY_ALGORITHM_VERSION,
 };
+use himmelcad_sidecar::import_registration_runtime::ImportRegistrationRuntime;
 use himmelcad_sidecar::job_runtime::{
     JobIdParams, JobManager, JobManagerConfig, JobWorkerContext, JobWorkerError, ListJobsParams,
 };
@@ -121,6 +146,7 @@ use himmelcad_sidecar::raster_runtime::{
     RasterGrid, RasterNoDataValue, RasterPhase, RasterProductRequest, RasterProgress,
     RasterResampling, RasterRuntime,
 };
+use himmelcad_sidecar::site_calibration_reader::inspect_site_calibration;
 use himmelcad_sidecar::splat_tiler::{tile_brush_ply, SplatTilerError};
 use himmelcad_sidecar::{
     crs_runtime::{ProjRuntime, ProjToolchainConfig},
@@ -158,6 +184,269 @@ struct RpcResponse {
 struct RpcError {
     code: i32,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OpenCanonicalProjectParams {
+    project_root: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AppNegotiationParams {
+    client_name: String,
+    supported_versions: Vec<u32>,
+    required_capabilities: Vec<String>,
+    optional_capabilities: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PageParams {
+    #[serde(default)]
+    cursor: Option<String>,
+    limit: usize,
+}
+
+const IO_RPC_SCHEMA_VERSION: u32 = 1;
+const IO_PROBE_PREFIX_BYTES: u64 = 64 * 1024;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IoProbeParams {
+    source_path: String,
+    #[serde(default)]
+    media_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IoImportExecuteParams {
+    operation_id: String,
+    command_id: String,
+    source_path: String,
+    selection: ImportProviderSelection,
+    options: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RegistrationStageParams {
+    session_id: String,
+    command_id: String,
+    source_path: String,
+    selection: ImportProviderSelection,
+    options: serde_json::Value,
+    recipe: RegistrationRecipe,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RegistrationSessionParams {
+    session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RegistrationResourceReadParams {
+    session_id: String,
+    capability: String,
+    resource_id: String,
+    offset: u64,
+    byte_length: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RegistrationSourceSamplesParams {
+    session_id: String,
+    maximum_samples: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SiteCalibrationInspectParams {
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RegistrationPointPairsParams {
+    session_id: String,
+    pairs: Vec<RegistrationPointPair>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RegistrationIcpParams {
+    session_id: String,
+    source: Vec<WorldPoint>,
+    target: Vec<RegistrationTargetSample>,
+    initial: Similarity3D,
+    mode: IcpMode,
+    options: IcpOptions,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IoExportRequestParams {
+    command_id: String,
+    provider_id: String,
+    provider_version: String,
+    target_path: String,
+    format_id: String,
+    options: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IoExportPlanEnvelope {
+    schema_version: u32,
+    #[serde(flatten)]
+    request: IoExportRequestParams,
+    plan: CanonicalExportPlan,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IoExportExecuteParams {
+    operation_id: String,
+    accepted_plan: IoExportPlanEnvelope,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IoOperationParams {
+    operation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IoOperationStatus {
+    schema_version: u32,
+    operation_id: String,
+    state: IoOperationState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    progress: Option<ProviderProgress>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum IoOperationState {
+    Running,
+    Completed,
+    Cancelled,
+    Failed,
+}
+
+struct IoOperationRecord {
+    cancellation: Arc<AtomicBool>,
+    status: IoOperationStatus,
+}
+
+#[derive(Default)]
+struct IoOperations {
+    records: Mutex<BTreeMap<String, IoOperationRecord>>,
+}
+
+impl IoOperations {
+    fn begin(self: &Arc<Self>, operation_id: String) -> anyhow::Result<IoProviderContext> {
+        validate_io_identity(&operation_id, "operationId")?;
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let mut records = self.records.lock().expect("I/O operation mutex poisoned");
+        if records.contains_key(&operation_id) {
+            anyhow::bail!("I/O operation identity was already used: {operation_id}");
+        }
+        records.insert(
+            operation_id.clone(),
+            IoOperationRecord {
+                cancellation: cancellation.clone(),
+                status: IoOperationStatus {
+                    schema_version: IO_RPC_SCHEMA_VERSION,
+                    operation_id: operation_id.clone(),
+                    state: IoOperationState::Running,
+                    progress: None,
+                    message: None,
+                },
+            },
+        );
+        Ok(IoProviderContext {
+            operation_id,
+            cancellation,
+            operations: Arc::clone(self),
+        })
+    }
+
+    fn status(&self, operation_id: &str) -> Option<IoOperationStatus> {
+        self.records
+            .lock()
+            .expect("I/O operation mutex poisoned")
+            .get(operation_id)
+            .map(|record| record.status.clone())
+    }
+
+    fn cancel(&self, operation_id: &str) -> bool {
+        let records = self.records.lock().expect("I/O operation mutex poisoned");
+        let Some(record) = records.get(operation_id) else {
+            return false;
+        };
+        if record.status.state != IoOperationState::Running {
+            return false;
+        }
+        record.cancellation.store(true, Ordering::Release);
+        true
+    }
+
+    fn progress(&self, operation_id: &str, progress: ProviderProgress) {
+        if let Some(record) = self
+            .records
+            .lock()
+            .expect("I/O operation mutex poisoned")
+            .get_mut(operation_id)
+        {
+            record.status.progress = Some(progress);
+        }
+    }
+
+    fn finish(&self, operation_id: &str, result: &anyhow::Result<serde_json::Value>) {
+        if let Some(record) = self
+            .records
+            .lock()
+            .expect("I/O operation mutex poisoned")
+            .get_mut(operation_id)
+        {
+            let cancelled = record.cancellation.load(Ordering::Acquire);
+            record.status.state = if result.is_ok() {
+                IoOperationState::Completed
+            } else if cancelled {
+                IoOperationState::Cancelled
+            } else {
+                IoOperationState::Failed
+            };
+            record.status.message = result.as_ref().err().map(ToString::to_string);
+        }
+    }
+}
+
+struct IoProviderContext {
+    operation_id: String,
+    cancellation: Arc<AtomicBool>,
+    operations: Arc<IoOperations>,
+}
+
+impl ProviderOperationContext for IoProviderContext {
+    fn is_cancelled(&self) -> bool {
+        self.cancellation.load(Ordering::Acquire)
+    }
+
+    fn report_progress(&mut self, progress: ProviderProgress) {
+        self.operations.progress(&self.operation_id, progress);
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -369,12 +658,18 @@ enum ProductRunConfiguration {
         color_correction: bool,
         fill_holes: bool,
         tile_size_pixels: u32,
+        #[serde(default)]
+        source_dem_entity_id: Option<EntityId>,
+        #[serde(default)]
+        source_dem_version_sha256: Option<ObjectHash>,
     },
     Mesh {
         target_face_count: u64,
         interpolate_holes: bool,
         build_texture: bool,
         texture_size: u32,
+        #[serde(default)]
+        source_dem_entity_id: Option<EntityId>,
     },
     Splat {
         initialization: String,
@@ -446,6 +741,44 @@ struct StartBatchJobParams {
     camera_entity_ids: Vec<String>,
     #[serde(default)]
     processing_set_id: Option<EntityId>,
+}
+
+/// Immutable execution evidence created before a batch enters the job queue.
+/// Recipe files remain symbolic; only this concrete plan contains project revisions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FrozenBatchExecutionPlan {
+    schema_version: u32,
+    run_id: String,
+    project_id: String,
+    recipe_sha256: ObjectHash,
+    input_sha256: ObjectHash,
+    plan_sha256: ObjectHash,
+    node_config_sha256: Vec<ObjectHash>,
+    frozen_entities: Vec<FrozenBatchEntity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    processing_set_membership_sha256: Option<ObjectHash>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    external_artifacts: Vec<FrozenBatchExternalArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FrozenBatchEntity {
+    entity_id: EntityId,
+    /// PhotoLab's immutable entity revision is addressed by this CAS hash.
+    entity_revision_sha256: ObjectHash,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FrozenBatchExternalArtifact {
+    entity_id: EntityId,
+    entity_revision_sha256: ObjectHash,
+    content_sha256: ObjectHash,
+    provider_id: String,
+    provider_version: String,
+    config_sha256: ObjectHash,
 }
 
 #[derive(Debug, Deserialize)]
@@ -580,6 +913,10 @@ async fn main() -> Result<()> {
     )?);
     let crs = Arc::new(default_crs_service()?);
     let las_imports = Arc::new(LasImportOperations::default());
+    let io_operations = Arc::new(IoOperations::default());
+    let registrations = Arc::new(ImportRegistrationRuntime::default());
+    let automation = Arc::new(AutomationRuntime::new()?);
+    let canonical_app = Arc::new(Mutex::new(CanonicalAppRuntime::default()));
     let (response_tx, mut response_rx) = mpsc::channel::<RpcResponse>(256);
     let writer = tokio::spawn(async move {
         let mut stdout = tokio::io::stdout();
@@ -600,11 +937,28 @@ async fn main() -> Result<()> {
         let jobs = Arc::clone(&jobs);
         let crs = Arc::clone(&crs);
         let las_imports = Arc::clone(&las_imports);
+        let io_operations = Arc::clone(&io_operations);
+        let registrations = Arc::clone(&registrations);
+        let automation = Arc::clone(&automation);
+        let canonical_app = Arc::clone(&canonical_app);
         let response_tx = response_tx.clone();
         let parsed = serde_json::from_str::<RpcRequest>(&line);
         tokio::spawn(async move {
             let response = match parsed {
-                Ok(req) => handle(req, projects, jobs, crs, las_imports).await,
+                Ok(req) => {
+                    handle(
+                        req,
+                        projects,
+                        jobs,
+                        crs,
+                        las_imports,
+                        io_operations,
+                        registrations,
+                        automation,
+                        canonical_app,
+                    )
+                    .await
+                }
                 Err(err) => RpcResponse {
                     jsonrpc: "2.0",
                     id: serde_json::Value::Null,
@@ -612,6 +966,7 @@ async fn main() -> Result<()> {
                     error: Some(RpcError {
                         code: -32700,
                         message: format!("parse error: {err}"),
+                        data: None,
                     }),
                 },
             };
@@ -626,16 +981,25 @@ async fn main() -> Result<()> {
     if let Err(error) = projects.close() {
         tracing::error!(%error, "failed to close project cleanly during sidecar shutdown");
     }
+    canonical_app
+        .lock()
+        .expect("canonical app runtime mutex poisoned")
+        .close();
 
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // JSON-RPC routing dependencies are explicit application services.
 async fn handle(
     req: RpcRequest,
     projects: Arc<ProjectRuntime>,
     jobs: Arc<JobManager>,
     crs: Arc<CrsService>,
     las_imports: Arc<LasImportOperations>,
+    io_operations: Arc<IoOperations>,
+    registrations: Arc<ImportRegistrationRuntime>,
+    automation: Arc<AutomationRuntime>,
+    canonical_app: Arc<Mutex<CanonicalAppRuntime>>,
 ) -> RpcResponse {
     if req.jsonrpc != "2.0" {
         return rpc_err(req.id, -32600, "invalid jsonrpc version");
@@ -653,13 +1017,32 @@ async fn handle(
         return handle_image_rpc(req, projects, &crs).await;
     }
     if req.method.starts_with("photolab.himmelcap.") {
-        return handle_himmelcap_rpc(req, projects).await;
+        return handle_himmelcap_rpc(req, Arc::clone(&projects)).await;
+    }
+    if req.method.starts_with("photolab.capture.") {
+        return handle_capture_rpc(req, projects).await;
     }
     if req.method.starts_with("photolab.gcp.") {
         return handle_gcp_rpc(req, projects, &crs).await;
     }
     if req.method.starts_with("photolab.products.") {
         return handle_product_rpc(req, projects).await;
+    }
+    if req.method.starts_with("registration.") {
+        return handle_registration_rpc(req, registrations, canonical_app).await;
+    }
+    if req.method.starts_with("io.") {
+        return handle_io_rpc(req, io_operations, canonical_app).await;
+    }
+    if req.method.starts_with("automation.") {
+        return handle_automation_rpc(req, automation, canonical_app);
+    }
+    if req.method == "app.negotiate"
+        || req.method == "app.protocol"
+        || req.method.starts_with("canonical.project.")
+        || req.method.starts_with("canonical.residency.")
+    {
+        return handle_canonical_app_rpc(req, &canonical_app, &automation);
     }
 
     match req.method.as_str() {
@@ -670,7 +1053,7 @@ async fn handle(
             error: None,
         },
         "import.las" => match serde_json::from_value::<ImportLasParams>(req.params.clone()) {
-            Ok(params) => match handle_import_las(params, las_imports).await {
+            Ok(params) => match handle_import_las(params, las_imports, canonical_app).await {
                 Ok(value) => RpcResponse {
                     jsonrpc: "2.0",
                     id: req.id,
@@ -694,7 +1077,18 @@ async fn handle(
             }
         }
         "import.ifc" => match serde_json::from_value::<ImportIfcParams>(req.params.clone()) {
-            Ok(params) => rpc_blocking(req.id, move || handle_import_ifc(params)).await,
+            Ok(params) => {
+                let canonical_app = Arc::clone(&canonical_app);
+                rpc_blocking(req.id, move || {
+                    let (staged, command_id) = handle_import_ifc(params)?;
+                    canonical_app
+                        .lock()
+                        .expect("canonical app runtime mutex poisoned")
+                        .publish_staged_import(&staged, &command_id)?;
+                    Ok(staged.package)
+                })
+                .await
+            }
             Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
         },
         "photolab.alignment.resolve" => {
@@ -828,6 +1222,829 @@ async fn handle_himmelcap_rpc(req: RpcRequest, projects: Arc<ProjectRuntime>) ->
     }
 }
 
+async fn handle_capture_rpc(req: RpcRequest, projects: Arc<ProjectRuntime>) -> RpcResponse {
+    match req.method.as_str() {
+        "photolab.capture.capabilities" => {
+            rpc_blocking(req.id, move || {
+                Ok::<_, anyhow::Error>(probe_capture_capabilities(
+                    &CaptureToolConfig::from_environment(),
+                ))
+            })
+            .await
+        }
+        "photolab.capture.scale.evaluate" => {
+            rpc_blocking_with_params::<LocalScaleConstraint, _, _>(
+                req.id,
+                req.params,
+                |constraint| Ok::<_, anyhow::Error>(evaluate_local_scale(&constraint)),
+            )
+            .await
+        }
+        "photolab.capture.video.prepare" => {
+            let progress_key = req
+                .params
+                .get("progressKey")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            rpc_blocking_with_params::<PrepareVideoFramesRequest, _, _>(
+                req.id,
+                req.params,
+                move |params| {
+                    let operation_id = params.operation_id.clone();
+                    let cancellation = projects.begin_image_inspection(&operation_id)?;
+                    let capabilities =
+                        probe_capture_capabilities(&CaptureToolConfig::from_environment());
+                    let result = prepare_video_frames(
+                        &params,
+                        &capabilities,
+                        || cancellation.is_cancel_requested(),
+                        |fraction, message| {
+                            emit_progress(progress_key.as_deref(), fraction, message);
+                        },
+                    );
+                    projects.finish_image_inspection(&operation_id);
+                    result.map_err(anyhow::Error::from)
+                },
+            )
+            .await
+        }
+        "photolab.capture.image.prepare" => {
+            let progress_key = req
+                .params
+                .get("progressKey")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            rpc_blocking_with_params::<PrepareStillImageRequest, _, _>(
+                req.id,
+                req.params,
+                move |params| {
+                    let operation_id = params.operation_id.clone();
+                    let cancellation = projects.begin_image_inspection(&operation_id)?;
+                    let capabilities =
+                        probe_capture_capabilities(&CaptureToolConfig::from_environment());
+                    let result = prepare_still_image(
+                        &params,
+                        &capabilities,
+                        || cancellation.is_cancel_requested(),
+                        |fraction, message| {
+                            emit_progress(progress_key.as_deref(), fraction, message);
+                        },
+                    );
+                    projects.finish_image_inspection(&operation_id);
+                    result.map_err(anyhow::Error::from)
+                },
+            )
+            .await
+        }
+        "photolab.capture.cancel" => {
+            rpc_blocking_with_params::<CancelImageCommitParams, _, _>(
+                req.id,
+                req.params,
+                move |params| Ok(projects.cancel_image_inspection(params)),
+            )
+            .await
+        }
+        other => rpc_err(req.id, -32601, &format!("method not found: {other}")),
+    }
+}
+
+fn handle_canonical_app_rpc(
+    req: RpcRequest,
+    runtime: &Mutex<CanonicalAppRuntime>,
+    automation: &AutomationRuntime,
+) -> RpcResponse {
+    if req.method == "app.negotiate" {
+        return handle_app_negotiation(req);
+    }
+    if req.method == "io.formats.page" {
+        return handle_io_formats_page(req);
+    }
+    let mut runtime = runtime
+        .lock()
+        .expect("canonical app runtime mutex poisoned");
+    match req.method.as_str() {
+        "canonical.project.open" => {
+            match serde_json::from_value::<OpenCanonicalProjectParams>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    runtime
+                        .open(params.project_root)
+                        .map_err(anyhow::Error::from),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        "canonical.project.close" => {
+            let closed = runtime.close();
+            automation.revoke_all();
+            rpc_result(
+                req.id,
+                Ok::<_, anyhow::Error>(serde_json::json!({ "closed": closed })),
+            )
+        }
+        "canonical.residency.bootstrap" => rpc_result(
+            req.id,
+            runtime.residency_bootstrap().map_err(anyhow::Error::from),
+        ),
+        "app.protocol" => match serde_json::from_value::<AppProtocolRequestEnvelope>(req.params) {
+            Ok(envelope) => {
+                if let AppProtocolRequest::ExecuteCanonicalTransaction(transaction) =
+                    &envelope.request
+                {
+                    if let Some(extension) =
+                        envelope.extensions.get("hcad.automation.confirmation@1")
+                    {
+                        let grant = extension
+                            .as_object()
+                            .filter(|object| object.len() == 1)
+                            .and_then(|object| object.get("grant"))
+                            .and_then(serde_json::Value::as_str);
+                        let generation = runtime
+                            .automation_entities()
+                            .map(|(generation, _)| generation);
+                        let authorization = match (grant, generation) {
+                            (Some(grant), Ok(generation)) => automation
+                                .authorize_confirmation_grant(transaction, grant, generation)
+                                .map_err(|error| error.to_string()),
+                            (None, _) => {
+                                Err("confirmationRequired: approval extension is malformed"
+                                    .to_owned())
+                            }
+                            (_, Err(error)) => Err(error.to_string()),
+                        };
+                        if let Err(message) = authorization {
+                            let response = AppProtocolResponseEnvelope {
+                                schema_id: APP_PROTOCOL_SCHEMA_ID.to_owned(),
+                                request_id: envelope.request_id,
+                                response: AppProtocolResponse::Error(AppProtocolError {
+                                    code: "confirmationRequired".to_owned(),
+                                    message,
+                                    details: BTreeMap::new(),
+                                }),
+                                extensions: envelope.extensions,
+                            };
+                            return rpc_result(
+                                req.id,
+                                serde_json::to_value(response).map_err(anyhow::Error::from),
+                            );
+                        }
+                    }
+                }
+                rpc_result(
+                    req.id,
+                    serde_json::to_value(runtime.dispatch(envelope)).map_err(anyhow::Error::from),
+                )
+            }
+            Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+        },
+        _ => rpc_err(req.id, -32601, "canonical application method not found"),
+    }
+}
+
+fn handle_app_negotiation(req: RpcRequest) -> RpcResponse {
+    let params = match serde_json::from_value::<AppNegotiationParams>(req.params) {
+        Ok(params) => params,
+        Err(error) => return rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+    };
+    const CAPABILITIES: &[&str] = &[
+        "document.read",
+        "document.write",
+        "journal.read",
+        "io.formats.read",
+        "io.probe",
+        "io.import.execute",
+        "io.export",
+        "io.operation",
+        "registration.import",
+        "residency.read",
+        "automation.entities.page",
+        "automation.cas.describe",
+        "automation.commands.validate",
+        "automation.commands.status",
+        "automation.commands.cancel",
+        "automation.bulk.read",
+        "automation.bulk.release",
+    ];
+    let invalid = params.client_name.trim().is_empty()
+        || params.supported_versions.is_empty()
+        || params.supported_versions.contains(&0)
+        || params
+            .required_capabilities
+            .iter()
+            .chain(params.optional_capabilities.iter())
+            .any(|capability| capability.trim().is_empty());
+    let required_unique = params
+        .required_capabilities
+        .iter()
+        .collect::<BTreeSet<_>>()
+        .len()
+        == params.required_capabilities.len();
+    let optional_unique = params
+        .optional_capabilities
+        .iter()
+        .collect::<BTreeSet<_>>()
+        .len()
+        == params.optional_capabilities.len();
+    if invalid || !required_unique || !optional_unique {
+        return rpc_err(req.id, -32602, "negotiation request is invalid");
+    }
+    let missing = params
+        .required_capabilities
+        .iter()
+        .filter(|required| !CAPABILITIES.contains(&required.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !params.supported_versions.contains(&1) || !missing.is_empty() {
+        return rpc_err(
+            req.id,
+            -32602,
+            &format!(
+                "the sidecar cannot satisfy the required app protocol; missing capabilities: {}",
+                missing.join(", ")
+            ),
+        );
+    }
+    rpc_result(
+        req.id,
+        Ok::<_, anyhow::Error>(serde_json::json!({
+            "selectedVersion": 1,
+            "serverName": "himmelcad-sidecar",
+            "serverVersion": env!("CARGO_PKG_VERSION"),
+            "sessionId": format!("sidecar-{}", std::process::id()),
+            "capabilities": CAPABILITIES,
+        })),
+    )
+}
+
+fn handle_automation_rpc(
+    req: RpcRequest,
+    automation: Arc<AutomationRuntime>,
+    canonical_app: Arc<Mutex<CanonicalAppRuntime>>,
+) -> RpcResponse {
+    let id = req.id;
+    let result = match req.method.as_str() {
+        "automation.entities.page" => serde_json::from_value::<EntityPageRequest>(req.params)
+            .map_err(|error| format!("invalidRequest: {error}"))
+            .and_then(|params| {
+                let app = canonical_app
+                    .lock()
+                    .map_err(|_| "internal: canonical application runtime poisoned".to_owned())?;
+                automation
+                    .entities_page(params, &app)
+                    .map_err(|error| error.to_string())
+            })
+            .and_then(|value| serde_json::to_value(value).map_err(|error| error.to_string())),
+        "automation.cas.describe" => serde_json::from_value::<CasDescribeRequest>(req.params)
+            .map_err(|error| format!("invalidRequest: {error}"))
+            .and_then(|params| {
+                let app = canonical_app
+                    .lock()
+                    .map_err(|_| "internal: canonical application runtime poisoned".to_owned())?;
+                automation
+                    .describe_cas(params, &app)
+                    .map_err(|error| error.to_string())
+            })
+            .and_then(|value| serde_json::to_value(value).map_err(|error| error.to_string())),
+        "automation.commands.validate" => {
+            serde_json::from_value::<CommandValidateRequest>(req.params)
+                .map_err(|error| format!("invalidRequest: {error}"))
+                .and_then(|params| {
+                    let app = canonical_app.lock().map_err(|_| {
+                        "internal: canonical application runtime poisoned".to_owned()
+                    })?;
+                    automation
+                        .validate_command(params, &app)
+                        .map_err(|error| error.to_string())
+                })
+                .and_then(|value| serde_json::to_value(value).map_err(|error| error.to_string()))
+        }
+        "automation.commands.status" => serde_json::from_value::<CommandStatusRequest>(req.params)
+            .map_err(|error| format!("invalidRequest: {error}"))
+            .and_then(|params| {
+                automation
+                    .command_status(&params)
+                    .map_err(|error| error.to_string())
+            })
+            .and_then(|value| serde_json::to_value(value).map_err(|error| error.to_string())),
+        "automation.commands.cancel" => serde_json::from_value::<CommandStatusRequest>(req.params)
+            .map_err(|error| format!("invalidRequest: {error}"))
+            .and_then(|params| {
+                automation
+                    .cancel_command(&params)
+                    .map_err(|error| error.to_string())
+            })
+            .and_then(|value| serde_json::to_value(value).map_err(|error| error.to_string())),
+        "automation.bulk.read" => serde_json::from_value::<BulkReadRequest>(req.params)
+            .map_err(|error| format!("invalidRequest: {error}"))
+            .and_then(|params| {
+                automation
+                    .bulk_read(params)
+                    .map_err(|error| error.to_string())
+            })
+            .and_then(|value| serde_json::to_value(value).map_err(|error| error.to_string())),
+        "automation.bulk.release" => serde_json::from_value::<BulkReleaseRequest>(req.params)
+            .map_err(|error| format!("invalidRequest: {error}"))
+            .and_then(|params| {
+                automation
+                    .bulk_release(params)
+                    .map_err(|error| error.to_string())
+            })
+            .and_then(|value| serde_json::to_value(value).map_err(|error| error.to_string())),
+        _ => Err("automation method not found".to_owned()),
+    };
+    match result {
+        Ok(value) => RpcResponse {
+            jsonrpc: "2.0",
+            id,
+            result: Some(value),
+            error: None,
+        },
+        Err(message) => rpc_automation_err(id, &message),
+    }
+}
+
+fn handle_io_formats_page(req: RpcRequest) -> RpcResponse {
+    let params = match serde_json::from_value::<PageParams>(req.params) {
+        Ok(params) if (1..=1_000).contains(&params.limit) => params,
+        Ok(_) => return rpc_err(req.id, -32602, "page limit must be from 1 through 1000"),
+        Err(error) => return rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+    };
+    let start = match params.cursor.as_deref() {
+        None => 0,
+        Some(cursor) => match cursor.parse::<usize>() {
+            Ok(cursor) => cursor,
+            Err(_) => return rpc_err(req.id, -32602, "page cursor is invalid"),
+        },
+    };
+    let registry = match canonical_builtin_import_registry(
+        std::env::temp_dir().join("himmelcad-provider-discovery"),
+    ) {
+        Ok(registry) => registry,
+        Err(error) => return rpc_err(req.id, -32603, &error.to_string()),
+    };
+    let items = registry.descriptors();
+    if start > items.len() {
+        return rpc_err(
+            req.id,
+            -32602,
+            "page cursor is beyond the provider catalogue",
+        );
+    }
+    let end = start.saturating_add(params.limit).min(items.len());
+    // Omit nextCursor when exhausted — JSON null breaks TS clients that only
+    // treat `undefined` as end-of-page (`null.length` throws).
+    let mut page = serde_json::json!({
+        "items": &items[start..end],
+    });
+    if end < items.len() {
+        page["nextCursor"] = serde_json::Value::String(end.to_string());
+    }
+    rpc_result(req.id, Ok::<_, anyhow::Error>(page))
+}
+
+async fn handle_registration_rpc(
+    req: RpcRequest,
+    registrations: Arc<ImportRegistrationRuntime>,
+    canonical_app: Arc<Mutex<CanonicalAppRuntime>>,
+) -> RpcResponse {
+    match req.method.as_str() {
+        "registration.import.stage" => {
+            rpc_blocking_with_params::<RegistrationStageParams, _, _>(
+                req.id,
+                req.params,
+                move |params| {
+                    validate_io_identity(&params.session_id, "sessionId")?;
+                    validate_io_identity(&params.command_id, "commandId")?;
+                    let source = PathBuf::from(&params.source_path);
+                    anyhow::ensure!(source.is_file(), "registration source is not a file");
+                    let scratch_root = create_registration_scratch(&params.session_id)?;
+                    let result = (|| {
+                        let registry = canonical_builtin_import_registry(scratch_root.clone())?;
+                        let mut context = LoggingProviderContext;
+                        let staged = registry.import(
+                            &params.selection,
+                            &source,
+                            &params.options,
+                            &mut context,
+                        )?;
+                        registrations
+                            .begin(
+                                params.session_id,
+                                params.command_id,
+                                params.recipe,
+                                staged,
+                                scratch_root.clone(),
+                            )
+                            .map_err(anyhow::Error::from)
+                    })();
+                    if result.is_err() {
+                        let _ = std::fs::remove_dir_all(&scratch_root);
+                    }
+                    result
+                },
+            )
+            .await
+        }
+        "registration.session.state" => {
+            rpc_blocking_with_params::<RegistrationSessionParams, _, _>(
+                req.id,
+                req.params,
+                move |params| {
+                    registrations
+                        .state(&params.session_id)
+                        .map_err(anyhow::Error::from)
+                },
+            )
+            .await
+        }
+        "registration.resources.describe" => {
+            rpc_blocking_with_params::<RegistrationSessionParams, _, _>(
+                req.id,
+                req.params,
+                move |params| {
+                    registrations
+                        .describe_resources(&params.session_id)
+                        .map_err(anyhow::Error::from)
+                },
+            )
+            .await
+        }
+        "registration.resource.read" => {
+            rpc_blocking_with_params::<RegistrationResourceReadParams, _, _>(
+                req.id,
+                req.params,
+                move |params| {
+                    registrations
+                        .read_resource(
+                            &params.session_id,
+                            &params.capability,
+                            &params.resource_id,
+                            params.offset,
+                            params.byte_length,
+                        )
+                        .map_err(anyhow::Error::from)
+                },
+            )
+            .await
+        }
+        "registration.samples.source" => {
+            rpc_blocking_with_params::<RegistrationSourceSamplesParams, _, _>(
+                req.id,
+                req.params,
+                move |params| {
+                    registrations
+                        .source_samples(&params.session_id, params.maximum_samples)
+                        .map_err(anyhow::Error::from)
+                },
+            )
+            .await
+        }
+        "registration.preview.pointPairs" => {
+            rpc_blocking_with_params::<RegistrationPointPairsParams, _, _>(
+                req.id,
+                req.params,
+                move |params| {
+                    registrations
+                        .preview_point_pairs(&params.session_id, &params.pairs)
+                        .map_err(anyhow::Error::from)
+                },
+            )
+            .await
+        }
+        "registration.preview.icp" => {
+            rpc_blocking_with_params::<RegistrationIcpParams, _, _>(
+                req.id,
+                req.params,
+                move |params| {
+                    registrations
+                        .preview_icp(
+                            &params.session_id,
+                            &params.source,
+                            &params.target,
+                            params.initial,
+                            params.mode,
+                            params.options,
+                            |completed, total, overlap| {
+                                emit_progress(
+                                    Some(&params.session_id),
+                                    completed as f64 / f64::from(total.max(1)),
+                                    &format!(
+                                        "Registration ICP {completed}/{total} · {:.1}% overlap",
+                                        overlap * 100.0
+                                    ),
+                                );
+                            },
+                        )
+                        .map_err(anyhow::Error::from)
+                },
+            )
+            .await
+        }
+        "registration.import.commit" => {
+            rpc_blocking_with_params::<RegistrationSessionParams, _, _>(
+                req.id,
+                req.params,
+                move |params| {
+                    let (staged, command_id, _scratch_root) =
+                        registrations.take_ready(&params.session_id)?;
+                    let result = canonical_app
+                        .lock()
+                        .expect("canonical app runtime mutex poisoned")
+                        .publish_staged_import(&staged, &command_id)
+                        .map_err(anyhow::Error::from);
+                    registrations.finish_commit(&params.session_id, result.is_ok());
+                    result
+                },
+            )
+            .await
+        }
+        "registration.session.cancel" => {
+            match serde_json::from_value::<RegistrationSessionParams>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    Ok::<_, anyhow::Error>(serde_json::json!({
+                        "schemaVersion": 1,
+                        "sessionId": params.session_id,
+                        "cancellationRequested": registrations.cancel(&params.session_id),
+                    })),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        "registration.siteCalibration.inspect" => {
+            rpc_blocking_with_params::<SiteCalibrationInspectParams, _, _>(
+                req.id,
+                req.params,
+                |params| {
+                    inspect_site_calibration(Path::new(&params.path)).map_err(anyhow::Error::from)
+                },
+            )
+            .await
+        }
+        _ => rpc_err(req.id, -32601, "registration method not found"),
+    }
+}
+
+fn create_registration_scratch(session_id: &str) -> anyhow::Result<PathBuf> {
+    validate_io_identity(session_id, "sessionId")?;
+    let digest = hex::encode(Sha256::digest(session_id.as_bytes()));
+    let parent = std::env::temp_dir().join("himmelcad-registration-sessions");
+    std::fs::create_dir_all(&parent)?;
+    let root = parent.join(format!("{}-{digest}", std::process::id()));
+    std::fs::create_dir(&root).with_context(|| {
+        format!(
+            "registration scratch already exists or cannot be created: {}",
+            root.display()
+        )
+    })?;
+    Ok(root)
+}
+
+async fn handle_io_rpc(
+    req: RpcRequest,
+    operations: Arc<IoOperations>,
+    canonical_app: Arc<Mutex<CanonicalAppRuntime>>,
+) -> RpcResponse {
+    match req.method.as_str() {
+        "io.formats.page" => handle_io_formats_page(req),
+        "io.probe" => {
+            rpc_blocking_with_params::<IoProbeParams, _, _>(req.id, req.params, |params| {
+                let source = PathBuf::from(params.source_path);
+                anyhow::ensure!(source.is_file(), "I/O probe source is not a file");
+                let mut prefix = Vec::new();
+                std::fs::File::open(&source)?
+                    .take(IO_PROBE_PREFIX_BYTES)
+                    .read_to_end(&mut prefix)?;
+                let registry = canonical_builtin_import_registry(io_probe_registry_root())?;
+                registry
+                    .select_importer(ImportProbeRequest {
+                        path: &source,
+                        prefix: &prefix,
+                        media_type: params.media_type.as_deref(),
+                    })
+                    .map_err(anyhow::Error::from)
+            })
+            .await
+        }
+        "io.import.execute" => {
+            let params = match serde_json::from_value::<IoImportExecuteParams>(req.params) {
+                Ok(params) => params,
+                Err(error) => {
+                    return rpc_err(req.id, -32602, &format!("invalid params: {error}"));
+                }
+            };
+            let operation_id = params.operation_id.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                run_tracked_io(operations, operation_id, |context| {
+                    validate_io_identity(&params.command_id, "commandId")?;
+                    let source = PathBuf::from(&params.source_path);
+                    anyhow::ensure!(source.is_file(), "I/O import source is not a file");
+                    let scratch = IoScratch::create(&context.operation_id)?;
+                    let registry = canonical_builtin_import_registry(scratch.root.clone())?;
+                    let staged =
+                        registry.import(&params.selection, &source, &params.options, context)?;
+                    let commit = canonical_app
+                        .lock()
+                        .expect("canonical app runtime mutex poisoned")
+                        .publish_staged_import(&staged, &params.command_id)?;
+                    serde_json::to_value(commit).map_err(anyhow::Error::from)
+                })
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(std::convert::identity);
+            rpc_result(req.id, result)
+        }
+        "io.export.plan" => {
+            rpc_blocking_with_params::<IoExportRequestParams, _, _>(
+                req.id,
+                req.params,
+                move |params| {
+                    validate_io_identity(&params.command_id, "commandId")?;
+                    let package = canonical_app
+                        .lock()
+                        .expect("canonical app runtime mutex poisoned")
+                        .reconstruct_import_package(&params.command_id)?;
+                    let registry = canonical_builtin_import_registry(io_probe_registry_root())?;
+                    require_provider_version(
+                        &registry,
+                        &params.provider_id,
+                        &params.provider_version,
+                    )?;
+                    let plan = registry.plan_export(
+                        &params.provider_id,
+                        CanonicalExportRequest {
+                            target: Path::new(&params.target_path),
+                            format_id: &params.format_id,
+                            package: &package,
+                            options: &params.options,
+                        },
+                    )?;
+                    Ok(IoExportPlanEnvelope {
+                        schema_version: IO_RPC_SCHEMA_VERSION,
+                        request: params,
+                        plan,
+                    })
+                },
+            )
+            .await
+        }
+        "io.export.execute" => {
+            let params = match serde_json::from_value::<IoExportExecuteParams>(req.params) {
+                Ok(params) => params,
+                Err(error) => {
+                    return rpc_err(req.id, -32602, &format!("invalid params: {error}"));
+                }
+            };
+            if params.accepted_plan.schema_version != IO_RPC_SCHEMA_VERSION {
+                return rpc_err(req.id, -32602, "unsupported I/O export-plan schema version");
+            }
+            let operation_id = params.operation_id.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                run_tracked_io(operations, operation_id, |context| {
+                    let accepted = params.accepted_plan;
+                    validate_io_identity(&accepted.request.command_id, "commandId")?;
+                    let scratch = IoScratch::create(&context.operation_id)?;
+                    let package = {
+                        let runtime = canonical_app
+                            .lock()
+                            .expect("canonical app runtime mutex poisoned");
+                        let package =
+                            runtime.reconstruct_import_package(&accepted.request.command_id)?;
+                        runtime.materialize_import_artifacts(
+                            &accepted.request.command_id,
+                            &scratch.root,
+                        )?;
+                        package
+                    };
+                    let registry = canonical_builtin_import_registry(scratch.root.clone())?;
+                    require_provider_version(
+                        &registry,
+                        &accepted.request.provider_id,
+                        &accepted.request.provider_version,
+                    )?;
+                    registry.execute_export(
+                        &accepted.request.provider_id,
+                        CanonicalExportRequest {
+                            target: Path::new(&accepted.request.target_path),
+                            format_id: &accepted.request.format_id,
+                            package: &package,
+                            options: &accepted.request.options,
+                        },
+                        &accepted.plan,
+                        context,
+                    )?;
+                    Ok(serde_json::json!({
+                        "schemaVersion": IO_RPC_SCHEMA_VERSION,
+                        "operationId": context.operation_id,
+                        "outputs": accepted.plan.outputs,
+                    }))
+                })
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(std::convert::identity);
+            rpc_result(req.id, result)
+        }
+        "io.operation.status" => match serde_json::from_value::<IoOperationParams>(req.params) {
+            Ok(params) => match operations.status(&params.operation_id) {
+                Some(status) => rpc_result(req.id, Ok::<_, anyhow::Error>(status)),
+                None => rpc_err(req.id, -32000, "I/O operation is unknown"),
+            },
+            Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+        },
+        "io.operation.cancel" => match serde_json::from_value::<IoOperationParams>(req.params) {
+            Ok(params) => rpc_result(
+                req.id,
+                Ok::<_, anyhow::Error>(serde_json::json!({
+                    "schemaVersion": IO_RPC_SCHEMA_VERSION,
+                    "operationId": params.operation_id,
+                    "cancellationRequested": operations.cancel(&params.operation_id),
+                })),
+            ),
+            Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+        },
+        other => rpc_err(req.id, -32601, &format!("I/O method not found: {other}")),
+    }
+}
+
+fn run_tracked_io<F>(
+    operations: Arc<IoOperations>,
+    operation_id: String,
+    operation: F,
+) -> anyhow::Result<serde_json::Value>
+where
+    F: FnOnce(&mut IoProviderContext) -> anyhow::Result<serde_json::Value>,
+{
+    let mut context = operations.begin(operation_id.clone())?;
+    let result = operation(&mut context);
+    operations.finish(&operation_id, &result);
+    result
+}
+
+fn validate_io_identity(value: &str, field: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !value.is_empty()
+            && value.len() <= 160
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')),
+        "{field} is not a bounded portable identity"
+    );
+    Ok(())
+}
+
+fn io_probe_registry_root() -> PathBuf {
+    std::env::temp_dir().join("himmelcad-io-registry")
+}
+
+fn require_provider_version(
+    registry: &himmelcad_io::FormatProviderRegistry,
+    provider_id: &str,
+    provider_version: &str,
+) -> anyhow::Result<()> {
+    let descriptor = registry
+        .descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.provider_id == provider_id)
+        .ok_or_else(|| anyhow::anyhow!("I/O provider is unavailable: {provider_id}"))?;
+    anyhow::ensure!(
+        descriptor.provider_version == provider_version,
+        "I/O provider version changed: selected {provider_version}, available {}",
+        descriptor.provider_version
+    );
+    Ok(())
+}
+
+struct IoScratch {
+    root: PathBuf,
+}
+
+impl IoScratch {
+    fn create(operation_id: &str) -> anyhow::Result<Self> {
+        validate_io_identity(operation_id, "operationId")?;
+        let digest = hex::encode(Sha256::digest(operation_id.as_bytes()));
+        let parent = std::env::temp_dir().join("himmelcad-io-operations");
+        std::fs::create_dir_all(&parent)?;
+        let root = parent.join(format!("{}-{digest}", std::process::id()));
+        std::fs::create_dir(&root).with_context(|| {
+            format!(
+                "I/O scratch root already exists or cannot be created: {}",
+                root.display()
+            )
+        })?;
+        Ok(Self { root })
+    }
+}
+
+impl Drop for IoScratch {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_dir_all(&self.root) {
+            tracing::warn!(path = %self.root.display(), %error, "failed to remove I/O scratch root");
+        }
+    }
+}
+
 async fn handle_product_rpc(req: RpcRequest, projects: Arc<ProjectRuntime>) -> RpcResponse {
     match req.method.as_str() {
         "photolab.products.list" => {
@@ -932,6 +2149,21 @@ async fn enrich_projected_references(
 ) -> anyhow::Result<CommitImagesParams> {
     use std::fmt::Write as _;
 
+    if params.local_metric {
+        anyhow::ensure!(
+            params.transformation.is_none(),
+            "localMetric cannot be combined with a CRS transformation"
+        );
+        for image in &mut params.images {
+            image.projected_reference = None;
+        }
+        return Ok(params);
+    }
+    let transformation = params
+        .transformation
+        .clone()
+        .context("CRS-backed image import requires a frozen transformation")?;
+
     let mut input = String::new();
     let mut indices = Vec::new();
     for (index, item) in params.images.iter().enumerate() {
@@ -951,11 +2183,11 @@ async fn enrich_projected_references(
     }
     let operation_id = format!("{}.coordinates", params.operation_id);
     let output = crs
-        .transform_text(&operation_id, &params.transformation, &input)
+        .transform_text(&operation_id, &transformation, &input)
         .await?;
     let coordinates = parse_transformed_coordinates(
         &output,
-        pipeline_ends_with_axis_swap(&params.transformation.pipeline.proj_pipeline),
+        pipeline_ends_with_axis_swap(&transformation.pipeline.proj_pipeline),
     )?;
     if coordinates.len() != indices.len() {
         anyhow::bail!(
@@ -982,7 +2214,7 @@ async fn enrich_projected_references(
             easting,
             northing,
             transformed_height_meters: source_height_meters.map(|_| height),
-            transformation_decision_sha256: params.transformation.decision_sha256.clone(),
+            transformation_decision_sha256: transformation.decision_sha256.clone(),
         });
     }
     Ok(params)
@@ -1060,6 +2292,22 @@ async fn handle_gcp_rpc(
                 req.id,
                 req.params,
                 move |params| upsert_assisted_gcp_observation(&projects, params),
+            )
+            .await
+        }
+        "photolab.gcp.localEstimate.compute" => {
+            rpc_blocking_with_params::<ComputeGcpLocalEstimateParams, _, _>(
+                req.id,
+                req.params,
+                move |params| projects.compute_gcp_local_estimate(params),
+            )
+            .await
+        }
+        "photolab.gcp.localEstimate.read" => {
+            rpc_blocking_with_params::<ReadGcpLocalEstimateParams, _, _>(
+                req.id,
+                req.params,
+                move |params| projects.read_gcp_local_estimate(params),
             )
             .await
         }
@@ -1159,7 +2407,7 @@ fn upsert_assisted_gcp_observation(
     )?;
     let propagation = propagate_gcp_through_tie_points(
         &params.observation,
-        track.as_ref().map_or(&[], std::slice::from_ref),
+        track.as_slice(),
         &collection.observations,
         params.maximum_seed_distance_pixels,
     )?;
@@ -1331,12 +2579,19 @@ fn load_aligned_gcp_cameras(
         .working_path
         .join(".photolab/cache/gcp-camera-catalog");
     let cancellation = himmelcad_core::photolab_jobs::CancellationToken::new();
-    let prepared = prepare_gcp_cameras(
+    let mut prepared = prepare_gcp_cameras(
         &development_colmap_executable()?,
         &alignment,
         &output,
         &cancellation,
     )?;
+    let calibration_groups = projects.list_calibration_groups()?;
+    attach_camera_reference_priors(
+        &mut prepared,
+        &context.camera_images,
+        &alignment,
+        &calibration_groups,
+    );
     let persisted_map = std::fs::read(alignment.join("camera-map.json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Vec<MaterializedCameraMapEntry>>(&bytes).ok());
@@ -1609,6 +2864,14 @@ async fn handle_project_rpc(
         "photolab.project.calibrationGroup.list" => {
             rpc_blocking(req.id, move || projects.list_calibration_groups()).await
         }
+        "photolab.project.calibrationGroup.updateIntrinsics" => {
+            rpc_blocking_with_params::<UpdateCalibrationGroupIntrinsicsParams, _, _>(
+                req.id,
+                req.params,
+                move |params| projects.update_calibration_group_intrinsics(params),
+            )
+            .await
+        }
         "photolab.project.captureGroup.create" => {
             rpc_blocking_with_params::<CreateCaptureGroupParams, _, _>(
                 req.id,
@@ -1738,11 +3001,11 @@ async fn handle_job_rpc(
         "photolab.jobs.startBatch" => {
             match serde_json::from_value::<StartBatchJobParams>(req.params) {
                 Ok(params) => match prepare_batch_job(&params, &projects) {
-                    Ok(job) => {
+                    Ok((job, frozen_plan)) => {
                         let publisher = Arc::clone(&projects);
                         let result = jobs
                             .start(job, move |context| {
-                                run_batch_pipeline(params, &context, &publisher)
+                                run_batch_pipeline(params, frozen_plan, &context, &publisher)
                             })
                             .await
                             .map_err(anyhow::Error::from);
@@ -1764,6 +3027,7 @@ async fn handle_job_rpc(
                         colmap,
                         run_params,
                         camera_images,
+                        calibration_groups,
                         lineage,
                     )) => {
                         let publisher = Arc::clone(&projects);
@@ -1792,6 +3056,7 @@ async fn handle_job_rpc(
                                     &mut prepared_cameras,
                                     &camera_images,
                                     &alignment_dataset,
+                                    &calibration_groups,
                                 );
                                 let tie_points = load_gcp_bundle_tie_points(
                                     &camera_root,
@@ -2324,19 +3589,22 @@ type PreparedGcpOptimizationJob = (
     PathBuf,
     RunGcpOptimizationParams,
     Vec<himmelcad_sidecar::image_commit::ProjectCameraImageRecord>,
+    Vec<crate::project_runtime::CameraCalibrationGroupRecord>,
     ProductLineage,
 );
 
 fn prepare_batch_job(
     params: &StartBatchJobParams,
     projects: &ProjectRuntime,
-) -> anyhow::Result<NewPhotolabJob> {
+) -> anyhow::Result<(NewPhotolabJob, FrozenBatchExecutionPlan)> {
     anyhow::ensure!(
         !params.steps.is_empty() && params.steps.len() <= 32,
         "batch needs 1..=32 steps"
     );
+    validate_unattended_batch_recipe(&params.steps)?;
     let context = projects.compute_context()?;
-    if let Some(processing_set_id) = params.processing_set_id.as_ref() {
+    validate_explicit_batch_artifacts(params, projects, &context)?;
+    let processing_set = if let Some(processing_set_id) = params.processing_set_id.as_ref() {
         let processing_set = projects
             .list_processing_sets()?
             .into_iter()
@@ -2345,21 +3613,20 @@ fn prepare_batch_job(
         let mut requested = params.camera_entity_ids.clone();
         requested.sort();
         requested.dedup();
-        let frozen = processing_set
+        let mut frozen = processing_set
             .camera_entity_ids
             .iter()
             .map(|id| id.0.clone())
             .collect::<Vec<_>>();
+        frozen.sort();
         anyhow::ensure!(
             requested == frozen,
             "batch camera selection differs from its immutable processing set"
         );
-    }
-    let bytes = serde_json::to_vec(&(
-        &params.steps,
-        &params.camera_entity_ids,
-        &params.processing_set_id,
-    ))?;
+        Some(processing_set)
+    } else {
+        None
+    };
     let batch_camera_entity_ids = if params.camera_entity_ids.is_empty() {
         context
             .camera_images
@@ -2369,18 +3636,31 @@ fn prepare_batch_job(
     } else {
         params.camera_entity_ids.clone()
     };
-    let image_mask_scope = projects
-        .image_mask_compute_scope(&batch_camera_entity_ids, params.processing_set_id.as_ref())?;
+    anyhow::ensure!(
+        batch_camera_entity_ids.len() >= 2,
+        "batch needs at least two frozen camera inputs"
+    );
+    let recipe_sha256 = batch_steps_hash(&params.steps, &params.camera_entity_ids)?;
+    let input_sha256 = batch_input_hash(
+        projects,
+        &context,
+        &params.camera_entity_ids,
+        params.processing_set_id.as_ref(),
+    )?;
+    let frozen_plan = freeze_batch_execution_plan(
+        params,
+        &context,
+        &batch_camera_entity_ids,
+        processing_set.as_ref(),
+        recipe_sha256,
+        input_sha256,
+    )?;
     let stage_count = 1_u32.saturating_add(u32::try_from(params.steps.len())?.saturating_mul(32));
-    Ok(NewPhotolabJob {
+    let job = NewPhotolabJob {
         id: PhotolabJobId(params.operation_id.clone()),
         kind: PhotolabJobKind::Batch,
-        config_hash: ObjectHash::of_bytes(&bytes),
-        input_hash: ObjectHash::of_bytes(&serde_json::to_vec(&(
-            &context.manifest.project_id,
-            &context.camera_images,
-            &image_mask_scope.scope_sha256,
-        ))?),
+        config_hash: frozen_plan.recipe_sha256.clone(),
+        input_hash: frozen_plan.plan_sha256.clone(),
         progress: JobProgress {
             stage: PhotolabStage {
                 kind: PhotolabStageKind::Preparing,
@@ -2390,11 +3670,276 @@ fn prepare_batch_job(
             },
             metrics: ProgressMetrics::empty(),
         },
+    };
+    Ok((job, frozen_plan))
+}
+
+fn validate_explicit_batch_artifacts(
+    params: &StartBatchJobParams,
+    projects: &ProjectRuntime,
+    context: &crate::project_runtime::ProjectComputeContext,
+) -> anyhow::Result<()> {
+    let reference = context.manifest.reference_frame.as_ref();
+    for step in &params.steps {
+        let BatchPipelineStep::Product {
+            configuration:
+                ProductRunConfiguration::Ortho {
+                    source_dem_entity_id: Some(entity_id),
+                    source_dem_version_sha256: Some(expected_version),
+                    ..
+                },
+        } = step
+        else {
+            continue;
+        };
+        let (_, record) =
+            projects.raster_dataset_by_entity_id(entity_id, PublishedRasterKind::Dem, None)?;
+        let reference = reference.context(
+            "orthomosaic and external DEM need an explicit projected project reference frame",
+        )?;
+        let current = context
+            .manifest
+            .entities
+            .get(&entity_id.0)
+            .context("selected external DEM entity does not exist")?;
+        anyhow::ensure!(
+            current.version_hash == *expected_version,
+            "selected external DEM revision changed; rebind the recipe slot"
+        );
+        let expected_horizontal = crs_definition_text(&reference.target.horizontal.crs);
+        let expected_vertical = height_reference_text(&reference.target.vertical);
+        anyhow::ensure!(
+            record.summary.crs.horizontal == expected_horizontal,
+            "selected DEM horizontal CRS differs from the project"
+        );
+        anyhow::ensure!(
+            record.summary.crs.vertical == expected_vertical,
+            "selected DEM height reference differs from the project"
+        );
+        let grid = &record.summary.grid;
+        anyhow::ensure!(
+            grid.gsd.is_finite()
+                && grid.gsd > 0.0
+                && grid.width_pixels > 0
+                && grid.height_pixels > 0
+                && grid.bounds.minimum_east.is_finite()
+                && grid.bounds.minimum_north.is_finite()
+                && grid.bounds.maximum_east.is_finite()
+                && grid.bounds.maximum_north.is_finite()
+                && grid.bounds.minimum_east < grid.bounds.maximum_east
+                && grid.bounds.minimum_north < grid.bounds.maximum_north,
+            "selected DEM has invalid coverage or resolution metadata"
+        );
+    }
+    Ok(())
+}
+
+fn validate_unattended_batch_recipe(steps: &[BatchPipelineStep]) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        matches!(steps.first(), Some(BatchPipelineStep::Alignment { .. })),
+        "an unattended batch must start with an explicit alignment node"
+    );
+    anyhow::ensure!(
+        steps
+            .iter()
+            .filter(|step| matches!(step, BatchPipelineStep::Alignment { .. }))
+            .count()
+            == 1,
+        "an unattended batch must contain exactly one alignment node"
+    );
+    let mut dense_ready = false;
+    let mut dem_ready = false;
+    let mut mesh_ready = false;
+    for step in steps {
+        let BatchPipelineStep::Product { configuration } = step else {
+            continue;
+        };
+        match configuration {
+            ProductRunConfiguration::Depth { .. } => {}
+            ProductRunConfiguration::Dense { .. } => dense_ready = true,
+            ProductRunConfiguration::Dem { .. } => {
+                anyhow::ensure!(dense_ready, "DEM needs a prior dense-cloud node");
+                dem_ready = true;
+            }
+            ProductRunConfiguration::Ortho {
+                source_dem_entity_id,
+                source_dem_version_sha256,
+                ..
+            } => {
+                anyhow::ensure!(
+                    (source_dem_entity_id.is_some() && source_dem_version_sha256.is_some())
+                        || (source_dem_entity_id.is_none()
+                            && source_dem_version_sha256.is_none()
+                            && dem_ready),
+                    "orthomosaic needs an exact external DEM entity/version binding or a prior DEM node"
+                );
+            }
+            ProductRunConfiguration::Mesh { .. } => {
+                anyhow::ensure!(dem_ready, "mesh needs a prior DEM node");
+                mesh_ready = true;
+            }
+            ProductRunConfiguration::Splat { .. } => {
+                anyhow::ensure!(mesh_ready, "Gaussian splat needs a prior mesh node");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn freeze_batch_execution_plan(
+    params: &StartBatchJobParams,
+    context: &crate::project_runtime::ProjectComputeContext,
+    camera_entity_ids: &[String],
+    processing_set: Option<&crate::project_runtime::ProcessingSetRecord>,
+    recipe_sha256: ObjectHash,
+    input_sha256: ObjectHash,
+) -> anyhow::Result<FrozenBatchExecutionPlan> {
+    let node_config_sha256 = params
+        .steps
+        .iter()
+        .map(|step| serde_json::to_vec(step).map(|bytes| ObjectHash::of_bytes(&bytes)))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut entities = BTreeMap::<String, FrozenBatchEntity>::new();
+    for id in camera_entity_ids {
+        let entity = context
+            .manifest
+            .entities
+            .get(id)
+            .with_context(|| format!("batch camera entity does not exist: {id}"))?;
+        anyhow::ensure!(
+            entity.kind == EntityKind::CameraImage,
+            "batch camera input has the wrong entity kind: {id}"
+        );
+        entities.insert(
+            id.clone(),
+            FrozenBatchEntity {
+                entity_id: entity.id.clone(),
+                entity_revision_sha256: entity.version_hash.clone(),
+            },
+        );
+    }
+    if let Some(set) = processing_set {
+        let entity = context
+            .manifest
+            .entities
+            .get(&set.entity_id.0)
+            .context("batch processing-set entity does not exist")?;
+        entities.insert(
+            entity.id.0.clone(),
+            FrozenBatchEntity {
+                entity_id: entity.id.clone(),
+                entity_revision_sha256: entity.version_hash.clone(),
+            },
+        );
+    }
+    let mut external_artifacts = Vec::new();
+    for step in &params.steps {
+        let BatchPipelineStep::Product {
+            configuration:
+                configuration @ ProductRunConfiguration::Ortho {
+                    source_dem_entity_id: Some(entity_id),
+                    ..
+                },
+        } = step
+        else {
+            continue;
+        };
+        let entity = context
+            .manifest
+            .entities
+            .get(&entity_id.0)
+            .context("selected external DEM entity does not exist")?;
+        anyhow::ensure!(
+            entity.kind == EntityKind::DigitalElevationModel,
+            "selected external DEM binding has the wrong entity kind"
+        );
+        let config_sha256 = ObjectHash::of_bytes(&serde_json::to_vec(configuration)?);
+        external_artifacts.push(FrozenBatchExternalArtifact {
+            entity_id: entity.id.clone(),
+            entity_revision_sha256: entity.version_hash.clone(),
+            content_sha256: entity.version_hash.clone(),
+            provider_id: "hcad.photolab.raster".into(),
+            provider_version: "1".into(),
+            config_sha256,
+        });
+        entities.insert(
+            entity.id.0.clone(),
+            FrozenBatchEntity {
+                entity_id: entity.id.clone(),
+                entity_revision_sha256: entity.version_hash.clone(),
+            },
+        );
+    }
+    external_artifacts.sort_by(|left, right| left.entity_id.0.cmp(&right.entity_id.0));
+    let frozen_entities = entities.into_values().collect::<Vec<_>>();
+    let processing_set_membership_sha256 = processing_set.map(|set| set.membership_sha256.clone());
+    let plan_sha256 = ObjectHash::of_bytes(&serde_json::to_vec(&(
+        1_u32,
+        &params.operation_id,
+        &context.manifest.project_id,
+        &recipe_sha256,
+        &input_sha256,
+        &node_config_sha256,
+        &frozen_entities,
+        &processing_set_membership_sha256,
+        &external_artifacts,
+    ))?);
+    Ok(FrozenBatchExecutionPlan {
+        schema_version: 1,
+        run_id: params.operation_id.clone(),
+        project_id: context.manifest.project_id.clone(),
+        recipe_sha256,
+        input_sha256,
+        plan_sha256,
+        node_config_sha256,
+        frozen_entities,
+        processing_set_membership_sha256,
+        external_artifacts,
     })
+}
+
+fn write_frozen_batch_plan(path: &Path, plan: &FrozenBatchExecutionPlan) -> anyhow::Result<()> {
+    let bytes = serde_json::to_vec_pretty(plan)?;
+    if path.is_file() {
+        let existing: FrozenBatchExecutionPlan = serde_json::from_slice(&std::fs::read(path)?)?;
+        anyhow::ensure!(
+            existing == *plan,
+            "the persisted concrete batch run differs from the requested run"
+        );
+        return Ok(());
+    }
+    let temporary = path.with_extension("json.pending");
+    std::fs::write(&temporary, bytes)?;
+    std::fs::rename(temporary, path)?;
+    Ok(())
+}
+
+fn validate_frozen_batch_entities(
+    context: &crate::project_runtime::ProjectComputeContext,
+    plan: &FrozenBatchExecutionPlan,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        plan.schema_version == 1 && plan.project_id == context.manifest.project_id,
+        "concrete batch run belongs to another project or schema"
+    );
+    for frozen in &plan.frozen_entities {
+        let current = context
+            .manifest
+            .entities
+            .get(&frozen.entity_id.0)
+            .with_context(|| format!("frozen batch entity was removed: {}", frozen.entity_id.0))?;
+        anyhow::ensure!(
+            current.version_hash == frozen.entity_revision_sha256,
+            "frozen batch entity changed: {}",
+            frozen.entity_id.0
+        );
+    }
+    Ok(())
 }
 
 fn run_batch_pipeline(
     params: StartBatchJobParams,
+    frozen_plan: FrozenBatchExecutionPlan,
     context: &JobWorkerContext,
     projects: &ProjectRuntime,
 ) -> Result<(), JobWorkerError> {
@@ -2406,6 +3951,8 @@ fn run_batch_pipeline(
     let compute_context = projects
         .compute_context()
         .map_err(|error| worker_error("projectRead", &error.to_string()))?;
+    validate_frozen_batch_entities(&compute_context, &frozen_plan)
+        .map_err(|error| worker_error("batchInputsChanged", &error.to_string()))?;
     let steps_sha256 = batch_steps_hash(&params.steps, &params.camera_entity_ids)
         .map_err(|error| worker_error("batchCheckpoint", &error.to_string()))?;
     let input_sha256 = batch_input_hash(
@@ -2415,16 +3962,29 @@ fn run_batch_pipeline(
         params.processing_set_id.as_ref(),
     )
     .map_err(|error| worker_error("batchCheckpoint", &error.to_string()))?;
+    if steps_sha256 != frozen_plan.recipe_sha256 || input_sha256 != frozen_plan.input_sha256 {
+        return Err(worker_error(
+            "batchInputsChanged",
+            "the project changed after batch instantiation; create a new concrete run",
+        ));
+    }
     let checkpoint_root = compute_context
         .working_path
         .join(".photolab/batch")
-        .join(&steps_sha256.0);
+        .join(&frozen_plan.plan_sha256.0);
     std::fs::create_dir_all(&checkpoint_root)
         .map_err(|error| worker_error("io", &error.to_string()))?;
+    write_frozen_batch_plan(&checkpoint_root.join("plan.json"), &frozen_plan)
+        .map_err(|error| worker_error("batchPlan", &error.to_string()))?;
     let checkpoint_path = checkpoint_root.join("checkpoint.json");
-    let completed = read_batch_checkpoint(&checkpoint_path, &steps_sha256, &input_sha256)
-        .map_err(|error| worker_error("batchCheckpoint", &error.to_string()))?
-        .min(params.steps.len());
+    let completed = read_batch_checkpoint(
+        &checkpoint_path,
+        &frozen_plan.plan_sha256,
+        &steps_sha256,
+        &input_sha256,
+    )
+    .map_err(|error| worker_error("batchCheckpoint", &error.to_string()))?
+    .min(params.steps.len());
     for (index, step) in params.steps.iter().cloned().enumerate().skip(completed) {
         context.check_cancelled()?;
         let base = 1 + u32::try_from(index).unwrap_or(u32::MAX).saturating_mul(32);
@@ -2460,23 +4020,69 @@ fn run_batch_pipeline(
                     .publish_colmap_outcome_for_processing_set(outcome, processing_set_id)
                     .map_err(|error| worker_error("projectPublish", &error.to_string()))?;
             }
-            BatchPipelineStep::Product { configuration } => execute_batch_product(
-                &params.operation_id,
-                index,
-                configuration,
-                &params.camera_entity_ids,
-                params.processing_set_id.as_ref(),
-                context,
-                projects,
-                base,
-                total,
-            )?,
+            BatchPipelineStep::Product { mut configuration } => {
+                let source_dem_entity_id = match &mut configuration {
+                    ProductRunConfiguration::Ortho {
+                        source_dem_entity_id,
+                        ..
+                    }
+                    | ProductRunConfiguration::Mesh {
+                        source_dem_entity_id,
+                        ..
+                    } => Some(source_dem_entity_id),
+                    _ => None,
+                };
+                if let Some(source_dem_entity_id) = source_dem_entity_id {
+                    if source_dem_entity_id.is_none() {
+                        let dem_index = params.steps[..index]
+                            .iter()
+                            .enumerate()
+                            .rev()
+                            .find_map(|(candidate_index, candidate)| {
+                                matches!(
+                                    candidate,
+                                    BatchPipelineStep::Product {
+                                        configuration: ProductRunConfiguration::Dem { .. }
+                                    }
+                                )
+                                .then_some(candidate_index)
+                            })
+                            .ok_or_else(|| {
+                                worker_error(
+                                    "batchNotReady",
+                                    "orthomosaic needs an explicit DEM binding or a prior DEM node",
+                                )
+                            })?;
+                        *source_dem_entity_id = Some(EntityId(format!(
+                            "{}:raster:{}-{:02}-dem",
+                            compute_context.manifest.project_id, params.operation_id, dem_index
+                        )));
+                    }
+                }
+                execute_batch_product(
+                    &params.operation_id,
+                    index,
+                    configuration,
+                    &params.camera_entity_ids,
+                    params.processing_set_id.as_ref(),
+                    context,
+                    projects,
+                    base,
+                    total,
+                )?;
+            }
         }
         projects
             .autosave()
             .map_err(|error| worker_error("autosave", &error.to_string()))?;
-        write_batch_checkpoint(&checkpoint_path, &steps_sha256, &input_sha256, index + 1)
-            .map_err(|error| worker_error("batchCheckpoint", &error.to_string()))?;
+        write_batch_checkpoint(
+            &checkpoint_path,
+            &frozen_plan.plan_sha256,
+            &steps_sha256,
+            &input_sha256,
+            index + 1,
+        )
+        .map_err(|error| worker_error("batchCheckpoint", &error.to_string()))?;
         context
             .progress
             .report_blocking(JobProgress {
@@ -2498,6 +4104,7 @@ fn run_batch_pipeline(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // Batch-product execution mirrors the persisted run context.
 fn execute_batch_product(
     batch_id: &str,
     index: usize,
@@ -2655,6 +4262,7 @@ fn product_kind_name(configuration: &ProductRunConfiguration) -> &'static str {
 #[serde(rename_all = "camelCase")]
 struct BatchCheckpoint {
     schema_version: u32,
+    plan_sha256: ObjectHash,
     steps_sha256: ObjectHash,
     input_sha256: ObjectHash,
     completed_steps: usize,
@@ -2698,6 +4306,7 @@ fn batch_input_hash(
 
 fn read_batch_checkpoint(
     path: &Path,
+    plan_sha256: &ObjectHash,
     steps_sha256: &ObjectHash,
     input_sha256: &ObjectHash,
 ) -> anyhow::Result<usize> {
@@ -2705,7 +4314,8 @@ fn read_batch_checkpoint(
         return Ok(0);
     }
     let value: BatchCheckpoint = serde_json::from_slice(&std::fs::read(path)?)?;
-    if value.schema_version != 2
+    if value.schema_version != 3
+        || value.plan_sha256 != *plan_sha256
         || value.steps_sha256 != *steps_sha256
         || value.input_sha256 != *input_sha256
     {
@@ -2715,12 +4325,14 @@ fn read_batch_checkpoint(
 }
 fn write_batch_checkpoint(
     path: &Path,
+    plan_sha256: &ObjectHash,
     steps_sha256: &ObjectHash,
     input_sha256: &ObjectHash,
     completed_steps: usize,
 ) -> anyhow::Result<()> {
     let value = BatchCheckpoint {
-        schema_version: 2,
+        schema_version: 3,
+        plan_sha256: plan_sha256.clone(),
         steps_sha256: steps_sha256.clone(),
         input_sha256: input_sha256.clone(),
         completed_steps,
@@ -2782,6 +4394,7 @@ fn prepare_gcp_optimization_job(
         development_colmap_executable()?,
         run_params,
         context.camera_images,
+        projects.list_calibration_groups()?,
         lineage,
     ))
 }
@@ -2790,6 +4403,7 @@ fn attach_camera_reference_priors(
     prepared: &mut [himmelcad_sidecar::mvs_scene::PreparedGcpCamera],
     camera_images: &[himmelcad_sidecar::image_commit::ProjectCameraImageRecord],
     alignment_dataset: &Path,
+    calibration_groups: &[crate::project_runtime::CameraCalibrationGroupRecord],
 ) {
     let camera_map = std::fs::read(alignment_dataset.join("camera-map.json"))
         .ok()
@@ -2808,6 +4422,17 @@ fn attach_camera_reference_priors(
         let Some(camera) = mapped else {
             continue;
         };
+        if let Some(group) = calibration_groups
+            .iter()
+            .find(|group| group.camera_entity_ids.contains(&camera.entity_id))
+        {
+            entry.camera.calibration_group_id = group.entity_id.0.clone();
+            entry.camera.intrinsics_policy = group.intrinsics_policy;
+        } else {
+            entry.camera.calibration_group_id = format!("ungrouped:{}", camera.entity_id.0);
+            entry.camera.intrinsics_policy =
+                himmelcad_core::photolab_gcp_optimization::GcpIntrinsicsPolicy::Fixed;
+        }
         let Some(reference) = camera.metadata.projected_reference.as_ref() else {
             continue;
         };
@@ -2897,6 +4522,7 @@ fn map_gcp_optimization_error(
     }
 }
 
+#[allow(clippy::type_complexity)] // Private orchestration state is consumed immediately by the job runner.
 fn prepare_alignment_job(
     params: StartAlignmentJobParams,
     projects: &ProjectRuntime,
@@ -3154,6 +4780,7 @@ const fn alignment_primary_store(profile: AlignmentQualityProfile) -> MappingFea
     }
 }
 
+#[allow(clippy::type_complexity)] // Private orchestration state is consumed immediately by the job runner.
 fn prepare_alignment_merge_job(
     params: StartAlignmentMergeJobParams,
     projects: &ProjectRuntime,
@@ -4067,9 +5694,20 @@ fn prepare_raster_product_job(
                     dense_record.output_index_sha256,
                 )
             }
-            ProductRunConfiguration::Ortho { .. } => {
-                let (dem_root, dem_record) = projects
-                    .latest_raster_dataset_for_lineage(PublishedRasterKind::Dem, &lineage)?;
+            ProductRunConfiguration::Ortho {
+                ref source_dem_entity_id,
+                ..
+            } => {
+                let (dem_root, dem_record) = if let Some(entity_id) = source_dem_entity_id {
+                    projects.raster_dataset_by_entity_id(
+                        entity_id,
+                        PublishedRasterKind::Dem,
+                        None,
+                    )?
+                } else {
+                    projects
+                        .latest_raster_dataset_for_lineage(PublishedRasterKind::Dem, &lineage)?
+                };
                 let dem_evidence = ObjectHash::of_bytes(&serde_json::to_vec(&dem_record)?);
                 (
                     PhotolabJobKind::BuildOrthomosaic,
@@ -4082,6 +5720,16 @@ fn prepare_raster_product_job(
             }
             _ => anyhow::bail!("raster preparation needs a DEM or orthomosaic configuration"),
         };
+    if let Some((_, dem_record)) = dem_dataset.as_ref() {
+        anyhow::ensure!(
+            dem_record.summary.crs.horizontal == horizontal_srs,
+            "selected DEM horizontal CRS differs from the project"
+        );
+        anyhow::ensure!(
+            dem_record.summary.crs.vertical == vertical_label,
+            "selected DEM height reference differs from the project"
+        );
+    }
     let input_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
         input_evidence,
         &config_bytes,
@@ -4146,6 +5794,7 @@ fn prepare_mesh_job(
         interpolate_holes,
         build_texture,
         texture_size,
+        source_dem_entity_id,
     } = params.configuration
     else {
         anyhow::bail!("mesh configuration required")
@@ -4170,8 +5819,12 @@ fn prepare_mesh_job(
         image_mask_scope_sha256: alignment.image_mask_scope_sha256,
     };
     pin_latest_product_gcp_optimization(projects, &mut lineage)?;
-    let (dem_root, dem) =
-        projects.latest_raster_dataset_for_lineage(PublishedRasterKind::Dem, &lineage)?;
+    let (dem_root, dem) = if let Some(entity_id) = source_dem_entity_id.as_ref() {
+        projects.raster_dataset_by_entity_id(entity_id, PublishedRasterKind::Dem, None)?
+    } else {
+        projects.latest_raster_dataset_for_lineage(PublishedRasterKind::Dem, &lineage)?
+    };
+    let dem_evidence = ObjectHash::of_bytes(&serde_json::to_vec(&dem)?);
     let (texture_dataset_root, texture_summary) = if build_texture {
         let (ortho_root, ortho) = projects
             .latest_raster_dataset_for_lineage(PublishedRasterKind::Orthomosaic, &lineage)?;
@@ -4184,9 +5837,10 @@ fn prepare_mesh_job(
         interpolate_holes,
         build_texture,
         texture_size,
+        &source_dem_entity_id,
     ))?);
     let input_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
-        &dem.job_id,
+        &dem_evidence,
         &texture_dataset_root,
         &lineage.source_alignment_entity_id,
         &lineage.processing_set_id,
@@ -5220,9 +6874,7 @@ fn rpc_result<T: Serialize>(id: serde_json::Value, result: anyhow::Result<T>) ->
     }
 }
 
-fn handle_import_ifc(
-    params: ImportIfcParams,
-) -> anyhow::Result<himmelcad_io::CanonicalImportPackage> {
+fn handle_import_ifc(params: ImportIfcParams) -> anyhow::Result<(CanonicalStagedImport, String)> {
     let source = PathBuf::from(params.path);
     anyhow::ensure!(
         source.is_file(),
@@ -5264,16 +6916,19 @@ fn handle_import_ifc(
         }
         hasher.update(&hash_buffer[..count]);
     }
+    let source_hash = hex::encode(hasher.finalize());
     let package_path = cache_dir
         .join("ifc-packages")
-        .join(format!("{}.json", hex::encode(hasher.finalize())));
+        .join(format!("{source_hash}.json"));
+    let provider = IfcCanonicalProvider::new(cache_dir.clone());
+    let command_id = format!("ifc-import-{source_hash}-{}", unix_timestamp_millis());
     if package_path.is_file() {
         let package = serde_json::from_slice::<himmelcad_io::CanonicalImportPackage>(
             &std::fs::read(&package_path)?,
         )?;
-        return Ok(package);
+        let roots = provider.staged_artifact_roots(&package)?;
+        return Ok((CanonicalStagedImport { package, roots }, command_id));
     }
-    let provider = IfcCanonicalProvider::new(cache_dir);
     let options = serde_json::json!({
         "acceptedLossCodes": ["hcad.loss.ifc.unsupported-geometry@1"],
         "importNamespace": params.import_namespace,
@@ -5295,12 +6950,14 @@ fn handle_import_ifc(
     let temporary = package_path.with_extension("json.tmp");
     std::fs::write(&temporary, serde_json::to_vec(&package)?)?;
     std::fs::rename(temporary, package_path)?;
-    Ok(package)
+    let roots = provider.staged_artifact_roots(&package)?;
+    Ok((CanonicalStagedImport { package, roots }, command_id))
 }
 
 async fn handle_import_las(
     params: ImportLasParams,
     operations: Arc<LasImportOperations>,
+    canonical_app: Arc<Mutex<CanonicalAppRuntime>>,
 ) -> anyhow::Result<serde_json::Value> {
     if params.paths.is_empty() {
         anyhow::bail!("paths is empty");
@@ -5314,6 +6971,8 @@ async fn handle_import_las(
     // Spawn each import on a blocking thread so heavy file reads don't stall
     // the JSON-RPC dispatch loop.
     let mut summaries = Vec::with_capacity(params.paths.len());
+    let mut combined_package: Option<himmelcad_io::CanonicalImportPackage> = None;
+    let mut staged_roots = StagedArtifactRoots::default();
     let progress_key = params.progress_key.clone();
     let operation_id = params
         .operation_id
@@ -5366,14 +7025,50 @@ async fn handle_import_las(
             total = summary.point_count_total,
             "import.las completed"
         );
+        let package = summary.canonical_import_package()?;
+        staged_roots.dataset_roots.insert(
+            summary.dataset_id.clone(),
+            PathBuf::from(&summary.potree_dir),
+        );
+        if let Some(combined) = combined_package.as_mut() {
+            combined.admissions.extend(package.admissions);
+            for object in package.objects {
+                if !combined
+                    .objects
+                    .iter()
+                    .any(|existing| existing.object_hash == object.object_hash)
+                {
+                    combined.objects.push(object);
+                }
+            }
+            combined.datasets.extend(package.datasets);
+            combined.resource_sets.extend(package.resource_sets);
+        } else {
+            combined_package = Some(package);
+        }
         summaries.push(summary);
     }
+    let staged = CanonicalStagedImport {
+        package: combined_package.context("LAS import produced no canonical package")?,
+        roots: staged_roots,
+    };
+    if active_operation.cancellation.load(Ordering::Acquire) {
+        anyhow::bail!("LAS import was cancelled before canonical publication");
+    }
+    let commit = canonical_app
+        .lock()
+        .expect("canonical app runtime mutex poisoned")
+        .publish_staged_import(&staged, &operation_id)?;
     emit_progress(
         progress_key.as_deref(),
         0.85,
         &format!("Conversion finished for {total} LAS/LAZ file(s)"),
     );
-    Ok(serde_json::json!({ "operationId": operation_id, "imports": summaries }))
+    Ok(serde_json::json!({
+        "operationId": operation_id,
+        "imports": summaries,
+        "journalEntry": commit.journal_entry,
+    }))
 }
 
 fn unix_timestamp_millis() -> u128 {
@@ -5424,6 +7119,54 @@ fn rpc_err(id: serde_json::Value, code: i32, message: &str) -> RpcResponse {
         error: Some(RpcError {
             code,
             message: message.to_string(),
+            data: None,
+        }),
+    }
+}
+
+fn rpc_automation_err(id: serde_json::Value, message: &str) -> RpcResponse {
+    let stable_code = message
+        .split_once(':')
+        .map_or("internal", |(code, _)| code.trim());
+    let known = [
+        "protocolMismatch",
+        "missingCapability",
+        "invalidRequest",
+        "invalidCursor",
+        "generationChanged",
+        "pageLimitExceeded",
+        "byteLimitExceeded",
+        "conflict",
+        "lossAcceptanceRequired",
+        "confirmationRequired",
+        "operationNotFound",
+        "cancelled",
+        "leaseExpired",
+        "leaseRevoked",
+        "leaseRangeInvalid",
+        "leaseBudgetExhausted",
+        "hashMismatch",
+        "permissionDenied",
+        "internal",
+    ];
+    let stable_code = if known.contains(&stable_code) {
+        stable_code
+    } else {
+        "internal"
+    };
+    RpcResponse {
+        jsonrpc: "2.0",
+        id,
+        result: None,
+        error: Some(RpcError {
+            code: -32040,
+            message: message.to_owned(),
+            data: Some(serde_json::json!({
+                "code": stable_code,
+                "message": message,
+                "retryable": matches!(stable_code, "generationChanged" | "cancelled"),
+                "details": {},
+            })),
         }),
     }
 }
@@ -5433,6 +7176,135 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    fn rpc_request(method: &str, params: serde_json::Value) -> RpcRequest {
+        RpcRequest {
+            jsonrpc: "2.0".to_owned(),
+            id: serde_json::json!(1),
+            method: method.to_owned(),
+            params,
+        }
+    }
+
+    #[test]
+    fn app_negotiation_advertises_only_implemented_capabilities() {
+        let response = handle_app_negotiation(rpc_request(
+            "app.negotiate",
+            serde_json::json!({
+                "clientName": "builder-test",
+                "supportedVersions": [1],
+                "requiredCapabilities": ["document.read", "document.write"],
+                "optionalCapabilities": ["view.read"]
+            }),
+        ));
+        assert!(response.error.is_none());
+        let result = response.result.expect("negotiation result");
+        assert_eq!(result["selectedVersion"], 1);
+        assert_eq!(
+            result["capabilities"],
+            serde_json::json!([
+                "document.read",
+                "document.write",
+                "journal.read",
+                "io.formats.read",
+                "io.probe",
+                "io.import.execute",
+                "io.export",
+                "io.operation",
+                "registration.import",
+                "residency.read",
+                "automation.entities.page",
+                "automation.cas.describe",
+                "automation.commands.validate",
+                "automation.commands.status",
+                "automation.commands.cancel",
+                "automation.bulk.read",
+                "automation.bulk.release"
+            ])
+        );
+    }
+
+    #[test]
+    fn io_provider_discovery_is_stable_and_paginated() {
+        let first = handle_io_formats_page(rpc_request(
+            "io.formats.page",
+            serde_json::json!({ "limit": 2 }),
+        ));
+        assert!(first.error.is_none());
+        let result = first.result.expect("format result");
+        assert_eq!(result["items"].as_array().map(Vec::len), Some(2));
+        assert!(result["nextCursor"].is_string());
+    }
+
+    #[tokio::test]
+    async fn io_probe_is_bounded_and_returns_a_version_frozen_selection() {
+        let source = std::env::temp_dir().join(format!(
+            "himmelcad-io-probe-{}-{}.dxf",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::write(&source, b"0\nSECTION\n2\nHEADER\n0\nENDSEC\n0\nEOF\n")
+            .expect("probe source");
+        let response = handle_io_rpc(
+            rpc_request(
+                "io.probe",
+                serde_json::json!({ "sourcePath": source, "mediaType": "image/vnd.dxf" }),
+            ),
+            Arc::new(IoOperations::default()),
+            Arc::new(Mutex::new(CanonicalAppRuntime::default())),
+        )
+        .await;
+        std::fs::remove_file(&source).expect("cleanup");
+        assert!(response.error.is_none(), "{:?}", response.error);
+        let selection = response.result.expect("probe selection");
+        assert_eq!(selection["providerId"], "hcad.io.dxf-rs@1");
+        assert_eq!(selection["formatId"], "dxf@r12-r2018-ascii");
+        assert!(selection["providerVersion"].is_string());
+    }
+
+    #[test]
+    fn generic_io_operation_cancel_is_visible_to_every_provider() {
+        let operations = Arc::new(IoOperations::default());
+        let context = operations
+            .begin("generic-import-1".to_owned())
+            .expect("begin operation");
+        assert!(!context.is_cancelled());
+        assert!(operations.cancel("generic-import-1"));
+        assert!(context.is_cancelled());
+        let result = Err(anyhow::anyhow!("cancelled"));
+        operations.finish("generic-import-1", &result);
+        assert_eq!(
+            operations.status("generic-import-1").expect("status").state,
+            IoOperationState::Cancelled
+        );
+        assert!(operations.begin("generic-import-1".to_owned()).is_err());
+    }
+
+    #[test]
+    fn exporter_capabilities_and_version_drift_fail_closed() {
+        let registry =
+            canonical_builtin_import_registry(io_probe_registry_root()).expect("built-in registry");
+        for provider_id in ["hcad.io.las-potree@1", "hcad.io.e57-potree@1"] {
+            let descriptor = registry
+                .descriptors()
+                .into_iter()
+                .find(|descriptor| descriptor.provider_id == provider_id)
+                .expect("import descriptor");
+            assert!(descriptor
+                .capabilities
+                .contains(&himmelcad_io::FormatCapability::Import));
+            assert!(!descriptor
+                .capabilities
+                .contains(&himmelcad_io::FormatCapability::Export));
+            assert!(registry.exporter(provider_id).is_err());
+        }
+        assert!(
+            require_provider_version(&registry, "hcad.io.dxf-rs@1", "changed-version").is_err()
+        );
+    }
 
     #[test]
     fn las_import_cancellation_is_generation_scoped_and_removed_on_finish() {
@@ -5589,6 +7461,60 @@ mod tests {
     }
 
     #[test]
+    fn unattended_batch_rejects_unbound_orthomosaic_before_queueing() {
+        let steps = vec![
+            BatchPipelineStep::Alignment {
+                profile: AlignmentQualityProfile::QualityHybrid,
+            },
+            BatchPipelineStep::Product {
+                configuration: ProductRunConfiguration::Ortho {
+                    resolution_meters_per_pixel: 0.03,
+                    blend_mode: "mosaic".into(),
+                    color_correction: true,
+                    fill_holes: false,
+                    tile_size_pixels: 512,
+                    source_dem_entity_id: None,
+                    source_dem_version_sha256: None,
+                },
+            },
+        ];
+        let error = validate_unattended_batch_recipe(&steps).expect_err("unbound DEM must fail");
+        assert!(error
+            .to_string()
+            .contains("exact external DEM entity/version binding"));
+    }
+
+    #[test]
+    fn unattended_standard_batch_has_no_runtime_input_gate() {
+        let mut steps = sample_steps();
+        steps.extend([
+            BatchPipelineStep::Product {
+                configuration: ProductRunConfiguration::Dem {
+                    surface: "dsm".into(),
+                    resolution_meters_per_pixel: 0.05,
+                    interpolate_nodata: false,
+                    tile_size_pixels: 512,
+                },
+            },
+            BatchPipelineStep::Product {
+                configuration: ProductRunConfiguration::Ortho {
+                    resolution_meters_per_pixel: 0.03,
+                    blend_mode: "mosaic".into(),
+                    color_correction: true,
+                    fill_holes: false,
+                    tile_size_pixels: 512,
+                    source_dem_entity_id: None,
+                    source_dem_version_sha256: None,
+                },
+            },
+        ]);
+        validate_unattended_batch_recipe(&steps).expect("prior DEM resolves the port");
+        assert!(!serde_json::to_string(&steps)
+            .expect("serialize")
+            .contains("NeedsUserInput"));
+    }
+
+    #[test]
     fn product_rpc_configuration_uses_renderer_camel_case_fields() {
         let configuration: ProductRunConfiguration = serde_json::from_value(serde_json::json!({
             "kind": "depth",
@@ -5610,9 +7536,11 @@ mod tests {
 
     #[test]
     fn agisoft_high_depth_settings_preserve_scale_and_mild_filtering() {
-        let mut settings = MvsSettings::default();
-        settings.maximum_image_dimension = 5_280_u32.div_ceil(2);
-        settings.matching_views = 16;
+        let mut settings = MvsSettings {
+            maximum_image_dimension: 5_280_u32.div_ceil(2),
+            matching_views: 16,
+            ..MvsSettings::default()
+        };
         apply_mvs_depth_filter(&mut settings, "mild").expect("mild filter");
 
         assert_eq!(settings.maximum_image_dimension, 2_640);
@@ -5634,17 +7562,28 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).expect("temp root");
         let path = root.join("checkpoint.json");
+        let plan = ObjectHash::of_bytes(b"concrete-plan-a");
         let steps = batch_steps_hash(&sample_steps(), &[]).expect("steps hash");
         let inputs = ObjectHash::of_bytes(b"inputs-a");
-        write_batch_checkpoint(&path, &steps, &inputs, 2).expect("write");
+        write_batch_checkpoint(&path, &plan, &steps, &inputs, 2).expect("write");
 
         assert_eq!(
-            read_batch_checkpoint(&path, &steps, &inputs).expect("matching checkpoint"),
+            read_batch_checkpoint(&path, &plan, &steps, &inputs).expect("matching checkpoint"),
             2
         );
         assert_eq!(
-            read_batch_checkpoint(&path, &steps, &ObjectHash::of_bytes(b"inputs-b"))
+            read_batch_checkpoint(&path, &plan, &steps, &ObjectHash::of_bytes(b"inputs-b"))
                 .expect("changed input starts clean"),
+            0
+        );
+        assert_eq!(
+            read_batch_checkpoint(
+                &path,
+                &ObjectHash::of_bytes(b"concrete-plan-b"),
+                &steps,
+                &inputs
+            )
+            .expect("changed concrete run starts clean"),
             0
         );
         let changed_steps = batch_steps_hash(
@@ -5655,7 +7594,7 @@ mod tests {
         )
         .expect("changed steps");
         assert_eq!(
-            read_batch_checkpoint(&path, &changed_steps, &inputs)
+            read_batch_checkpoint(&path, &plan, &changed_steps, &inputs)
                 .expect("changed configuration starts clean"),
             0
         );

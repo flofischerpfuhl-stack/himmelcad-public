@@ -7,29 +7,29 @@ optimization; Fast mode does **not** — expect residual gap vs Agisoft poses.
 
 ### 24-image subset (old Fast)
 
-| Metric | Value |
-|--------|------:|
-| Aligned cameras | 24 / 24 |
-| Sparse points | 8 449 |
+| Metric                |   Value |
+| --------------------- | ------: |
+| Aligned cameras       | 24 / 24 |
+| Sparse points         |   8 449 |
 | Mean reprojection RMS | 0.73 px |
-| Runtime (align only) | ~401 s |
+| Runtime (align only)  |  ~401 s |
 
 ### Full 135-image (old Fast: overlap=12, edge=2400)
 
-| Metric | Value |
-|--------|------:|
-| Aligned cameras | **135 / 135** |
-| Sparse points | 26 943 |
-| Mean reprojection RMS | **0.97 px** |
-| Runtime (align only) | **~1673 s (~28 min)** CPU-only SIFT |
+| Metric                |                               Value |
+| --------------------- | ----------------------------------: |
+| Aligned cameras       |                       **135 / 135** |
+| Sparse points         |                              26 943 |
+| Mean reprojection RMS |                         **0.97 px** |
+| Runtime (align only)  | **~1673 s (~28 min)** CPU-only SIFT |
 
 ### vs Agisoft dense LAS (sparse→LAS, centroid + Umeyama)
 
-| Metric | Value |
-|--------|------:|
+| Metric                  |       Value |
+| ----------------------- | ----------: |
 | NN median after Umeyama | **~0.81 m** |
-| NN p95 | **~1.23 m** |
-| Scale | ~1.000 |
+| NN p95                  | **~1.23 m** |
+| Scale                   |      ~1.000 |
 
 Note: Agisoft cloud is dense + GCP-optimized; we compare sparse without GCP BA.
 Camera trajectory NN spacing ~4.1 m (no spatial outliers).
@@ -58,13 +58,14 @@ Agisoft report (full 135, with GCP optimization): ~0.83 px mean alignment error,
 
 ## Changes applied (Fast profile only)
 
-| Knob | Before | After |
-|------|-------:|------:|
-| Sequential overlap | 12 | **20** |
-| max_image_edge | 2400 | **3200** |
-| keypoints_per_megapixel | 4000 | **5500** |
+| Knob                    | Before |    After |
+| ----------------------- | -----: | -------: |
+| Sequential overlap      |     12 |   **20** |
+| max_image_edge          |   2400 | **3200** |
+| keypoints_per_megapixel |   4000 | **5500** |
 
 Files:
+
 - `crates/himmelcad-core/src/photolab.rs` — resolve_alignment_profile Fast
 - `crates/himmelcad-sidecar/src/main.rs` — `alignment_pair_selection` Fast
 
@@ -84,13 +85,13 @@ Files:
 
 ## Gate: Fast 135 v2 (overlap=20, edge=3200) — 2026-07-18
 
-| Metric | Baseline (12 / 2400) | v2 (20 / 3200) | Δ |
-|--------|---------------------:|---------------:|--:|
-| Aligned | 135 / 135 | 135 / 135 | = |
-| Mean reproj RMS | **0.969 px** | 0.971 px | +0.002 (noise) |
-| Sparse points | **26 943** | 25 959 | −984 |
-| Observations | 171 097 | 169 534 | −1 563 |
-| Align runtime | **1673 s** | 2100 s | **+25 %** |
+| Metric          | Baseline (12 / 2400) | v2 (20 / 3200) |              Δ |
+| --------------- | -------------------: | -------------: | -------------: |
+| Aligned         |            135 / 135 |      135 / 135 |              = |
+| Mean reproj RMS |         **0.969 px** |       0.971 px | +0.002 (noise) |
+| Sparse points   |           **26 943** |         25 959 |           −984 |
+| Observations    |              171 097 |        169 534 |         −1 563 |
+| Align runtime   |           **1673 s** |         2100 s |      **+25 %** |
 
 **Conclusion:** the knob bump did **not** improve quality and made the run
 slower. Full 135 is a poor place to search the knob space.
@@ -120,12 +121,12 @@ Next experiments (24-image sandbox loops):
 
 ### 24-image A/B (sandbox)
 
-| Run | Knobs | Aligned | RMS | Sparse | Align s |
-|-----|-------|--------:|----:|-------:|--------:|
-| docs baseline | 12 / 2400 / feat~2048 | 24/24 | 0.730 | 8 449 | ~401 |
-| v2 dead budget | 20 / 3200 / feat~2048 | 24/24 | 0.775 | 6 844 | (e2e incomplete) |
-| budget-live 3200 | 20 / 3200 / feat~4096 | 24/24 | 0.673 | 15 599 | 905 |
-| **budget-live 2400** | 20 / **2400** / feat~4096 | 24/24 | **0.662** | **16 851** | **878** |
+| Run                  | Knobs                     | Aligned |       RMS |     Sparse |          Align s |
+| -------------------- | ------------------------- | ------: | --------: | ---------: | ---------------: |
+| docs baseline        | 12 / 2400 / feat~2048     |   24/24 |     0.730 |      8 449 |             ~401 |
+| v2 dead budget       | 20 / 3200 / feat~2048     |   24/24 |     0.775 |      6 844 | (e2e incomplete) |
+| budget-live 3200     | 20 / 3200 / feat~4096     |   24/24 |     0.673 |     15 599 |              905 |
+| **budget-live 2400** | 20 / **2400** / feat~4096 |   24/24 | **0.662** | **16 851** |          **878** |
 
 **Winner for Fast (24-subset):** live feature budget + **edge 2400** + overlap 20.
 
@@ -137,11 +138,11 @@ Next experiments (24-image sandbox loops):
 
 ### Current Fast defaults (after iteration)
 
-| Knob | Value | Notes |
-|------|------:|-------|
-| Sequential overlap | 20 | kept (side-lap hypothesis still plausible) |
-| max_image_edge | **2400** | better than 3200 at fixed feature budget |
-| keypoints_per_megapixel | 5500 | now **wired** into budget (ceil 8192 → 4096 SIFT) |
+| Knob                    |    Value | Notes                                             |
+| ----------------------- | -------: | ------------------------------------------------- |
+| Sequential overlap      |       20 | kept (side-lap hypothesis still plausible)        |
+| max_image_edge          | **2400** | better than 3200 at fixed feature budget          |
+| keypoints_per_megapixel |     5500 | now **wired** into budget (ceil 8192 → 4096 SIFT) |
 
 **Not yet re-gated on full 135** with live budget — do that only after we are
 happy with 24/48 loops (or after CUDA cuts runtime).
@@ -150,10 +151,10 @@ happy with 24/48 loops (or after CUDA cuts runtime).
 
 ### What we compared
 
-| Our product | Agisoft reference | Method | Result |
-|-------------|-------------------|--------|--------|
+| Our product                         | Agisoft reference                           | Method       | Result                      |
+| ----------------------------------- | ------------------------------------------- | ------------ | --------------------------- |
 | Fast sparse COLMAP (135, old knobs) | **Dense** LAS export `PW_GHT_ORIGINAL_…las` | Umeyama + NN | median ~0.81 m, p95 ~1.23 m |
-| Camera trajectory | — | NN spacing | ~4.1 m (no outliers) |
+| Camera trajectory                   | —                                           | NN spacing   | ~4.1 m (no outliers)        |
 
 This is **not** sparse↔sparse. The dense Agisoft cloud is denser and
 GCP-optimized; residual gap is expected without our GCP BA stage.
@@ -227,12 +228,12 @@ sandbox CUDA binary without replacing `vendor/colmap/linux-x64`.
 
 **Worth it for speed**, not as a mid-run production cutover:
 
-| Blocker now | Detail |
-|-------------|--------|
-| No `nvcc` | toolkit needs sudo (`nvidia-cuda-toolkit` or NVIDIA installer) |
-| RAM | 135 feature extract ~18 GiB RSS; parallel rebuild would thrash |
+| Blocker now | Detail                                                                  |
+| ----------- | ----------------------------------------------------------------------- |
+| No `nvcc`   | toolkit needs sudo (`nvidia-cuda-toolkit` or NVIDIA installer)          |
+| RAM         | 135 feature extract ~18 GiB RSS; parallel rebuild would thrash          |
 | Vendor risk | keep CUDA build under `.build/align-sandbox/colmap-cuda-install/` first |
-| GPU | Quadro M2200, **sm_52** — pin `CMAKE_CUDA_ARCHITECTURES=52` |
+| GPU         | Quadro M2200, **sm_52** — pin `CMAKE_CUDA_ARCHITECTURES=52`             |
 
 When toolkit is installed and a gate is idle: run
 `./.build/align-sandbox/scripts/build-colmap-cuda-sandbox.sh`, smoke

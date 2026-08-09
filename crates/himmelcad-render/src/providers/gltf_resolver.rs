@@ -1063,10 +1063,7 @@ mod tests {
             max_blob_bytes: 1,
             ..AssetBundleLimits::default()
         };
-        assert!(matches!(
-            ResolvedAssetBundle::build(&conflict[..1], limits),
-            Ok(_)
-        ));
+        assert!(ResolvedAssetBundle::build(&conflict[..1], limits).is_ok());
         assert!(matches!(
             ResolvedAssetBundle::build(
                 &[ResolvedAssetInput {

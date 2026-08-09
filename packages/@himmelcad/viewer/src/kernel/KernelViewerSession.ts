@@ -1,11 +1,12 @@
 import { KernelCameraController } from './KernelCameraController.js';
 import { KernelDecodeWorkerPool } from './KernelDecodeWorkerPool.js';
+import type { KernelLoadOperationOptions, KernelLoadProgress } from './KernelLoadOperation.js';
 import {
   KernelNavigationController,
   type KernelNavigationCallbacks,
   type KernelNavigationTarget,
+  type KernelViewMode,
 } from './KernelNavigationController.js';
-import type { KernelLoadOperationOptions, KernelLoadProgress } from './KernelLoadOperation.js';
 import type { KernelPotreeDatasetAdmission } from './KernelPotreeDatasetAdmission.js';
 import type {
   KernelPreparedMeshDatasetAdmission,
@@ -23,17 +24,10 @@ import {
 } from './KernelStreamingDriver.js';
 import {
   KernelViewerScene,
+  type KernelEntityViewPolicy,
   type KernelPreparedHierarchyAdmission,
   type KernelViewerEntityHandle,
 } from './KernelViewerScene.js';
-import type {
-  CanonicalEntity,
-  CanonicalResourceRef,
-  GeometryObject,
-  HatchPatternResource,
-  LineTypeResource,
-  TextureResource,
-} from './generated/index.js';
 import {
   kernelStreamingWorkPolicy,
   WgpuKernelViewer,
@@ -45,6 +39,7 @@ import {
   type KernelCanvasExtent,
   type KernelCanonicalMaterialResourceSet,
   type KernelCanonicalRenderAdmission,
+  type KernelCommittedEntityEffectMutation,
   type KernelClipVolume,
   type KernelDeviceCapabilities,
   type KernelEntityCommandMutation,
@@ -60,6 +55,8 @@ import {
   type KernelRasterDepthDistanceMeasurement,
   type KernelRasterDepthMeasurement,
   type KernelRasterDepthPick,
+  type KernelRgbaCaptureRequest,
+  type KernelRgbaCaptureResult,
   type KernelRenderStyle,
   type KernelResolvedHardwarePolicy,
   type KernelRuntimeQualityAdjustment,
@@ -71,6 +68,16 @@ import {
   type KernelWorldCamera,
   type KernelWorldPoint,
 } from './WgpuKernelViewer.js';
+import type {
+  CanonicalEntity,
+  CanonicalEntityEffect,
+  CanonicalResourceRef,
+  GeometryRepresentationBindingRef,
+  GeometryObject,
+  HatchPatternResource,
+  LineTypeResource,
+  TextureResource,
+} from './generated/index.js';
 
 export type KernelViewerSessionErrorCode =
   | 'aborted'
@@ -153,6 +160,22 @@ export interface KernelViewerSessionDiagnostics {
   readonly deviceGeneration: number;
 }
 
+export type KernelPresentedFrameOutcome = Extract<
+  KernelFrameOutcome,
+  { readonly status: 'presented' }
+>;
+
+export interface KernelPresentedFrameOptions {
+  readonly signal?: AbortSignal;
+}
+
+interface KernelPresentedFrameWaiter {
+  readonly resolve: (outcome: KernelPresentedFrameOutcome) => void;
+  readonly reject: (reason: unknown) => void;
+  readonly signal: AbortSignal | null;
+  onAbort: (() => void) | null;
+}
+
 /**
  * Framework-free owner of one complete shared-viewer lifetime.
  *
@@ -223,8 +246,12 @@ export class KernelViewerSession {
   private deviceGeneration = 1;
   private navigationState: KernelNavigationController | null = null;
   private navigationInteracting = false;
+  private currentStreamingCamera: KernelWorldCamera | null = null;
+  private previousStreamingCamera: KernelWorldCamera | null = null;
+  private viewModeRequestGeneration = 0;
   private pendingPickMappings = 0;
   private readonly pickMappingWaiters = new Set<() => void>();
+  private readonly presentedFrameWaiters = new Set<KernelPresentedFrameWaiter>();
 
   private constructor(
     private readonly options: KernelViewerSessionOptions,
@@ -277,6 +304,7 @@ export class KernelViewerSession {
       setCameraTransition: (from, to, progress, origin) =>
         this.viewerState.setCameraTransition(from, to, progress, origin),
       pick: (x, y, radius) => this.pick(x, y, radius),
+      entityHasKnownSourceHeight: (entityId) => this.scene.entityHasKnownSourceHeight(entityId),
     };
     this.navigationState = new KernelNavigationController(
       this.options.canvas,
@@ -285,6 +313,7 @@ export class KernelViewerSession {
       {
         ...(callbacks.onActivePick ? { onActivePick: callbacks.onActivePick } : {}),
         ...(callbacks.onCameraChanged ? { onCameraChanged: callbacks.onCameraChanged } : {}),
+        ...(callbacks.onViewModeChanged ? { onViewModeChanged: callbacks.onViewModeChanged } : {}),
         ...(callbacks.onCursorCoordinate
           ? { onCursorCoordinate: callbacks.onCursorCoordinate }
           : {}),
@@ -296,6 +325,8 @@ export class KernelViewerSession {
         requestFrame,
       },
     );
+    const viewMode = this.scene.currentViewMode();
+    if (viewMode !== '3d') void this.navigationState.setViewMode(viewMode, 0);
     return this.navigationState;
   }
 
@@ -324,7 +355,32 @@ export class KernelViewerSession {
       camera,
       floatingOrigin ?? [camera.target.x, camera.target.y, camera.target.z],
     );
+    this.currentStreamingCamera = replayWorldCamera(camera);
     this.options.requestFrame?.();
+  }
+
+  /**
+   * Atomically adopts an external camera into both interactive navigation and
+   * render/streaming state. The controller derives aspect from this viewport.
+   */
+  adoptWorldCamera(
+    camera: KernelWorldCamera,
+    floatingOrigin?: readonly [number, number, number],
+  ): KernelWorldCamera {
+    this.assertReady();
+    if (this.navigationState) {
+      return this.navigationState.adoptWorldCamera(camera, floatingOrigin);
+    }
+    const previous = this.camera.worldCamera();
+    const adopted = this.camera.adoptWorldCamera(camera);
+    try {
+      this.setNavigationCamera(adopted, floatingOrigin ?? this.camera.recommendedFloatingOrigin());
+    } catch (error) {
+      this.camera.adoptWorldCamera(previous);
+      throw error;
+    }
+    this.options.requestFrame?.();
+    return adopted;
   }
 
   setClearColor(color: readonly [number, number, number, number]): void {
@@ -395,6 +451,40 @@ export class KernelViewerSession {
 
   setEntityVisibility(entityId: string, visible: boolean): void {
     this.scene.setEntityVisibility(entityId, visible);
+  }
+
+  setEntityViewPolicy(entityId: string, policy: KernelEntityViewPolicy): void {
+    this.assertReady();
+    this.scene.setEntityViewPolicy(entityId, policy);
+  }
+
+  clearEntityViewPolicy(entityId: string): void {
+    this.assertReady();
+    this.scene.clearEntityViewPolicy(entityId);
+  }
+
+  /** Prewarms plan-only content before changing the shared camera/scene mode. */
+  async setViewMode(mode: KernelViewMode, durationMilliseconds = 180): Promise<void> {
+    this.assertReady();
+    const requestGeneration = ++this.viewModeRequestGeneration;
+    await this.scene.prepareViewMode(mode);
+    this.assertReady();
+    if (requestGeneration !== this.viewModeRequestGeneration) return;
+    let transitionSettled: Promise<void> | null = null;
+    if (this.navigationState) {
+      transitionSettled = this.navigationState.setViewMode(mode, durationMilliseconds);
+    } else {
+      const transition = this.camera.setLockedTopDown(mode !== '3d');
+      if (transition) {
+        this.viewerState.setWorldCamera(transition.to, this.camera.recommendedFloatingOrigin());
+        this.currentStreamingCamera = replayWorldCamera(transition.to);
+      }
+    }
+    this.scene.commitViewMode(mode);
+    this.options.requestFrame?.();
+    await transitionSettled;
+    this.assertReady();
+    if (requestGeneration !== this.viewModeRequestGeneration) return;
   }
 
   registerGlyphAtlas(
@@ -566,6 +656,19 @@ export class KernelViewerSession {
     return mutation;
   }
 
+  /** Projects an effect already committed by the canonical document authority. */
+  applyCommittedCanonicalEffect(
+    effect: CanonicalEntityEffect,
+    expectedBindings: readonly GeometryRepresentationBindingRef[] = this.viewerState.canonicalEntityBindings(
+      effect.entityId,
+    ),
+  ): KernelCommittedEntityEffectMutation {
+    this.assertReady();
+    const mutation = this.viewerState.applyCommittedCanonicalEffect(effect, expectedBindings);
+    this.options.requestFrame?.();
+    return mutation;
+  }
+
   beginMovePreview(previewId: string, entityId: string, opacityMultiplier = 0.5): number {
     this.assertReady();
     const generation = this.viewerState.beginMovePreview(previewId, entityId, opacityMultiplier);
@@ -598,11 +701,46 @@ export class KernelViewerSession {
     return this.performPick(x, y, radius);
   }
 
+  /** Captures renderer pixels without resizing or sampling the session canvas. */
+  captureRgba(request: KernelRgbaCaptureRequest): Promise<KernelRgbaCaptureResult> {
+    this.assertReady();
+    const pending = this.viewerState.captureRgba(request);
+    // Downlevel WebGPU mapping callbacks may need a subsequent ordinary device poll.
+    this.options.requestFrame?.();
+    return pending;
+  }
+
   /** Waits for current pick mappings without blocking viewer mutation or presentation. */
   async readbacksSettled(): Promise<void> {
     this.assertAlive();
     if (this.pendingPickMappings === 0) return;
     await new Promise<void>((resolve) => this.pickMappingWaiters.add(resolve));
+  }
+
+  /**
+   * Resolves after the next kernel surface present succeeds. This does not
+   * claim browser-compositor display or pixel-readback completion.
+   */
+  waitForNextPresentedFrame(
+    options: KernelPresentedFrameOptions = {},
+  ): Promise<KernelPresentedFrameOutcome> {
+    this.assertAlive();
+    options.signal?.throwIfAborted();
+    return new Promise<KernelPresentedFrameOutcome>((resolve, reject) => {
+      const signal = options.signal ?? null;
+      const waiter: KernelPresentedFrameWaiter = { resolve, reject, signal, onAbort: null };
+      const onAbort = (): void => {
+        this.presentedFrameWaiters.delete(waiter);
+        reject(abortReason(signal));
+      };
+      if (signal) waiter.onAbort = onAbort;
+      this.presentedFrameWaiters.add(waiter);
+      if (signal) {
+        signal.addEventListener('abort', onAbort, { once: true });
+        if (signal.aborted) onAbort();
+      }
+      this.options.requestFrame?.();
+    });
   }
 
   frame(interacting = false): KernelFrameOutcome {
@@ -616,6 +754,10 @@ export class KernelViewerSession {
       this.advanceCalibration();
       const interactionActive = interacting || this.navigationInteracting;
       const work = kernelStreamingWorkPolicy(this.policyState, interactionActive);
+      const prefetchCamera = interactionActive
+        ? predictedPrefetchCamera(this.previousStreamingCamera, this.currentStreamingCamera)
+        : null;
+      this.previousStreamingCamera = this.currentStreamingCamera;
       const plan = this.viewerState.planStreamingFrame({
         resourceBudget: this.policyState.resources,
         frameBudget: work.frame,
@@ -628,9 +770,11 @@ export class KernelViewerSession {
         // quality no longer forces every other provider to over-refine.
         maximumScreenSpaceError: 2,
         maximumTraversedNodes: work.maximumTraversedNodes,
+        ...(prefetchCamera === null ? {} : { prefetchCamera }),
       });
       const uploadedBytes = this.streamingState.execute(plan);
       const outcome = this.viewerState.render();
+      if (outcome.status === 'presented') this.resolvePresentedFrameWaiters(outcome);
       this.emit({ type: 'frame', outcome });
       if (outcome.status === 'recreateSurface') this.viewerState.recoverSurface();
       if (outcome.status === 'recreateDevice') {
@@ -706,6 +850,12 @@ export class KernelViewerSession {
     this.viewerState.dispose();
     for (const resolve of this.pickMappingWaiters) resolve();
     this.pickMappingWaiters.clear();
+    const disposedError = new KernelViewerSessionError('disposed', 'viewer session is disposed');
+    for (const waiter of this.presentedFrameWaiters) {
+      this.removePresentedFrameAbortListener(waiter);
+      waiter.reject(disposedError);
+    }
+    this.presentedFrameWaiters.clear();
     this.emit({ type: 'disposed' });
     this.listeners.clear();
   }
@@ -823,7 +973,7 @@ export class KernelViewerSession {
         onProgress,
       });
     } catch (cause) {
-      const aborted = options.signal?.aborted || isAbort(cause);
+      const aborted = options.signal?.aborted === true || isAbort(cause);
       const error = new KernelViewerSessionError(
         aborted ? 'aborted' : 'loadFailed',
         aborted
@@ -858,6 +1008,22 @@ export class KernelViewerSession {
     }
   }
 
+  private resolvePresentedFrameWaiters(outcome: KernelPresentedFrameOutcome): void {
+    if (this.presentedFrameWaiters.size === 0) return;
+    const waiters = [...this.presentedFrameWaiters];
+    this.presentedFrameWaiters.clear();
+    for (const waiter of waiters) {
+      this.removePresentedFrameAbortListener(waiter);
+      waiter.resolve(outcome);
+    }
+  }
+
+  private removePresentedFrameAbortListener(waiter: KernelPresentedFrameWaiter): void {
+    if (waiter.signal && waiter.onAbort) {
+      waiter.signal.removeEventListener('abort', waiter.onAbort);
+    }
+  }
+
   private assertAlive(): void {
     if (this.disposed) throw new KernelViewerSessionError('disposed', 'viewer session is disposed');
   }
@@ -886,6 +1052,7 @@ export class KernelViewerSession {
     origin: readonly [number, number, number],
   ): void {
     this.viewerState.setWorldCamera(camera, origin);
+    this.currentStreamingCamera = replayWorldCamera(camera);
   }
 
   private assertReady(): void {
@@ -932,8 +1099,68 @@ function browserHardwareInventory(): KernelHardwareInventory {
   };
 }
 
+function predictedPrefetchCamera(
+  previous: KernelWorldCamera | null,
+  current: KernelWorldCamera | null,
+): KernelWorldCamera | null {
+  if (previous === null || current?.projection.kind !== previous.projection.kind) {
+    return null;
+  }
+  const eyeDelta = {
+    x: current.eye.x - previous.eye.x,
+    y: current.eye.y - previous.eye.y,
+    z: current.eye.z - previous.eye.z,
+  };
+  const targetDelta = {
+    x: current.target.x - previous.target.x,
+    y: current.target.y - previous.target.y,
+    z: current.target.z - previous.target.z,
+  };
+  const eyeSpeed = Math.hypot(eyeDelta.x, eyeDelta.y, eyeDelta.z);
+  const targetSpeed = Math.hypot(targetDelta.x, targetDelta.y, targetDelta.z);
+  const speed = Math.max(eyeSpeed, targetSpeed);
+  const viewDistance = Math.max(
+    1e-6,
+    Math.hypot(
+      current.eye.x - current.target.x,
+      current.eye.y - current.target.y,
+      current.eye.z - current.target.z,
+    ),
+  );
+  if (!Number.isFinite(speed) || speed < viewDistance * 0.0005) return null;
+  const horizon = Math.min(3, (viewDistance * 0.35) / speed);
+  return {
+    ...replayWorldCamera(current),
+    eye: {
+      x: current.eye.x + eyeDelta.x * horizon,
+      y: current.eye.y + eyeDelta.y * horizon,
+      z: current.eye.z + eyeDelta.z * horizon,
+    },
+    target: {
+      x: current.target.x + targetDelta.x * horizon,
+      y: current.target.y + targetDelta.y * horizon,
+      z: current.target.z + targetDelta.z * horizon,
+    },
+  };
+}
+
+function replayWorldCamera(camera: KernelWorldCamera): KernelWorldCamera {
+  return {
+    eye: { ...camera.eye },
+    target: { ...camera.target },
+    up: { ...camera.up },
+    projection: { ...camera.projection },
+  };
+}
+
 function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError';
+}
+
+function abortReason(signal: AbortSignal | null): Error {
+  return signal?.reason instanceof Error
+    ? signal.reason
+    : new DOMException('Aborted', 'AbortError');
 }
 
 function errorMessage(error: unknown): string {

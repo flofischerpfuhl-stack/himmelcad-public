@@ -61,10 +61,7 @@ void test('streamed exact section loads canonical partitions sequentially in man
     binding: binding(),
     plane: { origin: { x: 0, y: 0, z: 0 }, normal: { x: 0, y: 0, z: 1 } },
     tolerance: 1e-6,
-    parts: [
-      location('right'),
-      location('left'),
-    ],
+    parts: [location('right'), location('left')],
   });
 
   assert.equal(evaluated, product);
@@ -73,7 +70,9 @@ void test('streamed exact section loads canonical partitions sequentially in man
     events.filter((event) => event.startsWith('push:')),
     ['push:left', 'push:right'],
   );
-  assert.ok(events.indexOf('push:left') < events.indexOf('fetch:https://example.test/right/part.json'));
+  assert.ok(
+    events.indexOf('push:left') < events.indexOf('fetch:https://example.test/right/part.json'),
+  );
 });
 
 void test('tampered topology manifest cancels before source buffers are fetched', async () => {

@@ -363,9 +363,7 @@ function closestTerrainLevel(
 ): RasterLevelManifest | undefined {
   return manifest.levels.reduce<RasterLevelManifest | undefined>((best, candidate) => {
     if (!best) return candidate;
-    return Math.abs(candidate.gsd - targetGsd) < Math.abs(best.gsd - targetGsd)
-      ? candidate
-      : best;
+    return Math.abs(candidate.gsd - targetGsd) < Math.abs(best.gsd - targetGsd) ? candidate : best;
   }, undefined);
 }
 

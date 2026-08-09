@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufReader, BufWriter, Read, Write};
+use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -17,6 +17,7 @@ use himmelcad_core::canonical_document::{
     CanonicalCommandTransaction, CanonicalDocument, CanonicalDocumentError, CanonicalJournalEntry,
     PreparedCanonicalTransaction,
 };
+use himmelcad_core::canonical_resource_catalog::CanonicalPresentationResourceSet;
 use himmelcad_core::entity_model::{GeometryResource, Representation};
 use himmelcad_core::entity_validation::geometry_object_content_hash;
 use himmelcad_core::hash::ObjectHash;
@@ -78,6 +79,23 @@ pub struct CanonicalImportInventory {
     /// Complete non-streamed binary resource-set inventories.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resource_sets: Vec<CanonicalResourceSet>,
+    /// Exact immutable presentation resources required to reconstruct the
+    /// provider package for a later loss-aware export.
+    ///
+    /// Empty is the backward-compatible meaning for inventories written
+    /// before this field existed. Keeping empty sets out of the compact JSON
+    /// also preserves their existing inventory hashes.
+    #[serde(default, skip_serializing_if = "presentation_resources_are_empty")]
+    pub presentation_resources: CanonicalPresentationResourceSet,
+}
+
+fn presentation_resources_are_empty(resources: &CanonicalPresentationResourceSet) -> bool {
+    resources.textures.is_empty()
+        && resources.materials.is_empty()
+        && resources.material_tables.is_empty()
+        && resources.hatch_patterns.is_empty()
+        && resources.line_types.is_empty()
+        && resources.annotation_styles.is_empty()
 }
 
 /// Host-owned roots containing every provider-prepared package payload.
@@ -259,6 +277,9 @@ pub enum CanonicalProjectStoreError {
     /// A provider JSON object has no semantic media type.
     #[error("canonical JSON object media type is invalid")]
     InvalidJsonObject,
+    /// One content address was previously catalogued with incompatible metadata.
+    #[error("canonical object metadata conflicts with an existing catalogue entry")]
+    ObjectMetadataConflict,
     /// A hash-framed journal record was modified.
     #[error("canonical journal record hash mismatch")]
     JournalHashMismatch,
@@ -347,6 +368,12 @@ impl CanonicalProjectStore {
         &self.document
     }
 
+    /// Project root containing the canonical store and immutable objects.
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// Persists and commits one ordinary canonical command transaction.
     pub fn commit_transaction(
         &mut self,
@@ -385,7 +412,13 @@ impl CanonicalProjectStore {
             return Err(CanonicalProjectStoreError::InvalidJsonObject);
         }
         let bytes = serde_json::to_vec(&object.value)?;
-        self.put_immutable_bytes(&object.object_hash, &bytes)
+        let object_hash = self.put_immutable_bytes(&object.object_hash, &bytes)?;
+        self.write_object_metadata(&CanonicalStoredObject {
+            object_hash: object_hash.clone(),
+            media_type: object.media_type.clone(),
+            byte_length: usize_length(bytes.len())?,
+        })?;
+        Ok(object_hash)
     }
 
     /// Stores immutable bytes without overwriting an existing content address.
@@ -432,6 +465,215 @@ impl CanonicalProjectStore {
             });
         }
         Ok(bytes)
+    }
+
+    /// Checks whether one well-formed content address is present without
+    /// loading its payload.
+    pub fn contains_object(
+        &self,
+        object_hash: &ObjectHash,
+    ) -> Result<bool, CanonicalProjectStoreError> {
+        validate_hash(object_hash)?;
+        Ok(object_path(&self.root, object_hash)?.is_file())
+    }
+
+    /// Returns the exact current byte length of one well-formed immutable
+    /// object without exposing its host path. The content hash was verified
+    /// before publication; small bootstrap objects are additionally re-read
+    /// and hash-verified by the residency resolver.
+    pub fn object_byte_length(
+        &self,
+        object_hash: &ObjectHash,
+    ) -> Result<u64, CanonicalProjectStoreError> {
+        validate_hash(object_hash)?;
+        Ok(fs::metadata(object_path(&self.root, object_hash)?)?.len())
+    }
+
+    /// Materializes one verified immutable object at a host-owned execution
+    /// path. This is used only inside the sidecar when a provider requires its
+    /// portable relative artifact layout for export; the path is never part of
+    /// the renderer contract.
+    pub fn materialize_object(
+        &self,
+        object_hash: &ObjectHash,
+        destination: impl AsRef<Path>,
+    ) -> Result<(), CanonicalProjectStoreError> {
+        let source = object_path(&self.root, object_hash)?;
+        verify_file(&source, object_hash, None)?;
+        let destination = destination.as_ref();
+        let parent = destination
+            .parent()
+            .ok_or(CanonicalProjectStoreError::UnsafeArtifactSource)?;
+        fs::create_dir_all(parent)?;
+        if destination.exists() {
+            verify_file(destination, object_hash, None)?;
+            return Ok(());
+        }
+        match fs::hard_link(&source, destination) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+                fs::copy(&source, destination)?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+        verify_file(destination, object_hash, None)
+    }
+
+    /// Reads the semantic media type and exact byte length of an object written
+    /// through the general object service.
+    pub fn read_object_metadata(
+        &self,
+        object_hash: &ObjectHash,
+    ) -> Result<CanonicalStoredObject, CanonicalProjectStoreError> {
+        let path = object_metadata_path(&self.root, object_hash)?;
+        let metadata: CanonicalStoredObject = serde_json::from_slice(&fs::read(path)?)?;
+        if metadata.object_hash != *object_hash
+            || metadata.media_type.trim().is_empty()
+            || metadata.byte_length == 0
+        {
+            return Err(CanonicalProjectStoreError::ObjectMetadataConflict);
+        }
+        verify_file(
+            &object_path(&self.root, object_hash)?,
+            object_hash,
+            Some(metadata.byte_length),
+        )?;
+        Ok(metadata)
+    }
+
+    /// Resolves one immutable CAS object for another trusted sidecar runtime.
+    ///
+    /// The returned open handle is process-internal and must never cross an
+    /// RPC or renderer boundary. The complete object is hash-verified through
+    /// that exact handle before it is admitted as a ranged-read source.
+    pub(crate) fn verified_object_source(
+        &self,
+        object_hash: &ObjectHash,
+    ) -> Result<(CanonicalStoredObject, File), CanonicalProjectStoreError> {
+        let metadata = match self.read_object_metadata(object_hash) {
+            Ok(metadata) => metadata,
+            Err(CanonicalProjectStoreError::Io(error))
+                if error.kind() == io::ErrorKind::NotFound =>
+            {
+                self.imported_object_metadata(object_hash)?
+            }
+            Err(error) => return Err(error),
+        };
+        let path = object_path(&self.root, object_hash)?;
+        let mut source = File::open(path)?;
+        verify_open_file(&mut source, object_hash, Some(metadata.byte_length))?;
+        source.seek(SeekFrom::Start(0))?;
+        Ok((metadata, source))
+    }
+
+    fn imported_object_metadata(
+        &self,
+        object_hash: &ObjectHash,
+    ) -> Result<CanonicalStoredObject, CanonicalProjectStoreError> {
+        let mut resolved = None;
+        for inventory in self.import_inventories()? {
+            for metadata in inventory
+                .objects
+                .into_iter()
+                .filter(|metadata| metadata.object_hash == *object_hash)
+            {
+                if resolved
+                    .as_ref()
+                    .is_some_and(|existing| existing != &metadata)
+                {
+                    return Err(CanonicalProjectStoreError::ObjectMetadataConflict);
+                }
+                resolved = Some(metadata);
+            }
+        }
+        resolved.ok_or_else(|| {
+            CanonicalProjectStoreError::Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                "canonical object metadata was not found",
+            ))
+        })
+    }
+
+    /// Returns validated import inventories in stable command-id order.
+    pub fn import_inventories(
+        &self,
+    ) -> Result<Vec<CanonicalImportInventory>, CanonicalProjectStoreError> {
+        let mut inventories = Vec::new();
+        for entry in fs::read_dir(canonical_root(&self.root).join("imports"))? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                return Err(CanonicalProjectStoreError::InvalidJournalLayout);
+            }
+            let stored: StoredImportInventory = serde_json::from_slice(&fs::read(entry.path())?)?;
+            stored.validate()?;
+            if entry.file_name()
+                != import_inventory_path(&self.root, &stored.inventory.command_id)
+                    .file_name()
+                    .ok_or(CanonicalProjectStoreError::InvalidJournalLayout)?
+            {
+                return Err(CanonicalProjectStoreError::InvalidJournalLayout);
+            }
+            inventories.push(stored.inventory);
+        }
+        inventories.sort_by(|left, right| left.command_id.cmp(&right.command_id));
+        Ok(inventories)
+    }
+
+    /// Returns a bounded journal suffix after an already observed sequence.
+    pub fn journal_since(
+        &self,
+        after_sequence: u64,
+        limit: usize,
+    ) -> Result<Vec<CanonicalJournalEntry>, CanonicalProjectStoreError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        Ok(self
+            .document
+            .journal()
+            .iter()
+            .filter(|entry| entry.sequence > after_sequence)
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+
+    fn write_object_metadata(
+        &self,
+        metadata: &CanonicalStoredObject,
+    ) -> Result<(), CanonicalProjectStoreError> {
+        let destination = object_metadata_path(&self.root, &metadata.object_hash)?;
+        let bytes = serde_json::to_vec(metadata)?;
+        if destination.exists() {
+            let existing: CanonicalStoredObject = serde_json::from_slice(&fs::read(destination)?)?;
+            if existing != *metadata {
+                return Err(CanonicalProjectStoreError::ObjectMetadataConflict);
+            }
+            return Ok(());
+        }
+        let temporary = unique_staging_file(&self.root, "object-metadata");
+        write_new_synced(&temporary, &bytes)?;
+        match fs::hard_link(&temporary, &destination) {
+            Ok(()) => sync_dir(
+                destination
+                    .parent()
+                    .ok_or(CanonicalProjectStoreError::ObjectMetadataConflict)?,
+            )?,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                let existing: CanonicalStoredObject =
+                    serde_json::from_slice(&fs::read(&destination)?)?;
+                if existing != *metadata {
+                    let _ = fs::remove_file(&temporary);
+                    return Err(CanonicalProjectStoreError::ObjectMetadataConflict);
+                }
+            }
+            Err(error) => {
+                let _ = fs::remove_file(&temporary);
+                return Err(CanonicalProjectStoreError::Io(error));
+            }
+        }
+        let _ = fs::remove_file(temporary);
+        Ok(())
     }
 
     /// Validates, stages and durably publishes an entire canonical import package.
@@ -597,6 +839,7 @@ impl CanonicalProjectStore {
                 .collect(),
             datasets: package.datasets.clone(),
             resource_sets: package.resource_sets.clone(),
+            presentation_resources: package.presentation_resources.clone(),
         };
         let stored_inventory = StoredImportInventory::new(inventory.clone())?;
         let import_bytes = serde_json::to_vec(&stored_inventory)?;
@@ -1013,6 +1256,7 @@ fn ensure_layout(root: &Path) -> Result<(), CanonicalProjectStoreError> {
         canonical_root(root).join("journal"),
         canonical_root(root).join("datasets"),
         canonical_root(root).join("imports"),
+        canonical_root(root).join("object-metadata"),
         root.join("tmp"),
         transactions_root(root),
     ] {
@@ -1070,6 +1314,16 @@ fn object_path(
     validate_hash(object_hash)?;
     let (prefix, remainder) = object_hash.as_str().split_at(2);
     Ok(root.join("objects").join(prefix).join(remainder))
+}
+
+fn object_metadata_path(
+    root: &Path,
+    object_hash: &ObjectHash,
+) -> Result<PathBuf, CanonicalProjectStoreError> {
+    validate_hash(object_hash)?;
+    Ok(canonical_root(root)
+        .join("object-metadata")
+        .join(format!("{}.json", object_hash.as_str())))
 }
 
 fn validate_hash(object_hash: &ObjectHash) -> Result<(), CanonicalProjectStoreError> {
@@ -1211,7 +1465,16 @@ fn verify_file(
     expected_hash: &ObjectHash,
     expected_length: Option<u64>,
 ) -> Result<(), CanonicalProjectStoreError> {
-    let file = File::open(path)?;
+    let mut file = File::open(path)?;
+    verify_open_file(&mut file, expected_hash, expected_length)
+}
+
+fn verify_open_file(
+    file: &mut File,
+    expected_hash: &ObjectHash,
+    expected_length: Option<u64>,
+) -> Result<(), CanonicalProjectStoreError> {
+    file.seek(SeekFrom::Start(0))?;
     let mut reader = BufReader::new(file);
     let mut hasher = Sha256::new();
     let mut length = 0_u64;
@@ -1556,6 +1819,25 @@ mod tests {
             .is_some());
         assert!(dataset_inventory_path(&root, "dataset-a").is_file());
         assert!(import_inventory_path(&root, "import-a").is_file());
+        assert!(!String::from_utf8(
+            fs::read(import_inventory_path(&root, "import-a")).expect("inventory bytes")
+        )
+        .expect("inventory utf8")
+        .contains("presentationResources"));
+        assert_eq!(
+            reopened
+                .import_inventories()
+                .expect("validated import inventory"),
+            vec![committed.inventory]
+        );
+        assert_eq!(
+            reopened.journal_since(0, 16).expect("journal suffix"),
+            vec![committed.journal_entry]
+        );
+        assert!(reopened
+            .journal_since(1, 16)
+            .expect("empty journal suffix")
+            .is_empty());
         let artifact = package.datasets[0].root_metadata.object_hash.clone();
         assert_eq!(
             reopened.read_object(&artifact).expect("artifact"),
@@ -1724,6 +2006,7 @@ mod tests {
             admissions: Vec::new(),
             datasets: Vec::new(),
             resource_sets: package.resource_sets.clone(),
+            presentation_resources: package.presentation_resources.clone(),
         };
         let stored_inventory = StoredImportInventory::new(inventory).expect("stored inventory");
         let import_bytes = serde_json::to_vec(&stored_inventory).expect("inventory bytes");
@@ -1893,6 +2176,26 @@ mod tests {
         let first_hash = store.put_json_object(&object).expect("first object");
         let second_hash = store.put_json_object(&object).expect("deduplicated object");
         assert_eq!(first_hash, second_hash);
+        assert_eq!(
+            store
+                .read_object_metadata(&first_hash)
+                .expect("object metadata"),
+            CanonicalStoredObject {
+                object_hash: first_hash.clone(),
+                media_type: "application/json".to_owned(),
+                byte_length: u64::try_from(serde_json::to_vec(&object.value).unwrap().len())
+                    .unwrap(),
+            }
+        );
+        let conflicting_media = CanonicalJsonObject {
+            object_hash: first_hash.clone(),
+            media_type: "application/vnd.himmelcad.attributes+json".to_owned(),
+            value: object.value.clone(),
+        };
+        assert!(matches!(
+            store.put_json_object(&conflicting_media),
+            Err(CanonicalProjectStoreError::ObjectMetadataConflict)
+        ));
 
         let duplicate_entity = package("scan-a", "dataset-b");
         let duplicate_entity_roots = dataset_sources("dataset-b", source_b.clone());
@@ -1979,6 +2282,32 @@ mod tests {
         assert!(reopened.document().entity(&entity.id).is_none());
         assert!(reopened.document().tombstone(&entity.id).is_some());
         drop(reopened);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verified_open_handle_survives_same_length_path_replacement_without_toctou() {
+        let root = temp_project("verified-open-handle");
+        let store = CanonicalProjectStore::open(&root).expect("open store");
+        let object = CanonicalJsonObject::new("application/json", serde_json::Value::Null)
+            .expect("canonical object");
+        let expected = store.put_json_object(&object).expect("publish object");
+        let path = object_path(&root, &expected).expect("object path");
+        let replacement = root.join("replacement.bin");
+        fs::write(&replacement, b"evil").expect("replacement");
+        let (metadata, mut source) = store
+            .verified_object_source(&expected)
+            .expect("open and verify canonical object through its leased handle");
+        assert_eq!(metadata.byte_length, 4);
+        fs::rename(&replacement, &path).expect("replace path with same-length object");
+        source.seek(SeekFrom::Start(0)).expect("rewind");
+        let mut bytes = Vec::new();
+        source.read_to_end(&mut bytes).expect("read leased handle");
+        assert_eq!(bytes, b"null");
+        assert_eq!(fs::read(&path).expect("replacement path"), b"evil");
+        drop(source);
+        drop(store);
         fs::remove_dir_all(root).expect("cleanup");
     }
 }

@@ -9,6 +9,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use geotiff_reader::GeoTiffFile;
 use himmelcad_core::entity_model::{GeometryResource, OrthoGridMapping, RasterCellDiagonal};
 use himmelcad_core::hash::ObjectHash;
+use himmelcad_core::typed_artifact::{
+    ArtifactElementType, ArtifactEndianness, TypedArtifactDescriptor, TypedArtifactLayout,
+    TypedArtifactManifest, TYPED_ARTIFACT_MANIFEST_NAME,
+};
 use himmelcad_render::{
     BoundingVolume, ContentKind, ContentReference, PreparedHierarchyManifest, RefinementMode,
     TileDescriptor, TileId, WorldAabb, WorldTransform, WorldVec3,
@@ -168,21 +172,54 @@ pub(crate) fn prepare_elevation_geotiff(
     let manifest_relative = PathBuf::from("viewer/manifest.json");
     write_bytes(&staging_root.join(&manifest_relative), &manifest_bytes)?;
 
-    let mut artifacts = evidence
-        .into_iter()
-        .flat_map(|((level, column, row), tile)| {
-            [
-                (
-                    PathBuf::from(format!("height/L{level:02}/{column}/{row}.f64")),
-                    tile.height,
-                ),
-                (
-                    PathBuf::from(format!("color/L{level:02}/{column}/{row}.png")),
-                    tile.color,
-                ),
-            ]
-        })
-        .collect::<Vec<_>>();
+    let mut artifacts = Vec::with_capacity(evidence.len().saturating_mul(2).saturating_add(2));
+    let mut typed_artifacts = BTreeMap::new();
+    for ((level, column, row), tile) in evidence {
+        let height_descriptor = TypedArtifactDescriptor {
+            resource: tile.height.clone(),
+            semantic: "hcad.raster.elevation".to_owned(),
+            layout: TypedArtifactLayout::DenseArray {
+                byte_offset: 0,
+                byte_length: F64_TILE_BYTES,
+                element_type: ArtifactElementType::Float64,
+                shape: vec![u64::from(TILE_SIZE_U32), u64::from(TILE_SIZE_U32)],
+                endianness: ArtifactEndianness::Little,
+                byte_strides: None,
+                decode: None,
+            },
+        };
+        typed_artifacts
+            .entry((
+                tile.height.object_hash.0.clone(),
+                height_descriptor.semantic.clone(),
+            ))
+            .or_insert(height_descriptor);
+        let color_descriptor = TypedArtifactDescriptor {
+            resource: tile.color.clone(),
+            semantic: "hcad.raster.encoded-color".to_owned(),
+            layout: TypedArtifactLayout::OpaqueBytes {
+                byte_offset: 0,
+                byte_length: tile
+                    .color
+                    .byte_length
+                    .ok_or_else(|| provider_message("prepared color tile length is missing"))?,
+            },
+        };
+        typed_artifacts
+            .entry((
+                tile.color.object_hash.0.clone(),
+                color_descriptor.semantic.clone(),
+            ))
+            .or_insert(color_descriptor);
+        artifacts.push((
+            PathBuf::from(format!("height/L{level:02}/{column}/{row}.f64")),
+            tile.height,
+        ));
+        artifacts.push((
+            PathBuf::from(format!("color/L{level:02}/{column}/{row}.png")),
+            tile.color,
+        ));
+    }
     artifacts.push((
         manifest_relative,
         GeometryResource {
@@ -190,6 +227,23 @@ pub(crate) fn prepare_elevation_geotiff(
             media_type: HIERARCHY_MEDIA_TYPE.to_owned(),
             byte_length: u64::try_from(manifest_bytes.len()).ok(),
         },
+    ));
+    let typed_manifest = TypedArtifactManifest {
+        schema_version: TypedArtifactManifest::SCHEMA_VERSION,
+        artifacts: typed_artifacts.into_values().collect(),
+    };
+    let (typed_manifest_artifact, typed_manifest_bytes) =
+        PreparedDatasetArtifact::typed_artifact_manifest(
+            relative_root.join(TYPED_ARTIFACT_MANIFEST_NAME),
+            &typed_manifest,
+        )?;
+    write_bytes(
+        &staging_root.join(TYPED_ARTIFACT_MANIFEST_NAME),
+        &typed_manifest_bytes,
+    )?;
+    artifacts.push((
+        PathBuf::from(TYPED_ARTIFACT_MANIFEST_NAME),
+        typed_manifest_artifact.resource,
     ));
     artifacts.sort_by(|left, right| left.0.cmp(&right.0));
     check_cancelled(context)?;

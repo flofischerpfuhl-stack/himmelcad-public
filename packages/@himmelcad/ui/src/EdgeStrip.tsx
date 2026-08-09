@@ -1,9 +1,4 @@
-import {
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  ChevronUp,
-} from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp } from 'lucide-react';
 
 import styles from './EdgeStrip.module.css';
 
@@ -26,8 +21,7 @@ export interface EdgeStripProps {
  */
 export function EdgeStrip({ side, label, onExpand }: EdgeStripProps): JSX.Element {
   const Chevron = side === 'left' ? ChevronRight : side === 'right' ? ChevronLeft : ChevronUp;
-  const ChevronAlt =
-    side === 'left' ? ChevronRight : side === 'right' ? ChevronLeft : ChevronDown;
+  const ChevronAlt = side === 'left' ? ChevronRight : side === 'right' ? ChevronLeft : ChevronDown;
   // ChevronAlt is currently unused but reserved for future "drag me wider"
   // hint; keep destructured to stop TS unused-import noise.
   void ChevronAlt;

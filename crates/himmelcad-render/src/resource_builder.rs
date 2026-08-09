@@ -1092,6 +1092,10 @@ pub fn build_instanced_glb_batches_with_geometries_and_textures(
     Ok(batches)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "material preparation joins explicit decoded, cached, styled, and GPU inputs"
+)]
 fn build_glb_material(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

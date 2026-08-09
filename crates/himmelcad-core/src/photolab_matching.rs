@@ -1030,7 +1030,9 @@ mod tests {
         );
 
         let fast = plan_backend_passes(&config(AlignmentQualityProfile::Fast));
-        assert_eq!(fast.passes[1].backend, MatcherBackend::SiftLightGlue);
+        assert_eq!(fast.passes[0].backend, MatcherBackend::SiftLightGlue);
+        assert_eq!(fast.passes[0].condition, PassCondition::Always);
+        assert_eq!(fast.passes[1].backend, MatcherBackend::AlikedN32LightGlue);
         assert_eq!(fast.passes[1].condition, PassCondition::PairQualityGate);
     }
 
@@ -1088,11 +1090,11 @@ mod tests {
                 expected_overlap: true,
                 registration_failed: false,
             },
-            &BTreeSet::from([MatcherBackend::AlikedN32LightGlue]),
+            &BTreeSet::from([MatcherBackend::SiftLightGlue]),
         );
         assert!(decision.required);
         assert!(decision.actions.contains(&RescueAction::RunBackend {
-            backend: MatcherBackend::SiftLightGlue,
+            backend: MatcherBackend::AlikedN32LightGlue,
         }));
         assert!(decision.actions.contains(&RescueAction::ExpandPairGraph));
     }

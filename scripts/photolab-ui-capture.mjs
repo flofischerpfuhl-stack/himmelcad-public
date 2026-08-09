@@ -11,7 +11,9 @@ const gcpImagesOutput = resolve(dirname(output), 'gcp-images.png');
 const browser = await chromium.connectOverCDP(endpoint);
 try {
   const context = browser.contexts()[0];
-  const page = context?.pages().find((candidate) => candidate.url().startsWith('http://localhost:5174'));
+  const page = context
+    ?.pages()
+    .find((candidate) => candidate.url().startsWith('http://localhost:5174'));
   if (!page) throw new Error('PhotoLab renderer page is not available over CDP');
   await page.waitForFunction(
     () => document.body.innerText.includes('Camera layer updated · 135/135 rectangles'),
@@ -61,7 +63,8 @@ try {
     canvases: [...document.querySelectorAll('canvas')].map((canvas) => ({
       width: canvas.width,
       height: canvas.height,
-      visible: canvas.getBoundingClientRect().width > 0 && canvas.getBoundingClientRect().height > 0,
+      visible:
+        canvas.getBoundingClientRect().width > 0 && canvas.getBoundingClientRect().height > 0,
     })),
   }));
   if (!diagnostics.cameraAccepted || diagnostics.cameraRejected) {
@@ -73,10 +76,7 @@ try {
   await imageLabels.nth(0).click();
   await imageLabels.nth(1).click({ modifiers: ['Control'] });
   await imageLabels.nth(3).click({ modifiers: ['Shift'] });
-  const selectionCount = page
-    .getByText('Count', { exact: true })
-    .locator('..')
-    .locator('strong');
+  const selectionCount = page.getByText('Count', { exact: true }).locator('..').locator('strong');
   await selectionCount.waitFor({ timeout: 5_000 });
   const rangeSelectionCount = await selectionCount.textContent();
   if (rangeSelectionCount !== '3')
@@ -88,7 +88,10 @@ try {
   const selectAllCount = await selectionCount.textContent();
   if (selectAllCount !== '135')
     throw new Error(`Tree-level Ctrl+A expected 135 images, got ${selectAllCount}`);
-  const firstGcp = page.getByRole('tree').getByText(/^gcp\S+$/, { exact: true }).first();
+  const firstGcp = page
+    .getByRole('tree')
+    .getByText(/^gcp\S+$/, { exact: true })
+    .first();
   await firstGcp.click();
   await page.getByText('Easting (X)', { exact: true }).waitFor({ timeout: 5_000 });
   await page.screenshot({ path: gcpOutput, fullPage: false });

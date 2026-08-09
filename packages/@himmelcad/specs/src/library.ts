@@ -5,7 +5,9 @@ import { isValidSpecCode, validateLibrary, validateSpecification } from './valid
 
 const STORAGE_KEY = 'himmelcad.specs.library.v1';
 
-export function parseLibraryJson(raw: unknown): { ok: true; library: SpecLibrary } | { ok: false; errors: string[] } {
+export function parseLibraryJson(
+  raw: unknown,
+): { ok: true; library: SpecLibrary } | { ok: false; errors: string[] } {
   if (!raw || typeof raw !== 'object') return { ok: false, errors: ['Not a JSON object'] };
   const lib = raw as SpecLibrary;
   const v = validateLibrary(lib);
@@ -32,7 +34,10 @@ export function loadLibraryFromLocalStorage(): SpecLibrary {
 export function saveLibraryToLocalStorage(library: SpecLibrary): void {
   const v = validateLibrary(library);
   if (!v.ok) throw new Error(v.errors.join('; '));
-  localStorage.setItem(STORAGE_KEY, serializeLibrary({ ...library, updatedAt: new Date().toISOString() }));
+  localStorage.setItem(
+    STORAGE_KEY,
+    serializeLibrary({ ...library, updatedAt: new Date().toISOString() }),
+  );
 }
 
 export function upsertSpecification(library: SpecLibrary, spec: Specification): SpecLibrary {

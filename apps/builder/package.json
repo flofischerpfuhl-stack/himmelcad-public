@@ -8,7 +8,7 @@
     "email": "noreply@himmelcad.local"
   },
   "homepage": "https://gitlab.com/florian-fischer-group/himmelcad",
-  "desktopName": "himmelcad-builder.desktop",
+  "desktopName": "HimmelCAD Builder",
   "license": "BUSL-1.1",
   "main": "dist/electron/main.js",
   "scripts": {
@@ -20,13 +20,20 @@
     "build:sidecar:win": "node ../../scripts/build-photolab-windows-rust.mjs",
     "build": "pnpm build:sidecar && pnpm prepare:viewer && vite build && tsc -p tsconfig.electron.json",
     "build:win": "pnpm build:sidecar:win && pnpm prepare:viewer && vite build && tsc -p tsconfig.electron.json",
-    "package:linux": "pnpm build && electron-builder --config electron-builder.linux.yml --linux --x64 --publish never",
-    "package:win": "pnpm build:win && electron-builder --config electron-builder.win.yml --win --x64 --publish never",
-    "package:win:update": "pnpm build:win && electron-builder --config electron-builder.win.yml --win nsis --x64 --publish never",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit"
+    "stage:automation:linux": "node ../../scripts/stage-automation-runtime.mjs linux-x64 --release",
+    "stage:automation:win": "node ../../scripts/stage-automation-runtime.mjs win32-x64 --release",
+    "package:linux": "pnpm build && pnpm stage:automation:linux && electron-builder --config electron-builder.linux.yml --linux --x64 --publish never",
+    "package:win": "pnpm build:win && pnpm stage:automation:win && electron-builder --config electron-builder.win.yml --win --x64 --publish never",
+    "package:win:update": "pnpm build:win && pnpm stage:automation:win && electron-builder --config electron-builder.win.yml --win nsis --x64 --publish never",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "test:plan-ui": "vite build && node ../../scripts/builder-plan-e2e.mjs",
+    "test": "rm -rf ../../.build/tests/builder && tsc -p tsconfig.test.json && node --test ../../.build/tests/builder/apps/builder/test/*.test.js"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "0.18.0",
+    "@himmelcad/app": "workspace:*",
+    "@himmelcad/agent": "workspace:*",
+    "@himmelcad/automation-host": "workspace:*",
     "@himmelcad/console": "workspace:*",
     "@himmelcad/data": "workspace:*",
     "@himmelcad/plan": "workspace:*",

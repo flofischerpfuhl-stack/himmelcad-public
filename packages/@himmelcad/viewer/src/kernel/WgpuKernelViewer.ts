@@ -5,6 +5,7 @@ import type {
   CanonicalRepresentationAdmission,
   CanonicalResourceRef,
   CanonicalEntity,
+  CanonicalEntityEffect,
   EntityVersionRef,
   GeometryObject,
   GeometryRepresentationBindingRef,
@@ -46,6 +47,7 @@ export interface WasmViewerBinding {
   section_topology_partition_content_hash_json(manifestJson: string): string;
   section_product_content_hash_json(productJson: string): string;
   publish_canonical_representations_json(admissionsJson: string): string;
+  apply_committed_entity_effect_json?(effectJson: string, expectedBindingsJson: string): string;
   transform_entity_json(commandJson: string, expectedBindingsJson: string): string;
   commit_move_preview_json(previewId: string, commandId: string): string;
   undo_entity_command_json(commandId: string, expectedBindingsJson: string): string;
@@ -198,6 +200,12 @@ export interface WasmViewerBinding {
   request_device_recovery_for_test?(reason: string): void;
   begin_render_pick(x: number, y: number, radius: number): Promise<string>;
   finish_render_pick(payloadJson: string): string;
+  capture_capabilities_json_v1?(): string;
+  begin_capture_rgba_v1?(
+    width: number,
+    height: number,
+    transparentBackground: boolean,
+  ): Promise<Uint8Array>;
   capabilities_json(): string;
   hardware_policy_json(requestJson: string): string;
   runtime_quality_json(): string;
@@ -272,6 +280,37 @@ export interface KernelDeviceCapabilities {
   readonly maxStorageBufferBindingSize: number;
   readonly maxBufferSize: number;
   readonly maxSampleCount: number;
+}
+
+/** Stable renderer-produced RGBA capture limits for the version-one boundary. */
+export interface KernelRgbaCaptureCapabilities {
+  readonly version: 1;
+  readonly maxDimension: number;
+  readonly maxPixels: number;
+  readonly maxRgbaBytes: number;
+  readonly colorSpace: 'srgb';
+  readonly alphaMode: 'straight';
+  readonly transparentBackground: true;
+}
+
+/** Explicit physical-pixel request; UI chrome is intentionally outside this boundary. */
+export interface KernelRgbaCaptureRequest {
+  readonly width: number;
+  readonly height: number;
+  readonly includeUi?: false;
+  readonly transparentBackground?: boolean;
+  readonly signal?: AbortSignal;
+}
+
+/** GPU-complete, tightly packed top-left-origin RGBA8 scene pixels. */
+export interface KernelRgbaCaptureResult {
+  readonly width: number;
+  readonly height: number;
+  readonly rgba8: Uint8Array;
+  readonly colorSpace: 'srgb';
+  readonly alphaMode: 'straight';
+  readonly includeUi: false;
+  readonly transparentBackground: boolean;
 }
 
 /** Camera and f64 floating-origin state uploaded atomically before a frame. */
@@ -762,6 +801,8 @@ export interface KernelStreamingFrameOptions {
   readonly maximumTraversedNodes?: number;
   /** Diagnostic only; visible keys otherwise stay inside the Rust kernel. */
   readonly includeRenderKeys?: boolean;
+  /** Predicted motion camera used only for bounded auxiliary admission. */
+  readonly prefetchCamera?: KernelWorldCamera;
 }
 
 export interface KernelHardwareInventory {
@@ -1317,6 +1358,11 @@ export interface KernelEntityCommandMutation extends KernelCanonicalEntityMutati
   readonly journalEntry: KernelEntityCommandJournalEntry;
 }
 
+/** Projection result for an effect already journaled by the document authority. */
+export interface KernelCommittedEntityEffectMutation extends KernelCanonicalEntityMutation {
+  readonly entity: CanonicalEntity;
+}
+
 export interface KernelEntityCommandJournal {
   readonly entries: readonly KernelEntityCommandJournalEntry[];
   readonly canUndo: boolean;
@@ -1678,7 +1724,9 @@ export class WgpuKernelViewer {
     this.scheduleClipCapSynchronization();
   }
 
-  private applyCanonicalCommandBindings(mutation: KernelEntityCommandMutation): void {
+  private applyCanonicalCommandBindings(
+    mutation: Pick<KernelEntityCommandMutation, 'entity' | 'bindings'>,
+  ): void {
     const bindings = new Map(
       mutation.bindings.map((binding) => [canonicalSlotKey(binding.key.slot), binding]),
     );
@@ -2723,6 +2771,34 @@ export class WgpuKernelViewer {
     return mutation;
   }
 
+  /** Applies an already journaled document effect without a second viewer journal. */
+  applyCommittedCanonicalEffect(
+    effect: CanonicalEntityEffect,
+    expectedBindings: readonly GeometryRepresentationBindingRef[],
+  ): KernelCommittedEntityEffectMutation {
+    this.assertAlive();
+    if (effect.after === null) {
+      throw new TypeError('committed delete effects must use detachCanonicalEntities');
+    }
+    validateExpectedEntityBindings(effect.entityId, expectedBindings);
+    const apply = this.binding.apply_committed_entity_effect_json;
+    if (apply === undefined) {
+      throw new Error('loaded viewer kernel cannot project committed canonical effects');
+    }
+    const value: unknown = JSON.parse(
+      apply.call(this.binding, JSON.stringify(effect), JSON.stringify(expectedBindings)),
+    );
+    const mutation = parseCommittedEntityEffectMutation(value);
+    if (
+      mutation.entity.id !== effect.entityId ||
+      mutation.entity.versionHash !== effect.after.versionHash
+    ) {
+      throw new TypeError('committed effect projection returned a different canonical entity');
+    }
+    this.applyCanonicalCommandBindings(mutation);
+    return mutation;
+  }
+
   /** Creates a buffer-sharing, non-pickable translucent drag ghost. */
   beginMovePreview(previewId: string, entityId: string, opacityMultiplier = 0.5): number {
     this.assertAlive();
@@ -2999,6 +3075,57 @@ export class WgpuKernelViewer {
   render(): KernelFrameOutcome {
     this.assertAlive();
     return parseFrameOutcome(this.binding.render());
+  }
+
+  /** Versioned renderer capture capabilities, independent of the live canvas extent. */
+  rgbaCaptureCapabilities(): KernelRgbaCaptureCapabilities {
+    this.assertAlive();
+    const report = this.binding.capture_capabilities_json_v1;
+    if (report === undefined) {
+      throw new Error('loaded viewer kernel does not support renderer RGBA capture v1');
+    }
+    return parseRgbaCaptureCapabilities(report.call(this.binding));
+  }
+
+  /**
+   * Renders the current camera and scene at an explicit size and resolves only
+   * after GPU readback. This never resizes or snapshots the live canvas.
+   */
+  async captureRgba(request: KernelRgbaCaptureRequest): Promise<KernelRgbaCaptureResult> {
+    this.assertAlive();
+    request.signal?.throwIfAborted();
+    const includeUi: unknown = request.includeUi;
+    if (includeUi !== undefined && includeUi !== false) {
+      throw new TypeError('renderer RGBA capture supports includeUi=false only');
+    }
+    const begin = this.binding.begin_capture_rgba_v1;
+    if (begin === undefined) {
+      throw new Error('loaded viewer kernel does not support renderer RGBA capture v1');
+    }
+    const capabilities = this.rgbaCaptureCapabilities();
+    validateRgbaCaptureExtent(request.width, request.height, capabilities);
+    const transparentBackground = request.transparentBackground ?? false;
+    const pending = begin.call(this.binding, request.width, request.height, transparentBackground);
+    const value = await abortable(pending, request.signal);
+    if (!(value instanceof Uint8Array)) {
+      throw new TypeError('kernel RGBA capture result is not a Uint8Array');
+    }
+    const expectedLength = request.width * request.height * 4;
+    if (value.byteLength !== expectedLength) {
+      throw new TypeError(
+        `kernel RGBA capture returned ${String(value.byteLength)} bytes; expected ${String(expectedLength)}`,
+      );
+    }
+    this.assertAlive();
+    return {
+      width: request.width,
+      height: request.height,
+      rgba8: value.slice(),
+      colorSpace: capabilities.colorSpace,
+      alphaMode: capabilities.alphaMode,
+      includeUi: false,
+      transparentBackground,
+    };
   }
 
   /** Rebinds a lost canvas surface without rebuilding the device or resident scene. */
@@ -3338,6 +3465,52 @@ function parseCapabilities(json: string): KernelDeviceCapabilities {
   return value as unknown as KernelDeviceCapabilities;
 }
 
+function parseRgbaCaptureCapabilities(json: string): KernelRgbaCaptureCapabilities {
+  const value: unknown = JSON.parse(json);
+  if (
+    !isRecord(value) ||
+    value.version !== 1 ||
+    finitePositiveInteger(value.maxDimension) === null ||
+    finitePositiveInteger(value.maxPixels) === null ||
+    finitePositiveInteger(value.maxRgbaBytes) === null ||
+    value.colorSpace !== 'srgb' ||
+    value.alphaMode !== 'straight' ||
+    value.transparentBackground !== true
+  ) {
+    throw new TypeError('kernel RGBA capture capability report is malformed');
+  }
+  return value as unknown as KernelRgbaCaptureCapabilities;
+}
+
+function validateRgbaCaptureExtent(
+  width: number,
+  height: number,
+  capabilities: KernelRgbaCaptureCapabilities,
+): void {
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) {
+    throw new RangeError('capture width and height must be positive safe integers');
+  }
+  const pixels = width * height;
+  if (
+    width > capabilities.maxDimension ||
+    height > capabilities.maxDimension ||
+    pixels > capabilities.maxPixels ||
+    pixels * 4 > capabilities.maxRgbaBytes
+  ) {
+    throw new RangeError('capture extent exceeds the renderer RGBA capture limits');
+  }
+}
+
+function abortable<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (signal === undefined) return promise;
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    void promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
 function parseFrameOutcome(json: string): KernelFrameOutcome {
   const value: unknown = JSON.parse(json);
   if (!isRecord(value) || typeof value.status !== 'string') {
@@ -3402,6 +3575,14 @@ function parseEntityCommandMutation(value: unknown): KernelEntityCommandMutation
     entity: value.entity as unknown as CanonicalEntity,
     journalEntry,
   };
+}
+
+function parseCommittedEntityEffectMutation(value: unknown): KernelCommittedEntityEffectMutation {
+  const mutation = parseCanonicalEntityMutation(value);
+  if (!isRecord(value) || !isCanonicalEntityEnvelope(value.entity)) {
+    throw new TypeError('committed effect projection has no canonical entity');
+  }
+  return { ...mutation, entity: value.entity as unknown as CanonicalEntity };
 }
 
 function parseEntityCommandJournal(value: unknown): KernelEntityCommandJournal {

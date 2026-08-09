@@ -53,7 +53,6 @@ impl PreparedAssetBundle {
     }
 
     /// Distinct content identities that will be committed for the stream owner.
-    #[must_use]
     pub fn identities(&self) -> impl Iterator<Item = AssetContentIdentity> + '_ {
         self.identities.iter().copied()
     }

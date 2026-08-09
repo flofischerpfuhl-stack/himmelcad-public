@@ -8,12 +8,12 @@ import type {
   HimmelcadViewerWasmModule,
   KernelCanonicalRenderAdmission,
   KernelGeometryObject,
+  KernelResolvedHardwarePolicy,
   WasmViewerBinding,
 } from '../src/kernel/WgpuKernelViewer.js';
 
 void test('host selects the kernel interaction streaming ceiling during navigation', () => {
-  const policy =
-    testHardwarePolicy() as unknown as import('../src/kernel/WgpuKernelViewer.js').KernelResolvedHardwarePolicy;
+  const policy = testHardwarePolicy() as unknown as KernelResolvedHardwarePolicy;
   assert.deepEqual(kernelStreamingWorkPolicy(policy, false), {
     frame: policy.frame,
     maximumTraversedNodes: 100_000,
@@ -844,6 +844,58 @@ void test('kernel canvas host suspends zero extent and rejects incomplete camera
   );
 });
 
+void test('renderer RGBA capture is bounded, GPU-promise based and abortable', async () => {
+  const canvas = { width: 1, height: 1, clientWidth: 1, clientHeight: 1 } as HTMLCanvasElement;
+  const binding = minimalBinding(canvas, () => undefined);
+  const calls: unknown[][] = [];
+  binding.capture_capabilities_json_v1 = () =>
+    JSON.stringify({
+      version: 1,
+      maxDimension: 4_096,
+      maxPixels: 16_777_216,
+      maxRgbaBytes: 67_108_864,
+      colorSpace: 'srgb',
+      alphaMode: 'straight',
+      transparentBackground: true,
+    });
+  binding.begin_capture_rgba_v1 = (width, height, transparent) => {
+    calls.push([width, height, transparent]);
+    return Promise.resolve(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]));
+  };
+  const viewer = await WgpuKernelViewer.create(canvas, () =>
+    Promise.resolve({ WasmViewer: { create: () => Promise.resolve(binding) } }),
+  );
+
+  const result = await viewer.captureRgba({
+    width: 2,
+    height: 1,
+    transparentBackground: true,
+  });
+  assert.deepEqual(calls, [[2, 1, true]]);
+  assert.deepEqual(result, {
+    width: 2,
+    height: 1,
+    rgba8: new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]),
+    colorSpace: 'srgb',
+    alphaMode: 'straight',
+    includeUi: false,
+    transparentBackground: true,
+  });
+  await assert.rejects(
+    viewer.captureRgba({ width: 1, height: 1, includeUi: true } as never),
+    /includeUi=false/,
+  );
+  await assert.rejects(viewer.captureRgba({ width: 4_097, height: 1 }), /capture limits/);
+
+  binding.begin_capture_rgba_v1 = () => new Promise<Uint8Array>(() => undefined);
+  const abort = new AbortController();
+  const pending = viewer.captureRgba({ width: 1, height: 1, signal: abort.signal });
+  const reason = new Error('capture cancelled');
+  abort.abort(reason);
+  await assert.rejects(pending, reason);
+  viewer.dispose();
+});
+
 void test('device replay restores immutable resources before presentation state', async () => {
   const canvas = { width: 1, height: 1, clientWidth: 1, clientHeight: 1 } as HTMLCanvasElement;
   const sourceBinding = minimalBinding(canvas, () => undefined);
@@ -899,6 +951,86 @@ void test('device replay restores immutable resources before presentation state'
     ['visible', 'survey', false],
     ['interaction', 'survey', true, false],
   ]);
+});
+
+void test('already committed canonical effects update residency without a viewer journal', async () => {
+  const canvas = { width: 1, height: 1, clientWidth: 1, clientHeight: 1 } as HTMLCanvasElement;
+  const binding = minimalBinding(canvas, () => {});
+  const admission = canonicalAdmission('committed', {
+    kind: 'point',
+    position: { x: 1, y: 2, z: 3 },
+  });
+  const before = admission.admission.entity;
+  const after = {
+    ...before,
+    revision: 2,
+    name: 'Committed rename',
+    versionHash: 'aa'.repeat(32),
+  };
+  let calls = 0;
+  binding.publish_canonical_representations_json = () =>
+    JSON.stringify({
+      entities: 1,
+      slots: 1,
+      proxies: 1,
+      generation: 1,
+      bindings: [
+        {
+          key: {
+            slot: { entityId: before.id, representationSlot: 'primary' },
+            entityRevision: before.revision,
+            entityVersionHash: before.versionHash,
+            geometryRef: before.representations[0]?.geometryRef,
+          },
+          generation: 1,
+        },
+      ],
+    });
+  binding.apply_committed_entity_effect_json = (effectJson, expectedBindingsJson) => {
+    calls += 1;
+    const effect = JSON.parse(effectJson) as { after: unknown };
+    const expected = JSON.parse(expectedBindingsJson) as Array<{
+      key: { slot: { entityId: string; representationSlot: string }; geometryRef: string };
+    }>;
+    assert.deepEqual(effect.after, after);
+    return JSON.stringify({
+      entities: 1,
+      slots: 1,
+      proxies: 1,
+      generation: 2,
+      entity: after,
+      bindings: expected.map((current) => ({
+        key: {
+          ...current.key,
+          entityRevision: 2,
+          entityVersionHash: after.versionHash,
+        },
+        generation: 2,
+      })),
+    });
+  };
+  const viewer = await WgpuKernelViewer.create(canvas, () =>
+    Promise.resolve({ WasmViewer: { create: () => Promise.resolve(binding) } }),
+  );
+  viewer.publishCanonicalRepresentations([admission]);
+  const currentBindings = viewer.canonicalEntityBindings(before.id);
+  assert.equal(currentBindings.length, 1);
+  assert.equal(currentBindings[0]?.key.slot.entityId, before.id);
+  const mutation = viewer.applyCommittedCanonicalEffect(
+    {
+      entityId: before.id,
+      before,
+      after,
+      touchedFields: ['name'],
+    },
+    currentBindings,
+  );
+
+  assert.equal(calls, 1);
+  assert.equal(mutation.entity.name, 'Committed rename');
+  assert.equal(viewer.canonicalEntityBindings(before.id)[0]?.key.entityRevision, 2);
+  assert.deepEqual(viewer.entityCommandJournal().entries, []);
+  viewer.dispose();
 });
 
 void test('scoped view clips compose atomically without discarding user clip boxes', async () => {
@@ -1256,7 +1388,7 @@ void test('framework-free session owns create, frame, device rebuild and dispose
   const events: string[] = [];
   session.subscribe((event) => events.push(event.type));
   const navigation = session.attachNavigation();
-  navigation.setLockedTopDown(true, 0);
+  await navigation.setLockedTopDown(true, 0);
   session.registerImageResource('image', 1, 1, new Uint8Array([1, 2, 3, 4]));
   session.registerDepthResource('depth', 1, 1, new Float32Array([12.5]));
   session.registerRasterBinaryResource('validity', new Uint8Array([1]));
@@ -1298,7 +1430,7 @@ void test('framework-free session owns create, frame, device rebuild and dispose
   await session.settled();
   assert.equal(bindings.length, 2);
   assert.equal(session.diagnostics().deviceGeneration, 2);
-  navigation.setLockedTopDown(false, 0);
+  await navigation.setLockedTopDown(false, 0);
   assert.deepEqual(replayCalls.slice(6), [
     '2:image',
     '2:depth',
@@ -1314,7 +1446,7 @@ void test('framework-free session owns create, frame, device rebuild and dispose
   assert.equal(disposedDecoders, 2);
   assert(events.includes('disposed'));
   assert.throws(() => session.diagnostics(), /disposed/);
-  assert.throws(() => navigation.setLockedTopDown(true, 0), /disposed/);
+  await assert.rejects(navigation.setLockedTopDown(true, 0), /disposed/);
 });
 
 void test('automatic backend routes a browser fallback adapter to WebGL2', async () => {
@@ -1611,8 +1743,7 @@ function minimalBinding(
     world_generation: () => 0n,
     render: () => JSON.stringify({ status: 'skipped', reason: 'Suspended' }),
     begin_render_pick: () => Promise.resolve('{}'),
-    finish_render_pick: () =>
-      JSON.stringify({ generation: 0, stale: false, candidates: [] }),
+    finish_render_pick: () => JSON.stringify({ generation: 0, stale: false, candidates: [] }),
     capabilities_json: () =>
       JSON.stringify({
         adapterName: 'test',

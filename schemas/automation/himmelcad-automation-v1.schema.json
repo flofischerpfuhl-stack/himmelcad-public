@@ -1,0 +1,988 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.himmelcad.local/automation/himmelcad-automation-v1.schema.json",
+  "title": "HimmelCAD Automation Protocol v1",
+  "description": "Language-neutral SDK source layered on the canonical app and view control planes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaId",
+    "version",
+    "capabilities",
+    "limits",
+    "methods",
+    "contractSources",
+    "contractSourcePins"
+  ],
+  "properties": {
+    "schemaId": { "const": "hcad.automation-schema@1" },
+    "version": { "const": 1 },
+    "capabilities": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "limits": { "$ref": "#/$defs/AutomationLimits" },
+    "methods": { "type": "object" },
+    "contractSources": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "contractSourcePins": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+    }
+  },
+  "capabilities": [
+    "document.read",
+    "document.write",
+    "journal.read",
+    "view.read",
+    "view.write",
+    "view.screenshot",
+    "automation.entities.page",
+    "automation.cas.describe",
+    "automation.commands.validate",
+    "automation.commands.status",
+    "automation.commands.cancel",
+    "automation.bulk.read",
+    "automation.bulk.release"
+  ],
+  "limits": {
+    "maxPageItems": 1000,
+    "maxPageBytes": 1048576,
+    "maxJournalPageItems": 4096,
+    "maxPropertySelectionItems": 1000,
+    "maxBulkRangeBytes": 8388608,
+    "maxInlineBytes": 262144,
+    "maxShapeRank": 8,
+    "maxShapeElements": 2000000000
+  },
+  "contractSources": [
+    "schemas/automation/fixtures/automation-wire-v1.json",
+    "crates/himmelcad-core/src/canonical_document.rs",
+    "crates/himmelcad-core/src/app_protocol.rs",
+    "packages/@himmelcad/app/src/canonicalProtocol.ts",
+    "packages/@himmelcad/app/src/protocol.ts",
+    "packages/@himmelcad/app/src/view.ts",
+    "packages/@himmelcad/data/src/generated/CanonicalEntity.ts",
+    "packages/@himmelcad/data/src/generated/CanonicalEntityMutation.ts",
+    "packages/@himmelcad/data/src/generated/CanonicalEntityEdit.ts"
+  ],
+  "contractSourcePins": {
+    "packages/@himmelcad/data/src/generated/CanonicalEntity.ts": "162c7d0dbc5809ced08cc631310ef4ba0615d7429159fe8ee32635c63a21eb62",
+    "packages/@himmelcad/data/src/generated/CanonicalEntityMutation.ts": "749a5dab2a578ab99a655d9426ac10246f6cb08d7ec97d087f5e7310f214b77f",
+    "packages/@himmelcad/data/src/generated/CanonicalEntityEdit.ts": "6dee4ee7c0011222c10b90c1b88b74bbf52e28e125e6b87fd2707b59311cf52d",
+    "packages/@himmelcad/app/src/canonicalProtocol.ts": "976a73b1c0a1be7b22e37986800579b21ae5f472e27816b1729b751b4906644a",
+    "packages/@himmelcad/app/src/protocol.ts": "fdb7bbc6460ec599472b707c9c14ac31983021ba87888a5dddf6170124241ba7",
+    "packages/@himmelcad/app/src/view.ts": "d4cac6e0f5d4ddd6971c3a41e7b7e8390dbb4b375a83b80fb9f6dedf78385137"
+  },
+  "methods": {
+    "app.negotiate": {
+      "capability": null,
+      "request": "ProtocolNegotiationRequest",
+      "response": "ProtocolNegotiationResponse"
+    },
+    "app.protocol": {
+      "capability": null,
+      "capabilityByRequestMethod": {
+        "readDocumentSnapshot": "document.read",
+        "readJournal": "journal.read",
+        "readPropertySchemas": "document.read",
+        "queryProperties": "document.read",
+        "compilePropertyEdit": "document.write",
+        "executeCanonicalTransaction": "document.write"
+      },
+      "request": "AppProtocolRequestEnvelope",
+      "response": "AppProtocolResponseEnvelope"
+    },
+    "view.state.get": {
+      "capability": "view.read",
+      "request": "EmptyRequest",
+      "response": "ViewStateV1"
+    },
+    "view.state.set": {
+      "capability": "view.write",
+      "request": "ViewStateV1",
+      "response": "ViewStateV1"
+    },
+    "view.screenshot": {
+      "capability": "view.screenshot",
+      "request": "ScreenshotRequestV1",
+      "response": "ScreenshotResultV1"
+    },
+    "automation.entities.page": {
+      "capability": "automation.entities.page",
+      "request": "EntityPageRequest",
+      "response": "EntityPage"
+    },
+    "automation.cas.describe": {
+      "capability": "automation.cas.describe",
+      "request": "CasDescribeRequest",
+      "response": "CasDescription"
+    },
+    "automation.commands.validate": {
+      "capability": "automation.commands.validate",
+      "request": "CommandValidateRequest",
+      "response": "CommandValidationPlan"
+    },
+    "automation.commands.status": {
+      "capability": "automation.commands.status",
+      "request": "CommandStatusRequest",
+      "response": "CommandStatus"
+    },
+    "automation.commands.cancel": {
+      "capability": "automation.commands.cancel",
+      "request": "CommandCancelRequest",
+      "response": "CommandCancelResult"
+    },
+    "automation.bulk.read": {
+      "capability": "automation.bulk.read",
+      "request": "BulkReadRequest",
+      "response": "BulkReadResult"
+    },
+    "automation.bulk.release": {
+      "capability": "automation.bulk.release",
+      "request": "BulkReleaseRequest",
+      "response": "BulkReleaseResult"
+    }
+  },
+  "errors": [
+    "protocolMismatch",
+    "missingCapability",
+    "invalidRequest",
+    "invalidCursor",
+    "generationChanged",
+    "pageLimitExceeded",
+    "byteLimitExceeded",
+    "conflict",
+    "lossAcceptanceRequired",
+    "confirmationRequired",
+    "operationNotFound",
+    "cancelled",
+    "leaseExpired",
+    "leaseRevoked",
+    "leaseRangeInvalid",
+    "leaseBudgetExhausted",
+    "hashMismatch",
+    "permissionDenied",
+    "internal"
+  ],
+  "$defs": {
+    "AutomationLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxPageItems",
+        "maxPageBytes",
+        "maxJournalPageItems",
+        "maxPropertySelectionItems",
+        "maxBulkRangeBytes",
+        "maxInlineBytes",
+        "maxShapeRank",
+        "maxShapeElements"
+      ],
+      "properties": {
+        "maxPageItems": { "type": "integer", "minimum": 1 },
+        "maxPageBytes": { "type": "integer", "minimum": 1 },
+        "maxJournalPageItems": { "type": "integer", "minimum": 1 },
+        "maxPropertySelectionItems": { "type": "integer", "minimum": 1 },
+        "maxBulkRangeBytes": { "type": "integer", "minimum": 1 },
+        "maxInlineBytes": { "type": "integer", "minimum": 1 },
+        "maxShapeRank": { "type": "integer", "minimum": 1 },
+        "maxShapeElements": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "EmptyRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "ProtocolNegotiationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clientName",
+        "supportedVersions",
+        "requiredCapabilities",
+        "optionalCapabilities"
+      ],
+      "properties": {
+        "clientName": { "type": "string", "minLength": 1 },
+        "supportedVersions": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "requiredCapabilities": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "optionalCapabilities": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "ProtocolNegotiationResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selectedVersion", "serverName", "serverVersion", "sessionId", "capabilities"],
+      "properties": {
+        "selectedVersion": { "type": "integer", "minimum": 1 },
+        "serverName": { "type": "string", "minLength": 1 },
+        "serverVersion": { "type": "string", "minLength": 1 },
+        "sessionId": { "type": "string", "minLength": 1 },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "RemoteError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "details": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "EntityVersionRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "revision", "versionHash"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "revision": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "versionHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "Representation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "geometryRef", "authority", "dependencyHash"],
+      "properties": {
+        "role": { "type": "string", "minLength": 1 },
+        "geometryRef": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "authority": { "type": "string", "minLength": 1 },
+        "dependencyHash": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "CanonicalEntity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "revision",
+        "typeId",
+        "name",
+        "owner",
+        "layerIds",
+        "placement",
+        "representations",
+        "componentsRef",
+        "attributesRef",
+        "relationsRef",
+        "styleRef",
+        "schemaVersion",
+        "versionHash"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "revision": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "typeId": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "owner": { "type": ["string", "null"] },
+        "layerIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "placement": {
+          "type": ["array", "null"],
+          "items": { "type": "number" },
+          "minItems": 16,
+          "maxItems": 16
+        },
+        "representations": { "type": "array", "items": { "$ref": "#/$defs/Representation" } },
+        "componentsRef": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "attributesRef": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "relationsRef": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "styleRef": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "schemaVersion": { "type": "integer", "minimum": 1 },
+        "versionHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "CanonicalEntityEdit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "setName",
+            "setOwner",
+            "setLayerIds",
+            "setPlacement",
+            "setRepresentations",
+            "setComponentsRef",
+            "setAttributesRef",
+            "setRelationsRef",
+            "setStyleRef"
+          ]
+        },
+        "name": { "type": "string" },
+        "owner": { "type": ["string", "null"] },
+        "layerIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "placement": {
+          "type": ["array", "null"],
+          "items": { "type": "number" },
+          "minItems": 16,
+          "maxItems": 16
+        },
+        "representations": { "type": "array", "items": { "$ref": "#/$defs/Representation" } },
+        "componentsRef": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "attributesRef": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "relationsRef": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "styleRef": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
+      },
+      "x-discriminator": "kind",
+      "x-variants": {
+        "setName": ["name"],
+        "setOwner": ["owner"],
+        "setLayerIds": ["layerIds"],
+        "setPlacement": ["placement"],
+        "setRepresentations": ["representations"],
+        "setComponentsRef": ["componentsRef"],
+        "setAttributesRef": ["attributesRef"],
+        "setRelationsRef": ["relationsRef"],
+        "setStyleRef": ["styleRef"]
+      }
+    },
+    "CanonicalEntityMutation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation"],
+      "properties": {
+        "operation": { "type": "string", "enum": ["create", "update", "delete", "restore"] },
+        "entity": { "$ref": "#/$defs/CanonicalEntity" },
+        "expected": { "$ref": "#/$defs/EntityVersionRef" },
+        "edits": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CanonicalEntityEdit" },
+          "minItems": 1
+        },
+        "snapshot": { "$ref": "#/$defs/CanonicalEntity" }
+      },
+      "x-discriminator": "operation",
+      "x-variants": {
+        "create": ["entity"],
+        "update": ["expected", "edits"],
+        "delete": ["expected"],
+        "restore": ["expected", "snapshot"]
+      }
+    },
+    "PropertyId": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespace", "name"],
+      "properties": {
+        "namespace": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "AppProtocolRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method"],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
+            "readDocumentSnapshot",
+            "readJournal",
+            "readPropertySchemas",
+            "queryProperties",
+            "compilePropertyEdit",
+            "executeCanonicalTransaction"
+          ]
+        },
+        "params": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "AppProtocolRequestEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaId", "requestId", "request"],
+      "properties": {
+        "schemaId": { "const": "hcad.app-protocol@1" },
+        "requestId": { "type": "string", "minLength": 1 },
+        "request": { "$ref": "#/$defs/AppProtocolRequest" },
+        "extensions": {
+          "type": "object",
+          "properties": {
+            "hcad.automation.confirmation@1": { "$ref": "#/$defs/AutomationConfirmationExtension" }
+          },
+          "additionalProperties": true
+        }
+      }
+    },
+    "AutomationConfirmationExtension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["grant"],
+      "properties": {
+        "grant": {
+          "type": "string",
+          "minLength": 1,
+          "writeOnly": true,
+          "description": "Opaque host-issued one-shot grant; clients must never mint or inspect it."
+        }
+      }
+    },
+    "AppProtocolResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "documentSnapshot",
+            "journalPage",
+            "propertySchemas",
+            "propertyQuery",
+            "compiledTransaction",
+            "transactionAccepted",
+            "error"
+          ]
+        },
+        "payload": {}
+      }
+    },
+    "AppProtocolResponseEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaId", "requestId", "response"],
+      "properties": {
+        "schemaId": { "const": "hcad.app-protocol@1" },
+        "requestId": { "type": "string", "minLength": 1 },
+        "response": { "$ref": "#/$defs/AppProtocolResponse" },
+        "extensions": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "Bounds3d": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum", "maximum"],
+      "properties": {
+        "minimum": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "maximum": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3
+        }
+      }
+    },
+    "EntityFilter": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "typeIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "ownerIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "bounds": { "$ref": "#/$defs/Bounds3d" },
+        "includeDescendants": { "type": "boolean" }
+      }
+    },
+    "EntityPageRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["limit", "byteLimit"],
+      "properties": {
+        "cursor": { "type": "string", "minLength": 1 },
+        "generation": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "byteLimit": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+        "filter": { "$ref": "#/$defs/EntityFilter" }
+      }
+    },
+    "EntityEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "revision", "versionHash", "typeId", "name", "layerIds"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "revision": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "versionHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "typeId": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "layerIds": { "type": "array", "items": { "type": "string" } },
+        "bounds": { "$ref": "#/$defs/Bounds3d" }
+      }
+    },
+    "EntityPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generation", "items", "returnedBytes"],
+      "properties": {
+        "generation": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "items": { "type": "array", "items": { "$ref": "#/$defs/EntityEnvelope" } },
+        "returnedBytes": { "type": "integer", "minimum": 0 },
+        "nextCursor": { "type": "string", "minLength": 1 }
+      }
+    },
+    "PropertyQueryRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaId", "entities", "properties"],
+      "properties": {
+        "schemaId": { "const": "hcad.property-query-request@1" },
+        "entities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/EntityVersionRef" },
+          "minItems": 1
+        },
+        "properties": { "type": "array", "items": { "$ref": "#/$defs/PropertyId" } }
+      }
+    },
+    "PropertyQueryResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaId", "entities", "properties"],
+      "properties": {
+        "schemaId": { "type": "string" },
+        "entities": { "type": "array", "items": { "$ref": "#/$defs/EntityVersionRef" } },
+        "properties": {
+          "type": "array",
+          "items": { "type": "object", "additionalProperties": true }
+        }
+      }
+    },
+    "JournalPageRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["afterSequence", "limit"],
+      "properties": {
+        "afterSequence": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 4096 }
+      }
+    },
+    "JournalPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["afterSequence", "entries", "journalHeadSequence", "hasMore"],
+      "properties": {
+        "afterSequence": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "entries": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "journalHeadSequence": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "hasMore": { "type": "boolean" }
+      }
+    },
+    "CanonicalCommandTransaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commandId", "mutations"],
+      "properties": {
+        "commandId": { "type": "string", "minLength": 1 },
+        "mutations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CanonicalEntityMutation" },
+          "minItems": 1
+        }
+      }
+    },
+    "CommandValidateRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transaction", "acceptedLossCodes"],
+      "properties": {
+        "transaction": { "$ref": "#/$defs/CanonicalCommandTransaction" },
+        "acceptedLossCodes": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "PlanIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "entityId": { "type": "string" },
+        "details": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "CommandValidationPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commandId", "valid", "requiresConfirmation", "losses", "conflicts", "planHash"],
+      "properties": {
+        "commandId": { "type": "string" },
+        "valid": { "type": "boolean" },
+        "requiresConfirmation": { "type": "boolean" },
+        "losses": { "type": "array", "items": { "$ref": "#/$defs/PlanIssue" } },
+        "conflicts": { "type": "array", "items": { "$ref": "#/$defs/PlanIssue" } },
+        "planHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "CommandStatusRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operationId"],
+      "properties": { "operationId": { "type": "string", "minLength": 1 } }
+    },
+    "CommandStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operationId", "state", "completed", "total", "message"],
+      "properties": {
+        "operationId": { "type": "string" },
+        "state": {
+          "type": "string",
+          "enum": ["queued", "running", "cancelling", "cancelled", "failed", "completed"]
+        },
+        "completed": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "total": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "message": { "type": "string" },
+        "error": { "$ref": "#/$defs/RemoteError" }
+      }
+    },
+    "CommandCancelRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operationId"],
+      "properties": { "operationId": { "type": "string", "minLength": 1 } }
+    },
+    "CommandCancelResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operationId", "cancellationRequested"],
+      "properties": {
+        "operationId": { "type": "string" },
+        "cancellationRequested": { "type": "boolean" }
+      }
+    },
+    "CasDescribeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contentHash"],
+      "properties": { "contentHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+    },
+    "CasDescription": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contentHash", "mediaType", "byteLength", "logicalShape"],
+      "properties": {
+        "contentHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "mediaType": { "type": "string", "minLength": 1 },
+        "byteLength": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "logicalShape": { "type": "object", "additionalProperties": true },
+        "lease": { "$ref": "#/$defs/BulkLeaseDescriptor" }
+      }
+    },
+    "Vec3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "z"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" }
+      }
+    },
+    "Quaternion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "z", "w"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" },
+        "w": { "type": "number" }
+      }
+    },
+    "WorldProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "near", "far"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["perspective", "orthographic"] },
+        "verticalFieldOfViewRadians": { "type": "number" },
+        "verticalSpan": { "type": "number" },
+        "near": { "type": "number", "exclusiveMinimum": 0 },
+        "far": { "type": "number", "exclusiveMinimum": 0 }
+      },
+      "x-discriminator": "kind",
+      "x-variants": {
+        "perspective": ["verticalFieldOfViewRadians"],
+        "orthographic": ["verticalSpan"]
+      }
+    },
+    "WorldCamera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["position", "target", "up", "projection"],
+      "properties": {
+        "position": { "$ref": "#/$defs/Vec3" },
+        "target": { "$ref": "#/$defs/Vec3" },
+        "up": { "$ref": "#/$defs/Vec3" },
+        "projection": { "$ref": "#/$defs/WorldProjection" }
+      }
+    },
+    "ViewPresentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["background", "renderStyle", "showGrid", "showAxes", "showSelectionOutline"],
+      "properties": {
+        "background": { "type": "string", "enum": ["theme", "black", "white", "transparent"] },
+        "renderStyle": { "type": "string", "enum": ["source", "monochrome", "xray"] },
+        "showGrid": { "type": "boolean" },
+        "showAxes": { "type": "boolean" },
+        "showSelectionOutline": { "type": "boolean" }
+      }
+    },
+    "ClipScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["all", "entities"] },
+        "entityIds": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "x-discriminator": "kind",
+      "x-variants": {
+        "all": [],
+        "entities": ["entityIds"]
+      }
+    },
+    "ClipPrimitive": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "keep"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["plane", "box"] },
+        "normal": { "$ref": "#/$defs/Vec3" },
+        "constant": { "type": "number" },
+        "center": { "$ref": "#/$defs/Vec3" },
+        "halfExtents": { "$ref": "#/$defs/Vec3" },
+        "orientation": { "$ref": "#/$defs/Quaternion" },
+        "keep": { "type": "string", "enum": ["positive", "negative", "inside", "outside"] }
+      },
+      "x-discriminator": "kind",
+      "x-variants": {
+        "plane": ["normal", "constant"],
+        "box": ["center", "halfExtents", "orientation"]
+      }
+    },
+    "ScopedClip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "enabled", "scope", "primitive"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "enabled": { "type": "boolean" },
+        "scope": { "$ref": "#/$defs/ClipScope" },
+        "primitive": { "$ref": "#/$defs/ClipPrimitive" }
+      }
+    },
+    "ViewStateV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "version",
+        "camera",
+        "navigationMode",
+        "hiddenEntityIds",
+        "selectedEntityIds",
+        "scopedClips",
+        "presentation"
+      ],
+      "properties": {
+        "schema": { "const": "himmelcad.view-state" },
+        "version": { "const": 1 },
+        "camera": { "$ref": "#/$defs/WorldCamera" },
+        "navigationMode": { "type": "string", "enum": ["3d", "2d", "2.5d"] },
+        "hiddenEntityIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "selectedEntityIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "scopedClips": { "type": "array", "items": { "$ref": "#/$defs/ScopedClip" } },
+        "presentation": { "$ref": "#/$defs/ViewPresentation" }
+      }
+    },
+    "ScreenshotRequestV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "format": { "const": "png" } },
+            "required": ["format"]
+          },
+          "then": { "not": { "required": ["quality"] } }
+        },
+        {
+          "if": {
+            "properties": { "background": { "const": "transparent" } },
+            "required": ["background"]
+          },
+          "then": { "properties": { "format": { "enum": ["png", "webp"] } } }
+        }
+      ],
+      "required": [
+        "schema",
+        "version",
+        "requestId",
+        "format",
+        "width",
+        "height",
+        "pixelRatio",
+        "background",
+        "includeUi"
+      ],
+      "properties": {
+        "schema": { "const": "himmelcad.screenshot-request" },
+        "version": { "const": 1 },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"
+        },
+        "format": { "type": "string", "enum": ["png", "jpeg", "webp"] },
+        "width": { "type": "integer", "minimum": 1, "maximum": 16384 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 16384 },
+        "pixelRatio": { "type": "number", "minimum": 0.25, "maximum": 4 },
+        "background": { "type": "string", "enum": ["view", "transparent"] },
+        "includeUi": { "type": "boolean" },
+        "quality": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "ScreenshotResultV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "version", "requestId", "mimeType", "width", "height", "encoding"],
+      "properties": {
+        "schema": { "const": "himmelcad.screenshot-result" },
+        "version": { "const": 1 },
+        "requestId": { "type": "string" },
+        "mimeType": { "type": "string", "enum": ["image/png", "image/jpeg", "image/webp"] },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "encoding": { "type": "string", "enum": ["base64", "bulkLease"] },
+        "data": { "type": "string" },
+        "lease": { "$ref": "#/$defs/BulkLeaseDescriptor" }
+      },
+      "x-discriminator": "encoding",
+      "x-variants": {
+        "base64": ["data"],
+        "bulkLease": ["lease"]
+      }
+    },
+    "BulkLeaseDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "leaseId",
+        "accessToken",
+        "contentHash",
+        "mediaType",
+        "elementType",
+        "shape",
+        "endianness",
+        "byteLength",
+        "expiresAt",
+        "maxReadableRange",
+        "remainingReadBudget",
+        "readOnly"
+      ],
+      "properties": {
+        "leaseId": { "type": "string", "minLength": 1 },
+        "accessToken": { "type": "string", "minLength": 1, "writeOnly": true },
+        "contentHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "mediaType": { "type": "string", "minLength": 1 },
+        "elementType": {
+          "type": "string",
+          "enum": [
+            "bytes",
+            "uint8",
+            "int8",
+            "uint16",
+            "int16",
+            "uint32",
+            "int32",
+            "uint64",
+            "int64",
+            "float32",
+            "float64"
+          ]
+        },
+        "shape": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "maxItems": 8 },
+        "endianness": { "type": "string", "enum": ["notApplicable", "little", "big"] },
+        "byteLength": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "maxReadableRange": { "type": "integer", "minimum": 1, "format": "uint64" },
+        "remainingReadBudget": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "readOnly": { "const": true },
+        "sourceEntity": { "$ref": "#/$defs/EntityVersionRef" }
+      }
+    },
+    "BulkReadRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leaseId", "accessToken", "offset", "length"],
+      "properties": {
+        "leaseId": { "type": "string" },
+        "accessToken": { "type": "string" },
+        "offset": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "length": { "type": "integer", "minimum": 1, "format": "uint64" }
+      }
+    },
+    "BulkReadResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leaseId", "offset", "byteLength", "encoding", "data", "remainingReadBudget"],
+      "properties": {
+        "leaseId": { "type": "string" },
+        "offset": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "byteLength": { "type": "integer", "minimum": 1, "format": "uint64" },
+        "encoding": { "const": "base64" },
+        "data": { "type": "string" },
+        "remainingReadBudget": { "type": "integer", "minimum": 0, "format": "uint64" }
+      }
+    },
+    "BulkReleaseRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leaseId", "accessToken"],
+      "properties": {
+        "leaseId": { "type": "string" },
+        "accessToken": { "type": "string" }
+      }
+    },
+    "BulkReleaseResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leaseId", "released"],
+      "properties": {
+        "leaseId": { "type": "string" },
+        "released": { "type": "boolean" }
+      }
+    }
+  }
+}

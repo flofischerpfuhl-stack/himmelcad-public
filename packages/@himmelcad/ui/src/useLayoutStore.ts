@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 
-const clamp = (v: number, lo: number, hi: number): number =>
-  Math.max(lo, Math.min(hi, v));
+const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 
 const LEFT_MIN = 180;
 const LEFT_MAX = 640;
@@ -37,6 +36,7 @@ export interface LayoutState {
   rightPanelWidth: number;
   bottomPanelHeight: number;
   activeFunctionId: string | null;
+  openFunctionIds: readonly string[];
 
   setRibbonCollapsed: (v: boolean) => void;
   toggleRibbon: () => void;
@@ -62,6 +62,7 @@ export interface LayoutState {
   adjustBottomPanelHeight: (delta: number) => void;
 
   activateFunction: (id: string | null) => void;
+  closeFunction: (id: string) => void;
 }
 
 export const useLayoutStore = create<LayoutState>((set) => ({
@@ -73,6 +74,7 @@ export const useLayoutStore = create<LayoutState>((set) => ({
   rightPanelWidth: 320,
   bottomPanelHeight: 220,
   activeFunctionId: null,
+  openFunctionIds: [],
 
   setRibbonCollapsed: (v) => set({ ribbonCollapsed: v }),
   toggleRibbon: () => set((s) => ({ ribbonCollapsed: !s.ribbonCollapsed })),
@@ -96,10 +98,32 @@ export const useLayoutStore = create<LayoutState>((set) => ({
     set((s) => ({ bottomPanelHeight: clampBottom(s.bottomPanelHeight + delta) })),
 
   activateFunction: (id) =>
-    set((state) => ({
-      activeFunctionId: id,
-      rightPanelCollapsed: id === null ? state.rightPanelCollapsed : false,
-    })),
+    set((state) => {
+      if (id === null) return { activeFunctionId: null };
+      if (state.activeFunctionId === id) {
+        const openFunctionIds = state.openFunctionIds.filter((candidate) => candidate !== id);
+        return {
+          openFunctionIds,
+          activeFunctionId: openFunctionIds.at(-1) ?? null,
+        };
+      }
+      return {
+        activeFunctionId: id,
+        openFunctionIds: state.openFunctionIds.includes(id)
+          ? state.openFunctionIds
+          : [...state.openFunctionIds, id],
+        rightPanelCollapsed: false,
+      };
+    }),
+  closeFunction: (id) =>
+    set((state) => {
+      const openFunctionIds = state.openFunctionIds.filter((candidate) => candidate !== id);
+      return {
+        openFunctionIds,
+        activeFunctionId:
+          state.activeFunctionId === id ? (openFunctionIds.at(-1) ?? null) : state.activeFunctionId,
+      };
+    }),
 }));
 
 /** Call on window resize so an open console shrinks if the max drops. */

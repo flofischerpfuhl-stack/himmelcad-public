@@ -8,9 +8,7 @@
     {
       "name": "proj",
       "default-features": false,
-      "features": [
-        "tiff"
-      ]
+      "features": ["tiff"]
     },
     {
       "name": "tiff",
@@ -28,9 +26,7 @@
   "features": {
     "tools": {
       "description": "Install libgeotiff utility programs",
-      "dependencies": [
-        "libjpeg-turbo"
-      ]
+      "dependencies": ["libjpeg-turbo"]
     }
   }
 }

@@ -78,7 +78,10 @@ try {
 }
 
 function findUnpackedRoot(root) {
-  const resources = findFile(root, (name, path) => name === 'app.asar' && /[\\/]resources[\\/]/.test(path));
+  const resources = findFile(
+    root,
+    (name, path) => name === 'app.asar' && /[\\/]resources[\\/]/.test(path),
+  );
   if (!resources) fail(`installed Electron resources/app.asar was not found below ${root}`);
   return dirname(dirname(resources));
 }
@@ -111,9 +114,7 @@ function discoverArtifact(target, directory) {
 }
 
 function usage() {
-  fail(
-    'usage: photolab-install-smoke.mjs <linux-x64|win32-x64> [deb|AppImage|NSIS-setup.exe]',
-  );
+  fail('usage: photolab-install-smoke.mjs <linux-x64|win32-x64> [deb|AppImage|NSIS-setup.exe]');
 }
 
 function fail(message) {

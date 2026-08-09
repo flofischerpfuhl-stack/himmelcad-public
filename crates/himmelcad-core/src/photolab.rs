@@ -174,10 +174,22 @@ pub fn resolve_alignment_profile(
         return Err(ResolveAlignmentProfileError::InvalidKeypointsPerMegapixel);
     }
 
-    let sparse_backends = vec![
-        SparseMatchingBackend::AlikedN32LightGlue,
-        SparseMatchingBackend::SiftLightGlue,
-    ];
+    // Execution order is part of the frozen configuration. The Fast profile
+    // deliberately establishes its classical SIFT baseline before deciding
+    // whether the learned matcher is needed as rescue; the quality profiles
+    // keep the learned matcher first because both sparse passes are primary.
+    let sparse_backends = match request.profile {
+        AlignmentQualityProfile::Fast => vec![
+            SparseMatchingBackend::SiftLightGlue,
+            SparseMatchingBackend::AlikedN32LightGlue,
+        ],
+        AlignmentQualityProfile::QualityHybrid | AlignmentQualityProfile::MaximumRobustness => {
+            vec![
+                SparseMatchingBackend::AlikedN32LightGlue,
+                SparseMatchingBackend::SiftLightGlue,
+            ]
+        }
+    };
     let hashable = HashableAlignmentConfig {
         schema_version: 1,
         profile: request.profile,
@@ -268,6 +280,13 @@ mod tests {
 
         assert_eq!(config.sift_scope, MatchingScope::AllCandidatePairs);
         assert_eq!(config.learned_sparse_scope, MatchingScope::QualityGated);
+        assert_eq!(
+            config.sparse_backends,
+            vec![
+                SparseMatchingBackend::SiftLightGlue,
+                SparseMatchingBackend::AlikedN32LightGlue,
+            ]
+        );
         assert_eq!(config.max_image_edge, 2_400);
         assert_eq!(config.keypoints_per_megapixel, 5_500);
     }

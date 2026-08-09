@@ -45,7 +45,12 @@ export function useConsoleStore(): readonly LogEvent[] {
   return consoleStore.getSnapshot();
 }
 
-export function logEvent(level: LogLevel, source: LogEvent['source'], message: string, data?: Record<string, unknown>): void {
+export function logEvent(
+  level: LogLevel,
+  source: LogEvent['source'],
+  message: string,
+  data?: Record<string, unknown>,
+): void {
   consoleStore.push({
     level,
     source,

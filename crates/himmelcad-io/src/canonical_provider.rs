@@ -10,11 +10,19 @@ use himmelcad_core::canonical_resource_catalog::{
 };
 use himmelcad_core::entity_model::{
     DepthSampling, ElevationSurfaceGeometry, GeometryObject, GeometryResource, RasterConnectivity,
-    RasterImageGeometry, SolidGeometry, TriangleMeshGeometry, TriangleMeshStorage,
+    RasterImageGeometry, SolidGeometry, Transform3d, TriangleMeshGeometry, TriangleMeshStorage,
 };
-use himmelcad_core::entity_validation::validate_resolved_representation;
+use himmelcad_core::entity_validation::{
+    canonical_entity_version_hash, validate_resolved_representation,
+};
 use himmelcad_core::geometry_representation_registry::CanonicalRepresentationAdmission;
 use himmelcad_core::hash::ObjectHash;
+use himmelcad_core::registration::{
+    compose_placement, similarity_transform3d, RegistrationPreview,
+};
+use himmelcad_core::typed_artifact::{
+    TypedArtifactManifest, TYPED_ARTIFACT_MANIFEST_MEDIA_TYPE, TYPED_ARTIFACT_MANIFEST_NAME,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -29,6 +37,73 @@ pub enum FormatCapability {
     Import,
     /// Writes canonical selections to an external format.
     Export,
+}
+
+/// Machine-readable provider options and the exact defaults applied to an empty object.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProviderOptionContract {
+    /// JSON Schema describing the provider-owned options object.
+    pub schema: serde_json::Value,
+    /// Concrete immutable options used when the caller supplies `{}`.
+    pub defaults: serde_json::Value,
+}
+
+impl ProviderOptionContract {
+    /// Contract for a provider operation that accepts no options.
+    #[must_use]
+    pub fn none() -> Self {
+        Self {
+            schema: serde_json::json!({
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+            defaults: serde_json::json!({}),
+        }
+    }
+
+    /// Builds a closed object schema from a JSON object of property schemas and defaults.
+    #[must_use]
+    pub fn object(properties: serde_json::Value, defaults: serde_json::Value) -> Self {
+        Self {
+            schema: serde_json::json!({
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": properties,
+                "additionalProperties": false
+            }),
+            defaults,
+        }
+    }
+
+    fn validate(&self) -> Result<(), ProviderContractError> {
+        let schema = self
+            .schema
+            .as_object()
+            .ok_or(ProviderContractError::InvalidOptionContract)?;
+        let properties = schema
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+            .ok_or(ProviderContractError::InvalidOptionContract)?;
+        let defaults = self
+            .defaults
+            .as_object()
+            .ok_or(ProviderContractError::InvalidOptionContract)?;
+        if schema.get("type").and_then(serde_json::Value::as_str) != Some("object")
+            || schema.get("$schema").and_then(serde_json::Value::as_str)
+                != Some("https://json-schema.org/draft/2020-12/schema")
+            || schema
+                .get("additionalProperties")
+                .and_then(serde_json::Value::as_bool)
+                != Some(false)
+            || defaults.keys().any(|key| !properties.contains_key(key))
+        {
+            return Err(ProviderContractError::InvalidOptionContract);
+        }
+        Ok(())
+    }
 }
 
 /// Stable identity and format surface of one I/O provider.
@@ -51,6 +126,10 @@ pub struct FormatProviderDescriptor {
     pub media_types: Vec<String>,
     /// Supported operation directions.
     pub capabilities: Vec<FormatCapability>,
+    /// Import option schema and concrete defaults, when import is supported.
+    pub import_options: Option<ProviderOptionContract>,
+    /// Export option schema and concrete defaults, when export is supported.
+    pub export_options: Option<ProviderOptionContract>,
 }
 
 impl FormatProviderDescriptor {
@@ -62,6 +141,10 @@ impl FormatProviderDescriptor {
             || self.display_name.trim().is_empty()
             || self.format_ids.is_empty()
             || self.capabilities.is_empty()
+            || self.capabilities.contains(&FormatCapability::Import)
+                != self.import_options.is_some()
+            || self.capabilities.contains(&FormatCapability::Export)
+                != self.export_options.is_some()
             || !all_unique(self.format_ids.iter())
             || !all_unique(self.extensions.iter())
             || !all_unique(self.media_types.iter())
@@ -85,6 +168,12 @@ impl FormatProviderDescriptor {
                 .any(|value| value.trim().is_empty() || !value.contains('/'))
         {
             return Err(ProviderContractError::InvalidDescriptor);
+        }
+        if let Some(contract) = &self.import_options {
+            contract.validate()?;
+        }
+        if let Some(contract) = &self.export_options {
+            contract.validate()?;
         }
         Ok(())
     }
@@ -176,6 +265,39 @@ pub struct PreparedDatasetArtifact {
     pub resource: GeometryResource,
 }
 
+impl PreparedDatasetArtifact {
+    /// Builds the fixed, content-addressed typed-layout artifact for one prepared dataset.
+    pub fn typed_artifact_manifest(
+        relative_path: PathBuf,
+        manifest: &TypedArtifactManifest,
+    ) -> Result<(Self, Vec<u8>), ProviderContractError> {
+        manifest
+            .validate()
+            .map_err(|error| ProviderContractError::Canonical(error.to_string()))?;
+        if relative_path.file_name().and_then(|name| name.to_str())
+            != Some(TYPED_ARTIFACT_MANIFEST_NAME)
+            || !safe_relative_path(&relative_path)
+        {
+            return Err(ProviderContractError::InvalidDatasetArtifact);
+        }
+        let bytes = serde_json::to_vec(manifest)
+            .map_err(|error| ProviderContractError::Canonical(error.to_string()))?;
+        let byte_length = u64::try_from(bytes.len())
+            .map_err(|_| ProviderContractError::InvalidDatasetArtifact)?;
+        Ok((
+            Self {
+                relative_path,
+                resource: GeometryResource {
+                    object_hash: ObjectHash::of_bytes(&bytes),
+                    media_type: TYPED_ARTIFACT_MANIFEST_MEDIA_TYPE.to_owned(),
+                    byte_length: Some(byte_length),
+                },
+            },
+            bytes,
+        ))
+    }
+}
+
 /// Exact binding between a prepared dataset and one canonical representation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -192,6 +314,41 @@ pub struct CanonicalPreparedDataset {
     pub root_metadata: GeometryResource,
     /// Complete immutable artifact inventory.
     pub artifacts: Vec<PreparedDatasetArtifact>,
+}
+
+impl CanonicalPreparedDataset {
+    /// Returns the unique provider-neutral typed-layout manifest artifact, when published.
+    pub fn typed_artifact_manifest(&self) -> Option<&PreparedDatasetArtifact> {
+        self.artifacts.iter().find(|artifact| {
+            artifact
+                .relative_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                == Some(TYPED_ARTIFACT_MANIFEST_NAME)
+                && artifact.resource.media_type == TYPED_ARTIFACT_MANIFEST_MEDIA_TYPE
+        })
+    }
+
+    /// Validates parsed typed layouts against this dataset's exact immutable inventory.
+    pub fn validate_typed_artifact_layouts(
+        &self,
+        manifest: &TypedArtifactManifest,
+    ) -> Result<(), ProviderContractError> {
+        manifest
+            .validate()
+            .map_err(|error| ProviderContractError::Canonical(error.to_string()))?;
+        if self.typed_artifact_manifest().is_none()
+            || manifest.artifacts.iter().any(|descriptor| {
+                !self
+                    .artifacts
+                    .iter()
+                    .any(|artifact| artifact.resource == descriptor.resource)
+            })
+        {
+            return Err(ProviderContractError::InvalidDatasetArtifact);
+        }
+        Ok(())
+    }
 }
 
 /// One immutable non-streamed binary resource staged from a provider-owned root.
@@ -330,6 +487,7 @@ impl CanonicalImportPackage {
                 return Err(ProviderContractError::DatasetBindingMismatch);
             }
             let mut paths = BTreeSet::new();
+            let mut typed_manifest_count = 0_u8;
             for artifact in &dataset.artifacts {
                 if !safe_relative_path(&artifact.relative_path)
                     || !valid_resource(&artifact.resource)
@@ -338,6 +496,20 @@ impl CanonicalImportPackage {
                 {
                     return Err(ProviderContractError::InvalidDatasetArtifact);
                 }
+                if artifact
+                    .relative_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    == Some(TYPED_ARTIFACT_MANIFEST_NAME)
+                {
+                    typed_manifest_count = typed_manifest_count.saturating_add(1);
+                    if artifact.resource.media_type != TYPED_ARTIFACT_MANIFEST_MEDIA_TYPE {
+                        return Err(ProviderContractError::InvalidDatasetArtifact);
+                    }
+                }
+            }
+            if typed_manifest_count > 1 {
+                return Err(ProviderContractError::InvalidDatasetArtifact);
             }
             if !dataset
                 .artifacts
@@ -438,6 +610,73 @@ impl CanonicalImportPackage {
     }
 }
 
+/// Applies one reviewed registration preview to every staged entity before publication.
+///
+/// The operation only changes canonical entity placements and their attribute provenance.
+/// Prepared geometry bytes remain immutable and reusable. Point-pair observations are not
+/// persisted; only the accepted transform and aggregate diagnostics enter the audit record.
+pub fn apply_registration_preview(
+    package: &mut CanonicalImportPackage,
+    recipe_id: &str,
+    method_kind: &str,
+    preview: &RegistrationPreview,
+) -> Result<(), ProviderContractError> {
+    if recipe_id.trim().is_empty() || method_kind.trim().is_empty() || !preview.accepted {
+        return Err(ProviderContractError::InvalidPackage);
+    }
+    package.validate()?;
+    let registration = similarity_transform3d(preview.transform);
+    let audit = serde_json::json!({
+        "schemaId": "hcad.import-registration-audit@1",
+        "recipeId": recipe_id,
+        "method": method_kind,
+        "transform": registration,
+        "diagnostics": {
+            "iterations": preview.iterations,
+            "matchedSamples": preview.matched_samples,
+            "overlapRatio": preview.overlap_ratio,
+            "converged": preview.converged,
+            "rmsHorizontalMeters": preview.residuals.rms_horizontal_meters,
+            "rmsVerticalMeters": preview.residuals.rms_vertical_meters,
+            "rmsSpatialMeters": preview.residuals.rms_spatial_meters,
+            "maxSpatialMeters": preview.residuals.max_spatial_meters,
+            "warnings": preview.warnings,
+        }
+    });
+
+    let mut rewritten_attributes = BTreeMap::<String, ObjectHash>::new();
+    for admission in &mut package.admissions {
+        admission.entity.placement = Some(compose_placement(
+            registration,
+            admission.entity.placement.unwrap_or(Transform3d::IDENTITY),
+        ));
+        let old_attributes = admission.entity.attributes_ref.0.clone();
+        let next_attributes = if let Some(existing) = rewritten_attributes.get(&old_attributes) {
+            existing.clone()
+        } else {
+            let source = package
+                .objects
+                .iter()
+                .find(|object| object.object_hash.as_str() == old_attributes)
+                .ok_or(ProviderContractError::MissingEntityObject)?;
+            let mut value = source.value.clone();
+            let map = value
+                .as_object_mut()
+                .ok_or(ProviderContractError::InvalidObject)?;
+            map.insert("hcad.import-registration@1".to_owned(), audit.clone());
+            let object = CanonicalJsonObject::new(source.media_type.clone(), value)?;
+            let object_hash = object.object_hash.clone();
+            package.objects.push(object);
+            rewritten_attributes.insert(old_attributes, object_hash.clone());
+            object_hash
+        };
+        admission.entity.attributes_ref = next_attributes;
+        admission.entity.version_hash = canonical_entity_version_hash(&admission.entity)
+            .map_err(|error| ProviderContractError::Canonical(error.to_string()))?;
+    }
+    package.validate()
+}
+
 fn presentation_resources_are_empty(resources: &CanonicalPresentationResourceSet) -> bool {
     resources.textures.is_empty()
         && resources.materials.is_empty()
@@ -517,6 +756,63 @@ pub struct CanonicalImportRequest<'a> {
     pub options: &'a serde_json::Value,
 }
 
+/// Host-local roots for immutable artifacts created during one import execution.
+///
+/// These paths deliberately never enter the portable canonical package. The host uses them only
+/// while staging and hash-verifying the package into its own project store.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct StagedArtifactRoots {
+    /// Exact source root for every prepared dataset ID in the package.
+    pub dataset_roots: BTreeMap<String, PathBuf>,
+    /// Exact source root for every resource-set ID in the package.
+    pub resource_set_roots: BTreeMap<String, PathBuf>,
+}
+
+impl StagedArtifactRoots {
+    fn validate(&self, package: &CanonicalImportPackage) -> Result<(), ProviderContractError> {
+        let dataset_ids = package
+            .datasets
+            .iter()
+            .map(|dataset| dataset.dataset_id.as_str())
+            .collect::<BTreeSet<_>>();
+        let resource_set_ids = package
+            .resource_sets
+            .iter()
+            .map(|resource_set| resource_set.resource_set_id.as_str())
+            .collect::<BTreeSet<_>>();
+        if self.dataset_roots.len() != dataset_ids.len()
+            || self.resource_set_roots.len() != resource_set_ids.len()
+            || self
+                .dataset_roots
+                .iter()
+                .any(|(id, root)| !dataset_ids.contains(id.as_str()) || root.as_os_str().is_empty())
+            || self.resource_set_roots.iter().any(|(id, root)| {
+                !resource_set_ids.contains(id.as_str()) || root.as_os_str().is_empty()
+            })
+        {
+            return Err(ProviderContractError::InvalidArtifactRoots);
+        }
+        Ok(())
+    }
+}
+
+/// Validated portable package paired with its non-serialized provider-local staging roots.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CanonicalStagedImport {
+    /// Portable, serializable canonical import package.
+    pub package: CanonicalImportPackage,
+    /// Host-local artifact roots valid for this execution result only.
+    pub roots: StagedArtifactRoots,
+}
+
+impl CanonicalStagedImport {
+    /// Validates both the portable package and the exact root inventory.
+    pub fn validate(&self) -> Result<(), ProviderContractError> {
+        self.package.validate()?;
+        self.roots.validate(&self.package)
+    }
+}
+
 /// One output file declared before an export mutates external state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -567,6 +863,15 @@ pub trait CanonicalImportProvider: Send + Sync {
         request: CanonicalImportRequest<'_>,
         context: &mut dyn ProviderOperationContext,
     ) -> Result<CanonicalImportPackage, ProviderContractError>;
+    /// Returns execution-local roots for every artifact inventory in `package`.
+    fn staged_artifact_roots(
+        &self,
+        package: &CanonicalImportPackage,
+    ) -> Result<StagedArtifactRoots, ProviderContractError> {
+        let roots = StagedArtifactRoots::default();
+        roots.validate(package)?;
+        Ok(roots)
+    }
 }
 
 /// Format-specific canonical export provider.
@@ -604,6 +909,10 @@ impl FormatProviderRegistry {
         descriptor.validate()?;
         if !descriptor.capabilities.contains(&FormatCapability::Import)
             || self.importers.contains_key(&descriptor.provider_id)
+            || self
+                .exporters
+                .get(&descriptor.provider_id)
+                .is_some_and(|registered| registered.descriptor() != descriptor)
         {
             return Err(ProviderContractError::DuplicateProvider);
         }
@@ -621,12 +930,55 @@ impl FormatProviderRegistry {
         descriptor.validate()?;
         if !descriptor.capabilities.contains(&FormatCapability::Export)
             || self.exporters.contains_key(&descriptor.provider_id)
+            || self
+                .importers
+                .get(&descriptor.provider_id)
+                .is_some_and(|registered| registered.descriptor() != descriptor)
         {
             return Err(ProviderContractError::DuplicateProvider);
         }
         self.exporters
             .insert(descriptor.provider_id.clone(), provider);
         Ok(())
+    }
+
+    /// Enumerates unique descriptors in stable provider-ID order.
+    #[must_use]
+    pub fn descriptors(&self) -> Vec<FormatProviderDescriptor> {
+        let mut descriptors = self
+            .importers
+            .values()
+            .map(|provider| {
+                (
+                    provider.descriptor().provider_id.clone(),
+                    provider.descriptor().clone(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        for provider in self.exporters.values() {
+            descriptors
+                .entry(provider.descriptor().provider_id.clone())
+                .or_insert_with(|| provider.descriptor().clone());
+        }
+        descriptors.into_values().collect()
+    }
+
+    /// Enumerates import-capable descriptors in stable provider-ID order.
+    #[must_use]
+    pub fn import_descriptors(&self) -> Vec<FormatProviderDescriptor> {
+        self.importers
+            .values()
+            .map(|provider| provider.descriptor().clone())
+            .collect()
+    }
+
+    /// Enumerates export-capable descriptors in stable provider-ID order.
+    #[must_use]
+    pub fn export_descriptors(&self) -> Vec<FormatProviderDescriptor> {
+        self.exporters
+            .values()
+            .map(|provider| provider.descriptor().clone())
+            .collect()
     }
 
     /// Selects one importer without depending on registration order.
@@ -678,7 +1030,7 @@ impl FormatProviderRegistry {
         source: &Path,
         options: &serde_json::Value,
         context: &mut dyn ProviderOperationContext,
-    ) -> Result<CanonicalImportPackage, ProviderContractError> {
+    ) -> Result<CanonicalStagedImport, ProviderContractError> {
         if context.is_cancelled() {
             return Err(ProviderContractError::Cancelled);
         }
@@ -706,7 +1058,12 @@ impl FormatProviderRegistry {
         {
             return Err(ProviderContractError::ProviderChanged);
         }
-        Ok(package)
+        let staged = CanonicalStagedImport {
+            roots: provider.staged_artifact_roots(&package)?,
+            package,
+        };
+        staged.validate()?;
+        Ok(staged)
     }
 
     /// Resolves one explicitly selected exporter.
@@ -719,6 +1076,77 @@ impl FormatProviderRegistry {
             .cloned()
             .ok_or(ProviderContractError::UnsupportedFormat)
     }
+
+    /// Produces and validates an export plan through one explicitly selected provider.
+    pub fn plan_export(
+        &self,
+        provider_id: &str,
+        request: CanonicalExportRequest<'_>,
+    ) -> Result<CanonicalExportPlan, ProviderContractError> {
+        request.package.validate()?;
+        let provider = self.exporter(provider_id)?;
+        let descriptor = provider.descriptor();
+        if !descriptor
+            .format_ids
+            .iter()
+            .any(|id| id == request.format_id)
+        {
+            return Err(ProviderContractError::UnsupportedFormat);
+        }
+        let plan = provider.plan_export(request)?;
+        validate_export_plan(&plan, descriptor)?;
+        Ok(plan)
+    }
+
+    /// Executes an unchanged registry plan after checking cancellation and loss-plan parity.
+    pub fn execute_export(
+        &self,
+        provider_id: &str,
+        request: CanonicalExportRequest<'_>,
+        plan: &CanonicalExportPlan,
+        context: &mut dyn ProviderOperationContext,
+    ) -> Result<(), ProviderContractError> {
+        if context.is_cancelled() {
+            return Err(ProviderContractError::Cancelled);
+        }
+        let provider = self.exporter(provider_id)?;
+        let descriptor = provider.descriptor();
+        validate_export_plan(plan, descriptor)?;
+        let current = provider.plan_export(CanonicalExportRequest {
+            target: request.target,
+            format_id: request.format_id,
+            package: request.package,
+            options: request.options,
+        })?;
+        validate_export_plan(&current, descriptor)?;
+        if &current != plan {
+            return Err(ProviderContractError::ExportPlanChanged);
+        }
+        provider.export(request, plan, context)
+    }
+}
+
+fn validate_export_plan(
+    plan: &CanonicalExportPlan,
+    descriptor: &FormatProviderDescriptor,
+) -> Result<(), ProviderContractError> {
+    let mut outputs = BTreeSet::new();
+    let mut losses = BTreeSet::new();
+    if !descriptor.format_ids.contains(&plan.format_id)
+        || plan.outputs.is_empty()
+        || plan.outputs.iter().any(|output| {
+            !safe_relative_path(&output.relative_path)
+                || output.media_type.trim().is_empty()
+                || !outputs.insert(output.relative_path.clone())
+        })
+        || plan
+            .semantic_losses
+            .iter()
+            .any(|loss| !valid_namespaced_id(loss) || !losses.insert(loss))
+    {
+        return Err(ProviderContractError::InvalidExportPlan);
+    }
+    Ok(())
 }
 
 /// Rejection from the common provider or canonical package boundary.
@@ -727,6 +1155,9 @@ pub enum ProviderContractError {
     /// Provider descriptor is malformed or unsupported.
     #[error("invalid format provider descriptor")]
     InvalidDescriptor,
+    /// Provider option schema/default metadata is malformed.
+    #[error("invalid provider option contract")]
+    InvalidOptionContract,
     /// Provider ID is already registered or lacks the requested capability.
     #[error("duplicate or capability-incompatible format provider")]
     DuplicateProvider,
@@ -745,6 +1176,15 @@ pub enum ProviderContractError {
     /// Operation was cancelled before publication.
     #[error("provider operation was cancelled")]
     Cancelled,
+    /// Provider did not return one exact local root per staged artifact inventory.
+    #[error("invalid or incomplete provider artifact roots")]
+    InvalidArtifactRoots,
+    /// Export plan is malformed, lossy without exact codes, or outside the provider descriptor.
+    #[error("invalid canonical export plan")]
+    InvalidExportPlan,
+    /// Provider planning no longer matches the plan accepted by the caller.
+    #[error("canonical export plan changed before execution")]
+    ExportPlanChanged,
     /// Canonical geometry/entity validation rejected provider output.
     #[error("canonical provider output: {0}")]
     Canonical(String),
@@ -1014,12 +1454,48 @@ mod tests {
     use himmelcad_core::entity_validation::{
         canonical_entity_version_hash, geometry_object_content_hash,
     };
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[derive(Clone)]
     struct MockImporter {
         descriptor: FormatProviderDescriptor,
         confidence: u8,
         package: CanonicalImportPackage,
+    }
+
+    struct MockExporter {
+        descriptor: FormatProviderDescriptor,
+        executions: Arc<AtomicUsize>,
+    }
+
+    impl CanonicalExportProvider for MockExporter {
+        fn descriptor(&self) -> &FormatProviderDescriptor {
+            &self.descriptor
+        }
+
+        fn plan_export(
+            &self,
+            request: CanonicalExportRequest<'_>,
+        ) -> Result<CanonicalExportPlan, ProviderContractError> {
+            Ok(CanonicalExportPlan {
+                format_id: request.format_id.to_owned(),
+                outputs: vec![ExportOutput {
+                    relative_path: PathBuf::from("survey.mock"),
+                    media_type: "application/vnd.mock".to_owned(),
+                }],
+                semantic_losses: vec!["hcad.loss.mock-identity@1".to_owned()],
+            })
+        }
+
+        fn export(
+            &self,
+            _request: CanonicalExportRequest<'_>,
+            _plan: &CanonicalExportPlan,
+            _context: &mut dyn ProviderOperationContext,
+        ) -> Result<(), ProviderContractError> {
+            self.executions.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
     }
 
     impl CanonicalImportProvider for MockImporter {
@@ -1043,6 +1519,34 @@ mod tests {
             _context: &mut dyn ProviderOperationContext,
         ) -> Result<CanonicalImportPackage, ProviderContractError> {
             Ok(self.package.clone())
+        }
+
+        fn staged_artifact_roots(
+            &self,
+            package: &CanonicalImportPackage,
+        ) -> Result<StagedArtifactRoots, ProviderContractError> {
+            Ok(StagedArtifactRoots {
+                dataset_roots: package
+                    .datasets
+                    .iter()
+                    .map(|dataset| {
+                        (
+                            dataset.dataset_id.clone(),
+                            PathBuf::from("/mock").join(&dataset.dataset_id),
+                        )
+                    })
+                    .collect(),
+                resource_set_roots: package
+                    .resource_sets
+                    .iter()
+                    .map(|set| {
+                        (
+                            set.resource_set_id.clone(),
+                            PathBuf::from("/mock/resources"),
+                        )
+                    })
+                    .collect(),
+            })
         }
     }
 
@@ -1149,7 +1653,7 @@ mod tests {
                 &mut TestContext::default(),
             )
             .expect("selected provider executes");
-        assert_eq!(imported.provider_id, selected.provider_id);
+        assert_eq!(imported.package.provider_id, selected.provider_id);
 
         let mut tied = FormatProviderRegistry::default();
         for provider_id in ["test.io.a@1", "test.io.b@1"] {
@@ -1164,6 +1668,221 @@ mod tests {
             tied.select_importer(request),
             Err(ProviderContractError::AmbiguousFormat)
         );
+    }
+
+    #[test]
+    fn registry_enumerates_unique_descriptors_with_explicit_option_defaults() {
+        let mut registry = FormatProviderRegistry::default();
+        let descriptor = import_export_descriptor("test.io.enumerated@1", "1.2.3");
+        registry
+            .register_importer(Arc::new(MockImporter {
+                descriptor: descriptor.clone(),
+                confidence: 100,
+                package: point_cloud_package("test.io.enumerated@1"),
+            }))
+            .expect("import registration");
+        registry
+            .register_exporter(Arc::new(MockExporter {
+                descriptor: descriptor.clone(),
+                executions: Arc::new(AtomicUsize::new(0)),
+            }))
+            .expect("matching export registration");
+
+        assert_eq!(registry.descriptors(), vec![descriptor.clone()]);
+        assert_eq!(registry.import_descriptors(), vec![descriptor.clone()]);
+        assert_eq!(registry.export_descriptors(), vec![descriptor.clone()]);
+        assert_eq!(
+            descriptor
+                .import_options
+                .as_ref()
+                .expect("import options")
+                .defaults,
+            serde_json::json!({"quality": "balanced"})
+        );
+
+        let mut mismatched = descriptor;
+        mismatched.display_name = "Different implementation".to_owned();
+        let mut mismatched_registry = FormatProviderRegistry::default();
+        mismatched_registry
+            .register_importer(Arc::new(MockImporter {
+                descriptor: import_export_descriptor("test.io.enumerated@1", "1.2.3"),
+                confidence: 100,
+                package: point_cloud_package("test.io.enumerated@1"),
+            }))
+            .expect("mismatch import registration");
+        assert_eq!(
+            mismatched_registry.register_exporter(Arc::new(MockExporter {
+                descriptor: mismatched,
+                executions: Arc::new(AtomicUsize::new(0)),
+            })),
+            Err(ProviderContractError::DuplicateProvider)
+        );
+
+        let mut invalid_options = import_export_descriptor("test.io.options@1", "1.0.0");
+        invalid_options
+            .import_options
+            .as_mut()
+            .expect("import options")
+            .defaults = serde_json::json!({"undeclared": true});
+        assert_eq!(
+            invalid_options.validate(),
+            Err(ProviderContractError::InvalidOptionContract)
+        );
+    }
+
+    #[test]
+    fn staged_import_keeps_roots_outside_the_portable_package() {
+        let provider_id = "test.io.staged@1";
+        let mut registry = FormatProviderRegistry::default();
+        registry
+            .register_importer(Arc::new(MockImporter {
+                descriptor: descriptor(provider_id, "1.0.0"),
+                confidence: 100,
+                package: point_cloud_package(provider_id),
+            }))
+            .expect("importer");
+        let probe = ImportProbeRequest {
+            path: Path::new("survey.laz"),
+            prefix: b"LASF",
+            media_type: None,
+        };
+        let selection = registry.select_importer(probe).expect("selection");
+        let staged = registry
+            .import(
+                &selection,
+                probe.path,
+                &serde_json::json!({}),
+                &mut TestContext::default(),
+            )
+            .expect("staged import");
+        assert_eq!(
+            staged.roots.dataset_roots.get("potree-scan"),
+            Some(&PathBuf::from("/mock/potree-scan"))
+        );
+        let portable = serde_json::to_string(&staged.package).expect("portable package JSON");
+        assert!(!portable.contains("/mock"));
+
+        let rootless = CanonicalStagedImport {
+            package: staged.package,
+            roots: StagedArtifactRoots::default(),
+        };
+        assert_eq!(
+            rootless.validate(),
+            Err(ProviderContractError::InvalidArtifactRoots)
+        );
+    }
+
+    #[test]
+    fn accepted_registration_rewrites_placement_and_audit_without_pick_coordinates() {
+        let mut package = point_cloud_package("test.io.registration@1");
+        let before_hash = package.admissions[0].entity.version_hash.clone();
+        let preview = RegistrationPreview {
+            transform: himmelcad_core::transform::Similarity3D {
+                tx: 12.0,
+                ty: -4.0,
+                tz: 3.0,
+                rx_radians: 0.0,
+                ry_radians: 0.0,
+                rz_radians: 0.0,
+                scale: 1.0,
+            },
+            residuals: himmelcad_core::transform::ResidualReport {
+                count: 3,
+                rms_horizontal_meters: 0.0,
+                rms_vertical_meters: 0.0,
+                rms_spatial_meters: 0.0,
+                max_spatial_meters: 0.0,
+                points: Vec::new(),
+                out_of_bounds_indices: Vec::new(),
+                warnings: Vec::new(),
+            },
+            iterations: 1,
+            matched_samples: 3,
+            overlap_ratio: 1.0,
+            converged: true,
+            accepted: true,
+            warnings: Vec::new(),
+        };
+
+        apply_registration_preview(&mut package, "site-fit", "pointPairs", &preview)
+            .expect("accepted registration");
+
+        let entity = &package.admissions[0].entity;
+        let placement = entity.placement.expect("registered placement");
+        assert_eq!(
+            [placement.0[12], placement.0[13], placement.0[14]],
+            [12.0, -4.0, 3.0]
+        );
+        assert_ne!(entity.version_hash, before_hash);
+        let attributes = package
+            .objects
+            .iter()
+            .find(|object| object.object_hash == entity.attributes_ref)
+            .expect("rewritten attributes");
+        let audit = &attributes.value["hcad.import-registration@1"];
+        assert_eq!(audit["recipeId"], "site-fit");
+        assert_eq!(audit["method"], "pointPairs");
+        let serialized = serde_json::to_string(audit).expect("audit JSON");
+        assert!(!serialized.contains("source"));
+        assert!(!serialized.contains("target"));
+        package
+            .validate()
+            .expect("registered package remains valid");
+    }
+
+    #[test]
+    fn registry_export_requires_plan_parity_and_observes_cancellation() {
+        let provider_id = "test.io.export@1";
+        let executions = Arc::new(AtomicUsize::new(0));
+        let mut registry = FormatProviderRegistry::default();
+        registry
+            .register_exporter(Arc::new(MockExporter {
+                descriptor: import_export_descriptor(provider_id, "1.0.0"),
+                executions: executions.clone(),
+            }))
+            .expect("exporter");
+        let package = point_cloud_package("test.io.source@1");
+        let options = serde_json::json!({});
+        let target = Path::new("survey.mock");
+        let request = || CanonicalExportRequest {
+            target,
+            format_id: "las@1.4",
+            package: &package,
+            options: &options,
+        };
+        let plan = registry
+            .plan_export(provider_id, request())
+            .expect("registry plan");
+
+        let mut changed = plan.clone();
+        changed
+            .semantic_losses
+            .push("hcad.loss.added-after-review@1".to_owned());
+        assert_eq!(
+            registry.execute_export(
+                provider_id,
+                request(),
+                &changed,
+                &mut TestContext::default(),
+            ),
+            Err(ProviderContractError::ExportPlanChanged)
+        );
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
+
+        let mut cancelled = TestContext {
+            cancelled: true,
+            ..TestContext::default()
+        };
+        assert_eq!(
+            registry.execute_export(provider_id, request(), &plan, &mut cancelled),
+            Err(ProviderContractError::Cancelled)
+        );
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
+
+        registry
+            .execute_export(provider_id, request(), &plan, &mut TestContext::default())
+            .expect("matching plan executes");
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -1530,6 +2249,28 @@ mod tests {
             extensions: vec!["las".to_owned(), "laz".to_owned()],
             media_types: vec!["application/vnd.las".to_owned()],
             capabilities: vec![FormatCapability::Import],
+            import_options: Some(ProviderOptionContract::none()),
+            export_options: None,
+        }
+    }
+
+    fn import_export_descriptor(provider_id: &str, version: &str) -> FormatProviderDescriptor {
+        FormatProviderDescriptor {
+            schema_version: CANONICAL_IO_SCHEMA_VERSION,
+            provider_id: provider_id.to_owned(),
+            provider_version: version.to_owned(),
+            display_name: "Mock import/export".to_owned(),
+            format_ids: vec!["las@1.4".to_owned()],
+            extensions: vec!["mock".to_owned()],
+            media_types: vec!["application/vnd.mock".to_owned()],
+            capabilities: vec![FormatCapability::Import, FormatCapability::Export],
+            import_options: Some(ProviderOptionContract::object(
+                serde_json::json!({
+                    "quality": {"type": "string", "enum": ["balanced", "maximum"]}
+                }),
+                serde_json::json!({"quality": "balanced"}),
+            )),
+            export_options: Some(ProviderOptionContract::none()),
         }
     }
 

@@ -138,10 +138,7 @@ export function GcpImageMarkerOverlay({
     };
   }
 
-  function startDrag(
-    event: ReactPointerEvent,
-    marker: GcpImageMarker,
-  ): void {
+  function startDrag(event: ReactPointerEvent, marker: GcpImageMarker): void {
     if (disabled || marker.state === 'blockedMuted') return;
     event.preventDefault();
     event.stopPropagation();
@@ -149,7 +146,8 @@ export function GcpImageMarkerOverlay({
     if (!pointer) return;
     rootRef.current?.setPointerCapture(event.pointerId);
     onSelectPoint?.(marker.pointId);
-    const coordinate = optimisticCoordinates.get(markerKey(marker))?.coordinate ?? marker.coordinate;
+    const coordinate =
+      optimisticCoordinates.get(markerKey(marker))?.coordinate ?? marker.coordinate;
     const next: DragState = {
       pointerId: event.pointerId,
       marker,
@@ -232,10 +230,7 @@ export function GcpImageMarkerOverlay({
       onPointerUp={finishDrag}
       onPointerCancel={cancelDrag}
     >
-      <svg
-        className={styles.ellipses}
-        aria-hidden="true"
-      >
+      <svg className={styles.ellipses} aria-hidden="true">
         {visibleMarkers.map((marker) => {
           if (!marker.uncertainty || marker.state !== 'predictedBlue') return null;
           return (
@@ -269,16 +264,16 @@ export function GcpImageMarkerOverlay({
             className={`${styles.marker} ${
               fullCrosshair ? styles.fullMarker : styles.compactMarker
             } ${styles[effectiveState]} ${fullCrosshair ? styles.selected : ''}`}
-            style={{
-              '--gcp-x': `${imageOffsetX + coordinate.xPixels * viewScale}px`,
-              '--gcp-y': `${imageOffsetY + coordinate.yPixels * viewScale}px`,
-            } as CSSProperties}
+            style={
+              {
+                '--gcp-x': `${imageOffsetX + coordinate.xPixels * viewScale}px`,
+                '--gcp-y': `${imageOffsetY + coordinate.yPixels * viewScale}px`,
+              } as CSSProperties
+            }
             disabled={disabled || marker.state === 'blockedMuted'}
             aria-label={`${marker.pointName}, ${stateLabel(effectiveState)}`}
             title={markerTitle(marker)}
-            onPointerDown={
-              fullCrosshair ? undefined : (event) => startDrag(event, marker)
-            }
+            onPointerDown={fullCrosshair ? undefined : (event) => startDrag(event, marker)}
             onDoubleClick={() =>
               void onCommitMeasurement({
                 pointId: marker.pointId,
@@ -289,10 +284,7 @@ export function GcpImageMarkerOverlay({
             }
           >
             {fullCrosshair ? (
-              <svg
-                className={styles.fullCrosshair}
-                aria-hidden="true"
-              >
+              <svg className={styles.fullCrosshair} aria-hidden="true">
                 <line
                   className={styles.axisVisual}
                   x1={imageOffsetX}
@@ -409,7 +401,6 @@ function markerKey(marker: Pick<GcpImageMarker, 'pointId' | 'imageId'>): string 
 
 function coordinatesMatch(left: GcpImageCoordinate, right: GcpImageCoordinate): boolean {
   return (
-    Math.abs(left.xPixels - right.xPixels) <= 1e-4 &&
-    Math.abs(left.yPixels - right.yPixels) <= 1e-4
+    Math.abs(left.xPixels - right.xPixels) <= 1e-4 && Math.abs(left.yPixels - right.yPixels) <= 1e-4
   );
 }

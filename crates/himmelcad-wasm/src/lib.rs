@@ -31,7 +31,8 @@ use glam::{DMat4, DVec3};
 
 #[cfg(target_arch = "wasm32")]
 use himmelcad_core::canonical_document::{
-    CanonicalCommandTransaction, CanonicalDocument, CanonicalJournalEntry, EntityVersionRef,
+    CanonicalCommandTransaction, CanonicalDocument, CanonicalEntityEffect, CanonicalJournalEntry,
+    EntityVersionRef,
 };
 #[cfg(target_arch = "wasm32")]
 use himmelcad_core::canonical_resource_catalog::{
@@ -87,14 +88,14 @@ use himmelcad_render::{
     tessellate_generated_solid_mesh, transform_bounding_volume,
     validate_authoritative_section_product, validate_glyph_atlas, AlignmentPreviewPartition,
     AssetBundleLimits, AuthoritativeSectionAccumulator, AuthoritativeSectionProduct, BackendPolicy,
-    BoundingVolume, CameraFrame, ClipOperation, ClipVolume, CurveTessellationOptions, DatasetId,
-    DecodedFeatureIdBinding, DecodedFeatureImage, DecodedLegacyBatchIds,
-    DecodedLegacyBatchTableCatalog, DecodedMeshFeatureSet, DecodedPrimitivePropertyAttribute,
-    DecodedPrimitivePropertyTexture, DecodedStreamingPayload, DecodedStructuralMetadata,
-    DecodedThreeDTilesContent, DecodedTriangleFeatureId, DeviceCalibration,
-    ElevationRasterPickRefiner, EntityCompilationOptions, EntityInteractionState,
-    EvaluatedMeshRecipe, EvaluatedMeshRepresentation, FillMode, FloatingOrigin,
-    FrameTelemetrySample, FrameTelemetryWindow, GaussianSplatPickRefiner,
+    BoundingVolume, CameraFrame, CameraProjection, ClipOperation, ClipVolume,
+    CurveTessellationOptions, DatasetId, DecodedFeatureIdBinding, DecodedFeatureImage,
+    DecodedLegacyBatchIds, DecodedLegacyBatchTableCatalog, DecodedMeshFeatureSet,
+    DecodedPrimitivePropertyAttribute, DecodedPrimitivePropertyTexture, DecodedStreamingPayload,
+    DecodedStructuralMetadata, DecodedThreeDTilesContent, DecodedTriangleFeatureId,
+    DeviceCalibration, ElevationRasterPickRefiner, EntityCompilationOptions,
+    EntityInteractionState, EvaluatedMeshRecipe, EvaluatedMeshRepresentation, FillMode,
+    FloatingOrigin, FrameTelemetrySample, FrameTelemetryWindow, GaussianSplatPickRefiner,
     GeometryRepresentationRegistry, GlyphAtlas, GlyphMetrics, GpuAlphaMode, GpuCalibrationProgress,
     GpuCalibrationSession, GpuCanonicalMaterial, GpuCanonicalTextureBinding, GpuDrawBatch,
     GpuHatchPattern, GpuHatchPatternData, GpuHatchResource, GpuIndexedMeshGeometry,
@@ -113,13 +114,14 @@ use himmelcad_render::{
     SectionHatchStyle, SectionMaterialRegionBinding, SectionPlane, SectionProduct, SectionRegion,
     SectionTopologyPart, SectionTopologyPartitionData, SectionTopologySnapshotKey,
     SharedAssetBlobCache, SnapKind, StreamingCoordinator, StreamingRuntimeLimits, StrokeMode,
-    SurfaceFrame, SurfaceFrameOutcome, SurfacePickRequest, TessellatedCurve, TessellatedCurvePath,
-    TessellatedCurveSegment, TextAlignment, TextBatchOptions, TextLayoutOptions, TextLayoutSpace,
-    ThreeDTilesContentKind, ThreeDTilesHierarchySource, TileId, TileKey, TileSelection,
-    TileSelectionView, TileSelector, TimingSample, TriangleMeshPickInstance,
-    TriangleMeshPickRefiner, TriangleMeshPickSource, UnresolvedHeightDisplay, WorldAabb,
-    WorldCamera, WorldTransform, WorldVec3, GPU_POINT_VERTEX_STRIDE_BYTES,
-    SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
+    SurfaceCaptureRequest, SurfaceFrame, SurfaceFrameOutcome, SurfacePickRequest, TessellatedCurve,
+    TessellatedCurvePath, TessellatedCurveSegment, TextAlignment, TextBatchOptions,
+    TextLayoutOptions, TextLayoutSpace, ThreeDTilesContentKind, ThreeDTilesHierarchySource, TileId,
+    TileKey, TileSelection, TileSelectionView, TileSelector, TimingSample,
+    TriangleMeshPickInstance, TriangleMeshPickRefiner, TriangleMeshPickSource,
+    UnresolvedHeightDisplay, WorldAabb, WorldCamera, WorldTransform, WorldVec3,
+    GPU_POINT_VERTEX_STRIDE_BYTES, MAX_CAPTURE_DIMENSION, MAX_CAPTURE_PIXELS,
+    MAX_CAPTURE_RGBA_BYTES, SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
 };
 #[cfg(target_arch = "wasm32")]
 use web_sys::HtmlCanvasElement;
@@ -267,37 +269,48 @@ fn validate_decoded_splat_cardinality(
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
-fn validate_decoded_raster_cardinality(
-    declared_elevation_width: u32,
-    declared_elevation_height: u32,
-    declared_color_width: u32,
-    declared_color_height: u32,
-    decoded_width: u32,
-    decoded_height: u32,
-    decoded_color_width: u32,
-    decoded_color_height: u32,
+struct RasterDimensions {
+    elevation_width: u32,
+    elevation_height: u32,
+    color_width: u32,
+    color_height: u32,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+struct RasterCardinality {
+    declared: RasterDimensions,
+    decoded: RasterDimensions,
     rgba_count: usize,
     elevation_count: usize,
-) -> Result<(), &'static str> {
-    if decoded_width != declared_elevation_width
-        || decoded_height != declared_elevation_height
-        || decoded_color_width != declared_color_width
-        || decoded_color_height != declared_color_height
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn validate_decoded_raster_cardinality(cardinality: RasterCardinality) -> Result<(), &'static str> {
+    let RasterCardinality {
+        declared,
+        decoded,
+        rgba_count,
+        elevation_count,
+    } = cardinality;
+    if decoded.elevation_width != declared.elevation_width
+        || decoded.elevation_height != declared.elevation_height
+        || decoded.color_width != declared.color_width
+        || decoded.color_height != declared.color_height
     {
         return Err("Raster worker artifact dimensions disagree with metadata");
     }
-    let elevation_count_expected = usize::try_from(declared_elevation_width)
+    let elevation_count_expected = usize::try_from(declared.elevation_width)
         .ok()
         .and_then(|width| {
-            usize::try_from(declared_elevation_height)
+            usize::try_from(declared.elevation_height)
                 .ok()
                 .and_then(|height| width.checked_mul(height))
         })
         .ok_or("Raster metadata dimensions exceed portable addressing")?;
-    let color_count = usize::try_from(declared_color_width)
+    let color_count = usize::try_from(declared.color_width)
         .ok()
         .and_then(|width| {
-            usize::try_from(declared_color_height)
+            usize::try_from(declared.color_height)
                 .ok()
                 .and_then(|height| width.checked_mul(height))
         })
@@ -312,13 +325,21 @@ fn validate_decoded_raster_cardinality(
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+type RasterBandSlices<'a> = (
+    &'a [u8],
+    Option<&'a [u8]>,
+    Option<&'a [u8]>,
+    Option<&'a [u8]>,
+);
+
+#[cfg(any(test, target_arch = "wasm32"))]
 fn split_streamed_raster_bands(
     packed: &[u8],
     elevation_length: usize,
     validity_length: usize,
     confidence_length: usize,
     triangle_mask_length: usize,
-) -> Result<(&[u8], Option<&[u8]>, Option<&[u8]>, Option<&[u8]>), &'static str> {
+) -> Result<RasterBandSlices<'_>, &'static str> {
     let validity_end = elevation_length
         .checked_add(validity_length)
         .ok_or("Raster side-band byte length overflow")?;
@@ -1397,6 +1418,8 @@ struct WasmStreamingFrameOptions {
     maximum_traversed_nodes: usize,
     #[serde(default)]
     include_render_keys: bool,
+    #[serde(default)]
+    prefetch_camera: Option<WorldCamera>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -2776,18 +2799,22 @@ impl WasmViewer {
                     primary,
                     "Raster",
                 )?;
-                validate_decoded_raster_cardinality(
-                    elevation_width,
-                    elevation_height,
-                    color_width,
-                    color_height,
-                    decoded.width,
-                    decoded.height,
-                    decoded.color_width,
-                    decoded.color_height,
-                    decoded.rgba8.len(),
-                    decoded.source_elevations.len(),
-                )
+                validate_decoded_raster_cardinality(RasterCardinality {
+                    declared: RasterDimensions {
+                        elevation_width,
+                        elevation_height,
+                        color_width,
+                        color_height,
+                    },
+                    decoded: RasterDimensions {
+                        elevation_width: decoded.width,
+                        elevation_height: decoded.height,
+                        color_width: decoded.color_width,
+                        color_height: decoded.color_height,
+                    },
+                    rgba_count: decoded.rgba8.len(),
+                    elevation_count: decoded.source_elevations.len(),
+                })
                 .map_err(JsValue::from_str)?;
                 self.reject_cross_provider_staged_stream_id(
                     &metadata.stream_id,
@@ -4224,6 +4251,17 @@ impl WasmViewer {
             .values()
             .flat_map(|selections| selections.iter().cloned())
             .collect::<Vec<_>>();
+        if let Some(prefetch_camera) = options.prefetch_camera {
+            let stable_frontiers = self.complete_streaming_frontiers.clone();
+            let prefetch_view = TileSelectionView {
+                camera: prefetch_camera,
+                maximum_unloaded_candidates: view.maximum_unloaded_candidates.saturating_add(1) / 2,
+                ..view
+            };
+            let prefetch = self.select_registered_datasets(prefetch_view);
+            self.complete_streaming_frontiers = stable_frontiers;
+            auxiliary.extend(prefetch.map_err(js_error)?.0);
+        }
         auxiliary.extend(self.move_preview_fallback_selections(&preview_selections)?);
         self.apply_move_preview_target_tiles(&preview_selections)
             .map_err(js_error)?;
@@ -4918,6 +4956,61 @@ impl WasmViewer {
         self.execute_transform_entity_command(command, expected_bindings)
     }
 
+    /// Projects an already committed canonical effect into resident viewer state.
+    ///
+    /// This deliberately appends no viewer-side semantic journal entry. The
+    /// authoritative sidecar transaction has already done so. Representation,
+    /// type, schema, component and style replacements require a resolved
+    /// admission transaction and are rejected by this envelope-only path.
+    pub fn apply_committed_entity_effect_json(
+        &mut self,
+        effect_json: &str,
+        expected_bindings_json: &str,
+    ) -> Result<String, JsValue> {
+        let effect: CanonicalEntityEffect = serde_json::from_str(effect_json).map_err(js_error)?;
+        let expected_bindings: Vec<GeometryRepresentationBindingRef> =
+            serde_json::from_str(expected_bindings_json).map_err(js_error)?;
+        let before = effect
+            .before
+            .ok_or_else(|| JsValue::from_str("committed create needs resolved admissions"))?;
+        let after = effect
+            .after
+            .ok_or_else(|| JsValue::from_str("committed delete must use canonical detach"))?;
+        if before.id != effect.entity_id || after.id != effect.entity_id {
+            return Err(JsValue::from_str(
+                "committed effect entity identity is inconsistent",
+            ));
+        }
+        let current = self.current_canonical_entity(&effect.entity_id.0)?;
+        if current != before {
+            return Err(JsValue::from_str(
+                "committed effect source does not match resident canonical revision",
+            ));
+        }
+        let mut permitted = before.clone();
+        permitted.revision = after.revision;
+        permitted.version_hash = after.version_hash.clone();
+        permitted.name.clone_from(&after.name);
+        permitted.owner.clone_from(&after.owner);
+        permitted.layer_ids.clone_from(&after.layer_ids);
+        permitted.placement = after.placement;
+        permitted.attributes_ref.clone_from(&after.attributes_ref);
+        permitted.relations_ref.clone_from(&after.relations_ref);
+        if permitted != after {
+            return Err(JsValue::from_str(
+                "committed effect needs resolved representation or resource publication",
+            ));
+        }
+        let applied = AppliedEntityPlacementCommand {
+            command_id: format!("committed:{}", after.version_hash.as_str()),
+            entity_id: effect.entity_id,
+            before,
+            after,
+        };
+        let publication = self.commit_entity_placement_publication(&applied, &expected_bindings)?;
+        append_committed_effect_result(publication, &applied.after)
+    }
+
     /// Converts one translation ghost into a canonical command without reloading resident tiles.
     pub fn commit_move_preview_json(
         &mut self,
@@ -5258,8 +5351,72 @@ impl WasmViewer {
     /// Presents one frame. Geometry registration is performed through the
     /// versioned render-world bridge, not through JavaScript scene objects.
     pub fn render(&mut self) -> Result<String, JsValue> {
-        let outcome = self.submit_frame(None).map_err(js_error)?;
+        let outcome = self
+            .submit_frame(None, None, None, None)
+            .map_err(js_error)?;
         Ok(frame_outcome_json(&outcome).to_string())
+    }
+
+    /// Reports the stable versioned offscreen-capture limits and pixel contract.
+    pub fn capture_capabilities_json_v1(&self) -> String {
+        serde_json::json!({
+            "version": 1,
+            "maxDimension": MAX_CAPTURE_DIMENSION.min(self.host.capabilities().max_texture_dimension_2d),
+            "maxPixels": MAX_CAPTURE_PIXELS,
+            "maxRgbaBytes": MAX_CAPTURE_RGBA_BYTES,
+            "colorSpace": "srgb",
+            "alphaMode": "straight",
+            "transparentBackground": true,
+        })
+        .to_string()
+    }
+
+    /// Submits an explicit-size offscreen scene frame and resolves only after
+    /// GPU completion. The live canvas extent and surface are never resized.
+    pub fn begin_capture_rgba_v1(
+        &mut self,
+        width: u32,
+        height: u32,
+        transparent_background: bool,
+    ) -> Result<js_sys::Promise, JsValue> {
+        if width == 0 || height == 0 {
+            return Err(JsValue::from_str(
+                "capture width and height must be non-zero",
+            ));
+        }
+        let camera_frame = self.camera_frame.ok_or_else(|| {
+            JsValue::from_str("set_world_camera_json must be called before explicit-size capture")
+        })?;
+        let view_projection = capture_gpu_view_projection(camera_frame, width, height)?;
+        let clear_color = if transparent_background {
+            wgpu::Color::TRANSPARENT
+        } else {
+            wgpu::Color {
+                a: 1.0,
+                ..self.clear_color
+            }
+        };
+        let outcome = self
+            .submit_frame(
+                None,
+                Some(SurfaceCaptureRequest { width, height }),
+                Some(view_projection),
+                Some(clear_color),
+            )
+            .map_err(js_error)?;
+        self.host
+            .device()
+            .poll(wgpu::PollType::Poll)
+            .map_err(js_error)?;
+        let SurfaceFrameOutcome::Captured { rgba_readback } = outcome else {
+            return Err(JsValue::from_str(
+                "capture frame was not submitted with an RGBA readback",
+            ));
+        };
+        Ok(wasm_bindgen_futures::future_to_promise(async move {
+            let rgba8 = rgba_readback.resolve().await.map_err(js_error)?;
+            Ok(js_sys::Uint8Array::from(rgba8.as_slice()).into())
+        }))
     }
 
     /// Submits one bounded cursor neighborhood and returns a mapping promise.
@@ -5284,10 +5441,15 @@ impl WasmViewer {
         let generation = self.render_world.generation();
         let viewport = self.host.extent();
         let outcome = self
-            .submit_frame(Some(SurfacePickRequest {
-                pixel: [x, y],
-                radius,
-            }))
+            .submit_frame(
+                Some(SurfacePickRequest {
+                    pixel: [x, y],
+                    radius,
+                }),
+                None,
+                None,
+                None,
+            )
             .map_err(js_error)?;
         self.host
             .device()
@@ -7183,6 +7345,9 @@ impl WasmViewer {
     fn submit_frame(
         &mut self,
         pick: Option<SurfacePickRequest>,
+        capture: Option<SurfaceCaptureRequest>,
+        view_projection: Option<[[f32; 4]; 4]>,
+        clear_color: Option<wgpu::Color>,
     ) -> Result<SurfaceFrameOutcome, String> {
         let visible_proxy_ids = self.raster_analysis_view.as_ref().map_or_else(
             || {
@@ -7277,13 +7442,14 @@ impl WasmViewer {
         );
         self.host
             .render(SurfaceFrame {
-                view_projection: self.view_projection,
+                view_projection: view_projection.unwrap_or(self.view_projection),
                 floating_origin: self.floating_origin,
                 clip_volumes: &clip_volumes,
                 batches: &batches,
                 point_size_scale: self.point_size_scale,
-                clear_color: self.clear_color,
+                clear_color: clear_color.unwrap_or(self.clear_color),
                 pick,
+                capture,
             })
             .map_err(|error| error.to_string())
     }
@@ -7940,6 +8106,22 @@ fn append_command_result(
 }
 
 #[cfg(target_arch = "wasm32")]
+fn append_committed_effect_result(
+    publication_json: String,
+    entity: &CanonicalEntity,
+) -> Result<String, JsValue> {
+    let mut value: serde_json::Value = serde_json::from_str(&publication_json).map_err(js_error)?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| JsValue::from_str("canonical publication result is malformed"))?;
+    object.insert(
+        "entity".to_owned(),
+        serde_json::to_value(entity).map_err(js_error)?,
+    );
+    serde_json::to_string(&value).map_err(js_error)
+}
+
+#[cfg(target_arch = "wasm32")]
 fn js_error(error: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&error.to_string())
 }
@@ -8119,12 +8301,43 @@ fn parse_sha256_hex(value: &str) -> Result<[u8; 32], JsValue> {
 }
 
 #[cfg(target_arch = "wasm32")]
+fn capture_gpu_view_projection(
+    frame: CameraFrame,
+    width: u32,
+    height: u32,
+) -> Result<[[f32; 4]; 4], JsValue> {
+    let source_aspect = match frame.camera.projection {
+        CameraProjection::Perspective { aspect, .. }
+        | CameraProjection::Orthographic { aspect, .. } => aspect,
+    };
+    let destination_aspect = f64::from(width) / f64::from(height);
+    let x_scale = source_aspect / destination_aspect;
+    if !x_scale.is_finite() || x_scale <= 0.0 {
+        return Err(JsValue::from_str(
+            "capture camera aspect adjustment is invalid",
+        ));
+    }
+    let aspect_adjustment = DMat4::from_cols(
+        glam::DVec4::new(x_scale, 0.0, 0.0, 0.0),
+        glam::DVec4::Y,
+        glam::DVec4::Z,
+        glam::DVec4::W,
+    );
+    #[allow(clippy::cast_possible_truncation)]
+    let gpu = (aspect_adjustment * frame.view_projection)
+        .to_cols_array_2d()
+        .map(|column| column.map(|value| value as f32));
+    Ok(gpu)
+}
+
+#[cfg(target_arch = "wasm32")]
 fn frame_outcome_json(outcome: &SurfaceFrameOutcome) -> serde_json::Value {
     match outcome {
         SurfaceFrameOutcome::Presented { reconfigured, .. } => {
             serde_json::json!({ "status": "presented", "reconfigured": reconfigured })
         }
         SurfaceFrameOutcome::Picked { .. } => serde_json::json!({ "status": "picked" }),
+        SurfaceFrameOutcome::Captured { .. } => serde_json::json!({ "status": "captured" }),
         SurfaceFrameOutcome::Skipped(reason) => serde_json::json!({
             "status": "skipped",
             "reason": format!("{reason:?}")
@@ -14473,9 +14686,33 @@ fn parse_streaming_completion(
 mod tests {
     use super::{
         split_streamed_raster_bands, validate_decoded_potree_cardinality,
-        validate_decoded_raster_cardinality, validate_decoded_splat_cardinality,
-        WasmFrameTelemetryObservation,
+        validate_decoded_raster_cardinality, validate_decoded_splat_cardinality, RasterCardinality,
+        RasterDimensions, WasmFrameTelemetryObservation,
     };
+
+    fn raster_cardinality(
+        declared: [u32; 4],
+        decoded: [u32; 4],
+        rgba_count: usize,
+        elevation_count: usize,
+    ) -> RasterCardinality {
+        RasterCardinality {
+            declared: RasterDimensions {
+                elevation_width: declared[0],
+                elevation_height: declared[1],
+                color_width: declared[2],
+                color_height: declared[3],
+            },
+            decoded: RasterDimensions {
+                elevation_width: decoded[0],
+                elevation_height: decoded[1],
+                color_width: decoded[2],
+                color_height: decoded[3],
+            },
+            rgba_count,
+            elevation_count,
+        }
+    }
 
     #[test]
     fn host_frame_observation_rejects_a_second_gpu_timing_authority() {
@@ -14502,11 +14739,41 @@ mod tests {
         assert!(validate_decoded_splat_cardinality(1, 2, 2).is_err());
         assert!(validate_decoded_splat_cardinality(2, 2, 1).is_err());
 
-        assert!(validate_decoded_raster_cardinality(2, 3, 4, 5, 2, 3, 4, 5, 80, 6).is_ok());
-        assert!(validate_decoded_raster_cardinality(2, 3, 4, 5, 3, 2, 4, 5, 80, 6).is_err());
-        assert!(validate_decoded_raster_cardinality(2, 3, 4, 5, 2, 3, 5, 4, 80, 6).is_err());
-        assert!(validate_decoded_raster_cardinality(2, 3, 4, 5, 2, 3, 4, 5, 79, 6).is_err());
-        assert!(validate_decoded_raster_cardinality(2, 3, 4, 5, 2, 3, 4, 5, 80, 5).is_err());
+        assert!(validate_decoded_raster_cardinality(raster_cardinality(
+            [2, 3, 4, 5],
+            [2, 3, 4, 5],
+            80,
+            6,
+        ))
+        .is_ok());
+        assert!(validate_decoded_raster_cardinality(raster_cardinality(
+            [2, 3, 4, 5],
+            [3, 2, 4, 5],
+            80,
+            6,
+        ))
+        .is_err());
+        assert!(validate_decoded_raster_cardinality(raster_cardinality(
+            [2, 3, 4, 5],
+            [2, 3, 5, 4],
+            80,
+            6,
+        ))
+        .is_err());
+        assert!(validate_decoded_raster_cardinality(raster_cardinality(
+            [2, 3, 4, 5],
+            [2, 3, 4, 5],
+            79,
+            6,
+        ))
+        .is_err());
+        assert!(validate_decoded_raster_cardinality(raster_cardinality(
+            [2, 3, 4, 5],
+            [2, 3, 4, 5],
+            80,
+            5,
+        ))
+        .is_err());
     }
 
     #[test]

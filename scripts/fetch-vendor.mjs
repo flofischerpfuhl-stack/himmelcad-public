@@ -263,7 +263,7 @@ git clone ${entry.upstream}.git /tmp/${name}
 cd /tmp/${name}
 mkdir build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release ..
-make -j\$(nproc)
+make -j$(nproc)
 cp PotreeConverter "${outDir.replace(REPO_ROOT, '$HIMMELCAD_ROOT')}/PotreeConverter"
 chmod +x "${outDir.replace(REPO_ROOT, '$HIMMELCAD_ROOT')}/PotreeConverter"
 \`\`\`

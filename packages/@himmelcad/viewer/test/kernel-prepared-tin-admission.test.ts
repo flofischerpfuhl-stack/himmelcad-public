@@ -55,10 +55,7 @@ void test('prepared Civil TIN verifies both manifests and publishes streamed exa
       datasetId: 'dgm-road-v1',
       manifestUri: 'https://example.test/dgm/kernel-manifest.json',
       preparationUri: 'https://example.test/dgm/preparation.json',
-      preparationResource: resource(
-        preparationBytes,
-        'hcad.prepared-triangle-mesh-recipe@1',
-      ),
+      preparationResource: resource(preparationBytes, 'hcad.prepared-triangle-mesh-recipe@1'),
       sectionTopologyUri: 'https://example.test/dgm/section-topology.json',
       sectionTopologyResource: resource(topologyBytes, 'hcad.section-topology-index@2'),
       admission,
@@ -97,9 +94,7 @@ void test('prepared Civil TIN verifies both manifests and publishes streamed exa
 void test('tampered prepared TIN topology never registers a dataset', async () => {
   const renderBytes = encoder.encode('{}');
   const preparationBytes = encoder.encode('{}');
-  const topologyBytes = encoder.encode(
-    '{"schemaVersion":1,"closedManifold":false,"parts":[]}',
-  );
+  const topologyBytes = encoder.encode('{"schemaVersion":1,"closedManifold":false,"parts":[]}');
   const admission = canonicalAdmission(renderBytes);
   let registered = false;
   await assert.rejects(
@@ -122,10 +117,7 @@ void test('tampered prepared TIN topology never registers a dataset', async () =
         datasetId: 'dgm-road-v1',
         manifestUri: 'https://example.test/dgm/kernel-manifest.json',
         preparationUri: 'https://example.test/dgm/preparation.json',
-        preparationResource: resource(
-          preparationBytes,
-          'hcad.prepared-triangle-mesh-recipe@1',
-        ),
+        preparationResource: resource(preparationBytes, 'hcad.prepared-triangle-mesh-recipe@1'),
         sectionTopologyUri: 'https://example.test/dgm/section-topology.json',
         sectionTopologyResource: {
           objectHash: '00'.repeat(32),
@@ -183,10 +175,7 @@ void test('prepared TIN rejects missing, reversed and non-finite canonical bound
           datasetId: 'dgm-invalid-bounds',
           manifestUri: 'https://example.test/dgm/kernel-manifest.json',
           preparationUri: 'https://example.test/dgm/preparation.json',
-          preparationResource: resource(
-            preparationBytes,
-            'hcad.prepared-triangle-mesh-recipe@1',
-          ),
+          preparationResource: resource(preparationBytes, 'hcad.prepared-triangle-mesh-recipe@1'),
           sectionTopologyUri: 'https://example.test/dgm/section-topology.json',
           sectionTopologyResource: resource(topologyBytes, 'hcad.section-topology-index@2'),
           admission,

@@ -45,9 +45,7 @@ export const SPEC_ENTITY_KINDS: readonly SpecEntityKind[] = [
 
 export type RgbColor = { r: number; g: number; b: number };
 
-export type ColorRef =
-  | { kind: 'rgb'; rgb: RgbColor }
-  | { kind: 'none' };
+export type ColorRef = { kind: 'rgb'; rgb: RgbColor } | { kind: 'none' };
 
 /** Dash pattern in drawing units (absolute). */
 export interface LinetypePattern {

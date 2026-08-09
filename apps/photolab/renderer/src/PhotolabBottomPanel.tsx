@@ -10,12 +10,7 @@ import type {
   PublishedGcpOptimizationEntry,
 } from '@himmelcad/data';
 import { EmptyState, ExpandChevron, IslandTabs } from '@himmelcad/ui';
-import {
-  AlertTriangle,
-  Ban,
-  CheckCircle2,
-  FileDown,
-} from 'lucide-react';
+import { AlertTriangle, Ban, CheckCircle2, FileDown } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { GcpAccuracyPanel, type GcpAccuracyReport } from './GcpAccuracyPanel.js';
@@ -654,9 +649,7 @@ function LineageOverview({
             </div>
             <details>
               <summary>
-                {alignment.calibrationGroups?.length ??
-                  alignment.calibrationGroupIds?.length ??
-                  0}{' '}
+                {alignment.calibrationGroups?.length ?? alignment.calibrationGroupIds?.length ?? 0}{' '}
                 frozen intrinsics groups · {revisions.length} GCP revisions
               </summary>
               <code>Alignment {alignment.entityId}</code>

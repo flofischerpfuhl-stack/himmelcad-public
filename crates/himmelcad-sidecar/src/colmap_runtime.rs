@@ -1466,7 +1466,7 @@ struct RunState {
     scratch: PathBuf,
     plan: ColmapProgressPlan,
     command_reports: Vec<ColmapCommandReport>,
-    reported_units: BTreeMap<usize, (u64, u64)>,
+    reported_progress: BTreeMap<usize, ProgressMetrics>,
 }
 
 impl RunState {
@@ -1475,7 +1475,7 @@ impl RunState {
             scratch,
             plan,
             command_reports: Vec::new(),
-            reported_units: BTreeMap::new(),
+            reported_progress: BTreeMap::new(),
         }
     }
 
@@ -1486,21 +1486,27 @@ impl RunState {
         mut metrics: ProgressMetrics,
     ) -> Result<(), ColmapRuntimeError> {
         let index = self.plan.index_of(label);
-        let previous = self.reported_units.entry(index).or_insert((0, 0));
-        metrics.completed_units = metrics.completed_units.max(previous.0);
-        metrics.completed_bytes = metrics.completed_bytes.max(previous.1);
+        let previous = self
+            .reported_progress
+            .get(&index)
+            .copied()
+            .unwrap_or_else(ProgressMetrics::empty);
+        metrics.completed_units = metrics.completed_units.max(previous.completed_units);
+        metrics.completed_bytes = metrics.completed_bytes.max(previous.completed_bytes);
         metrics.total_units = metrics
             .total_units
-            .map(|total| total.max(metrics.completed_units));
+            .map(|total| total.max(metrics.completed_units))
+            .or(previous.total_units);
         metrics.total_bytes = metrics
             .total_bytes
-            .map(|total| total.max(metrics.completed_bytes));
-        *previous = (metrics.completed_units, metrics.completed_bytes);
+            .map(|total| total.max(metrics.completed_bytes))
+            .or(previous.total_bytes);
         context
             .progress
             .report_blocking(self.plan.progress(index, metrics))
-            .map(|_| ())
-            .map_err(|error| ColmapRuntimeError::Progress(error.to_string()))
+            .map_err(|error| ColmapRuntimeError::Progress(error.to_string()))?;
+        self.reported_progress.insert(index, metrics);
+        Ok(())
     }
 
     fn report_complete(
@@ -1508,14 +1514,22 @@ impl RunState {
         context: &JobWorkerContext,
         label: &str,
     ) -> Result<(), ColmapRuntimeError> {
+        let previous = self
+            .reported_progress
+            .get(&self.plan.index_of(label))
+            .copied()
+            .unwrap_or_else(ProgressMetrics::empty);
+        let total_units = previous
+            .total_units
+            .unwrap_or_else(|| previous.completed_units.max(1));
         self.report_stage(
             context,
             label,
             ProgressMetrics {
-                completed_units: 1,
-                total_units: Some(1),
-                completed_bytes: 0,
-                total_bytes: None,
+                completed_units: total_units,
+                total_units: Some(total_units),
+                completed_bytes: previous.completed_bytes,
+                total_bytes: previous.total_bytes,
             },
         )
     }
@@ -4363,6 +4377,10 @@ mod tests {
                         byte_size: u64::try_from(bytes.len()).expect("test image length fits u64"),
                         sha256: source_object_hash,
                         metadata: PhotoMetadata::default(),
+                        capture_source: Default::default(),
+                        decoder_capability: None,
+                        position_prior: None,
+                        derived_provenance: None,
                         duplicate_of: None,
                     },
                     projected_reference: None,

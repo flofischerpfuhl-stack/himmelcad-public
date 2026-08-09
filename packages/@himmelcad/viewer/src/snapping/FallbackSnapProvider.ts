@@ -21,7 +21,10 @@ export class FallbackSnapProvider implements SnapProvider {
 
   query(input: SnapQueryInput): readonly SnapResult[] {
     const previous = input.previous;
-    const planeZ = previous?.stable ? previous.position.z - input.sceneRenderOffset[2] : 0;
+    const planeZ =
+      previous?.stable && previous.position.z !== null
+        ? previous.position.z - input.sceneRenderOffset[2]
+        : 0;
     PLANE.set(UP, -planeZ);
     const hit = input.ray.intersectPlane(PLANE, HIT);
     if (!hit) return [];

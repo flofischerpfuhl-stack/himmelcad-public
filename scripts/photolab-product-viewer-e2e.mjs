@@ -142,7 +142,10 @@ async function auditOpenProject(page, screenshotPath, label) {
     { timeout: 60_000 },
   );
   const visibleText = await page.locator('body').innerText();
-  if (visibleText.includes('Product could not be loaded') || visibleText.includes('Failed to fetch')) {
+  if (
+    visibleText.includes('Product could not be loaded') ||
+    visibleText.includes('Failed to fetch')
+  ) {
     throw new Error('The application console contains a product loading failure');
   }
   const protocol = await inspectProductProtocol(page);
@@ -246,7 +249,9 @@ async function inspectProductProtocol(page) {
           headers: { Range: 'bytes=0-31' },
         });
         if (assetResponse.status !== 206) {
-          throw new Error(`${product.kind} asset did not honor byte range: ${assetResponse.status}`);
+          throw new Error(
+            `${product.kind} asset did not honor byte range: ${assetResponse.status}`,
+          );
         }
         await assetResponse.arrayBuffer();
       }

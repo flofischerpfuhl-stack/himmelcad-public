@@ -72,7 +72,25 @@ declare global {
     __HCAD_UPDATE_ALIGNMENT_PREVIEW__?: () => AlignmentPreviewBrowserValidation;
     __HCAD_REMOVE_ALIGNMENT_PREVIEW__?: () => boolean;
     __HCAD_RESET_CAMERA__?: () => void;
+    __HCAD_CAPTURE_RGBA__?: (
+      width: number,
+      height: number,
+      transparentBackground: boolean,
+    ) => Promise<BrowserCaptureValidation>;
   }
+}
+
+interface BrowserCaptureValidation {
+  readonly width: number;
+  readonly height: number;
+  readonly byteLength: number;
+  readonly alpha: readonly number[];
+  readonly colorSpace: 'srgb';
+  readonly alphaMode: 'straight';
+  readonly includeUi: false;
+  readonly transparentBackground: boolean;
+  readonly extentBefore: readonly [number, number];
+  readonly extentAfter: readonly [number, number];
 }
 
 interface BrowserValidationState {
@@ -409,7 +427,8 @@ const PANORAMA_IMAGE_HASH = '8253870745066d9c79172635fae46712dbfd232c0548340493e
 const PANORAMA_DEPTH_HASH = '11f2667fd090884e4fccbadb71c96435bfb589537a858b53070f4b8aab365543';
 const PANORAMA_VALIDITY_HASH = 'a2c70538651a7e9296b097e8c3dfc1b195a945802ffe45aa471868fba6f1042e';
 const PANORAMA_CONFIDENCE_HASH = 'c05617ac39c882500d10674a36f1795b657df7606db0fdce146f93ea4a288b38';
-const PANORAMA_CONNECTIVITY_HASH = 'ce8bee525d6736e9825261b19a9b51719f9dc4bb728e95cf7067a2142b03b362';
+const PANORAMA_CONNECTIVITY_HASH =
+  'ce8bee525d6736e9825261b19a9b51719f9dc4bb728e95cf7067a2142b03b362';
 let EVALUATED_MESH_HASH = 'c'.repeat(64);
 let EVALUATED_TOPOLOGY_HASH = 'c'.repeat(64);
 let MATERIAL_TABLE_HASH = '7'.repeat(64);
@@ -2632,7 +2651,10 @@ async function installProviderFixtures(viewer: WgpuKernelViewer) {
   const surfaceEntityId = 'fixture-orthomosaic-surface';
   const surfaceStreamId = 'fixture-orthomosaic-surface/r';
   const surfaceFootprintOrigin = [BASE[0] + 120, BASE[1] - 32] as const;
-  const surfaceColorOrigin = [surfaceFootprintOrigin[0] + 0.5, surfaceFootprintOrigin[1] + 3.5] as const;
+  const surfaceColorOrigin = [
+    surfaceFootprintOrigin[0] + 0.5,
+    surfaceFootprintOrigin[1] + 3.5,
+  ] as const;
   const surfaceMapping = {
     origin: [surfaceFootprintOrigin[0], surfaceFootprintOrigin[1] + 4] as const,
     columnStep: [2, 0] as const,
@@ -2703,10 +2725,7 @@ async function installProviderFixtures(viewer: WgpuKernelViewer) {
   );
   const surfaceColor = new Uint8Array(4 * 4 * 4);
   for (let pixel = 0; pixel < 16; pixel += 1) {
-    surfaceColor.set(
-      pixel === 0 ? [20, 80, 160, 0] : [30 + pixel * 4, 140, 75, 255],
-      pixel * 4,
-    );
+    surfaceColor.set(pixel === 0 ? [20, 80, 160, 0] : [30 + pixel * 4, 140, 75, 255], pixel * 4);
   }
   state.phase = 'provider-worker-fixtures:surface-raster';
   const surfaceStage = await decodeAndStage(
@@ -3004,9 +3023,8 @@ function verifyResolvedPresentationBindings(
     },
   });
   if (
-    viewer
-      .entityPresentation('mixed-height-area')
-      .find((batch) => batch.kind === 'cadStroke')?.lineTypeComponents !== 4
+    viewer.entityPresentation('mixed-height-area').find((batch) => batch.kind === 'cadStroke')
+      ?.lineTypeComponents !== 4
   ) {
     throw new Error('older exact line-type revision was not independently resolvable');
   }
@@ -3025,9 +3043,8 @@ function verifyResolvedPresentationBindings(
     },
   });
   if (
-    viewer
-      .entityPresentation('mixed-height-area')
-      .find((batch) => batch.kind === 'cadStroke')?.lineTypeComponents !== 40
+    viewer.entityPresentation('mixed-height-area').find((batch) => batch.kind === 'cadStroke')
+      ?.lineTypeComponents !== 40
   ) {
     throw new Error('new exact line-type revision or scalable >16 path was not resolved');
   }
@@ -3564,14 +3581,28 @@ function entityZoo(): LegacyEntityRequest[] {
                 13, 12, 9, 10, 14, 9, 14, 13, 10, 11, 15, 10, 15, 14, 11, 8, 12, 11, 12, 15,
               ],
               normals: null,
-              textureCoordinates: Array.from({ length: 8 }, (_, set) => ([
-                [0, 0], [1, 0], [1, 1], [0, 1],
-                [0, 0], [1, 0], [1, 1], [0, 1],
-                [0, 0], [1, 0], [1, 1], [0, 1],
-                [0, 0], [1, 0], [1, 1], [0, 1],
-              ] as Array<[number, number]>).map(
-                ([u, v]) => [u * (1 - set * 0.03) + set * 0.01, v],
-              )),
+              textureCoordinates: Array.from({ length: 8 }, (_, set) =>
+                (
+                  [
+                    [0, 0],
+                    [1, 0],
+                    [1, 1],
+                    [0, 1],
+                    [0, 0],
+                    [1, 0],
+                    [1, 1],
+                    [0, 1],
+                    [0, 0],
+                    [1, 0],
+                    [1, 1],
+                    [0, 1],
+                    [0, 0],
+                    [1, 0],
+                    [1, 1],
+                    [0, 1],
+                  ] as Array<[number, number]>
+                ).map(([u, v]) => [u * (1 - set * 0.03) + set * 0.01, v]),
+              ),
             },
             closedManifold: true,
             triangleMaterialSlots: [
@@ -3961,6 +3992,30 @@ async function run(): Promise<void> {
     },
   } as const;
   viewer.setWorldCamera(worldCamera, BASE);
+  window.__HCAD_CAPTURE_RGBA__ = async (
+    width,
+    height,
+    transparentBackground,
+  ): Promise<BrowserCaptureValidation> => {
+    const extentBefore = viewer.extent();
+    const capture = await viewer.captureRgba({ width, height, transparentBackground });
+    const alpha = Array.from(
+      { length: capture.width * capture.height },
+      (_, index) => capture.rgba8[index * 4 + 3]!,
+    );
+    return {
+      width: capture.width,
+      height: capture.height,
+      byteLength: capture.rgba8.byteLength,
+      alpha,
+      colorSpace: capture.colorSpace,
+      alphaMode: capture.alphaMode,
+      includeUi: capture.includeUi,
+      transparentBackground: capture.transparentBackground,
+      extentBefore,
+      extentAfter: viewer.extent(),
+    };
+  };
   const localProfileCamera = new KernelCameraController(1280, 720);
   localProfileCamera.frame(
     { x: BASE[0] - 30, y: BASE[1] - 27, z: BASE[2] - 12 },
@@ -4084,42 +4139,27 @@ async function run(): Promise<void> {
   const textureRef = await registerMaterialTexture(
     'browser-material-checker',
     'srgb',
-    new Uint8Array([
-      255, 255, 255, 255, 32, 220, 255, 255,
-      255, 80, 48, 255, 255, 255, 255, 255,
-    ]),
+    new Uint8Array([255, 255, 255, 255, 32, 220, 255, 255, 255, 80, 48, 255, 255, 255, 255, 255]),
   );
   const normalTextureRef = await registerMaterialTexture(
     'browser-material-normal',
     'data',
-    new Uint8Array([
-      128, 128, 255, 255, 172, 128, 246, 255,
-      128, 172, 246, 255, 96, 128, 251, 255,
-    ]),
+    new Uint8Array([128, 128, 255, 255, 172, 128, 246, 255, 128, 172, 246, 255, 96, 128, 251, 255]),
   );
   const metallicRoughnessTextureRef = await registerMaterialTexture(
     'browser-material-metallic-roughness',
     'data',
-    new Uint8Array([
-      255, 48, 224, 255, 255, 128, 160, 255,
-      255, 208, 96, 255, 255, 255, 0, 255,
-    ]),
+    new Uint8Array([255, 48, 224, 255, 255, 128, 160, 255, 255, 208, 96, 255, 255, 255, 0, 255]),
   );
   const emissiveTextureRef = await registerMaterialTexture(
     'browser-material-emissive',
     'srgb',
-    new Uint8Array([
-      255, 64, 16, 255, 64, 128, 255, 255,
-      32, 255, 96, 255, 255, 255, 255, 255,
-    ]),
+    new Uint8Array([255, 64, 16, 255, 64, 128, 255, 255, 32, 255, 96, 255, 255, 255, 255, 255]),
   );
   const occlusionTextureRef = await registerMaterialTexture(
     'browser-material-occlusion',
     'data',
-    new Uint8Array([
-      255, 255, 255, 255, 192, 255, 255, 255,
-      96, 255, 255, 255, 32, 255, 255, 255,
-    ]),
+    new Uint8Array([255, 255, 255, 255, 192, 255, 255, 255, 96, 255, 255, 255, 32, 255, 255, 255]),
   );
   MATERIAL_TEXTURE_RESIDENCY = viewer.gpuTextureCacheStats();
   const unsealedSurveyMaterial: MaterialResource = {
@@ -4493,15 +4533,12 @@ async function run(): Promise<void> {
   }
   viewer.registerImageResource(PANORAMA_IMAGE_HASH, 8, 4, panoramaPixels);
   viewer.registerDepthResource(PANORAMA_DEPTH_HASH, 8, 4, new Float32Array(8 * 4).fill(3));
-  viewer.registerRasterBinaryResource(
-    PANORAMA_VALIDITY_HASH,
-    new Uint8Array([255, 255, 255, 127]),
-  );
+  viewer.registerRasterBinaryResource(PANORAMA_VALIDITY_HASH, new Uint8Array([255, 255, 255, 127]));
   viewer.registerRasterBinaryResource(
     PANORAMA_CONFIDENCE_HASH,
     new Uint8Array([
-      255, 230, 204, 179, 153, 128, 102, 77, 51, 26, 0, 26, 51, 77, 102, 128, 153, 179, 204,
-      230, 255, 230, 204, 179, 153, 128, 102, 77, 51, 26, 0, 26,
+      255, 230, 204, 179, 153, 128, 102, 77, 51, 26, 0, 26, 51, 77, 102, 128, 153, 179, 204, 230,
+      255, 230, 204, 179, 153, 128, 102, 77, 51, 26, 0, 26,
     ]),
   );
   viewer.registerRasterBinaryResource(
@@ -4743,9 +4780,7 @@ async function run(): Promise<void> {
     },
     placement: placement(-14, 5, 0),
   });
-  const referenceBlockMutation = viewer.publishCanonicalRepresentations([
-    referenceBlockAdmission,
-  ]);
+  const referenceBlockMutation = viewer.publishCanonicalRepresentations([referenceBlockAdmission]);
   if (referenceBlockMutation.bindings.length !== 1 || referenceBlockMutation.proxies === 0) {
     throw new Error('canonical entity-reference block did not publish atomically');
   }
@@ -4754,7 +4789,8 @@ async function run(): Promise<void> {
 
   const canonicalDocument = await KernelCanonicalDocument.create(moduleLoader);
   const sourceDocumentEntity = remainingAdmissions[0]?.admission.entity;
-  if (sourceDocumentEntity === undefined) throw new Error('document authority fixture has no entity');
+  if (sourceDocumentEntity === undefined)
+    throw new Error('document authority fixture has no entity');
   const documentEntityDraft = {
     ...sourceDocumentEntity,
     revision: 0,
@@ -5287,7 +5323,9 @@ async function run(): Promise<void> {
   const variantsUnloadedAtomically =
     unloadProof.entities === repeatTransaction.entities &&
     unloadProof.proxies === repeatTransaction.proxies &&
-    unloadProofRequests.every((request) => viewer.entityPresentation(request.entityId).length === 0);
+    unloadProofRequests.every(
+      (request) => viewer.entityPresentation(request.entityId).length === 0,
+    );
   if (!variantsUnloadedAtomically) {
     throw new Error('canonical zoo variants did not unload through one exact binding transaction');
   }
@@ -5880,10 +5918,9 @@ async function run(): Promise<void> {
     hoverColor: hoverPresentation[0]?.baseColor ?? [],
     selectionColor: selectionPresentation[0]?.baseColor ?? [],
     restoredColor: restoredPresentation[0]?.baseColor ?? [],
-    proxyIdentityStable:
-      [hoverPresentation, selectionPresentation, restoredPresentation].every(
-        (presentation) => batchIdentity(presentation) === interactionProxyIdentity,
-      ),
+    proxyIdentityStable: [hoverPresentation, selectionPresentation, restoredPresentation].every(
+      (presentation) => batchIdentity(presentation) === interactionProxyIdentity,
+    ),
     pickIdentityStable:
       sourcePickAddress !== 'null' &&
       [hoverPick, selectionPick, restoredPick].every(
@@ -5982,8 +6019,7 @@ async function run(): Promise<void> {
     )?.address ?? null,
   );
   state.deviceRecovery = {
-    detected:
-      deviceOutcome.status === 'recreateDevice' && deviceOutcome.reason === 'deviceLost',
+    detected: deviceOutcome.status === 'recreateDevice' && deviceOutcome.reason === 'deviceLost',
     presented: devicePresented.status === 'presented',
     entityHandleStable: recoveryHandle.loaded && recoveryHandle.visible,
     proxyIdentityStable: deviceProxyAfter === deviceProxyBefore,

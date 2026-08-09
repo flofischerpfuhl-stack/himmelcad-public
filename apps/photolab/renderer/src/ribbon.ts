@@ -1,6 +1,7 @@
 import type { RibbonTab } from '@himmelcad/ui';
 import {
   Box,
+  Bot,
   Camera,
   ChartNoAxesCombined,
   CloudUpload,
@@ -30,6 +31,7 @@ export interface PhotolabRibbonCallbacks {
   onSaveProjectAs: () => void;
   onImportFiles: () => void;
   onImportFolder: () => void;
+  onImportExternal: () => void;
   onImportGcps: () => void;
   onActivateFunction: (id: string) => void;
 }
@@ -69,6 +71,12 @@ export function createPhotolabRibbonTabs(callbacks: PhotolabRibbonCallbacks): Ri
               icon: icon(SaveAll),
               onActivate: callbacks.onSaveProjectAs,
             },
+            {
+              id: 'automation.agent',
+              label: 'Agent',
+              icon: icon(Bot),
+              onActivate: () => callbacks.onActivateFunction('automation.agent'),
+            },
           ],
         },
       ],
@@ -92,6 +100,12 @@ export function createPhotolabRibbonTabs(callbacks: PhotolabRibbonCallbacks): Ri
               label: 'Folder',
               icon: icon(Images),
               onActivate: callbacks.onImportFolder,
+            },
+            {
+              id: 'data.import.external',
+              label: 'DEM / Cloud / Mesh',
+              icon: icon(CloudUpload),
+              onActivate: callbacks.onImportExternal,
             },
           ],
         },

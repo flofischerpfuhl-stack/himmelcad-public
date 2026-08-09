@@ -1,13 +1,29 @@
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-import { BrowserWindow, app, dialog, ipcMain, nativeImage, protocol, session } from 'electron';
+import {
+  BrowserWindow,
+  app,
+  dialog,
+  ipcMain,
+  nativeImage,
+  protocol,
+  safeStorage,
+  session,
+} from 'electron';
+import {
+  defaultAutomationPaths,
+  registerElectronAutomationHost,
+} from '@himmelcad/automation-host/electron';
+import { ProviderCredentialStore } from '@himmelcad/automation-host/provider-credentials';
 
 import {
   callSidecar,
-  getRecentStderr,
   isSidecarRunning,
+  issueAutomationConfirmationGrant,
   onSidecarStderr,
   startSidecar,
   stopSidecar,
@@ -16,11 +32,24 @@ import { startDesktopUpdater } from './updater';
 
 const isDev = !app.isPackaged;
 const CACHE_DIR = resolve(tmpdir(), 'himmelcad-cache');
+const CANONICAL_PROJECTS_DIRECTORY = 'canonical-projects';
+const DEFAULT_CANONICAL_PROJECT_DIRECTORY = 'builder-default.hcad';
 const DEV_POINT_CLOUD = process.env.HCAD_DEV_POINT_CLOUD?.trim() ?? '';
 const DEV_IFC = process.env.HCAD_DEV_IFC?.trim() ?? '';
 const DEV_ORTHOPHOTO = process.env.HCAD_DEV_ORTHOPHOTO?.trim() ?? '';
 const DEV_DEM = process.env.HCAD_DEV_DEM?.trim() ?? '';
 const DEV_POTREE_DATASET = process.env.HCAD_DEV_POTREE_DATASET?.trim() ?? '';
+const CODEX_PROVIDER_ORIGIN = 'https://api.openai.com';
+const CODEX_PROVIDER_EGRESS = {
+  provider: 'codex',
+  origin: CODEX_PROVIDER_ORIGIN,
+  requests: [{ method: 'POST', path: '/v1/responses' }],
+  redirects: 'deny',
+  websockets: 'deny',
+} as const;
+const RENDERER_URL = isDev
+  ? 'http://localhost:5173/'
+  : pathToFileURL(resolve(__dirname, '../renderer/index.html')).href;
 const CACHE_CORS_HEADERS = {
   'access-control-allow-origin': '*',
   'access-control-expose-headers': 'accept-ranges, content-length, content-range',
@@ -29,6 +58,7 @@ app.setName('HimmelCAD Builder');
 if (process.platform === 'linux') app.setDesktopName('himmelcad-builder.desktop');
 
 let mainWindow: BrowserWindow | null = null;
+let automationHost: ReturnType<typeof registerElectronAutomationHost> | null = null;
 
 interface DevelopmentRasterTile {
   readonly x: number;
@@ -132,7 +162,109 @@ protocol.registerSchemesAsPrivileged([
       bypassCSP: true,
     },
   },
+  {
+    scheme: 'hcad-project',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      bypassCSP: true,
+    },
+  },
+  {
+    scheme: 'hcad-staged',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      bypassCSP: true,
+    },
+  },
 ]);
+
+interface CanonicalResidencyArtifactBinding {
+  readonly objectHash: string;
+  readonly mediaType: string;
+  readonly byteLength: number;
+}
+
+interface SidecarResidencyResource {
+  readonly objectHash: string;
+  readonly mediaType: string;
+  readonly byteLength: number | null;
+}
+
+interface SidecarResidencyDataset {
+  readonly datasetId: string;
+  readonly formatId: string;
+  readonly entityId: string;
+  readonly representationSlot: string;
+  readonly rootMetadata: SidecarResidencyResource;
+  readonly artifacts: readonly {
+    readonly relativePath: string;
+    readonly resource: SidecarResidencyResource;
+  }[];
+}
+
+interface SidecarResidencyBootstrap {
+  readonly schemaVersion: number;
+  readonly generation: number;
+  readonly entries: readonly {
+    readonly providerId: string;
+    readonly providerVersion: string;
+    readonly admission: unknown;
+    readonly dataset: SidecarResidencyDataset | null;
+  }[];
+}
+
+interface StagedArtifactBinding extends CanonicalResidencyArtifactBinding {
+  readonly sessionId: string;
+  readonly capability: string;
+  readonly resourceId: string;
+}
+
+interface SidecarStagedResourceDescriptor {
+  readonly resourceId: string;
+  readonly relativePath: string;
+  readonly objectHash: string;
+  readonly mediaType: string;
+  readonly byteLength: number;
+}
+
+interface SidecarStagedResourceInventory {
+  readonly schemaVersion: number;
+  readonly sessionId: string;
+  readonly capability: string;
+  readonly maximumReadBytes: number;
+  readonly datasets: readonly {
+    readonly datasetId: string;
+    readonly formatId: string;
+    readonly entityId: string;
+    readonly representationSlot: string;
+    readonly rootResourceId: string;
+    readonly artifacts: readonly SidecarStagedResourceDescriptor[];
+  }[];
+  readonly resourceSets: readonly {
+    readonly resourceSetId: string;
+    readonly resources: readonly SidecarStagedResourceDescriptor[];
+  }[];
+}
+
+interface SidecarStagedResourceRead {
+  readonly schemaVersion: number;
+  readonly resourceId: string;
+  readonly objectHash: string;
+  readonly mediaType: string;
+  readonly offset: number;
+  readonly byteLength: number;
+  readonly totalByteLength: number;
+  readonly bytesBase64: string;
+}
+
+const canonicalResidencyArtifacts = new Map<string, CanonicalResidencyArtifactBinding>();
+const stagedArtifacts = new Map<string, StagedArtifactBinding>();
 
 async function createWindow(): Promise<void> {
   const applicationIcon = nativeImage.createFromPath(resolve(__dirname, '../../build/icon.png'));
@@ -163,6 +295,13 @@ async function createWindow(): Promise<void> {
   if (!applicationIcon.isEmpty()) win.setIcon(applicationIcon);
 
   mainWindow = win;
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  const denyNavigation = (event: Electron.Event): void => {
+    event.preventDefault();
+    void automationHost?.invalidateAgentSessions();
+  };
+  win.webContents.on('will-navigate', denyNavigation);
+  win.webContents.on('will-redirect', denyNavigation);
 
   win.on('maximize', () => win.webContents.send('window:maximize-changed', true));
   win.on('unmaximize', () => win.webContents.send('window:maximize-changed', false));
@@ -177,9 +316,9 @@ async function createWindow(): Promise<void> {
 
   if (isDev) {
     win.webContents.openDevTools({ mode: 'detach' });
-    await win.loadURL('http://localhost:5173/');
+    await win.loadURL(RENDERER_URL);
   } else {
-    await win.loadFile(resolve(__dirname, '../renderer/index.html'));
+    await win.loadURL(RENDERER_URL);
   }
 }
 
@@ -292,6 +431,144 @@ void app.whenReady().then(async () => {
     }
   });
 
+  // Project objects are addressed only through descriptors reconstructed by
+  // the canonical sidecar. The renderer never receives a host filesystem path.
+  protocol.handle('hcad-project', async (request) => {
+    let url: URL;
+    try {
+      url = new URL(request.url);
+    } catch {
+      return new Response('bad url', { status: 400 });
+    }
+    if (url.host !== 'canonical') return new Response('forbidden', { status: 403 });
+    const binding = canonicalResidencyArtifacts.get(url.pathname);
+    if (!binding) return new Response('unknown canonical artifact', { status: 404 });
+    const projectRoot = defaultCanonicalProjectRoot();
+    const objectPath = canonicalObjectPath(projectRoot, binding.objectHash);
+    try {
+      const stat = await fs.stat(objectPath);
+      if (!stat.isFile() || stat.size !== binding.byteLength) {
+        return new Response('canonical artifact length mismatch', { status: 409 });
+      }
+      const rangeHeader = request.headers.get('range');
+      if (rangeHeader) {
+        const parsed = parseRange(rangeHeader, stat.size);
+        if (!parsed) {
+          return new Response('invalid range', {
+            status: 416,
+            headers: { ...CACHE_CORS_HEADERS, 'content-range': `bytes */${stat.size}` },
+          });
+        }
+        const length = parsed.end - parsed.start + 1;
+        const handle = await fs.open(objectPath, 'r');
+        try {
+          const bytes = Buffer.alloc(length);
+          await handle.read(bytes, 0, length, parsed.start);
+          return new Response(new Uint8Array(bytes), {
+            status: 206,
+            headers: {
+              ...CACHE_CORS_HEADERS,
+              'content-type': binding.mediaType,
+              'content-length': String(length),
+              'content-range': `bytes ${parsed.start}-${parsed.end}/${stat.size}`,
+              'accept-ranges': 'bytes',
+            },
+          });
+        } finally {
+          await handle.close();
+        }
+      }
+      const bytes = await fs.readFile(objectPath);
+      const observedHash = createHash('sha256').update(bytes).digest('hex');
+      if (observedHash !== binding.objectHash) {
+        return new Response('canonical artifact hash mismatch', { status: 409 });
+      }
+      return new Response(new Uint8Array(bytes), {
+        headers: {
+          ...CACHE_CORS_HEADERS,
+          'content-type': binding.mediaType,
+          'content-length': String(bytes.byteLength),
+          'accept-ranges': 'bytes',
+        },
+      });
+    } catch (error) {
+      return new Response(`canonical artifact unavailable: ${(error as Error).message}`, {
+        status: 404,
+      });
+    }
+  });
+
+  // Ephemeral registration artifacts are read through the sidecar-owned
+  // capability. Electron retains only opaque IDs and exact immutable metadata.
+  protocol.handle('hcad-staged', async (request) => {
+    let url: URL;
+    try {
+      url = new URL(request.url);
+    } catch {
+      return new Response('bad url', { status: 400 });
+    }
+    if (url.host !== 'registration') return new Response('forbidden', { status: 403 });
+    const binding = stagedArtifacts.get(url.pathname);
+    if (!binding) return new Response('staged capability revoked', { status: 410 });
+    const requested = request.headers.get('range');
+    const range = requested ? parseRange(requested, binding.byteLength) : null;
+    if (requested && !range) {
+      return new Response('invalid range', {
+        status: 416,
+        headers: { ...CACHE_CORS_HEADERS, 'content-range': `bytes */${binding.byteLength}` },
+      });
+    }
+    const offset = range?.start ?? 0;
+    const byteLength = range ? range.end - range.start + 1 : binding.byteLength;
+    if (byteLength > 4 * 1024 * 1024) {
+      return new Response('staged request exceeds range bound', { status: 413 });
+    }
+    try {
+      const result = await callSidecar<SidecarStagedResourceRead>({
+        method: 'registration.resource.read',
+        params: {
+          sessionId: binding.sessionId,
+          capability: binding.capability,
+          resourceId: binding.resourceId,
+          offset,
+          byteLength,
+        },
+      });
+      if (
+        result.schemaVersion !== 1 ||
+        result.resourceId !== binding.resourceId ||
+        result.objectHash !== binding.objectHash ||
+        result.mediaType !== binding.mediaType ||
+        result.offset !== offset ||
+        result.byteLength !== byteLength ||
+        result.totalByteLength !== binding.byteLength
+      ) {
+        return new Response('staged read descriptor mismatch', { status: 409 });
+      }
+      const bytes = Buffer.from(result.bytesBase64, 'base64');
+      if (bytes.byteLength !== byteLength) {
+        return new Response('staged read byte length mismatch', { status: 409 });
+      }
+      return new Response(new Uint8Array(bytes), {
+        status: range ? 206 : 200,
+        headers: {
+          ...CACHE_CORS_HEADERS,
+          'content-type': binding.mediaType,
+          'content-length': String(byteLength),
+          ...(range
+            ? {
+                'content-range': `bytes ${offset}-${offset + byteLength - 1}/${binding.byteLength}`,
+              }
+            : {}),
+          'accept-ranges': 'bytes',
+        },
+      });
+    } catch {
+      revokeStagedSession(binding.sessionId);
+      return new Response('staged capability unavailable', { status: 410 });
+    }
+  });
+
   if (!isDev) {
     // RATIONALE: COOP/COEP enable SharedArrayBuffer for future WASM-threaded
     // workloads (Potree decoder, Gaussian-splat sorting). Disabled in dev
@@ -309,6 +586,36 @@ void app.whenReady().then(async () => {
 
   registerIpc();
   await startSidecar();
+  const repositoryRoot = resolve(__dirname, '..', '..', '..', '..');
+  const automationPaths = app.isPackaged
+    ? {
+        runtimeRoot: resolve(
+          process.resourcesPath,
+          'automation-runtime',
+          process.platform === 'win32' ? 'win32-x64' : 'linux-x64',
+        ),
+        workspaceRoot: resolve(app.getPath('userData'), 'automation-workspace'),
+      }
+    : defaultAutomationPaths(repositoryRoot, app.getPath('userData'));
+  const providerCredentialStore = new ProviderCredentialStore({
+    path: resolve(app.getPath('userData'), 'automation', 'provider-credentials.v1.json'),
+    origin: CODEX_PROVIDER_ORIGIN,
+    safeStorage,
+  });
+  automationHost = registerElectronAutomationHost({
+    ipcMain,
+    getWindow: () => mainWindow,
+    sidecarCall: (method, params) => callSidecar({ method, params }),
+    issueConfirmationGrant: issueAutomationConfirmationGrant,
+    ...automationPaths,
+    workspaceCapabilityId: 'himmelcad-project',
+    rendererUrl: RENDERER_URL,
+    providerEgressManifest: CODEX_PROVIDER_EGRESS,
+    getAuthorization: (request) => providerCredentialStore.getAuthorization(request),
+    authorizationAvailable: (request) => providerCredentialStore.authorizationAvailable(request),
+    providerCredentialStore,
+  });
+  await automationHost.ready;
   await createWindow();
   startDesktopUpdater(() => mainWindow);
 });
@@ -332,6 +639,32 @@ function registerIpc(): void {
   ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
 
   ipcMain.handle('sidecar:status', () => isSidecarRunning());
+  ipcMain.handle('canonical-residency:bootstrap', async () => {
+    const bootstrap = await callSidecar<SidecarResidencyBootstrap>({
+      method: 'canonical.residency.bootstrap',
+      params: {},
+    });
+    return materializeCanonicalResidency(bootstrap);
+  });
+  ipcMain.handle('canonical-project:default-root', async () => {
+    const projectsDirectory = resolve(app.getPath('userData'), CANONICAL_PROJECTS_DIRECTORY);
+    await fs.mkdir(projectsDirectory, { recursive: true });
+    return defaultCanonicalProjectRoot();
+  });
+  ipcMain.handle('registration-staged:materialize', async (_event, sessionId: unknown) => {
+    if (typeof sessionId !== 'string' || !/^[A-Za-z0-9_.-]{1,160}$/.test(sessionId)) {
+      throw new Error('invalid registration session identity');
+    }
+    const inventory = await callSidecar<SidecarStagedResourceInventory>({
+      method: 'registration.resources.describe',
+      params: { sessionId },
+    });
+    return materializeStagedResources(inventory);
+  });
+  ipcMain.handle('registration-staged:revoke', (_event, sessionId: unknown) => {
+    if (typeof sessionId !== 'string') return false;
+    return revokeStagedSession(sessionId);
+  });
   ipcMain.handle('dev:initial-point-cloud-paths', () =>
     isDev && DEV_POINT_CLOUD.length > 0 ? [resolve(DEV_POINT_CLOUD)] : [],
   );
@@ -404,63 +737,209 @@ function registerIpc(): void {
     return callSidecar({ method, params });
   });
 
-  ipcMain.handle('dialog:openLas', async () => {
+  ipcMain.handle('dialog:openImport', async (_event, requestedExtensions: unknown) => {
     if (!mainWindow) return [];
-    const r = await dialog.showOpenDialog(mainWindow, {
-      title: 'Import LAS / LAZ',
+    const extensions = Array.isArray(requestedExtensions)
+      ? [...new Set(requestedExtensions)]
+          .filter(
+            (value): value is string =>
+              typeof value === 'string' && /^[A-Za-z0-9]{1,12}$/.test(value),
+          )
+          .slice(0, 128)
+      : [];
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Import into HimmelCAD',
       filters: [
-        { name: 'Point clouds (LAS/LAZ)', extensions: ['las', 'laz', 'LAS', 'LAZ'] },
+        ...(extensions.length > 0 ? [{ name: 'Supported formats', extensions }] : []),
         { name: 'All files', extensions: ['*'] },
       ],
       properties: ['openFile', 'multiSelections'],
     });
-    return r.canceled ? [] : r.filePaths;
+    return result.canceled ? [] : result.filePaths;
   });
+}
 
-  ipcMain.handle(
-    'import:las',
-    async (
-      _e,
-      payload: string[] | { paths?: string[]; progressKey?: string },
-    ): Promise<unknown> => {
-      try {
-        const paths = Array.isArray(payload) ? payload : (payload.paths ?? []);
-        const progressKey = Array.isArray(payload) ? undefined : payload.progressKey;
-        const result = await callSidecar<{ imports: Array<Record<string, unknown>> }>({
-          method: 'import.las',
-          params: {
-            paths,
-            cache_dir: CACHE_DIR,
-            progress_key: progressKey,
-            operation_id: progressKey,
-          },
-        });
-        // Sidecar returns independent semantic entity and immutable dataset
-        // identities; only the dataset identity addresses prepared bytes.
-        // synthesize the renderer-reachable URL so the renderer never has
-        // to know about CACHE_DIR or the cache scheme.
-        const imports = (result?.imports ?? []).map((s) => {
-          const entityId = String(s.entity_id ?? '');
-          if (!entityId) {
-            throw new Error('sidecar import.las response missing entity_id');
-          }
-          const datasetId = String(s.dataset_id ?? entityId);
-          return {
-            ...s,
-            metadata_url: `hcad-cache://local/${datasetId}/metadata.json`,
-          };
-        });
-        return { imports };
-      } catch (err) {
-        // Re-throw with the recent sidecar stderr appended so the renderer
-        // shows actionable output instead of a bare RPC error string.
-        const tail = getRecentStderr().slice(-12).join('\n');
-        const msg = err instanceof Error ? err.message : String(err);
-        const composed = tail ? `${msg}\n--- sidecar stderr (tail) ---\n${tail}` : msg;
-        throw new Error(composed);
-      }
-    },
+function defaultCanonicalProjectRoot(): string {
+  return resolve(
+    app.getPath('userData'),
+    CANONICAL_PROJECTS_DIRECTORY,
+    DEFAULT_CANONICAL_PROJECT_DIRECTORY,
   );
+}
+
+function canonicalObjectPath(projectRoot: string, objectHash: string): string {
+  if (!/^[a-f0-9]{64}$/.test(objectHash)) throw new Error('invalid canonical object hash');
+  return resolve(projectRoot, 'objects', objectHash.slice(0, 2), objectHash.slice(2));
+}
+
+function materializeCanonicalResidency(bootstrap: SidecarResidencyBootstrap): unknown {
+  if (
+    bootstrap.schemaVersion !== 1 ||
+    !Number.isSafeInteger(bootstrap.generation) ||
+    !Array.isArray(bootstrap.entries)
+  ) {
+    throw new Error('sidecar returned an invalid canonical residency bootstrap');
+  }
+  const nextArtifacts = new Map<string, CanonicalResidencyArtifactBinding>();
+  const entries = bootstrap.entries.map((entry) => {
+    if (
+      typeof entry.providerId !== 'string' ||
+      typeof entry.providerVersion !== 'string' ||
+      entry.admission === null ||
+      typeof entry.admission !== 'object'
+    ) {
+      throw new Error('sidecar returned an invalid canonical residency entry');
+    }
+    if (!entry.dataset) return { ...entry, dataset: null };
+    const dataset = entry.dataset;
+    if (!dataset.datasetId || !dataset.formatId || !Array.isArray(dataset.artifacts)) {
+      throw new Error('sidecar returned an invalid canonical residency dataset');
+    }
+    const token = createHash('sha256')
+      .update(`${dataset.datasetId}\0${dataset.rootMetadata.objectHash}`)
+      .digest('hex');
+    let metadataUrl: string | null = null;
+    for (const artifact of dataset.artifacts) {
+      const resource = artifact.resource;
+      if (
+        !/^[a-f0-9]{64}$/.test(resource.objectHash) ||
+        typeof resource.mediaType !== 'string' ||
+        resource.mediaType.length === 0 ||
+        !Number.isSafeInteger(resource.byteLength) ||
+        (resource.byteLength ?? 0) <= 0
+      ) {
+        throw new Error('sidecar returned an invalid canonical artifact resource');
+      }
+      const segments = safeArtifactSegments(artifact.relativePath);
+      const artifactUrl = `hcad-project://canonical/dataset/${token}/${segments
+        .map(encodeURIComponent)
+        .join('/')}`;
+      const pathname = new URL(artifactUrl).pathname;
+      const binding = {
+        objectHash: resource.objectHash,
+        mediaType: resource.mediaType,
+        byteLength: resource.byteLength!,
+      };
+      const existing = nextArtifacts.get(pathname);
+      if (existing && JSON.stringify(existing) !== JSON.stringify(binding)) {
+        throw new Error('canonical artifact URL collision');
+      }
+      nextArtifacts.set(pathname, binding);
+      if (resource.objectHash === dataset.rootMetadata.objectHash) metadataUrl = artifactUrl;
+    }
+    if (!metadataUrl) throw new Error('canonical dataset root metadata is absent');
+    return {
+      ...entry,
+      dataset: {
+        datasetId: dataset.datasetId,
+        formatId: dataset.formatId,
+        metadataUrl,
+      },
+    };
+  });
+  canonicalResidencyArtifacts.clear();
+  for (const [pathname, binding] of nextArtifacts) {
+    canonicalResidencyArtifacts.set(pathname, binding);
+  }
+  return { schemaVersion: 1, generation: bootstrap.generation, entries };
+}
+
+function materializeStagedResources(inventory: SidecarStagedResourceInventory): unknown {
+  if (
+    inventory.schemaVersion !== 1 ||
+    !/^[A-Za-z0-9_.-]{1,160}$/.test(inventory.sessionId) ||
+    !/^[a-f0-9]{64}$/.test(inventory.capability) ||
+    inventory.maximumReadBytes !== 4 * 1024 * 1024 ||
+    !Array.isArray(inventory.datasets as unknown) ||
+    !Array.isArray(inventory.resourceSets as unknown)
+  ) {
+    throw new Error('sidecar returned an invalid staged-resource inventory');
+  }
+  revokeStagedSession(inventory.sessionId);
+  const register = (resource: SidecarStagedResourceDescriptor): string => {
+    if (
+      !/^[a-f0-9]{64}$/.test(resource.resourceId) ||
+      !/^[a-f0-9]{64}$/.test(resource.objectHash) ||
+      typeof resource.mediaType !== 'string' ||
+      resource.mediaType.length === 0 ||
+      !Number.isSafeInteger(resource.byteLength) ||
+      resource.byteLength <= 0
+    ) {
+      throw new Error('sidecar returned an invalid staged-resource descriptor');
+    }
+    const segments = safeArtifactSegments(resource.relativePath);
+    const resourceUrl = `hcad-staged://registration/${encodeURIComponent(
+      inventory.sessionId,
+    )}/${resource.resourceId}/${segments.map(encodeURIComponent).join('/')}`;
+    const pathname = new URL(resourceUrl).pathname;
+    if (stagedArtifacts.has(pathname)) throw new Error('staged-resource URL collision');
+    stagedArtifacts.set(pathname, {
+      sessionId: inventory.sessionId,
+      capability: inventory.capability,
+      resourceId: resource.resourceId,
+      objectHash: resource.objectHash,
+      mediaType: resource.mediaType,
+      byteLength: resource.byteLength,
+    });
+    return resourceUrl;
+  };
+  const datasets = inventory.datasets.map((dataset) => {
+    const urls = new Map<string, string>();
+    for (const artifact of dataset.artifacts) urls.set(artifact.resourceId, register(artifact));
+    const metadataUrl = urls.get(dataset.rootResourceId);
+    if (!metadataUrl) throw new Error('staged dataset root metadata is absent');
+    return {
+      datasetId: dataset.datasetId,
+      formatId: dataset.formatId,
+      entityId: dataset.entityId,
+      representationSlot: dataset.representationSlot,
+      metadataUrl,
+      artifacts: dataset.artifacts.map((artifact) => {
+        const url = urls.get(artifact.resourceId);
+        if (!url) throw new Error('staged dataset artifact URL is absent');
+        return {
+          relativePath: artifact.relativePath,
+          resourceId: artifact.resourceId,
+          url,
+        };
+      }),
+    };
+  });
+  const resourceSets = inventory.resourceSets.map((resourceSet) => ({
+    resourceSetId: resourceSet.resourceSetId,
+    resources: resourceSet.resources.map((resource) => ({
+      relativePath: resource.relativePath,
+      resourceId: resource.resourceId,
+      url: register(resource),
+    })),
+  }));
+  return { schemaVersion: 1, sessionId: inventory.sessionId, datasets, resourceSets };
+}
+
+function revokeStagedSession(sessionId: string): boolean {
+  let revoked = false;
+  for (const [pathname, binding] of stagedArtifacts) {
+    if (binding.sessionId !== sessionId) continue;
+    stagedArtifacts.delete(pathname);
+    revoked = true;
+  }
+  return revoked;
+}
+
+function safeArtifactSegments(relativePath: string): string[] {
+  if (
+    typeof relativePath !== 'string' ||
+    relativePath.length === 0 ||
+    /^[\\/]/.test(relativePath) ||
+    relativePath.includes(':')
+  ) {
+    throw new Error('canonical artifact path is not relative');
+  }
+  const segments = relativePath.split(/[\\/]/);
+  if (segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..')) {
+    throw new Error('canonical artifact path contains unsafe segments');
+  }
+  return segments;
 }
 
 /**
@@ -517,5 +996,7 @@ app.on('activate', () => {
 });
 
 app.on('before-quit', () => {
+  void automationHost?.dispose();
+  automationHost = null;
   stopSidecar();
 });

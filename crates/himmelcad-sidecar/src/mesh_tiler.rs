@@ -153,6 +153,7 @@ struct SectionTopologyIndex<'a> {
 }
 
 /// Creates one coarse root and level-zero leaves; every tile is independently streamable.
+#[allow(clippy::too_many_arguments)] // Public preparation boundary mirrors persisted mesh options.
 pub fn build_tiled_dem_mesh(
     dem_dataset_root: &Path,
     summary: &RasterBuildSummary,
@@ -439,6 +440,7 @@ fn tile_contains_surface(
     Ok(false)
 }
 
+#[allow(clippy::too_many_arguments)] // Texture tile coordinates and source metadata stay explicit.
 fn copy_texture(
     texture_root: &Path,
     texture_summary: &RasterBuildSummary,
@@ -506,6 +508,7 @@ fn copy_texture_to(
     Ok(relative.to_string_lossy().replace('\\', "/"))
 }
 
+#[allow(clippy::too_many_arguments)] // Raster sampling coordinates form one hot-path boundary.
 fn resample_texture(
     texture_root: &Path,
     texture_summary: &RasterBuildSummary,
@@ -602,12 +605,12 @@ fn texture_pixel(
     if tile_x >= source_level.columns || tile_y >= source_level.rows {
         return Ok(None);
     }
-    if !cache.contains_key(&(tile_x, tile_y)) {
+    if let std::collections::hash_map::Entry::Vacant(entry) = cache.entry((tile_x, tile_y)) {
         let source = texture_root
             .join("view/rgba/L00")
             .join(tile_x.to_string())
             .join(format!("{tile_y}.png"));
-        cache.insert((tile_x, tile_y), image::open(source)?.to_rgba8());
+        entry.insert(image::open(source)?.to_rgba8());
     }
     let pixel = cache
         .get(&(tile_x, tile_y))
@@ -617,6 +620,7 @@ fn texture_pixel(
     Ok(Some(pixel))
 }
 
+#[allow(clippy::too_many_arguments)] // Tile topology, raster coordinates and output policy are inseparable here.
 fn build_tile(
     id: &str,
     parent: Option<String>,
@@ -2034,8 +2038,7 @@ mod tests {
         for pair in intervals.windows(2) {
             assert!(
                 (pair[1].0 - pair[0].1).abs() < 1.0e-8,
-                "real DGM trace has a gap or positive overlap: {:?}",
-                pair
+                "real DGM trace has a gap or positive overlap: {pair:?}"
             );
         }
         let seam_heights = segments

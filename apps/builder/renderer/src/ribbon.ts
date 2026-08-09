@@ -1,5 +1,6 @@
 import {
   Box,
+  Bot,
   Camera,
   CircleDot,
   CloudUpload,
@@ -45,6 +46,7 @@ export const ribbonTabs: RibbonTab[] = [
           { id: 'project.open', label: 'Open', icon: i(FolderOpen) },
           { id: 'project.save', label: 'Save', icon: i(Save) },
           { id: 'project.export', label: 'Export', icon: i(HardDriveDownload) },
+          { id: 'automation.agent', label: 'Agent', icon: i(Bot) },
         ],
       },
       {
@@ -74,7 +76,9 @@ export const ribbonTabs: RibbonTab[] = [
         label: 'CAD / BIM',
         actions: [
           { id: 'import.dxf', label: 'DXF', icon: i(Layers) },
+          { id: 'import.dwg', label: 'DWG', icon: i(Layers) },
           { id: 'import.ifc', label: 'IFC', icon: i(Box) },
+          { id: 'import.slpk', label: 'SLPK / I3S', icon: i(Box) },
         ],
       },
     ],
@@ -88,8 +92,10 @@ export const ribbonTabs: RibbonTab[] = [
         label: 'Camera',
         actions: [
           { id: 'view.frame', label: 'Frame All', icon: i(ZoomIn) },
-          { id: 'view.top', label: 'Top', icon: i(Grid3x3) },
-          { id: 'view.iso', label: 'Iso', icon: i(Camera) },
+          { id: 'view.3d', label: '3D', icon: i(Camera) },
+          { id: 'view.2.5d', label: '2.5D', icon: i(Grid3x3) },
+          { id: 'view.2d', label: '2D', icon: i(Grid3x3) },
+          { id: 'view.viewing-box', label: 'Viewing Box', icon: i(Box) },
         ],
       },
       {

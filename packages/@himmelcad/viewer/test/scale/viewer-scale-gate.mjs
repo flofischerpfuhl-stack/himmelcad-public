@@ -44,6 +44,7 @@ const chromeAngleBackend = process.env.HCAD_CHROME_ANGLE ?? '';
 assert(['', 'gl', 'vulkan'].includes(chromeAngleBackend), 'HCAD_CHROME_ANGLE must be gl or vulkan');
 
 const synthetic = createSyntheticPotree();
+const STREAMING_PAGE_BYTES = 1_048_576;
 const mixed = createSyntheticMixed(SOURCE_BOUNDS);
 assert.equal(synthetic.nodes.length, OCTREE_NODE_COUNT);
 assert.equal(synthetic.logicalPoints, AHN4_POINT_COUNT);
@@ -120,6 +121,8 @@ await run(esbuild, [
 const requestCounts = new Map();
 let rangeRequests = 0;
 let requestedBytes = 0;
+let physicalPageRangeRequests = 0;
+let repeatedPhysicalRangeRequests = 0;
 let hierarchyRangeRequests = 0;
 let hierarchyPageRangeRequests = 0;
 let preparedContentRequests = 0;
@@ -127,6 +130,7 @@ let meshContentRequests = 0;
 let splatContentRequests = 0;
 let preparedRequestedBytes = 0;
 const requestedHierarchyPages = new Set();
+const requestedPhysicalRanges = new Set();
 const server = createServer(async (request, response) => {
   try {
     const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
@@ -157,17 +161,22 @@ const server = createServer(async (request, response) => {
     }
     if (pathname === '/scale/octree.bin') {
       const range = parseSingleRange(request.headers.range);
-      const node = synthetic.nodeForRange(range.start, range.length);
-      if (node === null)
-        throw new RangeError(`unknown virtual octree range ${String(request.headers.range)}`);
-      const payload = synthetic.payloadForRange(range.start, range.length);
+      const nodes = synthetic.nodesForVirtualRange(range.start, range.length);
+      const payload = synthetic.payloadForVirtualRange(range.start, range.length);
       rangeRequests += 1;
       requestedBytes += payload.byteLength;
-      requestCounts.set(node.id, (requestCounts.get(node.id) ?? 0) + 1);
+      for (const node of nodes) requestCounts.set(node.id, (requestCounts.get(node.id) ?? 0) + 1);
+      if (range.start % STREAMING_PAGE_BYTES === 0 && range.length === STREAMING_PAGE_BYTES) {
+        physicalPageRangeRequests += 1;
+        const rangeKey = `${String(range.start)}:${String(range.length)}`;
+        if (requestedPhysicalRanges.has(rangeKey)) repeatedPhysicalRangeRequests += 1;
+        requestedPhysicalRanges.add(rangeKey);
+      }
+      const responseEnd = range.start + payload.byteLength - 1;
       response.writeHead(206, {
         'Content-Type': 'application/octet-stream',
         'Content-Length': payload.byteLength,
-        'Content-Range': `bytes ${String(range.start)}-${String(range.end)}/${String(synthetic.virtualOctreeBytes)}`,
+        'Content-Range': `bytes ${String(range.start)}-${String(responseEnd)}/${String(synthetic.virtualOctreeBytes)}`,
         'Accept-Ranges': 'bytes',
         'Cache-Control': 'no-store',
       });
@@ -200,6 +209,8 @@ const server = createServer(async (request, response) => {
       const stats = {
         rangeRequests,
         requestedBytes,
+        physicalPageRangeRequests,
+        repeatedPhysicalRangeRequests,
         uniqueNodes: requestedNodeIds.length,
         duplicateNodeRequests: [...requestCounts.values()].reduce(
           (total, count) => total + Math.max(0, count - 1),
@@ -361,15 +372,31 @@ try {
     state.residencyPlateau.drainedCosts.length,
   );
   assert(
-    state.residencyPlateau.reloadRequestDeltas.every((requests) => requests > 0),
+    state.residencyPlateau.reloadRequestDeltas.every(
+      (requests, index) =>
+        requests > 0 || (state.residencyPlateau?.reloadAvoidedNetworkDeltas[index] ?? 0) > 0,
+    ),
     JSON.stringify(state.residencyPlateau),
   );
   assert(state.driverDiagnostics.peakRequests <= state.runtimeLimits.contentRequests);
   assert(state.driverDiagnostics.actualDecodeWorkers <= state.runtimeLimits.decoderWorkers);
+  const streamingTelemetry = state.driverDiagnostics.streamingTelemetry;
+  assert.equal(streamingTelemetry.schemaVersion, 1);
+  assert.equal(
+    streamingTelemetry.transport.startedRequests,
+    state.driverDiagnostics.startedRequests,
+  );
+  assert(streamingTelemetry.transport.rangeRequests > 0);
+  assert(streamingTelemetry.lifecycle.point.coldLoads > 0);
+  assert(streamingTelemetry.lifecycle.point.revisitLoads > 0);
+  assert(streamingTelemetry.lifecycle.point.revisitsMadeResident > 0);
+  assert(streamingTelemetry.lifecycle.point.completedDecodes > 0);
+  assert(streamingTelemetry.lifecycle.point.completedUploads > 0);
   assert(state.frameTelemetry.peakPoints <= state.residentPointCeiling);
   assert(state.interactionLatency);
   assert(Number.isFinite(state.interactionLatency.maximumMs));
   if (performanceProfile) {
+    assert(streamingTelemetry.transport.fullRequests > 0);
     assert.equal(state.performanceProfile, performanceProfile);
     assert.equal(state.profilePeaksReached, true);
     assert(state.profileMinimum);
@@ -398,9 +425,23 @@ try {
     state.serverStats.rangeRequests +
     state.serverStats.hierarchyPageRangeRequests +
     state.serverStats.preparedContentRequests;
-  assert.equal(
-    state.driverDiagnostics.startedRequests + state.driverDiagnostics.cancelledBeforeStartRequests,
-    contentActions,
+  const avoidedNetworkFetches = Object.values(streamingTelemetry.lifecycle).reduce(
+    (total, lifecycle) => total + lifecycle.avoidedNetworkFetches,
+    0,
+  );
+  const coalescedOrCachedPageReads =
+    streamingTelemetry.physicalPages.hits + streamingTelemetry.physicalPages.coalescedWaiters;
+  assert(
+    state.driverDiagnostics.startedRequests +
+      state.driverDiagnostics.cancelledBeforeStartRequests <=
+      contentActions,
+  );
+  assert(
+    state.driverDiagnostics.startedRequests +
+      state.driverDiagnostics.cancelledBeforeStartRequests +
+      avoidedNetworkFetches +
+      coalescedOrCachedPageReads >=
+      contentActions,
   );
   assert(serverStartedRequests <= state.driverDiagnostics.startedRequests);
   assert(
@@ -408,10 +449,18 @@ try {
       state.driverDiagnostics.abortedAfterStartRequests,
   );
   assert(state.serverStats.uniqueNodes < OCTREE_NODE_COUNT);
-  assert(state.serverStats.duplicateNodeRequests > 0);
+  assert(streamingTelemetry.ramWarmCache.hits > 0);
+  assert(streamingTelemetry.lifecycle.point.avoidedWorkerDecodes > 0);
+  assert.equal(
+    state.serverStats.physicalPageRangeRequests,
+    streamingTelemetry.physicalPages.networkPages,
+  );
   assert(state.serverStats.hierarchyPageRangeRequests > 0);
   assert.equal(state.serverStats.hierarchyPageRangeRequests, state.actionCounts.fetchHierarchyPage);
   if (performanceProfile) {
+    assert(streamingTelemetry.lifecycle.mesh.coldLoads > 0);
+    assert(streamingTelemetry.lifecycle.mesh.completedDecodes > 0);
+    assert(streamingTelemetry.lifecycle.mesh.completedUploads > 0);
     assert(
       state.serverStats.meshContentRequests >= Math.ceil(state.profileMinimum.triangles / 8_192),
     );

@@ -37,3 +37,238 @@
   font-size: 12px;
   font-weight: 600;
 }
+
+.propertiesEmpty {
+  display: grid;
+  gap: 7px;
+  padding: 8px 3px;
+}
+
+.propertiesEmpty strong,
+.propertySummary strong {
+  color: var(--hc-fg-strong);
+  font-size: 12px;
+}
+
+.propertiesEmpty span,
+.propertySummary span {
+  color: var(--hc-fg-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.propertyPanel {
+  display: grid;
+  gap: 8px;
+}
+
+.propertySummary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--hc-border-subtle);
+}
+
+.propertyError {
+  padding: 8px;
+  color: var(--hc-danger-fg, #ffb0ad);
+  font-size: 11px;
+  line-height: 1.4;
+  background: var(--hc-danger-bg, rgb(140 35 40 / 18%));
+  border: 1px solid var(--hc-danger-border, rgb(255 120 120 / 28%));
+  border-radius: var(--hc-radius-sm);
+}
+
+.propertyRow {
+  display: grid;
+  gap: 5px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--hc-border-subtle);
+}
+
+.propertyHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--hc-fg-default);
+  font-size: 11px;
+}
+
+.propertyHeading small {
+  color: var(--hc-fg-subtle);
+  font-size: 9px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.propertyEditor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px;
+}
+
+.propertyEditor input,
+.propertyEditor button {
+  min-width: 0;
+  height: 27px;
+  padding: 3px 7px;
+  color: var(--hc-fg-strong);
+  font: 500 10px/1 var(--hc-font-ui);
+  background: var(--hc-bg-input, var(--hc-bg-island-lo));
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+}
+
+.propertyEditor input:focus {
+  border-color: var(--hc-selection-border);
+  outline: none;
+  box-shadow: 0 0 0 1px var(--hc-selection-border);
+}
+
+.propertyEditor button:not(:disabled) {
+  cursor: pointer;
+}
+
+.propertyEditor button:disabled {
+  color: var(--hc-fg-subtle);
+  opacity: 0.55;
+}
+
+.propertyValue,
+.propertyUnavailable {
+  overflow-wrap: anywhere;
+  color: var(--hc-fg-muted);
+  font: 500 10px/1.4 var(--hc-font-mono);
+}
+
+.propertyUnavailable {
+  font-family: var(--hc-font-ui);
+}
+
+.toolPanel {
+  display: grid;
+  gap: 12px;
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+  padding: 3px;
+  background: var(--hc-bg-island-lo);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+}
+
+.segment,
+.segmentActive,
+.toolButton,
+.toolButtonActive,
+.toolButtonDanger {
+  min-height: 28px;
+  padding: 5px 9px;
+  color: var(--hc-fg-muted);
+  font: 500 11px/1.2 var(--hc-font-ui);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--hc-radius-sm);
+  cursor: pointer;
+}
+
+.segment:hover,
+.toolButton:hover {
+  color: var(--hc-fg-strong);
+  background: var(--hc-hover-bg);
+}
+
+.segmentActive,
+.toolButtonActive {
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-island-hi);
+  border-color: var(--hc-selection-border);
+}
+
+.toolButton,
+.toolButtonActive,
+.toolButtonDanger {
+  border-color: var(--hc-border-default);
+}
+
+.toolButtonDanger:hover {
+  color: var(--hc-danger-fg, #ffb0ad);
+  background: var(--hc-danger-bg, rgb(140 35 40 / 24%));
+}
+
+.toolGroup {
+  display: grid;
+  gap: 7px;
+}
+
+.toolLabel,
+.toolHint {
+  color: var(--hc-fg-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.toolHint {
+  margin: 0;
+}
+
+.axisGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.toolActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.vectorEditor {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+}
+
+.vectorEditor legend {
+  padding: 0 5px;
+  color: var(--hc-fg-muted);
+  font-size: 11px;
+}
+
+.vectorEditor label {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  color: var(--hc-fg-subtle);
+  font-size: 10px;
+}
+
+.vectorEditor input {
+  width: 100%;
+  min-width: 0;
+  height: 27px;
+  padding: 3px 7px;
+  color: var(--hc-fg-strong);
+  font: 500 11px/1 var(--hc-font-mono);
+  background: var(--hc-bg-input, var(--hc-bg-island-lo));
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  outline: none;
+}
+
+.vectorEditor input:focus {
+  border-color: var(--hc-selection-border);
+  box-shadow: 0 0 0 1px var(--hc-selection-border);
+}

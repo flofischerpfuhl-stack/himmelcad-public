@@ -57,7 +57,9 @@
   height: 24px;
   color: var(--hc-fg-muted);
   border-radius: var(--hc-radius-sm);
-  transition: background var(--hc-motion-fast), color var(--hc-motion-fast);
+  transition:
+    background var(--hc-motion-fast),
+    color var(--hc-motion-fast);
 }
 
 .iconButton:hover {
@@ -79,9 +81,18 @@
 }
 
 @keyframes hc-icon-pulse {
-  0% { transform: scale(0.6); opacity: 0.4; }
-  60% { transform: scale(1.15); opacity: 1; }
-  100% { transform: scale(1); opacity: 1; }
+  0% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  60% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .body {
@@ -204,13 +215,25 @@
   word-break: break-word;
 }
 
-.debug .level { color: var(--hc-debug); }
-.info  .level { color: var(--hc-info); }
-.warn  .level { color: var(--hc-warning); }
-.error .level { color: var(--hc-error); }
+.debug .level {
+  color: var(--hc-debug);
+}
+.info .level {
+  color: var(--hc-info);
+}
+.warn .level {
+  color: var(--hc-warning);
+}
+.error .level {
+  color: var(--hc-error);
+}
 
-.warn  .msg { color: var(--hc-warning); }
-.error .msg { color: var(--hc-error); }
+.warn .msg {
+  color: var(--hc-warning);
+}
+.error .msg {
+  color: var(--hc-error);
+}
 
 /* === Inline progress bar === */
 

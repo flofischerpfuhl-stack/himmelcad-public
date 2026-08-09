@@ -40,112 +40,111 @@ async function main() {
   const rpc = new RpcClient(sidecarPath, output);
   try {
     await rpc.start();
-  await openProject(rpc, isolatedProject, output);
-  const images = await rpc.call('photolab.images.list', {});
-  if (!Array.isArray(images) || images.length === 0) {
-    throw new Error('The test project contains no imported images');
-  }
+    await openProject(rpc, isolatedProject, output);
+    const images = await rpc.call('photolab.images.list', {});
+    if (!Array.isArray(images) || images.length === 0) {
+      throw new Error('The test project contains no imported images');
+    }
 
-  const before = await rpc.call('photolab.project.snapshot', {});
-  const measuredJobId = `quality-e2e-measure-${Date.now()}`;
-  const queued = await rpc.call('photolab.jobs.startImageQuality', {
-    operationId: measuredJobId,
-    cameraEntityIds: [images[0].entityId],
-  });
-  if (queued.job.id !== measuredJobId) throw new Error('The queued quality job changed identity');
-  const measuredJob = await waitForJob(rpc, measuredJobId, 'completed');
-  const catalog = await rpc.call('photolab.images.quality.list', {});
-  const measured = catalog.find((record) => record.jobId === measuredJobId);
-  assertMeasuredRecord(measured, images[0]);
-  const published = await rpc.call('photolab.project.snapshot', {});
-  if (!published.manifest.imageQualityCatalogHash) {
-    throw new Error('Completed quality analysis did not publish a catalog');
-  }
-  if (
-    before.manifest.imageQualityCatalogHash &&
-    before.manifest.imageQualityCatalogHash === published.manifest.imageQualityCatalogHash
-  ) {
-    throw new Error('Completed quality analysis did not replace the catalog reference');
-  }
+    const before = await rpc.call('photolab.project.snapshot', {});
+    const measuredJobId = `quality-e2e-measure-${Date.now()}`;
+    const queued = await rpc.call('photolab.jobs.startImageQuality', {
+      operationId: measuredJobId,
+      cameraEntityIds: [images[0].entityId],
+    });
+    if (queued.job.id !== measuredJobId) throw new Error('The queued quality job changed identity');
+    const measuredJob = await waitForJob(rpc, measuredJobId, 'completed');
+    const catalog = await rpc.call('photolab.images.quality.list', {});
+    const measured = catalog.find((record) => record.jobId === measuredJobId);
+    assertMeasuredRecord(measured, images[0]);
+    const published = await rpc.call('photolab.project.snapshot', {});
+    if (!published.manifest.imageQualityCatalogHash) {
+      throw new Error('Completed quality analysis did not publish a catalog');
+    }
+    if (
+      before.manifest.imageQualityCatalogHash &&
+      before.manifest.imageQualityCatalogHash === published.manifest.imageQualityCatalogHash
+    ) {
+      throw new Error('Completed quality analysis did not replace the catalog reference');
+    }
 
-  await rpc.call('photolab.project.close', {});
-  await openProject(rpc, isolatedProject, output);
-  const reopenedCatalog = await rpc.call('photolab.images.quality.list', {});
-  if (!reopenedCatalog.some((record) => record.jobId === measuredJobId)) {
-    throw new Error('Published quality provenance did not survive project reopen');
-  }
+    await rpc.call('photolab.project.close', {});
+    await openProject(rpc, isolatedProject, output);
+    const reopenedCatalog = await rpc.call('photolab.images.quality.list', {});
+    if (!reopenedCatalog.some((record) => record.jobId === measuredJobId)) {
+      throw new Error('Published quality provenance did not survive project reopen');
+    }
 
-  const processingSetName = 'Quality E2E Scope';
-  await rpc.call('photolab.project.processingSet.create', {
-    name: processingSetName,
-    cameraEntityIds: images.slice(0, 2).map((image) => image.entityId),
-  });
-  const processingSets = await rpc.call('photolab.project.processingSet.list', {});
-  const processingSet = processingSets.find((record) => record.name === processingSetName);
-  if (!processingSet) throw new Error('The image-quality processing set was not created');
-  const scopedJobId = `quality-e2e-scope-${Date.now()}`;
-  await rpc.call('photolab.jobs.startImageQuality', {
-    operationId: scopedJobId,
-    processingSetId: processingSet.entityId,
-  });
-  const scopedJob = await waitForJob(rpc, scopedJobId, 'completed');
-  const scopedCatalog = await rpc.call('photolab.images.quality.list', {});
-  const scopedRecords = scopedCatalog.filter((record) => record.jobId === scopedJobId);
-  if (
-    scopedRecords.length !== 2 ||
-    scopedRecords.some(
-      (record) =>
-        record.processingSetId !== processingSet.entityId ||
-        record.processingSetMembershipSha256 !== processingSet.membershipSha256,
-    )
-  ) {
-    throw new Error('Processing-set analysis did not preserve its exact two-image scope');
-  }
+    const processingSetName = 'Quality E2E Scope';
+    await rpc.call('photolab.project.processingSet.create', {
+      name: processingSetName,
+      cameraEntityIds: images.slice(0, 2).map((image) => image.entityId),
+    });
+    const processingSets = await rpc.call('photolab.project.processingSet.list', {});
+    const processingSet = processingSets.find((record) => record.name === processingSetName);
+    if (!processingSet) throw new Error('The image-quality processing set was not created');
+    const scopedJobId = `quality-e2e-scope-${Date.now()}`;
+    await rpc.call('photolab.jobs.startImageQuality', {
+      operationId: scopedJobId,
+      processingSetId: processingSet.entityId,
+    });
+    const scopedJob = await waitForJob(rpc, scopedJobId, 'completed');
+    const scopedCatalog = await rpc.call('photolab.images.quality.list', {});
+    const scopedRecords = scopedCatalog.filter((record) => record.jobId === scopedJobId);
+    if (
+      scopedRecords.length !== 2 ||
+      scopedRecords.some(
+        (record) =>
+          record.processingSetId !== processingSet.entityId ||
+          record.processingSetMembershipSha256 !== processingSet.membershipSha256,
+      )
+    ) {
+      throw new Error('Processing-set analysis did not preserve its exact two-image scope');
+    }
 
-  const catalogHashBeforeCancellation = (
-    await rpc.call('photolab.project.snapshot', {})
-  ).manifest.imageQualityCatalogHash;
-  const cancelledJobId = `quality-e2e-cancel-${Date.now()}`;
-  await rpc.call('photolab.jobs.startImageQuality', {
-    operationId: cancelledJobId,
-  });
-  const acknowledgement = await rpc.call('photolab.jobs.cancel', { jobId: cancelledJobId });
-  const cancelledJob = await waitForJob(rpc, cancelledJobId, 'cancelled');
-  const afterCancellation = await rpc.call('photolab.project.snapshot', {});
-  const catalogAfterCancellation = await rpc.call('photolab.images.quality.list', {});
-  if (afterCancellation.manifest.imageQualityCatalogHash !== catalogHashBeforeCancellation) {
-    throw new Error('Cancelled quality analysis changed the published catalog');
-  }
-  if (catalogAfterCancellation.some((record) => record.jobId === cancelledJobId)) {
-    throw new Error('Cancelled quality analysis exposed partial records');
-  }
+    const catalogHashBeforeCancellation = (await rpc.call('photolab.project.snapshot', {})).manifest
+      .imageQualityCatalogHash;
+    const cancelledJobId = `quality-e2e-cancel-${Date.now()}`;
+    await rpc.call('photolab.jobs.startImageQuality', {
+      operationId: cancelledJobId,
+    });
+    const acknowledgement = await rpc.call('photolab.jobs.cancel', { jobId: cancelledJobId });
+    const cancelledJob = await waitForJob(rpc, cancelledJobId, 'cancelled');
+    const afterCancellation = await rpc.call('photolab.project.snapshot', {});
+    const catalogAfterCancellation = await rpc.call('photolab.images.quality.list', {});
+    if (afterCancellation.manifest.imageQualityCatalogHash !== catalogHashBeforeCancellation) {
+      throw new Error('Cancelled quality analysis changed the published catalog');
+    }
+    if (catalogAfterCancellation.some((record) => record.jobId === cancelledJobId)) {
+      throw new Error('Cancelled quality analysis exposed partial records');
+    }
 
-  await rpc.call('photolab.project.close', {});
-  await rpc.stop();
-  const ui = await auditUi(isolatedProject, output, images[0].name, processingSetName);
-  const result = {
-    schemaVersion: 1,
-    sourceProject,
-    imageCount: images.length,
-    measuredImage: { entityId: images[0].entityId, name: images[0].name },
-    measuredJob,
-    measuredRecord: measured,
-    processingSet: {
-      entityId: processingSet.entityId,
-      membershipSha256: processingSet.membershipSha256,
-      job: scopedJob,
-      recordCount: scopedRecords.length,
-    },
-    cancellation: {
-      firstRequest: acknowledgement.firstRequest,
-      terminalState: cancelledJob.state.kind,
-    },
-    catalogHash: published.manifest.imageQualityCatalogHash,
-    reopenVerified: true,
-    partialPublicationRejected: true,
-    ui,
-    durationMs: Date.now() - startedAt,
-  };
+    await rpc.call('photolab.project.close', {});
+    await rpc.stop();
+    const ui = await auditUi(isolatedProject, output, images[0].name, processingSetName);
+    const result = {
+      schemaVersion: 1,
+      sourceProject,
+      imageCount: images.length,
+      measuredImage: { entityId: images[0].entityId, name: images[0].name },
+      measuredJob,
+      measuredRecord: measured,
+      processingSet: {
+        entityId: processingSet.entityId,
+        membershipSha256: processingSet.membershipSha256,
+        job: scopedJob,
+        recordCount: scopedRecords.length,
+      },
+      cancellation: {
+        firstRequest: acknowledgement.firstRequest,
+        terminalState: cancelledJob.state.kind,
+      },
+      catalogHash: published.manifest.imageQualityCatalogHash,
+      reopenVerified: true,
+      partialPublicationRejected: true,
+      ui,
+      durationMs: Date.now() - startedAt,
+    };
     writeFileSync(resultPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
     process.stdout.write(`PhotoLab image-quality E2E passed · ${resultPath}\n`);
   } finally {
@@ -191,11 +190,9 @@ async function auditUi(project, outputRoot, imageName, processingSetName) {
     });
     page = await application.firstWindow({ timeout: 30_000 });
     page.on('pageerror', (error) => pageErrors.push(error.message));
-    await page.waitForFunction(
-      () => document.body.innerText.includes('Core ready'),
-      undefined,
-      { timeout: 60_000 },
-    );
+    await page.waitForFunction(() => document.body.innerText.includes('Core ready'), undefined, {
+      timeout: 60_000,
+    });
     await page.getByRole('tab', { name: 'Images', exact: true }).first().click({ force: true });
     await page.getByRole('button', { name: 'Image Status', exact: true }).click({ force: true });
     await page.getByText('Image status and measured quality', { exact: true }).waitFor({
@@ -207,7 +204,10 @@ async function auditUi(project, outputRoot, imageName, processingSetName) {
       .filter({ hasText: processingSetName })
       .selectOption({ label: `${processingSetName} · 2` });
     await page.getByText('2 / 2', { exact: true }).waitFor({ state: 'visible' });
-    await page.getByText(/Analyzed/).first().waitFor({ state: 'visible' });
+    await page
+      .getByText(/Analyzed/)
+      .first()
+      .waitFor({ state: 'visible' });
     const statusScreenshot = join(outputRoot, 'image-quality-status.png');
     await page.screenshot({ path: statusScreenshot });
 
@@ -231,7 +231,10 @@ async function auditUi(project, outputRoot, imageName, processingSetName) {
       electronErrors: electronErrors.filter((line) => !line.includes('DevTools listening')),
     };
   } catch (error) {
-    const body = await page?.locator('body').innerText().catch(() => 'Window body unavailable');
+    const body = await page
+      ?.locator('body')
+      .innerText()
+      .catch(() => 'Window body unavailable');
     await page
       ?.screenshot({ path: join(outputRoot, 'image-quality-ui-failure.png') })
       .catch(() => undefined);
@@ -286,7 +289,8 @@ async function waitForJob(rpcClient, jobId, expectedTerminalState) {
 
 function assertMeasuredRecord(record, image) {
   if (!record) throw new Error('The completed job has no catalog record');
-  if (record.imageEntityId !== image.entityId) throw new Error('Quality record changed image identity');
+  if (record.imageEntityId !== image.entityId)
+    throw new Error('Quality record changed image identity');
   if (record.sourceObjectHash !== image.metadata.sourceObjectHash) {
     throw new Error('Quality provenance does not reference the analyzed pixels');
   }

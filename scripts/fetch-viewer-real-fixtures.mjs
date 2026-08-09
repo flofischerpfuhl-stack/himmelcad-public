@@ -44,8 +44,10 @@ for (const asset of manifest.assets) {
 
 function verifySourceLock(asset, bytes) {
   if (asset.sourceByteLength === undefined && asset.sourceSha256 === undefined) return;
-  if (asset.sourceByteLength !== bytes.byteLength ||
-      createHash('sha256').update(bytes).digest('hex') !== asset.sourceSha256) {
+  if (
+    asset.sourceByteLength !== bytes.byteLength ||
+    createHash('sha256').update(bytes).digest('hex') !== asset.sourceSha256
+  ) {
     throw new Error(`downloaded source bytes do not match the source lock for ${asset.id}`);
   }
 }

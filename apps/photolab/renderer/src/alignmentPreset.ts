@@ -34,11 +34,7 @@ export type AlignmentPresetParseResult =
   | { ok: true; preset: AlignmentPresetFile }
   | { ok: false; errors: string[] };
 
-const PROFILES = new Set<AlignmentQualityProfile>([
-  'fast',
-  'qualityHybrid',
-  'maximumRobustness',
-]);
+const PROFILES = new Set<AlignmentQualityProfile>(['fast', 'qualityHybrid', 'maximumRobustness']);
 
 export function defaultOverridesForProfile(
   profile: AlignmentQualityProfile,
@@ -109,7 +105,10 @@ export function parseAlignmentPreset(value: unknown): AlignmentPresetParseResult
   if (typeof value.name !== 'string' || !value.name.trim()) {
     errors.push('Missing or empty "name"');
   }
-  if (typeof value.profile !== 'string' || !PROFILES.has(value.profile as AlignmentQualityProfile)) {
+  if (
+    typeof value.profile !== 'string' ||
+    !PROFILES.has(value.profile as AlignmentQualityProfile)
+  ) {
     errors.push(
       `Invalid profile (expected fast | qualityHybrid | maximumRobustness, got ${String(value.profile)})`,
     );
@@ -145,12 +144,7 @@ export function parseAlignmentPreset(value: unknown): AlignmentPresetParseResult
 
 function validateOverrideFields(overrides: Record<string, unknown>): string[] {
   const errors: string[] = [];
-  const check = (
-    key: string,
-    min: number,
-    max: number,
-    label: string,
-  ): void => {
+  const check = (key: string, min: number, max: number, label: string): void => {
     if (!(key in overrides) || overrides[key] === undefined || overrides[key] === null) return;
     const n = overrides[key];
     if (typeof n !== 'number' || !Number.isFinite(n) || !Number.isInteger(n)) {
@@ -171,8 +165,7 @@ function sanitizeOverrides(input: AlignmentPresetOverrides): AlignmentPresetOver
   if (typeof input.maxImageEdge === 'number') out.maxImageEdge = input.maxImageEdge;
   if (typeof input.keypointsPerMegapixel === 'number')
     out.keypointsPerMegapixel = input.keypointsPerMegapixel;
-  if (typeof input.sequentialOverlap === 'number')
-    out.sequentialOverlap = input.sequentialOverlap;
+  if (typeof input.sequentialOverlap === 'number') out.sequentialOverlap = input.sequentialOverlap;
   if (typeof input.featureBudget === 'number') out.featureBudget = input.featureBudget;
   return out;
 }

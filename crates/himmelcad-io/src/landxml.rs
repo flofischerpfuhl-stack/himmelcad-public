@@ -27,7 +27,8 @@ use crate::canonical_provider::{
     CanonicalExportPlan, CanonicalExportProvider, CanonicalExportRequest, CanonicalImportPackage,
     CanonicalImportProvider, CanonicalImportRequest, CanonicalJsonObject, ExportOutput,
     FormatCapability, FormatProviderDescriptor, ImportProbe, ImportProbeRequest,
-    ProviderContractError, ProviderOperationContext, ProviderProgress, CANONICAL_IO_SCHEMA_VERSION,
+    ProviderContractError, ProviderOperationContext, ProviderOptionContract, ProviderProgress,
+    CANONICAL_IO_SCHEMA_VERSION,
 };
 use crate::landxml_dom::{parse_xml, XmlNode};
 
@@ -144,6 +145,19 @@ impl LandXmlProvider {
                 extensions: vec!["xml".to_owned(), "landxml".to_owned()],
                 media_types: vec!["application/vnd.landxml+xml".to_owned()],
                 capabilities: vec![FormatCapability::Import, FormatCapability::Export],
+                import_options: Some(ProviderOptionContract::object(
+                    serde_json::json!({
+                        "importNamespace": {"type": ["string", "null"], "minLength": 1}
+                    }),
+                    serde_json::json!({"importNamespace": null}),
+                )),
+                export_options: Some(ProviderOptionContract::object(
+                    serde_json::json!({
+                        "units": {"type": ["object", "null"]},
+                        "coordinateSystem": {"type": ["object", "null"]}
+                    }),
+                    serde_json::json!({"units": null, "coordinateSystem": null}),
+                )),
             },
         }
     }

@@ -19,6 +19,15 @@ use crate::{
 /// fullscreen pass applies the linear-to-sRGB transfer exactly once.
 const FALLBACK_LINEAR_FRAME_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const PREFERRED_LINEAR_FRAME_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const CAPTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+/// Largest accepted offscreen capture edge before device-specific limits.
+pub const MAX_CAPTURE_DIMENSION: u32 = 16_384;
+/// Largest accepted RGBA capture payload. Temporary depth/ID/OIT targets make
+/// a substantially larger request unsafe even when one texture edge fits.
+pub const MAX_CAPTURE_RGBA_BYTES: u64 = 64 * 1024 * 1024;
+/// Pixel ceiling derived from the straight RGBA8 payload ceiling.
+pub const MAX_CAPTURE_PIXELS: u64 = MAX_CAPTURE_RGBA_BYTES / 4;
 
 /// Cursor-centered GPU hit request for one presentable frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +55,17 @@ pub struct SurfaceFrame<'a> {
     pub clear_color: wgpu::Color,
     /// Optional cursor neighborhood to copy from the ID/depth attachments.
     pub pick: Option<SurfacePickRequest>,
+    /// Optional explicit-size RGBA output instead of platform presentation.
+    pub capture: Option<SurfaceCaptureRequest>,
+}
+
+/// Explicit-size offscreen output using the same scene renderer as presentation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SurfaceCaptureRequest {
+    /// Physical output width in pixels.
+    pub width: u32,
+    /// Physical output height in pixels.
+    pub height: u32,
 }
 
 /// Non-fatal reason why a presentable frame was intentionally skipped.
@@ -83,6 +103,11 @@ pub enum SurfaceFrameOutcome {
         /// Pending asynchronous ID/depth neighborhood readback.
         hit_readback: GpuHitNeighborhoodReadback,
     },
+    /// An offscreen scene frame was submitted for asynchronous RGBA readback.
+    Captured {
+        /// Pending GPU-complete straight-alpha sRGB bytes.
+        rgba_readback: GpuRgbaReadback,
+    },
     /// No frame was submitted for a recoverable lifecycle reason.
     Skipped(SurfaceSkipReason),
     /// The platform surface itself was lost and must be recreated by the host.
@@ -111,6 +136,8 @@ pub enum GpuSurfaceError {
     Frame(GpuFrameError),
     /// Requested pick copy was invalid.
     Pick(GpuPickReadbackError),
+    /// Offscreen capture request or mapping failed.
+    Capture(GpuCaptureError),
 }
 
 impl Display for GpuSurfaceError {
@@ -131,6 +158,7 @@ impl Display for GpuSurfaceError {
             Self::DeviceError(message) => write!(formatter, "GPU device failure: {message}"),
             Self::Frame(error) => Display::fmt(error, formatter),
             Self::Pick(error) => Display::fmt(error, formatter),
+            Self::Capture(error) => Display::fmt(error, formatter),
         }
     }
 }
@@ -177,6 +205,48 @@ impl From<GpuPickReadbackError> for GpuSurfaceError {
     }
 }
 
+impl From<GpuCaptureError> for GpuSurfaceError {
+    fn from(value: GpuCaptureError) -> Self {
+        Self::Capture(value)
+    }
+}
+
+/// Bounded offscreen-capture validation or asynchronous mapping failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GpuCaptureError {
+    /// Width and height must both be non-zero.
+    EmptyExtent,
+    /// One edge exceeds the portable or active-device texture limit.
+    ExtentTooLarge,
+    /// The requested output exceeds the bounded capture pixel budget.
+    PixelBudgetExceeded,
+    /// Pick and RGBA capture cannot share one submission.
+    ConflictingReadback,
+    /// The asynchronous GPU mapping callback was dropped.
+    MappingCancelled,
+    /// GPU mapping failed, including device-loss failures.
+    MappingFailed(String),
+}
+
+impl Display for GpuCaptureError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyExtent => formatter.write_str("capture width and height must be non-zero"),
+            Self::ExtentTooLarge => formatter.write_str("capture extent exceeds the GPU limit"),
+            Self::PixelBudgetExceeded => {
+                formatter.write_str("capture exceeds the bounded RGBA byte budget")
+            }
+            Self::ConflictingReadback => {
+                formatter.write_str("capture and pick cannot share one frame submission")
+            }
+            Self::MappingCancelled => formatter.write_str("capture mapping was cancelled"),
+            Self::MappingFailed(message) => write!(formatter, "capture mapping failed: {message}"),
+        }
+    }
+}
+
+impl Error for GpuCaptureError {}
+
 /// Shared presentation host for browser canvases and native/Electron windows.
 ///
 /// Window-system integration owns creation of the `wgpu::Surface`; this type owns
@@ -190,6 +260,7 @@ pub struct GpuSurfaceHost<'window> {
     configuration: wgpu::SurfaceConfiguration,
     presentation_target: GpuPresentationTarget,
     presentation_renderer: GpuPresentationRenderer,
+    capture_presentation_renderer: GpuPresentationRenderer,
     linear_frame_format: wgpu::TextureFormat,
     frame_timing: Option<GpuFrameTimestampRecorder>,
     targets: GpuFrameTargets,
@@ -282,7 +353,9 @@ impl<'window> GpuSurfaceHost<'window> {
         };
         surface.configure(&device, &configuration);
         let linear_frame_format = choose_linear_frame_format(&adapter);
-        let presentation_renderer = GpuPresentationRenderer::new(&device, format);
+        let presentation_renderer = GpuPresentationRenderer::new(&device, format, false);
+        let capture_presentation_renderer =
+            GpuPresentationRenderer::new(&device, CAPTURE_FORMAT, true);
         let presentation_target = presentation_renderer.create_target(
             &device,
             physical_width,
@@ -314,6 +387,7 @@ impl<'window> GpuSurfaceHost<'window> {
             configuration,
             presentation_target,
             presentation_renderer,
+            capture_presentation_renderer,
             linear_frame_format,
             frame_timing,
             targets,
@@ -439,7 +513,7 @@ impl<'window> GpuSurfaceHost<'window> {
         self.configuration.alpha_mode = choose_alpha_mode(&capabilities.alpha_modes);
         if format != self.configuration.format {
             self.configuration.format = format;
-            self.presentation_renderer = GpuPresentationRenderer::new(&self.device, format);
+            self.presentation_renderer = GpuPresentationRenderer::new(&self.device, format, false);
             self.presentation_target = self.presentation_renderer.create_target(
                 &self.device,
                 self.configuration.width,
@@ -509,8 +583,15 @@ impl<'window> GpuSurfaceHost<'window> {
                 GpuDeviceFault::Fatal(message) => Err(GpuSurfaceError::DeviceError(message)),
             };
         }
-        if self.suspended {
+        if self.suspended && frame.capture.is_none() {
             return Ok(SurfaceFrameOutcome::Skipped(SurfaceSkipReason::Suspended));
+        }
+        if frame.pick.is_some() && frame.capture.is_some() {
+            return Err(GpuCaptureError::ConflictingReadback.into());
+        }
+        if let Some(request) = frame.capture {
+            let rgba_readback = self.render_capture(frame, request)?;
+            return Ok(SurfaceFrameOutcome::Captured { rgba_readback });
         }
         if let Some(request) = frame.pick {
             self.renderer.update_frame(
@@ -645,7 +726,7 @@ impl<'window> GpuSurfaceHost<'window> {
         self.configuration.alpha_mode = choose_alpha_mode(&surface_capabilities.alpha_modes);
         if format != self.configuration.format {
             self.configuration.format = format;
-            self.presentation_renderer = GpuPresentationRenderer::new(&self.device, format);
+            self.presentation_renderer = GpuPresentationRenderer::new(&self.device, format, false);
             self.presentation_target = self.presentation_renderer.create_target(
                 &self.device,
                 self.configuration.width,
@@ -673,6 +754,233 @@ impl<'window> GpuSurfaceHost<'window> {
     fn poll_frame_timing(&mut self) {
         self.poll_device();
     }
+
+    fn render_capture(
+        &mut self,
+        frame: SurfaceFrame<'_>,
+        request: SurfaceCaptureRequest,
+    ) -> Result<GpuRgbaReadback, GpuSurfaceError> {
+        let layout = capture_layout(
+            request.width,
+            request.height,
+            self.capabilities.max_texture_dimension_2d,
+            self.capabilities.max_buffer_size,
+        )?;
+        self.renderer.update_frame(
+            &self.queue,
+            frame.view_projection,
+            frame.floating_origin,
+            frame.clip_volumes,
+            [request.width, request.height],
+            frame.point_size_scale,
+        )?;
+        let prepared_batches =
+            self.prepare_batches(frame.batches, frame.view_projection, frame.floating_origin)?;
+        let targets =
+            self.renderer
+                .create_frame_targets(&self.device, request.width, request.height);
+        let presentation_target = self.capture_presentation_renderer.create_target(
+            &self.device,
+            request.width,
+            request.height,
+            self.linear_frame_format,
+        );
+        let output = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("himmelcad-capture-rgba8"),
+            size: wgpu::Extent3d {
+                width: request.width,
+                height: request.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: CAPTURE_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let output_view = output.create_view(&wgpu::TextureViewDescriptor::default());
+        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("himmelcad-capture-rgba8-readback"),
+            size: layout.mapped_bytes,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("himmelcad-offscreen-capture-frame"),
+            });
+        self.renderer.encode(
+            &mut encoder,
+            &presentation_target.linear_view,
+            &targets,
+            &prepared_batches,
+            frame.clear_color,
+            false,
+        );
+        self.capture_presentation_renderer.encode(
+            &mut encoder,
+            &output_view,
+            &presentation_target.bind_group,
+            None,
+        );
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &output,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &staging,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(layout.padded_bytes_per_row),
+                    rows_per_image: Some(request.height),
+                },
+            },
+            wgpu::Extent3d {
+                width: request.width,
+                height: request.height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let (mapping_sender, mapping_receiver) = futures_channel::oneshot::channel();
+        encoder.map_buffer_on_submit(&staging, wgpu::MapMode::Read, .., move |result| {
+            let _ignored = mapping_sender.send(result);
+        });
+        self.queue.submit([encoder.finish()]);
+        let _ignored_device_loss = self.device.poll(wgpu::PollType::Poll);
+        Ok(GpuRgbaReadback {
+            buffer: staging,
+            mapping_receiver,
+            width: request.width,
+            height: request.height,
+            unpadded_bytes_per_row: layout.unpadded_bytes_per_row,
+            padded_bytes_per_row: layout.padded_bytes_per_row,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CaptureLayout {
+    unpadded_bytes_per_row: u32,
+    padded_bytes_per_row: u32,
+    mapped_bytes: u64,
+}
+
+fn capture_layout(
+    width: u32,
+    height: u32,
+    device_max_dimension: u32,
+    device_max_buffer_size: u64,
+) -> Result<CaptureLayout, GpuCaptureError> {
+    if width == 0 || height == 0 {
+        return Err(GpuCaptureError::EmptyExtent);
+    }
+    let maximum_dimension = MAX_CAPTURE_DIMENSION.min(device_max_dimension);
+    if width > maximum_dimension || height > maximum_dimension {
+        return Err(GpuCaptureError::ExtentTooLarge);
+    }
+    let pixels = u64::from(width)
+        .checked_mul(u64::from(height))
+        .ok_or(GpuCaptureError::PixelBudgetExceeded)?;
+    if pixels > MAX_CAPTURE_PIXELS {
+        return Err(GpuCaptureError::PixelBudgetExceeded);
+    }
+    let unpadded_bytes_per_row = width
+        .checked_mul(4)
+        .ok_or(GpuCaptureError::PixelBudgetExceeded)?;
+    let padded_bytes_per_row = unpadded_bytes_per_row
+        .div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+        .checked_mul(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+        .ok_or(GpuCaptureError::PixelBudgetExceeded)?;
+    let mapped_bytes = u64::from(padded_bytes_per_row)
+        .checked_mul(u64::from(height))
+        .ok_or(GpuCaptureError::PixelBudgetExceeded)?;
+    if mapped_bytes > device_max_buffer_size {
+        return Err(GpuCaptureError::PixelBudgetExceeded);
+    }
+    Ok(CaptureLayout {
+        unpadded_bytes_per_row,
+        padded_bytes_per_row,
+        mapped_bytes,
+    })
+}
+
+/// Pending GPU-complete copy of one explicit-size straight-alpha sRGB frame.
+pub struct GpuRgbaReadback {
+    buffer: wgpu::Buffer,
+    mapping_receiver: futures_channel::oneshot::Receiver<Result<(), wgpu::BufferAsyncError>>,
+    width: u32,
+    height: u32,
+    unpadded_bytes_per_row: u32,
+    padded_bytes_per_row: u32,
+}
+
+impl GpuRgbaReadback {
+    /// Resolves only after GPU completion and removes WebGPU row padding.
+    pub async fn resolve(self) -> Result<Vec<u8>, GpuCaptureError> {
+        self.mapping_receiver
+            .await
+            .map_err(|_| GpuCaptureError::MappingCancelled)?
+            .map_err(|error| GpuCaptureError::MappingFailed(error.to_string()))?;
+        let mapped = self
+            .buffer
+            .slice(..)
+            .get_mapped_range()
+            .map_err(|error| GpuCaptureError::MappingFailed(error.to_string()))?;
+        let bytes = unpack_capture_rows(
+            &mapped,
+            self.width,
+            self.height,
+            self.unpadded_bytes_per_row,
+            self.padded_bytes_per_row,
+        );
+        drop(mapped);
+        self.buffer.unmap();
+        bytes
+    }
+}
+
+impl std::fmt::Debug for GpuRgbaReadback {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GpuRgbaReadback")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .finish_non_exhaustive()
+    }
+}
+
+fn unpack_capture_rows(
+    mapped: &[u8],
+    width: u32,
+    height: u32,
+    unpadded_bytes_per_row: u32,
+    padded_bytes_per_row: u32,
+) -> Result<Vec<u8>, GpuCaptureError> {
+    let output_length = usize::try_from(u64::from(width) * u64::from(height) * 4)
+        .map_err(|_| GpuCaptureError::PixelBudgetExceeded)?;
+    let row_bytes = usize::try_from(unpadded_bytes_per_row)
+        .map_err(|_| GpuCaptureError::PixelBudgetExceeded)?;
+    let stride =
+        usize::try_from(padded_bytes_per_row).map_err(|_| GpuCaptureError::PixelBudgetExceeded)?;
+    let mut output = Vec::with_capacity(output_length);
+    let row_count = usize::try_from(height).map_err(|_| GpuCaptureError::PixelBudgetExceeded)?;
+    for row in mapped.chunks(stride).take(row_count) {
+        let pixels = row
+            .get(..row_bytes)
+            .ok_or_else(|| GpuCaptureError::MappingFailed("mapped row is truncated".to_owned()))?;
+        output.extend_from_slice(pixels);
+    }
+    if output.len() != output_length {
+        return Err(GpuCaptureError::MappingFailed(
+            "mapped capture payload is truncated".to_owned(),
+        ));
+    }
+    Ok(output)
 }
 
 fn choose_surface_format(formats: &[wgpu::TextureFormat]) -> Option<wgpu::TextureFormat> {
@@ -720,7 +1028,11 @@ struct GpuPresentationRenderer {
 }
 
 impl GpuPresentationRenderer {
-    fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
+    fn new(
+        device: &wgpu::Device,
+        surface_format: wgpu::TextureFormat,
+        straight_alpha: bool,
+    ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("himmelcad-presentation-bind-group-layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -759,6 +1071,8 @@ impl GpuPresentationRenderer {
                 module: &shader,
                 entry_point: Some(if surface_format.is_srgb() {
                     "fragment_linear"
+                } else if straight_alpha {
+                    "fragment_encoded_straight_alpha"
                 } else {
                     "fragment_encoded"
                 }),
@@ -875,8 +1189,9 @@ fn choose_alpha_mode(modes: &[wgpu::CompositeAlphaMode]) -> wgpu::CompositeAlpha
 #[cfg(test)]
 mod tests {
     use super::{
-        choose_alpha_mode, choose_present_mode, choose_surface_format, reliable_timestamp_queries,
-        GpuDeviceFault, GpuDeviceFaultState, GpuRecoveryReason,
+        capture_layout, choose_alpha_mode, choose_present_mode, choose_surface_format,
+        reliable_timestamp_queries, unpack_capture_rows, GpuCaptureError, GpuDeviceFault,
+        GpuDeviceFaultState, GpuRecoveryReason, MAX_CAPTURE_DIMENSION, MAX_CAPTURE_PIXELS,
     };
 
     #[test]
@@ -934,5 +1249,65 @@ mod tests {
             ]),
             wgpu::CompositeAlphaMode::Opaque
         );
+    }
+
+    #[test]
+    fn capture_layout_rejects_empty_and_oversized_extents() {
+        assert_eq!(
+            capture_layout(0, 1, MAX_CAPTURE_DIMENSION, u64::MAX),
+            Err(GpuCaptureError::EmptyExtent)
+        );
+        assert_eq!(
+            capture_layout(
+                MAX_CAPTURE_DIMENSION + 1,
+                1,
+                MAX_CAPTURE_DIMENSION + 1,
+                u64::MAX,
+            ),
+            Err(GpuCaptureError::ExtentTooLarge)
+        );
+        assert_eq!(
+            capture_layout(2_049, 2_049, 2_048, u64::MAX),
+            Err(GpuCaptureError::ExtentTooLarge)
+        );
+        assert_eq!(
+            capture_layout(4_097, 4_097, MAX_CAPTURE_DIMENSION, u64::MAX),
+            Err(GpuCaptureError::PixelBudgetExceeded)
+        );
+        assert_eq!(
+            capture_layout(3, 2, MAX_CAPTURE_DIMENSION, 511),
+            Err(GpuCaptureError::PixelBudgetExceeded)
+        );
+        assert_eq!(MAX_CAPTURE_PIXELS, 16_777_216);
+    }
+
+    #[test]
+    fn capture_readback_removes_webgpu_row_padding() {
+        let layout =
+            capture_layout(3, 2, MAX_CAPTURE_DIMENSION, u64::MAX).expect("valid capture layout");
+        assert_eq!(layout.unpadded_bytes_per_row, 12);
+        assert_eq!(layout.padded_bytes_per_row, 256);
+        let mut mapped = vec![0_u8; usize::try_from(layout.mapped_bytes).expect("mapped bytes")];
+        mapped[..12].copy_from_slice(&(0_u8..12).collect::<Vec<_>>());
+        mapped[256..268].copy_from_slice(&(12_u8..24).collect::<Vec<_>>());
+
+        assert_eq!(
+            unpack_capture_rows(
+                &mapped,
+                3,
+                2,
+                layout.unpadded_bytes_per_row,
+                layout.padded_bytes_per_row,
+            )
+            .expect("readback rows"),
+            (0_u8..24).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn capture_readback_rejects_truncated_mapping() {
+        let error = unpack_capture_rows(&[0_u8; 8], 3, 1, 12, 256)
+            .expect_err("truncated readback must fail");
+        assert!(matches!(error, GpuCaptureError::MappingFailed(_)));
     }
 }

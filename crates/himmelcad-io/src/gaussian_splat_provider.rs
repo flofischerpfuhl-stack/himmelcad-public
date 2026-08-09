@@ -29,8 +29,8 @@ use crate::canonical_provider::{
     CanonicalExportPlan, CanonicalExportProvider, CanonicalExportRequest, CanonicalImportPackage,
     CanonicalImportProvider, CanonicalImportRequest, CanonicalJsonObject, CanonicalPreparedDataset,
     ExportOutput, FormatCapability, FormatProviderDescriptor, ImportProbe, ImportProbeRequest,
-    PreparedDatasetArtifact, ProviderContractError, ProviderOperationContext, ProviderProgress,
-    CANONICAL_IO_SCHEMA_VERSION,
+    PreparedDatasetArtifact, ProviderContractError, ProviderOperationContext,
+    ProviderOptionContract, ProviderProgress, StagedArtifactRoots, CANONICAL_IO_SCHEMA_VERSION,
 };
 
 /// Exact Gaussian-splat PLY format handled by this provider.
@@ -79,6 +79,19 @@ impl GaussianSplatPlyProvider {
                 extensions: vec!["ply".to_owned()],
                 media_types: vec![PLY_MEDIA_TYPE.to_owned(), SOURCE_MEDIA_TYPE.to_owned()],
                 capabilities: vec![FormatCapability::Import, FormatCapability::Export],
+                import_options: Some(ProviderOptionContract::object(
+                    serde_json::json!({
+                        "maximumSplats": {"type": "integer", "minimum": 1},
+                        "maximumLeafSplats": {"type": "integer", "minimum": 1},
+                        "maximumInternalSampleSplats": {"type": "integer", "minimum": 1}
+                    }),
+                    serde_json::json!({
+                        "maximumSplats": DEFAULT_MAX_SPLATS,
+                        "maximumLeafSplats": DEFAULT_LEAF_SPLATS,
+                        "maximumInternalSampleSplats": DEFAULT_INTERNAL_SAMPLE_SPLATS
+                    }),
+                )),
+                export_options: Some(ProviderOptionContract::none()),
             },
         }
     }
@@ -185,6 +198,25 @@ impl CanonicalImportProvider for GaussianSplatPlyProvider {
             message: "Gaussian-splat hierarchy is canonical and ready".to_owned(),
         });
         Ok(package)
+    }
+
+    fn staged_artifact_roots(
+        &self,
+        package: &CanonicalImportPackage,
+    ) -> Result<StagedArtifactRoots, ProviderContractError> {
+        Ok(StagedArtifactRoots {
+            dataset_roots: package
+                .datasets
+                .iter()
+                .map(|dataset| {
+                    (
+                        dataset.dataset_id.clone(),
+                        self.prepared_root.join(&dataset.dataset_id),
+                    )
+                })
+                .collect(),
+            resource_set_roots: Default::default(),
+        })
     }
 }
 

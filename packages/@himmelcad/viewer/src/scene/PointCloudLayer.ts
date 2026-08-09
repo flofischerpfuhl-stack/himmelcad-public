@@ -1,14 +1,8 @@
-import {
-  BufferAttribute,
-  BufferGeometry,
-  Color,
-  Points,
-  PointsMaterial,
-} from 'three';
+import { BufferAttribute, BufferGeometry, Color, Points, PointsMaterial } from 'three';
 
 import type { EntityId } from '@himmelcad/data';
 
-import { PointOctree } from '../spatial/PointOctree.js';
+import type { PointOctree } from '../spatial/PointOctree.js';
 import type { Layer } from './Layer.js';
 
 export interface CacheLayout {

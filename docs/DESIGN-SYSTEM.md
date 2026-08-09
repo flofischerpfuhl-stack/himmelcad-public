@@ -7,20 +7,20 @@ modules; they do not invent one-off chrome.
 
 ## Brand writing
 
-| Context | Form |
-| --- | --- |
+| Context                                       | Form                                                                |
+| --------------------------------------------- | ------------------------------------------------------------------- |
 | Stylized wordmark / splash / marketing chrome | `himmel:CAD`, `HIMMEL:CAD`, or `himmel:cad` — **always with colon** |
-| Plain prose / docs / legal | `HimmelCAD` without colon is OK |
-| Product suffix | space + product, e.g. `PHOTOLAB`, `BUILDER` |
+| Plain prose / docs / legal                    | `HimmelCAD` without colon is OK                                     |
+| Product suffix                                | space + product, e.g. `PHOTOLAB`, `BUILDER`                         |
 
 ## Fonts (exactly four roles)
 
-| Role | Token | Use |
-| --- | --- | --- |
-| UI | `--hc-font-ui` (Inter) | Ribbon, panels, tabs, forms, tree labels |
-| Mono | `--hc-font-mono` (JetBrains Mono) | Console, coordinates, hashes, numeric fields, code-like values |
-| Display | `--hc-font-display` (Kamikaze) | Compact wordmark in title bar |
-| Display 3D | `--hc-font-display-3d` (Kamikaze 3D) | Console brand splash only |
+| Role       | Token                                | Use                                                            |
+| ---------- | ------------------------------------ | -------------------------------------------------------------- |
+| UI         | `--hc-font-ui` (Inter)               | Ribbon, panels, tabs, forms, tree labels                       |
+| Mono       | `--hc-font-mono` (JetBrains Mono)    | Console, coordinates, hashes, numeric fields, code-like values |
+| Display    | `--hc-font-display` (Kamikaze)       | Compact wordmark in title bar                                  |
+| Display 3D | `--hc-font-display-3d` (Kamikaze 3D) | Console brand splash only                                      |
 
 Do not introduce extra typefaces. Do not use display fonts for body copy.
 
@@ -88,12 +88,12 @@ Jobs, Accuracy, Report, and similar panes must match the **console family**:
 
 Heuristic for PhotoLab / Builder:
 
-| Use **right Function panel** when | Use **modal / popup** when |
-| --- | --- |
+| Use **right Function panel** when                              | Use **modal / popup** when                                                           |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | Parameters for an active tool while viewport stays interactive | Multi-step wizard that needs full focus (project New/Open risk, destructive confirm) |
-| Settings that benefit from seeing the scene/image | Large dual-pane editors (CRS transform map) that would crush the viewport if docked |
-| Short forms (align options, product params) | Blocking safety (overwrite project, discard unsaved) |
-| Inspect / properties of selection | Rare “focus mode” report builders |
+| Settings that benefit from seeing the scene/image              | Large dual-pane editors (CRS transform map) that would crush the viewport if docked  |
+| Short forms (align options, product params)                    | Blocking safety (overwrite project, discard unsaved)                                 |
+| Inspect / properties of selection                              | Rare “focus mode” report builders                                                    |
 
 Rule of thumb: **if the user still needs to click the view or compare to geometry, dock it.**  
 **If a wrong click in the view would be harmful or the form is a multi-stage commit, popup.**
@@ -115,10 +115,10 @@ Image import and GCP import share one pattern:
 
 On first empty console session (product may override subtitle):
 
-1. Latin **Pater Noster** + crucifix ASCII art  
-2. Latin **Ave Maria** + Madonna ASCII art  
-3. Display splash `HIMMEL:CAD`  
-4. Product subtitle line  
+1. Latin **Pater Noster** + crucifix ASCII art
+2. Latin **Ave Maria** + Madonna ASCII art
+3. Display splash `HIMMEL:CAD`
+4. Product subtitle line
 
 ## Module library
 

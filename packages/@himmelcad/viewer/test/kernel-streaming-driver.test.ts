@@ -4,7 +4,7 @@ import test from 'node:test';
 import {
   decodeInputManifestHash,
   KernelStreamingDriver,
-  validateDecodeArtifactV4,
+  validateDecodeArtifactV5,
   type KernelAssetUriResolver,
   type KernelDecodeExecutor,
   type KernelFetch,
@@ -27,7 +27,7 @@ import type {
   KernelTileKey,
 } from '../src/kernel/WgpuKernelViewer.js';
 
-void test('HCDECODE v4 manifest matches the Rust fixed vector and rejects tamper', async () => {
+void test('HCDECODE v5 manifest matches the Rust fixed vector and rejects tamper', async () => {
   const job: KernelDecodeJob = {
     kind: 'gltf',
     metadataJson: '{"slot":"primary","revision":7}',
@@ -40,13 +40,13 @@ void test('HCDECODE v4 manifest matches the Rust fixed vector and rejects tamper
   const hash = await decodeInputManifestHash(job);
   assert.equal(hash, '13a4ab80a1d45e3d7e338f7fb3fe4e530f1f21aded30d2081b645796c1f6da1a');
   const artifact = await mockDecodeArtifact(job);
-  assert.doesNotThrow(() => validateDecodeArtifactV4(artifact, hash));
+  assert.doesNotThrow(() => validateDecodeArtifactV5(artifact, hash));
   assert.throws(
-    () => validateDecodeArtifactV4(artifact, `${hash.slice(0, 62)}00`),
+    () => validateDecodeArtifactV5(artifact, `${hash.slice(0, 62)}00`),
     /manifest hash mismatch/,
   );
   new Uint8Array(artifact)[8] = 1;
-  assert.throws(() => validateDecodeArtifactV4(artifact, hash), /version or length/);
+  assert.throws(() => validateDecodeArtifactV5(artifact, hash), /version or length/);
 });
 
 void test('streaming driver executes range fetch, decode, upload and eviction lifecycle', async () => {
@@ -305,7 +305,7 @@ void test('raster hash-verifies and packs elevation, validity and confidence sid
         ? validityBytes
         : uri.endsWith('confidence.bin')
           ? confidenceBytes
-        : new Uint8Array([255, 0, 0, 255]);
+          : new Uint8Array([255, 0, 0, 255]);
     return Promise.resolve(new Response(bytes));
   });
   const ticket = { key: { datasetId: 'ortho', tileId: 'r' }, generation: 1 };
@@ -377,7 +377,13 @@ void test('raster hash-verifies and packs elevation, validity and confidence sid
   assert.equal(
     (
       target.stagedRaster[0]?.metadata.contract as
-        | { readonly raster?: { readonly depth?: { readonly sampling?: { readonly connectivity?: { readonly kind?: string } } } } }
+        | {
+            readonly raster?: {
+              readonly depth?: {
+                readonly sampling?: { readonly connectivity?: { readonly kind?: string } };
+              };
+            };
+          }
         | undefined
     )?.raster?.depth?.sampling?.connectivity?.kind,
     'pixelSteps',
@@ -1052,6 +1058,74 @@ void test('kernel policies bound real hierarchy and multi-content HTTP concurren
   assert.deepEqual(low.final, { fetchedTiles: 1, hierarchyPages: 1, uploadedTiles: 1 });
 });
 
+void test('compatible point ranges coalesce into one bounded physical page', async () => {
+  const target = new RecordingTarget();
+  let resolvePage: ((response: Response) => void) | undefined;
+  let networkRequests = 0;
+  const driver = streamingDriver(target, (_uri, init) => {
+    networkRequests += 1;
+    assert.equal(new Headers(init.headers).get('Range'), 'bytes=0-1048575');
+    return new Promise<Response>((resolve) => {
+      resolvePage = resolve;
+    });
+  });
+  const descriptor = (tileId: string, byteOffset: number) => ({
+    id: tileId,
+    parent: null,
+    children: [],
+    bounds: { kind: 'sphere' as const, center: { x: 0, y: 0, z: 0 }, radius: 10 },
+    contentTransform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    geometricError: 0,
+    refinement: 'add' as const,
+    childPage: null,
+    contents: [
+      {
+        kind: 'potreePoints' as const,
+        uri: 'https://example.test/octree.bin',
+        byteOffset,
+        byteLength: 16,
+        primitiveCount: 1,
+        contentHash: null,
+        decoderParameters: {
+          streamingPage: { schemaVersion: 1, targetBytes: 1024 * 1024 },
+        },
+      },
+    ],
+  });
+  const first = { key: { datasetId: 'paged', tileId: 'a' }, generation: 1 };
+  const second = { key: { datasetId: 'paged', tileId: 'b' }, generation: 1 };
+  driver.execute({
+    render: [],
+    renderCount: 0,
+    actions: [
+      { kind: 'fetchTile', ticket: first, descriptor: descriptor('a', 0) },
+      { kind: 'fetchTile', ticket: second, descriptor: descriptor('b', 16) },
+    ],
+    admission: {},
+    eviction: {},
+    claimedDecodeMs: 0,
+  });
+  await nextTask();
+  assert.equal(networkRequests, 1);
+  resolvePage?.(new Response(new Uint8Array(1024 * 1024), { status: 206 }));
+  await driver.settled();
+
+  assert.equal(target.fetched.length, 2);
+  assert.deepEqual(driver.diagnostics().streamingTelemetry.physicalPages, {
+    targetBytes: 1024 * 1024,
+    budgetBytes: 128 * 1024 * 1024,
+    retainedBytes: 1024 * 1024,
+    entries: 1,
+    hits: 0,
+    misses: 2,
+    coalescedWaiters: 1,
+    networkPages: 1,
+    logicalReads: 2,
+    logicalBytes: 32,
+  });
+  driver.dispose();
+});
+
 void test('raising the request limit wakes queued fetches and dispose leaks no permits', async () => {
   const target = new RecordingTarget();
   const pending: Array<() => void> = [];
@@ -1302,7 +1376,7 @@ async function mockDecodeArtifact(job: KernelDecodeJob): Promise<ArrayBuffer> {
   const bytes = new Uint8Array(artifact);
   bytes.set(new TextEncoder().encode('HCDECODE'));
   const view = new DataView(artifact);
-  view.setUint16(8, 4, true);
+  view.setUint16(8, 5, true);
   view.setBigUint64(10, 0n, true);
   for (let index = 0; index < 32; index += 1) {
     bytes[18 + index] = Number.parseInt(hash.slice(index * 2, index * 2 + 2), 16);

@@ -1,3 +1,8 @@
+import {
+  type KernelDecodeJob,
+  type KernelDecodedArtifact,
+  type KernelDecodePoolDiagnostics,
+} from './KernelDecodeWorkerPool.js';
 import type {
   KernelContentReference,
   KernelCanonicalStreamMetadata,
@@ -19,11 +24,6 @@ import type {
   KernelTileDescriptor,
   KernelTileKey,
 } from './WgpuKernelViewer.js';
-import {
-  type KernelDecodeJob,
-  type KernelDecodedArtifact,
-  type KernelDecodePoolDiagnostics,
-} from './KernelDecodeWorkerPool.js';
 
 export interface KernelDecodeExecutor {
   setWorkerCount(workers: number): void;
@@ -101,10 +101,115 @@ export interface KernelStreamingDriverDiagnostics {
   readonly perWorkerReservationBytes: number;
   readonly maximumWorkerBaselineLinearMemoryBytes: number;
   readonly maximumWorkerLinearMemoryBytes: number;
+  /** Provider-neutral cold/revisit lifecycle and real host-transport evidence. */
+  readonly streamingTelemetry: KernelStreamingTelemetrySnapshot;
   /** Non-cancellation tile failures observed since driver creation. */
   readonly failedOperations: number;
   /** Bounded newest-first evidence for diagnosing provider and upload failures. */
   readonly recentFailures: readonly KernelStreamingFailure[];
+}
+
+type KernelStreamingContentClass = 'point' | 'mesh' | 'other';
+
+interface KernelStreamingLifecycleTelemetry {
+  readonly coldLoads: number;
+  readonly revisitLoads: number;
+  /** Render-plan tile references already backed by host resident content. */
+  readonly residencyHits: number;
+  readonly evictions: number;
+  readonly revisitsMadeResident: number;
+  readonly ramWarmHits: number;
+  readonly avoidedNetworkFetches: number;
+  readonly avoidedWorkerDecodes: number;
+  readonly completedFetches: number;
+  readonly fetchedBytes: number;
+  readonly fetchMs: number;
+  readonly maximumFetchMs: number;
+  readonly completedDecodes: number;
+  readonly decodedArtifactBytes: number;
+  readonly workerDecodeMs: number;
+  readonly decodeTurnaroundMs: number;
+  readonly maximumDecodeTurnaroundMs: number;
+  readonly completedUploads: number;
+  readonly uploadedBytes: number;
+  readonly uploadMs: number;
+  readonly maximumUploadMs: number;
+}
+
+interface KernelStreamingTelemetrySnapshot {
+  readonly schemaVersion: 1;
+  /** Only requests that acquired a permit and invoked the host transport. */
+  readonly transport: {
+    readonly startedRequests: number;
+    readonly completedRequests: number;
+    readonly failedRequests: number;
+    readonly abortedRequests: number;
+    readonly fullRequests: number;
+    readonly rangeRequests: number;
+    readonly receivedBytes: number;
+    readonly requestMs: number;
+    readonly maximumRequestMs: number;
+  };
+  readonly lifecycle: Readonly<
+    Record<KernelStreamingContentClass, KernelStreamingLifecycleTelemetry>
+  >;
+  readonly ramWarmCache: {
+    readonly budgetBytes: number;
+    readonly retainedBytes: number;
+    readonly entries: number;
+    readonly hits: number;
+    readonly misses: number;
+    readonly evictions: number;
+    readonly oversizedRejects: number;
+  };
+  readonly physicalPages: {
+    readonly targetBytes: number;
+    readonly budgetBytes: number;
+    readonly retainedBytes: number;
+    readonly entries: number;
+    readonly hits: number;
+    readonly misses: number;
+    readonly coalescedWaiters: number;
+    readonly networkPages: number;
+    readonly logicalReads: number;
+    readonly logicalBytes: number;
+  };
+}
+
+interface MutableStreamingTransportTelemetry {
+  startedRequests: number;
+  completedRequests: number;
+  failedRequests: number;
+  abortedRequests: number;
+  fullRequests: number;
+  rangeRequests: number;
+  receivedBytes: number;
+  requestMs: number;
+  maximumRequestMs: number;
+}
+
+interface MutableStreamingLifecycleTelemetry {
+  coldLoads: number;
+  revisitLoads: number;
+  residencyHits: number;
+  evictions: number;
+  revisitsMadeResident: number;
+  ramWarmHits: number;
+  avoidedNetworkFetches: number;
+  avoidedWorkerDecodes: number;
+  completedFetches: number;
+  fetchedBytes: number;
+  fetchMs: number;
+  maximumFetchMs: number;
+  completedDecodes: number;
+  decodedArtifactBytes: number;
+  workerDecodeMs: number;
+  decodeTurnaroundMs: number;
+  maximumDecodeTurnaroundMs: number;
+  completedUploads: number;
+  uploadedBytes: number;
+  uploadMs: number;
+  maximumUploadMs: number;
 }
 
 export interface KernelStreamingFailure {
@@ -133,6 +238,15 @@ interface InflightAssetFetch {
   settled: boolean;
 }
 
+interface InflightRangePage {
+  readonly controller: AbortController;
+  readonly promise: Promise<Uint8Array>;
+}
+
+interface StreamingPagePolicy {
+  readonly targetBytes: number;
+}
+
 interface RequestWaiter {
   readonly signal: AbortSignal;
   readonly resolve: (release: () => void) => void;
@@ -147,6 +261,12 @@ const EMPTY_ASSET_BUNDLE: KernelResolvedAssetBundle = {
 const MAX_ASSET_DEPENDENCIES = 4_096;
 const MAX_EXTERNAL_ASSET_BYTES = 512 * 1024 * 1024;
 const MAX_SINGLE_EXTERNAL_ASSET_BYTES = 256 * 1024 * 1024;
+const MAX_TELEMETRY_TILE_HISTORY = 262_144;
+const DEFAULT_RAM_WARM_CACHE_BYTES = 512 * 1024 * 1024;
+const MIN_STREAMING_PAGE_BYTES = 512 * 1024;
+const DEFAULT_STREAMING_PAGE_BYTES = 1024 * 1024;
+const MAX_STREAMING_PAGE_BYTES = 4 * 1024 * 1024;
+const DEFAULT_STREAMING_PAGE_CACHE_BYTES = 128 * 1024 * 1024;
 
 export interface KernelRasterDecoderParameters {
   readonly schemaVersion: 1 | 2;
@@ -209,7 +329,30 @@ interface FetchedTile {
   readonly ticket: KernelResidencyTicket;
   readonly descriptor: KernelTileDescriptor;
   readonly payloads: readonly FetchedPayload[] | null;
+  readonly warmPayloads: readonly WarmDecodedPayload[] | null;
   readonly compressedCost: KernelResourceCost;
+  readonly contentClasses: readonly KernelStreamingContentClass[];
+  readonly cacheKey: string;
+}
+
+interface WarmDecodedPayload {
+  readonly streamId: string;
+  readonly kind: Exclude<KernelContentReference['kind'], 'cadProxy'>;
+  readonly metadataJson: string;
+  readonly artifact: ArrayBuffer;
+  readonly primary: Uint8Array;
+  readonly bundleManifestJson: string;
+  readonly bundle: Uint8Array;
+  readonly secondary: Uint8Array;
+  readonly decodeParametersJson: string;
+  readonly expectedInputHash: string;
+  readonly residentMetadata: KernelResidentMetadata;
+}
+
+interface WarmCacheEntry {
+  readonly datasetId: string;
+  readonly payloads: readonly WarmDecodedPayload[];
+  readonly byteSize: number;
 }
 
 interface ResidentPayload {
@@ -240,6 +383,19 @@ export class KernelStreamingDriver {
   private readonly decodeControllers = new Map<string, AbortController>();
   private readonly tasks = new Set<Promise<void>>();
   private readonly inflightAssetFetches = new Map<string, InflightAssetFetch>();
+  private readonly inflightRangePages = new Map<string, InflightRangePage>();
+  private readonly tileHistory = new Map<string, 'seen' | 'evicted'>();
+  private readonly ramWarmCache = new DecodedArtifactLru(DEFAULT_RAM_WARM_CACHE_BYTES);
+  private readonly rangePageCache = new ByteRangePageLru(DEFAULT_STREAMING_PAGE_CACHE_BYTES);
+  private readonly transportTelemetry = zeroTransportTelemetry();
+  private readonly lifecycleTelemetry: Record<
+    KernelStreamingContentClass,
+    MutableStreamingLifecycleTelemetry
+  > = {
+    point: zeroLifecycleTelemetry(),
+    mesh: zeroLifecycleTelemetry(),
+    other: zeroLifecycleTelemetry(),
+  };
   private readonly requestSemaphore: DynamicRequestSemaphore;
   private runtimeLimits: KernelStreamingRuntimeLimits = {
     decoderWorkers: 0xffff,
@@ -255,9 +411,10 @@ export class KernelStreamingDriver {
   constructor(
     private readonly kernel: KernelStreamingTarget,
     private readonly fetchBytes: KernelFetch = globalFetch,
-    private readonly onStateChange: () => void = () => {},
+    private readonly onStateChange: () => void = () => undefined,
     private readonly resolveAssetUri: KernelAssetUriResolver = resolveSiblingUri,
     private readonly decodePool?: KernelDecodeExecutor,
+    private readonly now: () => number = () => performance.now(),
   ) {
     this.requestSemaphore = new DynamicRequestSemaphore(this.runtimeLimits.contentRequests);
   }
@@ -279,6 +436,24 @@ export class KernelStreamingDriver {
     this.requestSemaphore.setLimit(next.contentRequests);
     this.decodePool?.setWorkerCount(next.decoderWorkers);
     this.runtimeLimits = next;
+  }
+
+  /** Applies the process-global decoded-artifact ceiling used across providers. */
+  setRamWarmCacheBudget(bytes: number): void {
+    this.assertAlive();
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > 16 * 1024 * 1024 * 1024) {
+      throw new RangeError('RAM-warm cache budget must be an integer from 0 through 16 GiB');
+    }
+    this.ramWarmCache.setBudget(bytes);
+  }
+
+  /** Applies the compressed physical-page ceiling shared by range providers. */
+  setPhysicalPageCacheBudget(bytes: number): void {
+    this.assertAlive();
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > 4 * 1024 * 1024 * 1024) {
+      throw new RangeError('physical-page cache budget must be an integer from 0 through 4 GiB');
+    }
+    this.rangePageCache.setBudget(bytes);
   }
 
   /** Current real transport occupancy and honest synchronous decode mode. */
@@ -310,10 +485,13 @@ export class KernelStreamingDriver {
           bytes + (tile.payloads === null ? 0 : tile.compressedCost.cpuCompressedBytes),
         0,
       ),
-      decodedReadyTiles: [...this.fetched.values()].filter((tile) => tile.payloads === null).length,
+      decodedReadyTiles: [...this.fetched.values()].filter(
+        (tile) => tile.payloads === null && tile.warmPayloads === null,
+      ).length,
       perWorkerReservationBytes: decode.perWorkerReservationBytes,
       maximumWorkerBaselineLinearMemoryBytes: decode.maximumWorkerBaselineLinearMemoryBytes,
       maximumWorkerLinearMemoryBytes: decode.maximumWorkerLinearMemoryBytes,
+      streamingTelemetry: this.telemetrySnapshot(),
       failedOperations: this.failedOperations,
       recentFailures: this.recentFailures.map((failure) => ({ ...failure })),
     };
@@ -372,6 +550,13 @@ export class KernelStreamingDriver {
     if (this.lastPlanDecodeClaims > this.runtimeLimits.decoderWorkers) {
       throw new Error('kernel streaming plan exceeds the configured decoder claim ceiling');
     }
+    for (const key of plan.render) {
+      const resident = this.resident.get(tileKey(key));
+      if (resident === undefined) continue;
+      for (const contentClass of contentClassesForPayloads(resident)) {
+        this.lifecycleTelemetry[contentClass].residencyHits += 1;
+      }
+    }
     let uploadedBytes = 0;
     for (const action of plan.actions) {
       switch (action.kind) {
@@ -408,6 +593,9 @@ export class KernelStreamingDriver {
   detachDataset(datasetId: string): void {
     this.assertAlive();
     if (datasetId.length === 0) throw new RangeError('datasetId must be non-empty');
+    this.ramWarmCache.deleteDataset(datasetId);
+    // Range pages can lack content hashes; project detach is the immutable URI lifetime boundary.
+    this.rangePageCache.clear();
     for (const [key, controller] of this.controllers) {
       if (!driverKeyBelongsToDataset(key, datasetId)) continue;
       controller.abort();
@@ -451,11 +639,15 @@ export class KernelStreamingDriver {
     this.bootstrapControllers.clear();
     for (const controller of this.decodeControllers.values()) controller.abort();
     for (const fetch of this.inflightAssetFetches.values()) fetch.controller.abort();
+    for (const page of this.inflightRangePages.values()) page.controller.abort();
     this.requestSemaphore.dispose();
     this.decodePool?.dispose();
     this.controllers.clear();
     this.decodeControllers.clear();
     this.inflightAssetFetches.clear();
+    this.inflightRangePages.clear();
+    this.ramWarmCache.clear();
+    this.rangePageCache.clear();
     for (const payloads of this.staged.values()) {
       for (const payload of payloads) this.kernel.discardStagedContent(payload.streamId);
     }
@@ -469,11 +661,56 @@ export class KernelStreamingDriver {
     descriptor: KernelTileDescriptor,
   ): Promise<void> {
     const key = tileKey(ticket.key);
+    const contentClasses = contentClassesForDescriptor(descriptor);
+    const history = this.tileHistory.get(key);
+    const firstLoad = history === undefined;
+    const revisit = history === 'evicted';
+    for (const contentClass of contentClasses) {
+      if (firstLoad) this.lifecycleTelemetry[contentClass].coldLoads += 1;
+      else if (revisit) this.lifecycleTelemetry[contentClass].revisitLoads += 1;
+    }
+    if (firstLoad) rememberTileHistory(this.tileHistory, key, 'seen');
+    const cacheKey = decodedArtifactCacheKey(
+      ticket.key,
+      descriptor,
+      this.kernel.canonicalStreamBinding(ticket.key.datasetId),
+      descriptor.contents.some((content) => content.kind === 'potreePoints')
+        ? this.kernel.potreeDecodeParameters(ticket.key.datasetId)
+        : '',
+    );
+    const warm = this.ramWarmCache.get(cacheKey);
+    if (warm !== null) {
+      for (const contentClass of contentClasses) {
+        const telemetry = this.lifecycleTelemetry[contentClass];
+        telemetry.ramWarmHits += 1;
+        telemetry.avoidedNetworkFetches += descriptor.contents.filter(
+          (content) => contentClassForKind(content.kind) === contentClass,
+        ).length;
+      }
+      const compressedCost = zeroCost();
+      this.fetched.set(key, {
+        ticket,
+        descriptor,
+        payloads: null,
+        warmPayloads: warm.payloads,
+        compressedCost,
+        contentClasses,
+        cacheKey,
+      });
+      this.kernel.streamingFetched(ticket, compressedCost);
+      this.onStateChange();
+      return;
+    }
     const controller = this.replaceController(key);
     try {
       const payloads = await Promise.all(
         descriptor.contents.map(async (reference, index) => {
-          const bytes = await this.fetchVerifiedReference(reference, controller.signal);
+          const contentClass = contentClassForKind(reference.kind);
+          const bytes = await this.fetchVerifiedReference(
+            reference,
+            controller.signal,
+            contentClass,
+          );
           const assetBundle =
             reference.kind === 'gltf' || reference.kind === 'threeDTilesContainer'
               ? await this.fetchAssetBundle(reference, bytes, controller.signal)
@@ -492,6 +729,7 @@ export class KernelStreamingDriver {
                 },
                 controller.signal,
                 'raster elevation',
+                contentClass,
               );
             }
             if (parameters.validityReference) {
@@ -502,6 +740,7 @@ export class KernelStreamingDriver {
                 },
                 controller.signal,
                 'raster validity',
+                contentClass,
               );
             }
             if (parameters.confidenceReference) {
@@ -512,6 +751,7 @@ export class KernelStreamingDriver {
                 },
                 controller.signal,
                 'raster confidence',
+                contentClass,
               );
             }
             if (parameters.triangleMaskReference) {
@@ -522,6 +762,7 @@ export class KernelStreamingDriver {
                 },
                 controller.signal,
                 'raster triangle mask',
+                contentClass,
               );
             }
           }
@@ -550,7 +791,15 @@ export class KernelStreamingDriver {
             payload.triangleMaskBytes.byteLength,
           0,
         ) + payloads.reduce((total, payload) => total + payload.assetBundle.bytes.byteLength, 0);
-      this.fetched.set(key, { ticket, descriptor, payloads, compressedCost });
+      this.fetched.set(key, {
+        ticket,
+        descriptor,
+        payloads,
+        warmPayloads: null,
+        compressedCost,
+        contentClasses,
+        cacheKey,
+      });
       this.kernel.streamingFetched(ticket, compressedCost);
       this.onStateChange();
     } catch (error) {
@@ -568,8 +817,15 @@ export class KernelStreamingDriver {
   private async fetchVerifiedReference(
     reference: KernelContentReference,
     signal: AbortSignal,
+    contentClass: KernelStreamingContentClass,
   ): Promise<Uint8Array> {
-    return this.fetchVerifiedBytes(reference, signal, 'stream content');
+    return this.fetchVerifiedBytes(
+      reference,
+      signal,
+      'stream content',
+      contentClass,
+      parseStreamingPagePolicy(reference.decoderParameters),
+    );
   }
 
   private async fetchVerifiedBytes(
@@ -581,8 +837,10 @@ export class KernelStreamingDriver {
     },
     signal: AbortSignal,
     label: string,
+    contentClass: KernelStreamingContentClass = 'other',
+    pagePolicy: StreamingPagePolicy | null = null,
   ): Promise<Uint8Array> {
-    const bytes = await this.fetchReference(reference, signal);
+    const bytes = await this.fetchReference(reference, signal, contentClass, pagePolicy);
     if (reference.contentHash !== null) {
       if (!/^[0-9a-f]{64}$/.test(reference.contentHash)) {
         throw new TypeError(`${label} hash is not canonical lowercase SHA-256`);
@@ -597,152 +855,220 @@ export class KernelStreamingDriver {
   private async decodeTile(ticket: KernelResidencyTicket): Promise<void> {
     const key = tileKey(ticket.key);
     const fetched = this.fetched.get(key);
-    if (!fetched || fetched.ticket.generation !== ticket.generation || fetched.payloads === null)
+    if (
+      fetched?.ticket.generation !== ticket.generation ||
+      (fetched.payloads === null && fetched.warmPayloads === null)
+    )
       return;
     const decodeController = new AbortController();
     this.decodeControllers.get(key)?.abort();
     this.decodeControllers.set(key, decodeController);
     const decodedCost = { ...fetched.compressedCost };
     const staged: ResidentPayload[] = [];
+    const cachePayloads: WarmDecodedPayload[] = [];
     try {
-      for (const payload of fetched.payloads) {
-        if (payload.reference.kind === 'cadProxy') {
-          throw new Error('cadProxy content is not a CPU streaming payload');
+      if (fetched.warmPayloads !== null) {
+        for (const payload of fetched.warmPayloads) {
+          validateDecodeArtifactV5(payload.artifact, payload.expectedInputHash);
+          const ingestStarted = this.now();
+          const cost = this.kernel.stageDecodedStreamingPayload(
+            payload.kind,
+            payload.metadataJson,
+            new Uint8Array(payload.artifact),
+            payload.primary,
+            payload.bundleManifestJson,
+            payload.bundle,
+            payload.secondary,
+            payload.decodeParametersJson,
+            payload.expectedInputHash,
+          );
+          const ingestMs = elapsedMs(ingestStarted, this.now());
+          this.mainThreadDecodeIngestMs += ingestMs;
+          this.maximumMainThreadDecodeIngestMs = Math.max(
+            this.maximumMainThreadDecodeIngestMs,
+            ingestMs,
+          );
+          addCost(decodedCost, cost, false);
+          staged.push({
+            streamId: payload.streamId,
+            proxyIds: [],
+            kind: payload.kind,
+            metadata: payload.residentMetadata,
+          });
+          this.lifecycleTelemetry[contentClassForKind(payload.kind)].avoidedWorkerDecodes += 1;
         }
-        const binding = this.kernel.canonicalStreamBinding(ticket.key.datasetId);
-        const common = {
-          streamId: payload.streamId,
-          slot: binding.key.slot,
-          binding,
-          datasetId: ticket.key.datasetId,
-          tileId: ticket.key.tileId,
-          bounds: fetched.descriptor.bounds,
-        } as const;
-        let decodeParametersJson = '';
-        let validatedPrimitiveCount: number | undefined;
-        let rasterParameters: KernelRasterDecoderParameters | undefined;
-        if (payload.reference.kind === 'potreePoints') {
-          const pointCount = payload.reference.primitiveCount;
-          if (!Number.isSafeInteger(pointCount) || pointCount === null || pointCount <= 0) {
-            throw new Error('Potree hierarchy did not provide a positive point count');
+      } else {
+        for (const payload of fetched.payloads ?? []) {
+          if (payload.reference.kind === 'cadProxy') {
+            throw new Error('cadProxy content is not a CPU streaming payload');
           }
-          validatedPrimitiveCount = pointCount;
-          decodeParametersJson = this.kernel.potreeDecodeParameters(ticket.key.datasetId);
-        } else if (
-          payload.reference.kind === 'gltf' ||
-          payload.reference.kind === 'threeDTilesContainer'
-        ) {
-        } else if (payload.reference.kind === 'gaussianSplats') {
-          const maximumSplats = payload.reference.primitiveCount;
-          if (
-            !Number.isSafeInteger(maximumSplats) ||
-            maximumSplats === null ||
-            maximumSplats <= 0
-          ) {
-            throw new Error('Gaussian hierarchy did not provide a positive splat count');
+          const binding = this.kernel.canonicalStreamBinding(ticket.key.datasetId);
+          const common = {
+            streamId: payload.streamId,
+            slot: binding.key.slot,
+            binding,
+            datasetId: ticket.key.datasetId,
+            tileId: ticket.key.tileId,
+            bounds: fetched.descriptor.bounds,
+          } as const;
+          let decodeParametersJson = '';
+          let validatedPrimitiveCount: number | undefined;
+          let rasterParameters: KernelRasterDecoderParameters | undefined;
+          if (payload.reference.kind === 'potreePoints') {
+            const pointCount = payload.reference.primitiveCount;
+            if (!Number.isSafeInteger(pointCount) || pointCount === null || pointCount <= 0) {
+              throw new Error('Potree hierarchy did not provide a positive point count');
+            }
+            validatedPrimitiveCount = pointCount;
+            decodeParametersJson = this.kernel.potreeDecodeParameters(ticket.key.datasetId);
+          } else if (payload.reference.kind === 'gaussianSplats') {
+            const maximumSplats = payload.reference.primitiveCount;
+            if (
+              !Number.isSafeInteger(maximumSplats) ||
+              maximumSplats === null ||
+              maximumSplats <= 0
+            ) {
+              throw new Error('Gaussian hierarchy did not provide a positive splat count');
+            }
+            validatedPrimitiveCount = maximumSplats;
+            decodeParametersJson = JSON.stringify(payload.reference.decoderParameters ?? {});
+          } else if (payload.reference.kind === 'raster') {
+            rasterParameters = parseRasterParameters(payload.reference.decoderParameters);
           }
-          validatedPrimitiveCount = maximumSplats;
-          decodeParametersJson = JSON.stringify(payload.reference.decoderParameters ?? {});
-        } else if (payload.reference.kind === 'raster') {
-          rasterParameters = parseRasterParameters(payload.reference.decoderParameters);
-        }
-        const metadata =
-          payload.reference.kind === 'potreePoints'
-            ? ({
-                ...common,
-                pointCount: validatedPrimitiveCount!,
-              } satisfies KernelPotreeContentMetadata)
-            : payload.reference.kind === 'gltf' || payload.reference.kind === 'threeDTilesContainer'
+          const metadata =
+            payload.reference.kind === 'potreePoints'
               ? ({
                   ...common,
-                  contentUri: payload.reference.uri,
-                  contentKind: payload.reference.kind,
-                  contentTransform: fetched.descriptor.contentTransform,
-                } satisfies KernelThreeDTilesContentMetadata)
-              : payload.reference.kind === 'gaussianSplats'
+                  pointCount: validatedPrimitiveCount!,
+                } satisfies KernelPotreeContentMetadata)
+              : payload.reference.kind === 'gltf' ||
+                  payload.reference.kind === 'threeDTilesContainer'
                 ? ({
                     ...common,
-                    maximumSplats: validatedPrimitiveCount!,
-                  } satisfies KernelGaussianSplatContentMetadata)
-                : ({
-                    ...common,
-                    contract: await buildPreparedRasterContract(
-                      rasterParameters!,
-                      payload.bytes,
-                      payload.elevationBytes,
-                      payload.validityBytes,
-                      payload.confidenceBytes,
-                      payload.triangleMaskBytes,
-                    ),
-                    elevationPayloadByteLength: payload.elevationBytes.byteLength,
-                    validityPayloadByteLength: payload.validityBytes.byteLength,
-                    confidencePayloadByteLength: payload.confidenceBytes.byteLength,
-                    triangleMaskPayloadByteLength: payload.triangleMaskBytes.byteLength,
-                  } satisfies KernelRasterContentMetadata);
-        const metadataJson = JSON.stringify(metadata);
-        const bundleManifestJson = JSON.stringify(payload.assetBundle.manifest);
-        const decodeJob: KernelDecodeJob = {
-          kind: payload.reference.kind,
-          metadataJson,
-          bundleManifestJson,
-          decodeParametersJson,
-          primary: transferableBuffer(payload.bytes),
-          bundle: transferableBuffer(payload.assetBundle.bytes),
-          secondary: transferableBuffer(
-            packRasterBands(
-              payload.elevationBytes,
-              payload.validityBytes,
-              payload.confidenceBytes,
-              payload.triangleMaskBytes,
+                    contentUri: payload.reference.uri,
+                    contentKind: payload.reference.kind,
+                    contentTransform: fetched.descriptor.contentTransform,
+                  } satisfies KernelThreeDTilesContentMetadata)
+                : payload.reference.kind === 'gaussianSplats'
+                  ? ({
+                      ...common,
+                      maximumSplats: validatedPrimitiveCount!,
+                    } satisfies KernelGaussianSplatContentMetadata)
+                  : ({
+                      ...common,
+                      contract: await buildPreparedRasterContract(
+                        rasterParameters!,
+                        payload.bytes,
+                        payload.elevationBytes,
+                        payload.validityBytes,
+                        payload.confidenceBytes,
+                        payload.triangleMaskBytes,
+                      ),
+                      elevationPayloadByteLength: payload.elevationBytes.byteLength,
+                      validityPayloadByteLength: payload.validityBytes.byteLength,
+                      confidencePayloadByteLength: payload.confidenceBytes.byteLength,
+                      triangleMaskPayloadByteLength: payload.triangleMaskBytes.byteLength,
+                    } satisfies KernelRasterContentMetadata);
+          const metadataJson = JSON.stringify(metadata);
+          const bundleManifestJson = JSON.stringify(payload.assetBundle.manifest);
+          const decodeJob: KernelDecodeJob = {
+            kind: payload.reference.kind,
+            metadataJson,
+            bundleManifestJson,
+            decodeParametersJson,
+            primary: transferableBuffer(payload.bytes),
+            bundle: transferableBuffer(payload.assetBundle.bytes),
+            secondary: transferableBuffer(
+              packRasterBands(
+                payload.elevationBytes,
+                payload.validityBytes,
+                payload.confidenceBytes,
+                payload.triangleMaskBytes,
+              ),
             ),
-          ),
-        };
-        const expectedInputHash = await decodeInputManifestHash(decodeJob);
-        const result = await this.requiredDecodePool().decode(decodeJob, decodeController.signal);
-        validateDecodeArtifactV4(result.artifact, expectedInputHash);
-        const restored: FetchedPayload = {
-          ...payload,
-          bytes: new Uint8Array(result.primary),
-          elevationBytes: new Uint8Array(result.secondary),
-          assetBundle: {
-            manifest: payload.assetBundle.manifest,
-            bytes: new Uint8Array(result.bundle),
-          },
-        };
-        const ingestStarted = performance.now();
-        const cost = this.kernel.stageDecodedStreamingPayload(
-          payload.reference.kind,
-          metadataJson,
-          new Uint8Array(result.artifact),
-          restored.bytes,
-          bundleManifestJson,
-          restored.assetBundle.bytes,
-          restored.elevationBytes,
-          decodeParametersJson,
-          expectedInputHash,
-        );
-        const ingestMs = performance.now() - ingestStarted;
-        this.mainThreadDecodeIngestMs += ingestMs;
-        this.maximumMainThreadDecodeIngestMs = Math.max(
-          this.maximumMainThreadDecodeIngestMs,
-          ingestMs,
-        );
-        addCost(decodedCost, cost, false);
-        staged.push({
-          streamId: payload.streamId,
-          proxyIds: [],
-          kind: payload.reference.kind,
-          metadata: {
-            tile: fetched.descriptor.providerMetadata ?? null,
-            content: payload.reference.decoderParameters ?? null,
-          },
-        });
+          };
+          const expectedInputHash = await decodeInputManifestHash(decodeJob);
+          const contentClass = contentClassForKind(payload.reference.kind);
+          const decodeStarted = this.now();
+          const result = await this.requiredDecodePool().decode(decodeJob, decodeController.signal);
+          const decodeMs = elapsedMs(decodeStarted, this.now());
+          const decodeTelemetry = this.lifecycleTelemetry[contentClass];
+          decodeTelemetry.completedDecodes += 1;
+          decodeTelemetry.decodedArtifactBytes += result.artifact.byteLength;
+          decodeTelemetry.workerDecodeMs += result.workerDurationMs;
+          decodeTelemetry.decodeTurnaroundMs += decodeMs;
+          decodeTelemetry.maximumDecodeTurnaroundMs = Math.max(
+            decodeTelemetry.maximumDecodeTurnaroundMs,
+            decodeMs,
+          );
+          validateDecodeArtifactV5(result.artifact, expectedInputHash);
+          const restored: FetchedPayload = {
+            ...payload,
+            bytes: new Uint8Array(result.primary),
+            elevationBytes: new Uint8Array(result.secondary),
+            assetBundle: {
+              manifest: payload.assetBundle.manifest,
+              bytes: new Uint8Array(result.bundle),
+            },
+          };
+          const ingestStarted = this.now();
+          const cost = this.kernel.stageDecodedStreamingPayload(
+            payload.reference.kind,
+            metadataJson,
+            new Uint8Array(result.artifact),
+            restored.bytes,
+            bundleManifestJson,
+            restored.assetBundle.bytes,
+            restored.elevationBytes,
+            decodeParametersJson,
+            expectedInputHash,
+          );
+          const ingestMs = elapsedMs(ingestStarted, this.now());
+          this.mainThreadDecodeIngestMs += ingestMs;
+          this.maximumMainThreadDecodeIngestMs = Math.max(
+            this.maximumMainThreadDecodeIngestMs,
+            ingestMs,
+          );
+          addCost(decodedCost, cost, false);
+          staged.push({
+            streamId: payload.streamId,
+            proxyIds: [],
+            kind: payload.reference.kind,
+            metadata: {
+              tile: fetched.descriptor.providerMetadata ?? null,
+              content: payload.reference.decoderParameters ?? null,
+            },
+          });
+          cachePayloads.push({
+            streamId: payload.streamId,
+            kind: payload.reference.kind,
+            metadataJson,
+            artifact: result.artifact,
+            primary: restored.bytes,
+            bundleManifestJson,
+            bundle: restored.assetBundle.bytes,
+            secondary: restored.elevationBytes,
+            decodeParametersJson,
+            expectedInputHash,
+            residentMetadata: {
+              tile: fetched.descriptor.providerMetadata ?? null,
+              content: payload.reference.decoderParameters ?? null,
+            },
+          });
+        }
       }
       if (!this.isGenerationCurrent(key, ticket.generation)) {
         for (const payload of staged) this.kernel.discardStagedContent(payload.streamId);
         return;
       }
-      this.fetched.set(key, { ...fetched, payloads: null });
+      if (cachePayloads.length > 0) {
+        this.ramWarmCache.put(fetched.cacheKey, {
+          datasetId: ticket.key.datasetId,
+          payloads: cachePayloads,
+          byteSize: warmPayloadsByteSize(cachePayloads),
+        });
+      }
+      this.fetched.set(key, { ...fetched, payloads: null, warmPayloads: null });
       this.staged.set(key, staged);
       this.kernel.streamingDecoded(ticket, decodedCost);
       this.onStateChange();
@@ -780,18 +1106,18 @@ export class KernelStreamingDriver {
     if (reference.kind !== 'gltf' && reference.kind !== 'threeDTilesContainer') {
       return EMPTY_ASSET_BUNDLE;
     }
-    const documents: Array<{
+    const documents: {
       contentUri: string;
       contentKind: 'gltf' | 'threeDTilesContainer';
       bytes: Uint8Array;
-    }> = [{ contentUri: reference.uri, contentKind: reference.kind, bytes: primaryBytes }];
+    }[] = [{ contentUri: reference.uri, contentKind: reference.kind, bytes: primaryBytes }];
     const inspectedDocuments = new Set<string>();
     const declarations = new Map<
       string,
       { resolvedUri: string; kind: KernelAssetDependency['kind'] }
     >();
     const resolvedBytes = new Map<string, Uint8Array>();
-    const pendingEntries: Array<KernelAssetDependency & { resolvedUri: string }> = [];
+    const pendingEntries: (KernelAssetDependency & { resolvedUri: string })[] = [];
     const integrity = parseImmutableAssetParameters(reference.decoderParameters);
     const expectedAssets = new Map<
       string,
@@ -810,15 +1136,14 @@ export class KernelStreamingDriver {
     const verifiedAssets = new Set<string>();
     let aggregateAssetBytes = 0;
 
-    for (let documentIndex = 0; documentIndex < documents.length; documentIndex += 1) {
-      const document = documents[documentIndex]!;
+    for (const document of documents) {
       if (inspectedDocuments.has(document.contentUri)) continue;
       inspectedDocuments.add(document.contentUri);
       const dependencies = this.kernel.inspect3dTilesDependencies(
         { contentUri: document.contentUri, contentKind: document.contentKind },
         document.bytes,
       );
-      const addedDependencies: Array<KernelAssetDependency & { resolvedUri: string }> = [];
+      const addedDependencies: (KernelAssetDependency & { resolvedUri: string })[] = [];
       for (const dependency of dependencies) {
         if (dependency.ownerUri !== document.contentUri) {
           throw new Error('asset dependency owner does not match the inspected document');
@@ -906,7 +1231,7 @@ export class KernelStreamingDriver {
       totalBytes += bytes.byteLength;
     }
     const packed = new Uint8Array(totalBytes);
-    for (const [resolvedUri, bytes] of resolvedBytes) packed.set(bytes, offsets.get(resolvedUri)!);
+    for (const [resolvedUri, bytes] of resolvedBytes) packed.set(bytes, offsets.get(resolvedUri));
     const entries: KernelResolvedAssetEntry[] = pendingEntries.map((dependency) => ({
       ...dependency,
       byteOffset: offsets.get(dependency.resolvedUri)!,
@@ -926,6 +1251,7 @@ export class KernelStreamingDriver {
         promise: this.fetchReference(
           { uri, byteOffset: null, byteLength: null },
           controller.signal,
+          'mesh',
         ),
       };
       const tracked = inflight;
@@ -936,7 +1262,7 @@ export class KernelStreamingDriver {
             this.inflightAssetFetches.delete(uri);
           }
         })
-        .catch(() => {});
+        .catch(() => undefined);
       this.inflightAssetFetches.set(uri, inflight);
     }
     inflight.consumers += 1;
@@ -957,11 +1283,13 @@ export class KernelStreamingDriver {
     const key = tileKey(ticket.key);
     const fetched = this.fetched.get(key);
     const staged = this.staged.get(key);
-    if (!fetched || fetched.ticket.generation !== ticket.generation || !staged) return 0;
+    if (fetched?.ticket.generation !== ticket.generation || !staged) return 0;
     const residentCost = zeroCost();
     residentCost.cpuCompressedBytes = fetched.compressedCost.cpuCompressedBytes;
     try {
+      const uploadStarted = this.now();
       const result = this.kernel.publishStagedContents(staged.map((payload) => payload.streamId));
+      const uploadMs = elapsedMs(uploadStarted, this.now());
       addCost(residentCost, result.cost, false);
       const proxyIdsByStream = new Map(
         result.streams.map((stream) => [stream.streamId, stream.proxyIds]),
@@ -978,6 +1306,18 @@ export class KernelStreamingDriver {
       }
       this.staged.delete(key);
       this.fetched.delete(key);
+      distributeUploadTelemetry(
+        this.lifecycleTelemetry,
+        fetched.contentClasses,
+        result.uploadedBytes,
+        uploadMs,
+      );
+      if (this.tileHistory.get(key) === 'evicted') {
+        for (const contentClass of fetched.contentClasses) {
+          this.lifecycleTelemetry[contentClass].revisitsMadeResident += 1;
+        }
+        rememberTileHistory(this.tileHistory, key, 'seen');
+      }
       this.kernel.streamingUploaded(ticket, residentCost);
       this.onStateChange();
       return result.uploadedBytes;
@@ -1018,6 +1358,14 @@ export class KernelStreamingDriver {
 
   private evictTile(keyValue: KernelTileKey): void {
     const key = tileKey(keyValue);
+    const resident = this.resident.get(key);
+    if (resident !== undefined) {
+      const contentClasses = contentClassesForPayloads(resident);
+      for (const contentClass of contentClasses) {
+        this.lifecycleTelemetry[contentClass].evictions += 1;
+      }
+      rememberTileHistory(this.tileHistory, key, 'evicted');
+    }
     this.controllers.get(key)?.abort();
     this.decodeControllers.get(key)?.abort();
     this.controllers.delete(key);
@@ -1038,10 +1386,135 @@ export class KernelStreamingDriver {
       readonly byteLength: number | null;
     },
     signal: AbortSignal,
+    contentClass: KernelStreamingContentClass = 'other',
+    pagePolicy: StreamingPagePolicy | null = null,
   ): Promise<Uint8Array> {
-    return this.requestSemaphore.run(signal, () =>
-      fetchReferenceUnbounded(this.fetchBytes, reference, signal),
-    );
+    if (pagePolicy !== null && reference.byteOffset !== null && reference.byteLength !== null) {
+      const pageStart =
+        Math.floor(reference.byteOffset / pagePolicy.targetBytes) * pagePolicy.targetBytes;
+      const relativeOffset = reference.byteOffset - pageStart;
+      if (relativeOffset + reference.byteLength <= pagePolicy.targetBytes) {
+        return this.fetchPhysicalPageSlice(
+          reference.uri,
+          pageStart,
+          pagePolicy.targetBytes,
+          relativeOffset,
+          reference.byteLength,
+          signal,
+          contentClass,
+        );
+      }
+    }
+    return this.fetchTransport(reference, signal, contentClass, false);
+  }
+
+  private async fetchPhysicalPageSlice(
+    uri: string,
+    pageStart: number,
+    pageLength: number,
+    relativeOffset: number,
+    logicalLength: number,
+    signal: AbortSignal,
+    contentClass: KernelStreamingContentClass,
+  ): Promise<Uint8Array> {
+    this.rangePageCache.observeLogicalRead(logicalLength, pageLength);
+    const pageKey = `${uri}\0${pageStart}\0${pageLength}`;
+    let page = this.rangePageCache.get(pageKey);
+    if (page === null) {
+      let inflight = this.inflightRangePages.get(pageKey);
+      if (inflight === undefined) {
+        const controller = new AbortController();
+        const promise = this.fetchTransport(
+          { uri, byteOffset: pageStart, byteLength: pageLength },
+          controller.signal,
+          contentClass,
+          true,
+        );
+        inflight = { controller, promise };
+        this.inflightRangePages.set(pageKey, inflight);
+        this.rangePageCache.observeNetworkPage();
+        void promise
+          .then((bytes) => this.rangePageCache.put(pageKey, bytes))
+          .finally(() => {
+            if (this.inflightRangePages.get(pageKey) === inflight) {
+              this.inflightRangePages.delete(pageKey);
+            }
+          })
+          .catch(() => undefined);
+      } else {
+        this.rangePageCache.observeCoalescedWaiter();
+      }
+      page = await withAbort(inflight.promise, signal);
+    }
+    if (relativeOffset + logicalLength > page.byteLength) {
+      throw new Error('physical range page is shorter than the logical tile reference');
+    }
+    return page.slice(relativeOffset, relativeOffset + logicalLength);
+  }
+
+  private fetchTransport(
+    reference: {
+      readonly uri: string;
+      readonly byteOffset: number | null;
+      readonly byteLength: number | null;
+    },
+    signal: AbortSignal,
+    contentClass: KernelStreamingContentClass,
+    allowShortRange: boolean,
+  ): Promise<Uint8Array> {
+    return this.requestSemaphore.run(signal, async () => {
+      const started = this.now();
+      const ranged = reference.byteOffset !== null && reference.byteLength !== null;
+      this.transportTelemetry.startedRequests += 1;
+      if (ranged) this.transportTelemetry.rangeRequests += 1;
+      else this.transportTelemetry.fullRequests += 1;
+      try {
+        const bytes = await fetchReferenceUnbounded(
+          this.fetchBytes,
+          reference,
+          signal,
+          allowShortRange,
+        );
+        const requestMs = elapsedMs(started, this.now());
+        this.transportTelemetry.completedRequests += 1;
+        this.transportTelemetry.receivedBytes += bytes.byteLength;
+        this.transportTelemetry.requestMs += requestMs;
+        this.transportTelemetry.maximumRequestMs = Math.max(
+          this.transportTelemetry.maximumRequestMs,
+          requestMs,
+        );
+        const lifecycle = this.lifecycleTelemetry[contentClass];
+        lifecycle.completedFetches += 1;
+        lifecycle.fetchedBytes += bytes.byteLength;
+        lifecycle.fetchMs += requestMs;
+        lifecycle.maximumFetchMs = Math.max(lifecycle.maximumFetchMs, requestMs);
+        return bytes;
+      } catch (error) {
+        const requestMs = elapsedMs(started, this.now());
+        this.transportTelemetry.requestMs += requestMs;
+        this.transportTelemetry.maximumRequestMs = Math.max(
+          this.transportTelemetry.maximumRequestMs,
+          requestMs,
+        );
+        if (isAbort(error)) this.transportTelemetry.abortedRequests += 1;
+        else this.transportTelemetry.failedRequests += 1;
+        throw error;
+      }
+    });
+  }
+
+  private telemetrySnapshot(): KernelStreamingTelemetrySnapshot {
+    return {
+      schemaVersion: 1,
+      transport: { ...this.transportTelemetry },
+      lifecycle: {
+        point: { ...this.lifecycleTelemetry.point },
+        mesh: { ...this.lifecycleTelemetry.mesh },
+        other: { ...this.lifecycleTelemetry.other },
+      },
+      ramWarmCache: this.ramWarmCache.snapshot(),
+      physicalPages: this.rangePageCache.snapshot(),
+    };
   }
 
   private removeResident(payload: ResidentPayload): void {
@@ -1093,25 +1566,30 @@ async function fetchReferenceUnbounded(
     readonly byteLength: number | null;
   },
   signal: AbortSignal,
+  allowShortRange = false,
 ): Promise<Uint8Array> {
   const headers = new Headers();
   const hasRange = reference.byteOffset !== null && reference.byteLength !== null;
   if (hasRange) {
-    const end = reference.byteOffset! + reference.byteLength! - 1;
+    const end = reference.byteOffset + reference.byteLength - 1;
     headers.set('Range', `bytes=${reference.byteOffset}-${end}`);
   }
   const response = await fetchBytes(reference.uri, { headers, signal });
   if (!response.ok) throw new Error(`fetch ${reference.uri} failed with HTTP ${response.status}`);
   let bytes = new Uint8Array(await response.arrayBuffer());
   if (hasRange && response.status !== 206) {
-    const offset = reference.byteOffset!;
-    const length = reference.byteLength!;
+    const offset = reference.byteOffset;
+    const length = reference.byteLength;
     if (bytes.byteLength === length) return bytes;
     if (offset + length > bytes.byteLength)
       throw new Error('range response is shorter than requested');
     bytes = bytes.slice(offset, offset + length);
   }
-  if (hasRange && bytes.byteLength !== reference.byteLength) {
+  if (
+    hasRange &&
+    bytes.byteLength !== reference.byteLength &&
+    !(allowShortRange && bytes.byteLength < reference.byteLength)
+  ) {
     throw new Error('range response length does not match hierarchy metadata');
   }
   return bytes;
@@ -1144,6 +1622,153 @@ function driverKeyBelongsToDataset(key: string, datasetId: string): boolean {
 
 function streamId(key: KernelTileKey, index: number): string {
   return `${encodeURIComponent(key.datasetId)}/${encodeURIComponent(key.tileId)}/${index}`;
+}
+
+function contentClassForKind(kind: KernelContentReference['kind']): KernelStreamingContentClass {
+  if (kind === 'potreePoints') return 'point';
+  if (kind === 'gltf' || kind === 'threeDTilesContainer') return 'mesh';
+  return 'other';
+}
+
+function contentClassesForDescriptor(
+  descriptor: KernelTileDescriptor,
+): readonly KernelStreamingContentClass[] {
+  return uniqueContentClasses(
+    descriptor.contents.map((content) => contentClassForKind(content.kind)),
+  );
+}
+
+function contentClassesForPayloads(
+  payloads: readonly ResidentPayload[],
+): readonly KernelStreamingContentClass[] {
+  return uniqueContentClasses(payloads.map((payload) => contentClassForKind(payload.kind)));
+}
+
+function decodedArtifactCacheKey(
+  key: KernelTileKey,
+  descriptor: KernelTileDescriptor,
+  binding: KernelCanonicalStreamMetadata['binding'],
+  potreeDecodeParameters: string,
+): string {
+  return JSON.stringify({ key, descriptor, binding, potreeDecodeParameters });
+}
+
+function parseStreamingPagePolicy(value: unknown): StreamingPagePolicy | null {
+  if (!record(value) || !record(value.streamingPage)) return null;
+  const page = value.streamingPage;
+  if (
+    page.schemaVersion !== 1 ||
+    !Number.isSafeInteger(page.targetBytes) ||
+    Number(page.targetBytes) < MIN_STREAMING_PAGE_BYTES ||
+    Number(page.targetBytes) > MAX_STREAMING_PAGE_BYTES
+  ) {
+    throw new TypeError('streaming page policy must select 0.5 through 4 MiB');
+  }
+  return { targetBytes: Number(page.targetBytes) };
+}
+
+function warmPayloadsByteSize(payloads: readonly WarmDecodedPayload[]): number {
+  let bytes = 0;
+  for (const payload of payloads) {
+    bytes +=
+      payload.artifact.byteLength +
+      payload.primary.byteLength +
+      payload.bundle.byteLength +
+      payload.secondary.byteLength +
+      2 *
+        (payload.metadataJson.length +
+          payload.bundleManifestJson.length +
+          payload.decodeParametersJson.length +
+          payload.expectedInputHash.length);
+  }
+  return bytes;
+}
+
+function uniqueContentClasses(
+  classes: readonly KernelStreamingContentClass[],
+): readonly KernelStreamingContentClass[] {
+  const ordered: KernelStreamingContentClass[] = [];
+  for (const candidate of ['point', 'mesh', 'other'] as const) {
+    if (classes.includes(candidate)) ordered.push(candidate);
+  }
+  return ordered;
+}
+
+function rememberTileHistory(
+  history: Map<string, 'seen' | 'evicted'>,
+  key: string,
+  state: 'seen' | 'evicted',
+): void {
+  history.delete(key);
+  history.set(key, state);
+  if (history.size <= MAX_TELEMETRY_TILE_HISTORY) return;
+  const oldest = history.keys().next().value;
+  if (oldest !== undefined) history.delete(oldest);
+}
+
+function zeroTransportTelemetry(): MutableStreamingTransportTelemetry {
+  return {
+    startedRequests: 0,
+    completedRequests: 0,
+    failedRequests: 0,
+    abortedRequests: 0,
+    fullRequests: 0,
+    rangeRequests: 0,
+    receivedBytes: 0,
+    requestMs: 0,
+    maximumRequestMs: 0,
+  };
+}
+
+function zeroLifecycleTelemetry(): MutableStreamingLifecycleTelemetry {
+  return {
+    coldLoads: 0,
+    revisitLoads: 0,
+    residencyHits: 0,
+    evictions: 0,
+    revisitsMadeResident: 0,
+    ramWarmHits: 0,
+    avoidedNetworkFetches: 0,
+    avoidedWorkerDecodes: 0,
+    completedFetches: 0,
+    fetchedBytes: 0,
+    fetchMs: 0,
+    maximumFetchMs: 0,
+    completedDecodes: 0,
+    decodedArtifactBytes: 0,
+    workerDecodeMs: 0,
+    decodeTurnaroundMs: 0,
+    maximumDecodeTurnaroundMs: 0,
+    completedUploads: 0,
+    uploadedBytes: 0,
+    uploadMs: 0,
+    maximumUploadMs: 0,
+  };
+}
+
+function distributeUploadTelemetry(
+  lifecycle: Record<KernelStreamingContentClass, MutableStreamingLifecycleTelemetry>,
+  contentClasses: readonly KernelStreamingContentClass[],
+  uploadedBytes: number,
+  uploadMs: number,
+): void {
+  if (contentClasses.length === 0) return;
+  const baseBytes = Math.floor(uploadedBytes / contentClasses.length);
+  const remainingBytes = uploadedBytes - baseBytes * contentClasses.length;
+  const sharedMs = uploadMs / contentClasses.length;
+  for (let index = 0; index < contentClasses.length; index += 1) {
+    const contentClass = contentClasses[index]!;
+    const telemetry = lifecycle[contentClass];
+    telemetry.completedUploads += 1;
+    telemetry.uploadedBytes += baseBytes + Number(index < remainingBytes);
+    telemetry.uploadMs += sharedMs;
+    telemetry.maximumUploadMs = Math.max(telemetry.maximumUploadMs, sharedMs);
+  }
+}
+
+function elapsedMs(started: number, finished: number): number {
+  if (!Number.isFinite(started) || !Number.isFinite(finished)) return 0;
+  return Math.max(0, finished - started);
 }
 
 function zeroCost(): MutableCost {
@@ -1287,10 +1912,7 @@ function parseRasterParameters(value: unknown): KernelRasterDecoderParameters {
         (value.confidenceReference.encoding === 'unorm8' ||
           value.confidenceReference.encoding === 'float32LittleEndian'))
     ) ||
-    !(
-      value.triangleMaskReference === null ||
-      validHashedByteReference(value.triangleMaskReference)
-    )
+    !(value.triangleMaskReference === null || validHashedByteReference(value.triangleMaskReference))
   ) {
     throw new TypeError('raster decoderParameters are malformed');
   }
@@ -1361,18 +1983,12 @@ function packRasterBands(
   triangleMask: Uint8Array,
 ): Uint8Array {
   const packed = new Uint8Array(
-    elevations.byteLength +
-      validity.byteLength +
-      confidence.byteLength +
-      triangleMask.byteLength,
+    elevations.byteLength + validity.byteLength + confidence.byteLength + triangleMask.byteLength,
   );
   packed.set(elevations, 0);
   packed.set(validity, elevations.byteLength);
   packed.set(confidence, elevations.byteLength + validity.byteLength);
-  packed.set(
-    triangleMask,
-    elevations.byteLength + validity.byteLength + confidence.byteLength,
-  );
+  packed.set(triangleMask, elevations.byteLength + validity.byteLength + confidence.byteLength);
   return packed;
 }
 
@@ -1423,8 +2039,7 @@ function validRasterTopology(value: unknown): boolean {
     record(value) &&
     (value.kind === 'pixelSteps' ||
       (value.kind === 'continuous' &&
-        (value.diagonal === 'topLeftToBottomRight' ||
-          value.diagonal === 'topRightToBottomLeft') &&
+        (value.diagonal === 'topLeftToBottomRight' || value.diagonal === 'topRightToBottomLeft') &&
         (value.maximumHeightJump === null ||
           (typeof value.maximumHeightJump === 'number' &&
             Number.isFinite(value.maximumHeightJump) &&
@@ -1509,11 +2124,11 @@ function isAbort(error: unknown): boolean {
 }
 
 const DECODE_ARTIFACT_MAGIC = new TextEncoder().encode('HCDECODE');
-const DECODE_ARTIFACT_VERSION = 4;
+const DECODE_ARTIFACT_VERSION = 5;
 const DECODE_ARTIFACT_HEADER_BYTES = 50;
 const DECODE_INPUT_DOMAIN = new TextEncoder().encode('HCDECODE-INPUT-MANIFEST\0');
 
-/** Async host half of the HCDECODE v4 hierarchical input-manifest contract. */
+/** Async host half of the HCDECODE v5 hierarchical input-manifest contract. */
 export async function decodeInputManifestHash(job: KernelDecodeJob): Promise<string> {
   const encoder = new TextEncoder();
   const components = [
@@ -1562,26 +2177,194 @@ export async function decodeInputManifestHash(job: KernelDecodeJob): Promise<str
 }
 
 /** Rejects v1, truncation, trailing bytes and a worker/main input-identity split. */
-export function validateDecodeArtifactV4(artifact: ArrayBuffer, expectedInputHash: string): void {
+export function validateDecodeArtifactV5(artifact: ArrayBuffer, expectedInputHash: string): void {
   const bytes = new Uint8Array(artifact);
   if (
     bytes.byteLength < DECODE_ARTIFACT_HEADER_BYTES ||
     !DECODE_ARTIFACT_MAGIC.every((byte, index) => bytes[index] === byte)
   ) {
-    throw new Error('decode artifact v4 header is invalid');
+    throw new Error('decode artifact v5 header is invalid');
   }
   const view = new DataView(artifact);
   if (
     view.getUint16(8, true) !== DECODE_ARTIFACT_VERSION ||
     view.getBigUint64(10, true) !== BigInt(bytes.byteLength - DECODE_ARTIFACT_HEADER_BYTES)
   ) {
-    throw new Error('decode artifact v4 version or length is invalid');
+    throw new Error('decode artifact v5 version or length is invalid');
   }
   const artifactHash = Array.from(bytes.subarray(18, DECODE_ARTIFACT_HEADER_BYTES), (byte) =>
     byte.toString(16).padStart(2, '0'),
   ).join('');
   if (!/^[0-9a-f]{64}$/.test(expectedInputHash) || artifactHash !== expectedInputHash) {
     throw new Error('decode artifact input manifest hash mismatch');
+  }
+}
+
+class ByteRangePageLru {
+  private readonly entries = new Map<string, Uint8Array>();
+  private retainedBytes = 0;
+  private targetBytes = DEFAULT_STREAMING_PAGE_BYTES;
+  private hits = 0;
+  private misses = 0;
+  private coalescedWaiters = 0;
+  private networkPages = 0;
+  private logicalReads = 0;
+  private logicalBytes = 0;
+
+  constructor(private budgetBytes: number) {}
+
+  get(key: string): Uint8Array | null {
+    const bytes = this.entries.get(key);
+    if (bytes === undefined) {
+      this.misses += 1;
+      return null;
+    }
+    this.entries.delete(key);
+    this.entries.set(key, bytes);
+    this.hits += 1;
+    return bytes;
+  }
+
+  put(key: string, bytes: Uint8Array): void {
+    const previous = this.entries.get(key);
+    if (previous !== undefined) {
+      this.entries.delete(key);
+      this.retainedBytes -= previous.byteLength;
+    }
+    if (bytes.byteLength > this.budgetBytes) return;
+    this.entries.set(key, bytes);
+    this.retainedBytes += bytes.byteLength;
+    this.enforceBudget();
+  }
+
+  setBudget(bytes: number): void {
+    this.budgetBytes = bytes;
+    this.enforceBudget();
+  }
+
+  observeLogicalRead(bytes: number, targetBytes: number): void {
+    this.logicalReads += 1;
+    this.logicalBytes += bytes;
+    this.targetBytes = targetBytes;
+  }
+
+  observeCoalescedWaiter(): void {
+    this.coalescedWaiters += 1;
+  }
+
+  observeNetworkPage(): void {
+    this.networkPages += 1;
+  }
+
+  clear(): void {
+    this.entries.clear();
+    this.retainedBytes = 0;
+  }
+
+  snapshot(): KernelStreamingTelemetrySnapshot['physicalPages'] {
+    return {
+      targetBytes: this.targetBytes,
+      budgetBytes: this.budgetBytes,
+      retainedBytes: this.retainedBytes,
+      entries: this.entries.size,
+      hits: this.hits,
+      misses: this.misses,
+      coalescedWaiters: this.coalescedWaiters,
+      networkPages: this.networkPages,
+      logicalReads: this.logicalReads,
+      logicalBytes: this.logicalBytes,
+    };
+  }
+
+  private enforceBudget(): void {
+    while (this.retainedBytes > this.budgetBytes) {
+      const oldestKey = this.entries.keys().next().value;
+      if (oldestKey === undefined) break;
+      const oldest = this.entries.get(oldestKey);
+      if (oldest === undefined) break;
+      this.entries.delete(oldestKey);
+      this.retainedBytes -= oldest.byteLength;
+    }
+  }
+}
+
+class DecodedArtifactLru {
+  private readonly entries = new Map<string, WarmCacheEntry>();
+  private retainedBytes = 0;
+  private hits = 0;
+  private misses = 0;
+  private evictions = 0;
+  private oversizedRejects = 0;
+
+  constructor(private budgetBytes: number) {}
+
+  get(key: string): WarmCacheEntry | null {
+    const entry = this.entries.get(key);
+    if (entry === undefined) {
+      this.misses += 1;
+      return null;
+    }
+    this.entries.delete(key);
+    this.entries.set(key, entry);
+    this.hits += 1;
+    return entry;
+  }
+
+  put(key: string, entry: WarmCacheEntry): void {
+    const previous = this.entries.get(key);
+    if (previous !== undefined) {
+      this.entries.delete(key);
+      this.retainedBytes -= previous.byteSize;
+    }
+    if (entry.byteSize > this.budgetBytes) {
+      this.oversizedRejects += 1;
+      return;
+    }
+    this.entries.set(key, entry);
+    this.retainedBytes += entry.byteSize;
+    this.enforceBudget();
+  }
+
+  setBudget(bytes: number): void {
+    this.budgetBytes = bytes;
+    this.enforceBudget();
+  }
+
+  deleteDataset(datasetId: string): void {
+    for (const [key, entry] of this.entries) {
+      if (entry.datasetId !== datasetId) continue;
+      this.entries.delete(key);
+      this.retainedBytes -= entry.byteSize;
+    }
+  }
+
+  clear(): void {
+    this.entries.clear();
+    this.retainedBytes = 0;
+  }
+
+  snapshot(): KernelStreamingTelemetrySnapshot['ramWarmCache'] {
+    return {
+      budgetBytes: this.budgetBytes,
+      retainedBytes: this.retainedBytes,
+      entries: this.entries.size,
+      hits: this.hits,
+      misses: this.misses,
+      evictions: this.evictions,
+      oversizedRejects: this.oversizedRejects,
+    };
+  }
+
+  private enforceBudget(): void {
+    while (this.retainedBytes > this.budgetBytes) {
+      const oldestKey = this.entries.keys().next().value;
+      if (oldestKey === undefined) break;
+      const oldest = this.entries.get(oldestKey);
+      if (oldest === undefined) break;
+      this.entries.delete(oldestKey);
+      this.retainedBytes -= oldest.byteSize;
+      this.evictions += 1;
+    }
   }
 }
 

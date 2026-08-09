@@ -25,6 +25,8 @@ extraResources:
     to: RELEASE_INVENTORY.json
   - from: ../../target/release/himmelcad-sidecar
     to: himmelcad-sidecar
+  - from: ../../.build/automation-runtime/linux-x64
+    to: automation-runtime/linux-x64
   - from: ../../target/release/himmelcad-portable-mvs
     to: himmelcad-portable-mvs
   - from: ../../.build/photolab-runtime/linux-x64/workers/colmap

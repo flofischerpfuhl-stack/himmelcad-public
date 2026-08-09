@@ -28,8 +28,8 @@ use crate::canonical_provider::{
     CanonicalExportPlan, CanonicalExportProvider, CanonicalExportRequest, CanonicalImportPackage,
     CanonicalImportProvider, CanonicalImportRequest, CanonicalJsonObject, CanonicalResourceSet,
     ExportOutput, FormatCapability, FormatProviderDescriptor, ImportProbe, ImportProbeRequest,
-    PreparedResourceArtifact, ProviderContractError, ProviderOperationContext, ProviderProgress,
-    CANONICAL_IO_SCHEMA_VERSION,
+    PreparedResourceArtifact, ProviderContractError, ProviderOperationContext,
+    ProviderOptionContract, ProviderProgress, StagedArtifactRoots, CANONICAL_IO_SCHEMA_VERSION,
 };
 use crate::ifc_step::{StepError, StepIndex, StepRecord, StepValue};
 
@@ -78,6 +78,14 @@ impl IfcCanonicalProvider {
                 extensions: vec!["ifc".to_owned()],
                 media_types: vec![IFC_MEDIA_TYPE.to_owned()],
                 capabilities: vec![FormatCapability::Import, FormatCapability::Export],
+                import_options: Some(ProviderOptionContract::object(
+                    serde_json::json!({
+                        "acceptedLossCodes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+                        "importNamespace": {"type": ["string", "null"], "minLength": 1}
+                    }),
+                    serde_json::json!({"acceptedLossCodes": [], "importNamespace": null}),
+                )),
+                export_options: Some(loss_acceptance_options()),
             },
             resource_root,
         }
@@ -127,6 +135,7 @@ struct Product {
     unsupported_geometry: Vec<String>,
     properties: Vec<serde_json::Value>,
     classifications: Vec<serde_json::Value>,
+    materials: Vec<serde_json::Value>,
 }
 
 #[derive(Debug)]
@@ -237,6 +246,29 @@ impl CanonicalImportProvider for IfcCanonicalProvider {
         });
         Ok(package)
     }
+
+    fn staged_artifact_roots(
+        &self,
+        package: &CanonicalImportPackage,
+    ) -> Result<StagedArtifactRoots, ProviderContractError> {
+        Ok(StagedArtifactRoots {
+            dataset_roots: Default::default(),
+            resource_set_roots: package
+                .resource_sets
+                .iter()
+                .map(|set| (set.resource_set_id.clone(), self.resource_root.clone()))
+                .collect(),
+        })
+    }
+}
+
+fn loss_acceptance_options() -> ProviderOptionContract {
+    ProviderOptionContract::object(
+        serde_json::json!({
+            "acceptedLossCodes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+        }),
+        serde_json::json!({"acceptedLossCodes": []}),
+    )
 }
 
 impl CanonicalExportProvider for IfcCanonicalProvider {
@@ -366,6 +398,7 @@ fn map_products(
                 .get(&id)
                 .cloned()
                 .unwrap_or_default(),
+            materials: semantics.materials.get(&id).cloned().unwrap_or_default(),
         });
         if output.len() % 1000 == 0 {
             context.report_progress(ProviderProgress {
@@ -445,6 +478,7 @@ fn ownership_map(index: &StepIndex) -> Result<BTreeMap<u64, u64>, ProviderContra
 struct SemanticMaps {
     properties: BTreeMap<u64, Vec<serde_json::Value>>,
     classifications: BTreeMap<u64, Vec<serde_json::Value>>,
+    materials: BTreeMap<u64, Vec<serde_json::Value>>,
 }
 
 fn semantic_maps(index: &StepIndex) -> Result<SemanticMaps, ProviderContractError> {
@@ -466,6 +500,25 @@ fn semantic_maps(index: &StepIndex) -> Result<SemanticMaps, ProviderContractErro
                 .entry(product)
                 .or_default()
                 .push(value.clone());
+        }
+    }
+    for relation_id in index.ids_of_type("IFCRELASSOCIATESMATERIAL") {
+        let relation = index.record(relation_id).map_err(step_error)?;
+        let related = relation
+            .arguments
+            .get(4)
+            .and_then(list_references)
+            .unwrap_or_default();
+        let Some(material_id) = relation.arguments.get(5).and_then(reference_value) else {
+            continue;
+        };
+        let material = material_assignment_json(index, material_id, &mut BTreeSet::new())?;
+        for product in related {
+            result
+                .materials
+                .entry(product)
+                .or_default()
+                .push(material.clone());
         }
     }
     for relation_id in index.ids_of_type("IFCRELASSOCIATESCLASSIFICATION") {
@@ -497,6 +550,47 @@ fn semantic_maps(index: &StepIndex) -> Result<SemanticMaps, ProviderContractErro
         }
     }
     Ok(result)
+}
+
+fn material_assignment_json(
+    index: &StepIndex,
+    id: u64,
+    active: &mut BTreeSet<u64>,
+) -> Result<serde_json::Value, ProviderContractError> {
+    if active.len() >= 32 || !active.insert(id) {
+        return Err(provider_message(
+            "cyclic or over-deep IFC material assignment",
+        ));
+    }
+    let record = index.record(id).map_err(step_error)?;
+    if !record.entity_type.starts_with("IFCMATERIAL") {
+        active.remove(&id);
+        return Err(provider_message(
+            "IFCRELASSOCIATESMATERIAL target is not an IFC material select",
+        ));
+    }
+    let mut nested = Vec::new();
+    for reference in record.arguments.iter().flat_map(|value| match value {
+        StepValue::Ref(reference) => vec![*reference],
+        StepValue::List(values) => values.iter().filter_map(reference_value).collect(),
+        _ => Vec::new(),
+    }) {
+        if index
+            .records
+            .get(&reference)
+            .is_some_and(|location| location.entity_type.starts_with("IFCMATERIAL"))
+        {
+            nested.push(material_assignment_json(index, reference, active)?);
+        }
+    }
+    active.remove(&id);
+    Ok(serde_json::json!({
+        "stepId": id,
+        "entityType": record.entity_type,
+        "name": record.arguments.iter().find_map(string_value),
+        "materials": nested,
+        "exactArguments": record.arguments.iter().map(step_value_json).collect::<Vec<_>>(),
+    }))
 }
 
 fn property_definition_json(
@@ -1581,6 +1675,7 @@ fn build_package(
                     "unsupportedGeometryTypes": product.unsupported_geometry,
                     "propertySets": product.properties,
                     "externalClassifications": product.classifications,
+                    "materialAssignments": product.materials,
                     "modelCoordinates": model_metadata.clone(),
                     "sourceEqualsDisplayCoordinates": true,
                     "implicitReprojection": false,
@@ -2448,6 +2543,53 @@ ENDSEC;END-ISO-10303-21;";
         assert_eq!(
             attributes.value["hcad.ifc-import@1"]["propertySets"][0]["name"],
             "Pset_WallCommon"
+        );
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn assigns_nested_ifc_materials_to_selectable_bim_entities() {
+        let root = temp_root();
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("material.ifc");
+        let text = "ISO-10303-21;HEADER;FILE_SCHEMA(('IFC4'));ENDSEC;DATA;\
+#1=IFCCARTESIANPOINT((0.,0.,0.));#2=IFCAXIS2PLACEMENT3D(#1,$,$);#3=IFCLOCALPLACEMENT($,#2);\
+#4=IFCRECTANGLEPROFILEDEF(.AREA.,'Rect',$,2.,1.);#5=IFCDIRECTION((0.,0.,1.));\
+#6=IFCEXTRUDEDAREASOLID(#4,$,#5,3.);#7=IFCSHAPEREPRESENTATION($,'Body','SweptSolid',(#6));\
+#8=IFCPRODUCTDEFINITIONSHAPE($,$,(#7));\
+#9=IFCWALL('1abcdefghijklmnopqrstu',$,'Wall',$,$,#3,#8,$,$);\
+#10=IFCMATERIAL('Concrete','Structural concrete','Concrete');\
+#11=IFCMATERIALLAYER(#10,0.2,$,$,$,$,$);#12=IFCMATERIALLAYERSET((#11),'Wall layers',$);\
+#13=IFCMATERIALLAYERSETUSAGE(#12,.AXIS2.,.POSITIVE.,0.,$);\
+#14=IFCRELASSOCIATESMATERIAL('2abcdefghijklmnopqrstu',$,$,$,(#9),#13);\
+ENDSEC;END-ISO-10303-21;";
+        fs::write(&source, text).unwrap();
+        let provider = IfcCanonicalProvider::new(root.join("resources"));
+        let package = provider
+            .import(
+                CanonicalImportRequest {
+                    source: &source,
+                    format_id: IFC4_FORMAT_ID,
+                    options: &serde_json::json!({}),
+                },
+                &mut Context::default(),
+            )
+            .expect("material import");
+        let body = package
+            .admissions
+            .iter()
+            .find(|admission| admission.representation_slot == "body")
+            .expect("body");
+        let attributes = package
+            .objects
+            .iter()
+            .find(|object| object.object_hash == body.entity.attributes_ref)
+            .expect("attributes");
+        let assignment = &attributes.value["hcad.ifc-import@1"]["materialAssignments"][0];
+        assert_eq!(assignment["entityType"], "IFCMATERIALLAYERSETUSAGE");
+        assert_eq!(
+            assignment["materials"][0]["materials"][0]["materials"][0]["name"],
+            "Concrete"
         );
         fs::remove_dir_all(root).ok();
     }

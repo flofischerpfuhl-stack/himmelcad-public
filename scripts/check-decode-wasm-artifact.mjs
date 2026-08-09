@@ -21,7 +21,12 @@ const reportFile = path.join(outputRoot, 'artifact-report.json');
 
 await mkdir(bindgenRoot, { recursive: true });
 await run(cargo, [
-  'build', '-p', 'himmelcad-decode-wasm', '--target', 'wasm32-unknown-unknown', '--release',
+  'build',
+  '-p',
+  'himmelcad-decode-wasm',
+  '--target',
+  'wasm32-unknown-unknown',
+  '--release',
 ]);
 await run(bindgen, [rawWasm, '--out-dir', bindgenRoot, '--target', 'web', '--no-typescript']);
 await run(wasmOpt, [
@@ -49,7 +54,7 @@ const report = {
     bindgenBytes: 5 * 1024 * 1024,
     optimizedBytes: 4 * 1024 * 1024,
     rawGzipBytes: 2 * 1024 * 1024,
-    optimizedGzipBytes: 3 * 1024 * 1024 / 2,
+    optimizedGzipBytes: (3 * 1024 * 1024) / 2,
   },
   measured: { rawBytes, bindgenBytes, optimizedBytes, rawGzipBytes, optimizedGzipBytes },
 };
@@ -76,9 +81,9 @@ async function run(command, args) {
   await new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd: repoRoot, stdio: 'inherit' });
     child.once('error', (error) => {
-      reject(new Error(
-        `${command} is required for the decode-WASM release gate: ${error.message}`,
-      ));
+      reject(
+        new Error(`${command} is required for the decode-WASM release gate: ${error.message}`),
+      );
     });
     child.once('exit', (code, signal) => {
       if (code === 0) resolve();

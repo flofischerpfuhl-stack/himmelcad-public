@@ -1,4 +1,11 @@
-import type { CameraCalibrationGroupRecord, CaptureGroupRecord, EntityId } from '@himmelcad/data';
+import type {
+  CameraCalibrationGroupRecord,
+  CaptureGroupRecord,
+  EntityId,
+  GcpIntrinsicParameterMask,
+  GcpIntrinsicsGroupDiagnostics,
+  GcpIntrinsicsPolicy,
+} from '@himmelcad/data';
 import { Select } from '@himmelcad/ui';
 import { Plus, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -18,6 +25,8 @@ export function CaptureGroupsPanel({
   onCreate,
   onConfirm,
   onUseAsAlignmentScope,
+  intrinsicsDiagnostics,
+  onUpdateIntrinsics,
 }: {
   captureGroups: readonly CaptureGroupRecord[];
   calibrationGroups: readonly CameraCalibrationGroupRecord[];
@@ -31,6 +40,8 @@ export function CaptureGroupsPanel({
   ) => void;
   onConfirm: (captureGroupId: EntityId) => void;
   onUseAsAlignmentScope: (captureGroup: CaptureGroupRecord) => void;
+  intrinsicsDiagnostics: readonly GcpIntrinsicsGroupDiagnostics[];
+  onUpdateIntrinsics: (calibrationGroupId: EntityId, policy: GcpIntrinsicsPolicy) => void;
 }): JSX.Element {
   const [name, setName] = useState('');
   const [calibrationNames, setCalibrationNames] = useState<readonly string[]>(['Autofocus 1']);
@@ -224,6 +235,14 @@ export function CaptureGroupsPanel({
                         {calibration.initialCalibration.heightPixels}
                       </small>
                     )}
+                    <IntrinsicsPolicyEditor
+                      group={calibration}
+                      busy={busy}
+                      diagnostics={intrinsicsDiagnostics.find(
+                        (item) => item.calibrationGroupId === calibration.entityId,
+                      )}
+                      onChange={(policy) => onUpdateIntrinsics(calibration.entityId, policy)}
+                    />
                     <details>
                       <summary>Show assigned images</summary>
                       <div className={styles.assignedImages}>
@@ -243,6 +262,107 @@ export function CaptureGroupsPanel({
       </section>
     </div>
   );
+}
+
+const ALL_INTRINSICS: GcpIntrinsicParameterMask = {
+  f: true,
+  cx: true,
+  cy: true,
+  k1: true,
+  k2: true,
+  k3: true,
+  p1: true,
+  p2: true,
+};
+
+function IntrinsicsPolicyEditor({
+  group,
+  busy,
+  diagnostics,
+  onChange,
+}: {
+  group: CameraCalibrationGroupRecord;
+  busy: boolean;
+  diagnostics: GcpIntrinsicsGroupDiagnostics | undefined;
+  onChange: (policy: GcpIntrinsicsPolicy) => void;
+}): JSX.Element {
+  const policy = group.intrinsicsPolicy ?? { kind: 'auto' };
+  const mask = 'parameters' in policy ? policy.parameters : ALL_INTRINSICS;
+  return (
+    <div>
+      <label>
+        <span>Intrinsics policy</span>
+        <Select
+          value={policy.kind}
+          disabled={busy}
+          onChange={(event) => {
+            const kind = event.currentTarget.value as GcpIntrinsicsPolicy['kind'];
+            if (kind === 'auto' || kind === 'fixed') return onChange({ kind });
+            if (kind === 'custom') return onChange({ kind, parameters: mask });
+            onChange({
+              kind,
+              parameters: mask,
+              stddev: {
+                focalLogScale: 0.25,
+                principalXPixels: 200,
+                principalYPixels: 200,
+                k1: 0.25,
+                k2: 0.25,
+                k3: 0.25,
+                p1: 0.1,
+                p2: 0.1,
+              },
+            });
+          }}
+        >
+          <option value="auto">Auto · staged and observable</option>
+          <option value="fixed">Fixed · trust embedded calibration</option>
+          <option value="prior">Prior · refine selected with regularization</option>
+          <option value="custom">Custom · refine selected</option>
+        </Select>
+      </label>
+      {(policy.kind === 'prior' || policy.kind === 'custom') && (
+        <div aria-label="Enabled intrinsic parameters">
+          {(Object.keys(ALL_INTRINSICS) as (keyof GcpIntrinsicParameterMask)[]).map((parameter) => (
+            <label key={parameter}>
+              <input
+                type="checkbox"
+                checked={mask[parameter]}
+                disabled={busy}
+                onChange={(event) => {
+                  const parameters = { ...mask, [parameter]: event.currentTarget.checked };
+                  onChange(
+                    policy.kind === 'custom'
+                      ? { kind: 'custom', parameters }
+                      : { ...policy, parameters },
+                  );
+                }}
+              />
+              <span>{parameter}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      {diagnostics && (
+        <small>
+          Effective {enabledParameters(diagnostics.effectiveParameters)} ·{' '}
+          {diagnostics.observationCount} observations · radial{' '}
+          {(diagnostics.radialCoverage * 100).toFixed(0)}% · {diagnostics.occupiedQuadrants}/4
+          quadrants
+          {diagnostics.stages.at(-1)?.rejection
+            ? ` · fallback: ${diagnostics.stages.at(-1)?.rejection}`
+            : ''}
+        </small>
+      )}
+    </div>
+  );
+}
+
+function enabledParameters(mask: GcpIntrinsicParameterMask): string {
+  const values = (Object.keys(mask) as (keyof GcpIntrinsicParameterMask)[]).filter(
+    (parameter) => mask[parameter],
+  );
+  return values.length ? values.join(', ') : 'fixed';
 }
 
 function groupingLabel(value: CameraCalibrationGroupRecord['groupingBasis']): string {

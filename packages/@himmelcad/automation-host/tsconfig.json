@@ -1,0 +1,20 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true
+  },
+  "include": [
+    "index.cjs",
+    "index.d.ts",
+    "electron.cjs",
+    "electron.d.ts",
+    "provider-credentials.cjs",
+    "provider-credentials.d.ts"
+  ]
+}

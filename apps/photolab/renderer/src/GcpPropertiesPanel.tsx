@@ -1,4 +1,8 @@
-import type { GcpCollectionRecord, GcpOptimizationPublicationRecord, GcpPoint } from '@himmelcad/data';
+import type {
+  GcpCollectionRecord,
+  GcpOptimizationPublicationRecord,
+  GcpPoint,
+} from '@himmelcad/data';
 
 import styles from './ImagePropertiesPanel.module.css';
 
@@ -12,7 +16,9 @@ export function GcpPropertiesPanel({
   optimization: GcpOptimizationPublicationRecord | null;
 }): JSX.Element {
   const observations = collection.observations.filter((item) => item.pointId === point.id);
-  const residual = optimization?.artifact.result.residuals.find((item) => item.pointId === point.id);
+  const residual = optimization?.artifact.result.residuals.find(
+    (item) => item.pointId === point.id,
+  );
   const manual = observations.filter((item) => item.state.state === 'manual').length;
   const predicted = observations.filter((item) => item.state.state === 'predicted').length;
   const blocked = observations.filter((item) => item.state.state === 'blocked').length;
@@ -45,14 +51,22 @@ export function GcpPropertiesPanel({
         <Row label="Height" value={metric(residual?.heightMeters)} />
         <Row label="Horizontal" value={metric(residual?.horizontalMeters)} />
         <Row label="3D" value={metric(residual?.spatial3dMeters)} />
-        <Row label="Pixel RMS" value={residual ? `${residual.reprojectionRmsPixels.toFixed(3)} px` : '—'} />
+        <Row
+          label="Pixel RMS"
+          value={residual ? `${residual.reprojectionRmsPixels.toFixed(3)} px` : '—'}
+        />
       </section>
     </div>
   );
 }
 
 function Row({ label, value }: { label: string; value: string }): JSX.Element {
-  return <div className={styles.row}><span>{label}</span><strong title={value}>{value}</strong></div>;
+  return (
+    <div className={styles.row}>
+      <span>{label}</span>
+      <strong title={value}>{value}</strong>
+    </div>
+  );
 }
 
 function format(value: number): string {

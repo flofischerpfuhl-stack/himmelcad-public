@@ -20,8 +20,10 @@ use himmelcad_core::entity_validation::{
     canonical_entity_version_hash, geometry_object_content_hash, validate_resolved_representation,
 };
 use himmelcad_core::geometry_representation_registry::CanonicalRepresentationAdmission;
+use himmelcad_core::geometry_representation_registry::SectionTopologyPartitionManifest;
 use himmelcad_core::hash::ObjectHash;
 use himmelcad_core::photolab_crs::FrozenImportTransformation;
+use himmelcad_core::photolab_gcp_optimization::GcpIntrinsicsPolicy;
 use himmelcad_core::photolab_images::DjiBrownConradyCalibration;
 use himmelcad_core::photolab_jobs::{
     CancellationToken, PhotolabJob, PhotolabJobKind, PhotolabJobState,
@@ -36,10 +38,11 @@ use himmelcad_core::photolab_project::{
     PhotolabJournalEntry, PhotolabProjectManifest, ProjectSessionSummary,
     PHOTOLAB_PROJECT_FORMAT_VERSION,
 };
+use himmelcad_core::typed_artifact::{TypedArtifactManifest, TYPED_ARTIFACT_MANIFEST_NAME};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use himmelcad_io::CanonicalImportJsonObject;
+use himmelcad_io::{CanonicalImportJsonObject, CanonicalPreparedDataset, PreparedDatasetArtifact};
 use himmelcad_sidecar::alignment_merge_runtime::{
     inspect_solved_merge, AlignmentMergeEvidenceReport, MergeInputScope, SharedControlMergeOutcome,
 };
@@ -49,6 +52,10 @@ use himmelcad_sidecar::colmap_runtime::{
     ColmapRunOutcome, SelectedMapper,
 };
 use himmelcad_sidecar::dense_raster_prep::PreparedPotreeCloud;
+use himmelcad_sidecar::gcp_local_estimate_runtime::{
+    compute_gcp_local_estimate, read_gcp_local_estimate, ComputeGcpLocalEstimateParams,
+    GcpLocalEstimateArtifact, ReadGcpLocalEstimateParams,
+};
 use himmelcad_sidecar::gcp_optimization_runtime::RunGcpOptimizationResult;
 use himmelcad_sidecar::gcp_runtime::{
     commit_gcps_transaction, create_gcp_optimization_snapshot_transaction,
@@ -244,6 +251,8 @@ pub struct CameraCalibrationGroupRecord {
     pub evidence: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_calibration: Option<CameraCalibrationSeed>,
+    #[serde(default)]
+    pub intrinsics_policy: GcpIntrinsicsPolicy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -285,6 +294,13 @@ pub struct CreateCaptureGroupParams {
 #[serde(rename_all = "camelCase")]
 pub struct ConfirmCaptureGroupParams {
     pub capture_group_id: EntityId,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCalibrationGroupIntrinsicsParams {
+    pub calibration_group_id: EntityId,
+    pub intrinsics_policy: GcpIntrinsicsPolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -692,6 +708,8 @@ pub struct MeshArtifactRecord {
     pub textured: bool,
     pub prepared: PreparedMeshProduct,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_dataset: Option<CanonicalPreparedDataset>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_artifact: Option<ColmapArtifactSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_alignment_entity_id: Option<EntityId>,
@@ -707,8 +725,8 @@ pub struct MeshArtifactRecord {
 
 #[derive(Debug)]
 enum PublishedMeshRecord {
-    Prepared(MeshArtifactRecord),
-    Colmap(ComputeArtifactRecord),
+    Prepared(Box<MeshArtifactRecord>),
+    Colmap(Box<ComputeArtifactRecord>),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -753,6 +771,187 @@ pub struct ProjectPreparedMeshDatasetRecord {
     pub section_topology_resource: GeometryResource,
     pub canonical_admission: CanonicalRepresentationAdmission,
     pub canonical_objects: Vec<CanonicalImportJsonObject>,
+    pub canonical_dataset: CanonicalPreparedDataset,
+}
+
+fn package_prepared_mesh_dataset(
+    dataset_root: &Path,
+    prepared: &PreparedMeshProduct,
+    entity_id: &EntityId,
+) -> Result<CanonicalPreparedDataset> {
+    let render_path = prepared
+        .kernel_manifest_relative_path
+        .as_ref()
+        .context("prepared mesh has no kernel manifest path")?;
+    let render_resource = prepared
+        .kernel_manifest_resource
+        .as_ref()
+        .context("prepared mesh has no kernel manifest resource")?;
+    let preparation_path = prepared
+        .preparation_descriptor_relative_path
+        .as_ref()
+        .context("prepared mesh has no preparation descriptor path")?;
+    let preparation_resource = prepared
+        .preparation_descriptor_resource
+        .as_ref()
+        .context("prepared mesh has no preparation descriptor resource")?;
+    let topology = prepared
+        .section_topology
+        .as_ref()
+        .context("prepared mesh has no section topology")?;
+    anyhow::ensure!(
+        !topology.parts.is_empty(),
+        "prepared mesh section topology is empty"
+    );
+    let topology_parent = topology
+        .manifest_relative_path
+        .parent()
+        .unwrap_or_else(|| Path::new(""));
+    let mut artifacts = vec![
+        verified_dataset_artifact(dataset_root, render_path, render_resource)?,
+        verified_dataset_artifact(dataset_root, preparation_path, preparation_resource)?,
+        verified_dataset_artifact(
+            dataset_root,
+            &topology.manifest_relative_path,
+            &topology.manifest_resource,
+        )?,
+    ];
+    let mut descriptors = Vec::new();
+    for part in &topology.parts {
+        let manifest_relative = topology_parent.join(safe_mesh_artifact_url(&part.manifest_url)?);
+        let manifest_path = dataset_root.join(&manifest_relative);
+        let manifest_bytes = fs::read(&manifest_path)?;
+        let manifest: SectionTopologyPartitionManifest = serde_json::from_slice(&manifest_bytes)?;
+        anyhow::ensure!(
+            manifest.content_hash()?.as_str() == part.topology_hash,
+            "section topology partition hash mismatch for {}",
+            part.part_id
+        );
+        let manifest_resource = GeometryResource {
+            object_hash: ObjectHash::of_bytes(&manifest_bytes),
+            media_type: "hcad.section-topology-partition@1".to_owned(),
+            byte_length: Some(u64::try_from(manifest_bytes.len()).unwrap_or(u64::MAX)),
+        };
+        artifacts.push(verified_dataset_artifact(
+            dataset_root,
+            &manifest_relative,
+            &manifest_resource,
+        )?);
+        let position_relative = topology_parent.join(safe_mesh_artifact_url(&part.position_url)?);
+        artifacts.push(verified_dataset_artifact(
+            dataset_root,
+            &position_relative,
+            &manifest.positions,
+        )?);
+        let index_relative = topology_parent.join(safe_mesh_artifact_url(&part.index_url)?);
+        artifacts.push(verified_dataset_artifact(
+            dataset_root,
+            &index_relative,
+            &manifest.indices,
+        )?);
+        match (&part.material_slot_url, &manifest.material_slots) {
+            (Some(url), Some(resource)) => {
+                let relative = topology_parent.join(safe_mesh_artifact_url(url)?);
+                artifacts.push(verified_dataset_artifact(
+                    dataset_root,
+                    &relative,
+                    resource,
+                )?);
+            }
+            (None, None) => {}
+            _ => anyhow::bail!(
+                "section topology material-slot inventory mismatch for {}",
+                part.part_id
+            ),
+        }
+        descriptors.extend(
+            manifest
+                .typed_artifact_descriptors()
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?,
+        );
+    }
+    let typed_manifest = TypedArtifactManifest {
+        schema_version: TypedArtifactManifest::SCHEMA_VERSION,
+        artifacts: descriptors,
+    };
+    typed_manifest
+        .validate()
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let typed_relative = topology_parent.join(TYPED_ARTIFACT_MANIFEST_NAME);
+    let (typed_artifact, typed_bytes) =
+        PreparedDatasetArtifact::typed_artifact_manifest(typed_relative.clone(), &typed_manifest)?;
+    let typed_path = dataset_root.join(&typed_relative);
+    anyhow::ensure!(
+        !typed_path.exists(),
+        "typed artifact manifest already exists"
+    );
+    fs::write(&typed_path, typed_bytes)?;
+    artifacts.push(typed_artifact);
+    artifacts.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    for pair in artifacts.windows(2) {
+        anyhow::ensure!(
+            pair[0].relative_path != pair[1].relative_path,
+            "prepared mesh artifact path is duplicated: {}",
+            pair[0].relative_path.display()
+        );
+    }
+    let dataset = CanonicalPreparedDataset {
+        dataset_id: format!("prepared-mesh-{}", render_resource.object_hash.as_str()),
+        format_id: render_resource.media_type.clone(),
+        entity_id: entity_id.0.clone(),
+        representation_slot: "primary".to_owned(),
+        root_metadata: render_resource.clone(),
+        artifacts,
+    };
+    dataset.validate_typed_artifact_layouts(&typed_manifest)?;
+    Ok(dataset)
+}
+
+fn safe_mesh_artifact_url(url: &str) -> Result<PathBuf> {
+    anyhow::ensure!(
+        !url.trim().is_empty() && !url.contains('\\'),
+        "invalid prepared mesh artifact URL"
+    );
+    let path = PathBuf::from(url);
+    safe_mesh_relative_path(&path)?;
+    Ok(path)
+}
+
+fn safe_mesh_relative_path(path: &Path) -> Result<()> {
+    anyhow::ensure!(
+        !path.is_absolute()
+            && path
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_))),
+        "prepared mesh artifact URL escaped its dataset"
+    );
+    Ok(())
+}
+
+fn verified_dataset_artifact(
+    dataset_root: &Path,
+    relative_path: &Path,
+    expected: &GeometryResource,
+) -> Result<PreparedDatasetArtifact> {
+    safe_mesh_relative_path(relative_path)?;
+    let relative_path = relative_path.to_owned();
+    let root = dataset_root.canonicalize()?;
+    let path = dataset_root.join(&relative_path).canonicalize()?;
+    anyhow::ensure!(
+        path.starts_with(&root),
+        "prepared mesh artifact escaped its dataset"
+    );
+    let bytes = fs::read(path)?;
+    anyhow::ensure!(
+        ObjectHash::of_bytes(&bytes) == expected.object_hash
+            && expected.byte_length == Some(u64::try_from(bytes.len()).unwrap_or(u64::MAX)),
+        "prepared mesh artifact does not match its immutable descriptor: {}",
+        relative_path.display()
+    );
+    Ok(PreparedDatasetArtifact {
+        relative_path,
+        resource: expected.clone(),
+    })
 }
 
 fn canonical_prepared_mesh_contract(
@@ -1078,6 +1277,7 @@ impl ProjectRuntime {
         result
     }
 
+    #[allow(clippy::too_many_arguments)] // Archive lock ownership stays explicit until session installation.
     fn open_archive_inner(
         &self,
         params: &OpenProjectParams,
@@ -1802,6 +2002,48 @@ impl ProjectRuntime {
         )
     }
 
+    pub fn update_calibration_group_intrinsics(
+        &self,
+        params: UpdateCalibrationGroupIntrinsicsParams,
+    ) -> Result<OpenPhotolabProjectResult> {
+        let mut guard = self.session.lock().expect("project session mutex poisoned");
+        let session = guard.as_mut().context("no project is open")?;
+        ensure_writable(session)?;
+        let snapshot = session
+            .manifest
+            .entities
+            .get(&params.calibration_group_id.0)
+            .context("unknown calibration group")?;
+        anyhow::ensure!(
+            snapshot.kind == EntityKind::CameraCalibrationGroup,
+            "entity is not a camera calibration group"
+        );
+        let bytes = read_verified_object(&session.working_path, &snapshot.version_hash)?;
+        let mut calibration: CameraCalibrationGroupRecord = serde_json::from_slice(&bytes)?;
+        calibration.schema_version = 2;
+        calibration.intrinsics_policy = params.intrinsics_policy;
+        let hash = put_project_object(&session.working_path, &serde_json::to_vec(&calibration)?)?;
+        let mut candidate = session.manifest.clone();
+        candidate
+            .entities
+            .get_mut(&calibration.entity_id.0)
+            .context("calibration group disappeared")?
+            .version_hash = hash.clone();
+        commit_domain_entity_change(
+            session,
+            candidate,
+            unix_ms()?,
+            "PhotolabUpdateCalibrationGroupIntrinsics",
+            serde_json::json!({
+                "calibrationGroupId": calibration.entity_id,
+                "intrinsicsPolicy": calibration.intrinsics_policy,
+            }),
+            vec![calibration.entity_id],
+            vec![hash],
+            "Calibration-group intrinsics policy updated",
+        )
+    }
+
     pub fn calibration_groups_for_camera_scope(
         &self,
         camera_entity_ids: &[String],
@@ -1928,7 +2170,7 @@ impl ProjectRuntime {
                     calibration_index
                 ));
                 calibration_records.push(CameraCalibrationGroupRecord {
-                    schema_version: 1,
+                    schema_version: 2,
                     entity_id,
                     capture_group_id: capture_id.clone(),
                     name: calibration.name,
@@ -1939,6 +2181,7 @@ impl ProjectRuntime {
                     automatic: true,
                     evidence: calibration.evidence,
                     initial_calibration: calibration.initial_calibration,
+                    intrinsics_policy: GcpIntrinsicsPolicy::Auto,
                 });
             }
             let capture_record = CaptureGroupRecord {
@@ -2124,7 +2367,7 @@ impl ProjectRuntime {
                 index
             ));
             calibration_records.push(CameraCalibrationGroupRecord {
-                schema_version: 1,
+                schema_version: 2,
                 entity_id,
                 capture_group_id: capture_id.clone(),
                 name: group_name,
@@ -2135,6 +2378,7 @@ impl ProjectRuntime {
                 automatic: false,
                 evidence: Vec::new(),
                 initial_calibration: seed,
+                intrinsics_policy: GcpIntrinsicsPolicy::Auto,
             });
         }
         let capture_record = CaptureGroupRecord {
@@ -3245,6 +3489,59 @@ impl ProjectRuntime {
         anyhow::bail!("no completed raster product is available for this alignment lineage")
     }
 
+    /// Resolves one exact raster entity revision; batch planning must never use "latest".
+    pub fn raster_dataset_by_entity_id(
+        &self,
+        entity_id: &EntityId,
+        expected_kind: PublishedRasterKind,
+        required_lineage: Option<&ProductLineage>,
+    ) -> Result<(PathBuf, RasterArtifactRecord)> {
+        let guard = self.session.lock().expect("project session mutex poisoned");
+        let session = guard.as_ref().context("no project is open")?;
+        let entity = session
+            .manifest
+            .entities
+            .get(&entity_id.0)
+            .context("selected raster entity does not exist")?;
+        let expected_entity_kind = match expected_kind {
+            PublishedRasterKind::Dem => EntityKind::DigitalElevationModel,
+            PublishedRasterKind::Orthomosaic => EntityKind::Orthomosaic,
+        };
+        anyhow::ensure!(
+            entity.kind == expected_entity_kind,
+            "selected raster has the wrong kind"
+        );
+        let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
+        let record: RasterArtifactRecord = serde_json::from_slice(&bytes)?;
+        anyhow::ensure!(
+            record.kind == expected_kind,
+            "selected raster record has the wrong kind"
+        );
+        if let Some(lineage) = required_lineage {
+            anyhow::ensure!(
+                product_record_matches_lineage(
+                    record.source_alignment_entity_id.as_ref(),
+                    record.processing_set_id.as_ref(),
+                    record.gcp_optimization_entity_id.as_ref(),
+                    record.gcp_optimization_snapshot_sha256.as_ref(),
+                    record.image_mask_scope_sha256.as_ref(),
+                    lineage,
+                ),
+                "selected raster does not belong to the frozen processing lineage"
+            );
+        }
+        let dataset = session
+            .working_path
+            .join(&record.dataset_relative_path)
+            .canonicalize()?;
+        let root = session.working_path.canonicalize()?;
+        anyhow::ensure!(
+            dataset.starts_with(&root) && dataset.is_dir(),
+            "raster dataset escaped project root"
+        );
+        Ok((dataset, record))
+    }
+
     pub fn list_product_datasets(&self) -> Result<Vec<ProjectProductDatasetRecord>> {
         let guard = self.session.lock().expect("project session mutex poisoned");
         let session = guard.as_ref().context("no project is open")?;
@@ -3294,10 +3591,14 @@ impl ProjectRuntime {
                             .zip(record.prepared.preparation_descriptor_resource.as_ref()),
                     )
                     .zip(record.prepared.section_topology.as_ref())
+                    .zip(record.canonical_dataset.as_ref())
                     .map(
                         |(
-                            ((render_path, render_resource), (recipe_path, recipe_resource)),
-                            topology,
+                            (
+                                ((render_path, render_resource), (recipe_path, recipe_resource)),
+                                topology,
+                            ),
+                            canonical_dataset,
                         )|
                          -> Result<ProjectPreparedMeshDatasetRecord> {
                             let (canonical_admission, canonical_objects) =
@@ -3329,6 +3630,7 @@ impl ProjectRuntime {
                                 section_topology_resource: topology.manifest_resource.clone(),
                                 canonical_admission,
                                 canonical_objects,
+                                canonical_dataset: canonical_dataset.clone(),
                             })
                         },
                     )
@@ -3827,8 +4129,8 @@ impl ProjectRuntime {
             };
             if ids.iter().any(|id| json_contains_string(&value, &id.0)) {
                 anyhow::bail!(
-                    "cannot remove selected images because they are referenced by {} “{}”; remove the dependent alignment, processing set, group, GCP observation, or product first",
-                    format!("{:?}", entity.kind),
+                    "cannot remove selected images because they are referenced by {:?} “{}”; remove the dependent alignment, processing set, group, GCP observation, or product first",
+                    entity.kind,
                     entity.name
                 );
             }
@@ -3922,6 +4224,8 @@ impl ProjectRuntime {
             })
         {
             candidate.reference_frame = None;
+            candidate.spatial_reference =
+                himmelcad_core::photolab_capture::PhotolabSpatialReference::default();
             candidate.render_offset = Default::default();
         }
         candidate.command_sequence = candidate.command_sequence.saturating_add(1);
@@ -4042,7 +4346,7 @@ impl ProjectRuntime {
         let project_id = candidate.project_id.clone();
         let job_id = outcome.summary.job_id.clone();
         let entity_id_for =
-            |index: usize| EntityId(format!("{}:compute:{}:{index}", project_id, job_id));
+            |index: usize| EntityId(format!("{project_id}:compute:{job_id}:{index}"));
         let alignment_entity_id = outcome
             .summary
             .artifacts
@@ -4090,6 +4394,7 @@ impl ProjectRuntime {
                     .map(|value| (value, true)),
                 _ => None,
             };
+            let entity_id = entity_id_for(index);
             let bytes = if matches!(
                 artifact.kind,
                 ColmapArtifactKind::Mesh | ColmapArtifactKind::TexturedMesh
@@ -4101,6 +4406,11 @@ impl ProjectRuntime {
                         dataset_relative_path: dataset_relative_path.clone(),
                         textured,
                         prepared: prepared.clone(),
+                        canonical_dataset: Some(package_prepared_mesh_dataset(
+                            &dataset_path,
+                            prepared,
+                            &entity_id,
+                        )?),
                         source_artifact: Some(artifact.clone()),
                         source_alignment_entity_id: Some(alignment_entity_id.clone()),
                         processing_set_id: processing_set_id.clone(),
@@ -4115,7 +4425,6 @@ impl ProjectRuntime {
                 serde_json::to_vec(&record)?
             };
             let version_hash = put_project_object(&session.working_path, &bytes)?;
-            let entity_id = entity_id_for(index);
             let parent = if artifact.kind == ColmapArtifactKind::SparsePointCloud {
                 alignment_entity_id.clone()
             } else {
@@ -4686,6 +4995,8 @@ impl ProjectRuntime {
                 .parent()
                 .context("mesh destination has no parent")?,
         )?;
+        let entity_id = EntityId(format!("{}:mesh:{job_id}", session.manifest.project_id));
+        let canonical_dataset = package_prepared_mesh_dataset(staging_path, &prepared, &entity_id)?;
         fs::rename(staging_path, &destination)?;
         let record = MeshArtifactRecord {
             schema_version: 3,
@@ -4693,6 +5004,7 @@ impl ProjectRuntime {
             dataset_relative_path: relative,
             textured,
             prepared,
+            canonical_dataset: Some(canonical_dataset),
             source_artifact: None,
             source_alignment_entity_id: Some(lineage.source_alignment_entity_id.clone()),
             processing_set_id: lineage.processing_set_id.clone(),
@@ -4703,7 +5015,6 @@ impl ProjectRuntime {
         let version_hash =
             put_project_object(&session.working_path, &serde_json::to_vec(&record)?)?;
         let mut candidate = session.manifest.clone();
-        let entity_id = EntityId(format!("{}:mesh:{job_id}", candidate.project_id));
         candidate.entities.insert(
             entity_id.0.clone(),
             EntitySnapshot {
@@ -4848,6 +5159,46 @@ impl ProjectRuntime {
         let guard = self.session.lock().expect("project session mutex poisoned");
         let session = guard.as_ref().context("no project is open")?;
         read_gcp_collection(&session.working_path, &session.manifest).map_err(anyhow::Error::from)
+    }
+
+    /// Computes derived point feedback without journalling or publishing an alignment.
+    pub fn compute_gcp_local_estimate(
+        &self,
+        params: ComputeGcpLocalEstimateParams,
+    ) -> Result<GcpLocalEstimateArtifact> {
+        let guard = self.session.lock().expect("project session mutex poisoned");
+        let session = guard.as_ref().context("no project is open")?;
+        let (collection_sha256, collection) =
+            read_gcp_collection(&session.working_path, &session.manifest)?
+                .context("project has no GCP collection")?;
+        compute_gcp_local_estimate(
+            &session.working_path,
+            &collection_sha256,
+            &collection,
+            params,
+        )
+        .map_err(anyhow::Error::from)
+    }
+
+    /// Reads only an estimate valid for the current collection and supplied cameras.
+    pub fn read_gcp_local_estimate(
+        &self,
+        params: ReadGcpLocalEstimateParams,
+    ) -> Result<Option<GcpLocalEstimateArtifact>> {
+        let guard = self.session.lock().expect("project session mutex poisoned");
+        let session = guard.as_ref().context("no project is open")?;
+        let Some((collection_sha256, _)) =
+            read_gcp_collection(&session.working_path, &session.manifest)?
+        else {
+            return Ok(None);
+        };
+        read_gcp_local_estimate(
+            &session.working_path,
+            &collection_sha256,
+            &params.point_id,
+            &params.cameras,
+        )
+        .map_err(anyhow::Error::from)
     }
 
     pub fn commit_gcps(&self, params: CommitGcpsParams) -> Result<CommitGcpsResult> {
@@ -5961,7 +6312,7 @@ fn decode_published_mesh_record(
                 "prepared mesh source artifact kind does not match its entity"
             );
         }
-        return Ok(PublishedMeshRecord::Prepared(record));
+        return Ok(PublishedMeshRecord::Prepared(Box::new(record)));
     }
     let record: ComputeArtifactRecord =
         serde_json::from_slice(bytes).context("mesh entity has an unsupported product record")?;
@@ -5974,7 +6325,7 @@ fn decode_published_mesh_record(
         record.artifact.kind == expected_artifact_kind,
         "COLMAP mesh record kind does not match its entity"
     );
-    Ok(PublishedMeshRecord::Colmap(record))
+    Ok(PublishedMeshRecord::Colmap(Box::new(record)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -7056,6 +7407,13 @@ fn read_manifest(path: &Path) -> Result<PhotolabProjectManifest> {
         .with_context(|| format!("failed to read {}", manifest_path.display()))?;
     let mut manifest: PhotolabProjectManifest = serde_json::from_slice(&bytes)
         .with_context(|| format!("invalid project manifest {}", manifest_path.display()))?;
+    // `spatialReference` was introduced after `referenceFrame`. Preserve the
+    // meaning of existing georeferenced projects instead of accepting the
+    // serde default (`localMetric`) alongside an established CRS frame.
+    if manifest.reference_frame.is_some() {
+        manifest.spatial_reference =
+            himmelcad_core::photolab_capture::PhotolabSpatialReference::CrsBacked;
+    }
     if manifest.coordinate_axis_contract_version < 2 {
         normalize_legacy_coordinate_axes(path, &mut manifest)?;
         manifest.coordinate_axis_contract_version = 2;
@@ -7134,6 +7492,7 @@ fn acquire_lock(
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(path)
         .with_context(|| format!("project lock cannot be opened: {}", path.display()))?;
     if let Err(error) = lock.try_lock_exclusive() {
@@ -8660,7 +9019,7 @@ mod tests {
                     value: format!("2026-07-06 15:{:02}:{:02}", index / 60, index % 60),
                     reference: CaptureTimeReference::UnknownLocalTime,
                 });
-                metadata.dji_xmp.calibrated_focal_length_pixels = Some(3725.151_611);
+                metadata.dji_xmp.calibrated_focal_length_pixels = Some(3_725.151_611);
                 metadata.dji_xmp.calibrated_optical_center_x_pixels = Some(2640.0);
                 metadata.dji_xmp.calibrated_optical_center_y_pixels = Some(1978.0);
                 camera_ids.push(insert_test_camera_with_metadata(
@@ -8996,6 +9355,10 @@ mod tests {
                 byte_size: 1,
                 sha256: ObjectHash::of_bytes(format!("source-{suffix}").as_bytes()),
                 metadata: photo_metadata,
+                capture_source: Default::default(),
+                decoder_capability: None,
+                position_prior: None,
+                derived_provenance: None,
                 duplicate_of: None,
             },
             projected_reference: None,
@@ -9487,6 +9850,10 @@ mod tests {
         assert_eq!(migrated.render_offset.x, 4_375_550.25);
         assert_eq!(migrated.render_offset.y, 5_281_200.5);
         assert_eq!(migrated.render_offset.z, 735.8);
+        assert!(matches!(
+            migrated.spatial_reference,
+            himmelcad_core::photolab_capture::PhotolabSpatialReference::CrsBacked
+        ));
 
         runtime.close().expect("close project");
         fs::remove_dir_all(root).expect("test cleanup");
@@ -10182,6 +10549,21 @@ mod tests {
         );
         assert_eq!(kernel.provider_id, "hcad.prepared-triangle-mesh");
         assert_eq!(kernel.provider_version, "1.0.0");
+        assert_eq!(
+            kernel.canonical_dataset.entity_id,
+            published.entity_ids[1].0
+        );
+        assert!(kernel.canonical_dataset.typed_artifact_manifest().is_some());
+        assert!(kernel
+            .canonical_dataset
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.resource.media_type.starts_with("hcad.positions-f")));
+        assert!(kernel
+            .canonical_dataset
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.resource.media_type == "hcad.indices-u32le@1"));
         assert_eq!(
             kernel.dataset_id,
             format!(

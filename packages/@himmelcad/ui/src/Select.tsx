@@ -39,14 +39,13 @@ function optionsFromChildren(children: ReactNode): SelectOption[] {
       disabled?: boolean;
     }>;
     const typeName =
-      typeof el.type === 'string' ? el.type : (el.type as { name?: string }).name ?? '';
+      typeof el.type === 'string' ? el.type : ((el.type as { name?: string }).name ?? '');
     if (typeName !== 'option' && typeName !== 'Option') {
       // Nested fragments
       if (el.props.children) out.push(...optionsFromChildren(el.props.children));
       return;
     }
-    const value =
-      el.props.value != null ? String(el.props.value) : flattenLabel(el.props.children);
+    const value = el.props.value != null ? String(el.props.value) : flattenLabel(el.props.children);
     const label = flattenLabel(el.props.children) || value;
     out.push({ value, label, disabled: Boolean(el.props.disabled) });
   });
@@ -88,7 +87,8 @@ export function Select({
   const [internal, setInternal] = useState(String(defaultValue ?? ''));
 
   const options = useMemo(
-    () => (optionsProp && optionsProp.length > 0 ? [...optionsProp] : optionsFromChildren(children)),
+    () =>
+      optionsProp && optionsProp.length > 0 ? [...optionsProp] : optionsFromChildren(children),
     [optionsProp, children],
   );
 

@@ -15,7 +15,10 @@ void test('active abort terminates the non-cooperative worker and starts the nex
   assert.equal(pool.diagnostics().activeDecodes, 1);
 
   controller.abort();
-  await rejectsWithin(promise, (error) => error instanceof DOMException && error.name === 'AbortError');
+  await rejectsWithin(
+    promise,
+    (error) => error instanceof DOMException && error.name === 'AbortError',
+  );
   assert.equal(pool.diagnostics().activeDecodes, 0);
   assert.equal(pool.diagnostics().canceledDecodes, 1);
   assert.equal(workers[0]!.terminated, true);
@@ -160,34 +163,40 @@ class FakeWorker {
   respondDecoded(idOffset = 0): void {
     const request = this.takeActive();
     const artifact = Uint8Array.from([72, 67]).buffer;
-    this.respond({
-      kind: 'decoded',
-      id: request.id + idOffset,
-      artifact,
-      primary: request.job.primary,
-      bundle: request.job.bundle,
-      secondary: request.job.secondary,
-      workerDurationMs: 2,
-      workerContext: true,
-      workerBaselineLinearMemoryBytes: 16 * 1024 * 1024,
-      workerLinearMemoryBytes: 24 * 1024 * 1024,
-    }, [artifact, request.job.primary, request.job.bundle, request.job.secondary]);
+    this.respond(
+      {
+        kind: 'decoded',
+        id: request.id + idOffset,
+        artifact,
+        primary: request.job.primary,
+        bundle: request.job.bundle,
+        secondary: request.job.secondary,
+        workerDurationMs: 2,
+        workerContext: true,
+        workerBaselineLinearMemoryBytes: 16 * 1024 * 1024,
+        workerLinearMemoryBytes: 24 * 1024 * 1024,
+      },
+      [artifact, request.job.primary, request.job.bundle, request.job.secondary],
+    );
   }
 
   respondFailure(message: string): void {
     const request = this.takeActive();
-    this.respond({
-      kind: 'failed',
-      id: request.id,
-      message,
-      primary: request.job.primary,
-      bundle: request.job.bundle,
-      secondary: request.job.secondary,
-      workerDurationMs: 3,
-      workerContext: true,
-      workerBaselineLinearMemoryBytes: 16 * 1024 * 1024,
-      workerLinearMemoryBytes: 32 * 1024 * 1024,
-    }, [request.job.primary, request.job.bundle, request.job.secondary]);
+    this.respond(
+      {
+        kind: 'failed',
+        id: request.id,
+        message,
+        primary: request.job.primary,
+        bundle: request.job.bundle,
+        secondary: request.job.secondary,
+        workerDurationMs: 3,
+        workerContext: true,
+        workerBaselineLinearMemoryBytes: 16 * 1024 * 1024,
+        workerLinearMemoryBytes: 32 * 1024 * 1024,
+      },
+      [request.job.primary, request.job.bundle, request.job.secondary],
+    );
   }
 
   crash(message: string): void {

@@ -34,23 +34,29 @@ const missionB = optimization('gcp-b', 'alignment-b', 7, true, [
 ]);
 
 assert.deepEqual(
-  compatibleGcpOptimizations('alignment-a', [missionANew, missionB, missionAOld, missionAFailed]).map(
-    (entry) => entry.entityId,
-  ),
+  compatibleGcpOptimizations('alignment-a', [
+    missionANew,
+    missionB,
+    missionAOld,
+    missionAFailed,
+  ]).map((entry) => entry.entityId),
   ['gcp-a-old', 'gcp-a-new'],
 );
 assert.deepEqual(commonControlPointIds([missionANew, missionB]), ['control-1', 'control-2']);
-assert.deepEqual(completeAlignmentConnections(['alignment-a', 'alignment-b'], 'sharedControls', [
-  'control-1',
-  'control-2',
-]), [
-  {
-    kind: 'sharedControls',
-    alignmentA: 'alignment-a',
-    alignmentB: 'alignment-b',
-    controlPointIds: ['control-1', 'control-2'],
-  },
-]);
+assert.deepEqual(
+  completeAlignmentConnections(['alignment-a', 'alignment-b'], 'sharedControls', [
+    'control-1',
+    'control-2',
+  ]),
+  [
+    {
+      kind: 'sharedControls',
+      alignmentA: 'alignment-a',
+      alignmentB: 'alignment-b',
+      controlPointIds: ['control-1', 'control-2'],
+    },
+  ],
+);
 assert.equal(completeAlignmentConnections(['a', 'b', 'c'], 'overlap', []).length, 3);
 
 stdout.write('PhotoLab alignment-merge draft test passed.\n');

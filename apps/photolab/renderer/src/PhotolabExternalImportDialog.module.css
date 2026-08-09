@@ -1,0 +1,7 @@
+.viewport {
+  min-height: 18rem;
+  height: min(34vh, 25rem);
+  overflow: hidden;
+  border-radius: var(--hc-radius-md);
+  background: var(--hc-color-surface-canvas);
+}

@@ -1,5 +1,5 @@
-import { KernelCameraController } from './KernelCameraController.js';
 import type {
+  KernelCameraController,
   KernelCameraTransitionPair,
   KernelLocalOrthographicViewFrame,
   KernelPerspectiveViewpoint,
@@ -11,6 +11,7 @@ import type {
   KernelPickCandidate,
   KernelPickResult,
   KernelRasterAnalysisView,
+  KernelSourcePoint,
   KernelWorldCamera,
   KernelWorldPoint,
 } from './WgpuKernelViewer.js';
@@ -31,6 +32,7 @@ export interface KernelNavigationTarget {
     floatingOrigin: readonly [number, number, number],
   ): void;
   pick(x: number, y: number, radius?: number): Promise<KernelPickResult>;
+  entityHasKnownSourceHeight?(entityId: string): boolean;
 }
 
 export interface KernelNavigationCallbacks {
@@ -40,6 +42,7 @@ export interface KernelNavigationCallbacks {
     count: number,
   ) => void;
   readonly onCameraChanged?: (camera: ReturnType<KernelCameraController['worldCamera']>) => void;
+  readonly onViewModeChanged?: (mode: KernelViewMode) => void;
   readonly onInteractionChanged?: (interactive: boolean) => void;
   readonly onCursorCoordinate?: (
     coordinate: KernelPickCandidate['worldPosition'],
@@ -47,6 +50,9 @@ export interface KernelNavigationCallbacks {
   ) => void;
   readonly requestFrame?: () => void;
 }
+
+/** Shared scene/acquisition mode. Both plan modes use one camera and winner. */
+export type KernelViewMode = '3d' | '2d' | '2.5d';
 
 type DragMode = 'orbit' | 'pan';
 const LOCAL_SECTION_CLIP_SCOPE = 'kernel-local-section-view';
@@ -72,7 +78,12 @@ export class KernelNavigationController {
   private activeCandidateIndex = 0;
   private cursorCoordinate: KernelPickCandidate['worldPosition'] | null = null;
   private cursorPresentationPosition: KernelWorldPoint | null = null;
+  private viewMode: KernelViewMode = '3d';
   private transitionGeneration = 0;
+  private pendingTransition: {
+    readonly resolve: () => void;
+    readonly reject: (reason: unknown) => void;
+  } | null = null;
   private enabled = true;
   private pointerInteracting = false;
   private pointerMotionTimer: ReturnType<typeof setTimeout> | null = null;
@@ -105,13 +116,12 @@ export class KernelNavigationController {
   setEnabled(enabled: boolean): void {
     if (this.disposed || this.enabled === enabled) return;
     this.enabled = enabled;
-    this.transitionGeneration += 1;
+    this.cancelCameraTransition();
     this.dragMode = null;
     this.dragPivot = null;
     this.pointerInteracting = false;
     if (this.pointerMotionTimer !== null) clearTimeout(this.pointerMotionTimer);
     this.pointerMotionTimer = null;
-    this.transitionInteracting = false;
     if (this.wheelInteractionTimer !== null) clearTimeout(this.wheelInteractionTimer);
     this.wheelInteractionTimer = null;
     this.wheelInteracting = false;
@@ -135,7 +145,8 @@ export class KernelNavigationController {
   }
 
   activeCandidate(): KernelPickCandidate | null {
-    return this.candidates[this.activeCandidateIndex] ?? null;
+    const candidate = this.candidates[this.activeCandidateIndex] ?? null;
+    return candidate ? this.projectCandidate(candidate) : null;
   }
 
   /** Current authoritative cursor coordinate, including an explicitly unknown Source Z. */
@@ -143,12 +154,61 @@ export class KernelNavigationController {
     return this.cursorCoordinate;
   }
 
-  /** Runs the Rust perspective/orthographic morph and commits its endpoint. */
-  setLockedTopDown(enabled: boolean, durationMilliseconds = 180): void {
+  currentViewMode(): KernelViewMode {
+    return this.viewMode;
+  }
+
+  /**
+   * Changes shared view semantics. 2D and 2.5D never move the camera; only a
+   * 3D/plan boundary runs the perspective/orthographic morph.
+   */
+  async setViewMode(mode: KernelViewMode, durationMilliseconds = 180): Promise<void> {
     this.assertAlive();
-    if (enabled) this.clearLocalSectionDepth();
-    const transition = this.camera.setLockedTopDown(enabled);
-    this.applyCameraTransition(transition, durationMilliseconds);
+    if (mode === this.viewMode) return;
+    const wasPlan = isPlanViewMode(this.viewMode);
+    const becomesPlan = isPlanViewMode(mode);
+    this.viewMode = mode;
+    if (wasPlan !== becomesPlan) {
+      if (becomesPlan) this.clearLocalSectionDepth();
+      const transition = this.camera.setLockedTopDown(becomesPlan);
+      const settled = this.applyCameraTransition(transition, durationMilliseconds);
+      this.republishCurrentAcquisition();
+      this.callbacks.onViewModeChanged?.(mode);
+      this.callbacks.requestFrame?.();
+      await settled;
+      return;
+    }
+    this.republishCurrentAcquisition();
+    this.callbacks.onViewModeChanged?.(mode);
+    this.callbacks.requestFrame?.();
+  }
+
+  /** Runs the Rust perspective/orthographic morph and commits its endpoint. */
+  setLockedTopDown(enabled: boolean, durationMilliseconds = 180): Promise<void> {
+    return this.setViewMode(enabled ? '2d' : '3d', durationMilliseconds);
+  }
+
+  /** Cancels an in-flight morph and publishes one controller-owned camera endpoint. */
+  adoptWorldCamera(
+    camera: KernelWorldCamera,
+    floatingOrigin?: readonly [number, number, number],
+  ): KernelWorldCamera {
+    this.assertAlive();
+    const previous = this.camera.worldCamera();
+    this.cancelCameraTransition();
+    const adopted = this.camera.adoptWorldCamera(camera);
+    try {
+      this.viewer.setWorldCamera(
+        adopted,
+        floatingOrigin ?? this.camera.recommendedFloatingOrigin(),
+      );
+    } catch (error) {
+      this.camera.adoptWorldCamera(previous);
+      throw error;
+    }
+    this.callbacks.onCameraChanged?.(adopted);
+    this.callbacks.requestFrame?.();
+    return adopted;
   }
 
   /** Enters or replaces an arbitrary local section/profile view frame. */
@@ -159,7 +219,7 @@ export class KernelNavigationController {
     this.assertAlive();
     this.clearLocalSectionDepth();
     const transition = this.camera.setLocalOrthographicFrame(frame);
-    this.applyCameraTransition(transition, durationMilliseconds);
+    void this.applyCameraTransition(transition, durationMilliseconds);
   }
 
   /** Enters a local profile/section frame and composes its optional depth slab. */
@@ -176,7 +236,7 @@ export class KernelNavigationController {
     this.viewer.setScopedClipVolume(LOCAL_SECTION_CLIP_SCOPE, volume);
     this.localSectionDepthActive = volume !== null;
     const transition = this.camera.setLocalOrthographicFrame(view.frame);
-    this.applyCameraTransition(transition, durationMilliseconds);
+    void this.applyCameraTransition(transition, durationMilliseconds);
   }
 
   /** Morphs to an exact user-authored world-space perspective standpoint. */
@@ -184,7 +244,7 @@ export class KernelNavigationController {
     this.assertAlive();
     this.clearLocalSectionDepth();
     const transition = this.camera.setPerspectiveViewpoint(viewpoint);
-    this.applyCameraTransition(transition, durationMilliseconds);
+    void this.applyCameraTransition(transition, durationMilliseconds);
   }
 
   /** Opens one isolated kernel-owned panorama or oriented-image view. */
@@ -203,7 +263,7 @@ export class KernelNavigationController {
               verticalSpan: view.verticalSpan,
             });
       this.rasterAnalysisKind = view.kind;
-      this.applyCameraTransition(transition, durationMilliseconds);
+      void this.applyCameraTransition(transition, durationMilliseconds);
       return view;
     } catch (error) {
       this.viewer.clearRasterAnalysisView();
@@ -222,7 +282,7 @@ export class KernelNavigationController {
         : this.camera.clearLocalOrthographicFrame();
     this.viewer.clearRasterAnalysisView();
     this.rasterAnalysisKind = null;
-    this.applyCameraTransition(transition, durationMilliseconds);
+    void this.applyCameraTransition(transition, durationMilliseconds);
   }
 
   /** Leaves a local section/profile frame and restores its captured 3D camera. */
@@ -230,7 +290,7 @@ export class KernelNavigationController {
     this.assertAlive();
     this.clearLocalSectionDepth();
     const transition = this.camera.clearLocalOrthographicFrame();
-    this.applyCameraTransition(transition, durationMilliseconds);
+    void this.applyCameraTransition(transition, durationMilliseconds);
   }
 
   private clearLocalSectionDepth(): void {
@@ -242,38 +302,58 @@ export class KernelNavigationController {
   private applyCameraTransition(
     transition: KernelCameraTransitionPair | null,
     durationMilliseconds: number,
-  ): void {
-    this.transitionGeneration += 1;
-    if (this.transitionInteracting) {
-      this.transitionInteracting = false;
-      this.reportInteraction();
-    }
-    if (!transition) return;
+  ): Promise<void> {
+    this.cancelCameraTransition();
+    if (!transition) return Promise.resolve();
     const generation = this.transitionGeneration;
     const origin = this.camera.recommendedFloatingOrigin();
     if (!Number.isFinite(durationMilliseconds) || durationMilliseconds <= 0) {
       this.viewer.setWorldCamera(transition.to, origin);
       this.callbacks.onCameraChanged?.(transition.to);
       this.callbacks.requestFrame?.();
-      return;
+      return Promise.resolve();
     }
     this.transitionInteracting = true;
     this.reportInteraction();
     const start = performance.now();
-    const frame = (timestamp: number): void => {
-      if (this.disposed || generation !== this.transitionGeneration) return;
-      const progress = Math.min(1, Math.max(0, (timestamp - start) / durationMilliseconds));
-      this.viewer.setCameraTransition(transition.from, transition.to, progress, origin);
-      this.callbacks.requestFrame?.();
-      if (progress < 1) requestAnimationFrame(frame);
-      else {
-        this.viewer.setWorldCamera(transition.to, origin);
-        this.callbacks.onCameraChanged?.(transition.to);
-        this.transitionInteracting = false;
-        this.reportInteraction();
-      }
-    };
-    requestAnimationFrame(frame);
+    return new Promise<void>((resolve, reject) => {
+      this.pendingTransition = { resolve, reject };
+      const frame = (timestamp: number): void => {
+        if (this.disposed || generation !== this.transitionGeneration) return;
+        try {
+          const progress = Math.min(1, Math.max(0, (timestamp - start) / durationMilliseconds));
+          this.viewer.setCameraTransition(transition.from, transition.to, progress, origin);
+          this.callbacks.requestFrame?.();
+          if (progress < 1) {
+            requestAnimationFrame(frame);
+            return;
+          }
+          this.viewer.setWorldCamera(transition.to, origin);
+          this.callbacks.onCameraChanged?.(transition.to);
+          this.pendingTransition = null;
+          this.transitionInteracting = false;
+          this.reportInteraction();
+          resolve();
+        } catch (error) {
+          this.pendingTransition = null;
+          this.transitionInteracting = false;
+          this.reportInteraction();
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      };
+      requestAnimationFrame(frame);
+    });
+  }
+
+  private cancelCameraTransition(): void {
+    this.transitionGeneration += 1;
+    const pending = this.pendingTransition;
+    this.pendingTransition = null;
+    if (this.transitionInteracting) {
+      this.transitionInteracting = false;
+      this.reportInteraction();
+    }
+    pending?.resolve();
   }
 
   dispose(preserveViewerState = false): void {
@@ -281,7 +361,7 @@ export class KernelNavigationController {
     if (this.rasterAnalysisKind && !preserveViewerState) this.viewer.clearRasterAnalysisView();
     this.rasterAnalysisKind = null;
     this.disposed = true;
-    this.transitionGeneration += 1;
+    this.cancelCameraTransition();
     if (this.wheelInteractionTimer !== null) clearTimeout(this.wheelInteractionTimer);
     if (this.pointerMotionTimer !== null) clearTimeout(this.pointerMotionTimer);
     this.canvas.removeEventListener('pointerdown', this.onPointerDown);
@@ -435,9 +515,9 @@ export class KernelNavigationController {
     this.candidates = [];
     const ndc = this.physicalPointerNdc(position[0], position[1]);
     const targetPlaneCoordinate = this.camera.worldPointOnTargetPlane(ndc[0], ndc[1]);
-    this.cursorCoordinate = targetPlaneCoordinate;
+    this.cursorCoordinate = projectTargetPlaneCoordinate(targetPlaneCoordinate, this.viewMode);
     this.cursorPresentationPosition = targetPlaneCoordinate;
-    this.callbacks.onCursorCoordinate?.(targetPlaneCoordinate, 'targetPlane');
+    this.callbacks.onCursorCoordinate?.(this.cursorCoordinate, 'targetPlane');
     this.callbacks.onActivePick?.(null, 0, 0);
   }
 
@@ -449,14 +529,34 @@ export class KernelNavigationController {
   }
 
   private activateCandidate(index: number): KernelPickCandidate | null {
-    const candidate = this.candidates[index] ?? null;
-    if (!candidate) return null;
+    const sourceCandidate = this.candidates[index] ?? null;
+    if (!sourceCandidate) return null;
+    const candidate = this.projectCandidate(sourceCandidate);
     this.activeCandidateIndex = index;
     this.cursorCoordinate = candidate.worldPosition;
-    this.cursorPresentationPosition = candidate.presentationPosition;
+    this.cursorPresentationPosition = sourceCandidate.presentationPosition;
     this.callbacks.onCursorCoordinate?.(candidate.worldPosition, 'geometry');
     this.callbacks.onActivePick?.(candidate, index, this.candidates.length);
     return candidate;
+  }
+
+  private republishCurrentAcquisition(): void {
+    if (this.candidates[this.activeCandidateIndex]) {
+      this.activateCandidate(this.activeCandidateIndex);
+      return;
+    }
+    const presentation = this.cursorPresentationPosition;
+    if (!presentation) return;
+    this.cursorCoordinate = projectTargetPlaneCoordinate(presentation, this.viewMode);
+    this.callbacks.onCursorCoordinate?.(this.cursorCoordinate, 'targetPlane');
+  }
+
+  private projectCandidate(candidate: KernelPickCandidate): KernelPickCandidate {
+    const authoritativeCandidate =
+      this.viewer.entityHasKnownSourceHeight?.(candidate.address.entityId) === false
+        ? withUnknownSourceHeight(candidate)
+        : candidate;
+    return projectPickCandidateForViewMode(authoritativeCandidate, this.viewMode);
   }
 
   private reportInteraction(): void {
@@ -513,6 +613,38 @@ export class KernelNavigationController {
   private navigationEnabled(): boolean {
     return this.enabled !== false;
   }
+}
+
+export function isPlanViewMode(mode: KernelViewMode): mode is '2d' | '2.5d' {
+  return mode !== '3d';
+}
+
+/** Applies acquisition semantics after ranking, without changing the winner. */
+export function projectPickCandidateForViewMode(
+  candidate: KernelPickCandidate,
+  mode: KernelViewMode,
+): KernelPickCandidate {
+  if (mode !== '2d' || candidate.worldPosition.z === null) return candidate;
+  return {
+    ...candidate,
+    worldPosition: { x: candidate.worldPosition.x, y: candidate.worldPosition.y, z: null },
+  };
+}
+
+function withUnknownSourceHeight(candidate: KernelPickCandidate): KernelPickCandidate {
+  if (candidate.worldPosition.z === null) return candidate;
+  return {
+    ...candidate,
+    worldPosition: { x: candidate.worldPosition.x, y: candidate.worldPosition.y, z: null },
+  };
+}
+
+/** A free target plane has no Source height in either plan acquisition mode. */
+export function projectTargetPlaneCoordinate(
+  coordinate: KernelWorldPoint,
+  mode: KernelViewMode,
+): KernelSourcePoint {
+  return isPlanViewMode(mode) ? { x: coordinate.x, y: coordinate.y, z: null } : coordinate;
 }
 
 /** Returns the closest visible cursor candidate with depth as stable tie-breaker. */

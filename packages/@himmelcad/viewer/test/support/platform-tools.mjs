@@ -22,8 +22,7 @@ export function browserHeadless() {
 
 export function resolveChromeExecutable() {
   const configured =
-    process.env.HCAD_CHROME_PATH?.trim() ||
-    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?.trim();
+    process.env.HCAD_CHROME_PATH?.trim() || process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?.trim();
   if (configured) return requireExecutable(configured, 'configured Chrome');
 
   const candidates =
@@ -51,9 +50,7 @@ export function resolveChromeExecutable() {
     (candidate) => typeof candidate === 'string' && existsSync(candidate),
   );
   if (executable !== undefined) return executable;
-  throw new Error(
-    `no Chrome executable found for ${process.platform}; set HCAD_CHROME_PATH`,
-  );
+  throw new Error(`no Chrome executable found for ${process.platform}; set HCAD_CHROME_PATH`);
 }
 
 export function resolveElectronExecutable(repoRoot) {
@@ -71,9 +68,7 @@ export function resolveElectronExecutable(repoRoot) {
   ];
   const executable = candidates.find((candidate) => existsSync(candidate));
   if (executable !== undefined) return executable;
-  throw new Error(
-    `no Electron executable found for ${process.platform}; set HCAD_ELECTRON_PATH`,
-  );
+  throw new Error(`no Electron executable found for ${process.platform}; set HCAD_ELECTRON_PATH`);
 }
 
 export function resolveEsbuildExecutable(repoRoot) {
@@ -86,9 +81,7 @@ export function resolveEsbuildExecutable(repoRoot) {
   ];
   const executable = candidates.find((candidate) => existsSync(candidate));
   if (executable !== undefined) return executable;
-  throw new Error(
-    `no esbuild executable found for ${process.platform}; set HCAD_ESBUILD_PATH`,
-  );
+  throw new Error(`no esbuild executable found for ${process.platform}; set HCAD_ESBUILD_PATH`);
 }
 
 function requireExecutable(executable, label) {

@@ -24,7 +24,7 @@ import type {
   OrderedExcalidrawElement,
   ExcalidrawNonSelectionElement,
 } from "./element/types";
-import type { Action } from "./actions/types";
+import type { Action, ActionName } from "./actions/types";
 import type { LinearElementEditor } from "./element/linearElementEditor";
 import type { SuggestedBinding } from "./element/binding";
 import type { ImportedDataState } from "./data/types";
@@ -775,6 +775,8 @@ export interface ExcalidrawImperativeAPI {
   getName: InstanceType<typeof App>["getName"];
   scrollToContent: InstanceType<typeof App>["scrollToContent"];
   registerAction: (action: Action) => void;
+  /** Executes Excalidraw's registered action without duplicating editor behavior in a host toolbar. */
+  executeAction: (name: ActionName) => boolean;
   refresh: InstanceType<typeof App>["refresh"];
   setToast: InstanceType<typeof App>["setToast"];
   addFiles: (data: BinaryFileData[]) => void;

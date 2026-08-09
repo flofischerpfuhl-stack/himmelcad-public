@@ -442,6 +442,11 @@ impl CanonicalDocument {
         self.entities.values()
     }
 
+    /// Iterates all current tombstones in stable identity order.
+    pub fn tombstones(&self) -> impl Iterator<Item = &CanonicalEntityTombstone> {
+        self.tombstones.values()
+    }
+
     /// Complete immutable journal in acceptance order.
     #[must_use]
     pub fn journal(&self) -> &[CanonicalJournalEntry] {

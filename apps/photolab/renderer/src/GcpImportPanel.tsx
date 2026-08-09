@@ -341,7 +341,9 @@ export function GcpImportPanel({
     (discoveryQueryKey === JSON.stringify(query) &&
       selectedOperation != null &&
       !selectedOperation.ballpark &&
-      selectedOperation.requiredGrids.every((grid) => grid.availability.state === 'presentVerified'));
+      selectedOperation.requiredGrids.every(
+        (grid) => grid.availability.state === 'presentVerified',
+      ));
 
   const siteCalBlocked = mode === 'combined' && siteCalPath != null;
   // Only discover PROJ ops when a real transform is needed and we're on the ops/review path.
@@ -622,7 +624,12 @@ export function GcpImportPanel({
 
   if (!path) {
     return (
-      <ImportChatRoot title="GCP Import" onClose={onCancel} closeLabel="Close GCP import" busy={busy}>
+      <ImportChatRoot
+        title="GCP Import"
+        onClose={onCancel}
+        closeLabel="Close GCP import"
+        busy={busy}
+      >
         <EmptyPick
           icon={
             externalError ? (
@@ -656,8 +663,7 @@ export function GcpImportPanel({
     doHorizontal === 'yes' &&
     phaseOrder(phase) >= phaseOrder('horizontal_setup');
   const showCombined = mode === 'combined' && phaseOrder(phase) >= phaseOrder('combined_setup');
-  const showOps =
-    transformCoordinates && phaseOrder(phase) >= phaseOrder('operations');
+  const showOps = transformCoordinates && phaseOrder(phase) >= phaseOrder('operations');
   const showReview = phase === 'review';
 
   return (
@@ -707,9 +713,7 @@ export function GcpImportPanel({
             <button
               type="button"
               className={chat.primaryBtn}
-              disabled={
-                !previewReady || !operationReady || busy || localBusy || siteCalBlocked
-              }
+              disabled={!previewReady || !operationReady || busy || localBusy || siteCalBlocked}
               onClick={() => void commit()}
             >
               {busy ? <LoaderCircle className={chat.spinner} size={14} /> : <Check size={14} />}
@@ -868,43 +872,49 @@ export function GcpImportPanel({
             {mode == null && listWorkflows('gcp').length > 0 && (
               <ChatCard title="Saved workflows">
                 <div className={chat.chipGroup}>
-                  {listWorkflows('gcp').slice(0, 5).map((workflow) => (
-                    <button
-                      key={workflow.id}
-                      type="button"
-                      className={chat.chip}
-                      disabled={locked}
-                      title={workflow.name}
-                      onClick={() => {
-                        if (workflow.kind !== 'gcp') return;
-                        setMode(workflow.mode);
-                        setDoVertical(workflow.doVertical);
-                        setDoHorizontal(workflow.doHorizontal);
-                        setSourceCrsEpsg(workflow.sourceCrsEpsg);
-                        setDelimiter(workflow.delimiter);
-                        setDecimalSeparator(workflow.decimalSeparator);
-                        setHasHeader(workflow.hasHeader);
-                        setColumns(workflow.columns);
-                        setRole(workflow.role as typeof role);
-                        setHorizontalStddev(workflow.horizontalStddev);
-                        setHeightStddev(workflow.heightStddev);
-                        if (workflow.horizontalGrid) {
-                          setLocalGrid({
-                            filename: workflow.horizontalGrid.filename,
-                            localPath: workflow.horizontalGrid.absolutePath || workflow.horizontalGrid.localPath,
-                            absolutePath: workflow.horizontalGrid.absolutePath,
-                            relativePath: workflow.horizontalGrid.relativePath,
-                            kind: workflow.horizontalGrid.kind,
-                            driver: workflow.horizontalGrid.driver,
-                            coverage: workflow.horizontalGrid.coverage,
-                          });
-                        }
-                        setPhase(workflow.mode === 'none' ? 'review' : 'horizontal_setup');
-                      }}
-                    >
-                      {workflow.name.length > 42 ? `${workflow.name.slice(0, 40)}…` : workflow.name}
-                    </button>
-                  ))}
+                  {listWorkflows('gcp')
+                    .slice(0, 5)
+                    .map((workflow) => (
+                      <button
+                        key={workflow.id}
+                        type="button"
+                        className={chat.chip}
+                        disabled={locked}
+                        title={workflow.name}
+                        onClick={() => {
+                          if (workflow.kind !== 'gcp') return;
+                          setMode(workflow.mode);
+                          setDoVertical(workflow.doVertical);
+                          setDoHorizontal(workflow.doHorizontal);
+                          setSourceCrsEpsg(workflow.sourceCrsEpsg);
+                          setDelimiter(workflow.delimiter);
+                          setDecimalSeparator(workflow.decimalSeparator);
+                          setHasHeader(workflow.hasHeader);
+                          setColumns(workflow.columns);
+                          setRole(workflow.role as typeof role);
+                          setHorizontalStddev(workflow.horizontalStddev);
+                          setHeightStddev(workflow.heightStddev);
+                          if (workflow.horizontalGrid) {
+                            setLocalGrid({
+                              filename: workflow.horizontalGrid.filename,
+                              localPath:
+                                workflow.horizontalGrid.absolutePath ||
+                                workflow.horizontalGrid.localPath,
+                              absolutePath: workflow.horizontalGrid.absolutePath,
+                              relativePath: workflow.horizontalGrid.relativePath,
+                              kind: workflow.horizontalGrid.kind,
+                              driver: workflow.horizontalGrid.driver,
+                              coverage: workflow.horizontalGrid.coverage,
+                            });
+                          }
+                          setPhase(workflow.mode === 'none' ? 'review' : 'horizontal_setup');
+                        }}
+                      >
+                        {workflow.name.length > 42
+                          ? `${workflow.name.slice(0, 40)}…`
+                          : workflow.name}
+                      </button>
+                    ))}
                 </div>
               </ChatCard>
             )}
@@ -1065,62 +1075,64 @@ export function GcpImportPanel({
         {mode === 'separate' &&
           doHorizontal === 'yes' &&
           phaseOrder(phase) >= phaseOrder('horizontal_grid') && (
-          <>
-            <ChatBubble
-              role="system"
-              title="Horizontal datum grid"
-              onRevert={() => clearFrom('horizontal_grid')}
-              revertDisabled={locked}
-            />
-            <ChatCard
-              title="Horizontal grid file"
-              onRevert={() => clearFrom('horizontal_grid')}
-              revertDisabled={locked}
-            >
-              <div className={chat.gridRow}>
-                <Grid3X3 size={16} />
-                <div>
-                  <strong>NTv2 / GTG grid</strong>
-                  <span>
-                    {localGrid
-                      ? `${localGrid.filename} · previously selected`
-                      : 'Bundled grids used when they cover the project.'}
-                  </span>
-                  {gridProgress?.phase === 'grid' && <ProgressBar value={gridProgress.fraction} />}
-                  {localGrid && <code title={localGrid.localPath}>{localGrid.localPath}</code>}
-                </div>
-                <button
-                  type="button"
-                  className={chat.ghostBtn}
-                  disabled={locked || phase !== 'horizontal_grid'}
-                  onClick={() => void chooseGrid()}
-                >
-                  {localGrid ? 'Change…' : 'Choose grid…'}
-                </button>
-              </div>
-              {phase === 'horizontal_grid' && (
-                <div className={chat.toolbar}>
+            <>
+              <ChatBubble
+                role="system"
+                title="Horizontal datum grid"
+                onRevert={() => clearFrom('horizontal_grid')}
+                revertDisabled={locked}
+              />
+              <ChatCard
+                title="Horizontal grid file"
+                onRevert={() => clearFrom('horizontal_grid')}
+                revertDisabled={locked}
+              >
+                <div className={chat.gridRow}>
+                  <Grid3X3 size={16} />
+                  <div>
+                    <strong>NTv2 / GTG grid</strong>
+                    <span>
+                      {localGrid
+                        ? `${localGrid.filename} · previously selected`
+                        : 'Bundled grids used when they cover the project.'}
+                    </span>
+                    {gridProgress?.phase === 'grid' && (
+                      <ProgressBar value={gridProgress.fraction} />
+                    )}
+                    {localGrid && <code title={localGrid.localPath}>{localGrid.localPath}</code>}
+                  </div>
                   <button
                     type="button"
-                    className={`${chat.choice} ${chat.choicePrimary}`}
-                    disabled={locked}
-                    onClick={confirmHorizontalGrid}
+                    className={chat.ghostBtn}
+                    disabled={locked || phase !== 'horizontal_grid'}
+                    onClick={() => void chooseGrid()}
                   >
-                    Continue
-                  </button>
-                  <button
-                    type="button"
-                    className={chat.choice}
-                    disabled={locked}
-                    onClick={skipHorizontalGrid}
-                  >
-                    Use bundled / none
+                    {localGrid ? 'Change…' : 'Choose grid…'}
                   </button>
                 </div>
-              )}
-            </ChatCard>
-          </>
-        )}
+                {phase === 'horizontal_grid' && (
+                  <div className={chat.toolbar}>
+                    <button
+                      type="button"
+                      className={`${chat.choice} ${chat.choicePrimary}`}
+                      disabled={locked}
+                      onClick={confirmHorizontalGrid}
+                    >
+                      Continue
+                    </button>
+                    <button
+                      type="button"
+                      className={chat.choice}
+                      disabled={locked}
+                      onClick={skipHorizontalGrid}
+                    >
+                      Use bundled / none
+                    </button>
+                  </div>
+                )}
+              </ChatCard>
+            </>
+          )}
 
         {showCombined && (
           <ChatCard
@@ -1133,7 +1145,8 @@ export function GcpImportPanel({
               <div>
                 <strong>Site calibration file</strong>
                 <span>
-                  .cal / .dc parser is not implemented. Leave empty to use PROJ source → {targetCrs}.
+                  .cal / .dc parser is not implemented. Leave empty to use PROJ source → {targetCrs}
+                  .
                 </span>
                 {siteCalPath && <code>{fileName(siteCalPath)}</code>}
               </div>
@@ -1299,18 +1312,22 @@ export function GcpImportPanel({
                   ))}
                 </div>
                 {selectedOperation &&
-                  warningsForOperation(discovery.warnings, selectedOperation.name).map((warning) => (
-                    <div key={warning} className={chat.warnInline}>
-                      <AlertTriangle size={14} />
-                      <span>{warning}</span>
-                    </div>
-                  ))}
+                  warningsForOperation(discovery.warnings, selectedOperation.name).map(
+                    (warning) => (
+                      <div key={warning} className={chat.warnInline}>
+                        <AlertTriangle size={14} />
+                        <span>{warning}</span>
+                      </div>
+                    ),
+                  )}
                 {phase === 'operations' && selectedOperationId && (
                   <div className={chat.toolbar}>
                     <button
                       type="button"
                       className={`${chat.choice} ${chat.choicePrimary}`}
-                      disabled={busy || localBusy || !selectedOperation || selectedOperation.ballpark}
+                      disabled={
+                        busy || localBusy || !selectedOperation || selectedOperation.ballpark
+                      }
                       onClick={() => setPhase('review')}
                     >
                       Continue with this operation
@@ -1337,10 +1354,7 @@ export function GcpImportPanel({
                 value={transformCoordinates ? `${sourceCrs} → ${targetCrs}` : `As ${targetCrs}`}
               />
               <Metric label="Mode" value={mode ? MODE_LABEL[mode] : '—'} />
-              <Metric
-                label="Decimals"
-                value={decimalSeparator === 'comma' ? 'Comma' : 'Point'}
-              />
+              <Metric label="Decimals" value={decimalSeparator === 'comma' ? 'Comma' : 'Point'} />
             </div>
             {busy && (
               <div className={chat.successInline} style={{ color: 'var(--hc-fg-muted)' }}>
@@ -1461,9 +1475,7 @@ function CrsSearchColumn({
     }
     const tokens = q.split(/\s+/).filter(Boolean);
     const fromPresets = presets.filter((p) =>
-      tokens.every((t) =>
-        `${p.code} ${p.name} ${p.region} ${p.hint}`.toLowerCase().includes(t),
-      ),
+      tokens.every((t) => `${p.code} ${p.name} ${p.region} ${p.hint}`.toLowerCase().includes(t)),
     );
     const custom = /^(?:epsg:\s*)?(\d{3,7})$/i.exec(query.trim());
     const customCode = custom ? Number(custom[1]) : null;

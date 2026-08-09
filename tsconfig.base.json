@@ -30,11 +30,14 @@
 
     "baseUrl": ".",
     "paths": {
+      "@himmelcad/app": ["packages/@himmelcad/app/src/index.ts"],
+      "@himmelcad/app/*": ["packages/@himmelcad/app/src/*"],
       "@himmelcad/ui": ["packages/@himmelcad/ui/src/index.ts"],
       "@himmelcad/ui/*": ["packages/@himmelcad/ui/src/*"],
       "@himmelcad/viewer": ["packages/@himmelcad/viewer/src/index.ts"],
       "@himmelcad/viewer/*": ["packages/@himmelcad/viewer/src/*"],
       "@himmelcad/data": ["packages/@himmelcad/data/src/index.ts"],
+      "@himmelcad/data/canonical": ["packages/@himmelcad/data/src/generated/index.ts"],
       "@himmelcad/data/*": ["packages/@himmelcad/data/src/*"],
       "@himmelcad/theme": ["packages/@himmelcad/theme/src/index.ts"],
       "@himmelcad/theme/*": ["packages/@himmelcad/theme/src/*"],

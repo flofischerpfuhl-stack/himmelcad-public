@@ -210,12 +210,7 @@ function heightReference(
   return { kind: 'unknown' };
 }
 
-function assertSingleKey(
-  obj: Record<string, unknown>,
-  a: string,
-  b: string,
-  label: string,
-): void {
+function assertSingleKey(obj: Record<string, unknown>, a: string, b: string, label: string): void {
   const hasA = Object.prototype.hasOwnProperty.call(obj, a);
   const hasB = Object.prototype.hasOwnProperty.call(obj, b);
   assert.ok(!(hasA && hasB), `${label} must not dual-key ${a}+${b}`);
@@ -384,9 +379,6 @@ describe('workflow JSON round-trip shape', () => {
       operation: { requiredGrids: RequiredGrid[] };
     };
     assert.equal(parsed.operation.requiredGrids[0]!.officialSha256, undefined);
-    assert.equal(
-      gridLocalPath(parsed.operation.requiredGrids[0]!),
-      userPath,
-    );
+    assert.equal(gridLocalPath(parsed.operation.requiredGrids[0]!), userPath);
   });
 });

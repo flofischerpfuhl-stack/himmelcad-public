@@ -150,6 +150,25 @@ export function createSyntheticPotree() {
     nodes: Object.freeze(nodes),
     logicalPoints,
     virtualOctreeBytes: virtualOffset,
+    payloadForVirtualRange(start, length) {
+      const overlapping = nodesForVirtualRange(nodes, virtualOffset, start, length);
+      const actualLength = Math.min(length, virtualOffset - start);
+      const bytes = new Uint8Array(actualLength);
+      const requestedEnd = start + actualLength;
+      for (const node of overlapping) {
+        const overlapStart = Math.max(start, node.byteOffset);
+        const overlapEnd = Math.min(requestedEnd, node.byteOffset + node.byteLength);
+        const payload = pointPayload(node);
+        bytes.set(
+          payload.subarray(overlapStart - node.byteOffset, overlapEnd - node.byteOffset),
+          overlapStart - start,
+        );
+      }
+      return bytes;
+    },
+    nodesForVirtualRange(start, length) {
+      return nodesForVirtualRange(nodes, virtualOffset, start, length);
+    },
     payloadForRange(start, length) {
       const node = byOffset.get(start);
       if (node === undefined || node.byteLength !== length) {
@@ -168,6 +187,37 @@ export function createSyntheticPotree() {
       return page?.byteLength === length ? page : null;
     },
   });
+}
+
+function nodesForVirtualRange(nodes, virtualBytes, start, length) {
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(length) ||
+    start < 0 ||
+    length <= 0 ||
+    start >= virtualBytes
+  ) {
+    throw new RangeError(`range ${String(start)}+${String(length)} is outside the virtual octree`);
+  }
+  const end = Math.min(virtualBytes, start + length);
+  let low = 0;
+  let high = nodes.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const node = nodes[middle];
+    if (node.byteOffset + node.byteLength <= start) low = middle + 1;
+    else high = middle;
+  }
+  const overlapping = [];
+  for (let index = low; index < nodes.length; index += 1) {
+    const node = nodes[index];
+    if (node.byteOffset >= end) break;
+    overlapping.push(node);
+  }
+  if (overlapping.length === 0) {
+    throw new RangeError(`range ${String(start)}+${String(length)} has no synthetic nodes`);
+  }
+  return overlapping;
 }
 
 export function parseSingleRange(header) {

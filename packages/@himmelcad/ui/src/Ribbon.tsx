@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ReactNode,
-} from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 
 import styles from './Ribbon.module.css';
@@ -161,12 +155,7 @@ export function Ribbon({ tabs }: RibbonProps): JSX.Element {
         </div>
       )}
       {collapsed && dropdownTab && dropdownStyle && (
-        <div
-          ref={dropdownRef}
-          className={styles.dropdown}
-          style={dropdownStyle}
-          role="menu"
-        >
+        <div ref={dropdownRef} className={styles.dropdown} style={dropdownStyle} role="menu">
           {dropdownTab.groups.map((group) => (
             <div key={group.id} className={styles.dropdownGroup}>
               <div className={styles.dropdownGroupLabel}>{group.label}</div>

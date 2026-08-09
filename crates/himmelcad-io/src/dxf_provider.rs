@@ -45,8 +45,8 @@ use crate::canonical_provider::{
     CanonicalExportPlan, CanonicalExportProvider, CanonicalExportRequest, CanonicalImportPackage,
     CanonicalImportProvider, CanonicalImportRequest, CanonicalJsonObject, CanonicalResourceSet,
     ExportOutput, FormatCapability, FormatProviderDescriptor, ImportProbe, ImportProbeRequest,
-    PreparedResourceArtifact, ProviderContractError, ProviderOperationContext, ProviderProgress,
-    CANONICAL_IO_SCHEMA_VERSION,
+    PreparedResourceArtifact, ProviderContractError, ProviderOperationContext,
+    ProviderOptionContract, ProviderProgress, StagedArtifactRoots, CANONICAL_IO_SCHEMA_VERSION,
 };
 
 /// Exact format ID for the provider's ASCII DXF surface.
@@ -106,6 +106,8 @@ impl DxfCanonicalProvider {
                 extensions: vec!["dxf".to_owned()],
                 media_types: vec!["image/vnd.dxf".to_owned(), "application/dxf".to_owned()],
                 capabilities: vec![FormatCapability::Import, FormatCapability::Export],
+                import_options: Some(loss_acceptance_options()),
+                export_options: Some(loss_acceptance_options()),
             },
             resource_root,
         }
@@ -308,6 +310,29 @@ impl CanonicalImportProvider for DxfCanonicalProvider {
         });
         Ok(package)
     }
+
+    fn staged_artifact_roots(
+        &self,
+        package: &CanonicalImportPackage,
+    ) -> Result<StagedArtifactRoots, ProviderContractError> {
+        Ok(StagedArtifactRoots {
+            dataset_roots: Default::default(),
+            resource_set_roots: package
+                .resource_sets
+                .iter()
+                .map(|set| (set.resource_set_id.clone(), self.resource_root.clone()))
+                .collect(),
+        })
+    }
+}
+
+fn loss_acceptance_options() -> ProviderOptionContract {
+    ProviderOptionContract::object(
+        serde_json::json!({
+            "acceptedLossCodes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+        }),
+        serde_json::json!({"acceptedLossCodes": []}),
+    )
 }
 
 impl CanonicalExportProvider for DxfCanonicalProvider {

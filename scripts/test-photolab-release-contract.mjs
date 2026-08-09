@@ -1,14 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import {
-  mkdirSync,
-  mkdtempSync,
-  chmodSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, chmodSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { stdout } from 'node:process';
@@ -129,12 +122,7 @@ try {
   );
   const valid = spawnSync(
     process.execPath,
-    [
-      join(workspace, 'scripts/photolab-package-smoke.mjs'),
-      'linux-x64',
-      unpacked,
-      '--mode=static',
-    ],
+    [join(workspace, 'scripts/photolab-package-smoke.mjs'), 'linux-x64', unpacked, '--mode=static'],
     { encoding: 'utf8' },
   );
   assert.equal(valid.status, 0, valid.stderr);
@@ -143,12 +131,7 @@ try {
   writeFileSync(join(resources, 'workers/geo/bin/projinfo'), 'corrupt');
   const corrupt = spawnSync(
     process.execPath,
-    [
-      join(workspace, 'scripts/photolab-package-smoke.mjs'),
-      'linux-x64',
-      unpacked,
-      '--mode=static',
-    ],
+    [join(workspace, 'scripts/photolab-package-smoke.mjs'), 'linux-x64', unpacked, '--mode=static'],
     { encoding: 'utf8' },
   );
   assert.notEqual(corrupt.status, 0);
@@ -159,11 +142,7 @@ try {
     writeFileSync(fakeWindowsInstaller, 'not an installer');
     const foreignInstall = spawnSync(
       process.execPath,
-      [
-        join(workspace, 'scripts/photolab-install-smoke.mjs'),
-        'win32-x64',
-        fakeWindowsInstaller,
-      ],
+      [join(workspace, 'scripts/photolab-install-smoke.mjs'), 'win32-x64', fakeWindowsInstaller],
       { encoding: 'utf8' },
     );
     assert.notEqual(foreignInstall.status, 0);

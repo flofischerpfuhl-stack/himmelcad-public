@@ -1,0 +1,158 @@
+{
+  "canonicalTransaction": {
+    "commandId": "automation-golden-command",
+    "mutations": [
+      {
+        "operation": "create",
+        "entity": {
+          "id": "entity-create",
+          "revision": 0,
+          "typeId": "hcad.fixture@1",
+          "name": "Created",
+          "owner": null,
+          "layerIds": [],
+          "placement": null,
+          "representations": [],
+          "componentsRef": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attributesRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "relationsRef": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "styleRef": null,
+          "schemaVersion": 1,
+          "versionHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      },
+      {
+        "operation": "update",
+        "expected": {
+          "id": "entity-update",
+          "revision": 7,
+          "versionHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "edits": [
+          { "kind": "setName", "name": "Updated" },
+          { "kind": "setOwner", "owner": null },
+          { "kind": "setLayerIds", "layerIds": ["layer-a", "layer-b"] },
+          { "kind": "setPlacement", "placement": null },
+          { "kind": "setRepresentations", "representations": [] },
+          {
+            "kind": "setComponentsRef",
+            "componentsRef": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "kind": "setAttributesRef",
+            "attributesRef": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "setRelationsRef",
+            "relationsRef": "3333333333333333333333333333333333333333333333333333333333333333"
+          },
+          { "kind": "setStyleRef", "styleRef": null }
+        ]
+      },
+      {
+        "operation": "delete",
+        "expected": {
+          "id": "entity-delete",
+          "revision": 4,
+          "versionHash": "4444444444444444444444444444444444444444444444444444444444444444"
+        }
+      },
+      {
+        "operation": "restore",
+        "expected": {
+          "id": "entity-restore",
+          "revision": 9,
+          "versionHash": "5555555555555555555555555555555555555555555555555555555555555555"
+        },
+        "snapshot": {
+          "id": "entity-restore",
+          "revision": 8,
+          "typeId": "hcad.fixture@1",
+          "name": "Restored",
+          "owner": "parent",
+          "layerIds": ["layer-a"],
+          "placement": [
+            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 2.0, 3.0, 4.0, 1.0
+          ],
+          "representations": [],
+          "componentsRef": "6666666666666666666666666666666666666666666666666666666666666666",
+          "attributesRef": "7777777777777777777777777777777777777777777777777777777777777777",
+          "relationsRef": "8888888888888888888888888888888888888888888888888888888888888888",
+          "styleRef": "9999999999999999999999999999999999999999999999999999999999999999",
+          "schemaVersion": 1,
+          "versionHash": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      }
+    ]
+  },
+  "appRequestEnvelope": {
+    "schemaId": "hcad.app-protocol@1",
+    "requestId": "automation-golden-request",
+    "request": {
+      "method": "executeCanonicalTransaction",
+      "params": {
+        "commandId": "automation-golden-command",
+        "mutations": [
+          {
+            "operation": "delete",
+            "expected": {
+              "id": "entity-delete",
+              "revision": 4,
+              "versionHash": "4444444444444444444444444444444444444444444444444444444444444444"
+            }
+          }
+        ]
+      }
+    },
+    "extensions": {
+      "hcad.automation.confirmation@1": { "grant": "opaque-golden-grant" }
+    }
+  },
+  "viewState": {
+    "schema": "himmelcad.view-state",
+    "version": 1,
+    "camera": {
+      "position": { "x": 10.0, "y": 20.0, "z": 30.0 },
+      "target": { "x": 1.0, "y": 2.0, "z": 3.0 },
+      "up": { "x": 0.0, "y": 0.0, "z": 1.0 },
+      "projection": {
+        "kind": "perspective",
+        "verticalFieldOfViewRadians": 0.9,
+        "near": 0.1,
+        "far": 10000.0
+      }
+    },
+    "navigationMode": "2.5d",
+    "hiddenEntityIds": ["hidden"],
+    "selectedEntityIds": ["selected"],
+    "scopedClips": [],
+    "presentation": {
+      "background": "theme",
+      "renderStyle": "source",
+      "showGrid": true,
+      "showAxes": true,
+      "showSelectionOutline": true
+    }
+  },
+  "screenshotRequest": {
+    "schema": "himmelcad.screenshot-request",
+    "version": 1,
+    "requestId": "automation-golden-shot",
+    "format": "png",
+    "width": 640,
+    "height": 480,
+    "pixelRatio": 2.0,
+    "background": "view",
+    "includeUi": false
+  },
+  "screenshotResult": {
+    "schema": "himmelcad.screenshot-result",
+    "version": 1,
+    "requestId": "automation-golden-shot",
+    "mimeType": "image/png",
+    "width": 1280,
+    "height": 960,
+    "encoding": "base64",
+    "data": "UE5H"
+  }
+}

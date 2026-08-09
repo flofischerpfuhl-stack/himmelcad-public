@@ -1,6 +1,5 @@
 //! Bounded, versioned CPU decode artifacts transferred between worker and viewer WASM.
 
-use bincode::Options;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -13,7 +12,7 @@ const MAGIC: &[u8; 8] = b"HCDECODE";
 const INPUT_MANIFEST_DOMAIN: &[u8] = b"HCDECODE-INPUT-MANIFEST\0";
 const INPUT_MANIFEST_SCHEMA_VERSION: u16 = 1;
 /// Current worker artifact wire version. Older layouts are intentionally rejected.
-pub const DECODE_ARTIFACT_VERSION: u16 = 4;
+pub const DECODE_ARTIFACT_VERSION: u16 = 5;
 /// Magic, version, body length and exact input-manifest SHA-256.
 pub const DECODE_ARTIFACT_HEADER_BYTES: usize = 8 + 2 + 8 + 32;
 /// Hard allocation ceiling for one worker result and one viewer ingest.
@@ -23,6 +22,10 @@ pub const MAX_WORKER_INPUT_BYTES: usize = 32 * 1024 * 1024;
 
 /// Provider-neutral CPU result. It deliberately contains no GPU handles.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "public cross-crate artifact API and versioned wire representation must remain stable"
+)]
 pub enum DecodedStreamingPayload {
     /// glTF or legacy 3D Tiles content.
     ThreeDTiles(DecodedThreeDTilesContent),
@@ -95,10 +98,10 @@ pub fn encode_decode_artifact(
     artifact.extend_from_slice(&DECODE_ARTIFACT_VERSION.to_le_bytes());
     artifact.extend_from_slice(&0_u64.to_le_bytes());
     artifact.extend_from_slice(&input_hash);
-    bincode::DefaultOptions::new()
-        .with_fixint_encoding()
-        .with_limit(MAX_DECODE_ARTIFACT_BYTES)
-        .serialize_into(&mut artifact, &wire)
+    let config = bincode::config::standard()
+        .with_fixed_int_encoding()
+        .with_limit::<67_108_864>();
+    bincode::serde::encode_into_std_write(&wire, &mut artifact, config)
         .map_err(|error| error.to_string())?;
     let body_len = u64::try_from(artifact.len().saturating_sub(DECODE_ARTIFACT_HEADER_BYTES))
         .map_err(|_| "decode artifact is too large")?;
@@ -109,7 +112,7 @@ pub fn encode_decode_artifact(
     Ok(artifact)
 }
 
-/// Validates v4 framing, exact input identity and bounded binary/JSON wire data.
+/// Validates v5 framing, exact input identity and bounded binary/JSON wire data.
 pub fn decode_artifact(
     bytes: &[u8],
     expected_input_hash: [u8; 32],
@@ -137,12 +140,15 @@ pub fn decode_artifact(
     if artifact_input_hash != expected_input_hash {
         return Err("decode artifact input manifest hash mismatch".to_owned());
     }
-    let wire: WireDecodedStreamingPayload = bincode::DefaultOptions::new()
-        .with_fixint_encoding()
-        .with_limit(MAX_DECODE_ARTIFACT_BYTES)
-        .reject_trailing_bytes()
-        .deserialize(&bytes[DECODE_ARTIFACT_HEADER_BYTES..])
-        .map_err(|error| error.to_string())?;
+    let config = bincode::config::standard()
+        .with_fixed_int_encoding()
+        .with_limit::<67_108_864>();
+    let (wire, consumed): (WireDecodedStreamingPayload, usize) =
+        bincode::serde::decode_from_slice(&bytes[DECODE_ARTIFACT_HEADER_BYTES..], config)
+            .map_err(|error| error.to_string())?;
+    if consumed != bytes.len().saturating_sub(DECODE_ARTIFACT_HEADER_BYTES) {
+        return Err("decode artifact has trailing bytes".to_owned());
+    }
     wire.try_into()
 }
 
@@ -232,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn v4_round_trips_gltf_and_pnts_metadata_values_and_rejects_tamper() {
+    fn v5_round_trips_gltf_and_pnts_metadata_values_and_rejects_tamper() {
         use std::collections::BTreeMap;
 
         use crate::{
@@ -342,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn v4_round_trips_potree_civil_attributes_exactly() {
+    fn v5_round_trips_potree_civil_attributes_exactly() {
         use crate::{PackedCivilPointAttributes, WorldVec3};
 
         let civil = PackedCivilPointAttributes::new(

@@ -431,7 +431,7 @@ mod tests {
 
     #[tokio::test]
     async fn real_device_completes_incremental_calibration() {
-        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder();
+        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder().await;
         let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
         descriptor.backends = wgpu::Backends::PRIMARY;
         let instance = wgpu::Instance::new(descriptor);

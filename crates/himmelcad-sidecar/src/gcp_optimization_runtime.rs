@@ -473,6 +473,8 @@ mod tests {
     fn camera(id: u32, x: f64) -> GcpCameraModel {
         GcpCameraModel {
             image_id: ImageId(id),
+            calibration_group_id: "runtime-test-camera".into(),
+            intrinsics_policy: himmelcad_core::photolab_gcp_optimization::GcpIntrinsicsPolicy::Auto,
             width_pixels: 2000,
             height_pixels: 1500,
             focal_x_pixels: 1000.0,

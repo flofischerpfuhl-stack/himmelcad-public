@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { createHmac, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -14,6 +15,17 @@ interface PendingCall {
   reject: (err: Error) => void;
 }
 
+export class SidecarRpcError extends Error {
+  constructor(
+    readonly rpcCode: number,
+    message: string,
+    readonly data?: unknown,
+  ) {
+    super(message);
+    this.name = 'SidecarRpcError';
+  }
+}
+
 let child: ChildProcessWithoutNullStreams | null = null;
 let nextId = 1;
 const pending = new Map<number, PendingCall>();
@@ -22,6 +34,8 @@ let stdoutBuffer = '';
 const STDERR_RING_LIMIT = 200;
 const stderrRing: string[] = [];
 const stderrListeners = new Set<(line: string) => void>();
+const automationApprovalSecret = randomBytes(32);
+const automationHostSession = randomBytes(24).toString('hex');
 
 export function getRecentStderr(): string[] {
   return stderrRing.slice();
@@ -58,7 +72,14 @@ export function startSidecar(): Promise<void> {
       return;
     }
     try {
-      const proc = spawn(path, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+      const proc = spawn(path, [], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          HIMMELCAD_AUTOMATION_APPROVAL_SECRET: automationApprovalSecret.toString('hex'),
+          HIMMELCAD_AUTOMATION_HOST_SESSION: automationHostSession,
+        },
+      });
       proc.stdout.on('data', (buf: Buffer) => {
         stdoutBuffer += buf.toString();
         let nl: number;
@@ -131,8 +152,32 @@ export function callSidecar<T = unknown>(request: SidecarRequest): Promise<T> {
   });
 }
 
+/** Product-host-only grant issuer. Never expose this through preload or a
+ * renderer/harness IPC method. */
+export function issueAutomationConfirmationGrant(
+  planHash: string,
+  lifetimeMilliseconds = 30_000,
+): string {
+  if (!isSha256(planHash)) {
+    throw new Error('automation confirmation plan hash is invalid');
+  }
+  const expiresAt = Date.now() + Math.max(1_000, Math.min(60_000, lifetimeMilliseconds));
+  const grantId = randomBytes(32).toString('hex');
+  const signed = `v1:${automationHostSession}:${String(expiresAt)}:${grantId}:${planHash}`;
+  const signature = createHmac('sha256', automationApprovalSecret).update(signed).digest('hex');
+  return `${signed}:${signature}`;
+}
+
+function isSha256(value: string): boolean {
+  return /^[0-9a-f]{64}$/.test(value);
+}
+
 function handleResponse(line: string): void {
-  let parsed: { id?: number; result?: unknown; error?: { code: number; message: string } };
+  let parsed: {
+    id?: number;
+    result?: unknown;
+    error?: { code: number; message: string; data?: unknown };
+  };
   try {
     parsed = JSON.parse(line);
   } catch (err) {
@@ -145,7 +190,7 @@ function handleResponse(line: string): void {
   if (!cb) return;
   pending.delete(parsed.id);
   if (parsed.error) {
-    cb.reject(new Error(`[${parsed.error.code}] ${parsed.error.message}`));
+    cb.reject(new SidecarRpcError(parsed.error.code, parsed.error.message, parsed.error.data));
   } else {
     cb.resolve(parsed.result);
   }

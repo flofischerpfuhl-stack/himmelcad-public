@@ -3,6 +3,11 @@
 use serde::{Deserialize, Serialize};
 
 use crate::hash::ObjectHash;
+use crate::photolab_capture::{
+    CaptureClassificationBasis, CaptureDecodeCapability, CaptureDeviceClass, CaptureMedium,
+    CapturePositionPrior, CapturePositionPriorSource, CaptureSourceProfile,
+    DerivedCaptureArtifactProvenance,
+};
 
 /// Photo containers accepted by the Photolab discovery stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -333,6 +338,85 @@ impl PhotoMetadata {
                 .is_none_or(|height| height <= 0.2);
         flag_fixed && precision_fixed
     }
+
+    /// Classifies a camera without requiring DJI metadata or a pre-installed profile.
+    #[must_use]
+    pub fn capture_source_profile(&self) -> CaptureSourceProfile {
+        let make = self.exif.make.as_deref().unwrap_or_default();
+        let model = self.exif.model.as_deref().unwrap_or_default();
+        let identity = format!("{make} {model}").to_ascii_lowercase();
+        let device_class = if !self.dji_xmp.is_empty() || identity.contains("dji") {
+            CaptureDeviceClass::Drone
+        } else if [
+            "apple",
+            "iphone",
+            "google",
+            "pixel",
+            "samsung",
+            "huawei",
+            "xiaomi",
+            "oneplus",
+            "motorola",
+            "sony xperia",
+        ]
+        .iter()
+        .any(|needle| identity.contains(needle))
+        {
+            CaptureDeviceClass::Smartphone
+        } else if identity.contains("gopro") || identity.contains("insta360") {
+            CaptureDeviceClass::ActionCamera
+        } else if identity.contains("scanner") {
+            CaptureDeviceClass::Scanner
+        } else if !identity.trim().is_empty() {
+            CaptureDeviceClass::SystemCamera
+        } else {
+            CaptureDeviceClass::Unknown
+        };
+        CaptureSourceProfile {
+            schema_version: 1,
+            medium: CaptureMedium::StillImage,
+            device_class,
+            basis: if identity.trim().is_empty() && self.dji_xmp.is_empty() {
+                CaptureClassificationBasis::ExtensionFallback
+            } else {
+                CaptureClassificationBasis::EmbeddedMetadata
+            },
+            make: self.exif.make.clone(),
+            model: self.exif.model.clone(),
+            lens_model: self.exif.lens_model.clone(),
+        }
+    }
+
+    /// Converts embedded GNSS into an explicitly uncertain adjustment prior.
+    #[must_use]
+    pub fn position_prior(&self) -> Option<CapturePositionPrior> {
+        let gps = self.preferred_gps_position()?;
+        let height = gps.altitude.map(|altitude| altitude.meters);
+        let rtk = self.dji_xmp.rtk.as_ref();
+        let horizontal_sigma = rtk
+            .and_then(|metadata| {
+                metadata
+                    .standard_deviation_longitude_meters
+                    .zip(metadata.standard_deviation_latitude_meters)
+            })
+            .map_or(25.0, |(east, north)| east.max(north).max(0.01));
+        let vertical_sigma = rtk
+            .and_then(|metadata| metadata.standard_deviation_height_meters)
+            .unwrap_or(50.0)
+            .max(0.02);
+        CapturePositionPrior::diagonal(
+            gps.latitude_degrees,
+            gps.longitude_degrees,
+            height,
+            horizontal_sigma,
+            vertical_sigma,
+            if rtk.is_some() {
+                CapturePositionPriorSource::VendorRtk
+            } else {
+                CapturePositionPriorSource::ExifGps
+            },
+        )
+    }
 }
 
 /// Non-fatal import diagnostics attached to their source path.
@@ -351,6 +435,7 @@ pub enum ImageImportWarningCode {
     XmpMalformed,
     XmpUnsafeXmlIgnored,
     DuplicateContent,
+    DecoderUnavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -370,6 +455,14 @@ pub struct DiscoveredPhoto {
     pub byte_size: u64,
     pub sha256: ObjectHash,
     pub metadata: PhotoMetadata,
+    #[serde(default)]
+    pub capture_source: CaptureSourceProfile,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decoder_capability: Option<CaptureDecodeCapability>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position_prior: Option<CapturePositionPrior>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived_provenance: Option<DerivedCaptureArtifactProvenance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duplicate_of: Option<String>,
 }
@@ -417,5 +510,67 @@ mod tests {
         );
         assert_eq!(ExifOrientation::from_exif_value(0), None);
         assert_eq!(ExifOrientation::from_exif_value(9), None);
+    }
+
+    #[test]
+    fn ordinary_phone_metadata_is_not_classified_as_a_drone() {
+        let metadata = PhotoMetadata {
+            exif: ExifPhotoMetadata {
+                make: Some("Apple".into()),
+                model: Some("iPhone 15 Pro".into()),
+                gps: Some(ExifGpsPosition {
+                    latitude_degrees: 48.1,
+                    longitude_degrees: 11.5,
+                    altitude: None,
+                }),
+                ..ExifPhotoMetadata::default()
+            },
+            dji_xmp: DjiXmpMetadata::default(),
+        };
+        assert_eq!(
+            metadata.capture_source_profile().device_class,
+            CaptureDeviceClass::Smartphone
+        );
+        let prior = metadata.position_prior().expect("phone GPS prior");
+        assert_eq!(
+            prior.role,
+            crate::photolab_capture::CapturePositionRole::PriorOnly
+        );
+        assert_eq!(prior.covariance_enu_m2[0], 625.0);
+    }
+
+    #[test]
+    fn system_camera_and_rtk_uncertainty_are_provider_neutral() {
+        let system_camera = PhotoMetadata {
+            exif: ExifPhotoMetadata {
+                make: Some("Canon".into()),
+                model: Some("EOS R5".into()),
+                ..ExifPhotoMetadata::default()
+            },
+            dji_xmp: DjiXmpMetadata::default(),
+        };
+        assert_eq!(
+            system_camera.capture_source_profile().device_class,
+            CaptureDeviceClass::SystemCamera
+        );
+
+        let rtk = PhotoMetadata {
+            exif: ExifPhotoMetadata::default(),
+            dji_xmp: DjiXmpMetadata {
+                latitude_degrees: Some(48.0),
+                longitude_degrees: Some(11.0),
+                rtk: Some(DjiRtkMetadata {
+                    standard_deviation_longitude_meters: Some(0.03),
+                    standard_deviation_latitude_meters: Some(0.04),
+                    standard_deviation_height_meters: Some(0.08),
+                    ..DjiRtkMetadata::default()
+                }),
+                ..DjiXmpMetadata::default()
+            },
+        };
+        let prior = rtk.position_prior().expect("RTK prior");
+        assert_eq!(prior.covariance_enu_m2[0], 0.04_f64.powi(2));
+        assert_eq!(prior.covariance_enu_m2[8], 0.08_f64.powi(2));
+        assert_eq!(prior.source, CapturePositionPriorSource::VendorRtk);
     }
 }

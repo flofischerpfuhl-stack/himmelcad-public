@@ -241,11 +241,13 @@ before publication instead of surfacing later in the viewer.
 
 The browser-side wire types are generated from these Rust types with the
 optional `ts-bindings` feature. The generator owns
-`packages/@himmelcad/viewer/src/kernel/generated/`, recursively exports every
-type required by `CanonicalEntity` and `GeometryObject`, and emits an exact
-literal union for the built-in type identifiers. Its `--check` mode compares a
-fresh isolated export byte-for-byte, including the file set, so hand edits and
-stale files fail the gate:
+`packages/@himmelcad/data/src/generated/`, exposed as
+`@himmelcad/data/canonical`, recursively exports every type required by
+`CanonicalEntity` and `GeometryObject`, and emits an exact literal union for
+the built-in type identifiers. The old Viewer location contains only a
+compatibility barrel. The generator's `--check` mode compares a fresh isolated
+export byte-for-byte, including both file sets, so hand edits and stale files
+fail the gate:
 
 ```text
 cargo run -p himmelcad-core --features ts-bindings --bin generate_entity_bindings

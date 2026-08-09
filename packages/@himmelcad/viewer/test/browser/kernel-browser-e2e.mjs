@@ -397,6 +397,46 @@ try {
   assert(state);
   assert.equal(state.error, null, [state.error, ...browserMessages].filter(Boolean).join('\n'));
   assert.equal(state.ready, true);
+  const transparentCapture = await page.evaluate(() =>
+    window.__HCAD_CAPTURE_RGBA__?.(37, 23, true),
+  );
+  assert(transparentCapture, 'renderer RGBA capture hook must be installed');
+  assert.deepEqual(
+    {
+      width: transparentCapture.width,
+      height: transparentCapture.height,
+      byteLength: transparentCapture.byteLength,
+      colorSpace: transparentCapture.colorSpace,
+      alphaMode: transparentCapture.alphaMode,
+      includeUi: transparentCapture.includeUi,
+      transparentBackground: transparentCapture.transparentBackground,
+    },
+    {
+      width: 37,
+      height: 23,
+      byteLength: 37 * 23 * 4,
+      colorSpace: 'srgb',
+      alphaMode: 'straight',
+      includeUi: false,
+      transparentBackground: true,
+    },
+  );
+  assert.deepEqual(
+    transparentCapture.extentAfter,
+    transparentCapture.extentBefore,
+    'explicit-size capture must not resize the live presentation surface',
+  );
+  assert(
+    transparentCapture.alpha.some((alpha) => alpha < 255),
+    'transparent capture must preserve at least one background alpha sample',
+  );
+  const opaqueCapture = await page.evaluate(() => window.__HCAD_CAPTURE_RGBA__?.(13, 7, false));
+  assert(opaqueCapture, 'opaque renderer RGBA capture must resolve');
+  assert.equal(opaqueCapture.byteLength, 13 * 7 * 4);
+  assert(
+    opaqueCapture.alpha.every((alpha) => alpha === 255),
+    'opaque capture must composite every output pixel over an opaque background',
+  );
   // Real mode adds nine entities: one glTF, two shared external i3dm owners,
   // two transformed tiles, two external JSON glTFs and two legacy-metadata fixtures.
   // The canonical zoo also includes direct and nested block definitions, every
@@ -546,9 +586,7 @@ try {
     'canonical material batches must retain authored UV and source-texture bindings',
   );
   assert.deepEqual(
-    state.presentationBindings.canonicalMaterials.map(
-      (batch) => batch.sourceMaterialDoubleSided,
-    ),
+    state.presentationBindings.canonicalMaterials.map((batch) => batch.sourceMaterialDoubleSided),
     [false, true],
   );
   assert.deepEqual(
@@ -741,8 +779,8 @@ try {
   assert.equal(panoramaMeasurement.row, 1);
   assert.equal(panoramaMeasurement.depth, 3);
   assert(Math.abs(panoramaMeasurement.confidence - 26 / 255) < 1e-12);
-  const longitude = ((3.5 / 8) - 0.5) * Math.PI * 2;
-  const latitude = ((1.5 / 4) - 0.5) * Math.PI;
+  const longitude = (3.5 / 8 - 0.5) * Math.PI * 2;
+  const latitude = (1.5 / 4 - 0.5) * Math.PI;
   assertWorldClose(
     panoramaMeasurement.sourcePosition,
     {
@@ -764,8 +802,7 @@ try {
   );
   const panoramaAnalysisSample = rasterAnalysis.panoramaPick.candidates.find(
     (candidate) =>
-      candidate.address.entityId === 'scan-panorama' &&
-      candidate.snapKind === 'rasterSample',
+      candidate.address.entityId === 'scan-panorama' && candidate.snapKind === 'rasterSample',
   );
   assert(
     panoramaAnalysisSample,
@@ -785,8 +822,7 @@ try {
   assert.equal(rasterAnalysis.imageView.height, 4);
   const imageAnalysisSample = rasterAnalysis.imagePick.candidates.find(
     (candidate) =>
-      candidate.address.entityId === 'pinhole-depth-image' &&
-      candidate.snapKind === 'rasterSample',
+      candidate.address.entityId === 'pinhole-depth-image' && candidate.snapKind === 'rasterSample',
   );
   assert(
     imageAnalysisSample,

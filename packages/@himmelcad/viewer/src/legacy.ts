@@ -66,6 +66,9 @@ export type {
   KernelRasterAnalysisView,
   KernelRasterDepthDistanceMeasurement,
   KernelRasterDepthPick,
+  KernelRgbaCaptureCapabilities,
+  KernelRgbaCaptureRequest,
+  KernelRgbaCaptureResult,
 } from './kernel/WgpuKernelViewer.js';
 export {
   assertValidKernelLocalOrthographicViewFrame,

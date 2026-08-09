@@ -21,7 +21,10 @@ const POWER_VEC = new Vector3(0.5, 0.7, 0.3);
  * Weighted PCA plane fit. `weights` typically `1 / max(eps, distSqToQuery)`
  * so closer neighbours dominate. Returns `null` if input is degenerate.
  */
-export function fitPlane(points: readonly Vector3[], weights: readonly number[]): LocalPlane | null {
+export function fitPlane(
+  points: readonly Vector3[],
+  weights: readonly number[],
+): LocalPlane | null {
   if (points.length < 3 || points.length !== weights.length) return null;
 
   let weightSum = 0;

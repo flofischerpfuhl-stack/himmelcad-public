@@ -8,7 +8,8 @@ import {
   type DragEvent,
 } from 'react';
 
-import type { EntityId, SnapKind, SnapResult, Vec3 } from '@himmelcad/data';
+import type { EntityId, SnapKind, SnapResult, SourcePosition3, Vec3 } from '@himmelcad/data';
+import { OverlayChip } from '@himmelcad/ui';
 import {
   type CanonicalEntity,
   type CanonicalRepresentationAdmission,
@@ -17,16 +18,27 @@ import {
   type KernelPickCandidate,
   type KernelCanonicalRenderAdmission,
   type KernelClipVolume,
+  type KernelRgbaCaptureRequest,
+  type KernelRgbaCaptureResult,
   type KernelRenderStyle,
+  type KernelViewingBoxState,
+  type KernelViewMode,
+  type KernelWorldCamera,
+  type KernelWorldPoint,
   type Representation,
+  viewingBoxAxes,
+  viewingBoxClipVolume,
+  viewingBoxFromViewport,
 } from '@himmelcad/viewer/kernel';
 import { KernelViewport, type KernelViewportHandle } from '@himmelcad/viewer/kernel/react';
 
 import styles from './BuilderKernelViewport.module.css';
 
-const EMPTY_HASH_A = '01'.repeat(32);
-const EMPTY_HASH_B = '02'.repeat(32);
-const EMPTY_HASH_C = '03'.repeat(32);
+// Development raster fixtures have not entered canonical I/O yet. Keep their
+// viewer-only identities visibly isolated; they never enter the project tree.
+const DEV_RASTER_COMPONENTS_HASH = '01'.repeat(32);
+const DEV_RASTER_ATTRIBUTES_HASH = '02'.repeat(32);
+const DEV_RASTER_RELATIONS_HASH = '03'.repeat(32);
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] as const;
 
 const viewerWasmUrl = new URL('viewer-wasm/himmelcad_wasm.js', window.location.href).href;
@@ -65,14 +77,13 @@ const RASTER_STYLE: KernelRenderStyle = {
 };
 
 export interface BuilderPointCloudOptions {
-  readonly entityId: EntityId;
   readonly datasetId: string;
-  readonly sourceName: string;
+  /** Exact admission already committed by the canonical project runtime. */
+  readonly admission: CanonicalRepresentationAdmission;
   readonly bounds: {
     readonly min: readonly [number, number, number];
     readonly max: readonly [number, number, number];
   };
-  readonly pointCount: number;
 }
 
 export interface BuilderCanonicalImportPackage {
@@ -100,10 +111,7 @@ export interface BuilderRasterImageOptions {
 
 export interface BuilderKernelViewportHandle {
   loadPotreePointCloud(metadataUrl: string, options: BuilderPointCloudOptions): Promise<void>;
-  loadCanonicalPackage(
-    package_: BuilderCanonicalImportPackage,
-    translation: readonly [number, number, number],
-  ): Promise<readonly EntityId[]>;
+  loadCanonicalPackage(package_: BuilderCanonicalImportPackage): Promise<readonly EntityId[]>;
   loadRasterImage(imageUrl: string, options: BuilderRasterImageOptions): Promise<void>;
   loadDrapedRaster(
     imageUrl: string,
@@ -112,13 +120,21 @@ export interface BuilderKernelViewportHandle {
   ): Promise<void>;
   frameAll(): void;
   setPointSize(pointSize: number): void;
-  setNavigationMode(mode: 'orbit3d' | 'lockedTopDown2d'): void;
+  setViewMode(mode: KernelViewMode): Promise<void>;
+  worldCamera(): KernelWorldCamera | null;
+  adoptWorldCamera(camera: KernelWorldCamera): KernelWorldCamera;
+  waitForNextPresentedFrame(): Promise<void>;
+  captureRgba(request: KernelRgbaCaptureRequest): Promise<KernelRgbaCaptureResult>;
+  captureRectangle(): { x: number; y: number; width: number; height: number } | null;
   setEntityAppearance(
     entityIds: readonly EntityId[],
     options: { readonly opacity?: number; readonly verticalExaggeration?: number },
   ): void;
   setEntityVisibility(entityIds: readonly EntityId[], visible: boolean): void;
   setClipVolumes(volumes: readonly KernelClipVolume[]): void;
+  setAutomationClipVolumes(volumes: readonly KernelClipVolume[]): void;
+  createViewingBoxAt(center?: SourcePosition3): KernelViewingBoxState | null;
+  setViewingBox(state: KernelViewingBoxState | null): void;
 }
 
 interface BuilderKernelViewportProps {
@@ -126,30 +142,56 @@ interface BuilderKernelViewportProps {
   readonly onCursorSnap: (snap: SnapResult | null) => void;
   readonly onDropFiles: (paths: string[]) => void | Promise<void>;
   readonly onLog: (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void;
+  readonly viewingBox?: KernelViewingBoxState | null;
+  readonly placingViewingBoxCenter?: boolean;
+  readonly onViewportPoint?: (position: SourcePosition3) => void;
 }
 
 export const BuilderKernelViewport = forwardRef<
   BuilderKernelViewportHandle,
   BuilderKernelViewportProps
 >(function BuilderKernelViewport(
-  { pointSize, onCursorSnap, onDropFiles, onLog },
+  {
+    pointSize,
+    onCursorSnap,
+    onDropFiles,
+    onLog,
+    viewingBox = null,
+    placingViewingBoxCenter = false,
+    onViewportPoint,
+  },
   ref,
 ): JSX.Element {
   const kernelRef = useRef<KernelViewportHandle | null>(null);
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const viewingBoxOverlayRef = useRef<HTMLCanvasElement | null>(null);
   const readyRef = useRef(createDeferred<KernelViewportHandle>());
   const loadedBoundsRef = useRef<Bounds | null>(null);
   const entityStylesRef = useRef(new Map<EntityId, KernelRenderStyle>());
   const entityExaggerationDatumsRef = useRef(new Map<EntityId, number>());
-  const callbacksRef = useRef({ onCursorSnap, onDropFiles, onLog });
+  const callbacksRef = useRef({ onCursorSnap, onDropFiles, onLog, onViewportPoint });
+  const activeSourcePositionRef = useRef<SourcePosition3 | null>(null);
   const pointSizeRef = useRef(pointSize);
-  callbacksRef.current = { onCursorSnap, onDropFiles, onLog };
-  const [cursor, setCursor] = useState<Vec3 | null>(null);
+  const viewModeRef = useRef<KernelViewMode>('3d');
+  const automationClipIdsRef = useRef(new Set<string>());
+  callbacksRef.current = { onCursorSnap, onDropFiles, onLog, onViewportPoint };
+  const [cursor, setCursor] = useState<SourcePosition3 | null>(null);
+  const [viewMode, setViewModeState] = useState<KernelViewMode>('3d');
   const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
     pointSizeRef.current = pointSize;
     kernelRef.current?.session.setPointSize(pointSize);
   }, [pointSize]);
+
+  useEffect(() => {
+    drawViewingBoxOverlay(
+      viewingBoxOverlayRef.current,
+      hostRef.current,
+      kernelRef.current,
+      viewingBox,
+    );
+  }, [viewingBox]);
 
   const frameAll = useCallback(() => {
     const kernel = kernelRef.current;
@@ -163,148 +205,63 @@ export const BuilderKernelViewport = forwardRef<
     kernel.requestFrame();
   }, []);
 
+  const changeViewMode = useCallback(async (mode: KernelViewMode): Promise<void> => {
+    viewModeRef.current = mode;
+    setViewModeState(mode);
+    await kernelRef.current?.session.setViewMode(mode).catch((error: unknown) => {
+      callbacksRef.current.onLog('error', `View mode change failed: ${String(error)}`);
+      throw error;
+    });
+  }, []);
+
   useImperativeHandle(
     ref,
     () => ({
       async loadPotreePointCloud(metadataUrl, options) {
         const kernel = await readyRef.current.promise;
-        const metadataResponse = await fetch(metadataUrl);
-        if (!metadataResponse.ok) {
-          throw new Error(
-            `Potree metadata request failed (${metadataResponse.status} ${metadataResponse.statusText})`,
-          );
+        const entityId = options.admission.entity.id as EntityId;
+        if (options.admission.resolvedGeometry.kind !== 'pointCloud') {
+          throw new Error('committed LAS admission does not resolve to point-cloud geometry');
         }
-        const metadata = new Uint8Array(await metadataResponse.arrayBuffer());
-        const geometry: GeometryObject = {
-          kind: 'pointCloud',
-          dataset: {
-            formatId: 'potree@2',
-            metadata: {
-              objectHash: await sha256Hex(metadata),
-              mediaType: 'application/json',
-              byteLength: metadata.byteLength,
-            },
-            elementCount: options.pointCount,
-          },
-        };
-        const selected: Representation = {
-          role: 'canonical',
-          geometryRef: kernel.session.geometryObjectContentHash(geometry),
-          authority: 'authoritative',
-          dependencyHash: null,
-        };
-        const entityWithoutHash = {
-          id: options.entityId,
-          revision: 1,
-          typeId: 'hcad.point-cloud@1',
-          name: options.sourceName,
-          owner: null,
-          layerIds: [],
-          placement: null,
-          representations: [selected],
-          componentsRef: EMPTY_HASH_A,
-          attributesRef: EMPTY_HASH_B,
-          relationsRef: EMPTY_HASH_C,
-          styleRef: null,
-          schemaVersion: 1,
-        } satisfies Omit<CanonicalEntity, 'versionHash'>;
-        const hashInput: CanonicalEntity = {
-          ...entityWithoutHash,
-          versionHash: '00'.repeat(32),
-        };
-        const entity: CanonicalEntity = {
-          ...entityWithoutHash,
-          versionHash: kernel.session.canonicalEntityVersionHash(hashInput),
-        };
         await kernel.session.loadPotree(
           {
             datasetId: options.datasetId,
             metadataUri: metadataUrl,
-            admission: {
-              entity,
-              selected,
-              representationSlot: 'primary',
-              expectedGeneration: null,
-              resolvedGeometry: geometry,
-            },
+            admission: options.admission,
             style: POINT_CLOUD_STYLE,
           },
-          { operationId: `builder/load/${options.entityId}` },
+          { operationId: `builder/load/${entityId}` },
         );
-        entityStylesRef.current.set(options.entityId, POINT_CLOUD_STYLE);
-        entityExaggerationDatumsRef.current.set(options.entityId, options.bounds.min[2]);
+        entityStylesRef.current.set(entityId, POINT_CLOUD_STYLE);
+        entityExaggerationDatumsRef.current.set(entityId, options.bounds.min[2]);
         loadedBoundsRef.current = unionBounds(loadedBoundsRef.current, options.bounds);
         frameAll();
       },
-      async loadCanonicalPackage(package_, translation) {
+      async loadCanonicalPackage(package_) {
         const kernel = await readyRef.current.promise;
-        const normalized = package_.admissions
-          .filter(
-            (admission) =>
-              admission.selected.role === 'body' &&
-              (admission.resolvedGeometry.kind === 'surface3d' ||
-                (admission.resolvedGeometry.kind === 'solid' &&
-                  admission.resolvedGeometry.solid.kind === 'extrusion')),
-          )
-          .map((admission) => {
-            const geometryRef = kernel.session.geometryObjectContentHash(admission.resolvedGeometry);
-            const selected: Representation = {
-              role: 'canonical',
-              geometryRef,
-              authority: 'authoritative',
-              dependencyHash: null,
-            };
-            return {
-              ...admission,
-              selected,
-            };
-          });
-        const entities = new Map<EntityId, CanonicalEntity>();
-        const admissions: KernelCanonicalRenderAdmission[] = normalized.map((admission) => {
-          const id = admission.entity.id as EntityId;
-          let entity = entities.get(id);
-          if (!entity) {
-            const placement = translatedPlacement(admission.entity.placement, translation);
-            const entityAdmissions = normalized.filter((candidate) => candidate.entity.id === id);
-            const representations = entityAdmissions.map((candidate) => candidate.selected);
-            const hashInput: CanonicalEntity = {
-              ...admission.entity,
-              typeId:
-                admission.resolvedGeometry.kind === 'surface3d'
-                  ? 'hcad.surface-3d@1'
-                  : admission.entity.typeId,
-              placement,
-              representations,
-              versionHash: '00'.repeat(32),
-            };
-            entity = {
-              ...hashInput,
-              versionHash: kernel.session.canonicalEntityVersionHash(hashInput),
-            };
-            entities.set(id, entity);
-            entityStylesRef.current.set(id, IFC_STYLE);
-            entityExaggerationDatumsRef.current.set(id, translation[2]);
-          }
-          return {
-            admission: { ...admission, entity, representationSlot: 'primary' },
-            style: IFC_STYLE,
-          };
-        });
-        const loaded = new Set<EntityId>();
-        let rejected = 0;
-        for (const admission of admissions) {
-          try {
-            kernel.session.loadCanonical([admission]);
-            loaded.add(admission.admission.entity.id as EntityId);
-          } catch {
-            rejected += 1;
-          }
-        }
-        if (rejected > 0) {
+        const supported = package_.admissions.filter(
+          (admission) =>
+            admission.resolvedGeometry.kind === 'surface3d' ||
+            (admission.resolvedGeometry.kind === 'solid' &&
+              admission.resolvedGeometry.solid.kind === 'extrusion'),
+        );
+        const unsupportedCount = package_.admissions.length - supported.length;
+        if (unsupportedCount > 0) {
           callbacksRef.current.onLog(
             'warn',
-            `IFC viewer projection skipped ${rejected.toLocaleString()} unsupported body geometries`,
+            `IFC viewer projection skipped ${unsupportedCount.toLocaleString()} unsupported geometries`,
           );
+        }
+        if (supported.length === 0) return [];
+        const admissions: KernelCanonicalRenderAdmission[] = supported.map((admission) => ({
+          admission,
+          style: IFC_STYLE,
+        }));
+        kernel.session.loadCanonical(admissions);
+        const loaded = new Set(admissions.map(({ admission }) => admission.entity.id as EntityId));
+        for (const id of loaded) {
+          entityStylesRef.current.set(id, IFC_STYLE);
+          entityExaggerationDatumsRef.current.set(id, 0);
         }
         kernel.requestFrame();
         return [...loaded];
@@ -314,10 +271,18 @@ export const BuilderKernelViewport = forwardRef<
         const dimensions = options.rasterSize
           ? { width: options.rasterSize[0], height: options.rasterSize[1] }
           : await decodeImageDimensions(imageUrl);
-        await loadPreparedRaster(kernel, imageUrl, null, dimensions.width, dimensions.height, options, {
-          min: options.origin[2],
-          max: options.origin[2],
-        });
+        await loadPreparedRaster(
+          kernel,
+          imageUrl,
+          null,
+          dimensions.width,
+          dimensions.height,
+          options,
+          {
+            min: options.origin[2],
+            max: options.origin[2],
+          },
+        );
         entityStylesRef.current.set(options.entityId, RASTER_STYLE);
         entityExaggerationDatumsRef.current.set(options.entityId, options.origin[2]);
         const last = rasterCorner(
@@ -328,8 +293,16 @@ export const BuilderKernelViewport = forwardRef<
           dimensions.height,
         );
         loadedBoundsRef.current = unionBounds(loadedBoundsRef.current, {
-          min: [Math.min(options.origin[0], last[0]), Math.min(options.origin[1], last[1]), options.origin[2]],
-          max: [Math.max(options.origin[0], last[0]), Math.max(options.origin[1], last[1]), options.origin[2]],
+          min: [
+            Math.min(options.origin[0], last[0]),
+            Math.min(options.origin[1], last[1]),
+            options.origin[2],
+          ],
+          max: [
+            Math.max(options.origin[0], last[0]),
+            Math.max(options.origin[1], last[1]),
+            options.origin[2],
+          ],
         });
         kernel.requestFrame();
       },
@@ -338,10 +311,18 @@ export const BuilderKernelViewport = forwardRef<
         const dimensions = options.rasterSize
           ? { width: options.rasterSize[0], height: options.rasterSize[1] }
           : await decodeImageDimensions(imageUrl);
-        await loadPreparedRaster(kernel, imageUrl, depthUrl, dimensions.width, dimensions.height, options, {
-          min: 482.035,
-          max: 560.356,
-        });
+        await loadPreparedRaster(
+          kernel,
+          imageUrl,
+          depthUrl,
+          dimensions.width,
+          dimensions.height,
+          options,
+          {
+            min: 482.035,
+            max: 560.356,
+          },
+        );
         entityStylesRef.current.set(options.entityId, RASTER_STYLE);
         entityExaggerationDatumsRef.current.set(options.entityId, 482.035);
         loadedBoundsRef.current = unionBounds(loadedBoundsRef.current, {
@@ -354,8 +335,37 @@ export const BuilderKernelViewport = forwardRef<
       setPointSize(pointSize) {
         kernelRef.current?.session.setPointSize(pointSize);
       },
-      setNavigationMode(mode) {
-        kernelRef.current?.navigation.setLockedTopDown(mode === 'lockedTopDown2d');
+      setViewMode(mode) {
+        return changeViewMode(mode);
+      },
+      worldCamera() {
+        return kernelRef.current?.camera.worldCamera() ?? null;
+      },
+      adoptWorldCamera(camera) {
+        const kernel = kernelRef.current;
+        if (!kernel) throw new Error('viewer is not ready');
+        return kernel.session.adoptWorldCamera(camera);
+      },
+      async waitForNextPresentedFrame() {
+        const kernel = kernelRef.current;
+        if (!kernel) throw new Error('viewer is not ready');
+        await kernel.session.waitForNextPresentedFrame();
+      },
+      async captureRgba(request) {
+        const kernel = kernelRef.current;
+        if (!kernel) throw new Error('viewer is not ready');
+        return await kernel.session.captureRgba(request);
+      },
+      captureRectangle() {
+        const bounds = hostRef.current?.getBoundingClientRect();
+        return bounds
+          ? {
+              x: Math.round(bounds.x),
+              y: Math.round(bounds.y),
+              width: Math.round(bounds.width),
+              height: Math.round(bounds.height),
+            }
+          : null;
       },
       setEntityAppearance(entityIds, options) {
         const kernel = kernelRef.current;
@@ -387,8 +397,53 @@ export const BuilderKernelViewport = forwardRef<
       setClipVolumes(volumes) {
         kernelRef.current?.session.setClipVolumes(volumes);
       },
+      setAutomationClipVolumes(volumes) {
+        const kernel = kernelRef.current;
+        if (!kernel) throw new Error('viewer is not ready');
+        const next = new Set(volumes.map((volume) => volume.id));
+        for (const id of automationClipIdsRef.current) {
+          if (!next.has(id)) kernel.session.setScopedClipVolume(`automation:${id}`, null);
+        }
+        for (const volume of volumes) {
+          kernel.session.setScopedClipVolume(`automation:${volume.id}`, volume);
+        }
+        automationClipIdsRef.current = next;
+      },
+      createViewingBoxAt(center) {
+        const kernel = kernelRef.current;
+        if (!kernel) return null;
+        const camera = kernel.camera.worldCamera();
+        const target = center
+          ? {
+              x: center.x,
+              y: center.y,
+              z: center.z ?? camera.target.z,
+            }
+          : camera.target;
+        const distance = Math.hypot(
+          camera.eye.x - camera.target.x,
+          camera.eye.y - camera.target.y,
+          camera.eye.z - camera.target.z,
+        );
+        const visibleHeight =
+          camera.projection.kind === 'orthographic'
+            ? camera.projection.verticalSpan
+            : 2 * distance * Math.tan(camera.projection.verticalFovRadians * 0.5);
+        return viewingBoxFromViewport({
+          center: target,
+          visibleWidth: visibleHeight * camera.projection.aspect,
+          visibleHeight,
+          visibleDepth: Math.max(visibleHeight, distance * 0.5),
+        });
+      },
+      setViewingBox(state) {
+        kernelRef.current?.session.setScopedClipVolume(
+          'builder:viewing-box',
+          state ? viewingBoxClipVolume(state) : null,
+        );
+      },
     }),
-    [frameAll],
+    [changeViewMode, frameAll],
   );
 
   const handleReady = useCallback((handle: KernelViewportHandle) => {
@@ -396,6 +451,9 @@ export const BuilderKernelViewport = forwardRef<
     if (import.meta.env.DEV) Object.assign(window, { __hcadBuilderKernel: handle });
     handle.session.setClearColor([0.008, 0.011, 0.016, 1]);
     handle.session.setPointSize(pointSizeRef.current);
+    void handle.session.setViewMode(viewModeRef.current, 0).catch((error: unknown) => {
+      callbacksRef.current.onLog('error', `Initial view mode failed: ${String(error)}`);
+    });
     readyRef.current.resolve(handle);
     callbacksRef.current.onLog(
       'info',
@@ -404,11 +462,12 @@ export const BuilderKernelViewport = forwardRef<
   }, []);
 
   const handlePick = useCallback((candidate: KernelPickCandidate | null) => {
+    activeSourcePositionRef.current = candidate?.worldPosition ?? null;
     callbacksRef.current.onCursorSnap(candidate ? snapFromCandidate(candidate) : null);
   }, []);
 
   const handleCursor = useCallback((coordinate: KernelPickCandidate['worldPosition']) => {
-    setCursor({ x: coordinate.x, y: coordinate.y, z: coordinate.z ?? 0 });
+    setCursor(coordinate);
   }, []);
 
   const handleError = useCallback((error: Error) => {
@@ -427,7 +486,13 @@ export const BuilderKernelViewport = forwardRef<
 
   return (
     <div
-      className={styles.root}
+      ref={hostRef}
+      className={placingViewingBoxCenter ? `${styles.root} ${styles.placingCenter}` : styles.root}
+      onPointerUp={(event) => {
+        if (event.button !== 0 || !placingViewingBoxCenter) return;
+        const position = activeSourcePositionRef.current;
+        if (position) callbacksRef.current.onViewportPoint?.(position);
+      }}
       onDragEnter={(event) => {
         event.preventDefault();
         setDragging(true);
@@ -447,18 +512,40 @@ export const BuilderKernelViewport = forwardRef<
         onReady={handleReady}
         onActivePick={handlePick}
         onCursorCoordinate={handleCursor}
+        onFrame={() =>
+          drawViewingBoxOverlay(
+            viewingBoxOverlayRef.current,
+            hostRef.current,
+            kernelRef.current,
+            viewingBox,
+          )
+        }
         onError={handleError}
       />
+      <canvas ref={viewingBoxOverlayRef} className={styles.viewingBoxOverlay} aria-hidden />
       <output className={styles.coordinates} aria-label="Cursor coordinates">
         {cursor ? (
           <>
             <span>X</span> {formatCoordinate(cursor.x)} <span>Y</span> {formatCoordinate(cursor.y)}{' '}
-            <span>Z</span> {formatCoordinate(cursor.z)}
+            <span>Z</span> {cursor.z === null ? '—' : formatCoordinate(cursor.z)}
           </>
         ) : (
           'X —   Y —   Z —'
         )}
       </output>
+      <div className={styles.viewModes} aria-label="View mode">
+        {(['3d', '2.5d', '2d'] as const).map((mode) => (
+          <OverlayChip
+            key={mode}
+            as="button"
+            active={mode === viewMode}
+            aria-pressed={mode === viewMode}
+            onClick={() => changeViewMode(mode)}
+          >
+            {mode.toUpperCase()}
+          </OverlayChip>
+        ))}
+      </div>
       {dragging ? <div className={styles.dropOverlay}>Drop LAS / LAZ to import</div> : null}
     </div>
   );
@@ -467,6 +554,176 @@ export const BuilderKernelViewport = forwardRef<
 interface Bounds {
   readonly min: readonly [number, number, number];
   readonly max: readonly [number, number, number];
+}
+
+function drawViewingBoxOverlay(
+  canvas: HTMLCanvasElement | null,
+  host: HTMLDivElement | null,
+  kernel: KernelViewportHandle | null,
+  state: KernelViewingBoxState | null,
+): void {
+  if (!canvas || !host) return;
+  const rect = host.getBoundingClientRect();
+  const ratio = Math.max(1, globalThis.devicePixelRatio || 1);
+  const width = Math.max(1, Math.round(rect.width * ratio));
+  const height = Math.max(1, Math.round(rect.height * ratio));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.clearRect(0, 0, rect.width, rect.height);
+  if (!kernel || !state) return;
+
+  const camera = kernel.camera.worldCamera();
+  const [axisX, axisY, axisZ] = viewingBoxAxes(state);
+  const corners = [-1, 1].flatMap((x) =>
+    [-1, 1].flatMap((y) =>
+      [-1, 1].map((z) => ({
+        x:
+          state.center.x +
+          x * axisX.x * state.halfExtents.x +
+          y * axisY.x * state.halfExtents.y +
+          z * axisZ.x * state.halfExtents.z,
+        y:
+          state.center.y +
+          x * axisX.y * state.halfExtents.x +
+          y * axisY.y * state.halfExtents.y +
+          z * axisZ.y * state.halfExtents.z,
+        z:
+          state.center.z +
+          x * axisX.z * state.halfExtents.x +
+          y * axisY.z * state.halfExtents.y +
+          z * axisZ.z * state.halfExtents.z,
+      })),
+    ),
+  );
+  const projected = corners.map((corner) => projectViewingBoxPoint(corner, camera, rect));
+  const edges = [
+    [0, 1],
+    [0, 2],
+    [0, 4],
+    [1, 3],
+    [1, 5],
+    [2, 3],
+    [2, 6],
+    [3, 7],
+    [4, 5],
+    [4, 6],
+    [5, 7],
+    [6, 7],
+  ] as const;
+  context.save();
+  context.lineWidth = 1.25;
+  context.strokeStyle = state.enabled ? 'rgba(88, 203, 255, 0.92)' : 'rgba(150, 160, 170, 0.72)';
+  context.setLineDash(state.enabled ? [5, 3] : [2, 4]);
+  context.beginPath();
+  for (const [fromIndex, toIndex] of edges) {
+    const from = projected[fromIndex];
+    const to = projected[toIndex];
+    if (!from || !to) continue;
+    context.moveTo(from.x, from.y);
+    context.lineTo(to.x, to.y);
+  }
+  context.stroke();
+  context.setLineDash([]);
+  if (state.mode === 'resize') {
+    context.fillStyle = 'rgba(230, 248, 255, 0.96)';
+    for (const point of projected) {
+      if (point) context.fillRect(point.x - 2.5, point.y - 2.5, 5, 5);
+    }
+  }
+  const center = projectViewingBoxPoint(state.center, camera, rect);
+  if (center) drawViewingBoxModeGlyph(context, center.x, center.y, state.mode);
+  context.restore();
+}
+
+function projectViewingBoxPoint(
+  point: KernelWorldPoint,
+  camera: KernelWorldCamera,
+  hostRect: DOMRect,
+): { readonly x: number; readonly y: number } | null {
+  const forward = normalizeVector({
+    x: camera.target.x - camera.eye.x,
+    y: camera.target.y - camera.eye.y,
+    z: camera.target.z - camera.eye.z,
+  });
+  const right = normalizeVector(crossVector(forward, camera.up));
+  const up = crossVector(right, forward);
+  const relative = {
+    x: point.x - camera.eye.x,
+    y: point.y - camera.eye.y,
+    z: point.z - camera.eye.z,
+  };
+  const cameraX = dotVector(relative, right);
+  const cameraY = dotVector(relative, up);
+  const depth = dotVector(relative, forward);
+  let ndcX: number;
+  let ndcY: number;
+  if (camera.projection.kind === 'perspective') {
+    if (depth <= camera.projection.near) return null;
+    const halfHeight = depth * Math.tan(camera.projection.verticalFovRadians * 0.5);
+    ndcX = cameraX / (halfHeight * camera.projection.aspect);
+    ndcY = cameraY / halfHeight;
+  } else {
+    ndcX = cameraX / (camera.projection.verticalSpan * 0.5 * camera.projection.aspect);
+    ndcY = cameraY / (camera.projection.verticalSpan * 0.5);
+  }
+  if (!Number.isFinite(ndcX) || !Number.isFinite(ndcY)) return null;
+  const presentationWidth = globalThis.innerWidth || hostRect.width;
+  const presentationHeight = globalThis.innerHeight || hostRect.height;
+  return {
+    x: ((ndcX + 1) * presentationWidth) / 2 - hostRect.left,
+    y: ((1 - ndcY) * presentationHeight) / 2 - hostRect.top,
+  };
+}
+
+function drawViewingBoxModeGlyph(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  mode: KernelViewingBoxState['mode'],
+): void {
+  context.strokeStyle = 'rgba(244, 250, 255, 0.96)';
+  context.fillStyle = 'rgba(10, 25, 35, 0.78)';
+  context.lineWidth = 1.4;
+  context.beginPath();
+  context.arc(x, y, mode === 'rotate' ? 11 : 7, 0, Math.PI * 2);
+  context.fill();
+  context.stroke();
+  if (mode === 'rotate') {
+    context.beginPath();
+    context.arc(x, y, 15, -Math.PI * 0.75, Math.PI * 0.55);
+    context.stroke();
+  } else {
+    context.beginPath();
+    context.moveTo(x - 13, y);
+    context.lineTo(x + 13, y);
+    context.moveTo(x, y - 13);
+    context.lineTo(x, y + 13);
+    context.stroke();
+  }
+}
+
+function normalizeVector(vector: KernelWorldPoint): KernelWorldPoint {
+  const length = Math.hypot(vector.x, vector.y, vector.z);
+  return length > 1e-12
+    ? { x: vector.x / length, y: vector.y / length, z: vector.z / length }
+    : { x: 1, y: 0, z: 0 };
+}
+
+function crossVector(left: KernelWorldPoint, right: KernelWorldPoint): KernelWorldPoint {
+  return {
+    x: left.y * right.z - left.z * right.y,
+    y: left.z * right.x - left.x * right.z,
+    z: left.x * right.y - left.y * right.x,
+  };
+}
+
+function dotVector(left: KernelWorldPoint, right: KernelWorldPoint): number {
+  return left.x * right.x + left.y * right.y + left.z * right.z;
 }
 
 function unionBounds(current: Bounds | null, next: Bounds): Bounds {
@@ -497,17 +754,6 @@ function tuplePosition(value: readonly [number, number, number]): {
   return { x: value[0], y: value[1], z: value[2] };
 }
 
-function translatedPlacement(
-  placement: CanonicalEntity['placement'],
-  translation: readonly [number, number, number],
-): CanonicalEntity['placement'] {
-  const matrix = [...(placement ?? IDENTITY)] as CanonicalEntity['placement'] & number[];
-  matrix[12] = (matrix[12] ?? 0) + translation[0];
-  matrix[13] = (matrix[13] ?? 0) + translation[1];
-  matrix[14] = (matrix[14] ?? 0) + translation[2];
-  return matrix;
-}
-
 function rasterCorner(
   origin: readonly [number, number, number],
   columnStep: readonly [number, number, number],
@@ -522,7 +768,7 @@ function rasterCorner(
   ];
 }
 
-function canonicalRenderAdmission(
+function developmentRasterPreviewAdmission(
   kernel: KernelViewportHandle,
   entityId: EntityId,
   name: string,
@@ -544,9 +790,9 @@ function canonicalRenderAdmission(
     layerIds: [],
     placement: null,
     representations: [selected],
-    componentsRef: EMPTY_HASH_A,
-    attributesRef: EMPTY_HASH_B,
-    relationsRef: EMPTY_HASH_C,
+    componentsRef: DEV_RASTER_COMPONENTS_HASH,
+    attributesRef: DEV_RASTER_ATTRIBUTES_HASH,
+    relationsRef: DEV_RASTER_RELATIONS_HASH,
     styleRef: null,
     schemaVersion: 1,
   } satisfies Omit<CanonicalEntity, 'versionHash'>;
@@ -569,7 +815,7 @@ function canonicalRenderAdmission(
 
 function snapFromCandidate(candidate: KernelPickCandidate): SnapResult {
   return {
-    position: candidate.presentationPosition,
+    position: candidate.worldPosition,
     kind: snapKind(candidate.snapKind),
     entity: candidate.address.entityId as EntityId,
     confidence: 1 / (1 + Math.max(0, candidate.pixelDistance)),
@@ -623,9 +869,7 @@ async function loadPreparedRaster(
 ): Promise<void> {
   const datasetId = `builder-raster:${options.entityId}`;
   const formatId = 'himmelcad-prepared-hierarchy@1';
-  const sourceTiles = options.tiles ?? [
-    { x: 0, y: 0, width, height, imageUrl, depthUrl },
-  ];
+  const sourceTiles = options.tiles ?? [{ x: 0, y: 0, width, height, imageUrl, depthUrl }];
   const tiles = await Promise.all(
     sourceTiles.map(async (tile, index) => {
       const tileDepthUrl = depthUrl ? (tile.depthUrl ?? depthUrl) : null;
@@ -646,7 +890,9 @@ async function loadPreparedRaster(
           depthBytes.byteOffset,
           depthBytes.byteLength / Float32Array.BYTES_PER_ELEMENT,
         );
-        if (!elevations.some((value) => Number.isFinite(value) && Math.abs(value - 482.75) > 1e-5)) {
+        if (
+          !elevations.some((value) => Number.isFinite(value) && Math.abs(value - 482.75) > 1e-5)
+        ) {
           return null;
         }
         depthHash = await sha256Hex(depthBytes);
@@ -727,16 +973,16 @@ async function loadPreparedRaster(
     schemaVersion: 1,
     roots: renderableTiles.map((tile) => tile.id),
     tiles: renderableTiles.map((tile) => ({
-        id: tile.id,
-        parent: null,
-        children: [],
-        bounds: tile.bounds,
-        contentTransform: IDENTITY,
-        geometricError: 0,
-        refinement: 'replace',
-        contents: [tile.content],
-        childPage: null,
-      })),
+      id: tile.id,
+      parent: null,
+      children: [],
+      bounds: tile.bounds,
+      contentTransform: IDENTITY,
+      geometricError: 0,
+      refinement: 'replace',
+      contents: [tile.content],
+      childPage: null,
+    })),
   };
   const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
   const manifestHash = await sha256Hex(manifestBytes);
@@ -759,7 +1005,7 @@ async function loadPreparedRaster(
       depth: null,
     },
   };
-  const renderAdmission = canonicalRenderAdmission(
+  const renderAdmission = developmentRasterPreviewAdmission(
     kernel,
     options.entityId,
     options.sourceName,
@@ -772,6 +1018,16 @@ async function loadPreparedRaster(
     manifestUri: `${imageUrl}#${encodeURIComponent(options.entityId)}`,
     manifestBytes,
     admissions: [{ ...renderAdmission, datasetId, exaggerationDatum: elevations.min }],
+    ...(depthUrl === null
+      ? {
+          viewPolicies: {
+            [options.entityId]: {
+              availability: 'planOnly' as const,
+              sourceHeight: 'unknown' as const,
+            },
+          },
+        }
+      : {}),
   });
   kernel.requestFrame();
 }

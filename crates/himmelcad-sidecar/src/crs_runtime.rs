@@ -154,10 +154,11 @@ pub enum CrsRuntimeError {
 pub struct ProjRuntime {
     config: CanonicalToolchain,
     audit_cache: std::sync::Arc<OnceCell<ProjAudit>>,
-    grid_hash_cache: std::sync::Arc<
-        std::sync::Mutex<HashMap<PathBuf, (u64, std::time::SystemTime, ObjectHash)>>,
-    >,
+    grid_hash_cache: GridHashCache,
 }
+
+type GridHashCache =
+    std::sync::Arc<std::sync::Mutex<HashMap<PathBuf, (u64, std::time::SystemTime, ObjectHash)>>>;
 
 #[derive(Debug, Clone)]
 struct CanonicalToolchain {
@@ -876,15 +877,17 @@ impl ProjRuntime {
         if has_dhdn && has_etrs {
             return Ok(());
         }
-        // Regional survey grids often omit canonical SYSTEM_F/T tags; if the user
-        // explicitly registered a local .gsb, accept path binding and rely on PROJ.
-        if looks_like_ntv2 && !local_path.trim().is_empty() {
+        // Regional survey grids often omit canonical SYSTEM_F/T tags. A file selected
+        // explicitly by the user has no catalog-supplied official hash; accept that
+        // local binding and let the subsequent PROJ round-trip validate its contents.
+        // A hash-pinned catalog entry, however, claims a known grid identity. It must
+        // not become a DHDN grid merely because its path happens to end in `.gsb`.
+        if looks_like_ntv2 && grid.official_sha256.is_none() && !local_path.trim().is_empty() {
             return Ok(());
         }
         Err(CrsRuntimeError::IncompatibleGrid {
             filename: grid.official_filename.clone(),
-            reason: "NTv2 header must declare DHDN and ETRS89 (or use a local .gsb / BETA2007)"
-                .into(),
+            reason: "NTv2 header must declare DHDN and ETRS89 (or the grid must be an explicitly registered local .gsb / bundled BETA2007)".into(),
         })
     }
 

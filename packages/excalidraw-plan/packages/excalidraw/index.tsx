@@ -298,3 +298,13 @@ export { getDataURL } from "./data/blob";
 export { isElementLink } from "./element/elementLink";
 
 export { setCustomTextMetricsProvider } from "./element/textMeasurements";
+
+export {
+  clampHimmelCadPaperViewport,
+  HIMMELCAD_EXCALIDRAW_THEME_VARIABLES,
+} from "./himmelcad";
+export type {
+  HimmelCadPaperBounds,
+  HimmelCadPaperViewport,
+  HimmelCadPlanActionName,
+} from "./himmelcad";

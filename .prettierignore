@@ -2,10 +2,27 @@ node_modules/
 dist/
 build/
 target/
+.build/
 .vite/
 libs/
 vendor/
 packages/excalidraw-plan/
+runtime/
 packages/@himmelcad/data/src/generated/
 pnpm-lock.yaml
 *.min.*
+
+# User-owned survey datasets contain multi-gigabyte binary source material.
+photolab/260217_MUC_Alte_Akademie/
+
+# Vendored/upstream trees keep their own formatting toolchains and provenance.
+packages/excalidraw-plan/
+vendor/
+
+# Historical owner input is preserved byte-for-byte.
+originalprompt.md
+
+# Large hand-authored concept artifacts keep deliberate line/layout structure.
+photolab/PHOTOLAB-CONCEPT.md
+photolab/implementation-plan.html
+docs/TRANSFORM-MODULE-PLAN.md

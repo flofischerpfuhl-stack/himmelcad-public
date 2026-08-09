@@ -29,6 +29,91 @@ export interface PaperConfig {
   marginMm: number;
 }
 
+/** Excalidraw coordinates remain screen-friendly while paper remains physical. */
+export const PLAN_SCENE_UNITS_PER_MM = 4;
+
+export interface SheetTransform {
+  sceneUnitsPerMm: number;
+  paperWidthMm: number;
+  paperHeightMm: number;
+}
+
+export function validatePaperConfig(config: PaperConfig): string | null {
+  const { widthMm, heightMm } = resolvePaperMm(config);
+  if (
+    !Number.isFinite(widthMm) ||
+    !Number.isFinite(heightMm) ||
+    widthMm < 50 ||
+    heightMm < 50 ||
+    widthMm > 2_000 ||
+    heightMm > 2_000
+  ) {
+    return 'Paper dimensions must be between 50 and 2000 mm.';
+  }
+  if (
+    !Number.isFinite(config.marginMm) ||
+    config.marginMm < 0 ||
+    config.marginMm * 2 >= Math.min(widthMm, heightMm)
+  ) {
+    return 'Paper margin is outside the printable sheet.';
+  }
+  return null;
+}
+
+export function sheetTransform(config: PaperConfig): SheetTransform {
+  const paper = resolvePaperMm(config);
+  return {
+    sceneUnitsPerMm: PLAN_SCENE_UNITS_PER_MM,
+    paperWidthMm: paper.widthMm,
+    paperHeightMm: paper.heightMm,
+  };
+}
+
+export function mmToScene(valueMm: number, transform: SheetTransform): number {
+  return valueMm * transform.sceneUnitsPerMm;
+}
+
+export function sceneToMm(value: number, transform: SheetTransform): number {
+  return value / transform.sceneUnitsPerMm;
+}
+
+export function mmPointToScene(
+  point: { x: number; y: number },
+  transform: SheetTransform,
+): { x: number; y: number } {
+  return { x: mmToScene(point.x, transform), y: mmToScene(point.y, transform) };
+}
+
+export function sceneRectToMm(
+  rect: { x: number; y: number; width: number; height: number },
+  transform: SheetTransform,
+): { x: number; y: number; width: number; height: number } {
+  return {
+    x: sceneToMm(rect.x, transform),
+    y: sceneToMm(rect.y, transform),
+    width: sceneToMm(rect.width, transform),
+    height: sceneToMm(rect.height, transform),
+  };
+}
+
+export function sheetSceneBounds(config: PaperConfig): readonly [number, number, number, number] {
+  const transform = sheetTransform(config);
+  return [
+    0,
+    0,
+    mmToScene(transform.paperWidthMm, transform),
+    mmToScene(transform.paperHeightMm, transform),
+  ];
+}
+
+/** World metres to plotted paper millimetres at a conventional 1:n scale. */
+export function worldMetersToPaperMm(worldMeters: number, scaleDenominator: number): number {
+  if (!Number.isFinite(scaleDenominator) || scaleDenominator <= 0) {
+    throw new Error('Scale denominator must be positive.');
+  }
+  return (worldMeters * 1_000) / scaleDenominator;
+}
+
 export function resolvePaperMm(config: PaperConfig): { widthMm: number; heightMm: number } {
   if (config.sizeId === 'custom') {
     const w = config.customWidthMm ?? 210;
@@ -61,23 +146,4 @@ export function paperCssPixels(
     heightPx: Math.round(naturalH * scale),
     scale,
   };
-}
-
-export const PLAN_LIBRARY_KIND = 'himmelcadPlanLibrary' as const;
-export const PLAN_LIBRARY_FORMAT = 1 as const;
-
-/** Grouped drawing saved to local library (not model geometry). */
-export interface PlanLibraryItem {
-  id: string;
-  name: string;
-  /** Serialized Excalidraw elements JSON. */
-  elementsJson: string;
-  thumbnailDataUrl?: string;
-  updatedAt: string;
-}
-
-export interface PlanLibrary {
-  formatVersion: typeof PLAN_LIBRARY_FORMAT;
-  kind: typeof PLAN_LIBRARY_KIND;
-  items: PlanLibraryItem[];
 }

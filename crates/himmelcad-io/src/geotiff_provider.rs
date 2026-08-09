@@ -33,7 +33,8 @@ use crate::canonical_provider::{
     CanonicalImportProvider, CanonicalImportRequest, CanonicalJsonObject, CanonicalPreparedDataset,
     CanonicalResourceSet, ExportOutput, FormatCapability, FormatProviderDescriptor, ImportProbe,
     ImportProbeRequest, PreparedDatasetArtifact, PreparedResourceArtifact, ProviderContractError,
-    ProviderOperationContext, ProviderProgress, CANONICAL_IO_SCHEMA_VERSION,
+    ProviderOperationContext, ProviderOptionContract, ProviderProgress, StagedArtifactRoots,
+    CANONICAL_IO_SCHEMA_VERSION,
 };
 use crate::geotiff_preparation::prepare_elevation_geotiff;
 
@@ -85,6 +86,14 @@ impl GeoTiffCanonicalProvider {
                 extensions: vec!["tif".to_owned(), "tiff".to_owned()],
                 media_types: vec![TIFF_MEDIA_TYPE.to_owned(), "image/geotiff".to_owned()],
                 capabilities: vec![FormatCapability::Import, FormatCapability::Export],
+                import_options: Some(ProviderOptionContract::object(
+                    serde_json::json!({
+                        "interpretation": {"type": "string", "enum": ["auto", "rasterImage", "elevationSurface"]},
+                        "maximumHeightJump": {"type": ["number", "null"], "minimum": 0.0}
+                    }),
+                    serde_json::json!({"interpretation": "auto", "maximumHeightJump": null}),
+                )),
+                export_options: Some(loss_acceptance_options()),
             },
             resource_root,
         }
@@ -332,6 +341,33 @@ impl CanonicalImportProvider for GeoTiffCanonicalProvider {
         });
         Ok(package)
     }
+
+    fn staged_artifact_roots(
+        &self,
+        package: &CanonicalImportPackage,
+    ) -> Result<StagedArtifactRoots, ProviderContractError> {
+        Ok(StagedArtifactRoots {
+            dataset_roots: package
+                .datasets
+                .iter()
+                .map(|dataset| (dataset.dataset_id.clone(), self.resource_root.clone()))
+                .collect(),
+            resource_set_roots: package
+                .resource_sets
+                .iter()
+                .map(|set| (set.resource_set_id.clone(), self.resource_root.clone()))
+                .collect(),
+        })
+    }
+}
+
+fn loss_acceptance_options() -> ProviderOptionContract {
+    ProviderOptionContract::object(
+        serde_json::json!({
+            "acceptedLossCodes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+        }),
+        serde_json::json!({"acceptedLossCodes": []}),
+    )
 }
 
 impl CanonicalExportProvider for GeoTiffCanonicalProvider {
@@ -1141,7 +1177,35 @@ mod tests {
         let dataset = &package.datasets[0];
         assert_eq!(dataset.format_id, GEOTIFF_FORMAT_ID);
         assert_eq!(&dataset.root_metadata, raster);
-        assert_eq!(dataset.artifacts.len(), 4);
+        assert_eq!(dataset.artifacts.len(), 5);
+        let typed_artifact = dataset
+            .typed_artifact_manifest()
+            .expect("typed artifact manifest");
+        let typed_manifest: himmelcad_core::typed_artifact::TypedArtifactManifest =
+            serde_json::from_slice(
+                &fs::read(resources.join(&typed_artifact.relative_path))
+                    .expect("typed artifact bytes"),
+            )
+            .expect("typed artifact JSON");
+        typed_manifest.validate().expect("valid typed layouts");
+        dataset
+            .validate_typed_artifact_layouts(&typed_manifest)
+            .expect("typed layouts belong to dataset artifacts");
+        let elevation = typed_manifest
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.semantic == "hcad.raster.elevation")
+            .expect("typed elevation");
+        assert_eq!(elevation.resource.byte_length, Some(F64_TILE_BYTES));
+        assert!(matches!(
+            &elevation.layout,
+            himmelcad_core::typed_artifact::TypedArtifactLayout::DenseArray {
+                element_type: himmelcad_core::typed_artifact::ArtifactElementType::Float64,
+                shape,
+                endianness: himmelcad_core::typed_artifact::ArtifactEndianness::Little,
+                ..
+            } if shape == &[512, 512]
+        ));
         let manifest = dataset
             .artifacts
             .iter()

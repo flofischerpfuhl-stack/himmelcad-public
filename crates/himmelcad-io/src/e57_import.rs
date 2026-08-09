@@ -48,7 +48,7 @@ use crate::canonical_provider::{
     CanonicalImportPackage, CanonicalImportProvider, CanonicalImportRequest, CanonicalJsonObject,
     CanonicalResourceSet, FormatCapability, FormatProviderDescriptor, ImportProbe,
     ImportProbeRequest, PreparedResourceArtifact, ProviderContractError, ProviderOperationContext,
-    ProviderProgress, CANONICAL_IO_SCHEMA_VERSION,
+    ProviderOptionContract, ProviderProgress, StagedArtifactRoots, CANONICAL_IO_SCHEMA_VERSION,
 };
 use crate::las_import::{import_las_file_with_progress_and_cancel, ConverterProgress};
 use crate::ImportError;
@@ -95,6 +95,15 @@ impl E57CanonicalProvider {
                 extensions: vec!["e57".to_owned()],
                 media_types: vec!["model/e57".to_owned()],
                 capabilities: vec![FormatCapability::Import],
+                import_options: Some(ProviderOptionContract::object(
+                    serde_json::json!({
+                        "coordinateResolutionMeters": {"type": "number", "exclusiveMinimum": 0.0}
+                    }),
+                    serde_json::json!({
+                        "coordinateResolutionMeters": DEFAULT_RESOLUTION_METERS
+                    }),
+                )),
+                export_options: None,
             },
         }
     }
@@ -192,6 +201,29 @@ impl CanonicalImportProvider for E57CanonicalProvider {
             &transcode,
             context,
         )
+    }
+
+    fn staged_artifact_roots(
+        &self,
+        package: &CanonicalImportPackage,
+    ) -> Result<StagedArtifactRoots, ProviderContractError> {
+        Ok(StagedArtifactRoots {
+            dataset_roots: package
+                .datasets
+                .iter()
+                .map(|dataset| {
+                    (
+                        dataset.dataset_id.clone(),
+                        self.cache_dir.join(&dataset.dataset_id),
+                    )
+                })
+                .collect(),
+            resource_set_roots: package
+                .resource_sets
+                .iter()
+                .map(|set| (set.resource_set_id.clone(), self.cache_dir.clone()))
+                .collect(),
+        })
     }
 }
 

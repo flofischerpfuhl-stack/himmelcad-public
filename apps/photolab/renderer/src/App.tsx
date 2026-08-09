@@ -1,3 +1,13 @@
+import { ManagedAgentChat, ManagedAutomationApproval } from '@himmelcad/agent';
+import {
+  encodeRgbaScreenshot,
+  parseViewState,
+  validateScreenshotRequest,
+  type Quaternion,
+  type ScopedClip,
+  type ScreenshotRequestV1,
+  type ViewStateV1,
+} from '@himmelcad/app';
 import { consoleStore, logEvent } from '@himmelcad/console';
 import type {
   AlignmentQualityProfile,
@@ -8,6 +18,8 @@ import type {
   CaptureGroupRecord,
   EntityId,
   GcpCollectionRecord,
+  GcpLocalEstimateArtifact,
+  GcpIntrinsicsPolicy,
   GcpCsvImportMapping,
   GcpCsvPreview,
   GcpOptimizationPublicationRecord,
@@ -45,6 +57,11 @@ import {
   useLayoutStore,
   type WindowControls,
 } from '@himmelcad/ui';
+import type {
+  CanonicalRepresentationAdmission,
+  KernelClipVolume,
+  KernelWorldCamera,
+} from '@himmelcad/viewer/kernel';
 import { AlertTriangle, LoaderCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -60,6 +77,7 @@ import {
 import styles from './App.module.css';
 import { DefineAlignmentDialog } from './DefineAlignmentDialog.js';
 import { BatchConfiguratorPanel, type BatchPipelineStep } from './BatchConfiguratorPanel.js';
+import { BatchRecipeDialog } from './BatchRecipeDialog.js';
 import { CaptureGroupsPanel } from './CaptureGroupsPanel.js';
 import type { CaptureCalibrationDraft } from './captureGroupDraft.js';
 import { ConfirmationDialog } from './ConfirmationDialog.js';
@@ -70,6 +88,10 @@ import { GcpImagesPanel } from './GcpImagesPanel.js';
 import { GcpOptimizationPanel, type GcpOptimizationSelection } from './GcpOptimizationPanel.js';
 import { GcpPropertiesPanel } from './GcpPropertiesPanel.js';
 import { FloatingTaskIsland } from './FloatingTaskIsland.js';
+import {
+  PhotolabExternalImportDialog,
+  type PhotolabRegistrationPointCloudLayer,
+} from './PhotolabExternalImportDialog.js';
 import { ImageImportPanel } from './ImageImportPanel.js';
 import type {
   CrsOperationDiscovery,
@@ -102,9 +124,12 @@ import {
   createProjectFileOperation,
   failProjectFileOperation,
   requestProjectCancellation,
+  type ProjectArchiveProgress,
   type ProjectFileOperationState,
+  type ProjectProgressEvent,
 } from './projectFileOperation.js';
 import { createPhotolabProject } from './project.js';
+import { PhotolabExternalImportSession } from './externalImportSession.js';
 import { createPhotolabRibbonTabs } from './ribbon.js';
 import {
   EntityLoadGenerationGuard,
@@ -155,6 +180,20 @@ interface ProductLayerStatus {
   message?: string;
 }
 
+interface ExternalImportResidency {
+  readonly schemaVersion: 1;
+  readonly entries: readonly {
+    readonly admission: unknown;
+    readonly dataset: {
+      readonly datasetId: string;
+      readonly formatId: string;
+      readonly entityId: string;
+      readonly representationSlot: string;
+      readonly metadataUrl: string;
+    } | null;
+  }[];
+}
+
 export function App(): JSX.Element {
   const [project, setProject] = useState<ProjectSnapshot>(createPhotolabProject);
   const [selected, setSelected] = useState<ReadonlySet<EntityId>>(new Set());
@@ -166,6 +205,8 @@ export function App(): JSX.Element {
   const [productLayerStatuses, setProductLayerStatuses] = useState<
     Readonly<Record<EntityId, ProductLayerStatus>>
   >({});
+  const [externalImportPaths, setExternalImportPaths] = useState<readonly string[]>([]);
+  const externalImportSessionRef = useRef<PhotolabExternalImportSession | null>(null);
   const [productLayerRetryGeneration, setProductLayerRetryGeneration] = useState(0);
   const [snap, setSnap] = useState<SnapResult | null>(null);
   const [coreReady, setCoreReady] = useState(false);
@@ -190,6 +231,7 @@ export function App(): JSX.Element {
   const [imageQualityStarting, setImageQualityStarting] = useState(false);
   const [productStarting, setProductStarting] = useState(false);
   const [batchStarting, setBatchStarting] = useState(false);
+  const [batchRecipeOpen, setBatchRecipeOpen] = useState(false);
   const [processingSetSaving, setProcessingSetSaving] = useState(false);
   const [projectReady, setProjectReady] = useState(false);
   const [projectFileOperation, setProjectFileOperation] =
@@ -233,6 +275,9 @@ export function App(): JSX.Element {
   const [gcpOptimization, setGcpOptimization] = useState<GcpOptimizationPublicationRecord | null>(
     null,
   );
+  const [gcpLocalEstimates, setGcpLocalEstimates] = useState<readonly GcpLocalEstimateArtifact[]>(
+    [],
+  );
   const [gcpOptimizationStarting, setGcpOptimizationStarting] = useState(false);
   const [alignedGcpCameras, setAlignedGcpCameras] = useState<readonly AlignedGcpCameraRecord[]>([]);
   const [focusedGcpId, setFocusedGcpId] = useState<string | null>(null);
@@ -246,10 +291,16 @@ export function App(): JSX.Element {
   const [bottomTab, setBottomTab] = useState<BottomTab>('console');
   const [rightPanelTab, setRightPanelTab] = useState<'function' | 'properties'>('function');
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('scene');
-  const [sceneNavigationMode, setSceneNavigationMode] = useState<'orbit3d' | 'lockedTopDown2d'>(
-    'orbit3d',
-  );
+  const [sceneNavigationMode, setSceneNavigationMode] = useState<'3d' | '2d' | '2.5d'>('3d');
   const viewportRef = useRef<PhotolabKernelViewportHandle | null>(null);
+  const selectedRef = useRef(selected);
+  const projectRef = useRef(project);
+  const navigationModeRef = useRef(sceneNavigationMode);
+  const automationHiddenRef = useRef(new Set<EntityId>());
+  const automationClipsRef = useRef<readonly ScopedClip[]>([]);
+  selectedRef.current = selected;
+  projectRef.current = project;
+  navigationModeRef.current = sceneNavigationMode;
   const initialBootstrapRequested = useRef(false);
   const jobPollErrorLogged = useRef(false);
   const activeImageCommitId = useRef<string | null>(null);
@@ -281,11 +332,86 @@ export function App(): JSX.Element {
         setDefineAlignmentOpen(true);
         return;
       }
+      if (functionId === 'batch.configure') setBatchRecipeOpen(true);
       activateStoredFunction(functionId);
       if (functionId) setRightPanelTab('function');
     },
     [activateStoredFunction],
   );
+
+  useEffect(() => {
+    const bridge = window.himmelcad?.automationViewHost;
+    if (!bridge) return;
+    return bridge.register(async (method, params) => {
+      const viewport = viewportRef.current;
+      if (!viewport) throw new Error('PhotoLab view host is not ready.');
+      if (method === 'view.screenshot.prepare') {
+        const request = params as ScreenshotRequestV1;
+        validateScreenshotRequest(request);
+        if (!request.includeUi) {
+          const capture = await viewport.captureRgba({
+            width: Math.round(request.width * request.pixelRatio),
+            height: Math.round(request.height * request.pixelRatio),
+            transparentBackground: request.background === 'transparent',
+          });
+          return await encodeRgbaScreenshot(request, capture);
+        }
+        await viewport.waitForNextPresentedFrame();
+        const captureRect = viewport.captureRectangle();
+        if (!captureRect) throw new Error('PhotoLab viewport has no capture rectangle.');
+        return { captureRect };
+      }
+      if (method === 'view.state.get') return currentPhotolabViewState();
+      if (method !== 'view.state.set') throw new Error(`Unsupported view host method: ${method}`);
+      const state = parseViewState(params);
+      assertSupportedPhotolabPresentation(state);
+      await viewport.setViewMode(state.navigationMode);
+      setSceneNavigationMode(state.navigationMode);
+      viewport.adoptWorldCamera(toPhotolabKernelCamera(state));
+
+      const nextHidden = new Set(state.hiddenEntityIds as readonly EntityId[]);
+      for (const id of automationHiddenRef.current) {
+        if (!nextHidden.has(id)) {
+          const visible = projectRef.current.entities[id]?.visibility.visible ?? true;
+          viewport.setEntityVisibility([id], visible);
+        }
+      }
+      for (const id of nextHidden) viewport.setEntityVisibility([id], false);
+      automationHiddenRef.current = nextHidden;
+      setSelected(new Set(state.selectedEntityIds as readonly EntityId[]));
+      viewport.setAutomationClipVolumes(
+        state.scopedClips.filter((clip) => clip.enabled).map(photolabScopedClipVolume),
+      );
+      automationClipsRef.current = state.scopedClips;
+      await viewport.waitForNextPresentedFrame();
+      return currentPhotolabViewState();
+    });
+
+    function currentPhotolabViewState(): ViewStateV1 {
+      const camera = viewportRef.current?.worldCamera();
+      if (!camera) throw new Error('PhotoLab camera is not ready.');
+      const hidden = new Set<EntityId>(automationHiddenRef.current);
+      for (const entity of Object.values(projectRef.current.entities)) {
+        if (!entity.visibility.visible) hidden.add(entity.id);
+      }
+      return {
+        schema: 'himmelcad.view-state',
+        version: 1,
+        camera: fromPhotolabKernelCamera(camera),
+        navigationMode: navigationModeRef.current,
+        hiddenEntityIds: [...hidden].sort(),
+        selectedEntityIds: [...selectedRef.current].sort(),
+        scopedClips: automationClipsRef.current,
+        presentation: {
+          background: 'black',
+          renderStyle: 'source',
+          showGrid: false,
+          showAxes: false,
+          showSelectionOutline: true,
+        },
+      };
+    }
+  }, []);
 
   useEffect(() => {
     gcpCollectionRef.current = gcpCollection;
@@ -478,8 +604,7 @@ export function App(): JSX.Element {
     }
   }, [
     alignmentImageCount,
-    alignmentOverrides.maxImageEdge,
-    alignmentOverrides.keypointsPerMegapixel,
+    alignmentOverrides,
     alignmentScope,
     profile,
     projectReady,
@@ -528,6 +653,7 @@ export function App(): JSX.Element {
         setProductDatasets([]);
         setGcpCollection(null);
         setGcpOptimization(null);
+        setGcpLocalEstimates([]);
         setAlignedGcpCameras([]);
         setJobs([]);
         observedActiveJobs.current.clear();
@@ -1852,6 +1978,28 @@ export function App(): JSX.Element {
           // waiting for React's next render would reuse the stale revision.
           gcpCollectionRef.current = updated;
           setGcpCollection(updated);
+          // Every cached estimate is revision-bound. Recompute only the edited
+          // point against fixed cameras; failure (usually <2 observations)
+          // simply leaves global/coarse predictions in place.
+          setGcpLocalEstimates([]);
+          if (updated && alignedGcpCameras.length >= 2) {
+            try {
+              const local = await api.sidecar.call<GcpLocalEstimateArtifact>(
+                'photolab.gcp.localEstimate.compute',
+                {
+                  expectedCollectionSha256: updated[0],
+                  pointId: measurement.pointId,
+                  cameras: alignedGcpCameras.map((camera) => camera.camera),
+                },
+              );
+              if (local.estimate.collectionSha256 === updated[0]) {
+                setGcpLocalEstimates([local]);
+              }
+            } catch {
+              // One observation cannot be triangulated yet. Saving the marker
+              // remains successful and does not trigger global adjustment.
+            }
+          }
           logEvent(
             'info',
             'sidecar',
@@ -1869,7 +2017,7 @@ export function App(): JSX.Element {
       );
       return operation;
     },
-    [],
+    [alignedGcpCameras],
   );
 
   const editGcpObservation = useCallback(
@@ -1892,13 +2040,30 @@ export function App(): JSX.Element {
         const updated = await api.sidecar.call<readonly [ObjectHash, GcpCollectionRecord] | null>(
           'photolab.gcp.list',
         );
+        gcpCollectionRef.current = updated;
         setGcpCollection(updated);
+        setGcpLocalEstimates([]);
+        if (updated && alignedGcpCameras.length >= 2) {
+          try {
+            const local = await api.sidecar.call<GcpLocalEstimateArtifact>(
+              'photolab.gcp.localEstimate.compute',
+              {
+                expectedCollectionSha256: updated[0],
+                pointId: marker.pointId,
+                cameras: alignedGcpCameras.map((camera) => camera.camera),
+              },
+            );
+            if (local.estimate.collectionSha256 === updated[0]) setGcpLocalEstimates([local]);
+          } catch {
+            // Blocking/removing may intentionally leave fewer than two rays.
+          }
+        }
         logEvent('info', 'sidecar', `GCP observation ${edit.action} completed · ${marker.pointId}`);
       } catch (error) {
         logEvent('error', 'sidecar', `GCP observation edit failed: ${errorMessage(error)}`);
       }
     },
-    [gcpCollection],
+    [alignedGcpCameras, gcpCollection],
   );
 
   const editImageMask = useCallback(
@@ -2016,7 +2181,7 @@ export function App(): JSX.Element {
       project.renderOffset.y,
       project.renderOffset.z,
     ]);
-    viewportRef.current?.setNavigationMode(sceneNavigationMode);
+    void viewportRef.current?.setViewMode(sceneNavigationMode);
   }, [
     project.renderOffset.x,
     project.renderOffset.y,
@@ -2389,7 +2554,37 @@ export function App(): JSX.Element {
     [acceptProject, activeProcessingSetId, captureGroupSaving],
   );
 
-  const useCaptureGroupAsProcessingSet = useCallback(
+  const updateCalibrationGroupIntrinsics = useCallback(
+    async (calibrationGroupId: EntityId, intrinsicsPolicy: GcpIntrinsicsPolicy) => {
+      const api = window.himmelcad;
+      if (!api || captureGroupSaving) return;
+      setCaptureGroupSaving(true);
+      try {
+        const opened = await api.sidecar.call<OpenPhotolabProjectResult>(
+          'photolab.project.calibrationGroup.updateIntrinsics',
+          { calibrationGroupId, intrinsicsPolicy },
+        );
+        acceptProject(opened, { preserveSelection: true, processingSetId: activeProcessingSetId });
+        setCalibrationGroups(
+          await api.sidecar.call<CameraCalibrationGroupRecord[]>(
+            'photolab.project.calibrationGroup.list',
+          ),
+        );
+        logEvent('info', 'sidecar', 'Calibration-group intrinsics policy updated');
+      } catch (error) {
+        logEvent(
+          'error',
+          'sidecar',
+          `Intrinsics policy could not be saved: ${errorMessage(error)}`,
+        );
+      } finally {
+        setCaptureGroupSaving(false);
+      }
+    },
+    [acceptProject, activeProcessingSetId, captureGroupSaving],
+  );
+
+  const setCaptureGroupAsProcessingSet = useCallback(
     async (capture: CaptureGroupRecord) => {
       const api = window.himmelcad;
       if (!api || processingSetSaving) return;
@@ -2637,10 +2832,89 @@ export function App(): JSX.Element {
       gcpCollection,
       processingSets,
       project.entities,
-      runEntityCommand,
       selected,
       setRightCollapsed,
     ],
+  );
+
+  const chooseExternalImports = useCallback(async (): Promise<void> => {
+    const api = window.himmelcad;
+    if (!api || !projectReady) return;
+    try {
+      const projectRoot = await api.externalImport.projectRoot();
+      const session = await PhotolabExternalImportSession.open(projectRoot, api.sidecar.call);
+      externalImportSessionRef.current = session;
+      const formats = await session.listFormats();
+      const captureExtensions = new Set([
+        'jpg',
+        'jpeg',
+        'png',
+        'dng',
+        'heic',
+        'heif',
+        'avif',
+        'mp4',
+        'mov',
+        'mkv',
+        'webm',
+      ]);
+      const extensions = formats
+        .flatMap((format) => format.extensions)
+        .map((extension) => extension.replace(/^\./, '').toLowerCase())
+        .filter((extension) => !captureExtensions.has(extension));
+      const paths = await api.externalImport.selectFiles(extensions);
+      setExternalImportPaths((current) => [...current, ...paths]);
+    } catch (error) {
+      logEvent('error', 'renderer', `External import could not start: ${errorMessage(error)}`);
+    }
+  }, [projectReady]);
+
+  useEffect(() => {
+    const api = window.himmelcad;
+    if (!api || !projectReady) return;
+    let active = true;
+    void (async () => {
+      try {
+        const projectRoot = await api.externalImport.projectRoot();
+        const session = await PhotolabExternalImportSession.open(projectRoot, api.sidecar.call);
+        if (!active) return;
+        externalImportSessionRef.current = session;
+        await restoreExternalResidency(api, viewportRef.current);
+      } catch (error) {
+        logEvent(
+          'warn',
+          'renderer',
+          `External datasets could not be restored: ${errorMessage(error)}`,
+        );
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [project.projectId, projectReady]);
+
+  const registrationPointClouds = useMemo<readonly PhotolabRegistrationPointCloudLayer[]>(
+    () =>
+      productDatasets.flatMap((dataset) => {
+        if (
+          !dataset.visible ||
+          dataset.format !== 'potreeV2' ||
+          !dataset.boundsMin ||
+          !dataset.boundsMax
+        ) {
+          return [];
+        }
+        return [
+          {
+            entityId: dataset.entityId,
+            name: project.entities[dataset.entityId]?.name ?? 'Current point cloud',
+            metadataUrl: projectProductUrl(dataset.relativePath),
+            pointCount: dataset.pointCount ?? 0,
+            bounds: { min: dataset.boundsMin, max: dataset.boundsMax },
+          },
+        ];
+      }),
+    [productDatasets, project.entities],
   );
 
   const ribbonTabs = useMemo(
@@ -2652,10 +2926,20 @@ export function App(): JSX.Element {
         onSaveProjectAs: () => void saveProjectAs(),
         onImportFiles: () => void inspectImages('files'),
         onImportFolder: () => void inspectImages('folder'),
+        onImportExternal: () => void chooseExternalImports(),
         onImportGcps: () => void chooseGcpCsv(),
         onActivateFunction: activate,
       }),
-    [chooseGcpCsv, createProject, inspectImages, openProject, saveProject, saveProjectAs, activate],
+    [
+      chooseExternalImports,
+      chooseGcpCsv,
+      createProject,
+      inspectImages,
+      openProject,
+      saveProject,
+      saveProjectAs,
+      activate,
+    ],
   );
 
   const windowControls = useMemo<WindowControls | null>(() => {
@@ -2793,8 +3077,8 @@ export function App(): JSX.Element {
       <AppShell
         titleBar={
           <TitleBar
-            appName="himmel:CAD"
-            productLabel="PHOTOLAB"
+            appName="HimmelCAD"
+            productLabel="PhotoLab"
             // Project name lives in the left tree only — not in the titlebar.
             brandMark={<img className={styles.brandLogo} src={photolabLogoUrl} alt="" />}
             controls={windowControls}
@@ -2926,7 +3210,11 @@ export function App(): JSX.Element {
                   void createCaptureGroup(name, cameraIds, groups)
                 }
                 onConfirm={(captureGroupId) => void confirmCaptureGroup(captureGroupId)}
-                onUseAsAlignmentScope={(capture) => void useCaptureGroupAsProcessingSet(capture)}
+                intrinsicsDiagnostics={gcpOptimization?.artifact.result.intrinsicsDiagnostics ?? []}
+                onUpdateIntrinsics={(groupId, policy) =>
+                  void updateCalibrationGroupIntrinsics(groupId, policy)
+                }
+                onUseAsAlignmentScope={(capture) => void setCaptureGroupAsProcessingSet(capture)}
               />
             ) : activeFunctionId === 'reference.gcp.images' ? (
               <GcpImagesPanel
@@ -3131,18 +3419,17 @@ export function App(): JSX.Element {
                   </div>
                 )}
                 <div className={styles.sceneOverlayBar}>
-                  <OverlayChip
-                    as="button"
-                    active={sceneNavigationMode === 'lockedTopDown2d'}
-                    aria-pressed={sceneNavigationMode === 'lockedTopDown2d'}
-                    onClick={() =>
-                      setSceneNavigationMode((mode) =>
-                        mode === 'orbit3d' ? 'lockedTopDown2d' : 'orbit3d',
-                      )
-                    }
-                  >
-                    {sceneNavigationMode === 'lockedTopDown2d' ? 'Orbit 3D' : 'Top-down 2D'}
-                  </OverlayChip>
+                  {(['3d', '2.5d', '2d'] as const).map((mode) => (
+                    <OverlayChip
+                      key={mode}
+                      as="button"
+                      active={sceneNavigationMode === mode}
+                      aria-pressed={sceneNavigationMode === mode}
+                      onClick={() => setSceneNavigationMode(mode)}
+                    >
+                      {mode.toUpperCase()}
+                    </OverlayChip>
+                  ))}
                   <OverlayChip
                     as="button"
                     onClick={() => {
@@ -3168,6 +3455,7 @@ export function App(): JSX.Element {
                   alignedCameras={alignedGcpCameras}
                   gcpCollection={gcpCollection?.[1] ?? null}
                   gcpOptimization={gcpOptimization}
+                  gcpLocalEstimates={gcpLocalEstimates}
                   focusedGcpId={focusedGcpId}
                   onCommitGcpMeasurement={commitGcpMeasurement}
                   onEditGcpObservation={(marker, edit) => void editGcpObservation(marker, edit)}
@@ -3189,6 +3477,34 @@ export function App(): JSX.Element {
         floatingRightTabs
         statusBar={<StatusBar items={statusItems} />}
       />
+      {window.himmelcad ? (
+        <ManagedAutomationApproval transport={window.himmelcad.agentHarness} />
+      ) : null}
+      {activeFunctionId === 'automation.agent' && window.himmelcad ? (
+        <FloatingTaskIsland onRequestClose={() => activate(null)}>
+          <ManagedAgentChat
+            transport={window.himmelcad.agentHarness}
+            providerCredentials={window.himmelcad.providerCredentials}
+          />
+        </FloatingTaskIsland>
+      ) : null}
+      {externalImportPaths[0] && externalImportSessionRef.current ? (
+        <FloatingTaskIsland modal onRequestClose={() => undefined}>
+          <PhotolabExternalImportDialog
+            sourcePath={externalImportPaths[0]}
+            projectLabel={project.name}
+            session={externalImportSessionRef.current}
+            currentPointClouds={registrationPointClouds}
+            onCommitted={async () => {
+              const api = window.himmelcad;
+              if (!api) return;
+              await restoreExternalResidency(api, viewportRef.current);
+              logEvent('info', 'renderer', 'Registered external dataset committed and loaded');
+            }}
+            onClose={() => setExternalImportPaths((current) => current.slice(1))}
+          />
+        </FloatingTaskIsland>
+      ) : null}
       {projectFileOperation && (
         <FloatingTaskIsland
           modal
@@ -3288,6 +3604,37 @@ export function App(): JSX.Element {
           />
         </FloatingTaskIsland>
       )}
+      {batchRecipeOpen && (
+        <FloatingTaskIsland modal onRequestClose={() => setBatchRecipeOpen(false)}>
+          <BatchRecipeDialog
+            busy={batchStarting}
+            allCameraIds={projectImages.map((image) => image.entityId)}
+            selectedCameraIds={selectedCameraIds}
+            processingSets={processingSets}
+            activeProcessingSetId={activeProcessingSetId}
+            artifacts={productDatasets.flatMap((dataset) =>
+              dataset.kind === 'dem' && dataset.versionHash
+                ? [
+                    {
+                      entityId: dataset.entityId,
+                      label: `DEM · ${project.entities[dataset.entityId]?.name ?? dataset.entityId}`,
+                      kind: 'dem' as const,
+                      versionHash: dataset.versionHash,
+                    },
+                  ]
+                : [],
+            )}
+            onActivateProcessingSet={activateProcessingSet}
+            onClearProcessingSet={() => setActiveProcessingSetId(null)}
+            onRun={(steps, cameraEntityIds, scopeLabel) => {
+              void startBatch(steps, cameraEntityIds, scopeLabel);
+              setBatchRecipeOpen(false);
+            }}
+            onClose={() => setBatchRecipeOpen(false)}
+            onError={reportPanelError}
+          />
+        </FloatingTaskIsland>
+      )}
       {pendingProductExport && (
         <FloatingTaskIsland modal onRequestClose={cancelProductExport}>
           <ConfirmationDialog
@@ -3352,9 +3699,9 @@ function isProfile(value: string | undefined): value is AlignmentQualityProfile 
   return value === 'qualityHybrid' || value === 'maximumRobustness' || value === 'fast';
 }
 
-function workspaceLabel(mode: WorkspaceMode, sceneMode: 'orbit3d' | 'lockedTopDown2d'): string {
+function workspaceLabel(mode: WorkspaceMode, sceneMode: '3d' | '2d' | '2.5d'): string {
   if (mode === 'images') return 'Images / Depth';
-  return sceneMode === 'lockedTopDown2d' ? 'Top-down 2D · locked' : '3D Scene';
+  return sceneMode === '3d' ? '3D Scene' : `${sceneMode.toUpperCase()} Plan · locked`;
 }
 
 function hardwareLabel(hardware: HardwareCapabilities): string {
@@ -3446,6 +3793,82 @@ function projectProductUrl(relativePath: string): string {
     .map((segment) => encodeURIComponent(segment))
     .join('/');
   return `hcad-product://project/${encoded}`;
+}
+
+function parseExternalAdmission(value: unknown): CanonicalRepresentationAdmission {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !('entity' in value) ||
+    typeof value.entity !== 'object' ||
+    value.entity === null ||
+    !('resolvedGeometry' in value)
+  ) {
+    throw new Error('invalid external canonical admission');
+  }
+  return value as CanonicalRepresentationAdmission;
+}
+
+async function restoreExternalResidency(
+  api: NonNullable<typeof window.himmelcad>,
+  viewport: PhotolabKernelViewportHandle | null,
+): Promise<void> {
+  if (!viewport) return;
+  const residency = await api.externalImport.residency<ExternalImportResidency>();
+  if (residency.schemaVersion !== 1) throw new Error('invalid external residency');
+  for (const entry of residency.entries) {
+    const admission = parseExternalAdmission(entry.admission);
+    if (
+      entry.dataset?.formatId === 'potree@2' &&
+      admission.resolvedGeometry.kind === 'pointCloud'
+    ) {
+      await viewport.loadPotreePointCloud(entry.dataset.metadataUrl, {
+        entityId: admission.entity.id as EntityId,
+        sourceName: admission.entity.name,
+        bounds: await readExternalPotreeBounds(entry.dataset.metadataUrl),
+        pointCount: admission.resolvedGeometry.dataset.elementCount ?? 0,
+        canonicalAdmission: admission,
+      });
+    } else if (entry.dataset === null) {
+      await viewport.loadCanonicalPackage([admission]);
+    }
+  }
+  viewport.frameAll();
+}
+
+async function readExternalPotreeBounds(metadataUrl: string): Promise<{
+  readonly min: readonly [number, number, number];
+  readonly max: readonly [number, number, number];
+}> {
+  const response = await fetch(metadataUrl);
+  if (!response.ok) throw new Error(`external Potree metadata failed (${response.status})`);
+  const value: unknown = await response.json();
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !('boundingBox' in value) ||
+    typeof value.boundingBox !== 'object' ||
+    value.boundingBox === null ||
+    !('min' in value.boundingBox) ||
+    !('max' in value.boundingBox)
+  ) {
+    throw new Error('external Potree metadata has no bounds');
+  }
+  return {
+    min: externalCoordinateTuple(value.boundingBox.min),
+    max: externalCoordinateTuple(value.boundingBox.max),
+  };
+}
+
+function externalCoordinateTuple(value: unknown): readonly [number, number, number] {
+  if (
+    !Array.isArray(value) ||
+    value.length !== 3 ||
+    value.some((coordinate) => typeof coordinate !== 'number' || !Number.isFinite(coordinate))
+  ) {
+    throw new Error('external Potree bound is invalid');
+  }
+  return [value[0] as number, value[1] as number, value[2] as number];
 }
 
 interface AlignedCameraRectanglePose {
@@ -3577,9 +4000,127 @@ function normalize3(vector: readonly number[]): Vector3Tuple {
   return length > 1e-12 ? scale3(vector, 1 / length) : [1, 0, 0];
 }
 
-function parseSidecarProgress(
-  line: string,
-): import('./projectFileOperation.js').ProjectProgressEvent | null {
+function fromPhotolabKernelCamera(camera: KernelWorldCamera): ViewStateV1['camera'] {
+  return {
+    position: camera.eye,
+    target: camera.target,
+    up: camera.up,
+    projection:
+      camera.projection.kind === 'perspective'
+        ? {
+            kind: 'perspective',
+            verticalFieldOfViewRadians: camera.projection.verticalFovRadians,
+            near: camera.projection.near,
+            far: camera.projection.far,
+          }
+        : {
+            kind: 'orthographic',
+            verticalSpan: camera.projection.verticalSpan,
+            near: camera.projection.near,
+            far: camera.projection.far,
+          },
+  };
+}
+
+function toPhotolabKernelCamera(state: ViewStateV1): KernelWorldCamera {
+  return {
+    eye: state.camera.position,
+    target: state.camera.target,
+    up: state.camera.up,
+    projection:
+      state.camera.projection.kind === 'perspective'
+        ? {
+            kind: 'perspective',
+            verticalFovRadians: state.camera.projection.verticalFieldOfViewRadians,
+            aspect: 1,
+            near: state.camera.projection.near,
+            far: state.camera.projection.far,
+          }
+        : {
+            kind: 'orthographic',
+            verticalSpan: state.camera.projection.verticalSpan,
+            aspect: 1,
+            near: state.camera.projection.near,
+            far: state.camera.projection.far,
+          },
+  };
+}
+
+function assertSupportedPhotolabPresentation(state: ViewStateV1): void {
+  const presentation = state.presentation;
+  if (
+    presentation.background !== 'black' ||
+    presentation.renderStyle !== 'source' ||
+    presentation.showGrid ||
+    presentation.showAxes ||
+    !presentation.showSelectionOutline
+  ) {
+    throw new Error('The requested PhotoLab presentation controls are not implemented.');
+  }
+}
+
+function photolabScopedClipVolume(clip: ScopedClip): KernelClipVolume {
+  if (clip.scope.kind !== 'all') {
+    throw new Error('Entity-scoped automation clips are not supported by the current kernel.');
+  }
+  if (clip.primitive.kind === 'plane') {
+    const sign = clip.primitive.keep === 'positive' ? 1 : -1;
+    return {
+      id: clip.id,
+      enabled: clip.enabled,
+      planes: [
+        {
+          normal: {
+            x: clip.primitive.normal.x * sign,
+            y: clip.primitive.normal.y * sign,
+            z: clip.primitive.normal.z * sign,
+          },
+          distance: clip.primitive.constant * sign,
+        },
+      ],
+      operation: 'keepInside',
+      previewCap: false,
+    };
+  }
+  const axes = photolabQuaternionAxes(clip.primitive.orientation);
+  const center = clip.primitive.center;
+  const extents = clip.primitive.halfExtents;
+  const planes = axes.flatMap((axis, index) => {
+    const extent = [extents.x, extents.y, extents.z][index]!;
+    const centerProjection = axis.x * center.x + axis.y * center.y + axis.z * center.z;
+    return [
+      { normal: axis, distance: extent - centerProjection },
+      {
+        normal: { x: -axis.x, y: -axis.y, z: -axis.z },
+        distance: extent + centerProjection,
+      },
+    ];
+  });
+  return {
+    id: clip.id,
+    enabled: clip.enabled,
+    planes,
+    operation: clip.primitive.keep === 'inside' ? 'keepInside' : 'removeInside',
+    previewCap: false,
+  };
+}
+
+function photolabQuaternionAxes(
+  quaternion: Quaternion,
+): readonly [
+  { x: number; y: number; z: number },
+  { x: number; y: number; z: number },
+  { x: number; y: number; z: number },
+] {
+  const { x, y, z, w } = quaternion;
+  return [
+    { x: 1 - 2 * (y * y + z * z), y: 2 * (x * y + z * w), z: 2 * (x * z - y * w) },
+    { x: 2 * (x * y - z * w), y: 1 - 2 * (x * x + z * z), z: 2 * (y * z + x * w) },
+    { x: 2 * (x * z + y * w), y: 2 * (y * z - x * w), z: 1 - 2 * (x * x + y * y) },
+  ];
+}
+
+function parseSidecarProgress(line: string): ProjectProgressEvent | null {
   const index = line.indexOf(SIDECAR_PROGRESS_PREFIX);
   if (index < 0) return null;
   try {
@@ -3605,9 +4146,7 @@ function parseSidecarProgress(
   }
 }
 
-function isProjectArchiveProgress(
-  value: unknown,
-): value is import('./projectFileOperation.js').ProjectArchiveProgress {
+function isProjectArchiveProgress(value: unknown): value is ProjectArchiveProgress {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Record<string, unknown>;
   return (

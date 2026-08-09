@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "component": "numpy-2.2.6-cp312-win_amd64",
+  "assembly": {
+    "extensions": "Pinned official NumPy MSVC wheel",
+    "blas_lapack": "NumPy lapack_lite f2c C sources, ILP64",
+    "cblas_surface": "Only symbols imported by the pinned NumPy extensions",
+    "threading": "No provider threads or OpenMP"
+  },
+  "forbidden_payloads": [
+    "upstream stock BLAS implementation",
+    "GNU Fortran runtime",
+    "GCC runtime",
+    "OpenMP runtime",
+    "GPL-licensed runtime or metadata"
+  ],
+  "release_gates": [
+    "Pinned source and upstream wheel hashes",
+    "Exact PE export set equals the union of NumPy PE import tables",
+    "Recursive provider PE import audit",
+    "Metadata and binary-string license-policy audit",
+    "Isolated Wine import and NumPy array operations",
+    "float32/float64/complex64/complex128 GEMM, solve, inverse, SVD, eig, eigh, least-squares, QR and Cholesky",
+    "Singular, non-positive-definite and ill-conditioned numerical cases",
+    "Concurrent NumPy subprocess imports and threaded SVD",
+    "OpenCV PNG encode/decode and SIFT",
+    "Two clean builds must be byte-identical before coordinated publication"
+  ],
+  "bundled_non_spdx_terms": {
+    "component": "Microsoft Visual C++ Redistributable runtime",
+    "classification": "Microsoft redistributable terms; not BSD or another SPDX permissive license",
+    "license_file": "licenses/microsoft/LICENSE-Microsoft-VC-Runtime.rtf",
+    "license_sha256": "8099dc3cf9502c335da829e5c755948a12e3e6de490eb492a99deb673d883d8b"
+  },
+  "publication": "Candidate only; Wheel, runtime manifest and THIRD_PARTY inventory are published atomically by the release owner"
+}

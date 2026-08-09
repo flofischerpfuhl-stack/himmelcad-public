@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::entity::{EntityId, EntitySnapshot, Vec3};
 use crate::hash::ObjectHash;
+use crate::photolab_capture::PhotolabSpatialReference;
 use crate::photolab_crs::FrozenCrsEndpoint;
 
 /// Current on-disk schema version for Photolab `.hcad` working projects.
@@ -28,6 +29,8 @@ pub struct PhotolabProjectManifest {
     pub root_entity: EntityId,
     pub entities: BTreeMap<String, EntitySnapshot>,
     pub render_offset: Vec3,
+    #[serde(default)]
+    pub spatial_reference: PhotolabSpatialReference,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference_frame: Option<ProjectReferenceFrame>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -178,6 +181,7 @@ pub fn initial_photolab_manifest(
         root_entity: root_id,
         entities,
         render_offset: Vec3::default(),
+        spatial_reference: PhotolabSpatialReference::default(),
         reference_frame: None,
         image_quality_catalog_hash: None,
         image_mask_catalog_hash: None,

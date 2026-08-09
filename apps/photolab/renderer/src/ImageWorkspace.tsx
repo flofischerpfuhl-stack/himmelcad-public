@@ -3,6 +3,7 @@ import type {
   DiscoveredPhoto,
   EntityId,
   GcpCollectionRecord,
+  GcpLocalEstimateArtifact,
   GcpObservationEdit,
   GcpOptimizationPublicationRecord,
   ImageMaskEdit,
@@ -12,7 +13,7 @@ import type {
   PhotoImportBatch,
   ProjectCameraImageRecord,
 } from '@himmelcad/data';
-import { OverlayChip } from '@himmelcad/ui';
+import { OverlayChip, Select } from '@himmelcad/ui';
 import {
   Brush,
   Eraser,
@@ -51,6 +52,7 @@ export interface ImageWorkspaceProps {
   alignedCameras: readonly AlignedGcpCameraRecord[];
   gcpCollection: GcpCollectionRecord | null;
   gcpOptimization: GcpOptimizationPublicationRecord | null;
+  gcpLocalEstimates: readonly GcpLocalEstimateArtifact[];
   focusedGcpId: string | null;
   onCommitGcpMeasurement: (measurement: GcpManualMeasurement) => Promise<boolean>;
   onEditGcpObservation: (marker: GcpImageMarker, edit: GcpObservationEdit) => void;
@@ -91,6 +93,7 @@ export function ImageWorkspace({
   alignedCameras,
   gcpCollection,
   gcpOptimization,
+  gcpLocalEstimates,
   focusedGcpId,
   onCommitGcpMeasurement,
   onEditGcpObservation,
@@ -145,6 +148,10 @@ export function ImageWorkspace({
     for (const projection of gcpOptimization?.artifact.result.projections ?? []) {
       if (projection.pointId === focusedGcpId) ids.add(projection.imageId);
     }
+    for (const artifact of gcpLocalEstimates) {
+      if (artifact.estimate.pointId !== focusedGcpId) continue;
+      for (const projection of artifact.estimate.projections) ids.add(projection.imageId);
+    }
     const point = gcpCollection?.points.find(({ point }) => point.id === focusedGcpId)?.point;
     if (point) {
       const imagesByEntity = new Map(projectImages.map((image) => [image.entityId, image]));
@@ -154,7 +161,14 @@ export function ImageWorkspace({
       }
     }
     return ids;
-  }, [alignedCameras, focusedGcpId, gcpCollection, gcpOptimization, projectImages]);
+  }, [
+    alignedCameras,
+    focusedGcpId,
+    gcpCollection,
+    gcpLocalEstimates,
+    gcpOptimization,
+    projectImages,
+  ]);
   const photos = useMemo(() => {
     if (!relevantCameraIds) return allPhotos;
     const hashes = new Set(
@@ -260,12 +274,12 @@ export function ImageWorkspace({
             imageMask={imageMasks.find(
               (entry) =>
                 entry.imageEntityId ===
-                projectImages.find(
-                  (image) => image.metadata.sourceObjectHash === selected.sha256,
-                )?.entityId,
+                projectImages.find((image) => image.metadata.sourceObjectHash === selected.sha256)
+                  ?.entityId,
             )}
             gcpCollection={gcpCollection}
             gcpOptimization={gcpOptimization}
+            gcpLocalEstimates={gcpLocalEstimates}
             focusedGcpId={focusedGcpId}
             onCommitGcpMeasurement={onCommitGcpMeasurement}
             onEditGcpObservation={onEditGcpObservation}
@@ -294,6 +308,7 @@ function ImageLayerContent({
   imageMask,
   gcpCollection,
   gcpOptimization,
+  gcpLocalEstimates,
   focusedGcpId,
   onCommitGcpMeasurement,
   onEditGcpObservation,
@@ -309,6 +324,7 @@ function ImageLayerContent({
   imageMask: ListedImageMaskRevision | undefined;
   gcpCollection: GcpCollectionRecord | null;
   gcpOptimization: GcpOptimizationPublicationRecord | null;
+  gcpLocalEstimates: readonly GcpLocalEstimateArtifact[];
   focusedGcpId: string | null;
   onCommitGcpMeasurement: (measurement: GcpManualMeasurement) => Promise<boolean>;
   onEditGcpObservation: (marker: GcpImageMarker, edit: GcpObservationEdit) => void;
@@ -351,7 +367,7 @@ function ImageLayerContent({
   if (!loadFailed) {
     const dimensions = photo.metadata.exif.dimensions;
     const markers = camera
-      ? markersForCamera(camera, projectImage, gcpCollection, gcpOptimization, focusedGcpId)
+      ? markersForCamera(camera, projectImage, gcpCollection, gcpOptimization, gcpLocalEstimates)
       : [];
     return (
       <div className={styles.imageCanvas}>
@@ -362,6 +378,10 @@ function ImageLayerContent({
           width={camera?.camera.widthPixels ?? dimensions?.widthPixels ?? 1}
           height={camera?.camera.heightPixels ?? dimensions?.heightPixels ?? 1}
           markers={markers}
+          gcpPoints={
+            gcpCollection?.points.map(({ point }) => ({ id: point.id, name: point.name })) ?? []
+          }
+          imageId={camera?.imageId}
           imageEntityId={projectImage?.entityId}
           imageMask={imageMask}
           focusedGcpId={focusedGcpId}
@@ -783,6 +803,8 @@ function ImageContentFrame({
   width,
   height,
   markers,
+  gcpPoints,
+  imageId,
   imageEntityId,
   imageMask,
   focusedGcpId,
@@ -798,6 +820,8 @@ function ImageContentFrame({
   width: number;
   height: number;
   markers: readonly GcpImageMarker[];
+  gcpPoints: readonly { id: string; name: string }[];
+  imageId: number | undefined;
   imageEntityId: EntityId | undefined;
   imageMask: ListedImageMaskRevision | undefined;
   focusedGcpId: string | null;
@@ -815,6 +839,14 @@ function ImageContentFrame({
   const [maskBusy, setMaskBusy] = useState(false);
   const [activeStroke, setActiveStroke] = useState<readonly ImageMaskPoint[]>([]);
   const [fullResolutionReady, setFullResolutionReady] = useState(false);
+  const [observationMenu, setObservationMenu] = useState<{
+    x: number;
+    y: number;
+    coordinate: { xPixels: number; yPixels: number };
+    pointId: string;
+  } | null>(null);
+  const [observationBusy, setObservationBusy] = useState(false);
+  const previousSourceRef = useRef<string | null>(null);
   const strokeRef = useRef<{ pointerId: number; points: ImageMaskPoint[] } | null>(null);
   const fitMode = useRef(true);
   const lastViewportSize = useRef({ width: 0, height: 0 });
@@ -842,12 +874,34 @@ function ImageContentFrame({
     fitMode.current = true;
     lastViewportSize.current = { width: bounds.width, height: bounds.height };
   }, [commitTransform, container, height, width]);
+  const focusedMarker = focusedGcpId
+    ? markers.find((marker) => marker.pointId === focusedGcpId)
+    : undefined;
   useEffect(() => {
-    fitMode.current = true;
+    if (previousSourceRef.current === source) return;
+    const hadPreviousImage = previousSourceRef.current !== null;
+    previousSourceRef.current = source;
     setFullResolutionReady(false);
-    const animationFrame = requestAnimationFrame(fit);
+    const animationFrame = requestAnimationFrame(() => {
+      if (!container) return;
+      const bounds = container.getBoundingClientRect();
+      if (bounds.width <= 0 || bounds.height <= 0) return;
+      if (!hadPreviousImage || !focusedMarker) {
+        fit();
+        return;
+      }
+      const scale = transformRef.current.scale;
+      commitTransform({
+        scale,
+        x: bounds.width / 2 - focusedMarker.coordinate.xPixels * scale,
+        y: bounds.height / 2 - focusedMarker.coordinate.yPixels * scale,
+      });
+      fitMode.current = false;
+      lastViewportSize.current = { width: bounds.width, height: bounds.height };
+    });
     return () => cancelAnimationFrame(animationFrame);
-  }, [fit, source]);
+  }, [commitTransform, container, fit, focusedMarker, source]);
+  useEffect(() => setObservationMenu(null), [source]);
   useEffect(() => {
     if (!container) return;
     const update = () => {
@@ -923,7 +977,9 @@ function ImageContentFrame({
       const previous = stroke.points.at(-1);
       if (
         point &&
-        (!previous || Math.hypot(point.xPixels - previous.xPixels, point.yPixels - previous.yPixels) >= Math.max(1, maskRadius * 0.12))
+        (!previous ||
+          Math.hypot(point.xPixels - previous.xPixels, point.yPixels - previous.yPixels) >=
+            Math.max(1, maskRadius * 0.12))
       ) {
         stroke.points.push(point);
         setActiveStroke([...stroke.points]);
@@ -961,6 +1017,51 @@ function ImageContentFrame({
   const doubleClick = (event: ReactMouseEvent<HTMLDivElement>): void => {
     if (!pointerTargetOwnsInteraction(event.target)) fit();
   };
+  const openObservationMenu = (event: ReactMouseEvent<HTMLDivElement>): void => {
+    if (
+      !container ||
+      imageId == null ||
+      gcpPoints.length === 0 ||
+      maskTool !== 'pan' ||
+      pointerTargetOwnsInteraction(event.target)
+    ) {
+      return;
+    }
+    const coordinate = imageCoordinateAt(
+      event.clientX,
+      event.clientY,
+      container,
+      transformRef.current,
+      width,
+      height,
+    );
+    if (!coordinate) return;
+    event.preventDefault();
+    const bounds = container.getBoundingClientRect();
+    const initialPoint = gcpPoints.find((point) => point.id === focusedGcpId) ?? gcpPoints[0];
+    if (!initialPoint) return;
+    setObservationMenu({
+      x: Math.max(4, Math.min(event.clientX - bounds.left, bounds.width - 320)),
+      y: Math.max(4, Math.min(event.clientY - bounds.top, bounds.height - 230)),
+      coordinate,
+      pointId: initialPoint.id,
+    });
+  };
+  const commitContextObservation = async (): Promise<void> => {
+    if (!observationMenu || imageId == null || observationBusy) return;
+    setObservationBusy(true);
+    try {
+      const saved = await onCommitGcpMeasurement({
+        pointId: observationMenu.pointId,
+        imageId,
+        state: 'manual',
+        coordinate: observationMenu.coordinate,
+      });
+      if (saved) setObservationMenu(null);
+    } finally {
+      setObservationBusy(false);
+    }
+  };
   return (
     <div
       ref={setContainer}
@@ -972,6 +1073,7 @@ function ImageContentFrame({
       onPointerUp={stopPan}
       onPointerCancel={stopPan}
       onDoubleClick={doubleClick}
+      onContextMenu={openObservationMenu}
     >
       <div className={styles.zoomToolbar}>
         <OverlayChip
@@ -1040,9 +1142,9 @@ function ImageContentFrame({
             onClick={() => {
               if (!imageMask || imageMask.maskedPixelCount === 0) return;
               setMaskBusy(true);
-              void onEditImageMask(imageEntityId, imageMask.revisionSha256, { kind: 'clear' }).finally(
-                () => setMaskBusy(false),
-              );
+              void onEditImageMask(imageEntityId, imageMask.revisionSha256, {
+                kind: 'clear',
+              }).finally(() => setMaskBusy(false));
             }}
             disabled={maskBusy || !imageMask || imageMask.maskedPixelCount === 0}
             aria-label="Clear mask"
@@ -1053,7 +1155,9 @@ function ImageContentFrame({
           {maskBusy ? (
             <LoaderCircle className={styles.maskSpinner} size={13} />
           ) : (imageMask?.maskedPixelCount ?? 0) > 0 ? (
-            <code title="Masked pixels">{(imageMask?.maskedPixelCount ?? 0).toLocaleString('en-US')} px</code>
+            <code title="Masked pixels">
+              {(imageMask?.maskedPixelCount ?? 0).toLocaleString('en-US')} px
+            </code>
           ) : null}
         </div>
       )}
@@ -1126,6 +1230,51 @@ function ImageContentFrame({
           }
         />
       )}
+      {observationMenu && (
+        <div
+          className={styles.observationMenu}
+          style={{ left: observationMenu.x, top: observationMenu.y }}
+          role="dialog"
+          aria-label="Create GCP observation"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <strong>Create marker here</strong>
+          <span>
+            Pixel {observationMenu.coordinate.xPixels.toFixed(1)} /{' '}
+            {observationMenu.coordinate.yPixels.toFixed(1)}
+          </span>
+          <label>
+            Assign ground control point
+            <Select
+              wrapClassName={styles.observationSelect}
+              value={observationMenu.pointId}
+              disabled={observationBusy}
+              options={gcpPoints.map((point) => ({ value: point.id, label: point.name }))}
+              onChange={(event) =>
+                setObservationMenu((current) =>
+                  current ? { ...current, pointId: event.currentTarget.value } : current,
+                )
+              }
+            />
+          </label>
+          <div>
+            <button
+              type="button"
+              disabled={observationBusy}
+              onClick={() => setObservationMenu(null)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={observationBusy}
+              onClick={() => void commitContextObservation()}
+            >
+              {observationBusy ? 'Saving…' : 'Create observation'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1148,9 +1297,20 @@ function imagePointAt(
   width: number,
   height: number,
 ): ImageMaskPoint | null {
+  return imageCoordinateAt(event.clientX, event.clientY, host, transform, width, height);
+}
+
+function imageCoordinateAt(
+  clientX: number,
+  clientY: number,
+  host: HTMLDivElement,
+  transform: ImageViewTransform,
+  width: number,
+  height: number,
+): ImageMaskPoint | null {
   const bounds = host.getBoundingClientRect();
-  const xPixels = (event.clientX - bounds.left - transform.x) / transform.scale;
-  const yPixels = (event.clientY - bounds.top - transform.y) / transform.scale;
+  const xPixels = (clientX - bounds.left - transform.x) / transform.scale;
+  const yPixels = (clientY - bounds.top - transform.y) / transform.scale;
   if (xPixels < 0 || yPixels < 0 || xPixels >= width || yPixels >= height) return null;
   return { xPixels, yPixels };
 }
@@ -1274,13 +1434,12 @@ function markersForCamera(
   projectImage: ProjectCameraImageRecord | undefined,
   collection: GcpCollectionRecord | null,
   optimization: GcpOptimizationPublicationRecord | null,
-  focusedGcpId: string | null,
+  localEstimates: readonly GcpLocalEstimateArtifact[],
 ): GcpImageMarker[] {
   const names = new Map(collection?.points.map(({ point }) => [point.id, point.name]) ?? []);
   const markers = new Map<string, GcpImageMarker>();
   if (projectImage) {
     for (const { point } of collection?.points ?? []) {
-      if (focusedGcpId && point.id !== focusedGcpId) continue;
       const coordinate = initialGcpProjection(camera, projectImage, point.coordinate);
       if (!coordinate) continue;
       markers.set(point.id, {
@@ -1294,11 +1453,7 @@ function markersForCamera(
     }
   }
   for (const projection of optimization?.artifact.result.projections ?? []) {
-    if (
-      projection.imageId !== camera.imageId ||
-      (focusedGcpId && projection.pointId !== focusedGcpId)
-    )
-      continue;
+    if (projection.imageId !== camera.imageId) continue;
     markers.set(projection.pointId, {
       pointId: projection.pointId,
       pointName: names.get(projection.pointId) ?? projection.pointId,
@@ -1308,12 +1463,23 @@ function markersForCamera(
       uncertainty: projection.uncertainty,
     });
   }
+  // Local fixed-camera feedback is newer than a published global run, but it
+  // remains visually a prediction and never changes alignment provenance.
+  for (const artifact of localEstimates) {
+    for (const projection of artifact.estimate.projections) {
+      if (projection.imageId !== camera.imageId) continue;
+      markers.set(projection.pointId, {
+        pointId: projection.pointId,
+        pointName: names.get(projection.pointId) ?? projection.pointId,
+        imageId: camera.imageId,
+        coordinate: projection.coordinate,
+        state: 'predictedBlue',
+        uncertainty: projection.uncertainty,
+      });
+    }
+  }
   for (const observation of collection?.observations ?? []) {
-    if (
-      observation.imageId !== camera.imageId ||
-      (focusedGcpId && observation.pointId !== focusedGcpId)
-    )
-      continue;
+    if (observation.imageId !== camera.imageId) continue;
     const state = observation.state;
     const coordinate = state.state === 'blocked' ? state.predictedCoordinate : state.coordinate;
     if (!coordinate) continue;

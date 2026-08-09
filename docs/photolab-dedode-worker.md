@@ -47,15 +47,15 @@ entities until a later validating command publishes them.
 
 All integers and floats are little-endian. Strings are UTF-8.
 
-| Field | Representation |
-| --- | --- |
-| Magic | 8 bytes: `HCDEDG01` |
-| Schema | `u32`, currently `1` |
-| Pair count | `u32` |
-| Pair A ID | `u32` byte length, then bytes |
-| Pair B ID | `u32` byte length, then bytes |
-| Match count | `u32` |
-| Match | `u32 feature_a`, `u32 feature_b`, `f32 x_a`, `f32 y_a`, `f32 x_b`, `f32 y_b`, `f32 confidence` |
+| Field       | Representation                                                                                 |
+| ----------- | ---------------------------------------------------------------------------------------------- |
+| Magic       | 8 bytes: `HCDEDG01`                                                                            |
+| Schema      | `u32`, currently `1`                                                                           |
+| Pair count  | `u32`                                                                                          |
+| Pair A ID   | `u32` byte length, then bytes                                                                  |
+| Pair B ID   | `u32` byte length, then bytes                                                                  |
+| Match count | `u32`                                                                                          |
+| Match       | `u32 feature_a`, `u32 feature_b`, `f32 x_a`, `f32 y_a`, `f32 x_b`, `f32 y_b`, `f32 confidence` |
 
 Pair records repeat in request order. The Rust importer requires an exact pair
 set and count, finite in-image coordinates, confidence in `[0,1]`, feature

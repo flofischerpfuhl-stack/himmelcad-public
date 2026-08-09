@@ -1,13 +1,6 @@
-import {
-  forwardRef,
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useRef,
-  useState,
-} from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 
-import type { EntityId, SnapKind, SnapResult, Vec3 } from '@himmelcad/data';
+import type { EntityId, SnapKind, SnapResult, SourcePosition3, Vec3 } from '@himmelcad/data';
 import type {
   CanonicalEntity,
   CanonicalRepresentationAdmission,
@@ -16,8 +9,13 @@ import type {
   HimmelcadViewerWasmLoader,
   KernelCanonicalRenderAdmission,
   KernelGlyphAtlasMetadata,
+  KernelClipVolume,
   KernelPickCandidate,
+  KernelRgbaCaptureRequest,
+  KernelRgbaCaptureResult,
   KernelRenderStyle,
+  KernelViewMode,
+  KernelWorldCamera,
   KernelViewerEntityHandle,
   Representation,
 } from '@himmelcad/viewer/kernel';
@@ -35,8 +33,7 @@ const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] as const;
 const viewerWasmUrl = new URL('viewer-wasm/himmelcad_wasm.js', window.location.href).href;
 const decodeWasmUrl = new URL('viewer-decode-wasm/himmelcad_decode_wasm.js', window.location.href)
   .href;
-const wasmLoader: HimmelcadViewerWasmLoader = async () =>
-  import(/* @vite-ignore */ viewerWasmUrl);
+const wasmLoader: HimmelcadViewerWasmLoader = async () => import(/* @vite-ignore */ viewerWasmUrl);
 
 const SOURCE_STYLE: KernelRenderStyle = renderStyle([0.72, 0.82, 0.9, 1], 'source');
 const RASTER_STYLE: KernelRenderStyle = renderStyle([1, 1, 1, 1], 'source');
@@ -83,9 +80,11 @@ export interface PhotolabKernelViewportHandle {
       sourceName: string;
       bounds: { min: readonly [number, number, number]; max: readonly [number, number, number] };
       pointCount: number;
+      canonicalAdmission?: CanonicalRepresentationAdmission;
       loadToken?: string;
     },
   ): Promise<void>;
+  loadCanonicalPackage(admissions: readonly CanonicalRepresentationAdmission[]): Promise<void>;
   loadPreparedMesh(
     descriptor: PreparedMeshDescriptor,
     resolveProjectUrl: (relativePath: string) => string,
@@ -102,7 +101,14 @@ export interface PhotolabKernelViewportHandle {
   removeLayer(entityId: EntityId): void;
   resetProjectScene(offset: readonly [number, number, number]): void;
   setSceneRenderOffset(offset: readonly [number, number, number]): void;
-  setNavigationMode(mode: 'orbit3d' | 'lockedTopDown2d'): void;
+  setViewMode(mode: KernelViewMode): Promise<void>;
+  worldCamera(): KernelWorldCamera | null;
+  adoptWorldCamera(camera: KernelWorldCamera): KernelWorldCamera;
+  waitForNextPresentedFrame(): Promise<void>;
+  captureRgba(request: KernelRgbaCaptureRequest): Promise<KernelRgbaCaptureResult>;
+  captureRectangle(): { x: number; y: number; width: number; height: number } | null;
+  setEntityVisibility(entityIds: readonly EntityId[], visible: boolean): void;
+  setAutomationClipVolumes(volumes: readonly KernelClipVolume[]): void;
   setCameraImageRectangles(rectangles: readonly CameraImageRectangle[]): void;
   setGcpMarkers(markers: readonly GcpMarker[]): void;
   frameAll(): void;
@@ -117,6 +123,7 @@ export const PhotolabKernelViewport = forwardRef<
   }
 >(function PhotolabKernelViewport({ onCursorSnap, onLog }, ref): JSX.Element {
   const kernelRef = useRef<KernelViewportHandle | null>(null);
+  const hostRef = useRef<HTMLDivElement | null>(null);
   const readyRef = useRef(createDeferred<KernelViewportHandle>());
   const handlesRef = useRef(new Map<EntityId, KernelViewerEntityHandle>());
   const boundsRef = useRef(new Map<EntityId, Bounds>());
@@ -125,9 +132,10 @@ export const PhotolabKernelViewport = forwardRef<
   const annotationRevisionsRef = useRef(new Map<EntityId, number>());
   const slotGenerationsRef = useRef(new Map<EntityId, number>());
   const callbacksRef = useRef({ onCursorSnap, onLog });
-  const navigationModeRef = useRef<'orbit3d' | 'lockedTopDown2d'>('orbit3d');
+  const viewModeRef = useRef<KernelViewMode>('3d');
+  const automationClipIdsRef = useRef(new Set<string>());
   callbacksRef.current = { onCursorSnap, onLog };
-  const [cursor, setCursor] = useState<Vec3 | null>(null);
+  const [cursor, setCursor] = useState<SourcePosition3 | null>(null);
 
   const unload = useCallback((entityId: EntityId) => {
     const handle = handlesRef.current.get(entityId);
@@ -180,7 +188,8 @@ export const PhotolabKernelViewport = forwardRef<
       admissions: readonly KernelCanonicalRenderAdmission[],
     ): Promise<void> => {
       const kernel = await readyRef.current.promise;
-      const ids = category === 'camera' ? cameraAnnotationIdsRef.current : gcpAnnotationIdsRef.current;
+      const ids =
+        category === 'camera' ? cameraAnnotationIdsRef.current : gcpAnnotationIdsRef.current;
       for (const id of ids) unload(id);
       ids.clear();
       if (admissions.length === 0) {
@@ -220,12 +229,13 @@ export const PhotolabKernelViewport = forwardRef<
         };
         unload(options.entityId);
         const admission = currentAdmission(
-          canonicalRepresentationAdmission(
-            kernel,
-            options.entityId,
-            options.sourceName,
-            geometry,
-          ),
+          options.canonicalAdmission ??
+            canonicalRepresentationAdmission(
+              kernel,
+              options.entityId,
+              options.sourceName,
+              geometry,
+            ),
         );
         const handle = await kernel.session.loadPotree(
           { datasetId, metadataUri: metadataUrl, admission, style: SOURCE_STYLE },
@@ -233,6 +243,25 @@ export const PhotolabKernelViewport = forwardRef<
         );
         handlesRef.current.set(options.entityId, handle);
         boundsRef.current.set(options.entityId, options.bounds);
+      },
+      async loadCanonicalPackage(admissions) {
+        const kernel = await readyRef.current.promise;
+        const supported = admissions.filter(
+          (admission) =>
+            admission.resolvedGeometry.kind === 'surface3d' ||
+            (admission.resolvedGeometry.kind === 'solid' &&
+              admission.resolvedGeometry.solid.kind === 'extrusion'),
+        );
+        for (const admission of supported) unload(admission.entity.id as EntityId);
+        for (const handle of kernel.session.loadCanonical(
+          supported.map((admission) => ({
+            admission: currentAdmission(admission),
+            style: MESH_STYLE,
+          })),
+        )) {
+          handlesRef.current.set(handle.entityId as EntityId, handle);
+        }
+        kernel.requestFrame();
       },
       async loadPreparedMesh(descriptor, resolveProjectUrl, loadToken) {
         const kernel = await readyRef.current.promise;
@@ -310,10 +339,22 @@ export const PhotolabKernelViewport = forwardRef<
               style: RASTER_STYLE,
             },
           ],
+          ...(options.kind === 'orthomosaic'
+            ? {
+                viewPolicies: {
+                  [options.entityId]: {
+                    availability: 'planOnly' as const,
+                    sourceHeight: 'unknown' as const,
+                  },
+                },
+              }
+            : {}),
         });
         if (!handle) throw new Error('raster hierarchy published no canonical handle');
         handlesRef.current.set(options.entityId, handle);
-        const prepared = JSON.parse(new TextDecoder().decode(manifestBytes)) as PreparedHierarchyManifest;
+        const prepared = JSON.parse(
+          new TextDecoder().decode(manifestBytes),
+        ) as PreparedHierarchyManifest;
         const bounds = hierarchyBounds(prepared);
         if (bounds) boundsRef.current.set(options.entityId, bounds);
       },
@@ -331,7 +372,11 @@ export const PhotolabKernelViewport = forwardRef<
           kind: 'gaussianSplatCloud',
           dataset: {
             formatId: 'himmelcad-prepared-hierarchy@1',
-            metadata: resource(metadataHash, 'himmelcad-prepared-hierarchy@1', manifestBytes.length),
+            metadata: resource(
+              metadataHash,
+              'himmelcad-prepared-hierarchy@1',
+              manifestBytes.length,
+            ),
             elementCount: source.tiles.reduce((total, tile) => total + tile.splatCount, 0),
           },
         };
@@ -369,9 +414,62 @@ export const PhotolabKernelViewport = forwardRef<
         // The kernel keeps authoritative f64 project coordinates and applies a
         // floating GPU origin itself; product-side render offsets are obsolete.
       },
-      setNavigationMode(mode) {
-        navigationModeRef.current = mode;
-        kernelRef.current?.navigation.setLockedTopDown(mode === 'lockedTopDown2d');
+      async setViewMode(mode) {
+        viewModeRef.current = mode;
+        await kernelRef.current?.session.setViewMode(mode).catch((error: unknown) => {
+          callbacksRef.current.onLog(
+            'error',
+            `View mode could not be changed: ${errorMessage(error)}`,
+          );
+          throw error;
+        });
+      },
+      worldCamera() {
+        return kernelRef.current?.camera.worldCamera() ?? null;
+      },
+      adoptWorldCamera(camera) {
+        const kernel = kernelRef.current;
+        if (!kernel) throw new Error('viewer is not ready');
+        return kernel.session.adoptWorldCamera(camera);
+      },
+      async waitForNextPresentedFrame() {
+        const kernel = kernelRef.current;
+        if (!kernel) throw new Error('viewer is not ready');
+        await kernel.session.waitForNextPresentedFrame();
+      },
+      async captureRgba(request) {
+        const kernel = kernelRef.current;
+        if (!kernel) throw new Error('viewer is not ready');
+        return await kernel.session.captureRgba(request);
+      },
+      captureRectangle() {
+        const bounds = hostRef.current?.getBoundingClientRect();
+        return bounds
+          ? {
+              x: Math.round(bounds.x),
+              y: Math.round(bounds.y),
+              width: Math.round(bounds.width),
+              height: Math.round(bounds.height),
+            }
+          : null;
+      },
+      setEntityVisibility(entityIds, visible) {
+        const kernel = kernelRef.current;
+        if (!kernel) throw new Error('viewer is not ready');
+        for (const entityId of entityIds) kernel.scene.setEntityVisibility(entityId, visible);
+        kernel.requestFrame();
+      },
+      setAutomationClipVolumes(volumes) {
+        const kernel = kernelRef.current;
+        if (!kernel) throw new Error('viewer is not ready');
+        const next = new Set(volumes.map((volume) => volume.id));
+        for (const id of automationClipIdsRef.current) {
+          if (!next.has(id)) kernel.session.setScopedClipVolume(`automation:${id}`, null);
+        }
+        for (const volume of volumes) {
+          kernel.session.setScopedClipVolume(`automation:${volume.id}`, volume);
+        }
+        automationClipIdsRef.current = next;
       },
       setCameraImageRectangles(rectangles) {
         void (async () => {
@@ -379,7 +477,14 @@ export const PhotolabKernelViewport = forwardRef<
           const admissions = rectangles.map((rectangle) => {
             const points = [rectangle.cameraCenter, ...rectangle.corners] as const;
             const pairs = [
-              [1, 2], [2, 3], [3, 4], [4, 1], [0, 1], [0, 2], [0, 3], [0, 4],
+              [1, 2],
+              [2, 3],
+              [3, 4],
+              [4, 1],
+              [0, 1],
+              [0, 2],
+              [0, 3],
+              [0, 4],
             ] as const;
             const id = `${rectangle.entityId}:camera-footprint` as EntityId;
             return canonicalRenderAdmission(
@@ -403,7 +508,10 @@ export const PhotolabKernelViewport = forwardRef<
           });
           await replaceAnnotations('camera', admissions);
         })().catch((error: unknown) =>
-          callbacksRef.current.onLog('error', `Camera overlays could not be published: ${errorMessage(error)}`),
+          callbacksRef.current.onLog(
+            'error',
+            `Camera overlays could not be published: ${errorMessage(error)}`,
+          ),
         );
       },
       setGcpMarkers(markers) {
@@ -411,8 +519,8 @@ export const PhotolabKernelViewport = forwardRef<
           const kernel = await readyRef.current.promise;
           const admissions = markers.flatMap((marker) => {
             const color = marker.role.startsWith('checkpoint')
-              ? [1, 0.68, 0.12, 1] as const
-              : [1, 0.2, 0.25, 1] as const;
+              ? ([1, 0.68, 0.12, 1] as const)
+              : ([1, 0.2, 0.25, 1] as const);
             const labelId = `${marker.entityId}:label` as EntityId;
             return [
               canonicalRenderAdmission(
@@ -444,7 +552,10 @@ export const PhotolabKernelViewport = forwardRef<
           });
           await replaceAnnotations('gcp', admissions);
         })().catch((error: unknown) =>
-          callbacksRef.current.onLog('error', `GCP overlays could not be published: ${errorMessage(error)}`),
+          callbacksRef.current.onLog(
+            'error',
+            `GCP overlays could not be published: ${errorMessage(error)}`,
+          ),
         );
       },
       frameAll,
@@ -458,19 +569,15 @@ export const PhotolabKernelViewport = forwardRef<
         return true;
       },
     }),
-    [
-      currentAdmission,
-      frameAll,
-      frameBounds,
-      nextAnnotationRevision,
-      replaceAnnotations,
-      unload,
-    ],
+    [currentAdmission, frameAll, frameBounds, nextAnnotationRevision, replaceAnnotations, unload],
   );
 
-  useEffect(() => () => {
-    for (const handle of handlesRef.current.values()) if (handle.loaded) handle.unload();
-  }, []);
+  useEffect(
+    () => () => {
+      for (const handle of handlesRef.current.values()) if (handle.loaded) handle.unload();
+    },
+    [],
+  );
 
   const handleReady = useCallback((handle: KernelViewportHandle) => {
     kernelRef.current = handle;
@@ -478,7 +585,12 @@ export const PhotolabKernelViewport = forwardRef<
     const font = createGcpGlyphAtlas();
     handle.session.registerGlyphAtlas(GCP_FONT_HASH, font.metadata, font.rgba8);
     handle.session.setClearColor([0.008, 0.011, 0.016, 1]);
-    handle.navigation.setLockedTopDown(navigationModeRef.current === 'lockedTopDown2d', 0);
+    void handle.session.setViewMode(viewModeRef.current, 0).catch((error: unknown) => {
+      callbacksRef.current.onLog(
+        'error',
+        `Initial view mode could not be applied: ${errorMessage(error)}`,
+      );
+    });
     readyRef.current.resolve(handle);
     callbacksRef.current.onLog(
       'info',
@@ -490,9 +602,7 @@ export const PhotolabKernelViewport = forwardRef<
     callbacksRef.current.onCursorSnap(snapFromCandidate(candidate));
   }, []);
 
-  const handleCursor = useCallback((coordinate: { x: number; y: number; z: number | null }) => {
-    setCursor({ x: coordinate.x, y: coordinate.y, z: coordinate.z ?? 0 });
-  }, []);
+  const handleCursor = useCallback((coordinate: SourcePosition3) => setCursor(coordinate), []);
 
   const handleError = useCallback((error: Error) => {
     readyRef.current.reject(error);
@@ -500,7 +610,7 @@ export const PhotolabKernelViewport = forwardRef<
   }, []);
 
   return (
-    <div className={styles.root}>
+    <div ref={hostRef} className={styles.root}>
       <KernelViewport
         wasmLoader={wasmLoader}
         backend="automatic"
@@ -514,7 +624,7 @@ export const PhotolabKernelViewport = forwardRef<
       />
       <output className={styles.coordinates} aria-label="Cursor coordinates">
         {cursor
-          ? `X ${cursor.x.toFixed(3)}  Y ${cursor.y.toFixed(3)}  Z ${cursor.z.toFixed(3)}`
+          ? `X ${cursor.x.toFixed(3)}  Y ${cursor.y.toFixed(3)}  Z ${cursor.z === null ? '—' : cursor.z.toFixed(3)}`
           : 'X —   Y —   Z —'}
       </output>
     </div>
@@ -531,7 +641,10 @@ interface PreparedHierarchyManifest {
   readonly tiles: readonly PreparedTile[];
 }
 interface PreparedTile {
-  readonly bounds: { readonly kind: string; readonly bounds?: { readonly min: Vec3; readonly max: Vec3 } };
+  readonly bounds: {
+    readonly kind: string;
+    readonly bounds?: { readonly min: Vec3; readonly max: Vec3 };
+  };
 }
 interface RasterPyramidManifest {
   readonly grid: {
@@ -622,7 +735,10 @@ function canonicalRepresentationAdmission(
   } satisfies Omit<CanonicalEntity, 'versionHash'>;
   const entity: CanonicalEntity = {
     ...base,
-    versionHash: kernel.session.canonicalEntityVersionHash({ ...base, versionHash: '00'.repeat(32) }),
+    versionHash: kernel.session.canonicalEntityVersionHash({
+      ...base,
+      versionHash: '00'.repeat(32),
+    }),
   };
   const admission: CanonicalRepresentationAdmission = {
     entity,
@@ -681,34 +797,38 @@ function createGcpGlyphAtlas(): {
   context.fillStyle = '#ffffff';
   context.font = '600 20px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
   context.textBaseline = 'alphabetic';
-  const glyphs: Record<string, {
-    readonly atlasMin: readonly [number, number];
-    readonly atlasMax: readonly [number, number];
-    readonly planeMin: readonly [number, number];
-    readonly planeMax: readonly [number, number];
-    readonly advance: number;
-  }> = {};
+  const glyphs: Record<
+    string,
+    {
+      readonly atlasMin: readonly [number, number];
+      readonly atlasMax: readonly [number, number];
+      readonly planeMin: readonly [number, number];
+      readonly planeMax: readonly [number, number];
+      readonly advance: number;
+    }
+  > = {};
   for (const [index, character] of [...GCP_FONT_CHARACTERS].entries()) {
     const column = index % GCP_FONT_COLUMNS;
     const row = Math.floor(index / GCP_FONT_COLUMNS);
     const x = column * GCP_FONT_CELL_WIDTH;
     const y = row * GCP_FONT_CELL_HEIGHT;
     if (character !== ' ') context.fillText(character, x + 2, y + 21);
-    glyphs[character] = character === ' '
-      ? {
-          atlasMin: [x, y],
-          atlasMax: [x, y],
-          planeMin: [0, 0],
-          planeMax: [0, 0],
-          advance: 0.55,
-        }
-      : {
-          atlasMin: [x, y],
-          atlasMax: [x + GCP_FONT_CELL_WIDTH, y + GCP_FONT_CELL_HEIGHT],
-          planeMin: [0, -0.25],
-          planeMax: [0.72, 0.75],
-          advance: 0.72,
-        };
+    glyphs[character] =
+      character === ' '
+        ? {
+            atlasMin: [x, y],
+            atlasMax: [x, y],
+            planeMin: [0, 0],
+            planeMax: [0, 0],
+            advance: 0.55,
+          }
+        : {
+            atlasMin: [x, y],
+            atlasMax: [x + GCP_FONT_CELL_WIDTH, y + GCP_FONT_CELL_HEIGHT],
+            planeMin: [0, -0.25],
+            planeMax: [0.72, 0.75],
+            advance: 0.72,
+          };
   }
   return {
     metadata: {
@@ -759,8 +879,16 @@ function hierarchyBounds(manifest: PreparedHierarchyManifest): Bounds | null {
 
 function unionBounds(left: Bounds, right: Bounds): Bounds {
   return {
-    min: [0, 1, 2].map((axis) => Math.min(left.min[axis]!, right.min[axis]!)) as [number, number, number],
-    max: [0, 1, 2].map((axis) => Math.max(left.max[axis]!, right.max[axis]!)) as [number, number, number],
+    min: [0, 1, 2].map((axis) => Math.min(left.min[axis]!, right.min[axis]!)) as [
+      number,
+      number,
+      number,
+    ],
+    max: [0, 1, 2].map((axis) => Math.max(left.max[axis]!, right.max[axis]!)) as [
+      number,
+      number,
+      number,
+    ],
   };
 }
 function tuplePoint(value: readonly [number, number, number]): Vec3 {
@@ -769,13 +897,17 @@ function tuplePoint(value: readonly [number, number, number]): Vec3 {
 function pointTuple(value: Vec3): [number, number, number] {
   return [value.x, value.y, value.z];
 }
-function tuplePosition(value: readonly [number, number, number]): { x: number; y: number; z: number } {
+function tuplePosition(value: readonly [number, number, number]): {
+  x: number;
+  y: number;
+  z: number;
+} {
   return tuplePoint(value);
 }
 function snapFromCandidate(candidate: KernelPickCandidate | null): SnapResult | null {
   if (!candidate) return null;
   return {
-    position: candidate.presentationPosition,
+    position: candidate.worldPosition,
     kind: snapKind(candidate.snapKind),
     entity: candidate.address.entityId as EntityId,
     confidence: 1 / (1 + Math.max(0, candidate.pixelDistance)),
@@ -810,7 +942,9 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes.slice().buffer));
   return [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
-function assertCurrentLoad(_token?: string): void {}
+function assertCurrentLoad(token?: string): void {
+  void token;
+}
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -831,6 +965,9 @@ function createDeferred<T>(): {
 } {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
   return { promise, resolve, reject };
 }

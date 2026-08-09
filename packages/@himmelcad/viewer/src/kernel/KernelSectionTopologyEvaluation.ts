@@ -3,10 +3,7 @@ import type {
   SectionTopologyPartitionManifest,
 } from './generated/index.js';
 import type { KernelStreamingDriver } from './KernelStreamingDriver.js';
-import type {
-  KernelAuthoritativeSectionProduct,
-  WgpuKernelViewer,
-} from './WgpuKernelViewer.js';
+import type { KernelAuthoritativeSectionProduct, WgpuKernelViewer } from './WgpuKernelViewer.js';
 
 /** Transport locations for one immutable authoritative topology partition. */
 export interface KernelSectionTopologyPartitionLocation {

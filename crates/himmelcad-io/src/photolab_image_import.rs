@@ -9,6 +9,7 @@ use std::{
 
 use himmelcad_core::{
     hash::ObjectHash,
+    photolab_capture::{CaptureCapabilityInventory, CaptureDecodeSupport},
     photolab_images::{
         CaptureTime, CaptureTimeReference, DiscoveredPhoto, DjiAttitudeDegrees,
         DjiBrownConradyCalibration, DjiCalibrationProvenance, DjiRtkMetadata, DjiXmpMetadata,
@@ -93,6 +94,21 @@ pub fn import_photo_files(inputs: &[PathBuf]) -> PhotoImportBatch {
 /// the partial in-memory batch in that case; no project state is modified here.
 pub fn import_photo_files_with_progress<C, P>(
     inputs: &[PathBuf],
+    cancelled: C,
+    progress: P,
+) -> Option<PhotoImportBatch>
+where
+    C: FnMut() -> bool,
+    P: FnMut(f64, &str),
+{
+    let capabilities = CaptureCapabilityInventory::portable_defaults();
+    import_photo_files_with_capabilities_and_progress(inputs, &capabilities, cancelled, progress)
+}
+
+/// Same discovery path with one frozen host capability snapshot.
+pub fn import_photo_files_with_capabilities_and_progress<C, P>(
+    inputs: &[PathBuf],
+    capabilities: &CaptureCapabilityInventory,
     mut cancelled: C,
     mut progress: P,
 ) -> Option<PhotoImportBatch>
@@ -191,12 +207,39 @@ where
             DjiXmpMetadata::default()
         };
 
+        let capture_source = PhotoMetadata {
+            exif: exif.clone(),
+            dji_xmp: dji_xmp.clone(),
+        }
+        .capture_source_profile();
+        let position_prior = PhotoMetadata {
+            exif: exif.clone(),
+            dji_xmp: dji_xmp.clone(),
+        }
+        .position_prior();
+        let decoder_capability = capabilities.decoder(candidate.format).cloned();
+        if decoder_capability.as_ref().is_none_or(|capability| {
+            matches!(capability.support, CaptureDecodeSupport::Unsupported { .. })
+        }) {
+            batch.warnings.push(warning(
+                &candidate.path,
+                ImageImportWarningCode::DecoderUnavailable,
+                format!(
+                    "{:?} source was preserved, but no compatible decoder/transcoder is available",
+                    candidate.format
+                ),
+            ));
+        }
         batch.photos.push(DiscoveredPhoto {
             source_path,
             format: candidate.format,
             byte_size,
             sha256,
             metadata: PhotoMetadata { exif, dji_xmp },
+            capture_source,
+            decoder_capability,
+            position_prior,
+            derived_provenance: None,
             duplicate_of,
         });
         progress(
@@ -667,11 +710,13 @@ fn scan_dji_xmp_segments(
             reader,
             marker,
             segment_length,
-            &mut total_xmp_bytes,
-            path,
-            &mut metadata,
-            dimensions,
-            warnings,
+            JpegXmpSegmentContext {
+                total_xmp_bytes: &mut total_xmp_bytes,
+                path,
+                metadata: &mut metadata,
+                dimensions,
+                warnings,
+            },
         ) {
             break;
         }
@@ -680,15 +725,19 @@ fn scan_dji_xmp_segments(
     metadata
 }
 
+struct JpegXmpSegmentContext<'a> {
+    total_xmp_bytes: &'a mut usize,
+    path: &'a Path,
+    metadata: &'a mut DjiXmpMetadata,
+    dimensions: Option<ImageDimensions>,
+    warnings: &'a mut Vec<ImageImportWarning>,
+}
+
 fn process_jpeg_segment(
     reader: &mut (impl Read + Seek),
     marker: u8,
     segment_length: u16,
-    total_xmp_bytes: &mut usize,
-    path: &Path,
-    metadata: &mut DjiXmpMetadata,
-    dimensions: Option<ImageDimensions>,
-    warnings: &mut Vec<ImageImportWarning>,
+    context: JpegXmpSegmentContext<'_>,
 ) -> bool {
     let payload_length = usize::from(segment_length - 2);
     if marker != 0xe1 {
@@ -698,17 +747,17 @@ fn process_jpeg_segment(
         {
             return true;
         }
-        warnings.push(warning(
-            path,
+        context.warnings.push(warning(
+            context.path,
             ImageImportWarningCode::XmpMalformed,
             "cannot skip JPEG segment during XMP scan".to_owned(),
         ));
         return false;
     }
 
-    if total_xmp_bytes.saturating_add(payload_length) > MAX_TOTAL_XMP_PAYLOAD_BYTES {
-        warnings.push(warning(
-            path,
+    if context.total_xmp_bytes.saturating_add(payload_length) > MAX_TOTAL_XMP_PAYLOAD_BYTES {
+        context.warnings.push(warning(
+            context.path,
             ImageImportWarningCode::XmpScanLimitReached,
             "cumulative APP1 payload exceeds the fixed 512 KiB safety limit".to_owned(),
         ));
@@ -716,16 +765,22 @@ fn process_jpeg_segment(
     }
     let mut payload = vec![0_u8; payload_length];
     if reader.read_exact(&mut payload).is_err() {
-        warnings.push(warning(
-            path,
+        context.warnings.push(warning(
+            context.path,
             ImageImportWarningCode::XmpMalformed,
             "truncated JPEG APP1 payload".to_owned(),
         ));
         return false;
     }
     if is_xmp_payload(&payload) {
-        *total_xmp_bytes += payload.len();
-        parse_dji_xmp_payload(&payload, path, metadata, dimensions, warnings);
+        *context.total_xmp_bytes += payload.len();
+        parse_dji_xmp_payload(
+            &payload,
+            context.path,
+            context.metadata,
+            context.dimensions,
+            context.warnings,
+        );
     }
     true
 }
@@ -1460,6 +1515,19 @@ mod tests {
             gps.altitude.map(|height| height.semantic_reference),
             Some(HeightSemanticReference::Unknown)
         );
+        assert_eq!(
+            batch.photos[0].capture_source.device_class,
+            himmelcad_core::photolab_capture::CaptureDeviceClass::Drone
+        );
+        let prior = batch.photos[0]
+            .position_prior
+            .as_ref()
+            .expect("GPS must become an uncertain prior");
+        assert_eq!(
+            prior.role,
+            himmelcad_core::photolab_capture::CapturePositionRole::PriorOnly
+        );
+        assert!(prior.covariance_enu_m2[0] > 0.0);
     }
 
     #[test]
@@ -1538,5 +1606,28 @@ mod tests {
         );
         assert!(messages.get() >= 3);
         assert!(last_progress.get() < 1.0);
+    }
+
+    #[test]
+    fn unsupported_heif_is_preserved_and_reported_without_decoder_guessing() {
+        let temp = TempDirectory::new();
+        let path = temp.path.join("phone.heic");
+        fs::write(&path, b"immutable-heif-source").expect("HEIF fixture");
+
+        let batch = import_photo_files(std::slice::from_ref(&path));
+
+        assert_eq!(batch.photos.len(), 1);
+        assert_eq!(batch.photos[0].format, PhotoFormat::Heic);
+        assert!(batch.photos[0]
+            .decoder_capability
+            .as_ref()
+            .is_some_and(|capability| matches!(
+                capability.support,
+                CaptureDecodeSupport::Unsupported { .. }
+            )));
+        assert!(batch
+            .warnings
+            .iter()
+            .any(|warning| warning.code == ImageImportWarningCode::DecoderUnavailable));
     }
 }

@@ -28,6 +28,7 @@
 //! Repeated imports may therefore produce distinct entities which share the
 //! exact same verified prepared bytes.
 
+use std::collections::{BTreeSet, VecDeque};
 use std::env;
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -50,12 +51,20 @@ use himmelcad_core::entity_validation::{
 };
 use himmelcad_core::geometry_representation_registry::CanonicalRepresentationAdmission;
 use himmelcad_core::hash::ObjectHash;
+use himmelcad_core::typed_artifact::{
+    ArtifactAffineDecode, ArtifactChunkEncoding, ArtifactElementType, ArtifactEndianness,
+    ArtifactRecordChunk, InterleavedArtifactField, TypedArtifactDescriptor, TypedArtifactLayout,
+    TypedArtifactManifest, TYPED_ARTIFACT_MANIFEST_MEDIA_TYPE, TYPED_ARTIFACT_MANIFEST_NAME,
+};
+use himmelcad_render::{
+    ContentKind, DatasetId, HierarchySource, PotreeAttributeType, PotreeHierarchySource,
+};
 
 use crate::canonical_provider::{
     CanonicalImportPackage, CanonicalImportProvider, CanonicalImportRequest, CanonicalJsonObject,
     CanonicalPreparedDataset, FormatCapability, FormatProviderDescriptor, ImportProbe,
     ImportProbeRequest, PreparedDatasetArtifact, ProviderContractError, ProviderOperationContext,
-    ProviderProgress, CANONICAL_IO_SCHEMA_VERSION,
+    ProviderOptionContract, ProviderProgress, StagedArtifactRoots, CANONICAL_IO_SCHEMA_VERSION,
 };
 use crate::ImportError;
 
@@ -97,6 +106,8 @@ impl LasPotreeCanonicalProvider {
                     "application/vnd.laszip".to_owned(),
                 ],
                 capabilities: vec![FormatCapability::Import],
+                import_options: Some(ProviderOptionContract::none()),
+                export_options: None,
             },
         }
     }
@@ -170,6 +181,25 @@ impl CanonicalImportProvider for LasPotreeCanonicalProvider {
             .canonical_import_package()
             .map_err(|error| ProviderContractError::Canonical(error.to_string()))
     }
+
+    fn staged_artifact_roots(
+        &self,
+        package: &CanonicalImportPackage,
+    ) -> Result<StagedArtifactRoots, ProviderContractError> {
+        Ok(StagedArtifactRoots {
+            dataset_roots: package
+                .datasets
+                .iter()
+                .map(|dataset| {
+                    (
+                        dataset.dataset_id.clone(),
+                        self.cache_dir.join(&dataset.dataset_id),
+                    )
+                })
+                .collect(),
+            resource_set_roots: Default::default(),
+        })
+    }
 }
 
 /// One immutable file in a prepared Potree dataset.
@@ -194,6 +224,9 @@ pub struct PreparedPotreeManifest {
     pub metadata: PreparedPotreeFile,
     pub hierarchy: PreparedPotreeFile,
     pub octree: PreparedPotreeFile,
+    /// Provider-neutral physical point-record layouts, absent only in legacy datasets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typed_artifacts: Option<PreparedPotreeFile>,
 }
 
 /// Small immutable JSON object required by a canonical imported entity.
@@ -278,6 +311,20 @@ impl LasImportSummary {
                 "canonical point-cloud geometry does not match the prepared dataset".to_string(),
             ));
         }
+        if self
+            .dataset_manifest
+            .typed_artifacts
+            .as_ref()
+            .is_some_and(|typed| {
+                typed.relative_path != TYPED_ARTIFACT_MANIFEST_NAME
+                    || typed.media_type != TYPED_ARTIFACT_MANIFEST_MEDIA_TYPE
+                    || typed.byte_length == 0
+            })
+        {
+            return Err(ImportError::Canonical(
+                "prepared typed-artifact manifest identity is invalid".to_owned(),
+            ));
+        }
         for object in &self.canonical_objects {
             let bytes = serde_json::to_vec(&object.value)
                 .map_err(|error| ImportError::Canonical(error.to_string()))?;
@@ -321,21 +368,23 @@ impl LasImportSummary {
                 value: object.value,
             })
             .collect::<Vec<_>>();
-        let mut artifacts = [
+        let mut prepared_files = vec![
             &self.dataset_manifest.metadata,
             &self.dataset_manifest.hierarchy,
             &self.dataset_manifest.octree,
-        ]
-        .into_iter()
-        .map(|file| PreparedDatasetArtifact {
-            relative_path: PathBuf::from(&file.relative_path),
-            resource: GeometryResource {
-                object_hash: file.object_hash.clone(),
-                media_type: file.media_type.clone(),
-                byte_length: Some(file.byte_length),
-            },
-        })
-        .collect::<Vec<_>>();
+        ];
+        prepared_files.extend(self.dataset_manifest.typed_artifacts.iter());
+        let mut artifacts = prepared_files
+            .into_iter()
+            .map(|file| PreparedDatasetArtifact {
+                relative_path: PathBuf::from(&file.relative_path),
+                resource: GeometryResource {
+                    object_hash: file.object_hash.clone(),
+                    media_type: file.media_type.clone(),
+                    byte_length: Some(file.byte_length),
+                },
+            })
+            .collect::<Vec<_>>();
         let manifest_bytes = serde_json::to_vec(&self.dataset_manifest)
             .map_err(|error| ImportError::Canonical(error.to_string()))?;
         artifacts.push(PreparedDatasetArtifact {
@@ -488,8 +537,12 @@ where
             .is_some_and(|n| n == "intensity")
     });
 
-    let dataset_manifest =
+    let mut dataset_manifest =
         build_prepared_manifest(&prepared_dir.path, point_count, &progress, &is_cancelled)?;
+    dataset_manifest.typed_artifacts = Some(write_potree_typed_artifact_manifest(
+        &prepared_dir.path,
+        &dataset_manifest,
+    )?);
     let manifest_bytes = serde_json::to_vec(&dataset_manifest)
         .map_err(|error| ImportError::Canonical(error.to_string()))?;
     let dataset_manifest_hash = ObjectHash::of_bytes(&manifest_bytes);
@@ -665,7 +718,235 @@ fn build_prepared_manifest(
         metadata: files.next().expect("three prepared files were built"),
         hierarchy: files.next().expect("three prepared files were built"),
         octree: files.next().expect("three prepared files were built"),
+        typed_artifacts: None,
     })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PotreeTypedMetadata {
+    hierarchy: PotreeTypedHierarchy,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PotreeTypedHierarchy {
+    first_chunk_size: u64,
+}
+
+fn write_potree_typed_artifact_manifest(
+    directory: &Path,
+    prepared: &PreparedPotreeManifest,
+) -> Result<PreparedPotreeFile, ImportError> {
+    let metadata_bytes = std::fs::read(directory.join(&prepared.metadata.relative_path))?;
+    let hierarchy_bytes = std::fs::read(directory.join(&prepared.hierarchy.relative_path))?;
+    let metadata: PotreeTypedMetadata = serde_json::from_slice(&metadata_bytes)
+        .map_err(|error| ImportError::Canonical(error.to_string()))?;
+    let first_chunk_size = usize::try_from(metadata.hierarchy.first_chunk_size)
+        .map_err(|_| ImportError::Canonical("Potree first hierarchy chunk is too large".into()))?;
+    let first_chunk = hierarchy_bytes.get(..first_chunk_size).ok_or_else(|| {
+        ImportError::Canonical("Potree first hierarchy chunk exceeds hierarchy.bin".into())
+    })?;
+    let mut source = PotreeHierarchySource::from_bytes(
+        DatasetId("typed-artifact-layout".to_owned()),
+        "metadata.json",
+        &metadata_bytes,
+        first_chunk,
+    )
+    .map_err(|error| ImportError::Canonical(error.to_string()))?;
+    if !source
+        .point_layout()
+        .encoding
+        .eq_ignore_ascii_case(&prepared.encoding)
+    {
+        return Err(ImportError::Canonical(
+            "Potree dataset and metadata encodings disagree".into(),
+        ));
+    }
+
+    let encoding = if prepared.encoding.eq_ignore_ascii_case("BROTLI") {
+        ArtifactChunkEncoding::Brotli
+    } else if prepared.encoding.eq_ignore_ascii_case("DEFAULT")
+        || prepared.encoding.eq_ignore_ascii_case("UNCOMPRESSED")
+    {
+        ArtifactChunkEncoding::Raw
+    } else {
+        return Err(ImportError::Canonical(format!(
+            "unsupported Potree artifact encoding {:?}",
+            prepared.encoding
+        )));
+    };
+    let fields = source
+        .point_layout()
+        .attributes
+        .iter()
+        .map(|attribute| {
+            let element_type = potree_element_type(attribute.attribute_type);
+            let position = attribute.name.eq_ignore_ascii_case("position")
+                || attribute.name.eq_ignore_ascii_case("POSITION_CARTESIAN");
+            InterleavedArtifactField {
+                name: attribute.name.clone(),
+                semantic: potree_attribute_semantic(&attribute.name).to_owned(),
+                byte_offset: attribute.byte_offset as u64,
+                element_type,
+                shape: vec![attribute.component_count as u64],
+                endianness: if element_type.byte_width() == 1 {
+                    ArtifactEndianness::NotApplicable
+                } else {
+                    ArtifactEndianness::Little
+                },
+                byte_strides: None,
+                decode: position.then(|| ArtifactAffineDecode {
+                    scale: source.point_layout().scale.to_vec(),
+                    offset: source.point_layout().offset.to_vec(),
+                }),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let mut chunks = Vec::new();
+    let mut pending = VecDeque::from(source.roots().to_vec());
+    let mut visited = BTreeSet::new();
+    let mut expanded_pages = BTreeSet::new();
+    while let Some(tile_id) = pending.pop_front() {
+        let tile = source
+            .tile(&tile_id)
+            .map_err(|error| ImportError::Canonical(error.to_string()))?
+            .ok_or_else(|| ImportError::Canonical(format!("unknown Potree tile {}", tile_id.0)))?;
+        if let Some(page) = tile.child_page {
+            if !expanded_pages.insert(tile_id.clone()) {
+                return Err(ImportError::Canonical(format!(
+                    "Potree hierarchy page {} remained unresolved",
+                    tile_id.0
+                )));
+            }
+            let offset = usize::try_from(page.byte_offset.ok_or_else(|| {
+                ImportError::Canonical("Potree hierarchy page has no byte offset".into())
+            })?)
+            .map_err(|_| ImportError::Canonical("Potree hierarchy offset is too large".into()))?;
+            let length = usize::try_from(page.byte_length.ok_or_else(|| {
+                ImportError::Canonical("Potree hierarchy page has no byte length".into())
+            })?)
+            .map_err(|_| ImportError::Canonical("Potree hierarchy length is too large".into()))?;
+            let end = offset
+                .checked_add(length)
+                .ok_or_else(|| ImportError::Canonical("Potree hierarchy range overflow".into()))?;
+            let bytes = hierarchy_bytes.get(offset..end).ok_or_else(|| {
+                ImportError::Canonical("Potree hierarchy page exceeds hierarchy.bin".into())
+            })?;
+            source
+                .apply_hierarchy_page(&tile_id, bytes)
+                .map_err(|error| ImportError::Canonical(error.to_string()))?;
+            pending.push_front(tile_id);
+            continue;
+        }
+        if !visited.insert(tile_id.clone()) {
+            continue;
+        }
+        for content in tile.contents {
+            if content.kind != ContentKind::PotreePoints {
+                return Err(ImportError::Canonical(
+                    "Potree hierarchy contains non-point content".into(),
+                ));
+            }
+            chunks.push(ArtifactRecordChunk {
+                id: tile_id.0.clone(),
+                byte_offset: content.byte_offset.ok_or_else(|| {
+                    ImportError::Canonical("Potree node has no byte offset".into())
+                })?,
+                byte_length: content.byte_length.ok_or_else(|| {
+                    ImportError::Canonical("Potree node has no byte length".into())
+                })?,
+                record_count: content.primitive_count.ok_or_else(|| {
+                    ImportError::Canonical("Potree node has no point count".into())
+                })?,
+                encoding,
+            });
+        }
+        pending.extend(tile.children);
+    }
+    chunks.sort_by(|left, right| left.byte_offset.cmp(&right.byte_offset));
+    let observed_points = chunks
+        .iter()
+        .try_fold(0_u64, |total, chunk| total.checked_add(chunk.record_count));
+    if observed_points != Some(prepared.point_count) {
+        return Err(ImportError::Canonical(format!(
+            "Potree hierarchy point count {:?} differs from dataset point count {}",
+            observed_points, prepared.point_count
+        )));
+    }
+    let manifest = TypedArtifactManifest {
+        schema_version: TypedArtifactManifest::SCHEMA_VERSION,
+        artifacts: vec![TypedArtifactDescriptor {
+            resource: GeometryResource {
+                object_hash: prepared.octree.object_hash.clone(),
+                media_type: prepared.octree.media_type.clone(),
+                byte_length: Some(prepared.octree.byte_length),
+            },
+            semantic: "hcad.pointcloud.records".to_owned(),
+            layout: TypedArtifactLayout::InterleavedRecords {
+                record_stride: source.point_layout().stride as u64,
+                fields,
+                chunks,
+            },
+        }],
+    };
+    let (artifact, bytes) = PreparedDatasetArtifact::typed_artifact_manifest(
+        PathBuf::from(TYPED_ARTIFACT_MANIFEST_NAME),
+        &manifest,
+    )
+    .map_err(|error| ImportError::Canonical(error.to_string()))?;
+    std::fs::write(directory.join(TYPED_ARTIFACT_MANIFEST_NAME), &bytes)?;
+    Ok(PreparedPotreeFile {
+        relative_path: TYPED_ARTIFACT_MANIFEST_NAME.to_owned(),
+        object_hash: artifact.resource.object_hash,
+        byte_length: artifact
+            .resource
+            .byte_length
+            .expect("typed manifest helper always records its length"),
+        media_type: TYPED_ARTIFACT_MANIFEST_MEDIA_TYPE.to_owned(),
+    })
+}
+
+const fn potree_element_type(value: PotreeAttributeType) -> ArtifactElementType {
+    match value {
+        PotreeAttributeType::Double => ArtifactElementType::Float64,
+        PotreeAttributeType::Float => ArtifactElementType::Float32,
+        PotreeAttributeType::Int8 => ArtifactElementType::Int8,
+        PotreeAttributeType::Uint8 => ArtifactElementType::Uint8,
+        PotreeAttributeType::Int16 => ArtifactElementType::Int16,
+        PotreeAttributeType::Uint16 => ArtifactElementType::Uint16,
+        PotreeAttributeType::Int32 => ArtifactElementType::Int32,
+        PotreeAttributeType::Uint32 => ArtifactElementType::Uint32,
+        PotreeAttributeType::Int64 => ArtifactElementType::Int64,
+        PotreeAttributeType::Uint64 => ArtifactElementType::Uint64,
+    }
+}
+
+fn potree_attribute_semantic(name: &str) -> &'static str {
+    if name.eq_ignore_ascii_case("position") || name.eq_ignore_ascii_case("POSITION_CARTESIAN") {
+        "hcad.point.position"
+    } else if matches_ignore_ascii_case(name, &["rgb", "rgba", "color"]) {
+        "hcad.point.color"
+    } else if name.eq_ignore_ascii_case("intensity") {
+        "hcad.point.intensity"
+    } else if name.eq_ignore_ascii_case("classification") {
+        "hcad.point.classification"
+    } else if matches_ignore_ascii_case(name, &["return number", "return_number"]) {
+        "hcad.point.return-number"
+    } else if matches_ignore_ascii_case(name, &["number of returns", "number_of_returns"]) {
+        "hcad.point.number-of-returns"
+    } else if matches_ignore_ascii_case(name, &["point source id", "point_source_id"]) {
+        "hcad.point.source-id"
+    } else {
+        "hcad.point.attribute"
+    }
+}
+
+fn matches_ignore_ascii_case(value: &str, candidates: &[&str]) -> bool {
+    candidates
+        .iter()
+        .any(|candidate| value.eq_ignore_ascii_case(candidate))
 }
 
 fn publish_prepared_directory(
@@ -699,7 +980,9 @@ fn verify_prepared_files(
     manifest: &PreparedPotreeManifest,
     is_cancelled: &(dyn Fn() -> bool + Send + Sync),
 ) -> Result<(), ImportError> {
-    for file in [&manifest.metadata, &manifest.hierarchy, &manifest.octree] {
+    let mut files = vec![&manifest.metadata, &manifest.hierarchy, &manifest.octree];
+    files.extend(manifest.typed_artifacts.iter());
+    for file in files {
         let path = directory.join(&file.relative_path);
         let (object_hash, byte_length) = streaming_file_hash(&path, is_cancelled)?;
         if byte_length != file.byte_length || object_hash != file.object_hash {
@@ -1282,6 +1565,38 @@ mod tests {
         std::fs::write(directory.join("octree.bin"), [5_u8, 6, 7, 8, 9]).expect("octree");
     }
 
+    fn write_typed_potree_files(directory: &Path, encoding: &str, stored_bytes: usize) {
+        let metadata = serde_json::json!({
+            "version": "2.0",
+            "hierarchy": {"firstChunkSize": 22, "stepSize": 5, "depth": 0},
+            "spacing": 1.0,
+            "boundingBox": {"min": [10.0, 20.0, 30.0], "max": [11.0, 21.0, 31.0]},
+            "offset": [10.0, 20.0, 30.0],
+            "scale": [0.001, 0.002, 0.003],
+            "encoding": encoding,
+            "attributes": [
+                {"name": "position", "size": 12, "numElements": 3, "type": "int32"},
+                {"name": "rgba", "size": 6, "numElements": 3, "type": "uint16"}
+            ]
+        });
+        std::fs::write(
+            directory.join("metadata.json"),
+            serde_json::to_vec(&metadata).expect("metadata JSON"),
+        )
+        .expect("metadata");
+        let mut hierarchy = Vec::with_capacity(22);
+        hierarchy.extend([0_u8, 0]);
+        hierarchy.extend(2_u32.to_le_bytes());
+        hierarchy.extend(0_i64.to_le_bytes());
+        hierarchy.extend(
+            i64::try_from(stored_bytes)
+                .expect("stored length")
+                .to_le_bytes(),
+        );
+        std::fs::write(directory.join("hierarchy.bin"), hierarchy).expect("hierarchy");
+        std::fs::write(directory.join("octree.bin"), vec![0_u8; stored_bytes]).expect("octree");
+    }
+
     #[test]
     fn las_provider_descriptor_and_probe_are_registry_safe() {
         let provider = LasPotreeCanonicalProvider::new(PathBuf::from("/cache"));
@@ -1383,6 +1698,53 @@ mod tests {
     }
 
     #[test]
+    fn potree_typed_manifest_preserves_quantization_and_chunk_encoding() {
+        for (encoding, stored_bytes, expected_encoding) in [
+            ("DEFAULT", 36, ArtifactChunkEncoding::Raw),
+            ("BROTLI", 17, ArtifactChunkEncoding::Brotli),
+        ] {
+            let root = TestDirectory::new(&format!("typed-{encoding}"));
+            write_typed_potree_files(&root.0, encoding, stored_bytes);
+            let mut prepared =
+                build_prepared_manifest(&root.0, 2, &|_| {}, &|| false).expect("base manifest");
+            prepared.encoding = encoding.to_owned();
+            let typed =
+                write_potree_typed_artifact_manifest(&root.0, &prepared).expect("typed manifest");
+            let manifest: TypedArtifactManifest = serde_json::from_slice(
+                &std::fs::read(root.0.join(&typed.relative_path)).expect("typed bytes"),
+            )
+            .expect("typed JSON");
+            manifest.validate().expect("valid typed manifest");
+            let TypedArtifactLayout::InterleavedRecords {
+                record_stride,
+                fields,
+                chunks,
+            } = &manifest.artifacts[0].layout
+            else {
+                panic!("expected interleaved records");
+            };
+            assert_eq!(*record_stride, 18);
+            assert_eq!(chunks.len(), 1);
+            assert_eq!(chunks[0].encoding, expected_encoding);
+            assert_eq!(chunks[0].record_count, 2);
+            let position = fields
+                .iter()
+                .find(|field| field.semantic == "hcad.point.position")
+                .expect("position field");
+            assert_eq!(position.element_type, ArtifactElementType::Int32);
+            assert_eq!(position.shape, [3]);
+            assert_eq!(position.endianness, ArtifactEndianness::Little);
+            assert_eq!(
+                position.decode,
+                Some(ArtifactAffineDecode {
+                    scale: vec![0.001, 0.002, 0.003],
+                    offset: vec![10.0, 20.0, 30.0],
+                })
+            );
+        }
+    }
+
+    #[test]
     fn canonical_las_summary_revalidates_as_one_contract() {
         let manifest = PreparedPotreeManifest {
             schema_version: 1,
@@ -1408,6 +1770,7 @@ mod tests {
                 byte_length: 6,
                 media_type: "application/vnd.potree.points".to_string(),
             },
+            typed_artifacts: None,
         };
         let manifest_bytes = serde_json::to_vec(&manifest).expect("manifest JSON");
         let manifest_hash = ObjectHash::of_bytes(&manifest_bytes);
@@ -1484,6 +1847,7 @@ mod tests {
                 byte_length: 6,
                 media_type: "application/vnd.potree.points".to_string(),
             },
+            typed_artifacts: None,
         };
         let manifest_hash =
             ObjectHash::of_bytes(&serde_json::to_vec(&manifest).expect("manifest JSON"));

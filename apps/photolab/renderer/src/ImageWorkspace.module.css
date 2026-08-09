@@ -137,6 +137,64 @@
   overflow: visible;
 }
 
+.observationMenu {
+  position: absolute;
+  z-index: 20;
+  display: grid;
+  gap: 9px;
+  width: min(300px, calc(100% - 20px));
+  padding: 12px;
+  border: 1px solid var(--hc-border-strong);
+  border-radius: var(--hc-radius-md);
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-elevated);
+  box-shadow: var(--hc-shadow-popover);
+  cursor: default;
+  transform: translate(8px, 8px);
+  user-select: text;
+}
+.observationMenu strong {
+  color: var(--hc-fg-strong);
+  font-size: 12px;
+}
+.observationMenu > span {
+  color: var(--hc-fg-muted);
+  font: 10px/1.35 var(--hc-font-mono);
+}
+.observationMenu label {
+  display: grid;
+  gap: 5px;
+  color: var(--hc-fg-muted);
+  font-size: 11px;
+}
+.observationMenu button {
+  min-height: var(--hc-size-control-h);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-input);
+  font: 11px var(--hc-font-ui);
+}
+.observationSelect {
+  width: 100%;
+}
+.observationMenu > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+.observationMenu button {
+  padding: 0 10px;
+}
+.observationMenu button:last-child {
+  border-color: var(--hc-accent-base);
+  color: var(--hc-fg-on-accent);
+  background: var(--hc-accent-base);
+}
+.observationMenu button:disabled {
+  opacity: 0.55;
+}
+
 /* Mask tools: bottom-right so they never stack on zoom/layers (bottom-left). */
 .maskToolbar {
   position: absolute;

@@ -63,7 +63,9 @@ export function AlignmentMergePanel({
     () =>
       selectedCandidates.flatMap((candidate) => {
         const entityId = selectedOptimizationIds[candidate.entityId];
-        const entry = gcpOptimizations.find((candidateEntry) => candidateEntry.entityId === entityId);
+        const entry = gcpOptimizations.find(
+          (candidateEntry) => candidateEntry.entityId === entityId,
+        );
         return entry ? [entry] : [];
       }),
     [gcpOptimizations, selectedCandidates, selectedOptimizationIds],

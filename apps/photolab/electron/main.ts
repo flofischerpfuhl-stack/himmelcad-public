@@ -1,9 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { constants as fsConstants, createReadStream } from 'node:fs';
 import {
   copyFile,
   mkdir,
+  open,
   readdir,
   readFile,
   realpath,
@@ -14,12 +15,19 @@ import {
 } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Readable } from 'node:stream';
+import { pathToFileURL } from 'node:url';
 
-import { BrowserWindow, app, dialog, ipcMain, nativeImage, protocol } from 'electron';
+import { BrowserWindow, app, dialog, ipcMain, nativeImage, protocol, safeStorage } from 'electron';
+import {
+  defaultAutomationPaths,
+  registerElectronAutomationHost,
+} from '@himmelcad/automation-host/electron';
+import { ProviderCredentialStore } from '@himmelcad/automation-host/provider-credentials';
 
 import {
   callSidecar,
   isSidecarRunning,
+  issueAutomationConfirmationGrant,
   onSidecarStderr,
   startSidecar,
   stopSidecar,
@@ -28,8 +36,24 @@ import { PhotolabPreferencesService, type DirectoryPreference } from './preferen
 import { startDesktopUpdater } from './updater';
 
 const isDev = !app.isPackaged;
+const CODEX_PROVIDER_ORIGIN = 'https://api.openai.com';
+const CODEX_PROVIDER_EGRESS = {
+  provider: 'codex',
+  origin: CODEX_PROVIDER_ORIGIN,
+  requests: [{ method: 'POST', path: '/v1/responses' }],
+  redirects: 'deny',
+  websockets: 'deny',
+} as const;
+const CAPTURE_BUILT_RENDERER = Boolean(
+  process.env.HIMMELCAD_UI_CAPTURE_PATH?.trim() && process.env.HIMMELCAD_UI_CAPTURE_BUILT === '1',
+);
+const RENDERER_URL =
+  isDev && !CAPTURE_BUILT_RENDERER
+    ? 'http://localhost:5174/'
+    : pathToFileURL(resolve(__dirname, '../renderer/index.html')).href;
 app.setName('HimmelCAD PhotoLab');
 let mainWindow: BrowserWindow | null = null;
+let automationHost: ReturnType<typeof registerElectronAutomationHost> | null = null;
 let currentWorkingPath: string | null = null;
 let currentProjectSourcePath: string | null = null;
 let preferences: PhotolabPreferencesService;
@@ -66,9 +90,113 @@ protocol.registerSchemesAsPrivileged([
     // different origins, so the scheme must participate in CORS explicitly.
     privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
   },
+  {
+    scheme: 'hcad-staged',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+  },
+  {
+    scheme: 'hcad-project',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+  },
 ]);
 
+const STAGED_CORS_HEADERS = {
+  'access-control-allow-origin': '*',
+  'access-control-expose-headers': 'accept-ranges, content-length, content-range',
+} as const;
+
+interface StagedArtifactBinding {
+  readonly sessionId: string;
+  readonly capability: string;
+  readonly resourceId: string;
+  readonly objectHash: string;
+  readonly mediaType: string;
+  readonly byteLength: number;
+}
+
+interface SidecarStagedResourceDescriptor {
+  readonly resourceId: string;
+  readonly relativePath: string;
+  readonly objectHash: string;
+  readonly mediaType: string;
+  readonly byteLength: number;
+}
+
+interface SidecarStagedResourceInventory {
+  readonly schemaVersion: number;
+  readonly sessionId: string;
+  readonly capability: string;
+  readonly maximumReadBytes: number;
+  readonly datasets: readonly {
+    readonly datasetId: string;
+    readonly formatId: string;
+    readonly entityId: string;
+    readonly representationSlot: string;
+    readonly rootResourceId: string;
+    readonly artifacts: readonly SidecarStagedResourceDescriptor[];
+  }[];
+  readonly resourceSets: readonly {
+    readonly resourceSetId: string;
+    readonly resources: readonly SidecarStagedResourceDescriptor[];
+  }[];
+}
+
+interface SidecarStagedResourceRead {
+  readonly schemaVersion: number;
+  readonly resourceId: string;
+  readonly objectHash: string;
+  readonly mediaType: string;
+  readonly offset: number;
+  readonly byteLength: number;
+  readonly totalByteLength: number;
+  readonly bytesBase64: string;
+}
+
+interface SidecarCanonicalResidency {
+  readonly schemaVersion: number;
+  readonly generation: number;
+  readonly entries: readonly {
+    readonly providerId: string;
+    readonly providerVersion: string;
+    readonly admission: unknown;
+    readonly dataset: {
+      readonly datasetId: string;
+      readonly formatId: string;
+      readonly entityId: string;
+      readonly representationSlot: string;
+      readonly rootMetadata: { readonly objectHash: string };
+      readonly artifacts: readonly {
+        readonly relativePath: string;
+        readonly resource: {
+          readonly objectHash: string;
+          readonly mediaType: string;
+          readonly byteLength: number | null;
+        };
+      }[];
+    } | null;
+  }[];
+}
+
+const stagedArtifacts = new Map<string, StagedArtifactBinding>();
+const canonicalArtifacts = new Map<
+  string,
+  { readonly objectHash: string; readonly mediaType: string; readonly byteLength: number }
+>();
+
 const RENDERER_SIDECAR_METHODS = new Set([
+  'app.negotiate',
+  'canonical.project.open',
+  'canonical.residency.bootstrap',
+  'io.formats.page',
+  'io.probe',
+  'registration.import.stage',
+  'registration.session.state',
+  'registration.preview.pointPairs',
+  'registration.preview.icp',
+  'registration.samples.source',
+  'registration.import.commit',
+  'registration.session.cancel',
+  'registration.siteCalibration.inspect',
   'photolab.alignment.resolve',
   'photolab.project.snapshot',
   'photolab.project.journal.start',
@@ -103,6 +231,11 @@ const RENDERER_SIDECAR_METHODS = new Set([
   'photolab.himmelcap.release',
   'photolab.images.list',
   'photolab.images.quality.list',
+  'photolab.capture.capabilities',
+  'photolab.capture.scale.evaluate',
+  'photolab.capture.image.prepare',
+  'photolab.capture.video.prepare',
+  'photolab.capture.cancel',
   'photolab.gcp.preview',
   'photolab.gcp.commit',
   'photolab.gcp.list',
@@ -161,14 +294,19 @@ async function createWindow(): Promise<void> {
     },
   });
   mainWindow = window;
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  const denyNavigation = (event: Electron.Event): void => {
+    event.preventDefault();
+    void automationHost?.invalidateAgentSessions();
+  };
+  window.webContents.on('will-navigate', denyNavigation);
+  window.webContents.on('will-redirect', denyNavigation);
   window.on('maximize', () => window.webContents.send('window:maximize-changed', true));
   window.on('unmaximize', () => window.webContents.send('window:maximize-changed', false));
   const unsubscribe = onSidecarStderr((line) => window.webContents.send('sidecar:stderr', line));
   window.on('closed', unsubscribe);
 
-  const captureBuiltRenderer = capturePath && process.env.HIMMELCAD_UI_CAPTURE_BUILT === '1';
-  if (isDev && !captureBuiltRenderer) await window.loadURL('http://localhost:5174/');
-  else await window.loadFile(resolve(__dirname, '../renderer/index.html'));
+  await window.loadURL(RENDERER_URL);
   if (capturePath) {
     const requestedDelay = Number(process.env.HIMMELCAD_UI_CAPTURE_DELAY_MS ?? 8_000);
     const delay = Number.isFinite(requestedDelay)
@@ -341,6 +479,60 @@ function registerIpc(): void {
       throw new Error(`Renderer is not allowed to call sidecar method: ${method}`);
     }
     return callSidecar({ method, params });
+  });
+  ipcMain.handle('external-import:project-root', async () => {
+    const root = externalCanonicalProjectRoot();
+    await mkdir(dirname(root), { recursive: true });
+    return root;
+  });
+  ipcMain.handle('external-import:select', async (_event, requestedExtensions: unknown) => {
+    const extensions = Array.isArray(requestedExtensions)
+      ? [...new Set(requestedExtensions)]
+          .filter(
+            (value): value is string =>
+              typeof value === 'string' && /^[A-Za-z0-9]{1,12}$/.test(value),
+          )
+          .slice(0, 128)
+      : [];
+    const selection = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, {
+          title: 'Import survey data into PhotoLab',
+          properties: ['openFile', 'multiSelections'],
+          filters: [
+            ...(extensions.length > 0 ? [{ name: 'Supported formats', extensions }] : []),
+            { name: 'All files', extensions: ['*'] },
+          ],
+        })
+      : await dialog.showOpenDialog({
+          title: 'Import survey data into PhotoLab',
+          properties: ['openFile', 'multiSelections'],
+          filters: [
+            ...(extensions.length > 0 ? [{ name: 'Supported formats', extensions }] : []),
+            { name: 'All files', extensions: ['*'] },
+          ],
+        });
+    return selection.canceled ? [] : selection.filePaths;
+  });
+  ipcMain.handle('registration-staged:materialize', async (_event, sessionId: unknown) => {
+    if (typeof sessionId !== 'string' || !/^[A-Za-z0-9_.-]{1,160}$/.test(sessionId)) {
+      throw new Error('invalid registration session identity');
+    }
+    const inventory = await callSidecar<SidecarStagedResourceInventory>({
+      method: 'registration.resources.describe',
+      params: { sessionId },
+    });
+    return materializeStagedResources(inventory);
+  });
+  ipcMain.handle('registration-staged:revoke', (_event, sessionId: unknown) => {
+    if (typeof sessionId !== 'string') return false;
+    return revokeStagedSession(sessionId);
+  });
+  ipcMain.handle('external-import:residency', async () => {
+    const bootstrap = await callSidecar<SidecarCanonicalResidency>({
+      method: 'canonical.residency.bootstrap',
+      params: {},
+    });
+    return materializeCanonicalResidency(bootstrap);
   });
   ipcMain.handle(
     'products:export',
@@ -1075,6 +1267,26 @@ function registerIpc(): void {
     await preferences.rememberDirectory('image', dirname(selectedPath));
     return selectedPath;
   });
+  ipcMain.handle('capture:select-video', async () => {
+    const options: Electron.OpenDialogOptions = {
+      title: 'Import Video Capture',
+      defaultPath: await preferredDirectory('image'),
+      properties: ['openFile'],
+      filters: [
+        {
+          name: 'Video captures',
+          extensions: ['mp4', 'mov', 'm4v', 'mkv', 'avi', 'webm'],
+        },
+      ],
+    };
+    const selection = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    const selectedPath = selection.filePaths[0];
+    if (selection.canceled || !selectedPath) return null;
+    await preferences.rememberDirectory('image', dirname(selectedPath));
+    return selectedPath;
+  });
   ipcMain.handle(
     'grids:select',
     async (_event, requestedKindOrProgressKey?: string, requestedProgressKey?: string) => {
@@ -1487,6 +1699,300 @@ function registerProjectProtocols(): void {
     }
   });
   protocol.handle('hcad-product', serveProjectProduct);
+  protocol.handle('hcad-staged', serveStagedResource);
+  protocol.handle('hcad-project', serveCanonicalResource);
+}
+
+async function serveStagedResource(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  if (url.host !== 'registration') return new Response('forbidden', { status: 403 });
+  const binding = stagedArtifacts.get(url.pathname);
+  if (!binding) return new Response('staged capability revoked', { status: 410 });
+  const requested = request.headers.get('range');
+  const range = requested ? parseStagedByteRange(requested, binding.byteLength) : null;
+  if (requested && !range) {
+    return new Response('invalid range', {
+      status: 416,
+      headers: { ...STAGED_CORS_HEADERS, 'content-range': `bytes */${binding.byteLength}` },
+    });
+  }
+  const offset = range?.start ?? 0;
+  const byteLength = range ? range.end - range.start + 1 : binding.byteLength;
+  if (byteLength > 4 * 1024 * 1024) {
+    return new Response('staged request exceeds range bound', { status: 413 });
+  }
+  try {
+    const result = await callSidecar<SidecarStagedResourceRead>({
+      method: 'registration.resource.read',
+      params: {
+        sessionId: binding.sessionId,
+        capability: binding.capability,
+        resourceId: binding.resourceId,
+        offset,
+        byteLength,
+      },
+    });
+    if (
+      result.schemaVersion !== 1 ||
+      result.resourceId !== binding.resourceId ||
+      result.objectHash !== binding.objectHash ||
+      result.mediaType !== binding.mediaType ||
+      result.offset !== offset ||
+      result.byteLength !== byteLength ||
+      result.totalByteLength !== binding.byteLength
+    ) {
+      return new Response('staged read descriptor mismatch', { status: 409 });
+    }
+    const bytes = Buffer.from(result.bytesBase64, 'base64');
+    if (bytes.byteLength !== byteLength) {
+      return new Response('staged read byte length mismatch', { status: 409 });
+    }
+    return new Response(new Uint8Array(bytes), {
+      status: range ? 206 : 200,
+      headers: {
+        ...STAGED_CORS_HEADERS,
+        'content-type': binding.mediaType,
+        'content-length': String(byteLength),
+        ...(range
+          ? { 'content-range': `bytes ${offset}-${offset + byteLength - 1}/${binding.byteLength}` }
+          : {}),
+        'accept-ranges': 'bytes',
+      },
+    });
+  } catch {
+    revokeStagedSession(binding.sessionId);
+    return new Response('staged capability unavailable', { status: 410 });
+  }
+}
+
+async function serveCanonicalResource(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  if (url.host !== 'canonical') return new Response('forbidden', { status: 403 });
+  const binding = canonicalArtifacts.get(url.pathname);
+  if (!binding) return new Response('unknown canonical artifact', { status: 404 });
+  const projectRoot = externalCanonicalProjectRoot();
+  const objectPath = resolve(
+    projectRoot,
+    'objects',
+    binding.objectHash.slice(0, 2),
+    binding.objectHash.slice(2),
+  );
+  try {
+    const metadata = await stat(objectPath);
+    if (!metadata.isFile() || metadata.size !== binding.byteLength) {
+      return new Response('canonical artifact length mismatch', { status: 409 });
+    }
+    const requested = request.headers.get('range');
+    const range = requested ? parseStagedByteRange(requested, binding.byteLength) : null;
+    if (requested && !range) return new Response('invalid range', { status: 416 });
+    if (range) {
+      const length = range.end - range.start + 1;
+      const handle = await open(objectPath, 'r');
+      try {
+        const bytes = Buffer.alloc(length);
+        await handle.read(bytes, 0, length, range.start);
+        return new Response(new Uint8Array(bytes), {
+          status: 206,
+          headers: {
+            ...STAGED_CORS_HEADERS,
+            'content-type': binding.mediaType,
+            'content-length': String(length),
+            'content-range': `bytes ${range.start}-${range.end}/${binding.byteLength}`,
+            'accept-ranges': 'bytes',
+          },
+        });
+      } finally {
+        await handle.close();
+      }
+    }
+    const bytes = await readFile(objectPath);
+    if (createHash('sha256').update(bytes).digest('hex') !== binding.objectHash) {
+      return new Response('canonical artifact hash mismatch', { status: 409 });
+    }
+    return new Response(new Uint8Array(bytes), {
+      headers: {
+        ...STAGED_CORS_HEADERS,
+        'content-type': binding.mediaType,
+        'content-length': String(bytes.byteLength),
+        'accept-ranges': 'bytes',
+      },
+    });
+  } catch {
+    return new Response('canonical artifact unavailable', { status: 404 });
+  }
+}
+
+function materializeCanonicalResidency(bootstrap: SidecarCanonicalResidency): unknown {
+  if (bootstrap.schemaVersion !== 1 || !isRuntimeArray(bootstrap.entries)) {
+    throw new Error('sidecar returned invalid canonical residency');
+  }
+  const next = new Map<string, { objectHash: string; mediaType: string; byteLength: number }>();
+  const entries = bootstrap.entries.map((entry) => {
+    if (!entry.dataset) return { ...entry, dataset: null };
+    const urls = new Map<string, string>();
+    for (const artifact of entry.dataset.artifacts) {
+      const resource = artifact.resource;
+      const byteLength = resource.byteLength;
+      if (
+        !/^[a-f0-9]{64}$/.test(resource.objectHash) ||
+        !resource.mediaType ||
+        typeof byteLength !== 'number' ||
+        !Number.isSafeInteger(byteLength) ||
+        byteLength <= 0
+      ) {
+        throw new Error('invalid canonical residency resource');
+      }
+      const token = createHash('sha256')
+        .update(`${entry.dataset.datasetId}\0${resource.objectHash}`)
+        .digest('hex');
+      const url = `hcad-project://canonical/dataset/${token}/${safeArtifactSegments(
+        artifact.relativePath,
+      )
+        .map(encodeURIComponent)
+        .join('/')}`;
+      const pathname = new URL(url).pathname;
+      next.set(pathname, {
+        objectHash: resource.objectHash,
+        mediaType: resource.mediaType,
+        byteLength,
+      });
+      urls.set(resource.objectHash, url);
+    }
+    const metadataUrl = urls.get(entry.dataset.rootMetadata.objectHash);
+    if (!metadataUrl) throw new Error('canonical root metadata is absent');
+    return {
+      ...entry,
+      dataset: {
+        datasetId: entry.dataset.datasetId,
+        formatId: entry.dataset.formatId,
+        entityId: entry.dataset.entityId,
+        representationSlot: entry.dataset.representationSlot,
+        metadataUrl,
+      },
+    };
+  });
+  canonicalArtifacts.clear();
+  for (const [pathname, binding] of next) canonicalArtifacts.set(pathname, binding);
+  return { schemaVersion: 1, generation: bootstrap.generation, entries };
+}
+
+function externalCanonicalProjectRoot(): string {
+  return currentWorkingPath
+    ? resolve(currentWorkingPath, 'canonical-external.hcad')
+    : resolve(app.getPath('userData'), 'canonical-projects', 'photolab-external.hcad');
+}
+
+function materializeStagedResources(inventory: SidecarStagedResourceInventory): unknown {
+  if (
+    inventory.schemaVersion !== 1 ||
+    !/^[A-Za-z0-9_.-]{1,160}$/.test(inventory.sessionId) ||
+    !/^[a-f0-9]{64}$/.test(inventory.capability) ||
+    inventory.maximumReadBytes !== 4 * 1024 * 1024 ||
+    !isRuntimeArray(inventory.datasets) ||
+    !isRuntimeArray(inventory.resourceSets)
+  ) {
+    throw new Error('sidecar returned an invalid staged-resource inventory');
+  }
+  revokeStagedSession(inventory.sessionId);
+  const register = (resource: SidecarStagedResourceDescriptor): string => {
+    if (
+      !/^[a-f0-9]{64}$/.test(resource.resourceId) ||
+      !/^[a-f0-9]{64}$/.test(resource.objectHash) ||
+      !resource.mediaType ||
+      !Number.isSafeInteger(resource.byteLength) ||
+      resource.byteLength <= 0
+    ) {
+      throw new Error('sidecar returned an invalid staged-resource descriptor');
+    }
+    const segments = safeArtifactSegments(resource.relativePath);
+    const resourceUrl = `hcad-staged://registration/${encodeURIComponent(
+      inventory.sessionId,
+    )}/${resource.resourceId}/${segments.map(encodeURIComponent).join('/')}`;
+    const pathname = new URL(resourceUrl).pathname;
+    if (stagedArtifacts.has(pathname)) throw new Error('staged-resource URL collision');
+    stagedArtifacts.set(pathname, {
+      sessionId: inventory.sessionId,
+      capability: inventory.capability,
+      resourceId: resource.resourceId,
+      objectHash: resource.objectHash,
+      mediaType: resource.mediaType,
+      byteLength: resource.byteLength,
+    });
+    return resourceUrl;
+  };
+  const datasets = inventory.datasets.map((dataset) => {
+    const urls = new Map<string, string>();
+    for (const artifact of dataset.artifacts) urls.set(artifact.resourceId, register(artifact));
+    const metadataUrl = urls.get(dataset.rootResourceId);
+    if (!metadataUrl) throw new Error('staged dataset root metadata is absent');
+    return {
+      datasetId: dataset.datasetId,
+      formatId: dataset.formatId,
+      entityId: dataset.entityId,
+      representationSlot: dataset.representationSlot,
+      metadataUrl,
+      artifacts: dataset.artifacts.map((artifact) => {
+        const resourceUrl = urls.get(artifact.resourceId);
+        if (!resourceUrl) throw new Error('staged dataset artifact URL is absent');
+        return {
+          relativePath: artifact.relativePath,
+          resourceId: artifact.resourceId,
+          url: resourceUrl,
+        };
+      }),
+    };
+  });
+  const resourceSets = inventory.resourceSets.map((resourceSet) => ({
+    resourceSetId: resourceSet.resourceSetId,
+    resources: resourceSet.resources.map((resource) => ({
+      relativePath: resource.relativePath,
+      resourceId: resource.resourceId,
+      url: register(resource),
+    })),
+  }));
+  return { schemaVersion: 1, sessionId: inventory.sessionId, datasets, resourceSets };
+}
+
+function isRuntimeArray(value: unknown): boolean {
+  return Array.isArray(value);
+}
+
+function revokeStagedSession(sessionId: string): boolean {
+  let revoked = false;
+  for (const [pathname, binding] of stagedArtifacts) {
+    if (binding.sessionId !== sessionId) continue;
+    stagedArtifacts.delete(pathname);
+    revoked = true;
+  }
+  return revoked;
+}
+
+function safeArtifactSegments(relativePath: string): string[] {
+  if (!relativePath || /^[\\/]/.test(relativePath) || relativePath.includes(':')) {
+    throw new Error('staged artifact path is not relative');
+  }
+  const segments = relativePath.split(/[\\/]/);
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) {
+    throw new Error('staged artifact path contains unsafe segments');
+  }
+  return segments;
+}
+
+function parseStagedByteRange(value: string, total: number): { start: number; end: number } | null {
+  const match = /^bytes=(\d+)-(\d*)$/.exec(value.trim());
+  if (!match?.[1]) return null;
+  const start = Number(match[1]);
+  const end = match[2] ? Number(match[2]) : total - 1;
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(end) ||
+    start < 0 ||
+    end < start ||
+    end >= total
+  ) {
+    return null;
+  }
+  return { start, end };
 }
 
 async function ensureProjectPreview(
@@ -1664,6 +2170,36 @@ void app.whenReady().then(async () => {
   registerProjectProtocols();
   registerIpc();
   startSidecar();
+  const repositoryRoot = resolve(__dirname, '..', '..', '..', '..');
+  const automationPaths = app.isPackaged
+    ? {
+        runtimeRoot: resolve(
+          process.resourcesPath,
+          'automation-runtime',
+          process.platform === 'win32' ? 'win32-x64' : 'linux-x64',
+        ),
+        workspaceRoot: resolve(app.getPath('userData'), 'automation-workspace'),
+      }
+    : defaultAutomationPaths(repositoryRoot, app.getPath('userData'));
+  const providerCredentialStore = new ProviderCredentialStore({
+    path: resolve(app.getPath('userData'), 'automation', 'provider-credentials.v1.json'),
+    origin: CODEX_PROVIDER_ORIGIN,
+    safeStorage,
+  });
+  automationHost = registerElectronAutomationHost({
+    ipcMain,
+    getWindow: () => mainWindow,
+    sidecarCall: (method, params) => callSidecar({ method, params }),
+    issueConfirmationGrant: issueAutomationConfirmationGrant,
+    ...automationPaths,
+    workspaceCapabilityId: 'himmelcad-project',
+    rendererUrl: RENDERER_URL,
+    providerEgressManifest: CODEX_PROVIDER_EGRESS,
+    getAuthorization: (request) => providerCredentialStore.getAuthorization(request),
+    authorizationAvailable: (request) => providerCredentialStore.authorizationAvailable(request),
+    providerCredentialStore,
+  });
+  await automationHost.ready;
   await createWindow();
   const releaseSmokeReport = process.env.HIMMELCAD_RELEASE_SMOKE_REPORT?.trim();
   if (releaseSmokeReport) await runReleaseStartSmoke(resolve(releaseSmokeReport));
@@ -1678,4 +2214,8 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) void createWindow();
 });
 
-app.on('before-quit', stopSidecar);
+app.on('before-quit', () => {
+  void automationHost?.dispose();
+  automationHost = null;
+  stopSidecar();
+});

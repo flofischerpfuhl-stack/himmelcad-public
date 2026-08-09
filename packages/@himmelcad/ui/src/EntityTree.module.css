@@ -73,6 +73,30 @@
   flex: 1;
 }
 
+.scrollTop {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-muted);
+  background: transparent;
+  transition:
+    background var(--hc-motion-fast),
+    color var(--hc-motion-fast);
+}
+
+.scrollTop:hover,
+.scrollTop:focus-visible {
+  color: var(--hc-fg-strong);
+  background: var(--hc-hover-bg);
+  outline: none;
+}
+
 .headerCollapse {
   display: inline-flex;
   align-items: center;

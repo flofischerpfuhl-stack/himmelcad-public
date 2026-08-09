@@ -98,13 +98,13 @@ keinen zuvor geprüften Vendor-Manifestzustand still verändern.
 
 Die Gates sind absichtlich getrennt:
 
-| Gate | Linux | Windows cross/Wine | Windows nativ |
-| --- | --- | --- | --- |
-| Inventar, Hashes, Lizenz- und Binärclosure | verpflichtend | verpflichtend | verpflichtend |
-| Entpackter Package-Payload gegen `RELEASE_INVENTORY.json` | verpflichtend | verpflichtend | verpflichtend |
-| Worker-Versionen und DeDoDe-Import | nativ | optional unter Wine, nicht zertifizierend | verpflichtend nativ |
-| Renderer-, Electron- und Sidecar-Start | verpflichtend nativ | nicht durch Wine zertifiziert | verpflichtend nativ |
-| Installer mit anschließendem Start | `.deb`/AppImage nativ | nicht durch Wine zertifiziert | NSIS nativ |
+| Gate                                                      | Linux                 | Windows cross/Wine                        | Windows nativ       |
+| --------------------------------------------------------- | --------------------- | ----------------------------------------- | ------------------- |
+| Inventar, Hashes, Lizenz- und Binärclosure                | verpflichtend         | verpflichtend                             | verpflichtend       |
+| Entpackter Package-Payload gegen `RELEASE_INVENTORY.json` | verpflichtend         | verpflichtend                             | verpflichtend       |
+| Worker-Versionen und DeDoDe-Import                        | nativ                 | optional unter Wine, nicht zertifizierend | verpflichtend nativ |
+| Renderer-, Electron- und Sidecar-Start                    | verpflichtend nativ   | nicht durch Wine zertifiziert             | verpflichtend nativ |
+| Installer mit anschließendem Start                        | `.deb`/AppImage nativ | nicht durch Wine zertifiziert             | NSIS nativ          |
 
 `scripts/photolab-package-smoke.mjs` prüft einen entpackten Payload. `--mode=static` deckt
 Package-Mapping und unveränderte Inventardateien ab; `--mode=native` startet zusätzlich die

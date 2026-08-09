@@ -85,13 +85,19 @@ assert(
 );
 assertChannelsClose(webGpuMean, webGl2Mean, 0.02, 'global frame mean parity');
 
-process.stdout.write(`${JSON.stringify({
-  rmse,
-  background: { webGpu: webGpuBackground, webGl2: webGl2Background },
-  globalMean: { webGpu: webGpuMean, webGl2: webGl2Mean },
-  regions,
-  pixels,
-}, null, 2)}\n`);
+process.stdout.write(
+  `${JSON.stringify(
+    {
+      rmse,
+      background: { webGpu: webGpuBackground, webGl2: webGl2Background },
+      globalMean: { webGpu: webGpuMean, webGl2: webGl2Mean },
+      regions,
+      pixels,
+    },
+    null,
+    2,
+  )}\n`,
+);
 
 function assertChannelsClose(actual, expected, tolerance, label) {
   for (let channel = 0; channel < 3; channel += 1) {
@@ -132,7 +138,7 @@ function decodePng(png) {
   let height = 0;
   let channels = 0;
   const compressed = [];
-  for (let offset = 8; offset < png.byteLength;) {
+  for (let offset = 8; offset < png.byteLength; ) {
     const length = png.readUInt32BE(offset);
     const type = png.toString('ascii', offset + 4, offset + 8);
     const data = png.subarray(offset + 8, offset + 8 + length);
@@ -161,12 +167,18 @@ function decodePng(png) {
       const left = column >= channels ? pixels[output - channels] : 0;
       const up = row > 0 ? pixels[output - stride] : 0;
       const upperLeft = row > 0 && column >= channels ? pixels[output - stride - channels] : 0;
-      const predictor = filter === 0 ? 0
-        : filter === 1 ? left
-          : filter === 2 ? up
-            : filter === 3 ? Math.floor((left + up) / 2)
-              : filter === 4 ? paeth(left, up, upperLeft)
-                : Number.NaN;
+      const predictor =
+        filter === 0
+          ? 0
+          : filter === 1
+            ? left
+            : filter === 2
+              ? up
+              : filter === 3
+                ? Math.floor((left + up) / 2)
+                : filter === 4
+                  ? paeth(left, up, upperLeft)
+                  : Number.NaN;
       assert(Number.isFinite(predictor), `unsupported screenshot PNG filter ${String(filter)}`);
       pixels[output] = (source + predictor) & 0xff;
     }
@@ -181,5 +193,7 @@ function paeth(left, up, upperLeft) {
   const upperLeftDistance = Math.abs(prediction - upperLeft);
   return leftDistance <= upDistance && leftDistance <= upperLeftDistance
     ? left
-    : upDistance <= upperLeftDistance ? up : upperLeft;
+    : upDistance <= upperLeftDistance
+      ? up
+      : upperLeft;
 }

@@ -24,18 +24,17 @@
     }
   },
   "scripts": {
-    "bindings:generate": "cargo run -p himmelcad-core --features ts-bindings --bin generate_entity_bindings",
-    "bindings:check": "cargo run -p himmelcad-core --features ts-bindings --bin generate_entity_bindings -- --check",
     "typecheck": "tsc --noEmit",
     "typecheck:browser-kernel-contract": "tsc -p tsconfig.browser.json",
-    "test": "tsc -p tsconfig.test.json && node --test dist/viewer-tests/test/*.test.js",
+    "test": "rm -rf dist/viewer-tests && tsc -p tsconfig.test.json && node --test dist/viewer-tests/test/*.test.js",
+    "test:streaming-telemetry-scale": "rm -rf dist/viewer-tests && tsc -p tsconfig.test.json && node dist/viewer-tests/test/scale/streaming-telemetry-gate.js",
     "test:browser-kernel": "node test/browser/kernel-browser-e2e.mjs",
     "test:browser-kernel-webgpu": "node test/browser/kernel-browser-e2e.mjs --webgpu",
     "test:browser-kernel-webgl2": "node test/browser/kernel-browser-e2e.mjs --webgl2",
     "test:browser-kernel-real": "node test/browser/kernel-browser-e2e.mjs --real",
     "test:browser-kernel-real-webgl2": "node test/browser/kernel-browser-e2e.mjs --real --webgl2",
     "test:browser-kernel-color-parity": "node test/browser/kernel-color-parity.mjs",
-    "test:browser-kernel-real-parity": "node test/browser/kernel-browser-e2e.mjs --real && node test/browser/kernel-browser-e2e.mjs --real --webgl2 && node test/browser/kernel-color-parity.mjs",
+    "test:browser-kernel-real-parity": "node test/browser/kernel-browser-e2e.mjs --real --webgpu && node test/browser/kernel-browser-e2e.mjs --real --webgl2 && node test/browser/kernel-color-parity.mjs",
     "test:public-consumer-processes": "node test/consumer/public-process-hosts.mjs",
     "test:decode-wasm-artifact": "node ../../../scripts/check-decode-wasm-artifact.mjs"
   },

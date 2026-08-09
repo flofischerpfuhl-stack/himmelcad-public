@@ -118,9 +118,9 @@ impl TileStats {
     fn observe(&mut self, position: [f64; 3], maximum_scale: f64) {
         self.count += 1;
         self.maximum_scale = self.maximum_scale.max(maximum_scale);
-        for axis in 0..3 {
-            self.min[axis] = self.min[axis].min(position[axis]);
-            self.max[axis] = self.max[axis].max(position[axis]);
+        for (axis, coordinate) in position.into_iter().enumerate() {
+            self.min[axis] = self.min[axis].min(coordinate);
+            self.max[axis] = self.max[axis].max(coordinate);
         }
     }
 }

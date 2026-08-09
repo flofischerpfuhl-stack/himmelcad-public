@@ -22,7 +22,12 @@ use himmelcad_core::geometry_representation_registry::{
 };
 use ts_rs::TS;
 
-const GENERATED_RELATIVE_PATH: &str = "packages/@himmelcad/viewer/src/kernel/generated";
+const GENERATED_RELATIVE_PATH: &str = "packages/@himmelcad/data/src/generated";
+const LEGACY_BARREL_RELATIVE_PATH: &str = "packages/@himmelcad/viewer/src/kernel/generated";
+const LEGACY_BARREL: &str = concat!(
+    "// Compatibility barrel. Canonical contracts are generated in @himmelcad/data.\n",
+    "export type * from '@himmelcad/data/canonical';\n",
+);
 
 fn main() -> Result<(), Box<dyn Error>> {
     let check = match env::args().nth(1).as_deref() {
@@ -39,6 +44,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .nth(2)
         .ok_or("himmelcad-core must live below the repository root")?;
     let generated = repository.join(GENERATED_RELATIVE_PATH);
+    let legacy_barrel = repository.join(LEGACY_BARREL_RELATIVE_PATH);
     let staging = repository
         .join("target")
         .join(format!("entity-bindings-{}", std::process::id()));
@@ -49,9 +55,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let result = generate(&staging).and_then(|()| {
         if check {
-            check_equal(&generated, &staging)
+            check_equal(&generated, &staging)?;
+            check_legacy_barrel(&legacy_barrel)
         } else {
-            replace_generated(&generated, &staging)
+            replace_generated(&generated, &staging)?;
+            replace_legacy_barrel(&legacy_barrel)
         }
     });
     if staging.exists() {
@@ -65,6 +73,29 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("generated canonical entity bindings in {GENERATED_RELATIVE_PATH}");
     }
     Ok(())
+}
+
+fn replace_legacy_barrel(directory: &Path) -> Result<(), Box<dyn Error>> {
+    if directory.exists() {
+        fs::remove_dir_all(directory)?;
+    }
+    fs::create_dir_all(directory)?;
+    fs::write(directory.join("index.ts"), LEGACY_BARREL)?;
+    Ok(())
+}
+
+fn check_legacy_barrel(directory: &Path) -> Result<(), Box<dyn Error>> {
+    let expected = BTreeMap::from([(PathBuf::from("index.ts"), LEGACY_BARREL.as_bytes().to_vec())]);
+    let actual = if directory.exists() {
+        read_tree(directory)?
+    } else {
+        BTreeMap::new()
+    };
+    if actual == expected {
+        Ok(())
+    } else {
+        Err("viewer canonical-contract compatibility barrel drifted; regenerate bindings".into())
+    }
 }
 
 fn generate(staging: &Path) -> Result<(), Box<dyn Error>> {

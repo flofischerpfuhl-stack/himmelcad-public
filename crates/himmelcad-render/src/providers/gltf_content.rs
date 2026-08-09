@@ -499,6 +499,10 @@ fn accumulate_node_bounds(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "recursive decoder carries explicit immutable document context and bounded traversal state"
+)]
 fn decode_node(
     gltf: &gltf::Gltf,
     node: &gltf::Node<'_>,

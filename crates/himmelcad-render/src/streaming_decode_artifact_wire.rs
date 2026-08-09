@@ -17,6 +17,10 @@ use crate::{
 use super::streaming_decode_artifact::DecodedStreamingPayload;
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "boxing would alter the versioned bincode artifact layout"
+)]
 pub(super) enum WireDecodedStreamingPayload {
     ThreeDTiles(WireThreeDTilesContent),
     Potree(DecodedPotreePoints),

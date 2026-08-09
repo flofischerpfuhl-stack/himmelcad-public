@@ -7,6 +7,13 @@ export default defineConfig({
   base: './',
   publicDir: fileURLToPath(new URL('../../.build/builder-viewer/public', import.meta.url)),
   plugins: [react()],
+  resolve: {
+    alias: {
+      '@himmelcad/app': fileURLToPath(
+        new URL('../../packages/@himmelcad/app/src/index.ts', import.meta.url),
+      ),
+    },
+  },
   server: {
     port: 5174,
     strictPort: true,

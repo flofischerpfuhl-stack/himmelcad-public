@@ -32,10 +32,15 @@ export function defaultHatches(): HatchPattern[] {
     { id: 'h_horizontal', name: 'Horizontal', kind: 'lines', angleDeg: 0, spacing: 3 },
     { id: 'h_vertical', name: 'Vertical', kind: 'lines', angleDeg: 90, spacing: 3 },
     { id: 'h_dots', name: 'Dots', kind: 'dots', spacing: 3 },
-    { id: 'h_brick', name: 'Brick', kind: 'custom', lines: [
-      { angleDeg: 0, spacing: 6 },
-      { angleDeg: 90, spacing: 12, offset: 3 },
-    ]},
+    {
+      id: 'h_brick',
+      name: 'Brick',
+      kind: 'custom',
+      lines: [
+        { angleDeg: 0, spacing: 6 },
+        { angleDeg: 90, spacing: 12, offset: 3 },
+      ],
+    },
     { id: 'h_concrete', name: 'Concrete', kind: 'crosshatch', angleDeg: 30, spacing: 5 },
     { id: 'h_earth', name: 'Earth', kind: 'lines', angleDeg: 45, spacing: 2 },
     { id: 'h_steel', name: 'Steel', kind: 'lines', angleDeg: 45, spacing: 1.5 },

@@ -7,7 +7,7 @@
   "types": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test src/**/*.test.ts"
+    "test": "tsc -p tsconfig.test.json && node --test ../../../.build/tests/specs/*.test.js"
   },
   "devDependencies": {
     "typescript": "^5.6.2"

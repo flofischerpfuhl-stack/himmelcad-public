@@ -55,6 +55,8 @@ view, picking and correctness contracts do not.
 - Potree 2.0 remains the prepared point-cloud format.
 - 3D Tiles 1.1 with glTF content becomes the primary large textured-mesh and
   instancing format.
+- SLPK/I3S is another hierarchy/content provider that maps into the same
+  prepared hierarchy and renderer; it is not a render engine.
 - Raster/elevation pyramids and Gaussian splats have dedicated providers.
 - Authored CAD entities compile to render proxies directly.
 
@@ -121,6 +123,10 @@ stack while the viewport owns keyboard focus.
 
 Renderer hits are hints. Commands that change geometry revalidate the target
 and entity version in the authoritative core.
+
+ADR 0022 defines the 3D/2D/2.5D acquisition semantics. Providers always rank
+one canonical winner first; only the view-acquisition layer then removes Z for
+2D or retains the same winner's source Z for 2.5D.
 
 ### Device adaptation
 

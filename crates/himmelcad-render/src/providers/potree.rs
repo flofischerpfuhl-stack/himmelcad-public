@@ -488,7 +488,12 @@ impl PotreeHierarchySource {
                     byte_length: Some(byte_length),
                     primitive_count: Some(point_count),
                     content_hash: None,
-                    decoder_parameters: None,
+                    decoder_parameters: Some(serde_json::json!({
+                        "streamingPage": {
+                            "schemaVersion": 1,
+                            "targetBytes": 1_048_576
+                        }
+                    })),
                 }]
             };
             let child_page = is_proxy.then(|| HierarchyPageReference {
@@ -1144,6 +1149,12 @@ mod tests {
         assert_eq!(root.children, vec![TileId("r0".to_owned())]);
         assert_eq!(root.contents[0].byte_offset, Some(0));
         assert_eq!(root.contents[0].primitive_count, Some(100));
+        assert_eq!(
+            root.contents[0].decoder_parameters,
+            Some(serde_json::json!({
+                "streamingPage": { "schemaVersion": 1, "targetBytes": 1_048_576 }
+            }))
+        );
         let child = source
             .tile(&TileId("r0".to_owned()))
             .expect("lookup")

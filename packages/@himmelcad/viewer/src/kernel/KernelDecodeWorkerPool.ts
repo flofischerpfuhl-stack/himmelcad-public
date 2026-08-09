@@ -126,14 +126,16 @@ export class KernelDecodeWorkerPool {
   constructor(
     private readonly wasmModuleUrl: string,
     workers: number,
-    private readonly createWorker: () => Worker = () => new Worker(
-      new URL('./KernelDecodeWorker.ts', import.meta.url),
-      { type: 'module', name: 'himmelcad-streaming-decode' },
-    ),
+    private readonly createWorker: () => Worker = () =>
+      new Worker(new URL('./KernelDecodeWorker.ts', import.meta.url), {
+        type: 'module',
+        name: 'himmelcad-streaming-decode',
+      }),
     private readonly workerRamBudgetBytes = 512 * 1024 * 1024,
     private readonly minimumPerWorkerReservationBytes = 256 * 1024 * 1024,
   ) {
-    if (wasmModuleUrl.length === 0) throw new Error('decode worker wasmModuleUrl must be non-empty');
+    if (wasmModuleUrl.length === 0)
+      throw new Error('decode worker wasmModuleUrl must be non-empty');
     this.setWorkerCount(workers);
   }
 
@@ -225,10 +227,8 @@ export class KernelDecodeWorkerPool {
       event.preventDefault();
       this.failSlot(slot, new Error(event.message || 'decode worker failed'));
     };
-    worker.onmessageerror = () => this.failSlot(
-      slot,
-      new Error('decode worker protocol message could not be deserialized'),
-    );
+    worker.onmessageerror = () =>
+      this.failSlot(slot, new Error('decode worker protocol message could not be deserialized'));
     this.slots.push(slot);
   }
 
@@ -244,7 +244,10 @@ export class KernelDecodeWorkerPool {
       this.transferredInputBytes += inputBytes;
       this.peakTransferBytes = Math.max(this.peakTransferBytes, inputBytes);
       const request: WorkerRequest = {
-        kind: 'decode', id: entry.id, wasmModuleUrl: this.wasmModuleUrl, job: entry.job,
+        kind: 'decode',
+        id: entry.id,
+        wasmModuleUrl: this.wasmModuleUrl,
+        job: entry.job,
       };
       try {
         slot.worker.postMessage(request, [
@@ -263,14 +266,18 @@ export class KernelDecodeWorkerPool {
     if (!this.slots.includes(slot)) return;
     const entry = slot.active;
     if (entry === null || !isWorkerResponse(response) || response.id !== entry.id) {
-      this.failSlot(slot, new Error('decode worker protocol response did not match the active job'));
+      this.failSlot(
+        slot,
+        new Error('decode worker protocol response did not match the active job'),
+      );
       return;
     }
     slot.active = null;
     entry.signal.removeEventListener('abort', entry.abort);
-    const rawOutputBytes = response.primary.byteLength + response.bundle.byteLength +
-      response.secondary.byteLength;
-    const outputBytes = rawOutputBytes + (response.kind === 'decoded' ? response.artifact.byteLength : 0);
+    const rawOutputBytes =
+      response.primary.byteLength + response.bundle.byteLength + response.secondary.byteLength;
+    const outputBytes =
+      rawOutputBytes + (response.kind === 'decoded' ? response.artifact.byteLength : 0);
     this.transferredOutputBytes += outputBytes;
     this.peakTransferBytes = Math.max(this.peakTransferBytes, outputBytes);
     this.workerDecodeMs += response.workerDurationMs;
@@ -285,16 +292,19 @@ export class KernelDecodeWorkerPool {
     if (response.kind === 'failed') {
       if (!entry.canceled) {
         this.failedDecodes += 1;
-        this.rejectEntry(entry, new KernelDecodeWorkerError(
-          response.message,
-          response.primary,
-          response.bundle,
-          response.secondary,
-          response.workerDurationMs,
-          response.workerContext,
-          response.workerBaselineLinearMemoryBytes,
-          response.workerLinearMemoryBytes,
-        ));
+        this.rejectEntry(
+          entry,
+          new KernelDecodeWorkerError(
+            response.message,
+            response.primary,
+            response.bundle,
+            response.secondary,
+            response.workerDurationMs,
+            response.workerContext,
+            response.workerBaselineLinearMemoryBytes,
+            response.workerLinearMemoryBytes,
+          ),
+        );
       }
     } else {
       if (!entry.canceled) {
@@ -336,9 +346,10 @@ export class KernelDecodeWorkerPool {
 
   private reconcileDesiredWorkers(): void {
     if (this.disposed) return;
-    const ramLimitedWorkers = Math.max(1, Math.floor(
-      this.workerRamBudgetBytes / this.perWorkerReservationBytes(),
-    ));
+    const ramLimitedWorkers = Math.max(
+      1,
+      Math.floor(this.workerRamBudgetBytes / this.perWorkerReservationBytes()),
+    );
     const desired = Math.min(this.requestedWorkers, ramLimitedWorkers);
     for (const slot of this.slots) slot.retire = false;
 
@@ -374,8 +385,8 @@ export class KernelDecodeWorkerPool {
   }
 
   private perWorkerReservationBytes(): number {
-    const observedPeakWithTransferredInputs = this.maximumWorkerLinearMemoryBytes +
-      this.peakTransferBytes;
+    const observedPeakWithTransferredInputs =
+      this.maximumWorkerLinearMemoryBytes + this.peakTransferBytes;
     return Math.max(this.minimumPerWorkerReservationBytes, observedPeakWithTransferredInputs);
   }
 
@@ -387,17 +398,25 @@ export class KernelDecodeWorkerPool {
 function isWorkerResponse(value: unknown): value is WorkerResponse | WorkerFailure {
   if (typeof value !== 'object' || value === null) return false;
   const response = value as Record<string, unknown>;
-  if ((response.kind !== 'decoded' && response.kind !== 'failed') ||
-      !Number.isSafeInteger(response.id) || !(response.primary instanceof ArrayBuffer) ||
-      !(response.bundle instanceof ArrayBuffer) || !(response.secondary instanceof ArrayBuffer) ||
-      typeof response.workerDurationMs !== 'number' || !Number.isFinite(response.workerDurationMs) ||
-      response.workerDurationMs < 0 || typeof response.workerContext !== 'boolean') {
+  if (
+    (response.kind !== 'decoded' && response.kind !== 'failed') ||
+    !Number.isSafeInteger(response.id) ||
+    !(response.primary instanceof ArrayBuffer) ||
+    !(response.bundle instanceof ArrayBuffer) ||
+    !(response.secondary instanceof ArrayBuffer) ||
+    typeof response.workerDurationMs !== 'number' ||
+    !Number.isFinite(response.workerDurationMs) ||
+    response.workerDurationMs < 0 ||
+    typeof response.workerContext !== 'boolean'
+  ) {
     return false;
   }
-  if (!Number.isSafeInteger(response.workerBaselineLinearMemoryBytes) ||
-      Number(response.workerBaselineLinearMemoryBytes) < 0 ||
-      !Number.isSafeInteger(response.workerLinearMemoryBytes) ||
-      Number(response.workerLinearMemoryBytes) < Number(response.workerBaselineLinearMemoryBytes)) {
+  if (
+    !Number.isSafeInteger(response.workerBaselineLinearMemoryBytes) ||
+    Number(response.workerBaselineLinearMemoryBytes) < 0 ||
+    !Number.isSafeInteger(response.workerLinearMemoryBytes) ||
+    Number(response.workerLinearMemoryBytes) < Number(response.workerBaselineLinearMemoryBytes)
+  ) {
     return false;
   }
   return response.kind === 'decoded'

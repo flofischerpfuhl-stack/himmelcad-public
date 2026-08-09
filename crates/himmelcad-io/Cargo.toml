@@ -23,9 +23,11 @@ quick-xml = "=0.41.0"
 dxf = { version = "=0.6.1", features = ["serialize"] }
 geotiff-reader = { version = "=0.7.0", default-features = false, features = ["local"] }
 tiff-reader = { version = "=0.7.0", default-features = false, features = ["jpeg", "zstd"] }
-image = { version = "0.25.8", default-features = false, features = ["png"] }
+image = { version = "0.25.8", default-features = false, features = ["jpeg", "png"] }
 ndarray = "=0.17.2"
+acadrust = { path = "../../vendor/acadrust" }
 zip = { workspace = true, features = ["deflate-flate2"] }
+flate2 = "=1.1.9"
 
 [dev-dependencies]
 geotiff-writer = "=0.7.0"

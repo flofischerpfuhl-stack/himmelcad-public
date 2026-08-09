@@ -32,6 +32,8 @@ use thiserror::Error;
 
 use crate::grid_codecs::ggf::{GgfError, GgfGrid};
 
+type TransformStageResult = (Vec<WorldPoint>, Vec<u64>, u64, Vec<String>);
+
 /// Configuration for the transform engine (local PROJ + allowed grid roots).
 #[derive(Debug, Clone)]
 pub struct TransformRuntimeConfig {
@@ -410,6 +412,7 @@ impl TransformRuntime {
         Ok((frozen, result))
     }
 
+    #[allow(clippy::too_many_arguments)] // Geoid stage inputs mirror the frozen transform stage.
     fn apply_geoid_undulation(
         &self,
         grid_ref: &GridFileRef,
@@ -419,7 +422,7 @@ impl TransformRuntime {
         points: &[WorldPoint],
         oob_policy: OutOfBoundsPolicy,
         cancellation: &CancellationToken,
-    ) -> Result<(Vec<WorldPoint>, Vec<u64>, u64, Vec<String>), TransformRuntimeError> {
+    ) -> Result<TransformStageResult, TransformRuntimeError> {
         if cancellation.is_cancel_requested() {
             return Err(TransformRuntimeError::Cancelled);
         }
@@ -571,10 +574,7 @@ impl TransformRuntime {
             return Err(TransformRuntimeError::OutOfBounds { index: oob[0] });
         }
         // Normalize residual lat/lon confusion if any step still swaps.
-        let normalized = geo
-            .into_iter()
-            .map(|p| normalize_lon_lat_point(p))
-            .collect();
+        let normalized = geo.into_iter().map(normalize_lon_lat_point).collect();
         Ok(normalized)
     }
 
@@ -585,7 +585,7 @@ impl TransformRuntime {
         points: &[WorldPoint],
         oob_policy: OutOfBoundsPolicy,
         cancellation: &CancellationToken,
-    ) -> Result<(Vec<WorldPoint>, Vec<u64>, u64, Vec<String>), TransformRuntimeError> {
+    ) -> Result<TransformStageResult, TransformRuntimeError> {
         if points.is_empty() {
             return Ok((Vec::new(), Vec::new(), 0, Vec::new()));
         }

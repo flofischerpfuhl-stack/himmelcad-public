@@ -1,10 +1,5 @@
 import { RotateCcw, X } from 'lucide-react';
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  type ReactNode,
-} from 'react';
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 
 import styles from './ImportChat.module.css';
 

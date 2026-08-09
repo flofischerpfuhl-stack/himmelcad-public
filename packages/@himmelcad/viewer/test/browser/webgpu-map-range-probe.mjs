@@ -6,7 +6,9 @@ import { browserHeadless, resolveChromeExecutable } from '../support/platform-to
 
 const server = createServer((_request, response) => {
   response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  response.end('<!doctype html><title>WebGPU map range probe</title><canvas width="64" height="64"></canvas>');
+  response.end(
+    '<!doctype html><title>WebGPU map range probe</title><canvas width="64" height="64"></canvas>',
+  );
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const address = server.address();
@@ -56,7 +58,10 @@ try {
         staging.unmap();
         return { ok: valid, byteLength: bytes.length };
       } catch (error) {
-        return { ok: false, error: `${error?.name ?? 'Error'}: ${error?.message ?? String(error)}` };
+        return {
+          ok: false,
+          error: `${error?.name ?? 'Error'}: ${error?.message ?? String(error)}`,
+        };
       }
     };
 
@@ -76,12 +81,14 @@ try {
       surfaceStep = 'encode';
       const surfaceEncoder = device.createCommandEncoder();
       const surfacePass = surfaceEncoder.beginRenderPass({
-        colorAttachments: [{
-          view: context.getCurrentTexture().createView(),
-          clearValue: { r: 0.1, g: 0.2, b: 0.3, a: 1 },
-          loadOp: 'clear',
-          storeOp: 'store',
-        }],
+        colorAttachments: [
+          {
+            view: context.getCurrentTexture().createView(),
+            clearValue: { r: 0.1, g: 0.2, b: 0.3, a: 1 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          },
+        ],
       });
       surfacePass.end();
       surfaceStep = 'submit';

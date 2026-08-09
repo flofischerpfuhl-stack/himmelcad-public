@@ -23,11 +23,20 @@ export function ImagePropertiesPanel({
   const photo = image.metadata.inspectedPhoto;
   const exif = photo.metadata.exif;
   const dji = photo.metadata.djiXmp;
-  const gps = dji.latitudeDegrees != null && dji.longitudeDegrees != null
-    ? { latitude: dji.latitudeDegrees, longitude: dji.longitudeDegrees, height: dji.absoluteAltitude?.meters }
-    : exif.gps
-      ? { latitude: exif.gps.latitudeDegrees, longitude: exif.gps.longitudeDegrees, height: exif.gps.altitude?.meters }
-      : null;
+  const gps =
+    dji.latitudeDegrees != null && dji.longitudeDegrees != null
+      ? {
+          latitude: dji.latitudeDegrees,
+          longitude: dji.longitudeDegrees,
+          height: dji.absoluteAltitude?.meters,
+        }
+      : exif.gps
+        ? {
+            latitude: exif.gps.latitudeDegrees,
+            longitude: exif.gps.longitudeDegrees,
+            height: exif.gps.altitude?.meters,
+          }
+        : null;
   const optimized = aligned
     ? optimization?.artifact.result.cameras.find((camera) => camera.imageId === aligned.imageId)
     : undefined;
@@ -35,7 +44,10 @@ export function ImagePropertiesPanel({
   return (
     <div className={styles.root}>
       <Section title="Positions">
-        <Row label="Original" value={gps ? formatGeographicPosition(gps.longitude, gps.latitude, gps.height) : '—'} />
+        <Row
+          label="Original"
+          value={gps ? formatGeographicPosition(gps.longitude, gps.latitude, gps.height) : '—'}
+        />
         <Row
           label="Transformed"
           value={
@@ -43,27 +55,57 @@ export function ImagePropertiesPanel({
               ? formatCartesianPosition([
                   image.metadata.projectedReference.easting,
                   image.metadata.projectedReference.northing,
-                  image.metadata.projectedReference.transformedHeightMeters ?? image.metadata.projectedReference.sourceHeightMeters,
+                  image.metadata.projectedReference.transformedHeightMeters ??
+                    image.metadata.projectedReference.sourceHeightMeters,
                 ])
               : '—'
           }
         />
-        <Row label="Alignment local" value={aligned ? formatCartesianPosition(aligned.camera.centerReconstruction) : '—'} />
-        <Row label="GCP optimized" value={optimized ? formatCartesianPosition(optimized.centerWorldMeters) : '—'} />
+        <Row
+          label="Alignment local"
+          value={aligned ? formatCartesianPosition(aligned.camera.centerReconstruction) : '—'}
+        />
+        <Row
+          label="GCP optimized"
+          value={optimized ? formatCartesianPosition(optimized.centerWorldMeters) : '—'}
+        />
       </Section>
       <Section title="Orientation">
         <Row label="Gimbal" value={formatAttitude(dji.gimbalAttitude)} />
         <Row label="Aircraft" value={formatAttitude(dji.flightAttitude)} />
-        <Row label="Aligned" value={aligned ? formatMatrix(aligned.camera.cameraToReconstructionRotation) : '—'} />
-        <Row label="Optimized" value={optimized ? formatMatrix(optimized.cameraToWorldRotation) : '—'} />
+        <Row
+          label="Aligned"
+          value={aligned ? formatMatrix(aligned.camera.cameraToReconstructionRotation) : '—'}
+        />
+        <Row
+          label="Optimized"
+          value={optimized ? formatMatrix(optimized.cameraToWorldRotation) : '—'}
+        />
       </Section>
       <Section title="Camera and capture">
         <Row label="Camera" value={[exif.make, exif.model].filter(Boolean).join(' ') || '—'} />
         <Row label="Lens" value={exif.lensModel ?? '—'} />
-        <Row label="Dimensions" value={exif.dimensions ? `${exif.dimensions.widthPixels} × ${exif.dimensions.heightPixels} px` : '—'} />
-        <Row label="Focal length" value={exif.focalLengthMm == null ? '—' : `${exif.focalLengthMm.toFixed(2)} mm`} />
+        <Row
+          label="Dimensions"
+          value={
+            exif.dimensions
+              ? `${exif.dimensions.widthPixels} × ${exif.dimensions.heightPixels} px`
+              : '—'
+          }
+        />
+        <Row
+          label="Focal length"
+          value={exif.focalLengthMm == null ? '—' : `${exif.focalLengthMm.toFixed(2)} mm`}
+        />
         <Row label="Capture time" value={exif.capturedAt?.value ?? '—'} />
-        <Row label="RTK" value={dji.rtk ? `Flag ${dji.rtk.flag ?? '—'} · σH ${formatSigma(dji.rtk.standardDeviationHeightMeters)}` : '—'} />
+        <Row
+          label="RTK"
+          value={
+            dji.rtk
+              ? `Flag ${dji.rtk.flag ?? '—'} · σH ${formatSigma(dji.rtk.standardDeviationHeightMeters)}`
+              : '—'
+          }
+        />
       </Section>
       <Section title="Measured image quality">
         {quality?.outcome.status === 'measured' ? (
@@ -96,7 +138,11 @@ export function ImagePropertiesPanel({
               label="Sample"
               value={`${quality.sampleWidthPixels} × ${quality.sampleHeightPixels} of ${quality.originalWidthPixels} × ${quality.originalHeightPixels} px · ${quality.algorithmVersion}`}
             />
-            <Row label="Scope" value={quality.processingSetId ?? 'Project-wide'} mono={quality.processingSetId !== undefined} />
+            <Row
+              label="Scope"
+              value={quality.processingSetId ?? 'Project-wide'}
+              mono={quality.processingSetId !== undefined}
+            />
             <Row label="Analyzed" value={formatAnalysisTimestamp(quality.analyzedAtUnixMs)} />
             <Row label="Analysis job" value={quality.jobId} mono />
             <Row label="Analyzed metadata" value={quality.sourceMetadataObjectHash} mono />
@@ -110,9 +156,11 @@ export function ImagePropertiesPanel({
       </Section>
       <Section title="Status">
         <div className={styles.tags}>
-          {image.metadata.statusTags.length > 0
-            ? image.metadata.statusTags.map((tag) => <span key={tag}>{tag}</span>)
-            : <span>imported</span>}
+          {image.metadata.statusTags.length > 0 ? (
+            image.metadata.statusTags.map((tag) => <span key={tag}>{tag}</span>)
+          ) : (
+            <span>imported</span>
+          )}
         </div>
         <Row label="Image SHA-256" value={image.metadata.sourceObjectHash} mono />
         <Row label="Metadata SHA-256" value={image.metadataObjectHash} mono />
@@ -122,16 +170,39 @@ export function ImagePropertiesPanel({
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }): JSX.Element {
-  return <section><h3>{title}</h3>{children}</section>;
+  return (
+    <section>
+      <h3>{title}</h3>
+      {children}
+    </section>
+  );
 }
 
-function Row({ label, value, mono = false }: { label: string; value: string; mono?: boolean }): JSX.Element {
-  return <div className={styles.row}><span>{label}</span><strong className={mono ? styles.mono : undefined} title={value}>{value}</strong></div>;
+function Row({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}): JSX.Element {
+  return (
+    <div className={styles.row}>
+      <span>{label}</span>
+      <strong className={mono ? styles.mono : undefined} title={value}>
+        {value}
+      </strong>
+    </div>
+  );
 }
 
 function formatCartesianPosition(values: readonly [number, number, number | undefined]): string {
   return values
-    .map((value, index) => `${['X', 'Y', 'Z'][index]} ${formatNumber(value)}${value == null ? '' : ' m'}`)
+    .map(
+      (value, index) =>
+        `${['X', 'Y', 'Z'][index]} ${formatNumber(value)}${value == null ? '' : ' m'}`,
+    )
     .join(' · ');
 }
 
@@ -145,7 +216,9 @@ function formatNumber(value: number | undefined): string {
     : value.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 4 });
 }
 
-function formatAttitude(attitude: { yaw?: number; pitch?: number; roll?: number } | undefined): string {
+function formatAttitude(
+  attitude: { yaw?: number; pitch?: number; roll?: number } | undefined,
+): string {
   if (!attitude) return '—';
   return `Y ${attitude.yaw?.toFixed(2) ?? '—'}° · P ${attitude.pitch?.toFixed(2) ?? '—'}° · R ${attitude.roll?.toFixed(2) ?? '—'}°`;
 }

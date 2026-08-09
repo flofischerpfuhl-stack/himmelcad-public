@@ -1570,7 +1570,9 @@ const IDENTITY_AFFINE_ROWS: [[f32; 4]; 3] = [
     [0.0, 0.0, 1.0, 0.0],
 ];
 
-fn affine_rows(transform: WorldTransform) -> Result<([[f32; 4]; 3], [[f32; 4]; 3]), GpuFrameError> {
+type AffineRows = [[f32; 4]; 3];
+
+fn affine_rows(transform: WorldTransform) -> Result<(AffineRows, AffineRows), GpuFrameError> {
     if !transform.is_invertible_affine() {
         return Err(GpuFrameError::InvalidStyle);
     }
@@ -3107,6 +3109,10 @@ impl GpuDrawBatch {
 
     /// Uploads one indexed mesh once and draws it through compact affine
     /// instance records in both color and exact-ID passes.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "public GPU upload API keeps immutable geometry streams and draw metadata explicit"
+    )]
     pub fn new_instanced_indexed_mesh_with_queue(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -4719,6 +4725,10 @@ impl GpuSharedRenderer {
         )
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "private material bridge mirrors the explicit GPU resource inputs"
+    )]
     fn create_styled_material_from_texture_with_origins(
         &self,
         device: &wgpu::Device,
@@ -5305,6 +5315,10 @@ struct MaterialUniform {
 }
 
 impl MaterialUniform {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "uniform construction mirrors independently sourced shader fields"
+    )]
     fn new(
         alpha_mode: GpuAlphaMode,
         style: &GpuPresentationStyle,
@@ -5654,7 +5668,6 @@ fn canonical_sampler(
         compare,
         anisotropy_clamp: sampling.anisotropy_clamp,
         border_color,
-        ..wgpu::SamplerDescriptor::default()
     })
 }
 
@@ -5709,6 +5722,10 @@ fn create_mip_chain_texture_resource(
     })))
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "material allocation combines explicit immutable GPU resources at one boundary"
+)]
 fn create_material_from_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -6151,6 +6168,10 @@ fn pick_pipeline(
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "pipeline construction exposes orthogonal render-state choices without hidden defaults"
+)]
 fn pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
@@ -6664,7 +6685,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn instanced_mesh_sort_state_is_backend_resolved_and_uploadable() {
-        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder();
+        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder().await;
         let Some((device, queue)) = smoke_device().await else {
             return;
         };
@@ -7102,7 +7123,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn presentation_texture_rebind_retains_source_and_fork_state() {
-        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder();
+        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder().await;
         let Some((device, queue)) = smoke_device().await else {
             return;
         };
@@ -7195,7 +7216,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn real_wgpu_device_validates_mixed_color_depth_clip_and_pick_passes() {
-        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder();
+        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder().await;
         let Some((device, queue)) = smoke_device().await else {
             return;
         };
@@ -7401,7 +7422,7 @@ mod tests {
     async fn large_stream_uploads_use_unmapped_copy_dst_buffers() {
         const CHROME_REPRO_POINT_COUNT: usize = 31_668;
 
-        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder();
+        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder().await;
         let Some((device, queue)) = smoke_device().await else {
             return;
         };
@@ -7511,7 +7532,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn two_tiles_share_one_immutable_instanced_mesh_allocation() {
-        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder();
+        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder().await;
         let Some((device, queue)) = smoke_device().await else {
             return;
         };
@@ -7579,7 +7600,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn line_type_gaps_match_color_and_pick_on_a_real_device() {
-        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder();
+        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder().await;
         let Some((device, queue)) = smoke_device().await else {
             return;
         };
@@ -7686,7 +7707,7 @@ mod tests {
             samples.map(|x| copy_color_pixel(&device, &mut encoder, &color, x, 8));
         queue.submit([encoder.finish()]);
         let pick_receivers = pick_readbacks.map(map_pick);
-        let color_receivers = color_readbacks.each_ref().map(|buffer| map_color(buffer));
+        let color_receivers = color_readbacks.each_ref().map(map_color);
         device
             .poll(wgpu::PollType::wait_indefinitely())
             .expect("line type device poll");
@@ -7703,7 +7724,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn weighted_oit_is_draw_order_independent_on_a_real_device() {
-        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder();
+        let _native_test_guard = crate::test_sync::native_gpu_or_transcoder().await;
         let Some((device, queue)) = smoke_device().await else {
             return;
         };

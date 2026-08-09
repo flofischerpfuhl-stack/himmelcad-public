@@ -11,8 +11,8 @@ const child = spawn(
   process.execPath,
   [electronCli, `--remote-debugging-port=${remoteDebuggingPort}`, ...process.argv.slice(2)],
   {
-  env: environment,
-  stdio: 'inherit',
+    env: environment,
+    stdio: 'inherit',
   },
 );
 

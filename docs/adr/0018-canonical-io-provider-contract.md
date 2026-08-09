@@ -4,6 +4,9 @@
 
 Accepted, implementation in progress (2026-07-17).
 
+Clarified by ADR 0021: provider execution, interactive import registration and
+unattended PhotoLab batch execution are separate lifecycles.
+
 ## Context
 
 The unified viewer and canonical entity registry no longer accept product-owned
@@ -54,6 +57,20 @@ entity representation explicitly binds their immutable descriptor.
 Provider code may preserve unsupported source semantics through namespaced
 components, attributes, relations and imported-fallback representations. It
 may not invent a renderer-only entity model.
+
+An interactive registration host may transform a staged candidate before the
+single canonical publication transaction. Providers expose source metadata and
+options but never own point picking, CRS dialogs, manual placement or ICP UI.
+
+The DWG provider is built from a pinned `acadrust` source fork under `vendor/`.
+MPL-2.0 file-level attribution, a modifications log, bounded parsing and
+corpus/fuzz gates are mandatory. The fork publishes only through this package
+contract and has no direct entity-store or viewer authority.
+
+The SLPK/I3S provider maps hierarchy nodes, geometry, materials and metadata to
+the shared prepared hierarchy and canonical semantics. It renders through the
+unified renderer and global residency coordinator; it does not embed or create
+a second I3S renderer.
 
 ## Invariants
 

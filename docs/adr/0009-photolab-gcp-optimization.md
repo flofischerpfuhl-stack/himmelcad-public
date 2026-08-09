@@ -4,6 +4,15 @@
 
 Angenommen.
 
+Kalibrierungs-Policy in Überarbeitung seit 2026-07-19. Die unten beschriebene
+GCP-, Snapshot-, Rollen-, Residual- und Publikationsarchitektur bleibt
+verbindlich. Die pauschale Festlegung auf feste Intrinsics und das davon
+abgeleitete Solverlabel sind jedoch keine Produktvorgabe mehr. M4 aus
+`docs/PROGRAM-MILESTONES-2026-07-19.md` entscheidet die Defaults und die
+freigebbaren Parameter pro Kalibrierungsgruppe anhand Primärliteratur,
+Beobachtbarkeit und Golden-Datensätzen. Bis dahin darf bestehendes Verhalten
+nicht stillschweigend als endgültige Policy dokumentiert werden.
+
 ## Kontext
 
 PhotoLab muss GCPs mit XYZ-, XY- und Z-Masken, separat ausgewerteten
@@ -32,8 +41,9 @@ nachziehen, ohne Checkpoints in die Survey-Schätzung einzumischen.
   Messungen; es wird keine globale dichte Normalmatrix aufgebaut.
 - Die erste ausgewählte Kamerapose und das Zentrum der zweiten ausgewählten
   Kamera fixieren Pose und Maßstab der Gauge. Nicht ausgewählte Kameras bleiben
-  unverändert. Intrinsics bleiben bewusst fest, weil der eingefrorene
-  GCP-Snapshot ihre sichere Beobachtbarkeit nicht belegt.
+  unverändert. Welche Intrinsics fest, priorisiert oder frei sind, wird pro
+  Kalibrierungsgruppe durch die in Überarbeitung befindliche
+  Kalibrierungs-Policy bestimmt und im Snapshot eingefroren.
 - Nur die durch die jeweilige Rolle aktivierten Komponenten gehen mit ihrer
   Unsicherheit in die Normalgleichungen ein. Sind weniger als drei räumliche
   Controls vorhanden, optimiert `Auto` ausschließlich die beobachtbaren
@@ -76,9 +86,10 @@ nachziehen, ohne Checkpoints in die Survey-Schätzung einzumischen.
 Der GCP-Pfad benötigt keine zusätzliche Runtime-Library und verhält sich auf
 CPU, GPU und Betriebssystemen identisch. Das Ergebnis veröffentlicht neben
 Similarity, Restfehlern und Projektionen auch die verfeinerten Kameras und
-Sparse-Tie-Points mit dem eindeutigen Solverlabel
-`himmelcad-weighted-robust-bundle-adjustment-v2-fixed-intrinsics`. Ergebnisse
-ohne passende Alignment-/Processing-Set-Lineage werden nicht stillschweigend
-für Produkte wiederverwendet. Ein späterer Schur- oder GPU-Solver kann denselben
-Snapshot-, Gauge-, Rollen-, Residual-, Lineage- und Publikationsvertrag
-übernehmen.
+Sparse-Tie-Points. Solverlabel und Provenance enthalten zusätzlich die
+eingefrorene Intrinsics-Policy; das bisherige Label
+`himmelcad-weighted-robust-bundle-adjustment-v2-fixed-intrinsics` bezeichnet
+nur den entsprechenden Legacy-Modus. Ergebnisse ohne passende Alignment-/
+Processing-Set-Lineage werden nicht stillschweigend für Produkte
+wiederverwendet. Ein späterer Schur- oder GPU-Solver kann denselben Snapshot-,
+Gauge-, Rollen-, Residual-, Lineage- und Publikationsvertrag übernehmen.

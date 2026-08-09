@@ -30,6 +30,13 @@ const INVALID_PROJECTION_COST: f64 = 1.0e12;
 #[serde(rename_all = "camelCase")]
 pub struct GcpCameraModel {
     pub image_id: ImageId,
+    /// Immutable calibration-group identity. Grouping is never inferred from
+    /// numerically equal lens parameters: callers freeze this identity as part
+    /// of the optimization input.
+    pub calibration_group_id: String,
+    /// Interior-orientation policy frozen for this camera's calibration group.
+    #[serde(default)]
+    pub intrinsics_policy: GcpIntrinsicsPolicy,
     pub width_pixels: u32,
     pub height_pixels: u32,
     pub focal_x_pixels: f64,
@@ -49,6 +56,178 @@ pub struct GcpCameraModel {
     /// One-sigma reference uncertainty for east, north, and height.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference_stddev_meters: Option<[f64; 3]>,
+}
+
+/// The ordinary Brown/Metashape-compatible parameters supported by the
+/// automatic optimizer. Advanced affinity/skew and `k4` are deliberately not
+/// representable here, so they can never be enabled accidentally.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GcpIntrinsicParameter {
+    F,
+    Cx,
+    Cy,
+    K1,
+    K2,
+    K3,
+    P1,
+    P2,
+}
+
+/// Serializable selection of the eight supported parameters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GcpIntrinsicParameterMask {
+    pub f: bool,
+    pub cx: bool,
+    pub cy: bool,
+    pub k1: bool,
+    pub k2: bool,
+    pub k3: bool,
+    pub p1: bool,
+    pub p2: bool,
+}
+
+impl Default for GcpIntrinsicParameterMask {
+    fn default() -> Self {
+        Self::all()
+    }
+}
+
+impl GcpIntrinsicParameterMask {
+    pub const fn none() -> Self {
+        Self {
+            f: false,
+            cx: false,
+            cy: false,
+            k1: false,
+            k2: false,
+            k3: false,
+            p1: false,
+            p2: false,
+        }
+    }
+
+    pub const fn all() -> Self {
+        Self {
+            f: true,
+            cx: true,
+            cy: true,
+            k1: true,
+            k2: true,
+            k3: true,
+            p1: true,
+            p2: true,
+        }
+    }
+
+    const fn auto_base() -> Self {
+        Self {
+            f: true,
+            cx: false,
+            cy: false,
+            k1: true,
+            k2: false,
+            k3: false,
+            p1: false,
+            p2: false,
+        }
+    }
+
+    fn enabled(self, index: usize) -> bool {
+        [
+            self.f, self.cx, self.cy, self.k1, self.k2, self.k3, self.p1, self.p2,
+        ][index]
+    }
+
+    pub fn parameters(self) -> Vec<GcpIntrinsicParameter> {
+        const PARAMETERS: [GcpIntrinsicParameter; 8] = [
+            GcpIntrinsicParameter::F,
+            GcpIntrinsicParameter::Cx,
+            GcpIntrinsicParameter::Cy,
+            GcpIntrinsicParameter::K1,
+            GcpIntrinsicParameter::K2,
+            GcpIntrinsicParameter::K3,
+            GcpIntrinsicParameter::P1,
+            GcpIntrinsicParameter::P2,
+        ];
+        PARAMETERS
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, parameter)| self.enabled(index).then_some(parameter))
+            .collect()
+    }
+}
+
+/// One-sigma priors in the solver's native parameterization (`f` is log-scale).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GcpIntrinsicPriorStddev {
+    pub focal_log_scale: f64,
+    pub principal_x_pixels: f64,
+    pub principal_y_pixels: f64,
+    pub k1: f64,
+    pub k2: f64,
+    pub k3: f64,
+    pub p1: f64,
+    pub p2: f64,
+}
+
+impl Default for GcpIntrinsicPriorStddev {
+    fn default() -> Self {
+        Self {
+            focal_log_scale: 0.25,
+            principal_x_pixels: 200.0,
+            principal_y_pixels: 200.0,
+            k1: 0.25,
+            k2: 0.25,
+            k3: 0.25,
+            p1: 0.1,
+            p2: 0.1,
+        }
+    }
+}
+
+impl GcpIntrinsicPriorStddev {
+    fn values(self) -> [f64; 8] {
+        [
+            self.focal_log_scale,
+            self.principal_x_pixels,
+            self.principal_y_pixels,
+            self.k1,
+            self.k2,
+            self.k3,
+            self.p1,
+            self.p2,
+        ]
+    }
+
+    fn is_valid(self) -> bool {
+        self.values()
+            .into_iter()
+            .all(|value| value.is_finite() && value > 0.0)
+    }
+}
+
+/// Per-calibration-group interior-orientation behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum GcpIntrinsicsPolicy {
+    Auto,
+    Fixed,
+    Prior {
+        parameters: GcpIntrinsicParameterMask,
+        stddev: GcpIntrinsicPriorStddev,
+    },
+    Custom {
+        parameters: GcpIntrinsicParameterMask,
+    },
+}
+
+impl Default for GcpIntrinsicsPolicy {
+    fn default() -> Self {
+        Self::Auto
+    }
 }
 
 impl GcpCameraModel {
@@ -113,6 +292,7 @@ impl GcpCameraModel {
 #[serde(rename_all = "camelCase")]
 pub struct OptimizedGcpCamera {
     pub image_id: ImageId,
+    pub calibration_group_id: String,
     pub width_pixels: u32,
     pub height_pixels: u32,
     pub focal_x_pixels: f64,
@@ -451,6 +631,54 @@ pub struct GcpOptimizationResult {
     pub final_objective: f64,
     /// Number of cameras held fixed to remove similarity gauge freedom.
     pub fixed_gauge_camera_count: u32,
+    /// Reproducible model-selection and observability report per explicit
+    /// calibration group.
+    #[serde(default)]
+    pub intrinsics_diagnostics: Vec<GcpIntrinsicsGroupDiagnostics>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GcpIntrinsicsStageRejection {
+    PolicyFixed,
+    MasterRefinementDisabled,
+    TooFewCameras,
+    TooFewObservations,
+    InsufficientQuadrantCoverage,
+    InsufficientRadialCoverage,
+    InsufficientBaselineDiversity,
+    InsufficientDepthDiversity,
+    IllConditioned,
+    Singular,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GcpIntrinsicsStageDiagnostic {
+    pub parameters: GcpIntrinsicParameterMask,
+    pub accepted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejection: Option<GcpIntrinsicsStageRejection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition_number: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GcpIntrinsicsGroupDiagnostics {
+    pub calibration_group_id: String,
+    pub policy: GcpIntrinsicsPolicy,
+    pub camera_count: u32,
+    pub observation_count: u32,
+    pub occupied_quadrants: u8,
+    /// Maximum observed radius divided by the half image diagonal.
+    pub radial_coverage: f64,
+    /// Camera-centre baseline divided by median observed depth.
+    pub baseline_depth_ratio: f64,
+    /// Robust depth range divided by median observed depth.
+    pub relative_depth_range: f64,
+    pub effective_parameters: GcpIntrinsicParameterMask,
+    pub stages: Vec<GcpIntrinsicsStageDiagnostic>,
 }
 
 #[derive(Debug, Clone)]
@@ -469,13 +697,6 @@ struct BundleObservation {
     is_gcp_marker: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct IntrinsicGroupKey {
-    width_pixels: u32,
-    height_pixels: u32,
-    parameters: [u64; 9],
-}
-
 #[derive(Debug, Clone)]
 struct BundlePoint {
     track_id: Option<u64>,
@@ -485,12 +706,25 @@ struct BundlePoint {
     survey: Option<GcpPoint>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct BundleOutcome {
     iterations: u16,
     converged: bool,
     objective: f64,
     fixed_gauge_camera_count: u32,
+    intrinsics_diagnostics: Vec<GcpIntrinsicsGroupDiagnostics>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BundleProgressRange {
+    iteration_offset: u16,
+    total_units: u32,
+}
+
+#[derive(Debug, Clone)]
+struct IntrinsicGroupPlan {
+    indices: Vec<usize>,
+    diagnostics: GcpIntrinsicsGroupDiagnostics,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -657,8 +891,11 @@ where
         cameras,
         &snapshot.scope.camera_reference_image_ids,
         options,
-        iterations,
-        u32::from(similarity_iteration_limit).saturating_add(u32::from(options.maximum_iterations)),
+        BundleProgressRange {
+            iteration_offset: iterations,
+            total_units: u32::from(similarity_iteration_limit)
+                .saturating_add(u32::from(options.maximum_iterations)),
+        },
         &mut progress,
     )?;
     current_objective = bundle.objective;
@@ -759,6 +996,7 @@ where
         converged,
         final_objective: current_objective,
         fixed_gauge_camera_count: bundle.fixed_gauge_camera_count,
+        intrinsics_diagnostics: bundle.intrinsics_diagnostics,
     })
 }
 
@@ -877,8 +1115,7 @@ fn run_bundle_adjustment<F>(
     source_cameras: &[GcpCameraModel],
     selected_camera_ids: &[ImageId],
     options: GcpSolverOptions,
-    iteration_offset: u16,
-    progress_total_units: u32,
+    progress_range: BundleProgressRange,
     progress: &mut F,
 ) -> Result<BundleOutcome, GcpOptimizationError>
 where
@@ -900,8 +1137,9 @@ where
             })
         })
         .collect::<Vec<_>>();
-    let intrinsic_groups = build_intrinsic_groups(source_cameras);
     let observations = camera_observation_index(cameras.len(), points);
+    let intrinsic_groups =
+        build_intrinsic_groups(source_cameras, cameras, &observations, points, options);
     // Start the nonlinear solve on the declared control datum. This is a
     // graduated initialization only: after the short anchoring stage the
     // controls are released again and their declared survey uncertainties are
@@ -929,9 +1167,11 @@ where
             progress,
             GcpOptimizationProgress {
                 phase: GcpOptimizationPhase::Optimize,
-                completed_units: u32::from(iteration_offset.saturating_add(iteration)),
-                total_units: progress_total_units,
-                iteration: Some(iteration_offset.saturating_add(iteration)),
+                completed_units: u32::from(
+                    progress_range.iteration_offset.saturating_add(iteration),
+                ),
+                total_units: progress_range.total_units,
+                iteration: Some(progress_range.iteration_offset.saturating_add(iteration)),
                 objective: Some(current_objective),
             },
         )?;
@@ -942,9 +1182,11 @@ where
                     progress,
                     GcpOptimizationProgress {
                         phase: GcpOptimizationPhase::Optimize,
-                        completed_units: u32::from(iteration_offset.saturating_add(iteration)),
-                        total_units: progress_total_units,
-                        iteration: Some(iteration_offset.saturating_add(iteration)),
+                        completed_units: u32::from(
+                            progress_range.iteration_offset.saturating_add(iteration),
+                        ),
+                        total_units: progress_range.total_units,
+                        iteration: Some(progress_range.iteration_offset.saturating_add(iteration)),
                         objective: Some(current_objective),
                     },
                 )?;
@@ -963,9 +1205,13 @@ where
                         progress,
                         GcpOptimizationProgress {
                             phase: GcpOptimizationPhase::Optimize,
-                            completed_units: u32::from(iteration_offset.saturating_add(iteration)),
-                            total_units: progress_total_units,
-                            iteration: Some(iteration_offset.saturating_add(iteration)),
+                            completed_units: u32::from(
+                                progress_range.iteration_offset.saturating_add(iteration),
+                            ),
+                            total_units: progress_range.total_units,
+                            iteration: Some(
+                                progress_range.iteration_offset.saturating_add(iteration),
+                            ),
                             objective: Some(current_objective),
                         },
                     )?;
@@ -985,7 +1231,8 @@ where
         if options.refine_shared_intrinsics {
             for group in &intrinsic_groups {
                 let step = refine_intrinsic_group(
-                    group,
+                    &group.indices,
+                    group.diagnostics.effective_parameters,
                     cameras,
                     &observations,
                     points,
@@ -1031,6 +1278,10 @@ where
         converged,
         objective: current_objective,
         fixed_gauge_camera_count: u32::try_from(gauge.len()).unwrap_or(2),
+        intrinsics_diagnostics: intrinsic_groups
+            .into_iter()
+            .map(|group| group.diagnostics)
+            .collect(),
     })
 }
 
@@ -1090,34 +1341,43 @@ fn controls_anchor_bundle(points: &[BundlePoint]) -> bool {
     })
 }
 
-fn build_intrinsic_groups(cameras: &[GcpCameraModel]) -> Vec<Vec<usize>> {
-    let mut groups = BTreeMap::<IntrinsicGroupKey, Vec<usize>>::new();
-    for (index, camera) in cameras.iter().enumerate() {
-        let parameters = [
-            camera.focal_x_pixels.to_bits(),
-            camera.focal_y_pixels.to_bits(),
-            camera.principal_x_pixels.to_bits(),
-            camera.principal_y_pixels.to_bits(),
-            camera.radial_distortion[0].to_bits(),
-            camera.radial_distortion[1].to_bits(),
-            camera.radial_distortion[2].to_bits(),
-            camera.tangential_distortion[0].to_bits(),
-            camera.tangential_distortion[1].to_bits(),
-        ];
+fn build_intrinsic_groups(
+    source_cameras: &[GcpCameraModel],
+    cameras: &[OptimizedGcpCamera],
+    observations: &[Vec<(usize, ImageCoordinate, f64, bool)>],
+    points: &[BundlePoint],
+    options: GcpSolverOptions,
+) -> Vec<IntrinsicGroupPlan> {
+    let mut groups = BTreeMap::<String, Vec<usize>>::new();
+    for (index, camera) in source_cameras.iter().enumerate() {
         groups
-            .entry(IntrinsicGroupKey {
-                width_pixels: camera.width_pixels,
-                height_pixels: camera.height_pixels,
-                parameters,
-            })
+            .entry(camera.calibration_group_id.clone())
             .or_default()
             .push(index);
     }
-    groups.into_values().collect()
+    groups
+        .into_iter()
+        .map(|(calibration_group_id, indices)| {
+            let diagnostics = intrinsic_group_diagnostics(
+                calibration_group_id,
+                &indices,
+                source_cameras,
+                cameras,
+                observations,
+                points,
+                options,
+            );
+            IntrinsicGroupPlan {
+                indices,
+                diagnostics,
+            }
+        })
+        .collect()
 }
 
 fn refine_intrinsic_group(
     group: &[usize],
+    active: GcpIntrinsicParameterMask,
     cameras: &mut [OptimizedGcpCamera],
     observations: &[Vec<(usize, ImageCoordinate, f64, bool)>],
     points: &[BundlePoint],
@@ -1127,6 +1387,9 @@ fn refine_intrinsic_group(
     let Some(&first_index) = group.first() else {
         return 0.0;
     };
+    if active == GcpIntrinsicParameterMask::none() {
+        return 0.0;
+    }
     let mut normal = [[0.0; 8]; 8];
     let mut gradient = [0.0; 8];
     let mut usable = 0_usize;
@@ -1150,15 +1413,30 @@ fn refine_intrinsic_group(
             usable += 1;
         }
     }
-    if usable < 32 {
+    if usable < active.parameters().len().saturating_mul(2).max(8) {
         return 0.0;
     }
-    accumulate_intrinsic_prior(
-        &mut normal,
-        &mut gradient,
-        &cameras[first_index],
-        &source_cameras[first_index],
-    );
+    let policy = source_cameras[first_index].intrinsics_policy;
+    if let GcpIntrinsicsPolicy::Prior { stddev, .. } = policy {
+        accumulate_intrinsic_prior(
+            &mut normal,
+            &mut gradient,
+            &cameras[first_index],
+            &source_cameras[first_index],
+            active,
+            stddev,
+        );
+    } else if matches!(policy, GcpIntrinsicsPolicy::Auto) {
+        accumulate_intrinsic_prior(
+            &mut normal,
+            &mut gradient,
+            &cameras[first_index],
+            &source_cameras[first_index],
+            active,
+            default_intrinsic_prior(&source_cameras[first_index]),
+        );
+    }
+    constrain_inactive_intrinsics(&mut normal, &mut gradient, active);
     damp_diagonal(&mut normal, 1.0e-4);
     let Some(delta) = solve_linear(normal, gradient.map(|value| -value)) else {
         return 0.0;
@@ -1173,9 +1451,10 @@ fn refine_intrinsic_group(
     );
     for divisor in [1.0, 2.0, 4.0, 8.0, 16.0] {
         let step = delta.map(|value| value / divisor);
+        let shared = perturb_intrinsics(&cameras[first_index], step);
         let mut candidates = group
             .iter()
-            .map(|index| perturb_intrinsics(&cameras[*index], step))
+            .map(|index| copy_intrinsics(&cameras[*index], &shared))
             .collect::<Vec<_>>();
         if !valid_intrinsic_candidate(&candidates[0], &source_cameras[first_index]) {
             continue;
@@ -1196,6 +1475,368 @@ fn refine_intrinsic_group(
         }
     }
     0.0
+}
+
+fn intrinsic_group_diagnostics(
+    calibration_group_id: String,
+    group: &[usize],
+    source_cameras: &[GcpCameraModel],
+    cameras: &[OptimizedGcpCamera],
+    observations: &[Vec<(usize, ImageCoordinate, f64, bool)>],
+    points: &[BundlePoint],
+    options: GcpSolverOptions,
+) -> GcpIntrinsicsGroupDiagnostics {
+    let first_index = group[0];
+    let policy = source_cameras[first_index].intrinsics_policy;
+    let geometry = intrinsic_group_geometry(group, cameras, observations, points);
+    let mut stages = Vec::new();
+    let effective_parameters = if !options.refine_shared_intrinsics {
+        stages.push(rejected_intrinsic_stage(
+            policy_parameters(policy),
+            GcpIntrinsicsStageRejection::MasterRefinementDisabled,
+            None,
+        ));
+        GcpIntrinsicParameterMask::none()
+    } else {
+        match policy {
+            GcpIntrinsicsPolicy::Fixed => {
+                stages.push(rejected_intrinsic_stage(
+                    GcpIntrinsicParameterMask::none(),
+                    GcpIntrinsicsStageRejection::PolicyFixed,
+                    None,
+                ));
+                GcpIntrinsicParameterMask::none()
+            }
+            GcpIntrinsicsPolicy::Auto => {
+                auto_intrinsic_mask(group, cameras, observations, points, geometry, &mut stages)
+            }
+            GcpIntrinsicsPolicy::Prior { parameters, .. } => select_explicit_intrinsic_mask(
+                parameters,
+                group,
+                cameras,
+                observations,
+                points,
+                ExplicitIntrinsicSelection {
+                    geometry,
+                    maximum_condition: 1.0e12,
+                },
+                &mut stages,
+            ),
+            GcpIntrinsicsPolicy::Custom { parameters } => select_explicit_intrinsic_mask(
+                parameters,
+                group,
+                cameras,
+                observations,
+                points,
+                ExplicitIntrinsicSelection {
+                    geometry,
+                    maximum_condition: 1.0e10,
+                },
+                &mut stages,
+            ),
+        }
+    };
+    GcpIntrinsicsGroupDiagnostics {
+        calibration_group_id,
+        policy,
+        camera_count: saturating_u32(group.len()),
+        observation_count: saturating_u32(geometry.observation_count),
+        occupied_quadrants: geometry.occupied_quadrants,
+        radial_coverage: geometry.radial_coverage,
+        baseline_depth_ratio: geometry.baseline_depth_ratio,
+        relative_depth_range: geometry.relative_depth_range,
+        effective_parameters,
+        stages,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IntrinsicGroupGeometry {
+    observation_count: usize,
+    occupied_quadrants: u8,
+    radial_coverage: f64,
+    baseline_depth_ratio: f64,
+    relative_depth_range: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ExplicitIntrinsicSelection {
+    geometry: IntrinsicGroupGeometry,
+    maximum_condition: f64,
+}
+
+fn intrinsic_group_geometry(
+    group: &[usize],
+    cameras: &[OptimizedGcpCamera],
+    observations: &[Vec<(usize, ImageCoordinate, f64, bool)>],
+    points: &[BundlePoint],
+) -> IntrinsicGroupGeometry {
+    let mut quadrants = [false; 4];
+    let mut maximum_radius = 0.0_f64;
+    let mut depths = Vec::new();
+    let mut observation_count = 0_usize;
+    for &camera_index in group {
+        let camera = &cameras[camera_index];
+        let half_diagonal =
+            (f64::from(camera.width_pixels).hypot(f64::from(camera.height_pixels)) / 2.0).max(1.0);
+        for (point_index, measured, _, _) in &observations[camera_index] {
+            let offset = [
+                measured.x_pixels - camera.principal_x_pixels,
+                measured.y_pixels - camera.principal_y_pixels,
+            ];
+            maximum_radius = maximum_radius.max(offset[0].hypot(offset[1]) / half_diagonal);
+            let quadrant = usize::from(offset[0] >= 0.0) + 2 * usize::from(offset[1] >= 0.0);
+            quadrants[quadrant] = true;
+            let camera_point = mat3_transpose_vec(
+                camera.camera_to_world_rotation,
+                sub3(points[*point_index].world, camera.center_world_meters),
+            );
+            if camera_point[2].is_finite() && camera_point[2] > MIN_DEPTH {
+                depths.push(camera_point[2]);
+            }
+            observation_count += 1;
+        }
+    }
+    depths.sort_by(f64::total_cmp);
+    let median_depth = depths
+        .get(depths.len() / 2)
+        .copied()
+        .unwrap_or(1.0)
+        .max(MIN_DEPTH);
+    let relative_depth_range = match (depths.first(), depths.last()) {
+        (Some(minimum), Some(maximum)) => (maximum - minimum) / median_depth,
+        _ => 0.0,
+    };
+    let mut maximum_baseline = 0.0_f64;
+    for (position, &left) in group.iter().enumerate() {
+        for &right in &group[position + 1..] {
+            maximum_baseline = maximum_baseline.max(norm3(sub3(
+                cameras[left].center_world_meters,
+                cameras[right].center_world_meters,
+            )));
+        }
+    }
+    IntrinsicGroupGeometry {
+        observation_count,
+        occupied_quadrants: u8::try_from(
+            quadrants.into_iter().filter(|occupied| *occupied).count(),
+        )
+        .unwrap_or(4),
+        radial_coverage: maximum_radius,
+        baseline_depth_ratio: maximum_baseline / median_depth,
+        relative_depth_range,
+    }
+}
+
+fn auto_intrinsic_mask(
+    group: &[usize],
+    cameras: &[OptimizedGcpCamera],
+    observations: &[Vec<(usize, ImageCoordinate, f64, bool)>],
+    points: &[BundlePoint],
+    geometry: IntrinsicGroupGeometry,
+    stages: &mut Vec<GcpIntrinsicsStageDiagnostic>,
+) -> GcpIntrinsicParameterMask {
+    let candidates = [
+        (
+            GcpIntrinsicParameterMask::auto_base(),
+            32,
+            3,
+            0.25,
+            0.02,
+            0.02,
+            1.0e8,
+        ),
+        (
+            GcpIntrinsicParameterMask {
+                k2: true,
+                ..GcpIntrinsicParameterMask::auto_base()
+            },
+            64,
+            4,
+            0.45,
+            0.03,
+            0.04,
+            5.0e7,
+        ),
+        (
+            GcpIntrinsicParameterMask {
+                cx: true,
+                cy: true,
+                k2: true,
+                ..GcpIntrinsicParameterMask::auto_base()
+            },
+            80,
+            4,
+            0.50,
+            0.04,
+            0.05,
+            2.0e7,
+        ),
+        (
+            GcpIntrinsicParameterMask {
+                cx: true,
+                cy: true,
+                k2: true,
+                p1: true,
+                p2: true,
+                ..GcpIntrinsicParameterMask::auto_base()
+            },
+            96,
+            4,
+            0.60,
+            0.05,
+            0.08,
+            1.0e7,
+        ),
+        (
+            GcpIntrinsicParameterMask::all(),
+            128,
+            4,
+            0.75,
+            0.08,
+            0.12,
+            5.0e6,
+        ),
+    ];
+    let mut effective = GcpIntrinsicParameterMask::none();
+    for (
+        parameters,
+        minimum_observations,
+        minimum_quadrants,
+        radial,
+        baseline,
+        depth,
+        maximum_condition,
+    ) in candidates
+    {
+        let rejection = intrinsic_stage_geometry_rejection(
+            group.len(),
+            geometry,
+            minimum_observations,
+            minimum_quadrants,
+            radial,
+            baseline,
+            depth,
+        );
+        let condition =
+            intrinsic_condition_number(group, parameters, cameras, observations, points);
+        let rejection = rejection.or(match condition {
+            None => Some(GcpIntrinsicsStageRejection::Singular),
+            Some(value) if value > maximum_condition => {
+                Some(GcpIntrinsicsStageRejection::IllConditioned)
+            }
+            Some(_) => None,
+        });
+        let accepted = rejection.is_none();
+        stages.push(GcpIntrinsicsStageDiagnostic {
+            parameters,
+            accepted,
+            rejection,
+            condition_number: condition,
+        });
+        if !accepted {
+            break;
+        }
+        effective = parameters;
+    }
+    effective
+}
+
+fn select_explicit_intrinsic_mask(
+    parameters: GcpIntrinsicParameterMask,
+    group: &[usize],
+    cameras: &[OptimizedGcpCamera],
+    observations: &[Vec<(usize, ImageCoordinate, f64, bool)>],
+    points: &[BundlePoint],
+    selection: ExplicitIntrinsicSelection,
+    stages: &mut Vec<GcpIntrinsicsStageDiagnostic>,
+) -> GcpIntrinsicParameterMask {
+    if parameters == GcpIntrinsicParameterMask::none() {
+        stages.push(GcpIntrinsicsStageDiagnostic {
+            parameters,
+            accepted: true,
+            rejection: None,
+            condition_number: Some(1.0),
+        });
+        return parameters;
+    }
+    let minimum = parameters.parameters().len().saturating_mul(2).max(8);
+    let mut rejection = intrinsic_stage_geometry_rejection(
+        group.len(),
+        selection.geometry,
+        minimum,
+        2,
+        0.1,
+        0.005,
+        0.005,
+    );
+    let condition = intrinsic_condition_number(group, parameters, cameras, observations, points);
+    rejection = rejection.or(match condition {
+        None => Some(GcpIntrinsicsStageRejection::Singular),
+        Some(value) if value > selection.maximum_condition => {
+            Some(GcpIntrinsicsStageRejection::IllConditioned)
+        }
+        Some(_) => None,
+    });
+    stages.push(GcpIntrinsicsStageDiagnostic {
+        parameters,
+        accepted: rejection.is_none(),
+        rejection,
+        condition_number: condition,
+    });
+    if rejection.is_none() {
+        parameters
+    } else {
+        GcpIntrinsicParameterMask::none()
+    }
+}
+
+fn intrinsic_stage_geometry_rejection(
+    camera_count: usize,
+    geometry: IntrinsicGroupGeometry,
+    minimum_observations: usize,
+    minimum_quadrants: u8,
+    radial_coverage: f64,
+    baseline_depth_ratio: f64,
+    relative_depth_range: f64,
+) -> Option<GcpIntrinsicsStageRejection> {
+    if camera_count < 2 {
+        Some(GcpIntrinsicsStageRejection::TooFewCameras)
+    } else if geometry.observation_count < minimum_observations {
+        Some(GcpIntrinsicsStageRejection::TooFewObservations)
+    } else if geometry.occupied_quadrants < minimum_quadrants {
+        Some(GcpIntrinsicsStageRejection::InsufficientQuadrantCoverage)
+    } else if geometry.radial_coverage < radial_coverage {
+        Some(GcpIntrinsicsStageRejection::InsufficientRadialCoverage)
+    } else if geometry.baseline_depth_ratio < baseline_depth_ratio {
+        Some(GcpIntrinsicsStageRejection::InsufficientBaselineDiversity)
+    } else if geometry.relative_depth_range < relative_depth_range {
+        Some(GcpIntrinsicsStageRejection::InsufficientDepthDiversity)
+    } else {
+        None
+    }
+}
+
+fn rejected_intrinsic_stage(
+    parameters: GcpIntrinsicParameterMask,
+    rejection: GcpIntrinsicsStageRejection,
+    condition_number: Option<f64>,
+) -> GcpIntrinsicsStageDiagnostic {
+    GcpIntrinsicsStageDiagnostic {
+        parameters,
+        accepted: false,
+        rejection: Some(rejection),
+        condition_number,
+    }
+}
+
+fn policy_parameters(policy: GcpIntrinsicsPolicy) -> GcpIntrinsicParameterMask {
+    match policy {
+        GcpIntrinsicsPolicy::Auto => GcpIntrinsicParameterMask::all(),
+        GcpIntrinsicsPolicy::Fixed => GcpIntrinsicParameterMask::none(),
+        GcpIntrinsicsPolicy::Prior { parameters, .. }
+        | GcpIntrinsicsPolicy::Custom { parameters } => parameters,
+    }
 }
 
 fn intrinsic_projection_jacobian(
@@ -1254,11 +1895,115 @@ fn intrinsic_projection_jacobian(
     ))
 }
 
+fn intrinsic_condition_number(
+    group: &[usize],
+    active: GcpIntrinsicParameterMask,
+    cameras: &[OptimizedGcpCamera],
+    observations: &[Vec<(usize, ImageCoordinate, f64, bool)>],
+    points: &[BundlePoint],
+) -> Option<f64> {
+    let indices = (0..8)
+        .filter(|index| active.enabled(*index))
+        .collect::<Vec<_>>();
+    if indices.is_empty() {
+        return Some(1.0);
+    }
+    let mut normal = [[0.0; 8]; 8];
+    for &camera_index in group {
+        let camera = &cameras[camera_index];
+        for (point_index, _, sigma_pixels, _) in &observations[camera_index] {
+            let Ok((_, jacobian)) =
+                intrinsic_projection_jacobian(camera, points[*point_index].world)
+            else {
+                continue;
+            };
+            let mut unused_gradient = [0.0; 8];
+            accumulate_2d_normal(
+                &mut normal,
+                &mut unused_gradient,
+                jacobian,
+                [0.0; 2],
+                1.0 / sigma_pixels.powi(2),
+            );
+        }
+    }
+    let dimension = indices.len();
+    let mut correlation = vec![vec![0.0; dimension]; dimension];
+    for (row, &source_row) in indices.iter().enumerate() {
+        let row_scale = normal[source_row][source_row].sqrt();
+        if !row_scale.is_finite() || row_scale <= MATRIX_EPSILON {
+            return None;
+        }
+        for (column, &source_column) in indices.iter().enumerate() {
+            let column_scale = normal[source_column][source_column].sqrt();
+            correlation[row][column] =
+                normal[source_row][source_column] / (row_scale * column_scale);
+        }
+    }
+    symmetric_condition_number(correlation)
+}
+
+fn symmetric_condition_number(mut matrix: Vec<Vec<f64>>) -> Option<f64> {
+    let dimension = matrix.len();
+    for _ in 0..dimension.saturating_mul(dimension).saturating_mul(32) {
+        let mut pivot = None;
+        let mut maximum = 0.0_f64;
+        for (row, values) in matrix.iter().enumerate() {
+            for (column, value) in values.iter().enumerate().skip(row + 1) {
+                if value.abs() > maximum {
+                    maximum = value.abs();
+                    pivot = Some((row, column));
+                }
+            }
+        }
+        if maximum <= 1.0e-12 {
+            break;
+        }
+        let (row, column) = pivot?;
+        let angle =
+            0.5 * (2.0 * matrix[row][column]).atan2(matrix[column][column] - matrix[row][row]);
+        let (sine, cosine) = angle.sin_cos();
+        let old_row = matrix[row][row];
+        let old_column = matrix[column][column];
+        let cross = matrix[row][column];
+        matrix[row][row] =
+            cosine * cosine * old_row - 2.0 * sine * cosine * cross + sine * sine * old_column;
+        matrix[column][column] =
+            sine * sine * old_row + 2.0 * sine * cosine * cross + cosine * cosine * old_column;
+        matrix[row][column] = 0.0;
+        matrix[column][row] = 0.0;
+        for index in 0..dimension {
+            if index == row || index == column {
+                continue;
+            }
+            let left = matrix[index][row];
+            let right = matrix[index][column];
+            matrix[index][row] = cosine * left - sine * right;
+            matrix[row][index] = matrix[index][row];
+            matrix[index][column] = sine * left + cosine * right;
+            matrix[column][index] = matrix[index][column];
+        }
+    }
+    let mut minimum = f64::INFINITY;
+    let mut maximum = 0.0_f64;
+    for (index, row) in matrix.iter().enumerate() {
+        let eigenvalue = row[index];
+        if !eigenvalue.is_finite() || eigenvalue <= 1.0e-10 {
+            return None;
+        }
+        minimum = minimum.min(eigenvalue);
+        maximum = maximum.max(eigenvalue);
+    }
+    Some(maximum / minimum)
+}
+
 fn accumulate_intrinsic_prior(
     normal: &mut [[f64; 8]; 8],
     gradient: &mut [f64; 8],
     camera: &OptimizedGcpCamera,
     source: &GcpCameraModel,
+    active: GcpIntrinsicParameterMask,
+    stddev: GcpIntrinsicPriorStddev,
 ) {
     let residuals = [
         (camera.focal_x_pixels / source.focal_x_pixels).ln(),
@@ -1270,20 +2015,40 @@ fn accumulate_intrinsic_prior(
         camera.tangential_distortion[0] - source.tangential_distortion[0],
         camera.tangential_distortion[1] - source.tangential_distortion[1],
     ];
-    let sigmas = [
-        0.25,
-        f64::from(source.width_pixels) * 0.1,
-        f64::from(source.height_pixels) * 0.1,
-        0.25,
-        0.25,
-        0.25,
-        0.1,
-        0.1,
-    ];
+    let sigmas = stddev.values();
     for index in 0..8 {
+        if !active.enabled(index) {
+            continue;
+        }
         let weight = 1.0 / sigmas[index].powi(2);
         normal[index][index] += weight;
         gradient[index] += weight * residuals[index];
+    }
+}
+
+fn default_intrinsic_prior(source: &GcpCameraModel) -> GcpIntrinsicPriorStddev {
+    GcpIntrinsicPriorStddev {
+        principal_x_pixels: f64::from(source.width_pixels) * 0.1,
+        principal_y_pixels: f64::from(source.height_pixels) * 0.1,
+        ..GcpIntrinsicPriorStddev::default()
+    }
+}
+
+fn constrain_inactive_intrinsics(
+    normal: &mut [[f64; 8]; 8],
+    gradient: &mut [f64; 8],
+    active: GcpIntrinsicParameterMask,
+) {
+    for index in 0..8 {
+        if active.enabled(index) {
+            continue;
+        }
+        for other in 0..8 {
+            normal[index][other] = 0.0;
+            normal[other][index] = 0.0;
+        }
+        normal[index][index] = 1.0;
+        gradient[index] = 0.0;
     }
 }
 
@@ -1299,6 +2064,17 @@ fn perturb_intrinsics(camera: &OptimizedGcpCamera, delta: [f64; 8]) -> Optimized
     candidate.radial_distortion[2] += delta[5];
     candidate.tangential_distortion[0] += delta[6];
     candidate.tangential_distortion[1] += delta[7];
+    candidate
+}
+
+fn copy_intrinsics(camera: &OptimizedGcpCamera, source: &OptimizedGcpCamera) -> OptimizedGcpCamera {
+    let mut candidate = camera.clone();
+    candidate.focal_x_pixels = source.focal_x_pixels;
+    candidate.focal_y_pixels = source.focal_y_pixels;
+    candidate.principal_x_pixels = source.principal_x_pixels;
+    candidate.principal_y_pixels = source.principal_y_pixels;
+    candidate.radial_distortion = source.radial_distortion;
+    candidate.tangential_distortion = source.tangential_distortion;
     candidate
 }
 
@@ -1365,23 +2141,37 @@ fn intrinsic_group_candidate_objective(
             camera_objective(camera, &observations[*camera_index], points, None, options)
         })
         .sum::<f64>();
+    let (parameters, stddev) = match source.intrinsics_policy {
+        GcpIntrinsicsPolicy::Auto => (
+            GcpIntrinsicParameterMask::all(),
+            Some(default_intrinsic_prior(source)),
+        ),
+        GcpIntrinsicsPolicy::Prior { parameters, stddev } => (parameters, Some(stddev)),
+        GcpIntrinsicsPolicy::Fixed | GcpIntrinsicsPolicy::Custom { .. } => {
+            (GcpIntrinsicParameterMask::none(), None)
+        }
+    };
+    let Some(stddev) = stddev else {
+        return reprojection;
+    };
     let camera = &candidates[0];
     let residuals = [
-        (camera.focal_x_pixels / source.focal_x_pixels).ln() / 0.25,
-        (camera.principal_x_pixels - source.principal_x_pixels)
-            / (f64::from(source.width_pixels) * 0.1),
-        (camera.principal_y_pixels - source.principal_y_pixels)
-            / (f64::from(source.height_pixels) * 0.1),
-        (camera.radial_distortion[0] - source.radial_distortion[0]) / 0.25,
-        (camera.radial_distortion[1] - source.radial_distortion[1]) / 0.25,
-        (camera.radial_distortion[2] - source.radial_distortion[2]) / 0.25,
-        (camera.tangential_distortion[0] - source.tangential_distortion[0]) / 0.1,
-        (camera.tangential_distortion[1] - source.tangential_distortion[1]) / 0.1,
+        (camera.focal_x_pixels / source.focal_x_pixels).ln(),
+        camera.principal_x_pixels - source.principal_x_pixels,
+        camera.principal_y_pixels - source.principal_y_pixels,
+        camera.radial_distortion[0] - source.radial_distortion[0],
+        camera.radial_distortion[1] - source.radial_distortion[1],
+        camera.radial_distortion[2] - source.radial_distortion[2],
+        camera.tangential_distortion[0] - source.tangential_distortion[0],
+        camera.tangential_distortion[1] - source.tangential_distortion[1],
     ];
+    let sigmas = stddev.values();
     reprojection
         + residuals
             .iter()
-            .map(|value| 0.5 * value * value)
+            .enumerate()
+            .filter(|(index, _)| parameters.enabled(*index))
+            .map(|(index, value)| 0.5 * (value / sigmas[index]).powi(2))
             .sum::<f64>()
 }
 
@@ -1808,8 +2598,37 @@ fn validate_cameras(
     cameras: &[GcpCameraModel],
 ) -> Result<BTreeMap<ImageId, &GcpCameraModel>, GcpOptimizationError> {
     let mut map = BTreeMap::new();
+    let mut groups = BTreeMap::<&str, (u32, u32, GcpIntrinsicsPolicy)>::new();
     for camera in cameras {
         camera.validate()?;
+        if camera.calibration_group_id.trim().is_empty() {
+            return Err(GcpOptimizationError::InvalidCamera(
+                camera.image_id,
+                "calibration group id must be explicit and non-empty",
+            ));
+        }
+        if let GcpIntrinsicsPolicy::Prior { stddev, .. } = camera.intrinsics_policy {
+            if !stddev.is_valid() {
+                return Err(GcpOptimizationError::InvalidCamera(
+                    camera.image_id,
+                    "intrinsic prior standard deviations must be positive and finite",
+                ));
+            }
+        }
+        let signature = (
+            camera.width_pixels,
+            camera.height_pixels,
+            camera.intrinsics_policy,
+        );
+        if groups
+            .insert(&camera.calibration_group_id, signature)
+            .is_some_and(|existing| existing != signature)
+        {
+            return Err(GcpOptimizationError::InvalidCamera(
+                camera.image_id,
+                "calibration group members must share dimensions and policy",
+            ));
+        }
         if map.insert(camera.image_id, camera).is_some() {
             return Err(GcpOptimizationError::DuplicateCamera(camera.image_id));
         }
@@ -2569,6 +3388,7 @@ fn transform_camera(
 ) -> OptimizedGcpCamera {
     OptimizedGcpCamera {
         image_id: camera.image_id,
+        calibration_group_id: camera.calibration_group_id.clone(),
         width_pixels: camera.width_pixels,
         height_pixels: camera.height_pixels,
         focal_x_pixels: camera.focal_x_pixels,
@@ -2610,22 +3430,20 @@ where
                     && coordinate.x_pixels < f64::from(camera.width_pixels)
                     && coordinate.y_pixels < f64::from(camera.height_pixels)
                 {
-                    let distance = norm3(sub3(world, camera.center_world_meters)).max(MIN_DEPTH);
-                    let horizontal_pixels = point.uncertainty.horizontal_stddev_meters
-                        * camera.focal_x_pixels.max(camera.focal_y_pixels)
-                        / distance;
-                    let vertical_pixels = point.uncertainty.height_stddev_meters
-                        * camera.focal_x_pixels.max(camera.focal_y_pixels)
-                        / distance;
+                    let jacobian = numeric_point_jacobian(camera, world, coordinate);
+                    let horizontal_variance = point.uncertainty.horizontal_stddev_meters.powi(2);
+                    let vertical_variance = point.uncertainty.height_stddev_meters.powi(2);
+                    let covariance_world = [
+                        [horizontal_variance, 0.0, 0.0],
+                        [0.0, horizontal_variance, 0.0],
+                        [0.0, 0.0, vertical_variance],
+                    ];
+                    let covariance_pixels = propagate_point_covariance(jacobian, covariance_world);
                     result.push(GcpCameraProjection {
                         point_id: point.id.clone(),
                         image_id: camera.image_id,
                         coordinate,
-                        uncertainty: ProjectionUncertaintyEllipse {
-                            semi_major_pixels: horizontal_pixels.max(vertical_pixels),
-                            semi_minor_pixels: horizontal_pixels.min(vertical_pixels),
-                            angle_degrees: 0.0,
-                        },
+                        uncertainty: covariance_ellipse(covariance_pixels)?,
                     });
                 }
             }
@@ -2647,6 +3465,46 @@ where
             .then_with(|| left.image_id.cmp(&right.image_id))
     });
     Ok(result)
+}
+
+fn propagate_point_covariance(
+    jacobian: [[f64; 3]; 2],
+    covariance_world: [[f64; 3]; 3],
+) -> [[f64; 2]; 2] {
+    let mut result = [[0.0; 2]; 2];
+    for row in 0..2 {
+        for column in 0..2 {
+            for (left, covariance_row) in covariance_world.iter().enumerate() {
+                for (right, covariance_value) in covariance_row.iter().enumerate() {
+                    result[row][column] +=
+                        jacobian[row][left] * covariance_value * jacobian[column][right];
+                }
+            }
+        }
+    }
+    result
+}
+
+fn covariance_ellipse(
+    covariance: [[f64; 2]; 2],
+) -> Result<ProjectionUncertaintyEllipse, GcpOptimizationError> {
+    let xx = covariance[0][0].max(0.0);
+    let yy = covariance[1][1].max(0.0);
+    let xy = 0.5 * (covariance[0][1] + covariance[1][0]);
+    let half_trace = 0.5 * (xx + yy);
+    let radius = (0.25 * (xx - yy).powi(2) + xy * xy).max(0.0).sqrt();
+    let major = (half_trace + radius).max(0.0).sqrt();
+    let minor = (half_trace - radius).max(0.0).sqrt();
+    let angle = 0.5 * (2.0 * xy).atan2(xx - yy).to_degrees();
+    if [major, minor, angle].iter().all(|value| value.is_finite()) {
+        Ok(ProjectionUncertaintyEllipse {
+            semi_major_pixels: major,
+            semi_minor_pixels: minor,
+            angle_degrees: angle,
+        })
+    } else {
+        Err(GcpOptimizationError::InvalidProjectionUncertainty)
+    }
 }
 
 fn check_progress<F>(
@@ -2845,6 +3703,8 @@ pub enum GcpOptimizationError {
     DistortionDiverged,
     #[error("point lies behind a camera")]
     PointBehindCamera,
+    #[error("projected point covariance is invalid")]
+    InvalidProjectionUncertainty,
     #[error("full similarity adjustment needs at least three XYZ controls")]
     SimilarityNeedsThreeSpatialControls,
     #[error("GCP normal equations are singular")]
@@ -2873,6 +3733,8 @@ mod tests {
     fn camera(id: u32, center: [f64; 3], rotation: [f64; 9]) -> GcpCameraModel {
         GcpCameraModel {
             image_id: ImageId(id),
+            calibration_group_id: "test-camera".into(),
+            intrinsics_policy: GcpIntrinsicsPolicy::Auto,
             width_pixels: 2000,
             height_pixels: 1500,
             focal_x_pixels: 1000.0,
@@ -3706,5 +4568,188 @@ mod tests {
             propagation.observations[0].state,
             GcpObservationState::Automatic { .. }
         ));
+    }
+
+    #[test]
+    fn explicit_calibration_ids_are_the_only_grouping_authority() {
+        let mut cameras = vec![
+            look_down_camera(1, -4.0, 0.0),
+            look_down_camera(2, 0.0, 0.0),
+            look_down_camera(3, 4.0, 0.0),
+        ];
+        cameras[0].calibration_group_id = "physical-lens-a".into();
+        cameras[1].calibration_group_id = "physical-lens-b".into();
+        cameras[2].calibration_group_id = "physical-lens-a".into();
+        // Deliberately different floating-point seeds must not split an
+        // explicitly reviewed group, while equal seeds in B must not merge it.
+        cameras[2].focal_x_pixels = 999.999_999;
+        cameras[2].focal_y_pixels = 999.999_999;
+        validate_cameras(&cameras).expect("explicit groups are valid");
+        let optimized = cameras
+            .iter()
+            .map(|camera| transform_camera(camera, GcpSimilarityTransform::identity()))
+            .collect::<Vec<_>>();
+        let groups = build_intrinsic_groups(
+            &cameras,
+            &optimized,
+            &vec![Vec::new(); cameras.len()],
+            &[],
+            GcpSolverOptions::default(),
+        );
+        assert_eq!(groups.len(), 2);
+        assert_eq!(
+            groups
+                .iter()
+                .find(|group| group.diagnostics.calibration_group_id == "physical-lens-a")
+                .map(|group| group.indices.as_slice()),
+            Some([0, 2].as_slice())
+        );
+    }
+
+    #[test]
+    fn auto_returns_a_named_safe_fallback_for_a_weak_group() {
+        let cameras = vec![look_down_camera(1, 0.0, 0.0)];
+        let optimized = cameras
+            .iter()
+            .map(|camera| transform_camera(camera, GcpSimilarityTransform::identity()))
+            .collect::<Vec<_>>();
+        let groups = build_intrinsic_groups(
+            &cameras,
+            &optimized,
+            &[Vec::new()],
+            &[],
+            GcpSolverOptions::default(),
+        );
+        let diagnostics = &groups[0].diagnostics;
+        assert_eq!(
+            diagnostics.effective_parameters,
+            GcpIntrinsicParameterMask::none()
+        );
+        assert_eq!(diagnostics.stages.len(), 1);
+        assert_eq!(
+            diagnostics.stages[0].rejection,
+            Some(GcpIntrinsicsStageRejection::TooFewCameras)
+        );
+    }
+
+    #[test]
+    fn custom_mask_refines_only_the_selected_parameter_family() {
+        let mut truth = vec![
+            look_down_camera(1, -4.0, 0.0),
+            look_down_camera(2, 4.0, 0.0),
+        ];
+        for camera in &mut truth {
+            camera.calibration_group_id = "golden-lens".into();
+            camera.intrinsics_policy = GcpIntrinsicsPolicy::Custom {
+                parameters: GcpIntrinsicParameterMask {
+                    f: true,
+                    ..GcpIntrinsicParameterMask::none()
+                },
+            };
+        }
+        let mut source = truth.clone();
+        for camera in &mut source {
+            camera.focal_x_pixels = 900.0;
+            camera.focal_y_pixels = 900.0;
+        }
+        let truth_optimized = truth
+            .iter()
+            .map(|camera| transform_camera(camera, GcpSimilarityTransform::identity()))
+            .collect::<Vec<_>>();
+        let mut optimized = source
+            .iter()
+            .map(|camera| transform_camera(camera, GcpSimilarityTransform::identity()))
+            .collect::<Vec<_>>();
+        let mut points = Vec::new();
+        let mut observations = vec![Vec::new(), Vec::new()];
+        for row in 0..7 {
+            for column in 0..7 {
+                let world = [
+                    -3.0 + f64::from(column),
+                    -3.0 + f64::from(row),
+                    f64::from((row + column) % 4) * 0.35,
+                ];
+                let point_index = points.len();
+                points.push(BundlePoint {
+                    track_id: Some(u64::try_from(point_index).expect("small fixture")),
+                    reconstruction: world,
+                    world,
+                    observations: Vec::new(),
+                    survey: None,
+                });
+                for camera_index in 0..2 {
+                    observations[camera_index].push((
+                        point_index,
+                        project_world(&truth_optimized[camera_index], world).expect("visible"),
+                        1.0,
+                        false,
+                    ));
+                }
+            }
+        }
+        let mut auto_source = source.clone();
+        for camera in &mut auto_source {
+            camera.intrinsics_policy = GcpIntrinsicsPolicy::Auto;
+        }
+        let auto = build_intrinsic_groups(
+            &auto_source,
+            &optimized,
+            &observations,
+            &points,
+            GcpSolverOptions::default(),
+        );
+        assert!(auto[0].diagnostics.stages[0].accepted);
+        assert!(auto[0].diagnostics.effective_parameters.f);
+        assert!(auto[0].diagnostics.effective_parameters.k1);
+        let principal_before = optimized[0].principal_x_pixels;
+        let radial_before = optimized[0].radial_distortion;
+        let mask = GcpIntrinsicParameterMask {
+            f: true,
+            ..GcpIntrinsicParameterMask::none()
+        };
+        for _ in 0..12 {
+            refine_intrinsic_group(
+                &[0, 1],
+                mask,
+                &mut optimized,
+                &observations,
+                &points,
+                &source,
+                GcpSolverOptions::default(),
+            );
+        }
+        assert!((optimized[0].focal_x_pixels - 1_000.0).abs() < 1.0e-4);
+        assert_eq!(optimized[0].principal_x_pixels, principal_before);
+        assert_eq!(optimized[0].radial_distortion, radial_before);
+        assert_eq!(optimized[0].focal_x_pixels, optimized[1].focal_x_pixels);
+    }
+
+    #[test]
+    fn intrinsics_policy_json_is_a_pinned_eight_parameter_contract() {
+        let policy = GcpIntrinsicsPolicy::Prior {
+            parameters: GcpIntrinsicParameterMask::all(),
+            stddev: GcpIntrinsicPriorStddev::default(),
+        };
+        let value = serde_json::to_value(policy).expect("serialize policy");
+        assert_eq!(value["kind"], "prior");
+        assert_eq!(
+            value["parameters"].as_object().map(|value| value.len()),
+            Some(8)
+        );
+        let encoded = value.to_string();
+        assert!(!encoded.contains("b1"));
+        assert!(!encoded.contains("b2"));
+        assert!(!encoded.contains("k4"));
+    }
+
+    #[test]
+    fn projection_ellipse_uses_full_jacobian_covariance() {
+        let jacobian = [[2.0, 1.0, 0.5], [-0.5, 3.0, 1.0]];
+        let world = [[4.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 9.0]];
+        let pixels = propagate_point_covariance(jacobian, world);
+        assert!(pixels[0][1].abs() > 1.0e-6);
+        let ellipse = covariance_ellipse(pixels).expect("valid propagated ellipse");
+        assert!(ellipse.semi_major_pixels > ellipse.semi_minor_pixels);
+        assert!(ellipse.angle_degrees.abs() > 1.0e-3);
     }
 }

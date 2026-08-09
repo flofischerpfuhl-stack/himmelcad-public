@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { KernelCameraController } from '../src/kernel/KernelCameraController.js';
 import {
   KernelNavigationController,
   nearestCandidateIndex,
+  projectPickCandidateForViewMode,
 } from '../src/kernel/KernelNavigationController.js';
-import { KernelCameraController } from '../src/kernel/KernelCameraController.js';
 import type { KernelPickCandidate, KernelWorldPoint } from '../src/kernel/WgpuKernelViewer.js';
 
 void test('nearest cursor hit becomes the active Tab origin regardless of provider order', () => {
@@ -19,18 +20,134 @@ void test('nearest cursor hit becomes the active Tab origin regardless of provid
   assert.equal(nearestCandidateIndex([]), -1);
 });
 
+void test('2D and 2.5D preserve one winner and differ only in acquired height', () => {
+  const source = candidate('survey-point', { x: 500_001, y: 5_400_002, z: 137.25 }, 2, 0.3);
+
+  const twoD = projectPickCandidateForViewMode(source, '2d');
+  const twoPointFiveD = projectPickCandidateForViewMode(source, '2.5d');
+
+  assert.strictEqual(twoPointFiveD, source);
+  assert.deepEqual(twoD.address, source.address);
+  assert.equal(twoD.snapKind, source.snapKind);
+  assert.deepEqual(twoD.presentationPosition, source.presentationPosition);
+  assert.deepEqual(twoD.worldPosition, { x: 500_001, y: 5_400_002, z: null });
+  assert.deepEqual(twoPointFiveD.worldPosition, source.worldPosition);
+});
+
+void test('2.5D never invents height for a plan-only unknown-height entity', () => {
+  const source = candidate('unplaced-ortho', { x: 7, y: 8, z: 0 }, 0, 0.1);
+  const controller = Object.create(
+    KernelNavigationController.prototype,
+  ) as unknown as NavigationHarness;
+  Object.assign(controller, {
+    disposed: false,
+    enabled: true,
+    candidates: [source],
+    activeCandidateIndex: 0,
+    viewMode: '2.5d',
+    viewer: { entityHasKnownSourceHeight: () => false },
+  });
+
+  assert.deepEqual(controller.activeCandidate()?.worldPosition, { x: 7, y: 8, z: null });
+});
+
+void test('switching between plan acquisition modes never moves the camera', async () => {
+  const camera = new KernelCameraController(1_280, 720);
+  const published: ReturnType<KernelCameraController['worldCamera']>[] = [];
+  const controller = Object.create(
+    KernelNavigationController.prototype,
+  ) as unknown as NavigationHarness;
+  Object.assign(controller, navigationHarnessState(camera, published));
+
+  await controller.setViewMode('2d', 0);
+  const planCamera = camera.worldCamera();
+  const publishCount = published.length;
+  await controller.setViewMode('2.5d', 0);
+
+  assert.deepEqual(camera.worldCamera(), planCamera);
+  assert.equal(published.length, publishCount);
+  assert.equal(controller.currentViewMode(), '2.5d');
+});
+
+void test('view-mode promise settles only after the camera morph endpoint is published', async () => {
+  const camera = new KernelCameraController(1_280, 720);
+  const published: ReturnType<KernelCameraController['worldCamera']>[] = [];
+  const transitionFrames: number[] = [];
+  const queued: FrameRequestCallback[] = [];
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (callback: FrameRequestCallback): number => {
+    queued.push(callback);
+    return queued.length;
+  };
+  try {
+    const controller = Object.create(
+      KernelNavigationController.prototype,
+    ) as unknown as NavigationHarness;
+    Object.assign(controller, {
+      ...navigationHarnessState(camera, published),
+      viewer: {
+        setCameraTransition: (_from: unknown, _to: unknown, progress: number): void => {
+          transitionFrames.push(progress);
+        },
+        setWorldCamera: (value: ReturnType<KernelCameraController['worldCamera']>): void => {
+          published.push(value);
+        },
+      },
+    });
+
+    let settled = false;
+    const transition = controller.setViewMode('2d', 100).then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    assert.equal(settled, false);
+    assert.equal(queued.length, 1);
+    queued.shift()?.(performance.now() + 200);
+    await transition;
+
+    assert.equal(settled, true);
+    assert.equal(transitionFrames.at(-1), 1);
+    assert.equal(published.at(-1)?.projection.kind, 'orthographic');
+  } finally {
+    globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+  }
+});
+
+void test('navigation camera adoption publishes the controller-normalized camera once', () => {
+  const camera = new KernelCameraController(1_280, 720);
+  const published: ReturnType<KernelCameraController['worldCamera']>[] = [];
+  const controller = Object.create(
+    KernelNavigationController.prototype,
+  ) as unknown as NavigationHarness;
+  Object.assign(controller, navigationHarnessState(camera, published));
+  const source = camera.worldCamera();
+
+  const adopted = controller.adoptWorldCamera({
+    ...source,
+    eye: { x: 120, y: -50, z: 75 },
+    target: { x: 100, y: 0, z: 25 },
+    projection: { ...source.projection, aspect: 0.1 },
+  });
+
+  assert.equal(adopted.projection.aspect, 16 / 9);
+  assert.deepEqual(camera.worldCamera(), adopted);
+  assert.deepEqual(published, [adopted]);
+});
+
 void test('Tab cycling updates both active hit and the cursor/orbit coordinate', () => {
   const candidates = [
     candidate('first', { x: 1, y: 2, z: 3 }, 0, 0.1),
     candidate('second', { x: 4, y: 5, z: 6 }, 1, 0.2),
   ];
   const cursorEvents: KernelWorldPoint[] = [];
-  const activeEvents: Array<{ id: string | null; index: number; count: number }> = [];
+  const activeEvents: { id: string | null; index: number; count: number }[] = [];
   const controller = Object.create(
     KernelNavigationController.prototype,
   ) as unknown as NavigationHarness;
   Object.assign(controller, {
     disposed: false,
+    viewMode: '3d',
+    viewer: { entityHasKnownSourceHeight: () => true },
     candidates,
     activeCandidateIndex: 0,
     cursorCoordinate: candidates[0]?.worldPosition ?? null,
@@ -222,6 +339,41 @@ interface NavigationHarness {
     durationMilliseconds?: number,
   ): ReturnType<KernelNavigationController['setRasterAnalysisView']>;
   clearRasterAnalysisView(durationMilliseconds?: number): void;
+  setViewMode(mode: '3d' | '2d' | '2.5d', durationMilliseconds?: number): Promise<void>;
+  currentViewMode(): '3d' | '2d' | '2.5d';
+  activeCandidate(): KernelPickCandidate | null;
+  adoptWorldCamera(
+    camera: ReturnType<KernelCameraController['worldCamera']>,
+  ): ReturnType<KernelCameraController['worldCamera']>;
+}
+
+function navigationHarnessState(
+  camera: KernelCameraController,
+  published: ReturnType<KernelCameraController['worldCamera']>[],
+): Record<string, unknown> {
+  return {
+    disposed: false,
+    enabled: true,
+    camera,
+    viewer: {
+      setWorldCamera: (value: ReturnType<KernelCameraController['worldCamera']>): void => {
+        published.push(value);
+      },
+    },
+    callbacks: {},
+    transitionGeneration: 0,
+    pendingTransition: null,
+    transitionInteracting: false,
+    reportedInteracting: false,
+    pointerInteracting: false,
+    wheelInteracting: false,
+    localSectionDepthActive: false,
+    viewMode: '3d',
+    candidates: [],
+    activeCandidateIndex: 0,
+    cursorCoordinate: null,
+    cursorPresentationPosition: null,
+  };
 }
 
 function candidate(

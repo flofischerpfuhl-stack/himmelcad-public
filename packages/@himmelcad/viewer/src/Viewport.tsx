@@ -238,6 +238,7 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
   );
   const productDatasetsRef = useRef<Map<EntityId, RenderableProductDataset>>(new Map());
   const layerLoadTokensRef = useRef<Map<EntityId, string>>(new Map());
+  const initialRenderOffsetRef = useRef(renderOffset);
   const layerLoadSequenceRef = useRef(0);
   const nodeLoadConcurrencyRef = useRef(detectNodeLoadConcurrency());
   const streamingProfileRef = useRef<StreamingProfile>('normal');
@@ -288,6 +289,9 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
     const container = containerRef.current;
     if (!container) return;
     const tileStreaming = tileStreamingRef.current;
+    const productDatasets = productDatasetsRef.current;
+    const layerLoadTokens = layerLoadTokensRef.current;
+    const datasetBounds = datasetBoundsRef.current;
 
     const renderer = new WebGLRenderer({
       antialias: true,
@@ -306,7 +310,8 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
     let recreateTimer: number | null = null;
 
     const scene = new SceneGraph();
-    scene.resetRenderOffset(renderOffset[0], renderOffset[1], renderOffset[2]);
+    const initialRenderOffset = initialRenderOffsetRef.current;
+    scene.resetRenderOffset(initialRenderOffset[0], initialRenderOffset[1], initialRenderOffset[2]);
     sceneRef.current = scene;
     const camera = new CameraController(window.innerWidth, window.innerHeight);
     camera.setLockedTopDown(navigationModeRef.current === 'lockedTopDown2d');
@@ -459,7 +464,7 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
      * three.js camera position), not world space.
      */
     const snapToScenePivot = (snap: SnapResult | null): Vector3 | null => {
-      if (!snap) return null;
+      if (!snap || snap.position.z === null) return null;
       const off = scene.getRenderOffset();
       return new Vector3(
         snap.position.x - off[0],
@@ -487,7 +492,7 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
       const k = overlayKindRef.current;
       if (x) x.textContent = snap.position.x.toFixed(3);
       if (y) y.textContent = snap.position.y.toFixed(3);
-      if (z) z.textContent = snap.position.z.toFixed(3);
+      if (z) z.textContent = snap.position.z === null ? '—' : snap.position.z.toFixed(3);
       if (k) {
         const sourceLabel = snap.source ? ` · ${snap.source}` : '';
         const confidenceLabel = ` · ${Math.round(snap.confidence * 100)}%`;
@@ -759,9 +764,9 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
       window.removeEventListener('keydown', onKeyDown);
       picking.dispose();
       tileStreaming.dispose();
-      for (const dataset of productDatasetsRef.current.values()) dataset.dispose();
-      productDatasetsRef.current.clear();
-      layerLoadTokensRef.current.clear();
+      for (const dataset of productDatasets.values()) dataset.dispose();
+      productDatasets.clear();
+      layerLoadTokens.clear();
       disposeCameraRectangles(cameraRectanglesRef.current);
       cameraRectanglesRef.current = null;
       cameraRectangleDataRef.current = [];
@@ -769,7 +774,7 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
       disposeGcpMarkers(gcpMarkersRef.current);
       gcpMarkersRef.current = null;
       gcpMarkerDataRef.current = [];
-      datasetBoundsRef.current.clear();
+      datasetBounds.clear();
       pickingRef.current = null;
       renderer.dispose();
       rendererRef.current = null;
@@ -1129,9 +1134,10 @@ export const Viewport = forwardRef<ViewportHandle, ViewportProps>(function Viewp
     }
   }, []);
 
+  const [renderOffsetX, renderOffsetY, renderOffsetZ] = renderOffset;
   useEffect(() => {
-    setSceneRenderOffset([renderOffset[0], renderOffset[1], renderOffset[2]]);
-  }, [renderOffset[0], renderOffset[1], renderOffset[2], setSceneRenderOffset]);
+    setSceneRenderOffset([renderOffsetX, renderOffsetY, renderOffsetZ]);
+  }, [renderOffsetX, renderOffsetY, renderOffsetZ, setSceneRenderOffset]);
 
   useEffect(() => {
     setNavigationMode(navigationMode);
@@ -1383,7 +1389,11 @@ function snapShallowEqual(a: SnapResult | null, b: SnapResult | null): boolean {
   if (Math.abs(a.confidence - b.confidence) > 0.005) return false;
   if (Math.abs(a.position.x - b.position.x) > 1e-6) return false;
   if (Math.abs(a.position.y - b.position.y) > 1e-6) return false;
-  if (Math.abs(a.position.z - b.position.z) > 1e-6) return false;
+  if (
+    a.position.z !== b.position.z &&
+    (a.position.z === null || b.position.z === null || Math.abs(a.position.z - b.position.z) > 1e-6)
+  )
+    return false;
   return true;
 }
 

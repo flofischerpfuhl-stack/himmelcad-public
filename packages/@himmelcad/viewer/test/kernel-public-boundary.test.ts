@@ -14,6 +14,8 @@ import {
   type KernelNavigationController,
   type KernelPotreeDatasetAdmission,
   type KernelRasterDepthMeasurement,
+  type KernelRgbaCaptureRequest,
+  type KernelRgbaCaptureResult,
   type KernelSectionMutation,
   type KernelSectionRequest,
   type KernelViewerEntityHandle,
@@ -73,10 +75,7 @@ void test('browser release runners resolve tools for Linux, Windows and macOS', 
     assert.doesNotMatch(source, /\/home\/oem|\/usr\/bin\/google-chrome/);
   }
   assert.match(runnerSources.join('\n'), /WASM_BINDGEN/);
-  const support = await readFile(
-    path.join(packageRoot, 'test/support/platform-tools.mjs'),
-    'utf8',
-  );
+  const support = await readFile(path.join(packageRoot, 'test/support/platform-tools.mjs'), 'utf8');
   assert.match(support, /process\.platform === 'win32'/);
   assert.match(support, /process\.platform === 'darwin'/);
   assert.match(support, /HCAD_CHROME_PATH/);
@@ -120,10 +119,10 @@ void test('kernel public API surface is exact and runtime internals stay private
       return `${symbol.name}:${marker}`;
     })
     .sort();
-  assert.equal(surface.length, 202);
+  assert.equal(surface.length, 226);
   assert.equal(
     createHash('sha256').update(surface.join('\n')).digest('hex'),
-    'b806a9527735d5b29dea9bf6198cb8c461875f6bd2dfffc4ec2c0545adce48ee',
+    'f963f7788b1adf9a82e8187d18515ccc0e342d31691e7e6df48d92da45482e23',
     `kernel API changed; review the stable contract before updating this gate:\n${surface.join('\n')}`,
   );
 
@@ -138,7 +137,19 @@ void test('kernel public API surface is exact and runtime internals stay private
     'KernelViewerSession',
     'KernelViewerSessionError',
     'assertValidKernelLocalOrthographicViewFrame',
+    'assertViewingBox',
+    'isPlanViewMode',
     'localSectionClipVolume',
+    'moveViewingBox',
+    'placeViewingBoxCenter',
+    'projectPickCandidateForViewMode',
+    'projectTargetPlaneCoordinate',
+    'resizeViewingBox',
+    'rotateViewingBox',
+    'setViewingBoxMode',
+    'viewingBoxAxes',
+    'viewingBoxClipVolume',
+    'viewingBoxFromViewport',
   ]);
 });
 
@@ -166,6 +177,7 @@ void test('kernel entry is directly consumable without internal escape hatches',
     readonly attachNavigation: (
       callbacks?: KernelNavigationCallbacks,
     ) => KernelNavigationController;
+    readonly captureRgba: (request: KernelRgbaCaptureRequest) => Promise<KernelRgbaCaptureResult>;
     readonly subscribe: (listener: (event: KernelViewerSessionEvent) => void) => () => void;
     readonly diagnostics: () => KernelViewerSessionDiagnostics;
     readonly dispose: () => void;
@@ -233,11 +245,15 @@ void test('kernel public entry has no React, Three, Electron or product dependen
         specifier === 'react' ||
         specifier === 'three' ||
         specifier === 'electron' ||
-        specifier.startsWith('@himmelcad/data') ||
+        (specifier.startsWith('@himmelcad/data') && specifier !== '@himmelcad/data/canonical') ||
         specifier.startsWith('@himmelcad/ui') ||
         specifier.includes('/apps/')
       ) {
         forbidden.push({ file: path.relative(packageRoot, file), specifier });
+      }
+      if (specifier === '@himmelcad/data/canonical') {
+        await visit(path.resolve(packageRoot, '../data/src/generated/index.ts'));
+        continue;
       }
       if (!specifier.startsWith('.')) continue;
       const sourceSpecifier = specifier.endsWith('.js')

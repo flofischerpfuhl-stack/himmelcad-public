@@ -253,7 +253,7 @@ fn write_sparse_intermediates(
     scale: [f64; 3],
     cancellation: &CancellationToken,
 ) -> Result<(), DenseRasterPrepError> {
-    let mut las = BufWriter::with_capacity(1024 * 1024, File::create(&las_path)?);
+    let mut las = BufWriter::with_capacity(1024 * 1024, File::create(las_path)?);
     write_las_header(
         &mut las,
         point_count,
@@ -262,7 +262,7 @@ fn write_sparse_intermediates(
         scale,
         "HimmelCAD sparse COLMAP to LAS",
     )?;
-    let mut ply = BufWriter::with_capacity(1024 * 1024, File::create(&export_path)?);
+    let mut ply = BufWriter::with_capacity(1024 * 1024, File::create(export_path)?);
     write!(
         ply,
         "ply\nformat binary_little_endian 1.0\nelement vertex {point_count}\n\
@@ -465,6 +465,7 @@ fn write_las_header(
 }
 
 /// Creates a georeferenced three-band VRT by nearest-neighbor gridding of dense RGB samples.
+#[allow(clippy::too_many_arguments)] // GDAL grid parameters form one stable command boundary.
 pub fn prepare_color_vrt(
     vector: &PreparedDenseVector,
     output_root: &Path,
@@ -721,10 +722,12 @@ fn ply_to_las(
     Ok(())
 }
 
+type PlyInspection = (u64, u64, PlyVertexLayout, [f64; 3], [f64; 3]);
+
 fn inspect_ply(
     path: &Path,
     cancellation: &CancellationToken,
-) -> Result<(u64, u64, PlyVertexLayout, [f64; 3], [f64; 3]), DenseRasterPrepError> {
+) -> Result<PlyInspection, DenseRasterPrepError> {
     let mut reader = BufReader::new(File::open(path)?);
     let mut offset = 0_u64;
     let mut vertex_count = None;

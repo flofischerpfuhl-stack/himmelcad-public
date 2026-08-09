@@ -9,6 +9,10 @@ use serde::{Deserialize, Serialize};
 use crate::entity::EntityId;
 use crate::entity_model::{CanonicalEntity, GeometryObject, GeometryResource, Representation};
 use crate::hash::ObjectHash;
+use crate::typed_artifact::{
+    ArtifactAffineDecode, ArtifactElementType, ArtifactEndianness, TypedArtifactDescriptor,
+    TypedArtifactError, TypedArtifactLayout, TypedArtifactManifest,
+};
 
 /// One canonical representation requested for atomic registry admission.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -86,6 +90,94 @@ impl SectionTopologyPartitionManifest {
     /// Canonical descriptor identity referenced by `SectionTopologyPart`.
     pub fn content_hash(&self) -> Result<ObjectHash, serde_json::Error> {
         serde_json::to_vec(self).map(|bytes| ObjectHash::of_bytes(&bytes))
+    }
+
+    /// Converts the authoritative topology resources into provider-neutral typed layouts.
+    pub fn typed_artifact_descriptors(
+        &self,
+    ) -> Result<Vec<TypedArtifactDescriptor>, TypedArtifactError> {
+        if self.vertex_count == 0 || self.index_count == 0 || self.index_count % 3 != 0 {
+            return Err(TypedArtifactError::Layout);
+        }
+        let (position_element_type, position_byte_length) = match self.position_component_type {
+            SectionPositionComponentType::Float32 => (
+                ArtifactElementType::Float32,
+                u64::from(self.vertex_count)
+                    .checked_mul(3)
+                    .and_then(|count| count.checked_mul(4)),
+            ),
+            SectionPositionComponentType::Float64 => (
+                ArtifactElementType::Float64,
+                u64::from(self.vertex_count)
+                    .checked_mul(3)
+                    .and_then(|count| count.checked_mul(8)),
+            ),
+        };
+        let position_byte_length = position_byte_length.ok_or(TypedArtifactError::Layout)?;
+        let (index_element_type, index_byte_length) = match self.index_component_type {
+            SectionIndexComponentType::Uint16 => {
+                (ArtifactElementType::Uint16, self.index_count.checked_mul(2))
+            }
+            SectionIndexComponentType::Uint32 => {
+                (ArtifactElementType::Uint32, self.index_count.checked_mul(4))
+            }
+        };
+        let index_byte_length = index_byte_length.ok_or(TypedArtifactError::Layout)?;
+        let mut descriptors = vec![
+            TypedArtifactDescriptor {
+                resource: self.positions.clone(),
+                semantic: "hcad.mesh.positions".to_owned(),
+                layout: TypedArtifactLayout::DenseArray {
+                    byte_offset: 0,
+                    byte_length: position_byte_length,
+                    element_type: position_element_type,
+                    shape: vec![u64::from(self.vertex_count), 3],
+                    endianness: ArtifactEndianness::Little,
+                    byte_strides: None,
+                    decode: Some(ArtifactAffineDecode {
+                        scale: vec![1.0; 3],
+                        offset: self.origin.to_vec(),
+                    }),
+                },
+            },
+            TypedArtifactDescriptor {
+                resource: self.indices.clone(),
+                semantic: "hcad.mesh.triangle-indices".to_owned(),
+                layout: TypedArtifactLayout::DenseArray {
+                    byte_offset: 0,
+                    byte_length: index_byte_length,
+                    element_type: index_element_type,
+                    shape: vec![self.index_count],
+                    endianness: ArtifactEndianness::Little,
+                    byte_strides: None,
+                    decode: None,
+                },
+            },
+        ];
+        if let Some(material_slots) = &self.material_slots {
+            let triangle_count = self.index_count / 3;
+            descriptors.push(TypedArtifactDescriptor {
+                resource: material_slots.clone(),
+                semantic: "hcad.mesh.material-slots".to_owned(),
+                layout: TypedArtifactLayout::DenseArray {
+                    byte_offset: 0,
+                    byte_length: triangle_count
+                        .checked_mul(4)
+                        .ok_or(TypedArtifactError::Layout)?,
+                    element_type: ArtifactElementType::Uint32,
+                    shape: vec![triangle_count],
+                    endianness: ArtifactEndianness::Little,
+                    byte_strides: None,
+                    decode: None,
+                },
+            });
+        }
+        TypedArtifactManifest {
+            schema_version: TypedArtifactManifest::SCHEMA_VERSION,
+            artifacts: descriptors.clone(),
+        }
+        .validate()?;
+        Ok(descriptors)
     }
 }
 

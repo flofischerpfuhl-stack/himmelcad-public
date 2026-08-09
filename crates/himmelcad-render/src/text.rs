@@ -285,6 +285,10 @@ pub fn build_text_batch_with_texture(
     Ok(batch.with_material(material))
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "text upload keeps orthogonal GPU context, placement basis, and layout inputs explicit"
+)]
 fn build_world_batch(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
