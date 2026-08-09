@@ -71,15 +71,32 @@ Quelle.
 
 ## 3. Ziel-Workflow
 
-### 3.1 Bilder importieren
+### 3.1 Bilder importieren und Referenz konfigurieren
 
-Der Import akzeptiert einzelne Bilder, Ordner, rekursive Ordner, Drag-and-drop, Multikamera-/Multispektral-Layouts und später Video-Frames. Er besteht aus fünf expliziten Schritten:
+Der gemeinsame IO-Import akzeptiert einzelne Bilder, Ordner, rekursive Ordner,
+Drag-and-drop, Multikamera-/Multispektral-Layouts und später Video-Frames. Er
+erkennt Duplikate per Content Hash, schlägt Dateinamenorganisation und
+Aufnahmegruppen vor und zeigt EXIF/XMP, GNSS/INS, Kamera-/Gimbalwinkel,
+Brennweite, Sensorgröße, Zeit, Zeitzone und Unsicherheiten. Das ist noch keine
+interaktive Registrierung und kein Batch-Knoten.
 
-1. **Dateien und Layout** — Duplikate per Content Hash erkennen, Dateinamenorganisation vorschlagen, Aufnahmegruppen erkennen.
-2. **Metadatenprüfung** — EXIF, XMP, DJI RTK, GNSS/INS, Kamera-/Gimbalwinkel, Brennweite, Sensorgröße, Zeit, Zeitzone und Unsicherheiten tabellarisch zeigen.
-3. **Höhenbezug wählen** — ellipsoidisch, orthometrisch/Normalhöhe, unbekannt oder gerätespezifisches Profil; Ziel-Höhensystem und Geoid-/Quasigeoidmodell wählen.
-4. **Lage transformieren** — Quell- und Ziel-CRS, Area of Interest, Datumsepoche und konkrete PROJ-Operation wählen; benötigte NTv2-/GTG-Grids prüfen.
-5. **Validieren und importieren** — Stichproben, Bounding Box, erwartete Operationsgenauigkeit, Grid-Abdeckung, Ausreißer und endgültige Pipeline anzeigen.
+Zusätzlich ist ein dedizierter Importer für **HimmelCAD Cap**-Sessions
+(`.himmelcap`) vorgesehen: gewichtete Positions-Priors mit echter Kovarianz,
+Capture Groups pro Session, ohne stilles Umschalten auf `crsBacked`. Details:
+`docs/himmelcap/PHOTOLAB-IMPORTER.md` und ADR 0027.
+
+Eine optionale anschließende Referenzkonfiguration hat zwei Modi:
+
+- **CRS-backed:** Höhenbezug, Quell-/Ziel-CRS, Area of Interest, Datumsepoche,
+  konkrete PROJ-Operation und benötigte NTv2-/GTG-Grids werden geprüft. Die
+  bewährte Reihenfolge bleibt Höhe vor Lage; vor Accept erscheinen Stichproben,
+  Bounding Box, Genauigkeit, Grid-Abdeckung, Ausreißer und die endgültige
+  Pipeline.
+- **Local metric:** Das Projekt bleibt ein rechtshändiger kartesischer Raum in
+  Metern ohne erfundenes CRS, Kartenorigin, Norden oder Schwerkraft. Ein
+  versionierter Maßstabszwang zwischen triangulierten Endpunkten kann später
+  den Maßstab festlegen. Smartphone-GNSS bleibt ein unsicherer optionaler Prior
+  und macht den Raum nicht automatisch CRS-backed.
 
 Die UX fragt wie gewünscht zuerst nach dem Höhenbezug und danach nach der Lage. Intern darf die mathematische PROJ-Pipeline die nötigen Schritte in der korrekten Reihenfolge ausführen, weil ein Geoidwert selbst an geographischen Koordinaten ausgewertet wird.
 
@@ -221,7 +238,16 @@ Rechtsklick auf einen GCP bietet „Bilder mit diesem GCP“. Daraufhin:
 - listet das rechte Funktionspanel nur Bilder mit erwarteter Sichtbarkeit, sortiert nach Projektionsunsicherheit, Auflösung am Punkt und Blickwinkel,
 - zeigt jedes Bild die erwartete Position samt Unsicherheitsellipse und Epipolarhilfe,
 - erzeugt Drag/Pin einen `SetMarkerObservation`-Command,
-- trianguliert PhotoLab aus bestätigten Beobachtungen die GCP-Schätzung neu und reprojiziert sie sofort in alle anderen Bilder,
+- erzeugt auch ein Bild-Rechtsklick eine neue Beobachtung und ordnet sie einem
+  vorhandenen oder neu angelegten GCP zu,
+- trianguliert PhotoLab aus bestätigten Beobachtungen die GCP-Schätzung neu,
+  berechnet lokale Residuen und Kovarianz neu und reprojiziert sie sofort in
+  alle anderen Bilder,
+- leitet jede Fehlerellipse mit dem Projektions-Jacobian aus der aktuellen
+  3D-Kovarianz ab; Winkel und Radien sind nie hart kodiert,
+- bleiben alle in einem Bild relevanten GCPs sichtbar, während genau einer
+  fokussiert ist,
+- übernimmt der Bildwechsel die Vergrößerung und zentriert den fokussierten GCP,
 - bleiben Kameraposen dabei unverändert; die kanonische Blockausgleichung erfolgt erst durch „Ausrichtung optimieren“.
 
 Landet eine Reprojektion konsistent auf einem vorhandenen Feature-Track, kann dieser als orange Auto-Beobachtung vorgeschlagen werden. Automatische Beobachtungen sind niemals stillschweigend „manuell bestätigt“. Jeder Vorschlag besitzt Score, Herkunft und Undo.
@@ -421,7 +447,10 @@ einem ADR fixiert.
 ### 5.1 Zentrale Views
 
 - **3D Szene:** Kamerafrusta/Bildrechtecke, Sparse/Dense Clouds, GCPs, DEM-Terrain, drapiertes Orthomosaik, Mesh und Splats gleichzeitig.
-- **Karte 2D:** orthographisch, Top-down und rotationsgesperrt; DEM, Ortho, GCPs, Shapes, Footprints und QA-Overlays.
+- **Karte 2D:** orthographisch, Top-down und rotationsgesperrt; derselbe
+  Snap-Gewinner wie 2.5D, aber die Erfassung liefert absichtlich `z: null`.
+- **Karte 2.5D:** dieselbe Kamera, Sichtbarkeit und Snap-Rangfolge wie 2D; die
+  Erfassung behält die Quellhöhe des Gewinners, wenn vorhanden.
 - **Bilder:** Einzelbild, Grid/Filmstrip, Original/Depth/Confidence/Normalen, Marker und Messwerkzeuge.
 - **Split:** 3D oder Karte links, Bild rechts für GCP- und Messworkflow.
 - **Report:** interaktiver QA-Bericht vor PDF/HTML-Export.
@@ -548,17 +577,24 @@ Navigation. Damit gelten insbesondere:
 
 ## 8. Batch Processing
 
-PhotoLab verwendet einen validierten Task-Graph statt nur einer linearen Liste. Standardknoten:
+PhotoLab verwendet einen validierten Task-Graph statt nur einer linearen Liste.
+Ein Standardgraph beginnt mit bereits konfigurierten, unveränderlichen Inputs:
 
-`Import → Transform → Quality → Align → GCP Optimize → Depth → Dense → Ground Classify → DEM → Ortho → Splat → Report → Export`
+`Image Snapshot + Reference Snapshot → Quality → Align → GCP Optimize → Depth → Dense → Ground Classify → DEM → Ortho → Splat → Report → Export`
 
 Eigenschaften:
 
 - Set-/Survey-Parameter und explizite Input-Run-Auswahl,
+- typisierte symbolische Input-Ports werden vor Queue/Run an genaue,
+  versionierte Artefakte gebunden; fehlende oder mehrdeutige Pflichtinputs
+  deaktivieren Run,
 - Abhängigkeiten, optionale Zweige, Bedingungen und Failure Policy,
 - Schema-versioniertes JSON/YAML mit UI-Editor,
 - Save/Load, Projektvorlage und CLI-Ausführung,
 - konkrete Parameter werden beim Queueing eingefroren,
+- nach Run fordert der Executor nie User-Interaktion an; `GCP Optimize`
+  verarbeitet nur einen vorher eingefrorenen GCP-Snapshot und öffnet keinen
+  Marker-Editor,
 - Preflight für RAM/VRAM/Disk/Zeit und Outputgrößen,
 - Checkpoint nach jeder Tile-/Subtask-Grenze,
 - Pause/Resume/Cancel-Token und Crash-Recovery,
@@ -862,6 +898,14 @@ Bei ML-Komponenten werden Paper/Algorithmus, Implementierung, Gewichte und Train
    3D Tiles folgt danach.
 5. Lokale Netzwerk-/Clusterverarbeitung folgt erst nach der stabilen
    Single-Workstation-Pipeline.
+6. Lokale metrische Projekte ohne CRS sind First-Class gemäß ADR 0023.
+7. IO-Provider, interaktive Import-Registrierung und der nach Start
+   unbeaufsichtigte Batch sind getrennte Lebenszyklen gemäß ADR 0021.
+8. 2D und 2.5D teilen Kamera, Sichtbarkeit und Snap-Gewinner gemäß ADR 0022.
+9. Plan ist Excalidraw-first; DWG nutzt den beschlossenen `acadrust`-Fork und
+   SLPK/I3S bleibt Provider des gemeinsamen Renderers.
+10. Python-/Agent-Automation folgt der Capability- und Journalgrenze aus ADR
+    0024.
 
 ## 15. Quellenbasis (Auswahl)
 

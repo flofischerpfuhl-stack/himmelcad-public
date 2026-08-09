@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://himmelcad.de/schemas/himmelcap-session-v1.schema.json",
+  "title": "HimmelCAD Cap session manifest v1",
+  "description": "Draft schema for manifest.json inside a .himmelcap package. Freeze during roadmap phase C1.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "format",
+    "schemaVersion",
+    "sessionId",
+    "createdAt",
+    "app",
+    "device",
+    "capture",
+    "media"
+  ],
+  "properties": {
+    "format": {
+      "const": "himmelcap-session"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "app": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "build": { "type": "string" }
+      }
+    },
+    "device": {
+      "type": "object",
+      "required": ["platform", "model"],
+      "additionalProperties": true,
+      "properties": {
+        "platform": {
+          "type": "string",
+          "enum": ["android", "ios", "unknown"]
+        },
+        "osVersion": { "type": "string" },
+        "manufacturer": { "type": "string" },
+        "model": { "type": "string" },
+        "deviceIdHash": { "type": "string" }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "dualFrequencyGnss": { "type": "boolean" },
+        "rawGnssMeasurements": { "type": "boolean" },
+        "carrierPhaseAdr": { "type": "boolean" },
+        "arTracking": { "type": "boolean" }
+      }
+    },
+    "capture": {
+      "type": "object",
+      "required": ["mode", "frameCount"],
+      "additionalProperties": true,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["smartstills", "videoExtract", "manualStills", "unknown"]
+        },
+        "preview": {
+          "type": "string",
+          "enum": ["video", "stills", "unknown"]
+        },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "endedAt": { "type": "string", "format": "date-time" },
+        "frameCount": { "type": "integer", "minimum": 0 },
+        "notes": { "type": "string" }
+      }
+    },
+    "cameraSegments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["segmentId"],
+        "additionalProperties": true,
+        "properties": {
+          "segmentId": { "type": "string" },
+          "physicalCameraId": { "type": "string" },
+          "focusPolicy": {
+            "type": "string",
+            "enum": ["lockedFar", "lockedInfinity", "continuousAf", "unknown"]
+          },
+          "aePolicy": {
+            "type": "string",
+            "enum": ["locked", "auto", "unknown"]
+          },
+          "awbPolicy": {
+            "type": "string",
+            "enum": ["locked", "auto", "unknown"]
+          },
+          "resolution": {
+            "type": "object",
+            "properties": {
+              "width": { "type": "integer", "minimum": 1 },
+              "height": { "type": "integer", "minimum": 1 }
+            }
+          },
+          "frameIndices": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 0 },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
+      }
+    },
+    "positioning": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "bestTier": {
+          "type": "string",
+          "enum": [
+            "t0Consumer",
+            "t1DualFrequency",
+            "t2NtripFloat",
+            "t2NtripFix",
+            "unknown"
+          ]
+        },
+        "correctionService": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "protocol": { "type": "string" },
+            "casterHost": { "type": "string" },
+            "mountpoint": { "type": "string" },
+            "providerHint": { "type": "string" }
+          }
+        },
+        "crsHint": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "horizontal": { "type": "string" },
+            "height": {
+              "type": "string",
+              "enum": ["ellipsoid", "orthometric", "unknown"]
+            },
+            "epoch": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "media": {
+      "type": "object",
+      "required": ["frames"],
+      "additionalProperties": true,
+      "properties": {
+        "frames": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["index", "path", "sha256"],
+            "additionalProperties": true,
+            "properties": {
+              "index": { "type": "integer", "minimum": 0 },
+              "path": { "type": "string" },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-fA-F0-9]{64}$"
+              },
+              "capturedAt": { "type": "string", "format": "date-time" },
+              "segmentId": { "type": "string" }
+            }
+          }
+        },
+        "video": {
+          "type": ["object", "null"],
+          "additionalProperties": true
+        }
+      }
+    },
+    "qualitySummary": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "meanHorizontalSigmaM": { "type": "number", "minimum": 0 },
+        "meanVerticalSigmaM": { "type": "number", "minimum": 0 },
+        "fixFraction": { "type": "number", "minimum": 0, "maximum": 1 },
+        "floatFraction": { "type": "number", "minimum": 0, "maximum": 1 },
+        "singleFraction": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    }
+  }
+}

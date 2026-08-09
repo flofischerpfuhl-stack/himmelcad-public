@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://himmelcad.de/schemas/himmelcap-pose-v1.schema.json",
+  "title": "HimmelCAD Cap pose line v1",
+  "description": "One JSON object per line in poses.jsonl inside a .himmelcap package. Draft until C1 freeze.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "frameIndex",
+    "latitudeDegrees",
+    "longitudeDegrees",
+    "covarianceEnuM2",
+    "fixType",
+    "tier",
+    "source",
+    "role"
+  ],
+  "properties": {
+    "frameIndex": { "type": "integer", "minimum": 0 },
+    "timestampUtc": { "type": "string", "format": "date-time" },
+    "timestampDeviceNs": { "type": "integer" },
+    "latitudeDegrees": { "type": "number", "minimum": -90, "maximum": 90 },
+    "longitudeDegrees": { "type": "number", "minimum": -180, "maximum": 180 },
+    "heightMeters": { "type": "number" },
+    "heightSemantic": {
+      "type": "string",
+      "enum": ["ellipsoid", "orthometric", "unknown"]
+    },
+    "covarianceEnuM2": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "items": { "type": "number" }
+    },
+    "fixType": {
+      "type": "string",
+      "enum": ["fix", "float", "single", "deadReckoning", "unknown"]
+    },
+    "tier": {
+      "type": "string",
+      "enum": [
+        "t0Consumer",
+        "t1DualFrequency",
+        "t2NtripFloat",
+        "t2NtripFix",
+        "unknown"
+      ]
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "osFused",
+        "dualFrequencyPvt",
+        "ntripRtk",
+        "fusedGnss",
+        "unknown"
+      ]
+    },
+    "role": {
+      "const": "priorOnly"
+    },
+    "usedForReconstruction": { "type": "boolean" },
+    "orientation": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "quaternionXyzw": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": { "type": "number" }
+        },
+        "frame": { "type": "string" },
+        "sigmaRad": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

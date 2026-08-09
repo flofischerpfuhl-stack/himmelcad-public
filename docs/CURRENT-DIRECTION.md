@@ -4,6 +4,12 @@ Status: binding for parallel agent work as of 2026-07-17.
 Does not replace ADRs. When this file and older roadmap prose disagree on
 **what to implement now**, this file wins for sequencing and scope freezes.
 
+The owner-reviewed cross-product program and milestone order from 2026-07-19
+are binding in `docs/PROGRAM-MILESTONES-2026-07-19.md`. It supersedes older
+product sequencing prose where the two conflict. ADR 0021 defines the hard
+boundary between canonical IO, interactive import registration and unattended
+PhotoLab batch execution.
+
 ## Active product focus
 
 1. **Foundation stage A** — finish and gate the shared viewer core defined by
@@ -12,6 +18,12 @@ Does not replace ADRs. When this file and older roadmap prose disagree on
    stable package facade after stage A; no product-specific renderer fork.
 3. **Further CAD and PhotoLab productization** — remains paused until the stage
    A report is complete.
+4. **HimmelCAD Cap (preparation track)** — mobile phone-only capture upstream
+   for PhotoLab. Binding docs in `docs/himmelcap/` and ADR 0027. **C0 (repo
+   prep) is open.** Mobile UI implementation waits for the owner **UI brief**
+   and stack gate. Format schema freeze (C1) and PhotoLab importer design (C2)
+   may proceed without inventing Cap screens. Cap must not divert PhotoLab
+   release gates unless the owner re-prioritizes.
 
 ## Foundation stage A
 
@@ -63,11 +75,12 @@ It does not by itself authorize unrelated product UI or reserved products.
 
 ## Parallel work lanes
 
-| Lane | Owns | Avoid |
-| --- | --- | --- |
-| Kernel / viewer | `crates/**`, `packages/@himmelcad/viewer/**`, entity/render contracts, ADR 0016/0017 implementation | Unrelated PhotoLab panel polish |
-| PhotoLab UI | `apps/photolab/renderer/**`, PhotoLab-only UX, later extraction into `@himmelcad/ui` | `crates/**`, viewer/streaming/picking rewrites |
-| Shared shell | `@himmelcad/ui`, `@himmelcad/console`, `@himmelcad/theme` | Only with coordination when both lanes need it |
+| Lane            | Owns                                                                                                | Avoid                                          |
+| --------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Kernel / viewer | `crates/**`, `packages/@himmelcad/viewer/**`, entity/render contracts, ADR 0016/0017 implementation | Unrelated PhotoLab panel polish                |
+| PhotoLab UI     | `apps/photolab/renderer/**`, PhotoLab-only UX, later extraction into `@himmelcad/ui`                | `crates/**`, viewer/streaming/picking rewrites |
+| Cap             | `docs/himmelcap/**`, `schemas/himmelcap/**`, `apps/cap/**`, later Cap IO types/importer hooks      | Inventing Cap UI before owner brief; external RTK as MVP requirement |
+| Shared shell    | `@himmelcad/ui`, `@himmelcad/console`, `@himmelcad/theme`                                           | Only with coordination when both lanes need it |
 
 `@himmelcad/data` contracts follow the kernel lane. UI work should adapt or
 wait rather than invent parallel type shapes.
@@ -131,14 +144,15 @@ shortcut.
 
 ## Document authority
 
-| Topic | Canonical file |
-| --- | --- |
-| Day-to-day agent rules | `AGENTS.md` |
-| What to build *now* / freezes / lanes | `docs/CURRENT-DIRECTION.md` (this file) |
-| Product family and long-term scope | `docs/PRODUCT-VISION.md` |
-| Phase history and exit criteria | `docs/ROADMAP.md` (partially historical until rebaselined) |
-| Accepted architecture decisions | `docs/adr/*` |
-| Still-open product choices | `docs/OPEN-QUESTIONS.md` |
+| Topic                                        | Canonical file                                             |
+| -------------------------------------------- | ---------------------------------------------------------- |
+| Day-to-day agent rules                       | `AGENTS.md`                                                |
+| What to build _now_ / freezes / lanes        | `docs/CURRENT-DIRECTION.md` (this file)                    |
+| Cross-product M0–M11 program from 2026-07-19 | `docs/PROGRAM-MILESTONES-2026-07-19.md`                    |
+| Product family and long-term scope           | `docs/PRODUCT-VISION.md`                                   |
+| Phase history and exit criteria              | `docs/ROADMAP.md` (partially historical until rebaselined) |
+| Accepted architecture decisions              | `docs/adr/*`                                               |
+| Still-open product choices                   | `docs/OPEN-QUESTIONS.md`                                   |
 
 PhotoLab product detail remains in `photolab/PHOTOLAB-CONCEPT.md` and
 `photolab/implementation-plan.html`.

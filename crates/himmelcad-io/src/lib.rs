@@ -12,10 +12,12 @@ use std::sync::Arc;
 use thiserror::Error;
 
 pub mod canonical_provider;
+pub mod dwg_provider;
 pub mod dxf_provider;
 pub mod e57_import;
 pub mod gaussian_splat_provider;
 pub mod gcp_import;
+pub mod hcap_import;
 mod geotiff_preparation;
 pub mod geotiff_provider;
 pub mod hcap_import;
@@ -25,6 +27,7 @@ pub mod landxml;
 mod landxml_dom;
 pub mod las_import;
 pub mod photolab_image_import;
+pub mod slpk_provider;
 
 #[derive(Debug, Error)]
 pub enum ImportError {
@@ -56,13 +59,16 @@ pub struct ImportResult {
 }
 
 pub use canonical_provider::{
-    CanonicalExportPlan, CanonicalExportProvider, CanonicalExportRequest, CanonicalImportPackage,
-    CanonicalImportProvider, CanonicalImportRequest, CanonicalJsonObject, CanonicalPreparedDataset,
-    CanonicalResourceSet, ExportOutput, FormatCapability, FormatProviderDescriptor,
+    apply_registration_preview, CanonicalExportPlan, CanonicalExportProvider,
+    CanonicalExportRequest, CanonicalImportPackage, CanonicalImportProvider,
+    CanonicalImportRequest, CanonicalJsonObject, CanonicalPreparedDataset, CanonicalResourceSet,
+    CanonicalStagedImport, ExportOutput, FormatCapability, FormatProviderDescriptor,
     FormatProviderRegistry, ImportProbe, ImportProbeRequest, ImportProviderSelection,
     PreparedDatasetArtifact, PreparedResourceArtifact, ProviderContractError,
-    ProviderOperationContext, ProviderProgress, CANONICAL_IO_SCHEMA_VERSION,
+    ProviderOperationContext, ProviderOptionContract, ProviderProgress, StagedArtifactRoots,
+    CANONICAL_IO_SCHEMA_VERSION,
 };
+pub use dwg_provider::{DwgCanonicalProvider, DWG_FORMAT_ID, DWG_PROVIDER_ID};
 pub use dxf_provider::{DxfCanonicalProvider, DXF_FORMAT_ID, DXF_PROVIDER_ID};
 pub use e57_import::{
     transcode_e57_to_laz, E57CanonicalProvider, E57ImportError, E57ScanMetadata, E57ScanPose,
@@ -96,9 +102,10 @@ pub use las_import::{
     PreparedPotreeFile, PreparedPotreeManifest,
 };
 pub use photolab_image_import::{
-    discover_photo_files, import_photo_files, import_photo_files_with_progress, PhotoDiscovery,
-    PhotoImportCandidate,
+    discover_photo_files, import_photo_files, import_photo_files_with_capabilities_and_progress,
+    import_photo_files_with_progress, PhotoDiscovery, PhotoImportCandidate,
 };
+pub use slpk_provider::{SlpkCanonicalProvider, SLPK_FORMAT_ID, SLPK_PROVIDER_ID};
 
 /// Builds the production canonical import registry shared by desktop hosts.
 ///
@@ -117,6 +124,12 @@ pub fn canonical_builtin_import_registry(
     let dxf = Arc::new(DxfCanonicalProvider::new(prepared_data_root.clone()));
     registry.register_importer(dxf.clone())?;
     registry.register_exporter(dxf)?;
+    registry.register_importer(Arc::new(DwgCanonicalProvider::new(
+        prepared_data_root.clone(),
+    )))?;
+    registry.register_importer(Arc::new(SlpkCanonicalProvider::new(
+        prepared_data_root.clone(),
+    )))?;
     let landxml = Arc::new(LandXmlProvider::new());
     registry.register_importer(landxml.clone())?;
     registry.register_exporter(landxml)?;
@@ -286,6 +299,26 @@ mod canonical_registry_tests {
             .expect("DXF provider");
         assert_eq!(dxf.provider_id, DXF_PROVIDER_ID);
         assert!(registry.exporter(DXF_PROVIDER_ID).is_ok());
+
+        let dwg = registry
+            .select_importer(ImportProbeRequest {
+                path: Path::new("drawing.dwg"),
+                prefix: b"AC1032trailing bytes",
+                media_type: Some("image/vnd.dwg"),
+            })
+            .expect("DWG provider");
+        assert_eq!(dwg.provider_id, DWG_PROVIDER_ID);
+        assert!(registry.exporter(DWG_PROVIDER_ID).is_err());
+
+        let slpk = registry
+            .select_importer(ImportProbeRequest {
+                path: Path::new("mesh.slpk"),
+                prefix: b"PK\x03\x04trailing bytes",
+                media_type: Some("application/vnd.esri.slpk"),
+            })
+            .expect("SLPK provider");
+        assert_eq!(slpk.provider_id, SLPK_PROVIDER_ID);
+        assert!(registry.exporter(SLPK_PROVIDER_ID).is_err());
 
         let landxml = registry
             .select_importer(ImportProbeRequest {

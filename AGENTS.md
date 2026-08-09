@@ -22,7 +22,8 @@ nachfragen, dann coden.
 - Projektformat: `docs/PROJECT-FORMAT.md`
 - MVP-Plan: `docs/MVP-PLAN.md`
 - Offene Entscheidungen: `docs/OPEN-QUESTIONS.md`
-- ADRs: `docs/adr/` (Entity: 0016, Render: 0017)
+- ADRs: `docs/adr/` (Entity: 0016, Render: 0017, Cap: 0027)
+- Cap (himmel:cap): `docs/himmelcap/README.md`
 - Third-Party-Lizenzen: `LICENSES/THIRD_PARTY.md`
 
 ## 1. Identitaet und Prioritaeten
@@ -31,11 +32,15 @@ nachfragen, dann coden.
 - **Aktueller Fokus:** HimmelCAD PhotoLab als Delivery-Produkt; parallele
   Kernel-Arbeit an Entities (ADR 0016) und Render-Core (ADR 0017). Builder
   bleibt das CAD-Produkt, weitere CAD-Feature-Productization ist pausiert.
-- **Produktfamilie:** HimmelCAD Builder, HimmelCAD PhotoLab, HimmelCAD
-  WeltView. **Assembler, TestFlight und ChronoGit sind nur reservierte Namen**
+- **Produktfamilie:** HimmelCAD Builder, HimmelCAD PhotoLab, HimmelCAD Cap
+  (Kurzform himmel:cap), HimmelCAD WeltView.
+  **Assembler, TestFlight und ChronoGit sind nur reservierte Namen**
   bis zu einem expliziten Decision Gate — keine Implementierung, keine
   Agent-Aufgaben dafuer. Details: `docs/PRODUCT-VISION.md` und
   `docs/CURRENT-DIRECTION.md`.
+- **Cap:** Docs unter `docs/himmelcap/`, ADR 0027. Mobile-UI erst nach
+  Owner-UI-Brief und Stack-Gate. Kein Pflicht-Zubehoer/RTK-Puck im MVP.
+  Format `.himmelcap` + PhotoLab-Importer.
 - **ChronoGit-Tax:** Command-Journal, immutable Objects und stabile IDs sind
   erwuenscht. Diff-UI, Merge-Produkt und weitere Schema-Komplexitaet nur fuer
   ChronoGit sind eingefroren.
