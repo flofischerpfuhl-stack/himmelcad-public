@@ -995,10 +995,16 @@ fn remove_file(path: &Path, action: &'static str) -> Result<(), ImageCommitError
     fs::remove_file(path).map_err(|error| io_error(action, path, error))
 }
 
+#[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<(), ImageCommitError> {
     File::open(path)
         .and_then(|directory| directory.sync_all())
         .map_err(|error| io_error("sync directory", path, error))
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> Result<(), ImageCommitError> {
+    Ok(())
 }
 
 fn check_cancelled<C>(is_cancelled: &mut C) -> Result<(), ImageCommitError>

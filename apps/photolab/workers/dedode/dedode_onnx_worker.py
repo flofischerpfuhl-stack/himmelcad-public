@@ -9,6 +9,7 @@ of a PhotoLab release runtime.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -191,6 +192,12 @@ def _save_features(np, path, keypoints, confidence, descriptions, width, height)
     os.replace(temporary, path)
 
 
+def _feature_path(root, image_id):
+    """Map opaque image identifiers to portable, collision-resistant filenames."""
+    digest = hashlib.sha256(image_id.encode("utf-8")).hexdigest()
+    return root / f"{digest}.npz"
+
+
 def _logsumexp(np, values, axis):
     maximum = np.max(values, axis=axis)
     return maximum + np.log(np.sum(np.exp(values - np.expand_dims(maximum, axis)), axis=axis))
@@ -325,7 +332,7 @@ def _run(request_path: pathlib.Path, model_root: pathlib.Path) -> int:
         descriptions = _descriptions(np, description_grid, feature_indices)
         _save_features(
             np,
-            feature_root / f"{image_id}.npz",
+            _feature_path(feature_root, image_id),
             keypoints,
             confidence,
             descriptions,
@@ -342,11 +349,11 @@ def _run(request_path: pathlib.Path, model_root: pathlib.Path) -> int:
     completed_pairs: list[str] = []
     for index, pair in enumerate(request["pairs"]):
         image_a, image_b = pair["imageA"], pair["imageB"]
-        with np.load(feature_root / f"{image_a}.npz", allow_pickle=False) as features_a:
+        with np.load(_feature_path(feature_root, image_a), allow_pickle=False) as features_a:
             keypoints_a = features_a["keypoints"].copy()
             descriptions_a = features_a["descriptions"].copy()
             width_a, height_a = int(features_a["width"][0]), int(features_a["height"][0])
-        with np.load(feature_root / f"{image_b}.npz", allow_pickle=False) as features_b:
+        with np.load(_feature_path(feature_root, image_b), allow_pickle=False) as features_b:
             keypoints_b = features_b["keypoints"].copy()
             descriptions_b = features_b["descriptions"].copy()
             width_b, height_b = int(features_b["width"][0]), int(features_b["height"][0])

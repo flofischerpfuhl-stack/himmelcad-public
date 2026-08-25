@@ -132,7 +132,12 @@ use himmelcad_sidecar::{
 mod project_runtime;
 
 const PROGRESS_PREFIX: &str = "__HC_PROGRESS__";
-const MIN_CAMERA_REFERENCE_SIGMA_METERS: f64 = 0.001;
+// Smartphone antenna/camera lever-arm and frame/GNSS synchronization errors
+// make sub-5 cm priors overconfident until device-specific calibration exists.
+const MIN_FIXED_CAMERA_REFERENCE_HORIZONTAL_SIGMA_METERS: f64 = 0.05;
+const MIN_FIXED_CAMERA_REFERENCE_HEIGHT_SIGMA_METERS: f64 = 0.10;
+const MIN_NON_FIXED_CAMERA_REFERENCE_HORIZONTAL_SIGMA_METERS: f64 = 0.30;
+const MIN_NON_FIXED_CAMERA_REFERENCE_HEIGHT_SIGMA_METERS: f64 = 0.60;
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)] // params is part of the JSON-RPC contract.
@@ -2827,18 +2832,28 @@ fn attach_camera_reference_priors(
             .contains(&himmelcad_core::photolab_products::ImageProductTag::RtkFixed);
         let horizontal_default = if rtk_fixed { 0.03 } else { 5.0 };
         let height_default = if rtk_fixed { 0.06 } else { 10.0 };
+        let horizontal_floor = if rtk_fixed {
+            MIN_FIXED_CAMERA_REFERENCE_HORIZONTAL_SIGMA_METERS
+        } else {
+            MIN_NON_FIXED_CAMERA_REFERENCE_HORIZONTAL_SIGMA_METERS
+        };
+        let height_floor = if rtk_fixed {
+            MIN_FIXED_CAMERA_REFERENCE_HEIGHT_SIGMA_METERS
+        } else {
+            MIN_NON_FIXED_CAMERA_REFERENCE_HEIGHT_SIGMA_METERS
+        };
         entry.camera.reference_center_world_meters =
             Some([reference.easting, reference.northing, height]);
         entry.camera.reference_stddev_meters = Some([
             rtk.and_then(|value| value.standard_deviation_longitude_meters)
                 .unwrap_or(horizontal_default)
-                .max(MIN_CAMERA_REFERENCE_SIGMA_METERS),
+                .max(horizontal_floor),
             rtk.and_then(|value| value.standard_deviation_latitude_meters)
                 .unwrap_or(horizontal_default)
-                .max(MIN_CAMERA_REFERENCE_SIGMA_METERS),
+                .max(horizontal_floor),
             rtk.and_then(|value| value.standard_deviation_height_meters)
                 .unwrap_or(height_default)
-                .max(MIN_CAMERA_REFERENCE_SIGMA_METERS),
+                .max(height_floor),
         ]);
     }
 }

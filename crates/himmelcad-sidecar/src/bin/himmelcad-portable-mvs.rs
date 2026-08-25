@@ -2232,7 +2232,7 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> Result<(), WorkerError> {
 fn hash_file(path: &Path) -> Result<ObjectHash, WorkerError> {
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
+    let mut buffer = vec![0_u8; 1024 * 1024].into_boxed_slice();
     loop {
         let read = file.read(&mut buffer)?;
         if read == 0 {

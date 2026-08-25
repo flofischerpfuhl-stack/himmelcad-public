@@ -163,7 +163,8 @@ pub struct UpsertGcpObservationsResult {
 #[serde(rename_all = "camelCase")]
 pub struct CreateGcpOptimizationSnapshotParams {
     pub operation_id: String,
-    pub expected_collection_sha256: ObjectHash,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_collection_sha256: Option<ObjectHash>,
     pub scope: GcpOptimizationScope,
     /// Per-run role/mask overrides; the authoritative imported GCP catalog is unchanged.
     #[serde(default)]
@@ -743,10 +744,28 @@ pub fn create_gcp_optimization_snapshot_transaction(
 ) -> Result<CreateGcpOptimizationSnapshotResult, GcpRuntimeError> {
     validate_operation_id(&params.operation_id)?;
     check_cancelled(cancellation)?;
-    let group_id = find_reference_group(manifest)?;
-    let (collection_sha256, collection) =
-        load_required_collection(project_root, manifest, &group_id)?;
-    require_expected_hash(&params.expected_collection_sha256, &collection_sha256)?;
+    let (group_id, collection_sha256, collection, collection_published) =
+        if let Some(expected) = params.expected_collection_sha256.as_ref() {
+            let group_id = find_reference_group(manifest)?;
+            let (collection_sha256, collection) =
+                load_required_collection(project_root, manifest, &group_id)?;
+            require_expected_hash(expected, &collection_sha256)?;
+            (Some(group_id), collection_sha256, collection, None)
+        } else {
+            if !params.scope.point_ids.is_empty() || !params.role_overrides.is_empty() {
+                return Err(GcpRuntimeError::CollectionMissing);
+            }
+            let collection = GcpCollectionRecord {
+                schema_version: 1,
+                previous_collection_sha256: None,
+                points: Vec::new(),
+                observations: Vec::new(),
+            };
+            let bytes = serde_json::to_vec(&collection)?;
+            let hash = ObjectHash::of_bytes(&bytes);
+            let published = write_object(project_root, &hash, &bytes)?;
+            (None, hash, collection, published)
+        };
     let mut point_definitions = collection.point_definitions();
     for (point_id, role) in &params.role_overrides {
         let point = point_definitions
@@ -773,10 +792,21 @@ pub fn create_gcp_optimization_snapshot_transaction(
     if cancellation.is_cancel_requested() {
         rollback_optional(scope_published.as_ref())?;
         rollback_optional(snapshot_published.as_ref())?;
+        rollback_optional(collection_published.as_ref())?;
         return Err(GcpRuntimeError::Cancelled);
     }
     let mut candidate = manifest.clone();
     touch_manifest(&mut candidate)?;
+    let affected_entities = group_id.clone().into_iter().collect::<Vec<_>>();
+    let input_hashes = group_id
+        .is_some()
+        .then(|| collection_sha256.clone())
+        .into_iter()
+        .collect::<Vec<_>>();
+    let mut output_hashes = vec![snapshot_sha256.clone(), residual_scope_sha256.clone()];
+    if group_id.is_none() {
+        output_hashes.insert(0, collection_sha256.clone());
+    }
     let journal = committed_journal(
         &candidate,
         &params.operation_id,
@@ -786,11 +816,11 @@ pub fn create_gcp_optimization_snapshot_transaction(
             "snapshotSha256": snapshot_sha256,
             "residualScopeSha256": residual_scope_sha256,
         }),
-        vec![group_id],
-        vec![collection_sha256.clone()],
-        vec![snapshot_sha256.clone(), residual_scope_sha256.clone()],
+        affected_entities,
+        input_hashes,
+        output_hashes,
     );
-    let published = [snapshot_published, scope_published]
+    let published = [collection_published, snapshot_published, scope_published]
         .into_iter()
         .flatten()
         .collect::<Vec<_>>();
@@ -1375,6 +1405,7 @@ fn create_parent(path: &Path) -> Result<(), GcpRuntimeError> {
     })
 }
 
+#[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<(), GcpRuntimeError> {
     File::open(path)
         .and_then(|directory| directory.sync_all())
@@ -1383,6 +1414,11 @@ fn sync_directory(path: &Path) -> Result<(), GcpRuntimeError> {
             path: path.to_path_buf(),
             source,
         })
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> Result<(), GcpRuntimeError> {
+    Ok(())
 }
 
 fn safe_component(value: &str) -> String {
@@ -1995,7 +2031,7 @@ mod tests {
             &mut fixture.manifest,
             CreateGcpOptimizationSnapshotParams {
                 operation_id: "snapshot".into(),
-                expected_collection_sha256: second.collection_sha256,
+                expected_collection_sha256: Some(second.collection_sha256),
                 scope: GcpOptimizationScope {
                     label: "Control A only".into(),
                     point_ids: vec![himmelcad_core::photolab_gcp::GcpPointId("A".into())],
@@ -2010,5 +2046,27 @@ mod tests {
         assert!(result.residual_scope.checkpoint_point_ids.is_empty());
         assert!(object_path(&fixture.root, &result.snapshot_sha256).is_file());
         assert!(object_path(&fixture.root, &result.residual_scope_sha256).is_file());
+    }
+
+    #[test]
+    fn camera_only_snapshot_request_does_not_require_a_gcp_collection_hash() {
+        let request: CreateGcpOptimizationSnapshotParams =
+            serde_json::from_value(serde_json::json!({
+                "operationId": "camera-only",
+                "scope": {
+                    "label": "All positioned images",
+                    "pointIds": [],
+                    "cameraReferenceImageIds": [7, 2, 5]
+                }
+            }))
+            .expect("camera-only request should deserialize");
+
+        assert_eq!(request.expected_collection_sha256, None);
+        assert!(request.scope.point_ids.is_empty());
+        assert_eq!(
+            request.scope.camera_reference_image_ids,
+            vec![ImageId(7), ImageId(2), ImageId(5)]
+        );
+        assert!(request.role_overrides.is_empty());
     }
 }

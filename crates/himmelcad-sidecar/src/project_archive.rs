@@ -455,7 +455,14 @@ where
 fn is_excluded(relative: &Path, options: PackArchiveOptions) -> bool {
     let first = relative.components().next();
     matches!(first, Some(Component::Normal(name)) if name == "tmp")
-        || matches!(first, Some(Component::Normal(name)) if name == "project.lock")
+        || matches!(
+            first,
+            Some(Component::Normal(name))
+                if name == "project.lock"
+                    || name == ".project.lock"
+                    || name == "project.lock.guard"
+                    || name == ".project.lock.guard"
+        )
         || (!options.include_rebuildable_index
             && matches!(first, Some(Component::Normal(name)) if name == "index"))
 }
@@ -881,6 +888,9 @@ mod tests {
         fs::write(project.join("tmp/partial"), b"no").unwrap();
         fs::write(project.join("index/cache"), b"no").unwrap();
         fs::write(project.join("project.lock"), b"no").unwrap();
+        fs::write(project.join(".project.lock"), b"no").unwrap();
+        fs::write(project.join("project.lock.guard"), b"no").unwrap();
+        fs::write(project.join(".project.lock.guard"), b"no").unwrap();
     }
 
     fn limits() -> UnpackArchiveLimits {
@@ -924,6 +934,9 @@ mod tests {
         assert!(!output.join("tmp").exists());
         assert!(!output.join("index").exists());
         assert!(!output.join("project.lock").exists());
+        assert!(!output.join(".project.lock").exists());
+        assert!(!output.join("project.lock.guard").exists());
+        assert!(!output.join(".project.lock.guard").exists());
         fs::remove_dir_all(root).unwrap();
     }
 

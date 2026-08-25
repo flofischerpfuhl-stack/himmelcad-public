@@ -3468,6 +3468,7 @@ fn publish_feature_cache(
         fs::remove_file(&database)?;
     }
     fs::rename(&temporary, &database)?;
+    #[cfg(unix)]
     File::open(root)?.sync_all()?;
     atomic_write(
         &record_path,
@@ -4229,6 +4230,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ColmapRuntimeError> {
     file.write_all(bytes)?;
     file.sync_all()?;
     fs::rename(&temporary, path)?;
+    #[cfg(unix)]
     File::open(parent)?.sync_all()?;
     Ok(())
 }

@@ -466,7 +466,8 @@ fn build_georeferenced_vrt(
     srs: &str,
     cancellation: &CancellationToken,
 ) -> Result<(), OrthophotoPreparationError> {
-    let mut child = Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .args([
             "-of",
             "VRT",
@@ -478,10 +479,22 @@ fn build_georeferenced_vrt(
             &bounds.maximum_east.to_string(),
             &bounds.minimum_north.to_string(),
         ])
-        .arg(png)
-        .arg(vrt)
+        .arg(external_tool_path(png))
+        .arg(external_tool_path(vrt))
         .env_clear()
         .env("PROJ_NETWORK", "OFF")
+        .env("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR");
+    if let Some(prefix) = executable.parent().and_then(Path::parent) {
+        let gdal_data = prefix.join("share/gdal");
+        if gdal_data.is_dir() {
+            command.env("GDAL_DATA", external_tool_path(&gdal_data));
+        }
+        let proj_data = prefix.join("share/proj");
+        if proj_data.is_dir() {
+            command.env("PROJ_DATA", external_tool_path(&proj_data));
+        }
+    }
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -503,6 +516,23 @@ fn build_georeferenced_vrt(
     // given the frozen WKT2 text. Restore the exact audited WKT2 contract so
     // dependent raster validation cannot silently change datum semantics.
     rewrite_vrt_srs(vrt, srs)
+}
+
+#[cfg(windows)]
+fn external_tool_path(path: &Path) -> std::ffi::OsString {
+    let value = path.as_os_str().to_string_lossy();
+    if let Some(suffix) = value.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{suffix}").into()
+    } else if let Some(suffix) = value.strip_prefix(r"\\?\") {
+        suffix.into()
+    } else {
+        path.as_os_str().to_owned()
+    }
+}
+
+#[cfg(not(windows))]
+fn external_tool_path(path: &Path) -> std::ffi::OsString {
+    path.as_os_str().to_owned()
 }
 
 fn rewrite_vrt_srs(vrt: &Path, frozen_wkt: &str) -> Result<(), OrthophotoPreparationError> {
@@ -739,6 +769,19 @@ impl DemSampler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn gdal_vrt_paths_strip_windows_verbatim_prefixes() {
+        assert_eq!(
+            external_tool_path(Path::new(r"\\?\C:\project\tile.png")),
+            std::ffi::OsString::from(r"C:\project\tile.png")
+        );
+        assert_eq!(
+            external_tool_path(Path::new(r"\\?\UNC\server\share\tile.png")),
+            std::ffi::OsString::from(r"\\server\share\tile.png")
+        );
+    }
     use image::Rgb;
 
     fn camera() -> MvsPinholeCamera {

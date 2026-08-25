@@ -1770,7 +1770,7 @@ export function App(): JSX.Element {
   const startGcpOptimization = useCallback(
     async (selection: GcpOptimizationSelection) => {
       const api = window.himmelcad;
-      if (!api || !projectReady || !gcpCollection || gcpOptimizationStarting) return;
+      if (!api || !projectReady || gcpOptimizationStarting) return;
       const activePointIds = selection.pointIds.filter(
         (pointId) => selection.roleOverrides[pointId] !== 'disabled',
       );
@@ -1786,7 +1786,7 @@ export function App(): JSX.Element {
           'photolab.gcp.optimization.snapshot',
           {
             operationId: snapshotOperationId,
-            expectedCollectionSha256: gcpCollection[0],
+            ...(gcpCollection ? { expectedCollectionSha256: gcpCollection[0] } : {}),
             scope: {
               label: processingSet
                 ? `${processingSet.name} · ${alignedGcpCameras.length} cameras · ${activePointIds.length} points`
@@ -1810,10 +1810,14 @@ export function App(): JSX.Element {
         logEvent(
           'info',
           'sidecar',
-          `GCP optimization queued · ${activePointIds.length} points · snapshot ${snapshot.snapshotSha256.slice(0, 12)}`,
+          `Alignment optimization queued · ${activePointIds.length} GCPs · ${selection.cameraReferenceImageIds.length} camera priors · snapshot ${snapshot.snapshotSha256.slice(0, 12)}`,
         );
       } catch (error) {
-        logEvent('error', 'sidecar', `GCP optimization could not start: ${errorMessage(error)}`);
+        logEvent(
+          'error',
+          'sidecar',
+          `Alignment optimization could not start: ${errorMessage(error)}`,
+        );
       } finally {
         setGcpOptimizationStarting(false);
       }

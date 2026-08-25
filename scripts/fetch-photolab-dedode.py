@@ -79,6 +79,10 @@ def fetch(path: pathlib.Path, url: str, size: int, sha256: str) -> None:
         print(f"verified {path}")
         return
     temporary = path.with_suffix(path.suffix + ".part")
+    if verified(temporary, size, sha256):
+        os.replace(temporary, path)
+        print(f"verified {path}")
+        return
     offset = temporary.stat().st_size if temporary.is_file() else 0
     request = urllib.request.Request(url, headers={"Range": f"bytes={offset}-"} if offset else {})
     with urllib.request.urlopen(request) as response:
@@ -170,8 +174,11 @@ def smoke_inference(python: pathlib.Path, source_root: pathlib.Path, root: pathl
         "schemaVersion": 1,
         "jobId": "dedode-smoke",
         "scratchRoot": str(scratch),
-        "images": [{"id": "smoke-a", "path": str(image_a)}, {"id": "smoke-b", "path": str(image_b)}],
-        "pairs": [{"imageA": "smoke-a", "imageB": "smoke-b"}],
+        "images": [
+            {"id": "project:smoke:image:a", "path": str(image_a)},
+            {"id": "project:smoke:image:b", "path": str(image_b)},
+        ],
+        "pairs": [{"imageA": "project:smoke:image:a", "imageB": "project:smoke:image:b"}],
         "device": {"kind": "cpu"},
         "numericMode": "float32",
         "maxKeypoints": 1024,

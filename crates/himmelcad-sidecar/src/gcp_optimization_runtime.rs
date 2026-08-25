@@ -1,9 +1,12 @@
 //! Durable execution wrapper for internal GCP georeferencing optimization.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+#[cfg(unix)]
+use std::fs::File;
 
 use himmelcad_core::hash::ObjectHash;
 use himmelcad_core::photolab_gcp::GcpOptimizationSnapshot;
@@ -321,9 +324,11 @@ fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), GcpOptimizationRu
     }
     fs::rename(&temporary, path)
         .map_err(|source| io_error("publish GCP optimization file", path, source))?;
+    #[cfg(unix)]
     File::open(parent)
         .and_then(|directory| directory.sync_all())
-        .map_err(|source| io_error("sync GCP optimization directory", parent, source))
+        .map_err(|source| io_error("sync GCP optimization directory", parent, source))?;
+    Ok(())
 }
 
 fn io_error(

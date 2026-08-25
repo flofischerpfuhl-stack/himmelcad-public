@@ -71,6 +71,26 @@ pub enum DedodeResourceKind {
     Dinov2VitL14Weights,
 }
 
+#[cfg(test)]
+mod portable_match_id_tests {
+    use std::io::Cursor;
+
+    use super::read_string;
+
+    #[test]
+    fn match_id_reader_accepts_opaque_project_image_ids_longer_than_128_bytes() {
+        let image_id = format!("project:{}:image:{}", "a".repeat(64), "b".repeat(64));
+        assert!(image_id.len() > 128);
+        let mut encoded = (image_id.len() as u32).to_le_bytes().to_vec();
+        encoded.extend_from_slice(image_id.as_bytes());
+
+        assert_eq!(
+            read_string(&mut Cursor::new(encoded)).expect("valid opaque image ID"),
+            image_id
+        );
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DedodeRuntimeBackend {
     Pytorch,
@@ -1619,7 +1639,7 @@ fn read_f32(reader: &mut impl Read) -> Result<f32, DedodeRuntimeError> {
 
 fn read_string(reader: &mut impl Read) -> Result<String, DedodeRuntimeError> {
     let length = read_u32(reader)? as usize;
-    if length == 0 || length > 128 {
+    if length == 0 || length > 256 {
         return Err(DedodeRuntimeError::InvalidMatchArtifact(
             "invalid image ID length".into(),
         ));
@@ -1628,7 +1648,7 @@ fn read_string(reader: &mut impl Read) -> Result<String, DedodeRuntimeError> {
     reader.read_exact(&mut bytes)?;
     let value = String::from_utf8(bytes)
         .map_err(|_| DedodeRuntimeError::InvalidMatchArtifact("image ID is not UTF-8".into()))?;
-    validate_component("match image ID", &value)?;
+    validate_image_identifier("match image ID", &value)?;
     Ok(value)
 }
 
@@ -2254,6 +2274,41 @@ print(json.dumps({"schemaVersion":1,"pythonVersion":".".join(map(str,sys.version
             parse_match_container(&path, &request()),
             Err(DedodeRuntimeError::InvalidMatchArtifact(_))
         ));
+    }
+
+    #[test]
+    fn neutral_match_container_accepts_portable_opaque_project_image_ids() {
+        let image_a = format!("project:{}:image:{}", "a".repeat(64), "b".repeat(64));
+        let image_b = format!("project:{}:image:{}", "c".repeat(64), "d".repeat(64));
+        assert!(image_a.len() > 128);
+        let mut request = request();
+        request.camera_images = vec![fake_camera(&image_a), fake_camera(&image_b)];
+        request.pairs = vec![DedodeImagePair {
+            image_a: image_a.clone(),
+            image_b: image_b.clone(),
+        }];
+
+        let directory = TestDirectory::new("opaque-image-ids");
+        let path = directory.0.join("matches.hcdm");
+        let mut output = File::create(&path).expect("matches file");
+        output.write_all(MATCH_MAGIC).expect("magic");
+        output
+            .write_all(&MATCH_SCHEMA_VERSION.to_le_bytes())
+            .expect("schema");
+        output.write_all(&1_u32.to_le_bytes()).expect("pair count");
+        for id in [&image_a, &image_b] {
+            output
+                .write_all(&(id.len() as u32).to_le_bytes())
+                .expect("id length");
+            output.write_all(id.as_bytes()).expect("id");
+        }
+        output.write_all(&0_u32.to_le_bytes()).expect("match count");
+        drop(output);
+
+        let parsed = parse_match_container(&path, &request).expect("valid opaque IDs");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].pair.image_a, image_a);
+        assert_eq!(parsed[0].pair.image_b, image_b);
     }
 
     #[test]
