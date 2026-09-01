@@ -8,7 +8,7 @@ never suppress a required gate.
 | Tier    | Command                                     | Purpose                                                                                                                                                |
 | ------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | changed | `pnpm verify:changed`                       | Frequent local feedback: affected package typechecks/tests and direct Rust crate tests. No English, browser, visual, package or real-data gates.       |
-| commit  | `pnpm verify:commit`                        | Staged paths plus changed-file lint/format, Rust format and the English UI audit exactly once.                                                         |
+| commit  | `pnpm verify:commit`                        | Staged paths plus changed-file lint/format, Rust format and the currently implemented PhotoLab English UI audit exactly once.                         |
 | push    | `pnpm verify:push`                          | The commits since the upstream merge base, with reverse consumers and risk-triggered contract/browser/visual/clippy gates.                             |
 | release | `pnpm verify:release -- --capabilities=...` | Full release plan. Missing GPU, real-data or native package capabilities fail rather than silently skip. CI fans this plan out across capable runners. |
 
@@ -33,6 +33,9 @@ recursively traversed. This protects local multi-gigabyte capture datasets.
   is explicitly not source code.
 - Automation schema, generator and generated Python SDK changes run one
   deduplicated SDK test/staleness gate. Release verification always runs it.
+- The family-wide English UI policy applies to every product. PhotoLab has the
+  current automated audit; Cap and the remaining product surfaces must add
+  equivalent gates rather than relying on documentation alone.
 - Managed-runtime manifests, staging, OpenCV build/audit recipes and the
   deterministic wheel packager select the SDK, packager and automation-host
   gates together. Stock development wheels can therefore never become release

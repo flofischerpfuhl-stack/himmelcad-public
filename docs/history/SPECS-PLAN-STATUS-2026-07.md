@@ -1,16 +1,20 @@
 # Specs & Plan — implementation status (independent v0)
 
+Status: archived implementation snapshot. It does not define current Builder
+priority or completion.
+
 Started after review defaults (2026-07-18).
 
 Rebased after owner review (2026-07-19): the plan prototype is
 **Excalidraw-first**. Excalidraw remains the primary sheet interaction engine;
-HimmelCAD supplies paper units, multi-sheet metadata, model-view descriptors,
+Himmel:CAD supplies paper units, multi-sheet metadata, model-view descriptors,
 templates and deterministic exports around it. See
-`docs/PROGRAM-MILESTONES-2026-07-19.md`.
+`docs/history/PROGRAM-MILESTONES-2026-07-19.md`. That file is historical and
+does not define current priorities.
 
 ## Independence
 
-Neither feature is wired to HimmelCAD core entities, layers, or the render viewer yet.
+Neither feature is wired to Himmel:CAD core entities, layers, or the render viewer yet.
 Both are Builder subtools (task islands), English UI, local persistence.
 
 ## Specifications (`@himmelcad/specs`)
@@ -41,6 +45,6 @@ Both are Builder subtools (task islands), English UI, local persistence.
    while keeping Excalidraw scene coordinates and interactions intact
 2. Add paper bounds, page navigation and export clipping around the canvas
 3. Build frame/title-block/stamp libraries as ordinary selectable Excalidraw
-   groups plus typed HimmelCAD metadata
+   groups plus typed Himmel:CAD metadata
 4. Add model-view descriptors and deterministic PDF/SVG/image export
 5. Add the Spec attribute editor and later bind `drawFolder` to the model tree

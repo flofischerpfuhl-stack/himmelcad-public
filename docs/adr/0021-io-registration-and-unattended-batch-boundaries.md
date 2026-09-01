@@ -6,7 +6,7 @@
 
 ## Context
 
-HimmelCAD needs reusable import/export providers, interactive survey/BIM
+Himmel:CAD needs reusable import/export providers, interactive survey/BIM
 placement workflows and configurable PhotoLab processing recipes. Treating all
 three as one generic workflow introduces two failures: product UIs begin to own
 format logic, and a long-running PhotoLab batch can unexpectedly stop for a

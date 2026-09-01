@@ -26,7 +26,7 @@ Candidates to evaluate later (must re-check license before link):
 
 - Commercial: Swift Navigation, Point One, u-blox SDKs
 - Permissive research ports (verify case-by-case)
-- Clean-room float/AR under BUSL/MIT by HimmelCAD (future)
+- Clean-room float/AR under BUSL/MIT by Himmel:CAD (future)
 
 Until then Cap still delivers the **capture + NTRIP + `.hcap` + PhotoLab prior**
 pipeline that makes dual-freq + corrections usable for the &lt;30 cm go/no-go

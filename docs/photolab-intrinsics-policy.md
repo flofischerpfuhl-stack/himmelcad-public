@@ -1,6 +1,7 @@
 # PhotoLab intrinsics refinement policy
 
-Status: researched M4 implementation decision, 2026-07-19.
+Status: current implementation policy, decided from research and Golden-dataset
+evidence on 2026-07-19.
 
 ## Decision
 

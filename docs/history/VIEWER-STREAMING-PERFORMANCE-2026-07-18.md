@@ -1,6 +1,9 @@
 # Viewer streaming performance pass
 
-Status: safe pass implemented; invasive follow-ups deferred until subjective
+Status: archived optimization report. Reproduce measurements on the current
+revision before using them as evidence.
+
+The safe pass was implemented; invasive follow-ups were deferred until subjective
 viewer validation
 
 ## Constraints

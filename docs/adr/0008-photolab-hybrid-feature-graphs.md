@@ -1,58 +1,51 @@
-# ADR 0008: Getrennte Feature-Graphen und messbare Hybrid-Auswahl
+# ADR 0008: Separate feature graphs and measurable hybrid selection
 
 ## Status
 
-Angenommen.
+Accepted.
 
-## Kontext
+## Context
 
-PhotoLab kombiniert ALIKED/LightGlue, SIFT/LightGlue und DeDoDe-v2-G. Die
-Keypoint-Indizes der drei Verfahren haben keine gemeinsame Semantik. Ein
-ungeprüftes Zusammenkopieren ihrer SQLite-Tabellen würde Beobachtungen
-vertauschen oder Duplikate als zusätzliche Evidenz zählen.
+PhotoLab combines ALIKED/LightGlue, SIFT/LightGlue, and DeDoDe-v2-G. Keypoint
+indices from these methods have no shared meaning. Merging their SQLite tables
+without a tested identity model would exchange observations or count duplicates
+as additional evidence.
 
-DeDoDe läuft aus Lizenz-, Trust- und Hardwaregründen in einem separaten,
-signierten Offline-Worker. COLMAP bleibt für Kameramodell, epipolare Prüfung,
-Trackbildung und Sparse Reconstruction zuständig.
+For licensing, trust, and hardware isolation, DeDoDe runs in a separate signed
+offline worker. COLMAP remains responsible for camera models, epipolar
+verification, track formation, and sparse reconstruction.
 
-## Entscheidung
+## Decision
 
-- Jeder Matcher besitzt eine eigene COLMAP-Datenbank.
-- DeDoDe-Keypoints werden nach `(CameraEntityId, workerFeatureId)` stabil
-  aggregiert. Widersprüchliche Koordinaten desselben Features brechen den Lauf
-  ab.
-- Die Brücke verwendet ausschließlich COLMAPs öffentliche Textformate und die
-  CLI-Kommandos `feature_importer`, `matches_importer` und
-  `geometric_verifier`.
-- Die 128 Import-Deskriptorwerte sind deterministische Sentinelwerte. Sie
-  gelangen nie in einen Deskriptormatcher; ausschließlich die expliziten
-  DeDoDe-Paare werden importiert und anschließend geometrisch geprüft.
-- Im Hybridmodus werden globale und inkrementelle Rekonstruktionen für alle
-  drei getrennt verifizierten Feature-Graphen ausgeführt.
-- „Alle Kandidatenpaare“ bezeichnet den vor dem Lauf eingefrorenen Pair Graph,
-  nicht automatisch alle quadratischen Bildkombinationen. `Quality Hybrid`
-  verwendet für geordnete Aufnahmefolgen einen beidseitig überlappenden
-  Sequenzgraphen mit 24 Nachbarn; ALIKED/LightGlue und SIFT verarbeiten jede
-  dieser Kanten unabhängig. Nur `Maximum Robustness` verlangt den
-  vollständigen quadratischen Graphen. Kalibriergruppen dürfen die
-  Aufnahmefolge dabei nicht umsortieren.
-- Jede erfolgreiche Rekonstruktion wird mit `model_converter` in das
-  öffentliche COLMAP-Textformat überführt. Die Auswahl erfolgt deterministisch
-  nach registrierten Bildern, gültigen Beobachtungen, 3D-Punkten und kleinerem
-  mittleren Reprojektionsfehler. Erst bei vollständigem Gleichstand gelten die
-  Nutzerpräferenz, Global Mapper und eine feste Store-Reihenfolge.
-- Das ausgewählte Modell wird nach `sparse-selected/0` kopiert. Alle dichten
-  Folgeprodukte und die publizierte Sparse-Artefaktbeschreibung verwenden nur
-  diesen kanonischen Pfad.
-- Fehlgeschlagene Kandidaten werden im Command-Protokoll erhalten. Es gibt
-  keinen stillen Fallback von einem angeforderten DeDoDe-Lauf auf nur
-  ALIKED/SIFT.
+- Each matcher owns a separate COLMAP database.
+- DeDoDe keypoints are stably aggregated by
+  `(CameraEntityId, workerFeatureId)`. Conflicting coordinates for the same
+  feature fail the run.
+- The bridge uses only COLMAP's public text formats and the `feature_importer`,
+  `matches_importer`, and `geometric_verifier` CLI commands.
+- The 128 imported descriptor values are deterministic sentinels. They never
+  enter a descriptor matcher; only explicit DeDoDe pairs are imported and then
+  geometrically verified.
+- Hybrid mode runs global and incremental reconstruction for all three
+  separately verified feature graphs.
+- “All candidate pairs” means the pair graph frozen before execution, not every
+  quadratic image combination by default. For ordered captures, Quality Hybrid
+  uses a bidirectional 24-neighbor sequence graph, and ALIKED/LightGlue and SIFT
+  process every edge independently. Only Maximum Robustness requires the full
+  quadratic graph. Calibration groups must not reorder the capture sequence.
+- Every successful reconstruction is converted to COLMAP's public text format
+  with `model_converter`. Selection is deterministic by registered images,
+  valid observations, 3D points, and then lower mean reprojection error. Only a
+  complete tie uses user preference, Global Mapper, and a fixed store order.
+- The selected model is copied to `sparse-selected/0`. All dense downstream
+  products and the published sparse artifact use only this canonical path.
+- Failed candidates remain in the command record. A requested DeDoDe run never
+  silently falls back to ALIKED/SIFT only.
 
-## Folgen
+## Consequences
 
-Die Verfahren werden auf Rekonstruktionsebene als Ensemble fusioniert, ohne
-inkompatible Feature-Indizes zu vermischen. Der Hybridmodus benötigt mehr
-Rechenzeit und Speicher, kann aber niemals allein wegen einer internen
-Tie-Break-Entscheidung ein statistisch schwächeres Modell auswählen. Eine
-spätere echte Track-Level-Fusion braucht einen eigenen, getesteten
-Multi-Descriptor-Trackbuilder und eine neue ADR.
+Methods are fused as a reconstruction-level ensemble without mixing
+incompatible feature identities. Hybrid mode costs more time and memory but
+cannot select a statistically weaker model merely because of an internal tie
+break. Future track-level fusion requires a tested multi-descriptor track
+builder and a new ADR.

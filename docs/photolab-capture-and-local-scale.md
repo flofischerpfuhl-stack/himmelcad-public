@@ -1,7 +1,7 @@
 # PhotoLab capture sources, video and local scale
 
-Status: M5 implementation contract, 2026-07-20. ADR 0023 remains the
-architectural decision for non-CRS projects.
+Status: current implementation contract, 2026-07-20. ADR 0023 remains the
+architectural authority for non-CRS projects.
 
 ## Capture sources
 

@@ -1,4 +1,8 @@
-# Implementation gate answers (owner, 2026-07-21)
+# Historical Cap implementation gate answers (owner, 2026-07-21)
+
+Status: archived. These answers describe the gate used for the first MVP. Newer
+normative product and UI documents override them, including the English-only UI
+decision.
 
 | ID | Answer |
 | --- | --- |

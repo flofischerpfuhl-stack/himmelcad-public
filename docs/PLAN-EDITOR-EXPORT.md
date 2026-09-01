@@ -1,5 +1,8 @@
 # Plan editor export fidelity
 
+Status: current implemented export contract. Limitations listed here are part
+of the contract until code and verification update them together.
+
 The Plan editor exports a deterministic multi-sheet SVG/PDF bundle and a machine-readable
 `*-fidelity.json` report. PNG is rendered from the SVG in the active browser.
 

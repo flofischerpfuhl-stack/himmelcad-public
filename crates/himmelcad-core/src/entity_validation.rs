@@ -2334,6 +2334,31 @@ mod tests {
     }
 
     #[test]
+    fn geometry_hash_survives_json_roundtrip_for_survey_coordinates() {
+        let geometry = GeometryObject::Curve {
+            curve: Box::new(CurveGeometry::LineSegment {
+                start: Position {
+                    x: 90_830.419_027_269_59,
+                    y: 67_266.875_151_353_3,
+                    z: Some(0.0),
+                },
+                end: Position {
+                    x: 90_829.459_359_580_91,
+                    y: 67_263.736_219_780_91,
+                    z: Some(0.0),
+                },
+            }),
+        };
+        let expected = geometry_object_content_hash(&geometry).expect("geometry hash");
+        let bytes = serde_json::to_vec(&geometry).expect("serialize geometry");
+        let decoded: GeometryObject = serde_json::from_slice(&bytes).expect("parse geometry");
+        assert_eq!(
+            geometry_object_content_hash(&decoded).expect("roundtrip geometry hash"),
+            expected
+        );
+    }
+
+    #[test]
     fn organizational_built_ins_reject_representations() {
         let geometry = point(1.0);
         let mut entity = canonical_entity(built_in_type::GROUP, &geometry);

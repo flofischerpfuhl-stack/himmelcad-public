@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://himmelcad.de/schemas/himmelcap-session-v1.schema.json",
-  "title": "HimmelCAD Cap session manifest v1",
-  "description": "Draft schema for manifest.json inside a .himmelcap package. Freeze during roadmap phase C1.",
+  "title": "Himmel:CAD Cap session manifest v1",
+  "description": "Schema for manifest.json inside a .hcap package.",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -128,13 +128,7 @@
       "properties": {
         "bestTier": {
           "type": "string",
-          "enum": [
-            "t0Consumer",
-            "t1DualFrequency",
-            "t2NtripFloat",
-            "t2NtripFix",
-            "unknown"
-          ]
+          "enum": ["t0Consumer", "t1DualFrequency", "t2NtripFloat", "t2NtripFix", "unknown"]
         },
         "correctionService": {
           "type": "object",

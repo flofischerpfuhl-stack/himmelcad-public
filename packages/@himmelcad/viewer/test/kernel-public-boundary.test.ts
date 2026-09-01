@@ -119,10 +119,10 @@ void test('kernel public API surface is exact and runtime internals stay private
       return `${symbol.name}:${marker}`;
     })
     .sort();
-  assert.equal(surface.length, 226);
+  assert.equal(surface.length, 228);
   assert.equal(
     createHash('sha256').update(surface.join('\n')).digest('hex'),
-    'f963f7788b1adf9a82e8187d18515ccc0e342d31691e7e6df48d92da45482e23',
+    '7e77523b579443a516dffc1f2645eb69b639e9852858ecd467a88cfa0469466a',
     `kernel API changed; review the stable contract before updating this gate:\n${surface.join('\n')}`,
   );
 
@@ -145,6 +145,7 @@ void test('kernel public API surface is exact and runtime internals stay private
     'projectPickCandidateForViewMode',
     'projectTargetPlaneCoordinate',
     'resizeViewingBox',
+    'resizeViewingBoxFace',
     'rotateViewingBox',
     'setViewingBoxMode',
     'viewingBoxAxes',
@@ -207,6 +208,30 @@ void test('React viewport is a thin session adapter without engine ownership', a
     'readonly streaming:',
   ]) {
     assert.equal(source.includes(forbidden), false, `React adapter owns ${forbidden}`);
+  }
+});
+
+void test('React viewport callback updates preserve the active viewer session', async () => {
+  const source = await readFile(path.join(packageRoot, 'src/kernel/KernelViewport.tsx'), 'utf8');
+  assert.match(source, /const callbacksRef = useRef\(/);
+  assert.match(source, /callbacksRef\.current\.onFrame\?\.\(event\.outcome\)/);
+
+  const effectDependencies = source.match(/\}, \[([\s\S]*?)\]\);\s*\n\s*return \(/)?.[1];
+  assert.ok(effectDependencies, 'viewport lifecycle effect dependencies are present');
+  for (const callback of [
+    'onReady',
+    'onActivePick',
+    'onCursorCoordinate',
+    'onFrame',
+    'onHardwarePolicy',
+    'onRuntimeQuality',
+    'onError',
+  ]) {
+    assert.equal(
+      effectDependencies.includes(callback),
+      false,
+      `${callback} must not recreate the viewer session`,
+    );
   }
 });
 

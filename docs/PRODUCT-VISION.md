@@ -1,225 +1,82 @@
-# HimmelCAD Product Vision
+# Himmel:CAD product vision
 
 ## Mission
 
-HimmelCAD is a family of 3D-first CAD and spatial tools for surveyors, civil
-engineers, architects, planners and later possibly precision-mechanics and
-3D-printing users.
+Himmel:CAD is a family of spatial applications primarily for construction,
+civil engineering, surveying, planning, and the people who capture or consume
+their data.
 
-The permanent priority order is:
+The family turns large real-world datasets into precise, interactive projects
+without separating point clouds, photogrammetry, CAD, rasters, meshes, splats,
+and browser delivery into incompatible products.
+
+Correctness, data integrity, and security are non-negotiable. Within those
+boundaries, the permanent product priority is:
 
 ```text
 Performance > intuitive UX > aesthetics
 ```
 
-Imports, conversions and pre-computation may be expensive. Once a project is
-open, interaction must stay fast and predictable on standard professional
-hardware.
+Import, conversion, indexing, and preprocessing may take time. Once data is
+available for work, interaction must remain fast and predictable.
 
-## Licensing Model
+## Product family
 
-HimmelCAD source is available under a license that forbids commercial use
-without a commercial license from the rights holder. Users may fork and build
-the software for private, hobby, research and non-commercial use.
+### Himmel:CAD Builder
 
-Every incorporated dependency or vendored/forked codebase must allow this use
-model. GPL-family code may be studied for algorithmic understanding only when
-the law permits it; it must not be copied, ported or derived into product code.
+Builder is the flagship product: a 3D-first Civil Engineering CAD optimized for
+point clouds, Gaussian splats, terrain and elevation models, meshes, BIM/Civil
+objects, and large spatial projects.
 
-The exact dependency rules live in `AGENTS.md` and
-`LICENSES/THIRD_PARTY.md`.
+3D-first does not mean 2D-incomplete. Builder provides first-class 2D and 2.5D
+construction, drafting, snapping, annotation, layout, and plan workflows on the
+same canonical entities and commands. It must not become a separate 2D CAD with
+3D attached later.
 
-## Product Family
+### Himmel:CAD PhotoLab
 
-The canonical product names are **HimmelCAD Builder**, **HimmelCAD Assembler**,
-**HimmelCAD PhotoLab**, **HimmelCAD Cap**, **HimmelCAD WeltView**,
-**HimmelCAD TestFlight**, and **HimmelCAD ChronoGit**. Product UI, package
-metadata, release artifacts, and current documentation use these names; the
-shorter names below are only unambiguous prose shorthand. **HimmelCAD Cap** may
-appear in marketing and UI as **himmel:cap**.
+PhotoLab is the photogrammetric processing product. It turns image, camera,
+control, and capture data into measurable depth products, point clouds,
+elevation models, orthomosaics, meshes, and Gaussian splats with explicit
+lineage and accuracy reporting.
 
-### HimmelCAD Builder
+PhotoLab is prioritized as the first finished product because its product
+boundary is smaller than Builder's. Its outputs are normal Himmel:CAD entities
+that Builder and WeltView can consume.
 
-The first implemented product foundation and the main 3D-first CAD. Further
-productization is paused while PhotoLab becomes the current delivery target.
-Builder starts point-cloud-first, but its architecture must already
-allow tiled meshes, surfaces, CAD primitives, solids, BIM-like objects, photos, splats,
-attributes, scripting and future read-only browser viewing.
+### Himmel:CAD Cap
 
-### HimmelCAD PhotoLab
+Cap is the Android/iOS field-capture application. It packages phone imagery,
+poses, sensor observations, and quality evidence into `.hcap` sessions for
+PhotoLab. It is designed for simple field capture and honest quality feedback,
+not as a professional survey controller or an on-device reconstruction suite.
 
-Current product focus: a near-full Agisoft Metashape alternative with an
-additional Gaussian-splat pipeline. The first finished product target includes
-image/RTK import, explicit horizontal and vertical CRS transformation, photo
-alignment, GCP/checkpoint adjustment, measurable depth images, dense point
-clouds, DSM/DTM, orthomosaics, textured terrain/meshes and Gaussian splats.
+### Himmel:CAD WeltView
 
-The binding product and implementation concept is documented in
-`photolab/PHOTOLAB-CONCEPT.md` and `photolab/implementation-plan.html`.
+WeltView is the browser viewer for shared Himmel:CAD projects. It supports
+viewing, inspection, visibility and display control, measurement, and other
+read-only project interactions without gaining canonical mutation authority.
 
-PhotoLab outputs must become normal HimmelCAD entities, not a separate
-one-off project type.
+### Reserved names
 
-### HimmelCAD Cap
+ChronoGit, Assembler, and TestFlight are reserved product concepts. They do not
+authorize implementation work. Active products may retain generally useful
+foundations such as immutable resources and journaled commands, but must not
+pay speculative product complexity for reserved concepts.
 
-Mobile capture app (Android and iOS) for **non-surveyors** without professional
-field equipment. Operators record a scene with a video-like UX; the app writes
-a single **`.himmelcap`** session package after short on-device processing.
-PhotoLab imports that package with weighted GNSS priors. MVP accuracy path is
-**phone-only** (dual-frequency handset recommended; optional NTRIP on Android).
-External RTK accessories and mandatory GCPs are out of MVP scope.
+## Shared product contract
 
-Binding docs: `docs/himmelcap/` and ADR 0027. Application root: `apps/cap/`
-(stack reserved until UI brief + stack gate). Marketing shorthand: **himmel:cap**.
-
-### HimmelCAD WeltView
-
-Browser-based read-only viewer for Builder projects. It must show the same
-entities and display modes as Builder where browser hardware allows it.
-
-Allowed interactions:
-
-- inspect entity properties,
-- toggle visibility/display modes,
-- measure interactively,
-- later attach or view IoT/live data.
-
-Disallowed by default:
-
-- modifying canonical project entities.
-
-Open decision: whether large projects are always downloaded client-side,
-streamed over HTTP range requests, or served through a future backend. The
-viewer architecture must keep all three possible until that decision is made.
-
-### HimmelCAD ChronoGit
-
-Possible future semantic version-control system for HimmelCAD projects. It is
-not committed as a product yet, but Builder must remain compatible with it:
-immutable objects, command journal, semantic entity IDs and meaningful diffs.
-
-### HimmelCAD Assembler
-
-Possible precision-mechanics / 3D-printing twin of Builder. Not currently
-planned for implementation, but entity and command design should avoid
-unnecessary civil/survey-only assumptions.
-
-There is deliberately no Assembler application directory yet. The name is
-reserved in product documentation until an implementation track is approved.
-
-### HimmelCAD TestFlight
-
-Possible simulation-oriented product: time-dependent 3D entities, interactive
-entities, scripted behavior and game-engine-like simulation workflows.
-
-Examples:
-
-- terrain/runoff simulation,
-- vehicle sweep paths,
-- wind/solver integrations,
-- entities with executable scripts.
-
-Not currently committed as a product. The core model must still preserve a
-future time dimension for attributes and simulation overlays.
-
-## Shared Product Rules
-
-- All products must remain visually compatible with the VSCode Dark Islands
-  aesthetic already used in Builder.
-- Electron is the desktop shell for product apps that need native file access.
-- WeltView must run in browsers on desktop and eventually mobile.
-- Shared renderer/data packages must not import Electron.
-- Import is allowed to take time; runtime interaction is not.
-- All long-running work must report useful console progress, not only jump
-  from 0 to 100.
-- Every feature callable from UI should have a command ID and be console-callable
-  when the command system reaches that layer.
-- Python scripting must call the same command/entity APIs as the UI, not bypass
-  them.
-
-## Builder Entity Roadmap
-
-Entity types to keep in mind when designing the core model:
-
-1. Point clouds.
-   - Point attributes include intensity, confidence, classification, RGB,
-     return info and optional Gaussian/splat display data.
-   - For CAD/Civil workflows, Gaussian/splat data tied to a point cloud is
-     primarily a point-cloud display attribute. A standalone
-     `GaussianSplatCloud` entity is reserved for splat-only assets or PhotoLab
-     outputs that are not semantically a point cloud.
-2. 3D meshes.
-   - Triangle meshes, optionally with tiled photo textures.
-3. Surfaces.
-   - 2.5D triangle meshes / terrain-like surfaces, optionally textured.
-4. Polylines.
-   - Two-point lines are a polyline special case.
-   - Partially heightless polylines exist but only height-defined entities are
-     drawn in the 3D view.
-5. Points.
-   - 2D points, points without numbers and survey points are variants of the
-     same semantic point family.
-6. Solids.
-   - Computed volume bodies between meshes/surfaces, extruded 2D faces and
-     other geometry-first volumetric results.
-7. Objects.
-   - Semantic BIM/IFC/Civil objects such as walls, pipes, manholes and shafts.
-     Their display geometry may reference meshes, surfaces or solids, but the
-     entity remains an object with attributes and behavior.
-8. Labels / annotations.
-9. 2D orthophotos.
-   - Georeferenced raster images tiled into multiple resolutions at import.
-10. 2D panoramic photos.
-11. 3D panoramic photos.
-    - Laser-scan panoramas with depth information, usable for measuring.
-12. Dimensions.
-13. Circles.
-14. Arcs.
-15. Splines.
-16. Clothoids.
-17. 3D variants of circles, arcs, splines and clothoids.
-18. Alignments.
-    - Alignment = tuple of polylines, arcs and clothoids.
-    - With gradient: also 3D.
-    - With ramp band: continuous surface-like representation.
-    - With width band: continuous corridor/surface representation.
-    - With slopes: generated slope geometry from the continuous alignment
-      model.
-
-Every entity has a nested custom attribute table in addition to its required
-semantic/geometry properties.
-
-## Specifications, Layers and Styles
-
-Entities can be assigned to a specification or a free specification. A
-specification may map to layer/style behavior. This area is intentionally not
-fully designed yet.
-
-The guiding constraint: free user attributes, imported attributes and
-geometry/style-driving attributes must be separate enough that casual metadata
-cannot accidentally mutate geometry.
-
-Detailed data-model rules live in `docs/DATA-MODEL.md`.
-
-## Scripting Direction
-
-The complete app should eventually be controllable from Python through a shared
-out-of-process scripting sidecar and SDK. Embedding Python directly into the
-renderer or mutating project state from Python is not allowed.
-
-Python/AI agents should be able to:
-
-- call app commands,
-- query entities and attributes,
-- extract data into Python-native structures,
-- work efficiently with point clouds as arrays,
-- map polygonal/area data toward Shapely/GeoPandas-like structures where
-  license and distribution constraints allow it,
-- write modifications back through commands.
-
-Scripts must not directly mutate the canonical store or bypass journaled
-commands.
-ADR 0024 makes this operational through generated sync/async clients, paginated
-queries, bounded bulk-data leases and explicit capabilities. Network access is
-off by default, and installed LLM CLI harnesses remain adapters rather than
-project authorities.
+- Products share canonical entities, commands, IO providers, renderer,
+  automation protocol, design tokens, and UI patterns where applicable.
+- Product-specific UX may differ, but it must not fork shared domain truth.
+- Product UI is English and follows one Himmel:CAD visual language.
+- Every product capability has a discoverable UI path. Contextually relevant
+  entity commands should also be available from context menus.
+- Canonical state changes are journaled commands. Python and AI agents use the
+  same query and command contracts as product UI.
+- Large datasets stay streamed and bounded; app renderers never become the
+  permanent owner of complete datasets.
+- Long-running work exposes meaningful progress, cancellation, recovery, and
+  clear failure behavior.
+- No product silently invents coordinates, height, scale, CRS, precision, or
+  accuracy.

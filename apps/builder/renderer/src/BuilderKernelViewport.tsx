@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type DragEvent,
+  type PointerEvent as ReactPointerEvent,
 } from 'react';
 
 import type { EntityId, SnapKind, SnapResult, SourcePosition3, Vec3 } from '@himmelcad/data';
@@ -21,11 +22,16 @@ import {
   type KernelRgbaCaptureRequest,
   type KernelRgbaCaptureResult,
   type KernelRenderStyle,
+  type KernelViewingBoxAxis,
+  type KernelViewingBoxFace,
   type KernelViewingBoxState,
   type KernelViewMode,
   type KernelWorldCamera,
   type KernelWorldPoint,
   type Representation,
+  resizeViewingBoxFace,
+  rotateViewingBox,
+  setViewingBoxMode,
   viewingBoxAxes,
   viewingBoxClipVolume,
   viewingBoxFromViewport,
@@ -145,7 +151,52 @@ interface BuilderKernelViewportProps {
   readonly viewingBox?: KernelViewingBoxState | null;
   readonly placingViewingBoxCenter?: boolean;
   readonly onViewportPoint?: (position: SourcePosition3) => void;
+  readonly onViewingBoxChange?: (state: KernelViewingBoxState | null) => void;
 }
+
+interface ScreenPoint {
+  readonly x: number;
+  readonly y: number;
+}
+
+interface ViewingBoxFaceHandle {
+  readonly kind: 'face';
+  readonly axis: KernelViewingBoxAxis;
+  readonly face: KernelViewingBoxFace;
+  readonly point: ScreenPoint;
+  readonly screenAxis: ScreenPoint;
+  readonly pixelsPerWorldUnit: number;
+}
+
+interface ViewingBoxRingHandle {
+  readonly kind: 'ring';
+  readonly axis: KernelViewingBoxAxis;
+  readonly center: ScreenPoint;
+  readonly points: readonly ScreenPoint[];
+}
+
+type ViewingBoxHandle = ViewingBoxFaceHandle | ViewingBoxRingHandle;
+
+type ViewingBoxPointerInteraction =
+  | {
+      readonly kind: 'face';
+      readonly pointerId: number;
+      readonly startClientX: number;
+      readonly startClientY: number;
+      readonly startState: KernelViewingBoxState;
+      readonly handle: ViewingBoxFaceHandle;
+      moved: boolean;
+    }
+  | {
+      readonly kind: 'ring';
+      readonly pointerId: number;
+      readonly startClientX: number;
+      readonly startClientY: number;
+      readonly startState: KernelViewingBoxState;
+      readonly handle: ViewingBoxRingHandle;
+      readonly startAngle: number;
+      moved: boolean;
+    };
 
 export const BuilderKernelViewport = forwardRef<
   BuilderKernelViewportHandle,
@@ -159,6 +210,7 @@ export const BuilderKernelViewport = forwardRef<
     viewingBox = null,
     placingViewingBoxCenter = false,
     onViewportPoint,
+    onViewingBoxChange,
   },
   ref,
 ): JSX.Element {
@@ -169,15 +221,35 @@ export const BuilderKernelViewport = forwardRef<
   const loadedBoundsRef = useRef<Bounds | null>(null);
   const entityStylesRef = useRef(new Map<EntityId, KernelRenderStyle>());
   const entityExaggerationDatumsRef = useRef(new Map<EntityId, number>());
-  const callbacksRef = useRef({ onCursorSnap, onDropFiles, onLog, onViewportPoint });
+  const callbacksRef = useRef({
+    onCursorSnap,
+    onDropFiles,
+    onLog,
+    onViewportPoint,
+    onViewingBoxChange,
+  });
   const activeSourcePositionRef = useRef<SourcePosition3 | null>(null);
+  const viewingBoxRef = useRef(viewingBox);
+  const viewingBoxInteractionRef = useRef<ViewingBoxPointerInteraction | null>(null);
+  const pendingViewingBoxPreviewRef = useRef<KernelViewingBoxState | null>(null);
+  const viewingBoxPreviewFrameRef = useRef<number | null>(null);
   const pointSizeRef = useRef(pointSize);
   const viewModeRef = useRef<KernelViewMode>('3d');
   const automationClipIdsRef = useRef(new Set<string>());
-  callbacksRef.current = { onCursorSnap, onDropFiles, onLog, onViewportPoint };
+  callbacksRef.current = {
+    onCursorSnap,
+    onDropFiles,
+    onLog,
+    onViewportPoint,
+    onViewingBoxChange,
+  };
+  viewingBoxRef.current = viewingBox;
   const [cursor, setCursor] = useState<SourcePosition3 | null>(null);
   const [viewMode, setViewModeState] = useState<KernelViewMode>('3d');
   const [dragging, setDragging] = useState(false);
+  const [viewingBoxCursor, setViewingBoxCursor] = useState<'default' | 'grab' | 'grabbing'>(
+    'default',
+  );
 
   useEffect(() => {
     pointSizeRef.current = pointSize;
@@ -192,6 +264,16 @@ export const BuilderKernelViewport = forwardRef<
       viewingBox,
     );
   }, [viewingBox]);
+
+  useEffect(
+    () => () => {
+      if (viewingBoxPreviewFrameRef.current !== null) {
+        cancelAnimationFrame(viewingBoxPreviewFrameRef.current);
+      }
+      kernelRef.current?.setInteracting(false);
+    },
+    [],
+  );
 
   const frameAll = useCallback(() => {
     const kernel = kernelRef.current;
@@ -239,24 +321,13 @@ export const BuilderKernelViewport = forwardRef<
       },
       async loadCanonicalPackage(package_) {
         const kernel = await readyRef.current.promise;
-        const supported = package_.admissions.filter(
-          (admission) =>
-            admission.resolvedGeometry.kind === 'surface3d' ||
-            (admission.resolvedGeometry.kind === 'solid' &&
-              admission.resolvedGeometry.solid.kind === 'extrusion'),
+        const admissions: KernelCanonicalRenderAdmission[] = package_.admissions.map(
+          (admission) => ({
+            admission,
+            style: IFC_STYLE,
+          }),
         );
-        const unsupportedCount = package_.admissions.length - supported.length;
-        if (unsupportedCount > 0) {
-          callbacksRef.current.onLog(
-            'warn',
-            `IFC viewer projection skipped ${unsupportedCount.toLocaleString()} unsupported geometries`,
-          );
-        }
-        if (supported.length === 0) return [];
-        const admissions: KernelCanonicalRenderAdmission[] = supported.map((admission) => ({
-          admission,
-          style: IFC_STYLE,
-        }));
+        if (admissions.length === 0) return [];
         kernel.session.loadCanonical(admissions);
         const loaded = new Set(admissions.map(({ admission }) => admission.entity.id as EntityId));
         for (const id of loaded) {
@@ -420,10 +491,27 @@ export const BuilderKernelViewport = forwardRef<
               z: center.z ?? camera.target.z,
             }
           : camera.target;
-        const distance = Math.hypot(
+        const forward = normalizeVector({
+          x: camera.target.x - camera.eye.x,
+          y: camera.target.y - camera.eye.y,
+          z: camera.target.z - camera.eye.z,
+        });
+        const cameraDistance = Math.hypot(
           camera.eye.x - camera.target.x,
           camera.eye.y - camera.target.y,
           camera.eye.z - camera.target.z,
+        );
+        const targetDistance = dotVector(
+          {
+            x: target.x - camera.eye.x,
+            y: target.y - camera.eye.y,
+            z: target.z - camera.eye.z,
+          },
+          forward,
+        );
+        const distance = Math.max(
+          camera.projection.near * 2,
+          targetDistance > 0 ? targetDistance : cameraDistance,
         );
         const visibleHeight =
           camera.projection.kind === 'orthographic'
@@ -433,7 +521,9 @@ export const BuilderKernelViewport = forwardRef<
           center: target,
           visibleWidth: visibleHeight * camera.projection.aspect,
           visibleHeight,
-          visibleDepth: Math.max(visibleHeight, distance * 0.5),
+          visibleDepth: visibleHeight,
+          viewFraction: 0.25,
+          uniform: true,
         });
       },
       setViewingBox(state) {
@@ -467,6 +557,7 @@ export const BuilderKernelViewport = forwardRef<
   }, []);
 
   const handleCursor = useCallback((coordinate: KernelPickCandidate['worldPosition']) => {
+    activeSourcePositionRef.current = coordinate;
     setCursor(coordinate);
   }, []);
 
@@ -484,13 +575,232 @@ export const BuilderKernelViewport = forwardRef<
     if (paths.length > 0) void callbacksRef.current.onDropFiles(paths);
   }, []);
 
+  const commitViewingBox = useCallback((state: KernelViewingBoxState) => {
+    viewingBoxRef.current = state;
+    callbacksRef.current.onViewingBoxChange?.(state);
+  }, []);
+
+  const applyViewingBoxPreview = useCallback(
+    (state: KernelViewingBoxState, previewCap: boolean): void => {
+      viewingBoxRef.current = state;
+      const kernel = kernelRef.current;
+      if (!kernel) return;
+      kernel.session.setScopedClipVolume(
+        'builder:viewing-box',
+        viewingBoxClipVolume(state, previewCap),
+      );
+      drawViewingBoxOverlay(viewingBoxOverlayRef.current, hostRef.current, kernel, state);
+      kernel.requestFrame();
+    },
+    [],
+  );
+
+  const previewViewingBox = useCallback(
+    (state: KernelViewingBoxState): void => {
+      viewingBoxRef.current = state;
+      pendingViewingBoxPreviewRef.current = state;
+      if (viewingBoxPreviewFrameRef.current !== null) return;
+      viewingBoxPreviewFrameRef.current = requestAnimationFrame(() => {
+        viewingBoxPreviewFrameRef.current = null;
+        const pending = pendingViewingBoxPreviewRef.current;
+        pendingViewingBoxPreviewRef.current = null;
+        if (pending) applyViewingBoxPreview(pending, false);
+      });
+    },
+    [applyViewingBoxPreview],
+  );
+
+  const flushViewingBoxPreview = useCallback(
+    (state: KernelViewingBoxState): void => {
+      if (viewingBoxPreviewFrameRef.current !== null) {
+        cancelAnimationFrame(viewingBoxPreviewFrameRef.current);
+        viewingBoxPreviewFrameRef.current = null;
+      }
+      pendingViewingBoxPreviewRef.current = null;
+      applyViewingBoxPreview(state, true);
+    },
+    [applyViewingBoxPreview],
+  );
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const target = window as unknown as Record<string, unknown>;
+    const key = '__hcadBuilderViewingBoxDebug';
+    const previous = target[key];
+    target[key] = {
+      placeAtCameraTarget(): void {
+        const cameraTarget = kernelRef.current?.camera.worldCamera().target;
+        if (cameraTarget) callbacksRef.current.onViewportPoint?.(cameraTarget);
+      },
+      remove(): void {
+        viewingBoxRef.current = null;
+        kernelRef.current?.session.setScopedClipVolume('builder:viewing-box', null);
+        kernelRef.current?.requestFrame();
+        callbacksRef.current.onViewingBoxChange?.(null);
+      },
+      handles(): unknown {
+        const host = hostRef.current;
+        const kernel = kernelRef.current;
+        const state = viewingBoxRef.current;
+        if (!host || !kernel || !state) return null;
+        const geometry = viewingBoxOverlayGeometry(host, kernel, state);
+        const rect = host.getBoundingClientRect();
+        return geometry
+          ? {
+              host: { left: rect.left, top: rect.top },
+              state,
+              faces: geometry.faces,
+              rings: geometry.rings,
+            }
+          : null;
+      },
+    };
+    return () => {
+      if (previous === undefined) delete target[key];
+      else target[key] = previous;
+    };
+  }, []);
+
+  const handleViewingBoxPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (placingViewingBoxCenter || event.button !== 0) return;
+      const state = viewingBoxRef.current;
+      const host = hostRef.current;
+      const kernel = kernelRef.current;
+      if (!state || !host || !kernel) return;
+      const point = eventPoint(event, host);
+      const handle = hitTestViewingBoxHandle(viewingBoxOverlayGeometry(host, kernel, state), point);
+      if (!handle) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      kernel.setInteracting(true);
+      viewingBoxInteractionRef.current =
+        handle.kind === 'face'
+          ? {
+              kind: 'face',
+              pointerId: event.pointerId,
+              startClientX: event.clientX,
+              startClientY: event.clientY,
+              startState: state,
+              handle,
+              moved: false,
+            }
+          : {
+              kind: 'ring',
+              pointerId: event.pointerId,
+              startClientX: event.clientX,
+              startClientY: event.clientY,
+              startState: state,
+              handle,
+              startAngle: Math.atan2(point.y - handle.center.y, point.x - handle.center.x),
+              moved: false,
+            };
+      setViewingBoxCursor('grabbing');
+    },
+    [placingViewingBoxCenter],
+  );
+
+  const handleViewingBoxPointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const interaction = viewingBoxInteractionRef.current;
+      if (!interaction) {
+        if (placingViewingBoxCenter) return;
+        const state = viewingBoxRef.current;
+        const host = hostRef.current;
+        const kernel = kernelRef.current;
+        const nextCursor =
+          state && host && kernel
+            ? hitTestViewingBoxHandle(
+                viewingBoxOverlayGeometry(host, kernel, state),
+                eventPoint(event, host),
+              )
+              ? 'grab'
+              : 'default'
+            : 'default';
+        setViewingBoxCursor((current) => (current === nextCursor ? current : nextCursor));
+        return;
+      }
+      if (interaction.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const deltaX = event.clientX - interaction.startClientX;
+      const deltaY = event.clientY - interaction.startClientY;
+      if (Math.hypot(deltaX, deltaY) >= 4) interaction.moved = true;
+      if (interaction.kind === 'face') {
+        const signedDelta =
+          (deltaX * interaction.handle.screenAxis.x + deltaY * interaction.handle.screenAxis.y) /
+          interaction.handle.pixelsPerWorldUnit;
+        previewViewingBox(
+          resizeViewingBoxFace(
+            interaction.startState,
+            interaction.handle.axis,
+            interaction.handle.face,
+            signedDelta,
+            true,
+          ),
+        );
+        return;
+      }
+      const host = hostRef.current;
+      if (!host) return;
+      const point = eventPoint(event, host);
+      const angle = Math.atan2(
+        point.y - interaction.handle.center.y,
+        point.x - interaction.handle.center.x,
+      );
+      previewViewingBox(
+        rotateViewingBox(
+          interaction.startState,
+          interaction.handle.axis,
+          normalizeAngle(angle - interaction.startAngle),
+        ),
+      );
+    },
+    [placingViewingBoxCenter, previewViewingBox],
+  );
+
+  const finishViewingBoxInteraction = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const interaction = viewingBoxInteractionRef.current;
+      if (!interaction || interaction.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      viewingBoxInteractionRef.current = null;
+      kernelRef.current?.setInteracting(false);
+      if (!interaction.moved && event.type !== 'pointercancel') {
+        commitViewingBox(
+          setViewingBoxMode(
+            viewingBoxRef.current ?? interaction.startState,
+            interaction.kind === 'face' ? 'rotate' : 'resize',
+          ),
+        );
+      } else {
+        const finalState = viewingBoxRef.current ?? interaction.startState;
+        flushViewingBoxPreview(finalState);
+        commitViewingBox(finalState);
+      }
+      setViewingBoxCursor('grab');
+    },
+    [commitViewingBox, flushViewingBoxPreview],
+  );
+
   return (
     <div
       ref={hostRef}
       className={placingViewingBoxCenter ? `${styles.root} ${styles.placingCenter}` : styles.root}
+      style={placingViewingBoxCenter ? undefined : { cursor: viewingBoxCursor }}
+      onPointerDownCapture={handleViewingBoxPointerDown}
+      onPointerMoveCapture={handleViewingBoxPointerMove}
+      onPointerUpCapture={finishViewingBoxInteraction}
+      onPointerCancelCapture={finishViewingBoxInteraction}
       onPointerUp={(event) => {
         if (event.button !== 0 || !placingViewingBoxCenter) return;
-        const position = activeSourcePositionRef.current;
+        const position =
+          activeSourcePositionRef.current ?? kernelRef.current?.camera.worldCamera().target;
         if (position) callbacksRef.current.onViewportPoint?.(position);
       }}
       onDragEnter={(event) => {
@@ -517,7 +827,7 @@ export const BuilderKernelViewport = forwardRef<
             viewingBoxOverlayRef.current,
             hostRef.current,
             kernelRef.current,
-            viewingBox,
+            viewingBoxRef.current,
           )
         }
         onError={handleError}
@@ -576,31 +886,8 @@ function drawViewingBoxOverlay(
   context.setTransform(ratio, 0, 0, ratio, 0, 0);
   context.clearRect(0, 0, rect.width, rect.height);
   if (!kernel || !state) return;
-
-  const camera = kernel.camera.worldCamera();
-  const [axisX, axisY, axisZ] = viewingBoxAxes(state);
-  const corners = [-1, 1].flatMap((x) =>
-    [-1, 1].flatMap((y) =>
-      [-1, 1].map((z) => ({
-        x:
-          state.center.x +
-          x * axisX.x * state.halfExtents.x +
-          y * axisY.x * state.halfExtents.y +
-          z * axisZ.x * state.halfExtents.z,
-        y:
-          state.center.y +
-          x * axisX.y * state.halfExtents.x +
-          y * axisY.y * state.halfExtents.y +
-          z * axisZ.y * state.halfExtents.z,
-        z:
-          state.center.z +
-          x * axisX.z * state.halfExtents.x +
-          y * axisY.z * state.halfExtents.y +
-          z * axisZ.z * state.halfExtents.z,
-      })),
-    ),
-  );
-  const projected = corners.map((corner) => projectViewingBoxPoint(corner, camera, rect));
+  const geometry = viewingBoxOverlayGeometry(host, kernel, state);
+  if (!geometry) return;
   const edges = [
     [0, 1],
     [0, 2],
@@ -615,29 +902,128 @@ function drawViewingBoxOverlay(
     [5, 7],
     [6, 7],
   ] as const;
+  const computed = getComputedStyle(host);
+  const accent = computed.getPropertyValue('--hc-accent-base').trim() || computed.color;
+  const foreground = computed.getPropertyValue('--hc-fg-strong').trim() || computed.color;
   context.save();
   context.lineWidth = 1.25;
-  context.strokeStyle = state.enabled ? 'rgba(88, 203, 255, 0.92)' : 'rgba(150, 160, 170, 0.72)';
+  context.globalAlpha = state.enabled ? 0.92 : 0.58;
+  context.strokeStyle = state.enabled ? accent : foreground;
   context.setLineDash(state.enabled ? [5, 3] : [2, 4]);
   context.beginPath();
   for (const [fromIndex, toIndex] of edges) {
-    const from = projected[fromIndex];
-    const to = projected[toIndex];
+    const from = geometry.corners[fromIndex];
+    const to = geometry.corners[toIndex];
     if (!from || !to) continue;
     context.moveTo(from.x, from.y);
     context.lineTo(to.x, to.y);
   }
   context.stroke();
   context.setLineDash([]);
-  if (state.mode === 'resize') {
-    context.fillStyle = 'rgba(230, 248, 255, 0.96)';
-    for (const point of projected) {
-      if (point) context.fillRect(point.x - 2.5, point.y - 2.5, 5, 5);
+  context.globalAlpha = 1;
+  context.strokeStyle = accent;
+  context.fillStyle = foreground;
+  if (state.mode === 'rotate') {
+    for (const [index, ring] of geometry.rings.entries()) {
+      context.lineWidth = index === 0 ? 2.25 : 1.8;
+      context.setLineDash(index === 0 ? [] : index === 1 ? [7, 3] : [2, 3]);
+      drawPolyline(context, ring.points, true);
+    }
+    context.setLineDash([]);
+  } else {
+    for (const handle of geometry.faces) {
+      drawInwardFaceArrow(context, handle.point, geometry.center);
     }
   }
-  const center = projectViewingBoxPoint(state.center, camera, rect);
-  if (center) drawViewingBoxModeGlyph(context, center.x, center.y, state.mode);
   context.restore();
+}
+
+interface ViewingBoxOverlayGeometry {
+  readonly corners: readonly (ScreenPoint | null)[];
+  readonly center: ScreenPoint;
+  readonly faces: readonly ViewingBoxFaceHandle[];
+  readonly rings: readonly ViewingBoxRingHandle[];
+}
+
+function viewingBoxOverlayGeometry(
+  host: HTMLDivElement,
+  kernel: KernelViewportHandle,
+  state: KernelViewingBoxState,
+): ViewingBoxOverlayGeometry | null {
+  const rect = host.getBoundingClientRect();
+  const camera = kernel.camera.worldCamera();
+  const axes = viewingBoxAxes(state);
+  const extents = [state.halfExtents.x, state.halfExtents.y, state.halfExtents.z] as const;
+  const corners = [-1, 1].flatMap((x) =>
+    [-1, 1].flatMap((y) =>
+      [-1, 1].map((z) =>
+        projectViewingBoxPoint(
+          localViewingBoxPoint(state.center, axes, extents, [x, y, z]),
+          camera,
+          rect,
+        ),
+      ),
+    ),
+  );
+  const center = projectViewingBoxPoint(state.center, camera, rect);
+  if (!center) return null;
+  const axisNames = ['x', 'y', 'z'] as const;
+  const faces: ViewingBoxFaceHandle[] = [];
+  if (state.mode !== 'rotate') {
+    for (let axisIndex = 0; axisIndex < axes.length; axisIndex += 1) {
+      const axis = axes[axisIndex]!;
+      const extent = extents[axisIndex]!;
+      const axisName = axisNames[axisIndex]!;
+      for (const face of [-1, 1] as const) {
+        const worldPoint = addScaledPoint(state.center, axis, face * extent);
+        const point = projectViewingBoxPoint(worldPoint, camera, rect);
+        const positiveAxisPoint = projectViewingBoxPoint(
+          addScaledPoint(worldPoint, axis, 1),
+          camera,
+          rect,
+        );
+        if (!point || !positiveAxisPoint) continue;
+        const screenX = positiveAxisPoint.x - point.x;
+        const screenY = positiveAxisPoint.y - point.y;
+        const pixelsPerWorldUnit = Math.hypot(screenX, screenY);
+        if (pixelsPerWorldUnit < 1e-5) continue;
+        faces.push({
+          kind: 'face',
+          axis: axisName,
+          face,
+          point,
+          screenAxis: {
+            x: screenX / pixelsPerWorldUnit,
+            y: screenY / pixelsPerWorldUnit,
+          },
+          pixelsPerWorldUnit,
+        });
+      }
+    }
+  }
+  const rings: ViewingBoxRingHandle[] = [];
+  if (state.mode === 'rotate') {
+    for (let axisIndex = 0; axisIndex < axes.length; axisIndex += 1) {
+      const firstPlaneIndex = (axisIndex + 1) % 3;
+      const secondPlaneIndex = (axisIndex + 2) % 3;
+      const radius = Math.max(extents[firstPlaneIndex]!, extents[secondPlaneIndex]!) * 1.28;
+      const points: ScreenPoint[] = [];
+      for (let sample = 0; sample <= 72; sample += 1) {
+        const angle = (sample / 72) * Math.PI * 2;
+        const worldPoint = addScaledPoint(
+          addScaledPoint(state.center, axes[firstPlaneIndex]!, Math.cos(angle) * radius),
+          axes[secondPlaneIndex]!,
+          Math.sin(angle) * radius,
+        );
+        const point = projectViewingBoxPoint(worldPoint, camera, rect);
+        if (point) points.push(point);
+      }
+      if (points.length > 2) {
+        rings.push({ kind: 'ring', axis: axisNames[axisIndex]!, center, points });
+      }
+    }
+  }
+  return { corners, center, faces, rings };
 }
 
 function projectViewingBoxPoint(
@@ -680,31 +1066,126 @@ function projectViewingBoxPoint(
   };
 }
 
-function drawViewingBoxModeGlyph(
+function drawInwardFaceArrow(
   context: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  mode: KernelViewingBoxState['mode'],
+  point: ScreenPoint,
+  center: ScreenPoint,
 ): void {
-  context.strokeStyle = 'rgba(244, 250, 255, 0.96)';
-  context.fillStyle = 'rgba(10, 25, 35, 0.78)';
-  context.lineWidth = 1.4;
+  const towardCenter = normalizeScreenPoint({ x: center.x - point.x, y: center.y - point.y });
+  const perpendicular = { x: -towardCenter.y, y: towardCenter.x };
+  const tail = { x: point.x - towardCenter.x * 13, y: point.y - towardCenter.y * 13 };
+  const tip = { x: point.x + towardCenter.x * 6, y: point.y + towardCenter.y * 6 };
+  context.lineWidth = 2;
   context.beginPath();
-  context.arc(x, y, mode === 'rotate' ? 11 : 7, 0, Math.PI * 2);
-  context.fill();
+  context.moveTo(tail.x, tail.y);
+  context.lineTo(tip.x, tip.y);
+  context.moveTo(tip.x, tip.y);
+  context.lineTo(
+    tip.x - towardCenter.x * 7 + perpendicular.x * 4,
+    tip.y - towardCenter.y * 7 + perpendicular.y * 4,
+  );
+  context.moveTo(tip.x, tip.y);
+  context.lineTo(
+    tip.x - towardCenter.x * 7 - perpendicular.x * 4,
+    tip.y - towardCenter.y * 7 - perpendicular.y * 4,
+  );
   context.stroke();
-  if (mode === 'rotate') {
-    context.beginPath();
-    context.arc(x, y, 15, -Math.PI * 0.75, Math.PI * 0.55);
-    context.stroke();
-  } else {
-    context.beginPath();
-    context.moveTo(x - 13, y);
-    context.lineTo(x + 13, y);
-    context.moveTo(x, y - 13);
-    context.lineTo(x, y + 13);
-    context.stroke();
+}
+
+function drawPolyline(
+  context: CanvasRenderingContext2D,
+  points: readonly ScreenPoint[],
+  close: boolean,
+): void {
+  const first = points[0];
+  if (!first) return;
+  context.beginPath();
+  context.moveTo(first.x, first.y);
+  for (let index = 1; index < points.length; index += 1) {
+    const point = points[index]!;
+    context.lineTo(point.x, point.y);
   }
+  if (close) context.closePath();
+  context.stroke();
+}
+
+function hitTestViewingBoxHandle(
+  geometry: ViewingBoxOverlayGeometry | null,
+  point: ScreenPoint,
+): ViewingBoxHandle | null {
+  if (!geometry) return null;
+  let closest: { readonly handle: ViewingBoxHandle; readonly distance: number } | null = null;
+  for (const handle of geometry.faces) {
+    const distance = Math.hypot(point.x - handle.point.x, point.y - handle.point.y);
+    if (distance <= 15 && (!closest || distance < closest.distance)) closest = { handle, distance };
+  }
+  for (const handle of geometry.rings) {
+    const distance = distanceToPolyline(point, handle.points);
+    if (distance <= 9 && (!closest || distance < closest.distance)) closest = { handle, distance };
+  }
+  return closest?.handle ?? null;
+}
+
+function distanceToPolyline(point: ScreenPoint, points: readonly ScreenPoint[]): number {
+  let closest = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < points.length; index += 1) {
+    closest = Math.min(closest, distanceToSegment(point, points[index - 1]!, points[index]!));
+  }
+  return closest;
+}
+
+function distanceToSegment(point: ScreenPoint, start: ScreenPoint, end: ScreenPoint): number {
+  const deltaX = end.x - start.x;
+  const deltaY = end.y - start.y;
+  const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+  if (lengthSquared <= 1e-12) return Math.hypot(point.x - start.x, point.y - start.y);
+  const projection = Math.max(
+    0,
+    Math.min(1, ((point.x - start.x) * deltaX + (point.y - start.y) * deltaY) / lengthSquared),
+  );
+  return Math.hypot(
+    point.x - (start.x + projection * deltaX),
+    point.y - (start.y + projection * deltaY),
+  );
+}
+
+function eventPoint(event: ReactPointerEvent<HTMLDivElement>, host: HTMLDivElement): ScreenPoint {
+  const rect = host.getBoundingClientRect();
+  return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+}
+
+function normalizeAngle(angle: number): number {
+  return Math.atan2(Math.sin(angle), Math.cos(angle));
+}
+
+function normalizeScreenPoint(point: ScreenPoint): ScreenPoint {
+  const length = Math.hypot(point.x, point.y);
+  return length > 1e-6 ? { x: point.x / length, y: point.y / length } : { x: 1, y: 0 };
+}
+
+function addScaledPoint(
+  point: KernelWorldPoint,
+  direction: KernelWorldPoint,
+  scale: number,
+): KernelWorldPoint {
+  return {
+    x: point.x + direction.x * scale,
+    y: point.y + direction.y * scale,
+    z: point.z + direction.z * scale,
+  };
+}
+
+function localViewingBoxPoint(
+  center: KernelWorldPoint,
+  axes: readonly [KernelWorldPoint, KernelWorldPoint, KernelWorldPoint],
+  extents: readonly [number, number, number],
+  signs: readonly [number, number, number],
+): KernelWorldPoint {
+  let point = center;
+  for (let index = 0; index < axes.length; index += 1) {
+    point = addScaledPoint(point, axes[index]!, signs[index]! * extents[index]!);
+  }
+  return point;
 }
 
 function normalizeVector(vector: KernelWorldPoint): KernelWorldPoint {

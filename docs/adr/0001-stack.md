@@ -12,7 +12,7 @@ The browser/WASM direction remains unchanged.
 
 ## Context
 
-HimmelCAD Builder must be a 3D point-cloud-first CAD application with very
+Himmel:CAD Builder must be a 3D point-cloud-first CAD application with very
 large datasets, a precise cursor coordinate system, segmentation, and future
 support for meshes, Gaussian splats, BIM/IFC entities, browser viewing,
 semantic diffs, scripting, and simulations.

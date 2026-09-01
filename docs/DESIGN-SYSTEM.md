@@ -1,127 +1,145 @@
-# HimmelCAD Design System
+# Himmel:CAD design system
 
-Binding visual and interaction rules for **all** HimmelCAD products
-(PhotoLab, Builder, WeltView, later reserved products). Implementation lives in
-`packages/@himmelcad/theme` and `packages/@himmelcad/ui`. Product apps compose
-modules; they do not invent one-off chrome.
+This document defines the shared visual, interaction, and product-copy language
+for Builder, PhotoLab, Cap, and WeltView. Implementation lives in
+`@himmelcad/theme` and `@himmelcad/ui`; product apps compose these modules rather
+than inventing one-off chrome.
 
-## Brand writing
+## Brand and language
 
-| Context                                       | Form                                                                |
-| --------------------------------------------- | ------------------------------------------------------------------- |
-| Stylized wordmark / splash / marketing chrome | `himmel:CAD`, `HIMMEL:CAD`, or `himmel:cad` — **always with colon** |
-| Plain prose / docs / legal                    | `HimmelCAD` without colon is OK                                     |
-| Product suffix                                | space + product, e.g. `PHOTOLAB`, `BUILDER`                         |
+- The product family is written **Himmel:CAD** in documentation, marketing, and
+  product UI.
+- Product names are **Himmel:CAD Builder**, **Himmel:CAD PhotoLab**,
+  **Himmel:CAD Cap**, and **Himmel:CAD WeltView**.
+- Lowercase or uppercase wordmarks such as `himmel:CAD` and `HIMMEL:CAD` are
+  allowed when the supplied brand asset or display treatment requires them.
+- Source identifiers, package names, formats, and compatibility paths may use
+  `himmelcad` where punctuation is not valid.
+- All product UI copy is English. Documentation is English even when owner and
+  agent communicate in German.
+- Use sentence case unless a supplied wordmark requires another casing.
 
-## Fonts (exactly four roles)
+## Visual language
 
-| Role       | Token                                | Use                                                            |
-| ---------- | ------------------------------------ | -------------------------------------------------------------- |
-| UI         | `--hc-font-ui` (Inter)               | Ribbon, panels, tabs, forms, tree labels                       |
-| Mono       | `--hc-font-mono` (JetBrains Mono)    | Console, coordinates, hashes, numeric fields, code-like values |
-| Display    | `--hc-font-display` (Kamikaze)       | Compact wordmark in title bar                                  |
-| Display 3D | `--hc-font-display-3d` (Kamikaze 3D) | Console brand splash only                                      |
+Himmel:CAD uses a VS Code-inspired Dark Islands composition: a dark or light
+void with separate floating work surfaces. Panels are not assembled from
+unmodified browser borders or generic component-library defaults.
 
-Do not introduce extra typefaces. Do not use display fonts for body copy.
+- Use theme tokens; do not add one-off colors, shadows, radii, fonts, or spacing
+  when an existing token or pattern applies.
+- Reuse the typography roles defined by `@himmelcad/theme`: UI, mono, display,
+  and display-3D. Display faces are not body fonts.
+- Use one accent blue sparingly for primary actions, focus, and important links.
+  Status colors communicate success, warning, and error only.
+- Active and selected states use shared neutral or accent-outline patterns. Do
+  not invent translucent accent washes or gradients.
+- Animations are subtle, non-blocking, and normally complete within 200 ms.
 
-## Color
+## Shared controls
 
-- **One accent blue:** `--hc-accent-base` (`#1597f2`). Rare use: primary buttons, focus ring, solid accent selection border, links that truly need emphasis.
-- **No blue washes, soft fills, or accent gradients** for selection or hover.
-- **Status only:** success / warning / error — each as **filled** or **border** variant. No half-transparent status backgrounds unless a dedicated token is added later for both themes.
-- Themes: `.hc-theme-dark` (default) and `.hc-theme-light` (Cloudflare-like light void + white islands). Apply on `document.documentElement`.
+Product-owned checkboxes, radios, selects, menus, dialogs, toasts, empty states,
+tabs, and other recurring controls use shared themed modules.
 
-## Selection & pressed states
+Do not ship unstyled browser, Electron, Flutter, or operating-system defaults
+for product-owned UI. Preserve semantic HTML, focus behavior, keyboard access,
+screen-reader labels, and platform accessibility beneath the custom styling.
+OS-owned permission, credential, and file-selection surfaces may remain native
+when platform security or integration requires them.
 
-Two allowed kinds:
+Before creating a control:
 
-1. **Neutral active / pressed** — slightly brighter/darker grey (`--hc-press-bg` / `--hc-active-bg`), optional stronger border. Used for tabs, list rows, ribbon actions when “current”.
-2. **Accent outline** — solid 1px `--hc-accent-base` border, **no** accent fill. Used when the selection is a primary target (e.g. geometry selection chrome, critical radio).
+1. Search `@himmelcad/ui` and existing product usage.
+2. Reuse the closest established pattern, including typography and casing.
+3. If the pattern is cross-product, extend the shared module first.
+4. Keep a product-local control only when its domain interaction is genuinely
+   product-specific.
 
-Forbidden: translucent blue backgrounds, blue gradients, mixed ad-hoc styles.
+## App composition
 
-## Islands & tabs
+Desktop products use the shared shell language:
 
-- Panels float on `--hc-bg-void` with `--hc-radius-island` and `--hc-shadow-island`.
-- **Floating island tabs** (View/Images, Function/Properties, Tree/Layers) use `IslandTabs` with `variant="floating"`:
-  - **identical** surface as main islands: `--hc-bg-island` + `--hc-shadow-island` + `--hc-radius-island` (no different grey, no softer border),
-  - host must be `AppShell` `floatingLeftTabs` / `floatingViewportTabs` / `floatingRightTabs` so there is **no** outer radius wrapping the tabs,
-  - left edge aligned with the island they control,
-  - sentence case (not ALL CAPS),
-  - horizontally scrollable when many tabs,
-  - neutral active (label only; no accent wash).
-- **Console / bottom result tabs** use `IslandTabs` with `variant="strip"`: attached to the island surface, **not** floating pills.
-- Viewport overlay controls use `OverlayChip` and always anchor **bottom-left** (tools) / **bottom-right** (coordinates) in **every** workspace (View and Images).
+- top ribbon that can collapse while retaining discoverable actions;
+- left entity/navigation area;
+- central viewport or workspace;
+- right properties and active-function surfaces;
+- bottom console/results area;
+- persistent viewport coordinate display where spatial interaction applies.
 
-## Expand / collapse chevrons
+Panels remain collapsible. Tool parameters stay docked when the user must
+interact with the viewport. Focused multi-step, destructive, or spatially dense
+work may use a custom modal or full task surface.
 
-Standard tree disclosure:
+## Discoverability and contextual access
 
-- **Collapsed** → chevron right (`>`)
-- **Expanded** → chevron down (`v`)
+Every user-facing capability needs a visible, discoverable UI entry. Keyboard
+shortcuts and automation are additional access paths, not replacements for
+visible UI.
 
-Use `ExpandChevron` from `@himmelcad/ui`. Do not invert this. Ribbon collapse (whole chrome up/down) may use up/down for the ribbon itself only.
+Commands relevant to a selected entity should be evaluated for the entity
+context menu. Commands relevant to empty viewport space may belong in the quick
+function surface. Do not place unrelated global configuration into entity
+context menus merely to satisfy parity.
 
-## Controls
+Ribbon, context-menu, console, Python, and AI access must resolve to the same
+underlying command or query when they represent the same capability.
 
-Native browser checkboxes, selects, alerts, and toasts are **forbidden** in product UI.
+## Complete user flows
 
-Use shared modules:
+Design beyond the happy-path button. For every operation, determine:
 
-- `Checkbox`
-- `Select`
-- `EmptyState` (console-family empty: mono-friendly, same density as console body)
-- future: `Toast` / `Dialog` only as designed modules
+- how the user discovers and starts it;
+- where it can be confirmed, cancelled, closed, or resumed;
+- what happens on Escape, window close, project replacement, and app shutdown;
+- how conflicting or simultaneous operations are coordinated;
+- what remains visible after success, cancellation, and failure;
+- whether the result belongs in properties, the entity tree, jobs, reports, or
+  the console;
+- which sibling apps and automation clients expose the same capability.
 
-Sizes: default control height `--hc-size-control-h` (28px); compact variant allowed.
+Incompatible operations must be serialized, disabled with an explanation, or
+rejected explicitly. Separate panels do not imply safe concurrency.
 
-## Empty states
+## Progress, cancellation, and feedback
 
-Jobs, Accuracy, Report, and similar panes must match the **console family**:
+- Effectively instant actions do not flash indicators.
+- If the user can perceive waiting, show an inline busy state or spinner without
+  blocking unrelated interaction.
+- Operations long enough to justify progress report real phases or units when
+  available; do not fabricate a smooth percentage.
+- Expensive work is cancellable. Cancellation must be checked between bounded
+  units and must not publish partial canonical results.
+- If a short atomic boundary cannot be interrupted safely, communicate that
+  state and cancel at the next safe boundary.
+- Errors explain what failed, what remains safe, and what the user can do next.
 
-- same panel background language (`--hc-bg-island-lo` body),
-- same typography scale,
-- short title + one-line hint,
-- no large illustration stacks that make empty panes look like different products.
+The in-app console records important operation start, completion, duration,
+degraded fallbacks, and actionable failures. It complements task-local feedback
+instead of replacing it.
 
-## Function surface: panel vs popup
+## UI copy
 
-Heuristic for PhotoLab / Builder:
+- Prefer short labels and direct status text over explanatory paragraphs.
+- Do not spend permanent screen space explaining familiar controls.
+- Use tooltips or contextual help for unfamiliar icons and domain-specific
+  terms, not as a substitute for clear labels.
+- Empty states are concise and actionable.
+- Confirmation copy names the actual consequence.
+- Never claim accuracy, completion, recovery, or saved state that the product
+  has not verified.
 
-| Use **right Function panel** when                              | Use **modal / popup** when                                                           |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Parameters for an active tool while viewport stays interactive | Multi-step wizard that needs full focus (project New/Open risk, destructive confirm) |
-| Settings that benefit from seeing the scene/image              | Large dual-pane editors (CRS transform map) that would crush the viewport if docked  |
-| Short forms (align options, product params)                    | Blocking safety (overwrite project, discard unsaved)                                 |
-| Inspect / properties of selection                              | Rare “focus mode” report builders                                                    |
+## Input consistency
 
-Rule of thumb: **if the user still needs to click the view or compare to geometry, dock it.**  
-**If a wrong click in the view would be harmful or the form is a multi-stage commit, popup.**
+Shared spatial controls remain consistent across Builder, PhotoLab, and
+WeltView unless a product has a documented reason to differ. Selection,
+navigation, snapping, command completion, cancellation, and context-menu
+behavior must not change accidentally between workspaces.
 
-Import review can start docked; promote to popup only if field density forces it.
+Detailed camera, picking, and snapping behavior belongs to the viewer and input
+contracts rather than being duplicated here.
 
-## Import / transform layout
+## Verification
 
-Image import and GCP import share one pattern:
-
-- Same section order, field components, primary/secondary actions.
-- **Transform blocks (height and horizontal)** are twins:
-  - **Left:** current / source system
-  - **Right:** target system
-  - Search by EPSG; empty query shows five defaults (most common + recent user choices)
-  - Explicit **No transform** option on both
-
-## Console brand intro
-
-On first empty console session (product may override subtitle):
-
-1. Latin **Pater Noster** + crucifix ASCII art
-2. Latin **Ave Maria** + Madonna ASCII art
-3. Display splash `HIMMEL:CAD`
-4. Product subtitle line
-
-## Module library
-
-Shared building blocks live under `packages/@himmelcad/ui` and must stay Electron-free. Products only wire domain content into slots (tree, function body, viewport, bottom tabs).
-
-See also: `docs/CURRENT-DIRECTION.md`, `AGENTS.md` § UI.
+UI changes require proportional component or interaction tests and visual
+inspection. React and CSS changes must reach the running dev server through HMR
+or a verified reload. Mount-only behavior requires a remount. Electron main,
+preload, and sidecar changes require a full dev restart.

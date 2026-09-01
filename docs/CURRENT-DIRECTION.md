@@ -1,165 +1,57 @@
-# Current Direction (execution lanes)
+# Current direction
 
-Status: binding for parallel agent work as of 2026-07-17.  
-Does not replace ADRs. When this file and older roadmap prose disagree on
-**what to implement now**, this file wins for sequencing and scope freezes.
+Status: binding execution direction as of 2026-08-16.
 
-The owner-reviewed cross-product program and milestone order from 2026-07-19
-are binding in `docs/PROGRAM-MILESTONES-2026-07-19.md`. It supersedes older
-product sequencing prose where the two conflict. ADR 0021 defines the hard
-boundary between canonical IO, interactive import registration and unattended
-PhotoLab batch execution.
+This file defines current priority and sequencing. It does not override accepted
+ADRs. Completed plans and reports do not regain authority when they contain
+older priorities.
 
-## Active product focus
+## Product priority
 
-1. **Foundation stage A** — finish and gate the shared viewer core defined by
-   ADR 0016/0017 before expanding product or entity-catalog breadth.
-2. **HimmelCAD PhotoLab, Builder and WeltView integration** — consume the same
-   stable package facade after stage A; no product-specific renderer fork.
-3. **Further CAD and PhotoLab productization** — remains paused until the stage
-   A report is complete.
-4. **HimmelCAD Cap (preparation track)** — mobile phone-only capture upstream
-   for PhotoLab. Binding docs in `docs/himmelcap/` and ADR 0027. **C0 (repo
-   prep) is open.** Mobile UI implementation waits for the owner **UI brief**
-   and stack gate. Format schema freeze (C1) and PhotoLab importer design (C2)
-   may proceed without inventing Cap screens. Cap must not divert PhotoLab
-   release gates unless the owner re-prioritizes.
+1. **Finish PhotoLab as the first released product.** PhotoLab is prioritized
+   because its bounded workflow can reach a finished, testable product sooner.
+   Release work includes real datasets, cancellation and recovery, offline
+   runtimes, packaging, installation, visual quality, and honest reports.
+2. **Keep Builder as the flagship product.** Builder is the long-term center of
+   Himmel:CAD: a 3D-first Civil CAD with first-class 2D construction. Builder
+   work proceeds where it completes shared platform integration, canonical IO,
+   document commands, registration, properties, and essential CAD workflows.
+   Broad feature expansion must not displace the PhotoLab release goal.
+3. **Advance shared infrastructure when it directly serves the products.** Core,
+   renderer, IO, UI, automation, project format, and Python SDK remain shared.
+   No app receives a private canonical store, renderer, importer, or command
+   model.
+4. **Maintain Cap and WeltView without creating competing product programs.**
+   Cap has an implemented Flutter MVP and `.hcap` pipeline; further hardening is
+   driven by field validation. WeltView consumes the same read-only project and
+   renderer contracts as Builder.
 
-## Foundation stage A
+## Active boundaries
 
-Stage A is the current kernel/viewer sequence and is complete only when
-automated gates cover all of the following:
+- Canonical entities and commands: ADR 0016 and ADR 0019.
+- Unified Rust/wgpu renderer: ADR 0017. New work uses
+  `@himmelcad/viewer/kernel`; the Three.js surface is migration-only legacy.
+- Provider-neutral import/export: ADR 0018.
+- Interactive import registration and unattended PhotoLab execution are
+  separate lifecycles. A running PhotoLab batch never requests user input.
+- Automation: ADR 0024. UI, Python, and AI use the same canonical queries and
+  commands.
+- Shared UI: `docs/DESIGN-SYSTEM.md` and `@himmelcad/ui`.
 
-- one mixed view containing Potree point clouds, prepared mesh/TIN and authored
-  CAD, with prepared raster/splat content on the same path where available;
-- orbit, pan and zoom with separately calibrated idle and interaction ceilings;
-- presentation-only exaggeration, source-coordinate pick/clip/measurement,
-  provider-neutral entity placement without buffer rebuild, canonical CAD snaps
-  and partition-independent exact sections on the implemented topology path;
-- translation commit plus append-only undo/redo without reloading resident
-  streaming content;
-- a stable package facade for canonical, Potree, prepared mesh/TIN and generic
-  prepared hierarchy load, entity visibility and complete unload;
-- the ordinary WebGPU/WebGL2 correctness gates and the deliberately rare
-  low/mixed scale gate. Mainstream latency is reported honestly and never
-  weakened to manufacture a pass.
+## Scope freezes
 
-After all gates pass, report **A reached** and stop adding kernel breadth. App
-wiring may then begin minimally; new conformance families remain parked.
+Himmel:CAD ChronoGit, Assembler, and TestFlight remain reserved names. Do not
+implement their product surfaces without an explicit owner decision.
 
-**Status 2026-07-17: A reached.** The evidence and the deliberately unchanged
-mainstream latency non-pass are recorded in `docs/VIEWER-VERIFICATION.md`.
-The owner opened the next decision gate on 2026-07-17: resume the original
-canonical-entity and unified-viewer program beyond A. A remains the permanent
-regression floor; it is no longer a breadth freeze.
+Allowed future-compatible foundations are limited to capabilities already
+needed by active products: stable IDs, immutable objects, journaled commands,
+rebuildable indexes, and clean shared boundaries. Do not add diff UI, merge
+policy, simulation schema, manufacturing kernels, or other speculative product
+complexity.
 
-## Post-A viewer/entity program (active)
+## Completion discipline
 
-Der verbindliche Abschlussumfang, die fünf verbleibenden Viewer-Meilensteine
-und das Zeit-/Gate-Protokoll stehen in
-`docs/VIEWER-COMPLETION-MILESTONES.md`.
-
-Work now proceeds in dependency order rather than catalog order:
-
-1. canonical document authority, atomic command journal and project persistence;
-2. provider-neutral canonical import/export transactions and immutable resources;
-3. remaining canonical resource/definition semantics and CAD/Civil roundtrip;
-4. scan, raster, splat, BIM and solid provider depth;
-5. remaining viewer presentation, measurement and conformance paths;
-6. deliberately scheduled real-data, visual, mixed-scale and native-host gates.
-
-The resumed scope includes the items previously parked only because they did not
-block A: additional 3D Tiles/glTF conformance, IFC/BIM and DXF depth, panorama
-measurement, block/resource expansion, and native mobile sustained benchmarks.
-It does not by itself authorize unrelated product UI or reserved products.
-
-## Parallel work lanes
-
-| Lane            | Owns                                                                                                | Avoid                                          |
-| --------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Kernel / viewer | `crates/**`, `packages/@himmelcad/viewer/**`, entity/render contracts, ADR 0016/0017 implementation | Unrelated PhotoLab panel polish                |
-| PhotoLab UI     | `apps/photolab/renderer/**`, PhotoLab-only UX, later extraction into `@himmelcad/ui`                | `crates/**`, viewer/streaming/picking rewrites |
-| Cap             | `docs/himmelcap/**`, `schemas/himmelcap/**`, `apps/cap/**`, later Cap IO types/importer hooks      | Inventing Cap UI before owner brief; external RTK as MVP requirement |
-| Shared shell    | `@himmelcad/ui`, `@himmelcad/console`, `@himmelcad/theme`                                           | Only with coordination when both lanes need it |
-
-`@himmelcad/data` contracts follow the kernel lane. UI work should adapt or
-wait rather than invent parallel type shapes.
-
-## Scope freezes (until an explicit decision gate)
-
-### ChronoGit readiness tax
-
-**Allowed now** (and already desired for undo/scripting):
-
-- command journal,
-- immutable content-addressed objects,
-- stable entity IDs / revisions,
-- rebuildable indexes.
-
-**Frozen until ChronoGit feasibility (roadmap Phase 7 gate):**
-
-- semantic diff product UI,
-- merge policies for CAD collaboration,
-- Git/LFS product packaging as a ChronoGit feature,
-- extra schema complexity that only serves future diffs.
-
-Do not grow the MVP or PhotoLab for ChronoGit productization. Keep the
-storage shape compatible; do not implement ChronoGit.
-
-### Reserved products
-
-**HimmelCAD Assembler**, **HimmelCAD TestFlight**, and **HimmelCAD ChronoGit**
-remain reserved names only. No application directories, no feature work, and no
-agent tasks unless the owner opens an explicit decision gate.
-
-Design may keep a future time dimension and command-journal compatibility, but
-agents must not generalize every PhotoLab or Builder change for those products.
-
-### Render and entity sources of truth
-
-- Entity semantics: **ADR 0016** (`docs/adr/0016-canonical-entity-model.md`)
-  and `crates/himmelcad-core` canonical contracts. Older closed `EntityKind`
-  lists are a migration boundary, not the long-term model.
-- Renderer: **ADR 0017** is the permanent direction: one Rust/wgpu render core,
-  canonical entities, one global streaming/residency policy, f64 source/project
-  coordinates and WebGPU plus WebGL2 backends of the same engine. Do not add a
-  Three.js, Potree or Cesium provisional engine and do not couple high-end
-  quality ceilings to low-end hardware.
-- Import/export publication: **ADR 0018**; providers stage one validated canonical
-  package and never mutate a viewer or legacy project store directly.
-- Mutable entity authority: **ADR 0019**; document commands, view attachment and
-  tile residency are three distinct lifecycles.
-
-### Resumed after stage A
-
-- additional legacy 3D Tiles/glTF metadata corpora;
-- IFC/BIM depth, DXF catalog breadth, panorama measurement and block expansion;
-- hatch/linetype catalog expansion beyond the current contract;
-- native mobile sustained benchmarks.
-
-PhotoLab panel polish and Builder feature-CAD tools remain in their product/UI
-lanes. An audit finding is implemented according to the dependency order above;
-none may weaken an A invariant or turn a large-data provider into an in-memory
-shortcut.
-
-## Document authority
-
-| Topic                                        | Canonical file                                             |
-| -------------------------------------------- | ---------------------------------------------------------- |
-| Day-to-day agent rules                       | `AGENTS.md`                                                |
-| What to build _now_ / freezes / lanes        | `docs/CURRENT-DIRECTION.md` (this file)                    |
-| Cross-product M0–M11 program from 2026-07-19 | `docs/PROGRAM-MILESTONES-2026-07-19.md`                    |
-| Product family and long-term scope           | `docs/PRODUCT-VISION.md`                                   |
-| Phase history and exit criteria              | `docs/ROADMAP.md` (partially historical until rebaselined) |
-| Accepted architecture decisions              | `docs/adr/*`                                               |
-| Still-open product choices                   | `docs/OPEN-QUESTIONS.md`                                   |
-
-PhotoLab product detail remains in `photolab/PHOTOLAB-CONCEPT.md` and
-`photolab/implementation-plan.html`.
-
-## Design system
-
-Visual rules for all products: `docs/DESIGN-SYSTEM.md`.
-Shared modules: `packages/@himmelcad/ui` (IslandTabs, OverlayChip, Checkbox,
-Select, EmptyState, ExpandChevron, CrsTransformPair, shell).
-Tokens + light/dark: `packages/@himmelcad/theme/src/tokens.css`.
+A feature is not complete because a code path or UI exists. Its relevant user
+flow, conflicting-operation behavior, cancellation, failure recovery,
+persistence, automation surface, sibling-app impact, and proportional tests must
+be resolved or explicitly reported as remaining work.

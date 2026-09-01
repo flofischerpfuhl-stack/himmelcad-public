@@ -70,7 +70,7 @@ PhotoLab accepts `.hcap` ZIP; optional exploded folder with `manifest.json` for 
   "packageProfile": "office",
   "sessionId": "uuid",
   "createdAt": "2026-07-21T12:00:00.000Z",
-  "app": { "name": "HimmelCAD Cap", "version": "0.1.0" },
+  "app": { "name": "Himmel:CAD Cap", "version": "0.1.0" },
   "device": {
     "platform": "android",
     "manufacturer": "Google",

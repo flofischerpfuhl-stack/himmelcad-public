@@ -9,7 +9,7 @@
 - Upstream `LICENSE` SHA-256:
   `935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43`
 
-The tag and commit are frozen inputs. HimmelCAD must not track `main` or copy
+The tag and commit are frozen inputs. Himmel:CAD must not track `main` or copy
 unattributed snippets from a moving checkout. Every retained upstream file is
 listed in the slice manifest together with its original path and local
 modifications.
@@ -32,7 +32,7 @@ The useful upstream boundary is small:
   audited package declares MIT and has registry integrity
   `sha512-loGRve78NuZ5k8Z54ZSDNOtv3dVBM1SeBCRtm1EYtZiDIZ8SyMVcYpUGgFpGuNKk71+9/NuM9hvScrgf7+4E+A==`.
 
-HimmelCAD keeps its own message rendering and design system. It ports the row
+Himmel:CAD keeps its own message rendering and design system. It ports the row
 stability and scroll contract, not T3 Code's Tailwind markup, repository diff
 UI, terminal-context UI or application state.
 
@@ -46,15 +46,15 @@ T3 server:
 - the Codex, Claude and OpenCode driver/adapter implementations and their event
   normalization tests
 
-HimmelCAD forks this as a narrow `AgentHarnessDriver` SPI with discovery,
+Himmel:CAD forks this as a narrow `AgentHarnessDriver` SPI with discovery,
 capability probing, normalized events, turn interruption, approval forwarding
 and process cleanup. It does not import the upstream Effect runtime,
 orchestration database, worktree/VCS ownership, update manager, telemetry,
 account inspection or provider settings store. Installed CLIs remain the
-provider authorities and keep their own authenticated homes; HimmelCAD never
+provider authorities and keep their own authenticated homes; Himmel:CAD never
 copies tokens into a project.
 
-## HimmelCAD security boundary
+## Himmel:CAD security boundary
 
 - The managed Python environment has network access disabled by default.
 - A selected LLM CLI is a separate, explicit harness process. Its provider
@@ -63,7 +63,7 @@ copies tokens into a project.
   canonical-store path or mutation handle.
 - Canonical writes still use expected revisions and journaled commands.
 - Destructive, process-spawning, filesystem-expanding and externally visible
-  actions remain approval-gated in HimmelCAD even if a harness supports its own
+  actions remain approval-gated in Himmel:CAD even if a harness supports its own
   approval protocol.
 - Discovery probes version/help output with time and output bounds; it never
   invokes login, update or credential-reading commands.
@@ -95,5 +95,5 @@ license is mirrored beside it. The retained upstream inputs are:
 - `apps/web/src/components/chat/MessagesTimeline.tsx`
 
 No upstream persistence, project, worktree, Git, account, update, telemetry,
-remote or terminal-management source is retained. The UI uses a HimmelCAD-owned
+remote or terminal-management source is retained. The UI uses a Himmel:CAD-owned
 virtual list and design tokens; `@legendapp/list` is not incorporated.

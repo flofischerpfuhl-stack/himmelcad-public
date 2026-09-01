@@ -389,6 +389,10 @@ export interface AppFacadeMethods extends AppProtocolMethods {
     readonly request: { readonly sessionId: string; readonly maximumSamples: number };
     readonly response: RegistrationSourceSamples;
   };
+  readonly 'registration.samples.projectPointCloud': {
+    readonly request: { readonly datasetId: string; readonly maximumSamples: number };
+    readonly response: RegistrationSourceSamples;
+  };
   readonly 'registration.import.commit': {
     readonly request: { readonly sessionId: string };
     readonly response: IoImportCommit;
@@ -745,13 +749,13 @@ export class RegistrationClient {
     requireCapability(this.session, 'registration.import');
     validatePortableIdentity(sessionId, 'sessionId');
     if (
-      pairs.length < 3 ||
+      pairs.length < 1 ||
       pairs.some(
         (pair) => !validRegistrationPoint(pair.source) || !validRegistrationPoint(pair.target),
       )
     ) {
       throw new ContractValidationError(
-        'at least three finite source/target pairs are required',
+        'at least one finite source/target pair is required',
         'pairs',
       );
     }
@@ -791,6 +795,23 @@ export class RegistrationClient {
     return this.transport.request(
       'registration.samples.source',
       { sessionId, maximumSamples },
+      options,
+    );
+  }
+
+  async projectPointCloudSamples(
+    datasetId: string,
+    maximumSamples = 2_048,
+    options?: RpcRequestOptions,
+  ): Promise<RegistrationSourceSamples> {
+    requireCapability(this.session, 'registration.import');
+    validatePortableIdentity(datasetId, 'datasetId');
+    if (!Number.isInteger(maximumSamples) || maximumSamples < 3 || maximumSamples > 2_048) {
+      throw new ContractValidationError('maximumSamples must be from 3 through 2048', 'samples');
+    }
+    return this.transport.request(
+      'registration.samples.projectPointCloud',
+      { datasetId, maximumSamples },
       options,
     );
   }

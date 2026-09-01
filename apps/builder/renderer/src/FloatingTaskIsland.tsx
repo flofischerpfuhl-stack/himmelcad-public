@@ -23,10 +23,12 @@ const FOCUSABLE = [
 export function FloatingTaskIsland({
   children,
   modal = false,
+  hidden = false,
   onRequestClose,
 }: {
   children: ReactNode;
   modal?: boolean;
+  hidden?: boolean;
   onRequestClose?: () => void;
 }): JSX.Element {
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -61,7 +63,7 @@ export function FloatingTaskIsland({
   }, [constrain]);
 
   useEffect(() => {
-    if (!modal) return;
+    if (!modal || hidden) return;
     const previouslyFocused =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const frame = window.requestAnimationFrame(() => {
@@ -72,7 +74,7 @@ export function FloatingTaskIsland({
       window.cancelAnimationFrame(frame);
       previouslyFocused?.focus();
     };
-  }, [modal]);
+  }, [hidden, modal]);
 
   const keepModalFocus = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
     if (!modal) return;
@@ -136,6 +138,7 @@ export function FloatingTaskIsland({
 
   return (
     <div
+      hidden={hidden}
       className={`${styles.layer} ${modal ? styles.modalLayer : ''}`}
       role="presentation"
       onKeyDown={keepModalFocus}

@@ -117,6 +117,26 @@ pub struct CanonicalImportCommit {
     pub inventory: CanonicalImportInventory,
 }
 
+/// Byte-measured phase of durable canonical import publication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanonicalImportProgressPhase {
+    /// Provider artifacts are copied and hash-verified into the transaction.
+    Staging,
+    /// Verified transaction objects are atomically published into the project.
+    Publishing,
+}
+
+/// Incremental byte progress for one durable canonical import phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CanonicalImportProgress {
+    /// Current publication phase.
+    pub phase: CanonicalImportProgressPhase,
+    /// Bytes processed in this phase.
+    pub completed_bytes: u64,
+    /// Total bytes that will be processed in this phase.
+    pub total_bytes: u64,
+}
+
 /// Hash-framed deterministic journal record.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -689,6 +709,18 @@ impl CanonicalProjectStore {
         source_roots: &CanonicalImportSourceRoots,
         command_id: &str,
     ) -> Result<CanonicalImportCommit, CanonicalProjectStoreError> {
+        self.publish_import_package_with_progress(package, source_roots, command_id, &mut |_| {})
+    }
+
+    /// Publishes an import while reporting the real bytes copied and verified.
+    #[allow(clippy::too_many_lines)]
+    pub fn publish_import_package_with_progress(
+        &mut self,
+        package: &CanonicalImportPackage,
+        source_roots: &CanonicalImportSourceRoots,
+        command_id: &str,
+        progress: &mut dyn FnMut(CanonicalImportProgress),
+    ) -> Result<CanonicalImportCommit, CanonicalProjectStoreError> {
         package.validate()?;
         self.validate_source_roots(package, source_roots)?;
         let transaction = package.entity_create_transaction(command_id.to_owned())?;
@@ -701,6 +733,13 @@ impl CanonicalProjectStore {
 
         let mut stored_objects = BTreeMap::<String, CanonicalStoredObject>::new();
         let mut object_hashes = BTreeSet::<String>::new();
+        let staging_total = import_artifact_bytes(package, source_roots)?;
+        let mut staging_completed = 0_u64;
+        progress(CanonicalImportProgress {
+            phase: CanonicalImportProgressPhase::Staging,
+            completed_bytes: 0,
+            total_bytes: staging_total,
+        });
         for object in &package.objects {
             let bytes = serde_json::to_vec(&object.value)?;
             self.stage_bytes(
@@ -753,11 +792,19 @@ impl CanonicalProjectStore {
                 if !source.starts_with(&canonical_root) || !source.is_file() {
                     return Err(CanonicalProjectStoreError::UnsafeArtifactSource);
                 }
-                self.stage_file(
+                self.stage_file_with_progress(
                     &staged_objects,
                     &source,
                     &artifact.resource,
                     &mut object_hashes,
+                    &mut |bytes| {
+                        staging_completed = staging_completed.saturating_add(bytes);
+                        progress(CanonicalImportProgress {
+                            phase: CanonicalImportProgressPhase::Staging,
+                            completed_bytes: staging_completed.min(staging_total),
+                            total_bytes: staging_total,
+                        });
+                    },
                 )?;
                 let byte_length = artifact
                     .resource
@@ -785,11 +832,19 @@ impl CanonicalProjectStore {
                 if !source.starts_with(&canonical_root) || !source.is_file() {
                     return Err(CanonicalProjectStoreError::UnsafeArtifactSource);
                 }
-                self.stage_file(
+                self.stage_file_with_progress(
                     &staged_objects,
                     &source,
                     &artifact.resource,
                     &mut object_hashes,
+                    &mut |bytes| {
+                        staging_completed = staging_completed.saturating_add(bytes);
+                        progress(CanonicalImportProgress {
+                            phase: CanonicalImportProgressPhase::Staging,
+                            completed_bytes: staging_completed.min(staging_total),
+                            total_bytes: staging_total,
+                        });
+                    },
                 )?;
                 let byte_length = artifact
                     .resource
@@ -862,7 +917,23 @@ impl CanonicalProjectStore {
         sync_dir(&transaction_dir)?;
         cleanup.preserve();
 
-        if let Err(error) = self.publish_pending_files(&transaction_dir, &pending) {
+        let publishing_total = self.pending_publication_bytes(&transaction_dir, &pending)?;
+        let mut publishing_completed = 0_u64;
+        progress(CanonicalImportProgress {
+            phase: CanonicalImportProgressPhase::Publishing,
+            completed_bytes: 0,
+            total_bytes: publishing_total,
+        });
+        if let Err(error) =
+            self.publish_pending_files_with_progress(&transaction_dir, &pending, &mut |bytes| {
+                publishing_completed = publishing_completed.saturating_add(bytes);
+                progress(CanonicalImportProgress {
+                    phase: CanonicalImportProgressPhase::Publishing,
+                    completed_bytes: publishing_completed.min(publishing_total),
+                    total_bytes: publishing_total,
+                });
+            })
+        {
             return Err(CanonicalProjectStoreError::CommitPending {
                 transaction_dir,
                 reason: error.to_string(),
@@ -976,6 +1047,7 @@ impl CanonicalProjectStore {
         Ok(())
     }
 
+    #[cfg(test)]
     fn stage_file(
         &self,
         staged_objects: &Path,
@@ -983,12 +1055,34 @@ impl CanonicalProjectStore {
         resource: &GeometryResource,
         object_hashes: &mut BTreeSet<String>,
     ) -> Result<(), CanonicalProjectStoreError> {
+        self.stage_file_with_progress(staged_objects, source, resource, object_hashes, &mut |_| {})
+    }
+
+    fn stage_file_with_progress(
+        &self,
+        staged_objects: &Path,
+        source: &Path,
+        resource: &GeometryResource,
+        object_hashes: &mut BTreeSet<String>,
+        progress: &mut dyn FnMut(u64),
+    ) -> Result<(), CanonicalProjectStoreError> {
         validate_hash(&resource.object_hash)?;
         let staged = staged_objects.join(resource.object_hash.as_str());
         if staged.exists() {
-            verify_file(&staged, &resource.object_hash, resource.byte_length)?;
+            verify_file_with_progress(
+                &staged,
+                &resource.object_hash,
+                resource.byte_length,
+                progress,
+            )?;
         } else {
-            copy_new_verified(source, &staged, &resource.object_hash, resource.byte_length)?;
+            copy_new_verified_with_progress(
+                source,
+                &staged,
+                &resource.object_hash,
+                resource.byte_length,
+                progress,
+            )?;
         }
         let destination = object_path(&self.root, &resource.object_hash)?;
         if destination.exists() {
@@ -1064,34 +1158,93 @@ impl CanonicalProjectStore {
         transaction_dir: &Path,
         pending: &PendingCanonicalCommit,
     ) -> Result<(), CanonicalProjectStoreError> {
+        self.publish_pending_files_with_progress(transaction_dir, pending, &mut |_| {})
+    }
+
+    fn publish_pending_files_with_progress(
+        &self,
+        transaction_dir: &Path,
+        pending: &PendingCanonicalCommit,
+        progress: &mut dyn FnMut(u64),
+    ) -> Result<(), CanonicalProjectStoreError> {
         pending.validate(transaction_name(transaction_dir)?)?;
         for object_hash in &pending.object_hashes {
             let staged = transaction_dir.join("objects").join(object_hash.as_str());
             let destination = object_path(&self.root, object_hash)?;
             if destination.exists() {
-                verify_file(&destination, object_hash, None)?;
+                verify_file_with_progress(&destination, object_hash, None, progress)?;
             } else {
-                publish_immutable_file(&staged, &destination, object_hash, None)?;
+                publish_immutable_file_with_progress(
+                    &staged,
+                    &destination,
+                    object_hash,
+                    None,
+                    progress,
+                )?;
             }
         }
         for dataset_file in &pending.dataset_files {
             let staged = staged_dataset_path(transaction_dir, &dataset_file.dataset_id);
             let destination = dataset_inventory_path(&self.root, &dataset_file.dataset_id);
-            publish_named_file(&staged, &destination, &dataset_file.content_hash)?;
+            publish_named_file_with_progress(
+                &staged,
+                &destination,
+                &dataset_file.content_hash,
+                progress,
+            )?;
         }
         if let Some(expected_hash) = &pending.import_inventory_hash {
-            publish_named_file(
+            publish_named_file_with_progress(
                 &transaction_dir.join("import.json"),
                 &import_inventory_path(&self.root, &pending.journal.entry.command_id),
                 expected_hash,
+                progress,
             )?;
         }
-        publish_named_file(
+        publish_named_file_with_progress(
             &transaction_dir.join("journal.json"),
             &journal_path(&self.root, pending.journal.entry.sequence),
             &ObjectHash::of_bytes(&serde_json::to_vec(&pending.journal)?),
+            progress,
         )?;
         Ok(())
+    }
+
+    fn pending_publication_bytes(
+        &self,
+        transaction_dir: &Path,
+        pending: &PendingCanonicalCommit,
+    ) -> Result<u64, CanonicalProjectStoreError> {
+        let mut total = 0_u64;
+        for object_hash in &pending.object_hashes {
+            let staged = transaction_dir.join("objects").join(object_hash.as_str());
+            let destination = object_path(&self.root, object_hash)?;
+            let bytes = if destination.exists() {
+                fs::metadata(destination)?.len()
+            } else {
+                fs::metadata(staged)?.len().saturating_mul(2)
+            };
+            total = total.saturating_add(bytes);
+        }
+        for dataset_file in &pending.dataset_files {
+            total = total.saturating_add(
+                fs::metadata(staged_dataset_path(
+                    transaction_dir,
+                    &dataset_file.dataset_id,
+                ))?
+                .len()
+                .saturating_mul(2),
+            );
+        }
+        for path in [
+            transaction_dir.join("journal.json"),
+            transaction_dir.join("import.json"),
+        ] {
+            if path.is_file() {
+                total = total.saturating_add(fs::metadata(path)?.len().saturating_mul(2));
+            }
+        }
+        Ok(total)
     }
 
     fn recover_pending_transactions(&mut self) -> Result<(), CanonicalProjectStoreError> {
@@ -1342,6 +1495,51 @@ fn compact_hash(value: &impl Serialize) -> Result<ObjectHash, CanonicalProjectSt
     Ok(ObjectHash::of_bytes(&serde_json::to_vec(value)?))
 }
 
+fn import_artifact_bytes(
+    package: &CanonicalImportPackage,
+    source_roots: &CanonicalImportSourceRoots,
+) -> Result<u64, CanonicalProjectStoreError> {
+    let mut hashes = BTreeSet::new();
+    let mut total = 0_u64;
+    for dataset in &package.datasets {
+        let root = source_roots
+            .datasets
+            .get(&dataset.dataset_id)
+            .ok_or_else(|| CanonicalProjectStoreError::MissingDatasetRoot {
+                dataset_id: dataset.dataset_id.clone(),
+            })?;
+        for artifact in &dataset.artifacts {
+            if hashes.insert(artifact.resource.object_hash.as_str()) {
+                total = total.saturating_add(
+                    artifact
+                        .resource
+                        .byte_length
+                        .unwrap_or(fs::metadata(root.join(&artifact.relative_path))?.len()),
+                );
+            }
+        }
+    }
+    for resource_set in &package.resource_sets {
+        let root = source_roots
+            .resource_sets
+            .get(&resource_set.resource_set_id)
+            .ok_or_else(|| CanonicalProjectStoreError::MissingResourceSetRoot {
+                resource_set_id: resource_set.resource_set_id.clone(),
+            })?;
+        for artifact in &resource_set.resources {
+            if hashes.insert(artifact.resource.object_hash.as_str()) {
+                total = total.saturating_add(
+                    artifact
+                        .resource
+                        .byte_length
+                        .unwrap_or(fs::metadata(root.join(&artifact.relative_path))?.len()),
+                );
+            }
+        }
+    }
+    Ok(total)
+}
+
 fn usize_length(value: usize) -> Result<u64, CanonicalProjectStoreError> {
     u64::try_from(value).map_err(|_| CanonicalProjectStoreError::ObjectLengthMismatch {
         expected: u64::MAX,
@@ -1398,11 +1596,12 @@ fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<(), CanonicalProjectSto
     Ok(())
 }
 
-fn copy_new_verified(
+fn copy_new_verified_with_progress(
     source: &Path,
     destination: &Path,
     expected_hash: &ObjectHash,
     expected_length: Option<u64>,
+    progress: &mut dyn FnMut(u64),
 ) -> Result<(), CanonicalProjectStoreError> {
     let input = File::open(source)?;
     let output = OpenOptions::new()
@@ -1421,6 +1620,7 @@ fn copy_new_verified(
         }
         writer.write_all(&buffer[..read])?;
         hasher.update(&buffer[..read]);
+        progress(u64::try_from(read).unwrap_or(u64::MAX));
         length = length
             .checked_add(u64::try_from(read).map_err(|_| {
                 CanonicalProjectStoreError::ObjectLengthMismatch {
@@ -1465,14 +1665,32 @@ fn verify_file(
     expected_hash: &ObjectHash,
     expected_length: Option<u64>,
 ) -> Result<(), CanonicalProjectStoreError> {
+    verify_file_with_progress(path, expected_hash, expected_length, &mut |_| {})
+}
+
+fn verify_file_with_progress(
+    path: &Path,
+    expected_hash: &ObjectHash,
+    expected_length: Option<u64>,
+    progress: &mut dyn FnMut(u64),
+) -> Result<(), CanonicalProjectStoreError> {
     let mut file = File::open(path)?;
-    verify_open_file(&mut file, expected_hash, expected_length)
+    verify_open_file_with_progress(&mut file, expected_hash, expected_length, progress)
 }
 
 fn verify_open_file(
     file: &mut File,
     expected_hash: &ObjectHash,
     expected_length: Option<u64>,
+) -> Result<(), CanonicalProjectStoreError> {
+    verify_open_file_with_progress(file, expected_hash, expected_length, &mut |_| {})
+}
+
+fn verify_open_file_with_progress(
+    file: &mut File,
+    expected_hash: &ObjectHash,
+    expected_length: Option<u64>,
+    progress: &mut dyn FnMut(u64),
 ) -> Result<(), CanonicalProjectStoreError> {
     file.seek(SeekFrom::Start(0))?;
     let mut reader = BufReader::new(file);
@@ -1485,6 +1703,7 @@ fn verify_open_file(
             break;
         }
         hasher.update(&buffer[..read]);
+        progress(u64::try_from(read).unwrap_or(u64::MAX));
         length = length
             .checked_add(u64::try_from(read).map_err(|_| {
                 CanonicalProjectStoreError::ObjectLengthMismatch {
@@ -1521,23 +1740,40 @@ fn publish_immutable_file(
     expected_hash: &ObjectHash,
     expected_length: Option<u64>,
 ) -> Result<(), CanonicalProjectStoreError> {
-    verify_file(staged, expected_hash, expected_length)?;
-    publish_link(staged, destination)?;
-    verify_file(destination, expected_hash, expected_length)
+    publish_immutable_file_with_progress(
+        staged,
+        destination,
+        expected_hash,
+        expected_length,
+        &mut |_| {},
+    )
 }
 
-fn publish_named_file(
+fn publish_immutable_file_with_progress(
     staged: &Path,
     destination: &Path,
     expected_hash: &ObjectHash,
+    expected_length: Option<u64>,
+    progress: &mut dyn FnMut(u64),
 ) -> Result<(), CanonicalProjectStoreError> {
-    verify_file(staged, expected_hash, None)?;
+    verify_file_with_progress(staged, expected_hash, expected_length, progress)?;
+    publish_link(staged, destination)?;
+    verify_file_with_progress(destination, expected_hash, expected_length, progress)
+}
+
+fn publish_named_file_with_progress(
+    staged: &Path,
+    destination: &Path,
+    expected_hash: &ObjectHash,
+    progress: &mut dyn FnMut(u64),
+) -> Result<(), CanonicalProjectStoreError> {
+    verify_file_with_progress(staged, expected_hash, None, progress)?;
     if destination.exists() {
-        verify_file(destination, expected_hash, None)?;
+        verify_file_with_progress(destination, expected_hash, None, progress)?;
         return Ok(());
     }
     publish_link(staged, destination)?;
-    verify_file(destination, expected_hash, None)
+    verify_file_with_progress(destination, expected_hash, None, progress)
 }
 
 fn publish_link(staged: &Path, destination: &Path) -> Result<(), CanonicalProjectStoreError> {
@@ -1801,9 +2037,32 @@ mod tests {
         let package = package("scan-a", "dataset-a");
         let roots = dataset_sources("dataset-a", source);
         let mut store = CanonicalProjectStore::open(&root).expect("open");
+        let mut progress = Vec::new();
         let committed = store
-            .publish_import_package(&package, &roots, "import-a")
+            .publish_import_package_with_progress(&package, &roots, "import-a", &mut |update| {
+                progress.push(update)
+            })
             .expect("publish import");
+        for updates in [
+            progress
+                .iter()
+                .filter(|update| update.phase == CanonicalImportProgressPhase::Staging)
+                .collect::<Vec<_>>(),
+            progress
+                .iter()
+                .filter(|update| update.phase == CanonicalImportProgressPhase::Publishing)
+                .collect::<Vec<_>>(),
+        ] {
+            assert!(!updates.is_empty());
+            assert!(updates.windows(2).all(|pair| {
+                pair[0].completed_bytes <= pair[1].completed_bytes
+                    && pair[0].total_bytes == pair[1].total_bytes
+            }));
+            assert_eq!(
+                updates.last().expect("final progress").completed_bytes,
+                updates.last().expect("final progress").total_bytes
+            );
+        }
         assert_eq!(committed.journal_entry.sequence, 1);
         assert!(store
             .document()

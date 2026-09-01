@@ -131,7 +131,7 @@ loss, and the accepted loss remains in package provenance and later export
 plans. Binary DXF is likewise rejected because a complete unsupported-entity
 preflight cannot be guaranteed by this dependency version.
 
-DXF also has no provider-independent slot for HimmelCAD entity IDs or version
+DXF also has no provider-independent slot for Himmel:CAD entity IDs or version
 hashes. Every DXF export therefore declares
 `hcad.loss.dxf.canonical-identity@1` unless a future extension writes and
 revalidates that identity explicitly; geometry/style round-trip equivalence is
@@ -197,7 +197,7 @@ validated before publication.
 
 Gaussian-splat PLY import recognizes two complete schemas without field
 defaults: INRIA/3DGS (`scale_*` logarithms, WXYZ `rot_*`, logit `opacity`, SH
-DC and a complete degree-0..3 `f_rest_*` set) and the HimmelCAD prepared RGBA8
+DC and a complete degree-0..3 `f_rest_*` set) and the Himmel:CAD prepared RGBA8
 schema (linear scale, XYZW quaternion and RGBA bytes). Partial schemas,
 unknown vertex fields, non-finite values, zero quaternions, invalid SH sets,
 list properties and non-vertex payloads fail closed. PLY carries neither CRS

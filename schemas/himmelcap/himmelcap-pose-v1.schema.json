@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://himmelcad.de/schemas/himmelcap-pose-v1.schema.json",
-  "title": "HimmelCAD Cap pose line v1",
-  "description": "One JSON object per line in poses.jsonl inside a .himmelcap package. Draft until C1 freeze.",
+  "title": "Himmel:CAD Cap pose line v1",
+  "description": "One JSON object per line in poses.jsonl inside a .hcap package.",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -38,23 +38,11 @@
     },
     "tier": {
       "type": "string",
-      "enum": [
-        "t0Consumer",
-        "t1DualFrequency",
-        "t2NtripFloat",
-        "t2NtripFix",
-        "unknown"
-      ]
+      "enum": ["t0Consumer", "t1DualFrequency", "t2NtripFloat", "t2NtripFix", "unknown"]
     },
     "source": {
       "type": "string",
-      "enum": [
-        "osFused",
-        "dualFrequencyPvt",
-        "ntripRtk",
-        "fusedGnss",
-        "unknown"
-      ]
+      "enum": ["osFused", "dualFrequencyPvt", "ntripRtk", "fusedGnss", "unknown"]
     },
     "role": {
       "const": "priorOnly"

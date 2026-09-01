@@ -246,15 +246,9 @@ export const PhotolabKernelViewport = forwardRef<
       },
       async loadCanonicalPackage(admissions) {
         const kernel = await readyRef.current.promise;
-        const supported = admissions.filter(
-          (admission) =>
-            admission.resolvedGeometry.kind === 'surface3d' ||
-            (admission.resolvedGeometry.kind === 'solid' &&
-              admission.resolvedGeometry.solid.kind === 'extrusion'),
-        );
-        for (const admission of supported) unload(admission.entity.id as EntityId);
+        for (const admission of admissions) unload(admission.entity.id as EntityId);
         for (const handle of kernel.session.loadCanonical(
-          supported.map((admission) => ({
+          admissions.map((admission) => ({
             admission: currentAdmission(admission),
             style: MESH_STYLE,
           })),

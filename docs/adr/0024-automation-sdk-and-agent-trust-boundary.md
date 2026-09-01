@@ -7,13 +7,13 @@
 ## Context
 
 Python scripts and LLM harnesses need broad read and controlled write access to
-HimmelCAD without becoming alternate project authorities. Geometry can be too
+Himmel:CAD without becoming alternate project authorities. Geometry can be too
 large for JSON, and third-party CLI harnesses have different process and
 network behavior.
 
 ## Decision
 
-HimmelCAD exposes a versioned, language-neutral automation protocol over the
+Himmel:CAD exposes a versioned, language-neutral automation protocol over the
 same canonical queries, CAS revisions, commands and durable journal as product
 UI. Python sync and async clients are generated from that contract. Queries are
 paginated; large point, mesh, image and table data use bounded local bulk-data

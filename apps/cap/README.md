@@ -1,8 +1,8 @@
-# himmel:Cap (`apps/cap`)
+# Himmel:CAD Cap (`apps/cap`)
 
-Flutter field app for **HimmelCAD Cap** — Android + iOS.
+Flutter field app for **Himmel:CAD Cap** — Android + iOS.
 
-Homescreen name: **himmel:Cap** · application id: `de.himmelcad.cap`
+Application id: `de.himmelcad.cap`.
 
 ## Run
 
@@ -33,7 +33,8 @@ Or enter credentials in **Settings → RTK** (stored in secure storage).
 - Capture: time-based smartstills + GNSS HUD + `.hcap` packer
 - NTRIP client + correction-aware float path (E1 integer AR plug-in boundary)
 - Cloud scaffold (Drive/Dropbox/OneDrive) — OAuth later
-- EN + DE l10n
+- English product UI target. The checked-in German localization is legacy debt
+  tracked by `docs/himmelcap/ROADMAP.md`.
 - Visual baseline: `../cap-prototype/screenshots/`
 
 ## PhotoLab

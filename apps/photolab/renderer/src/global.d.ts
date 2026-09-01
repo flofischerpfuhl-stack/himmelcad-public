@@ -45,6 +45,16 @@ interface PhotolabDesktopApi {
   readonly externalImport: {
     projectRoot: () => Promise<string>;
     selectFiles: (extensions: readonly string[]) => Promise<string[]>;
+    openTransform: () => Promise<string | null>;
+    saveTransform: (transform: {
+      readonly tx: number;
+      readonly ty: number;
+      readonly tz: number;
+      readonly rxRadians: number;
+      readonly ryRadians: number;
+      readonly rzRadians: number;
+      readonly scale: number;
+    }) => Promise<string | null>;
     materialize: (sessionId: string) => Promise<{
       readonly schemaVersion: 1;
       readonly sessionId: string;

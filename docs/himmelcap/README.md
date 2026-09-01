@@ -1,20 +1,19 @@
-# HimmelCAD Cap documentation index
+# Himmel:CAD Cap documentation
 
-| Document | Purpose |
-| --- | --- |
-| [PRODUCT.md](./PRODUCT.md) | Audience, use cases, accuracy contract |
-| [ROADMAP.md](./ROADMAP.md) | Phases C0–C6 and exit criteria |
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | Modules, capture, positioning, data flow |
-| [FORMAT.md](./FORMAT.md) | **`.hcap`** package layout (ZIP) |
-| [PHOTOLAB-IMPORTER.md](./PHOTOLAB-IMPORTER.md) | Desktop import design |
-| [UI-BRIEF.md](./UI-BRIEF.md) | Screens, settings, cloud/USB, prototype |
-| [IMPLEMENTATION-GATE.md](./IMPLEMENTATION-GATE.md) | **Questions before autonomous E2E build** |
-| [RESEARCH-NOTES.md](./RESEARCH-NOTES.md) | Condensed research + thesis check |
-| [GNSS-RTK-ALGORITHMS.md](./GNSS-RTK-ALGORITHMS.md) | SF/DF phone RTK, robust filters |
-| [ADR 0027](../adr/0027-himmelcap-capture-product.md) | Binding product decision |
+Cap is an implemented Flutter mobile MVP for Android and iOS. It captures field
+sessions into `.hcap` packages for PhotoLab. Field validation and release
+hardening remain open.
 
-App root: `apps/cap/`.
-Interactive UI prototype: `apps/cap-prototype/` (iterate here before Flutter).
-**Golden UI screenshots (Flutter parity):** `apps/cap-prototype/screenshots/`.
-Schemas: `schemas/himmelcap/`.
-Package extension: **`.hcap`**.
+| Document                                               | Purpose                                          |
+| ------------------------------------------------------ | ------------------------------------------------ |
+| [`PRODUCT.md`](PRODUCT.md)                             | Product boundary, audience, and success criteria |
+| [`ROADMAP.md`](ROADMAP.md)                             | Remaining field-validation and release work      |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md)                   | Implemented runtime and platform boundaries      |
+| [`FORMAT.md`](FORMAT.md)                               | `.hcap` v1 package format                        |
+| [`PHOTOLAB-IMPORTER.md`](PHOTOLAB-IMPORTER.md)         | Canonical PhotoLab import behavior               |
+| [`UI-BRIEF.md`](UI-BRIEF.md)                           | English mobile UX and state model                |
+| [`GNSS-RTK-ALGORITHMS.md`](GNSS-RTK-ALGORITHMS.md)     | Positioning research and algorithm constraints   |
+| [`ADR 0027`](../adr/0027-himmelcap-capture-product.md) | Accepted product decision                        |
+
+Implementation: `apps/cap/`. Interactive historical prototype:
+`apps/cap-prototype/`. Schemas: `schemas/himmelcap/`.

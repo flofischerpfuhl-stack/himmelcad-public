@@ -49,8 +49,8 @@ import { PlanIsland } from './PlanIsland.js';
 import { SpecsIsland } from './SpecsIsland.js';
 import { BuilderCanonicalProjectSession } from './project.js';
 import { ribbonTabs } from './ribbon.js';
+import { parseSidecarProgress } from './sidecarProgress.js';
 
-const SIDECAR_PROGRESS_PREFIX = '__HC_PROGRESS__';
 const DEFAULT_POINT_SIZE = 1;
 
 interface BuilderResidencyBootstrap {
@@ -83,6 +83,9 @@ export function App(): JSX.Element {
   const [agentOpen, setAgentOpen] = useState(false);
   const [registrationSourcePaths, setRegistrationSourcePaths] = useState<readonly string[]>([]);
   const registrationSourcePath = registrationSourcePaths[0] ?? null;
+  const [backgroundedRegistrationPath, setBackgroundedRegistrationPath] = useState<string | null>(
+    null,
+  );
   const [rightPanelTab, setRightPanelTab] = useState<'function' | 'properties'>('function');
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() =>
     document.documentElement.classList.contains('hc-theme-light') ? 'light' : 'dark',
@@ -224,6 +227,20 @@ export function App(): JSX.Element {
       canonicalReadyRef.current = null;
       throw error;
     }
+  }, []);
+
+  const reloadCanonicalResidency = useCallback(async (): Promise<void> => {
+    const session = canonicalSessionRef.current;
+    const viewport = viewportRef.current;
+    const api = window.himmelcad;
+    if (!session || !viewport || !api) return;
+    setProject(await session.refresh());
+    const restored = await restoreCanonicalResidency(
+      viewport,
+      await api.canonicalProject.residencyBootstrap(),
+    );
+    entityGroupsRef.current.cloud = restored.clouds;
+    entityGroupsRef.current.ifc = restored.inlineMeshes;
   }, []);
 
   useEffect(() => {
@@ -386,31 +403,28 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (!activeFunctionId) return;
     const id = activeFunctionId;
-    if (
-      [
-        'import.las',
-        'import.e57',
-        'import.dxf',
-        'import.dwg',
-        'import.ifc',
-        'import.slpk',
-      ].includes(id)
-    ) {
+    if (id === 'import.file') {
       void (async () => {
-        const api = window.himmelcad;
-        if (!api) {
-          logEvent('warn', 'renderer', 'no electron bridge: skipping import dialog');
+        try {
+          const api = window.himmelcad;
+          if (!api) {
+            logEvent('warn', 'renderer', 'no electron bridge: skipping import dialog');
+            return;
+          }
+          const session = await ensureCanonicalProject();
+          const formats = await session.listIoFormats();
+          const extensions = formats
+            .flatMap((format) => format.extensions)
+            .map((value) => value.replace(/^\./, ''));
+          const paths = await api.dialog.openImport(extensions);
+          if (paths.length > 0) {
+            setRegistrationSourcePaths((current) => [...current, ...paths]);
+          }
+        } catch (error: unknown) {
+          logEvent('error', 'renderer', `Import selection failed: ${String(error)}`);
+        } finally {
           closeFunction(id);
-          return;
         }
-        const session = await ensureCanonicalProject();
-        const formats = await session.listIoFormats();
-        const extensions = formats
-          .flatMap((format) => format.extensions)
-          .map((value) => value.replace(/^\./, ''));
-        const paths = await api.dialog.openImport(extensions);
-        closeFunction(id);
-        setRegistrationSourcePaths((current) => [...current, ...paths]);
       })();
     } else if (id === 'view.frame') {
       viewportRef.current?.frameAll();
@@ -421,8 +435,8 @@ export function App(): JSX.Element {
       void viewportRef.current?.setViewMode(mode);
       closeFunction(id);
     } else if (id === 'view.viewing-box' && !viewingBox) {
-      const created = viewportRef.current?.createViewingBoxAt(snap?.position);
-      if (created) setViewingBox(created);
+      setPlacingViewingBoxCenter(true);
+      logEvent('info', 'renderer', 'Viewing Box: click the model to place the box.');
     } else if (id === 'output.specs') {
       setSpecsOpen(true);
       closeFunction(id);
@@ -434,7 +448,11 @@ export function App(): JSX.Element {
       closeFunction(id);
     }
     // Other ribbon actions only highlight + show their function panel for now.
-  }, [activeFunctionId, closeFunction, ensureCanonicalProject, snap?.position, viewingBox]);
+  }, [activeFunctionId, closeFunction, ensureCanonicalProject, viewingBox]);
+
+  useEffect(() => {
+    if (activeFunctionId !== 'view.viewing-box') setPlacingViewingBoxCenter(false);
+  }, [activeFunctionId]);
 
   useEffect(() => {
     viewportRef.current?.setViewingBox(viewingBox);
@@ -554,7 +572,7 @@ export function App(): JSX.Element {
             source: 'renderer',
             timestamp: Date.now(),
             message:
-              'commands: help · clear · import.las · view.frame · view.point-size <px> · view.3d · view.2.5d · view.2d · view.clip.horizontal <z> · view.clip.vertical-x <x> · view.clip.vertical-y <y> · view.clip.clear · view.opacity <group> <0..1> · view.exaggeration <group> <factor> · ribbon.<id>',
+              'commands: help · clear · import · view.frame · view.point-size <px> · view.3d · view.2.5d · view.2d · view.clip.horizontal <z> · view.clip.vertical-x <x> · view.clip.vertical-y <y> · view.clip.clear · view.opacity <group> <0..1> · view.exaggeration <group> <factor> · ribbon.<id>',
           });
           return;
         case 'clear':
@@ -793,17 +811,25 @@ export function App(): JSX.Element {
             viewingBox={viewingBox}
             placingViewingBoxCenter={placingViewingBoxCenter}
             onViewportPoint={(position) => {
-              setViewingBox((current) =>
-                current
-                  ? placeViewingBoxCenter(current, {
-                      x: position.x,
-                      y: position.y,
-                      z: position.z ?? current.center.z,
-                    })
-                  : current,
-              );
+              const created = viewingBox
+                ? placeViewingBoxCenter(viewingBox, {
+                    x: position.x,
+                    y: position.y,
+                    z: position.z ?? viewingBox.center.z,
+                  })
+                : viewportRef.current?.createViewingBoxAt(position);
+              if (created) {
+                setViewingBox(created);
+                const size = created.halfExtents.x * 2;
+                logEvent(
+                  'info',
+                  'renderer',
+                  `Viewing Box placed (${size.toFixed(2)} m cube at the current zoom).`,
+                );
+              }
               setPlacingViewingBoxCenter(false);
             }}
+            onViewingBoxChange={setViewingBox}
             onDropFiles={(paths) => setRegistrationSourcePaths((current) => [...current, ...paths])}
             onLog={(level, message) => logEvent(level, 'renderer', message)}
           />
@@ -834,26 +860,26 @@ export function App(): JSX.Element {
         </FloatingTaskIsland>
       ) : null}
       {registrationSourcePath && canonicalSessionRef.current ? (
-        <FloatingTaskIsland modal onRequestClose={() => undefined}>
+        <FloatingTaskIsland
+          modal
+          hidden={backgroundedRegistrationPath === registrationSourcePath}
+          onRequestClose={() => undefined}
+        >
           <BuilderImportRegistrationIsland
             sourcePath={registrationSourcePath}
             projectLabel={project?.name ?? 'Current project'}
             session={canonicalSessionRef.current}
+            onBackgroundStateChange={(backgrounded) =>
+              setBackgroundedRegistrationPath(backgrounded ? registrationSourcePath : null)
+            }
             onCommitted={async () => {
-              const session = canonicalSessionRef.current;
-              const viewport = viewportRef.current;
-              const api = window.himmelcad;
-              if (!session || !viewport || !api) return;
-              setProject(await session.refresh());
-              const restored = await restoreCanonicalResidency(
-                viewport,
-                await api.canonicalProject.residencyBootstrap(),
-              );
-              entityGroupsRef.current.cloud = restored.clouds;
-              entityGroupsRef.current.ifc = restored.inlineMeshes;
+              await reloadCanonicalResidency();
               logEvent('info', 'renderer', 'Registered import committed and loaded');
             }}
-            onClose={() => setRegistrationSourcePaths((current) => current.slice(1))}
+            onClose={() => {
+              setBackgroundedRegistrationPath(null);
+              setRegistrationSourcePaths((current) => current.slice(1));
+            }}
           />
         </FloatingTaskIsland>
       ) : null}
@@ -909,7 +935,7 @@ function functionBody(
         onPlacingCenterChange={onPlacingViewingBoxCenterChange}
       />
     ) : (
-      <div className={styles.toolHint}>Move the cursor over the model to create a viewing box.</div>
+      <div className={styles.toolHint}>Click the model to place a zoom-scaled viewing box.</div>
     );
   }
   return (
@@ -1092,9 +1118,8 @@ function ViewingBoxPanel({
   onPlacingCenterChange,
 }: ViewingBoxPanelProps): JSX.Element {
   const modes: readonly { readonly id: KernelViewingBoxMode; readonly label: string }[] = [
-    { id: 'resize', label: 'Size' },
-    { id: 'move', label: 'Move' },
-    { id: 'rotate', label: 'Rotate' },
+    { id: 'resize', label: 'Arrows' },
+    { id: 'rotate', label: 'Rings' },
   ];
   return (
     <div className={styles.toolPanel}>
@@ -1194,7 +1219,8 @@ function ViewingBoxPanel({
         </button>
       </div>
       <p className={styles.toolHint}>
-        The box owns one scoped clip and remains active while other tools are used.
+        Drag a face arrow to resize. Click an arrow for rotation rings; drag a ring to rotate and
+        click it to return to arrows.
       </p>
     </div>
   );
@@ -1355,31 +1381,6 @@ function quaternionAxes(
     { x: 2 * (x * y - z * w), y: 1 - 2 * (x * x + z * z), z: 2 * (y * z + x * w) },
     { x: 2 * (x * z + y * w), y: 2 * (y * z - x * w), z: 1 - 2 * (x * x + y * y) },
   ];
-}
-
-function parseSidecarProgress(
-  line: string,
-): { progressKey: string; fraction: number; message: string } | null {
-  const idx = line.indexOf(SIDECAR_PROGRESS_PREFIX);
-  if (idx < 0) return null;
-  const raw = line.slice(idx + SIDECAR_PROGRESS_PREFIX.length).trim();
-  try {
-    const parsed = JSON.parse(raw) as {
-      progressKey?: unknown;
-      fraction?: unknown;
-      message?: unknown;
-    };
-    if (typeof parsed.progressKey !== 'string') return null;
-    if (typeof parsed.fraction !== 'number' || !Number.isFinite(parsed.fraction)) return null;
-    if (typeof parsed.message !== 'string') return null;
-    return {
-      progressKey: parsed.progressKey,
-      fraction: clamp(parsed.fraction, 0, 1),
-      message: parsed.message,
-    };
-  } catch {
-    return null;
-  }
 }
 
 async function restoreCanonicalResidency(

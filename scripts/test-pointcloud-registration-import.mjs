@@ -39,6 +39,13 @@ readline.createInterface({ input: child.stderr }).on('line', (line) => {
   stderr.push(line);
   if (stderr.length > 50) stderr.shift();
 });
+child.on('exit', (code, signal) => {
+  const error = new Error(
+    `sidecar exited before replying (code ${String(code)}, signal ${String(signal)}): ${stderr.join('\n')}`,
+  );
+  for (const request of pending.values()) request.reject(error);
+  pending.clear();
+});
 
 function rpc(method, params = {}) {
   const id = nextId++;
@@ -118,9 +125,18 @@ try {
       entry.dataset?.formatId === 'potree@2' && entry.dataset.datasetId === potree.datasetId,
   );
   assert.ok(admitted, 'committed project residency did not contain the imported point cloud');
+  const targetSamples = await rpc('registration.samples.projectPointCloud', {
+    datasetId: potree.datasetId,
+    maximumSamples: 128,
+  });
+  assert.ok(
+    targetSamples.points.length >= 3,
+    'committed point cloud did not expose bounded ICP target samples',
+  );
+  assert.equal(targetSamples.datasetId, potree.datasetId);
 
   process.stdout.write(
-    `Point-cloud registration smoke passed: ${selection.formatId}, ${sampled.points.length} samples, ${pairs.length} point pairs, RMS ${preview.preview.residuals.rmsSpatialMeters.toExponential(2)} m.\n`,
+    `Point-cloud registration smoke passed: ${selection.formatId}, ${sampled.points.length} source samples, ${targetSamples.points.length} target samples, ${pairs.length} point pairs, RMS ${preview.preview.residuals.rmsSpatialMeters.toExponential(2)} m.\n`,
   );
 } catch (error) {
   process.stderr.write(`${stderr.join('\n')}\n`);

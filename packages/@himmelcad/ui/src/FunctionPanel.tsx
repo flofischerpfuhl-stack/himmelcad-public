@@ -88,13 +88,18 @@ export function FunctionPanel({
         {collapseButton}
       </div>
       <div className={styles.islandBody}>
-        <div
-          className={styles.contextName}
-          title={selectedTab === 'function' ? title : propertiesTitle}
-        >
-          {selectedTab === 'function'
-            ? (title ?? activeFunctionId ?? 'Function')
-            : (propertiesTitle ?? 'Selection')}
+        <div className={styles.contextHeader}>
+          <span className={styles.contextLabel}>
+            {selectedTab === 'function' ? 'Function' : 'Properties'}
+          </span>
+          <span
+            className={styles.contextName}
+            title={selectedTab === 'function' ? title : propertiesTitle}
+          >
+            {selectedTab === 'function'
+              ? (title ?? activeFunctionId ?? 'Function')
+              : (propertiesTitle ?? 'Selection')}
+          </span>
         </div>
         <div className={styles.body}>
           {selectedTab === 'function' ? (

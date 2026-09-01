@@ -1,6 +1,6 @@
 # Maximizing smartphone RTK — algorithms research (Cap)
 
-Status: research synthesis for HimmelCAD Cap, 2026-07-21.
+Status: research synthesis for Himmel:CAD Cap, 2026-07-21.
 Complements `RESEARCH-NOTES.md` and the accuracy targets in `PRODUCT.md`.
 
 **Core question:** Can single-frequency phones with RTK/NTRIP approach useful

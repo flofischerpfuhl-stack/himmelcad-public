@@ -8,6 +8,10 @@
   pointer-events: none;
 }
 
+.layer[hidden] {
+  display: none;
+}
+
 .modalLayer {
   background: color-mix(in srgb, var(--hc-bg-app) 58%, transparent);
   backdrop-filter: blur(2px);

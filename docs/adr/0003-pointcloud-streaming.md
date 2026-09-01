@@ -33,13 +33,13 @@ visible improvement, and would re-discover algorithms that the Potree
 ecosystem already ships in production.
 
 `AGENTS.md` §1.6 (added in this same change set) makes the right move
-explicit: a license-compatible existing implementation **is** HimmelCAD
+explicit: a license-compatible existing implementation **is** Himmel:CAD
 once we vendor it. We must not draw an artificial line between "library"
 and "our code".
 
 ## Decision
 
-Adopt the **Potree 2.0 stack**, vendored into the HimmelCAD source tree:
+Adopt the **Potree 2.0 stack**, vendored into the Himmel:CAD source tree:
 
 | Concern                      | Vendored asset                                                         | Upstream license       |
 | ---------------------------- | ---------------------------------------------------------------------- | ---------------------- |
@@ -47,7 +47,7 @@ Adopt the **Potree 2.0 stack**, vendored into the HimmelCAD source tree:
 | **LAS / LAZ → tile builder** | **PotreeConverter 2.1** binary in `vendor/potreeconverter/<platform>/` | BSD 2-Clause           |
 | **Renderer streaming + LOD** | **`@pnext/three-loader 1.0.x`** source in `vendor/three-loader/`       | MIT (+ BSD-2 portions) |
 | **Cursor refinement**        | Existing `crates/himmelcad-spatial` (PointOctree, PCA plane fit)       | BSL 1.1 (ours)         |
-| **Tile abstraction**         | Existing `streaming/TiledDataset` interface (HimmelCAD)                | BSL 1.1 (ours)         |
+| **Tile abstraction**         | Existing `streaming/TiledDataset` interface (Himmel:CAD)                | BSL 1.1 (ours)         |
 
 All three vendored assets are listed in `LICENSES/THIRD_PARTY.md` with the
 upstream commit SHA and their original `LICENSE` files mirrored next to
@@ -70,8 +70,8 @@ A point cloud entity stores under
 
 A small `himmelcad.json` sidecar in the same directory records our
 project-level extensions: `entityId`, render-offset (for the f64 → f32
-mapping), HimmelCAD attribute mappings (layer ids, classification labels
-mapped to HimmelCAD codes, etc.). The Potree files themselves stay
+mapping), Himmel:CAD attribute mappings (layer ids, classification labels
+mapped to Himmel:CAD codes, etc.). The Potree files themselves stay
 untouched — that keeps the format compatible with any future Potree-native
 tooling we want to invoke.
 

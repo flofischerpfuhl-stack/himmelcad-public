@@ -1,6 +1,6 @@
-# PhotoLab importer for `.himmelcap`
+# PhotoLab importer for `.hcap`
 
-Status: design note for C2. Implementation starts after C1 schema freeze.
+Status: implemented import boundary; this document defines expected behavior.
 
 ## Why a dedicated importer
 
@@ -54,7 +54,7 @@ the temporary mapping in the importer report.
 
 Minimal C2 surface:
 
-- File → Import Cap session (or drag-drop `.himmelcap`)
+- File → Import Cap session (or drag-drop `.hcap`)
 - Progress + cancel
 - Summary panel: frame count, mean σ, tier, warnings
 - Link to capture group in project tree

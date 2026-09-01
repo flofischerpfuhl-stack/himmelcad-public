@@ -7,7 +7,7 @@ unsoundness or yanked release is never accepted through this list.
 
 ## RUSTSEC-2025-0141 — bincode is unmaintained
 
-HimmelCAD uses `bincode 2.0.1` only for the ephemeral `HCDECODE v5` worker
+Himmel:CAD uses `bincode 2.0.1` only for the ephemeral `HCDECODE v5` worker
 artifact. The artifact has an authenticated input-manifest identity, an exact
 framed body length, a 64 MiB input/allocation limit, trailing-byte rejection
 and no persistence compatibility promise. `bincode` is not used for project,

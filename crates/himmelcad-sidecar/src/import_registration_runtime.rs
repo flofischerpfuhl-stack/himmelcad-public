@@ -12,9 +12,9 @@ use std::{
 use himmelcad_core::{
     photolab_jobs::CancellationToken,
     registration::{
-        fit_point_pairs_3d, origin_and_project_north_transform, run_icp, IcpMode, IcpOptions,
-        RegistrationError, RegistrationMethod, RegistrationPhase, RegistrationPointPair,
-        RegistrationPreview, RegistrationRecipe, RegistrationTargetSample,
+        fit_point_pairs_3d, fit_translation_point_pairs_3d, origin_and_project_north_transform,
+        run_icp, IcpMode, IcpOptions, RegistrationError, RegistrationMethod, RegistrationPhase,
+        RegistrationPointPair, RegistrationPreview, RegistrationRecipe, RegistrationTargetSample,
     },
     transform::{apply_similarity_3d, residual_report, Similarity3D, WorldPoint},
 };
@@ -418,19 +418,19 @@ impl ImportRegistrationRuntime {
         else {
             return Err(ImportRegistrationRuntimeError::WrongMethod);
         };
-        let allow_scale = matches!(
-            model,
-            himmelcad_core::transform::EmpiricalModelKind::Similarity3D
-        );
-        if !matches!(
-            model,
-            himmelcad_core::transform::EmpiricalModelKind::Rigid3D
-                | himmelcad_core::transform::EmpiricalModelKind::Similarity3D
-        ) {
-            return Err(ImportRegistrationRuntimeError::UnsupportedPointPairModel);
-        }
         session.state.phase = RegistrationPhase::Previewing;
-        let preview = fit_point_pairs_3d(pairs, allow_scale, robust)?;
+        let preview = match model {
+            himmelcad_core::transform::EmpiricalModelKind::Translation3D => {
+                fit_translation_point_pairs_3d(pairs, robust)?
+            }
+            himmelcad_core::transform::EmpiricalModelKind::Rigid3D => {
+                fit_point_pairs_3d(pairs, false, robust)?
+            }
+            himmelcad_core::transform::EmpiricalModelKind::Similarity3D => {
+                fit_point_pairs_3d(pairs, true, robust)?
+            }
+            _ => return Err(ImportRegistrationRuntimeError::UnsupportedPointPairModel),
+        };
         session.state.phase = if preview.accepted {
             RegistrationPhase::ReadyToCommit
         } else {
@@ -734,6 +734,141 @@ fn sample_potree_root(
         ],
         points,
     })
+}
+
+/// Samples one hash-verified committed Potree dataset without exposing project paths.
+pub(crate) fn sample_potree_open_files(
+    owner_id: &str,
+    dataset_id: &str,
+    resource_hashes: [String; 3],
+    placement: Option<himmelcad_core::entity_model::Transform3d>,
+    maximum_samples: usize,
+    metadata_file: &mut fs::File,
+    hierarchy_file: &mut fs::File,
+    octree_file: &mut fs::File,
+) -> Result<RegistrationSourceSamples, ImportRegistrationRuntimeError> {
+    if !(3..=himmelcad_core::registration::MAX_ICP_SAMPLES_PER_CLOUD).contains(&maximum_samples) {
+        return Err(ImportRegistrationRuntimeError::InvalidSampleLimit);
+    }
+    let metadata_length = metadata_file.metadata()?.len();
+    if metadata_length == 0 || metadata_length > MAX_REGISTRATION_SAMPLE_NODE_BYTES {
+        return Err(ImportRegistrationRuntimeError::SampleNodeTooLarge);
+    }
+    let cancellation = CancellationToken::new();
+    let metadata = read_open_range(metadata_file, 0, metadata_length, &cancellation)?;
+    let metadata_json: serde_json::Value = serde_json::from_slice(&metadata)
+        .map_err(|_| ImportRegistrationRuntimeError::InvalidPotreeMetadata)?;
+    let first_chunk_size = metadata_json
+        .pointer("/hierarchy/firstChunkSize")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or(ImportRegistrationRuntimeError::InvalidPotreeMetadata)?;
+    if first_chunk_size == 0 || first_chunk_size > MAX_REGISTRATION_SAMPLE_NODE_BYTES {
+        return Err(ImportRegistrationRuntimeError::SampleNodeTooLarge);
+    }
+    let hierarchy = read_open_range(hierarchy_file, 0, first_chunk_size, &cancellation)?;
+    let mut source = PotreeHierarchySource::from_bytes(
+        DatasetId(dataset_id.to_owned()),
+        "hcad-project://canonical/metadata.json",
+        &metadata,
+        &hierarchy,
+    )
+    .map_err(|_| ImportRegistrationRuntimeError::InvalidPotreeMetadata)?;
+    let root_id = source
+        .roots()
+        .first()
+        .cloned()
+        .ok_or(ImportRegistrationRuntimeError::InvalidPotreeMetadata)?;
+    let root = source
+        .tile(&root_id)
+        .map_err(|_| ImportRegistrationRuntimeError::InvalidPotreeMetadata)?
+        .ok_or(ImportRegistrationRuntimeError::InvalidPotreeMetadata)?;
+    let content = root
+        .contents
+        .first()
+        .ok_or(ImportRegistrationRuntimeError::MissingSampleArtifact)?;
+    let offset = content
+        .byte_offset
+        .ok_or(ImportRegistrationRuntimeError::InvalidPotreeMetadata)?;
+    let byte_length = content
+        .byte_length
+        .ok_or(ImportRegistrationRuntimeError::InvalidPotreeMetadata)?;
+    let point_count = content
+        .primitive_count
+        .ok_or(ImportRegistrationRuntimeError::InvalidPotreeMetadata)?;
+    if byte_length == 0 || byte_length > MAX_REGISTRATION_SAMPLE_NODE_BYTES {
+        return Err(ImportRegistrationRuntimeError::SampleNodeTooLarge);
+    }
+    let payload = read_open_range(octree_file, offset, byte_length, &cancellation)?;
+    let origin = match root.bounds {
+        BoundingVolume::AxisAlignedBox { bounds } => WorldVec3 {
+            x: (bounds.min.x + bounds.max.x) * 0.5,
+            y: (bounds.min.y + bounds.max.y) * 0.5,
+            z: (bounds.min.z + bounds.max.z) * 0.5,
+        },
+        _ => return Err(ImportRegistrationRuntimeError::InvalidPotreeMetadata),
+    };
+    let decoded = source
+        .point_layout()
+        .decode_node(&payload, point_count, origin)
+        .map_err(|_| ImportRegistrationRuntimeError::InvalidPotreePayload)?;
+    if decoded.positions.len() < 3 {
+        return Err(ImportRegistrationRuntimeError::InsufficientSourceSamples);
+    }
+    let count = maximum_samples.min(decoded.positions.len());
+    let mut points = Vec::with_capacity(count);
+    for index in 0..count {
+        let source_index = index * decoded.positions.len() / count;
+        let local = decoded.positions[source_index];
+        points.push(apply_optional_placement(
+            WorldPoint::new(
+                decoded.world_origin.x + f64::from(local[0]),
+                decoded.world_origin.y + f64::from(local[1]),
+                decoded.world_origin.z + f64::from(local[2]),
+            ),
+            placement,
+        ));
+    }
+    Ok(RegistrationSourceSamples {
+        schema_version: 1,
+        session_id: owner_id.to_owned(),
+        dataset_id: dataset_id.to_owned(),
+        sampling_method: "potree-additive-root-even-v1".to_owned(),
+        source_transform: placement,
+        resource_hashes: resource_hashes.into(),
+        points,
+    })
+}
+
+fn read_open_range(
+    file: &mut fs::File,
+    offset: u64,
+    byte_length: u64,
+    cancellation: &CancellationToken,
+) -> Result<Vec<u8>, ImportRegistrationRuntimeError> {
+    let end = offset
+        .checked_add(byte_length)
+        .ok_or(ImportRegistrationRuntimeError::InvalidResourceRange)?;
+    if end > file.metadata()?.len() {
+        return Err(ImportRegistrationRuntimeError::InvalidResourceRange);
+    }
+    file.seek(SeekFrom::Start(offset))?;
+    let mut bytes = vec![
+        0;
+        usize::try_from(byte_length)
+            .map_err(|_| ImportRegistrationRuntimeError::SampleNodeTooLarge)?
+    ];
+    let mut read = 0;
+    while read < bytes.len() {
+        if cancellation.is_cancel_requested() {
+            return Err(ImportRegistrationRuntimeError::ResourceCapabilityRevoked);
+        }
+        let count = file.read(&mut bytes[read..])?;
+        if count == 0 {
+            return Err(ImportRegistrationRuntimeError::ResourceChanged);
+        }
+        read += count;
+    }
+    Ok(bytes)
 }
 
 fn read_verified_full(

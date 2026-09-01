@@ -9,5 +9,10 @@
     "sourceMap": false,
     "types": ["node"]
   },
-  "include": ["renderer/src/projectProjection.ts", "test"]
+  "include": [
+    "renderer/src/importDialogPolicy.ts",
+    "renderer/src/projectProjection.ts",
+    "renderer/src/sidecarProgress.ts",
+    "test"
+  ]
 }

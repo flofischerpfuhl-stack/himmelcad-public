@@ -17,7 +17,16 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 
 import { Readable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 
-import { BrowserWindow, app, dialog, ipcMain, nativeImage, protocol, safeStorage } from 'electron';
+import {
+  BrowserWindow,
+  app,
+  dialog,
+  ipcMain,
+  nativeImage,
+  protocol,
+  safeStorage,
+  type OpenDialogOptions,
+} from 'electron';
 import {
   defaultAutomationPaths,
   registerElectronAutomationHost,
@@ -512,6 +521,38 @@ function registerIpc(): void {
           ],
         });
     return selection.canceled ? [] : selection.filePaths;
+  });
+  ipcMain.handle('external-import:open-transform', async () => {
+    const options: OpenDialogOptions = {
+      title: 'Open transformation',
+      filters: [
+        { name: 'HimmelCAD transformation', extensions: ['hctransform', 'json', 'cal', 'txt'] },
+        { name: 'All files', extensions: ['*'] },
+      ],
+      properties: ['openFile'],
+    };
+    const selection = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    return selection.canceled ? null : (selection.filePaths[0] ?? null);
+  });
+  ipcMain.handle('external-import:save-transform', async (_event, value: unknown) => {
+    const transform = validateSavedTransform(value);
+    const options = {
+      title: 'Save transformation',
+      defaultPath: 'himmelcad-transformation.hctransform',
+      filters: [{ name: 'HimmelCAD transformation', extensions: ['hctransform'] }],
+    };
+    const selection = mainWindow
+      ? await dialog.showSaveDialog(mainWindow, options)
+      : await dialog.showSaveDialog(options);
+    if (selection.canceled || !selection.filePath) return null;
+    await writeFile(
+      selection.filePath,
+      `${JSON.stringify({ schemaId: 'hcad.site-calibration@1', transform }, null, 2)}\n`,
+      { encoding: 'utf8', flag: 'w' },
+    );
+    return selection.filePath;
   });
   ipcMain.handle('registration-staged:materialize', async (_event, sessionId: unknown) => {
     if (typeof sessionId !== 'string' || !/^[A-Za-z0-9_.-]{1,160}$/.test(sessionId)) {
@@ -1367,6 +1408,33 @@ function registerIpc(): void {
       : await dialog.showOpenDialog(options);
     return selection.canceled ? null : (selection.filePaths[0] ?? null);
   });
+}
+
+function validateSavedTransform(value: unknown): {
+  readonly tx: number;
+  readonly ty: number;
+  readonly tz: number;
+  readonly rxRadians: number;
+  readonly ryRadians: number;
+  readonly rzRadians: number;
+  readonly scale: number;
+} {
+  if (typeof value !== 'object' || value === null) throw new Error('invalid transformation');
+  const candidate = value as Record<string, unknown>;
+  const keys = ['tx', 'ty', 'tz', 'rxRadians', 'ryRadians', 'rzRadians', 'scale'] as const;
+  if (!keys.every((key) => typeof candidate[key] === 'number' && Number.isFinite(candidate[key]))) {
+    throw new Error('transformation contains non-finite values');
+  }
+  if ((candidate.scale as number) <= 0) throw new Error('transformation scale must be positive');
+  return {
+    tx: candidate.tx as number,
+    ty: candidate.ty as number,
+    tz: candidate.tz as number,
+    rxRadians: candidate.rxRadians as number,
+    ryRadians: candidate.ryRadians as number,
+    rzRadians: candidate.rzRadians as number,
+    scale: candidate.scale as number,
+  };
 }
 
 async function inspectGrid(

@@ -1,5 +1,6 @@
 import type {
   ImportRegistrationState,
+  JsonValue,
   RegistrationPoint,
   RegistrationPointPair,
   RegistrationRecipe,
@@ -53,9 +54,16 @@ export function PhotolabExternalImportDialog({
   const [pendingSource, setPendingSource] = useState<RegistrationPoint | null>(null);
   const [format, setFormat] = useState<ImportRegistrationFormatContext | null>(null);
   const [probeError, setProbeError] = useState<string | null>(null);
+  const [operationError, setOperationError] = useState<string | null>(null);
+  const [semanticLosses, setSemanticLosses] = useState<readonly string[]>([]);
+  const [pendingRecipe, setPendingRecipe] = useState<RegistrationRecipe | null>(null);
+  const [pendingProviderOptions, setPendingProviderOptions] = useState<JsonValue>({});
   const [preparedSourceSamples, setPreparedSourceSamples] = useState<readonly RegistrationPoint[]>(
     [],
   );
+  const [preparedTargetSamples, setPreparedTargetSamples] = useState<
+    readonly RegistrationTargetSample[]
+  >([]);
   const [currentAdmissions, setCurrentAdmissions] = useState<
     readonly CanonicalRepresentationAdmission[]
   >([]);
@@ -113,6 +121,7 @@ export function PhotolabExternalImportDialog({
         }[];
       }>();
       const canonicalAdmissions: CanonicalRepresentationAdmission[] = [];
+      const pointCloudTargets: RegistrationTargetSample[] = [];
       for (const entry of residency?.entries ?? []) {
         const admissions = previewAdmissions({ admissions: [entry.admission] }, undefined);
         const admission = admissions[0];
@@ -129,17 +138,24 @@ export function PhotolabExternalImportDialog({
             pointCount: admission.resolvedGeometry.dataset.elementCount ?? 0,
             canonicalAdmission: admission,
           });
+          try {
+            const samples = await session.projectPointCloudSamples(entry.dataset.datasetId);
+            for (const position of samples.points) pointCloudTargets.push({ position });
+          } catch {
+            // Exact dual-view picks remain available for legacy prepared datasets.
+          }
         } else if (entry.dataset === null) {
           await projectViewport.current?.loadCanonicalPackage([admission]);
         }
       }
+      setPreparedTargetSamples(deterministicSubset(pointCloudTargets, 2_048));
       setCurrentAdmissions(canonicalAdmissions);
       projectViewport.current?.frameAll();
-    })();
-  }, [currentPointClouds]);
+    })().catch((error: unknown) => setOperationError(errorMessage(error)));
+  }, [currentPointClouds, session]);
 
   useEffect(() => {
-    if (!state) return;
+    if (!state || pendingRecipe?.method.kind === 'sourceCoordinates') return;
     let active = true;
     void (async () => {
       const admissions = previewAdmissions(state.sourcePreview, state.preview?.transform);
@@ -170,11 +186,13 @@ export function PhotolabExternalImportDialog({
         });
       }
       sourceViewport.current?.frameAll();
-    })();
+    })().catch((error: unknown) => {
+      if (active) setOperationError(errorMessage(error));
+    });
     return () => {
       active = false;
     };
-  }, [session, state]);
+  }, [pendingRecipe?.method.kind, session, state]);
 
   useEffect(
     () => () => {
@@ -185,13 +203,41 @@ export function PhotolabExternalImportDialog({
     [],
   );
 
-  const stage = async (recipe: RegistrationRecipe): Promise<void> => {
+  const stage = async (
+    recipe: RegistrationRecipe,
+    providerOptions: JsonValue = {},
+    acceptedLossCodes: readonly string[] = [],
+  ): Promise<void> => {
     setBusy(true);
+    setOperationError(null);
+    setSemanticLosses([]);
+    setPendingRecipe(recipe);
+    setPendingProviderOptions(providerOptions);
     try {
-      setState(await session.stage(sourcePath, recipe));
+      const stagedState = await session.stage(
+        sourcePath,
+        recipe,
+        withAcceptedLossCodes(providerOptions, acceptedLossCodes),
+      );
+      if (recipe.method.kind === 'sourceCoordinates') {
+        if (stagedState.phase !== 'readyToCommit' || stagedState.preview?.accepted !== true) {
+          throw new Error('The import could not be prepared for direct loading.');
+        }
+        await session.commit(stagedState.sessionId);
+        await window.himmelcad?.externalImport.revoke(stagedState.sessionId);
+        await onCommitted();
+        onClose();
+        return;
+      }
+      setState(stagedState);
       setPairs([]);
       setPendingSource(null);
       setPreparedSourceSamples([]);
+    } catch (error: unknown) {
+      const message = errorMessage(error);
+      const losses = explicitSemanticLosses(message);
+      if (losses.length > 0) setSemanticLosses(losses);
+      else setOperationError(message);
     } finally {
       setBusy(false);
     }
@@ -218,8 +264,11 @@ export function PhotolabExternalImportDialog({
   const previewPairs = async (): Promise<void> => {
     if (!state) return;
     setBusy(true);
+    setOperationError(null);
     try {
       setState(await session.previewPointPairs(state.sessionId, pairs));
+    } catch (error: unknown) {
+      setOperationError(errorMessage(error));
     } finally {
       setBusy(false);
     }
@@ -227,11 +276,14 @@ export function PhotolabExternalImportDialog({
   const commit = async (): Promise<void> => {
     if (!state) return;
     setBusy(true);
+    setOperationError(null);
     try {
       await session.commit(state.sessionId);
       await window.himmelcad?.externalImport.revoke(state.sessionId);
       await onCommitted();
       onClose();
+    } catch (error: unknown) {
+      setOperationError(errorMessage(error));
     } finally {
       setBusy(false);
     }
@@ -242,10 +294,14 @@ export function PhotolabExternalImportDialog({
       preparedSourceSamples.length >= 3
         ? preparedSourceSamples
         : collectInlineSource(previewAdmissions(state.sourcePreview, undefined));
-    const target = collectInlineTargets(currentAdmissions);
+    const target = deterministicSubset(
+      [...preparedTargetSamples, ...collectInlineTargets(currentAdmissions)],
+      2_048,
+    );
     if (source.length < 3 || target.length < 3) return;
     const mode = target.every((sample) => sample.normal) ? 'pointToPlane' : 'pointToPoint';
     setBusy(true);
+    setOperationError(null);
     try {
       setState(
         await session.previewIcp({
@@ -264,6 +320,8 @@ export function PhotolabExternalImportDialog({
           },
         }),
       );
+    } catch (error: unknown) {
+      setOperationError(errorMessage(error));
     } finally {
       setBusy(false);
     }
@@ -275,19 +333,38 @@ export function PhotolabExternalImportDialog({
       projectLabel={projectLabel}
       format={format}
       probeError={probeError}
+      operationError={operationError}
+      semanticLosses={semanticLosses}
       state={state}
       pointPairs={pairs}
       nextPickSide={pendingSource ? 'target' : 'source'}
       sourcePickReady={sourceSnap !== null}
       targetPickReady={targetSnap !== null}
       busy={busy}
-      onStage={(recipe) => void stage(recipe)}
+      onStage={(recipe, providerOptions) => void stage(recipe, providerOptions)}
+      onAcceptSemanticLosses={() => {
+        if (pendingRecipe) void stage(pendingRecipe, pendingProviderOptions, semanticLosses);
+      }}
+      onLoadTransform={async () => {
+        const path = await window.himmelcad?.externalImport.openTransform();
+        if (!path) return null;
+        const inspected = await session.inspectTransform(path);
+        return {
+          label: fileLabel(path),
+          sourceSha256: inspected.sourceSha256,
+          transform: inspected.transform,
+          warnings: inspected.warnings,
+        };
+      }}
+      onSaveTransform={async (transform) =>
+        (await window.himmelcad?.externalImport.saveTransform(transform)) ?? null
+      }
       onRequestPick={requestPick}
       onPreviewPointPairs={() => void previewPairs()}
       {...((preparedSourceSamples.length >= 3 ||
         collectInlineSource(state ? previewAdmissions(state.sourcePreview, undefined) : [], 3)
           .length >= 3) &&
-      collectInlineTargets(currentAdmissions, 3).length >= 3
+      (preparedTargetSamples.length >= 3 || collectInlineTargets(currentAdmissions, 3).length >= 3)
         ? { onPreviewIcp: () => void previewIcp() }
         : {})}
       onCommit={() => void commit()}
@@ -524,4 +601,26 @@ function tuple(value: unknown): readonly [number, number, number] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function fileLabel(path: string): string {
+  return path.split(/[\\/]/).at(-1) ?? path;
+}
+
+function explicitSemanticLosses(message: string): readonly string[] {
+  if (!/explicit(?:ly)? accept|explicit acceptance/i.test(message)) return [];
+  return [...new Set(message.match(/hcad\.loss\.[A-Za-z0-9_.:@-]+/g) ?? [])];
+}
+
+function withAcceptedLossCodes(
+  options: JsonValue,
+  acceptedLossCodes: readonly string[],
+): JsonValue {
+  if (acceptedLossCodes.length === 0) return options;
+  if (!isRecord(options)) throw new Error('provider import options must be an object');
+  return { ...options, acceptedLossCodes: [...acceptedLossCodes] };
 }

@@ -1,7 +1,7 @@
 # acadrust fork provenance
 
-Status: pinned input for M9. The fork is mandatory; support claims remain gated
-by HimmelCAD's own corpus and fuzz results.
+Status: pinned provider input. The fork is mandatory; support claims remain gated
+by Himmel:CAD's own corpus and fuzz results.
 
 - Upstream: <https://github.com/hakanaktt/acadrust>
 - Upstream version: `0.4.1`
@@ -15,7 +15,7 @@ by HimmelCAD's own corpus and fuzz results.
 
 The source will live below `vendor/acadrust/` with its upstream license and
 notices intact. Modified upstream files remain MPL-2.0 at file level and are
-marked in the fork inventory. HimmelCAD-specific provider/admission code stays
+marked in the fork inventory. Himmel:CAD-specific provider/admission code stays
 outside the fork so the license and trust boundary remain obvious.
 
 The fork was materialized on 2026-07-20. The archive's separately authored

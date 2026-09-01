@@ -5,6 +5,7 @@ const MINIMUM_VIEW_SPAN = 1e-5;
 
 export type KernelViewingBoxMode = 'resize' | 'move' | 'rotate';
 export type KernelViewingBoxAxis = 'x' | 'y' | 'z';
+export type KernelViewingBoxFace = -1 | 1;
 
 /**
  * View-local, non-canonical clipping tool state. Rotation is expressed as a
@@ -26,28 +27,40 @@ export interface KernelViewingBoxViewportSeed {
   readonly visibleHeight: number;
   /** Visible depth around the navigation target; defaults to the smaller plan span. */
   readonly visibleDepth?: number;
+  /** Fraction of the visible span occupied by the initial full box size. */
+  readonly viewFraction?: number;
+  /** Uses the smaller visible plan span for an initially cubic box. */
+  readonly uniform?: boolean;
   readonly id?: string;
 }
 
-/** Creates a box that occupies 60% of the current view, so its initial size tracks zoom. */
+/** Creates a box whose full size follows the current visible span. */
 export function viewingBoxFromViewport(seed: KernelViewingBoxViewportSeed): KernelViewingBoxState {
   assertPoint(seed.center, 'viewing box center');
   assertPositive(seed.visibleWidth, 'visible width', MINIMUM_VIEW_SPAN);
   assertPositive(seed.visibleHeight, 'visible height', MINIMUM_VIEW_SPAN);
   const depth = seed.visibleDepth ?? Math.min(seed.visibleWidth, seed.visibleHeight);
   assertPositive(depth, 'visible depth', MINIMUM_VIEW_SPAN);
+  const fraction = seed.viewFraction ?? 0.6;
+  if (!Number.isFinite(fraction) || fraction <= 0 || fraction > 1) {
+    throw new RangeError('viewing box fraction must be finite and within (0, 1]');
+  }
+  const uniformSpan = Math.min(seed.visibleWidth, seed.visibleHeight);
+  const width = seed.uniform ? uniformSpan : seed.visibleWidth;
+  const height = seed.uniform ? uniformSpan : seed.visibleHeight;
+  const resolvedDepth = seed.uniform ? uniformSpan : depth;
   const id = seed.id ?? 'builder:viewing-box';
   assertId(id);
   return {
     id,
     center: { ...seed.center },
     halfExtents: {
-      x: seed.visibleWidth * 0.3,
-      y: seed.visibleHeight * 0.3,
-      z: depth * 0.3,
+      x: width * fraction * 0.5,
+      y: height * fraction * 0.5,
+      z: resolvedDepth * fraction * 0.5,
     },
     rotation: [0, 0, 0, 1],
-    mode: 'move',
+    mode: 'resize',
     enabled: true,
   };
 }
@@ -92,12 +105,24 @@ export function resizeViewingBox(
   signedDelta: number,
   anchorOpposite = true,
 ): KernelViewingBoxState {
+  return resizeViewingBoxFace(state, axis, 1, signedDelta, anchorOpposite);
+}
+
+/** Resizes either local face and keeps the opposite face fixed across an overdrag. */
+export function resizeViewingBoxFace(
+  state: KernelViewingBoxState,
+  axis: KernelViewingBoxAxis,
+  face: KernelViewingBoxFace,
+  signedDelta: number,
+  anchorOpposite = true,
+): KernelViewingBoxState {
   assertViewingBox(state);
   assertFinite(signedDelta, 'viewing box resize delta');
+  if (face !== -1 && face !== 1) throw new RangeError('viewing box face must be -1 or 1');
   const oldExtent = state.halfExtents[axis];
-  const nextExtent = Math.max(MINIMUM_EXTENT, oldExtent + signedDelta * 0.5);
-  const appliedFaceDelta = (nextExtent - oldExtent) * 2;
-  const localShift = anchorOpposite ? appliedFaceDelta * 0.5 : 0;
+  const separation = face * oldExtent * 2 + signedDelta;
+  const nextExtent = Math.max(MINIMUM_EXTENT, Math.abs(separation) * 0.5);
+  const localShift = anchorOpposite ? signedDelta * 0.5 : 0;
   const axisVector = viewingBoxAxes(state)[axisIndex(axis)];
   return {
     ...state,
@@ -129,7 +154,10 @@ export function rotateViewingBox(
 }
 
 /** Six inward planes consumed by the renderer's composable clip-scope API. */
-export function viewingBoxClipVolume(state: KernelViewingBoxState): KernelClipVolume {
+export function viewingBoxClipVolume(
+  state: KernelViewingBoxState,
+  previewCap = true,
+): KernelClipVolume {
   assertViewingBox(state);
   const axes = viewingBoxAxes(state);
   const extents = [state.halfExtents.x, state.halfExtents.y, state.halfExtents.z] as const;
@@ -148,7 +176,7 @@ export function viewingBoxClipVolume(state: KernelViewingBoxState): KernelClipVo
     id: state.id,
     planes,
     operation: 'keepInside',
-    previewCap: true,
+    previewCap,
     enabled: state.enabled,
   };
 }

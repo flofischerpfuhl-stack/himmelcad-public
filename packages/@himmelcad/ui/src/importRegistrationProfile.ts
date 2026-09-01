@@ -77,7 +77,13 @@ export function importRegistrationProfile(formatId: string): ImportRegistrationP
       label: 'CAD drawing',
       summary:
         'Use declared drawing coordinates or place local CAD geometry from an origin and bearing.',
-      methods: ['sourceCoordinates', 'originAndProjectNorth', 'manualPlacement', 'pointPairs'],
+      methods: [
+        'sourceCoordinates',
+        'originAndProjectNorth',
+        'manualPlacement',
+        'pointPairs',
+        'icp',
+      ],
       recommendedMethod: 'originAndProjectNorth',
       pointPicking: true,
       specialCapabilities: ['CAD vertex and edge picks', 'Explicit origin and project north'],
@@ -89,7 +95,13 @@ export function importRegistrationProfile(formatId: string): ImportRegistrationP
       label: 'Civil model',
       summary:
         'Retain declared LandXML coordinates; no silent unit, scale or CRS correction is applied.',
-      methods: ['sourceCoordinates', 'originAndProjectNorth', 'manualPlacement', 'pointPairs'],
+      methods: [
+        'sourceCoordinates',
+        'originAndProjectNorth',
+        'manualPlacement',
+        'pointPairs',
+        'icp',
+      ],
       recommendedMethod: 'sourceCoordinates',
       pointPicking: true,
       specialCapabilities: ['Declared civil coordinates', 'Surface and alignment picks'],
@@ -136,7 +148,7 @@ export function importRegistrationProfile(formatId: string): ImportRegistrationP
     family: 'generic3d',
     label: '3D dataset',
     summary: 'Review the source placement and commit it as one canonical import transaction.',
-    methods: ['sourceCoordinates', 'originAndProjectNorth', 'manualPlacement', 'pointPairs'],
+    methods: ['sourceCoordinates', 'originAndProjectNorth', 'manualPlacement', 'pointPairs', 'icp'],
     recommendedMethod: 'sourceCoordinates',
     pointPicking: true,
     specialCapabilities: ['Canonical preview', 'Manual or point-pair placement'],

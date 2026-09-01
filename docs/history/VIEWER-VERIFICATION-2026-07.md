@@ -1,4 +1,8 @@
-# Viewer Verification
+# Viewer verification snapshot
+
+Status: archived evidence from July 2026. Counts and results are not current
+unless reproduced on the present revision. Current verification policy lives in
+`docs/TEST-TIERS.md`.
 
 The shared viewer is verified through three independent gates. A screenshot is
 never accepted as proof of geometric correctness or performance.
@@ -1746,7 +1750,7 @@ Apple-Silicon or Windows V6 measurements.
 - explicitly licensed NVIDIA Gaussian datasets plus deterministic generated
   1M/10M/100M splat stress fixtures.
 - buildingSMART sample IFC files under CC BY 4.0.
-- MIT-licensed ezdxf fixtures plus a deterministic HimmelCAD CAD zoo.
+- MIT-licensed ezdxf fixtures plus a deterministic Himmel:CAD CAD zoo.
 
 External data is downloaded only through a checksum-pinned manifest. Large
 assets live outside the source repository and are mirrored only after license

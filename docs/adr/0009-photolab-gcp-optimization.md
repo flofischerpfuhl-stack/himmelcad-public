@@ -1,95 +1,75 @@
-# ADR 0009: GCP-Messung und robuste Georeferenzierung
+# ADR 0009: GCP measurement and robust georeferencing
 
 ## Status
 
-Angenommen.
+Accepted.
 
-Kalibrierungs-Policy in Überarbeitung seit 2026-07-19. Die unten beschriebene
-GCP-, Snapshot-, Rollen-, Residual- und Publikationsarchitektur bleibt
-verbindlich. Die pauschale Festlegung auf feste Intrinsics und das davon
-abgeleitete Solverlabel sind jedoch keine Produktvorgabe mehr. M4 aus
-`docs/PROGRAM-MILESTONES-2026-07-19.md` entscheidet die Defaults und die
-freigebbaren Parameter pro Kalibrierungsgruppe anhand Primärliteratur,
-Beobachtbarkeit und Golden-Datensätzen. Bis dahin darf bestehendes Verhalten
-nicht stillschweigend als endgültige Policy dokumentiert werden.
+The GCP, snapshot, role, residual, lineage, and publication architecture below
+is binding. Camera-intrinsics defaults and releasable parameters are governed
+by `docs/photolab-intrinsics-policy.md`; the old blanket fixed-intrinsics rule
+is not a product requirement.
 
-## Kontext
+## Context
 
-PhotoLab muss GCPs mit XYZ-, XY- und Z-Masken, separat ausgewerteten
-Checkpoints und reproduzierbaren Restfehlern verarbeiten. Das Programm muss
-offline und auf Windows wie Linux funktionieren. Copyleft-Solver oder eine
-plattformgebundene native Solver-Abhängigkeit sind daher kein tragfähiger
-Kernpfad.
+PhotoLab must process GCPs with XYZ, XY, and Z masks, independently evaluated
+checkpoints, and reproducible residuals. The path must run offline on Windows
+and Linux without a copyleft solver or a platform-specific solver dependency.
 
-Die Sparse-Rekonstruktion führt bereits ein Bundle Adjustment aus. GCPs müssen
-anschließend das freie Rekonstruktionssystem in den Projekt-Weltraum
-überführen und die ausgewählten Kameraposen gemeinsam mit den Bildmessungen
-nachziehen, ohne Checkpoints in die Survey-Schätzung einzumischen.
+Sparse reconstruction already performs bundle adjustment. GCP processing must
+place the free reconstruction in project world space and refine selected camera
+poses with image observations without using checkpoints as survey priors.
 
-## Entscheidung
+## Decision
 
-- Bildmessungen werden aus kalibrierten Kamerastrahlen per linearer
-  Mehrstrahl-Ausgleichung trianguliert.
-- Controls bestimmen eine robuste 7-Parameter-Similarity-Transformation
-  (Translation, Rotation, Maßstab) als Initialisierung. Danach verfeinert ein
-  gewichtetes robustes Bundle Adjustment die ausgewählten Kamera-Extrinsics,
-  GCP-Schnittpunkte und eine deterministisch auf 50.000 Tracks begrenzte
-  Teilmenge der COLMAP-Tie-Points. Huber und Cauchy stehen als robuste
-  M-Schätzer für Bild- und Survey-Residuen zur Verfügung.
-- Das Bundle Adjustment nutzt blockweise kleine Normalgleichungen für Punkte
-  und Kameras. Dadurch bleibt der Speicher linear in der begrenzten Zahl von
-  Messungen; es wird keine globale dichte Normalmatrix aufgebaut.
-- Die erste ausgewählte Kamerapose und das Zentrum der zweiten ausgewählten
-  Kamera fixieren Pose und Maßstab der Gauge. Nicht ausgewählte Kameras bleiben
-  unverändert. Welche Intrinsics fest, priorisiert oder frei sind, wird pro
-  Kalibrierungsgruppe durch die in Überarbeitung befindliche
-  Kalibrierungs-Policy bestimmt und im Snapshot eingefroren.
-- Nur die durch die jeweilige Rolle aktivierten Komponenten gehen mit ihrer
-  Unsicherheit in die Normalgleichungen ein. Sind weniger als drei räumliche
-  Controls vorhanden, optimiert `Auto` ausschließlich die beobachtbaren
-  Translationskomponenten. Ein explizit verlangter 7-Parameter-Lauf wird in
-  diesem Fall abgelehnt.
-- Checkpoints nehmen mit ihren Bildmessungen an der Reprojektionsgeometrie
-  teil, ihre Survey-Koordinaten erzeugen jedoch nie einen Prior und bleiben
-  damit reine Genauigkeitskontrolle.
-- Kamerareferenzen sind ein ausdrücklicher Opt-in und standardmäßig vollständig
-  abgewählt. Nur explizit ausgewählte Kameras erzeugen einen Positionsprior.
-  Dafür werden ihre bereits in den Projekt-Weltraum projizierten GPS-/RTK-
-  Koordinaten und die beim Import eingefrorenen DJI-Unsicherheiten verwendet;
-  fehlen Unsicherheiten, gelten dokumentierte konservative Standardwerte.
-- Residuen werden je Punkt als East, North, Height, Horizontal, 3D und
-  Bild-RMS geführt und für Controls und Checkpoints getrennt aggregiert. Jede
-  Anzeige bleibt an den unveränderlichen GCP-Snapshot gebunden.
-- Eine manuelle GCP-Messung darf an einen verifizierten Feature Track snappen.
-  Dessen übrige Bildmessungen werden als automatische Vorschläge übernommen;
-  manuelle Messungen werden dabei niemals überschrieben.
-- Der Sidecar schreibt phasen- und iterationsweise atomare Checkpoints. Eine
-  Cancellation wird in allen Punkt-, Iterations- und Projektionsschleifen
-  geprüft. Ergebnisobjekte werden erst nach vollständiger Berechnung
-  inhaltsadressiert veröffentlicht.
-- Jede Optimierung veröffentlicht die IDs der Quell-Ausrichtung und des
-  optionalen Processing Sets. MVS, Tiefenkarten, Orthorektifizierung und alle
-  Folgeprodukte dürfen nur ein zu genau dieser Lineage kompatibles Ergebnis
-  übernehmen. Dabei werden die optimierten Kamera-Extrinsics direkt verwendet;
-  die Similarity allein ist kein Ersatz für die Bundle-Adjustment-Pose.
+- Image observations are triangulated from calibrated camera rays with linear
+  multi-ray least squares.
+- Controls initialize a robust seven-parameter similarity transform. A weighted
+  robust bundle adjustment then refines selected camera extrinsics, GCP
+  intersections, and a deterministic subset of at most 50,000 COLMAP tie
+  points. Huber and Cauchy estimators are available for image and survey
+  residuals.
+- Blockwise small normal equations keep memory linear in the bounded number of
+  observations; no global dense normal matrix is formed.
+- The first selected camera pose and the second selected camera center fix pose
+  and scale gauge. Unselected cameras remain unchanged. Each calibration group
+  freezes which intrinsics are fixed, prior-constrained, or free.
+- Only components enabled by a point's role enter the equations with their
+  uncertainty. With fewer than three spatial controls, Auto optimizes only
+  observable translation components. An explicitly requested seven-parameter
+  solve is rejected.
+- Checkpoint image observations participate in reprojection geometry, but their
+  survey coordinates never create a prior.
+- Camera references are opt-in and all are unselected by default. Only selected
+  cameras create position priors from coordinates already projected into
+  project world space and from uncertainties frozen during import. Missing
+  uncertainty uses documented conservative defaults.
+- Residuals are stored per point as East, North, Height, Horizontal, 3D, and
+  image RMS and aggregated separately for controls and checkpoints. Every view
+  remains bound to the immutable GCP snapshot.
+- A manual GCP observation may snap to a verified feature track. Other track
+  observations become automatic proposals and never overwrite manual input.
+- The sidecar writes atomic checkpoints by phase and iteration. Cancellation is
+  checked in point, iteration, and projection loops. Content-addressed result
+  objects publish only after complete calculation.
+- Every result records source-alignment and optional processing-set IDs. MVS,
+  depth maps, orthorectification, and downstream products may consume only
+  matching lineage and use optimized camera extrinsics directly; the initial
+  similarity is not a substitute for bundle-adjusted poses.
 
-## UX-Vertrag
+## UX contract
 
-- Blau: nur vorhergesagte Projektion, nicht optimierungswirksam.
-- Grün: manuell bestätigte Bildmessung.
-- Orange: über einen geometrisch verifizierten Tie Point fortgeschriebene
-  automatische Messung.
-- Gedämpft: bewusst gesperrte Messung.
+- Blue: predicted projection only; excluded from optimization.
+- Green: manually confirmed image observation.
+- Orange: automatic observation propagated through a verified tie point.
+- Muted: deliberately locked observation.
 
-## Konsequenzen
+## Consequences
 
-Der GCP-Pfad benötigt keine zusätzliche Runtime-Library und verhält sich auf
-CPU, GPU und Betriebssystemen identisch. Das Ergebnis veröffentlicht neben
-Similarity, Restfehlern und Projektionen auch die verfeinerten Kameras und
-Sparse-Tie-Points. Solverlabel und Provenance enthalten zusätzlich die
-eingefrorene Intrinsics-Policy; das bisherige Label
-`himmelcad-weighted-robust-bundle-adjustment-v2-fixed-intrinsics` bezeichnet
-nur den entsprechenden Legacy-Modus. Ergebnisse ohne passende Alignment-/
-Processing-Set-Lineage werden nicht stillschweigend für Produkte
-wiederverwendet. Ein späterer Schur- oder GPU-Solver kann denselben Snapshot-,
-Gauge-, Rollen-, Residual-, Lineage- und Publikationsvertrag übernehmen.
+The GCP path needs no additional runtime library and behaves consistently
+across CPU, GPU, and operating system. Results publish refined cameras and
+sparse tie points alongside similarity, residuals, and projections. Solver
+provenance includes the frozen intrinsics policy. The former
+`himmelcad-weighted-robust-bundle-adjustment-v2-fixed-intrinsics` label denotes
+only its legacy mode. Incompatible lineage is never reused silently. A future
+Schur or GPU solver may preserve the same snapshot, gauge, role, residual,
+lineage, and publication contract.

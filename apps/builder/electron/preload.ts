@@ -106,6 +106,16 @@ export interface HimmelCADApi {
   };
   readonly dialog: {
     openImport: (extensions: readonly string[]) => Promise<string[]>;
+    openTransform: () => Promise<string | null>;
+    saveTransform: (transform: {
+      readonly tx: number;
+      readonly ty: number;
+      readonly tz: number;
+      readonly rxRadians: number;
+      readonly ryRadians: number;
+      readonly rzRadians: number;
+      readonly scale: number;
+    }) => Promise<string | null>;
   };
 }
 
@@ -205,6 +215,8 @@ const api: HimmelCADApi = {
   },
   dialog: {
     openImport: (extensions) => ipcRenderer.invoke('dialog:openImport', extensions),
+    openTransform: () => ipcRenderer.invoke('dialog:openTransform'),
+    saveTransform: (transform) => ipcRenderer.invoke('dialog:saveTransform', transform),
   },
 };
 

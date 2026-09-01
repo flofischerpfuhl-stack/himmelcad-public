@@ -12,7 +12,7 @@ describes the post-pivot architecture, which is what ships.
 
 ## Context
 
-HimmelCAD Builder needs a cursor that always carries a precise 3D
+Himmel:CAD Builder needs a cursor that always carries a precise 3D
 coordinate, scales to billions of points and hundreds of millions of
 triangles, and underpins every measurement, drawing, orbit-pivot and
 selection downstream. Sampling-based heuristics (the previous MVP path)

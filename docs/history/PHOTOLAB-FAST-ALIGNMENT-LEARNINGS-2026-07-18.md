@@ -1,5 +1,8 @@
 # PhotoLab Fast alignment — learnings (2026-07-18)
 
+Status: archived benchmark and investigation report. Reproduce measurements on
+the current revision before using them as evidence or changing current policy.
+
 Context: Sulzberg SUMA (DJI M4E, EPSG:31468+7837). Agisoft reference has full GCP
 optimization; Fast mode does **not** — expect residual gap vs Agisoft poses.
 

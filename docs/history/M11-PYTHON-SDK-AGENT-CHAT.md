@@ -1,12 +1,15 @@
 # M11 implementation plan: Python SDK and agent chat
 
-Status: implementation completed on 2026-07-20; final integrated release
+Status: archived implementation record. Current automation authority is ADR
+0024 and the generated protocol and SDK contracts.
+
+Implementation completed on 2026-07-20; final integrated release
 verification remains in progress. This record does not substitute for the
 capability-owned release gates.
 
 ## Outcome
 
-HimmelCAD exposes one versioned automation protocol whose queries and commands
+Himmel:CAD exposes one versioned automation protocol whose queries and commands
 enter the same canonical dispatcher, journal and compare-and-swap checks as the
 desktop UI. A generated synchronous and asynchronous Python SDK uses that
 protocol. Builder and PhotoLab may host a virtualized chat UI which discovers
@@ -142,7 +145,7 @@ For both `linux-x64` and `win32-x64`, staging:
 6. atomically publishes a platform-specific runtime inventory containing all
    source and artifact hashes and the release-eligibility result.
 
-The Windows manifest contains release-eligible, deterministic HimmelCAD wheels
+The Windows manifest contains release-eligible, deterministic Himmel:CAD wheels
 for NumPy 2.2.6 and headless OpenCV 4.13.0. Their exact CPython runtime is also
 covered by dynamic Wine smoke tests for NumPy's float/complex BLAS and LAPACK
 paths, failure cases and concurrency, plus OpenCV PNG and SIFT operations. A

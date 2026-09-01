@@ -102,14 +102,47 @@
 }
 
 .rowFull > .card {
+  width: calc(100% - 32px);
+  max-width: calc(100% - 32px);
+  margin-left: 32px;
+}
+
+.messageLine,
+.attachmentLine {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
   width: 100%;
-  max-width: 100%;
+}
+
+.attachmentLine {
+  align-items: flex-start;
+}
+
+.card .avatarSpacer {
+  display: none;
+}
+
+.avatar,
+.avatarSpacer {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--hc-border-default);
+  border-radius: 50%;
+  background: var(--hc-bg-island-hi);
+  color: var(--hc-accent-base);
 }
 
 /* Revert sits under the message, flush with its left/right edge */
 .rowSystem > .revertBtn {
   align-self: flex-start;
-  margin-left: 2px;
+  margin-left: 34px;
 }
 
 .rowUser > .revertBtn {
@@ -119,7 +152,7 @@
 
 .rowFull > .revertBtn {
   align-self: flex-start;
-  margin-left: 2px;
+  margin-left: 34px;
   order: 2;
 }
 
@@ -137,6 +170,7 @@
 }
 
 .bubble {
+  position: relative;
   max-width: min(520px, 100%);
   padding: 10px 12px;
   border: 1px solid var(--hc-border-default);
@@ -147,6 +181,19 @@
   line-height: 1.45;
 }
 
+.bubbleSystem::before {
+  position: absolute;
+  bottom: 5px;
+  left: -5px;
+  width: 8px;
+  height: 8px;
+  border-bottom: 1px solid var(--hc-border-default);
+  border-left: 1px solid var(--hc-border-default);
+  background: var(--hc-bg-island-lo);
+  content: '';
+  transform: rotate(45deg);
+}
+
 .rowUser > .bubble {
   border-radius: 12px 12px 4px 12px;
   background: var(--hc-press-bg);
@@ -154,6 +201,19 @@
   color: var(--hc-fg-strong);
   font-size: 12px;
   font-weight: 500;
+}
+
+.bubbleUser::after {
+  position: absolute;
+  right: -5px;
+  bottom: 5px;
+  width: 8px;
+  height: 8px;
+  border-top: 1px solid var(--hc-border-strong);
+  border-right: 1px solid var(--hc-border-strong);
+  background: var(--hc-press-bg);
+  content: '';
+  transform: rotate(45deg);
 }
 
 .revertBtn {
@@ -201,6 +261,10 @@
   border-color: var(--hc-success);
 }
 
+.bubbleOk::before {
+  border-color: var(--hc-success);
+}
+
 .bubbleOk strong {
   color: var(--hc-success);
 }
@@ -209,11 +273,19 @@
   border-color: var(--hc-warning);
 }
 
+.bubbleWarn::before {
+  border-color: var(--hc-warning);
+}
+
 .bubbleWarn strong {
   color: var(--hc-warning);
 }
 
 .bubbleError {
+  border-color: var(--hc-error);
+}
+
+.bubbleError::before {
   border-color: var(--hc-error);
 }
 

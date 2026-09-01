@@ -1,4 +1,4 @@
-# HimmelCAD Cap — research notes (2026-07)
+# Himmel:CAD Cap — research notes (2026-07)
 
 Condensed findings that inform Cap product decisions. Not a substitute for
 peer-reviewed reading lists; pointers only.

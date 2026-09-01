@@ -15,6 +15,8 @@ export interface CrsTransformPairProps {
   noTransform: boolean;
   onNoTransformChange: (noTransform: boolean) => void;
   noTransformLabel?: string;
+  /** Hide the checkbox when the parent flow already made the transform decision. */
+  showNoTransform?: boolean;
   className?: string;
 }
 
@@ -30,18 +32,21 @@ export function CrsTransformPair({
   noTransform,
   onNoTransformChange,
   noTransformLabel = 'No transform — keep source values',
+  showNoTransform = true,
   className,
 }: CrsTransformPairProps): JSX.Element {
   return (
     <section className={className ? `${styles.root} ${className}` : styles.root}>
       <div className={styles.header}>
         <div className={styles.title}>{title}</div>
-        <Checkbox
-          className={styles.noTransform}
-          checked={noTransform}
-          onChange={(e) => onNoTransformChange(e.target.checked)}
-          label={noTransformLabel}
-        />
+        {showNoTransform ? (
+          <Checkbox
+            className={styles.noTransform}
+            checked={noTransform}
+            onChange={(e) => onNoTransformChange(e.target.checked)}
+            label={noTransformLabel}
+          />
+        ) : null}
       </div>
       {hint ? <p className={styles.hint}>{hint}</p> : null}
       <div className={styles.columns} data-disabled={noTransform ? 'true' : 'false'}>

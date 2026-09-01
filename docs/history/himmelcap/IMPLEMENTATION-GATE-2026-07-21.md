@@ -1,4 +1,7 @@
-# HimmelCAD Cap — implementation gate (questions for autonomous E2E build)
+# Historical Himmel:CAD Cap implementation gate
+
+Status: archived after the MVP gate was answered and implemented. This file has
+no current product authority.
 
 Status: **blocked on owner answers** before a long unattended implementation run.
 UI visual baseline: `apps/cap-prototype/screenshots/` (+ `MANIFEST.md`).
@@ -96,7 +99,7 @@ Without client IDs, agent can only implement **interfaces + fake/link UI**, not 
 
 - Android `applicationId`: `de.himmelcad.cap` OK?
 - iOS bundle id: `de.himmelcad.cap` OK?
-- Display name: **himmel:cap** vs **HimmelCAD Cap** on home screen?
+- Display name: **himmel:cap** vs **Himmel:CAD Cap** on home screen?
 
 ### B6. Distribution for first binary **Required**
 
@@ -178,7 +181,7 @@ This is the hardest engineering fork:
 
 ### C8. Cloud folder conventions **Required if cloud**
 
-- Default remote path: `/HimmelCAD Cap/{projectName}/` ?
+- Default remote path: `/Himmel:CAD Cap/{projectName}/` ?
 - Upload: `{jobName}.hcap`
 - Bestandsplan pull: fixed name `bestandsplan.dxf` or latest `*.dxf` by mtime?
 - Auto-upload after save: default off or on?

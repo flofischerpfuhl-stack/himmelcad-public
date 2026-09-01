@@ -93,6 +93,14 @@ export class PhotolabExternalImportSession {
     return this.registration.sourceSamples(sessionId);
   }
 
+  projectPointCloudSamples(datasetId: string, maximumSamples = 2_048) {
+    return this.registration.projectPointCloudSamples(datasetId, maximumSamples);
+  }
+
+  inspectTransform(path: string) {
+    return this.registration.inspectSiteCalibration(path);
+  }
+
   commit(sessionId: string) {
     return this.registration.commit(sessionId);
   }

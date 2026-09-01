@@ -44,16 +44,32 @@
   box-shadow: var(--hc-shadow-island);
 }
 
-.contextName {
+.contextHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   flex-shrink: 0;
-  padding: 7px 12px;
-  overflow: hidden;
+  min-height: 40px;
+  box-sizing: border-box;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--hc-border-subtle);
   border-radius: 0;
-  color: var(--hc-fg-default);
   background: var(--hc-bg-island-hi);
   box-shadow: none;
-  font-size: 11px;
+}
+
+.contextLabel {
+  color: var(--hc-fg-muted);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.contextName {
+  flex: 1;
+  overflow: hidden;
+  color: var(--hc-fg-strong);
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

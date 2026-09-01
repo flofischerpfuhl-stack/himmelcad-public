@@ -1,6 +1,6 @@
-# HimmelCAD Cap golden fixtures
+# Himmel:CAD Cap golden fixtures
 
-Placeholder for synthetic `.himmelcap` packages used by C1/C2 tests.
+Synthetic `.hcap` packages used by Cap and PhotoLab contract tests.
 
 No real customer media. When the first fixture is added:
 

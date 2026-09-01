@@ -1,4 +1,4 @@
-import { RotateCcw, X } from 'lucide-react';
+import { Bot, RotateCcw, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 
 import styles from './ImportChat.module.css';
@@ -136,10 +136,15 @@ export function ChatBubble({
           : '';
   return (
     <div className={`${styles.row} ${styles.rowSystem}`}>
-      <div className={`${styles.bubble} ${toneClass}`.trim()}>
-        {title ? <strong>{title}</strong> : null}
-        {children}
-        {detail ? <small>{detail}</small> : null}
+      <div className={styles.messageLine}>
+        <span className={styles.avatar} aria-hidden="true">
+          <Bot size={13} strokeWidth={2} />
+        </span>
+        <div className={`${styles.bubble} ${styles.bubbleSystem} ${toneClass}`.trim()}>
+          {title ? <strong>{title}</strong> : null}
+          {children}
+          {detail ? <small>{detail}</small> : null}
+        </div>
       </div>
       {onRevert ? <RevertButton onRevert={onRevert} disabled={revertDisabled} /> : null}
     </div>
@@ -166,27 +171,30 @@ export function ChatChoices({
   const locked = (lockResolved && resolvedId != null) || disabled;
   return (
     <div className={`${styles.row} ${styles.rowSystem}`}>
-      <div className={styles.choices} role="group">
-        {options.map((option) => {
-          const active = resolvedId === option.id;
-          return (
-            <button
-              key={option.id}
-              type="button"
-              className={[
-                styles.choice,
-                option.primary ? styles.choicePrimary : '',
-                active ? styles.choiceActive : '',
-              ]
-                .filter(Boolean)
-                .join(' ')}
-              disabled={locked || option.disabled}
-              onClick={() => onSelect(option.id)}
-            >
-              {option.label}
-            </button>
-          );
-        })}
+      <div className={styles.attachmentLine}>
+        <span className={styles.avatarSpacer} aria-hidden="true" />
+        <div className={styles.choices} role="group">
+          {options.map((option) => {
+            const active = resolvedId === option.id;
+            return (
+              <button
+                key={option.id}
+                type="button"
+                className={[
+                  styles.choice,
+                  option.primary ? styles.choicePrimary : '',
+                  active ? styles.choiceActive : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                disabled={locked || option.disabled}
+                onClick={() => onSelect(option.id)}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
       {onRevert && resolvedId != null ? (
         <RevertButton onRevert={onRevert} disabled={revertDisabled} />

@@ -1,10 +1,14 @@
 # Builder MVP Implementation Plan
 
+Status: archived planning snapshot. It does not define current scope, priority,
+architecture, or completion. Use `docs/CURRENT-DIRECTION.md`, the normative
+documents in `docs/README.md`, and accepted ADRs instead.
+
 ## MVP Definition
 
 The MVP is successful when a user can:
 
-1. open HimmelCAD Builder,
+1. open Himmel:CAD Builder,
 2. create a `.hcad/` project,
 3. import multiple LAS/LAZ files at once,
 4. view them interactively as 3D point clouds,

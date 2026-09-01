@@ -1,317 +1,171 @@
-# HimmelCAD Architecture
+# Himmel:CAD architecture
 
-## Summary
+This document describes current system boundaries. Accepted ADRs contain the
+decision rationale and override this overview when details conflict.
 
-HimmelCAD is split into three layers:
+## Architectural goals
 
-1. **Core** - Rust data model, storage, import, spatial indexes, commands.
-2. **Viewer** - browser-compatible TypeScript/three.js renderer.
-3. **Shell/UI** - Builder Electron desktop app and WeltView browser app.
+- One canonical platform shared by Builder, PhotoLab, Cap import, and WeltView.
+- Precise, crash-safe, journaled project state outside the UI.
+- One renderer for CAD, point clouds, meshes, rasters, splats, and product views.
+- Large-data interaction with bounded CPU, memory, storage, and GPU work.
+- The same product capabilities available to UI, Python, and AI automation.
+- Product-specific workflows without product-specific sources of truth.
 
-The central rule: Builder and WeltView must share the same viewer and data
-contracts. Electron gives desktop file access and native packaging, but it must
-not leak into the shared renderer.
-
-Product-family scope and long-term entity plans are documented in
-`docs/PRODUCT-VISION.md`. This file focuses on the technical architecture that
-keeps those products compatible.
-
-## Why Electron, Not Tauri or Native UI
-
-Electron is chosen because HimmelCAD is a 3D web-renderer-heavy application. The
-same renderer must later run in WeltView. Electron gives a predictable Chromium
-runtime across platforms.
-
-Rejected alternatives:
-
-- **Tauri:** attractive because Rust-native and smaller binaries, but it depends
-  on OS webviews. For WebGL/WebGPU-heavy work this creates unpredictable
-  compatibility, especially on Linux WebKitGTK.
-- **Slint/native UI:** good for native controls, weak for web-compatible 3D
-  renderer reuse and the existing three.js ecosystem.
-- **Vanilla JS v01 continuation:** fastest short-term, too fragile for a CAD
-  with panels, command routing, state, undo, viewer sharing, and tests.
-
-## Technology Stack
-
-| Layer               | Choice                                           | Reason                                                         |
-| ------------------- | ------------------------------------------------ | -------------------------------------------------------------- |
-| Desktop shell       | Electron                                         | Stable Chromium, good packaging, predictable WebGL/WebGPU path |
-| Browser app         | Vite static app                                  | Same viewer package as Builder                                 |
-| UI                  | TypeScript + React                               | Strong ecosystem, testability, refactoring safety              |
-| State mirror        | Zustand                                          | Small, explicit, works well with command events                |
-| Styling             | CSS variables / Tailwind-style tokens            | Dark-Islands-inspired design without hardcoded colors          |
-| 3D renderer         | three.js                                         | Mature web 3D ecosystem                                        |
-| Point-cloud loading | modular Potree/pnext-inspired loader             | Better embedding than monolithic Potree v1                     |
-| Core                | Rust                                             | Performance, memory safety, native and WASM targets            |
-| Desktop bridge      | Separate sidecar process via JSON-RPC over stdio | Crash isolation, same pattern as PhotoLab Python sidecar later |
-| Browser bridge      | wasm-bindgen in a Web Worker                     | Same core model in WeltView                                    |
-
-## Runtime Model
+## System layers
 
 ```text
-Builder Electron
-  main process
-    file dialogs
-    secure preload
-    sidecar lifecycle (spawn, supervise, restart on crash)
-    JSON-RPC client over stdio
-  renderer process
-    React UI
-    shared viewer
-    command mirror
-
-himmelcad-sidecar (separate OS process)
-  tokio runtime
-  project storage
-  entity model
-  command journal
-  import/index pipelines
-  spatial queries
-  JSON-RPC server over stdio
-
-WeltView Browser
-  React UI subset
-  shared viewer
-  Web Worker hosting himmelcad-wasm
-  HTTP/blob project loader
+Product hosts
+  Builder / PhotoLab / WeltView / Cap
+        |
+Shared application contracts
+  UI modules / app facade / automation protocol
+        |
+Canonical platform
+  commands / entities / project store / IO / spatial services
+        |
+Representation and rendering platform
+  preparation providers / Rust render core / streaming and residency
 ```
 
-## State Ownership
+### Product hosts
 
-The Rust core owns authoritative project state. The React app receives snapshots
-and events, then mirrors them for display.
+Desktop products use Electron with React renderers. WeltView is a browser host.
+Cap is a Flutter mobile host whose `.hcap` output enters the canonical platform
+through the shared IO boundary.
 
-Why:
+Hosts own product composition, transient interaction state, and platform
+integration. They do not own canonical entities, format parsers, rendering
+truth, or alternate mutation paths.
 
-- commands are serialized once,
-- undo/redo is deterministic,
-- future Python scripting can call the same command API,
-- ChronoGit gets command history and semantic diffs,
-- WeltView can load read-only snapshots without reimplementing rules.
+### Canonical platform
 
-The UI may keep transient state such as hover, current panel size, and open
-dropdowns. It must not mutate entities directly.
+Rust owns canonical project state, validation, commands, persistence, IO,
+spatial operations, and durable operation state. React, Flutter, Python, and AI
+clients observe or invoke this authority through versioned contracts.
 
-## Renderer Architecture
+`CanonicalDocument` is the mutable entity authority. Every semantic create,
+update, delete, restore, property edit, or relation change is a validated command
+with expected revisions and an append-only journal entry. Undo and redo append
+compensating commands; they do not rewind history.
 
-The viewer package exposes:
+Viewer attachment, GPU residency, and canonical entity lifetime are separate
+lifecycles. A render failure never rolls canonical state back to match a cache.
 
-- `SceneGraph`,
-- `Layer`,
-- `Viewport`,
-- `CameraController`,
-- `ToolController`,
-- `PickingService`,
-- `SnappingService`,
-- `RenderOffset`,
-- `TiledDataset`,
-- `TileStreamingService`,
-- `RenderBudget`.
+## Runtime boundaries
 
-Layer types planned:
+### Desktop
 
-- point cloud layer,
-- CAD primitive layer,
-- tiled mesh layer (high-resolution meshes with hierarchical LOD),
-- tiled texture provider (mipmap/tile pyramid for textured meshes),
-- Gaussian splat layer (hierarchical splat tree, depth-sorted),
-- BIM/IFC layer (mapped onto tiled mesh layer where possible),
-- simulation overlay layer.
+Electron main processes provide narrowly scoped platform services such as
+window lifecycle, secure file selection, package updates, and sidecar
+supervision. Renderers use a minimal preload API with context isolation,
+disabled Node integration, and sandboxing.
 
-Point clouds are only the first layer. The scene graph is intentionally not
-Potree's application scene. Potree/pnext concepts are used for octree streaming,
-point budgets, and shaders, but HimmelCAD owns the app state and UI.
+The Rust sidecar owns projects and long-running operations. Compute workers are
+isolated, inventory-pinned, and replaceable. Workers write scratch outputs; only
+the sidecar validates and publishes canonical results.
 
-### Generic `TiledDataset` Abstraction
+### Browser
 
-All large data layers - point clouds, tiled meshes, tiled textures, Gaussian
-splats - implement a single `TiledDataset` contract. This is mandatory, not
-optional, because every per-layer streaming reinvention historically becomes a
-maintenance disaster.
+WeltView uses the shared viewer facade and browser-compatible WASM contracts. It
+may attach read-only document snapshots without receiving canonical mutation
+authority.
 
-A `TiledDataset` provides:
+### Mobile
 
-- a hierarchical tile tree (octree, BVH, quadtree, splat tree, depending on data type),
-- per-tile bounds in project world coordinates,
-- per-tile screen-space-error metric for LOD selection,
-- per-tile load/unload functions,
-- per-tile picking acceleration data,
-- per-tile statistics for the render budget,
-- per-tile content cost (points, triangles, splats, texture/GPU bytes, draw calls),
-- per-tile transparency mode and persisted spatial-index status.
+Cap owns capture and package creation, not reconstruction. Native platform
+channels may expose camera and sensor capabilities. `.hcap` remains the stable
+handoff to PhotoLab.
 
-The `TileStreamingService` then operates on `TiledDataset` instances without
-knowing what kind of data they hold. The `RenderBudget` allocates fairly
-across all visible datasets, regardless of type.
+## Renderer
 
-Consequence:
+ADR 0017 defines one platform-neutral Rust render core built on `wgpu`.
 
-- Point cloud LOD, mesh LOD, splat LOD, and texture LOD all share the same
-  budget logic and the same eviction logic.
-- Adding a new tile-based layer type only requires implementing `TiledDataset`
-  and a small render module; the streaming and budget infrastructure is reused.
+- WebGPU is the primary browser and Electron backend.
+- WebGL2 is the permanent downlevel backend of the same engine.
+- Native backends remain available through wgpu where product hosts require
+  them.
+- One render world owns camera, depth, picking, clipping, selection, streaming,
+  residency, and resource budgets.
 
-See `docs/adr/0004-large-geometry-contracts.md` for the enforced shared
-contracts across point clouds, tiled meshes, textures, splats and snap targets.
+New integrations use `@himmelcad/viewer/kernel`. The historical React/Three.js
+surface and `@himmelcad/three-loader` are isolated compatibility paths during
+app migration. They are not the target architecture and must not gain new
+product behavior.
 
-### Snapping as a First-Class Subsystem
+Formats are providers, not render engines. Potree, 3D Tiles/glTF, prepared
+meshes, rasters, splats, and authored CAD all map into shared capabilities and
+the global residency coordinator.
 
-Cursor-snapping (point/edge/face/grid/anchor) is not a side effect of the
-cursor coordinate system. It is its own subsystem.
+## Large-data and coordinate invariants
 
-`SnappingService`:
+- Canonical world and camera values use `f64`; GPU payloads use local `f32`
+  coordinates with explicit `f64` transforms.
+- Z is up. Missing Z is unknown, never zero.
+- Source coordinates are immutable unless an explicit journaled operation
+  creates a new revision.
+- No implicit CRS, grid, axis, height, scale, or unit conversion is allowed.
+- Complete large datasets do not live permanently in product renderers or WASM
+  memory.
+- Importers prepare hierarchies, indexes, bounds, statistics, and GPU-friendly
+  artifacts before interactive use.
+- Runtime selection, decode, upload, picking, and eviction are bounded and
+  cancellation-aware.
 
-- holds a registry of snap providers per layer type,
-- queries providers within a screen-space tolerance,
-- ranks candidate snaps by user priority (point > vertex > edge > face > grid),
-- filters candidates through one central snap-target mask,
-- returns a single canonical snap result with snap kind metadata,
-- feeds both the cursor coordinate display and active drawing tools.
+## IO and publication
 
-This means:
+ADR 0018 defines provider-neutral import and export. Providers probe, stage,
+validate, report losses, and return canonical packages. They never mutate a
+viewer or product-specific store directly.
 
-- the same snapping logic powers the bottom-right coordinate display, the
-  drawing tools, the measurement tools, and any future scripting hook,
-- new layer types add snap providers, not new snap pipelines,
-- edit commands can revalidate the selected `GeometryTargetRef` in Rust before
-  mutating project state.
+Interactive import registration is a reviewed pre-commit lifecycle. It may
+collect CRS decisions, point pairs, placement, and refinement input. PhotoLab
+batch execution begins only from a fully resolved immutable plan and never
+pauses for new user input.
 
-## Coordinates
+Publication is transactional: immutable artifacts are complete and verified
+before the canonical command commits. Cancellation or failure before commit
+does not expose partial entities.
 
-Internally, HimmelCAD uses kartesische coordinates only:
+## Operation coordination
 
-- canonical storage: `f64`,
-- render buffers: `f32` relative to stable render/tile offsets,
-- Z is world-up,
-- optional CRS/import metadata is stored for later export, warning, and map
-  integration only,
-- no implicit reprojection, no implicit NTv2 grids, no implicit scale correction.
+Every operation declares its scope, resources, mutation authority,
+cancellation identity, and conflict behavior. Product hosts must not infer
+parallel safety from separate buttons or panels.
 
-ADR 0023 also permits a first-class local metric project frame: metres and
-correct relative scale do not imply a CRS, map origin, north or gravity.
+For every new operation, decide whether overlapping work is:
 
-If imported files are far apart, the app may warn and later offer an explicit
-transform workflow. It must not silently change coordinates.
+- safely concurrent because it reads immutable snapshots or disjoint resources;
+- coordinated through shared budgets or a common operation owner;
+- serialized because it mutates the same project or external target; or
+- rejected with a clear user-facing reason.
 
-## Cursor Coordinate Strategy
+Cancellation, close, project replacement, sidecar restart, undo/redo, and app
+shutdown are part of the same lifecycle design. Operation IDs and capabilities
+must not survive their owner or leak into a later operation.
 
-The cursor coordinate is a first-class system:
+## Automation
 
-1. depth pick from rendered geometry,
-2. nearest loaded point fallback,
-3. local interpolation fallback,
-4. estimated/last-stable state only if no reliable coordinate exists.
+ADR 0024 defines a versioned language-neutral protocol over canonical queries,
+commands, view control, and bounded bulk-data leases. Generated sync and async
+Python clients and AI harness adapters use that protocol.
 
-The user-facing coordinate is always in project world coordinates after exactly
-one render-offset reversal. Picking services must be bounded to the current
-visible/loaded tiles.
+Product UI may provide richer composition, but a domain capability must not
+exist only as component-local logic. Pure presentation details such as hover or
+panel animation are not canonical automation operations.
 
-## Storage and History
+## Shared UI architecture
 
-The project format is a hybrid:
+`@himmelcad/ui` and `@himmelcad/theme` are Electron-free. Apps compose shared
+modules and add domain content. A recurring interaction pattern belongs in the
+shared library before a second app copies it.
 
-- `.hcad/` folder is the canonical working format,
-- `.hcadx` zip is the portable export format,
-- object blobs are content-addressed,
-- commands are append-only journal entries,
-- indexes are rebuildable cache,
-- point-cloud tiles use the **Potree 2.0 tile layout** (open, well-documented,
-  natively understood by `pnext/three-loader`) wrapped inside our content-
-  addressable object store. Mesh, texture, and splat tile formats follow the
-  same layout philosophy when they arrive.
+## Related decisions
 
-This gives:
-
-- fast loading,
-- partial streaming,
-- undo/redo,
-- clean crash recovery,
-- a credible path toward ChronoGit.
-
-PhotoLab project New/Open/Save/Save As reuse the sidecar archive-operation
-identity and cancellation token; Electron does not create a parallel job
-record. Exact phase/byte/file progress travels over the existing progress
-channel to a renderer-owned Dark-Island operation dialog. Project replacement
-is transactional at the file boundary, and Electron attempts to restore the
-previous recoverable session if New/Open fails after its session switch.
-
-## Dependency Policy
-
-CloudCompare and similar GPL projects may inform algorithm research but are not
-build inputs and must not be ported. Any algorithm must be implemented from
-papers, own derivation, or permissively licensed implementations.
-
-All third-party code must be listed in `LICENSES/THIRD_PARTY.md` before product
-use.
-
-## Future Compatibility
-
-### WeltView
-
-WeltView works because:
-
-- renderer has no Electron dependency,
-- Rust core can compile to WASM,
-- `.hcadx` is streamable in browser,
-- editing commands can be disabled while read-only viewing remains.
-
-### PhotoLab
-
-PhotoLab uses the Rust sidecar as the authoritative project/job boundary and launches audited,
-offline worker runtimes for COLMAP, neural inference, MVS, raster, mesh and splat stages. Python is
-permitted only inside a staged worker runtime with an explicit inventory; neither Builder nor the
-shared renderer depends on Python. PhotoLab outputs are normal HimmelCAD entities: depth maps,
-point clouds, rasters, meshes, splats, transforms and lineage attributes. Capture groups,
-calibration groups, alignment/GCP runs and merge runs are immutable domain records rather than
-implicit mutable “chunks”.
-
-Per-image exclusion masks are original-resolution, content-addressed revisions owned by the Rust
-project runtime. COLMAP and DeDoDe receive materialized keep masks for feature extraction; the
-portable MVS scene transforms the same masks into undistorted image space and excludes masked
-reference and source patches. Mask scope hashes participate in job inputs, checkpoints, alignment
-artifacts and MVS reuse. Workers never mutate the catalog and never publish directly.
-
-The PhotoLab renderer builds processing reports exclusively from the project mirror of those
-persisted records. Electron owns only destination selection, atomic file publication and isolated
-Chromium PDF rendering; report content generation remains Electron-free and is covered by a pure
-TypeScript contract test.
-
-### ChronoGit
-
-ChronoGit depends on:
-
-- immutable objects,
-- command journal,
-- semantic entity IDs,
-- deterministic derived entities,
-- attribute blobs separate from heavy geometry.
-
-The MVP must preserve these constraints even before the ChronoGit UI exists.
-
-### TestFlight
-
-TestFlight depends on:
-
-- terrain/mesh extraction,
-- entity attributes that can later carry time-varying values,
-- commands/scripts that can produce derived overlay entities,
-- no renderer assumption that all geometry is static CAD geometry.
-
-The MVP does not simulate anything, but it must not block this path.
-
-### Assembler
-
-Assembler is only a feasibility concept. The shared foundation should avoid
-unnecessary survey/civil-only assumptions, but Builder must not wait for a
-future precision-mechanics kernel. If Assembler requires fundamentally different
-constraints or solid modeling, that decision gets its own ADR.
-
-### Python Scripting and AI Agents
-
-Python scripting uses a shared out-of-process scripting sidecar plus SDK. It
-must use the same command/entity contracts as the UI. Direct mutation of project
-state from scripts would break undo/redo, ChronoGit and replay. Heavy Python
-compute belongs in a sidecar/process boundary, not in the renderer.
-The versioned protocol, bulk-data leases, capability model and harness boundary
-are defined by ADR 0024.
+- ADR 0016 — canonical entity model.
+- ADR 0017 — unified render core.
+- ADR 0018 — canonical IO provider contract.
+- ADR 0019 — canonical document authority.
+- ADR 0022 — shared 3D, 2D, and 2.5D view modes.
+- ADR 0024 — automation and agent trust boundary.
+- ADR 0025 — interactive import registration.

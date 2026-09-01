@@ -1,6 +1,6 @@
 # `@himmelcad/ui`
 
-Shared UI modules for all HimmelCAD products. **Use these — never invent one-off chrome.**
+Shared UI modules for all Himmel:CAD products. **Use these — never invent one-off chrome.**
 
 ## Control modules (mandatory for forms)
 

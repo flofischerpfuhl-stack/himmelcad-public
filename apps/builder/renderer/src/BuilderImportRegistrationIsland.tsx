@@ -1,11 +1,13 @@
 import type {
   ImportRegistrationState,
+  JsonValue,
   RegistrationPoint,
   RegistrationPointPair,
   RegistrationRecipe,
   RegistrationSimilarity3d,
   RegistrationTargetSample,
 } from '@himmelcad/app';
+import { logEvent } from '@himmelcad/console';
 import type { SnapResult } from '@himmelcad/data';
 import { ImportRegistrationWizard, type ImportRegistrationFormatContext } from '@himmelcad/ui';
 import type { CanonicalRepresentationAdmission } from '@himmelcad/viewer/kernel';
@@ -18,6 +20,7 @@ import {
   type BuilderKernelViewportHandle,
 } from './BuilderKernelViewport.js';
 import type { BuilderCanonicalProjectSession } from './project.js';
+import { importStageNeedsFurtherInput } from './importDialogPolicy.js';
 
 interface StagedResidency {
   readonly sessionId: string;
@@ -36,12 +39,14 @@ export function BuilderImportRegistrationIsland({
   sourcePath,
   projectLabel,
   session,
+  onBackgroundStateChange,
   onCommitted,
   onClose,
 }: {
   readonly sourcePath: string;
   readonly projectLabel: string;
   readonly session: BuilderCanonicalProjectSession;
+  readonly onBackgroundStateChange: (backgrounded: boolean) => void;
   readonly onCommitted: () => void | Promise<void>;
   readonly onClose: () => void;
 }): JSX.Element {
@@ -52,12 +57,19 @@ export function BuilderImportRegistrationIsland({
   const [pendingSource, setPendingSource] = useState<RegistrationPoint | null>(null);
   const [format, setFormat] = useState<ImportRegistrationFormatContext | null>(null);
   const [probeError, setProbeError] = useState<string | null>(null);
+  const [operationError, setOperationError] = useState<string | null>(null);
+  const [semanticLosses, setSemanticLosses] = useState<readonly string[]>([]);
+  const [pendingRecipe, setPendingRecipe] = useState<RegistrationRecipe | null>(null);
+  const [pendingProviderOptions, setPendingProviderOptions] = useState<JsonValue>({});
   const [currentAdmissions, setCurrentAdmissions] = useState<
     readonly CanonicalRepresentationAdmission[]
   >([]);
   const [preparedSourceSamples, setPreparedSourceSamples] = useState<readonly RegistrationPoint[]>(
     [],
   );
+  const [preparedTargetSamples, setPreparedTargetSamples] = useState<
+    readonly RegistrationTargetSample[]
+  >([]);
   const [busy, setBusy] = useState(false);
   const sourceViewport = useRef<BuilderKernelViewportHandle | null>(null);
   const projectViewport = useRef<BuilderKernelViewportHandle | null>(null);
@@ -90,7 +102,7 @@ export function BuilderImportRegistrationIsland({
   }, [session, sourcePath]);
 
   useEffect(() => {
-    if (!state) return;
+    if (!state || pendingRecipe?.method.kind === 'sourceCoordinates') return;
     let active = true;
     const package_ = applyPreviewToPackage(
       parsePreviewPackage(state.sourcePreview),
@@ -124,40 +136,59 @@ export function BuilderImportRegistrationIsland({
         });
       }
       sourceViewport.current?.frameAll();
-    })();
-    void window.himmelcad?.canonicalProject.residencyBootstrap().then(async (bootstrap) => {
-      if (!active) return;
-      const admissions = bootstrap.entries.map((entry) => entry.admission).filter(isAdmissionLike);
-      setCurrentAdmissions(admissions);
-      const inlineAdmissions: CanonicalRepresentationAdmission[] = [];
-      for (const entry of bootstrap.entries) {
-        if (!isAdmissionLike(entry.admission)) continue;
-        if (
-          entry.dataset?.formatId === 'potree@2' &&
-          entry.admission.resolvedGeometry.kind === 'pointCloud'
-        ) {
-          await projectViewport.current?.loadPotreePointCloud(entry.dataset.metadataUrl, {
-            datasetId: entry.dataset.datasetId,
-            admission: entry.admission,
-            bounds: await readPotreeBounds(entry.dataset.metadataUrl),
-          });
-        } else if (entry.dataset === null) {
-          inlineAdmissions.push(entry.admission);
-        }
-      }
-      if (inlineAdmissions.length > 0) {
-        await projectViewport.current?.loadCanonicalPackage({
-          providerId: 'hcad.registration-current-preview@1',
-          providerVersion: '1',
-          admissions: inlineAdmissions,
-        });
-      }
-      projectViewport.current?.frameAll();
+    })().catch((error: unknown) => {
+      if (active) setOperationError(errorMessage(error));
     });
+    void window.himmelcad?.canonicalProject
+      .residencyBootstrap()
+      .then(async (bootstrap) => {
+        if (!active) return;
+        const admissions = bootstrap.entries
+          .map((entry) => entry.admission)
+          .filter(isAdmissionLike);
+        setCurrentAdmissions(admissions);
+        const inlineAdmissions: CanonicalRepresentationAdmission[] = [];
+        const pointCloudTargets: RegistrationTargetSample[] = [];
+        for (const entry of bootstrap.entries) {
+          if (!isAdmissionLike(entry.admission)) continue;
+          if (
+            entry.dataset?.formatId === 'potree@2' &&
+            entry.admission.resolvedGeometry.kind === 'pointCloud'
+          ) {
+            await projectViewport.current?.loadPotreePointCloud(entry.dataset.metadataUrl, {
+              datasetId: entry.dataset.datasetId,
+              admission: entry.admission,
+              bounds: await readPotreeBounds(entry.dataset.metadataUrl),
+            });
+            try {
+              const samples = await session.registrationProjectPointCloudSamples(
+                entry.dataset.datasetId,
+              );
+              for (const position of samples.points) pointCloudTargets.push({ position });
+            } catch {
+              // Picking remains available when a legacy dataset cannot expose root samples.
+            }
+          } else if (entry.dataset === null) {
+            inlineAdmissions.push(entry.admission);
+          }
+        }
+        setPreparedTargetSamples(deterministicSubset(pointCloudTargets, 2_048));
+        if (inlineAdmissions.length > 0) {
+          await projectViewport.current?.loadCanonicalPackage({
+            providerId: 'hcad.registration-current-preview@1',
+            providerVersion: '1',
+            admissions: inlineAdmissions,
+          });
+        }
+        projectViewport.current?.frameAll();
+      })
+      .catch((error: unknown) => {
+        if (active) setOperationError(errorMessage(error));
+      });
     return () => {
       active = false;
     };
-  }, [session, state]);
+  }, [pendingRecipe?.method.kind, session, state]);
 
   useEffect(
     () => () => {
@@ -167,13 +198,70 @@ export function BuilderImportRegistrationIsland({
     [],
   );
 
-  const stage = async (recipe: RegistrationRecipe): Promise<void> => {
+  const stage = async (
+    recipe: RegistrationRecipe,
+    providerOptions: JsonValue = {},
+    acceptedLossCodes: readonly string[] = [],
+  ): Promise<void> => {
+    const backgroundOperation = !importStageNeedsFurtherInput(recipe.method.kind);
+    const startedAt = performance.now();
     setBusy(true);
+    setOperationError(null);
+    setSemanticLosses([]);
+    setPendingRecipe(recipe);
+    setPendingProviderOptions(providerOptions);
+    if (backgroundOperation) {
+      logEvent('info', 'renderer', `Import running in background: ${fileLabel(sourcePath)}`);
+      onBackgroundStateChange(true);
+    }
     try {
-      setState(await session.stageRegisteredImport(sourcePath, recipe));
+      const stagedState = await session.stageRegisteredImport(
+        sourcePath,
+        recipe,
+        withAcceptedLossCodes(providerOptions, acceptedLossCodes),
+      );
+      if (recipe.method.kind === 'sourceCoordinates') {
+        if (stagedState.phase !== 'readyToCommit' || stagedState.preview?.accepted !== true) {
+          throw new Error('The import could not be prepared for direct loading.');
+        }
+        await session.commitRegisteredImport(stagedState.sessionId);
+        await window.himmelcad?.stagedRegistration.revoke(stagedState.sessionId);
+        await onCommitted();
+        logEvent(
+          'info',
+          'renderer',
+          `Import completed: ${fileLabel(sourcePath)} · ${stagedState.sourceEntityCount} entity · ${((performance.now() - startedAt) / 1_000).toFixed(1)} s`,
+        );
+        onClose();
+        return;
+      }
+      setState(stagedState);
       setPairs([]);
       setPendingSource(null);
       setPreparedSourceSamples([]);
+    } catch (error: unknown) {
+      const message = errorMessage(error);
+      const losses = explicitSemanticLosses(message);
+      if (losses.length > 0) {
+        setSemanticLosses(losses);
+        if (backgroundOperation) {
+          logEvent(
+            'warn',
+            'renderer',
+            `Import needs confirmation before it can continue: ${fileLabel(sourcePath)}`,
+          );
+        }
+      } else {
+        setOperationError(message);
+        if (backgroundOperation) {
+          logEvent(
+            'error',
+            'renderer',
+            `Background import failed for ${fileLabel(sourcePath)}: ${message}`,
+          );
+        }
+      }
+      if (backgroundOperation) onBackgroundStateChange(false);
     } finally {
       setBusy(false);
     }
@@ -204,8 +292,11 @@ export function BuilderImportRegistrationIsland({
   const previewPairs = async (): Promise<void> => {
     if (!state) return;
     setBusy(true);
+    setOperationError(null);
     try {
       setState(await session.previewRegistrationPointPairs(state.sessionId, pairs));
+    } catch (error: unknown) {
+      setOperationError(errorMessage(error));
     } finally {
       setBusy(false);
     }
@@ -216,10 +307,14 @@ export function BuilderImportRegistrationIsland({
       parsePreviewPackage(state.sourcePreview).admissions,
     );
     const source = preparedSourceSamples.length >= 3 ? preparedSourceSamples : inlineSource;
-    const target = collectInlineMeshTargetSamples(currentAdmissions);
+    const target = deterministicSubset(
+      [...preparedTargetSamples, ...collectInlineMeshTargetSamples(currentAdmissions)],
+      2_048,
+    );
     if (source.length < 3 || target.length < 3) return;
     const pointToPlane = target.every((sample) => sample.normal !== undefined);
     setBusy(true);
+    setOperationError(null);
     try {
       setState(
         await session.previewRegistrationIcp({
@@ -238,18 +333,38 @@ export function BuilderImportRegistrationIsland({
           },
         }),
       );
+    } catch (error: unknown) {
+      setOperationError(errorMessage(error));
     } finally {
       setBusy(false);
     }
   };
   const commit = async (): Promise<void> => {
     if (!state) return;
+    const startedAt = performance.now();
     setBusy(true);
+    setOperationError(null);
+    logEvent('info', 'renderer', `Import commit running in background: ${fileLabel(sourcePath)}`);
+    onBackgroundStateChange(true);
     try {
       await session.commitRegisteredImport(state.sessionId);
       await window.himmelcad?.stagedRegistration.revoke(state.sessionId);
       await onCommitted();
+      logEvent(
+        'info',
+        'renderer',
+        `Import completed: ${fileLabel(sourcePath)} · ${state.sourceEntityCount} entity · ${((performance.now() - startedAt) / 1_000).toFixed(1)} s commit`,
+      );
       onClose();
+    } catch (error: unknown) {
+      const message = errorMessage(error);
+      setOperationError(message);
+      logEvent(
+        'error',
+        'renderer',
+        `Background import commit failed for ${fileLabel(sourcePath)}: ${message}`,
+      );
+      onBackgroundStateChange(false);
     } finally {
       setBusy(false);
     }
@@ -261,16 +376,35 @@ export function BuilderImportRegistrationIsland({
       projectLabel={projectLabel}
       format={format}
       probeError={probeError}
+      operationError={operationError}
+      semanticLosses={semanticLosses}
       state={state}
       pointPairs={pairs}
       nextPickSide={pendingSource ? 'target' : 'source'}
       sourcePickReady={sourceSnap !== null}
       targetPickReady={targetSnap !== null}
       busy={busy}
-      onStage={(recipe) => void stage(recipe)}
+      onStage={(recipe, providerOptions) => void stage(recipe, providerOptions)}
+      onAcceptSemanticLosses={() => {
+        if (pendingRecipe) void stage(pendingRecipe, pendingProviderOptions, semanticLosses);
+      }}
+      onLoadTransform={async () => {
+        const path = await window.himmelcad?.dialog.openTransform();
+        if (!path) return null;
+        const inspected = await session.inspectRegistrationTransform(path);
+        return {
+          label: fileLabel(path),
+          sourceSha256: inspected.sourceSha256,
+          transform: inspected.transform,
+          warnings: inspected.warnings,
+        };
+      }}
+      onSaveTransform={async (transform) =>
+        (await window.himmelcad?.dialog.saveTransform(transform)) ?? null
+      }
       onRequestPick={requestPick}
       onPreviewPointPairs={() => void previewPairs()}
-      {...(hasIcpSamples(state, currentAdmissions, preparedSourceSamples)
+      {...(hasIcpSamples(state, currentAdmissions, preparedSourceSamples, preparedTargetSamples)
         ? { onPreviewIcp: () => void previewIcp() }
         : {})}
       onCommit={() => void commit()}
@@ -315,13 +449,22 @@ function hasIcpSamples(
   state: ImportRegistrationState | null,
   current: readonly CanonicalRepresentationAdmission[],
   preparedSource: readonly RegistrationPoint[],
+  preparedTarget: readonly RegistrationTargetSample[],
 ): boolean {
   if (!state) return false;
   return (
     (preparedSource.length >= 3 ||
       collectInlineMeshSamples(parsePreviewPackage(state.sourcePreview).admissions, 3).length >=
         3) &&
-    collectInlineMeshTargetSamples(current, 3).length >= 3
+    (preparedTarget.length >= 3 || collectInlineMeshTargetSamples(current, 3).length >= 3)
+  );
+}
+
+function deterministicSubset<T>(values: readonly T[], maximum: number): T[] {
+  if (values.length <= maximum) return [...values];
+  return Array.from(
+    { length: maximum },
+    (_, index) => values[Math.floor((index * values.length) / maximum)]!,
   );
 }
 
@@ -516,6 +659,28 @@ function coordinateTuple(value: unknown): readonly [number, number, number] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function fileLabel(path: string): string {
+  return path.split(/[\\/]/).at(-1) ?? path;
+}
+
+function explicitSemanticLosses(message: string): readonly string[] {
+  if (!/explicit(?:ly)? accept|explicit acceptance/i.test(message)) return [];
+  return [...new Set(message.match(/hcad\.loss\.[A-Za-z0-9_.:@-]+/g) ?? [])];
+}
+
+function withAcceptedLossCodes(
+  options: JsonValue,
+  acceptedLossCodes: readonly string[],
+): JsonValue {
+  if (acceptedLossCodes.length === 0) return options;
+  if (!isRecord(options)) throw new Error('provider import options must be an object');
+  return { ...options, acceptedLossCodes: [...acceptedLossCodes] };
 }
 
 function point(snap: SnapResult): RegistrationPoint {

@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   resizeViewingBox,
+  resizeViewingBoxFace,
   rotateViewingBox,
   viewingBoxAxes,
   viewingBoxClipVolume,
@@ -21,6 +22,8 @@ void test('viewing box starts at a zoom-relative size and emits six inward plane
   const volume = viewingBoxClipVolume(state);
   assert.equal(volume.planes.length, 6);
   assert.equal(volume.operation, 'keepInside');
+  assert.equal(volume.previewCap, true);
+  assert.equal(viewingBoxClipVolume(state, false).previewCap, false);
   assert.ok(volume.planes.every((plane) => signedDistance(plane, state.center) >= 0));
   assert.ok(volume.planes.some((plane) => signedDistance(plane, { x: 113, y: 200, z: 20 }) < 0));
 });
@@ -50,6 +53,32 @@ void test('anchored resize keeps the opposite face fixed', () => {
   const resized = resizeViewingBox(initial, 'x', 4, true);
   assert.equal(resized.halfExtents.x, initial.halfExtents.x + 2);
   assert.equal(resized.center.x - resized.halfExtents.x, negativeFace);
+});
+
+void test('face resize can overdrag beyond the opposite face', () => {
+  const initial = viewingBoxFromViewport({
+    center: { x: 0, y: 0, z: 0 },
+    visibleWidth: 20,
+    visibleHeight: 20,
+  });
+  const fixedPositiveFace = initial.center.x + initial.halfExtents.x;
+  const resized = resizeViewingBoxFace(initial, 'x', -1, 18, true);
+  assert.equal(resized.center.x - resized.halfExtents.x, fixedPositiveFace);
+  assert.equal(resized.halfExtents.x, 3);
+  assert.equal(resized.center.x, fixedPositiveFace + 3);
+});
+
+void test('uniform viewing box uses a calibrated fraction of the smaller visible span', () => {
+  const state = viewingBoxFromViewport({
+    center: { x: 0, y: 0, z: 0 },
+    visibleWidth: 12,
+    visibleHeight: 8,
+    visibleDepth: 20,
+    viewFraction: 0.25,
+    uniform: true,
+  });
+  assert.deepEqual(state.halfExtents, { x: 1, y: 1, z: 1 });
+  assert.equal(state.mode, 'resize');
 });
 
 function signedDistance(

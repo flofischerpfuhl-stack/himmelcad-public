@@ -1,4 +1,4 @@
-# ADR 0007: Portable Depth Maps and Dense MVS
+# ADR 0028: Portable Depth Maps and Dense MVS
 
 - Status: accepted
 - Date: 2026-07-11
@@ -23,7 +23,7 @@ The classical plane-sweep/PatchMatch family does not require learned weights.
 Gallup et al. describe multi-view plane sweeping for slanted surfaces; the
 OpenSfM public API demonstrates the practical sequence of patch matching,
 cross-view depth cleaning and redundant-point pruning. These publications and
-APIs are algorithm references only. HimmelCAD does not copy or port their
+APIs are algorithm references only. Himmel:CAD does not copy or port their
 source.
 
 ## Decision

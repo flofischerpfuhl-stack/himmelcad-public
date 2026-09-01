@@ -28,6 +28,7 @@ export {
   moveViewingBox,
   placeViewingBoxCenter,
   resizeViewingBox,
+  resizeViewingBoxFace,
   rotateViewingBox,
   setViewingBoxMode,
   viewingBoxAxes,
@@ -36,6 +37,7 @@ export {
 } from './KernelViewingBox.js';
 export type {
   KernelViewingBoxAxis,
+  KernelViewingBoxFace,
   KernelViewingBoxMode,
   KernelViewingBoxState,
   KernelViewingBoxViewportSeed,

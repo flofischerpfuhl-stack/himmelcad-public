@@ -1,4 +1,4 @@
-# HimmelCAD Cap — interactive UI prototype
+# Himmel:CAD Cap — interactive UI prototype
 
 Clickable phone UI for owner iteration. **Not** production Flutter.
 
@@ -18,7 +18,7 @@ Or: `npx --yes serve -p 8765 .`
 - Job popup → job screen (accordion)
 - Capture screen (GNSS HUD + start/stop + fake processing)
 - Settings (theme, RTK profiles, cloud links, export)
-- Dark / light themes (HimmelCAD tokens)
+- Dark / light themes (Himmel:CAD tokens)
 
 ## Path to Flutter
 

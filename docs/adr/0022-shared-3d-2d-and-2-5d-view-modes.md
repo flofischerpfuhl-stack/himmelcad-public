@@ -6,7 +6,7 @@
 
 ## Context
 
-HimmelCAD needs a true plan view and a plan-navigation mode that can still
+Himmel:CAD needs a true plan view and a plan-navigation mode that can still
 acquire height from visible geometry. Existing code has one locked top-down
 mode and restores a previously captured orbit camera when leaving it. That
 makes a plan-to-3D transition jump to stale orientation and risks creating a

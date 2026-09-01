@@ -1,4 +1,8 @@
-# HimmelCAD program milestones from 2026-07-19
+# Himmel:CAD program milestones from 2026-07-19
+
+Status: archived execution snapshot. Completion statements apply only to the
+recorded revision and gates. This file has no authority over current product
+priority or unfinished release validation.
 
 Status: M0–M10 completed; M11 implementation completed; final integrated
 release verification in progress. Architecture authority remains with the
@@ -7,7 +11,7 @@ boundaries across Viewer, PhotoLab, Builder and shared infrastructure.
 
 ## Outcome
 
-HimmelCAD is completed through one shared canonical platform, not through
+Himmel:CAD is completed through one shared canonical platform, not through
 product-specific entity, IO, render or automation implementations. The active
 program contains milestones M0 through M11 below. Work follows dependency
 order; independent Viewer and PhotoLab slices may proceed in parallel after M1.
@@ -98,7 +102,7 @@ failure reporting only.
 - Excalidraw is the primary interaction and canvas engine for the independent
   plan-composer prototype: selection, transforms, grouping, snapping, drawing,
   text and responsive canvas behavior are not rebuilt from scratch.
-- HimmelCAD wraps it with paper/sheet semantics, physical units, templates,
+- Himmel:CAD wraps it with paper/sheet semantics, physical units, templates,
   title blocks, stamps, model-view descriptors, scale rules, persistence and
   deterministic export.
 - Canonical model geometry and georeferencing remain outside Excalidraw. Model

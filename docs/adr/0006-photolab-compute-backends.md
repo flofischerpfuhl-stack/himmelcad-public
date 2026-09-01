@@ -29,7 +29,7 @@ distributions require the same independent audit.
    validates outputs and atomically publishes product manifests.
 2. V1 uses a curated, headless COLMAP 4.x worker for geometric computation:
    - ALIKED/LightGlue and SIFT/LightGlue run in independent feature stores;
-   - only geometrically verified observations are fused into HimmelCAD tracks;
+   - only geometrically verified observations are fused into Himmel:CAD tracks;
    - the global mapper is attempted first on a healthy view graph;
    - incremental/hierarchical mapping is the recorded robustness fallback;
    - PatchMatch, stereo fusion, meshing and texture mapping are resumable

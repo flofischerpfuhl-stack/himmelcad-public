@@ -170,6 +170,14 @@ export class BuilderCanonicalProjectSession {
     return this.registration.sourceSamples(sessionId, maximumSamples);
   }
 
+  async registrationProjectPointCloudSamples(datasetId: string, maximumSamples = 2_048) {
+    return this.registration.projectPointCloudSamples(datasetId, maximumSamples);
+  }
+
+  async inspectRegistrationTransform(path: string) {
+    return this.registration.inspectSiteCalibration(path);
+  }
+
   async commitRegisteredImport(sessionId: string): Promise<ProjectSnapshot> {
     const commit = await this.registration.commit(sessionId);
     return this.acceptCommittedEntry(commit.journalEntry);

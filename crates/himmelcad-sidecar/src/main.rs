@@ -82,6 +82,9 @@ use himmelcad_sidecar::brush_runtime::{
     BrushRunRequest, BrushRuntime, BrushTrainingSettings, DevBrushRuntimeConfig,
 };
 use himmelcad_sidecar::canonical_app_runtime::CanonicalAppRuntime;
+use himmelcad_sidecar::canonical_project_store::{
+    CanonicalImportProgress, CanonicalImportProgressPhase,
+};
 use himmelcad_sidecar::capture_runtime::{
     prepare_still_image, prepare_video_frames, probe_capture_capabilities, CaptureToolConfig,
     PrepareStillImageRequest, PrepareVideoFramesRequest,
@@ -263,6 +266,13 @@ struct RegistrationResourceReadParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RegistrationSourceSamplesParams {
     session_id: String,
+    maximum_samples: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RegistrationProjectPointCloudSamplesParams {
+    dataset_id: String,
     maximum_samples: usize,
 }
 
@@ -492,6 +502,50 @@ impl ProviderOperationContext for LoggingProviderContext {
             completed = progress.completed,
             total = progress.total,
             message = progress.message,
+            "canonical import progress"
+        );
+    }
+}
+
+struct RegistrationProviderContext {
+    progress_key: String,
+    last_fraction: f64,
+}
+
+impl RegistrationProviderContext {
+    fn new(progress_key: String) -> Self {
+        Self {
+            progress_key,
+            last_fraction: 0.0,
+        }
+    }
+}
+
+impl ProviderOperationContext for RegistrationProviderContext {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn report_progress(&mut self, progress: ProviderProgress) {
+        let local_fraction = progress
+            .total
+            .filter(|total| *total > 0)
+            .map_or(self.last_fraction, |total| {
+                progress.completed as f64 / total as f64
+            })
+            .clamp(0.0, 1.0);
+        self.last_fraction = self.last_fraction.max(local_fraction);
+        emit_progress(
+            Some(&self.progress_key),
+            0.02 + self.last_fraction * 0.68,
+            &format!("Preparing import · {}", progress.message),
+        );
+        tracing::info!(
+            phase = %progress.phase,
+            completed = progress.completed,
+            total = ?progress.total,
+            message = %progress.message,
             "canonical import progress"
         );
     }
@@ -1615,12 +1669,14 @@ async fn handle_registration_rpc(
                 move |params| {
                     validate_io_identity(&params.session_id, "sessionId")?;
                     validate_io_identity(&params.command_id, "commandId")?;
+                    let progress_key = params.session_id.clone();
+                    emit_progress(Some(&progress_key), 0.0, "Starting registered import");
                     let source = PathBuf::from(&params.source_path);
                     anyhow::ensure!(source.is_file(), "registration source is not a file");
                     let scratch_root = create_registration_scratch(&params.session_id)?;
                     let result = (|| {
                         let registry = canonical_builtin_import_registry(scratch_root.clone())?;
-                        let mut context = LoggingProviderContext;
+                        let mut context = RegistrationProviderContext::new(progress_key.clone());
                         let staged = registry.import(
                             &params.selection,
                             &source,
@@ -1639,6 +1695,12 @@ async fn handle_registration_rpc(
                     })();
                     if result.is_err() {
                         let _ = std::fs::remove_dir_all(&scratch_root);
+                    } else {
+                        emit_progress(
+                            Some(&progress_key),
+                            0.70,
+                            "Prepared import · ready for project commit",
+                        );
                     }
                     result
                 },
@@ -1699,6 +1761,24 @@ async fn handle_registration_rpc(
             )
             .await
         }
+        "registration.samples.projectPointCloud" => {
+            rpc_blocking_with_params::<RegistrationProjectPointCloudSamplesParams, _, _>(
+                req.id,
+                req.params,
+                move |params| {
+                    validate_io_identity(&params.dataset_id, "datasetId")?;
+                    canonical_app
+                        .lock()
+                        .expect("canonical app runtime mutex poisoned")
+                        .registration_point_cloud_samples(
+                            &params.dataset_id,
+                            params.maximum_samples,
+                        )
+                        .map_err(anyhow::Error::from)
+                },
+            )
+            .await
+        }
         "registration.preview.pointPairs" => {
             rpc_blocking_with_params::<RegistrationPointPairsParams, _, _>(
                 req.id,
@@ -1745,14 +1825,47 @@ async fn handle_registration_rpc(
                 req.id,
                 req.params,
                 move |params| {
+                    let progress_key = params.session_id.clone();
+                    emit_progress(
+                        Some(&progress_key),
+                        0.70,
+                        "Committing import to the project",
+                    );
                     let (staged, command_id, _scratch_root) =
                         registrations.take_ready(&params.session_id)?;
+                    let mut last_phase = None;
+                    let mut last_completed = 0_u64;
                     let result = canonical_app
                         .lock()
                         .expect("canonical app runtime mutex poisoned")
-                        .publish_staged_import(&staged, &command_id)
+                        .publish_staged_import_with_progress(
+                            &staged,
+                            &command_id,
+                            &mut |progress| {
+                                let threshold =
+                                    (progress.total_bytes / 1_000).max(16 * 1024 * 1024);
+                                let phase_changed = last_phase != Some(progress.phase);
+                                let finished = progress.completed_bytes >= progress.total_bytes;
+                                if phase_changed
+                                    || finished
+                                    || progress.completed_bytes.saturating_sub(last_completed)
+                                        >= threshold
+                                {
+                                    last_phase = Some(progress.phase);
+                                    last_completed = progress.completed_bytes;
+                                    emit_canonical_import_progress(&progress_key, progress);
+                                }
+                            },
+                        )
                         .map_err(anyhow::Error::from);
                     registrations.finish_commit(&params.session_id, result.is_ok());
+                    if result.is_ok() {
+                        emit_progress(
+                            Some(&progress_key),
+                            1.0,
+                            "Import committed and ready to load",
+                        );
+                    }
                     result
                 },
             )
@@ -7109,6 +7222,27 @@ fn emit_progress(progress_key: Option<&str>, fraction: f64, message: &str) {
         "message": message,
     });
     eprintln!("{PROGRESS_PREFIX}{payload}");
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn emit_canonical_import_progress(progress_key: &str, progress: CanonicalImportProgress) {
+    let local_fraction = if progress.total_bytes == 0 {
+        1.0
+    } else {
+        progress.completed_bytes as f64 / progress.total_bytes as f64
+    }
+    .clamp(0.0, 1.0);
+    let (overall_fraction, phase) = match progress.phase {
+        CanonicalImportProgressPhase::Staging => (0.70 + local_fraction * 0.10, "Staging"),
+        CanonicalImportProgressPhase::Publishing => (0.80 + local_fraction * 0.19, "Publishing"),
+    };
+    let completed_gib = progress.completed_bytes as f64 / 1_073_741_824.0;
+    let total_gib = progress.total_bytes as f64 / 1_073_741_824.0;
+    emit_progress(
+        Some(progress_key),
+        overall_fraction,
+        &format!("{phase} project data · {completed_gib:.2}/{total_gib:.2} GiB"),
+    );
 }
 
 fn rpc_err(id: serde_json::Value, code: i32, message: &str) -> RpcResponse {

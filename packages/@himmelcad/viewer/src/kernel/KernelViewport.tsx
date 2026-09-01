@@ -78,6 +78,25 @@ export function KernelViewport({
 }: KernelViewportProps): JSX.Element {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // INVARIANT: Observational callback identity must not own the GPU/streaming lifecycle.
+  const callbacksRef = useRef({
+    onReady,
+    onActivePick,
+    onCursorCoordinate,
+    onFrame,
+    onHardwarePolicy,
+    onRuntimeQuality,
+    onError,
+  });
+  callbacksRef.current = {
+    onReady,
+    onActivePick,
+    onCursorCoordinate,
+    onFrame,
+    onHardwarePolicy,
+    onRuntimeQuality,
+    onError,
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -107,7 +126,9 @@ export function KernelViewport({
 
     const fail = (error: unknown): void => {
       if (!alive || abort.signal.aborted) return;
-      onError?.(error instanceof Error ? error : new Error(String(error)));
+      callbacksRef.current.onError?.(
+        error instanceof Error ? error : new Error(String(error)),
+      );
     };
 
     const requestFrame = (): void => {
@@ -128,14 +149,14 @@ export function KernelViewport({
     const observeSession = (event: KernelViewerSessionEvent): void => {
       switch (event.type) {
         case 'frame':
-          onFrame?.(event.outcome);
+          callbacksRef.current.onFrame?.(event.outcome);
           return;
         case 'hardwarePolicy':
-          onHardwarePolicy?.(event.policy);
+          callbacksRef.current.onHardwarePolicy?.(event.policy);
           resizeViewport?.();
           return;
         case 'runtimeQuality':
-          onRuntimeQuality?.(event.quality, event.adjustment);
+          callbacksRef.current.onRuntimeQuality?.(event.quality, event.adjustment);
           resizeViewport?.();
           return;
         case 'deviceRecoveryCompleted':
@@ -174,8 +195,10 @@ export function KernelViewport({
         created.subscribe(observeSession);
         created.camera.frame({ x: -25, y: -25, z: -1 }, { x: 25, y: 25, z: 1 });
         const navigation = created.attachNavigation({
-          ...(onActivePick ? { onActivePick } : {}),
-          ...(onCursorCoordinate ? { onCursorCoordinate } : {}),
+          onActivePick: (candidate, index, count) =>
+            callbacksRef.current.onActivePick?.(candidate, index, count),
+          onCursorCoordinate: (coordinate, source) =>
+            callbacksRef.current.onCursorCoordinate?.(coordinate, source),
         });
         const resize = (): void => {
           if (!alive || session === null) return;
@@ -198,8 +221,8 @@ export function KernelViewport({
         resizeObserver.observe(windowMasked ? root : canvas);
         if (windowMasked) globalThis.addEventListener('resize', resize);
         resize();
-        onHardwarePolicy?.(created.hardwarePolicy);
-        onReady?.({
+        callbacksRef.current.onHardwarePolicy?.(created.hardwarePolicy);
+        callbacksRef.current.onReady?.({
           session: created,
           camera: created.camera,
           navigation,
@@ -234,13 +257,6 @@ export function KernelViewport({
     authoritativeSectionTolerance,
     backend,
     decodeWasmModuleUrl,
-    onActivePick,
-    onCursorCoordinate,
-    onError,
-    onFrame,
-    onHardwarePolicy,
-    onReady,
-    onRuntimeQuality,
     presentationMode,
     wasmLoader,
   ]);

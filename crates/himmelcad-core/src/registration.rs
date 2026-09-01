@@ -347,6 +347,8 @@ pub fn fit_point_pairs_3d(
     options: RobustFitOptions,
 ) -> Result<RegistrationPreview, RegistrationError> {
     options.validate()?;
+    let matched_samples =
+        u32::try_from(pairs.len()).map_err(|_| RegistrationError::TooManyPointPairs)?;
     if pairs.len() < 3 {
         return Err(RegistrationError::InsufficientPointPairs);
     }
@@ -402,12 +404,104 @@ pub fn fit_point_pairs_3d(
         transform,
         residuals,
         iterations,
-        matched_samples: pairs.len() as u32,
+        matched_samples,
         overlap_ratio: 1.0,
         converged,
         accepted: converged,
         warnings: (!converged)
             .then(|| "robust point-pair fit reached its iteration limit".to_owned())
+            .into_iter()
+            .collect(),
+    })
+}
+
+/// Fits a robust 3D translation from one or more fresh point pairs.
+pub fn fit_translation_point_pairs_3d(
+    pairs: &[RegistrationPointPair],
+    options: RobustFitOptions,
+) -> Result<RegistrationPreview, RegistrationError> {
+    options.validate()?;
+    let matched_samples =
+        u32::try_from(pairs.len()).map_err(|_| RegistrationError::TooManyPointPairs)?;
+    if pairs.is_empty() {
+        return Err(RegistrationError::InsufficientPointPairs);
+    }
+    if pairs.iter().any(|pair| {
+        pair.pair_id.trim().is_empty()
+            || !pair.source.is_finite()
+            || !pair.target.is_finite()
+            || pair
+                .weight
+                .is_some_and(|weight| !weight.is_finite() || weight <= 0.0)
+    }) {
+        return Err(RegistrationError::InvalidPointPair);
+    }
+    let mut weights = pairs
+        .iter()
+        .map(|pair| pair.weight.unwrap_or(1.0))
+        .collect::<Vec<_>>();
+    let mut transform = identity_similarity();
+    let mut iterations = 0;
+    let mut converged = false;
+    for iteration in 0..options.maximum_iterations {
+        iterations = iteration + 1;
+        let weight_sum = weights.iter().sum::<f64>();
+        if !weight_sum.is_finite() || weight_sum <= 0.0 {
+            return Err(RegistrationError::InvalidPointPair);
+        }
+        let next = Similarity3D {
+            tx: pairs
+                .iter()
+                .zip(&weights)
+                .map(|(pair, weight)| weight * (pair.target.x - pair.source.x))
+                .sum::<f64>()
+                / weight_sum,
+            ty: pairs
+                .iter()
+                .zip(&weights)
+                .map(|(pair, weight)| weight * (pair.target.y - pair.source.y))
+                .sum::<f64>()
+                / weight_sum,
+            tz: pairs
+                .iter()
+                .zip(&weights)
+                .map(|(pair, weight)| weight * (pair.target.z - pair.source.z))
+                .sum::<f64>()
+                / weight_sum,
+            ..identity_similarity()
+        };
+        let delta = transform_delta(transform, next);
+        transform = next;
+        for (index, pair) in pairs.iter().enumerate() {
+            let residual = distance(apply_similarity_3d(transform, pair.source), pair.target);
+            weights[index] =
+                pair.weight.unwrap_or(1.0) * huber_weight(residual, options.huber_delta_meters);
+        }
+        if delta < options.convergence_epsilon {
+            converged = true;
+            break;
+        }
+    }
+    let controls = pairs
+        .iter()
+        .map(|pair| ControlPair {
+            source: pair.source,
+            target: pair.target,
+            weight: pair.weight,
+            id: Some(pair.pair_id.clone()),
+        })
+        .collect::<Vec<_>>();
+    let residuals = residual_report(&controls, |point| apply_similarity_3d(transform, point));
+    Ok(RegistrationPreview {
+        transform,
+        residuals,
+        iterations,
+        matched_samples,
+        overlap_ratio: 1.0,
+        converged,
+        accepted: converged,
+        warnings: (!converged)
+            .then(|| "robust point-pair translation reached its iteration limit".to_owned())
             .into_iter()
             .collect(),
     })
@@ -930,6 +1024,8 @@ pub enum RegistrationError {
     InvalidIcpOptions,
     #[error("at least three non-collinear point pairs are required")]
     InsufficientPointPairs,
+    #[error("point-pair limit exceeded; pre-filter observations first")]
+    TooManyPointPairs,
     #[error("a point-pair observation is invalid")]
     InvalidPointPair,
     #[error("at least three source and target ICP samples are required")]
@@ -1032,6 +1128,24 @@ mod tests {
                 apply_similarity_3d(expected, source[1])
             ) < 0.1
         );
+    }
+
+    #[test]
+    fn one_point_pair_fits_translation_without_rotation_or_scale() {
+        let pair = RegistrationPointPair {
+            pair_id: "p1".to_owned(),
+            source: WorldPoint::new(4.0, -2.0, 8.0),
+            target: WorldPoint::new(104.0, 18.0, 5.0),
+            weight: None,
+        };
+        let result = fit_translation_point_pairs_3d(&[pair], RobustFitOptions::default())
+            .expect("translation fit");
+        assert!(result.accepted);
+        assert!((result.transform.tx - 100.0).abs() < f64::EPSILON);
+        assert!((result.transform.ty - 20.0).abs() < f64::EPSILON);
+        assert!((result.transform.tz + 3.0).abs() < f64::EPSILON);
+        assert!((result.transform.scale - 1.0).abs() < f64::EPSILON);
+        assert!(result.transform.rx_radians.abs() < f64::EPSILON);
     }
 
     #[test]

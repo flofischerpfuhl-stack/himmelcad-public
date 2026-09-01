@@ -10,7 +10,7 @@ Accepted for the new shared foundation.
 
 ## Context
 
-HimmelCAD must display and interact with large point clouds, very large textured
+Himmel:CAD must display and interact with large point clouds, very large textured
 meshes, rasters with elevation, Gaussian splats and authored CAD geometry in the
 same scene. Builder, PhotoLab and WeltView must share this behavior. Native iOS
 and Android applications must remain possible without replacing the renderer.

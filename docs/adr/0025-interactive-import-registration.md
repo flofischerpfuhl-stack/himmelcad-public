@@ -34,33 +34,51 @@ reports progress, supports cancellation and never runs implicitly.
 `+Y` from project `+Y`. It is converted to a right-handed Z rotation and composed
 outside any existing IFC/product placement.
 
-Site-calibration import fails closed. HimmelCAD accepts its own
+Site-calibration import fails closed. Himmel:CAD accepts its own
 `hcad.site-calibration@1` JSON and explicit named text parameters with declared
 rotation units. It does not infer semantics from opaque proprietary `.dc`
 binary data.
 
 The shared registration UI uses PhotoLab's chat-led sequence for every
-canonical provider: probe, explain the detected format, choose one applicable
-placement method, stage, interact/review and commit. Product hosts provide the
-live source and project views; they do not fork the conversation or the
-registration state machine. Format profiles only constrain affordances:
+canonical provider: probe, choose one of `none`, `transform file`, `horizontal
+and height separately` or `horizontal and height together`, stage,
+interact/review and commit. Product hosts provide the live source and project
+views; they do not fork the conversation or the registration state machine.
 
-| Format family              | Default                 | Additional reviewed affordances                                         |
-| -------------------------- | ----------------------- | ----------------------------------------------------------------------- |
-| LAS, LAZ, E57 point clouds | fresh point pairs       | source coordinates, manual placement, bounded ICP                       |
-| IFC BIM                    | origin + project north  | source coordinates, manual placement, geometry pairs, bounded ICP       |
-| DXF, DWG CAD               | origin + project north  | source coordinates, manual placement, CAD geometry pairs                |
-| LandXML Civil              | source coordinates      | origin + north, manual placement, surface/alignment pairs               |
-| GeoTIFF/COG                | embedded source mapping | manual placement, raster sample pairs                                   |
-| SLPK/I3S                   | source coordinates      | manual placement, prepared-mesh pairs, bounded ICP                      |
-| Gaussian splats            | source coordinates      | manual placement and point pairs when the renderer supplies exact picks |
+Himmel:CAD is CRS-neutral. LAS/LAZ/E57 metadata may be retained for audit, but
+the UI never infers a usable source CRS from it. Every CRS operation requires
+an explicit source and target decision. The joint path selects horizontal and
+vertical endpoints in one decision; the separate path collects the same two
+decisions in explicit order. A geoid or horizontal/vertical grid is an
+operation input, not a file-format guess.
 
-Point-cloud point picking is a first-class dual-view operation. A source pick
+Common-point registration is available for every renderable format with exact
+picking. Format profiles only add provider-specific preparation controls:
+
+| Format family       | Provider-specific preparation                                                         |
+| ------------------- | ------------------------------------------------------------------------------------- |
+| LAS, LAZ            | no inferred CRS; streamed point picking and bounded root-node samples                 |
+| E57                 | scan/pose handling before the same point-cloud registration path                      |
+| IFC BIM             | preserve product placements; explicit fallback/loss approval                          |
+| DXF, DWG CAD        | no layer-selection step; explicit unsupported-content/loss approval                   |
+| LandXML Civil       | declared units and civil-coordinate metadata review                                   |
+| GeoTIFF/COG         | raster/elevation interpretation and elevation discontinuity threshold                 |
+| SLPK/I3S            | layer choice only when the package actually contains multiple admissible scene layers |
+| Meshes and other 3D | exact geometry picks; bounded point-to-cloud ICP after a coarse placement             |
+| Gaussian splats     | point pairs when the renderer can return an exact source pick                         |
+
+Point picking is a first-class dual-view operation. A source pick
 must be followed by exactly one project pick before another source pick is
 accepted. Committed project point clouds are materialized in the target view
 through the same streamed Potree residency path; they are not copied into UI
 memory. Format profiles never authorize implicit reprojection, unit conversion
-or scale correction.
+or scale correction. ICP is a refinement, never the initial placement.
+
+Transform files persist replayable parameters and immutable provenance. Files
+that only describe an interactive method cannot replay old viewport picks.
+After a point-pair fit the accepted similarity/translation parameters may be
+saved as `hcad.site-calibration@1`; the point observations themselves remain
+transient.
 
 ## Consequences
 
@@ -77,7 +95,8 @@ or scale correction.
   receives opaque resource IDs. Reads are range- and request-bounded and the
   capability is revoked on cancel, commit, sidecar restart and product-host
   teardown.
-- Potree imports produced from LAS/E57 expose deterministic bounded root-node
-  samples with dataset, resource-hash and existing-placement provenance. The
-  dual-view host may use point-to-point ICP, or point-to-plane ICP when the
-  target mesh supplies transformed face normals.
+- Potree imports produced from LAS/E57 and live committed project point clouds
+  expose deterministic bounded root-node samples with dataset, resource-hash
+  and existing-placement provenance. The dual-view host may use point-to-point
+  ICP against a point cloud, or point-to-plane ICP when the target mesh supplies
+  transformed face normals.

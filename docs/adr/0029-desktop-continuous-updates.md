@@ -1,4 +1,4 @@
-# ADR 0021: Continuous desktop updates from a public GitHub mirror
+# ADR 0029: Continuous desktop updates from a public GitHub mirror
 
 ## Status
 

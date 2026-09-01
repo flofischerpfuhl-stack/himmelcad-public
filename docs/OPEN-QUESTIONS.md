@@ -1,104 +1,64 @@
-# Open Product and Architecture Questions
+# Open product and architecture questions
 
-These questions are intentionally explicit so future implementation work does
-not smuggle in accidental product decisions.
-
-## Resolved Direction
-
-- The CAD product is **Builder**. User-facing text, app paths and package
-  names use `builder`.
-- Public/product wording may call HimmelCAD open source. Legal/license files
-  still need exact wording before release.
-- Gaussian/splat data tied to point clouds is primarily a point-cloud display
-  attribute for CAD/Civil workflows. Standalone `GaussianSplatCloud` remains for
-  splat-only assets.
-- Surface meanings follow ADR 0016: `ElevationSurface` (2.5D) vs `Surface3D`
-  (open spatial) vs solid `Object3D`. Older `Mesh`/`Solid` wording is migration
-  prose until contracts fully cut over.
-- Semantic BIM/IFC/Civil data is `BimObject` / classified `Object3D`, not an
-  anonymous mesh, unless explicitly materialized.
-- Python scripting should be a shared out-of-process scripting sidecar plus SDK,
-  using the same command/entity contracts as UI and AI agents.
-- **ChronoGit readiness tax (Q9):** only journal + immutable objects + stable
-  IDs/revisions. No ChronoGit product work until Phase 7 decision gate. See
-  `docs/CURRENT-DIRECTION.md`.
-- **Reserved products:** Assembler, TestFlight, and ChronoGit stay names-only
-  until an explicit gate. Agents must not implement them.
-- **HimmelCAD Cap** is an accepted product (ADR 0027) in **preparation**:
-  docs/schemas only until UI brief + mobile stack gate. Phone-only MVP; no
-  required external RTK; `.himmelcap` → PhotoLab importer.
-- **Entity base model:** ADR 0016 — versioned `type_id`, representations,
-  optional Z (`None` never means zero). Lines/circles/arcs are curve
-  representations, not separate base kinds.
-- **Renderer direction:** ADR 0017 — one Rust/wgpu-oriented render core with
-  WebGPU and WebGL2 backends; no Three.js/Potree/Cesium provisional engine.
+This file contains unresolved owner decisions only. Resolved decisions belong
+in the relevant normative document or an ADR.
 
 ## Licensing
 
-1. Is the intended license exactly **Business Source License 1.1**, or should
-   the repo use a custom source-available non-commercial license?
-2. What is the conversion date/change license, if BSL 1.1 remains the license?
-   BSL normally requires a future change license.
+### Q1 — Final product license
 
-## WeltView Distribution
+Is the final license exactly Business Source License 1.1, including its change
+date and change license, or a custom source-available commercial license?
 
-3. For large projects, should WeltView prioritize full client-side download,
-   HTTP range streaming from static hosting, or a future backend service?
-4. Should WeltView support mobile from the first public release, or only keep
-   the architecture mobile-compatible until later?
+Until resolved, repository license files and `docs/DEPENDENCY-POLICY.md` define
+the enforceable boundary. Marketing must not make a legally stronger claim than
+the license text.
 
-## Entity Semantics
+## Builder semantics
 
-5. ~~Should 2D and 3D polylines share one entity kind with optional Z?~~
-   **Superseded by ADR 0016:** one `Curve` family with optional Z positions;
-   missing Z is unknown, never zero. Remaining nuance: whether pure paper-space
-   drafting needs a separate view-only kind (still open, low priority).
-6. How strict should specifications be? Are they mostly styles/layers, or do
-   they define geometry-generating behavior like Civil-style object types?
+### Q2 — Specifications
 
-## Heavy Geometry
+Do specifications primarily group layer/style/property rules, or may they also
+define geometry-generating Civil behavior? Implementation must keep ordinary
+user attributes separate from geometry-driving parameters until this is
+decided.
 
-7. Which textured-mesh format should be the first target: 3D Tiles, glTF with
-   meshopt/KTX2, Potree-adjacent custom tiling, or another permissive stack?
-8. What transparency quality is acceptable for huge textured meshes: layer
-   opacity, alpha-test, weighted OIT, or exact sorting only for small meshes?
+### Q3 — Paper-space model
 
-## Deferred raster/depth conformance after Foundation A
+Should independent paper-space drafting become a canonical entity domain, or
+remain plan-composer/view content connected to canonical model-view
+descriptors?
 
-11. Version the prepared streaming raster contract for camera- and planar-depth
-    mappings, explicit planar U/V frames, validity/confidence bands and exact
-    connectivity masks. The Foundation-A orthographic elevation path already
-    has one pixel-centre convention; these additional imaging modes must reuse
-    it rather than open a parallel renderer.
-12. ~~Remove the remaining duplicate panorama depth authority and define one
-    rigid camera-to-entity-local pose validation before panorama measurement is
-    expanded.~~ **Resolved:** panorama image, depth and scan-station position
-    now have one authority: the camera-mapped raster and its validated rigid
-    camera-to-entity-local pose. A second serialized `station` is rejected.
+## WeltView delivery
 
-## ChronoGit and TestFlight
+### Q4 — Large-project distribution
 
-9. ~~How much extra complexity may the MVP carry for ChronoGit readiness?~~
-   **Resolved for now:** journal + immutable objects + stable IDs only.
-   Diff UI, merge product, and ChronoGit-only schema growth are frozen until
-   the Phase 7 feasibility gate. Tracked in `docs/CURRENT-DIRECTION.md`.
-10. Which time-varying data model does TestFlight need: time-stamped attributes,
-    event streams, simulation states, or all of them?
-    **Deferred:** TestFlight is reserved/out of scope until its decision gate.
-    Do not expand the core schema solely for this question.
+Which modes ship first: complete client download, static HTTP range streaming,
+or a hosted backend? The shared format and viewer remain compatible with all
+three until the product gate.
 
-## HimmelCAD Cap
+### Q5 — Initial mobile-browser support
 
-20. ~~Which mobile stack should Cap use?~~ **Recommendation (not yet gated):**
-    Flutter in `apps/cap/` + Kotlin/Swift platform channels for raw GNSS and
-    camera lock; format/importer stay in monorepo. Owner still confirms before
-    C3 code. See `docs/himmelcap/ARCHITECTURE.md`.
-21. Should Cap UI strings be German-first for field crews, English-first for
-    family consistency with PhotoLab, or bilingual from day one?
-22. Final `.himmelcap` container: ZIP only, or also exploded directory for
-    desktop drop? (Draft allows both for tests.)
-23. Android on-device RTK/NTRIP engine: which license-clean library or service
-    SDK is acceptable under `AGENTS.md`?
-24. After field validation (roadmap C5), what absolute accuracy sentence is
-    allowed in marketing and in-app copy?
-25. Distribution: public store, enterprise sideload, or both for MVP?
+Is mobile browser use a first-release requirement or a compatibility target
+after desktop browser release?
+
+## Rendering quality
+
+### Q6 — Transparency tiers
+
+Which transparency modes are required for large textured meshes and splats on
+each hardware tier? Correctness and performance gates must be defined before a
+quality mode is presented as supported.
+
+## Cap release
+
+### Q7 — Validated accuracy claims
+
+Which absolute and relative accuracy statements may be used after the agreed
+field-validation datasets have passed? Until then, Cap reports measured quality
+and uncertainty without a marketing guarantee.
+
+### Q8 — Distribution channels
+
+Which store, enterprise, and sideload channels are required for the first Cap
+release?

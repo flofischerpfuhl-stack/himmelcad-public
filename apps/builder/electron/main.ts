@@ -757,6 +757,61 @@ function registerIpc(): void {
     });
     return result.canceled ? [] : result.filePaths;
   });
+  ipcMain.handle('dialog:openTransform', async () => {
+    if (!mainWindow) return null;
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Open transformation',
+      filters: [
+        { name: 'HimmelCAD transformation', extensions: ['hctransform', 'json', 'cal', 'txt'] },
+        { name: 'All files', extensions: ['*'] },
+      ],
+      properties: ['openFile'],
+    });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+  ipcMain.handle('dialog:saveTransform', async (_event, value: unknown) => {
+    if (!mainWindow) return null;
+    const transform = validateSavedTransform(value);
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save transformation',
+      defaultPath: 'himmelcad-transformation.hctransform',
+      filters: [{ name: 'HimmelCAD transformation', extensions: ['hctransform'] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    await fs.writeFile(
+      result.filePath,
+      `${JSON.stringify({ schemaId: 'hcad.site-calibration@1', transform }, null, 2)}\n`,
+      { encoding: 'utf8', flag: 'w' },
+    );
+    return result.filePath;
+  });
+}
+
+function validateSavedTransform(value: unknown): {
+  readonly tx: number;
+  readonly ty: number;
+  readonly tz: number;
+  readonly rxRadians: number;
+  readonly ryRadians: number;
+  readonly rzRadians: number;
+  readonly scale: number;
+} {
+  if (typeof value !== 'object' || value === null) throw new Error('invalid transformation');
+  const candidate = value as Record<string, unknown>;
+  const keys = ['tx', 'ty', 'tz', 'rxRadians', 'ryRadians', 'rzRadians', 'scale'] as const;
+  if (!keys.every((key) => typeof candidate[key] === 'number' && Number.isFinite(candidate[key]))) {
+    throw new Error('transformation contains non-finite values');
+  }
+  if ((candidate.scale as number) <= 0) throw new Error('transformation scale must be positive');
+  return {
+    tx: candidate.tx as number,
+    ty: candidate.ty as number,
+    tz: candidate.tz as number,
+    rxRadians: candidate.rxRadians as number,
+    ryRadians: candidate.ryRadians as number,
+    rzRadians: candidate.rzRadians as number,
+    scale: candidate.scale as number,
+  };
 }
 
 function defaultCanonicalProjectRoot(): string {

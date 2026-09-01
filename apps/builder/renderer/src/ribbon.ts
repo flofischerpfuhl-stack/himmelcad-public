@@ -10,7 +10,6 @@ import {
   Gauge,
   Grid3x3,
   HardDriveDownload,
-  Layers,
   Minus,
   PaintBucket,
   Pipette,
@@ -64,22 +63,9 @@ export const ribbonTabs: RibbonTab[] = [
     label: 'Import',
     groups: [
       {
-        id: 'import.pointcloud',
-        label: 'Point Cloud',
-        actions: [
-          { id: 'import.las', label: 'LAS / LAZ', icon: i(CloudUpload) },
-          { id: 'import.e57', label: 'E57', icon: i(CloudUpload) },
-        ],
-      },
-      {
-        id: 'import.cad',
-        label: 'CAD / BIM',
-        actions: [
-          { id: 'import.dxf', label: 'DXF', icon: i(Layers) },
-          { id: 'import.dwg', label: 'DWG', icon: i(Layers) },
-          { id: 'import.ifc', label: 'IFC', icon: i(Box) },
-          { id: 'import.slpk', label: 'SLPK / I3S', icon: i(Box) },
-        ],
+        id: 'import.source',
+        label: 'Source',
+        actions: [{ id: 'import.file', label: 'Import…', icon: i(CloudUpload) }],
       },
     ],
   },

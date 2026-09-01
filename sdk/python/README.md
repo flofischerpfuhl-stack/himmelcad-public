@@ -1,8 +1,8 @@
-# HimmelCAD Python SDK
+# Himmel:CAD Python SDK
 
 This package is generated from `schemas/automation/himmelcad-automation-v1.schema.json` and requires Python 3.12 or newer. Do not edit files under `src/himmelcad` by hand.
 
-Both `HimmelcadClient` and `AsyncHimmelcadClient` use the existing HimmelCAD control planes. Document snapshots, journal pages, property operations and transaction commits travel through `app.protocol`; the SDK does not create a parallel commit path.
+Both `HimmelcadClient` and `AsyncHimmelcadClient` use the existing Himmel:CAD control planes. Document snapshots, journal pages, property operations and transaction commits travel through `app.protocol`; the SDK does not create a parallel commit path.
 
 ```python
 from himmelcad import CanonicalTransactionBuilder, HimmelcadClient

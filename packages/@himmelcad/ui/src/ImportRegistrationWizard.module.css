@@ -8,7 +8,6 @@
   background: var(--hc-bg-island-hi) !important;
 }
 
-.summary,
 .warning {
   margin: 10px 0 0;
   color: var(--hc-fg-muted);
@@ -20,22 +19,91 @@
   color: var(--hc-warning);
 }
 
-.capabilities {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 10px 0 0;
-  padding: 0;
-  list-style: none;
+.error {
+  margin: 8px 0 0;
+  color: var(--hc-error);
+  font-size: 11px;
 }
 
-.capabilities li {
-  padding: 4px 7px;
+.lossSummary {
+  margin: 0;
+  color: var(--hc-fg-muted);
+  font-size: 11px;
+}
+
+.fileRow,
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fileRow > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--hc-fg-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actions {
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.crsStack {
+  display: grid;
+  gap: 12px;
+}
+
+.crsField {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--hc-fg-muted);
+  font-size: 10px;
+}
+
+.crsField input {
+  min-width: 0;
+  height: 32px;
+  padding: 0 9px;
   border: 1px solid var(--hc-border-default);
   border-radius: var(--hc-radius-sm);
+  outline: 0;
+  background: var(--hc-bg-input);
+  color: var(--hc-fg-default);
+  font-size: 12px;
+}
+
+.crsField input:focus {
+  border-color: var(--hc-accent-base);
+}
+
+.compactField {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
   color: var(--hc-fg-muted);
-  background: var(--hc-bg-island-hi);
-  font-size: 10px;
+  font-size: 11px;
+}
+
+.compactField > span {
+  flex: 1;
+}
+
+.compactField input {
+  width: 180px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  outline: 0;
+  background: var(--hc-bg-input);
+  color: var(--hc-fg-default);
 }
 
 .views {

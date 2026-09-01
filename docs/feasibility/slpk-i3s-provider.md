@@ -65,7 +65,7 @@ Gzip-compressed resources are decompressed
 under a second independent limit.
 
 SLPK's optional special hash index is an optimization only. Every artifact
-published into HimmelCAD is SHA-256 verified by the canonical object store;
+published into Himmel:CAD is SHA-256 verified by the canonical object store;
 neither the Zip CRC nor the historical SLPK MD5 index is treated as a trust
 boundary.
 

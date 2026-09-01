@@ -1,6 +1,6 @@
-# ADR 0027: HimmelCAD Cap as phone-only capture upstream for PhotoLab
+# ADR 0027: Himmel:CAD Cap as phone-only capture upstream for PhotoLab
 
-- Status: Accepted (preparation track)
+- Status: Accepted and implemented as an MVP
 - Date: 2026-07-21
 - Depends on: ADR 0009, ADR 0018, ADR 0021, ADR 0023
 
@@ -13,7 +13,7 @@ package sessions so PhotoLab does not fall back to 25 m / 50 m EXIF defaults.
 
 ## Decision
 
-1. Add product **HimmelCAD Cap** (shorthand **himmel:cap**) to the product family.
+1. Add product **Himmel:CAD Cap** (shorthand **himmel:cap**) to the product family.
 2. Cap runs on **Android and iOS** consumer phones. MVP accuracy path is
    **phone GNSS only** (dual-frequency + optional NTRIP on Android). External
    RTK hardware is not required and not part of MVP onboarding.
@@ -30,8 +30,9 @@ package sessions so PhotoLab does not fall back to 25 m / 50 m EXIF defaults.
 7. Cap implementation lives under `apps/cap/` once a mobile stack is chosen.
    Format schemas live under `schemas/himmelcap/`. Product docs under
    `docs/himmelcap/`.
-8. Until the owner provides a UI brief and stack gate, agents implement only
-   documentation, schemas, fixtures, and shared types — not free-form mobile UI.
+8. Mobile implementation begins only after an owner UI brief and stack gate.
+   That gate was satisfied on 2026-07-21; the resulting Flutter MVP, `.hcap`
+   pipeline, and PhotoLab importer are now the implementation baseline.
 
 ## Consequences
 

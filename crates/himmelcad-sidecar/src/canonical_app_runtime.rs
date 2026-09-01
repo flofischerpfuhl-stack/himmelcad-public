@@ -20,7 +20,7 @@ use himmelcad_core::canonical_document::{
 use himmelcad_core::entity::EntityId;
 use himmelcad_core::entity_model::{built_in_type, CanonicalEntity, EntityTypeId, GeometryObject};
 use himmelcad_core::entity_validation::{
-    canonical_entity_version_hash, validate_resolved_representation,
+    canonical_entity_version_hash, geometry_object_content_hash, validate_resolved_representation,
 };
 use himmelcad_core::geometry_representation_registry::CanonicalRepresentationAdmission;
 use himmelcad_core::hash::ObjectHash;
@@ -37,8 +37,12 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::canonical_project_store::{
-    CanonicalImportCommit, CanonicalImportInventory, CanonicalImportSourceRoots,
-    CanonicalProjectStore, CanonicalProjectStoreError, CanonicalStoredObject,
+    CanonicalImportCommit, CanonicalImportInventory, CanonicalImportProgress,
+    CanonicalImportSourceRoots, CanonicalProjectStore, CanonicalProjectStoreError,
+    CanonicalStoredObject,
+};
+use crate::import_registration_runtime::{
+    sample_potree_open_files, ImportRegistrationRuntimeError, RegistrationSourceSamples,
 };
 
 /// Process-internal verified CAS source used by the bounded automation lease
@@ -103,6 +107,9 @@ pub enum CanonicalAppRuntimeError {
     /// A durable provider package cannot be reconstructed exactly for export.
     #[error("canonical import inventory cannot be reconstructed: {0}")]
     InvalidImportInventory(String),
+    /// A live prepared point cloud could not provide bounded registration samples.
+    #[error("canonical point-cloud registration samples are invalid: {0}")]
+    RegistrationSamples(String),
 }
 
 impl CanonicalAppRuntime {
@@ -225,6 +232,28 @@ impl CanonicalAppRuntime {
             .map_err(Into::into)
     }
 
+    /// Publishes a staged import and reports the real durable-store byte progress.
+    pub fn publish_staged_import_with_progress(
+        &mut self,
+        staged: &CanonicalStagedImport,
+        command_id: &str,
+        progress: &mut dyn FnMut(CanonicalImportProgress),
+    ) -> Result<CanonicalImportCommit, CanonicalAppRuntimeError> {
+        staged.validate()?;
+        let source_roots = CanonicalImportSourceRoots {
+            datasets: staged.roots.dataset_roots.clone(),
+            resource_sets: staged.roots.resource_set_roots.clone(),
+        };
+        self.store_mut()?
+            .publish_import_package_with_progress(
+                &staged.package,
+                &source_roots,
+                command_id,
+                progress,
+            )
+            .map_err(Into::into)
+    }
+
     /// Reconstructs exact admissions for live entities without exposing host
     /// paths. Deleted entities and superseded representation bindings are
     /// intentionally omitted.
@@ -264,7 +293,17 @@ impl CanonicalAppRuntime {
                         CanonicalAppRuntimeError::InvalidResidency(error.to_string())
                     })?;
                 validate_resolved_representation(entity, &stored.selected, &geometry).map_err(
-                    |error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()),
+                    |error| {
+                        let observed = geometry_object_content_hash(&geometry)
+                            .map(|hash| hash.0)
+                            .unwrap_or_else(|hash_error| hash_error.to_string());
+                        CanonicalAppRuntimeError::InvalidResidency(format!(
+                            "entity {:?} slot {:?}: {error}; expected {}, observed {observed}",
+                            stored.entity_id,
+                            stored.representation_slot,
+                            stored.selected.geometry_ref.0,
+                        ))
+                    },
                 )?;
                 let matching_datasets = inventory
                     .datasets
@@ -312,6 +351,81 @@ impl CanonicalAppRuntime {
             generation: store.document().generation(),
             entries,
         })
+    }
+
+    /// Returns a deterministic bounded sample of one live committed Potree point cloud.
+    pub fn registration_point_cloud_samples(
+        &self,
+        dataset_id: &str,
+        maximum_samples: usize,
+    ) -> Result<RegistrationSourceSamples, CanonicalAppRuntimeError> {
+        let bootstrap = self.residency_bootstrap()?;
+        let entry = bootstrap
+            .entries
+            .into_iter()
+            .find(|entry| {
+                entry
+                    .dataset
+                    .as_ref()
+                    .is_some_and(|dataset| dataset.dataset_id == dataset_id)
+            })
+            .ok_or_else(|| {
+                CanonicalAppRuntimeError::RegistrationSamples(format!(
+                    "unknown live dataset {dataset_id:?}"
+                ))
+            })?;
+        let dataset = entry.dataset.ok_or_else(|| {
+            CanonicalAppRuntimeError::RegistrationSamples("dataset is missing".to_owned())
+        })?;
+        if dataset.format_id != "potree@2"
+            || !matches!(
+                entry.admission.resolved_geometry,
+                GeometryObject::PointCloud { .. }
+            )
+        {
+            return Err(CanonicalAppRuntimeError::RegistrationSamples(
+                "dataset is not a Potree point cloud".to_owned(),
+            ));
+        }
+        let metadata_hash = dataset.root_metadata.object_hash.clone();
+        let hierarchy_hash = dataset
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.relative_path.ends_with("hierarchy.bin"))
+            .map(|artifact| artifact.resource.object_hash.clone())
+            .ok_or_else(|| {
+                CanonicalAppRuntimeError::RegistrationSamples(
+                    "Potree hierarchy artifact is missing".to_owned(),
+                )
+            })?;
+        let octree_hash = dataset
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.relative_path.ends_with("octree.bin"))
+            .map(|artifact| artifact.resource.object_hash.clone())
+            .ok_or_else(|| {
+                CanonicalAppRuntimeError::RegistrationSamples(
+                    "Potree octree artifact is missing".to_owned(),
+                )
+            })?;
+        let store = self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?;
+        let (_, mut metadata_file) = store.verified_object_source(&metadata_hash)?;
+        let (_, mut hierarchy_file) = store.verified_object_source(&hierarchy_hash)?;
+        let (_, mut octree_file) = store.verified_object_source(&octree_hash)?;
+        sample_potree_open_files(
+            "project-point-cloud",
+            dataset_id,
+            [metadata_hash.0, hierarchy_hash.0, octree_hash.0],
+            entry.admission.entity.placement,
+            maximum_samples,
+            &mut metadata_file,
+            &mut hierarchy_file,
+            &mut octree_file,
+        )
+        .map_err(registration_sample_error)
     }
 
     /// Reconstructs the exact currently-live canonical package published by
@@ -554,6 +668,10 @@ impl CanonicalAppRuntime {
             .as_mut()
             .ok_or(CanonicalAppDispatchError::ProjectNotOpen)
     }
+}
+
+fn registration_sample_error(error: ImportRegistrationRuntimeError) -> CanonicalAppRuntimeError {
+    CanonicalAppRuntimeError::RegistrationSamples(error.to_string())
 }
 
 fn register_materialized_destination(

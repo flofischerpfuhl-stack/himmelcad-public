@@ -1,4 +1,4 @@
-# HimmelCAD Excalidraw plan fork
+# Himmel:CAD Excalidraw plan fork
 
 Shallow clone of [excalidraw/excalidraw](https://github.com/excalidraw/excalidraw) **v0.18.0**
 for the Builder **Plan** subtool.
@@ -28,12 +28,12 @@ stores versioned model-view descriptors with generated vector/raster artifacts.
 The maintained TypeScript source is the Builder runtime. The published
 `@excalidraw/excalidraw@0.18.0` package supplies the pinned third-party dependency
 graph only; it is not the editor runtime or stylesheet authority. Finite paper,
-host toolbar actions, grouped library insertion and HimmelCAD theme variables are
+host toolbar actions, grouped library insertion and Himmel:CAD theme variables are
 connected through the host contract below.
 
 Further fork work is deliberately compatibility-focused: upstream security fixes,
 bundle splitting and progressively replacing export simplifications documented in
-`docs/implementation-plans/plan-editor-export-fidelity.md`.
+`docs/PLAN-EDITOR-EXPORT.md`.
 
 ## Maintained changes
 
@@ -43,7 +43,7 @@ bundle splitting and progressively replacing export simplifications documented i
   to this source tree. The registry package remains only the pinned
   lockfile/dependency source while TypeScript and SCSS come from this fork.
 - `ExcalidrawImperativeAPI.executeAction(name)` exposes already registered
-  Excalidraw actions to HimmelCAD's PowerPoint-like toolbar. Alignment,
+  Excalidraw actions to Himmel:CAD's PowerPoint-like toolbar. Alignment,
   distribution, z-order, grouping and undo/redo therefore continue to use
   Excalidraw's implementation instead of a parallel host implementation.
 - `himmelcad.ts` defines the finite-paper viewport clamp and theme-variable
@@ -55,6 +55,6 @@ Files changed from upstream v0.18.0:
 - `packages/excalidraw/types.ts`
 - `packages/excalidraw/components/App.tsx`
 - `packages/excalidraw/index.tsx`
-- `packages/excalidraw/himmelcad.ts` (HimmelCAD addition)
+- `packages/excalidraw/himmelcad.ts` (Himmel:CAD addition)
 
 Upstream attribution and the MIT license remain unchanged.

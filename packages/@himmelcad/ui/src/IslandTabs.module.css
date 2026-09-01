@@ -13,17 +13,14 @@
   overflow-x: auto;
   overflow-y: visible;
   padding: 1px 1px 1px 0; /* room for 1px border without clip */
-  scrollbar-width: thin;
-  scrollbar-color: var(--hc-border-strong) transparent;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 .root::-webkit-scrollbar {
-  height: 6px;
-}
-
-.root::-webkit-scrollbar-thumb {
-  background: var(--hc-border-strong);
-  border-radius: 999px;
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .tab {

@@ -66,6 +66,16 @@ export interface PhotolabDesktopApi {
   readonly externalImport: {
     projectRoot: () => Promise<string>;
     selectFiles: (extensions: readonly string[]) => Promise<string[]>;
+    openTransform: () => Promise<string | null>;
+    saveTransform: (transform: {
+      readonly tx: number;
+      readonly ty: number;
+      readonly tz: number;
+      readonly rxRadians: number;
+      readonly ryRadians: number;
+      readonly rzRadians: number;
+      readonly scale: number;
+    }) => Promise<string | null>;
     materialize: (sessionId: string) => Promise<StagedResidencyMaterialization>;
     revoke: (sessionId: string) => Promise<boolean>;
     residency: <T = unknown>() => Promise<T>;
@@ -271,6 +281,8 @@ const api: PhotolabDesktopApi = {
   externalImport: {
     projectRoot: () => ipcRenderer.invoke('external-import:project-root'),
     selectFiles: (extensions) => ipcRenderer.invoke('external-import:select', extensions),
+    openTransform: () => ipcRenderer.invoke('external-import:open-transform'),
+    saveTransform: (transform) => ipcRenderer.invoke('external-import:save-transform', transform),
     materialize: (sessionId) => ipcRenderer.invoke('registration-staged:materialize', sessionId),
     revoke: (sessionId) => ipcRenderer.invoke('registration-staged:revoke', sessionId),
     residency: () => ipcRenderer.invoke('external-import:residency'),
