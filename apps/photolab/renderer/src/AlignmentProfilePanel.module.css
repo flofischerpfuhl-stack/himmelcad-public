@@ -71,6 +71,26 @@
 }
 
 .meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--hc-fg-muted);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.badge {
+  padding: 1px 5px;
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-chip);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.disabledReason {
   color: var(--hc-fg-muted);
   font-family: var(--hc-font-ui);
   font-size: 11px;

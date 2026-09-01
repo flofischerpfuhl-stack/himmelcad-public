@@ -30,11 +30,23 @@ export interface AlignmentPresetFile {
   overrides: AlignmentPresetOverrides;
 }
 
+export type AlignmentPresetReference =
+  | { source: 'builtIn'; presetId: string }
+  | { source: 'userFile'; path: string };
+
+export interface FactoryAlignmentPreset {
+  source: 'builtIn';
+  path: string;
+  preset: AlignmentPresetFile;
+}
+
 export type AlignmentPresetParseResult =
   | { ok: true; preset: AlignmentPresetFile }
   | { ok: false; errors: string[] };
 
 const PROFILES = new Set<AlignmentQualityProfile>(['fast', 'qualityHybrid', 'maximumRobustness']);
+const FACTORY_PRESET_SAVED_AT = '2026-09-01T00:00:00.000Z';
+const FACTORY_PRESET_PATH_PREFIX = 'builtin:alignment-preset:';
 
 export function defaultOverridesForProfile(
   profile: AlignmentQualityProfile,
@@ -62,6 +74,90 @@ export function defaultOverridesForProfile(
         featureBudget: 32_000,
       };
   }
+}
+
+function factoryPreset(
+  profile: AlignmentQualityProfile,
+  name: string,
+  description: string,
+): FactoryAlignmentPreset {
+  const id = `photolab.factory.${profile}`;
+  return {
+    source: 'builtIn',
+    path: `${FACTORY_PRESET_PATH_PREFIX}${profile}`,
+    preset: {
+      formatVersion: ALIGNMENT_PRESET_FORMAT_VERSION,
+      kind: ALIGNMENT_PRESET_KIND,
+      id,
+      name,
+      description,
+      savedAt: FACTORY_PRESET_SAVED_AT,
+      profile,
+      overrides: defaultOverridesForProfile(profile),
+    },
+  };
+}
+
+/** Immutable code-owned presets. They are never written to the user's preset directory. */
+export const FACTORY_ALIGNMENT_PRESETS: readonly FactoryAlignmentPreset[] = [
+  factoryPreset('fast', 'Fast', 'Reduced image size and feature budget for quick alignment.'),
+  factoryPreset(
+    'qualityHybrid',
+    'Quality Hybrid',
+    'Balanced quality and runtime for most projects.',
+  ),
+  factoryPreset(
+    'maximumRobustness',
+    'Maximum Robustness',
+    'Highest feature budget and exhaustive matching for difficult datasets.',
+  ),
+];
+
+export const DEFAULT_FACTORY_ALIGNMENT_PRESET = FACTORY_ALIGNMENT_PRESETS[1]!;
+
+export function factoryAlignmentPresetById(id: string): FactoryAlignmentPreset | undefined {
+  return FACTORY_ALIGNMENT_PRESETS.find((item) => item.preset.id === id);
+}
+
+export function factoryAlignmentPresetByPath(path: string): FactoryAlignmentPreset | undefined {
+  return FACTORY_ALIGNMENT_PRESETS.find((item) => item.path === path);
+}
+
+export function factoryAlignmentPresetForProfile(
+  profile: AlignmentQualityProfile,
+): FactoryAlignmentPreset {
+  const preset = FACTORY_ALIGNMENT_PRESETS.find((item) => item.preset.profile === profile);
+  if (!preset) throw new Error(`No built-in alignment preset exists for profile ${profile}`);
+  return preset;
+}
+
+export function builtInAlignmentPresetReference(
+  profile: AlignmentQualityProfile,
+): AlignmentPresetReference {
+  return { source: 'builtIn', presetId: factoryAlignmentPresetForProfile(profile).preset.id };
+}
+
+export function alignmentPresetReferenceKey(reference: AlignmentPresetReference): string {
+  if (reference.source === 'userFile') return reference.path;
+  const factory = factoryAlignmentPresetById(reference.presetId);
+  return factory?.path ?? `${FACTORY_PRESET_PATH_PREFIX}${reference.presetId}`;
+}
+
+export function alignmentPresetReferenceFromKey(key: string): AlignmentPresetReference {
+  const factory = factoryAlignmentPresetByPath(key);
+  return factory
+    ? { source: 'builtIn', presetId: factory.preset.id }
+    : { source: 'userFile', path: key };
+}
+
+export function isAlignmentPresetReference(value: unknown): value is AlignmentPresetReference {
+  if (!isRecord(value)) return false;
+  if (value.source === 'userFile') return typeof value.path === 'string' && value.path.length > 0;
+  return (
+    value.source === 'builtIn' &&
+    typeof value.presetId === 'string' &&
+    factoryAlignmentPresetById(value.presetId) != null
+  );
 }
 
 export function buildAlignmentPreset(input: {

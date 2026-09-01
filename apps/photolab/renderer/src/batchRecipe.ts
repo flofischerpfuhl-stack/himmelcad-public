@@ -1,4 +1,13 @@
-import type { EntityId, ObjectHash } from '@himmelcad/data';
+import type { AlignmentQualityProfile, EntityId, ObjectHash } from '@himmelcad/data';
+
+import {
+  builtInAlignmentPresetReference,
+  factoryAlignmentPresetById,
+  isAlignmentPresetReference,
+  parseAlignmentPreset,
+  type AlignmentPresetFile,
+  type AlignmentPresetReference,
+} from './alignmentPreset.js';
 
 import {
   defaultProductConfiguration,
@@ -6,7 +15,23 @@ import {
 } from './productConfiguration.js';
 
 export type BatchRecipePipelineStep =
-  | { kind: 'alignment'; profile: 'qualityHybrid' }
+  | { kind: 'alignment'; preset: AlignmentPresetReference }
+  | { kind: 'product'; configuration: ProductRunConfiguration };
+
+export interface LegacyBatchAlignmentStep {
+  kind: 'alignment';
+  profile: AlignmentQualityProfile;
+}
+
+export interface ResolvedBatchAlignmentPreset {
+  id: string;
+  name: string;
+  profile: AlignmentQualityProfile;
+  overrides: AlignmentPresetFile['overrides'];
+}
+
+export type ResolvedBatchPipelineStep =
+  | { kind: 'alignment'; preset: ResolvedBatchAlignmentPreset }
   | { kind: 'product'; configuration: ProductRunConfiguration };
 
 export interface BatchRecipeCanvasNode {
@@ -82,7 +107,10 @@ export function instantiateBatchRecipe(
   demEntityId?: EntityId,
   demVersionSha256?: ObjectHash,
 ): BatchRecipePipelineStep[] {
-  const alignment: BatchRecipePipelineStep = { kind: 'alignment', profile: 'qualityHybrid' };
+  const alignment: BatchRecipePipelineStep = {
+    kind: 'alignment',
+    preset: builtInAlignmentPresetReference('qualityHybrid'),
+  };
   if (preset === 'orthomosaicExternalDem') {
     const configuration = {
       ...defaultProductConfiguration('ortho'),
@@ -101,6 +129,64 @@ export function instantiateBatchRecipe(
       }),
     ),
   ];
+}
+
+export function migrateLegacyBatchAlignmentSteps(
+  steps: readonly (BatchRecipePipelineStep | LegacyBatchAlignmentStep)[],
+): { steps: BatchRecipePipelineStep[]; migratedProfiles: AlignmentQualityProfile[] } {
+  const migratedProfiles: AlignmentQualityProfile[] = [];
+  const migrated = steps.map((step): BatchRecipePipelineStep => {
+    if (step.kind !== 'alignment' || 'preset' in step) return step;
+    migratedProfiles.push(step.profile);
+    return { kind: 'alignment', preset: builtInAlignmentPresetReference(step.profile) };
+  });
+  return { steps: migrated, migratedProfiles };
+}
+
+export async function resolveBatchPipelineSteps(
+  steps: readonly BatchRecipePipelineStep[],
+  loadUserPreset: (path: string) => Promise<unknown>,
+): Promise<ResolvedBatchPipelineStep[]> {
+  return Promise.all(
+    steps.map(async (step): Promise<ResolvedBatchPipelineStep> => {
+      if (step.kind === 'product') return step;
+      let preset: AlignmentPresetFile;
+      if (step.preset.source === 'builtIn') {
+        const factory = factoryAlignmentPresetById(step.preset.presetId);
+        if (!factory) throw new Error('The selected built-in alignment preset is unavailable.');
+        preset = factory.preset;
+      } else {
+        const parsed = parseAlignmentPreset(await loadUserPreset(step.preset.path));
+        if (!parsed.ok) {
+          throw new Error(`The batch alignment preset is invalid: ${parsed.errors.join('; ')}`);
+        }
+        preset = parsed.preset;
+      }
+      return {
+        kind: 'alignment',
+        preset: {
+          id: preset.id,
+          name: preset.name,
+          profile: preset.profile,
+          overrides: preset.overrides,
+        },
+      };
+    }),
+  );
+}
+
+export function isBatchAlignmentStep(
+  value: unknown,
+): value is Extract<BatchRecipePipelineStep, { kind: 'alignment' }> | LegacyBatchAlignmentStep {
+  if (!value || typeof value !== 'object') return false;
+  const step = value as Record<string, unknown>;
+  if (step.kind !== 'alignment') return false;
+  if (isAlignmentPresetReference(step.preset)) return true;
+  return (
+    step.profile === 'qualityHybrid' ||
+    step.profile === 'maximumRobustness' ||
+    step.profile === 'fast'
+  );
 }
 
 export function isBatchRecipeTemplateFile(value: unknown): value is BatchRecipeTemplateFile {

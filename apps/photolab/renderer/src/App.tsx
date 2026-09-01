@@ -70,6 +70,7 @@ import photolabLogoUrl from '../../build/mark.png';
 import { AlignmentProfilePanel } from './AlignmentProfilePanel.js';
 import { AlignmentMergePanel } from './AlignmentMergePanel.js';
 import {
+  DEFAULT_FACTORY_ALIGNMENT_PRESET,
   defaultOverridesForProfile,
   type AlignmentPresetFile,
   type AlignmentPresetOverrides,
@@ -78,6 +79,7 @@ import styles from './App.module.css';
 import { DefineAlignmentDialog } from './DefineAlignmentDialog.js';
 import { BatchConfiguratorPanel, type BatchPipelineStep } from './BatchConfiguratorPanel.js';
 import { BatchRecipeDialog } from './BatchRecipeDialog.js';
+import { resolveBatchPipelineSteps } from './batchRecipe.js';
 import { CaptureGroupsPanel } from './CaptureGroupsPanel.js';
 import type { CaptureCalibrationDraft } from './captureGroupDraft.js';
 import { ConfirmationDialog } from './ConfirmationDialog.js';
@@ -216,9 +218,9 @@ export function App(): JSX.Element {
     defaultOverridesForProfile('qualityHybrid'),
   );
   const [selectedAlignmentPreset, setSelectedAlignmentPreset] =
-    useState<AlignmentPresetFile | null>(null);
+    useState<AlignmentPresetFile | null>(DEFAULT_FACTORY_ALIGNMENT_PRESET.preset);
   const [selectedAlignmentPresetPath, setSelectedAlignmentPresetPath] = useState<string | null>(
-    null,
+    DEFAULT_FACTORY_ALIGNMENT_PRESET.path,
   );
   const [defineAlignmentOpen, setDefineAlignmentOpen] = useState(false);
   const [alignmentScope, setAlignmentScope] = useState<'all' | 'selection'>('all');
@@ -1763,7 +1765,7 @@ export function App(): JSX.Element {
       return;
     }
     if (!selectedAlignmentPreset) {
-      setResolveError('Select a predefined alignment preset (.hcalign) before starting.');
+      setResolveError('Select an alignment preset before starting.');
       return;
     }
     const operationId = `alignment-${crypto.randomUUID()}`;
@@ -1871,9 +1873,13 @@ export function App(): JSX.Element {
       setBatchStarting(true);
       try {
         const operationId = `batch-${crypto.randomUUID()}`;
+        const resolvedSteps = await resolveBatchPipelineSteps(steps, async (path) => {
+          const result = await api.alignmentPresets.loadPath(path);
+          return result.preset;
+        });
         const result = await api.sidecar.call<{ job: PhotolabJob }>('photolab.jobs.startBatch', {
           operationId,
-          steps,
+          steps: resolvedSteps,
           cameraEntityIds,
           ...(activeProcessingSetId ? { processingSetId: activeProcessingSetId } : {}),
         });

@@ -7,7 +7,13 @@ import type {
 import { Select } from '@himmelcad/ui';
 import { useCallback, useEffect, useState } from 'react';
 
-import { parseAlignmentPreset, type AlignmentPresetFile } from './alignmentPreset.js';
+import {
+  DEFAULT_FACTORY_ALIGNMENT_PRESET,
+  FACTORY_ALIGNMENT_PRESETS,
+  factoryAlignmentPresetByPath,
+  parseAlignmentPreset,
+  type AlignmentPresetFile,
+} from './alignmentPreset.js';
 import styles from './AlignmentProfilePanel.module.css';
 
 export interface AlignmentPresetListItem {
@@ -67,7 +73,7 @@ export function AlignmentProfilePanel({
   onConfirmPendingGroups,
   onDefineAlignment,
 }: AlignmentProfilePanelProps): JSX.Element {
-  const [presets, setPresets] = useState<AlignmentPresetListItem[]>([]);
+  const [userPresets, setUserPresets] = useState<AlignmentPresetListItem[]>([]);
   const [listError, setListError] = useState<string | null>(null);
   const [loadBusy, setLoadBusy] = useState(false);
 
@@ -75,17 +81,25 @@ export function AlignmentProfilePanel({
     const api = window.himmelcad;
     if (!api?.alignmentPresets) return;
     try {
-      setPresets(await api.alignmentPresets.list());
+      setUserPresets(await api.alignmentPresets.list());
       setListError(null);
     } catch (err) {
       setListError(err instanceof Error ? err.message : String(err));
-      setPresets([]);
+      setUserPresets([]);
     }
   }, []);
 
   useEffect(() => {
     void refreshList();
   }, [refreshList]);
+
+  useEffect(() => {
+    if (selectedPreset && selectedPresetPath) return;
+    onPresetSelected(
+      DEFAULT_FACTORY_ALIGNMENT_PRESET.preset,
+      DEFAULT_FACTORY_ALIGNMENT_PRESET.path,
+    );
+  }, [onPresetSelected, selectedPreset, selectedPresetPath]);
 
   const applyRaw = (raw: unknown, path: string): void => {
     const parsed = parseAlignmentPreset(raw);
@@ -101,6 +115,12 @@ export function AlignmentProfilePanel({
   const selectFromList = async (path: string): Promise<void> => {
     if (!path) {
       onPresetCleared();
+      return;
+    }
+    const factory = factoryAlignmentPresetByPath(path);
+    if (factory) {
+      setListError(null);
+      onPresetSelected(factory.preset, factory.path);
       return;
     }
     const api = window.himmelcad;
@@ -143,6 +163,26 @@ export function AlignmentProfilePanel({
   );
   const hasPreset = selectedPreset != null && selectedPresetPath != null;
   const busy = loadBusy || confirmingGroups || resolving || starting;
+  const selectedFactory = selectedPresetPath
+    ? factoryAlignmentPresetByPath(selectedPresetPath)
+    : undefined;
+  const startDisabledReason = starting
+    ? 'Alignment is being queued.'
+    : resolving
+      ? 'Alignment settings are being validated.'
+      : loadBusy
+        ? 'The alignment preset is loading.'
+        : confirmingGroups
+          ? 'Capture groups are being confirmed.'
+          : !hasPreset
+            ? 'Select an alignment preset before starting.'
+            : pendingGroups.length > 0
+              ? 'Confirm the detected camera groups before starting alignment.'
+              : !canStart
+                ? imageCount < 2
+                  ? 'Import at least two images before starting alignment.'
+                  : 'Wait until the project is ready before starting alignment.'
+                : null;
 
   return (
     <div className={styles.root}>
@@ -192,13 +232,25 @@ export function AlignmentProfilePanel({
             disabled={loadBusy}
             onChange={(event) => void selectFromList(event.currentTarget.value)}
           >
-            <option value="">Select…</option>
-            {presets.map((item) => (
-              <option key={item.path} value={item.path}>
-                {item.name}
-                {item.profile ? ` · ${item.profile}` : ''}
-              </option>
-            ))}
+            <option value="" disabled>
+              Select…
+            </option>
+            <optgroup label="Built-in presets">
+              {FACTORY_ALIGNMENT_PRESETS.map((item) => (
+                <option key={item.path} value={item.path}>
+                  {item.preset.name} · Built-in
+                </option>
+              ))}
+            </optgroup>
+            {userPresets.length > 0 && (
+              <optgroup label="User presets">
+                {userPresets.map((item) => (
+                  <option key={item.path} value={item.path}>
+                    {item.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </Select>
         </label>
 
@@ -226,7 +278,10 @@ export function AlignmentProfilePanel({
 
         {hasPreset && selectedPreset && (
           <div className={styles.meta}>
-            {profileLabel(selectedPreset.profile)} · {imageCount} images
+            <span>
+              {profileLabel(selectedPreset.profile)} · {imageCount} images
+            </span>
+            {selectedFactory && <span className={styles.badge}>Built-in</span>}
           </div>
         )}
       </section>
@@ -256,11 +311,19 @@ export function AlignmentProfilePanel({
         </div>
       )}
 
+      {startDisabledReason && <div className={styles.disabledReason}>{startDisabledReason}</div>}
+
       <button
         type="button"
         className={styles.actionPrimary}
         disabled={
-          !canStart || !hasPreset || pendingGroups.length > 0 || resolving || starting || loadBusy
+          !canStart ||
+          !hasPreset ||
+          pendingGroups.length > 0 ||
+          confirmingGroups ||
+          resolving ||
+          starting ||
+          loadBusy
         }
         onClick={onStart}
       >

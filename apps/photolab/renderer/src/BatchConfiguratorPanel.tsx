@@ -1,7 +1,20 @@
 import type { EntityId, ObjectHash, ProcessingSetRecord } from '@himmelcad/data';
 import { FileDown, FileUp, Play, RotateCcw } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import {
+  alignmentPresetReferenceFromKey,
+  alignmentPresetReferenceKey,
+  builtInAlignmentPresetReference,
+  FACTORY_ALIGNMENT_PRESETS,
+  type AlignmentPresetReference,
+} from './alignmentPreset.js';
+import {
+  isBatchAlignmentStep,
+  migrateLegacyBatchAlignmentSteps,
+  type BatchRecipePipelineStep,
+  type LegacyBatchAlignmentStep,
+} from './batchRecipe.js';
 import styles from './BatchConfiguratorPanel.module.css';
 import {
   defaultProductConfiguration,
@@ -22,9 +35,7 @@ export type BatchPipelineScope =
   | { kind: 'currentSelection' }
   | { kind: 'processingSet'; entityId: EntityId; membershipSha256: ObjectHash };
 
-export type BatchPipelineStep =
-  | { kind: 'alignment'; profile: 'qualityHybrid' | 'maximumRobustness' | 'fast' }
-  | { kind: 'product'; configuration: ProductRunConfiguration };
+export type BatchPipelineStep = BatchRecipePipelineStep;
 
 interface BatchConfiguratorPanelProps {
   busy: boolean;
@@ -60,8 +71,18 @@ export function BatchConfiguratorPanel({
   const [file, setFile] = useState<BatchPipelineFile>(createDefaultBatch);
   const [expanded, setExpanded] = useState<string | null>('alignment');
   const [batchError, setBatchError] = useState<string | null>(null);
+  const [userPresets, setUserPresets] = useState<Array<{ name: string; path: string }>>([]);
   const scope = scopeValue(file.scope);
   const enabledKinds = useMemo(() => new Set(file.steps.map(stepKey)), [file.steps]);
+  const selectedAlignmentReference = alignmentStep(file.steps)?.preset;
+  const selectedAlignmentKey = alignmentPresetReferenceKey(
+    selectedAlignmentReference ?? builtInAlignmentPresetReference('qualityHybrid'),
+  );
+  const unlistedUserPreset =
+    selectedAlignmentReference?.source === 'userFile' &&
+    !userPresets.some((item) => item.path === selectedAlignmentReference.path)
+      ? selectedAlignmentReference
+      : null;
   const selectedProcessingSet = useMemo(() => {
     const configuredScope = file.scope;
     if (configuredScope?.kind !== 'processingSet') return undefined;
@@ -87,6 +108,19 @@ export function BatchConfiguratorPanel({
           ? 'Processing set unavailable'
           : `Current selection · ${selectedCameraIds.length}`;
 
+  const refreshPresets = useCallback(async (): Promise<void> => {
+    try {
+      setUserPresets((await window.himmelcad?.alignmentPresets.list()) ?? []);
+    } catch (error) {
+      setBatchError(error instanceof Error ? error.message : String(error));
+      setUserPresets([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshPresets();
+  }, [refreshPresets]);
+
   useEffect(() => {
     if (!activeProcessingSetId) return;
     const processingSet = processingSets.find(
@@ -105,7 +139,8 @@ export function BatchConfiguratorPanel({
         };
       }
       const next = [...current.steps];
-      if (key === 'alignment') next.push({ kind: 'alignment', profile: 'qualityHybrid' });
+      if (key === 'alignment')
+        next.push({ kind: 'alignment', preset: builtInAlignmentPresetReference('qualityHybrid') });
       else
         next.push({
           kind: 'product',
@@ -115,10 +150,10 @@ export function BatchConfiguratorPanel({
     });
   };
 
-  const updateAlignment = (profile: 'qualityHybrid' | 'maximumRobustness' | 'fast') => {
+  const updateAlignment = (preset: AlignmentPresetReference) => {
     setFile((current) => ({
       ...current,
-      steps: current.steps.map((step) => (step.kind === 'alignment' ? { ...step, profile } : step)),
+      steps: current.steps.map((step) => (step.kind === 'alignment' ? { ...step, preset } : step)),
     }));
   };
 
@@ -140,9 +175,15 @@ export function BatchConfiguratorPanel({
       if (loaded == null) return;
       if (!isBatchPipelineFile(loaded))
         throw new Error('The batch file does not use a supported PhotoLab format.');
+      const migration = migrateLegacyBatchAlignmentSteps(loaded.steps);
+      for (const profile of migration.migratedProfiles) {
+        console.info(
+          `[PhotoLab] Loaded a legacy batch alignment profile and mapped it to the built-in ${profile} preset.`,
+        );
+      }
       const normalized: BatchPipelineFile = {
         ...loaded,
-        steps: normalizeSteps(loaded.steps),
+        steps: normalizeSteps(migration.steps),
         scope: loaded.scope ?? { kind: 'all' },
       };
       const loadedScope = normalized.scope;
@@ -281,18 +322,32 @@ export function BatchConfiguratorPanel({
           onExpand={() => setExpanded(expanded === 'alignment' ? null : 'alignment')}
         >
           <label className={styles.field}>
-            <span>Profile</span>
+            <span>Preset</span>
             <Select
-              value={alignmentStep(file.steps)?.profile ?? 'qualityHybrid'}
+              value={selectedAlignmentKey}
               onChange={(event) =>
-                updateAlignment(
-                  event.currentTarget.value as 'qualityHybrid' | 'maximumRobustness' | 'fast',
-                )
+                updateAlignment(alignmentPresetReferenceFromKey(event.currentTarget.value))
               }
             >
-              <option value="qualityHybrid">Quality Hybrid · recommended</option>
-              <option value="maximumRobustness">Maximum Robustness</option>
-              <option value="fast">Fast</option>
+              <optgroup label="Built-in presets">
+                {FACTORY_ALIGNMENT_PRESETS.map((item) => (
+                  <option key={item.path} value={item.path}>
+                    {item.preset.name} · Built-in
+                  </option>
+                ))}
+              </optgroup>
+              {(userPresets.length > 0 || unlistedUserPreset) && (
+                <optgroup label="User presets">
+                  {unlistedUserPreset && (
+                    <option value={unlistedUserPreset.path}>Referenced user preset</option>
+                  )}
+                  {userPresets.map((item) => (
+                    <option key={item.path} value={item.path}>
+                      {item.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </Select>
           </label>
         </BatchCard>
@@ -732,7 +787,7 @@ export function createDefaultBatch(): BatchPipelineFile {
     name: 'Standard Photogrammetry',
     scope: { kind: 'all' },
     steps: [
-      { kind: 'alignment', profile: 'qualityHybrid' },
+      { kind: 'alignment', preset: builtInAlignmentPresetReference('qualityHybrid') },
       { kind: 'product', configuration: defaultProductConfiguration('dense') },
       { kind: 'product', configuration: defaultProductConfiguration('dem') },
       { kind: 'product', configuration: defaultProductConfiguration('ortho') },
@@ -764,9 +819,14 @@ function productStep(
       step.kind === 'product' && step.configuration.kind === kind,
   );
 }
-function isBatchPipelineFile(value: unknown): value is BatchPipelineFile {
+type LoadableBatchPipelineStep = BatchPipelineStep | LegacyBatchAlignmentStep;
+type LoadableBatchPipelineFile = Omit<BatchPipelineFile, 'steps'> & {
+  steps: LoadableBatchPipelineStep[];
+};
+
+function isBatchPipelineFile(value: unknown): value is LoadableBatchPipelineFile {
   if (!value || typeof value !== 'object') return false;
-  const candidate = value as Partial<BatchPipelineFile>;
+  const candidate = value as Partial<LoadableBatchPipelineFile>;
   return (
     candidate.formatVersion === 1 &&
     typeof candidate.name === 'string' &&
@@ -800,15 +860,10 @@ function scopeValue(scope: BatchPipelineScope | undefined): string {
   if (scope.kind === 'currentSelection') return 'selection';
   return encodeProcessingSetValue(scope.entityId);
 }
-function isBatchStep(value: unknown): value is BatchPipelineStep {
+function isBatchStep(value: unknown): value is LoadableBatchPipelineStep {
   if (!value || typeof value !== 'object') return false;
   const step = value as Record<string, unknown>;
-  if (step.kind === 'alignment')
-    return (
-      step.profile === 'qualityHybrid' ||
-      step.profile === 'maximumRobustness' ||
-      step.profile === 'fast'
-    );
+  if (step.kind === 'alignment') return isBatchAlignmentStep(step);
   if (step.kind !== 'product' || !step.configuration || typeof step.configuration !== 'object')
     return false;
   const operation = (step.configuration as { kind?: unknown }).kind;

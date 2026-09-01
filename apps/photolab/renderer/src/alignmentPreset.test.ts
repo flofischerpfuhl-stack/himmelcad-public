@@ -9,10 +9,26 @@ import { describe, it } from 'node:test';
 import {
   ALIGNMENT_PRESET_KIND,
   buildAlignmentPreset,
+  DEFAULT_FACTORY_ALIGNMENT_PRESET,
+  defaultOverridesForProfile,
+  FACTORY_ALIGNMENT_PRESETS,
   parseAlignmentPreset,
 } from './alignmentPreset.js';
 
 describe('alignmentPreset', () => {
+  it('ships three ordered built-in presets generated from profile defaults', () => {
+    assert.deepEqual(
+      FACTORY_ALIGNMENT_PRESETS.map((item) => item.preset.name),
+      ['Fast', 'Quality Hybrid', 'Maximum Robustness'],
+    );
+    for (const item of FACTORY_ALIGNMENT_PRESETS) {
+      assert.deepEqual(item.preset.overrides, defaultOverridesForProfile(item.preset.profile));
+      assert.equal(parseAlignmentPreset(item.preset).ok, true);
+      assert.equal(item.path.startsWith('builtin:'), true);
+    }
+    assert.equal(DEFAULT_FACTORY_ALIGNMENT_PRESET.preset.profile, 'qualityHybrid');
+  });
+
   it('builds a valid .hcalign payload', () => {
     const preset = buildAlignmentPreset({
       name: 'Sulzberg Fast',

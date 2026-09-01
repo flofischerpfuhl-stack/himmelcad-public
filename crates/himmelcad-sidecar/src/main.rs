@@ -636,7 +636,7 @@ struct CommitGcpCsvParams {
     coordinates_already_in_project_crs: bool,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AlignmentJobOverrides {
     #[serde(default)]
@@ -647,6 +647,16 @@ struct AlignmentJobOverrides {
     sequential_overlap: Option<u32>,
     #[serde(default)]
     feature_budget: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchAlignmentPreset {
+    id: String,
+    name: String,
+    profile: AlignmentQualityProfile,
+    #[serde(default)]
+    overrides: AlignmentJobOverrides,
 }
 
 #[derive(Debug, Deserialize)]
@@ -784,7 +794,10 @@ struct StartProductExportJobParams {
 )]
 enum BatchPipelineStep {
     Alignment {
-        profile: AlignmentQualityProfile,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preset: Option<BatchAlignmentPreset>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<AlignmentQualityProfile>,
     },
     Product {
         configuration: ProductRunConfiguration,
@@ -3869,6 +3882,18 @@ fn validate_unattended_batch_recipe(steps: &[BatchPipelineStep]) -> anyhow::Resu
     let mut dem_ready = false;
     let mut mesh_ready = false;
     for step in steps {
+        if let BatchPipelineStep::Alignment { preset, profile } = step {
+            anyhow::ensure!(
+                preset.is_some() ^ profile.is_some(),
+                "batch alignment needs exactly one preset snapshot"
+            );
+            if let Some(preset) = preset {
+                anyhow::ensure!(
+                    !preset.id.trim().is_empty() && !preset.name.trim().is_empty(),
+                    "batch alignment preset identity is incomplete"
+                );
+            }
+        }
         let BatchPipelineStep::Product { configuration } = step else {
             continue;
         };
@@ -4107,14 +4132,24 @@ fn run_batch_pipeline(
         context.check_cancelled()?;
         let base = 1 + u32::try_from(index).unwrap_or(u32::MAX).saturating_mul(32);
         match step.clone() {
-            BatchPipelineStep::Alignment { profile } => {
+            BatchPipelineStep::Alignment { preset, profile } => {
+                let (profile, overrides) = match (preset, profile) {
+                    (Some(preset), None) => (preset.profile, preset.overrides),
+                    (None, Some(profile)) => (profile, AlignmentJobOverrides::default()),
+                    _ => {
+                        return Err(worker_error(
+                            "batchPrepare",
+                            "batch alignment needs exactly one preset snapshot",
+                        ));
+                    }
+                };
                 let (_, request, runtime, dedode, processing_set_id) = prepare_alignment_job(
                     StartAlignmentJobParams {
                         operation_id: format!("{}-{:02}-alignment", params.operation_id, index),
                         profile,
                         camera_entity_ids: params.camera_entity_ids.clone(),
                         processing_set_id: params.processing_set_id.clone(),
-                        overrides: AlignmentJobOverrides::default(),
+                        overrides,
                     },
                     projects,
                 )
@@ -7594,7 +7629,13 @@ mod tests {
     fn sample_steps() -> Vec<BatchPipelineStep> {
         vec![
             BatchPipelineStep::Alignment {
-                profile: AlignmentQualityProfile::QualityHybrid,
+                preset: Some(BatchAlignmentPreset {
+                    id: "photolab.factory.qualityHybrid".into(),
+                    name: "Quality Hybrid".into(),
+                    profile: AlignmentQualityProfile::QualityHybrid,
+                    overrides: AlignmentJobOverrides::default(),
+                }),
+                profile: None,
             },
             BatchPipelineStep::Product {
                 configuration: ProductRunConfiguration::Dense {
@@ -7613,7 +7654,13 @@ mod tests {
     fn unattended_batch_rejects_unbound_orthomosaic_before_queueing() {
         let steps = vec![
             BatchPipelineStep::Alignment {
-                profile: AlignmentQualityProfile::QualityHybrid,
+                preset: Some(BatchAlignmentPreset {
+                    id: "photolab.factory.qualityHybrid".into(),
+                    name: "Quality Hybrid".into(),
+                    profile: AlignmentQualityProfile::QualityHybrid,
+                    overrides: AlignmentJobOverrides::default(),
+                }),
+                profile: None,
             },
             BatchPipelineStep::Product {
                 configuration: ProductRunConfiguration::Ortho {
@@ -7684,6 +7731,35 @@ mod tests {
     }
 
     #[test]
+    fn batch_alignment_accepts_a_frozen_renderer_preset_snapshot() {
+        let step: BatchPipelineStep = serde_json::from_value(serde_json::json!({
+            "kind": "alignment",
+            "preset": {
+                "id": "site-quality",
+                "name": "Site quality",
+                "profile": "qualityHybrid",
+                "overrides": {
+                    "maxImageEdge": 9000,
+                    "featureBudget": 20000
+                }
+            }
+        }))
+        .expect("renderer preset snapshot");
+        let BatchPipelineStep::Alignment {
+            preset: Some(preset),
+            profile: None,
+        } = step
+        else {
+            panic!("expected preset-backed alignment step");
+        };
+        assert_eq!(preset.id, "site-quality");
+        assert_eq!(preset.name, "Site quality");
+        assert_eq!(preset.profile, AlignmentQualityProfile::QualityHybrid);
+        assert_eq!(preset.overrides.max_image_edge, Some(9_000));
+        assert_eq!(preset.overrides.feature_budget, Some(20_000));
+    }
+
+    #[test]
     fn agisoft_high_depth_settings_preserve_scale_and_mild_filtering() {
         let mut settings = MvsSettings {
             maximum_image_dimension: 5_280_u32.div_ceil(2),
@@ -7737,7 +7813,13 @@ mod tests {
         );
         let changed_steps = batch_steps_hash(
             &[BatchPipelineStep::Alignment {
-                profile: AlignmentQualityProfile::Fast,
+                preset: Some(BatchAlignmentPreset {
+                    id: "photolab.factory.fast".into(),
+                    name: "Fast".into(),
+                    profile: AlignmentQualityProfile::Fast,
+                    overrides: AlignmentJobOverrides::default(),
+                }),
+                profile: None,
             }],
             &[],
         )

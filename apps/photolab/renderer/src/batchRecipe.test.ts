@@ -7,7 +7,10 @@ import {
   graphForBatchRecipePreset,
   instantiateBatchRecipe,
   isBatchRecipeTemplateFile,
+  migrateLegacyBatchAlignmentSteps,
+  resolveBatchPipelineSteps,
 } from './batchRecipe.js';
+import { factoryAlignmentPresetForProfile } from './alignmentPreset.js';
 
 describe('batch RecipeTemplate', () => {
   it('keeps reusable templates symbolic and rejects concrete-run payloads', () => {
@@ -31,7 +34,13 @@ describe('batch RecipeTemplate', () => {
       'a'.repeat(64) as ObjectHash,
     );
     assert.equal(steps.length, 2);
-    assert.deepEqual(steps[0], { kind: 'alignment', profile: 'qualityHybrid' });
+    assert.deepEqual(steps[0], {
+      kind: 'alignment',
+      preset: {
+        source: 'builtIn',
+        presetId: factoryAlignmentPresetForProfile('qualityHybrid').preset.id,
+      },
+    });
     assert.deepEqual(steps[1], {
       kind: 'product',
       configuration: {
@@ -54,5 +63,53 @@ describe('batch RecipeTemplate', () => {
       ['alignment', 'depth', 'dense', 'dem', 'ortho', 'mesh', 'splat'],
     );
     assert.equal(JSON.stringify(steps).includes('NeedsUserInput'), false);
+  });
+
+  it('maps legacy profile steps to the matching built-in preset', () => {
+    const migrated = migrateLegacyBatchAlignmentSteps([
+      { kind: 'alignment', profile: 'maximumRobustness' },
+    ]);
+    assert.deepEqual(migrated.migratedProfiles, ['maximumRobustness']);
+    assert.deepEqual(migrated.steps, [
+      {
+        kind: 'alignment',
+        preset: {
+          source: 'builtIn',
+          presetId: factoryAlignmentPresetForProfile('maximumRobustness').preset.id,
+        },
+      },
+    ]);
+  });
+
+  it('freezes the referenced preset and its overrides for execution', async () => {
+    const resolved = await resolveBatchPipelineSteps(
+      [
+        {
+          kind: 'alignment',
+          preset: { source: 'userFile', path: '/presets/site.hcalign' },
+        },
+      ],
+      async () => ({
+        formatVersion: 1,
+        kind: 'alignmentPreset',
+        id: 'site-quality',
+        name: 'Site quality',
+        description: '',
+        savedAt: '2026-09-01T00:00:00.000Z',
+        profile: 'qualityHybrid',
+        overrides: { featureBudget: 20_000 },
+      }),
+    );
+    assert.deepEqual(resolved, [
+      {
+        kind: 'alignment',
+        preset: {
+          id: 'site-quality',
+          name: 'Site quality',
+          profile: 'qualityHybrid',
+          overrides: { featureBudget: 20_000 },
+        },
+      },
+    ]);
   });
 });
