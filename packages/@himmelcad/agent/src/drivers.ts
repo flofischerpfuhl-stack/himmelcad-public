@@ -66,7 +66,11 @@ function makeDriver(provider: HarnessProvider): AgentHarnessDriver {
         if (issue) return { state: 'incompatible', provider, detail: issue };
         return { state: 'available', identity: freezeIdentity(response.identity) };
       }
-      if (response.kind === 'missing' || response.kind === 'incompatible') {
+      if (
+        response.kind === 'notConfigured' ||
+        response.kind === 'missing' ||
+        response.kind === 'incompatible'
+      ) {
         return {
           state: response.kind,
           provider,

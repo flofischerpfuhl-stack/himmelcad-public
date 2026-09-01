@@ -32,6 +32,7 @@ export interface AgentChatPanelProps {
     workspaceScopeLabel: string;
   };
   busy: boolean;
+  notConfiguredMessage?: string;
   onSelectProvider(provider: HarnessProvider): void;
   onSend(prompt: string): void;
   onInterrupt(): void;
@@ -53,6 +54,9 @@ export function AgentChatPanel(props: AgentChatPanelProps): JSX.Element {
     (item) => item.state === 'available' && item.identity.provider === props.activeProvider,
   );
   const hasAvailableHarness = props.discoveries.some((item) => item.state === 'available');
+  const runtimeNotConfigured =
+    props.discoveries.length > 0 &&
+    props.discoveries.every((item) => item.state === 'notConfigured');
   const pendingApproval = findLastRow(
     rows,
     (row): row is Extract<AgentTimelineRow, { kind: 'approval' }> =>
@@ -139,6 +143,8 @@ export function AgentChatPanel(props: AgentChatPanelProps): JSX.Element {
               'Ask the agent to use the HimmelCAD SDK.'
             ) : hasAvailableHarness ? (
               'Choose an available local harness to start.'
+            ) : runtimeNotConfigured ? (
+              (props.notConfiguredMessage ?? 'No agent runtime is configured.')
             ) : props.discoveries.length === 0 ? (
               'No local harness discovery result is available.'
             ) : (

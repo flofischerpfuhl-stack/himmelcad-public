@@ -635,6 +635,12 @@ class DesktopAgentHarnessHostTransport {
   }
 
   async #discover(request) {
+    if (
+      typeof this.#options.approvedPath !== 'string' ||
+      this.#options.approvedPath.trim().length === 0
+    ) {
+      return { kind: 'notConfigured', detail: 'No agent runtime is configured.' };
+    }
     const resolvedExecutable = await resolveApprovedExecutable(
       request.executableNames,
       this.#options.approvedPath,
@@ -1144,6 +1150,7 @@ function confirmationGrant(extensions) {
 }
 
 async function resolveApprovedExecutable(names, approvedPath) {
+  if (typeof approvedPath !== 'string' || approvedPath.trim().length === 0) return null;
   const directories = approvedPath.split(delimiter).filter((directory) => isAbsolute(directory));
   for (const name of names) {
     if (!/^[A-Za-z0-9._-]{1,128}$/u.test(name)) continue;

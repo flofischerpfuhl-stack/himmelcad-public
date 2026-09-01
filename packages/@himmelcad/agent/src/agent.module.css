@@ -110,6 +110,7 @@
   border-radius: 50%;
 }
 .harnessPicker i[data-state='missing'],
+.harnessPicker i[data-state='notConfigured'],
 .harnessPicker i[data-state='incompatible'] {
   background: var(--hc-warning);
 }

@@ -26,7 +26,7 @@ export interface AgentHarnessDriver {
 export type HarnessDiscovery =
   | { state: 'available'; identity: HarnessExecutableIdentity }
   | {
-      state: 'missing' | 'incompatible';
+      state: 'notConfigured' | 'missing' | 'incompatible';
       provider: HarnessProvider;
       detail: string;
       version?: string;

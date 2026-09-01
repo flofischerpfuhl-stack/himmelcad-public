@@ -67,6 +67,57 @@ test('provider credential IPC errors are bounded and never reflect secrets', asy
   assert.equal(JSON.stringify(response).includes(secret), false);
 });
 
+for (const approvedPath of [undefined, '']) {
+  test(`agent request IPC returns not configured when approved PATH is ${approvedPath === undefined ? 'missing' : 'empty'}`, async (context) => {
+    const root = await mkdtemp(resolve(tmpdir(), 'hcad-agent-ipc-test-'));
+    context.after(async () => rm(root, { recursive: true, force: true }));
+    const handlers = new Map();
+    const ipcMain = {
+      handle: (channel, handler) => handlers.set(channel, handler),
+      on: () => {},
+      removeHandler: (channel) => handlers.delete(channel),
+    };
+    const rendererUrl = 'file:///trusted/index.html';
+    const mainFrame = { routingId: 1, url: rendererUrl };
+    const webContents = {
+      id: 7,
+      mainFrame,
+      send: () => {},
+      isDestroyed: () => false,
+      once: () => {},
+    };
+    const window = { webContents, isDestroyed: () => false };
+    const host = registerElectronAutomationHost({
+      ipcMain,
+      getWindow: () => window,
+      sidecarCall: async () => ({}),
+      issueConfirmationGrant: () => 'grant',
+      runtimeRoot: resolve(root, 'runtime'),
+      workspaceRoot: resolve(root, 'workspace'),
+      workspaceCapabilityId: 'workspace',
+      rendererUrl,
+      approvedPath,
+    });
+    await host.ready;
+    const request = handlers.get('automation:agent:request');
+    assert.deepEqual(
+      await request(
+        { sender: webContents, senderFrame: mainFrame },
+        {
+          kind: 'discover',
+          provider: 'codex',
+          executableNames: ['codex'],
+          versionArgs: ['--version'],
+          timeoutMs: 2_000,
+          maxOutputBytes: 64 * 1024,
+        },
+      ),
+      { kind: 'notConfigured', detail: 'No agent runtime is configured.' },
+    );
+    await host.dispose();
+  });
+}
+
 test('provider credential IPC rejects child frames and exposes only narrow mutations', async (context) => {
   const root = await mkdtemp(resolve(tmpdir(), 'hcad-provider-ipc-test-'));
   context.after(async () => rm(root, { recursive: true, force: true }));

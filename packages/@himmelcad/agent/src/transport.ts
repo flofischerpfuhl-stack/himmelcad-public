@@ -59,6 +59,7 @@ export interface HostProtocolMessage {
 }
 
 export type HostHarnessResponse =
+  | { kind: 'notConfigured'; detail: string }
   | { kind: 'missing'; detail: string }
   | { kind: 'incompatible'; detail: string; version?: string }
   | { kind: 'discovered'; identity: HarnessExecutableIdentity }

@@ -17,12 +17,14 @@ export interface ManagedAgentChatProps {
   readonly transport: AgentHarnessHostTransport;
   readonly workspaceScopeLabel?: string;
   readonly providerCredentials?: ProviderCredentialRendererTransport;
+  readonly notConfiguredMessage?: string;
 }
 
 export function ManagedAgentChat({
   transport,
   workspaceScopeLabel = 'Current HimmelCAD project via SDK',
   providerCredentials,
+  notConfiguredMessage,
 }: ManagedAgentChatProps): JSX.Element {
   const [discoveries, setDiscoveries] = useState<readonly HarnessDiscovery[]>([]);
   const [activeProvider, setActiveProvider] = useState<HarnessProvider | null>(null);
@@ -224,6 +226,7 @@ export function ManagedAgentChat({
         workspaceScopeLabel,
       }}
       busy={busy}
+      {...(notConfiguredMessage ? { notConfiguredMessage } : {})}
       providerCredentialControl={
         providerCredentials ? (
           <ProviderCredentialControl

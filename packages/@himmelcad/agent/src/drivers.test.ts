@@ -10,6 +10,26 @@ import type {
 } from './transport.js';
 
 describe('harness drivers', () => {
+  it('preserves an unconfigured runtime as a typed discovery state', async () => {
+    const discoveries = await discoverHarnesses(
+      new FixtureTransport(() => ({
+        kind: 'notConfigured',
+        detail: 'No agent runtime is configured.',
+      })),
+    );
+    assert.deepEqual(
+      discoveries.map((item) => item.state),
+      ['notConfigured', 'notConfigured', 'notConfigured'],
+    );
+    assert.equal(
+      discoveries.every(
+        (item) =>
+          item.state === 'notConfigured' && item.detail === 'No agent runtime is configured.',
+      ),
+      true,
+    );
+  });
+
   it('treats absent Claude/OpenCode as normal and freezes available identity', async () => {
     const transport = new FixtureTransport((request) => {
       if (request.kind !== 'discover') return { kind: 'accepted' };

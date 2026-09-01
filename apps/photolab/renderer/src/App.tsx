@@ -3489,6 +3489,7 @@ export function App(): JSX.Element {
           <ManagedAgentChat
             transport={window.himmelcad.agentHarness}
             providerCredentials={window.himmelcad.providerCredentials}
+            notConfiguredMessage="No agent runtime configured — configure an API key in preferences to enable the agent."
           />
         </FloatingTaskIsland>
       ) : null}
