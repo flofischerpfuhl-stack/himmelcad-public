@@ -143,8 +143,8 @@ export function Ribbon({ tabs }: RibbonProps): JSX.Element {
                     action={action}
                     isActive={activeFunctionId === action.id}
                     onSelect={() => {
-                      activate(action.id);
-                      action.onActivate?.();
+                      if (action.onActivate) action.onActivate();
+                      else activate(action.id);
                     }}
                   />
                 ))}
@@ -169,8 +169,8 @@ export function Ribbon({ tabs }: RibbonProps): JSX.Element {
                       activeFunctionId === action.id ? styles.dropdownItemActive : ''
                     }`}
                     onClick={() => {
-                      activate(action.id);
-                      action.onActivate?.();
+                      if (action.onActivate) action.onActivate();
+                      else activate(action.id);
                       setDropdownTabId(null);
                     }}
                   >

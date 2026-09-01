@@ -78,7 +78,20 @@ async function auditViewport(browserInstance, viewport) {
   });
   await page.addInitScript({ content: mockBridgeSource() });
   await page.goto(rendererUrl);
-  await page.waitForFunction(() => document.body.innerText.includes('Project'));
+  try {
+    await page.waitForFunction(() => document.body.innerText.includes('Project'));
+  } catch (error) {
+    const bodyText = await page
+      .locator('body')
+      .innerText()
+      .catch(() => '<unavailable>');
+    throw new Error(
+      `PhotoLab renderer did not become ready for ${viewport.name}. ` +
+        `Page errors: ${pageErrors.join(' | ') || '<none>'}. ` +
+        `Body: ${bodyText.slice(0, 500) || '<empty>'}`,
+      { cause: error },
+    );
+  }
 
   const capture = async (name) => {
     await page.evaluate(
@@ -224,6 +237,9 @@ async function auditViewport(browserInstance, viewport) {
       }
       await button.click();
       await capture(`function-${slug(action)}`);
+      if (action === 'Configure Batch') {
+        await page.getByRole('button', { name: 'Close batch configuration', exact: true }).click();
+      }
       if (action === 'Capture Groups') {
         await page.getByRole('button', { name: 'Add split', exact: true }).click();
         await capture('function-capture-groups-calibration-split');
@@ -233,56 +249,54 @@ async function auditViewport(browserInstance, viewport) {
 
   await page.getByRole('tab', { name: 'Images', exact: true }).first().click();
   await page.getByRole('button', { name: 'Images', exact: true }).first().click();
-  await page.getByText('Reading photos', { exact: true }).waitFor();
+  await page.getByText('Scanning folders…', { exact: true }).waitFor();
   await capture('image-import-progress');
-  await page.getByText('Import 2 photos', { exact: true }).waitFor();
-  for (const [stepIndex, label] of [
-    'Files',
-    'Metadata',
-    'Height',
-    'Horizontal',
-    'Import',
-  ].entries()) {
-    await page.locator('ol[aria-label="Image import steps"] button').nth(stepIndex).click();
-    if (label === 'Horizontal') await page.waitForTimeout(350);
-    await capture(`image-import-${slug(label)}`);
+  try {
+    await page.getByText('2 images ready', { exact: true }).waitFor({ timeout: 5_000 });
+  } catch (error) {
+    const bodyText = await page
+      .locator('body')
+      .innerText()
+      .catch(() => '<unavailable>');
+    throw new Error(
+      `Image import preview did not become ready. Body tail: ${bodyText.slice(-3_000)}`,
+      {
+        cause: error,
+      },
+    );
   }
+  await capture('image-import-preview');
+  await page.getByRole('button', { name: 'None', exact: true }).click();
+  await page.getByText('Ready to import', { exact: true }).waitFor();
+  await capture('image-import-review');
   await page.getByRole('button', { name: 'Close image import', exact: true }).click();
 
   await page.evaluate(() => {
     window.__photolabVisualInspectError = true;
   });
   await page.getByRole('button', { name: 'Images', exact: true }).first().click();
-  await page.getByText('Image inspection failed', { exact: true }).waitFor();
+  await page.getByText('Visual image inspection failure', { exact: true }).waitFor();
   await capture('image-import-error');
-  await page.getByRole('button', { name: 'Close', exact: true }).last().click();
+  await page.getByRole('button', { name: 'Close image import', exact: true }).click();
   await page.evaluate(() => {
     window.__photolabVisualInspectError = false;
   });
 
   await page.getByRole('tab', { name: 'Reference', exact: true }).first().click();
   await page.getByRole('button', { name: 'Import GCPs', exact: true }).click();
-  await page.getByText('Import ground control points', { exact: true }).waitFor();
+  await page.getByText('Preview valid · 2 points', { exact: true }).waitFor();
   await capture('gcp-import-file');
-  for (const name of [
-    'gcp-import-columns',
-    'gcp-import-preview',
-    'gcp-import-crs',
-    'gcp-import-review',
-  ]) {
-    await page.getByRole('button', { name: 'Next', exact: true }).click();
-    if (name === 'gcp-import-crs') await page.waitForTimeout(350);
-    await capture(name);
-  }
+  await capture('gcp-import-preview');
+  await page.getByRole('button', { name: 'None', exact: true }).click();
+  await page.getByText('Summary', { exact: true }).last().waitFor();
+  await capture('gcp-import-review');
   await page.getByRole('button', { name: 'Close GCP import', exact: true }).click();
 
   await page.evaluate(() => {
     window.__photolabVisualGcpPreviewError = true;
   });
   await page.getByRole('button', { name: 'Import GCPs', exact: true }).click();
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
-  await page.getByRole('alert').filter({ hasText: 'Visual GCP preview failure' }).waitFor();
+  await page.getByText('Visual GCP preview failure', { exact: true }).waitFor();
   await capture('gcp-import-error');
   await page.getByRole('button', { name: 'Close GCP import', exact: true }).click();
   await page.evaluate(() => {
@@ -354,11 +368,14 @@ function mockBridgeSource() {
     const preview={header:['Name','East','North','Height'],dataRowCount:2,validPointCount:2,previewRows:[{sourceLine:2,point:{name:'GCP-01',coordinate:{eastMeters:4375560.1,northMeters:5281257.2,heightMeters:735.3},role:'controlXyz'}},{sourceLine:3,point:{name:'GCP-02',coordinate:{eastMeters:4375572.4,northMeters:5281268.5,heightMeters:736.1},role:'checkpointXyz'}}],errors:[]};
     const productDataset={entityId:'sparse-1',kind:'sparse',relativePath:'products/sparse/metadata.json',format:'potreeV2',visible:false,boundsMin:[4375550,5281247,730],boundsMax:[4375570,5281267,740],renderOffset:[4375560,5281257,735],pointCount:10};
     const call=async(method)=>{
+      if(method==='app.negotiate')return {selectedVersion:1,serverName:'visual-sidecar',serverVersion:'visual',sessionId:'visual-app-session',capabilities:['io.formats.read','io.probe','registration.import']};
+      if(method==='canonical.project.open')return {};
       if(method==='photolab.hardware.probe')return {operatingSystem:'linux',cpu:{physicalCores:8,logicalCores:16,supportsAvx2:true},ramBytes:34359738368,dedicatedVramBytes:0};
       if(method==='photolab.images.inspect'){await new Promise(resolve=>setTimeout(resolve,450));if(window.__photolabVisualInspectError)throw new Error('Visual image inspection failure');return batch;}
       if(method==='photolab.crs.discover')return discovery;
       if(method==='photolab.gcp.preview'){if(window.__photolabVisualGcpPreviewError)throw new Error('Visual GCP preview failure');return preview;}
       if(method==='photolab.images.list')return [projectImage(1),projectImage(2)];
+      if(method==='photolab.images.quality.list'||method==='photolab.project.imageMask.list')return [];
       if(method==='photolab.products.list')return [productDataset];
       if(method==='photolab.project.processingSet.list'||method==='photolab.project.captureGroup.list'||method==='photolab.project.calibrationGroup.list'||method==='photolab.project.alignmentMerge.candidates'||method==='photolab.project.alignmentMerge.list'||method==='photolab.gcp.optimization.list'||method==='photolab.jobs.list')return [];
       if(method==='photolab.gcp.list'||method==='photolab.gcp.optimization.latest')return null;
@@ -370,9 +387,14 @@ function mockBridgeSource() {
       version:'visual',platform:'linux',
       window:{minimize:async()=>{},maximizeToggle:async()=>false,close:async()=>{},isMaximized:async()=>false,onMaximizeChange:()=>()=>{}},
       sidecar:{status:async()=>true,call,onStderr:(listener)=>{window.__photolabVisualStderr=listener;return ()=>{window.__photolabVisualStderr=undefined}}},
+      agentHarness:{request:async()=>({kind:'unavailable',reason:'visual audit mock'}),subscribe:()=>()=>{},subscribeProductApprovals:()=>()=>{},respondProductApproval:async()=>{}},
+      providerCredentials:{status:async()=>({ok:true,value:{provider:'codex',state:'missing',persistentSupported:false,sessionOverride:false}}),replace:async()=>({ok:false,error:{code:'unsupported',message:'Unavailable in visual audit'}}),clearSession:async()=>({ok:true,value:{provider:'codex',state:'missing',persistentSupported:false,sessionOverride:false}}),delete:async()=>({ok:true,value:{provider:'codex',state:'missing',persistentSupported:false,sessionOverride:false}})},
+      automationViewHost:{register:()=>()=>{}},
       preferences:{gcpCsv:{get:async()=>defaults,save:async()=>{}}},
       project:{bootstrap:async()=>opened,create:async()=>opened,open:async()=>opened,save:async()=>opened,saveAs:async()=>opened,cancelArchive:async()=>({})},
       images:{selectFiles:async()=>['/tmp/DJI_0001.JPG','/tmp/DJI_0002.JPG'],selectFolder:async()=>['/tmp']},
+      himmelcap:{selectFile:async()=>null},
+      externalImport:{projectRoot:async()=>'/tmp/visual-project',selectFiles:async()=>[],openTransform:async()=>null,saveTransform:async()=>null,materialize:async(sessionId)=>({schemaVersion:1,sessionId,datasets:[]}),revoke:async()=>true,residency:async()=>({schemaVersion:1,entries:[]})},
       grids:{select:async()=>null},
       reference:{selectGcpCsv:async()=>'/tmp/visual-gcps.csv'},
       batch:{load:async()=>null,save:async()=>true},reports:{save:async()=>true},products:{export:async()=>({confirmation:{token:'visual-export',displayName:'Sparse Point Cloud'}}),confirmExport:async()=>({job:{id:'visual-export-job',kind:'exportProduct',state:{kind:'queued'},stages:[],createdUnixMs:0,updatedUnixMs:0,progress:{completedWork:0,totalWork:1,completedBytes:0,totalBytes:0}}}),cancelExport:async()=>{}}
