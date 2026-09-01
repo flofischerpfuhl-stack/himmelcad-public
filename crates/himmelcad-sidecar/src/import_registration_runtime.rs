@@ -736,6 +736,13 @@ fn sample_potree_root(
     })
 }
 
+/// Open, hash-verified files for one committed Potree dataset.
+pub(crate) struct PotreeOpenFiles<'a> {
+    pub metadata: &'a mut fs::File,
+    pub hierarchy: &'a mut fs::File,
+    pub octree: &'a mut fs::File,
+}
+
 /// Samples one hash-verified committed Potree dataset without exposing project paths.
 pub(crate) fn sample_potree_open_files(
     owner_id: &str,
@@ -743,19 +750,17 @@ pub(crate) fn sample_potree_open_files(
     resource_hashes: [String; 3],
     placement: Option<himmelcad_core::entity_model::Transform3d>,
     maximum_samples: usize,
-    metadata_file: &mut fs::File,
-    hierarchy_file: &mut fs::File,
-    octree_file: &mut fs::File,
+    files: PotreeOpenFiles<'_>,
 ) -> Result<RegistrationSourceSamples, ImportRegistrationRuntimeError> {
     if !(3..=himmelcad_core::registration::MAX_ICP_SAMPLES_PER_CLOUD).contains(&maximum_samples) {
         return Err(ImportRegistrationRuntimeError::InvalidSampleLimit);
     }
-    let metadata_length = metadata_file.metadata()?.len();
+    let metadata_length = files.metadata.metadata()?.len();
     if metadata_length == 0 || metadata_length > MAX_REGISTRATION_SAMPLE_NODE_BYTES {
         return Err(ImportRegistrationRuntimeError::SampleNodeTooLarge);
     }
     let cancellation = CancellationToken::new();
-    let metadata = read_open_range(metadata_file, 0, metadata_length, &cancellation)?;
+    let metadata = read_open_range(files.metadata, 0, metadata_length, &cancellation)?;
     let metadata_json: serde_json::Value = serde_json::from_slice(&metadata)
         .map_err(|_| ImportRegistrationRuntimeError::InvalidPotreeMetadata)?;
     let first_chunk_size = metadata_json
@@ -765,7 +770,7 @@ pub(crate) fn sample_potree_open_files(
     if first_chunk_size == 0 || first_chunk_size > MAX_REGISTRATION_SAMPLE_NODE_BYTES {
         return Err(ImportRegistrationRuntimeError::SampleNodeTooLarge);
     }
-    let hierarchy = read_open_range(hierarchy_file, 0, first_chunk_size, &cancellation)?;
+    let hierarchy = read_open_range(files.hierarchy, 0, first_chunk_size, &cancellation)?;
     let mut source = PotreeHierarchySource::from_bytes(
         DatasetId(dataset_id.to_owned()),
         "hcad-project://canonical/metadata.json",
@@ -798,7 +803,7 @@ pub(crate) fn sample_potree_open_files(
     if byte_length == 0 || byte_length > MAX_REGISTRATION_SAMPLE_NODE_BYTES {
         return Err(ImportRegistrationRuntimeError::SampleNodeTooLarge);
     }
-    let payload = read_open_range(octree_file, offset, byte_length, &cancellation)?;
+    let payload = read_open_range(files.octree, offset, byte_length, &cancellation)?;
     let origin = match root.bounds {
         BoundingVolume::AxisAlignedBox { bounds } => WorldVec3 {
             x: (bounds.min.x + bounds.max.x) * 0.5,

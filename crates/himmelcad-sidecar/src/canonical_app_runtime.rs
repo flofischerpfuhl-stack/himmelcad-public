@@ -42,7 +42,8 @@ use crate::canonical_project_store::{
     CanonicalStoredObject,
 };
 use crate::import_registration_runtime::{
-    sample_potree_open_files, ImportRegistrationRuntimeError, RegistrationSourceSamples,
+    sample_potree_open_files, ImportRegistrationRuntimeError, PotreeOpenFiles,
+    RegistrationSourceSamples,
 };
 
 /// Process-internal verified CAS source used by the bounded automation lease
@@ -421,9 +422,11 @@ impl CanonicalAppRuntime {
             [metadata_hash.0, hierarchy_hash.0, octree_hash.0],
             entry.admission.entity.placement,
             maximum_samples,
-            &mut metadata_file,
-            &mut hierarchy_file,
-            &mut octree_file,
+            PotreeOpenFiles {
+                metadata: &mut metadata_file,
+                hierarchy: &mut hierarchy_file,
+                octree: &mut octree_file,
+            },
         )
         .map_err(registration_sample_error)
     }
