@@ -733,6 +733,13 @@ struct CameraReferencePrior {
     stddev_meters: [f64; 3],
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CameraReferencePair {
+    center_reconstruction: [f64; 3],
+    center_world_meters: [f64; 3],
+    stddev_meters: [f64; 3],
+}
+
 /// Runs triangulation, robust control-only fitting and checkpoint-only evaluation.
 #[allow(clippy::too_many_lines)]
 pub fn optimize_gcp_alignment<F>(
@@ -808,13 +815,30 @@ where
         .iter()
         .filter(|point| point.participation == OptimizationPointParticipation::Control)
         .collect::<Vec<_>>();
-    let effective_mode = effective_mode(options.transform_mode, &controls)?;
+    let camera_only = controls.is_empty();
+    let effective_mode = if camera_only {
+        GcpTransformMode::Similarity7
+    } else {
+        effective_mode(options.transform_mode, &controls)?
+    };
     let active = active_parameters(effective_mode, &controls);
-    let mut transform = initial_transform(&controls, effective_mode, options.robust_loss);
+    let mut transform = if camera_only {
+        initial_camera_reference_transform(
+            cameras,
+            &snapshot.scope.camera_reference_image_ids,
+            options.robust_loss,
+        )?
+    } else {
+        initial_transform(&controls, effective_mode, options.robust_loss)
+    };
     let mut lambda = 1.0e-6;
     let mut current_objective = objective(&controls, transform, options.robust_loss);
     let mut iterations = 0_u16;
-    let similarity_iteration_limit = options.maximum_iterations.min(50);
+    let similarity_iteration_limit = if camera_only {
+        0
+    } else {
+        options.maximum_iterations.min(50)
+    };
     // The seven-parameter initializer is tiny and should settle quickly; keep
     // the larger iteration budget for the coupled camera/point adjustment.
     for iteration in 0..similarity_iteration_limit {
@@ -2581,13 +2605,16 @@ fn validate_options(options: GcpSolverOptions) -> Result<(), GcpOptimizationErro
 }
 
 fn validate_snapshot(snapshot: &GcpOptimizationSnapshot) -> Result<(), GcpOptimizationError> {
-    if snapshot.schema_version != 1 || snapshot.points.is_empty() {
+    if snapshot.schema_version != 1
+        || (snapshot.points.is_empty() && snapshot.scope.camera_reference_image_ids.len() < 3)
+    {
         return Err(GcpOptimizationError::InvalidSnapshot);
     }
-    if !snapshot
-        .points
-        .iter()
-        .any(|point| point.participation == OptimizationPointParticipation::Control)
+    if !snapshot.points.is_empty()
+        && !snapshot
+            .points
+            .iter()
+            .any(|point| point.participation == OptimizationPointParticipation::Control)
     {
         return Err(GcpOptimizationError::NoControls);
     }
@@ -2894,6 +2921,226 @@ fn active_parameters(mode: GcpTransformMode, controls: &[&TriangulatedPoint]) ->
     let xy = controls.iter().any(|point| point.definition.role.uses_xy());
     let z = controls.iter().any(|point| point.definition.role.uses_z());
     [xy, xy, z, false, false, false, false]
+}
+
+fn initial_camera_reference_transform(
+    cameras: &[GcpCameraModel],
+    selected_camera_ids: &[ImageId],
+    loss: GcpRobustLoss,
+) -> Result<GcpSimilarityTransform, GcpOptimizationError> {
+    let selected = selected_camera_ids.iter().copied().collect::<BTreeSet<_>>();
+    let pairs = cameras
+        .iter()
+        .filter(|camera| selected.contains(&camera.image_id))
+        .filter_map(|camera| {
+            Some(CameraReferencePair {
+                center_reconstruction: camera.center_reconstruction,
+                center_world_meters: camera.reference_center_world_meters?,
+                stddev_meters: camera.reference_stddev_meters?,
+            })
+        })
+        .collect::<Vec<_>>();
+    if pairs.len() < 3 {
+        return Err(GcpOptimizationError::TooFewCameraReferencePriors);
+    }
+    if !camera_reference_geometry_is_stable(&pairs) {
+        return Err(GcpOptimizationError::DegenerateCameraReferences);
+    }
+
+    let mut candidates = Vec::new();
+    if let Some(transform) = weighted_camera_similarity(&pairs) {
+        candidates.push(transform);
+    }
+    candidates.push(camera_median_translation(&pairs));
+
+    const MAX_TRIPLE_HYPOTHESES: usize = 256;
+    let mut hypotheses = 0_usize;
+    'outer: for first in 0..pairs.len() {
+        for second in (first + 1)..pairs.len() {
+            for third in (second + 1)..pairs.len() {
+                if let Some(transform) =
+                    weighted_camera_similarity(&[pairs[first], pairs[second], pairs[third]])
+                {
+                    candidates.push(transform);
+                }
+                hypotheses += 1;
+                if hypotheses >= MAX_TRIPLE_HYPOTHESES {
+                    break 'outer;
+                }
+            }
+        }
+    }
+
+    candidates
+        .into_iter()
+        .min_by(|left, right| {
+            camera_reference_initializer_objective(&pairs, *left, loss).total_cmp(
+                &camera_reference_initializer_objective(&pairs, *right, loss),
+            )
+        })
+        .ok_or(GcpOptimizationError::DegenerateCameraReferences)
+}
+
+fn camera_reference_geometry_is_stable(pairs: &[CameraReferencePair]) -> bool {
+    for first in 0..pairs.len() {
+        for second in (first + 1)..pairs.len() {
+            for third in (second + 1)..pairs.len() {
+                let source_first = sub3(
+                    pairs[second].center_reconstruction,
+                    pairs[first].center_reconstruction,
+                );
+                let source_second = sub3(
+                    pairs[third].center_reconstruction,
+                    pairs[first].center_reconstruction,
+                );
+                let target_first = sub3(
+                    pairs[second].center_world_meters,
+                    pairs[first].center_world_meters,
+                );
+                let target_second = sub3(
+                    pairs[third].center_world_meters,
+                    pairs[first].center_world_meters,
+                );
+                let source_scale = norm3(source_first).max(norm3(source_second)).powi(2);
+                let target_scale = norm3(target_first).max(norm3(target_second)).powi(2);
+                if source_scale > MATRIX_EPSILON
+                    && target_scale > MATRIX_EPSILON
+                    && norm3(cross3(source_first, source_second)) > source_scale * 1.0e-6
+                    && norm3(cross3(target_first, target_second)) > target_scale * 1.0e-6
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn camera_reference_initializer_objective(
+    pairs: &[CameraReferencePair],
+    transform: GcpSimilarityTransform,
+    loss: GcpRobustLoss,
+) -> f64 {
+    let mut costs = pairs
+        .iter()
+        .map(|pair| {
+            let residual = sub3(
+                transform.apply(pair.center_reconstruction),
+                pair.center_world_meters,
+            );
+            let normalized = ((residual[0] / pair.stddev_meters[0]).powi(2)
+                + (residual[1] / pair.stddev_meters[1]).powi(2)
+                + (residual[2] / pair.stddev_meters[2]).powi(2))
+            .sqrt();
+            robust_cost(loss, normalized)
+        })
+        .collect::<Vec<_>>();
+    costs.sort_by(f64::total_cmp);
+    let retained = if costs.len() < 4 {
+        costs.len()
+    } else {
+        costs.len() - (costs.len() / 5).max(1)
+    };
+    costs.into_iter().take(retained).sum()
+}
+
+fn camera_median_translation(pairs: &[CameraReferencePair]) -> GcpSimilarityTransform {
+    let mut deltas = [Vec::new(), Vec::new(), Vec::new()];
+    for pair in pairs {
+        for axis in 0..3 {
+            deltas[axis].push(pair.center_world_meters[axis] - pair.center_reconstruction[axis]);
+        }
+    }
+    let mut translation = [0.0; 3];
+    for (axis, values) in deltas.iter_mut().enumerate() {
+        values.sort_by(f64::total_cmp);
+        translation[axis] = match values.len() {
+            0 => 0.0,
+            length if length % 2 == 1 => values[length / 2],
+            length => (values[length / 2 - 1] + values[length / 2]) * 0.5,
+        };
+    }
+    GcpSimilarityTransform {
+        translation_meters: translation,
+        ..GcpSimilarityTransform::identity()
+    }
+}
+
+fn weighted_camera_similarity(pairs: &[CameraReferencePair]) -> Option<GcpSimilarityTransform> {
+    if pairs.len() < 3 {
+        return None;
+    }
+    let weights = pairs
+        .iter()
+        .map(|pair| {
+            let variance = pair
+                .stddev_meters
+                .iter()
+                .map(|sigma| sigma * sigma)
+                .sum::<f64>()
+                / 3.0;
+            1.0 / variance.max(MIN_SIGMA_METERS.powi(2))
+        })
+        .collect::<Vec<_>>();
+    let weight_sum = weights.iter().sum::<f64>();
+    if !weight_sum.is_finite() || weight_sum <= MATRIX_EPSILON {
+        return None;
+    }
+    let source_center = scale3(
+        pairs
+            .iter()
+            .zip(&weights)
+            .fold([0.0; 3], |sum, (pair, weight)| {
+                add3(sum, scale3(pair.center_reconstruction, *weight))
+            }),
+        1.0 / weight_sum,
+    );
+    let target_center = scale3(
+        pairs
+            .iter()
+            .zip(&weights)
+            .fold([0.0; 3], |sum, (pair, weight)| {
+                add3(sum, scale3(pair.center_world_meters, *weight))
+            }),
+        1.0 / weight_sum,
+    );
+    let mut covariance = [[0.0; 3]; 3];
+    let mut source_energy = 0.0;
+    for (pair, weight) in pairs.iter().zip(&weights) {
+        let source = sub3(pair.center_reconstruction, source_center);
+        let target = sub3(pair.center_world_meters, target_center);
+        source_energy += weight * dot3(source, source);
+        for (row, source_component) in source.iter().enumerate() {
+            for (column, target_component) in target.iter().enumerate() {
+                covariance[row][column] += weight * source_component * target_component;
+            }
+        }
+    }
+    if source_energy <= MATRIX_EPSILON {
+        return None;
+    }
+    let rotation = horn_rotation(covariance)?;
+    let numerator = pairs
+        .iter()
+        .zip(&weights)
+        .map(|(pair, weight)| {
+            let source = sub3(pair.center_reconstruction, source_center);
+            let target = sub3(pair.center_world_meters, target_center);
+            weight * dot3(target, mat3_vec(rotation, source))
+        })
+        .sum::<f64>();
+    let scale = numerator / source_energy;
+    if !scale.is_finite() || scale <= MATRIX_EPSILON {
+        return None;
+    }
+    Some(GcpSimilarityTransform {
+        scale,
+        rotation,
+        translation_meters: sub3(
+            target_center,
+            scale3(mat3_vec(rotation, source_center), scale),
+        ),
+    })
 }
 
 fn initial_transform(
@@ -3707,6 +3954,10 @@ pub enum GcpOptimizationError {
     InvalidProjectionUncertainty,
     #[error("full similarity adjustment needs at least three XYZ controls")]
     SimilarityNeedsThreeSpatialControls,
+    #[error("camera-reference-only adjustment needs at least three usable camera priors")]
+    TooFewCameraReferencePriors,
+    #[error("camera reference positions do not define a stable similarity")]
+    DegenerateCameraReferences,
     #[error("GCP normal equations are singular")]
     SingularAdjustment,
     #[error("sparse tie point {0} is invalid")]
@@ -4207,6 +4458,87 @@ mod tests {
             selected.cameras[2].center_world_meters[0]
                 > unselected.cameras[2].center_world_meters[0] + 0.01
         );
+    }
+
+    #[test]
+    fn camera_references_alone_initialize_and_constrain_similarity() {
+        let mut cameras = [
+            look_down_camera(1, -4.0, -3.0),
+            look_down_camera(2, 4.0, -3.0),
+            look_down_camera(3, 0.0, 4.0),
+            look_down_camera(4, 5.0, 5.0),
+        ];
+        let target = |center: [f64; 3]| {
+            [
+                center[0] * 2.0 + 500.0,
+                center[1] * 2.0 + 600.0,
+                center[2] * 2.0 + 50.0,
+            ]
+        };
+        for camera in &mut cameras {
+            camera.reference_center_world_meters = Some(target(camera.center_reconstruction));
+            camera.reference_stddev_meters = Some([0.03, 0.03, 0.06]);
+        }
+        let snapshot = GcpOptimizationSnapshot {
+            schema_version: 1,
+            scope: GcpOptimizationScope {
+                label: "Camera references only".into(),
+                point_ids: Vec::new(),
+                camera_reference_image_ids: cameras.iter().map(|camera| camera.image_id).collect(),
+            },
+            points: Vec::new(),
+            observations: Vec::new(),
+        };
+        let result = optimize_gcp_bundle_alignment(
+            &snapshot,
+            &cameras,
+            &synthetic_tie_points(&cameras, false),
+            GcpSolverOptions::default(),
+            |_| GcpSolveControl::Continue,
+        )
+        .expect("camera-reference-only adjustment");
+
+        assert_eq!(result.effective_mode, GcpTransformMode::Similarity7);
+        for (optimized, source) in result.cameras.iter().zip(&cameras) {
+            let expected = target(source.center_reconstruction);
+            assert!(norm3(sub3(optimized.center_world_meters, expected)) < 0.05);
+        }
+    }
+
+    #[test]
+    fn camera_reference_only_alignment_rejects_collinear_camera_centers() {
+        let mut cameras = [
+            look_down_camera(1, 0.0, 0.0),
+            look_down_camera(2, 2.0, 0.0),
+            look_down_camera(3, 4.0, 0.0),
+        ];
+        for camera in &mut cameras {
+            camera.reference_center_world_meters = Some([
+                camera.center_reconstruction[0] + 100.0,
+                200.0,
+                camera.center_reconstruction[2] + 10.0,
+            ]);
+            camera.reference_stddev_meters = Some([0.03, 0.03, 0.06]);
+        }
+        let snapshot = GcpOptimizationSnapshot {
+            schema_version: 1,
+            scope: GcpOptimizationScope {
+                label: "Degenerate camera references".into(),
+                point_ids: Vec::new(),
+                camera_reference_image_ids: cameras.iter().map(|camera| camera.image_id).collect(),
+            },
+            points: Vec::new(),
+            observations: Vec::new(),
+        };
+        let error = optimize_gcp_bundle_alignment(
+            &snapshot,
+            &cameras,
+            &[],
+            GcpSolverOptions::default(),
+            |_| GcpSolveControl::Continue,
+        )
+        .expect_err("collinear camera references must be rejected");
+        assert_eq!(error, GcpOptimizationError::DegenerateCameraReferences);
     }
 
     #[test]

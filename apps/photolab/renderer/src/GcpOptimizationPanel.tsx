@@ -65,7 +65,17 @@ export function GcpOptimizationPanel({
     setRoles(nextRoles);
   }, [observationCounts, points]);
 
-  useEffect(() => setCameraReferences(new Set()), [cameras]);
+  useEffect(
+    () =>
+      setCameraReferences(
+        points.length === 0
+          ? new Set(
+              cameras.filter((camera) => camera.referenceAvailable).map((camera) => camera.imageId),
+            )
+          : new Set(),
+      ),
+    [cameras, points.length],
+  );
 
   const selected = points.filter((point) => included.has(point.id));
   const controls = selected.filter((point) =>
@@ -74,17 +84,19 @@ export function GcpOptimizationPanel({
   const checkpoints = selected.filter((point) =>
     (roles[point.id] ?? point.role).startsWith('checkpoint'),
   );
-  const canStart = controls.length > 0 && selected.length > 0 && !busy;
+  const cameraOnly = controls.length === 0 && cameraReferences.size >= 3;
+  const canStart =
+    !busy && ((controls.length > 0 && selected.length > 0) || cameraReferences.size >= 3);
 
   return (
     <div className={styles.root}>
       <section className={styles.intro}>
         <CircleGauge size={18} />
         <div>
-          <strong>GCP-assisted alignment</strong>
+          <strong>Alignment optimization</strong>
           <p>
-            Every selection is stored as an immutable snapshot. Camera reference positions are
-            excluded from optimization by default.
+            Every selection is stored as an immutable snapshot. Without GCPs, all valid camera
+            reference positions are included automatically and weighted by their uncertainty.
           </p>
         </div>
       </section>
@@ -106,7 +118,9 @@ export function GcpOptimizationPanel({
 
       {points.length === 0 ? (
         <div className={styles.empty}>
-          Import GCPs first and measure each one in at least two images.
+          {cameraReferences.size >= 3
+            ? 'No GCPs loaded · camera references will anchor the optimization.'
+            : 'Import GCPs or provide at least three positioned images.'}
         </div>
       ) : (
         <div className={styles.table}>
@@ -170,7 +184,10 @@ export function GcpOptimizationPanel({
         <span>Spatially distributed points are suggested when no checkpoints are assigned.</span>
       </div>
       <details>
-        <summary>Camera reference priors · none selected by default</summary>
+        <summary>
+          Camera reference priors ·{' '}
+          {points.length === 0 ? 'all valid selected automatically' : 'none selected by default'}
+        </summary>
         <div className={styles.table}>
           <div className={styles.tableHeader}>
             <span>Use</span>
@@ -218,7 +235,7 @@ export function GcpOptimizationPanel({
         disabled={!canStart}
         onClick={() =>
           onStart({
-            pointIds: selected.map((point) => point.id),
+            pointIds: cameraOnly ? [] : selected.map((point) => point.id),
             roleOverrides: Object.fromEntries(
               selected.map((point) => [point.id, roles[point.id] ?? point.role]),
             ),
@@ -227,7 +244,11 @@ export function GcpOptimizationPanel({
         }
       >
         <CheckCircle2 size={16} />
-        {busy ? 'Starting optimization…' : 'Create snapshot and optimize'}
+        {busy
+          ? 'Starting optimization…'
+          : cameraOnly
+            ? 'Optimize with camera references'
+            : 'Create snapshot and optimize'}
       </button>
     </div>
   );

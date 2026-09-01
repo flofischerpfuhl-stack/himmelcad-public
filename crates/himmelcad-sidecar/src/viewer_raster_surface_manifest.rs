@@ -632,6 +632,7 @@ fn write_bytes_atomically(
         fs::remove_file(destination)?;
     }
     fs::rename(&temporary, destination)?;
+    #[cfg(unix)]
     File::open(parent)?.sync_all()?;
     Ok(())
 }

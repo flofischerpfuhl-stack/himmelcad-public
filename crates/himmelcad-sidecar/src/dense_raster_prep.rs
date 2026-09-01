@@ -524,15 +524,14 @@ pub fn inspect_vector_wkt(
     cancellation: &CancellationToken,
 ) -> Result<String, DenseRasterPrepError> {
     let output_path = vector.flatgeobuf_path.with_extension("ogrinfo.json");
-    let mut child = Command::new(ogrinfo)
+    let mut command = offline_gdal_command(ogrinfo);
+    let mut child = command
         .args([
             "-json",
             "-so",
-            vector.flatgeobuf_path.to_string_lossy().as_ref(),
+            external_tool_argument(vector.flatgeobuf_path.to_string_lossy().as_ref()).as_str(),
             vector.layer.as_str(),
         ])
-        .env_clear()
-        .env("PROJ_NETWORK", "OFF")
         .stdin(Stdio::null())
         .stdout(File::create(&output_path)?)
         .stderr(Stdio::null())
@@ -571,10 +570,12 @@ pub fn inspect_raster_wkt(
     cancellation: &CancellationToken,
 ) -> Result<String, DenseRasterPrepError> {
     let output_path = raster.with_extension("gdalinfo.json");
-    let mut child = Command::new(gdalinfo)
-        .args(["-json", raster.to_string_lossy().as_ref()])
-        .env_clear()
-        .env("PROJ_NETWORK", "OFF")
+    let mut command = offline_gdal_command(gdalinfo);
+    let mut child = command
+        .args([
+            "-json",
+            external_tool_argument(raster.to_string_lossy().as_ref()).as_str(),
+        ])
         .stdin(Stdio::null())
         .stdout(File::create(&output_path)?)
         .stderr(Stdio::null())
@@ -969,13 +970,12 @@ fn run_owned_command(
     arguments: &[String],
     cancellation: &CancellationToken,
 ) -> Result<(), DenseRasterPrepError> {
-    let mut command = Command::new(executable);
-    command
-        .args(arguments)
-        .env_clear()
-        .env("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
-        .env("PROJ_NETWORK", "OFF")
-        .env("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", "");
+    let normalized_arguments = arguments
+        .iter()
+        .map(|argument| external_tool_argument(argument))
+        .collect::<Vec<_>>();
+    let mut command = offline_gdal_command(executable);
+    command.args(&normalized_arguments);
     if let Some(parent) = executable.parent() {
         if parent.join("liblaszip.so").is_file() {
             command.env("LD_LIBRARY_PATH", parent);
@@ -1003,6 +1003,42 @@ fn run_owned_command(
     }
 }
 
+fn offline_gdal_command(executable: &Path) -> Command {
+    let mut command = Command::new(executable);
+    command
+        .env_clear()
+        .env("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
+        .env("PROJ_NETWORK", "OFF")
+        .env("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", "");
+    if let Some(prefix) = executable.parent().and_then(Path::parent) {
+        let gdal_data = prefix.join("share/gdal");
+        if gdal_data.is_dir() {
+            command.env("GDAL_DATA", gdal_data);
+        }
+        let proj_data = prefix.join("share/proj");
+        if proj_data.is_dir() {
+            command.env("PROJ_DATA", proj_data);
+        }
+    }
+    command
+}
+
+#[cfg(windows)]
+fn external_tool_argument(value: &str) -> String {
+    if let Some(suffix) = value.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{suffix}")
+    } else if let Some(suffix) = value.strip_prefix(r"\\?\") {
+        suffix.to_owned()
+    } else {
+        value.to_owned()
+    }
+}
+
+#[cfg(not(windows))]
+fn external_tool_argument(value: &str) -> String {
+    value.to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1020,6 +1056,20 @@ mod tests {
         assert!((point.reprojection_error - 0.25).abs() < f64::EPSILON);
         assert!(parse_colmap_sparse_point("# comment").unwrap().is_none());
         assert!(parse_colmap_sparse_point("1 nan 2 3 4 5 6 0.1").is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn gdal_arguments_strip_windows_verbatim_prefixes() {
+        assert_eq!(
+            external_tool_argument(r"\\?\C:\project\dense.csv"),
+            r"C:\project\dense.csv"
+        );
+        assert_eq!(
+            external_tool_argument(r"\\?\UNC\server\share\dense.csv"),
+            r"\\server\share\dense.csv"
+        );
+        assert_eq!(external_tool_argument("EPSG:31468"), "EPSG:31468");
     }
 
     #[test]

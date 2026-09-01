@@ -2,11 +2,14 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
 
 use anyhow::{Context, Result};
 use fs2::FileExt;
@@ -1431,7 +1434,7 @@ impl ProjectRuntime {
         if working_path == source_path {
             lease.source_fingerprint = source_fingerprint(&source_path)?;
             lease.heartbeat_unix_ms = unix_ms()?;
-            write_lease_record(&lock_file, &lease)?;
+            write_lease_record(&lock_path, &lease)?;
         }
 
         let summary = ProjectSessionSummary {
@@ -5491,7 +5494,7 @@ impl ProjectRuntime {
         }
         new_lease.source_fingerprint = source_fingerprint(&destination)?;
         new_lease.heartbeat_unix_ms = unix_ms()?;
-        write_lease_record(&new_lock_file, &new_lease)?;
+        write_lease_record(&new_lock_path, &new_lease)?;
         if let Err(error) = release_lock(&session.lock_file, &session.lock_path, &session.id) {
             release_lock(&new_lock_file, &new_lock_path, &session.id)?;
             return Err(error).context("failed to release previous project lock after Save As");
@@ -6225,13 +6228,26 @@ fn heartbeat_session_lease(session: &mut ProjectSession, refresh_source: bool) -
         session.lease.source_fingerprint = source_fingerprint(&session.source_path)?;
     }
     session.lease.heartbeat_unix_ms = unix_ms()?;
-    write_lease_record(&session.lock_file, &session.lease)
+    write_lease_record(&session.lock_path, &session.lease)
 }
 
 fn ensure_source_unchanged(session: &ProjectSession) -> Result<()> {
     let observed = source_fingerprint(&session.source_path)?;
     if observed == session.lease.source_fingerprint {
         return Ok(());
+    }
+    if session.working_path == session.source_path
+        && observed.kind == ProjectSourceFingerprintKind::Manifest
+    {
+        let expected_bytes = serde_json::to_vec_pretty(&session.manifest)?;
+        let expected = ProjectSourceFingerprint {
+            kind: ProjectSourceFingerprintKind::Manifest,
+            sha256: ObjectHash::of_bytes(&expected_bytes),
+            byte_size: u64::try_from(expected_bytes.len())?,
+        };
+        if observed == expected {
+            return Ok(());
+        }
     }
     anyhow::bail!(
         "project source changed externally while this session was open; refusing to overwrite {} (opened fingerprint {}, current fingerprint {}). Save to a different file or reopen the project.",
@@ -7488,13 +7504,14 @@ fn acquire_lock(
     session_id: &str,
     source_path: &Path,
 ) -> Result<(Arc<File>, ProjectLeaseRecord)> {
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)
-        .with_context(|| format!("project lock cannot be opened: {}", path.display()))?;
+    let guard_path = project_lock_guard_path(path);
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true);
+    #[cfg(windows)]
+    options.share_mode(0x0000_0001 | 0x0000_0002 | 0x0000_0004);
+    let lock = options
+        .open(&guard_path)
+        .with_context(|| format!("project lock cannot be opened: {}", guard_path.display()))?;
     if let Err(error) = lock.try_lock_exclusive() {
         anyhow::bail!(
             "project is already locked/open: {} ({error}). {}",
@@ -7514,18 +7531,20 @@ fn acquire_lock(
         opened_unix_ms,
         heartbeat_unix_ms: opened_unix_ms,
     };
-    write_lease_record(&lock, &lease)?;
+    write_lease_record(path, &lease)?;
     Ok((Arc::new(lock), lease))
 }
 
-fn write_lease_record(lock: &File, lease: &ProjectLeaseRecord) -> Result<()> {
+fn write_lease_record(path: &Path, lease: &ProjectLeaseRecord) -> Result<()> {
     let mut bytes = serde_json::to_vec_pretty(lease)?;
     bytes.push(b'\n');
-    lock.set_len(0)?;
-    let mut writer = lock;
-    writer.seek(SeekFrom::Start(0))?;
+    let mut writer = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
     writer.write_all(&bytes)?;
-    lock.sync_data()?;
+    writer.sync_data()?;
     Ok(())
 }
 
@@ -7634,6 +7653,15 @@ fn release_lock(lock: &File, path: &Path, session_id: &str) -> Result<()> {
     Ok(())
 }
 
+fn project_lock_guard_path(lease_path: &Path) -> PathBuf {
+    let parent = lease_path.parent().unwrap_or_else(|| Path::new("."));
+    let lease_name = lease_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("project.lock");
+    parent.join(format!("{lease_name}.guard"))
+}
+
 fn write_journal_entry(root: &Path, entry: &PhotolabJournalEntry) -> Result<()> {
     let path = root
         .join("journal")
@@ -7671,7 +7699,7 @@ fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
             path.display()
         )
     })?;
-    File::open(parent)?.sync_all()?;
+    sync_parent_directory(path)?;
     Ok(())
 }
 

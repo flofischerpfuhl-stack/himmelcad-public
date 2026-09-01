@@ -1381,12 +1381,22 @@ impl RasterRuntime {
         temporary_directory: &Path,
     ) -> Result<String, RasterRuntimeError> {
         check_cancelled(cancellation)?;
+        let args = args
+            .into_iter()
+            .map(external_tool_argument)
+            .collect::<Vec<_>>();
         let mut command = Command::new(self.tool_path(tool));
         command
             .args(args)
             .env_clear()
-            .env("GDAL_DATA", &self.config.gdal_data_directory)
-            .env("PROJ_DATA", &self.config.proj_data_directory)
+            .env(
+                "GDAL_DATA",
+                external_tool_path(&self.config.gdal_data_directory),
+            )
+            .env(
+                "PROJ_DATA",
+                external_tool_path(&self.config.proj_data_directory),
+            )
             .env("PROJ_NETWORK", "OFF")
             .env("GDAL_DRIVER_PATH", "disable")
             .env("GDAL_PAM_ENABLED", "NO")
@@ -1394,7 +1404,7 @@ impl RasterRuntime {
                 "GDAL_NUM_THREADS",
                 self.config.threads_per_process.to_string(),
             )
-            .env("CPL_TMPDIR", temporary_directory)
+            .env("CPL_TMPDIR", external_tool_path(temporary_directory))
             .env("LC_ALL", "C")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -2273,6 +2283,7 @@ fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(), RasterRu
         file.sync_all()?;
     }
     fs::rename(&temporary, path)?;
+    #[cfg(unix)]
     File::open(parent)?.sync_all()?;
     Ok(())
 }
@@ -2375,6 +2386,7 @@ async fn publish_directory(
             return Err(RasterRuntimeError::OutputExists(path_string(&destination)?));
         }
         fs::rename(&source, &destination)?;
+        #[cfg(unix)]
         if let Some(parent) = destination.parent() {
             File::open(parent)?.sync_all()?;
         }
@@ -2419,6 +2431,27 @@ fn check_cancelled(cancellation: &CancellationToken) -> Result<(), RasterRuntime
     } else {
         Ok(())
     }
+}
+
+#[cfg(windows)]
+fn external_tool_argument(value: OsString) -> OsString {
+    let text = value.to_string_lossy();
+    if let Some(suffix) = text.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{suffix}").into()
+    } else if let Some(suffix) = text.strip_prefix(r"\\?\") {
+        suffix.into()
+    } else {
+        value
+    }
+}
+
+#[cfg(not(windows))]
+fn external_tool_argument(value: OsString) -> OsString {
+    value
+}
+
+fn external_tool_path(path: &Path) -> OsString {
+    external_tool_argument(path.as_os_str().to_owned())
 }
 
 fn canonical_file(path: &Path) -> Result<PathBuf, RasterRuntimeError> {
@@ -2487,6 +2520,23 @@ fn path_string(path: &Path) -> Result<String, RasterRuntimeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn gdal_process_arguments_strip_windows_verbatim_prefixes() {
+        assert_eq!(
+            external_tool_argument(OsString::from(r"\\?\C:\project\dense.fgb")),
+            OsString::from(r"C:\project\dense.fgb")
+        );
+        assert_eq!(
+            external_tool_argument(OsString::from(r"\\?\UNC\server\share\dense.fgb")),
+            OsString::from(r"\\server\share\dense.fgb")
+        );
+        assert_eq!(
+            external_tool_argument(OsString::from("EPSG:31468")),
+            OsString::from("EPSG:31468")
+        );
+    }
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt as _;

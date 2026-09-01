@@ -1796,8 +1796,14 @@ fn publish_link(staged: &Path, destination: &Path) -> Result<(), CanonicalProjec
     Ok(())
 }
 
+#[cfg(unix)]
 fn sync_dir(path: &Path) -> Result<(), CanonicalProjectStoreError> {
     File::open(path)?.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_dir(_path: &Path) -> Result<(), CanonicalProjectStoreError> {
     Ok(())
 }
 

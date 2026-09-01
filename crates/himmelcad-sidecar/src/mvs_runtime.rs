@@ -2218,7 +2218,7 @@ fn hash_file(
 ) -> Result<ObjectHash, MvsRuntimeError> {
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
+    let mut buffer = vec![0_u8; 1024 * 1024].into_boxed_slice();
     loop {
         if cancellation.is_some_and(CancellationToken::is_cancel_requested) {
             return Err(MvsRuntimeError::Cancelled);

@@ -489,6 +489,23 @@ fn prepare_mvs_scene_impl(
     if let Some(total) = progress_total {
         progress(1, total)?;
     }
+    let undistorter_input = scene_root.join("undistorter-input-model-txt");
+    fs::create_dir_all(&undistorter_input)?;
+    run_colmap(
+        &executable,
+        "portable image-name model conversion",
+        &[
+            "model_converter".into(),
+            "--input_path".into(),
+            external_tool_path(&sparse),
+            "--output_path".into(),
+            external_tool_path(&undistorter_input),
+            "--output_type".into(),
+            "TXT".into(),
+        ],
+        cancellation,
+    )?;
+    normalize_colmap_image_name_separators(&undistorter_input.join("images.txt"))?;
     let mut last_undistorted_count = 0_u64;
     run_colmap_with_poll(
         &executable,
@@ -496,11 +513,11 @@ fn prepare_mvs_scene_impl(
         &[
             "image_undistorter".into(),
             "--image_path".into(),
-            images.into_os_string(),
+            external_tool_path(&images),
             "--input_path".into(),
-            sparse.as_os_str().to_owned(),
+            external_tool_path(&undistorter_input),
             "--output_path".into(),
-            scene_root.as_os_str().to_owned(),
+            external_tool_path(scene_root),
             "--output_type".into(),
             "COLMAP".into(),
             "--max_image_size".into(),
@@ -521,6 +538,12 @@ fn prepare_mvs_scene_impl(
         },
     )?;
     if let (Some(expected), Some(total)) = (expected_image_count, progress_total) {
+        let completed = count_regular_files(&scene_root.join("images"))?;
+        if completed != u64::try_from(expected).unwrap_or(u64::MAX) {
+            return Err(MvsSceneError::InvalidModel(format!(
+                "COLMAP image undistorter produced {completed}/{expected} images"
+            )));
+        }
         progress(
             u64::try_from(expected)
                 .unwrap_or(u64::MAX)
@@ -536,9 +559,9 @@ fn prepare_mvs_scene_impl(
         &[
             "model_converter".into(),
             "--input_path".into(),
-            scene_root.join("sparse").into_os_string(),
+            external_tool_path(&scene_root.join("sparse")),
             "--output_path".into(),
-            text_root.as_os_str().to_owned(),
+            external_tool_path(&text_root),
             "--output_type".into(),
             "TXT".into(),
         ],
@@ -774,9 +797,9 @@ fn prepare_undistortion_masks(
         &[
             "model_converter".into(),
             "--input_path".into(),
-            sparse_model.as_os_str().to_owned(),
+            external_tool_path(sparse_model),
             "--output_path".into(),
-            original_text.as_os_str().to_owned(),
+            external_tool_path(&original_text),
             "--output_type".into(),
             "TXT".into(),
         ],
@@ -1050,6 +1073,59 @@ fn count_regular_files(root: &Path) -> Result<u64, MvsSceneError> {
         }
     }
     Ok(total)
+}
+
+fn normalize_colmap_image_name_separators(path: &Path) -> Result<(), MvsSceneError> {
+    let source = fs::read_to_string(path)?;
+    let mut expect_image_record = true;
+    let mut normalized = String::with_capacity(source.len());
+    for line in source.split_inclusive('\n') {
+        let content = line.strip_suffix('\n').unwrap_or(line);
+        let content = content.strip_suffix('\r').unwrap_or(content);
+        let line_ending = if line.ends_with("\r\n") {
+            "\r\n"
+        } else if line.ends_with('\n') {
+            "\n"
+        } else {
+            ""
+        };
+        if content.trim_start().starts_with('#') {
+            normalized.push_str(content);
+            normalized.push_str(line_ending);
+            continue;
+        }
+        if expect_image_record {
+            if content.trim().is_empty() {
+                normalized.push_str(content);
+            } else {
+                normalized.push_str(&content.replace('\\', "/"));
+                expect_image_record = false;
+            }
+        } else {
+            normalized.push_str(content);
+            expect_image_record = true;
+        }
+        normalized.push_str(line_ending);
+    }
+    fs::write(path, normalized)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn external_tool_path(path: &Path) -> std::ffi::OsString {
+    let value = path.as_os_str().to_string_lossy();
+    if let Some(suffix) = value.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{suffix}").into()
+    } else if let Some(suffix) = value.strip_prefix(r"\\?\") {
+        suffix.into()
+    } else {
+        path.as_os_str().to_owned()
+    }
+}
+
+#[cfg(not(windows))]
+fn external_tool_path(path: &Path) -> std::ffi::OsString {
+    path.as_os_str().to_owned()
 }
 
 fn parse_cameras(path: &Path) -> Result<BTreeMap<u64, ParsedCamera>, MvsSceneError> {
@@ -1403,7 +1479,7 @@ fn hash_file(path: &Path, cancellation: &CancellationToken) -> Result<ObjectHash
     use std::io::Read;
     let mut file = fs::File::open(path)?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
+    let mut buffer = vec![0_u8; 1024 * 1024].into_boxed_slice();
     loop {
         cancellation.check().map_err(|_| MvsSceneError::Cancelled)?;
         let read = file.read(&mut buffer)?;
@@ -1532,6 +1608,44 @@ mod tests {
         )
         .is_err());
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn colmap_image_names_are_normalized_without_touching_observation_rows() {
+        let root = std::env::temp_dir().join(format!(
+            "himmelcad-mvs-portable-image-names-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("model root");
+        let path = root.join("images.txt");
+        fs::write(
+            &path,
+            "# Image list\n1 1 0 0 0 0 0 0 1 calibration-000000\\image-00000000.jpg\n10 20 -1 30 40 7\n2 1 0 0 0 0 0 0 1 calibration-000000\\image-00000001.jpg\n\n",
+        )
+        .expect("image fixture");
+
+        normalize_colmap_image_name_separators(&path).expect("normalize image names");
+
+        let normalized = fs::read_to_string(&path).expect("normalized model");
+        assert!(normalized.contains("calibration-000000/image-00000000.jpg"));
+        assert!(normalized.contains("calibration-000000/image-00000001.jpg"));
+        assert!(normalized.contains("10 20 -1 30 40 7"));
+        assert!(!normalized.contains('\\'));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn external_tool_paths_strip_windows_verbatim_prefixes() {
+        assert_eq!(
+            external_tool_path(Path::new(r"\\?\C:\project\images")),
+            std::ffi::OsString::from(r"C:\project\images")
+        );
+        assert_eq!(
+            external_tool_path(Path::new(r"\\?\UNC\server\share\images")),
+            std::ffi::OsString::from(r"\\server\share\images")
+        );
     }
 
     fn temporary_model_root() -> PathBuf {

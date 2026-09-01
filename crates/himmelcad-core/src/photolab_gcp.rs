@@ -1100,9 +1100,9 @@ pub fn build_optimization_snapshot(
     }
     sort_unique(&mut scope.point_ids)?;
     sort_unique(&mut scope.camera_reference_image_ids)?;
-    if scope.point_ids.is_empty() {
+    if scope.point_ids.is_empty() && scope.camera_reference_image_ids.len() < 3 {
         return Err(GcpError::InvalidOptimizationScope(
-            "scope needs at least one GCP or checkpoint",
+            "scope needs at least one GCP or three camera references",
         ));
     }
     let mut points_by_id = BTreeMap::new();
@@ -1130,9 +1130,10 @@ pub fn build_optimization_snapshot(
             participation,
         });
     }
-    if !snapshots
-        .iter()
-        .any(|point| point.participation == OptimizationPointParticipation::Control)
+    if !snapshots.is_empty()
+        && !snapshots
+            .iter()
+            .any(|point| point.participation == OptimizationPointParticipation::Control)
     {
         return Err(GcpError::InvalidOptimizationScope(
             "scope needs at least one control point",
@@ -1470,6 +1471,41 @@ mod tests {
         let decoded: GcpOptimizationSnapshot =
             serde_json::from_str(&encoded).expect("deserialize snapshot");
         assert_eq!(decoded, snapshot);
+    }
+
+    #[test]
+    fn optimization_snapshot_accepts_camera_references_without_gcps() {
+        let snapshot = build_optimization_snapshot(
+            GcpOptimizationScope {
+                label: "Camera references".to_owned(),
+                point_ids: Vec::new(),
+                camera_reference_image_ids: vec![ImageId(9), ImageId(3), ImageId(6)],
+            },
+            &[],
+            &[],
+        )
+        .expect("three camera references should define a camera-only scope");
+
+        assert!(snapshot.points.is_empty());
+        assert!(snapshot.observations.is_empty());
+        assert_eq!(
+            snapshot.scope.camera_reference_image_ids,
+            vec![ImageId(3), ImageId(6), ImageId(9)]
+        );
+
+        let insufficient = build_optimization_snapshot(
+            GcpOptimizationScope {
+                label: "Too few camera references".to_owned(),
+                point_ids: Vec::new(),
+                camera_reference_image_ids: vec![ImageId(3), ImageId(6)],
+            },
+            &[],
+            &[],
+        );
+        assert!(matches!(
+            insufficient,
+            Err(GcpError::InvalidOptimizationScope(_))
+        ));
     }
 
     #[test]
