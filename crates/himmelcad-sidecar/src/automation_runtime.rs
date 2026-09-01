@@ -1568,7 +1568,12 @@ mod tests {
             .is_err());
         let mut invalid_signature =
             issue_test_grant(&runtime, &second.plan_hash, &"44".repeat(32), now + 30_000);
-        invalid_signature.replace_range(invalid_signature.len() - 1.., "0");
+        let replacement = if invalid_signature.ends_with('0') {
+            "1"
+        } else {
+            "0"
+        };
+        invalid_signature.replace_range(invalid_signature.len() - 1.., replacement);
         assert!(runtime
             .authorize_confirmation_grant(&transaction, &invalid_signature, generation)
             .is_err());
