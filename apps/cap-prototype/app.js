@@ -108,9 +108,6 @@ function $all(sel, root = document) {
 function project() {
   return PROJECTS.find((p) => p.id === currentProjectId) || PROJECTS[0];
 }
-function allJobs() {
-  return PROJECTS.flatMap((p) => p.jobs.map((j) => ({ ...j, projectId: p.id, projectName: p.name })));
-}
 function findJob(id) {
   for (const p of PROJECTS) {
     const j = p.jobs.find((x) => x.id === id);
@@ -187,7 +184,10 @@ function openProjectDropdown() {
 }
 
 function initMap() {
-  map = L.map('map', { zoomControl: false, attributionControl: false }).setView([48.1378, 11.5755], 16);
+  map = L.map('map', { zoomControl: false, attributionControl: false }).setView(
+    [48.1378, 11.5755],
+    16,
+  );
   L.tileLayer(
     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     { maxZoom: 19, attribution: '' },
@@ -240,7 +240,10 @@ function openJob(id) {
   $('#job-desc').textContent = job.desc || '';
 
   const notesHtml = (job.notes || [])
-    .map((n, i) => `<li class="note-item"><span class="note-idx">${i + 1}</span><span>${escapeHtml(n)}</span></li>`)
+    .map(
+      (n, i) =>
+        `<li class="note-item"><span class="note-idx">${i + 1}</span><span>${escapeHtml(n)}</span></li>`,
+    )
     .join('');
 
   const acc = $('#job-accordion');
@@ -301,10 +304,7 @@ function openJob(id) {
 }
 
 function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function wireAccordion(root) {
@@ -447,7 +447,7 @@ function openRtkCreateModal() {
   host.innerHTML = `
     <div class="overlay-card island save-card">
       <h3>RTK-Profil</h3>
-      <label class="field"><span>Name</span><input type="text" id="rtk-name" placeholder="z. B. SAPOS HEPS" /></label>
+      <label class="field"><span>Name</span><input type="text" id="rtk-name" placeholder="z. B. SAPOS HEPS" /></label>
       <label class="field"><span>Host</span><input type="text" id="rtk-host" placeholder="ntrip.example.de" /></label>
       <label class="field"><span>Port</span><input type="text" id="rtk-port" value="2101" /></label>
       <label class="field"><span>Mountpoint</span><input type="text" id="rtk-mount" /></label>
@@ -565,11 +565,7 @@ function commitSavedJob() {
     sigmaV: 0.8,
     fixPct: 5,
     floatPct: 80,
-    path: [
-      base,
-      [base[0] + 0.0003, base[1] + 0.0004],
-      [base[0] + 0.0006, base[1] + 0.0009],
-    ],
+    path: [base, [base[0] + 0.0003, base[1] + 0.0004], [base[0] + 0.0006, base[1] + 0.0009]],
     color: '#1597f2',
   };
   project().jobs.unshift(job);
@@ -631,7 +627,9 @@ function wire() {
     autoUpload = !autoUpload;
     $('#btn-auto-upload').textContent = autoUpload ? 'An' : 'Aus';
   });
-  $('#btn-dxf-folder').addEventListener('click', () => showToast('Cloud-Ordner: /Bestandsplan (Demo)'));
+  $('#btn-dxf-folder').addEventListener('click', () =>
+    showToast('Cloud-Ordner: /Bestandsplan (Demo)'),
+  );
 
   $all('[data-link-cloud]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -652,7 +650,9 @@ function wire() {
     });
   });
 
-  $all('#theme-seg button').forEach((b) => b.addEventListener('click', () => setTheme(b.dataset.theme)));
+  $all('#theme-seg button').forEach((b) =>
+    b.addEventListener('click', () => setTheme(b.dataset.theme)),
+  );
   $('#map-attrib').addEventListener('click', () => showToast('Kartenquellen / Lizenzen'));
 
   $('#studio-theme').addEventListener('click', () => {
