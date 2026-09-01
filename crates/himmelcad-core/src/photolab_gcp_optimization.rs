@@ -3047,8 +3047,8 @@ fn camera_reference_initializer_objective(
 fn camera_median_translation(pairs: &[CameraReferencePair]) -> GcpSimilarityTransform {
     let mut deltas = [Vec::new(), Vec::new(), Vec::new()];
     for pair in pairs {
-        for axis in 0..3 {
-            deltas[axis].push(pair.center_world_meters[axis] - pair.center_reconstruction[axis]);
+        for (axis, axis_deltas) in deltas.iter_mut().enumerate() {
+            axis_deltas.push(pair.center_world_meters[axis] - pair.center_reconstruction[axis]);
         }
     }
     let mut translation = [0.0; 3];
