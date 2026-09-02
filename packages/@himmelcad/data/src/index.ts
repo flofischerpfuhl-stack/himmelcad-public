@@ -393,6 +393,7 @@ export interface PhotolabJob {
   startedAtUnixMs?: number;
   finishedAtUnixMs?: number;
   lastCheckpointSequence?: number;
+  terminalDiagnostic?: string;
 }
 
 export interface HardwareCapabilities {

@@ -10,9 +10,13 @@ use std::{
 };
 
 use fs2::FileExt;
-use himmelcad_core::photolab_jobs::{
-    CancellationToken, CheckpointDescriptor, JobError, JobProgress, NewPhotolabJob, PhotolabJob,
-    PhotolabJobId, PhotolabJobState,
+use himmelcad_core::{
+    hash::ObjectHash,
+    photolab_jobs::{
+        CancellationToken, CheckpointCommitState, CheckpointDescriptor, CheckpointId, JobError,
+        JobProgress, NewPhotolabJob, PhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState,
+        CHECKPOINT_SCHEMA_VERSION,
+    },
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -171,6 +175,11 @@ impl ProgressSink {
 pub struct CheckpointSink {
     manager: JobManager,
     job_id: PhotolabJobId,
+    job_kind: PhotolabJobKind,
+    config_hash: ObjectHash,
+    input_hash: ObjectHash,
+    stage_base: u32,
+    stage_count: Option<u32>,
 }
 
 impl CheckpointSink {
@@ -193,6 +202,83 @@ impl CheckpointSink {
             .runtime
             .block_on(self.manager.record_checkpoint(&self.job_id, checkpoint))
     }
+
+    /// Returns the parent job kind represented by this sink.
+    #[must_use]
+    pub const fn job_kind(&self) -> PhotolabJobKind {
+        self.job_kind
+    }
+
+    /// Records metadata for a payload that has already been durably committed.
+    pub async fn record_committed(
+        &self,
+        sequence: u64,
+        progress: JobProgress,
+        checkpoint_id: impl Into<String>,
+        payload_hash: ObjectHash,
+    ) -> Result<PhotolabJob, JobManagerError> {
+        let checkpoint =
+            self.committed_descriptor(sequence, progress, checkpoint_id.into(), payload_hash);
+        self.record(&checkpoint).await
+    }
+
+    /// Blocking variant for supervised native workers.
+    pub fn record_committed_blocking(
+        &self,
+        sequence: u64,
+        progress: JobProgress,
+        checkpoint_id: impl Into<String>,
+        payload_hash: ObjectHash,
+    ) -> Result<PhotolabJob, JobManagerError> {
+        let checkpoint =
+            self.committed_descriptor(sequence, progress, checkpoint_id.into(), payload_hash);
+        self.record_blocking(&checkpoint)
+    }
+
+    fn committed_descriptor(
+        &self,
+        sequence: u64,
+        progress: JobProgress,
+        checkpoint_id: String,
+        payload_hash: ObjectHash,
+    ) -> CheckpointDescriptor {
+        CheckpointDescriptor {
+            schema_version: CHECKPOINT_SCHEMA_VERSION,
+            checkpoint_id: CheckpointId(checkpoint_id),
+            job_id: self.job_id.clone(),
+            job_kind: self.job_kind,
+            sequence,
+            progress: self.map_progress(progress),
+            config_hash: self.config_hash.clone(),
+            input_hash: self.input_hash.clone(),
+            commit_state: CheckpointCommitState::Committed { payload_hash },
+        }
+    }
+
+    fn map_progress(&self, mut progress: JobProgress) -> JobProgress {
+        if let Some(stage_count) = self.stage_count {
+            progress.stage.index = self.stage_base.saturating_add(progress.stage.index);
+            progress.stage.stage_count = stage_count;
+        }
+        progress
+    }
+}
+
+/// Cheap diagnostic callback scoped to one job.
+#[derive(Debug, Clone)]
+pub struct JobDiagnosticSink {
+    manager: JobManager,
+    job_id: PhotolabJobId,
+}
+
+impl JobDiagnosticSink {
+    /// Persists a non-fatal diagnostic from blocking worker code.
+    pub fn record_blocking(&self, diagnostic: impl Into<String>) -> Result<(), JobManagerError> {
+        self.manager.runtime.block_on(
+            self.manager
+                .record_terminal_diagnostic(&self.job_id, diagnostic.into()),
+        )
+    }
 }
 
 /// Capabilities handed to a blocking Photolab compute worker.
@@ -201,6 +287,7 @@ pub struct JobWorkerContext {
     pub cancellation: CancellationToken,
     pub progress: ProgressSink,
     pub checkpoints: CheckpointSink,
+    pub diagnostics: JobDiagnosticSink,
 }
 
 impl JobWorkerContext {
@@ -217,6 +304,8 @@ impl JobWorkerContext {
         let mut mapped = self.clone();
         mapped.progress.stage_base = stage_base;
         mapped.progress.stage_count = Some(stage_count);
+        mapped.checkpoints.stage_base = stage_base;
+        mapped.checkpoints.stage_count = Some(stage_count);
         mapped
     }
 }
@@ -351,8 +440,20 @@ impl JobManager {
 
         let manager = self.clone();
         let job_id = job.id.clone();
+        let job_kind = job.kind;
+        let config_hash = job.config_hash.clone();
+        let input_hash = job.input_hash.clone();
         self.runtime.spawn(async move {
-            manager.supervise(job_id, cancellation, work).await;
+            manager
+                .supervise(
+                    job_id,
+                    job_kind,
+                    config_hash,
+                    input_hash,
+                    cancellation,
+                    work,
+                )
+                .await;
         });
         Ok(StartJobResult { job })
     }
@@ -474,8 +575,15 @@ impl JobManager {
         }
     }
 
-    async fn supervise<F>(&self, job_id: PhotolabJobId, cancellation: CancellationToken, work: F)
-    where
+    async fn supervise<F>(
+        &self,
+        job_id: PhotolabJobId,
+        job_kind: PhotolabJobKind,
+        config_hash: ObjectHash,
+        input_hash: ObjectHash,
+        cancellation: CancellationToken,
+        work: F,
+    ) where
         F: FnOnce(JobWorkerContext) -> JobWorkerResult + Send + 'static,
     {
         let Ok(permit) = self.inner.concurrency.clone().acquire_owned().await else {
@@ -509,6 +617,15 @@ impl JobManager {
                 stage_count: None,
             },
             checkpoints: CheckpointSink {
+                manager: self.clone(),
+                job_id: job_id.clone(),
+                job_kind,
+                config_hash,
+                input_hash,
+                stage_base: 0,
+                stage_count: None,
+            },
+            diagnostics: JobDiagnosticSink {
                 manager: self.clone(),
                 job_id: job_id.clone(),
             },
@@ -614,6 +731,20 @@ impl JobManager {
         managed.job.record_checkpoint(checkpoint)?;
         self.publish_durable(managed);
         Ok(managed.job.clone())
+    }
+
+    async fn record_terminal_diagnostic(
+        &self,
+        job_id: &PhotolabJobId,
+        diagnostic: String,
+    ) -> Result<(), JobManagerError> {
+        let mut jobs = self.inner.jobs.lock().await;
+        let managed = jobs
+            .get_mut(&job_id.0)
+            .ok_or_else(|| JobManagerError::JobNotFound(job_id.clone()))?;
+        managed.job.record_terminal_diagnostic(diagnostic);
+        self.publish_durable(managed);
+        Ok(())
     }
 
     fn current_history_scope(&self) -> Result<Option<JobHistoryScope>, JobManagerError> {
@@ -796,6 +927,7 @@ impl std::error::Error for JobManagerError {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         mpsc, Mutex as StdMutex,
@@ -883,12 +1015,86 @@ mod tests {
     }
 
     fn request(id: &str) -> NewPhotolabJob {
+        request_for_kind(id, PhotolabJobKind::AlignPhotos)
+    }
+
+    fn request_for_kind(id: &str, kind: PhotolabJobKind) -> NewPhotolabJob {
         NewPhotolabJob {
             id: PhotolabJobId(id.into()),
-            kind: PhotolabJobKind::AlignPhotos,
+            kind,
             config_hash: hash("config"),
             input_hash: hash("inputs"),
             progress: progress(0),
+        }
+    }
+
+    async fn assert_durable_checkpoint_updates_job(kind: PhotolabJobKind, id: &str) {
+        let manager = manager(1, 0);
+        let job_id = PhotolabJobId(id.into());
+        let directory = std::env::temp_dir().join(format!(
+            "himmelcad-job-checkpoint-{}-{id}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("checkpoint test directory");
+        let checkpoint_path = directory.join("checkpoint.bin");
+        let worker_path = checkpoint_path.clone();
+        let checkpoint_id = id.to_owned();
+        manager
+            .start(request_for_kind(id, kind), move |context| {
+                let pending = worker_path.with_extension("pending");
+                let payload = b"durable runtime checkpoint";
+                let mut file = File::create(&pending).expect("create pending checkpoint");
+                file.write_all(payload).expect("write checkpoint payload");
+                file.sync_all().expect("sync checkpoint payload");
+                drop(file);
+                fs::rename(&pending, &worker_path).expect("commit checkpoint payload");
+                #[cfg(unix)]
+                File::open(worker_path.parent().expect("checkpoint parent"))
+                    .expect("open checkpoint parent")
+                    .sync_all()
+                    .expect("sync checkpoint parent");
+                context.checkpoints.record_committed_blocking(
+                    7,
+                    checkpoint_progress(kind),
+                    format!("{checkpoint_id}:checkpoint:7"),
+                    ObjectHash::of_bytes(payload),
+                )?;
+                Ok(())
+            })
+            .await
+            .expect("admitted");
+        let terminal = manager.wait_for_terminal(&job_id).await.expect("terminal");
+        assert_eq!(terminal.state, PhotolabJobState::Completed);
+        assert_eq!(terminal.last_checkpoint_sequence, Some(7));
+        assert!(checkpoint_path.is_file());
+        fs::remove_dir_all(directory).expect("checkpoint test cleanup");
+    }
+
+    fn checkpoint_progress(kind: PhotolabJobKind) -> JobProgress {
+        let stage_kind = match kind {
+            PhotolabJobKind::BuildDepthMaps => PhotolabStageKind::DepthEstimation,
+            PhotolabJobKind::BuildDensePointCloud => PhotolabStageKind::DenseFusion,
+            PhotolabJobKind::BuildDem | PhotolabJobKind::BuildOrthomosaic => {
+                PhotolabStageKind::Rasterization
+            }
+            PhotolabJobKind::BuildGaussianSplat => PhotolabStageKind::SplatOptimization,
+            PhotolabJobKind::Batch => PhotolabStageKind::Finalizing,
+            _ => PhotolabStageKind::Preparing,
+        };
+        JobProgress {
+            stage: PhotolabStage {
+                kind: stage_kind,
+                index: 0,
+                stage_count: 1,
+                label: "Commit durable checkpoint".into(),
+            },
+            metrics: ProgressMetrics {
+                completed_units: 1,
+                total_units: Some(1),
+                completed_bytes: 0,
+                total_bytes: None,
+            },
         }
     }
 
@@ -1185,6 +1391,80 @@ mod tests {
         assert_eq!(terminal.progress.metrics.completed_units, 10);
         assert_eq!(terminal.progress.metrics.completed_bytes, 1_000);
         assert_eq!(terminal.last_checkpoint_sequence, Some(1));
+    }
+
+    #[tokio::test]
+    async fn durable_depth_checkpoint_updates_job_record() {
+        assert_durable_checkpoint_updates_job(
+            PhotolabJobKind::BuildDepthMaps,
+            "durable-depth-checkpoint",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn durable_dense_checkpoint_updates_job_record() {
+        assert_durable_checkpoint_updates_job(
+            PhotolabJobKind::BuildDensePointCloud,
+            "durable-dense-checkpoint",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn durable_dem_checkpoint_updates_job_record() {
+        assert_durable_checkpoint_updates_job(PhotolabJobKind::BuildDem, "durable-dem-checkpoint")
+            .await;
+    }
+
+    #[tokio::test]
+    async fn durable_orthomosaic_checkpoint_updates_job_record() {
+        assert_durable_checkpoint_updates_job(
+            PhotolabJobKind::BuildOrthomosaic,
+            "durable-orthomosaic-checkpoint",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn durable_batch_checkpoint_updates_job_record() {
+        assert_durable_checkpoint_updates_job(PhotolabJobKind::Batch, "durable-batch-checkpoint")
+            .await;
+    }
+
+    #[tokio::test]
+    async fn durable_splat_checkpoint_updates_job_record() {
+        assert_durable_checkpoint_updates_job(
+            PhotolabJobKind::BuildGaussianSplat,
+            "durable-splat-checkpoint",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn cancellation_retains_non_fatal_terminal_diagnostic() {
+        let manager = manager(1, 0);
+        let id = PhotolabJobId("cancel-diagnostic".into());
+        let worker_id = id.clone();
+        manager
+            .start(request(&id.0), move |context| {
+                context
+                    .diagnostics
+                    .record_blocking("checkpoint write failed after retry")?;
+                context.cancellation.request_cancel();
+                Err(JobWorkerError::Cancelled)
+            })
+            .await
+            .expect("admitted");
+        let terminal = manager
+            .wait_for_terminal(&worker_id)
+            .await
+            .expect("terminal");
+        assert_eq!(terminal.state, PhotolabJobState::Cancelled);
+        assert_eq!(
+            terminal.terminal_diagnostic.as_deref(),
+            Some("checkpoint write failed after retry")
+        );
     }
 
     #[tokio::test]

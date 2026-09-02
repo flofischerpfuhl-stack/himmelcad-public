@@ -5801,6 +5801,7 @@ fn cleanup_published_job_scratch(project_root: &Path, job_id: &str, kind: Photol
         started_at_unix_ms: None,
         finished_at_unix_ms: Some(0),
         last_checkpoint_sequence: None,
+        terminal_diagnostic: None,
     };
     if let Err(error) = cleanup_terminal_job_scratch(project_root, &job) {
         tracing::warn!(
@@ -5970,6 +5971,7 @@ fn cleanup_raster_job(project_root: &Path, job_id: &str, completed: bool) -> Res
     let job_directory = staging.join("raster-jobs").join(job_id);
     if completed {
         remove_path_if_exists(&checkpoint)?;
+        remove_path_if_exists(&checkpoint.with_extension("steps"))?;
         remove_path_if_exists(&job_directory)?;
     } else if !checkpoint.is_file() {
         remove_path_if_exists(&job_directory)?;
@@ -6276,27 +6278,48 @@ fn mark_interrupted_jobs(history: &mut BTreeMap<String, PhotolabJob>) -> Result<
         ) {
             continue;
         }
-        let (code, message) = job.last_checkpoint_sequence.map_or_else(
-            || {
-                (
-                    "interrupted".to_owned(),
-                    "The previous PhotoLab session ended before this job completed. Restart the operation; no committed checkpoint was recorded."
-                        .to_owned(),
-                )
-            },
-            |sequence| {
-                (
-                    "interruptedRecoverable".to_owned(),
-                    format!(
-                        "The previous PhotoLab session ended before this job completed. Resume is available from committed checkpoint {sequence}."
-                    ),
-                )
-            },
-        );
+        let (code, message) = match (
+            job.last_checkpoint_sequence,
+            job_kind_supports_cross_restart_resume(job.kind),
+        ) {
+            (Some(sequence), true) => (
+                "interruptedRecoverable".to_owned(),
+                format!(
+                    "The previous PhotoLab session ended before this job completed. Resume is available from committed checkpoint {sequence}."
+                ),
+            ),
+            (_, false) => (
+                "interrupted".to_owned(),
+                "The previous PhotoLab session ended before this job completed. Restart required; this operation has no cross-restart resume path."
+                    .to_owned(),
+            ),
+            (None, true) => (
+                "interrupted".to_owned(),
+                "The previous PhotoLab session ended before this job completed. Restart the operation; no committed checkpoint was recorded."
+                    .to_owned(),
+            ),
+        };
         job.transition_to(PhotolabJobState::Failed { code, message })?;
         changed.push(job.clone());
     }
     Ok(changed)
+}
+
+const fn job_kind_supports_cross_restart_resume(kind: PhotolabJobKind) -> bool {
+    match kind {
+        PhotolabJobKind::BuildDepthMaps
+        | PhotolabJobKind::BuildDensePointCloud
+        | PhotolabJobKind::BuildDem
+        | PhotolabJobKind::BuildOrthomosaic
+        | PhotolabJobKind::BuildGaussianSplat
+        | PhotolabJobKind::Batch => true,
+        PhotolabJobKind::AnalyzeImageQuality
+        | PhotolabJobKind::AlignPhotos
+        | PhotolabJobKind::OptimizeAlignment
+        | PhotolabJobKind::MergeAlignments
+        | PhotolabJobKind::BuildMesh
+        | PhotolabJobKind::ExportProduct => false,
+    }
 }
 
 fn json_contains_string(value: &serde_json::Value, needle: &str) -> bool {
@@ -8780,7 +8803,7 @@ mod tests {
     }
 
     #[test]
-    fn job_history_survives_reopen_and_marks_crash_records_recoverable() {
+    fn job_history_marks_only_checkpointed_resume_capable_kinds_recoverable() {
         let root = temp_test_dir("durable-job-history");
         let project = root.join("project.hcad");
         let runtime = ProjectRuntime::default();
@@ -8802,13 +8825,21 @@ mod tests {
         completed
             .transition_to(PhotolabJobState::Completed)
             .expect("completed");
-        let mut interrupted = test_job("interrupted-job");
+        let mut interrupted =
+            test_job_with_kind("interrupted-job", PhotolabJobKind::BuildDepthMaps);
         interrupted
             .transition_to(PhotolabJobState::Running)
             .expect("running");
         interrupted
             .record_checkpoint(&test_checkpoint(&interrupted))
             .expect("checkpoint");
+        let mut alignment = test_job_with_kind("alignment-job", PhotolabJobKind::AlignPhotos);
+        alignment
+            .transition_to(PhotolabJobState::Running)
+            .expect("alignment running");
+        alignment
+            .record_checkpoint(&test_checkpoint(&alignment))
+            .expect("synthetic alignment checkpoint");
 
         let manifest_before = fs::read(project.join("manifest.json")).expect("manifest before");
         runtime
@@ -8819,8 +8850,11 @@ mod tests {
         runtime
             .persist(&scope, &interrupted)
             .expect("persist interrupted");
+        runtime
+            .persist(&scope, &alignment)
+            .expect("persist alignment");
         let interrupted_scratch =
-            project.join(format!("tmp/colmap/colmap-{}-123-1", interrupted.id.0));
+            project.join(format!("tmp/colmap/colmap-{}-123-1", alignment.id.0));
         fs::create_dir_all(interrupted_scratch.join("features"))
             .expect("interrupted alignment scratch");
         fs::write(interrupted_scratch.join("features/partial.db"), b"partial")
@@ -8857,7 +8891,7 @@ mod tests {
             })
             .expect("reopen");
         let jobs = reopened.load_current().expect("load durable jobs");
-        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs.len(), 3);
         assert!(jobs.iter().any(|job| {
             job.id.0 == "completed-job" && job.state == PhotolabJobState::Completed
         }));
@@ -8873,12 +8907,40 @@ mod tests {
                     && message.contains("committed checkpoint 1")
         ));
         assert!(recovered.finished_at_unix_ms.is_some());
+        let restarted = jobs
+            .iter()
+            .find(|job| job.id.0 == "alignment-job")
+            .expect("alignment record");
+        assert_eq!(restarted.last_checkpoint_sequence, Some(1));
+        assert!(matches!(
+            &restarted.state,
+            PhotolabJobState::Failed { code, message }
+                if code == "interrupted"
+                    && message.contains("Restart required")
+                    && !message.contains("Resume is available")
+        ));
         assert!(
             !interrupted_scratch.exists(),
             "a crashed alignment has no resumable runtime checkpoint, so its scratch is rebuildable"
         );
         reopened.close().expect("close reopened");
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn alignment_and_mesh_capability_table_never_claims_cross_restart_resume() {
+        assert!(!job_kind_supports_cross_restart_resume(
+            PhotolabJobKind::AlignPhotos
+        ));
+        assert!(!job_kind_supports_cross_restart_resume(
+            PhotolabJobKind::OptimizeAlignment
+        ));
+        assert!(!job_kind_supports_cross_restart_resume(
+            PhotolabJobKind::MergeAlignments
+        ));
+        assert!(!job_kind_supports_cross_restart_resume(
+            PhotolabJobKind::BuildMesh
+        ));
     }
 
     fn test_job(id: &str) -> PhotolabJob {

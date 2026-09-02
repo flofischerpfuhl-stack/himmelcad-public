@@ -348,6 +348,9 @@ pub struct PhotolabJob {
     pub finished_at_unix_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_checkpoint_sequence: Option<u64>,
+    /// Non-fatal terminal-path detail that must survive in durable job history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_diagnostic: Option<String>,
 }
 
 impl PhotolabJob {
@@ -368,7 +371,16 @@ impl PhotolabJob {
             started_at_unix_ms: None,
             finished_at_unix_ms: None,
             last_checkpoint_sequence: None,
+            terminal_diagnostic: None,
         })
+    }
+
+    /// Retains a non-empty diagnostic without changing lifecycle state semantics.
+    pub fn record_terminal_diagnostic(&mut self, diagnostic: impl Into<String>) {
+        let diagnostic = diagnostic.into();
+        if !diagnostic.trim().is_empty() {
+            self.terminal_diagnostic = Some(diagnostic);
+        }
     }
 
     /// Performs a normal lifecycle transition. Cancellation uses `request_cancel`.

@@ -12,7 +12,7 @@ use fs2::FileExt;
 use himmelcad_core::canonical_document::EntityVersionRef;
 use himmelcad_core::canonical_resources::CanonicalResourceRef;
 use himmelcad_core::hash::ObjectHash;
-use himmelcad_core::photolab_jobs::CancellationToken;
+use himmelcad_core::photolab_jobs::{CancellationToken, PhotolabJobKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -21,6 +21,7 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::task::JoinSet;
 
+use crate::job_runtime::CheckpointSink;
 use crate::viewer_raster_manifest::{
     publish_prepared_elevation_hierarchy, PreparedElevationHierarchyError,
     PreparedElevationHierarchyOptions,
@@ -361,6 +362,8 @@ pub enum RasterRuntimeError {
     CheckpointMismatch,
     #[error("checkpoint output '{0}' was modified or removed")]
     CheckpointOutputChanged(String),
+    #[error("job checkpoint sink rejected an update: {0}")]
+    CheckpointSink(String),
     #[error("raster output already exists: {0}")]
     OutputExists(String),
     #[error("raster job is already active: {0}")]
@@ -566,6 +569,7 @@ impl RasterRuntime {
         &self,
         command: &RasterBuildCommand,
         cancellation: &CancellationToken,
+        checkpoint_sink: Option<&CheckpointSink>,
         mut progress: P,
     ) -> Result<RasterBuildSummary, RasterRuntimeError>
     where
@@ -623,6 +627,7 @@ impl RasterRuntime {
             &checkpoint_path,
             &mut checkpoint,
             cancellation,
+            checkpoint_sink,
             &mut progress,
         )
         .await?;
@@ -638,6 +643,7 @@ impl RasterRuntime {
                 &checkpoint_path,
                 &mut checkpoint,
                 cancellation,
+                checkpoint_sink,
                 &mut progress,
             )
             .await?;
@@ -650,6 +656,7 @@ impl RasterRuntime {
             &checkpoint_path,
             &mut checkpoint,
             cancellation,
+            checkpoint_sink,
             &mut progress,
         )
         .await?;
@@ -660,6 +667,7 @@ impl RasterRuntime {
             &checkpoint_path,
             &mut checkpoint,
             cancellation,
+            checkpoint_sink,
             &mut progress,
         )
         .await?;
@@ -671,6 +679,7 @@ impl RasterRuntime {
             &checkpoint_path,
             &mut checkpoint,
             cancellation,
+            checkpoint_sink,
             &mut progress,
         )
         .await?;
@@ -746,7 +755,11 @@ impl RasterRuntime {
         });
         cleanup_intermediates(job_directory.clone()).await?;
         publish_directory(job_directory.clone(), output_directory.clone()).await?;
-        remove_checkpoint(checkpoint_path).await?;
+        // Managed production jobs remove checkpoints only after the completed job record is
+        // durable. This avoids a crash window where history claims a checkpoint already deleted.
+        if checkpoint_sink.is_none() {
+            remove_checkpoint(checkpoint_path).await?;
+        }
         Ok(summary)
     }
 
@@ -1274,6 +1287,7 @@ impl RasterRuntime {
         checkpoint_path: &Path,
         checkpoint: &mut RasterCheckpoint,
         cancellation: &CancellationToken,
+        checkpoint_sink: Option<&CheckpointSink>,
         progress: &mut P,
     ) -> Result<(), RasterRuntimeError>
     where
@@ -1311,19 +1325,36 @@ impl RasterRuntime {
             let (step, evidence) =
                 joined.map_err(|error| RasterRuntimeError::BackgroundTask(error.to_string()))??;
             completed = completed.saturating_add(1);
-            write_completed_step_async(
+            let marker_hash = write_completed_step_async(
                 checkpoint_path.to_path_buf(),
                 step.id.clone(),
                 evidence.clone(),
             )
             .await?;
             checkpoint.completed.insert(step.id.clone(), evidence);
-            progress(RasterProgress {
+            let checkpoint_progress = RasterProgress {
                 phase: step.phase,
                 completed_steps: completed,
                 total_steps: total,
                 current_step: step.id,
-            });
+            };
+            if let Some(sink) = checkpoint_sink.filter(|sink| {
+                matches!(
+                    sink.job_kind(),
+                    PhotolabJobKind::BuildDem | PhotolabJobKind::BuildOrthomosaic
+                )
+            }) {
+                let sequence = u64::try_from(checkpoint.completed.len()).unwrap_or(u64::MAX);
+                sink.record_committed(
+                    sequence,
+                    raster_checkpoint_progress(&checkpoint_progress, sink.job_kind()),
+                    format!("raster:{}:{sequence}", command_job_id(checkpoint_path)),
+                    marker_hash,
+                )
+                .await
+                .map_err(|error| RasterRuntimeError::CheckpointSink(error.to_string()))?;
+            }
+            progress(checkpoint_progress);
         }
         check_cancelled(cancellation)?;
         validate_checkpoint_outputs(checkpoint, job_directory.to_path_buf()).await
@@ -2186,12 +2217,59 @@ async fn write_completed_step_async(
     checkpoint_path: PathBuf,
     step_id: String,
     evidence: OutputEvidence,
-) -> Result<(), RasterRuntimeError> {
+) -> Result<ObjectHash, RasterRuntimeError> {
     let directory = checkpoint_marker_directory(&checkpoint_path);
     let marker_hash = ObjectHash::of_bytes(step_id.as_bytes());
     let marker_path = directory.join(format!("{}.json", marker_hash.as_str()));
     let marker = CompletedStep { step_id, evidence };
-    write_json_atomic_async(marker_path, &marker).await
+    write_json_atomic_async(marker_path.clone(), &marker).await?;
+    tokio::task::spawn_blocking(move || hash_file(&marker_path))
+        .await
+        .map_err(|error| RasterRuntimeError::BackgroundTask(error.to_string()))?
+}
+
+fn command_job_id(checkpoint_path: &Path) -> &str {
+    checkpoint_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("raster")
+}
+
+fn raster_checkpoint_progress(
+    progress: &RasterProgress,
+    kind: PhotolabJobKind,
+) -> himmelcad_core::photolab_jobs::JobProgress {
+    use himmelcad_core::photolab_jobs::{
+        JobProgress, PhotolabStage, PhotolabStageKind, ProgressMetrics,
+    };
+
+    let (index, stage_kind) = match progress.phase {
+        RasterPhase::Validating => (0, PhotolabStageKind::Preparing),
+        RasterPhase::Rasterizing | RasterPhase::Orthorectifying => {
+            (1, PhotolabStageKind::Rasterization)
+        }
+        RasterPhase::Mosaicking => (2, PhotolabStageKind::Rasterization),
+        RasterPhase::BuildingPyramid => (3, PhotolabStageKind::Rasterization),
+        RasterPhase::ExportingCog => (4, PhotolabStageKind::Rasterization),
+        RasterPhase::ValidatingCog => (5, PhotolabStageKind::Finalizing),
+        RasterPhase::Committing => (6, PhotolabStageKind::Finalizing),
+    };
+    let orthomosaic = kind == PhotolabJobKind::BuildOrthomosaic;
+
+    JobProgress {
+        stage: PhotolabStage {
+            kind: stage_kind,
+            index: index + u32::from(orthomosaic),
+            stage_count: 7 + u32::from(orthomosaic),
+            label: progress.current_step.clone(),
+        },
+        metrics: ProgressMetrics {
+            completed_units: progress.completed_steps,
+            total_units: Some(progress.total_steps.max(1)),
+            completed_bytes: 0,
+            total_bytes: None,
+        },
+    }
 }
 
 fn checkpoint_marker_directory(checkpoint_path: &Path) -> PathBuf {
@@ -2755,7 +2833,7 @@ mod tests {
         let command = elevation_command(&points, &destination);
         let mut updates = Vec::new();
         let result = runtime
-            .execute(&command, &CancellationToken::new(), |update| {
+            .execute(&command, &CancellationToken::new(), None, |update| {
                 updates.push(update);
             })
             .await

@@ -18,7 +18,8 @@ use std::{
 use himmelcad_core::{
     hash::ObjectHash,
     photolab_jobs::{
-        CancellationToken, JobProgress, PhotolabStage, PhotolabStageKind, ProgressMetrics,
+        CancellationToken, JobProgress, PhotolabJobKind, PhotolabStage, PhotolabStageKind,
+        ProgressMetrics,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,7 @@ const PLY_HEADER_MAX_BYTES: usize = 1024 * 1024;
 const LOG_TAIL_LINES: usize = 240;
 const MAX_LOG_RECORD_BYTES: usize = 16 * 1024;
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(15);
+const CHECKPOINT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const COOPERATIVE_CANCEL_GRACE: Duration = Duration::from_millis(200);
 const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 const OUTPUT_SUMMARY_SCHEMA_VERSION: u32 = 1;
@@ -332,6 +334,8 @@ pub enum BrushRuntimeError {
     Cancelled,
     #[error("job progress sink rejected an update: {0}")]
     Progress(String),
+    #[error("job checkpoint sink rejected an update: {0}")]
+    Checkpoint(String),
     #[error("required Brush output is missing: {0}")]
     MissingOutput(PathBuf),
     #[error("invalid Brush PLY {path}: {reason}")]
@@ -351,6 +355,7 @@ impl BrushRuntimeError {
             Self::CommandFailed { .. } => "brushCommand",
             Self::MissingOutput(_) | Self::InvalidPly { .. } => "invalidWorkerOutput",
             Self::Progress(_) => "progressSink",
+            Self::Checkpoint(_) => "checkpointSink",
             Self::Io(_) => "io",
             Self::Json(_) => "json",
             _ => "invalidInput",
@@ -530,19 +535,32 @@ impl BrushRuntime {
         let started = Instant::now();
         let mut child = self.spawn_child(&command_arguments, &scratch)?;
         let mut progress_error = None;
+        let mut last_checkpoint_sequence = 0_u64;
         let progress_floor = request
             .resume
             .as_ref()
             .map_or(0, |resume| u64::from(resume.completed_iterations));
-        let process = supervise_child(&mut child, &context.cancellation, |completed, total| {
-            if completed >= progress_floor && progress_error.is_none() {
-                progress_error = report(
+        let process = supervise_child(
+            &mut child,
+            &context.cancellation,
+            |completed, total| {
+                if completed >= progress_floor && progress_error.is_none() {
+                    progress_error = report(
+                        context,
+                        request.progress_plan().progress(1, completed, Some(total)),
+                    )
+                    .err();
+                }
+            },
+            || {
+                report_new_brush_checkpoints(
+                    &export_directory,
+                    request,
                     context,
-                    request.progress_plan().progress(1, completed, Some(total)),
+                    &mut last_checkpoint_sequence,
                 )
-                .err();
-            }
-        })?;
+            },
+        )?;
         if let Some(error) = progress_error {
             return Err(error);
         }
@@ -1059,13 +1077,15 @@ struct LogEvent {
     record: String,
 }
 
-fn supervise_child<F>(
+fn supervise_child<F, C>(
     child: &mut Child,
     cancellation: &CancellationToken,
     mut progress: F,
+    mut checkpoint: C,
 ) -> Result<ProcessOutcome, BrushRuntimeError>
 where
     F: FnMut(u64, u64),
+    C: FnMut() -> Result<(), BrushRuntimeError>,
 {
     let stdout = child
         .stdout
@@ -1080,8 +1100,13 @@ where
     let stderr_reader = spawn_log_reader(stderr, "stderr", sender);
     let mut tail = VecDeque::with_capacity(LOG_TAIL_LINES);
     let mut last_progress = None;
+    let mut last_checkpoint_poll = Instant::now();
     let status = loop {
         drain_events(&receiver, &mut tail, &mut last_progress, &mut progress);
+        if last_checkpoint_poll.elapsed() >= CHECKPOINT_POLL_INTERVAL {
+            checkpoint()?;
+            last_checkpoint_poll = Instant::now();
+        }
         if cancellation.is_cancel_requested() {
             request_cooperative_stop(child);
             let deadline = Instant::now() + COOPERATIVE_CANCEL_GRACE;
@@ -1097,6 +1122,7 @@ where
             let _ = child.wait();
             let _ = stdout_reader.join();
             let _ = stderr_reader.join();
+            checkpoint()?;
             return Err(BrushRuntimeError::Cancelled);
         }
         if let Some(status) = child.try_wait()? {
@@ -1110,10 +1136,60 @@ where
     let _ = stdout_reader.join();
     let _ = stderr_reader.join();
     drain_events(&receiver, &mut tail, &mut last_progress, &mut progress);
+    checkpoint()?;
     Ok(ProcessOutcome {
         status,
         log_tail: tail.into_iter().collect(),
     })
+}
+
+fn report_new_brush_checkpoints(
+    directory: &Path,
+    request: &BrushRunRequest,
+    context: &JobWorkerContext,
+    last_sequence: &mut u64,
+) -> Result<(), BrushRuntimeError> {
+    if context.checkpoints.job_kind() != PhotolabJobKind::BuildGaussianSplat || !directory.is_dir()
+    {
+        return Ok(());
+    }
+    let mut candidates = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let path = entry?.path();
+        if let Some(iteration) =
+            checkpoint_iteration(&path).filter(|iteration| u64::from(*iteration) > *last_sequence)
+        {
+            candidates.push((iteration, path));
+        }
+    }
+    candidates.sort_by_key(|(iteration, _)| *iteration);
+    for (iteration, path) in candidates {
+        let Ok(validated) = validate_ply(
+            &path,
+            request.settings.spherical_harmonics_degree,
+            request.settings.maximum_splats,
+        ) else {
+            // Brush owns the path and may still be completing this export.
+            continue;
+        };
+        File::open(&path)?.sync_all()?;
+        let sequence = u64::from(iteration);
+        context
+            .checkpoints
+            .record_committed_blocking(
+                sequence,
+                request.progress_plan().progress(
+                    1,
+                    sequence,
+                    Some(u64::from(request.settings.iterations)),
+                ),
+                format!("brush:{}:{iteration}", request.job_id),
+                validated.sha256,
+            )
+            .map_err(|error| BrushRuntimeError::Checkpoint(error.to_string()))?;
+        *last_sequence = sequence;
+    }
+    Ok(())
 }
 
 fn request_cooperative_stop(child: &mut Child) {
@@ -1967,6 +2043,7 @@ printf '[00:01] 3000/3000 Steps\n' >&2
             .expect("start");
         let terminal = manager.wait_for_terminal(&id).await.expect("terminal");
         assert_eq!(terminal.state, PhotolabJobState::Completed);
+        assert_eq!(terminal.last_checkpoint_sequence, Some(3_000));
         let outcome = outcome_slot.lock().expect("slot").take().expect("outcome");
         assert!(outcome.output_path.is_file());
         assert!(outcome.summary_path.is_file());
@@ -2057,6 +2134,7 @@ printf '[00:01] 3000/3000 Steps\n' >&2
         manager.cancel(&id).await.expect("cancel");
         let terminal = manager.wait_for_terminal(&id).await.expect("terminal");
         assert_eq!(terminal.state, PhotolabJobState::Cancelled);
+        assert_eq!(terminal.last_checkpoint_sequence, Some(3_000));
         assert!(started.elapsed() < Duration::from_secs(2));
         assert!(!find_summary(&rig.root.join("scratch")));
         let recovery = recovery_runtime

@@ -20,7 +20,8 @@ use std::{
 use himmelcad_core::{
     hash::ObjectHash,
     photolab_jobs::{
-        CancellationToken, JobProgress, PhotolabStage, PhotolabStageKind, ProgressMetrics,
+        CancellationToken, JobProgress, PhotolabJobKind, PhotolabStage, PhotolabStageKind,
+        ProgressMetrics,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -510,6 +511,8 @@ pub enum MvsRuntimeError {
     Cancelled,
     #[error("progress sink rejected an update: {0}")]
     Progress(String),
+    #[error("checkpoint sink rejected an update: {0}")]
+    Checkpoint(String),
     #[error("worker output is invalid: {0}")]
     InvalidOutput(String),
     #[error("I/O error: {0}")]
@@ -530,6 +533,7 @@ impl From<MvsRuntimeError> for JobWorkerError {
                     MvsRuntimeError::CommandFailed { .. } => "mvsCommand",
                     MvsRuntimeError::InvalidOutput(_) => "invalidMvsOutput",
                     MvsRuntimeError::Progress(_) => "progressSink",
+                    MvsRuntimeError::Checkpoint(_) => "checkpointSink",
                     MvsRuntimeError::Io(_) => "io",
                     MvsRuntimeError::Json(_) => "json",
                     _ => "invalidInput",
@@ -896,6 +900,12 @@ impl MvsRuntime {
             &context.cancellation,
             request.fuse_dense_point_cloud,
             context,
+            MvsCheckpointIdentity {
+                root: &checkpoint_path,
+                job_id: &request.job_id,
+                scene_sha256: &request.scene_manifest_sha256,
+                settings_sha256: &settings_sha256,
+            },
         )?;
         let command = MvsCommandReport {
             argv: audited_argv,
@@ -1917,6 +1927,22 @@ struct ProcessOutcome {
     log_tail: Vec<String>,
 }
 
+#[derive(Clone, Copy)]
+struct MvsCheckpointIdentity<'a> {
+    root: &'a Path,
+    job_id: &'a str,
+    scene_sha256: &'a ObjectHash,
+    settings_sha256: &'a ObjectHash,
+}
+
+#[derive(Clone, Copy)]
+struct MvsCheckpointProgress {
+    fusion: bool,
+    stage_index: u32,
+    completed_units: u64,
+    total_units: Option<u64>,
+}
+
 fn spawn_worker(
     executable: &Path,
     arguments: &[OsString],
@@ -1941,11 +1967,13 @@ fn spawn_worker(
     command.spawn().map_err(MvsRuntimeError::Io)
 }
 
+#[allow(clippy::too_many_lines)]
 fn supervise_worker(
     child: &mut Child,
     cancellation: &CancellationToken,
     fusion: bool,
     context: &JobWorkerContext,
+    checkpoint: MvsCheckpointIdentity<'_>,
 ) -> Result<ProcessOutcome, MvsRuntimeError> {
     let stdout = child
         .stdout
@@ -1963,6 +1991,7 @@ fn supervise_worker(
     let mut last_stage = 2_u32;
     let mut last_completed = 0_u64;
     let mut last_total = None;
+    let mut last_checkpoint_sequence = 0_u64;
 
     loop {
         while let Ok(record) = receiver.try_recv() {
@@ -2022,10 +2051,24 @@ fn supervise_worker(
                 Ok(WorkerEvent::Checkpoint {
                     sequence,
                     completed_tiles,
-                }) => push_log(
-                    &mut log_tail,
-                    format!("checkpoint {sequence}: {completed_tiles} tiles"),
-                ),
+                }) => {
+                    report_mvs_checkpoint(
+                        checkpoint,
+                        sequence,
+                        MvsCheckpointProgress {
+                            fusion,
+                            stage_index: last_stage,
+                            completed_units: last_completed,
+                            total_units: last_total,
+                        },
+                        context,
+                        &mut last_checkpoint_sequence,
+                    )?;
+                    push_log(
+                        &mut log_tail,
+                        format!("checkpoint {sequence}: {completed_tiles} tiles"),
+                    );
+                }
                 Ok(WorkerEvent::Log { level, message }) => {
                     push_log(&mut log_tail, format!("{level:?}: {message}"));
                 }
@@ -2057,6 +2100,25 @@ fn supervise_worker(
                     },
                 );
             }
+            if let Some((_, _, latest)) = latest_checkpoint(
+                checkpoint.root,
+                checkpoint.job_id,
+                checkpoint.scene_sha256,
+                checkpoint.settings_sha256,
+            )? {
+                report_mvs_checkpoint(
+                    checkpoint,
+                    latest.sequence,
+                    MvsCheckpointProgress {
+                        fusion,
+                        stage_index: last_stage,
+                        completed_units: last_completed,
+                        total_units: last_total,
+                    },
+                    context,
+                    &mut last_checkpoint_sequence,
+                )?;
+            }
             if cancellation.is_cancel_requested() {
                 return Err(MvsRuntimeError::Cancelled);
             }
@@ -2067,6 +2129,52 @@ fn supervise_worker(
         }
         thread::sleep(CANCEL_POLL_INTERVAL);
     }
+}
+
+fn report_mvs_checkpoint(
+    identity: MvsCheckpointIdentity<'_>,
+    sequence: u64,
+    checkpoint_progress: MvsCheckpointProgress,
+    context: &JobWorkerContext,
+    last_sequence: &mut u64,
+) -> Result<(), MvsRuntimeError> {
+    if sequence <= *last_sequence
+        || !matches!(
+            context.checkpoints.job_kind(),
+            PhotolabJobKind::BuildDepthMaps | PhotolabJobKind::BuildDensePointCloud
+        )
+    {
+        return Ok(());
+    }
+    let path = identity
+        .root
+        .join(format!("checkpoint-{sequence:012}.json"));
+    let bytes = read_bounded(&path, MAX_JSON_BYTES)?;
+    let checkpoint: MvsCheckpoint = serde_json::from_slice(&bytes)?;
+    validate_checkpoint(
+        &checkpoint,
+        identity.job_id,
+        identity.scene_sha256,
+        identity.settings_sha256,
+    )?;
+    context
+        .checkpoints
+        .record_committed_blocking(
+            sequence,
+            progress(
+                checkpoint_progress.fusion,
+                checkpoint_progress.stage_index,
+                checkpoint_progress.completed_units,
+                checkpoint_progress.total_units,
+                0,
+                None,
+            ),
+            format!("mvs:{}:{sequence}", identity.job_id),
+            ObjectHash::of_bytes(&bytes),
+        )
+        .map_err(|error| MvsRuntimeError::Checkpoint(error.to_string()))?;
+    *last_sequence = sequence;
+    Ok(())
 }
 
 #[derive(Debug)]

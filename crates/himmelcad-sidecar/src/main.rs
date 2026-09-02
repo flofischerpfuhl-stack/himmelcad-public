@@ -8,7 +8,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufReader as StdBufReader, Read};
+use std::io::{BufReader as StdBufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -3479,19 +3479,50 @@ async fn handle_job_rpc(
                                     Ok(outcome) => outcome,
                                     Err(error) => {
                                         if matches!(error, JobWorkerError::Cancelled) {
-                                            let _ = write_merge_checkpoint(
+                                            let cancelled_checkpoint = AlignmentMergeCheckpoint {
+                                                schema_version: 1,
+                                                operation_id: checkpoint_operation_id.clone(),
+                                                merge_entity_id: merge_entity_id.clone(),
+                                                input_hash: checkpoint_input_hash.clone(),
+                                                config_hash: checkpoint_config_hash.clone(),
+                                                state: AlignmentMergeCheckpointState::Cancelled,
+                                                scratch_relative_path: None,
+                                                summary_sha256: None,
+                                            };
+                                            if let Err(first_error) = write_merge_checkpoint(
                                                 &checkpoint_project_root,
-                                                &AlignmentMergeCheckpoint {
-                                                    schema_version: 1,
-                                                    operation_id: checkpoint_operation_id.clone(),
-                                                    merge_entity_id: merge_entity_id.clone(),
-                                                    input_hash: checkpoint_input_hash.clone(),
-                                                    config_hash: checkpoint_config_hash.clone(),
-                                                    state: AlignmentMergeCheckpointState::Cancelled,
-                                                    scratch_relative_path: None,
-                                                    summary_sha256: None,
-                                                },
-                                            );
+                                                &cancelled_checkpoint,
+                                            ) {
+                                                tracing::error!(
+                                                    job_id = %checkpoint_operation_id,
+                                                    error = %first_error,
+                                                    "failed to write cancelled alignment-merge checkpoint; retrying once"
+                                                );
+                                                if let Err(retry_error) = write_merge_checkpoint(
+                                                    &checkpoint_project_root,
+                                                    &cancelled_checkpoint,
+                                                ) {
+                                                    let diagnostic = format!(
+                                                        "Cancelled alignment-merge checkpoint could not be written after one retry: {retry_error} (first attempt: {first_error})"
+                                                    );
+                                                    tracing::error!(
+                                                        job_id = %checkpoint_operation_id,
+                                                        error = %retry_error,
+                                                        first_error = %first_error,
+                                                        "cancelled alignment-merge checkpoint retry failed"
+                                                    );
+                                                    if let Err(diagnostic_error) = context
+                                                        .diagnostics
+                                                        .record_blocking(diagnostic)
+                                                    {
+                                                        tracing::error!(
+                                                            job_id = %checkpoint_operation_id,
+                                                            error = %diagnostic_error,
+                                                            "failed to persist alignment-merge cancellation diagnostic"
+                                                        );
+                                                    }
+                                                }
+                                            }
                                         }
                                         return Err(error);
                                     }
@@ -4255,7 +4286,7 @@ fn run_batch_pipeline(
         projects
             .autosave()
             .map_err(|error| worker_error("autosave", &error.to_string()))?;
-        write_batch_checkpoint(
+        let checkpoint_hash = write_batch_checkpoint(
             &checkpoint_path,
             &frozen_plan.plan_sha256,
             &steps_sha256,
@@ -4263,22 +4294,32 @@ fn run_batch_pipeline(
             index + 1,
         )
         .map_err(|error| worker_error("batchCheckpoint", &error.to_string()))?;
+        let checkpoint_progress = JobProgress {
+            stage: PhotolabStage {
+                kind: PhotolabStageKind::Finalizing,
+                index: base + 31,
+                stage_count: total,
+                label: format!("Batch step {} committed atomically", index + 1),
+            },
+            metrics: ProgressMetrics {
+                completed_units: 1,
+                total_units: Some(1),
+                completed_bytes: 0,
+                total_bytes: None,
+            },
+        };
+        context
+            .checkpoints
+            .record_committed_blocking(
+                u64::try_from(index + 1).unwrap_or(u64::MAX),
+                checkpoint_progress.clone(),
+                format!("batch:{}:{}", params.operation_id, index + 1),
+                checkpoint_hash,
+            )
+            .map_err(JobWorkerError::from)?;
         context
             .progress
-            .report_blocking(JobProgress {
-                stage: PhotolabStage {
-                    kind: PhotolabStageKind::Finalizing,
-                    index: base + 31,
-                    stage_count: total,
-                    label: format!("Batch-Schritt {} atomar abgeschlossen", index + 1),
-                },
-                metrics: ProgressMetrics {
-                    completed_units: 1,
-                    total_units: Some(1),
-                    completed_bytes: 0,
-                    total_bytes: None,
-                },
-            })
+            .report_blocking(checkpoint_progress)
             .map_err(JobWorkerError::from)?;
     }
     Ok(())
@@ -4509,7 +4550,7 @@ fn write_batch_checkpoint(
     steps_sha256: &ObjectHash,
     input_sha256: &ObjectHash,
     completed_steps: usize,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ObjectHash> {
     let value = BatchCheckpoint {
         schema_version: 3,
         plan_sha256: plan_sha256.clone(),
@@ -4518,9 +4559,17 @@ fn write_batch_checkpoint(
         completed_steps,
     };
     let temporary = path.with_extension("json.pending");
-    std::fs::write(&temporary, serde_json::to_vec(&value)?)?;
+    let bytes = serde_json::to_vec(&value)?;
+    let mut file = std::fs::File::create(&temporary)?;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    drop(file);
     std::fs::rename(temporary, path)?;
-    Ok(())
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        std::fs::File::open(parent)?.sync_all()?;
+    }
+    Ok(ObjectHash::of_bytes(&bytes))
 }
 
 fn prepare_gcp_optimization_job(
@@ -6398,16 +6447,19 @@ fn run_raster_product(
     let stage_count = 7 + stage_offset;
     let handle = tokio::runtime::Handle::current();
     let summary = handle
-        .block_on(
-            runtime.execute(&command, &context.cancellation, move |progress| {
+        .block_on(runtime.execute(
+            &command,
+            &context.cancellation,
+            Some(&context.checkpoints),
+            move |progress| {
                 let sink = progress_sink.clone();
                 tokio::spawn(async move {
                     let _ = sink
                         .report(raster_job_progress(progress, stage_offset, stage_count))
                         .await;
                 });
-            }),
-        )
+            },
+        ))
         .map_err(|error| {
             if matches!(
                 error,
