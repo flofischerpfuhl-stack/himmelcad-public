@@ -1,80 +1,31 @@
 /**
- * Pure freeze-payload tests for the image import CRS workflow.
+ * Freeze-payload tests for the image import CRS workflow.
  * Run: pnpm --filter @himmelcad/photolab test
  *
- * `ImageImportPanel.tsx` is a React module (JSX plus CSS-module imports), so the
- * `node --experimental-strip-types --test` runner cannot load it. The freeze
- * helpers below are therefore a verbatim mirror of that file. The drift guard at
- * the end of this file compares the mirror against the panel source, so the
- * mirror can never silently diverge from the behaviour it claims to test.
+ * The helpers under test live in `importFreeze.ts` — a plain module without JSX
+ * or CSS-module imports — so the `node --experimental-strip-types --test`
+ * runner loads the production code directly. `ImageImportPanel.tsx` imports the
+ * very same functions, so there is nothing left that could drift.
  */
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
-import { fileURLToPath } from 'node:url';
 
-type GridKind = 'ntv2' | 'gtg' | 'geoid';
-type HeightSource = 'unknown' | 'ellipsoidal' | 'orthometric' | 'deviceProfile';
-
-interface GeographicArea {
-  westLongitude: number;
-  southLatitude: number;
-  eastLongitude: number;
-  northLatitude: number;
-}
-
-interface RequiredGrid {
-  kind?: GridKind;
-  officialFilename: string;
-  officialSha256?: string;
-  license?: {
-    licenseName: string;
-    source: string;
-    redistributionAllowed: boolean;
-  };
-  coverage?: GeographicArea;
-  availability:
-    | { state: 'missing' }
-    | {
-        state: 'presentVerified';
-        localPath?: string;
-        local_path?: string;
-        observedSha256?: string;
-        observed_sha256?: string;
-      };
-}
-
-interface LocalGridSelection {
-  filename: string;
-  localPath: string;
-  kind: GridKind;
-  driver: string;
-  coverage: GeographicArea;
-}
-
-interface CrsOperationCandidate {
-  operationId: string;
-  name: string;
-  kind: 'general' | 'gaussKruegerDatumTransformation';
-  projPipeline: string;
-  areaOfUse: GeographicArea;
-  ballpark: boolean;
-  bestAvailable: boolean;
-  requiredGrids: RequiredGrid[];
-}
-
-interface GridCatalogEntry {
-  kind: GridKind;
-  officialFilename: string;
-  license: {
-    licenseName: string;
-    source: string;
-    redistributionAllowed: boolean;
-  };
-  coverage: GeographicArea;
-  localPath?: string;
-}
+import {
+  attachLocalGridsToOperation,
+  defaultGridLicense,
+  gridLocalPath,
+  heightReference,
+  isVerticalGridFilename,
+  normalizeGridKind,
+  presentVerifiedAvailability,
+  rewritePipelineGridToken,
+  type CrsOperationCandidate,
+  type GeographicArea,
+  type GridCatalogEntry,
+  type LocalGridSelection,
+  type RequiredGrid,
+} from './importFreeze.js';
 
 const AREA: GeographicArea = {
   westLongitude: 9,
@@ -82,187 +33,6 @@ const AREA: GeographicArea = {
   eastLongitude: 10,
   northLatitude: 49,
 };
-
-// mirror-begin ImageImportPanel.tsx
-function isVerticalGridFilename(name: string): boolean {
-  return /geoid|gcg|egm|quasi|gtx|vert/i.test(name);
-}
-
-function normalizeGridKind(
-  kind: GridKind | undefined,
-  filename: string,
-  verticalHint: boolean,
-): GridKind {
-  const lower = filename.toLowerCase();
-  if (verticalHint || kind === 'geoid' || /geoid|gcg|egm|quasi|gtx|vert/i.test(lower)) {
-    return 'geoid';
-  }
-  if (lower.endsWith('.gsb') || lower.endsWith('.gsba') || kind === 'ntv2') return 'ntv2';
-  if (kind === 'gtg') return 'gtg';
-  return 'gtg';
-}
-
-function gridLocalPath(grid: RequiredGrid): string | null {
-  const availability = grid.availability;
-  if (availability.state !== 'presentVerified') return null;
-  const path = availability.local_path ?? availability.localPath;
-  return path && path.trim() !== '' ? path : null;
-}
-
-function presentVerifiedAvailability(
-  path: string,
-  observedSha256: string | null,
-): Extract<RequiredGrid['availability'], { state: 'presentVerified' }> {
-  if (observedSha256) {
-    return {
-      state: 'presentVerified',
-      local_path: path,
-      observed_sha256: observedSha256,
-    };
-  }
-  return {
-    state: 'presentVerified',
-    local_path: path,
-  };
-}
-
-function defaultGridLicense(filename: string): {
-  licenseName: string;
-  source: string;
-  redistributionAllowed: boolean;
-} {
-  return {
-    licenseName: 'User or bundled PROJ grid',
-    source: filename,
-    redistributionAllowed: false,
-  };
-}
-
-function normalizeRequiredGridForFreeze(
-  grid: RequiredGrid,
-  user: LocalGridSelection | null,
-  catalog: readonly GridCatalogEntry[],
-  area: GeographicArea,
-): RequiredGrid {
-  const vertical = isVerticalGridFilename(grid.officialFilename);
-  const existingPath = gridLocalPath(grid);
-  const catalogHit =
-    catalog.find(
-      (entry) =>
-        entry.officialFilename === grid.officialFilename ||
-        (user != null && entry.localPath === user.localPath) ||
-        (user != null && entry.officialFilename === user.filename),
-    ) ??
-    catalog.find((entry) =>
-      vertical
-        ? entry.kind === 'geoid' && !!entry.localPath
-        : (entry.kind === 'ntv2' || entry.kind === 'gtg') && !!entry.localPath,
-    );
-
-  const userPath = user?.localPath?.trim() || null;
-  const path = userPath || existingPath || catalogHit?.localPath?.trim() || null;
-  const license = grid.license ?? defaultGridLicense(user?.filename ?? grid.officialFilename);
-  const filename = user?.filename ?? grid.officialFilename;
-  const kind = normalizeGridKind(grid.kind ?? user?.kind, filename, vertical);
-  const coverage = grid.coverage ?? user?.coverage ?? area;
-
-  if (!path) {
-    return {
-      kind,
-      officialFilename: grid.officialFilename,
-      license,
-      coverage,
-      availability: { state: 'missing' },
-    };
-  }
-
-  // Path-only binding for freeze. Official CDN/catalog SHA pins must not ride along
-  // when the user supplies a local NTv2/geoid (e.g. kanu_ntv2_schwaben.gsb) — the
-  // sidecar re-hashes the file against that pin and rejects the import.
-  const next: RequiredGrid = {
-    kind,
-    officialFilename: filename,
-    license,
-    coverage,
-    availability: presentVerifiedAvailability(path, null),
-  };
-  return next;
-}
-
-function rewritePipelineGridToken(
-  pipeline: string,
-  fromFilename: string,
-  toFilename: string,
-): string {
-  if (!fromFilename || !toFilename || fromFilename === toFilename) return pipeline;
-  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  // Match +grids=... tokens; swap exact basename occurrences.
-  return pipeline
-    .replace(/\+grids=([^\s]+)/g, (_full, list: string) => {
-      const parts = list.split(',').map((part) => {
-        const base = part.replace(/^.*[/\\]/, '');
-        if (base === fromFilename || part === fromFilename) return toFilename;
-        return part;
-      });
-      if (parts.join(',') === list && list.includes(fromFilename)) {
-        return `+grids=${list.split(fromFilename).join(toFilename)}`;
-      }
-      return `+grids=${parts.join(',')}`;
-    })
-    .replace(new RegExp(escape(fromFilename), 'g'), toFilename);
-}
-
-function attachLocalGridsToOperation(
-  operation: CrsOperationCandidate,
-  verticalGrid: LocalGridSelection | null,
-  horizontalGrid: LocalGridSelection | null,
-  catalog: readonly GridCatalogEntry[],
-  area: GeographicArea,
-): CrsOperationCandidate {
-  if (operation.requiredGrids.length === 0) return operation;
-  let projPipeline = operation.projPipeline;
-  const requiredGrids = operation.requiredGrids.map((grid) => {
-    const vertical = isVerticalGridFilename(grid.officialFilename);
-    const user = vertical ? verticalGrid : horizontalGrid;
-    const next = normalizeRequiredGridForFreeze(grid, user, catalog, area);
-    // Keep PROJ pipeline in sync when the user rebinds a different local file.
-    // Otherwise freeze rediscovery cannot match +grids=<old> to +grids=<user>.
-    if (
-      user &&
-      next.officialFilename &&
-      grid.officialFilename &&
-      next.officialFilename !== grid.officialFilename
-    ) {
-      projPipeline = rewritePipelineGridToken(
-        projPipeline,
-        grid.officialFilename,
-        next.officialFilename,
-      );
-    }
-    return next;
-  });
-  return {
-    ...operation,
-    projPipeline,
-    requiredGrids,
-  };
-}
-
-function heightReference(source: HeightSource, verticalEpsg: number): Record<string, unknown> {
-  if (source === 'ellipsoidal') return { kind: 'ellipsoidal' };
-  if (source === 'deviceProfile') {
-    // Single key only (no profileId + profile_id dual).
-    return { kind: 'deviceProfile', profile_id: 'dji-explicit' };
-  }
-  if (source === 'orthometric') {
-    return {
-      kind: 'orthometric',
-      vertical_crs: { kind: 'epsg', value: verticalEpsg },
-    };
-  }
-  return { kind: 'unknown' };
-}
-// mirror-end ImageImportPanel.tsx
 
 function assertSingleKey(obj: Record<string, unknown>, a: string, b: string, label: string): void {
   const hasA = Object.prototype.hasOwnProperty.call(obj, a);
@@ -480,38 +250,24 @@ describe('workflow JSON round-trip shape', () => {
   });
 });
 
-describe('mirror drift guard', () => {
-  /** Comments and formatting are noise; only the executable text must agree. */
-  const normalize = (source: string): string =>
-    source
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/(^|\s)\/\/[^\n]*/g, '$1')
-      .replace(/\bexport\s+function\b/g, 'function')
-      .replace(/\s+/g, '');
+describe('grid availability helpers', () => {
+  it('classifies vertical filenames and emits snake_case availability only', () => {
+    assert.equal(isVerticalGridFilename('de_bkg_gcg2016.tif'), true);
+    assert.equal(isVerticalGridFilename('kanu_ntv2_schwaben.gsb'), false);
 
-  it('mirrors every freeze helper verbatim from ImageImportPanel.tsx', () => {
-    const self = readFileSync(fileURLToPath(import.meta.url), 'utf8');
-    const begin = self.indexOf('// mirror-begin ImageImportPanel.tsx');
-    const end = self.indexOf('// mirror-end ImageImportPanel.tsx');
-    assert.ok(begin > 0 && end > begin, 'the mirror markers must delimit the copied helpers');
+    const pathOnly = presentVerifiedAvailability('/data/grids/a.gsb', null);
+    assertSingleKey(pathOnly, 'localPath', 'local_path', 'presentVerified');
+    assert.equal(pathOnly.local_path, '/data/grids/a.gsb');
+    assert.equal(pathOnly.observed_sha256, undefined);
 
-    const mirrored = self
-      .slice(begin, end)
-      .split(/\n(?=function )/)
-      .slice(1)
-      .map((chunk) => chunk.trim())
-      .filter((chunk) => chunk.length > 0);
-    assert.equal(mirrored.length, 9, 'expected nine mirrored freeze helpers');
+    const hashed = presentVerifiedAvailability('/data/grids/a.gsb', 'abc');
+    assertSingleKey(hashed, 'observedSha256', 'observed_sha256', 'presentVerified');
+    assert.equal(hashed.observed_sha256, 'abc');
 
-    const panel = normalize(
-      readFileSync(new URL('./ImageImportPanel.tsx', import.meta.url), 'utf8'),
-    );
-    for (const chunk of mirrored) {
-      const name = /^function\s+([A-Za-z0-9_]+)/.exec(chunk)?.[1] ?? '(unnamed)';
-      assert.ok(
-        panel.includes(normalize(chunk)),
-        `${name} drifted from ImageImportPanel.tsx — re-copy the helper into the mirror block`,
-      );
-    }
+    assert.deepEqual(defaultGridLicense('a.gsb'), {
+      licenseName: 'User or bundled PROJ grid',
+      source: 'a.gsb',
+      redistributionAllowed: false,
+    });
   });
 });
