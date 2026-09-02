@@ -115,21 +115,16 @@ PROJECT-FORMAT, and an accepted ADR before implementation.
     reads only this bounded summary. Builder never accepts an inventory
     assembled by walking a product directory after publication.
 
-6.  **Lineage payload.** For publications made after this contract exists,
-    PhotoLab freezes `ProductLineageV1` (`hcad.photolab-product-lineage@1`)
-    before the ready record and product record become visible. The mandatory
-    payload is: - source project stable id and the exact archive/manifest fingerprint; - product entity id, exact entity version and content hash, publication
-    generation, kind, label, dataset label, and normalized canonical format
-    id; - source alignment entity id and exact version/content hash; - processing-set choice as the tagged union
-    `selected { id, version_hash, membership_sha256 } | none |
-all_imported_cameras`, with the frozen camera-selection SHA-256 in every
-    case; - image-mask scope as `selected { scope_sha256 } | none`; - GCP choice as `selected { entity_id, entity_version_hash,
-snapshot_sha256 } | none`; - the exact source `spatialReference` plus the frozen
-    `ProjectReferenceFrame` (`FrozenCrsEndpoint` and
-    `establishedByTransformationSha256`), or the explicit `local_frame`
-    marker; `unknown` is not legal for a new complete publication; - ordered algorithm, configuration, and tool identities, each with stable
-    id, version, and configuration/binary hash where applicable; and - the accepted registration transform/audit, if one existed at
-    publication.
+6.  **Lineage payload.** For publications made after this contract exists, PhotoLab freezes `ProductLineageV1` (`hcad.photolab-product-lineage@1`) before the ready record and product record become visible. The mandatory payload is:
+    - source project stable id and the exact archive/manifest fingerprint;
+    - product entity id, exact entity version and content hash, publication generation, kind, label, dataset label, and normalized canonical format id;
+    - source alignment entity id and exact version/content hash;
+    - processing-set choice as the tagged union `selected { id, version_hash, membership_sha256 } | none | all_imported_cameras`, with the frozen camera-selection SHA-256 in every case;
+    - image-mask scope as `selected { scope_sha256 } | none`;
+    - GCP choice as `selected { entity_id, entity_version_hash, snapshot_sha256 } | none`;
+    - the exact source `spatialReference` plus the frozen `ProjectReferenceFrame` (`FrozenCrsEndpoint` and `establishedByTransformationSha256`), or the explicit `local_frame` marker; `unknown` is not legal for a new complete publication;
+    - ordered algorithm, configuration, and tool identities, each with stable id, version, and configuration/binary hash where applicable; and
+    - the accepted registration transform/audit, if one existed at publication.
 
 7.  **Provenance component.** Builder creates
     `hcad.photolab-product-provenance@1` as a hash-bound envelope containing
@@ -196,32 +191,10 @@ snapshot_sha256 } | none`; - the exact source `spatialReference` plus the frozen
 
 ### IF-D19 validation constraints (restated)
 
-- DEM: the admission object must declare
-  `Grid { raster: GeometryResource, mapping: OrthoGridMapping, sampling:
-
-DepthSampling }`— the immutable height/validity resource includes hash,
-  media type and byte length; mapping carries finite source pixel-center
-  origin, column and row vectors; sampling explicitly carries
- `ElevationZ`, interpolation and connectivity/NoData semantics; nothing
-  is inferred. Its representation slot binds the same entity and grid
-  resource to a hash-verified `himmelcad-prepared-hierarchy@1`Raster
-root. This is the existing canonical Grid shape, not a second Import
-model.
-
-- Orthomosaic: the only R1 arrival is`RasterImageGeometry`plus
-  `RasterMapping::PlanGrid2D`carrying the source pixel-grid affine XY
-  transform, frozen CRS, no depth, no entity placement and`z: null`. A
-  zero-height orthomosaic `OrthoGrid`is rejected;`PlanGrid2D`has no Z,
-  depth or placement authority.
-- Prepared hierarchy:`himmelcad-prepared-hierarchy@1`is not blanket
-  permission to accept arbitrary contents. Validation requires the
-  canonical entity kind, representation slot, geometry/resource hash,
-  root manifest, every referenced artifact and every tile`ContentKind`
-  to agree; unsupported or mixed semantics fail before review;
-  registration never relabels Raster, glTF mesh or GaussianSplats
-  content. - A renderer decoder or an inventory label is never semantic admission;
-  complete lineage is captured by PhotoLab at publication and copied
-  byte-for-byte, and Builder never reconstructs missing history.
+- DEM: the admission object must declare `Grid { raster: GeometryResource, mapping: OrthoGridMapping, sampling: DepthSampling }`. The immutable height/validity resource includes hash, media type, and byte length; mapping carries finite source pixel-center origin, column, and row vectors; sampling explicitly carries `ElevationZ`, interpolation, and connectivity/NoData semantics. Nothing is inferred. Its representation slot binds the same entity and grid resource to a hash-verified `himmelcad-prepared-hierarchy@1` Raster root. This is the existing canonical Grid shape and Raster-owned behavior, not a second Import model.
+- Orthomosaic: the only R1 arrival is `RasterImageGeometry` plus `RasterMapping::PlanGrid2D`, carrying the source pixel-grid affine XY transform, frozen CRS, no depth, no entity placement, and `z: null`. A zero-height orthomosaic `OrthoGrid` is rejected; `PlanGrid2D` has no Z, depth, or placement authority.
+- Prepared hierarchy: `himmelcad-prepared-hierarchy@1` is not blanket permission to accept arbitrary contents. Validation requires the canonical entity kind, representation slot, geometry/resource hash, root manifest, every referenced artifact, and every tile `ContentKind` to agree. Unsupported or mixed semantics fail before review; registration never relabels Raster, glTF mesh, or GaussianSplats content.
+- A renderer decoder or an inventory label is never semantic admission. Complete lineage is captured by PhotoLab at publication and copied byte-for-byte; Builder never reconstructs missing history.
 
 ## Release gates
 
@@ -242,20 +215,9 @@ gate test).
 
 ## Consequences
 
-- PhotoLab publication gains a package/ready-record step and a frozen lineage
-  payload for every product. How the existing five-field product lineage
-  record relates to `ProductLineageV1` is not decided here; current records
-  are legacy per Decision 8 until PhotoLab republishes or recomputes.
-- All current PhotoLab publications become `partial` or `unknown` and must be
-  republished or recomputed to become registrable; the UI and listing say so
-  instead of decorating old bytes.
-- The Builder registration island, the generated command table
-  (`io.import.product_dataset.list/register`), and WeltView's read-only
-  archive path implement the consumer side; none of them may synthesize
-  entities or provenance.
-- Exporters must either preserve the provenance component through a declared
-  extension or report `hcad.loss.photolab-product-provenance@1`; silent drops
-  are not allowed.
+- PhotoLab publication gains a package/ready-record step and a frozen lineage payload for every product. How the existing five-field product lineage record relates to `ProductLineageV1` is not decided here; current records are legacy per Decision 8 until PhotoLab republishes or recomputes.
+- All current PhotoLab publications become `partial` or `unknown` and must be republished or recomputed to become registrable; the UI and listing say so instead of decorating old bytes.
+- The consumer side — generated command-table rows, source acquisition and pinning, listing budgets, repeated registration and update rules, passive consumers, and `.hcadx` WeltView parity — is governed by import-formats IF-D20, IF-D23, IF-D24, and IF-D25 as written there; this ADR neither restates nor modifies them.
 
 ## Primary references
 
@@ -269,10 +231,10 @@ gate test).
 
 ## Normative document changes
 
-Applied by the Builder program's single writer on 2026-09-02 after review of
-this ADR: the `docs/DATA-MODEL.md` pending item 8 promotion (retaining every
-item-8 particular — per-dataset prepared format, alignment id + hash, GCP
-revision + snapshot hash, frozen CRS — plus the admitted identifiers and the
-`complete | partial | unknown` rule) and the `docs/PROJECT-FORMAT.md`
-"Product data" paragraph on candidate packages, ready records and package
-immutability. This ADR does not edit those files.
+Applied by the Builder program's single writer on 2026-09-02 after review of this ADR; this ADR does not edit those files.
+
+`docs/DATA-MODEL.md`, "Immutable resources" (pending item 8 promoted), now reads:
+
+> PhotoLab products are published as `hcad.product-import-package-manifest@1` packages (package id + version; per-dataset prepared format) carrying a frozen `hcad.photolab-product-lineage@1` payload (alignment id + hash, GCP revision + snapshot hash, frozen CRS). Builder registration stores it as the read-only `hcad.photolab-product-provenance@1` component (exact lineage bytes, `lineage_object_sha256`, source `package_sha256`, destination registration audit). Records carry `provenanceStatus: complete | partial | unknown`; legacy publications may only be `partial` or `unknown`, and registration behavior per status follows import-formats IF-D19 (missing provenance is surfaced, never silently downgraded). The chain is PhotoLab publishes → Builder registers → WeltView reads the registered product read-only from the project or its `.hcadx` archive. Shapes, hash canonicalization, and states are defined by ADR 0030 (Proposed, owner acceptance pending) and import-formats IF-D19/IF-D22.
+
+`docs/PROJECT-FORMAT.md`, "Product data": the candidate-package, ready-record (`package_sha256` last), atomic-visibility, ready-summary-only listing, and package-immutability paragraph proposed by revision 1 of this ADR, applied unchanged.
