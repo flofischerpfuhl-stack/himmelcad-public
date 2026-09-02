@@ -14,6 +14,7 @@ function status(
 ): ProductPrerequisiteStatus {
   return {
     hasPublishedAlignment: true,
+    mergedFrameGeoreferenced: true,
     availableArtifacts: new Set(artifacts),
     externalDemBound: false,
     meshSourceKinds: ['dem'],
@@ -47,6 +48,18 @@ describe('product prerequisite evaluation', () => {
       evaluateProductPrerequisites('ortho', status(['dense'], { externalDemBound: true })).met,
       true,
     );
+  });
+
+  it('blocks georeferenced products while an overlap-merged frame is unoptimized', () => {
+    const unresolved = status(['depth', 'dense', 'dem'], { mergedFrameGeoreferenced: false });
+    for (const kind of ['dem', 'ortho'] as const) {
+      const decision = evaluateProductPrerequisites(kind, unresolved);
+      assert.equal(decision.met, false);
+      assert.equal(decision.actionFunctionId, 'alignment.optimize');
+      assert.match(decision.reason ?? '', /arbitrary frame/);
+    }
+    assert.equal(evaluateProductPrerequisites('depth', unresolved).met, true);
+    assert.equal(evaluateProductPrerequisites('dense', unresolved).met, true);
   });
 
   it('keeps mesh source requirements data-driven', () => {

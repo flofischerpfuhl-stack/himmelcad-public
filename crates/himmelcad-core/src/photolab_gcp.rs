@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{hash::ObjectHash, photolab_matching::ImageId};
+use crate::{entity::EntityId, hash::ObjectHash, photolab_matching::ImageId};
 
 const MINIMUM_USABLE_OBSERVATIONS: usize = 2;
 
@@ -1023,6 +1023,8 @@ pub struct OptimizationPointSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct GcpOptimizationSnapshot {
     pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_alignment_entity_id: Option<EntityId>,
     pub scope: GcpOptimizationScope,
     pub points: Vec<OptimizationPointSnapshot>,
     pub observations: Vec<GcpObservation>,
@@ -1033,6 +1035,8 @@ pub struct GcpOptimizationSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct GcpResidualReportScope {
     pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_alignment_entity_id: Option<EntityId>,
     pub label: String,
     pub collection_sha256: ObjectHash,
     pub optimization_snapshot_sha256: ObjectHash,
@@ -1070,6 +1074,7 @@ pub fn build_gcp_residual_report_scope(
     checkpoint_point_ids.sort();
     Ok(GcpResidualReportScope {
         schema_version: 1,
+        source_alignment_entity_id: snapshot.source_alignment_entity_id.clone(),
         label: snapshot.scope.label.clone(),
         collection_sha256,
         optimization_snapshot_sha256,
@@ -1089,6 +1094,7 @@ fn validate_sha256(hash: &ObjectHash) -> Result<(), GcpError> {
 
 /// Validates and freezes point roles, camera-reference scope and observations.
 pub fn build_optimization_snapshot(
+    source_alignment_entity_id: Option<EntityId>,
     mut scope: GcpOptimizationScope,
     points: &[GcpPoint],
     observations: &[GcpObservation],
@@ -1161,6 +1167,7 @@ pub fn build_optimization_snapshot(
 
     Ok(GcpOptimizationSnapshot {
         schema_version: 1,
+        source_alignment_entity_id,
         scope,
         points: snapshots,
         observations: frozen_observations,
@@ -1448,6 +1455,7 @@ mod tests {
         let mut all_observations = observations("A");
         all_observations.extend(observations("B"));
         let snapshot = build_optimization_snapshot(
+            None,
             GcpOptimizationScope {
                 label: "Block Nord · Run 4".to_owned(),
                 point_ids: vec![GcpPointId("B".to_owned()), GcpPointId("A".to_owned())],
@@ -1476,6 +1484,7 @@ mod tests {
     #[test]
     fn optimization_snapshot_accepts_camera_references_without_gcps() {
         let snapshot = build_optimization_snapshot(
+            None,
             GcpOptimizationScope {
                 label: "Camera references".to_owned(),
                 point_ids: Vec::new(),
@@ -1494,6 +1503,7 @@ mod tests {
         );
 
         let insufficient = build_optimization_snapshot(
+            None,
             GcpOptimizationScope {
                 label: "Too few camera references".to_owned(),
                 point_ids: Vec::new(),
@@ -1539,6 +1549,7 @@ mod tests {
         let mut all_observations = observations("A");
         all_observations.extend(observations("B"));
         let snapshot = build_optimization_snapshot(
+            None,
             GcpOptimizationScope {
                 label: "Run 7".into(),
                 point_ids: vec![GcpPointId("A".into()), GcpPointId("B".into())],

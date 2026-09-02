@@ -96,7 +96,12 @@ export function ProductPanel({
       } else if (product.kind === 'dense') availableArtifacts.add('dense');
       else if (product.kind === 'dem') availableArtifacts.add('dem');
     }
-    return { ...prerequisites, availableArtifacts };
+    return {
+      ...prerequisites,
+      availableArtifacts,
+      mergedFrameGeoreferenced:
+        prerequisites.mergedFrameGeoreferenced || Boolean(resolvedInputs.gcpOptimization),
+    };
   }, [prerequisiteProducts, prerequisites, resolvedInputs]);
   const prerequisite = evaluateProductPrerequisites(operation, {
     ...exactPrerequisites,

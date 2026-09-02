@@ -166,6 +166,8 @@ pub struct UpsertGcpObservationsResult {
 pub struct CreateGcpOptimizationSnapshotParams {
     pub operation_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_alignment_entity_id: Option<EntityId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_collection_sha256: Option<ObjectHash>,
     pub scope: GcpOptimizationScope,
     /// Per-run role/mask overrides; the authoritative imported GCP catalog is unchanged.
@@ -177,6 +179,8 @@ pub struct CreateGcpOptimizationSnapshotParams {
 #[serde(rename_all = "camelCase")]
 pub struct CreateGcpOptimizationSnapshotResult {
     pub operation_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_alignment_entity_id: Option<EntityId>,
     pub collection_sha256: ObjectHash,
     pub snapshot_sha256: ObjectHash,
     pub residual_scope_sha256: ObjectHash,
@@ -803,8 +807,12 @@ pub fn create_gcp_optimization_snapshot_transaction(
             .ok_or_else(|| GcpRuntimeError::Domain(GcpError::UnknownPoint(point_id.clone())))?;
         point.role = *role;
     }
-    let snapshot =
-        build_optimization_snapshot(params.scope, &point_definitions, &collection.observations)?;
+    let snapshot = build_optimization_snapshot(
+        params.source_alignment_entity_id.clone(),
+        params.scope,
+        &point_definitions,
+        &collection.observations,
+    )?;
     let snapshot_bytes = serde_json::to_vec(&snapshot)?;
     let snapshot_sha256 = ObjectHash::of_bytes(&snapshot_bytes);
     let residual_scope = build_gcp_residual_report_scope(
@@ -844,6 +852,7 @@ pub fn create_gcp_optimization_snapshot_transaction(
             "collectionSha256": collection_sha256,
             "snapshotSha256": snapshot_sha256,
             "residualScopeSha256": residual_scope_sha256,
+            "sourceAlignmentEntityId": params.source_alignment_entity_id,
         }),
         affected_entities,
         input_hashes,
@@ -857,6 +866,7 @@ pub fn create_gcp_optimization_snapshot_transaction(
     *manifest = candidate;
     Ok(CreateGcpOptimizationSnapshotResult {
         operation_id: params.operation_id,
+        source_alignment_entity_id: snapshot.source_alignment_entity_id,
         collection_sha256,
         snapshot_sha256,
         residual_scope_sha256,
@@ -2141,6 +2151,7 @@ mod tests {
             &mut fixture.manifest,
             CreateGcpOptimizationSnapshotParams {
                 operation_id: "snapshot".into(),
+                source_alignment_entity_id: None,
                 expected_collection_sha256: Some(second.collection_sha256),
                 scope: GcpOptimizationScope {
                     label: "Control A only".into(),

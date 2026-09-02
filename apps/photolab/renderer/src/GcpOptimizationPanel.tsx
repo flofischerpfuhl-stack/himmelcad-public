@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import styles from './GcpOptimizationPanel.module.css';
 
 export interface GcpOptimizationSelection {
+  sourceAlignmentEntityId: string;
   pointIds: string[];
   roleOverrides: Record<string, GcpRole>;
   cameraReferenceImageIds: number[];
@@ -19,16 +20,22 @@ export interface GcpOptimizationCameraReference {
 }
 
 export interface GcpOptimizationPanelProps {
+  alignments: readonly { id: string; label: string }[];
+  selectedAlignmentId: string;
   collection: GcpCollectionRecord | null;
   cameras: readonly GcpOptimizationCameraReference[];
   busy: boolean;
+  onAlignmentChange: (id: string) => void;
   onStart: (selection: GcpOptimizationSelection) => void;
 }
 
 export function GcpOptimizationPanel({
+  alignments,
+  selectedAlignmentId,
   collection,
   cameras,
   busy,
+  onAlignmentChange,
   onStart,
 }: GcpOptimizationPanelProps): JSX.Element {
   const points = useMemo(
@@ -86,10 +93,27 @@ export function GcpOptimizationPanel({
   );
   const cameraOnly = controls.length === 0 && cameraReferences.size >= 3;
   const canStart =
-    !busy && ((controls.length > 0 && selected.length > 0) || cameraReferences.size >= 3);
+    !busy &&
+    selectedAlignmentId.length > 0 &&
+    ((controls.length > 0 && selected.length > 0) || cameraReferences.size >= 3);
 
   return (
     <div className={styles.root}>
+      <label className={styles.alignmentField}>
+        <span>Alignment</span>
+        <Select
+          value={selectedAlignmentId}
+          disabled={busy || alignments.length === 0}
+          onChange={(event) => onAlignmentChange(event.currentTarget.value)}
+        >
+          {alignments.length === 0 && <option value="">No published alignments</option>}
+          {alignments.map((alignment) => (
+            <option key={alignment.id} value={alignment.id}>
+              {alignment.label}
+            </option>
+          ))}
+        </Select>
+      </label>
       <section className={styles.intro}>
         <CircleGauge size={18} />
         <div>
@@ -235,6 +259,7 @@ export function GcpOptimizationPanel({
         disabled={!canStart}
         onClick={() =>
           onStart({
+            sourceAlignmentEntityId: selectedAlignmentId,
             pointIds: cameraOnly ? [] : selected.map((point) => point.id),
             roleOverrides: Object.fromEntries(
               selected.map((point) => [point.id, roles[point.id] ?? point.role]),

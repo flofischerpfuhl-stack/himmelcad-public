@@ -321,7 +321,12 @@ export interface MergedAlignmentRunRecord {
   inputGcpOptimizationEntityIds: EntityId[];
   connections: AlignmentMergeConnection[];
   cameraEntityIds: EntityId[];
+  calibrationGroups?: {
+    groupId: string;
+    cameraEntityIds: EntityId[];
+  }[];
   lineageSha256: ObjectHash;
+  publicationSequence?: number;
   datasetRelativePath?: string;
 }
 
@@ -1035,11 +1040,13 @@ export interface EditGcpObservationResult {
 
 export interface GcpOptimizationSnapshotResult {
   operationId: string;
+  sourceAlignmentEntityId?: EntityId;
   collectionSha256: ObjectHash;
   snapshotSha256: ObjectHash;
   residualScopeSha256: ObjectHash;
   residualScope: {
     schemaVersion: number;
+    sourceAlignmentEntityId?: EntityId;
     label: string;
     collectionSha256: ObjectHash;
     optimizationSnapshotSha256: ObjectHash;
@@ -1076,6 +1083,7 @@ export interface GcpOptimizationPublicationRecord {
     solver: string;
     inputSha256: ObjectHash;
     snapshotSha256: ObjectHash;
+    sourceAlignmentEntityId?: EntityId;
     result: {
       transform: {
         scale: number;

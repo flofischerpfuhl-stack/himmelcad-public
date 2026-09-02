@@ -185,6 +185,12 @@ export function AlignmentMergePanel({
             </span>
           </label>
         </fieldset>
+        {connectionMode === 'overlap' && (
+          <div className={styles.warningChip} role="note">
+            Overlap merges solve in an arbitrary frame — run GCP optimization on the merged result
+            before building georeferenced products.
+          </div>
+        )}
         <button
           type="button"
           disabled={
@@ -235,6 +241,12 @@ export function AlignmentMergePanel({
                 {merge.inputAlignmentEntityIds.length} alignments · {merge.cameraEntityIds.length}{' '}
                 cameras
               </small>
+              {merge.connections.some((connection) => connection.kind === 'overlap') && (
+                <div className={styles.warningChip} role="note">
+                  Overlap merges solve in an arbitrary frame — run GCP optimization on the merged
+                  result before building georeferenced products.
+                </div>
+              )}
               <details className={styles.lineageDetails}>
                 <summary>Run lineage and connection evidence</summary>
                 {merge.inputAlignmentEntityIds.map((entityId) => (

@@ -4118,6 +4118,7 @@ mod tests {
         }
         GcpOptimizationSnapshot {
             schema_version: 1,
+            source_alignment_entity_id: None,
             scope: GcpOptimizationScope {
                 label: "Test scope".into(),
                 point_ids: points.iter().map(|value| value.0.id.clone()).collect(),
@@ -4195,6 +4196,7 @@ mod tests {
         }
         GcpOptimizationSnapshot {
             schema_version: 1,
+            source_alignment_entity_id: None,
             scope: GcpOptimizationScope {
                 label: "BA synthetic".into(),
                 point_ids: points.iter().map(|point| point.id.clone()).collect(),
@@ -4481,6 +4483,7 @@ mod tests {
         }
         let snapshot = GcpOptimizationSnapshot {
             schema_version: 1,
+            source_alignment_entity_id: None,
             scope: GcpOptimizationScope {
                 label: "Camera references only".into(),
                 point_ids: Vec::new(),
@@ -4522,6 +4525,7 @@ mod tests {
         }
         let snapshot = GcpOptimizationSnapshot {
             schema_version: 1,
+            source_alignment_entity_id: None,
             scope: GcpOptimizationScope {
                 label: "Degenerate camera references".into(),
                 point_ids: Vec::new(),

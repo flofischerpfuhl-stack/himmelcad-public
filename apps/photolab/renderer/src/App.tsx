@@ -282,6 +282,7 @@ export function App(): JSX.Element {
     readonly PublishedGcpOptimizationEntry[]
   >([]);
   const [activeProductAlignmentId, setActiveProductAlignmentId] = useState<EntityId | null>(null);
+  const [activeGcpAlignmentId, setActiveGcpAlignmentId] = useState<EntityId | null>(null);
   const [activeProcessingSetId, setActiveProcessingSetId] = useState<EntityId | null>(null);
   const [productDatasets, setProductDatasets] = useState<readonly ProjectProductDatasetRecord[]>(
     [],
@@ -537,25 +538,69 @@ export function App(): JSX.Element {
   );
   const alignmentImageCount =
     alignmentScope === 'selection' ? selectedCameraIds.length : projectImages.length;
-  const productAlignmentInputs = useMemo(
-    () => [
-      ...[...alignmentMergeCandidates]
-        .sort((left, right) => right.publicationSequence - left.publicationSequence)
-        .map((candidate) => ({
-          id: candidate.entityId,
-          label: `${candidate.name} · ${candidate.cameraEntityIds.length} cameras`,
-        })),
+  const productAlignmentInputs = useMemo(() => {
+    const processingSetNames = new Map(
+      processingSets.map((processingSet) => [processingSet.entityId, processingSet.name]),
+    );
+    return [
+      ...alignmentMergeCandidates.map((candidate) => ({
+        id: candidate.entityId,
+        label: `${candidate.name} · ${candidate.processingSetId ? (processingSetNames.get(candidate.processingSetId) ?? candidate.processingSetId) : 'project-wide'} · ${candidate.cameraEntityIds.length} cameras`,
+        publicationSequence: candidate.publicationSequence,
+      })),
       ...alignmentMerges
         .filter((merge) => merge.state === 'published')
         .map((merge) => ({
           id: merge.entityId,
           label: `${merge.name} · merged · ${merge.cameraEntityIds.length} cameras`,
+          publicationSequence: merge.publicationSequence ?? 0,
         })),
-    ],
-    [alignmentMergeCandidates, alignmentMerges],
-  );
+    ]
+      .sort(
+        (left, right) =>
+          right.publicationSequence - left.publicationSequence || left.id.localeCompare(right.id),
+      )
+      .map(({ id, label }) => ({ id, label }));
+  }, [alignmentMergeCandidates, alignmentMerges, processingSets]);
   const selectedProductAlignmentId =
     activeProductAlignmentId ?? (productAlignmentInputs[0]?.id as EntityId | undefined) ?? null;
+  const selectedGcpAlignmentId =
+    activeGcpAlignmentId ?? (productAlignmentInputs[0]?.id as EntityId | undefined) ?? null;
+  useEffect(() => {
+    const api = window.himmelcad;
+    if (!api || !projectReady || !selectedGcpAlignmentId) {
+      setAlignedGcpCameras([]);
+      return;
+    }
+    let current = true;
+    void Promise.all([
+      api.sidecar.call<AlignedGcpCameraRecord[]>('photolab.gcp.alignedCameras', {
+        sourceAlignmentEntityId: selectedGcpAlignmentId,
+      }),
+      api.sidecar.call<GcpOptimizationPublicationRecord | null>(
+        'photolab.gcp.optimization.latest',
+        { sourceAlignmentEntityId: selectedGcpAlignmentId },
+      ),
+    ])
+      .then(([cameras, optimization]) => {
+        if (!current) return;
+        setAlignedGcpCameras(cameras);
+        setGcpOptimization(optimization);
+      })
+      .catch((error: unknown) => {
+        if (!current) return;
+        setAlignedGcpCameras([]);
+        setGcpOptimization(null);
+        logEvent(
+          'warn',
+          'sidecar',
+          `Selected alignment cameras are not available: ${errorMessage(error)}`,
+        );
+      });
+    return () => {
+      current = false;
+    };
+  }, [projectReady, selectedGcpAlignmentId]);
   const productPrerequisites = useMemo(() => {
     const availableArtifacts = new Set<ProductPrerequisiteArtifact>();
     for (const dataset of productDatasets) {
@@ -566,13 +611,32 @@ export function App(): JSX.Element {
       } else if (dataset.kind === 'dense') availableArtifacts.add('dense');
       else if (dataset.kind === 'dem') availableArtifacts.add('dem');
     }
+    const overlapMerge = alignmentMerges.find(
+      (merge) =>
+        merge.entityId === selectedProductAlignmentId &&
+        merge.connections.some((connection) => connection.kind === 'overlap'),
+    );
+    const mergedOptimizationAvailable = gcpOptimizations.some(
+      (entry) =>
+        entry.optimization.sourceAlignmentEntityId === selectedProductAlignmentId &&
+        entry.optimization.processingSetId == null &&
+        entry.optimization.artifact.result.converged,
+    );
     return {
       hasPublishedAlignment: selectedProductAlignmentId !== null,
+      mergedFrameGeoreferenced:
+        projectLocalMetric || overlapMerge == null || mergedOptimizationAvailable,
       availableArtifacts,
       externalDemBound: false,
       meshSourceKinds: ['dem'] as const,
     };
-  }, [productDatasets, selectedProductAlignmentId]);
+  }, [
+    alignmentMerges,
+    gcpOptimizations,
+    productDatasets,
+    projectLocalMetric,
+    selectedProductAlignmentId,
+  ]);
 
   const resolveProfile = useCallback(async () => {
     const api = window.himmelcad;
@@ -754,6 +818,7 @@ export function App(): JSX.Element {
         setSelected(new Set());
         setActiveProcessingSetId(null);
         setActiveProductAlignmentId(null);
+        setActiveGcpAlignmentId(null);
         setFocusedGcpId(null);
       }
       const api = window.himmelcad;
@@ -1870,7 +1935,11 @@ export function App(): JSX.Element {
     lastLoadedGcpOptimizationJobId.current = completed.id;
     void api.sidecar
       .call<GcpOptimizationPublicationRecord | null>('photolab.gcp.optimization.latest', {
-        ...(activeProcessingSetId ? { processingSetId: activeProcessingSetId } : {}),
+        ...(selectedGcpAlignmentId
+          ? { sourceAlignmentEntityId: selectedGcpAlignmentId }
+          : activeProcessingSetId
+            ? { processingSetId: activeProcessingSetId }
+            : {}),
       })
       .then(setGcpOptimization)
       .catch((error: unknown) => {
@@ -1881,7 +1950,7 @@ export function App(): JSX.Element {
           `Completed GCP optimization could not be loaded: ${errorMessage(error)}`,
         );
       });
-  }, [activeProcessingSetId, jobs]);
+  }, [activeProcessingSetId, jobs, selectedGcpAlignmentId]);
 
   useEffect(() => {
     const api = window.himmelcad;
@@ -2149,6 +2218,7 @@ export function App(): JSX.Element {
           'photolab.gcp.optimization.snapshot',
           {
             operationId: snapshotOperationId,
+            sourceAlignmentEntityId: selection.sourceAlignmentEntityId,
             ...(gcpCollection ? { expectedCollectionSha256: gcpCollection[0] } : {}),
             scope: {
               label: processingSet
@@ -2166,7 +2236,7 @@ export function App(): JSX.Element {
           {
             operationId,
             snapshotSha256: snapshot.snapshotSha256,
-            ...(processingSet ? { processingSetId: processingSet.entityId } : {}),
+            sourceAlignmentEntityId: selection.sourceAlignmentEntityId,
           },
         );
         setJobs((previous) => [...previous.filter((job) => job.id !== result.job.id), result.job]);
@@ -3565,9 +3635,12 @@ export function App(): JSX.Element {
               />
             ) : activeFunctionId === 'alignment.optimize' ? (
               <GcpOptimizationPanel
+                alignments={productAlignmentInputs}
+                selectedAlignmentId={selectedGcpAlignmentId ?? ''}
                 collection={gcpCollection?.[1] ?? null}
                 cameras={gcpCameraReferences}
                 busy={gcpOptimizationStarting}
+                onAlignmentChange={(id) => setActiveGcpAlignmentId(id ? (id as EntityId) : null)}
                 onStart={(selection) => void startGcpOptimization(selection)}
               />
             ) : activeFunctionId === 'batch.configure' || activeFunctionId === 'batch.queue' ? (

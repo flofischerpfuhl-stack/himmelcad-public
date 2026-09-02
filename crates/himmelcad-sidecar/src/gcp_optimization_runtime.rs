@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(unix)]
 use std::fs::File;
 
+use himmelcad_core::entity::EntityId;
 use himmelcad_core::hash::ObjectHash;
 use himmelcad_core::photolab_gcp::GcpOptimizationSnapshot;
 use himmelcad_core::photolab_gcp_optimization::{
@@ -26,6 +27,7 @@ static TEMPORARY_COUNTER: AtomicU64 = AtomicU64::new(1);
 pub struct RunGcpOptimizationParams {
     pub operation_id: String,
     pub snapshot_sha256: ObjectHash,
+    pub source_alignment_entity_id: EntityId,
     pub cameras: Vec<GcpCameraModel>,
     #[serde(default)]
     pub tie_points: Vec<GcpBundleTiePoint>,
@@ -41,6 +43,8 @@ pub struct GcpOptimizationArtifact {
     pub solver: String,
     pub input_sha256: ObjectHash,
     pub snapshot_sha256: ObjectHash,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_alignment_entity_id: Option<EntityId>,
     pub result: GcpOptimizationResult,
 }
 
@@ -63,6 +67,8 @@ pub struct GcpOptimizationCheckpoint {
     pub operation_id: String,
     pub input_sha256: ObjectHash,
     pub snapshot_sha256: ObjectHash,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_alignment_entity_id: Option<EntityId>,
     pub status: GcpOptimizationCheckpointStatus,
     pub progress: GcpOptimizationProgress,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -91,8 +97,14 @@ where
     validate_operation_id(&params.operation_id)?;
     validate_hash(&params.snapshot_sha256)?;
     let snapshot = load_snapshot(project_root, &params.snapshot_sha256)?;
+    if let Some(snapshot_source) = snapshot.source_alignment_entity_id.as_ref() {
+        if snapshot_source != &params.source_alignment_entity_id {
+            return Err(GcpOptimizationRuntimeError::SnapshotSourceMismatch);
+        }
+    }
     let input_bytes = serde_json::to_vec(&(
         &params.snapshot_sha256,
+        &params.source_alignment_entity_id,
         &params.cameras,
         &params.tie_points,
         params.options,
@@ -111,6 +123,7 @@ where
         operation_id: params.operation_id.clone(),
         input_sha256: input_sha256.clone(),
         snapshot_sha256: params.snapshot_sha256.clone(),
+        source_alignment_entity_id: Some(params.source_alignment_entity_id.clone()),
         status: GcpOptimizationCheckpointStatus::Running,
         progress: initial_progress,
         artifact_sha256: None,
@@ -168,6 +181,7 @@ where
         solver: "himmelcad-weighted-robust-bundle-adjustment-v3-shared-intrinsics".into(),
         input_sha256: input_sha256.clone(),
         snapshot_sha256: params.snapshot_sha256,
+        source_alignment_entity_id: Some(params.source_alignment_entity_id),
         result,
     };
     let artifact_bytes = serde_json::to_vec(&artifact)?;
@@ -354,6 +368,8 @@ pub enum GcpOptimizationRuntimeError {
     InvalidProjectPath,
     #[error("GCP object content does not match its hash")]
     ObjectHashMismatch,
+    #[error("GCP optimization snapshot belongs to another source alignment")]
+    SnapshotSourceMismatch,
     #[error("stored GCP optimization checkpoint is invalid")]
     InvalidCheckpoint,
     #[error("GCP optimization was cancelled")]
@@ -440,6 +456,7 @@ mod tests {
             }
             let snapshot = GcpOptimizationSnapshot {
                 schema_version: 1,
+                source_alignment_entity_id: Some(EntityId("alignment-fixture".into())),
                 scope: GcpOptimizationScope {
                     label: "Fixture".into(),
                     point_ids: points.iter().map(|value| value.point.id.clone()).collect(),
@@ -462,6 +479,7 @@ mod tests {
             RunGcpOptimizationParams {
                 operation_id: operation_id.into(),
                 snapshot_sha256: self.snapshot_sha256.clone(),
+                source_alignment_entity_id: EntityId("alignment-fixture".into()),
                 cameras: self.cameras.clone(),
                 tie_points: Vec::new(),
                 options: GcpSolverOptions::default(),

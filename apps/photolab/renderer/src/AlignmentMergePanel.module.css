@@ -160,6 +160,16 @@
   font-size: 9px;
 }
 
+.warningChip {
+  padding: 6px 8px;
+  border: 1px solid var(--hc-warning);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-warning);
+  background: var(--hc-bg-island-lo);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
 .plan > button,
 .runs button {
   min-height: 31px;

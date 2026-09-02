@@ -960,12 +960,16 @@ struct StartGcpOptimizationJobParams {
     operation_id: String,
     snapshot_sha256: ObjectHash,
     #[serde(default)]
+    source_alignment_entity_id: Option<EntityId>,
+    #[serde(default)]
     processing_set_id: Option<EntityId>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AlignedGcpCamerasParams {
+    #[serde(default)]
+    source_alignment_entity_id: Option<EntityId>,
     #[serde(default)]
     processing_set_id: Option<EntityId>,
 }
@@ -2378,7 +2382,7 @@ async fn handle_product_rpc(req: RpcRequest, projects: Arc<ProjectRuntime>) -> R
             rpc_blocking(req.id, move || projects.list_product_datasets()).await
         }
         "photolab.products.resolveInputs" => {
-            rpc_blocking_with_params::<ResolveProductInputsParams, _, _>(
+            rpc_blocking_product_with_params::<ResolveProductInputsParams, _, _>(
                 req.id,
                 req.params,
                 move |params| resolve_product_inputs_response(&projects, params),
@@ -2659,7 +2663,11 @@ async fn handle_gcp_rpc(
                 req.id,
                 req.params,
                 move |params| {
-                    latest_gcp_optimization_for_scope(&projects, params.processing_set_id.as_ref())
+                    latest_gcp_optimization_for_scope(
+                        &projects,
+                        params.processing_set_id.as_ref(),
+                        params.source_alignment_entity_id.as_ref(),
+                    )
                 },
             )
             .await
@@ -2672,7 +2680,11 @@ async fn handle_gcp_rpc(
                 req.id,
                 req.params,
                 move |params| {
-                    load_aligned_gcp_cameras(&projects, params.processing_set_id.as_ref())
+                    load_aligned_gcp_cameras(
+                        &projects,
+                        params.processing_set_id.as_ref(),
+                        params.source_alignment_entity_id.as_ref(),
+                    )
                 },
             )
             .await
@@ -2703,14 +2715,45 @@ async fn handle_gcp_rpc(
     }
 }
 
+fn resolve_gcp_source_alignment(
+    projects: &ProjectRuntime,
+    processing_set_id: Option<&EntityId>,
+    source_alignment_entity_id: Option<&EntityId>,
+    request_kind: &'static str,
+) -> anyhow::Result<crate::project_runtime::PublishedAlignmentDataset> {
+    if let Some(alignment_entity_id) = source_alignment_entity_id {
+        let inferred_processing_set_id = if processing_set_id.is_none() {
+            projects.processing_set_id_for_alignment(alignment_entity_id)?
+        } else {
+            None
+        };
+        return projects.alignment_dataset_by_entity_id(
+            alignment_entity_id,
+            processing_set_id.or(inferred_processing_set_id.as_ref()),
+        );
+    }
+    tracing::warn!(
+        request_kind,
+        processing_set_id = processing_set_id.map(|value| value.0.as_str()),
+        "GCP request omitted sourceAlignmentEntityId; falling back to the latest AlignmentRun for the processing set"
+    );
+    projects.latest_alignment_dataset_for_processing_set(processing_set_id)
+}
+
 fn latest_gcp_optimization_for_scope(
     projects: &ProjectRuntime,
     processing_set_id: Option<&EntityId>,
+    source_alignment_entity_id: Option<&EntityId>,
 ) -> anyhow::Result<Option<crate::project_runtime::GcpOptimizationPublicationRecord>> {
-    if processing_set_id.is_none() {
+    if processing_set_id.is_none() && source_alignment_entity_id.is_none() {
         return projects.latest_gcp_optimization();
     }
-    let alignment = projects.latest_alignment_dataset_for_processing_set(processing_set_id)?;
+    let alignment = resolve_gcp_source_alignment(
+        projects,
+        processing_set_id,
+        source_alignment_entity_id,
+        "latest optimization query",
+    )?;
     projects.latest_gcp_optimization_for_lineage(&ProductLineage {
         source_alignment_entity_id: alignment.source_alignment_entity_id,
         processing_set_id: alignment.processing_set_id,
@@ -2897,11 +2940,18 @@ fn read_colmap_observation_line(reader: &mut impl std::io::BufRead) -> anyhow::R
 fn load_aligned_gcp_cameras(
     projects: &ProjectRuntime,
     processing_set_id: Option<&EntityId>,
+    source_alignment_entity_id: Option<&EntityId>,
 ) -> anyhow::Result<Vec<AlignedGcpCameraRecord>> {
     let context = projects.compute_context()?;
-    let alignment = projects
-        .latest_alignment_dataset_for_processing_set(processing_set_id)?
-        .root;
+    let resolved_alignment = resolve_gcp_source_alignment(
+        projects,
+        processing_set_id,
+        source_alignment_entity_id,
+        "aligned-cameras query",
+    )?;
+    let frozen_calibration_partition = projects
+        .calibration_partition_for_alignment(&resolved_alignment.source_alignment_entity_id)?;
+    let alignment = resolved_alignment.root;
     let aligned_model = alignment.join("sparse-aligned");
     let center_in_project_world = aligned_model.is_dir()
         && ["cameras.bin", "cameras.txt"]
@@ -2926,6 +2976,7 @@ fn load_aligned_gcp_cameras(
         &context.camera_images,
         &alignment,
         &calibration_groups,
+        &frozen_calibration_partition,
     );
     let persisted_map = std::fs::read(alignment.join("camera-map.json"))
         .ok()
@@ -3433,6 +3484,7 @@ async fn handle_job_rpc(
                         run_params,
                         camera_images,
                         calibration_groups,
+                        frozen_calibration_partition,
                         lineage,
                     )) => {
                         let publisher = Arc::clone(&projects);
@@ -3462,6 +3514,7 @@ async fn handle_job_rpc(
                                     &camera_images,
                                     &alignment_dataset,
                                     &calibration_groups,
+                                    &frozen_calibration_partition,
                                 );
                                 let tie_points = load_gcp_bundle_tie_points(
                                     &camera_root,
@@ -3881,7 +3934,7 @@ async fn handle_job_rpc(
                                 .map_err(anyhow::Error::from);
                             rpc_result(req.id, result)
                         }
-                        Err(error) => rpc_err(req.id, -32000, &error.to_string()),
+                        Err(error) => product_rpc_err(req.id, &error),
                     }
                 }
                 Ok(params)
@@ -3968,7 +4021,7 @@ async fn handle_job_rpc(
                                 .map_err(anyhow::Error::from);
                             rpc_result(req.id, result)
                         }
-                        Err(error) => rpc_err(req.id, -32000, &error.to_string()),
+                        Err(error) => product_rpc_err(req.id, &error),
                     }
                 }
                 Ok(params)
@@ -4001,7 +4054,7 @@ async fn handle_job_rpc(
                                 .map_err(anyhow::Error::from);
                             rpc_result(req.id, result)
                         }
-                        Err(error) => rpc_err(req.id, -32000, &error.to_string()),
+                        Err(error) => product_rpc_err(req.id, &error),
                     }
                 }
                 Ok(params)
@@ -4483,6 +4536,7 @@ type PreparedGcpOptimizationJob = (
     RunGcpOptimizationParams,
     Vec<himmelcad_sidecar::image_commit::ProjectCameraImageRecord>,
     Vec<crate::project_runtime::CameraCalibrationGroupRecord>,
+    Vec<ColmapCalibrationGroup>,
     ProductLineage,
 );
 
@@ -5318,8 +5372,24 @@ fn prepare_gcp_optimization_job(
     projects: &ProjectRuntime,
 ) -> anyhow::Result<PreparedGcpOptimizationJob> {
     let context = projects.compute_context()?;
-    let alignment =
-        projects.latest_alignment_dataset_for_processing_set(params.processing_set_id.as_ref())?;
+    let explicit_source = params.source_alignment_entity_id.is_some();
+    let alignment = resolve_gcp_source_alignment(
+        projects,
+        params.processing_set_id.as_ref(),
+        params.source_alignment_entity_id.as_ref(),
+        "optimization start",
+    )?;
+    let snapshot = projects.gcp_optimization_snapshot(&params.snapshot_sha256)?;
+    match snapshot.source_alignment_entity_id.as_ref() {
+        Some(snapshot_source) => anyhow::ensure!(
+            snapshot_source == &alignment.source_alignment_entity_id,
+            "GCP optimization snapshot belongs to another source alignment"
+        ),
+        None => anyhow::ensure!(
+            !explicit_source,
+            "explicit GCP optimization source must be pinned in its snapshot"
+        ),
+    }
     let lineage = ProductLineage {
         source_alignment_entity_id: alignment.source_alignment_entity_id.clone(),
         processing_set_id: alignment.processing_set_id.clone(),
@@ -5335,12 +5405,16 @@ fn prepare_gcp_optimization_job(
     let run_params = RunGcpOptimizationParams {
         operation_id: params.operation_id.clone(),
         snapshot_sha256: params.snapshot_sha256.clone(),
+        source_alignment_entity_id: alignment.source_alignment_entity_id.clone(),
         cameras: Vec::new(),
         tie_points: Vec::new(),
         options: GcpSolverOptions::default(),
     };
-    let input =
-        serde_json::to_vec(&(&params.snapshot_sha256, alignment_dataset.to_string_lossy()))?;
+    let input = serde_json::to_vec(&(
+        &params.snapshot_sha256,
+        &alignment.source_alignment_entity_id,
+        alignment_dataset.to_string_lossy(),
+    ))?;
     let job = NewPhotolabJob {
         id: PhotolabJobId(params.operation_id),
         kind: PhotolabJobKind::OptimizeAlignment,
@@ -5365,6 +5439,7 @@ fn prepare_gcp_optimization_job(
         run_params,
         context.camera_images,
         projects.list_calibration_groups()?,
+        projects.calibration_partition_for_alignment(&lineage.source_alignment_entity_id)?,
         lineage,
     ))
 }
@@ -5374,6 +5449,7 @@ fn attach_camera_reference_priors(
     camera_images: &[himmelcad_sidecar::image_commit::ProjectCameraImageRecord],
     alignment_dataset: &Path,
     calibration_groups: &[crate::project_runtime::CameraCalibrationGroupRecord],
+    frozen_calibration_partition: &[ColmapCalibrationGroup],
 ) {
     let camera_map = std::fs::read(alignment_dataset.join("camera-map.json"))
         .ok()
@@ -5392,7 +5468,19 @@ fn attach_camera_reference_priors(
         let Some(camera) = mapped else {
             continue;
         };
-        if let Some(group) = calibration_groups
+        if let Some(frozen_group) = frozen_calibration_partition
+            .iter()
+            .find(|group| group.camera_entity_ids.contains(&camera.entity_id.0))
+        {
+            entry.camera.calibration_group_id = frozen_group.group_id.clone();
+            entry.camera.intrinsics_policy = calibration_groups
+                .iter()
+                .find(|group| group.entity_id.0 == frozen_group.group_id)
+                .map_or(
+                    himmelcad_core::photolab_gcp_optimization::GcpIntrinsicsPolicy::Fixed,
+                    |group| group.intrinsics_policy,
+                );
+        } else if let Some(group) = calibration_groups
             .iter()
             .find(|group| group.camera_entity_ids.contains(&camera.entity_id))
         {
@@ -6441,6 +6529,69 @@ struct ResolvedProductInputContext {
     gcp_optimization: Option<crate::project_runtime::GcpOptimizationPublicationRecord>,
 }
 
+const MERGED_FRAME_NOT_GEOREFERENCED: &str = "mergedFrameNotGeoreferenced";
+const MERGED_FRAME_NOT_GEOREFERENCED_MESSAGE: &str = "Overlap merges solve in an arbitrary frame. Run GCP optimization on the merged result before building georeferenced products.";
+
+#[derive(Debug)]
+struct ProductInputFailure {
+    code: &'static str,
+    message: &'static str,
+}
+
+impl std::fmt::Display for ProductInputFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.message)
+    }
+}
+
+impl std::error::Error for ProductInputFailure {}
+
+fn ensure_merged_frame_georeferenced(
+    projects: &ProjectRuntime,
+    lineage: &ProductLineage,
+    has_converged_optimization: bool,
+) -> anyhow::Result<()> {
+    let context = projects.compute_context()?;
+    let local_metric = matches!(
+        context.manifest.spatial_reference,
+        PhotolabSpatialReference::LocalMetric { .. }
+    );
+    let Some(entity) = context
+        .manifest
+        .entities
+        .get(&lineage.source_alignment_entity_id.0)
+    else {
+        anyhow::bail!("source alignment entity does not exist");
+    };
+    if local_metric || has_converged_optimization || entity.kind != EntityKind::MergedAlignmentRun {
+        return Ok(());
+    }
+    let merge = projects.alignment_merge_by_entity_id(&lineage.source_alignment_entity_id)?;
+    if merged_frame_needs_optimization(local_metric, &merge.connections, has_converged_optimization)
+    {
+        return Err(anyhow::Error::new(ProductInputFailure {
+            code: MERGED_FRAME_NOT_GEOREFERENCED,
+            message: MERGED_FRAME_NOT_GEOREFERENCED_MESSAGE,
+        }));
+    }
+    Ok(())
+}
+
+fn merged_frame_needs_optimization(
+    local_metric: bool,
+    connections: &[crate::project_runtime::AlignmentMergeConnection],
+    has_converged_optimization: bool,
+) -> bool {
+    !local_metric
+        && !has_converged_optimization
+        && connections.iter().any(|connection| {
+            matches!(
+                connection,
+                crate::project_runtime::AlignmentMergeConnection::Overlap { .. }
+            )
+        })
+}
+
 fn resolve_product_input_context(
     projects: &ProjectRuntime,
     processing_set_id: Option<&EntityId>,
@@ -6488,6 +6639,13 @@ fn resolve_product_inputs_response(
         None,
         &params.gcp_optimization_entity_id,
     )?;
+    if matches!(params.kind.as_str(), "dem" | "ortho") {
+        ensure_merged_frame_georeferenced(
+            projects,
+            &resolved.lineage,
+            resolved.gcp_optimization.is_some(),
+        )?;
+    }
     let context = projects.compute_context()?;
     let alignment_entity = context
         .manifest
@@ -6859,6 +7017,11 @@ fn prepare_raster_product_job(
         params.source_alignment_entity_id.as_ref(),
         required_camera_scope,
         &params.gcp_optimization_entity_id,
+    )?;
+    ensure_merged_frame_georeferenced(
+        projects,
+        &resolved_inputs.lineage,
+        resolved_inputs.gcp_optimization.is_some(),
     )?;
     let alignment = resolved_inputs.alignment;
     let lineage = resolved_inputs.lineage;
@@ -8044,6 +8207,31 @@ where
     rpc_result(id, result)
 }
 
+async fn rpc_blocking_product_with_params<P, T, F>(
+    id: serde_json::Value,
+    params: serde_json::Value,
+    operation: F,
+) -> RpcResponse
+where
+    P: serde::de::DeserializeOwned + Send + 'static,
+    T: Serialize + Send + 'static,
+    F: FnOnce(P) -> anyhow::Result<T> + Send + 'static,
+{
+    match serde_json::from_value::<P>(params) {
+        Ok(params) => {
+            let result = tokio::task::spawn_blocking(move || operation(params))
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(std::convert::identity);
+            match result {
+                Ok(value) => rpc_result(id, Ok(value)),
+                Err(error) => product_rpc_err(id, &error),
+            }
+        }
+        Err(error) => rpc_err(id, -32602, &format!("invalid params: {error}")),
+    }
+}
+
 fn rpc_result<T: Serialize>(id: serde_json::Value, result: anyhow::Result<T>) -> RpcResponse {
     match result {
         Ok(value) => match serde_json::to_value(value) {
@@ -8348,6 +8536,25 @@ fn rpc_err_with_data(
     }
 }
 
+fn product_rpc_err(id: serde_json::Value, error: &anyhow::Error) -> RpcResponse {
+    if let Some(failure) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<ProductInputFailure>())
+    {
+        return rpc_err_with_data(
+            id,
+            -32040,
+            failure.message,
+            serde_json::json!({
+                "code": failure.code,
+                "message": failure.message,
+                "retryable": false,
+            }),
+        );
+    }
+    rpc_err(id, -32000, &error.to_string())
+}
+
 fn rpc_resume_err(id: serde_json::Value, error: &ResumeRpcFailure) -> RpcResponse {
     RpcResponse {
         jsonrpc: "2.0",
@@ -8415,9 +8622,22 @@ fn rpc_automation_err(id: serde_json::Value, message: &str) -> RpcResponse {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc as TestArc, Mutex as TestMutex};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    struct TestLogWriter(TestArc<TestMutex<Vec<u8>>>);
+
+    impl std::io::Write for TestLogWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            std::io::Write::write(&mut *self.0.lock().expect("log buffer"), bytes)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     fn resume_test_job(kind: PhotolabJobKind) -> himmelcad_core::photolab_jobs::PhotolabJob {
         himmelcad_core::photolab_jobs::PhotolabJob::new(NewPhotolabJob {
@@ -8976,6 +9196,81 @@ mod tests {
             Some(&EntityId("set-b".into())),
             &lineage,
         ));
+    }
+
+    #[test]
+    fn merged_gcp_revision_matches_the_exact_merged_product_lineage() {
+        let lineage = test_product_lineage("merged-alignment-a", None);
+        assert!(gcp_revision_matches_product_lineage(
+            Some(&EntityId("merged-alignment-a".into())),
+            None,
+            &lineage,
+        ));
+        assert!(!gcp_revision_matches_product_lineage(
+            Some(&EntityId("alignment-input-a".into())),
+            None,
+            &lineage,
+        ));
+    }
+
+    #[test]
+    fn omitted_gcp_source_logs_the_alignment_run_fallback() {
+        let output = TestArc::new(TestMutex::new(Vec::new()));
+        let writer_output = TestArc::clone(&output);
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(move || TestLogWriter(TestArc::clone(&writer_output)))
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            let error = resolve_gcp_source_alignment(
+                &ProjectRuntime::default(),
+                None,
+                None,
+                "fallback log test",
+            )
+            .expect_err("an unopened project has no fallback alignment");
+            assert!(error.to_string().contains("no project is open"));
+        });
+        let output = String::from_utf8(output.lock().expect("log buffer").clone())
+            .expect("UTF-8 tracing output");
+        assert!(output.contains("omitted sourceAlignmentEntityId"));
+        assert!(output.contains("latest AlignmentRun"));
+    }
+
+    #[test]
+    fn georeferenced_overlap_merge_requires_a_converged_merged_optimization() {
+        use crate::project_runtime::AlignmentMergeConnection;
+
+        let overlap = vec![AlignmentMergeConnection::Overlap {
+            alignment_a: EntityId("alignment-a".into()),
+            alignment_b: EntityId("alignment-b".into()),
+            verified_cross_run_track_count: 12,
+        }];
+        let shared = vec![AlignmentMergeConnection::SharedControls {
+            alignment_a: EntityId("alignment-a".into()),
+            alignment_b: EntityId("alignment-b".into()),
+            control_point_ids: vec!["A".into(), "B".into(), "C".into()],
+        }];
+
+        assert!(merged_frame_needs_optimization(false, &overlap, false));
+        assert!(!merged_frame_needs_optimization(false, &overlap, true));
+        assert!(!merged_frame_needs_optimization(false, &shared, false));
+        assert!(!merged_frame_needs_optimization(true, &overlap, false));
+
+        let response = product_rpc_err(
+            serde_json::json!(7),
+            &anyhow::Error::new(ProductInputFailure {
+                code: MERGED_FRAME_NOT_GEOREFERENCED,
+                message: MERGED_FRAME_NOT_GEOREFERENCED_MESSAGE,
+            }),
+        );
+        let error = response.error.expect("typed product error");
+        assert_eq!(error.code, -32040);
+        assert_eq!(
+            error.data.expect("typed error data")["code"],
+            MERGED_FRAME_NOT_GEOREFERENCED
+        );
     }
 
     #[test]

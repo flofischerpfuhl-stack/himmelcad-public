@@ -26,6 +26,7 @@ use himmelcad_core::geometry_representation_registry::CanonicalRepresentationAdm
 use himmelcad_core::geometry_representation_registry::SectionTopologyPartitionManifest;
 use himmelcad_core::hash::ObjectHash;
 use himmelcad_core::photolab_crs::{CrsDefinition, FrozenImportTransformation};
+use himmelcad_core::photolab_gcp::GcpOptimizationSnapshot;
 use himmelcad_core::photolab_gcp_optimization::GcpIntrinsicsPolicy;
 use himmelcad_core::photolab_images::DjiBrownConradyCalibration;
 use himmelcad_core::photolab_jobs::{
@@ -381,9 +382,14 @@ pub struct MergedAlignmentRunRecord {
     pub input_gcp_optimization_entity_ids: Vec<EntityId>,
     pub connections: Vec<AlignmentMergeConnection>,
     pub camera_entity_ids: Vec<EntityId>,
+    /// Exact union of the immutable input-alignment intrinsics partitions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub calibration_groups: Vec<ColmapCalibrationGroup>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_mask_scope_sha256: Option<ObjectHash>,
     pub lineage_sha256: ObjectHash,
+    #[serde(default)]
+    pub publication_sequence: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dataset_relative_path: Option<String>,
 }
@@ -2667,7 +2673,34 @@ impl ProjectRuntime {
     }
 
     pub fn list_alignment_merges(&self) -> Result<Vec<MergedAlignmentRunRecord>> {
-        self.list_records_of_kind(EntityKind::MergedAlignmentRun)
+        let mut records: Vec<MergedAlignmentRunRecord> =
+            self.list_records_of_kind(EntityKind::MergedAlignmentRun)?;
+        records.sort_by(|left, right| {
+            (left.publication_sequence, &left.entity_id.0)
+                .cmp(&(right.publication_sequence, &right.entity_id.0))
+        });
+        Ok(records)
+    }
+
+    pub fn alignment_merge_by_entity_id(
+        &self,
+        merge_entity_id: &EntityId,
+    ) -> Result<MergedAlignmentRunRecord> {
+        let guard = self.session.lock().expect("project session mutex poisoned");
+        let session = guard.as_ref().context("no project is open")?;
+        let entity = session
+            .manifest
+            .entities
+            .get(&merge_entity_id.0)
+            .with_context(|| format!("unknown alignment merge {}", merge_entity_id.0))?;
+        anyhow::ensure!(
+            entity.kind == EntityKind::MergedAlignmentRun,
+            "selected source is not an alignment merge"
+        );
+        Ok(serde_json::from_slice(&read_verified_object(
+            &session.working_path,
+            &entity.version_hash,
+        )?)?)
     }
 
     pub fn alignment_merge_compute_context(
@@ -2728,39 +2761,14 @@ impl ProjectRuntime {
             .iter()
             .map(|id| id.0.clone())
             .collect::<std::collections::BTreeSet<_>>();
-        let mut calibration_groups = self
-            .list_calibration_groups()?
-            .into_iter()
-            .filter_map(|group| {
-                let camera_entity_ids = group
-                    .camera_entity_ids
-                    .iter()
-                    .filter(|id| union.contains(&id.0))
-                    .map(|id| id.0.clone())
-                    .collect::<Vec<_>>();
-                (!camera_entity_ids.is_empty()).then(|| ColmapCalibrationGroup {
-                    group_id: group.entity_id.0,
-                    camera_entity_ids,
-                    seed: group.initial_calibration.and_then(|seed| {
-                        Some(ColmapCalibrationSeed {
-                            width_pixels: seed.width_pixels,
-                            height_pixels: seed.height_pixels,
-                            focal_pixels: seed.focal_pixels?,
-                            principal_x_pixels: seed.principal_x_pixels?,
-                            principal_y_pixels: seed.principal_y_pixels?,
-                            full_brown_calibration: seed.full_brown_calibration,
-                        })
-                    }),
-                })
-            })
-            .collect::<Vec<_>>();
+        let mut calibration_groups = record.calibration_groups.clone();
         let covered = calibration_groups
             .iter()
             .flat_map(|group| group.camera_entity_ids.iter().cloned())
             .collect::<std::collections::BTreeSet<_>>();
         if covered != union {
-            // Legacy projects did not persist calibration groups. Keeping each independently
-            // solved alignment separate is the conservative, autofocus-safe migration.
+            // Legacy merge plans did not persist the union partition. Keeping each camera
+            // independent is the conservative, autofocus-safe migration.
             calibration_groups = union
                 .iter()
                 .map(|camera_id| ColmapCalibrationGroup {
@@ -2798,6 +2806,7 @@ impl ProjectRuntime {
         let session = guard.as_mut().context("no project is open")?;
         ensure_writable(session)?;
         let mut camera_ids = Vec::new();
+        let mut calibration_groups = Vec::new();
         for input_id in &input_ids {
             let entity = session
                 .manifest
@@ -2817,6 +2826,17 @@ impl ProjectRuntime {
             );
             let dataset = session.working_path.join(&record.dataset_relative_path);
             let input_camera_ids = alignment_camera_scope(&record, &dataset, &session.manifest)?;
+            if record.calibration_groups.is_empty() {
+                calibration_groups.extend(input_camera_ids.iter().map(|camera_id| {
+                    ColmapCalibrationGroup {
+                        group_id: format!("legacy:{camera_id}"),
+                        camera_entity_ids: vec![camera_id.clone()],
+                        seed: None,
+                    }
+                }));
+            } else {
+                calibration_groups.extend(record.calibration_groups);
+            }
             let current_mask_scope =
                 build_image_mask_compute_scope(session, &input_camera_ids, None)?;
             match record.image_mask_scope_sha256.as_ref() {
@@ -2833,6 +2853,38 @@ impl ProjectRuntime {
         }
         camera_ids.sort_by(|left, right| left.0.cmp(&right.0));
         camera_ids.dedup();
+        let mut calibration_group_union = BTreeMap::<String, ColmapCalibrationGroup>::new();
+        for mut group in calibration_groups {
+            group.camera_entity_ids.sort();
+            group.camera_entity_ids.dedup();
+            if let Some(existing) = calibration_group_union.get_mut(&group.group_id) {
+                anyhow::ensure!(
+                    existing.seed == group.seed,
+                    "alignment inputs disagree about the frozen seed for calibration group {}",
+                    group.group_id
+                );
+                existing.camera_entity_ids.extend(group.camera_entity_ids);
+                existing.camera_entity_ids.sort();
+                existing.camera_entity_ids.dedup();
+            } else {
+                calibration_group_union.insert(group.group_id.clone(), group);
+            }
+        }
+        let calibration_groups = calibration_group_union.into_values().collect::<Vec<_>>();
+        let calibration_camera_ids = calibration_groups
+            .iter()
+            .flat_map(|group| group.camera_entity_ids.iter().cloned())
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            calibration_camera_ids.iter().collect::<BTreeSet<_>>().len()
+                == calibration_camera_ids.len()
+                && calibration_camera_ids
+                    .iter()
+                    .cloned()
+                    .collect::<BTreeSet<_>>()
+                    == camera_ids.iter().map(|id| id.0.clone()).collect(),
+            "merged calibration groups must partition the camera union exactly"
+        );
         let image_mask_scope_sha256 = build_image_mask_compute_scope(
             session,
             &camera_ids.iter().map(|id| id.0.clone()).collect::<Vec<_>>(),
@@ -2871,6 +2923,7 @@ impl ProjectRuntime {
             &optimization_ids,
             &params.connections,
             &camera_ids,
+            &calibration_groups,
             &image_mask_scope_sha256,
         ))?);
         let record = MergedAlignmentRunRecord {
@@ -2882,8 +2935,10 @@ impl ProjectRuntime {
             input_gcp_optimization_entity_ids: optimization_ids,
             connections: params.connections,
             camera_entity_ids: camera_ids,
+            calibration_groups,
             image_mask_scope_sha256: Some(image_mask_scope_sha256),
             lineage_sha256,
+            publication_sequence: 0,
             dataset_relative_path: None,
         };
         let version_hash =
@@ -3024,6 +3079,7 @@ impl ProjectRuntime {
         let mut published = context.record;
         published.state = MergedAlignmentState::Published;
         published.connections = published_connections;
+        published.publication_sequence = session.manifest.command_sequence.saturating_add(1);
         published.dataset_relative_path = Some(dataset_relative_path.clone());
         let version_hash =
             put_project_object(&session.working_path, &serde_json::to_vec(&published)?)?;
@@ -3145,6 +3201,7 @@ impl ProjectRuntime {
             .context("failed to atomically publish shared-control alignment dataset")?;
         let mut published = context.record;
         published.state = MergedAlignmentState::Published;
+        published.publication_sequence = session.manifest.command_sequence.saturating_add(1);
         published.dataset_relative_path = Some(dataset_relative_path.clone());
         let version_hash =
             put_project_object(&session.working_path, &serde_json::to_vec(&published)?)?;
@@ -3356,6 +3413,50 @@ impl ProjectRuntime {
             EntityKind::MergedAlignmentRun => Ok(None),
             _ => anyhow::bail!("selected product source is not an alignment"),
         }
+    }
+
+    pub fn calibration_partition_for_alignment(
+        &self,
+        alignment_entity_id: &EntityId,
+    ) -> Result<Vec<ColmapCalibrationGroup>> {
+        let guard = self.session.lock().expect("project session mutex poisoned");
+        let session = guard.as_ref().context("no project is open")?;
+        let entity = session
+            .manifest
+            .entities
+            .get(&alignment_entity_id.0)
+            .with_context(|| format!("unknown source alignment {}", alignment_entity_id.0))?;
+        let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
+        let (mut groups, camera_ids) = match entity.kind {
+            EntityKind::AlignmentRun => {
+                let record: ComputeArtifactRecord = serde_json::from_slice(&bytes)?;
+                (record.calibration_groups, record.camera_entity_ids)
+            }
+            EntityKind::MergedAlignmentRun => {
+                let record: MergedAlignmentRunRecord = serde_json::from_slice(&bytes)?;
+                (
+                    record.calibration_groups,
+                    record
+                        .camera_entity_ids
+                        .into_iter()
+                        .map(|id| id.0)
+                        .collect(),
+                )
+            }
+            _ => anyhow::bail!("selected GCP source is not an alignment"),
+        };
+        if groups.is_empty() {
+            groups = camera_ids
+                .into_iter()
+                .map(|camera_id| ColmapCalibrationGroup {
+                    group_id: format!("legacy:{camera_id}"),
+                    camera_entity_ids: vec![camera_id],
+                    seed: None,
+                })
+                .collect();
+        }
+        groups.sort_by(|left, right| left.group_id.cmp(&right.group_id));
+        Ok(groups)
     }
 
     pub fn latest_alignment_dataset_for_camera_scope(
@@ -5029,6 +5130,11 @@ impl ProjectRuntime {
         let session = guard.as_mut().context("no project is open")?;
         ensure_writable(session)?;
         validate_product_lineage(session, lineage, None)?;
+        anyhow::ensure!(
+            outcome.artifact.source_alignment_entity_id.as_ref()
+                == Some(&lineage.source_alignment_entity_id),
+            "GCP optimization artifact belongs to another source alignment"
+        );
         let products_group =
             unique_entity_of_kind(&session.manifest, EntityKind::Group, "products")?;
         let record = GcpOptimizationPublicationRecord {
@@ -5513,6 +5619,9 @@ impl ProjectRuntime {
     ) -> Result<CreateGcpOptimizationSnapshotResult> {
         let operation_id = params.operation_id.clone();
         self.run_gcp_operation(&operation_id, |session, cancellation| {
+            if let Some(source_alignment_entity_id) = params.source_alignment_entity_id.as_ref() {
+                validate_gcp_source_alignment(session, source_alignment_entity_id)?;
+            }
             create_gcp_optimization_snapshot_transaction(
                 &session.working_path,
                 &mut session.manifest,
@@ -5521,6 +5630,18 @@ impl ProjectRuntime {
             )
             .map_err(anyhow::Error::from)
         })
+    }
+
+    pub fn gcp_optimization_snapshot(
+        &self,
+        snapshot_sha256: &ObjectHash,
+    ) -> Result<GcpOptimizationSnapshot> {
+        let guard = self.session.lock().expect("project session mutex poisoned");
+        let session = guard.as_ref().context("no project is open")?;
+        Ok(serde_json::from_slice(&read_verified_object(
+            &session.working_path,
+            snapshot_sha256,
+        )?)?)
     }
 
     pub fn cancel_gcp_operation(
@@ -6965,6 +7086,44 @@ fn gcp_publication_order(
 ) -> std::cmp::Ordering {
     (left.optimization.publication_sequence, &left.entity_id.0)
         .cmp(&(right.optimization.publication_sequence, &right.entity_id.0))
+}
+
+fn validate_gcp_source_alignment(
+    session: &ProjectSession,
+    source_alignment_entity_id: &EntityId,
+) -> Result<()> {
+    let entity = session
+        .manifest
+        .entities
+        .get(&source_alignment_entity_id.0)
+        .with_context(|| {
+            format!(
+                "unknown GCP optimization source alignment {}",
+                source_alignment_entity_id.0
+            )
+        })?;
+    let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
+    match entity.kind {
+        EntityKind::AlignmentRun => {
+            let record: ComputeArtifactRecord = serde_json::from_slice(&bytes)
+                .context("GCP optimization source is not a sparse alignment record")?;
+            anyhow::ensure!(
+                record.artifact.kind == ColmapArtifactKind::SparseModel,
+                "GCP optimization source is not a sparse alignment"
+            );
+        }
+        EntityKind::MergedAlignmentRun => {
+            let record: MergedAlignmentRunRecord = serde_json::from_slice(&bytes)
+                .context("GCP optimization source is not a merged alignment record")?;
+            anyhow::ensure!(
+                record.state == MergedAlignmentState::Published
+                    && record.dataset_relative_path.is_some(),
+                "GCP optimization needs a published merged alignment"
+            );
+        }
+        _ => anyhow::bail!("GCP optimization source is not an alignment"),
+    }
+    Ok(())
 }
 
 fn validate_product_lineage(
@@ -10898,6 +11057,162 @@ mod tests {
             .expect_err("mismatched camera membership must fail")
             .to_string()
             .contains("exactly matches processing set"));
+        runtime.close().expect("close");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn explicit_gcp_source_resolves_published_merge_and_pins_snapshot_lineage() {
+        let root = temp_test_dir("merged-gcp-source");
+        let runtime = ProjectRuntime::default();
+        runtime
+            .create(CreateProjectParams {
+                path: path_string(&root.join("project.hcad")),
+                name: "Merged GCP source".into(),
+            })
+            .expect("project");
+        let (merge_id, alignment_id) = {
+            let mut guard = runtime.session.lock().expect("session");
+            let session = guard.as_mut().expect("open");
+            let images =
+                unique_entity_of_kind(&session.manifest, EntityKind::ImageCollection, "images")
+                    .expect("images");
+            let cameras =
+                ["a", "b", "c"].map(|suffix| insert_test_camera(session, &images, suffix, []));
+            let alignment_a = insert_test_alignment(session, "source-a", 1, &cameras[..2]);
+            let alignment_b = insert_test_alignment(session, "source-b", 2, &cameras[1..]);
+            let dataset_relative_path = "datasets/alignment-merges/merged-gcp";
+            let dataset = session.working_path.join(dataset_relative_path);
+            fs::create_dir_all(dataset.join("sparse-aligned")).expect("merged model");
+            for name in ["cameras.txt", "images.txt", "points3D.txt"] {
+                fs::write(dataset.join("sparse-aligned").join(name), "# fixture\n")
+                    .expect("merged COLMAP table");
+            }
+            fs::write(dataset.join("camera-map.json"), "[]").expect("camera map");
+            let camera_ids = cameras.iter().map(|id| id.0.clone()).collect::<Vec<_>>();
+            let mask_scope =
+                build_image_mask_compute_scope(session, &camera_ids, None).expect("mask scope");
+            let merge_id = EntityId(format!(
+                "{}:alignment-merge:published",
+                session.manifest.project_id
+            ));
+            let record = MergedAlignmentRunRecord {
+                schema_version: 1,
+                entity_id: merge_id.clone(),
+                name: "Published overlap merge".into(),
+                state: MergedAlignmentState::Published,
+                input_alignment_entity_ids: vec![alignment_a.clone(), alignment_b],
+                input_gcp_optimization_entity_ids: Vec::new(),
+                connections: vec![AlignmentMergeConnection::Overlap {
+                    alignment_a: alignment_a.clone(),
+                    alignment_b: EntityId(format!(
+                        "{}:alignment:source-b",
+                        session.manifest.project_id
+                    )),
+                    verified_cross_run_track_count: 12,
+                }],
+                camera_entity_ids: cameras.to_vec(),
+                calibration_groups: cameras
+                    .iter()
+                    .map(|camera| ColmapCalibrationGroup {
+                        group_id: format!("group:{}", camera.0),
+                        camera_entity_ids: vec![camera.0.clone()],
+                        seed: None,
+                    })
+                    .collect(),
+                image_mask_scope_sha256: Some(mask_scope.scope_sha256),
+                lineage_sha256: ObjectHash::of_bytes(b"merged-lineage"),
+                publication_sequence: 3,
+                dataset_relative_path: Some(dataset_relative_path.into()),
+            };
+            let version_hash = put_project_object(
+                &session.working_path,
+                &serde_json::to_vec(&record).expect("merge JSON"),
+            )
+            .expect("merge object");
+            session.manifest.entities.insert(
+                merge_id.0.clone(),
+                EntitySnapshot {
+                    id: merge_id.clone(),
+                    kind: EntityKind::MergedAlignmentRun,
+                    name: record.name,
+                    parent: None,
+                    children: Vec::new(),
+                    visibility: VisibilityState::default(),
+                    version_hash,
+                    bounds: None,
+                },
+            );
+            (merge_id, alignment_a)
+        };
+
+        let merged = runtime
+            .alignment_dataset_by_entity_id(&merge_id, None)
+            .expect("published merged dataset");
+        assert_eq!(merged.source_alignment_entity_id, merge_id);
+        assert!(merged
+            .root
+            .ends_with("datasets/alignment-merges/merged-gcp"));
+        assert_eq!(
+            runtime
+                .calibration_partition_for_alignment(&merge_id)
+                .expect("frozen merged calibration partition")
+                .len(),
+            3
+        );
+
+        let snapshot = runtime
+            .create_gcp_optimization_snapshot(CreateGcpOptimizationSnapshotParams {
+                operation_id: "merged-source-snapshot".into(),
+                source_alignment_entity_id: Some(merge_id.clone()),
+                expected_collection_sha256: None,
+                scope: himmelcad_core::photolab_gcp::GcpOptimizationScope {
+                    label: "Published overlap merge · 3 cameras".into(),
+                    point_ids: Vec::new(),
+                    camera_reference_image_ids: vec![
+                        himmelcad_core::photolab_matching::ImageId(1),
+                        himmelcad_core::photolab_matching::ImageId(2),
+                        himmelcad_core::photolab_matching::ImageId(3),
+                    ],
+                },
+                role_overrides: BTreeMap::new(),
+            })
+            .expect("merged source snapshot");
+        assert_eq!(snapshot.source_alignment_entity_id, Some(merge_id.clone()));
+        assert_eq!(
+            snapshot.residual_scope.source_alignment_entity_id,
+            Some(merge_id.clone())
+        );
+        assert_eq!(
+            runtime
+                .gcp_optimization_snapshot(&snapshot.snapshot_sha256)
+                .expect("stored snapshot")
+                .source_alignment_entity_id,
+            Some(merge_id)
+        );
+
+        let alignment_snapshot = runtime
+            .create_gcp_optimization_snapshot(CreateGcpOptimizationSnapshotParams {
+                operation_id: "alignment-source-snapshot".into(),
+                source_alignment_entity_id: Some(alignment_id.clone()),
+                expected_collection_sha256: None,
+                scope: himmelcad_core::photolab_gcp::GcpOptimizationScope {
+                    label: "Explicit alignment".into(),
+                    point_ids: Vec::new(),
+                    camera_reference_image_ids: vec![
+                        himmelcad_core::photolab_matching::ImageId(1),
+                        himmelcad_core::photolab_matching::ImageId(2),
+                        himmelcad_core::photolab_matching::ImageId(3),
+                    ],
+                },
+                role_overrides: BTreeMap::new(),
+            })
+            .expect("explicit AlignmentRun snapshot");
+        assert_eq!(
+            alignment_snapshot.source_alignment_entity_id,
+            Some(alignment_id)
+        );
+
         runtime.close().expect("close");
         fs::remove_dir_all(root).expect("cleanup");
     }

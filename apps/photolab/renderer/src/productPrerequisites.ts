@@ -4,6 +4,7 @@ export type ProductPrerequisiteArtifact = 'depth' | 'depthReuse' | 'dense' | 'de
 
 export interface ProductPrerequisiteStatus {
   hasPublishedAlignment: boolean;
+  mergedFrameGeoreferenced: boolean;
   availableArtifacts: ReadonlySet<ProductPrerequisiteArtifact>;
   externalDemBound: boolean;
   meshSourceKinds: readonly Extract<ProductPrerequisiteArtifact, 'dem' | 'dense'>[];
@@ -25,6 +26,13 @@ export function evaluateProductPrerequisites(
       'Products need a published sparse alignment.',
       'Run an alignment first',
       'alignment.run',
+    );
+  }
+  if ((kind === 'dem' || kind === 'ortho') && !status.mergedFrameGeoreferenced) {
+    return missing(
+      'Overlap merges solve in an arbitrary frame. Run GCP optimization on the merged result before building georeferenced products.',
+      'Optimize merged alignment',
+      'alignment.optimize',
     );
   }
   if (kind === 'depth' || kind === 'splat') return { met: true };
