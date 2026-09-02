@@ -1112,9 +1112,23 @@ async fn acquire_compute_lease(cancellation: &CancellationToken) -> io::Result<O
 }
 
 fn compute_lease_path() -> PathBuf {
-    std::env::var_os("HIMMELCAD_COMPUTE_LEASE_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("himmelcad-photolab-compute.lock"))
+    if let Some(path) = std::env::var_os("HIMMELCAD_COMPUTE_LEASE_PATH") {
+        return PathBuf::from(path);
+    }
+    // Test processes must never queue behind a real sidecar's machine-wide
+    // lease: on 2026-09-02 a running golden e2e sidecar held the shared lock and
+    // every bounded cancellation timing test timed out before its worker could
+    // spawn. `cfg(test)` covers the library's own tests; the binary's test
+    // harness links the non-test library, so also recognise the runtime
+    // environment cargo sets for `cargo test`/`cargo run` processes (a packaged
+    // sidecar launched by Electron never carries `CARGO_MANIFEST_DIR`).
+    if cfg!(test) || std::env::var_os("CARGO_MANIFEST_DIR").is_some() {
+        return std::env::temp_dir().join(format!(
+            "himmelcad-photolab-compute-test-{}.lock",
+            std::process::id()
+        ));
+    }
+    std::env::temp_dir().join("himmelcad-photolab-compute.lock")
 }
 
 fn publish(managed: &ManagedJob) {

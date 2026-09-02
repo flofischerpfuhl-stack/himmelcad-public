@@ -87,6 +87,17 @@ export interface ProcessingReportCalibrationGroup {
   sigmas: ReportIntrinsics | null;
   correlation: readonly (readonly number[])[] | null;
   uncertaintyNote: string;
+  radialResidualProfile?: {
+    before: readonly ProcessingReportRadialResidualBin[];
+    after: readonly ProcessingReportRadialResidualBin[];
+  } | null;
+}
+
+export interface ProcessingReportRadialResidualBin {
+  radiusStart: number;
+  radiusEnd: number;
+  meanAbsoluteResidualPixels?: number;
+  count: number;
 }
 
 export interface ProcessingReportGcpResidual {
@@ -220,16 +231,68 @@ function cameraCalibrationSection(
           const correlation = group.correlation
             ? stableJson(group.correlation)
             : `Not available · ${group.uncertaintyNote}`;
-          return `<tr><td><strong>${escapeHtml(group.groupId)}</strong><small>${escapeHtml(alignment.name)} · ${formatInteger(group.imageCount)} images</small></td>${values}<td>${escapeHtml(correlation)}</td></tr>`;
+          const provenance = alignment.gcpOptimizationEntityId
+            ? `${alignment.gcpOptimizationEntityId} · ${alignment.gcpOptimizationSnapshotSha256?.slice(0, 8) ?? 'hash unavailable'}`
+            : 'No converged GCP optimization provenance';
+          const profile = group.radialResidualProfile
+            ? calibrationRadialProfileSvg(group.radialResidualProfile)
+            : '<span class="empty">Radial residual profile unavailable.</span>';
+          return `<tr><td><strong>${escapeHtml(group.groupId)}</strong><small>${escapeHtml(alignment.name)} · ${formatInteger(group.imageCount)} images</small><small>${escapeHtml(provenance)}</small></td>${values}<td>${escapeHtml(correlation)}</td><td>${profile}</td></tr>`;
         }),
     )
     .join('');
   return section(
     'Camera calibration per group',
     rows
-      ? `<p class="note">Values are seed → solved. Parameters are marked refined only when the converged GCP snapshot records them as effective.</p><table><thead><tr><th>Group</th>${parameterNames.map((name) => `<th>${name}</th>`).join('')}<th>Sigmas / correlation</th></tr></thead><tbody>${rows}</tbody></table>`
+      ? `<p class="note">Values are seed → solved. Parameters are marked refined only when the converged GCP snapshot records them as effective.</p><table><thead><tr><th>Group</th>${parameterNames.map((name) => `<th>${name}</th>`).join('')}<th>Sigmas / correlation</th><th>Radial residuals</th></tr></thead><tbody>${rows}</tbody></table>`
       : '<p class="empty">No frozen calibration groups were recorded.</p>',
   );
+}
+
+// X6-tunable plot dimensions keep the eight-bin evidence readable in both the
+// right panel and the landscape report without suggesting sub-bin precision.
+const CALIBRATION_PROFILE_WIDTH = 180;
+const CALIBRATION_PROFILE_HEIGHT = 72;
+// X6-tunable shading range preserves legible matrix labels at r=0 while making
+// |r|=1 visually dominant using only design-system color tokens.
+const CALIBRATION_HEATMAP_MIN_PERCENT = 8;
+const CALIBRATION_HEATMAP_RANGE_PERCENT = 72;
+
+export function calibrationHeatmapShadePercent(correlation: number): number {
+  const magnitude = Number.isFinite(correlation) ? Math.min(1, Math.abs(correlation)) : 0;
+  return CALIBRATION_HEATMAP_MIN_PERCENT + magnitude * CALIBRATION_HEATMAP_RANGE_PERCENT;
+}
+
+export function calibrationRadialBinPoints(
+  bins: readonly ProcessingReportRadialResidualBin[],
+  maximumResidual: number,
+  width = CALIBRATION_PROFILE_WIDTH,
+  height = CALIBRATION_PROFILE_HEIGHT,
+): string {
+  const usableMaximum =
+    Number.isFinite(maximumResidual) && maximumResidual > 0 ? maximumResidual : 1;
+  return bins
+    .map((bin, index) => {
+      const x = bins.length <= 1 ? width / 2 : (index / (bins.length - 1)) * width;
+      const residual = bin.meanAbsoluteResidualPixels ?? 0;
+      const y = height - (Math.min(usableMaximum, Math.max(0, residual)) / usableMaximum) * height;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(' ');
+}
+
+function calibrationRadialProfileSvg(profile: {
+  before: readonly ProcessingReportRadialResidualBin[];
+  after: readonly ProcessingReportRadialResidualBin[];
+}): string {
+  const maximum = Math.max(
+    1e-12,
+    ...profile.before.map((bin) => bin.meanAbsoluteResidualPixels ?? 0),
+    ...profile.after.map((bin) => bin.meanAbsoluteResidualPixels ?? 0),
+  );
+  const before = calibrationRadialBinPoints(profile.before, maximum);
+  const after = calibrationRadialBinPoints(profile.after, maximum);
+  return `<svg class="calibration-profile" viewBox="0 0 ${CALIBRATION_PROFILE_WIDTH} ${CALIBRATION_PROFILE_HEIGHT}" role="img" aria-label="Radial reprojection residuals before and after optimization"><polyline class="before" points="${before}"/><polyline class="after" points="${after}"/><title>Before and after mean absolute reprojection residual by center-to-corner bin; maximum ${escapeHtml(formatNumber(maximum, 3))} px</title></svg><small>Before · after · max ${escapeHtml(formatNumber(maximum, 3))} px</small>`;
 }
 
 function processingParametersSection(
@@ -747,4 +810,4 @@ function escapeHtml(value: string): string {
 }
 
 const REPORT_CSS = `
-:root{--report-control:#238be6;--report-check:#d97706;--report-map-bg:#f6f9fc}@page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{margin:0;background:#fff;color:#18202d;font:11px system-ui,-apple-system,"Segoe UI",sans-serif}header{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding:0 0 14px;border-bottom:3px solid #238be6}h1{margin:0;font-size:26px}header p{margin:4px 0 0;color:#5c6979}.eyebrow{color:#087dcc;font:700 9px ui-monospace,monospace;letter-spacing:.18em}.summary{text-align:right;line-height:1.7}section{margin-top:18px}h2{margin:0 0 8px;padding-bottom:4px;border-bottom:1px solid #b8c7d8;font-size:16px}.annex{margin-top:26px;padding:7px;background:#eaf2f9;border-top:2px solid #238be6;font-size:18px}h3{margin:12px 0 6px;font-size:12px}table{width:100%;border-collapse:collapse;font-size:8px;table-layout:auto}th,td{padding:4px 5px;border:1px solid #cbd5e0;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{background:#eaf2f9;color:#34465a}td small{display:block;margin-top:2px;color:#66768a}code{display:block;font:7.5px ui-monospace,"Cascadia Mono",monospace;overflow-wrap:anywhere}dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:3px 12px;margin:0}dt{color:#617085}dd{margin:0;font-weight:600}.cards{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}.card{padding:9px;border:1px solid #cbd5e0;border-radius:5px;background:#f6f9fc}.card h3{margin-top:0}.optimization{break-before:auto;margin-top:14px;padding-top:2px}.note{color:#617085}.empty{color:#68778a;font-style:italic}.failure{color:#b42318}.residual-map{display:block;width:100%;height:auto;border:1px solid #cbd5e0}.residual-map text{fill:#34465a;font:9px system-ui,sans-serif}.residual-map .scale line{stroke:#34465a;stroke-width:2}footer{margin-top:22px;padding-top:8px;border-top:1px solid #cbd5e0;color:#617085;font-size:9px}`;
+:root{--report-control:#238be6;--report-check:#d97706;--report-map-bg:#f6f9fc}@page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{margin:0;background:#fff;color:#18202d;font:11px system-ui,-apple-system,"Segoe UI",sans-serif}header{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding:0 0 14px;border-bottom:3px solid #238be6}h1{margin:0;font-size:26px}header p{margin:4px 0 0;color:#5c6979}.eyebrow{color:#087dcc;font:700 9px ui-monospace,monospace;letter-spacing:.18em}.summary{text-align:right;line-height:1.7}section{margin-top:18px}h2{margin:0 0 8px;padding-bottom:4px;border-bottom:1px solid #b8c7d8;font-size:16px}.annex{margin-top:26px;padding:7px;background:#eaf2f9;border-top:2px solid #238be6;font-size:18px}h3{margin:12px 0 6px;font-size:12px}table{width:100%;border-collapse:collapse;font-size:8px;table-layout:auto}th,td{padding:4px 5px;border:1px solid #cbd5e0;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{background:#eaf2f9;color:#34465a}td small{display:block;margin-top:2px;color:#66768a}code{display:block;font:7.5px ui-monospace,"Cascadia Mono",monospace;overflow-wrap:anywhere}dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:3px 12px;margin:0}dt{color:#617085}dd{margin:0;font-weight:600}.cards{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}.card{padding:9px;border:1px solid #cbd5e0;border-radius:5px;background:#f6f9fc}.card h3{margin-top:0}.optimization{break-before:auto;margin-top:14px;padding-top:2px}.note{color:#617085}.empty{color:#68778a;font-style:italic}.failure{color:#b42318}.residual-map{display:block;width:100%;height:auto;border:1px solid #cbd5e0}.residual-map text{fill:#34465a;font:9px system-ui,sans-serif}.residual-map .scale line{stroke:#34465a;stroke-width:2}.calibration-profile{display:block;width:180px;max-width:100%;height:auto;border-bottom:1px solid #cbd5e0}.calibration-profile polyline{fill:none;stroke-width:2}.calibration-profile .before{stroke:#d97706}.calibration-profile .after{stroke:#238be6}footer{margin-top:22px;padding-top:8px;border-top:1px solid #cbd5e0;color:#617085;font-size:9px}`;

@@ -279,6 +279,47 @@ export interface GcpIntrinsicsGroupDiagnostics {
   }[];
 }
 
+export type GcpIntrinsicParameterName = 'f' | 'cx' | 'cy' | 'k1' | 'k2' | 'k3' | 'p1' | 'p2';
+
+export interface GcpCalibrationParameterEstimate {
+  name: GcpIntrinsicParameterName;
+  seedValue: number;
+  solvedValue: number;
+  delta: number;
+}
+
+export interface GcpCalibrationUncertainty {
+  sigma0Squared: number;
+  degreesOfFreedom: number;
+  sigmas: number[];
+  correlation: number[][];
+}
+
+export interface GcpRadialResidualBin {
+  radiusStart: number;
+  radiusEnd: number;
+  meanAbsoluteResidualPixels?: number;
+  count: number;
+}
+
+export interface GcpCalibrationGroupReport {
+  calibrationGroupId: string;
+  parameters: GcpCalibrationParameterEstimate[];
+  uncertainty?: GcpCalibrationUncertainty;
+  uncertaintyReason?: string;
+  radialResidualProfile: {
+    before: GcpRadialResidualBin[];
+    after: GcpRadialResidualBin[];
+  };
+}
+
+export interface GcpCalibrationReport {
+  optimizationEntityId: EntityId;
+  optimizationSnapshotSha256: ObjectHash;
+  artifactSha256: ObjectHash;
+  groups: GcpCalibrationGroupReport[];
+}
+
 export interface CameraCalibrationGroupRecord {
   schemaVersion: 1 | 2;
   entityId: EntityId;
@@ -1168,6 +1209,7 @@ export interface GcpOptimizationPublicationRecord {
         centerWorldMeters: [number, number, number];
       }[];
       intrinsicsDiagnostics?: GcpIntrinsicsGroupDiagnostics[];
+      calibrationReports?: GcpCalibrationGroupReport[];
       residuals: {
         pointId: string;
         role: Exclude<GcpRole, 'disabled'>;

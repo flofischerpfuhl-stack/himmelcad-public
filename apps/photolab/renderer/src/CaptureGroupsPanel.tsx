@@ -3,6 +3,8 @@ import type {
   CaptureGroupRecord,
   CameraCalibrationSeed,
   EntityId,
+  GcpCalibrationGroupReport,
+  GcpCalibrationReport,
   GcpIntrinsicParameterMask,
   GcpIntrinsicsGroupDiagnostics,
   GcpIntrinsicsPolicy,
@@ -23,6 +25,7 @@ import {
   type LabCalibrationParameter,
   validateLabCalibration,
 } from './labCalibration.js';
+import { calibrationHeatmapShadePercent, calibrationRadialBinPoints } from './processingReport.js';
 
 const HELP_SESSION_KEY = 'photolab.capture-groups.help-open';
 
@@ -77,6 +80,10 @@ export function CaptureGroupsPanel({
   ]);
   const [assignments, setAssignments] = useState<Readonly<Record<EntityId, number>>>({});
   const [labForms, setLabForms] = useState<Readonly<Record<number, LabCalibrationFormValues>>>({});
+  const [calibrationReport, setCalibrationReport] = useState<GcpCalibrationReport | null>(null);
+  const [calibrationReportState, setCalibrationReportState] = useState<
+    'loading' | 'ready' | 'unavailable' | 'failed'
+  >('loading');
   const [helpOpen, setHelpOpen] = useState(() => {
     try {
       return sessionStorage.getItem(HELP_SESSION_KEY) === 'true';
@@ -85,6 +92,30 @@ export function CaptureGroupsPanel({
     }
   });
   const selectionKey = selectedCameras.map((camera) => camera.entityId).join('\u0000');
+  const calibrationEvidenceKey = [
+    ...calibrationGroups.map((group) => group.entityId),
+    ...intrinsicsDiagnostics.map(
+      (diagnostic) => `${diagnostic.calibrationGroupId}:${diagnostic.observationCount}`,
+    ),
+  ].join('\u0000');
+  useEffect(() => {
+    let current = true;
+    setCalibrationReportState('loading');
+    void queryCalibrationReport()
+      .then((report) => {
+        if (!current) return;
+        setCalibrationReport(report);
+        setCalibrationReportState(report ? 'ready' : 'unavailable');
+      })
+      .catch(() => {
+        if (!current) return;
+        setCalibrationReport(null);
+        setCalibrationReportState('failed');
+      });
+    return () => {
+      current = false;
+    };
+  }, [calibrationEvidenceKey]);
   useEffect(() => {
     const selectedIds = selectionKey.split('\u0000').filter(Boolean) as EntityId[];
     setAssignments(
@@ -443,6 +474,15 @@ export function CaptureGroupsPanel({
                       )}
                       onChange={(policy) => onUpdateIntrinsics(calibration.entityId, policy)}
                     />
+                    <CalibrationInspector
+                      groupId={calibration.entityId}
+                      report={calibrationReport?.groups.find(
+                        (item) => item.calibrationGroupId === calibration.entityId,
+                      )}
+                      state={calibrationReportState}
+                      optimizationEntityId={calibrationReport?.optimizationEntityId}
+                      snapshotSha256={calibrationReport?.optimizationSnapshotSha256}
+                    />
                     <details>
                       <summary>Show assigned images</summary>
                       <div className={styles.assignedImages}>
@@ -462,6 +502,139 @@ export function CaptureGroupsPanel({
       </section>
     </div>
   );
+}
+
+function queryCalibrationReport(): Promise<GcpCalibrationReport | null> {
+  const api = window.himmelcad;
+  if (!api) return Promise.reject(new Error('PhotoLab RPC bridge unavailable'));
+  // Read-only query over the immutable optimization artifact; admitted by the
+  // Electron method allowlist and the P11 row `photolab.gcp.calibration_report`.
+  return api.sidecar.call<GcpCalibrationReport | null>('photolab.gcp.calibrationReport', {});
+}
+
+function CalibrationInspector({
+  groupId,
+  report,
+  state,
+  optimizationEntityId,
+  snapshotSha256,
+}: {
+  groupId: EntityId;
+  report: GcpCalibrationGroupReport | undefined;
+  state: 'loading' | 'ready' | 'unavailable' | 'failed';
+  optimizationEntityId: EntityId | undefined;
+  snapshotSha256: string | undefined;
+}): JSX.Element {
+  const uncertainty = report?.uncertainty;
+  const profile = report?.radialResidualProfile;
+  const maximumResidual = profile
+    ? Math.max(
+        1e-12,
+        ...profile.before.map((bin) => bin.meanAbsoluteResidualPixels ?? 0),
+        ...profile.after.map((bin) => bin.meanAbsoluteResidualPixels ?? 0),
+      )
+    : 1;
+  return (
+    <details className={styles.calibrationInspector}>
+      <summary>Calibration</summary>
+      {state === 'loading' && <small>Loading calibration evidence…</small>}
+      {state === 'failed' && <small>Calibration evidence could not be loaded.</small>}
+      {state === 'unavailable' && <small>Sigmas need a converged GCP optimization.</small>}
+      {state === 'ready' && !report && (
+        <small>No calibration evidence was recorded for this group.</small>
+      )}
+      {report && (
+        <>
+          {report.parameters.length ? (
+            <table className={styles.parameterTable}>
+              <thead>
+                <tr>
+                  <th>Parameter</th>
+                  <th>Seed</th>
+                  <th>Solved</th>
+                  <th>Δ</th>
+                  <th>σ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.parameters.map((parameter, index) => (
+                  <tr key={parameter.name}>
+                    <th>{parameter.name}</th>
+                    <td>{formatCalibrationValue(parameter.seedValue)}</td>
+                    <td>{formatCalibrationValue(parameter.solvedValue)}</td>
+                    <td>{formatCalibrationValue(parameter.delta)}</td>
+                    <td>{uncertainty ? formatCalibrationValue(uncertainty.sigmas[index]) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <small>No intrinsic parameters were refined for this group.</small>
+          )}
+          {uncertainty ? (
+            <div>
+              <small>
+                Correlation · σ₀² {formatCalibrationValue(uncertainty.sigma0Squared)} ·{' '}
+                {uncertainty.degreesOfFreedom} degrees of freedom
+              </small>
+              <div
+                className={styles.correlationGrid}
+                style={{
+                  gridTemplateColumns: `repeat(${report.parameters.length}, minmax(24px, 1fr))`,
+                }}
+                aria-label={`Intrinsic parameter correlation matrix for ${groupId}`}
+              >
+                {uncertainty.correlation.flatMap((row, rowIndex) =>
+                  row.map((value, columnIndex) => (
+                    <span
+                      key={`${rowIndex}-${columnIndex}`}
+                      title={`${report.parameters[rowIndex]?.name ?? rowIndex} × ${report.parameters[columnIndex]?.name ?? columnIndex}: ${value.toFixed(4)}`}
+                      style={{
+                        background: `color-mix(in srgb, var(--hc-accent, var(--hc-fg-default)) ${calibrationHeatmapShadePercent(value).toFixed(1)}%, var(--hc-bg-island-lo))`,
+                      }}
+                    >
+                      {value.toFixed(2)}
+                    </span>
+                  )),
+                )}
+              </div>
+            </div>
+          ) : (
+            <small>{report.uncertaintyReason ?? 'Sigmas need a converged GCP optimization.'}</small>
+          )}
+          {profile && (
+            <div className={styles.radialProfile}>
+              <small>Mean absolute reprojection residual · center → corner</small>
+              <svg
+                viewBox="0 0 180 72"
+                role="img"
+                aria-label="Radial residual profile before and after optimization"
+              >
+                <polyline
+                  className={styles.profileBefore}
+                  points={calibrationRadialBinPoints(profile.before, maximumResidual)}
+                />
+                <polyline
+                  className={styles.profileAfter}
+                  points={calibrationRadialBinPoints(profile.after, maximumResidual)}
+                />
+              </svg>
+              <small>Before · after · max {formatCalibrationValue(maximumResidual)} px</small>
+            </div>
+          )}
+          <small className={styles.provenance} title={snapshotSha256}>
+            {optimizationEntityId ?? 'Optimization unavailable'} ·{' '}
+            {snapshotSha256?.slice(0, 8) ?? 'hash unavailable'}
+          </small>
+        </>
+      )}
+    </details>
+  );
+}
+
+function formatCalibrationValue(value: number | undefined): string {
+  if (value === undefined || !Number.isFinite(value)) return '—';
+  return value.toLocaleString('en-US', { maximumSignificantDigits: 7 });
 }
 
 function LabCalibrationEditor({

@@ -29,7 +29,9 @@ use himmelcad_core::hash::ObjectHash;
 use himmelcad_core::photolab::AlignmentQualityProfile;
 use himmelcad_core::photolab_crs::{CrsDefinition, FrozenImportTransformation};
 use himmelcad_core::photolab_gcp::GcpOptimizationSnapshot;
-use himmelcad_core::photolab_gcp_optimization::GcpIntrinsicsPolicy;
+use himmelcad_core::photolab_gcp_optimization::{
+    GcpIntrinsicParameter, GcpIntrinsicsPolicy, GcpRadialResidualProfile,
+};
 use himmelcad_core::photolab_images::{DjiBrownConradyCalibration, ImageDimensions};
 use himmelcad_core::photolab_jobs::{
     CancellationToken, PhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState,
@@ -878,6 +880,16 @@ pub struct PublishedGcpOptimizationEntry {
     pub optimization: GcpOptimizationPublicationRecord,
 }
 
+/// Read-only calibration evidence projection for one converged optimization.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GcpCalibrationReport {
+    pub optimization_entity_id: EntityId,
+    pub optimization_snapshot_sha256: ObjectHash,
+    pub artifact_sha256: ObjectHash,
+    pub groups: Vec<himmelcad_core::photolab_gcp_optimization::GcpCalibrationGroupReport>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MeshArtifactRecord {
@@ -1201,6 +1213,7 @@ pub struct ProcessingReportCalibrationGroup {
     pub sigmas: Option<ProcessingReportIntrinsics>,
     pub correlation: Option<Vec<Vec<f64>>>,
     pub uncertainty_note: String,
+    pub radial_residual_profile: Option<GcpRadialResidualProfile>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -5351,6 +5364,31 @@ impl ProjectRuntime {
         }
         records.sort_by(gcp_publication_order);
         Ok(records)
+    }
+
+    pub fn gcp_calibration_report(
+        &self,
+        optimization_entity_id: Option<&EntityId>,
+    ) -> Result<Option<GcpCalibrationReport>> {
+        let entry = if let Some(entity_id) = optimization_entity_id {
+            let entry = self.gcp_optimization_entry_by_entity_id(entity_id)?;
+            anyhow::ensure!(
+                entry.optimization.artifact.result.converged,
+                "GCP calibration report requires a converged optimization"
+            );
+            Some(entry)
+        } else {
+            self.list_gcp_optimizations()?
+                .into_iter()
+                .filter(|entry| entry.optimization.artifact.result.converged)
+                .max_by(gcp_publication_order)
+        };
+        Ok(entry.map(|entry| GcpCalibrationReport {
+            optimization_entity_id: entry.entity_id,
+            optimization_snapshot_sha256: entry.optimization.snapshot_sha256,
+            artifact_sha256: entry.optimization.artifact_sha256,
+            groups: entry.optimization.artifact.result.calibration_reports,
+        }))
     }
 
     pub fn latest_gcp_optimization_entry_for_lineage(
@@ -10303,10 +10341,10 @@ fn build_processing_report_alignment(
     groups: &[ColmapCalibrationGroup],
     deltas: &[CalibrationGroupIntrinsicsDelta],
 ) -> Result<ProcessingReportAlignmentSurveyData> {
-    let optimization = optimizations
-        .iter()
-        .rev()
-        .find(|(_, record)| record.source_alignment_entity_id.as_ref() == Some(&entity_id));
+    let optimization = optimizations.iter().rev().find(|(_, record)| {
+        record.source_alignment_entity_id.as_ref() == Some(&entity_id)
+            && record.artifact.result.converged
+    });
     let result = optimization.map(|(_, record)| &record.artifact.result);
     let sparse_points = result.map_or(&[][..], |result| result.tie_points.as_slice());
     let footprint_bbox = point_footprint_bbox(
@@ -10341,6 +10379,12 @@ fn build_processing_report_alignment(
                     .iter()
                     .find(|item| item.calibration_group_id == group.group_id)
             });
+            let calibration_report = result.and_then(|result| {
+                result
+                    .calibration_reports
+                    .iter()
+                    .find(|item| item.calibration_group_id == group.group_id)
+            });
             let cameras = result
                 .map(|result| {
                     result
@@ -10355,14 +10399,18 @@ fn build_processing_report_alignment(
                 .as_ref()
                 .map(report_intrinsics_from_seed)
                 .unwrap_or_default();
-            seed.f = seed.f.or_else(|| delta.and_then(|item| item.seed_focal_pixels));
+            seed.f = seed
+                .f
+                .or_else(|| delta.and_then(|item| item.seed_focal_pixels));
             let mut solved = if cameras.is_empty() {
                 ProcessingReportIntrinsics::default()
             } else {
                 ProcessingReportIntrinsics {
-                    f: mean(cameras.iter().map(|camera| {
-                        (camera.focal_x_pixels + camera.focal_y_pixels) * 0.5
-                    })),
+                    f: mean(
+                        cameras
+                            .iter()
+                            .map(|camera| (camera.focal_x_pixels + camera.focal_y_pixels) * 0.5),
+                    ),
                     cx: mean(cameras.iter().map(|camera| camera.principal_x_pixels)),
                     cy: mean(cameras.iter().map(|camera| camera.principal_y_pixels)),
                     k1: mean(cameras.iter().map(|camera| camera.radial_distortion[0])),
@@ -10375,18 +10423,38 @@ fn build_processing_report_alignment(
             solved.f = solved
                 .f
                 .or_else(|| delta.and_then(|item| item.solved_focal_pixels));
-            let refined = diagnostic.map_or_else(ProcessingReportIntrinsicsFlags::default, |item| {
-                ProcessingReportIntrinsicsFlags {
-                    f: item.effective_parameters.f,
-                    cx: item.effective_parameters.cx,
-                    cy: item.effective_parameters.cy,
-                    k1: item.effective_parameters.k1,
-                    k2: item.effective_parameters.k2,
-                    k3: item.effective_parameters.k3,
-                    p1: item.effective_parameters.p1,
-                    p2: item.effective_parameters.p2,
+            if let Some(report) = calibration_report {
+                for parameter in &report.parameters {
+                    set_report_intrinsic(&mut seed, parameter.name, &parameter.seed_value);
+                    set_report_intrinsic(&mut solved, parameter.name, &parameter.solved_value);
                 }
-            });
+            }
+            let refined =
+                diagnostic.map_or_else(ProcessingReportIntrinsicsFlags::default, |item| {
+                    ProcessingReportIntrinsicsFlags {
+                        f: item.effective_parameters.f,
+                        cx: item.effective_parameters.cx,
+                        cy: item.effective_parameters.cy,
+                        k1: item.effective_parameters.k1,
+                        k2: item.effective_parameters.k2,
+                        k3: item.effective_parameters.k3,
+                        p1: item.effective_parameters.p1,
+                        p2: item.effective_parameters.p2,
+                    }
+                });
+            let mut sigmas = calibration_report
+                .and_then(|report| report.uncertainty.as_ref())
+                .map(|_| ProcessingReportIntrinsics::default());
+            if let (Some(report), Some(values)) = (calibration_report, sigmas.as_mut()) {
+                for (parameter, sigma) in report.parameters.iter().zip(
+                    report
+                        .uncertainty
+                        .as_ref()
+                        .map_or(&[][..], |uncertainty| uncertainty.sigmas.as_slice()),
+                ) {
+                    set_report_intrinsic(values, parameter.name, sigma);
+                }
+            }
             ProcessingReportCalibrationGroup {
                 group_id: group.group_id.clone(),
                 image_count: group.camera_entity_ids.len(),
@@ -10394,12 +10462,24 @@ fn build_processing_report_alignment(
                 solved,
                 refined,
                 fixed: delta.is_some_and(|item| item.pinned)
-                    || diagnostic.is_some_and(|item| {
-                        matches!(item.policy, GcpIntrinsicsPolicy::Fixed)
+                    || diagnostic
+                        .is_some_and(|item| matches!(item.policy, GcpIntrinsicsPolicy::Fixed)),
+                sigmas,
+                correlation: calibration_report
+                    .and_then(|report| report.uncertainty.as_ref())
+                    .map(|uncertainty| uncertainty.correlation.clone()),
+                uncertainty_note: calibration_report
+                    .and_then(|report| report.uncertainty_reason.clone())
+                    .unwrap_or_else(|| {
+                        if calibration_report.is_some() {
+                            "Available from the converged GCP optimization.".to_owned()
+                        } else {
+                            "Sigmas need a converged GCP optimization with calibration evidence."
+                                .to_owned()
+                        }
                     }),
-                sigmas: None,
-                correlation: None,
-                uncertainty_note: "Unavailable: this GCP optimization snapshot stores observability diagnostics but no intrinsics covariance.".to_owned(),
+                radial_residual_profile: calibration_report
+                    .map(|report| report.radial_residual_profile.clone()),
             }
         })
         .collect::<Vec<_>>();
@@ -10474,6 +10554,23 @@ fn report_intrinsics_from_seed(seed: &ColmapCalibrationSeed) -> ProcessingReport
         cy: Some(seed.principal_y_pixels),
         ..ProcessingReportIntrinsics::default()
     }
+}
+
+fn set_report_intrinsic(
+    values: &mut ProcessingReportIntrinsics,
+    parameter: GcpIntrinsicParameter,
+    value: &f64,
+) {
+    *match parameter {
+        GcpIntrinsicParameter::F => &mut values.f,
+        GcpIntrinsicParameter::Cx => &mut values.cx,
+        GcpIntrinsicParameter::Cy => &mut values.cy,
+        GcpIntrinsicParameter::K1 => &mut values.k1,
+        GcpIntrinsicParameter::K2 => &mut values.k2,
+        GcpIntrinsicParameter::K3 => &mut values.k3,
+        GcpIntrinsicParameter::P1 => &mut values.p1,
+        GcpIntrinsicParameter::P2 => &mut values.p2,
+    } = Some(*value);
 }
 
 fn point_footprint_bbox(points: impl Iterator<Item = [f64; 3]>) -> Option<[f64; 4]> {
@@ -15582,7 +15679,7 @@ mod tests {
     }
 
     #[test]
-    fn processing_report_survey_query_returns_gsd_residuals_and_explicit_null_uncertainty() {
+    fn processing_report_and_calibration_query_return_frozen_accuracy_evidence() {
         let root = temp_test_dir("processing-report-survey");
         let runtime = ProjectRuntime::default();
         runtime
@@ -15726,6 +15823,25 @@ mod tests {
                                 "radialCoverage": 0.8, "baselineDepthRatio": 0.5, "relativeDepthRange": 0.4,
                                 "effectiveParameters": { "f": true, "cx": true, "cy": true, "k1": true, "k2": false, "k3": false, "p1": false, "p2": false },
                                 "stages": []
+                            }],
+                            "calibrationReports": [{
+                                "calibrationGroupId": "calibration-1",
+                                "parameters": [
+                                    { "name": "f", "seedValue": 90.0, "solvedValue": 100.0, "delta": 10.0 },
+                                    { "name": "cx", "seedValue": 50.0, "solvedValue": 50.5, "delta": 0.5 },
+                                    { "name": "cy", "seedValue": 40.0, "solvedValue": 39.5, "delta": -0.5 },
+                                    { "name": "k1", "seedValue": 0.0, "solvedValue": -0.01, "delta": -0.01 }
+                                ],
+                                "uncertainty": {
+                                    "sigma0Squared": 0.25,
+                                    "degreesOfFreedom": 20,
+                                    "sigmas": [0.4, 0.2, 0.2, 0.002],
+                                    "correlation": [[1.0,0.1,0.0,-0.8],[0.1,1.0,0.2,0.0],[0.0,0.2,1.0,0.0],[-0.8,0.0,0.0,1.0]]
+                                },
+                                "radialResidualProfile": {
+                                    "before": [{ "radiusStart": 0.0, "radiusEnd": 0.125, "meanAbsoluteResidualPixels": 1.2, "count": 3 }],
+                                    "after": [{ "radiusStart": 0.0, "radiusEnd": 0.125, "meanAbsoluteResidualPixels": 0.3, "count": 3 }]
+                                }
                             }]
                         }
                     },
@@ -15784,11 +15900,36 @@ mod tests {
         assert_eq!(alignment.calibration_groups[0].seed.f, Some(90.0));
         assert_eq!(alignment.calibration_groups[0].solved.f, Some(100.0));
         assert!(alignment.calibration_groups[0].refined.f);
-        assert!(alignment.calibration_groups[0].sigmas.is_none());
-        assert!(alignment.calibration_groups[0].correlation.is_none());
-        assert!(alignment.calibration_groups[0]
-            .uncertainty_note
-            .contains("no intrinsics covariance"));
+        assert_eq!(
+            alignment.calibration_groups[0]
+                .sigmas
+                .as_ref()
+                .and_then(|item| item.f),
+            Some(0.4)
+        );
+        assert_eq!(
+            alignment.calibration_groups[0]
+                .correlation
+                .as_ref()
+                .map(Vec::len),
+            Some(4)
+        );
+        assert_eq!(
+            alignment.calibration_groups[0]
+                .radial_residual_profile
+                .as_ref()
+                .map(|profile| profile.after[0].count),
+            Some(3)
+        );
+        let calibration = runtime
+            .gcp_calibration_report(Some(&optimization_id))
+            .expect("calibration query")
+            .expect("converged calibration report");
+        assert_eq!(calibration.optimization_entity_id, optimization_id);
+        assert_eq!(
+            calibration.groups[0].parameters[0].name,
+            GcpIntrinsicParameter::F
+        );
         runtime.close().expect("close");
         fs::remove_dir_all(root).expect("cleanup");
     }

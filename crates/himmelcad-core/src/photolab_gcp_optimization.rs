@@ -21,6 +21,14 @@ use crate::photolab_matching::ImageId;
 const MIN_DEPTH: f64 = 1.0e-9;
 const MIN_SIGMA_METERS: f64 = 1.0e-6;
 const MATRIX_EPSILON: f64 = 1.0e-12;
+/// Eight equal radial bands keep the center-to-corner residual trend legible
+/// in the compact inspector without implying more spatial resolution than the
+/// calibration observations support.
+const RADIAL_RESIDUAL_BIN_COUNT: usize = 8;
+/// Covariance is withheld above this condition number because displaying very
+/// large finite sigmas from a numerically unstable inverse would overstate the
+/// evidence. This is an X6-tunable reporting gate, not a solver acceptance gate.
+const INTRINSIC_UNCERTAINTY_MAX_CONDITION: f64 = 1.0e10;
 // Invalid candidates must never beat a valid reprojection merely because the
 // projector cannot produce a sample for them.
 const INVALID_PROJECTION_COST: f64 = 1.0e12;
@@ -635,6 +643,9 @@ pub struct GcpOptimizationResult {
     /// calibration group.
     #[serde(default)]
     pub intrinsics_diagnostics: Vec<GcpIntrinsicsGroupDiagnostics>,
+    /// Inspectable before/after calibration evidence from this exact solve.
+    #[serde(default)]
+    pub calibration_reports: Vec<GcpCalibrationGroupReport>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -681,6 +692,58 @@ pub struct GcpIntrinsicsGroupDiagnostics {
     pub stages: Vec<GcpIntrinsicsStageDiagnostic>,
 }
 
+/// One refined intrinsic in the policy's canonical model order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GcpCalibrationParameterEstimate {
+    pub name: GcpIntrinsicParameter,
+    pub seed_value: f64,
+    pub solved_value: f64,
+    pub delta: f64,
+}
+
+/// A-posteriori covariance evidence aligned with `parameters` in the enclosing
+/// calibration-group report.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GcpCalibrationUncertainty {
+    pub sigma0_squared: f64,
+    pub degrees_of_freedom: u32,
+    pub sigmas: Vec<f64>,
+    pub correlation: Vec<Vec<f64>>,
+}
+
+/// Mean absolute reprojection residual in one normalized center-to-corner band.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GcpRadialResidualBin {
+    pub radius_start: f64,
+    pub radius_end: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mean_absolute_residual_pixels: Option<f64>,
+    pub count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GcpRadialResidualProfile {
+    pub before: Vec<GcpRadialResidualBin>,
+    pub after: Vec<GcpRadialResidualBin>,
+}
+
+/// Immutable calibration evidence for one explicit calibration group.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GcpCalibrationGroupReport {
+    pub calibration_group_id: String,
+    pub parameters: Vec<GcpCalibrationParameterEstimate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uncertainty: Option<GcpCalibrationUncertainty>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uncertainty_reason: Option<String>,
+    pub radial_residual_profile: GcpRadialResidualProfile,
+}
+
 #[derive(Debug, Clone)]
 struct TriangulatedPoint {
     definition: GcpPoint,
@@ -713,6 +776,7 @@ struct BundleOutcome {
     objective: f64,
     fixed_gauge_camera_count: u32,
     intrinsics_diagnostics: Vec<GcpIntrinsicsGroupDiagnostics>,
+    calibration_reports: Vec<GcpCalibrationGroupReport>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1021,6 +1085,7 @@ where
         final_objective: current_objective,
         fixed_gauge_camera_count: bundle.fixed_gauge_camera_count,
         intrinsics_diagnostics: bundle.intrinsics_diagnostics,
+        calibration_reports: bundle.calibration_reports,
     })
 }
 
@@ -1164,6 +1229,8 @@ where
     let observations = camera_observation_index(cameras.len(), points);
     let intrinsic_groups =
         build_intrinsic_groups(source_cameras, cameras, &observations, points, options);
+    let seed_cameras = cameras.to_vec();
+    let seed_point_worlds = points.iter().map(|point| point.world).collect::<Vec<_>>();
     // Start the nonlinear solve on the declared control datum. This is a
     // graduated initialization only: after the short anchoring stage the
     // controls are released again and their declared survey uncertainties are
@@ -1297,6 +1364,17 @@ where
             break;
         }
     }
+    let calibration_reports = build_calibration_reports(
+        &intrinsic_groups,
+        source_cameras,
+        &seed_cameras,
+        &seed_point_worlds,
+        cameras,
+        points,
+        &observations,
+        options,
+        converged,
+    );
     Ok(BundleOutcome {
         iterations,
         converged,
@@ -1306,6 +1384,7 @@ where
             .into_iter()
             .map(|group| group.diagnostics)
             .collect(),
+        calibration_reports,
     })
 }
 
@@ -1414,55 +1493,21 @@ fn refine_intrinsic_group(
     if active == GcpIntrinsicParameterMask::none() {
         return 0.0;
     }
-    let mut normal = [[0.0; 8]; 8];
-    let mut gradient = [0.0; 8];
-    let mut usable = 0_usize;
-    for &camera_index in group {
-        let camera = &cameras[camera_index];
-        for (point_index, measured, sigma_pixels, is_gcp_marker) in &observations[camera_index] {
-            let point = points[*point_index].world;
-            let Ok((projected, jacobian)) = intrinsic_projection_jacobian(camera, point) else {
-                continue;
-            };
-            let residual = [
-                projected.x_pixels - measured.x_pixels,
-                projected.y_pixels - measured.y_pixels,
-            ];
-            let normalized = residual[0].hypot(residual[1]) / sigma_pixels;
-            let weight = robust_weight(
-                observation_loss(options.robust_loss, *is_gcp_marker),
-                normalized,
-            ) / sigma_pixels.powi(2);
-            accumulate_2d_normal(&mut normal, &mut gradient, jacobian, residual, weight);
-            usable += 1;
-        }
-    }
-    if usable < active.parameters().len().saturating_mul(2).max(8) {
+    let mut system = intrinsic_normal_system(
+        group,
+        active,
+        cameras,
+        observations,
+        points,
+        source_cameras,
+        options,
+    );
+    if system.usable_observations < active.parameters().len().saturating_mul(2).max(8) {
         return 0.0;
     }
-    let policy = source_cameras[first_index].intrinsics_policy;
-    if let GcpIntrinsicsPolicy::Prior { stddev, .. } = policy {
-        accumulate_intrinsic_prior(
-            &mut normal,
-            &mut gradient,
-            &cameras[first_index],
-            &source_cameras[first_index],
-            active,
-            stddev,
-        );
-    } else if matches!(policy, GcpIntrinsicsPolicy::Auto) {
-        accumulate_intrinsic_prior(
-            &mut normal,
-            &mut gradient,
-            &cameras[first_index],
-            &source_cameras[first_index],
-            active,
-            default_intrinsic_prior(&source_cameras[first_index]),
-        );
-    }
-    constrain_inactive_intrinsics(&mut normal, &mut gradient, active);
-    damp_diagonal(&mut normal, 1.0e-4);
-    let Some(delta) = solve_linear(normal, gradient.map(|value| -value)) else {
+    constrain_inactive_intrinsics(&mut system.normal, &mut system.gradient, active);
+    damp_diagonal(&mut system.normal, 1.0e-4);
+    let Some(delta) = solve_linear(system.normal, system.gradient.map(|value| -value)) else {
         return 0.0;
     };
     let old_cost = intrinsic_group_objective(
@@ -1499,6 +1544,379 @@ fn refine_intrinsic_group(
         }
     }
     0.0
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IntrinsicNormalSystem {
+    normal: [[f64; 8]; 8],
+    gradient: [f64; 8],
+    weighted_residual_sum: f64,
+    usable_observations: usize,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn intrinsic_normal_system(
+    group: &[usize],
+    active: GcpIntrinsicParameterMask,
+    cameras: &[OptimizedGcpCamera],
+    observations: &[Vec<(usize, ImageCoordinate, f64, bool)>],
+    points: &[BundlePoint],
+    source_cameras: &[GcpCameraModel],
+    options: GcpSolverOptions,
+) -> IntrinsicNormalSystem {
+    let mut system = IntrinsicNormalSystem {
+        normal: [[0.0; 8]; 8],
+        gradient: [0.0; 8],
+        weighted_residual_sum: 0.0,
+        usable_observations: 0,
+    };
+    for &camera_index in group {
+        let camera = &cameras[camera_index];
+        for (point_index, measured, sigma_pixels, is_gcp_marker) in &observations[camera_index] {
+            let Ok((projected, jacobian)) =
+                intrinsic_projection_jacobian(camera, points[*point_index].world)
+            else {
+                continue;
+            };
+            let residual = [
+                projected.x_pixels - measured.x_pixels,
+                projected.y_pixels - measured.y_pixels,
+            ];
+            let residual_norm = residual[0].hypot(residual[1]);
+            let weight = robust_weight(
+                observation_loss(options.robust_loss, *is_gcp_marker),
+                residual_norm / sigma_pixels,
+            ) / sigma_pixels.powi(2);
+            accumulate_2d_normal(
+                &mut system.normal,
+                &mut system.gradient,
+                jacobian,
+                residual,
+                weight,
+            );
+            system.weighted_residual_sum += weight * residual_norm.powi(2);
+            system.usable_observations += 1;
+        }
+    }
+    let Some(&first_index) = group.first() else {
+        return system;
+    };
+    let policy = source_cameras[first_index].intrinsics_policy;
+    let prior = match policy {
+        GcpIntrinsicsPolicy::Prior { stddev, .. } => Some(stddev),
+        GcpIntrinsicsPolicy::Auto => Some(default_intrinsic_prior(&source_cameras[first_index])),
+        GcpIntrinsicsPolicy::Fixed | GcpIntrinsicsPolicy::Custom { .. } => None,
+    };
+    if let Some(stddev) = prior {
+        accumulate_intrinsic_prior(
+            &mut system.normal,
+            &mut system.gradient,
+            &cameras[first_index],
+            &source_cameras[first_index],
+            active,
+            stddev,
+        );
+    }
+    system
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_calibration_reports(
+    groups: &[IntrinsicGroupPlan],
+    source_cameras: &[GcpCameraModel],
+    seed_cameras: &[OptimizedGcpCamera],
+    seed_point_worlds: &[[f64; 3]],
+    cameras: &[OptimizedGcpCamera],
+    points: &[BundlePoint],
+    observations: &[Vec<(usize, ImageCoordinate, f64, bool)>],
+    options: GcpSolverOptions,
+    converged: bool,
+) -> Vec<GcpCalibrationGroupReport> {
+    let final_point_worlds = points.iter().map(|point| point.world).collect::<Vec<_>>();
+    groups
+        .iter()
+        .map(|group| {
+            let active = group.diagnostics.effective_parameters;
+            let first_index = group.indices[0];
+            let parameters = active
+                .parameters()
+                .into_iter()
+                .map(|name| {
+                    let seed_value = intrinsic_parameter_value(&seed_cameras[first_index], name);
+                    let solved_value = intrinsic_parameter_value(&cameras[first_index], name);
+                    GcpCalibrationParameterEstimate {
+                        name,
+                        seed_value,
+                        solved_value,
+                        delta: solved_value - seed_value,
+                    }
+                })
+                .collect::<Vec<_>>();
+            let (uncertainty, uncertainty_reason) = calibration_uncertainty(
+                &group.indices,
+                active,
+                source_cameras,
+                cameras,
+                points,
+                observations,
+                options,
+                converged,
+            );
+            GcpCalibrationGroupReport {
+                calibration_group_id: group.diagnostics.calibration_group_id.clone(),
+                parameters,
+                uncertainty,
+                uncertainty_reason,
+                radial_residual_profile: GcpRadialResidualProfile {
+                    before: radial_residual_profile(
+                        &group.indices,
+                        seed_cameras,
+                        seed_point_worlds,
+                        observations,
+                    ),
+                    after: radial_residual_profile(
+                        &group.indices,
+                        cameras,
+                        &final_point_worlds,
+                        observations,
+                    ),
+                },
+            }
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn calibration_uncertainty(
+    group: &[usize],
+    active: GcpIntrinsicParameterMask,
+    source_cameras: &[GcpCameraModel],
+    cameras: &[OptimizedGcpCamera],
+    points: &[BundlePoint],
+    observations: &[Vec<(usize, ImageCoordinate, f64, bool)>],
+    options: GcpSolverOptions,
+    converged: bool,
+) -> (Option<GcpCalibrationUncertainty>, Option<String>) {
+    if !converged {
+        return (
+            None,
+            Some("Sigmas need a converged GCP optimization.".to_owned()),
+        );
+    }
+    let indices = (0..8)
+        .filter(|index| active.enabled(*index))
+        .collect::<Vec<_>>();
+    if indices.is_empty() {
+        return (
+            None,
+            Some("No intrinsic parameters were refined for this group.".to_owned()),
+        );
+    }
+    let system = intrinsic_normal_system(
+        group,
+        active,
+        cameras,
+        observations,
+        points,
+        source_cameras,
+        options,
+    );
+    let scalar_observations = system.usable_observations.saturating_mul(2);
+    let Some(degrees_of_freedom) = scalar_observations.checked_sub(indices.len()) else {
+        return (
+            None,
+            Some("Intrinsic uncertainty has no positive residual degrees of freedom.".to_owned()),
+        );
+    };
+    if degrees_of_freedom == 0 {
+        return (
+            None,
+            Some("Intrinsic uncertainty has no positive residual degrees of freedom.".to_owned()),
+        );
+    }
+    let reduced_normal = indices
+        .iter()
+        .map(|row| {
+            indices
+                .iter()
+                .map(|column| system.normal[*row][*column])
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let Some(condition) = normal_matrix_condition_number(&reduced_normal) else {
+        return (
+            None,
+            Some("Intrinsic uncertainty is unavailable because the reduced normal matrix is singular.".to_owned()),
+        );
+    };
+    if condition > INTRINSIC_UNCERTAINTY_MAX_CONDITION {
+        return (
+            None,
+            Some(format!(
+                "Intrinsic uncertainty is unavailable because the reduced normal matrix condition number {condition:.3e} exceeds the {INTRINSIC_UNCERTAINTY_MAX_CONDITION:.3e} reporting gate."
+            )),
+        );
+    }
+    let Some(inverse) = invert_matrix(reduced_normal) else {
+        return (
+            None,
+            Some("Intrinsic uncertainty is unavailable because the reduced normal matrix is singular.".to_owned()),
+        );
+    };
+    // A-posteriori variance factor: sigma0^2 = v^T P v / (n - u),
+    // where n is the number of scalar image observations and u is the number
+    // of refined intrinsic unknowns. P includes the terminal robust weights.
+    let sigma0_squared = system.weighted_residual_sum / degrees_of_freedom as f64;
+    let focal = (cameras[group[0]].focal_x_pixels + cameras[group[0]].focal_y_pixels) * 0.5;
+    let scales = indices
+        .iter()
+        .map(|index| if *index == 0 { focal } else { 1.0 })
+        .collect::<Vec<_>>();
+    let sigmas = (0..inverse.len())
+        .map(|index| (sigma0_squared * inverse[index][index].max(0.0)).sqrt() * scales[index])
+        .collect::<Vec<_>>();
+    let native_sigmas = (0..inverse.len())
+        .map(|index| inverse[index][index].max(0.0).sqrt())
+        .collect::<Vec<_>>();
+    if !sigma0_squared.is_finite()
+        || sigma0_squared < 0.0
+        || sigmas.iter().any(|sigma| !sigma.is_finite())
+        || native_sigmas
+            .iter()
+            .any(|sigma| !sigma.is_finite() || *sigma <= MATRIX_EPSILON)
+    {
+        return (
+            None,
+            Some("Intrinsic uncertainty is unavailable because the covariance is not finite and positive.".to_owned()),
+        );
+    }
+    let mut correlation = vec![vec![0.0; inverse.len()]; inverse.len()];
+    for row in 0..inverse.len() {
+        correlation[row][row] = 1.0;
+        for column in row + 1..inverse.len() {
+            let value = (0.5 * (inverse[row][column] + inverse[column][row])
+                / (native_sigmas[row] * native_sigmas[column]))
+                .clamp(-1.0, 1.0);
+            correlation[row][column] = value;
+            correlation[column][row] = value;
+        }
+    }
+    (
+        Some(GcpCalibrationUncertainty {
+            sigma0_squared,
+            degrees_of_freedom: saturating_u32(degrees_of_freedom),
+            sigmas,
+            correlation,
+        }),
+        None,
+    )
+}
+
+fn intrinsic_parameter_value(camera: &OptimizedGcpCamera, parameter: GcpIntrinsicParameter) -> f64 {
+    match parameter {
+        GcpIntrinsicParameter::F => (camera.focal_x_pixels + camera.focal_y_pixels) * 0.5,
+        GcpIntrinsicParameter::Cx => camera.principal_x_pixels,
+        GcpIntrinsicParameter::Cy => camera.principal_y_pixels,
+        GcpIntrinsicParameter::K1 => camera.radial_distortion[0],
+        GcpIntrinsicParameter::K2 => camera.radial_distortion[1],
+        GcpIntrinsicParameter::K3 => camera.radial_distortion[2],
+        GcpIntrinsicParameter::P1 => camera.tangential_distortion[0],
+        GcpIntrinsicParameter::P2 => camera.tangential_distortion[1],
+    }
+}
+
+fn radial_residual_profile(
+    group: &[usize],
+    cameras: &[OptimizedGcpCamera],
+    point_worlds: &[[f64; 3]],
+    observations: &[Vec<(usize, ImageCoordinate, f64, bool)>],
+) -> Vec<GcpRadialResidualBin> {
+    let mut sums = [0.0; RADIAL_RESIDUAL_BIN_COUNT];
+    let mut counts = [0_u32; RADIAL_RESIDUAL_BIN_COUNT];
+    for &camera_index in group {
+        let camera = &cameras[camera_index];
+        let half_diagonal =
+            (f64::from(camera.width_pixels).hypot(f64::from(camera.height_pixels)) * 0.5).max(1.0);
+        for (point_index, measured, _, _) in &observations[camera_index] {
+            let Ok(projected) = project_world(camera, point_worlds[*point_index]) else {
+                continue;
+            };
+            let radius = (measured.x_pixels - camera.principal_x_pixels)
+                .hypot(measured.y_pixels - camera.principal_y_pixels)
+                / half_diagonal;
+            let bin = ((radius.clamp(0.0, 1.0) * RADIAL_RESIDUAL_BIN_COUNT as f64).floor()
+                as usize)
+                .min(RADIAL_RESIDUAL_BIN_COUNT - 1);
+            sums[bin] += (projected.x_pixels - measured.x_pixels)
+                .hypot(projected.y_pixels - measured.y_pixels);
+            counts[bin] = counts[bin].saturating_add(1);
+        }
+    }
+    (0..RADIAL_RESIDUAL_BIN_COUNT)
+        .map(|index| GcpRadialResidualBin {
+            radius_start: index as f64 / RADIAL_RESIDUAL_BIN_COUNT as f64,
+            radius_end: (index + 1) as f64 / RADIAL_RESIDUAL_BIN_COUNT as f64,
+            mean_absolute_residual_pixels: (counts[index] > 0)
+                .then_some(sums[index] / f64::from(counts[index])),
+            count: counts[index],
+        })
+        .collect()
+}
+
+fn normal_matrix_condition_number(normal: &[Vec<f64>]) -> Option<f64> {
+    let mut correlation = vec![vec![0.0; normal.len()]; normal.len()];
+    for row in 0..normal.len() {
+        let row_scale = normal[row][row].sqrt();
+        if !row_scale.is_finite() || row_scale <= MATRIX_EPSILON {
+            return None;
+        }
+        for column in 0..normal.len() {
+            let column_scale = normal[column][column].sqrt();
+            correlation[row][column] = normal[row][column] / (row_scale * column_scale);
+        }
+    }
+    symmetric_condition_number(correlation)
+}
+
+fn invert_matrix(mut matrix: Vec<Vec<f64>>) -> Option<Vec<Vec<f64>>> {
+    let dimension = matrix.len();
+    let mut inverse = vec![vec![0.0; dimension]; dimension];
+    for (index, row) in inverse.iter_mut().enumerate() {
+        row[index] = 1.0;
+    }
+    for column in 0..dimension {
+        let pivot = (column..dimension).max_by(|left, right| {
+            matrix[*left][column]
+                .abs()
+                .total_cmp(&matrix[*right][column].abs())
+        })?;
+        let pivot_value = matrix[pivot][column];
+        if !pivot_value.is_finite() || pivot_value.abs() <= MATRIX_EPSILON {
+            return None;
+        }
+        matrix.swap(column, pivot);
+        inverse.swap(column, pivot);
+        let scale = matrix[column][column];
+        for index in 0..dimension {
+            matrix[column][index] /= scale;
+            inverse[column][index] /= scale;
+        }
+        for row in 0..dimension {
+            if row == column {
+                continue;
+            }
+            let factor = matrix[row][column];
+            for index in 0..dimension {
+                matrix[row][index] -= factor * matrix[column][index];
+                inverse[row][index] -= factor * inverse[column][index];
+            }
+        }
+    }
+    inverse
+        .iter()
+        .flatten()
+        .all(|value| value.is_finite())
+        .then_some(inverse)
 }
 
 fn intrinsic_group_diagnostics(
@@ -5151,5 +5569,169 @@ mod tests {
         let ellipse = covariance_ellipse(pixels).expect("valid propagated ellipse");
         assert!(ellipse.semi_major_pixels > ellipse.semi_minor_pixels);
         assert!(ellipse.angle_degrees.abs() > 1.0e-3);
+    }
+
+    fn calibration_uncertainty_fixture(
+        point_count: usize,
+        singular: bool,
+    ) -> (
+        Vec<GcpCameraModel>,
+        Vec<OptimizedGcpCamera>,
+        Vec<BundlePoint>,
+        Vec<Vec<(usize, ImageCoordinate, f64, bool)>>,
+        GcpIntrinsicParameterMask,
+    ) {
+        let mask = GcpIntrinsicParameterMask {
+            f: true,
+            k1: true,
+            ..GcpIntrinsicParameterMask::none()
+        };
+        let mut source = vec![
+            look_down_camera(1, -4.0, -2.0),
+            look_down_camera(2, 4.0, 2.0),
+        ];
+        for camera in &mut source {
+            camera.calibration_group_id = "covariance-lens".into();
+            camera.intrinsics_policy = GcpIntrinsicsPolicy::Custom { parameters: mask };
+        }
+        let cameras = source
+            .iter()
+            .map(|camera| transform_camera(camera, GcpSimilarityTransform::identity()))
+            .collect::<Vec<_>>();
+        let mut points = Vec::new();
+        let mut observations = vec![Vec::new(), Vec::new()];
+        for index in 0..point_count {
+            let world = if singular {
+                [0.0, 0.0, 0.0]
+            } else {
+                let column = index % 8;
+                let row = index / 8;
+                [
+                    -3.5 + column as f64,
+                    -3.0 + (row % 7) as f64,
+                    (index % 5) as f64 * 0.17,
+                ]
+            };
+            let point_index = points.len();
+            points.push(BundlePoint {
+                track_id: None,
+                reconstruction: world,
+                world,
+                observations: Vec::new(),
+                survey: Some(identity_frame_point(
+                    &format!("C{index}"),
+                    world,
+                    GcpRole::ControlXyz,
+                )),
+            });
+            for camera_index in 0..cameras.len() {
+                let mut measured = project_world(&cameras[camera_index], world).expect("visible");
+                measured.x_pixels += if index % 2 == 0 { 0.2 } else { -0.2 };
+                measured.y_pixels += if index % 3 == 0 { 0.1 } else { -0.1 };
+                observations[camera_index].push((point_index, measured, 1.0, true));
+            }
+        }
+        (source, cameras, points, observations, mask)
+    }
+
+    #[test]
+    fn intrinsic_sigmas_shrink_with_more_gcps_and_f_k1_are_anticorrelated() {
+        let (small_source, small_cameras, small_points, small_observations, mask) =
+            calibration_uncertainty_fixture(16, false);
+        let (large_source, large_cameras, large_points, large_observations, _) =
+            calibration_uncertainty_fixture(64, false);
+        let (small, small_reason) = calibration_uncertainty(
+            &[0, 1],
+            mask,
+            &small_source,
+            &small_cameras,
+            &small_points,
+            &small_observations,
+            GcpSolverOptions::default(),
+            true,
+        );
+        let (large, large_reason) = calibration_uncertainty(
+            &[0, 1],
+            mask,
+            &large_source,
+            &large_cameras,
+            &large_points,
+            &large_observations,
+            GcpSolverOptions::default(),
+            true,
+        );
+        assert_eq!(small_reason, None);
+        assert_eq!(large_reason, None);
+        let small = small.expect("small covariance");
+        let large = large.expect("large covariance");
+        assert!(large.sigmas[0] < small.sigmas[0]);
+        assert!(large.sigmas[1] < small.sigmas[1]);
+        assert!(
+            large.correlation[0][1] < -0.7,
+            "f-k1 correlation={}",
+            large.correlation[0][1]
+        );
+        assert_eq!(large.correlation[0][0], 1.0);
+        assert_eq!(large.correlation[0][1], large.correlation[1][0]);
+    }
+
+    #[test]
+    fn singular_intrinsic_system_withholds_uncertainty_with_a_reason() {
+        let (source, cameras, points, observations, mask) =
+            calibration_uncertainty_fixture(16, true);
+        let (uncertainty, reason) = calibration_uncertainty(
+            &[0, 1],
+            mask,
+            &source,
+            &cameras,
+            &points,
+            &observations,
+            GcpSolverOptions::default(),
+            true,
+        );
+        assert!(uncertainty.is_none());
+        assert!(reason.expect("reason").contains("singular"));
+    }
+
+    #[test]
+    fn radial_profile_bin_counts_cover_every_observation() {
+        let (_, cameras, points, observations, _) = calibration_uncertainty_fixture(24, false);
+        let point_worlds = points.iter().map(|point| point.world).collect::<Vec<_>>();
+        let bins = radial_residual_profile(&[0, 1], &cameras, &point_worlds, &observations);
+        assert_eq!(bins.len(), RADIAL_RESIDUAL_BIN_COUNT);
+        assert_eq!(bins.iter().map(|bin| bin.count).sum::<u32>(), 48);
+    }
+
+    #[test]
+    fn optimization_result_without_calibration_reports_is_backward_compatible() {
+        let cameras = [
+            look_down_camera(1, -4.0, -3.0),
+            look_down_camera(2, 4.0, -3.0),
+            look_down_camera(3, 0.0, 4.0),
+        ];
+        let controls = [
+            [-1.5, -1.0, 0.0],
+            [1.5, -1.0, 0.2],
+            [-1.0, 1.5, -0.1],
+            [1.0, 1.5, 0.3],
+        ];
+        let result = optimize_gcp_alignment(
+            &identity_snapshot(&controls, &cameras, None),
+            &cameras,
+            GcpSolverOptions {
+                refine_shared_intrinsics: false,
+                ..GcpSolverOptions::default()
+            },
+            |_| GcpSolveControl::Continue,
+        )
+        .expect("optimization");
+        let mut value = serde_json::to_value(result).expect("serialize result");
+        value
+            .as_object_mut()
+            .expect("result object")
+            .remove("calibrationReports");
+        let decoded: GcpOptimizationResult =
+            serde_json::from_value(value).expect("legacy result should deserialize");
+        assert!(decoded.calibration_reports.is_empty());
     }
 }

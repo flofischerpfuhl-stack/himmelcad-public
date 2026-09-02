@@ -395,3 +395,99 @@
   font: 8px var(--hc-font-mono);
   text-overflow: ellipsis;
 }
+
+.calibrationInspector {
+  display: grid;
+  gap: 7px;
+  margin-top: 4px;
+  padding: 6px;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-island-lo);
+}
+
+.calibrationInspector[open] > summary {
+  margin-bottom: 6px;
+  color: var(--hc-fg-strong);
+  font-weight: 650;
+}
+
+.calibrationInspector > small,
+.radialProfile > small,
+.provenance {
+  display: block;
+  color: var(--hc-fg-muted);
+  font-size: 8px;
+}
+
+.parameterTable {
+  width: 100%;
+  border-collapse: collapse;
+  font: 8px var(--hc-font-mono);
+}
+
+.parameterTable th,
+.parameterTable td {
+  padding: 3px 4px;
+  border: 1px solid var(--hc-border-subtle);
+  text-align: right;
+}
+
+.parameterTable th:first-child {
+  text-align: left;
+}
+
+.parameterTable thead th {
+  color: var(--hc-fg-muted);
+  background: var(--hc-bg-island-hi);
+}
+
+.correlationGrid {
+  overflow: auto;
+  display: grid;
+  gap: 1px;
+  margin-top: 4px;
+  padding: 1px;
+  background: var(--hc-border-subtle);
+}
+
+.correlationGrid span {
+  min-height: 24px;
+  display: grid;
+  place-items: center;
+  color: var(--hc-fg-strong);
+  font: 7px var(--hc-font-mono);
+}
+
+.radialProfile {
+  display: grid;
+  gap: 3px;
+}
+
+.radialProfile svg {
+  width: 100%;
+  min-height: 72px;
+  border: 1px solid var(--hc-border-subtle);
+  background: var(--hc-bg-void);
+}
+
+.radialProfile polyline {
+  fill: none;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.profileBefore {
+  stroke: var(--hc-warning);
+}
+
+.profileAfter {
+  stroke: var(--hc-accent, var(--hc-fg-default));
+}
+
+.provenance {
+  overflow: hidden;
+  font-family: var(--hc-font-mono);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

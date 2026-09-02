@@ -299,6 +299,7 @@ const RENDERER_SIDECAR_METHODS = new Set([
   'photolab.gcp.optimization.snapshot',
   'photolab.gcp.optimization.latest',
   'photolab.gcp.optimization.list',
+  'photolab.gcp.calibrationReport',
   'photolab.gcp.alignedCameras',
   'photolab.gcp.cancel',
   'photolab.jobs.startAlignment',

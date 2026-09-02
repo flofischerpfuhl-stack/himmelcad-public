@@ -644,6 +644,13 @@ struct CommitGcpCsvParams {
     coordinates_already_in_project_crs: bool,
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GcpCalibrationReportParams {
+    #[serde(default)]
+    optimization_entity_id: Option<EntityId>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AlignmentJobOverrides {
@@ -2688,6 +2695,16 @@ async fn handle_gcp_rpc(
         }
         "photolab.gcp.optimization.list" => {
             rpc_blocking(req.id, move || projects.list_gcp_optimizations()).await
+        }
+        "photolab.gcp.calibrationReport" => {
+            rpc_blocking_with_params::<GcpCalibrationReportParams, _, _>(
+                req.id,
+                req.params,
+                move |params| {
+                    projects.gcp_calibration_report(params.optimization_entity_id.as_ref())
+                },
+            )
+            .await
         }
         "photolab.gcp.alignedCameras" => {
             rpc_blocking_with_params::<AlignedGcpCamerasParams, _, _>(
