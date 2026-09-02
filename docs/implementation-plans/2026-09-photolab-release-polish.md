@@ -928,49 +928,59 @@ the updater contract test green. Flagged for the owner; no Codex run.
 
 ## Phase G — Doctrine and gate closures (added 2026-09-02)
 
-### WP-G1 — PhotoLab products open in Builder and WeltView (R1 gate 8, Size L)
+### WP-G1 — PhotoLab products open in Builder and WeltView (R1 gate 8)
 
-Problem. Gate 8 is not met: Builder's import registration accepts only
-`potree@2` (`apps/builder/renderer/src/BuilderImportRegistrationIsland.tsx`,
-`import_registration_runtime.rs:371`), while PhotoLab publishes
-`potreeV2`, `rasterPyramid`, `tiledMesh`, `mvsDepth` and splat datasets
-(`project_runtime.rs` publication paths); WeltView is a 50-line shell
-(`apps/weltview/src/App.tsx`). The shared render core's adopted prepared formats are `potree@2` and
-`himmelcad-prepared-hierarchy@1` (DEM/ortho pyramids, complete tiled
-meshes, splats); `mesh@1` is only a test proxy identifier. Per the Builder
-review of 2026-09-02, binary PLY, incomplete tiled meshes, standalone MVS
-depth and raw Brush PLY are deferred with reasons; legacy publications get
-an explicit "provenance unknown/partial" state (full lineage fields are
-required only for publications made after the contract exists), and the
-provenance schema is a versioned manifest (pending DATA-MODEL/ADR admission)
-that publication code must target by id/version — see the revised IF-D19.
+Contract (accepted 2026-09-02, Builder program):
+`docs/builder-program/specs/import-formats/import-formats.md` section
+"PhotoLab product datasets — 2026-09-02", decision records IF-D19–IF-D25;
+review `import-formats-photolab-review-2026-09-02.md` (4 blockers resolved,
+0 owner questions). Implementation follows that text unchanged; contract gaps
+are messaged to the Builder session (doctrine rule 2), never worked around.
 
-**Decision:** PhotoLab products become ordinary canonical datasets that
-Builder registers through the existing interactive import-registration
-flow (ADR 0025) for every prepared format the render core can decode —
-point clouds, elevation rasters, prepared meshes, splats — with the product
-lineage (alignment, GCP revision, CRS) carried as dataset provenance;
-WeltView gains a read-only "open local project" path over the same kernel
-and datasets, without choosing a delivery mode (that remains the R3 owner
-gate).
-**Derivation:** ROADMAP R1 gate 8; ADR 0016/0017/0018 (one canonical model,
-one renderer, provider-neutral IO); X3 (registered datasets are canonical
-entities visible to automation); X4 (RealWorks/RIB Civil open survey
-deliverables directly).
-**Rejected:** a PhotoLab-specific viewer in Builder (ADR 0017); WeltView
-streaming modes (reserved R3 decision).
-**Tunable:** none.
+Sequenced into three parts:
 
-Builder rules apply: the Builder thread is amending
-`docs/builder-program/specs/import-formats/import-formats.md` (accepted
-2026-09-02: "register a PhotoLab product dataset" per prepared format, ADR
-0021/0025 lifecycle, lineage as immutable provenance, automation via P11) with
-a `demanding-user` review; implementation starts only after that spec and
-review exist. Sidecar: extend the
-registration runtime's dataset matching beyond `potree@2`; keep the
-`.hcadx`/prepared-hierarchy contracts unchanged. Tests: register each
-product kind from the smoke project into a Builder project; WeltView opens
-the same project read-only; lineage provenance visible in properties.
+**WP-G1a — admission + PhotoLab publication (Size L, blocked on admission).**
+IF-D22 requires DATA-MODEL, PROJECT-FORMAT and an accepted ADR to admit
+`hcad.product-import-package-manifest@1` and
+`hcad.photolab-product-provenance@1` before implementation (DATA-MODEL pending
+item 8). Step 1: ADR 0030 drafted as a cite-and-adopt of the spec's exact
+`ProductImportPackageManifestV1` / `ProductLineageV1` shapes, the
+`package_sha256` canonicalization rule (sorted UTF-8 keys, no whitespace, no
+floats, hash over the payload minus `package_sha256`), the ready-record
+atomicity, fail-closed compatibility (`unsupported_package_schema`) and the
+`complete | partial | unknown` states — reviewed by the Builder session.
+Step 2 (after acceptance): every PhotoLab publication freezes
+`ProductLineageV1` before the ready record and product record become visible
+(mandatory fields per IF-D19: project id + fingerprint, product identity,
+alignment id + version/content hash, processing-set tagged union with frozen
+camera-selection hash, mask scope, GCP choice, exact spatialReference +
+`ProjectReferenceFrame` or `local_frame`, ordered algorithm/config/tool
+identities, registration audit); writes the candidate package, fsyncs manifest
+and artifacts, then the small ready record with `package_sha256` last; the
+product record mirrors the summary. `photolab.products.list` exposes
+`provenanceStatus` and `missingFieldIds`; pre-contract publications report
+`partial`/`unknown` and are never decorated from current state. Adopted
+ingress formats only: `potree@2` (sparse/dense) and
+`himmelcad-prepared-hierarchy@1` (DEM as canonical Grid, complete tiled mesh);
+orthomosaic waits for RA-D11 `PlanGrid2D`, splat for Pointcloud ownership;
+binary PLY, incomplete tiled meshes, standalone MVS depth and raw Brush PLY
+stay unavailable with the spec's reasons.
+
+**WP-G1b — Builder registration + WeltView (Size L, after WP-G2).** The two
+P11 rows `io.import.product_dataset.list/register` with the exact
+`ProductDatasetList/RegisterRequest/ResultV1` schemas (IF-D20) in the
+generated command table; the existing registration island gains the product
+chooser and the bounded, lock-scoped `.hcad`/`.hcadx` catalog reader
+(IF-D23/24); Builder commits the declared entity plus the
+`hcad.photolab-product-provenance@1` component journal-last; WeltView opens
+the resulting `.hcadx` read-only through the canonical store/kernel (IF-D25).
+
+**WP-G1c — gate test (Size M).** Per IF-D21: for every Available product row,
+Builder registers and reopens, performs canonical Save As to a complete
+`.hcadx`, WeltView opens it read-only; the test compares entity ids,
+version/content hashes, prepared bindings, exact provenance bytes and the
+row's render/pick/snap semantics. Gate 8 stays open until this passes for
+every renderable product kind in the release.
 
 ### WP-G2 — PhotoLab automation parity (doctrine X3, Size L)
 
