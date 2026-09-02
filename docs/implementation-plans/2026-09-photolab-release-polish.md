@@ -634,6 +634,24 @@ markers, no spurious error.
 
 ## Phase D — Multi-mission correctness and teachability
 
+### WP-C10 — GCP grid-kind normalization parity (Size S, found 2026-09-02)
+
+Problem. `gcpImportDecision.ts` `userGrid()` builds a `GridCatalogEntry`
+without `normalizeGridKind`, so a GDAL-mislabeled `.gsb` stays
+`kind: 'gtg'` in the GCP freeze payload while the image import path
+normalizes it to `'ntv2'` (`importFreeze.ts`). `containsArea` is also
+duplicated three times with identical bodies (`ImageImportPanel.tsx`,
+`gcpImportDecision.ts`, `GcpImportPanel.tsx`).
+
+Design. Route the GCP wizard's user-grid construction through the shared
+`normalizeGridKind` from `importFreeze.ts`; dedupe `containsArea` into the
+same module; add a test that a mislabeled `.gsb` freezes as `ntv2` on both
+paths. This changes the GCP freeze payload for mislabeled grids only — that
+is the fix, not a regression.
+
+Acceptance criteria: both wizards produce the same `GridCatalogEntry` for
+the same file; existing gcpImportDecision and importFreeze tests green.
+
 ### WP-D1 — Georeferencing after overlap merge (Size L)
 
 Problem. GCP optimization only resolves `EntityKind::AlignmentRun`
