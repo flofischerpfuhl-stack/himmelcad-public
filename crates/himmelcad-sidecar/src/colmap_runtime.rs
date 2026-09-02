@@ -5091,6 +5091,123 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
     }
 
     #[tokio::test]
+    async fn characterization_one_embedded_group_materializes_full_opencv_and_freezes_mapper() {
+        let rig = TestRig::new("characterize-one-embedded", false, false);
+        let mut request = rig.request("characterize-one-embedded-job");
+        request.sift_rescue_only = true;
+        request.intrinsics_refinement = ColmapIntrinsicsRefinement::FreezeReliableEmbedded;
+        let full = DjiBrownConradyCalibration {
+            focal_x_pixels: 80.0,
+            focal_y_pixels: 81.0,
+            principal_x_pixels: 50.25,
+            principal_y_pixels: 49.75,
+            radial_distortion: [-0.1, -0.002, -0.015],
+            tangential_distortion: [0.0003, -0.0004],
+            calibration_date: "2025-02-26".into(),
+            provenance: himmelcad_core::photolab_images::DjiCalibrationProvenance::DewarpData,
+        };
+        request.calibration_groups = vec![ColmapCalibrationGroup {
+            group_id: "dewarp".into(),
+            camera_entity_ids: vec!["camera-a".into(), "camera-b".into()],
+            seed: Some(ColmapCalibrationSeed {
+                width_pixels: 100,
+                height_pixels: 100,
+                focal_pixels: full.focal_x_pixels,
+                principal_x_pixels: full.principal_x_pixels,
+                principal_y_pixels: full.principal_y_pixels,
+                full_brown_calibration: Some(full),
+            }),
+        }];
+
+        let outcome = run_successfully(rig.runtime(), request).await;
+        let invocations = fs::read_to_string(outcome.scratch_path.join("invocations.log"))
+            .expect("read invocation log");
+        assert!(invocations.contains(
+            "--ImageReader.camera_model|FULL_OPENCV|--ImageReader.camera_params|80.000000000000,81.000000000000,50.250000000000,49.750000000000,-0.100000000000,-0.002000000000,0.000300000000,-0.000400000000,-0.015000000000,0,0,0"
+        ));
+        assert!(invocations.contains(
+            "--GlobalMapper.ba_refine_focal_length|0|--GlobalMapper.ba_refine_principal_point|0|--GlobalMapper.ba_refine_extra_params|0"
+        ));
+    }
+
+    #[tokio::test]
+    async fn characterization_one_unseeded_group_uses_default_simple_radial_and_refines_mapper() {
+        let rig = TestRig::new("characterize-one-unseeded", false, false);
+        let mut request = rig.request("characterize-one-unseeded-job");
+        request.sift_rescue_only = true;
+        request.intrinsics_refinement = ColmapIntrinsicsRefinement::Refine;
+        request.calibration_groups = vec![ColmapCalibrationGroup {
+            group_id: "unseeded".into(),
+            camera_entity_ids: vec!["camera-a".into(), "camera-b".into()],
+            seed: None,
+        }];
+
+        let outcome = run_successfully(rig.runtime(), request).await;
+        let invocations = fs::read_to_string(outcome.scratch_path.join("invocations.log"))
+            .expect("read invocation log");
+        let extractor = invocations
+            .lines()
+            .find(|line| line.starts_with("CMD|feature_extractor"))
+            .expect("feature extractor invocation");
+        assert!(!extractor.contains("--ImageReader.camera_model"));
+        assert!(!extractor.contains("--ImageReader.camera_params"));
+        assert!(invocations.contains(
+            "--GlobalMapper.ba_refine_focal_length|1|--GlobalMapper.ba_refine_principal_point|0|--GlobalMapper.ba_refine_extra_params|1"
+        ));
+    }
+
+    #[tokio::test]
+    async fn characterization_two_embedded_groups_materialize_each_seed_and_freeze_mapper() {
+        let rig = TestRig::new("characterize-two-embedded", false, false);
+        let mut request = rig.request("characterize-two-embedded-job");
+        request.sift_rescue_only = true;
+        request.intrinsics_refinement = ColmapIntrinsicsRefinement::FreezeReliableEmbedded;
+        let seed = |focal_x_pixels: f64, focal_y_pixels: f64| ColmapCalibrationSeed {
+            width_pixels: 100,
+            height_pixels: 100,
+            focal_pixels: focal_x_pixels,
+            principal_x_pixels: 50.0,
+            principal_y_pixels: 50.0,
+            full_brown_calibration: Some(DjiBrownConradyCalibration {
+                focal_x_pixels,
+                focal_y_pixels,
+                principal_x_pixels: 50.0,
+                principal_y_pixels: 50.0,
+                radial_distortion: [-0.1, -0.002, -0.015],
+                tangential_distortion: [0.0003, -0.0004],
+                calibration_date: "2025-02-26".into(),
+                provenance: himmelcad_core::photolab_images::DjiCalibrationProvenance::DewarpData,
+            }),
+        };
+        request.calibration_groups = vec![
+            ColmapCalibrationGroup {
+                group_id: "dewarp-a".into(),
+                camera_entity_ids: vec!["camera-a".into()],
+                seed: Some(seed(80.0, 81.0)),
+            },
+            ColmapCalibrationGroup {
+                group_id: "dewarp-b".into(),
+                camera_entity_ids: vec!["camera-b".into()],
+                seed: Some(seed(90.0, 91.0)),
+            },
+        ];
+
+        let outcome = run_successfully(rig.runtime(), request).await;
+        let invocations = fs::read_to_string(outcome.scratch_path.join("invocations.log"))
+            .expect("read invocation log");
+        assert_eq!(invocations.matches("CMD|feature_extractor").count(), 2);
+        assert!(invocations.contains(
+            "--ImageReader.camera_model|FULL_OPENCV|--ImageReader.camera_params|80.000000000000,81.000000000000,50.000000000000,50.000000000000,-0.100000000000,-0.002000000000,0.000300000000,-0.000400000000,-0.015000000000,0,0,0"
+        ));
+        assert!(invocations.contains(
+            "--ImageReader.camera_model|FULL_OPENCV|--ImageReader.camera_params|90.000000000000,91.000000000000,50.000000000000,50.000000000000,-0.100000000000,-0.002000000000,0.000300000000,-0.000400000000,-0.015000000000,0,0,0"
+        ));
+        assert!(invocations.contains(
+            "--GlobalMapper.ba_refine_focal_length|0|--GlobalMapper.ba_refine_principal_point|0|--GlobalMapper.ba_refine_extra_params|0"
+        ));
+    }
+
+    #[tokio::test]
     async fn one_automatic_calibration_group_keeps_source_sequence() {
         let rig = TestRig::new("automatic-calibration-order", false, false);
         let mut request = rig.request("automatic-calibration-order-job");
