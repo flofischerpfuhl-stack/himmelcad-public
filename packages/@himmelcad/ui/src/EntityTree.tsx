@@ -382,7 +382,12 @@ function TreeNode({
   const hasChildren = children.length > 0;
 
   return (
-    <div role="treeitem" aria-expanded={hasChildren ? open : undefined}>
+    <div
+      role="treeitem"
+      aria-level={depth + 1}
+      aria-expanded={hasChildren ? open : undefined}
+      aria-selected={isSelected}
+    >
       <div
         className={`${styles.row} ${isSelected ? styles.rowSelected : ''}`}
         style={{ paddingLeft: 4 + depth * 12 }}
@@ -461,24 +466,27 @@ function TreeNode({
           {node.visibility.visible ? <Eye size={11} /> : <EyeOff size={11} />}
         </button>
       </div>
-      {open &&
-        children.map((cid) => (
-          <TreeNode
-            key={cid}
-            id={cid}
-            entities={entities}
-            depth={depth + 1}
-            selectedIds={selectedIds}
-            onSelect={onSelect}
-            editingId={editingId}
-            onEditingChange={onEditingChange}
-            onRename={onRename}
-            onMove={onMove}
-            onVisibilityChange={onVisibilityChange}
-            onContextMenu={onContextMenu}
-            sortChildren={sortChildren}
-          />
-        ))}
+      {open && hasChildren ? (
+        <div role="group">
+          {children.map((cid) => (
+            <TreeNode
+              key={cid}
+              id={cid}
+              entities={entities}
+              depth={depth + 1}
+              selectedIds={selectedIds}
+              onSelect={onSelect}
+              editingId={editingId}
+              onEditingChange={onEditingChange}
+              onRename={onRename}
+              onMove={onMove}
+              onVisibilityChange={onVisibilityChange}
+              onContextMenu={onContextMenu}
+              sortChildren={sortChildren}
+            />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -296,10 +296,12 @@ export function ChipGroup({
 
 export function ProgressBar({
   value,
+  ariaLabel,
   indeterminate = false,
   indeterminateLabel = 'Working…',
 }: {
   value: number;
+  ariaLabel: string;
   indeterminate?: boolean;
   indeterminateLabel?: string;
 }): JSX.Element {
@@ -308,6 +310,9 @@ export function ProgressBar({
     <div
       className={styles.progressRow}
       role="progressbar"
+      aria-label={ariaLabel.trim() || indeterminateLabel}
+      aria-valuemin={0}
+      aria-valuemax={100}
       aria-valuenow={indeterminate ? undefined : percent}
     >
       <div

@@ -200,6 +200,7 @@ export function GcpOptimizationPanel({
               <div className={`${styles.row} ${!usable ? styles.disabled : ''}`} key={point.id}>
                 <label className={styles.check}>
                   <Checkbox
+                    aria-label={`Include ${point.name} in GCP optimization`}
                     checked={included.has(point.id)}
                     disabled={!usable || busy}
                     onChange={(event) => {
@@ -261,6 +262,7 @@ export function GcpOptimizationPanel({
             >
               <label className={styles.check}>
                 <Checkbox
+                  aria-label={`Use ${camera.name} camera reference`}
                   checked={cameraReferences.has(camera.imageId)}
                   disabled={!camera.referenceAvailable || busy}
                   onChange={(event) => {

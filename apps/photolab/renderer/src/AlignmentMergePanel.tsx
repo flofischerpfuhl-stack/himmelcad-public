@@ -231,6 +231,7 @@ export function AlignmentMergePanel({
               <div className={styles.candidateBlock} key={candidate.entityId}>
                 <label>
                   <Checkbox
+                    aria-label={`Merge ${candidate.name}`}
                     checked={selected.has(candidate.entityId)}
                     onChange={(event) =>
                       setSelected((current) => {
@@ -293,6 +294,7 @@ export function AlignmentMergePanel({
           <legend>Connection</legend>
           <label>
             <Radio
+              aria-label="Image overlap"
               name="alignment-merge-connection"
               checked={connectionMode === 'overlap'}
               onChange={() => setConnectionMode('overlap')}
@@ -304,6 +306,7 @@ export function AlignmentMergePanel({
           </label>
           <label>
             <Radio
+              aria-label="Shared controls"
               name="alignment-merge-connection"
               checked={connectionMode === 'sharedControls'}
               onChange={() => setConnectionMode('sharedControls')}

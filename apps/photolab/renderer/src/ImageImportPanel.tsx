@@ -1036,6 +1036,7 @@ export function ImageImportPanel({
             <div style={{ width: 'min(420px, 100%)' }}>
               <ProgressBar
                 value={progress?.fraction ?? 0}
+                ariaLabel={progress?.message || 'Discovering images'}
                 indeterminate={progress?.indeterminate === true}
                 indeterminateLabel="Discovering…"
               />
@@ -1572,7 +1573,12 @@ export function ImageImportPanel({
             ) : operationBusy ? (
               <>
                 <strong style={{ fontSize: 11 }}>Validating with PROJ…</strong>
-                <ProgressBar value={0} indeterminate indeterminateLabel="Validating…" />
+                <ProgressBar
+                  value={0}
+                  ariaLabel="Validating with PROJ"
+                  indeterminate
+                  indeterminateLabel="Validating…"
+                />
               </>
             ) : discovery ? (
               <>
@@ -1813,6 +1819,7 @@ export function ImageImportPanel({
                   <strong style={{ fontSize: 11 }}>{progress.message}</strong>
                   <ProgressBar
                     value={progress.fraction}
+                    ariaLabel={progress.message || 'Importing images'}
                     indeterminate={progress.indeterminate === true}
                     indeterminateLabel="Importing…"
                   />
@@ -2277,7 +2284,9 @@ function GridSelector({
             {selected.filename} · {selected.driver}
           </code>
         )}
-        {progress?.phase === 'grid' && <ProgressBar value={progress.fraction} />}
+        {progress?.phase === 'grid' && (
+          <ProgressBar value={progress.fraction} ariaLabel={`Loading ${title}`} />
+        )}
       </div>
       <button type="button" className={chat.ghostBtn} onClick={onChoose} disabled={busy}>
         {progress?.phase === 'grid' ? <LoaderCircle className={chat.spinner} size={14} /> : null}

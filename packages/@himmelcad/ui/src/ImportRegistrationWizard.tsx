@@ -310,7 +310,12 @@ export function ImportRegistrationWizard({
           />
         ) : (
           <ChatBubble title="Checking file">
-            <ProgressBar value={0} indeterminate indeterminateLabel="Checking…" />
+            <ProgressBar
+              value={0}
+              ariaLabel="Checking file"
+              indeterminate
+              indeterminateLabel="Checking…"
+            />
           </ChatBubble>
         )}
 

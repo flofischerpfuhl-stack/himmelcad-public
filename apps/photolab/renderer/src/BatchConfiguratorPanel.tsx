@@ -679,6 +679,7 @@ function BatchCard({
       <div className={styles.cardHeader}>
         <label className={styles.check}>
           <Checkbox
+            aria-label={`Include ${label} in batch`}
             checked={enabled}
             disabled={disabled}
             onChange={(event) => onToggle(event.currentTarget.checked)}
@@ -1010,7 +1011,11 @@ function ToggleField({
 }): JSX.Element {
   return (
     <label className={styles.toggle}>
-      <Checkbox checked={checked} onChange={(event) => onChange(event.currentTarget.checked)} />
+      <Checkbox
+        aria-label={label}
+        checked={checked}
+        onChange={(event) => onChange(event.currentTarget.checked)}
+      />
       <span />
       <strong>{label}</strong>
     </label>

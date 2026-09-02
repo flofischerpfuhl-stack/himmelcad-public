@@ -53,6 +53,7 @@ export function ProjectFileOperationDialog({
             <div
               className={styles.progress}
               role="progressbar"
+              aria-labelledby="project-file-operation-status"
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={percentage}

@@ -179,6 +179,7 @@ export function VideoFrameImportPanel({
             <div
               className={styles.progress}
               role="progressbar"
+              aria-label={progress?.message || 'Preparing video frames'}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={percentage}

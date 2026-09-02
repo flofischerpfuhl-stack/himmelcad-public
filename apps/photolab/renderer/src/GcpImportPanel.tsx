@@ -1267,7 +1267,12 @@ export function GcpImportPanel({
                         ? 'Bundled GCG2016 is used when it covers the project.'
                         : 'Select the survey grid required by this height pair.'}
                   </span>
-                  {gridProgress?.phase === 'grid' && <ProgressBar value={gridProgress.fraction} />}
+                  {gridProgress?.phase === 'grid' && (
+                    <ProgressBar
+                      value={gridProgress.fraction}
+                      ariaLabel="Loading geoid or quasigeoid grid"
+                    />
+                  )}
                   {verticalGrid && (
                     <code title={verticalGrid.localPath}>{verticalGrid.localPath}</code>
                   )}
@@ -1391,7 +1396,10 @@ export function GcpImportPanel({
                         : 'Bundled grids used when they cover the project.'}
                     </span>
                     {gridProgress?.phase === 'grid' && (
-                      <ProgressBar value={gridProgress.fraction} />
+                      <ProgressBar
+                        value={gridProgress.fraction}
+                        ariaLabel="Loading NTv2 or GTG grid"
+                      />
                     )}
                     {localGrid && <code title={localGrid.localPath}>{localGrid.localPath}</code>}
                   </div>
@@ -1533,7 +1541,12 @@ export function GcpImportPanel({
             ) : localBusy && !discovery ? (
               <>
                 <strong style={{ fontSize: 11 }}>Validating with PROJ…</strong>
-                <ProgressBar value={0} indeterminate indeterminateLabel="Validating…" />
+                <ProgressBar
+                  value={0}
+                  ariaLabel="Validating with PROJ"
+                  indeterminate
+                  indeterminateLabel="Validating…"
+                />
               </>
             ) : discovery ? (
               <>
