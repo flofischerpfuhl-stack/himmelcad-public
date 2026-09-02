@@ -19,7 +19,7 @@ replaces them. Revision 2 (2026-09-02) applies the architect's conformance
 check `docs/adr/0030-conformance-check-2026-09-02.md`. Revision 4
 (2026-09-02) adopts IF-D26–IF-D34, which close the nine WP-G1a contract
 gaps; where a record says "specified above", the spec's shape tables are
-adopted by citation without paraphrase.
+adopted by citation without paraphrase. Revision 6 (2026-09-02) replaces every IF-D26–IF-D34 paraphrase with the record's Decision text quoted verbatim under the ADR decision it governs; the ADR keeps only its own framing sentences around those quotes.
 
 ## Context
 
@@ -82,9 +82,13 @@ PROJECT-FORMAT, and an accepted ADR before implementation.
     manifest payload with only the `package_sha256` member omitted: UTF-8 JSON,
     object keys sorted by UTF-8 byte order, declared array order retained, no
     insignificant whitespace, strings emitted by the shared generated JSON
-    serializer, integers in base-10 without leading zeroes, and no floating-point manifest values. Per IF-D34, every logical `f64` in a package manifest or lineage payload, including `FrozenCrsEndpointV1.horizontal.coordinateEpoch.decimalYear`, is a canonical JSON `Decimal64` string: the finite binary64 value's shortest round-tripping, ties-to-even decimal expanded without exponent notation and normalized by the spec's exact rule; packages preserve the original lineage bytes and never round, normalize, or write the projected epoch back into the authoritative transformation model. Because every object, resource, and
+    serializer, integers in base-10 without leading zeroes, and no floating-point manifest values. Because every object, resource, and
     artifact hash is inside that payload, it binds the complete package without
     depending on filesystem enumeration order.
+
+    Adopted verbatim (import-formats IF-D34, quoted):
+
+    > **Decision:** every logical `f64` in a package manifest or lineage payload, including `FrozenCrsEndpointV1.horizontal.coordinateEpoch.decimalYear`, is a canonical JSON `Decimal64` string: the finite binary64 value's shortest round-tripping, ties-to-even decimal expanded without exponent notation and normalized by the exact rule above. Packages preserve the original lineage bytes and never round, normalize, or write the projected epoch back into the authoritative transformation model.
 
 3.  **Immutable package truth.** The admission object's semantic body,
     geometry and resource references, type, schema version, and representation
@@ -108,21 +112,29 @@ PROJECT-FORMAT, and an accepted ADR before implementation.
     component in one journal-last transaction.
 
 5.  **Publication atomicity.** PhotoLab publication creates a candidate
-    package, fsyncs its manifest and declared artifacts, and writes a small ready record (schema id `hcad.product-import-package-ready@1`, IF-D29) containing `manifest_id`, product id and version, publication generation, normalized format, manifest hash, lineage hash and status, `artifact_count`, `object_count`, `total_bytes`, and `package_sha256` last. Per IF-D29, `publication_generation` is the checked next PhotoLab journal command sequence and is identical in lineage, manifest, ready record, publication record, and committed journal entry; `publication_id` and a non-null package's `manifest_id` equal `"product-" + sha256(canonical_json([source_project_id, product_entity_id, product_entity_version_hash, publication_generation]))`; dataset ids are copied from admitted prepared datasets, resource ids equal their SHA-256, and resource/artifact roles use only the spec's closed role enumerations. The product publication record mirrors that summary;
+    package, fsyncs its manifest and declared artifacts, and writes a small ready record, `ProductImportPackageReadyRecordV1` (schema id `hcad.product-import-package-ready@1`), whose members are exactly `schema_id`, `manifest_id`, `product_id`, `product_version_hash`, `publication_generation`, `normalized_format_id`, `manifest_sha256`, `lineage_object_sha256`, `provenance_status`, `missing_field_ids`, `artifact_count`, `object_count`, `total_bytes`, and `package_sha256`, the last written last. The product publication record mirrors that summary;
     it and the ready record become visible atomically and must agree. Listing
     reads only this bounded summary. Builder never accepts an inventory
     assembled by walking a product directory after publication.
 
-6.  **Lineage payload.** For publications made after this contract exists, PhotoLab freezes `ProductLineageV1` (`hcad.photolab-product-lineage@1`) before the ready record and product record become visible. Per IF-D26 it has one exact serialized shape — the spec's field identifiers, JSON primitive types and tagged unions; a `?` member is omitted, never `null`; every unmarked member is present; every logical `f64` is a `Decimal64` string per Decision 2 (IF-D34), and the coordinate epoch is never rewritten in the model. The mandatory payload is:
+    Adopted verbatim (import-formats IF-D29, quoted):
+
+    > **Decision:** `publication_generation` is the checked next PhotoLab journal command sequence and is identical in lineage, manifest, ready record, publication record, and committed journal entry. `publication_id` and a non-null package's `manifest_id` equal `"product-" + sha256(canonical_json([source_project_id, product_entity_id, product_entity_version_hash, publication_generation]))`. The ready record uses `hcad.product-import-package-ready@1`; dataset ids are copied from admitted prepared datasets; resource ids equal their SHA-256; and resource/artifact roles use only the closed role enumerations above.
+
+6.  **Lineage payload.** For publications made after this contract exists, PhotoLab freezes `ProductLineageV1` (`hcad.photolab-product-lineage@1`) before the ready record and product record become visible. Its serialized shape is IF-D26, quoted below. The mandatory payload is:
     - source project stable id and the exact archive/manifest fingerprint;
-    - product entity id, exact entity version and content hash, publication generation, kind, label, dataset label, and normalized canonical format id;
+    - product entity id, exact entity version and content hash, publication generation, kind, label, dataset label, and `source_format`; `normalized_format_id` is optional (`?`): present exactly when a canonical prepared format is known, otherwise omitted without making the publication incomplete;
     - source alignment entity id and exact version/content hash;
     - processing-set choice as the tagged union `selected { id, version_hash, membership_sha256 } | none | all_imported_cameras`, with the frozen camera-selection SHA-256 in every case;
     - image-mask scope as `selected { scope_sha256 } | none`;
     - GCP choice as `selected { entity_id, entity_version_hash, snapshot_sha256 } | none`;
     - the exact source `spatialReference` plus the frozen `ProjectReferenceFrame` (`FrozenCrsEndpoint` and `establishedByTransformationSha256`), or the explicit `local_frame` marker; `unknown` is not legal for a new complete publication;
-    - `algorithms`, `configurations`, and `tools` as always-present ordered identity arrays of `ProductLineageIdentityV1 { id: string, sha256: Sha256 }` (IF-D26), repeated invocations kept as repeated entries; and
+    - `algorithms`, `configurations`, and `tools` as always-present ordered identity arrays of `ProductLineageIdentityV1 { id: string, sha256: Sha256 }`, repeated invocations kept as repeated entries; and
     - the accepted registration transform/audit, if one existed at publication.
+
+    Adopted verbatim (import-formats IF-D26, quoted):
+
+    > **Decision:** `ProductLineageV1` uses the exact field identifiers, JSON primitive types, tagged unions, and `ProductLineageIdentityV1 { id: string, sha256: Sha256 }` shape specified above. `algorithms`, `configurations`, and `tools` are always-present ordered identity arrays; repeated invocations remain repeated entries. A `?` member is omitted, never `null`, and every unmarked member is present.
 
 7.  **Provenance component.** Builder creates
     `hcad.photolab-product-provenance@1` as a hash-bound envelope containing
@@ -137,8 +149,8 @@ PROJECT-FORMAT, and an accepted ADR before implementation.
     meaning or bytes of the registered product.
 
 8.  **Legacy state.** Records carry an explicit `provenanceStatus`:
-    `complete` means every post-contract mandatory field and package hash
-    exists and validates; `partial` means at least one trustworthy
+    `complete` means every post-contract mandatory lineage field exists and
+    validates, whether or not an import package exists (IF-D33); `partial` means at least one trustworthy
     publication-time lineage value exists but one or more mandatory field ids
     are absent; `unknown` means no trustworthy publication-time lineage
     payload exists. Missing fields are mandatory only for post-contract
@@ -146,7 +158,19 @@ PROJECT-FORMAT, and an accepted ADR before implementation.
     `unknown` rows list their available facts and exact `missingFieldIds`,
     show "Needs republish/recompute", and cannot register. Builder never reads
     the current alignment, processing set, GCP, masks, CRS, project manifest,
-    or tool versions to fill history. Current PhotoLab publications are legacy until PhotoLab republishes or recomputes them. Per IF-D27, `missing_field_ids` and its `missingFieldIds` projection contain only exact `ProductLineageV1` serialized member ids — top-level ids, dot paths for members of present objects, zero-based bracket paths for members of present array items; whole missing arrays use their top-level id; inapplicable conditionals are not missing; invalid values are invalid rather than missing; the list is de-duplicated and UTF-8-byte-order sorted. Per IF-D28, dispositions use one closed reason-code enumeration — `available`, `needs_republish_recompute`, `needs_preparation`, `no_package`, `unsupported_format`, `invalid_package`, `unsupported_package_schema` — with the spec's disposition, meaning, precedence, and required base copy; UI may only append a product label or diagnostic id. Per IF-D33, every post-contract publication writes the complete hash-bound lineage envelope in `PhotoLabProductPublicationRecordV1`; if no package exists the required member is exactly `package: null`, with no fabricated manifest id or zero hash; the legacy five-field relation is only a read-only projection that can produce `partial` or `unknown`, never `complete` or reconstructed history.
+    or tool versions to fill history. Current PhotoLab publications are legacy until PhotoLab republishes or recomputes them. Missing-field ids (IF-D27), reason codes (IF-D28), and resident lineage without a package (IF-D33) are quoted below.
+
+    Adopted verbatim (import-formats IF-D27, quoted):
+
+    > **Decision:** `missing_field_ids` and its `missingFieldIds` projection contain only exact `ProductLineageV1` serialized member ids: top-level ids, dot paths for members of present objects, and zero-based bracket paths for members of present array items. Whole missing arrays use only their top-level id; inapplicable conditionals are not missing; values with invalid types or shapes are invalid rather than missing; the list is de-duplicated and UTF-8-byte-order sorted.
+
+    Adopted verbatim (import-formats IF-D28, quoted):
+
+    > **Decision:** the only reason codes are `available`, `needs_republish_recompute`, `needs_preparation`, `no_package`, `unsupported_format`, `invalid_package`, and `unsupported_package_schema`, with the disposition, meaning, precedence, and required base copy in the table above. UI may only append a product label or diagnostic id; it may not replace the base sentence or derive copy from an unknown string.
+
+    Adopted verbatim (import-formats IF-D33, quoted):
+
+    > **Decision:** every post-contract publication writes the complete hash-bound lineage envelope in `PhotoLabProductPublicationRecordV1`; if no package exists, the required member is exactly `package: null`, with no fabricated manifest id or zero hash. The legacy five-field relation is only a read-only projection and can produce `partial` or `unknown`, never `complete` or reconstructed history.
 
 9.  **Compatibility.** Compatibility is fail-closed and lossless: an unknown
     manifest major or type id or an unknown `required_features` value returns
@@ -166,27 +190,39 @@ PROJECT-FORMAT, and an accepted ADR before implementation.
     exact canonical formats below; it never passes a UI label into the
     renderer as a guessed format id.
 
-        | PhotoLab publication / candidate format                    | Resulting canonical entity and sibling owner                                                                                       | Disposition                                                                                                                                                   |
-        | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-        | `potreeV2` sparse point cloud                              | `hcad.point-cloud@1`; Pointcloud                                                                                                   | Eligible after package/provenance admission and Pointcloud acceptance; not implementation-ready; normalized to `potree@2`                                     |
-        | `potreeV2` prepared dense point cloud                      | `hcad.point-cloud@1`; Pointcloud                                                                                                   | Eligible after package/provenance admission and Pointcloud acceptance; not implementation-ready; normalized to `potree@2`                                     |
-        | `binaryPly` dense fallback                                 | none until prepared                                                                                                                | Deferred — not a prepared dataset and no canonical non-splat PLY dataset admission exists in the current render path; the chooser reports "Needs preparation" |
-        | `rasterPyramid` DEM                                        | `hcad.elevation-surface@1` with `ElevationSurfaceGeometry::Grid`; Raster                                                           | Eligible after package/provenance admission and Raster acceptance; not implementation-ready                                                                   |
-        | `rasterPyramid` orthomosaic                                | `hcad.raster-image@1`; Raster RA-D11                                                                                               | Needs canonical `PlanGrid2D` admission; not implementation-ready until RA-D11's DATA-MODEL/generated-reader delta lands                                       |
-        | `tiledMesh` with `preparedMesh.canonicalDataset`           | `hcad.surface-3d@1`, or `hcad.object-3d@1` when the verified topology is closed; Mesh & Terrain                                    | Eligible after package/provenance admission and Mesh acceptance; not implementation-ready; using `himmelcad-prepared-hierarchy@1`                             |
-        | legacy `tiledMesh` without that complete prepared contract | none                                                                                                                               | Deferred — a legacy display manifest is not a complete ADR 0018 canonical package; registration fails closed                                                  |
-        | `mvsDepth`                                                 | none as a standalone Builder product                                                                                               | Deferred — a PhotoLab MVS artifact index, not a render-core prepared-dataset format; may remain a lineage input                                               |
+    | PhotoLab publication / candidate format                    | Resulting canonical entity and sibling owner                                                    | Disposition                                                                                                                                                   |
+    | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `potreeV2` sparse point cloud                              | `hcad.point-cloud@1`; Pointcloud                                                                | Eligible after package/provenance admission and Pointcloud acceptance; not implementation-ready; normalized to `potree@2`                                     |
+    | `potreeV2` prepared dense point cloud                      | `hcad.point-cloud@1`; Pointcloud                                                                | Eligible after package/provenance admission and Pointcloud acceptance; not implementation-ready; normalized to `potree@2`                                     |
+    | `binaryPly` dense fallback                                 | none until prepared                                                                             | Deferred — not a prepared dataset and no canonical non-splat PLY dataset admission exists in the current render path; the chooser reports "Needs preparation" |
+    | `rasterPyramid` DEM                                        | `hcad.elevation-surface@1` with `ElevationSurfaceGeometry::Grid`; Raster                        | Eligible after package/provenance admission and Raster acceptance; not implementation-ready                                                                   |
+    | `rasterPyramid` orthomosaic                                | `hcad.raster-image@1`; Raster RA-D11                                                            | Needs canonical `PlanGrid2D` admission; not implementation-ready until RA-D11's DATA-MODEL/generated-reader delta lands                                       |
+    | `tiledMesh` with `preparedMesh.canonicalDataset`           | `hcad.surface-3d@1`, or `hcad.object-3d@1` when the verified topology is closed; Mesh & Terrain | Eligible after package/provenance admission and Mesh acceptance; not implementation-ready; using `himmelcad-prepared-hierarchy@1`                             |
+    | legacy `tiledMesh` without that complete prepared contract | none                                                                                            | Deferred — a legacy display manifest is not a complete ADR 0018 canonical package; registration fails closed                                                  |
+    | `mvsDepth`                                                 | none as a standalone Builder product                                                            | Deferred — a PhotoLab MVS artifact index, not a render-core prepared-dataset format; may remain a lineage input                                               |
 
-    | Gaussian-splat `prepared` | `hcad.gaussian-splat-cloud@1`; Pointcloud (authoritative owner per its PhotoLab-arrival registry row, IF-D31) | Eligible only after common data-model and package/provenance admission; no owner choice remains |
+    | Gaussian-splat `prepared` | `hcad.gaussian-splat-cloud@1`; Pointcloud (authoritative arrival ownership at `docs/builder-program/specs/pointcloud/pointcloud.md:65-74`; IF-D31) | Eligible after the data-model and package/provenance admission; no unresolved owner choice remains |
     | Gaussian-splat `brushPly` | none until prepared | Deferred — a monolithic fallback is not interaction-ready prepared data |
     | canonical `potree@2` | point-cloud rows above | Eligible ingress format after package admission; not a product disposition by itself |
-    | canonical `himmelcad-prepared-hierarchy@1` | eligible raster and mesh rows above, plus splat only after owner acceptance; gated by matching canonical geometry and content kind | Eligible ingress format after package admission; not blanket adoption |
+    | canonical `himmelcad-prepared-hierarchy@1` | eligible raster, mesh, and Pointcloud-owned prepared-splat rows above; gated by matching canonical geometry and content kind | Eligible ingress format after package admission; not blanket adoption |
     | claimed canonical `mesh@1` | none | Deferred as an unverified identifier; do not emit or accept it |
-    | published overlap or shared-control merged alignment | `hcad.point-cloud@1`; Pointcloud | Ordinary product-import manifest as any eligible `potree@2` point cloud (IF-D32); lineage identifies the merge entity (id, version hash, `lineage_sha256`) and `source_alignment_inputs` carries at least two `{id, sha256}` identities in published input-alignment order; V1 does not represent a mixed overlap/shared-control merge |
+    | published overlap or shared-control merged alignment | `hcad.point-cloud@1`; Pointcloud | Ordinary product-import manifest as any eligible `potree@2` point cloud with ordered merge lineage (IF-D32, quoted below) |
 
-        All otherwise eligible rows remain unavailable until the common
-        package/provenance admission and their named owner acceptance land; they
-        are not independently Adopted product rows.
+    All otherwise eligible rows remain unavailable until the common
+    package/provenance admission and their named owner acceptance land; they
+    are not independently Adopted product rows.
+
+    Adopted verbatim (import-formats IF-D30, quoted):
+
+    > **Decision:** `product_kind: "dem"` requires `PhotoLabDemFactsV1` with `elevationZ`, exact `RasterInterpolation`, exact `RasterConnectivity`, explicit source NoData semantics, the mandatory validity resource, and a connectivity resource for mask connectivity. The canonical Grid and prepared Raster root bind the same facts and resources. Until all are frozen, the publication has `package: null` and is not Available.
+
+    Adopted verbatim (import-formats IF-D31, quoted):
+
+    > **Decision:** the Pointcloud specification's PhotoLab-arrival registry row is authoritative for `hcad.gaussian-splat-cloud@1`. A prepared splat becomes eligible only after common data-model and package/provenance admission; no owner choice remains. ADR 0030 Decision 10 revision 4 must follow that registry row and remove revision 3's stale unresolved-owner wording.
+
+    Adopted verbatim (import-formats IF-D32, quoted):
+
+    > **Decision:** a published overlap or shared-control merged alignment uses the same product-import manifest as every other eligible `potree@2` point cloud. Its lineage identifies the merge entity with id, version hash, and `lineage_sha256`, and `source_alignment_inputs` contains at least two `{id, sha256}` identities in published input-alignment order. V1 does not represent a mixed overlap/shared-control merge.
 
 ### IF-D19 validation constraints (restated)
 
@@ -194,7 +230,7 @@ PROJECT-FORMAT, and an accepted ADR before implementation.
 - Orthomosaic: the only R1 arrival is `RasterImageGeometry` plus `RasterMapping::PlanGrid2D`, carrying the source pixel-grid affine XY transform, frozen CRS, no depth, no entity placement, and `z: null`. A zero-height orthomosaic `OrthoGrid` is rejected; `PlanGrid2D` has no Z, depth, or placement authority.
 - Prepared hierarchy: `himmelcad-prepared-hierarchy@1` is not blanket permission to accept arbitrary contents. Validation requires the canonical entity kind, representation slot, geometry/resource hash, root manifest, every referenced artifact, and every tile `ContentKind` to agree. Unsupported or mixed semantics fail before review; registration never relabels Raster, glTF mesh, or GaussianSplats content.
 - A renderer decoder or an inventory label is never semantic admission. Complete lineage is captured by PhotoLab at publication and copied byte-for-byte; Builder never reconstructs missing history.
-- DEM package facts (IF-D30): `product_kind: "dem"` requires `PhotoLabDemFactsV1` with `elevationZ`, exact `RasterInterpolation`, exact `RasterConnectivity`, explicit source NoData semantics, the mandatory validity resource, and a connectivity resource for mask connectivity; the canonical Grid and prepared Raster root bind the same facts and resources; until all are frozen the publication has `package: null` and is not Available.
+- DEM package facts: IF-D30, quoted under Decision 10.
 
 ## Release gates
 
@@ -215,7 +251,7 @@ gate test).
 
 ## Consequences
 
-- PhotoLab publication gains a package/ready-record step and a frozen lineage payload for every product. Per IF-D33 the existing five-field product lineage record is only a read-only projection of `ProductLineageV1` that can yield `partial` or `unknown`, never `complete` or reconstructed history; every post-contract publication keeps the complete hash-bound lineage in its publication record with `package: null` when no package exists.
+- PhotoLab publication gains a package/ready-record step and a frozen lineage payload for every product; the existing five-field product lineage record is only a read-only projection (IF-D33, quoted under Decision 8).
 - All current PhotoLab publications become `partial` or `unknown` and must be republished or recomputed to become registrable; the UI and listing say so instead of decorating old bytes.
 - The consumer side — generated command-table rows, source acquisition and pinning, listing budgets, repeated registration and update rules, passive consumers, and `.hcadx` WeltView parity — is governed by import-formats IF-D20, IF-D23, IF-D24, and IF-D25 as written there; this ADR neither restates nor modifies them.
 
