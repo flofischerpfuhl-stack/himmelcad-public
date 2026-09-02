@@ -211,6 +211,30 @@ strictly optional, never a new required runtime; (3) portable MVS GPU stays
 out of scope (own project). Every GPU path must degrade to today's CPU path
 with identical outputs gated by the determinism tests.
 
+Evidence gathered 2026-09-02 (read-only probes, no code change):
+
+- Vendored COLMAP 4.1.0 (`vendor/colmap/linux-x64/bin/colmap`) reports
+  "without CUDA"; `ldd` links no CUDA libraries. The `--FeatureExtraction.use_gpu`
+  flag exists but has no backend, so no in-place toggle is possible — GPU
+  support means a new hash-pinned COLMAP runtime built with CUDA (ADR 0013
+  inventory, licence and size review), for Linux and Windows separately.
+- DeDoDe's packaged ONNX Runtime 1.24.4 exposes only
+  `CPUExecutionProvider` (plus Azure); a CUDA execution provider requires
+  shipping `onnxruntime-gpu` and its CUDA/cuDNN closure — again a runtime
+  artifact decision, not a flag.
+- The portable MVS worker declares itself the CPU reference worker
+  (`himmelcad-portable-mvs.rs:78`).
+- Development machine: Quadro M2200, 4 GiB VRAM, driver 580 — compute
+  capability 5.2, which current CUDA 12 toolchains only support with
+  explicit legacy targets; not representative of user hardware.
+
+Conclusion: WP-A6 is an owner decision about shipping CUDA-enabled runtimes
+(build effort, ~1 GiB extra payload, licence inventory, Windows parity),
+not an engineering task inside this plan. The safe code-side preparation —
+threading the hardware probe into an execution-mode selection with a
+kill-switch — only pays off once such runtimes exist, so it is deferred
+until the owner decides.
+
 Acceptance criteria: on a non-GPU machine nothing changes (CI-provable); on
 the dev machine the smoke alignment uses GPU when allowed and produces a
 result passing the existing contract tests; kill-switch documented.
