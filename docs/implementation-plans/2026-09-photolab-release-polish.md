@@ -827,7 +827,9 @@ snapshot-hash provenance displayed.
 Problem. No gradual selection, no way to see or act on bad observations; the
 robust solver downweights silently.
 
-Design. Surface the robust-loss outcome per optimization run: a QC list of
+Design. Also publish per-observation residual magnitudes (px) in the
+accuracy payload so the accuracy-row → image jump (WP-C8c) can target the
+worst image instead of the first observation. Surface the robust-loss outcome per optimization run: a QC list of
 observations ranked by final weight/residual (image, GCP, px residual,
 weight, flag "downweighted/rejected"), worst tie-point clusters, with actions
 "open in image" (WP-C8 threading) and "exclude observation and re-optimize"
