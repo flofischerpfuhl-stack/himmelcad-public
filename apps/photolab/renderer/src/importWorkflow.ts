@@ -96,6 +96,7 @@ export interface GcpImportWorkflow {
   sourceVerticalEpsg: number;
   targetVerticalEpsg: number;
   gridPolicy: GridPolicy;
+  verticalGrid?: StoredGridRef | null;
   horizontalGrid: StoredGridRef | null;
   delimiter: string;
   decimalSeparator: 'point' | 'comma';

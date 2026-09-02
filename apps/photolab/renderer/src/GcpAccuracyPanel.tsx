@@ -44,6 +44,7 @@ export interface GcpAccuracyReport {
   processingSetLabel: string;
   alignmentRunLabel: string;
   optimizationSnapshotSha256: string;
+  heightReferenceLabel: string;
   cameraCount: number;
   residuals: readonly GcpAccuracyResidual[];
   control?: GcpAccuracyStatistics;
@@ -78,6 +79,7 @@ export function GcpAccuracyPanel({
           <span>
             {report.processingSetLabel} › {report.alignmentRunLabel} › {report.cameraCount} cameras
           </span>
+          <span>Height reference · {report.heightReferenceLabel}</span>
         </div>
         <code title={report.optimizationSnapshotSha256}>
           Snapshot {report.optimizationSnapshotSha256.slice(0, 12)}
@@ -95,7 +97,7 @@ export function GcpAccuracyPanel({
               <th>Role</th>
               <th className={styles.numeric}>East</th>
               <th className={styles.numeric}>North</th>
-              <th className={styles.numeric}>Height</th>
+              <th className={styles.numeric}>Height · {report.heightReferenceLabel}</th>
               <th className={styles.numeric}>Horizontal</th>
               <th className={styles.numeric}>3D</th>
               <th className={styles.numeric}>Image RMS</th>

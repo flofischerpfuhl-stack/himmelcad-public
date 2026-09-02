@@ -40,7 +40,6 @@ import {
 } from './importWorkflow.js';
 import {
   HORIZONTAL_CRS_PRESETS,
-  type CrsOperationCandidate,
   type CrsOperationDiscovery,
   type CrsOperationQuery,
   type CrsPreset,
@@ -48,6 +47,11 @@ import {
   type ImageImportProgress,
   type LocalGridSelection,
 } from './ImageImportPanel.js';
+import {
+  buildGcpImportDecision,
+  buildGcpOperationQuery,
+  isGcpOperationReady,
+} from './gcpImportDecision.js';
 
 export interface GcpImportPanelProps {
   path: string | null;
@@ -59,7 +63,7 @@ export interface GcpImportPanelProps {
   onChooseFile: () => void;
   onPreview: (path: string, mapping: GcpCsvImportMapping) => Promise<GcpCsvPreview>;
   onDiscoverCrs: (query: CrsOperationQuery) => Promise<CrsOperationDiscovery>;
-  onSelectGrid: (kind: 'horizontal') => Promise<LocalGridSelection | null>;
+  onSelectGrid: (kind: 'horizontal' | 'vertical') => Promise<LocalGridSelection | null>;
   onCommit: (
     path: string,
     mapping: GcpCsvImportMapping,
@@ -78,6 +82,7 @@ type Phase =
   | 'mode'
   | 'vertical_ask'
   | 'vertical_setup'
+  | 'vertical_grid'
   | 'horizontal_ask'
   | 'horizontal_setup'
   | 'horizontal_grid'
@@ -203,14 +208,16 @@ export function GcpImportPanel({
   const [error, setError] = useState<string | null>(null);
   const [localBusy, setLocalBusy] = useState(false);
   const [localGrid, setLocalGrid] = useState<LocalGridSelection | null>(null);
+  const [verticalGrid, setVerticalGrid] = useState<LocalGridSelection | null>(null);
   const preferencesHydrated = useRef(false);
   const lastPreviewKey = useRef<string | null>(null);
 
   /** True only when a real horizontal CRS change is requested. */
   const transformCoordinates =
     mode === 'combined' || (mode === 'separate' && doHorizontal === 'yes');
+  const transformHeight = mode === 'separate' && doVertical === 'yes';
   /** No convert / already project CRS — skip operation picker entirely. */
-  const identityImport = mode === 'none' || (mode === 'separate' && doHorizontal === 'no');
+  const identityImport = !transformCoordinates && !transformHeight;
 
   useEffect(() => {
     if (preferencesHydrated.current) return;
@@ -239,6 +246,7 @@ export function GcpImportPanel({
       setDoHorizontal(null);
       setDiscovery(null);
       setSiteCalPath(null);
+      setVerticalGrid(null);
     }
   }, [path, phase]);
 
@@ -326,29 +334,58 @@ export function GcpImportPanel({
 
   const query = useMemo(
     () =>
-      buildQuery(
-        transformCoordinates ? sourceCrs : targetCrs,
-        targetCrs,
-        area,
-        transformCoordinates ? localGrid : null,
-      ),
-    [area, localGrid, sourceCrs, targetCrs, transformCoordinates],
+      buildGcpOperationQuery({
+        sourceHorizontalEpsg: sourceCrsEpsg,
+        targetHorizontalEpsg: targetCrsEpsg,
+        sourceVerticalEpsg,
+        targetVerticalEpsg,
+        transformHorizontal: transformCoordinates,
+        transformHeight,
+        areaOfInterest: area,
+        verticalGrid,
+        horizontalGrid: localGrid,
+      }),
+    [
+      area,
+      localGrid,
+      sourceCrsEpsg,
+      sourceVerticalEpsg,
+      targetCrsEpsg,
+      targetVerticalEpsg,
+      transformCoordinates,
+      transformHeight,
+      verticalGrid,
+    ],
   );
   const selectedOperation =
     discovery?.candidates.find((item) => item.operationId === selectedOperationId) ?? null;
-  const operationReady =
-    identityImport ||
-    (discoveryQueryKey === JSON.stringify(query) &&
-      selectedOperation != null &&
-      !selectedOperation.ballpark &&
-      selectedOperation.requiredGrids.every(
-        (grid) => grid.availability.state === 'presentVerified',
+  const missingSelectedGrid = selectedOperation?.requiredGrids.find(
+    (grid) => grid.availability.state !== 'presentVerified',
+  );
+  const operationReady = isGcpOperationReady(
+    identityImport,
+    transformHeight,
+    discoveryQueryKey === JSON.stringify(query),
+    selectedOperation,
+    query.areaOfInterest,
+  );
+  const selectedCoverageFailure =
+    selectedOperation != null &&
+    (!containsArea(selectedOperation.areaOfUse, query.areaOfInterest) ||
+      selectedOperation.requiredGrids.some(
+        (grid) => grid.coverage == null || !containsArea(grid.coverage, query.areaOfInterest),
       ));
+  const selectedHeightOperationMissing =
+    transformHeight &&
+    selectedOperation != null &&
+    !selectedOperation.projPipeline.includes('+proj=vgridshift');
 
   const siteCalBlocked = mode === 'combined' && siteCalPath != null;
   // Only discover PROJ ops when a real transform is needed and we're on the ops/review path.
   const needsDiscovery =
-    transformCoordinates && !siteCalBlocked && (phase === 'operations' || phase === 'review');
+    (transformCoordinates || transformHeight) &&
+    !siteCalBlocked &&
+    (phase === 'operations' || phase === 'review');
 
   useEffect(() => {
     if (!needsDiscovery || siteCalBlocked) return;
@@ -388,21 +425,28 @@ export function GcpImportPanel({
     };
   }, [needsDiscovery, onDiscoverCrs, onError, query, siteCalBlocked]);
 
-  const chooseGrid = async (): Promise<void> => {
+  const chooseGrid = async (target: 'horizontal' | 'vertical'): Promise<void> => {
     setLocalBusy(true);
     setError(null);
     try {
-      const selected = await onSelectGrid('horizontal');
+      const selected = await onSelectGrid(target);
       if (!selected) return;
-      if (selected.kind === 'geoid')
+      if (target === 'vertical' && selected.kind !== 'geoid')
+        throw new Error(`${selected.filename} is a horizontal grid, not a geoid or quasigeoid.`);
+      if (target === 'horizontal' && selected.kind === 'geoid')
         throw new Error(`${selected.filename} is a vertical grid, not a horizontal datum grid.`);
       if (!containsArea(selected.coverage, area))
         throw new Error(
           `${selected.filename} does not cover the GCP/project area. Select a grid whose coverage contains the image positions.`,
         );
       const enriched = enrichGridPaths(selected, null);
-      setLocalGrid(enriched);
-      rememberGrid('horizontal', enriched);
+      if (target === 'vertical') {
+        setVerticalGrid(enriched);
+        rememberGrid('vertical', enriched);
+      } else {
+        setLocalGrid(enriched);
+        rememberGrid('horizontal', enriched);
+      }
       setDiscoveryQueryKey(null);
     } catch (reason) {
       const detail = message(reason);
@@ -424,15 +468,18 @@ export function GcpImportPanel({
       setDoHorizontal(null);
       setSiteCalPath(null);
       setLocalGrid(null);
+      setVerticalGrid(null);
     }
     if (step === 'vertical_ask') {
       setDoVertical(null);
       setDoHorizontal(null);
       setLocalGrid(null);
+      setVerticalGrid(null);
     }
     if (step === 'vertical_setup') {
       setDoHorizontal(null);
       setLocalGrid(null);
+      setVerticalGrid(null);
     }
     if (step === 'horizontal_ask') {
       setDoHorizontal(null);
@@ -452,12 +499,18 @@ export function GcpImportPanel({
     setDoHorizontal(null);
     setSiteCalPath(null);
     setLocalGrid(null);
+    setVerticalGrid(null);
     setDiscovery(null);
     setDiscoveryQueryKey(null);
     setSelectedOperationId(null);
     if (next === 'none') {
       // Already project CRS — import values as-is, no operation pick.
       setSourceCrsEpsg(targetCrsEpsg);
+      const projectVerticalEpsg = parseVerticalEpsgCode(projectTargetCrs);
+      if (projectVerticalEpsg != null) {
+        setSourceVerticalEpsg(projectVerticalEpsg);
+        setTargetVerticalEpsg(projectVerticalEpsg);
+      }
       setDoVertical('no');
       setDoHorizontal('no');
       setPhase('review');
@@ -478,9 +531,23 @@ export function GcpImportPanel({
   };
 
   const confirmVerticalSetup = () => {
-    // GCP commit path currently preserves height values; record choice for audit UI only.
+    if (sourceVerticalEpsg === targetVerticalEpsg) {
+      setError('Source and target height CRS are identical. Choose different references.');
+      return;
+    }
+    if (sourceVerticalEpsg === 99999 || targetVerticalEpsg === 99999) {
+      setError('Local or relative heights cannot be transformed without a defined vertical CRS.');
+      return;
+    }
     rememberCrs('vertical', sourceVerticalEpsg);
     rememberCrs('vertical', targetVerticalEpsg);
+    const remembered = loadRememberedGrid('vertical');
+    if (remembered) setVerticalGrid(remembered);
+    setPhase('vertical_grid');
+  };
+
+  const confirmVerticalGrid = () => {
+    if (verticalGrid) rememberGrid('vertical', verticalGrid);
     setPhase('horizontal_ask');
   };
 
@@ -495,7 +562,7 @@ export function GcpImportPanel({
       setDiscovery(null);
       setDiscoveryQueryKey(null);
       setSelectedOperationId(null);
-      setPhase('review');
+      setPhase(transformHeight ? 'operations' : 'review');
     }
   };
 
@@ -573,7 +640,19 @@ export function GcpImportPanel({
         setDiscovery(result);
         setDiscoveryQueryKey(JSON.stringify(query));
         setSelectedOperationId(identity.operationId);
-        await onCommit(path, mapping, buildDecision(query, identity, result), true);
+        await onCommit(
+          path,
+          mapping,
+          buildGcpImportDecision(
+            query,
+            identity,
+            result,
+            sourceVerticalEpsg,
+            targetVerticalEpsg,
+            false,
+          ),
+          true,
+        );
       } catch (reason: unknown) {
         const detail = message(reason);
         setError(detail);
@@ -587,8 +666,15 @@ export function GcpImportPanel({
     await onCommit(
       path,
       mapping,
-      buildDecision(query, selectedOperation, discovery),
-      !transformCoordinates,
+      buildGcpImportDecision(
+        query,
+        selectedOperation,
+        discovery,
+        sourceVerticalEpsg,
+        targetVerticalEpsg,
+        transformHeight,
+      ),
+      identityImport,
     );
   };
 
@@ -663,7 +749,8 @@ export function GcpImportPanel({
     doHorizontal === 'yes' &&
     phaseOrder(phase) >= phaseOrder('horizontal_setup');
   const showCombined = mode === 'combined' && phaseOrder(phase) >= phaseOrder('combined_setup');
-  const showOps = transformCoordinates && phaseOrder(phase) >= phaseOrder('operations');
+  const showOps =
+    (transformCoordinates || transformHeight) && phaseOrder(phase) >= phaseOrder('operations');
   const showReview = phase === 'review';
 
   return (
@@ -693,7 +780,8 @@ export function GcpImportPanel({
                   sourceCrsEpsg,
                   sourceVerticalEpsg,
                   targetVerticalEpsg,
-                  gridPolicy: transformCoordinates ? 'ntv2' : null,
+                  gridPolicy: transformCoordinates || transformHeight ? 'ntv2' : null,
+                  verticalGrid: verticalGrid ? toStoredGrid(verticalGrid) : null,
                   horizontalGrid: localGrid ? toStoredGrid(localGrid) : null,
                   delimiter,
                   decimalSeparator,
@@ -887,6 +975,8 @@ export function GcpImportPanel({
                           setDoVertical(workflow.doVertical);
                           setDoHorizontal(workflow.doHorizontal);
                           setSourceCrsEpsg(workflow.sourceCrsEpsg);
+                          setSourceVerticalEpsg(workflow.sourceVerticalEpsg);
+                          setTargetVerticalEpsg(workflow.targetVerticalEpsg);
                           setDelimiter(workflow.delimiter);
                           setDecimalSeparator(workflow.decimalSeparator);
                           setHasHeader(workflow.hasHeader);
@@ -907,7 +997,27 @@ export function GcpImportPanel({
                               coverage: workflow.horizontalGrid.coverage,
                             });
                           }
-                          setPhase(workflow.mode === 'none' ? 'review' : 'horizontal_setup');
+                          if (workflow.verticalGrid) {
+                            setVerticalGrid({
+                              filename: workflow.verticalGrid.filename,
+                              localPath:
+                                workflow.verticalGrid.absolutePath ||
+                                workflow.verticalGrid.localPath,
+                              absolutePath: workflow.verticalGrid.absolutePath,
+                              relativePath: workflow.verticalGrid.relativePath,
+                              kind: workflow.verticalGrid.kind,
+                              driver: workflow.verticalGrid.driver,
+                              coverage: workflow.verticalGrid.coverage,
+                            });
+                          }
+                          setPhase(
+                            workflow.mode === 'none' ||
+                              (workflow.mode === 'separate' &&
+                                workflow.doVertical !== 'yes' &&
+                                workflow.doHorizontal !== 'yes')
+                              ? 'review'
+                              : 'operations',
+                          );
                         }}
                       >
                         {workflow.name.length > 42
@@ -954,7 +1064,7 @@ export function GcpImportPanel({
               revertDisabled={locked}
               options={[
                 { id: 'no', label: 'No — preserve heights', primary: true },
-                { id: 'yes', label: 'Yes — label height CRS' },
+                { id: 'yes', label: 'Yes — transform height' },
               ]}
             />
             {doVertical != null && (
@@ -963,7 +1073,7 @@ export function GcpImportPanel({
                 onRevert={() => clearFrom('vertical_ask')}
                 revertDisabled={locked}
               >
-                {doVertical === 'yes' ? 'Height CRS labeled' : 'Preserve heights'}
+                {doVertical === 'yes' ? 'Transform height' : 'Preserve declared heights'}
               </ChatBubble>
             )}
           </>
@@ -1001,6 +1111,54 @@ export function GcpImportPanel({
             )}
           </ChatCard>
         )}
+
+        {mode === 'separate' &&
+          doVertical === 'yes' &&
+          phaseOrder(phase) >= phaseOrder('vertical_grid') && (
+            <ChatCard
+              title="Vertical grid"
+              onRevert={() => clearFrom('vertical_setup')}
+              revertDisabled={locked}
+            >
+              <div className={chat.gridRow}>
+                <Grid3X3 size={16} />
+                <div>
+                  <strong>Geoid or quasigeoid</strong>
+                  <span>
+                    {verticalGrid
+                      ? `${verticalGrid.filename} · selected`
+                      : sourceVerticalEpsg === 7837 || targetVerticalEpsg === 7837
+                        ? 'Bundled GCG2016 is used when it covers the project.'
+                        : 'Select the survey grid required by this height pair.'}
+                  </span>
+                  {gridProgress?.phase === 'grid' && <ProgressBar value={gridProgress.fraction} />}
+                  {verticalGrid && (
+                    <code title={verticalGrid.localPath}>{verticalGrid.localPath}</code>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className={chat.ghostBtn}
+                  disabled={locked || phase !== 'vertical_grid'}
+                  onClick={() => void chooseGrid('vertical')}
+                >
+                  {verticalGrid ? 'Change…' : 'Choose grid…'}
+                </button>
+              </div>
+              {phase === 'vertical_grid' && (
+                <div className={chat.toolbar}>
+                  <button
+                    type="button"
+                    className={`${chat.choice} ${chat.choicePrimary}`}
+                    disabled={locked}
+                    onClick={confirmVerticalGrid}
+                  >
+                    {verticalGrid ? 'Continue with this grid' : 'Continue to validation'}
+                  </button>
+                </div>
+              )}
+            </ChatCard>
+          )}
 
         {mode === 'separate' && phaseOrder(phase) >= phaseOrder('horizontal_ask') && (
           <>
@@ -1105,7 +1263,7 @@ export function GcpImportPanel({
                     type="button"
                     className={chat.ghostBtn}
                     disabled={locked || phase !== 'horizontal_grid'}
-                    onClick={() => void chooseGrid()}
+                    onClick={() => void chooseGrid('horizontal')}
                   >
                     {localGrid ? 'Change…' : 'Choose grid…'}
                   </button>
@@ -1233,7 +1391,7 @@ export function GcpImportPanel({
                   type="button"
                   className={chat.ghostBtn}
                   disabled={locked || phase !== 'combined_grid'}
-                  onClick={() => void chooseGrid()}
+                  onClick={() => void chooseGrid('horizontal')}
                 >
                   {localGrid ? 'Change…' : 'Choose grid…'}
                 </button>
@@ -1320,13 +1478,35 @@ export function GcpImportPanel({
                       </div>
                     ),
                   )}
+                {missingSelectedGrid && (
+                  <div className={chat.errorInline}>
+                    <AlertTriangle size={14} /> Required grid {missingSelectedGrid.officialFilename}{' '}
+                    is missing or unverified. Select a covering grid before import.
+                  </div>
+                )}
+                {selectedCoverageFailure && (
+                  <div className={chat.errorInline}>
+                    <AlertTriangle size={14} /> The selected operation or grid does not cover the
+                    GCP/project area. Select a covering geoid or coordinate operation.
+                  </div>
+                )}
+                {selectedHeightOperationMissing && (
+                  <div className={chat.errorInline}>
+                    <AlertTriangle size={14} /> This operation does not transform height values.
+                    Select an operation with a verified vertical grid.
+                  </div>
+                )}
                 {phase === 'operations' && selectedOperationId && (
                   <div className={chat.toolbar}>
                     <button
                       type="button"
                       className={`${chat.choice} ${chat.choicePrimary}`}
                       disabled={
-                        busy || localBusy || !selectedOperation || selectedOperation.ballpark
+                        busy ||
+                        localBusy ||
+                        !selectedOperation ||
+                        selectedOperation.ballpark ||
+                        !operationReady
                       }
                       onClick={() => setPhase('review')}
                     >
@@ -1352,6 +1532,14 @@ export function GcpImportPanel({
               <Metric
                 label="Coordinates"
                 value={transformCoordinates ? `${sourceCrs} → ${targetCrs}` : `As ${targetCrs}`}
+              />
+              <Metric
+                label="Height"
+                value={
+                  transformHeight
+                    ? `EPSG:${sourceVerticalEpsg} → EPSG:${targetVerticalEpsg}`
+                    : `Preserved · EPSG:${sourceVerticalEpsg}`
+                }
               />
               <Metric label="Mode" value={mode ? MODE_LABEL[mode] : '—'} />
               <Metric label="Decimals" value={decimalSeparator === 'comma' ? 'Comma' : 'Point'} />
@@ -1595,6 +1783,7 @@ function phaseOrder(phase: Phase): number {
     'mode',
     'vertical_ask',
     'vertical_setup',
+    'vertical_grid',
     'horizontal_ask',
     'horizontal_setup',
     'horizontal_grid',
@@ -1644,52 +1833,6 @@ function selector(value: string, hasHeader: boolean, headers: readonly string[] 
   return { kind: 'index' as const, value: Number.isSafeInteger(index) && index >= 0 ? index : 0 };
 }
 
-function buildQuery(
-  source: string,
-  target: string,
-  areaOfInterest: CrsOperationQuery['areaOfInterest'],
-  localGrid: LocalGridSelection | null,
-): CrsOperationQuery {
-  return {
-    source: { crs: parseCrs(source) },
-    target: { crs: parseCrs(target) },
-    areaOfInterest,
-    selectionPolicy: { allowBallpark: false, onlyBest: false },
-    gridCatalog: localGrid
-      ? [
-          {
-            kind: localGrid.kind,
-            officialFilename: localGrid.filename,
-            license: {
-              licenseName: 'User-supplied local grid',
-              source: localGrid.localPath,
-              redistributionAllowed: false,
-            },
-            coverage: localGrid.coverage,
-            localPath: localGrid.localPath,
-          },
-        ]
-      : [
-          {
-            kind: 'gtg',
-            officialFilename: 'de_adv_BETA2007.tif',
-            officialSha256: '46e681fcc7d022dde1db1f9d0a3426a9bfb1d4a151af69a81b3c30104c9388e2',
-            license: {
-              licenseName: 'AdV free redistribution notice',
-              source: 'https://cdn.proj.org/de_adv_README.txt',
-              redistributionAllowed: true,
-            },
-            coverage: {
-              westLongitude: 5.416666666666667,
-              southLatitude: 46.95,
-              eastLongitude: 15.75,
-              northLatitude: 55.35,
-            },
-          },
-        ],
-  };
-}
-
 function containsArea(
   coverage: CrsOperationQuery['areaOfInterest'],
   area: CrsOperationQuery['areaOfInterest'],
@@ -1726,34 +1869,16 @@ function projectImageArea(
   };
 }
 
-function parseCrs(value: string): { kind: 'epsg' | 'authority'; value: number | string } {
-  const match = /^EPSG:\s*(\d+)(?:\+\d+)?$/i.exec(value.trim());
-  return match
-    ? { kind: 'epsg', value: Number(match[1]) }
-    : { kind: 'authority', value: value.trim() };
-}
-
 function parseEpsgCode(value: string | null): number | null {
   if (!value) return null;
   const match = /^EPSG:\s*(\d+)(?:\+\d+)?$/i.exec(value.trim());
   return match ? Number(match[1]) : null;
 }
 
-function buildDecision(
-  query: CrsOperationQuery,
-  operation: CrsOperationCandidate,
-  discovery: CrsOperationDiscovery,
-): ImageImportDecision {
-  return {
-    schemaVersion: 1,
-    containsGpsData: false,
-    horizontal: { source: query.source, target: query.target },
-    vertical: { source: { kind: 'unknown' }, target: { kind: 'unknown' }, mode: 'preserveValues' },
-    areaOfInterest: query.areaOfInterest,
-    operation: { ...operation, bestAvailable: true },
-    selectionPolicy: { allowBallpark: false, onlyBest: false },
-    databaseVersions: discovery.audit.versions,
-  };
+function parseVerticalEpsgCode(value: string | null): number | null {
+  if (!value) return null;
+  const match = /^EPSG:\s*\d+\+(\d+)$/i.exec(value.trim());
+  return match ? Number(match[1]) : null;
 }
 
 function columnLabel(key: 'name' | 'east' | 'north' | 'height'): string {

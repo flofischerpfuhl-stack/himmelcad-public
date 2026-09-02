@@ -1,5 +1,6 @@
 import type {
   GcpCollectionRecord,
+  GcpHeightReference,
   GcpOptimizationPublicationRecord,
   GcpPoint,
 } from '@himmelcad/data';
@@ -22,13 +23,27 @@ export function GcpPropertiesPanel({
   const manual = observations.filter((item) => item.state.state === 'manual').length;
   const predicted = observations.filter((item) => item.state.state === 'predicted').length;
   const blocked = observations.filter((item) => item.state.state === 'blocked').length;
+  const record = collection.points.find((item) => item.point.id === point.id);
+  const heightReference = formatHeightReference(record?.targetHeightReference);
   return (
     <div className={styles.root}>
       <section>
         <h3>Project coordinates</h3>
         <Row label="Easting (X)" value={`${format(point.coordinate.eastMeters)} m`} />
         <Row label="Northing (Y)" value={`${format(point.coordinate.northMeters)} m`} />
-        <Row label="Height (Z)" value={`${format(point.coordinate.heightMeters)} m`} />
+        <Row
+          label={`Height (Z) · ${heightReference}`}
+          value={`${format(point.coordinate.heightMeters)} m`}
+        />
+        {record?.sourcePoint && (
+          <Row
+            label={`Imported height · ${formatHeightReference(record.sourceHeightReference)}`}
+            value={`${format(record.sourcePoint.coordinate.heightMeters)} m`}
+          />
+        )}
+        {record && (
+          <Row label="Frozen operation" value={record.transformationSha256.slice(0, 12)} />
+        )}
       </section>
       <section>
         <h3>Survey use</h3>
@@ -87,4 +102,12 @@ function componentLabel(role: GcpPoint['role']): string {
   if (role.endsWith('Xy')) return 'XY';
   if (role.endsWith('Z')) return 'Z';
   return 'None';
+}
+
+export function formatHeightReference(reference: GcpHeightReference | undefined): string {
+  if (!reference || reference.kind === 'unknown') return 'Unknown reference';
+  if (reference.kind === 'ellipsoidal') return 'Ellipsoidal';
+  if (reference.kind === 'deviceProfile') return reference.profileId;
+  const crs = reference.verticalCrs;
+  return crs.kind === 'epsg' ? `EPSG:${crs.value}` : String(crs.value);
 }

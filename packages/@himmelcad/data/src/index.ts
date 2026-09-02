@@ -918,6 +918,15 @@ export interface GcpPoint {
   role: GcpRole;
 }
 
+export type GcpHeightReference =
+  | { kind: 'unknown' }
+  | { kind: 'ellipsoidal' }
+  | {
+      kind: 'orthometric' | 'normalHeight';
+      verticalCrs: { kind: 'epsg' | 'authority'; value: number | string };
+    }
+  | { kind: 'deviceProfile'; profileId: string };
+
 export interface GcpCsvPreview {
   sourcePath: string;
   sourceSha256: ObjectHash;
@@ -936,6 +945,9 @@ export interface GcpCollectionRecord {
   previousCollectionSha256?: ObjectHash;
   points: {
     point: GcpPoint;
+    sourcePoint?: GcpPoint;
+    sourceHeightReference?: GcpHeightReference;
+    targetHeightReference?: GcpHeightReference;
     sourceCsvSha256: ObjectHash;
     transformationSha256: ObjectHash;
   }[];

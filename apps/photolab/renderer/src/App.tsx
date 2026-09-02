@@ -88,7 +88,7 @@ import type { GcpImageMarker, GcpManualMeasurement } from './GcpImageMarkerOverl
 import { GcpImportPanel } from './GcpImportPanel.js';
 import { GcpImagesPanel } from './GcpImagesPanel.js';
 import { GcpOptimizationPanel, type GcpOptimizationSelection } from './GcpOptimizationPanel.js';
-import { GcpPropertiesPanel } from './GcpPropertiesPanel.js';
+import { GcpPropertiesPanel, formatHeightReference } from './GcpPropertiesPanel.js';
 import { FloatingTaskIsland } from './FloatingTaskIsland.js';
 import {
   PhotolabExternalImportDialog,
@@ -2122,6 +2122,13 @@ export function App(): JSX.Element {
     if (!gcpOptimization || !gcpCollection) return null;
     const result = gcpOptimization.artifact.result;
     const names = new Map(gcpCollection[1].points.map(({ point }) => [point.id, point.name]));
+    const heightReferences = [
+      ...new Set(
+        gcpCollection[1].points.map((record) =>
+          formatHeightReference(record.targetHeightReference),
+        ),
+      ),
+    ];
     const counts = new Map(result.points.map((point) => [point.pointId, point.observationCount]));
     const processingSet = findMatchingProcessingSet(
       processingSets,
@@ -2136,6 +2143,8 @@ export function App(): JSX.Element {
         : `Ad-hoc alignment · ${alignedGcpCameras.length} cameras`,
       alignmentRunLabel: gcpOptimization.operationId,
       optimizationSnapshotSha256: gcpOptimization.snapshotSha256,
+      heightReferenceLabel:
+        heightReferences.length === 1 ? heightReferences[0]! : heightReferences.join(' / '),
       cameraCount: alignedGcpCameras.length,
       residuals: result.residuals.map((residual) => ({
         ...residual,

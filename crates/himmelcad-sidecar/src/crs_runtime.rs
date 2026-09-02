@@ -342,6 +342,19 @@ impl ProjRuntime {
             .parse_candidates(&captured.stdout, query, cancellation)
             .await?;
         if let Some(explicit) = self
+            .explicit_vertical_grid_candidate(query, cancellation)
+            .await?
+        {
+            for candidate in &mut candidates {
+                candidate.best_available = false;
+            }
+            warnings.push(
+                "The selected geoid is used in an explicit, hash-frozen projected-height pipeline. Published accuracy is not inferred from the filename."
+                    .to_owned(),
+            );
+            candidates.insert(0, explicit);
+        }
+        if let Some(explicit) = self
             .explicit_dhdn_grid_candidate(query, cancellation)
             .await?
         {
@@ -849,6 +862,156 @@ impl ProjRuntime {
         }))
     }
 
+    /// PROJ treats a projected 2D endpoint as permission to discard a compound
+    /// vertical component. For a height-only GCP operation that would surface a
+    /// misleading `+proj=noop`. Build the auditable projected → geographic →
+    /// vgridshift → projected pipeline explicitly when exactly one endpoint is
+    /// ellipsoidal and the other carries a registered vertical CRS.
+    async fn explicit_vertical_grid_candidate(
+        &self,
+        query: &OperationQuery,
+        cancellation: &CancellationToken,
+    ) -> Result<Option<OperationCandidate>, CrsRuntimeError> {
+        let Some(source_zone) = etrs89_utm_zone(&query.source.crs) else {
+            return Ok(None);
+        };
+        let Some(target_zone) = etrs89_utm_zone(&query.target.crs) else {
+            return Ok(None);
+        };
+        let source_vertical = compound_vertical_epsg(&query.source.crs);
+        let target_vertical = compound_vertical_epsg(&query.target.crs);
+        let (vertical_epsg, inverse_grid, direction_label) =
+            match (source_vertical, target_vertical) {
+                (Some(source), None) => (source, false, "to ellipsoidal height"),
+                (None, Some(target)) => (target, true, "from ellipsoidal height"),
+                _ => return Ok(None),
+            };
+        let mut vertical_entries = query
+            .grid_catalog
+            .iter()
+            .filter(|entry| entry.kind == TransformationGridKind::Geoid);
+        let Some(entry) = vertical_entries.next() else {
+            return Ok(None);
+        };
+        if vertical_entries.next().is_some() {
+            return Ok(None);
+        }
+
+        let mut effective_entry = entry.clone();
+        if let Some(local_path) = entry.local_path.as_ref() {
+            let filename = Path::new(local_path)
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .ok_or(CrsRuntimeError::InvalidRequest("grid localPath"))?;
+            validate_grid_filename(filename)?;
+            effective_entry.official_filename = filename.to_owned();
+        } else {
+            validate_grid_filename(&effective_entry.official_filename)?;
+        }
+        let required_grid = self.catalog_grid(&effective_entry, cancellation).await?;
+        let grid_step = if inverse_grid {
+            format!(
+                "+step +inv +proj=vgridshift +grids={} +multiplier=1",
+                effective_entry.official_filename
+            )
+        } else {
+            format!(
+                "+step +proj=vgridshift +grids={} +multiplier=1",
+                effective_entry.official_filename
+            )
+        };
+        let pipeline = format!(
+            "+proj=pipeline +step +inv +proj=utm +zone={source_zone} +ellps=GRS80 {grid_step} +step +proj=utm +zone={target_zone} +ellps=GRS80"
+        );
+        validate_pipeline_tokens(&pipeline)?;
+        if matches!(
+            required_grid.availability,
+            RequiredGridAvailability::PresentVerified { .. }
+        ) && effective_entry.coverage.contains(query.area_of_interest)
+        {
+            let longitude = f64::from(source_zone) * 6.0 - 183.0;
+            let latitude = (query.area_of_interest.south_latitude
+                + query.area_of_interest.north_latitude)
+                * 0.5;
+            let probe_input = format!("{longitude:.12} {latitude:.12} 0 0\n");
+            let geographic_to_source = format!(
+                "+proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=utm +zone={source_zone} +ellps=GRS80"
+            );
+            let projected = self
+                .run_cct_probe(
+                    &geographic_to_source,
+                    &[],
+                    false,
+                    &probe_input,
+                    cancellation,
+                )
+                .await?;
+            let forward = self
+                .run_cct_probe(
+                    &pipeline,
+                    std::slice::from_ref(&effective_entry),
+                    false,
+                    &projected,
+                    cancellation,
+                )
+                .await?;
+            let inverse = self
+                .run_cct_probe(
+                    &pipeline,
+                    std::slice::from_ref(&effective_entry),
+                    true,
+                    &forward,
+                    cancellation,
+                )
+                .await?;
+            let projected_values = probe_values(&projected)?;
+            let inverse_values = probe_values(&inverse)?;
+            if inverse_values
+                .iter()
+                .take(3)
+                .any(|value| !value.is_finite())
+                || (projected_values[0] - inverse_values[0]).abs() > 1e-4
+                || (projected_values[1] - inverse_values[1]).abs() > 1e-4
+                || (projected_values[2] - inverse_values[2]).abs() > 1e-4
+            {
+                return Err(CrsRuntimeError::MalformedOutput(
+                    "selected vertical-grid pipeline failed its forward/inverse area probe".into(),
+                ));
+            }
+        }
+
+        let operation_evidence = serde_json::json!({
+            "schemaVersion": 1,
+            "source": query.source,
+            "target": query.target,
+            "pipeline": pipeline,
+            "verticalEpsg": vertical_epsg,
+            "grid": {
+                "filename": required_grid.official_filename,
+                "sha256": required_grid.official_sha256,
+            },
+        });
+        let operation_id = format!(
+            "proj:{}",
+            ObjectHash::of_bytes(
+                &serde_json::to_vec(&operation_evidence)
+                    .map_err(|error| CrsRuntimeError::MalformedOutput(error.to_string()))?
+            )
+            .as_str()
+        );
+        Ok(Some(OperationCandidate {
+            operation_id,
+            name: format!("EPSG:{vertical_epsg} {direction_label} · explicit geoid"),
+            kind: CoordinateOperationKind::General,
+            proj_pipeline: pipeline,
+            area_of_use: effective_entry.coverage,
+            expected_accuracy_mm: None,
+            ballpark: false,
+            best_available: true,
+            required_grids: vec![required_grid],
+        }))
+    }
+
     async fn validate_dhdn_horizontal_grid(
         &self,
         grid: &RequiredTransformationGrid,
@@ -1161,6 +1324,38 @@ fn dhdn_gauss_krueger_zone(target: &CrsDefinition) -> Option<i32> {
     } else {
         None
     }
+}
+
+fn etrs89_utm_zone(definition: &CrsDefinition) -> Option<u32> {
+    let code = horizontal_epsg(definition)?;
+    if (25_828..=25_838).contains(&code) {
+        Some(code - 25_800)
+    } else {
+        None
+    }
+}
+
+fn horizontal_epsg(definition: &CrsDefinition) -> Option<u32> {
+    match definition {
+        CrsDefinition::Epsg(code) => Some(*code),
+        CrsDefinition::Authority(authority) => authority
+            .strip_prefix("EPSG:")?
+            .split('+')
+            .next()?
+            .parse()
+            .ok(),
+        CrsDefinition::Wkt2(_) | CrsDefinition::ProjJson(_) => None,
+    }
+}
+
+fn compound_vertical_epsg(definition: &CrsDefinition) -> Option<u32> {
+    let CrsDefinition::Authority(authority) = definition else {
+        return None;
+    };
+    let mut parts = authority.strip_prefix("EPSG:")?.split('+');
+    parts.next()?;
+    let vertical = parts.next()?.parse().ok()?;
+    parts.next().is_none().then_some(vertical)
 }
 
 #[derive(Debug)]
@@ -1588,6 +1783,7 @@ mod tests {
 
     use himmelcad_core::photolab_crs::{
         CrsWithEpoch, FrozenCrsEndpoint, FrozenOperationPipeline, HeightReference,
+        HorizontalCrsSelection, ImportTransformationDecision, VerticalCrsSelection,
         VerticalOperationMode,
     };
 
@@ -1926,6 +2122,109 @@ PROJJSON:
         assert!(candidate
             .proj_pipeline
             .contains("+proj=tmerc +lat_0=0 +lon_0=12 +k=1 +x_0=4500000"));
+    }
+
+    #[tokio::test]
+    async fn dhhn2016_to_ellipsoidal_height_uses_frozen_golden_geoid() {
+        let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let grid = workspace.join("photolab/01_Transformation/Geoide/DHHN 2016/GCG2016_SU.tif");
+        if !grid.is_file()
+            || !Path::new("/usr/bin/projinfo").is_file()
+            || !Path::new("/usr/bin/cct").is_file()
+            || !Path::new("/usr/share/proj/proj.db").is_file()
+        {
+            return;
+        }
+        let grid_root = grid.parent().expect("geoid parent").to_path_buf();
+        let mut config =
+            ProjToolchainConfig::system("/usr/bin/projinfo", "/usr/bin/cct", "/usr/share/proj");
+        config.allowed_grid_roots.push(grid_root);
+        let runtime = ProjRuntime::open(config).expect("system PROJ runtime");
+        let area = GeographicArea {
+            west_longitude: 11.49,
+            south_latitude: 47.99,
+            east_longitude: 11.51,
+            north_latitude: 48.01,
+        };
+        let query = OperationQuery {
+            source: CrsWithEpoch {
+                crs: CrsDefinition::Authority("EPSG:25832+7837".into()),
+                coordinate_epoch: None,
+            },
+            target: crs(25832),
+            area_of_interest: area,
+            selection_policy: OperationSelectionPolicy {
+                allow_ballpark: false,
+                only_best: false,
+            },
+            grid_catalog: vec![GridCatalogEntry {
+                kind: TransformationGridKind::Geoid,
+                official_filename: "GCG2016_SU.tif".into(),
+                official_sha256: Some(ObjectHash(
+                    "3898a1d1ef673012dffd3ed2d311707403ceab236b372f86d3ab7515caa2af9d".into(),
+                )),
+                license: GridLicenseMetadata {
+                    license_name: "Golden survey fixture".into(),
+                    spdx_expression: None,
+                    source: "photolab/01_Transformation/Geoide".into(),
+                    redistribution_allowed: false,
+                },
+                coverage: GeographicArea {
+                    west_longitude: 7.45,
+                    south_latitude: 47.216_666_6,
+                    east_longitude: 13.925,
+                    north_latitude: 50.616_666_7,
+                },
+                local_path: Some(path_text(&grid)),
+            }],
+        };
+        let discovery = runtime
+            .discover_operations(&query, &CancellationToken::new())
+            .await
+            .expect("height operation discovery");
+        let operation = discovery
+            .candidates
+            .iter()
+            .find(|candidate| candidate.proj_pipeline.contains("+proj=vgridshift"))
+            .expect("explicit vertical operation")
+            .clone();
+        let frozen = ImportTransformationDecision {
+            schema_version: 1,
+            contains_gps_data: false,
+            horizontal: HorizontalCrsSelection {
+                source: query.source.clone(),
+                target: query.target.clone(),
+            },
+            vertical: Some(VerticalCrsSelection {
+                source: HeightReference::NormalHeight {
+                    vertical_crs: CrsDefinition::Epsg(7837),
+                },
+                target: HeightReference::Ellipsoidal,
+                mode: VerticalOperationMode::Transform,
+            }),
+            area_of_interest: area,
+            operation,
+            selection_policy: query.selection_policy,
+            ballpark_confirmation: None,
+            database_versions: discovery.audit.versions,
+        }
+        .validate_and_freeze()
+        .expect("freeze height decision");
+        let mut input = "686482.635 5319324.564 454.053825 0\n".as_bytes();
+        let mut output = Vec::new();
+        runtime
+            .transform_stream(&frozen, &mut input, &mut output, &CancellationToken::new())
+            .await
+            .expect("frozen height transform");
+        let values = probe_values(std::str::from_utf8(&output).expect("UTF-8 output"))
+            .expect("transformed coordinate");
+        assert!((values[0] - 686_482.635).abs() < 1e-6);
+        assert!((values[1] - 5_319_324.564).abs() < 1e-6);
+        assert!(
+            (values[2] - 500.698_500_255).abs() < 1e-6,
+            "expected ellipsoidal height 500.698500255, got {}",
+            values[2]
+        );
     }
 
     /// Regression: UI/GDAL often labels classic .gsb as GTG; freeze used to reject

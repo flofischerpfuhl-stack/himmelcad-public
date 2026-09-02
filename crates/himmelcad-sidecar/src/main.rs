@@ -32,8 +32,9 @@ use himmelcad_core::photolab::{
     ResolvedAlignmentConfig,
 };
 use himmelcad_core::photolab_capture::{evaluate_local_scale, LocalScaleConstraint};
-use himmelcad_core::photolab_crs::FrozenImportTransformation;
-use himmelcad_core::photolab_crs::{CrsDefinition, HeightReference};
+use himmelcad_core::photolab_crs::{
+    CrsDefinition, FrozenImportTransformation, HeightReference, VerticalOperationMode,
+};
 use himmelcad_core::photolab_gcp::{
     GcpCoordinate, GcpCsvImportMapping, GcpObservation, GcpObservationState, ImageCoordinate,
 };
@@ -2777,7 +2778,25 @@ async fn transform_gcp_import(
     let mapping = params.mapping;
     let source_import =
         tokio::task::spawn_blocking(move || import_gcp_csv_file(&path, mapping)).await??;
+    let transformation_required = params.transformation.vertical_mode
+        == VerticalOperationMode::Transform
+        || params.transformation.original.horizontal != params.transformation.target.horizontal;
+    if params.transformation.vertical_mode == VerticalOperationMode::Transform {
+        anyhow::ensure!(
+            params
+                .transformation
+                .pipeline
+                .proj_pipeline
+                .split_ascii_whitespace()
+                .any(|token| token == "+proj=vgridshift"),
+            "the frozen GCP height decision has no vertical grid operation"
+        );
+    }
     if params.coordinates_already_in_project_crs {
+        anyhow::ensure!(
+            !transformation_required,
+            "the frozen GCP decision requires a coordinate or height transformation"
+        );
         return Ok(CommitGcpsParams {
             operation_id: params.operation_id,
             transformed_points: source_import.points.clone(),
@@ -2786,6 +2805,10 @@ async fn transform_gcp_import(
             coordinates_already_in_project_crs: true,
         });
     }
+    anyhow::ensure!(
+        transformation_required,
+        "the frozen GCP decision preserves already-project coordinates; no transformation may be applied"
+    );
     let mut input = String::new();
     // GCP CSV columns are explicitly East/North, while an authoritative EPSG
     // pipeline may start in North/East axis order (for example EPSG:31468).

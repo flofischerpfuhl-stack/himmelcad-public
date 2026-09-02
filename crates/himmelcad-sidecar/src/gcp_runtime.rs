@@ -11,7 +11,9 @@ use himmelcad_core::entity::{
     Bounds3, EntityId, EntityKind, EntitySnapshot, Vec3, VisibilityState,
 };
 use himmelcad_core::hash::ObjectHash;
-use himmelcad_core::photolab_crs::FrozenImportTransformation;
+use himmelcad_core::photolab_crs::{
+    FrozenImportTransformation, HeightReference, VerticalOperationMode,
+};
 use himmelcad_core::photolab_gcp::{
     build_gcp_residual_report_scope, build_optimization_snapshot, validate_gcp_observation,
     validate_gcp_points, GcpError, GcpObservation, GcpOptimizationScope, GcpPoint, GcpPointId,
@@ -187,7 +189,15 @@ pub struct CreateGcpOptimizationSnapshotResult {
 #[serde(rename_all = "camelCase")]
 pub struct GcpPointRecord {
     pub point: GcpPoint,
+    /// Immutable parsed source value before the frozen operation was applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_point: Option<GcpPoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_height_reference: Option<HeightReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_height_reference: Option<HeightReference>,
     pub source_csv_sha256: ObjectHash,
+    /// Content hash of the complete frozen operation and its grid bindings.
     pub transformation_sha256: ObjectHash,
 }
 
@@ -216,6 +226,9 @@ impl GcpCollectionRecord {
 pub struct GcpPointMetadataRecord {
     pub schema_version: u32,
     pub point: GcpPoint,
+    pub source_point: GcpPoint,
+    pub source_height_reference: HeightReference,
+    pub target_height_reference: HeightReference,
     pub source_csv_sha256: ObjectHash,
     pub transformation_sha256: ObjectHash,
 }
@@ -228,6 +241,12 @@ pub fn commit_gcps_transaction(
 ) -> Result<CommitGcpsResult, GcpRuntimeError> {
     validate_operation_id(&params.operation_id)?;
     validate_transformation(&params.transformation)?;
+    let transformation_required = params.transformation.vertical_mode
+        == VerticalOperationMode::Transform
+        || params.transformation.original.horizontal != params.transformation.target.horizontal;
+    if params.coordinates_already_in_project_crs == transformation_required {
+        return Err(GcpRuntimeError::InvalidCrsDecision);
+    }
     check_cancelled(cancellation)?;
     let reparsed = import_gcp_csv_file_with_cancel(
         Path::new(&params.source_import.source_path),
@@ -292,11 +311,18 @@ fn commit_gcps_staged(
     let import_sha256 = stage_bytes(staging_root, &import_bytes)?;
     let mut committed = Vec::with_capacity(params.transformed_points.len());
     let mut entities = Vec::with_capacity(params.transformed_points.len());
-    for point in params.transformed_points {
+    for (point, source_point) in params
+        .transformed_points
+        .into_iter()
+        .zip(reparsed.points.iter())
+    {
         check_cancelled(cancellation)?;
         let metadata = GcpPointMetadataRecord {
             schema_version: 1,
             point: point.clone(),
+            source_point: source_point.clone(),
+            source_height_reference: params.transformation.original.vertical.clone(),
+            target_height_reference: params.transformation.target.vertical.clone(),
             source_csv_sha256: source_csv_sha256.clone(),
             transformation_sha256: transformation_sha256.clone(),
         };
@@ -315,6 +341,9 @@ fn commit_gcps_staged(
         });
         current.points.push(GcpPointRecord {
             point,
+            source_point: Some(source_point.clone()),
+            source_height_reference: Some(params.transformation.original.vertical.clone()),
+            target_height_reference: Some(params.transformation.target.vertical.clone()),
             source_csv_sha256: source_csv_sha256.clone(),
             transformation_sha256: transformation_sha256.clone(),
         });
@@ -924,6 +953,15 @@ fn validate_transformation(
             .epsg_database_version
             .trim()
             .is_empty()
+    {
+        return Err(GcpRuntimeError::InvalidCrsDecision);
+    }
+    if transformation.vertical_mode == VerticalOperationMode::Transform
+        && !transformation
+            .pipeline
+            .proj_pipeline
+            .split_ascii_whitespace()
+            .any(|token| token == "+proj=vgridshift")
     {
         return Err(GcpRuntimeError::InvalidCrsDecision);
     }
@@ -1546,9 +1584,9 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use himmelcad_core::photolab_crs::{
-        CrsDatabaseVersions, CrsDefinition, CrsWithEpoch, FrozenCrsEndpoint,
-        FrozenOperationPipeline, GeographicArea, HeightReference, OperationSelectionPolicy,
-        VerticalOperationMode,
+        CrsDatabaseVersions, CrsDefinition, CrsWithEpoch, FrozenCrsEndpoint, FrozenGridBinding,
+        FrozenOperationPipeline, GeographicArea, GridLicenseMetadata, HeightReference,
+        OperationSelectionPolicy, TransformationGridKind, VerticalOperationMode,
     };
     use himmelcad_core::photolab_gcp::{
         CsvColumnSelector, CsvDecimalSeparator, GcpCsvImportMapping, GcpObservationState, GcpRole,
@@ -1598,12 +1636,16 @@ mod tests {
 
         fn commit(&mut self) -> CommitGcpsResult {
             let source_import = self.import();
+            let mut transformed_points = source_import.points.clone();
+            for point in &mut transformed_points {
+                point.coordinate.height_meters += 45.0;
+            }
             commit_gcps_transaction(
                 &self.root,
                 &mut self.manifest,
                 CommitGcpsParams {
                     operation_id: "commit-gcps".into(),
-                    transformed_points: source_import.points.clone(),
+                    transformed_points,
                     source_import,
                     transformation: transformation(),
                     coordinates_already_in_project_crs: false,
@@ -1669,11 +1711,23 @@ mod tests {
             pipeline: FrozenOperationPipeline {
                 operation_id: "fixture-operation".into(),
                 operation_name: "Fixture".into(),
-                proj_pipeline: "+proj=pipeline +step +proj=utm +zone=32".into(),
+                proj_pipeline: "+proj=pipeline +step +proj=vgridshift +grids=fixture-geoid.tif"
+                    .into(),
                 expected_accuracy_mm: Some(10.0),
                 ballpark: false,
                 selection_policy: OperationSelectionPolicy::default(),
-                grids: vec![],
+                grids: vec![FrozenGridBinding {
+                    kind: TransformationGridKind::Geoid,
+                    official_filename: "fixture-geoid.tif".into(),
+                    official_sha256: None,
+                    local_path: "/fixtures/fixture-geoid.tif".into(),
+                    license: GridLicenseMetadata {
+                        license_name: "Fixture".into(),
+                        spdx_expression: None,
+                        source: "fixture".into(),
+                        redistribution_allowed: false,
+                    },
+                }],
             },
             database_versions: CrsDatabaseVersions {
                 proj_version: "9.4.0".into(),
@@ -1719,12 +1773,37 @@ mod tests {
             .expect("read collection")
             .expect("collection");
         assert_eq!(collection.points.len(), 2);
+        assert_eq!(
+            collection.points[0]
+                .source_point
+                .as_ref()
+                .expect("source point")
+                .coordinate
+                .height_meters,
+            400.0
+        );
+        assert_eq!(collection.points[0].point.coordinate.height_meters, 445.0);
+        assert!(matches!(
+            collection.points[0].source_height_reference.as_ref(),
+            Some(HeightReference::Ellipsoidal)
+        ));
+        assert!(matches!(
+            collection.points[0].target_height_reference.as_ref(),
+            Some(HeightReference::Orthometric { .. })
+        ));
+        assert_eq!(
+            collection.points[0].transformation_sha256,
+            result.transformation_sha256
+        );
     }
 
     #[test]
     fn user_confirmed_project_coordinates_are_not_rejected_by_crs_metadata() {
         let mut fixture = Fixture::new();
-        let mut project_target = transformation().target;
+        let mut identity = transformation();
+        identity.original = identity.target.clone();
+        identity.vertical_mode = VerticalOperationMode::PreserveValues;
+        let mut project_target = identity.target.clone();
         project_target.horizontal.crs = CrsDefinition::Epsg(31468);
         fixture.manifest.reference_frame = Some(ProjectReferenceFrame {
             target: project_target,
@@ -1738,13 +1817,22 @@ mod tests {
                 operation_id: "accepted-project-coordinates".into(),
                 transformed_points: source_import.points.clone(),
                 source_import,
-                transformation: transformation(),
+                transformation: identity,
                 coordinates_already_in_project_crs: true,
             },
             &CancellationToken::new(),
         )
         .expect("explicitly accepted project coordinates");
         assert_eq!(result.points.len(), 2);
+        let (_, collection) = read_gcp_collection(&fixture.root, &fixture.manifest)
+            .expect("read preserved collection")
+            .expect("preserved collection");
+        let record = &collection.points[0];
+        assert_eq!(record.source_point.as_ref(), Some(&record.point));
+        assert_eq!(
+            record.source_height_reference,
+            record.target_height_reference
+        );
     }
 
     #[test]
@@ -1769,6 +1857,28 @@ mod tests {
         .expect_err("cancelled");
         assert!(matches!(error, GcpRuntimeError::Cancelled));
         assert_eq!(fixture.manifest, before);
+    }
+
+    #[test]
+    fn height_transform_without_vertical_pipeline_is_rejected() {
+        let mut fixture = Fixture::new();
+        let source_import = fixture.import();
+        let mut invalid = transformation();
+        invalid.pipeline.proj_pipeline = "+proj=noop".into();
+        let error = commit_gcps_transaction(
+            &fixture.root,
+            &mut fixture.manifest,
+            CommitGcpsParams {
+                operation_id: "missing-height-operation".into(),
+                transformed_points: source_import.points.clone(),
+                source_import,
+                transformation: invalid,
+                coordinates_already_in_project_crs: false,
+            },
+            &CancellationToken::new(),
+        )
+        .expect_err("height transform must execute a vertical grid operation");
+        assert!(matches!(error, GcpRuntimeError::InvalidCrsDecision));
     }
 
     #[test]
