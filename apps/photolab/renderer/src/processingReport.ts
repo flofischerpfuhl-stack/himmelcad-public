@@ -24,6 +24,13 @@ export interface ProcessingReportProduct {
   gcpOptimizationSnapshotSha256?: string;
   imageMaskScopeSha256?: string;
   toolVersions?: Readonly<Record<string, string>>;
+  provenanceStatus?: 'complete' | 'partial' | 'unknown';
+  missingFieldIds?: readonly string[];
+  packageSchemaId?: string;
+  packageSha256?: string;
+  normalizedFormatId?: string;
+  disposition?: 'available' | 'needs_preparation' | 'needs_republish_recompute' | 'unsupported';
+  reasonCode?: string;
 }
 
 export interface ProcessingReportSurveyData {
@@ -508,13 +515,21 @@ function productSection(products: readonly ProcessingReportProduct[]): string {
   const rows = products
     .map(
       (product) =>
-        `<tr><td><strong>${escapeHtml(product.kind)}</strong><small>${escapeHtml(product.entityId)}</small></td><td>${escapeHtml(product.format)}</td><td>${product.pointCount?.toLocaleString('en-US') ?? '—'}</td><td><code>${escapeHtml(product.versionHash ?? 'Not exposed by this project record')}</code></td><td><code>${escapeHtml(product.sourceAlignmentEntityId ?? 'Legacy / unavailable')}</code></td><td><code>${escapeHtml(product.processingSetId ?? 'Project-wide / merged')}</code></td><td><code>${escapeHtml(product.gcpOptimizationEntityId ?? 'No GCP optimization')}</code><small>${escapeHtml(product.gcpOptimizationSnapshotSha256 ?? '')}</small></td><td><code>${escapeHtml(product.imageMaskScopeSha256 ?? 'Legacy / unavailable')}</code></td><td>${product.toolVersions ? escapeHtml(stableJson(product.toolVersions)) : 'Not recorded'}</td><td>${escapeHtml(product.relativePath)}</td></tr>`,
+        `<tr><td><strong>${escapeHtml(product.kind)}</strong><small>${escapeHtml(product.entityId)}</small></td><td>${escapeHtml(product.normalizedFormatId ?? product.format)}</td><td>${escapeHtml(humanize(product.provenanceStatus ?? 'unknown'))}<small>${(product.missingFieldIds?.length ?? 0) === 0 ? 'All mandatory fields present' : `Missing: ${escapeHtml(product.missingFieldIds?.join(', ') ?? '')}`}</small></td><td>${escapeHtml(productDispositionLabel(product.disposition))}<small>${escapeHtml(product.reasonCode ?? 'legacy_record')}${product.disposition === 'needs_republish_recompute' || product.disposition == null ? ' · Needs republish/recompute' : ''}</small></td><td><code>${escapeHtml(product.packageSha256 ?? 'No package')}</code></td><td>${product.pointCount?.toLocaleString('en-US') ?? '—'}</td><td><code>${escapeHtml(product.versionHash ?? 'Not exposed by this project record')}</code></td><td><code>${escapeHtml(product.sourceAlignmentEntityId ?? 'Legacy / unavailable')}</code></td><td><code>${escapeHtml(product.processingSetId ?? 'Project-wide / merged')}</code></td><td><code>${escapeHtml(product.gcpOptimizationEntityId ?? 'No GCP optimization')}</code><small>${escapeHtml(product.gcpOptimizationSnapshotSha256 ?? '')}</small></td><td><code>${escapeHtml(product.imageMaskScopeSha256 ?? 'Legacy / unavailable')}</code></td><td>${product.toolVersions ? escapeHtml(stableJson(product.toolVersions)) : 'Not recorded'}</td><td>${escapeHtml(product.relativePath)}</td></tr>`,
     )
     .join('');
   return section(
     'Published products',
-    `<table><thead><tr><th>Product</th><th>Format</th><th>Points</th><th>Entity version SHA-256</th><th>Source alignment</th><th>Processing set</th><th>GCP revision</th><th>Mask-scope SHA-256</th><th>Tool versions</th><th>Project path</th></tr></thead><tbody>${rows}</tbody></table>`,
+    `<table><thead><tr><th>Product</th><th>Format</th><th>Provenance</th><th>Disposition</th><th>Package SHA-256</th><th>Points</th><th>Entity version SHA-256</th><th>Source alignment</th><th>Processing set</th><th>GCP revision</th><th>Mask-scope SHA-256</th><th>Tool versions</th><th>Project path</th></tr></thead><tbody>${rows}</tbody></table>`,
   );
+}
+
+function productDispositionLabel(disposition: ProcessingReportProduct['disposition']): string {
+  if (disposition == null) return 'Needs republish/recompute';
+  if (disposition === 'available') return 'Available';
+  if (disposition === 'needs_preparation') return 'Needs preparation';
+  if (disposition === 'needs_republish_recompute') return 'Needs republish/recompute';
+  return 'Unsupported';
 }
 
 function accuracySection(

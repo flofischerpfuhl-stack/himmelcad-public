@@ -805,7 +805,14 @@ function LineageOverview({
         <article className={styles.lineageCard} key={product.entityId}>
           <div>
             <strong>{product.kind}</strong>
-            <span>{product.format} · published product</span>
+            <span>
+              {product.normalizedFormatId ?? product.format} ·{' '}
+              {product.provenanceStatus ?? 'unknown'} provenance ·{' '}
+              {productDispositionLabel(product.disposition)}
+              {product.disposition === 'needs_republish_recompute'
+                ? ' · Needs republish/recompute'
+                : ''}
+            </span>
           </div>
           <details>
             <summary>Exact product lineage</summary>
@@ -816,11 +823,24 @@ function LineageOverview({
             {product.gcpOptimizationSnapshotSha256 && (
               <code>GCP snapshot {product.gcpOptimizationSnapshotSha256}</code>
             )}
+            <code>Package {product.packageSha256 ?? 'not published'}</code>
+            {(product.missingFieldIds?.length ?? 0) > 0 && (
+              <code>Missing fields {product.missingFieldIds?.join(', ')}</code>
+            )}
+            <code>Disposition reason {product.reasonCode ?? 'legacy_record'}</code>
           </details>
         </article>
       ))}
     </section>
   );
+}
+
+function productDispositionLabel(disposition: ReportProduct['disposition']): string {
+  if (disposition == null) return 'Needs republish/recompute';
+  if (disposition === 'available') return 'Available';
+  if (disposition === 'needs_preparation') return 'Needs preparation';
+  if (disposition === 'needs_republish_recompute') return 'Needs republish/recompute';
+  return 'Unsupported';
 }
 
 function stageFraction(job: PhotolabJob): number | null {

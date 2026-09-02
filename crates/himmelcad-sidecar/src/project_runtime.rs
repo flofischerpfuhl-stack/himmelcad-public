@@ -13,11 +13,12 @@ use std::os::windows::fs::OpenOptionsExt;
 
 use anyhow::{Context, Result};
 use fs2::FileExt;
+use himmelcad_core::canonical_json;
 use himmelcad_core::entity::{EntityId, EntityKind, EntitySnapshot, VisibilityState};
 use himmelcad_core::entity_model::{
     built_in_type, CanonicalEntity, EntityTypeId, GeometryObject, GeometryResource, Representation,
-    RepresentationAuthority, RepresentationRole, SolidGeometry, TriangleMeshGeometry,
-    TriangleMeshStorage,
+    RepresentationAuthority, RepresentationRole, SolidGeometry, StreamedGeometry,
+    TriangleMeshGeometry, TriangleMeshStorage,
 };
 use himmelcad_core::entity_validation::{
     canonical_entity_version_hash, geometry_object_content_hash, validate_resolved_representation,
@@ -42,6 +43,16 @@ use himmelcad_core::photolab_project::{
     initial_photolab_manifest, JournalCommandState, OpenPhotolabProjectResult,
     PhotolabJournalEntry, PhotolabProjectManifest, ProjectSessionSummary,
     PHOTOLAB_PROJECT_FORMAT_VERSION,
+};
+use himmelcad_core::product_import_package::{
+    ProductImportPackageAdmissionV1, ProductImportPackageArtifactV1, ProductImportPackageCountsV1,
+    ProductImportPackageDatasetV1, ProductImportPackageLineageV1, ProductImportPackageManifestV1,
+    ProductImportPackageProducerV1, ProductImportPackageProductV1,
+    ProductImportPackageReadyRecordV1, ProductImportPackageRepresentationSlotV1,
+    ProductImportPackageResourceV1, ProductImportPackageSourceV1, ProductLineageGcpChoiceV1,
+    ProductLineageMaskScopeV1, ProductLineageProcessingSetChoiceV1, ProductLineageReferenceFrameV1,
+    ProductLineageV1, ProvenanceStatus, PRODUCT_IMPORT_PACKAGE_SCHEMA_ID,
+    PRODUCT_LINEAGE_SCHEMA_ID,
 };
 use himmelcad_core::typed_artifact::{TypedArtifactManifest, TYPED_ARTIFACT_MANIFEST_NAME};
 use serde::{Deserialize, Serialize};
@@ -927,6 +938,229 @@ pub struct ProjectProductDatasetRecord {
     pub image_mask_scope_sha256: Option<ObjectHash>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub tool_versions: BTreeMap<String, String>,
+    #[serde(flatten)]
+    pub contract: ProductDatasetContractProjection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProductDatasetDisposition {
+    Available,
+    NeedsPreparation,
+    NeedsRepublishRecompute,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductDatasetContractProjection {
+    pub provenance_status: ProvenanceStatus,
+    pub missing_field_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package_schema_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package_sha256: Option<ObjectHash>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normalized_format_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub object_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<u64>,
+    pub disposition: ProductDatasetDisposition,
+    pub reason_code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct ProductImportPublicationRecordV1 {
+    schema_id: String,
+    manifest_id: String,
+    product_id: String,
+    product_version_hash: ObjectHash,
+    publication_generation: u64,
+    normalized_format_id: String,
+    manifest_sha256: ObjectHash,
+    lineage_object_sha256: ObjectHash,
+    provenance_status: ProvenanceStatus,
+    missing_field_ids: Vec<String>,
+    artifact_count: u64,
+    object_count: u64,
+    total_bytes: u64,
+    package_relative_path: String,
+    disposition: ProductDatasetDisposition,
+    reason_code: String,
+    package_sha256: ObjectHash,
+}
+
+impl ProductImportPublicationRecordV1 {
+    fn projection(&self) -> ProductDatasetContractProjection {
+        ProductDatasetContractProjection {
+            provenance_status: self.provenance_status,
+            missing_field_ids: self.missing_field_ids.clone(),
+            package_schema_id: Some(self.schema_id.clone()),
+            package_sha256: Some(self.package_sha256.clone()),
+            normalized_format_id: Some(self.normalized_format_id.clone()),
+            artifact_count: Some(self.artifact_count),
+            object_count: Some(self.object_count),
+            total_bytes: Some(self.total_bytes),
+            disposition: self.disposition,
+            reason_code: self.reason_code.clone(),
+        }
+    }
+}
+
+fn legacy_product_contract(
+    kind: &str,
+    format: &str,
+    has_alignment_id: bool,
+    has_processing_set_id: bool,
+    has_gcp_facts: bool,
+    has_mask_scope: bool,
+    has_tool_facts: bool,
+) -> ProductDatasetContractProjection {
+    let has_trustworthy_fact = has_alignment_id
+        || has_processing_set_id
+        || has_gcp_facts
+        || has_mask_scope
+        || has_tool_facts;
+    let provenance_status = if has_trustworthy_fact {
+        ProvenanceStatus::Partial
+    } else {
+        ProvenanceStatus::Unknown
+    };
+    let mut missing = [
+        "source_project_id",
+        "source_project_fingerprint",
+        "product_content_hash",
+        "publication_generation",
+        "product_label",
+        "dataset_label",
+        "normalized_format_id",
+        "source_alignment_entity_id",
+        "source_alignment_entity_version_hash",
+        "source_alignment_content_hash",
+        "processing_set_choice",
+        "camera_selection_sha256",
+        "image_mask_scope",
+        "gcp_choice",
+        "spatialReference",
+        "reference_frame",
+        "algorithms",
+        "configurations",
+        "tools",
+        "package_sha256",
+    ]
+    .into_iter()
+    .filter(|field| {
+        !(*field == "source_alignment_entity_id" && has_alignment_id)
+            && !(*field == "image_mask_scope" && has_mask_scope)
+    })
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
+    missing.sort();
+    let unsupported = matches!(format, "mvsDepth")
+        || kind == "orthomosaic"
+        || (kind == "gaussianSplat" && format == "prepared");
+    let (disposition, reason_code) = if unsupported {
+        (
+            ProductDatasetDisposition::Unsupported,
+            match (kind, format) {
+                (_, "mvsDepth") => "standalone_mvs_depth_not_admitted",
+                ("orthomosaic", _) => "plan_grid_2d_admission_required",
+                ("gaussianSplat", "prepared") => "pointcloud_ownership_deferred",
+                _ => "canonical_owner_mapping_unavailable",
+            },
+        )
+    } else {
+        (
+            ProductDatasetDisposition::NeedsRepublishRecompute,
+            match provenance_status {
+                ProvenanceStatus::Partial => "partial_legacy_provenance",
+                ProvenanceStatus::Unknown => "unknown_legacy_provenance",
+                ProvenanceStatus::Complete => unreachable!(),
+            },
+        )
+    };
+    ProductDatasetContractProjection {
+        provenance_status,
+        missing_field_ids: missing,
+        package_schema_id: None,
+        package_sha256: None,
+        normalized_format_id: None,
+        artifact_count: None,
+        object_count: None,
+        total_bytes: None,
+        disposition,
+        reason_code: reason_code.to_owned(),
+    }
+}
+
+fn product_import_publication_path(root: &Path, entity_id: &EntityId) -> PathBuf {
+    let key = ObjectHash::of_bytes(entity_id.0.as_bytes());
+    root.join(".photolab/product-import-publications")
+        .join(format!("{}.json", key.as_str()))
+}
+
+fn published_product_contract(
+    session: &ProjectSession,
+    entity_id: &EntityId,
+) -> Result<Option<ProductDatasetContractProjection>> {
+    let path = product_import_publication_path(&session.working_path, entity_id);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let record: ProductImportPublicationRecordV1 = serde_json::from_slice(&fs::read(&path)?)
+        .with_context(|| {
+            format!(
+                "invalid product import publication record {}",
+                path.display()
+            )
+        })?;
+    anyhow::ensure!(
+        record.schema_id == PRODUCT_IMPORT_PACKAGE_SCHEMA_ID && record.product_id == entity_id.0,
+        "product import publication summary belongs to another schema or entity"
+    );
+    himmelcad_core::product_import_package::validate_relative_posix_path(
+        &record.package_relative_path,
+    )
+    .map_err(anyhow::Error::msg)?;
+    let ready_path = session
+        .working_path
+        .join(&record.package_relative_path)
+        .join("ready.json");
+    let canonical_root = session.working_path.canonicalize()?;
+    let canonical_ready_path = ready_path.canonicalize()?;
+    anyhow::ensure!(
+        canonical_ready_path.starts_with(&canonical_root),
+        "product import ready record escaped the project root"
+    );
+    let ready: ProductImportPackageReadyRecordV1 =
+        serde_json::from_slice(&fs::read(&canonical_ready_path)?).with_context(|| {
+            format!(
+                "invalid product import ready record {}",
+                ready_path.display()
+            )
+        })?;
+    anyhow::ensure!(
+        record.schema_id == ready.schema_id
+            && record.manifest_id == ready.manifest_id
+            && record.product_id == ready.product_id
+            && record.product_version_hash == ready.product_version_hash
+            && record.publication_generation == ready.publication_generation
+            && record.normalized_format_id == ready.normalized_format_id
+            && record.manifest_sha256 == ready.manifest_sha256
+            && record.lineage_object_sha256 == ready.lineage_object_sha256
+            && record.provenance_status == ready.provenance_status
+            && record.missing_field_ids == ready.missing_field_ids
+            && record.artifact_count == ready.artifact_count
+            && record.object_count == ready.object_count
+            && record.total_bytes == ready.total_bytes
+            && record.package_sha256 == ready.package_sha256,
+        "product publication record and ready record disagree"
+    );
+    Ok(Some(record.projection()))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1211,6 +1445,837 @@ fn verified_dataset_artifact(
     Ok(PreparedDatasetArtifact {
         relative_path,
         resource: expected.clone(),
+    })
+}
+
+#[derive(Debug)]
+struct ProductPackageCanonicalContract {
+    admission: CanonicalRepresentationAdmission,
+    objects: Vec<CanonicalImportJsonObject>,
+    dataset: CanonicalPreparedDataset,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_product_import_package(
+    session: &ProjectSession,
+    candidate_manifest: &PhotolabProjectManifest,
+    snapshot: &EntitySnapshot,
+    kind: &str,
+    content_kind: &str,
+    dataset_label: &str,
+    normalized_format_id: &str,
+    dataset_root: &Path,
+    dataset_root_relative_path: &Path,
+    lineage: &ProductLineage,
+    camera_entity_ids: &[String],
+    canonical: ProductPackageCanonicalContract,
+    disposition: ProductDatasetDisposition,
+    reason_code: &str,
+    cancellation: &CancellationToken,
+) -> Result<ProductImportPublicationRecordV1> {
+    cancellation.check()?;
+    let publication_generation = candidate_manifest.command_sequence;
+    let product_version_hash = canonical.admission.entity.version_hash.clone();
+    let product_content_hash = canonical.admission.selected.geometry_ref.clone();
+    let manifest_seed = serde_json::to_vec(&(
+        &candidate_manifest.project_id,
+        &snapshot.id,
+        &product_version_hash,
+        publication_generation,
+    ))?;
+    let manifest_id = format!("product-{}", ObjectHash::of_bytes(&manifest_seed).as_str());
+    let package_relative_path = format!(".photolab/product-import-packages/{manifest_id}");
+    let package_root = session.working_path.join(&package_relative_path);
+    anyhow::ensure!(
+        !package_root.exists(),
+        "product import package already exists"
+    );
+
+    let result = (|| -> Result<ProductImportPublicationRecordV1> {
+        fs::create_dir_all(&package_root)?;
+        cancellation.check()?;
+        let source_fingerprint = source_fingerprint(&session.source_path)?.sha256;
+        let source_alignment = candidate_manifest
+            .entities
+            .get(&lineage.source_alignment_entity_id.0)
+            .context("product lineage source alignment disappeared")?;
+        let source_alignment_content_hash = match source_alignment.kind {
+            EntityKind::AlignmentRun => {
+                let bytes =
+                    read_verified_object(&session.working_path, &source_alignment.version_hash)?;
+                serde_json::from_slice::<ComputeArtifactRecord>(&bytes)
+                    .ok()
+                    .map(|record| record.artifact.sha256)
+            }
+            EntityKind::MergedAlignmentRun => None,
+            _ => None,
+        };
+        let mut missing_field_ids = Vec::new();
+        if source_alignment_content_hash.is_none() {
+            missing_field_ids.push("source_alignment_content_hash".to_owned());
+        }
+        let processing_set_choice = if let Some(processing_set_id) = &lineage.processing_set_id {
+            let processing_set = read_processing_set(session, processing_set_id)?;
+            let processing_set_entity = candidate_manifest
+                .entities
+                .get(&processing_set_id.0)
+                .context("product processing set disappeared")?;
+            ProductLineageProcessingSetChoiceV1::Selected {
+                id: processing_set_id.0.clone(),
+                version_hash: processing_set_entity.version_hash.clone(),
+                membership_sha256: processing_set.membership_sha256,
+            }
+        } else {
+            let all_camera_ids = candidate_manifest
+                .entities
+                .values()
+                .filter(|entity| entity.kind == EntityKind::CameraImage)
+                .map(|entity| entity.id.0.clone())
+                .collect::<BTreeSet<_>>();
+            if camera_entity_ids.iter().cloned().collect::<BTreeSet<_>>() == all_camera_ids {
+                ProductLineageProcessingSetChoiceV1::AllImportedCameras
+            } else {
+                ProductLineageProcessingSetChoiceV1::None
+            }
+        };
+        let camera_selection_sha256 =
+            ObjectHash::of_bytes(&canonical_json::to_vec(&camera_entity_ids)?);
+        let mask_scope = build_image_mask_compute_scope(session, camera_entity_ids, None)?;
+        let image_mask_scope = if mask_scope.scope_sha256 != lineage.image_mask_scope_sha256 {
+            missing_field_ids.push("image_mask_scope".to_owned());
+            None
+        } else if mask_scope.masks.is_empty() {
+            Some(ProductLineageMaskScopeV1::None)
+        } else {
+            Some(ProductLineageMaskScopeV1::Selected {
+                scope_sha256: mask_scope.scope_sha256,
+            })
+        };
+        let gcp_choice = match (
+            &lineage.gcp_optimization_entity_id,
+            &lineage.gcp_optimization_snapshot_sha256,
+        ) {
+            (Some(entity_id), Some(snapshot_sha256)) => {
+                let entity = candidate_manifest
+                    .entities
+                    .get(&entity_id.0)
+                    .context("product GCP optimization disappeared")?;
+                ProductLineageGcpChoiceV1::Selected {
+                    entity_id: entity_id.0.clone(),
+                    entity_version_hash: entity.version_hash.clone(),
+                    snapshot_sha256: snapshot_sha256.clone(),
+                }
+            }
+            (None, None) => ProductLineageGcpChoiceV1::None,
+            _ => anyhow::bail!("product GCP lineage is incomplete"),
+        };
+        let reference_frame = match &candidate_manifest.spatial_reference {
+            himmelcad_core::photolab_capture::PhotolabSpatialReference::LocalMetric { .. } => {
+                ProductLineageReferenceFrameV1::LocalFrame
+            }
+            himmelcad_core::photolab_capture::PhotolabSpatialReference::CrsBacked => {
+                ProductLineageReferenceFrameV1::Frozen {
+                    project_reference_frame: candidate_manifest
+                        .reference_frame
+                        .clone()
+                        .context("CRS-backed product has no frozen project reference frame")?,
+                }
+            }
+        };
+        missing_field_ids.extend([
+            "algorithms".to_owned(),
+            "configurations".to_owned(),
+            "tools".to_owned(),
+        ]);
+        let executable = std::env::current_exe()?;
+        let executable_sha256 = hash_regular_file(&executable)?.0;
+        let payload = ProductLineageV1 {
+            source_project_id: candidate_manifest.project_id.clone(),
+            source_project_fingerprint: source_fingerprint.clone(),
+            product_entity_id: snapshot.id.0.clone(),
+            product_entity_version_hash: product_version_hash.clone(),
+            product_content_hash: product_content_hash.clone(),
+            publication_generation,
+            product_kind: kind.to_owned(),
+            product_label: snapshot.name.clone(),
+            dataset_label: dataset_label.to_owned(),
+            normalized_format_id: normalized_format_id.to_owned(),
+            source_alignment_entity_id: lineage.source_alignment_entity_id.0.clone(),
+            source_alignment_entity_version_hash: source_alignment.version_hash.clone(),
+            source_alignment_content_hash,
+            processing_set_choice,
+            camera_selection_sha256,
+            image_mask_scope,
+            gcp_choice,
+            spatial_reference: candidate_manifest.spatial_reference.clone(),
+            reference_frame,
+            algorithms: None,
+            configurations: None,
+            tools: None,
+            registration_audit: None,
+        };
+        let lineage_bytes = canonical_json::to_vec(&payload)?;
+        let lineage_object_sha256 = ObjectHash::of_bytes(&lineage_bytes);
+
+        let mut artifacts = Vec::new();
+        let mut resources = Vec::new();
+        let lineage_path = "objects/lineage.json".to_owned();
+        write_package_artifact(
+            &package_root,
+            &lineage_path,
+            &lineage_bytes,
+            "application/vnd.himmelcad.photolab-product-lineage+json",
+            "lineage",
+            &mut artifacts,
+        )?;
+        resources.push(ProductImportPackageResourceV1 {
+            resource_id: lineage_object_sha256.0.clone(),
+            owner_entity_id: snapshot.id.0.clone(),
+            role: "lineage".to_owned(),
+            object_path: lineage_path,
+            sha256: lineage_object_sha256.clone(),
+            byte_length: u64::try_from(lineage_bytes.len())?,
+            media_type: "application/vnd.himmelcad.photolab-product-lineage+json".to_owned(),
+        });
+
+        let mut admissions = Vec::new();
+        let mut datasets = Vec::new();
+        {
+            let dataset_root_relative = Path::new(dataset_root_relative_path);
+            safe_mesh_relative_path(dataset_root_relative)?;
+            let inventory_parent = dataset_root_relative
+                .parent()
+                .context("dataset root has no relative parent")?;
+            let inventory_root = dataset_root.join(inventory_parent);
+            let root_file_name = dataset_root_relative
+                .file_name()
+                .and_then(|value| value.to_str())
+                .context("dataset root file name is not valid UTF-8")?;
+            anyhow::ensure!(
+                canonical.admission.entity.id.0 == canonical.dataset.entity_id
+                    && canonical.admission.representation_slot
+                        == canonical.dataset.representation_slot
+                    && canonical.dataset.format_id == normalized_format_id,
+                "canonical dataset binding disagrees with its admission"
+            );
+            let entity_path = "objects/entity.json".to_owned();
+            let entity_bytes = serde_json::to_vec(&canonical.admission.entity)?;
+            write_package_artifact(
+                &package_root,
+                &entity_path,
+                &entity_bytes,
+                "application/vnd.himmelcad.entity+json",
+                "admission_entity",
+                &mut artifacts,
+            )?;
+            let entity_object_sha256 = ObjectHash::of_bytes(&entity_bytes);
+            resources.push(ProductImportPackageResourceV1 {
+                resource_id: entity_object_sha256.0.clone(),
+                owner_entity_id: snapshot.id.0.clone(),
+                role: "admission_entity".to_owned(),
+                object_path: entity_path.clone(),
+                sha256: entity_object_sha256.clone(),
+                byte_length: u64::try_from(entity_bytes.len())?,
+                media_type: "application/vnd.himmelcad.entity+json".to_owned(),
+            });
+            let geometry_bytes = serde_json::to_vec(&canonical.admission.resolved_geometry)?;
+            let geometry_path = format!(
+                "objects/{}.json",
+                canonical.admission.selected.geometry_ref.as_str()
+            );
+            anyhow::ensure!(
+                ObjectHash::of_bytes(&geometry_bytes) == canonical.admission.selected.geometry_ref,
+                "canonical representation object hash changed before package publication"
+            );
+            write_package_artifact(
+                &package_root,
+                &geometry_path,
+                &geometry_bytes,
+                "application/vnd.himmelcad.geometry+json",
+                "representation_object",
+                &mut artifacts,
+            )?;
+            resources.push(ProductImportPackageResourceV1 {
+                resource_id: canonical.admission.selected.geometry_ref.0.clone(),
+                owner_entity_id: snapshot.id.0.clone(),
+                role: "representation_object".to_owned(),
+                object_path: geometry_path,
+                sha256: canonical.admission.selected.geometry_ref.clone(),
+                byte_length: u64::try_from(geometry_bytes.len())?,
+                media_type: "application/vnd.himmelcad.geometry+json".to_owned(),
+            });
+            for object in canonical.objects {
+                let path = format!("objects/{}.json", object.object_hash.as_str());
+                let bytes = serde_json::to_vec(&object.value)?;
+                write_package_artifact(
+                    &package_root,
+                    &path,
+                    &bytes,
+                    &object.media_type,
+                    "canonical_object",
+                    &mut artifacts,
+                )?;
+                resources.push(ProductImportPackageResourceV1 {
+                    resource_id: object.object_hash.0.clone(),
+                    owner_entity_id: snapshot.id.0.clone(),
+                    role: "canonical_object".to_owned(),
+                    object_path: path,
+                    sha256: object.object_hash,
+                    byte_length: u64::try_from(bytes.len())?,
+                    media_type: object.media_type,
+                });
+            }
+            admissions.push(ProductImportPackageAdmissionV1 {
+                entity_id: canonical.admission.entity.id.0.clone(),
+                type_id: canonical.admission.entity.type_id.0.clone(),
+                schema_version: canonical.admission.entity.schema_version,
+                entity_object_path: entity_path,
+                entity_object_sha256,
+                representation_slots: vec![ProductImportPackageRepresentationSlotV1 {
+                    slot: canonical.admission.representation_slot.clone(),
+                    kind: match canonical.admission.selected.role {
+                        RepresentationRole::Canonical => "canonical",
+                        RepresentationRole::Body => "body",
+                        RepresentationRole::Axis => "axis",
+                        RepresentationRole::Footprint => "footprint",
+                        RepresentationRole::Boundary => "boundary",
+                        RepresentationRole::Alternate => "alternate",
+                    }
+                    .to_owned(),
+                    object_sha256: canonical.admission.selected.geometry_ref.clone(),
+                }],
+            });
+            let artifact_paths = copy_dataset_inventory(
+                &inventory_root,
+                &package_root,
+                &mut artifacts,
+                "dataset",
+                cancellation,
+            )?;
+            let root_path = format!("dataset/{root_file_name}");
+            let root_artifact = artifacts
+                .iter()
+                .find(|artifact| artifact.path == root_path)
+                .with_context(|| format!("dataset root artifact is missing: {root_path}"))?;
+            anyhow::ensure!(
+                root_artifact.sha256 == canonical.dataset.root_metadata.object_hash
+                    && canonical.dataset.root_metadata.byte_length
+                        == Some(root_artifact.byte_length),
+                "canonical dataset root disagrees with its immutable resource"
+            );
+            for declared in &canonical.dataset.artifacts {
+                let scoped = declared
+                    .relative_path
+                    .strip_prefix(inventory_parent)
+                    .unwrap_or(&declared.relative_path);
+                let path = format!("dataset/{}", normalized_relative_posix_path(scoped)?);
+                let artifact = artifacts
+                    .iter()
+                    .find(|artifact| artifact.path == path)
+                    .with_context(|| format!("canonical dataset artifact is missing: {path}"))?;
+                anyhow::ensure!(
+                    artifact.sha256 == declared.resource.object_hash
+                        && declared.resource.byte_length == Some(artifact.byte_length),
+                    "canonical dataset artifact changed before package publication: {path}"
+                );
+            }
+            datasets.push(ProductImportPackageDatasetV1 {
+                dataset_id: canonical.dataset.dataset_id,
+                entity_id: canonical.dataset.entity_id,
+                slot: canonical.dataset.representation_slot,
+                format_id: canonical.dataset.format_id,
+                content_kind: content_kind.to_owned(),
+                root_path,
+                root_sha256: root_artifact.sha256.clone(),
+                artifact_paths,
+            });
+        }
+        artifacts.sort_by(|left, right| left.path.as_bytes().cmp(right.path.as_bytes()));
+        resources.sort_by(|left, right| {
+            left.object_path
+                .as_bytes()
+                .cmp(right.object_path.as_bytes())
+        });
+        let total_bytes = artifacts.iter().try_fold(0_u64, |total, artifact| {
+            total
+                .checked_add(artifact.byte_length)
+                .context("product package byte count overflow")
+        })?;
+        let counts = ProductImportPackageCountsV1 {
+            object_count: u64::try_from(resources.len())?,
+            artifact_count: u64::try_from(artifacts.len())?,
+            total_bytes,
+        };
+        let mut manifest = ProductImportPackageManifestV1 {
+            schema_id: PRODUCT_IMPORT_PACKAGE_SCHEMA_ID.to_owned(),
+            manifest_id: manifest_id.clone(),
+            producer: ProductImportPackageProducerV1 {
+                product_id: "himmelcad-photolab".to_owned(),
+                product_version: env!("CARGO_PKG_VERSION").to_owned(),
+                build_hash: executable_sha256,
+                canonical_schema_versions: admissions
+                    .iter()
+                    .map(|admission| admission.type_id.clone())
+                    .collect(),
+            },
+            source: ProductImportPackageSourceV1 {
+                project_id: candidate_manifest.project_id.clone(),
+                project_fingerprint: source_fingerprint,
+                publication_generation,
+            },
+            product: ProductImportPackageProductV1 {
+                entity_id: snapshot.id.0.clone(),
+                entity_version_hash: product_version_hash.clone(),
+                content_hash: product_content_hash,
+                kind: kind.to_owned(),
+                label: snapshot.name.clone(),
+                dataset_label: dataset_label.to_owned(),
+            },
+            lineage: ProductImportPackageLineageV1 {
+                schema_id: PRODUCT_LINEAGE_SCHEMA_ID.to_owned(),
+                lineage_object_sha256: lineage_object_sha256.clone(),
+                payload,
+            },
+            admissions,
+            datasets,
+            resources,
+            artifacts,
+            required_features: Vec::new(),
+            counts,
+            package_sha256: ObjectHash::of_bytes(b"pending-package-sha256"),
+        };
+        himmelcad_core::product_import_package::validate_product_import_package_paths(&manifest)
+            .map_err(anyhow::Error::msg)?;
+        manifest.package_sha256 = manifest.computed_package_sha256()?;
+        let manifest_bytes = canonical_json::to_vec(&manifest)?;
+        let manifest_sha256 = ObjectHash::of_bytes(&manifest_bytes);
+        atomic_write_bytes(&package_root.join("manifest.json"), &manifest_bytes)?;
+        sync_package_artifacts(&package_root, &manifest, cancellation)?;
+
+        let provenance_status = if missing_field_ids.is_empty() {
+            ProvenanceStatus::Complete
+        } else {
+            missing_field_ids.sort();
+            missing_field_ids.dedup();
+            ProvenanceStatus::Partial
+        };
+        let (disposition, reason_code) = if disposition == ProductDatasetDisposition::Unsupported {
+            (disposition, reason_code)
+        } else if provenance_status != ProvenanceStatus::Complete {
+            (
+                ProductDatasetDisposition::NeedsRepublishRecompute,
+                "partial_publication_provenance",
+            )
+        } else {
+            (disposition, reason_code)
+        };
+        let ready = ProductImportPackageReadyRecordV1 {
+            schema_id: PRODUCT_IMPORT_PACKAGE_SCHEMA_ID.to_owned(),
+            manifest_id: manifest_id.clone(),
+            product_id: snapshot.id.0.clone(),
+            product_version_hash: product_version_hash.clone(),
+            publication_generation,
+            normalized_format_id: normalized_format_id.to_owned(),
+            manifest_sha256: manifest_sha256.clone(),
+            lineage_object_sha256: lineage_object_sha256.clone(),
+            provenance_status,
+            missing_field_ids: missing_field_ids.clone(),
+            artifact_count: manifest.counts.artifact_count,
+            object_count: manifest.counts.object_count,
+            total_bytes: manifest.counts.total_bytes,
+            package_sha256: manifest.package_sha256.clone(),
+        };
+        cancellation.check()?;
+        atomic_write_bytes(
+            &package_root.join("ready.json"),
+            &serde_json::to_vec(&ready)?,
+        )?;
+        let publication = ProductImportPublicationRecordV1 {
+            schema_id: ready.schema_id,
+            manifest_id: ready.manifest_id,
+            product_id: ready.product_id,
+            product_version_hash: ready.product_version_hash,
+            publication_generation: ready.publication_generation,
+            normalized_format_id: ready.normalized_format_id,
+            manifest_sha256: ready.manifest_sha256,
+            lineage_object_sha256: ready.lineage_object_sha256,
+            provenance_status: ready.provenance_status,
+            missing_field_ids: ready.missing_field_ids,
+            artifact_count: ready.artifact_count,
+            object_count: ready.object_count,
+            total_bytes: ready.total_bytes,
+            package_relative_path,
+            disposition,
+            reason_code: reason_code.to_owned(),
+            package_sha256: ready.package_sha256,
+        };
+        atomic_write_json(
+            &product_import_publication_path(&session.working_path, &snapshot.id),
+            &publication,
+        )?;
+        Ok(publication)
+    })();
+    if result.is_err() {
+        let _ = remove_path_if_exists(&package_root);
+        let _ = remove_path_if_exists(&product_import_publication_path(
+            &session.working_path,
+            &snapshot.id,
+        ));
+    }
+    result
+}
+
+fn frozen_product_camera_scope(
+    session: &ProjectSession,
+    lineage: &ProductLineage,
+) -> Result<Vec<String>> {
+    let entity = session
+        .manifest
+        .entities
+        .get(&lineage.source_alignment_entity_id.0)
+        .context("product source alignment does not exist")?;
+    let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
+    match entity.kind {
+        EntityKind::MergedAlignmentRun => {
+            let record: MergedAlignmentRunRecord = serde_json::from_slice(&bytes)?;
+            validate_camera_scope(
+                &session.manifest,
+                &record
+                    .camera_entity_ids
+                    .iter()
+                    .map(|id| id.0.clone())
+                    .collect::<Vec<_>>(),
+            )
+        }
+        EntityKind::AlignmentRun => {
+            let record: ComputeArtifactRecord = serde_json::from_slice(&bytes)?;
+            let dataset = session.working_path.join(&record.dataset_relative_path);
+            alignment_camera_scope(&record, &dataset, &session.manifest)
+        }
+        _ => anyhow::bail!("product source lineage references a non-alignment entity"),
+    }
+}
+
+fn hash_regular_file(path: &Path) -> Result<(ObjectHash, u64)> {
+    let mut file = File::open(path)?;
+    let mut digest = Sha256::new();
+    let mut buffer = vec![0_u8; SOURCE_HASH_BUFFER_BYTES];
+    let mut byte_length = 0_u64;
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+        byte_length = byte_length
+            .checked_add(u64::try_from(read)?)
+            .context("artifact length overflow")?;
+    }
+    Ok((ObjectHash(hex::encode(digest.finalize())), byte_length))
+}
+
+fn write_package_artifact(
+    package_root: &Path,
+    relative_path: &str,
+    bytes: &[u8],
+    media_type: &str,
+    role: &str,
+    artifacts: &mut Vec<ProductImportPackageArtifactV1>,
+) -> Result<()> {
+    himmelcad_core::product_import_package::validate_relative_posix_path(relative_path)
+        .map_err(anyhow::Error::msg)?;
+    let target = package_root.join(relative_path);
+    atomic_write_bytes(&target, bytes)?;
+    artifacts.push(ProductImportPackageArtifactV1 {
+        path: relative_path.to_owned(),
+        sha256: ObjectHash::of_bytes(bytes),
+        byte_length: u64::try_from(bytes.len())?,
+        media_type: media_type.to_owned(),
+        role: role.to_owned(),
+    });
+    Ok(())
+}
+
+fn copy_dataset_inventory(
+    source_root: &Path,
+    package_root: &Path,
+    artifacts: &mut Vec<ProductImportPackageArtifactV1>,
+    prefix: &str,
+    cancellation: &CancellationToken,
+) -> Result<Vec<String>> {
+    cancellation.check()?;
+    let canonical_root = source_root.canonicalize()?;
+    let mut files = Vec::new();
+    collect_regular_dataset_files(&canonical_root, &canonical_root, &mut files)?;
+    let mut files = files
+        .into_iter()
+        .map(|path| Ok((normalized_relative_posix_path(&path)?, path)))
+        .collect::<Result<Vec<_>>>()?;
+    files.sort_by(|(left, _), (right, _)| left.as_bytes().cmp(right.as_bytes()));
+    let mut folded_paths = BTreeMap::new();
+    for (path, _) in &files {
+        if let Some(existing) = folded_paths.insert(path.to_lowercase(), path.clone()) {
+            anyhow::bail!("platform case-fold collision: {existing} and {path}");
+        }
+    }
+    let mut paths = Vec::with_capacity(files.len());
+    for (normalized_relative, relative) in files {
+        cancellation.check()?;
+        let source = canonical_root.join(&relative).canonicalize()?;
+        anyhow::ensure!(
+            source.starts_with(&canonical_root),
+            "dataset artifact escaped its root"
+        );
+        let relative_path = format!("{prefix}/{normalized_relative}");
+        himmelcad_core::product_import_package::validate_relative_posix_path(&relative_path)
+            .map_err(anyhow::Error::msg)?;
+        let target = package_root.join(&relative_path);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let (sha256, byte_length) = copy_regular_file_cancellable(&source, &target, cancellation)?;
+        artifacts.push(ProductImportPackageArtifactV1 {
+            path: relative_path.clone(),
+            sha256,
+            byte_length,
+            media_type: product_artifact_media_type(&relative),
+            role: "dataset".to_owned(),
+        });
+        paths.push(relative_path);
+    }
+    Ok(paths)
+}
+
+fn normalized_relative_posix_path(path: &Path) -> Result<String> {
+    let mut segments = Vec::new();
+    for component in path.components() {
+        let std::path::Component::Normal(segment) = component else {
+            anyhow::bail!("dataset artifact path is not relative and normalized");
+        };
+        segments.push(
+            segment
+                .to_str()
+                .context("dataset artifact path is not valid UTF-8")?,
+        );
+    }
+    let normalized = segments.join("/");
+    himmelcad_core::product_import_package::validate_relative_posix_path(&normalized)
+        .map_err(anyhow::Error::msg)?;
+    Ok(normalized)
+}
+
+fn copy_regular_file_cancellable(
+    source: &Path,
+    target_path: &Path,
+    cancellation: &CancellationToken,
+) -> Result<(ObjectHash, u64)> {
+    let mut source = File::open(source)?;
+    let mut target = File::create(target_path)?;
+    let mut digest = Sha256::new();
+    let mut buffer = vec![0_u8; SOURCE_HASH_BUFFER_BYTES];
+    let mut byte_length = 0_u64;
+    loop {
+        cancellation.check()?;
+        let read = source.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        target.write_all(&buffer[..read])?;
+        digest.update(&buffer[..read]);
+        byte_length = byte_length
+            .checked_add(u64::try_from(read)?)
+            .context("artifact length overflow")?;
+    }
+    target.sync_all()?;
+    sync_parent_directory(target_path)?;
+    Ok((ObjectHash(hex::encode(digest.finalize())), byte_length))
+}
+
+fn collect_regular_dataset_files(
+    root: &Path,
+    directory: &Path,
+    files: &mut Vec<PathBuf>,
+) -> Result<()> {
+    let mut entries = fs::read_dir(directory)?.collect::<std::result::Result<Vec<_>, _>>()?;
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in entries {
+        let metadata = fs::symlink_metadata(entry.path())?;
+        anyhow::ensure!(
+            !metadata.file_type().is_symlink(),
+            "dataset package rejects symbolic links"
+        );
+        if metadata.is_dir() {
+            collect_regular_dataset_files(root, &entry.path(), files)?;
+        } else if metadata.is_file() {
+            files.push(entry.path().strip_prefix(root)?.to_owned());
+        }
+    }
+    Ok(())
+}
+
+fn product_artifact_media_type(path: &Path) -> String {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "json" => "application/json",
+        "bin" => "application/octet-stream",
+        "ply" => "application/vnd.himmelcad.ply",
+        "tif" | "tiff" => "image/tiff",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "glb" => "model/gltf-binary",
+        _ => "application/octet-stream",
+    }
+    .to_owned()
+}
+
+fn sync_package_artifacts(
+    root: &Path,
+    manifest: &ProductImportPackageManifestV1,
+    cancellation: &CancellationToken,
+) -> Result<()> {
+    let canonical_root = root.canonicalize()?;
+    for artifact in &manifest.artifacts {
+        cancellation.check()?;
+        let path = root.join(&artifact.path).canonicalize()?;
+        anyhow::ensure!(
+            path.starts_with(&canonical_root),
+            "package artifact escaped its root"
+        );
+        let (sha256, byte_length) = hash_regular_file_cancellable(&path, cancellation)?;
+        anyhow::ensure!(
+            sha256 == artifact.sha256 && byte_length == artifact.byte_length,
+            "package artifact changed before ready publication"
+        );
+        File::open(path)?.sync_all()?;
+    }
+    File::open(root.join("manifest.json"))?.sync_all()?;
+    sync_parent_directory(&root.join("manifest.json"))?;
+    Ok(())
+}
+
+fn hash_regular_file_cancellable(
+    path: &Path,
+    cancellation: &CancellationToken,
+) -> Result<(ObjectHash, u64)> {
+    let mut file = File::open(path)?;
+    let mut digest = Sha256::new();
+    let mut buffer = vec![0_u8; SOURCE_HASH_BUFFER_BYTES];
+    let mut byte_length = 0_u64;
+    loop {
+        cancellation.check()?;
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+        byte_length = byte_length
+            .checked_add(u64::try_from(read)?)
+            .context("artifact length overflow")?;
+    }
+    Ok((ObjectHash(hex::encode(digest.finalize())), byte_length))
+}
+
+fn canonical_potree_product_contract(
+    snapshot: &EntitySnapshot,
+    dataset_root: &Path,
+    potree: &PreparedPotreeCloud,
+) -> Result<ProductPackageCanonicalContract> {
+    let metadata_path = dataset_root.join(&potree.relative_metadata_path);
+    let (metadata_hash, metadata_length) = hash_regular_file(&metadata_path)?;
+    let metadata = GeometryResource {
+        object_hash: metadata_hash,
+        media_type: "application/json".to_owned(),
+        byte_length: Some(metadata_length),
+    };
+    let geometry = GeometryObject::PointCloud {
+        dataset: StreamedGeometry {
+            format_id: "potree@2".to_owned(),
+            metadata: metadata.clone(),
+            element_count: Some(potree.point_count),
+        },
+    };
+    let canonical_objects = [
+        ("application/vnd.himmelcad.components+json", serde_json::json!({"hcad.prepared-dataset@1": {"formatId": "potree@2", "manifestRef": metadata.object_hash}})),
+        ("application/vnd.himmelcad.attributes+json", serde_json::json!({})),
+        ("application/vnd.himmelcad.relations+json", serde_json::json!([])),
+    ]
+    .into_iter()
+    .map(|(media_type, value)| {
+        let bytes = serde_json::to_vec(&value)?;
+        Ok(CanonicalImportJsonObject {
+            object_hash: ObjectHash::of_bytes(&bytes),
+            media_type: media_type.to_owned(),
+            value,
+        })
+    })
+    .collect::<Result<Vec<_>>>()?;
+    let selected = Representation {
+        role: RepresentationRole::Canonical,
+        geometry_ref: geometry_object_content_hash(&geometry)?,
+        authority: RepresentationAuthority::Authoritative,
+        dependency_hash: None,
+    };
+    let mut entity = CanonicalEntity {
+        id: snapshot.id.clone(),
+        revision: 0,
+        type_id: EntityTypeId(built_in_type::POINT_CLOUD.to_owned()),
+        name: snapshot.name.clone(),
+        owner: None,
+        layer_ids: Vec::new(),
+        placement: None,
+        representations: vec![selected.clone()],
+        components_ref: canonical_objects[0].object_hash.clone(),
+        attributes_ref: canonical_objects[1].object_hash.clone(),
+        relations_ref: canonical_objects[2].object_hash.clone(),
+        style_ref: None,
+        schema_version: 1,
+        version_hash: ObjectHash::of_bytes(b"pending"),
+    };
+    entity.version_hash = canonical_entity_version_hash(&entity)?;
+    validate_resolved_representation(&entity, &selected, &geometry)?;
+    let root = metadata_path
+        .parent()
+        .context("Potree metadata has no dataset root")?
+        .canonicalize()?;
+    let mut relative_files = Vec::new();
+    collect_regular_dataset_files(&root, &root, &mut relative_files)?;
+    relative_files.sort();
+    let artifacts = relative_files
+        .into_iter()
+        .map(|relative_path| {
+            let (object_hash, byte_length) = hash_regular_file(&root.join(&relative_path))?;
+            Ok(PreparedDatasetArtifact {
+                relative_path: relative_path.clone(),
+                resource: GeometryResource {
+                    object_hash,
+                    media_type: product_artifact_media_type(&relative_path),
+                    byte_length: Some(byte_length),
+                },
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(ProductPackageCanonicalContract {
+        admission: CanonicalRepresentationAdmission {
+            entity,
+            selected,
+            representation_slot: "source".to_owned(),
+            expected_generation: None,
+            resolved_geometry: geometry,
+        },
+        objects: canonical_objects,
+        dataset: CanonicalPreparedDataset {
+            dataset_id: format!("potree-{}", snapshot.id.0),
+            format_id: "potree@2".to_owned(),
+            entity_id: snapshot.id.0.clone(),
+            representation_slot: "source".to_owned(),
+            root_metadata: metadata,
+            artifacts,
+        },
     })
 }
 
@@ -1767,6 +2832,7 @@ impl ProjectRuntime {
             }
             history
         };
+        cleanup_unpublished_product_import_packages(&working_path, &manifest)?;
         let mut guard = self.session.lock().expect("project session mutex poisoned");
         if guard.is_some() {
             anyhow::bail!("a project is already open; close it before opening another one");
@@ -4668,6 +5734,19 @@ impl ProjectRuntime {
                         },
                     )
                     .transpose()?;
+                let contract =
+                    published_product_contract(session, &entity.id)?.unwrap_or_else(|| {
+                        legacy_product_contract(
+                            "mesh",
+                            "tiledMesh",
+                            record.source_alignment_entity_id.is_some(),
+                            record.processing_set_id.is_some(),
+                            record.gcp_optimization_entity_id.is_some()
+                                || record.gcp_optimization_snapshot_sha256.is_some(),
+                            record.image_mask_scope_sha256.is_some(),
+                            false,
+                        )
+                    });
                 records.push(ProjectProductDatasetRecord {
                     entity_id: entity.id.clone(),
                     kind: "mesh".into(),
@@ -4685,10 +5764,24 @@ impl ProjectRuntime {
                     gcp_optimization_snapshot_sha256: record.gcp_optimization_snapshot_sha256,
                     image_mask_scope_sha256: record.image_mask_scope_sha256,
                     tool_versions: BTreeMap::new(),
+                    contract,
                 });
             } else if entity.kind == EntityKind::DepthMap {
                 let record: MvsArtifactRecord = serde_json::from_slice(&bytes)?;
                 let dataset = dataset_protocol_relative(&record.dataset_relative_path)?;
+                let contract =
+                    published_product_contract(session, &entity.id)?.unwrap_or_else(|| {
+                        legacy_product_contract(
+                            "depth",
+                            "mvsDepth",
+                            record.source_alignment_entity_id.is_some(),
+                            record.processing_set_id.is_some(),
+                            record.gcp_optimization_entity_id.is_some()
+                                || record.gcp_optimization_snapshot_sha256.is_some(),
+                            record.image_mask_scope_sha256.is_some(),
+                            true,
+                        )
+                    });
                 records.push(ProjectProductDatasetRecord {
                     entity_id: entity.id.clone(),
                     kind: "depth".into(),
@@ -4706,6 +5799,7 @@ impl ProjectRuntime {
                     gcp_optimization_snapshot_sha256: record.gcp_optimization_snapshot_sha256,
                     image_mask_scope_sha256: record.image_mask_scope_sha256,
                     tool_versions: BTreeMap::new(),
+                    contract,
                 });
             } else if entity.kind == EntityKind::PointCloud {
                 if let Ok(record) = serde_json::from_slice::<MvsArtifactRecord>(&bytes) {
@@ -4721,6 +5815,19 @@ impl ProjectRuntime {
                             "binaryPly",
                         )
                     };
+                    let contract =
+                        published_product_contract(session, &entity.id)?.unwrap_or_else(|| {
+                            legacy_product_contract(
+                                "dense",
+                                format,
+                                record.source_alignment_entity_id.is_some(),
+                                record.processing_set_id.is_some(),
+                                record.gcp_optimization_entity_id.is_some()
+                                    || record.gcp_optimization_snapshot_sha256.is_some(),
+                                record.image_mask_scope_sha256.is_some(),
+                                false,
+                            )
+                        });
                     records.push(ProjectProductDatasetRecord {
                         entity_id: entity.id.clone(),
                         kind: "dense".into(),
@@ -4738,6 +5845,7 @@ impl ProjectRuntime {
                         gcp_optimization_snapshot_sha256: record.gcp_optimization_snapshot_sha256,
                         image_mask_scope_sha256: record.image_mask_scope_sha256,
                         tool_versions: BTreeMap::new(),
+                        contract,
                     });
                 } else {
                     let record: ComputeArtifactRecord = serde_json::from_slice(&bytes)?;
@@ -4750,6 +5858,18 @@ impl ProjectRuntime {
                         .as_ref()
                         .context("sparse point cloud has no Potree hierarchy")?;
                     let dataset = dataset_protocol_relative(&record.dataset_relative_path)?;
+                    let contract =
+                        published_product_contract(session, &entity.id)?.unwrap_or_else(|| {
+                            legacy_product_contract(
+                                "sparse",
+                                "potreeV2",
+                                record.parent_alignment_entity_id.is_some(),
+                                record.processing_set_id.is_some(),
+                                false,
+                                record.image_mask_scope_sha256.is_some(),
+                                true,
+                            )
+                        });
                     records.push(ProjectProductDatasetRecord {
                         entity_id: entity.id.clone(),
                         kind: "sparse".into(),
@@ -4770,6 +5890,7 @@ impl ProjectRuntime {
                             "colmapToolManifestSha256".to_owned(),
                             record.tool_manifest_sha256.0,
                         )]),
+                        contract,
                     });
                 }
             } else if entity.kind == EntityKind::GaussianSplatCloud {
@@ -4780,16 +5901,29 @@ impl ProjectRuntime {
                         |prepared| prepared.manifest_relative_path.as_path(),
                     ),
                 );
+                let splat_format = if record.prepared_splats.is_some() {
+                    "prepared"
+                } else {
+                    "brushPly"
+                };
+                let contract =
+                    published_product_contract(session, &entity.id)?.unwrap_or_else(|| {
+                        legacy_product_contract(
+                            "gaussianSplat",
+                            splat_format,
+                            record.source_alignment_entity_id.is_some(),
+                            record.processing_set_id.is_some(),
+                            record.gcp_optimization_entity_id.is_some()
+                                || record.gcp_optimization_snapshot_sha256.is_some(),
+                            record.image_mask_scope_sha256.is_some(),
+                            true,
+                        )
+                    });
                 records.push(ProjectProductDatasetRecord {
                     entity_id: entity.id.clone(),
                     kind: "gaussianSplat".into(),
                     relative_path: path_string(&relative),
-                    format: if record.prepared_splats.is_some() {
-                        "prepared"
-                    } else {
-                        "brushPly"
-                    }
-                    .into(),
+                    format: splat_format.into(),
                     visible: entity.visibility.visible,
                     prepared_mesh: None,
                     bounds_min: None,
@@ -4808,17 +5942,32 @@ impl ProjectRuntime {
                             record.summary.executable_sha256.0,
                         ),
                     ]),
+                    contract,
                 });
             } else {
                 let record: RasterArtifactRecord = serde_json::from_slice(&bytes)?;
                 let relative = dataset_protocol_relative(&record.dataset_relative_path)?
                     .join(&record.summary.pyramid_manifest_path);
+                let raster_kind = match record.kind {
+                    PublishedRasterKind::Dem => "dem",
+                    PublishedRasterKind::Orthomosaic => "orthomosaic",
+                };
+                let contract =
+                    published_product_contract(session, &entity.id)?.unwrap_or_else(|| {
+                        legacy_product_contract(
+                            raster_kind,
+                            "rasterPyramid",
+                            record.source_alignment_entity_id.is_some(),
+                            record.processing_set_id.is_some(),
+                            record.gcp_optimization_entity_id.is_some()
+                                || record.gcp_optimization_snapshot_sha256.is_some(),
+                            record.image_mask_scope_sha256.is_some(),
+                            true,
+                        )
+                    });
                 records.push(ProjectProductDatasetRecord {
                     entity_id: entity.id.clone(),
-                    kind: match record.kind {
-                        PublishedRasterKind::Dem => "dem".into(),
-                        PublishedRasterKind::Orthomosaic => "orthomosaic".into(),
-                    },
+                    kind: raster_kind.into(),
                     relative_path: path_string(&relative),
                     format: "rasterPyramid".into(),
                     visible: entity.visibility.visible,
@@ -4833,6 +5982,7 @@ impl ProjectRuntime {
                     gcp_optimization_snapshot_sha256: record.gcp_optimization_snapshot_sha256,
                     image_mask_scope_sha256: record.image_mask_scope_sha256,
                     tool_versions: raster_tool_versions(&record.summary.audit),
+                    contract,
                 });
             }
         }
@@ -5564,8 +6714,10 @@ impl ProjectRuntime {
         &self,
         outcome: ColmapRunOutcome,
         processing_set_id: Option<EntityId>,
+        cancellation: &CancellationToken,
     ) -> Result<PublishColmapResult> {
         validate_compute_job_id(&outcome.summary.job_id)?;
+        cancellation.check()?;
         anyhow::ensure!(
             !outcome
                 .summary
@@ -5766,6 +6918,112 @@ impl ProjectRuntime {
         candidate.autosave_generation = candidate.autosave_generation.saturating_add(1);
         candidate.modified_unix_ms = unix_ms()?;
         candidate.clean_shutdown = false;
+        for entity_id in &entity_ids {
+            let snapshot = candidate
+                .entities
+                .get(&entity_id.0)
+                .context("published COLMAP entity disappeared before package publication")?;
+            let bytes = read_verified_object(&session.working_path, &snapshot.version_hash)?;
+            if snapshot.kind == EntityKind::PointCloud {
+                let record: ComputeArtifactRecord = serde_json::from_slice(&bytes)?;
+                let Some(potree) = record.potree.as_ref() else {
+                    continue;
+                };
+                let source_alignment_entity_id = record
+                    .parent_alignment_entity_id
+                    .clone()
+                    .context("sparse cloud has no source alignment")?;
+                let Some(image_mask_scope_sha256) = record.image_mask_scope_sha256.clone() else {
+                    continue;
+                };
+                let product_lineage = ProductLineage {
+                    source_alignment_entity_id,
+                    processing_set_id: record.processing_set_id.clone(),
+                    gcp_optimization_entity_id: None,
+                    gcp_optimization_snapshot_sha256: None,
+                    image_mask_scope_sha256,
+                };
+                let canonical = canonical_potree_product_contract(snapshot, &dataset_path, potree)?;
+                write_product_import_package(
+                    session,
+                    &candidate,
+                    snapshot,
+                    "sparse",
+                    "potreePoints",
+                    "Sparse point cloud",
+                    "potree@2",
+                    &dataset_path,
+                    &potree.relative_metadata_path,
+                    &product_lineage,
+                    &camera_scope,
+                    canonical,
+                    ProductDatasetDisposition::Available,
+                    "available",
+                    cancellation,
+                )?;
+            } else if matches!(snapshot.kind, EntityKind::Mesh | EntityKind::TexturedMesh) {
+                let Ok(record) = serde_json::from_slice::<MeshArtifactRecord>(&bytes) else {
+                    continue;
+                };
+                let Some(canonical_dataset) = record.canonical_dataset.clone() else {
+                    continue;
+                };
+                let (Some(render_resource), Some(recipe_resource), Some(topology)) = (
+                    record.prepared.kernel_manifest_resource.as_ref(),
+                    record.prepared.preparation_descriptor_resource.as_ref(),
+                    record.prepared.section_topology.as_ref(),
+                ) else {
+                    continue;
+                };
+                let (admission, objects) = canonical_prepared_mesh_contract(
+                    snapshot,
+                    &record,
+                    render_resource,
+                    recipe_resource,
+                    &topology.manifest_resource,
+                )?;
+                let Some(image_mask_scope_sha256) = record.image_mask_scope_sha256.clone() else {
+                    continue;
+                };
+                let product_lineage = ProductLineage {
+                    source_alignment_entity_id: record
+                        .source_alignment_entity_id
+                        .clone()
+                        .context("prepared mesh has no source alignment")?,
+                    processing_set_id: record.processing_set_id.clone(),
+                    gcp_optimization_entity_id: record.gcp_optimization_entity_id.clone(),
+                    gcp_optimization_snapshot_sha256: record
+                        .gcp_optimization_snapshot_sha256
+                        .clone(),
+                    image_mask_scope_sha256,
+                };
+                write_product_import_package(
+                    session,
+                    &candidate,
+                    snapshot,
+                    "mesh",
+                    "gltf",
+                    "Prepared mesh",
+                    "himmelcad-prepared-hierarchy@1",
+                    &dataset_path,
+                    record
+                        .prepared
+                        .kernel_manifest_relative_path
+                        .as_deref()
+                        .context("prepared mesh has no kernel manifest path")?,
+                    &product_lineage,
+                    &camera_scope,
+                    ProductPackageCanonicalContract {
+                        admission,
+                        objects,
+                        dataset: canonical_dataset,
+                    },
+                    ProductDatasetDisposition::Available,
+                    "available",
+                    cancellation,
+                )?;
+            }
+        }
         let mut affected_entities = entity_ids.clone();
         if has_alignment || has_depth {
             affected_entities.extend(camera_scope.iter().cloned().map(EntityId));
@@ -5919,8 +7177,10 @@ impl ProjectRuntime {
         camera_entity_ids: &[String],
         image_mask_scope_sha256: &ObjectHash,
         lineage: &ProductLineage,
+        cancellation: &CancellationToken,
     ) -> Result<PublishColmapResult> {
         validate_compute_job_id(&outcome.output.job_id)?;
+        cancellation.check()?;
         let mut guard = self.session.lock().expect("project session mutex poisoned");
         let session = guard.as_mut().context("no project is open")?;
         ensure_writable(session)?;
@@ -6020,6 +7280,43 @@ impl ProjectRuntime {
         candidate.autosave_generation = candidate.autosave_generation.saturating_add(1);
         candidate.modified_unix_ms = unix_ms()?;
         candidate.clean_shutdown = false;
+        if let (Some(potree), Some(dense_id)) = (record.potree.as_ref(), entity_ids.get(1)) {
+            let snapshot = candidate
+                .entities
+                .get(&dense_id.0)
+                .context("dense point cloud disappeared before package publication")?;
+            let product_lineage = ProductLineage {
+                source_alignment_entity_id: record
+                    .source_alignment_entity_id
+                    .clone()
+                    .context("dense point cloud has no source alignment")?,
+                processing_set_id: record.processing_set_id.clone(),
+                gcp_optimization_entity_id: record.gcp_optimization_entity_id.clone(),
+                gcp_optimization_snapshot_sha256: record.gcp_optimization_snapshot_sha256.clone(),
+                image_mask_scope_sha256: record
+                    .image_mask_scope_sha256
+                    .clone()
+                    .context("dense point cloud has no frozen mask scope")?,
+            };
+            let canonical = canonical_potree_product_contract(snapshot, &dataset_path, potree)?;
+            write_product_import_package(
+                session,
+                &candidate,
+                snapshot,
+                "dense",
+                "potreePoints",
+                "Dense point cloud",
+                "potree@2",
+                &dataset_path,
+                &potree.relative_metadata_path,
+                &product_lineage,
+                &record.camera_entity_ids,
+                canonical,
+                ProductDatasetDisposition::Available,
+                "available",
+                cancellation,
+            )?;
+        }
         let mut affected_entities = entity_ids.clone();
         affected_entities.extend(record.camera_entity_ids.iter().cloned().map(EntityId));
         let journal = PhotolabJournalEntry {
@@ -6263,8 +7560,10 @@ impl ProjectRuntime {
         prepared: PreparedMeshProduct,
         textured: bool,
         lineage: &ProductLineage,
+        cancellation: &CancellationToken,
     ) -> Result<PublishColmapResult> {
         validate_compute_job_id(job_id)?;
+        cancellation.check()?;
         let mut guard = self.session.lock().expect("project session mutex poisoned");
         let session = guard.as_mut().context("no project is open")?;
         ensure_writable(session)?;
@@ -6332,6 +7631,62 @@ impl ProjectRuntime {
         candidate.autosave_generation = candidate.autosave_generation.saturating_add(1);
         candidate.modified_unix_ms = unix_ms()?;
         candidate.clean_shutdown = false;
+        let snapshot = candidate
+            .entities
+            .get(&entity_id.0)
+            .context("mesh disappeared before package publication")?;
+        let canonical_dataset = record
+            .canonical_dataset
+            .clone()
+            .context("prepared mesh has no canonical dataset")?;
+        let render_resource = record
+            .prepared
+            .kernel_manifest_resource
+            .as_ref()
+            .context("prepared mesh has no kernel manifest resource")?;
+        let recipe_resource = record
+            .prepared
+            .preparation_descriptor_resource
+            .as_ref()
+            .context("prepared mesh has no preparation descriptor")?;
+        let topology = record
+            .prepared
+            .section_topology
+            .as_ref()
+            .context("prepared mesh has no section topology")?;
+        let (admission, objects) = canonical_prepared_mesh_contract(
+            snapshot,
+            &record,
+            render_resource,
+            recipe_resource,
+            &topology.manifest_resource,
+        )?;
+        let camera_scope = frozen_product_camera_scope(session, lineage)?;
+        write_product_import_package(
+            session,
+            &candidate,
+            snapshot,
+            "mesh",
+            "gltf",
+            "Prepared mesh",
+            "himmelcad-prepared-hierarchy@1",
+            &destination,
+            record
+                .prepared
+                .kernel_manifest_relative_path
+                .as_deref()
+                .context("prepared mesh has no kernel manifest path")?,
+            lineage,
+            &camera_scope,
+            ProductPackageCanonicalContract {
+                admission,
+                objects,
+                dataset: canonical_dataset,
+            },
+            ProductDatasetDisposition::Available,
+            "available",
+            cancellation,
+        )?;
         let journal = PhotolabJournalEntry {
             sequence: candidate.command_sequence,
             command_id: format!("mesh-publish-{job_id}"),
@@ -7079,6 +8434,50 @@ fn cleanup_published_job_scratch(project_root: &Path, job_id: &str, kind: Photol
             "published PhotoLab scratch cleanup will be retried from durable job history"
         );
     }
+}
+
+fn cleanup_unpublished_product_import_packages(
+    project_root: &Path,
+    manifest: &PhotolabProjectManifest,
+) -> Result<()> {
+    let publication_root = project_root.join(".photolab/product-import-publications");
+    let package_root = project_root.join(".photolab/product-import-packages");
+    let mut retained_packages = BTreeSet::new();
+    if publication_root.is_dir() {
+        for entry in fs::read_dir(&publication_root)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let bytes = fs::read(entry.path())?;
+            let record: ProductImportPublicationRecordV1 = serde_json::from_slice(&bytes)
+                .with_context(|| {
+                    format!(
+                        "published product import record is corrupt: {}",
+                        entry.path().display()
+                    )
+                })?;
+            let entity_id = EntityId(record.product_id.clone());
+            if !manifest.entities.contains_key(&entity_id.0)
+                || entry.path() != product_import_publication_path(project_root, &entity_id)
+            {
+                remove_path_if_exists(&entry.path())?;
+                continue;
+            }
+            retained_packages.insert(record.manifest_id);
+        }
+    }
+    if package_root.is_dir() {
+        for entry in fs::read_dir(package_root)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir()
+                && !retained_packages.contains(&entry.file_name().to_string_lossy().into_owned())
+            {
+                remove_path_if_exists(&entry.path())?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Removes only rebuildable, job-owned scratch after the worker has reached a durable terminal
@@ -10749,6 +12148,52 @@ mod tests {
     };
 
     #[test]
+    fn legacy_product_provenance_is_never_complete() {
+        let partial = legacy_product_contract("dense", "potreeV2", true, false, false, true, true);
+        assert_eq!(partial.provenance_status, ProvenanceStatus::Partial);
+        assert_eq!(
+            partial.disposition,
+            ProductDatasetDisposition::NeedsRepublishRecompute
+        );
+        assert!(partial.package_sha256.is_none());
+        assert!(partial
+            .missing_field_ids
+            .contains(&"package_sha256".to_owned()));
+
+        let unknown =
+            legacy_product_contract("dense", "potreeV2", false, false, false, false, false);
+        assert_eq!(unknown.provenance_status, ProvenanceStatus::Unknown);
+        assert_eq!(
+            unknown.disposition,
+            ProductDatasetDisposition::NeedsRepublishRecompute
+        );
+    }
+
+    #[test]
+    fn cancelled_package_inventory_never_creates_a_ready_record() {
+        let root = temp_test_dir("cancelled-product-package");
+        let source = root.join("source");
+        let package = root.join("package");
+        fs::create_dir_all(&source).expect("source directory");
+        fs::create_dir_all(&package).expect("package directory");
+        fs::write(source.join("metadata.json"), b"{}").expect("source artifact");
+        let cancellation = CancellationToken::new();
+        cancellation.request_cancel();
+        let mut artifacts = Vec::new();
+        assert!(copy_dataset_inventory(
+            &source,
+            &package,
+            &mut artifacts,
+            "dataset",
+            &cancellation,
+        )
+        .is_err());
+        assert!(artifacts.is_empty());
+        assert!(!package.join("ready.json").exists());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn corrupt_record_fixture_surfaces_in_project_diagnostics() {
         let root = temp_test_dir("corrupt-record-diagnostics");
         let project = root.join("diagnostics.hcad");
@@ -13768,6 +15213,7 @@ mod tests {
                     prepared_textured_mesh: Some(prepared_textured_mesh),
                 },
                 None,
+                &CancellationToken::new(),
             )
             .expect("publish COLMAP mesh products");
         assert_eq!(published.entity_ids.len(), 3);
@@ -13997,6 +15443,7 @@ mod tests {
                     prepared_textured_mesh: None,
                 },
                 Some(processing_set.entity_id.clone()),
+                &CancellationToken::new(),
             )
             .expect("publish sparse alignment");
         assert!(
@@ -14065,6 +15512,50 @@ mod tests {
         assert!(sparse
             .relative_path
             .ends_with("sparse-potree/octree/metadata.json"));
+        assert_eq!(sparse.contract.provenance_status, ProvenanceStatus::Partial);
+        assert_eq!(
+            sparse.contract.disposition,
+            ProductDatasetDisposition::NeedsRepublishRecompute
+        );
+        assert!(sparse.contract.package_sha256.is_some());
+        assert!(sparse
+            .contract
+            .missing_field_ids
+            .contains(&"image_mask_scope".to_owned()));
+        let publication_path =
+            product_import_publication_path(&root.join("project.hcad"), sparse_id);
+        let publication: ProductImportPublicationRecordV1 =
+            serde_json::from_slice(&fs::read(publication_path).expect("publication summary"))
+                .expect("valid publication summary");
+        let package_root = root
+            .join("project.hcad")
+            .join(&publication.package_relative_path);
+        let ready_bytes = fs::read(package_root.join("ready.json")).expect("ready record");
+        assert!(String::from_utf8(ready_bytes)
+            .expect("UTF-8 ready record")
+            .ends_with(&format!(
+                r#""package_sha256":"{}"}}"#,
+                publication.package_sha256.as_str()
+            )));
+        let manifest_bytes = fs::read(package_root.join("manifest.json")).expect("manifest");
+        let retained =
+            himmelcad_core::product_import_package::read_product_import_package_manifest(
+                &manifest_bytes,
+                &BTreeSet::new(),
+                &BTreeSet::from([built_in_type::POINT_CLOUD.to_owned()]),
+            )
+            .expect("compatible package manifest");
+        assert_eq!(retained.manifest.package_sha256, publication.package_sha256);
+        assert!(retained
+            .manifest
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.path == "dataset/metadata.json"));
+        assert!(!retained
+            .manifest
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.path.ends_with("export.ply")));
 
         let export = runtime
             .product_export_source(sparse_id)

@@ -7,6 +7,7 @@
 
 pub mod app_protocol;
 pub mod canonical_document;
+pub mod canonical_json;
 pub mod canonical_resource_catalog;
 pub mod canonical_resources;
 pub mod contract;
@@ -31,6 +32,7 @@ pub mod photolab_models;
 pub mod photolab_products;
 pub mod photolab_project;
 pub mod photolab_recipe;
+pub mod product_import_package;
 pub mod project;
 pub mod property_schema;
 pub mod registration;

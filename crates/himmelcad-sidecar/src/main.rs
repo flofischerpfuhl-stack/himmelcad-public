@@ -48,8 +48,8 @@ use himmelcad_core::photolab_gcp_optimization::{
 };
 use himmelcad_core::photolab_images::ProjectedPhotoReference;
 use himmelcad_core::photolab_jobs::{
-    JobProgress, NewPhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState, PhotolabStage,
-    PhotolabStageKind, ProgressMetrics,
+    CancellationToken, JobProgress, NewPhotolabJob, PhotolabJobId, PhotolabJobKind,
+    PhotolabJobState, PhotolabStage, PhotolabStageKind, ProgressMetrics,
 };
 use himmelcad_core::photolab_matching::ImageId;
 use himmelcad_core::registration::{
@@ -3703,12 +3703,10 @@ async fn handle_job_rpc(
                                     .publish_colmap_outcome_for_processing_set(
                                         outcome,
                                         processing_set_id,
+                                        &context.cancellation,
                                     )
                                     .map_err(|error| {
-                                        himmelcad_sidecar::job_runtime::JobWorkerError::Failed {
-                                            code: "projectPublish".into(),
-                                            message: error.to_string(),
-                                        }
+                                        map_project_publish_error(error, &context.cancellation)
                                     })?;
                                 Ok(())
                             })
@@ -4046,18 +4044,19 @@ async fn handle_job_rpc(
                                         }
                                         context.check_cancelled()?;
                                         publisher
-                                        .publish_mvs_outcome(
-                                            outcome,
-                                            &prepared.camera_entity_ids,
-                                            &prepared.image_mask_scope.scope_sha256,
-                                            &prepared.lineage,
-                                        )
-                                        .map_err(|error| {
-                                            himmelcad_sidecar::job_runtime::JobWorkerError::Failed {
-                                                code: "projectPublish".into(),
-                                                message: error.to_string(),
-                                            }
-                                        })?;
+                                            .publish_mvs_outcome(
+                                                outcome,
+                                                &prepared.camera_entity_ids,
+                                                &prepared.image_mask_scope.scope_sha256,
+                                                &prepared.lineage,
+                                                &context.cancellation,
+                                            )
+                                            .map_err(|error| {
+                                                map_project_publish_error(
+                                                    error,
+                                                    &context.cancellation,
+                                                )
+                                            })?;
                                         Ok(())
                                     },
                                 )
@@ -4494,8 +4493,9 @@ async fn resume_product_job(
                         &prepared.camera_entity_ids,
                         &prepared.image_mask_scope.scope_sha256,
                         &prepared.lineage,
+                        &context.cancellation,
                     )
-                    .map_err(|error| worker_error("projectPublish", &error.to_string()))?;
+                    .map_err(|error| map_project_publish_error(error, &context.cancellation))?;
                 Ok(())
             })
             .await
@@ -5057,8 +5057,12 @@ fn run_batch_pipeline(
                 prepare_alignment_mesh(&mut outcome, context)?;
                 context.check_cancelled()?;
                 projects
-                    .publish_colmap_outcome_for_processing_set(outcome, processing_set_id)
-                    .map_err(|error| worker_error("projectPublish", &error.to_string()))?;
+                    .publish_colmap_outcome_for_processing_set(
+                        outcome,
+                        processing_set_id,
+                        &context.cancellation,
+                    )
+                    .map_err(|error| map_project_publish_error(error, &context.cancellation))?;
             }
             BatchPipelineStep::Product {
                 mut configuration,
@@ -5235,8 +5239,9 @@ fn execute_batch_product(
                     &prepared.camera_entity_ids,
                     &prepared.image_mask_scope.scope_sha256,
                     &prepared.lineage,
+                    &node.cancellation,
                 )
-                .map_err(|error| worker_error("projectPublish", &error.to_string()))?;
+                .map_err(|error| map_project_publish_error(error, &node.cancellation))?;
         }
         config @ ProductRunConfiguration::Dem { .. }
         | config @ ProductRunConfiguration::Ortho { .. } => {
@@ -7421,8 +7426,9 @@ fn run_mesh_job(
             result,
             prepared.textured,
             &prepared.lineage,
+            &context.cancellation,
         )
-        .map_err(|error| worker_error("projectPublish", &error.to_string()))?;
+        .map_err(|error| map_project_publish_error(error, &context.cancellation))?;
     Ok(())
 }
 
@@ -7986,6 +7992,17 @@ fn map_mesh_tiler_error(error: MeshTilerError) -> JobWorkerError {
 
 fn worker_failed(code: &'static str) -> impl FnOnce(anyhow::Error) -> JobWorkerError {
     move |error| worker_error(code, &error.to_string())
+}
+
+fn map_project_publish_error(
+    error: anyhow::Error,
+    cancellation: &CancellationToken,
+) -> JobWorkerError {
+    if cancellation.is_cancel_requested() {
+        JobWorkerError::Cancelled
+    } else {
+        worker_error("projectPublish", &error.to_string())
+    }
 }
 
 fn worker_error(code: &str, message: &str) -> JobWorkerError {

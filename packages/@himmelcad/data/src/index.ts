@@ -1376,3 +1376,148 @@ export interface CommandResult {
   affectedEntities: EntityId[];
   message?: string;
 }
+
+/** ADR 0030 publication/listing projection returned by PhotoLab's private product query. */
+export type ProductProvenanceStatus = 'complete' | 'partial' | 'unknown';
+export type ProductDatasetDisposition =
+  | 'available'
+  | 'needs_preparation'
+  | 'needs_republish_recompute'
+  | 'unsupported';
+
+export interface ProductImportPackageSummary {
+  packageSchemaId?: 'hcad.product-import-package-manifest@1';
+  packageSha256?: ObjectHash;
+  normalizedFormatId?: 'potree@2' | 'himmelcad-prepared-hierarchy@1';
+  artifactCount?: number;
+  objectCount?: number;
+  totalBytes?: number;
+  provenanceStatus: ProductProvenanceStatus;
+  missingFieldIds: string[];
+  disposition: ProductDatasetDisposition;
+  reasonCode: string;
+}
+
+/** Exact snake_case wire envelope for `hcad.product-import-package-manifest@1`. */
+export interface ProductImportPackageManifestV1 {
+  schema_id: 'hcad.product-import-package-manifest@1';
+  manifest_id: string;
+  producer: {
+    product_id: string;
+    product_version: string;
+    build_hash: ObjectHash;
+    canonical_schema_versions: string[];
+  };
+  source: {
+    project_id: string;
+    project_fingerprint: ObjectHash;
+    publication_generation: number;
+  };
+  product: {
+    entity_id: string;
+    entity_version_hash: ObjectHash;
+    content_hash: ObjectHash;
+    kind: string;
+    label: string;
+    dataset_label: string;
+  };
+  lineage: {
+    schema_id: 'hcad.photolab-product-lineage@1';
+    lineage_object_sha256: ObjectHash;
+    payload: ProductLineageV1;
+  };
+  admissions: Array<{
+    entity_id: string;
+    type_id: string;
+    schema_version: number;
+    entity_object_path: string;
+    entity_object_sha256: ObjectHash;
+    representation_slots: Array<{ slot: string; kind: string; object_sha256: ObjectHash }>;
+  }>;
+  datasets: Array<{
+    dataset_id: string;
+    entity_id: string;
+    slot: string;
+    format_id: string;
+    content_kind: string;
+    root_path: string;
+    root_sha256: ObjectHash;
+    artifact_paths: string[];
+  }>;
+  resources: Array<{
+    resource_id: string;
+    owner_entity_id: string;
+    role: string;
+    object_path: string;
+    sha256: ObjectHash;
+    byte_length: number;
+    media_type: string;
+  }>;
+  artifacts: Array<{
+    path: string;
+    sha256: ObjectHash;
+    byte_length: number;
+    media_type: string;
+    role: string;
+  }>;
+  required_features: string[];
+  counts: { object_count: number; artifact_count: number; total_bytes: number };
+  package_sha256: ObjectHash;
+}
+
+export type ProductLineageProcessingSetChoiceV1 =
+  | { kind: 'selected'; id: string; version_hash: ObjectHash; membership_sha256: ObjectHash }
+  | { kind: 'none' }
+  | { kind: 'all_imported_cameras' };
+export type ProductLineageMaskScopeV1 =
+  | { kind: 'selected'; scope_sha256: ObjectHash }
+  | { kind: 'none' };
+export type ProductLineageGcpChoiceV1 =
+  | {
+      kind: 'selected';
+      entity_id: string;
+      entity_version_hash: ObjectHash;
+      snapshot_sha256: ObjectHash;
+    }
+  | { kind: 'none' };
+
+export interface ProductLineageV1 {
+  source_project_id: string;
+  source_project_fingerprint: ObjectHash;
+  product_entity_id: string;
+  product_entity_version_hash: ObjectHash;
+  product_content_hash: ObjectHash;
+  publication_generation: number;
+  product_kind: string;
+  product_label: string;
+  dataset_label: string;
+  normalized_format_id: string;
+  source_alignment_entity_id: string;
+  source_alignment_entity_version_hash: ObjectHash;
+  source_alignment_content_hash?: ObjectHash;
+  processing_set_choice: ProductLineageProcessingSetChoiceV1;
+  camera_selection_sha256: ObjectHash;
+  image_mask_scope?: ProductLineageMaskScopeV1;
+  gcp_choice: ProductLineageGcpChoiceV1;
+  spatialReference: unknown;
+  reference_frame: { kind: 'frozen'; project_reference_frame: unknown } | { kind: 'local_frame' };
+  algorithms?: Array<{
+    id: string;
+    version: string;
+    configuration_sha256?: ObjectHash;
+    binary_sha256?: ObjectHash;
+  }>;
+  configurations?: Array<{
+    id: string;
+    version: string;
+    configuration_sha256?: ObjectHash;
+    binary_sha256?: ObjectHash;
+  }>;
+  tools?: Array<{
+    id: string;
+    version: string;
+    configuration_sha256?: ObjectHash;
+    binary_sha256?: ObjectHash;
+  }>;
+  registration_audit?: unknown;
+}
