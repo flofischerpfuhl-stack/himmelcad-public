@@ -1035,6 +1035,25 @@ escalated. Constants in code should cite this section.
 | WP-F2   | Pixel diff threshold ≤ 0.1 % pixels, per-channel tolerance 16                                               | Tolerates antialiasing jitter, catches layout shifts                                                                              | False-positive rate over 20 CI runs                                                                     |
 | WP-F2   | Baseline set: 2 viewports × 42 surfaces = 84 PNGs, ≈ 11 MB in-repo                                          | Both layouts matter for the design system; measured run-to-run noise is 0 px                                                      | Move baselines to Git LFS once their history exceeds ≈ 50 MB or churn exceeds one regeneration per week |
 
+## Integration evidence — 2026-09-02 (Waves 1–4 on a fresh sidecar)
+
+`scripts/photolab-e2e.mjs`, Sulzberg `01_Photos`, 24 images, `--smoke
+--profile fast`, target `EPSG:31468+7837`, sidecar built from HEAD after
+WP-A2 (all Wave 1–4 packages included):
+
+| Stage                                                                 | Result                                                                                                                                                                                      |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Import wizard → CRS freeze (WP-C2 height path) → atomic commit        | completed, 24 images, 17.9 s                                                                                                                                                                |
+| Fast alignment (SIFT + mapper)                                        | completed, 727 s, published                                                                                                                                                                 |
+| GCP preview → CRS discovery → freeze → commit                         | completed (optimization skipped: only 2 of the dataset's GCPs are measurable with 24 images; the script requires ≥ 3 — use all 135 images for the GCP scope)                                |
+| Depth maps                                                            | completed, 1 379 s, job record `lastCheckpointSequence: 120`                                                                                                                                |
+| Dense point cloud                                                     | completed, 52 s, 2 098 118 points, `lastCheckpointSequence: 120`                                                                                                                            |
+| Dense export via `photolab.jobs.startProductExport { format: 'laz' }` | LAS 1.4 PF2, 2 098 118 points, 12.7 MB, scale 0.001, offsets = bbox min, COMPOUNDCRS DHDN/GK4 + DHHN2016 WKT, RGB present, finite coordinates, no leftover processes (laspy 2.7 validation) |
+
+Alignment job records carry `lastCheckpointSequence: None` (honest: no
+cross-restart resume). Not exercised in this run: kill-and-resume, merge, GCP
+optimization (needs the 135-image scope), DEM/ortho/mesh/splat products.
+
 ## Execution order and review protocol
 
 Waves (sequential Codex runs; the reviewing session verifies each before the
