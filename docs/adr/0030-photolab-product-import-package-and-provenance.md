@@ -82,8 +82,7 @@ PROJECT-FORMAT, and an accepted ADR before implementation.
     manifest payload with only the `package_sha256` member omitted: UTF-8 JSON,
     object keys sorted by UTF-8 byte order, declared array order retained, no
     insignificant whitespace, strings emitted by the shared generated JSON
-    serializer, integers in base-10 without leading zeroes, and no
-    floating-point manifest values. Because every object, resource, and
+    serializer, integers in base-10 without leading zeroes, and no floating-point manifest values. Per IF-D34, every logical `f64` in a package manifest or lineage payload, including `FrozenCrsEndpointV1.horizontal.coordinateEpoch.decimalYear`, is a canonical JSON `Decimal64` string: the finite binary64 value's shortest round-tripping, ties-to-even decimal expanded without exponent notation and normalized by the spec's exact rule; packages preserve the original lineage bytes and never round, normalize, or write the projected epoch back into the authoritative transformation model. Because every object, resource, and
     artifact hash is inside that payload, it binds the complete package without
     depending on filesystem enumeration order.
 
@@ -114,7 +113,7 @@ PROJECT-FORMAT, and an accepted ADR before implementation.
     reads only this bounded summary. Builder never accepts an inventory
     assembled by walking a product directory after publication.
 
-6.  **Lineage payload.** For publications made after this contract exists, PhotoLab freezes `ProductLineageV1` (`hcad.photolab-product-lineage@1`) before the ready record and product record become visible. The mandatory payload is:
+6.  **Lineage payload.** For publications made after this contract exists, PhotoLab freezes `ProductLineageV1` (`hcad.photolab-product-lineage@1`) before the ready record and product record become visible. Per IF-D26 it has one exact serialized shape — the spec's field identifiers, JSON primitive types and tagged unions; a `?` member is omitted, never `null`; every unmarked member is present; every logical `f64` is a `Decimal64` string per Decision 2 (IF-D34), and the coordinate epoch is never rewritten in the model. The mandatory payload is:
     - source project stable id and the exact archive/manifest fingerprint;
     - product entity id, exact entity version and content hash, publication generation, kind, label, dataset label, and normalized canonical format id;
     - source alignment entity id and exact version/content hash;
@@ -122,7 +121,7 @@ PROJECT-FORMAT, and an accepted ADR before implementation.
     - image-mask scope as `selected { scope_sha256 } | none`;
     - GCP choice as `selected { entity_id, entity_version_hash, snapshot_sha256 } | none`;
     - the exact source `spatialReference` plus the frozen `ProjectReferenceFrame` (`FrozenCrsEndpoint` and `establishedByTransformationSha256`), or the explicit `local_frame` marker; `unknown` is not legal for a new complete publication;
-    - ordered algorithm, configuration, and tool identities, each with stable id, version, and configuration/binary hash where applicable; and
+    - `algorithms`, `configurations`, and `tools` as always-present ordered identity arrays of `ProductLineageIdentityV1 { id: string, sha256: Sha256 }` (IF-D26), repeated invocations kept as repeated entries; and
     - the accepted registration transform/audit, if one existed at publication.
 
 7.  **Provenance component.** Builder creates
@@ -216,7 +215,7 @@ gate test).
 
 ## Consequences
 
-- PhotoLab publication gains a package/ready-record step and a frozen lineage payload for every product. How the existing five-field product lineage record relates to `ProductLineageV1` is not decided here; current records are legacy per Decision 8 until PhotoLab republishes or recomputes.
+- PhotoLab publication gains a package/ready-record step and a frozen lineage payload for every product. Per IF-D33 the existing five-field product lineage record is only a read-only projection of `ProductLineageV1` that can yield `partial` or `unknown`, never `complete` or reconstructed history; every post-contract publication keeps the complete hash-bound lineage in its publication record with `package: null` when no package exists.
 - All current PhotoLab publications become `partial` or `unknown` and must be republished or recomputed to become registrable; the UI and listing say so instead of decorating old bytes.
 - The consumer side — generated command-table rows, source acquisition and pinning, listing budgets, repeated registration and update rules, passive consumers, and `.hcadx` WeltView parity — is governed by import-formats IF-D20, IF-D23, IF-D24, and IF-D25 as written there; this ADR neither restates nor modifies them.
 
