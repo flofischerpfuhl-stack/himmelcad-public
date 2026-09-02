@@ -117,7 +117,7 @@ export function ImageWorkspace({
     const controller = new AbortController();
     void fetch(projectProductUrl(latest.relativePath), { signal: controller.signal })
       .then(async (response) => {
-        if (!response.ok) throw new Error(`Depth-Index HTTP ${response.status}`);
+        if (!response.ok) throw new Error(`Depth index HTTP ${response.status}`);
         const index = (await response.json()) as MvsOutputIndex;
         setDepthProduct({
           index,
@@ -364,6 +364,11 @@ function ImageLayerContent({
       </div>
     );
   }
+  // Inspection batches describe source files before their content-addressed objects exist.
+  // Requesting the project URL here raced the atomic commit, emitted a false load error, and
+  // could cache the pre-commit 404. Only committed project records may use hcad-image://.
+  if (!projectImage)
+    return <ImageMetadataCard photo={photo} status="Validated · not imported yet" />;
   if (!loadFailed) {
     const dimensions = photo.metadata.exif.dimensions;
     const markers = camera
@@ -398,6 +403,10 @@ function ImageLayerContent({
       </div>
     );
   }
+  return <ImageMetadataCard photo={photo} status="Image source is unavailable" />;
+}
+
+function ImageMetadataCard({ photo, status }: { photo: DiscoveredPhoto; status: string }) {
   return (
     <div className={styles.metadataCard}>
       <ImageIcon size={38} />
@@ -426,7 +435,7 @@ function ImageLayerContent({
         </div>
         <div>
           <dt>Status</dt>
-          <dd>validated · not imported yet</dd>
+          <dd>{status}</dd>
         </div>
       </dl>
       <span className={styles.previewNotice}>
@@ -513,7 +522,7 @@ function DepthCanvas({
         const response = await fetch(projectProductUrl(`${basePath}${tile.relativePath}`), {
           signal: controller.signal,
         });
-        if (!response.ok) throw new Error(`Depth-Tile HTTP ${response.status}`);
+        if (!response.ok) throw new Error(`Depth tile HTTP ${response.status}`);
         return { tile, decoded: decodeDepthTile(await response.arrayBuffer()) };
       }),
     )

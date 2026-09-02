@@ -109,67 +109,37 @@ export interface GcpImportWorkflow {
 
 export type ImportWorkflow = ImageImportWorkflow | GcpImportWorkflow;
 
-const WORKFLOW_KEY = 'himmelcad.photolab.importWorkflows';
-const MAX_WORKFLOWS = 24;
+export const LEGACY_WORKFLOW_KEY = 'himmelcad.photolab.importWorkflows';
 
-export function listWorkflows(kind: 'image' | 'gcp'): ImportWorkflow[] {
+export interface LegacyWorkflowMigrationPlan {
+  readonly workflows: readonly ImportWorkflow[];
+}
+
+/** Pure compatibility parser used before moving old GCP workflows to `.hcimport` files. */
+export function legacyWorkflowMigrationPlan(raw: string | null): LegacyWorkflowMigrationPlan {
+  if (!raw) return { workflows: [] };
   try {
-    const raw = localStorage.getItem(WORKFLOW_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as ImportWorkflow[];
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((item) => item && item.kind === kind && item.schemaVersion === 1)
-      .map((item) => ({
-        ...item,
-        description:
-          'description' in item && typeof item.description === 'string' ? item.description : '',
-      }))
-      .sort((a, b) => (a.savedAt < b.savedAt ? 1 : -1));
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return { workflows: [] };
+    const workflows = parsed.filter(isImportWorkflow);
+    return {
+      workflows: workflows.map((item) => ({ ...item, description: item.description ?? '' })),
+    };
   } catch {
-    return [];
+    return { workflows: [] };
   }
 }
 
-export function workflowNameExists(
-  kind: 'image' | 'gcp',
-  name: string,
-  exceptId?: string,
-): boolean {
-  const normalized = name.trim().toLowerCase();
-  if (!normalized) return false;
-  return listWorkflows(kind).some(
-    (item) => item.id !== exceptId && item.name.trim().toLowerCase() === normalized,
+function isImportWorkflow(value: unknown): value is ImportWorkflow {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<ImportWorkflow>;
+  return (
+    candidate.schemaVersion === 1 &&
+    (candidate.kind === 'image' || candidate.kind === 'gcp') &&
+    typeof candidate.id === 'string' &&
+    typeof candidate.name === 'string' &&
+    typeof candidate.savedAt === 'string'
   );
-}
-
-export function saveWorkflow(
-  workflow: ImportWorkflow,
-): { ok: true } | { ok: false; error: string } {
-  const name = workflow.name.trim();
-  if (!name) return { ok: false, error: 'Name is required.' };
-  if (workflowNameExists(workflow.kind, name, workflow.id)) {
-    return { ok: false, error: `A workflow named “${name}” already exists.` };
-  }
-  const all = loadAll().filter((item) => item.id !== workflow.id);
-  all.unshift({ ...workflow, name, description: workflow.description.trim() });
-  localStorage.setItem(WORKFLOW_KEY, JSON.stringify(all.slice(0, MAX_WORKFLOWS)));
-  return { ok: true };
-}
-
-function loadAll(): ImportWorkflow[] {
-  try {
-    const raw = localStorage.getItem(WORKFLOW_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as ImportWorkflow[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-export function deleteWorkflow(id: string): void {
-  localStorage.setItem(WORKFLOW_KEY, JSON.stringify(loadAll().filter((item) => item.id !== id)));
 }
 
 export function enrichGridPaths(

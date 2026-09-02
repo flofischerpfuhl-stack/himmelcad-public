@@ -134,6 +134,7 @@ export const PhotolabKernelViewport = forwardRef<
   const callbacksRef = useRef({ onCursorSnap, onLog });
   const viewModeRef = useRef<KernelViewMode>('3d');
   const automationClipIdsRef = useRef(new Set<string>());
+  const framedInitialAnnotationsRef = useRef(false);
   callbacksRef.current = { onCursorSnap, onLog };
   const [cursor, setCursor] = useState<SourcePosition3 | null>(null);
 
@@ -403,6 +404,7 @@ export const PhotolabKernelViewport = forwardRef<
       removeLayer: unload,
       resetProjectScene() {
         for (const id of [...handlesRef.current.keys()]) unload(id);
+        framedInitialAnnotationsRef.current = false;
       },
       setSceneRenderOffset() {
         // The kernel keeps authoritative f64 project coordinates and applies a
@@ -468,7 +470,7 @@ export const PhotolabKernelViewport = forwardRef<
       setCameraImageRectangles(rectangles) {
         void (async () => {
           const kernel = await readyRef.current.promise;
-          const admissions = rectangles.map((rectangle) => {
+          const admissions = rectangles.flatMap((rectangle) => {
             const points = [rectangle.cameraCenter, ...rectangle.corners] as const;
             const pairs = [
               [1, 2],
@@ -481,26 +483,45 @@ export const PhotolabKernelViewport = forwardRef<
               [0, 4],
             ] as const;
             const id = `${rectangle.entityId}:camera-footprint` as EntityId;
-            return canonicalRenderAdmission(
-              kernel,
-              id,
-              'Camera footprint',
-              {
-                kind: 'curve',
-                curve: {
-                  kind: 'composite',
-                  segments: pairs.map(([from, to]) => ({
-                    kind: 'lineSegment' as const,
-                    start: tuplePosition(points[from]),
-                    end: tuplePosition(points[to]),
-                  })),
+            return [
+              canonicalRenderAdmission(
+                kernel,
+                rectangle.entityId,
+                'Camera GPS position',
+                { kind: 'point', position: tuplePosition(rectangle.cameraCenter) },
+                renderStyle(rectangle.aligned ? [0.28, 0.7, 1, 1] : [0.72, 0.82, 0.9, 1]),
+                nextAnnotationRevision(rectangle.entityId),
+              ),
+              canonicalRenderAdmission(
+                kernel,
+                id,
+                'Camera footprint',
+                {
+                  kind: 'curve',
+                  curve: {
+                    kind: 'composite',
+                    segments: pairs.map(([from, to]) => ({
+                      kind: 'lineSegment' as const,
+                      start: tuplePosition(points[from]),
+                      end: tuplePosition(points[to]),
+                    })),
+                  },
                 },
-              },
-              renderStyle(rectangle.aligned ? [0.28, 0.7, 1, 1] : [0.55, 0.58, 0.64, 1]),
-              nextAnnotationRevision(id),
-            );
+                renderStyle(rectangle.aligned ? [0.28, 0.7, 1, 1] : [0.55, 0.58, 0.64, 1]),
+                nextAnnotationRevision(id),
+              ),
+            ];
           });
           await replaceAnnotations('camera', admissions);
+          for (const rectangle of rectangles) {
+            boundsRef.current.set(rectangle.entityId, pointBounds(rectangle.cameraCenter));
+          }
+          if (!framedInitialAnnotationsRef.current && rectangles.length > 0) {
+            framedInitialAnnotationsRef.current = true;
+            frameBounds(
+              rectangles.map((item) => pointBounds(item.cameraCenter)).reduce(unionBounds),
+            );
+          }
         })().catch((error: unknown) =>
           callbacksRef.current.onLog(
             'error',
@@ -545,6 +566,13 @@ export const PhotolabKernelViewport = forwardRef<
             ];
           });
           await replaceAnnotations('gcp', admissions);
+          for (const marker of markers) {
+            boundsRef.current.set(marker.entityId, pointBounds(marker.position));
+          }
+          if (!framedInitialAnnotationsRef.current && markers.length > 0) {
+            framedInitialAnnotationsRef.current = true;
+            frameBounds(markers.map((item) => pointBounds(item.position)).reduce(unionBounds));
+          }
         })().catch((error: unknown) =>
           callbacksRef.current.onLog(
             'error',
@@ -883,6 +911,13 @@ function unionBounds(left: Bounds, right: Bounds): Bounds {
       number,
       number,
     ],
+  };
+}
+
+function pointBounds(point: readonly [number, number, number]): Bounds {
+  return {
+    min: [point[0] - 0.5, point[1] - 0.5, point[2] - 0.5],
+    max: [point[0] + 0.5, point[1] + 0.5, point[2] + 0.5],
   };
 }
 function tuplePoint(value: readonly [number, number, number]): Vec3 {

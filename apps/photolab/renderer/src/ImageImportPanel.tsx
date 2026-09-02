@@ -179,7 +179,7 @@ export interface ImageImportPanelProps {
   progress: ImageImportProgress | null;
   gridProgress: ImageImportProgress | null;
   error: string | null;
-  himmelcap: HcapImportPreview | null;
+  himmelcapImports: readonly HcapImportPreview[];
   onChooseMoreFiles: () => void;
   onChooseFolder: () => void;
   onChooseHimmelcap: () => void;
@@ -327,7 +327,7 @@ export function ImageImportPanel({
   progress,
   gridProgress,
   error,
-  himmelcap,
+  himmelcapImports,
   onChooseMoreFiles,
   onChooseFolder,
   onChooseHimmelcap,
@@ -897,6 +897,12 @@ export function ImageImportPanel({
 
   const loadWorkflow = async (workflow: ImageImportWorkflow) => {
     setOperationError(null);
+    if (workflow.mode === 'combined') {
+      setOperationError('Not available yet — the site-calibration reader is not implemented');
+      setMode(null);
+      setPhase('mode');
+      return;
+    }
     setWorkflowSavedName(workflow.name);
     setMode(workflow.mode);
     setDoVertical(workflow.doVertical);
@@ -940,6 +946,14 @@ export function ImageImportPanel({
     } else setHorizontalGrid(null);
 
     const storedOp = workflow.operation ?? null;
+    if (workflow.mode === 'none') {
+      setPinnedOperation(null);
+      setSelectedOperationId(null);
+      setDiscovery(null);
+      setGridStepCompleted(true);
+      setPhase('review');
+      return;
+    }
     if (storedOp && !storedOp.ballpark) {
       // Full restore: pin op + synthetic discovery so import works without re-discover.
       const restored: CrsOperationCandidate = {
@@ -991,24 +1005,6 @@ export function ImageImportPanel({
     setDiscovery(null);
     setGridStepCompleted(false);
     setPhase('operations');
-  };
-
-  const pickSiteCal = async () => {
-    // Reuse generic open dialog via folder/file is not ideal; use HTML input fallback.
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.cal,.dc,.jxl,.xml,text/*';
-    input.onchange = () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      // Browser File has no full path in Electron without webUtils — store name for UI.
-      const pathLike =
-        'path' in file && typeof (file as { path?: string }).path === 'string'
-          ? (file as { path: string }).path
-          : file.name;
-      setSiteCalPath(pathLike);
-    };
-    input.click();
   };
 
   const scrollKey = [
@@ -1116,14 +1112,15 @@ export function ImageImportPanel({
           detail={`${batch.photos.length} found · ${batch.photos.length - usablePhotos.length} duplicates · ${gpsCount} GPS · ${rtkCount} RTK`}
         />
 
-        {himmelcap && (
+        {himmelcapImports.map((himmelcap) => (
           <ChatBubble
+            key={himmelcap.sessionId}
             role="system"
             tone={himmelcap.warnings.length > 0 ? 'warn' : 'ok'}
             title={`${himmelcap.displayName} · verified Cap project`}
             detail={`${himmelcap.frameCount} frames · ${himmelcap.poseCount} position priors · schema v${himmelcap.schemaVersion}${himmelcap.packageProfile ? ` · ${himmelcap.packageProfile}` : ''}${himmelcap.warnings.length > 0 ? ` · ${himmelcap.warnings.join(' · ')}` : ''}`}
           />
-        )}
+        ))}
 
         <ChatCard
           title="Preview"
@@ -1135,7 +1132,7 @@ export function ImageImportPanel({
                 type="button"
                 className={chat.ghostBtn}
                 onClick={onChooseMoreFiles}
-                disabled={locked || himmelcap != null}
+                disabled={locked || himmelcapImports.length > 0}
               >
                 <FileImage size={13} /> Add
               </button>
@@ -1143,11 +1140,11 @@ export function ImageImportPanel({
                 type="button"
                 className={chat.ghostBtn}
                 onClick={onChooseFolder}
-                disabled={locked || himmelcap != null}
+                disabled={locked || himmelcapImports.length > 0}
               >
                 <FolderOpen size={13} /> Folder
               </button>
-              {!himmelcap && (
+              {himmelcapImports.length === 0 && (
                 <button
                   type="button"
                   className={chat.ghostBtn}
@@ -1230,7 +1227,7 @@ export function ImageImportPanel({
                     <strong>{workflow.name}</strong>
                     <small>
                       {(workflow.description?.trim() || 'No description') +
-                        ` · ${new Date(workflow.savedAt).toLocaleString()}`}
+                        ` · ${new Date(workflow.savedAt).toLocaleString('en-US')}`}
                     </small>
                   </button>
                 ))}
@@ -1255,6 +1252,12 @@ export function ImageImportPanel({
             { id: 'combined', label: 'Combined' },
           ]}
         />
+        {!pastMode && (
+          <div className={chat.warnInline}>
+            <AlertTriangle size={14} />
+            <span>Not available yet — the site-calibration reader is not implemented</span>
+          </div>
+        )}
         {mode != null && <ChatBubble role="user">{MODE_LABEL[mode]}</ChatBubble>}
 
         {/* Separate: vertical ask */}
@@ -1454,10 +1457,19 @@ export function ImageImportPanel({
               }
               revertDisabled={locked}
               options={[
-                { id: 'cal', label: 'Site calibration file (.cal / .dc)', primary: true },
-                { id: 'helmert', label: 'Manual 7-parameter Helmert' },
+                {
+                  id: 'cal',
+                  label: 'Site calibration file (.cal / .dc)',
+                  primary: true,
+                  disabled: true,
+                },
+                { id: 'helmert', label: 'Manual 7-parameter Helmert', disabled: true },
               ]}
             />
+            <div className={chat.warnInline}>
+              <AlertTriangle size={14} />
+              <span>Not available yet — the site-calibration reader is not implemented</span>
+            </div>
             {(phase === 'combined_cal' || phase === 'combined_helmert') && (
               <ChatBubble role="user">
                 {phase === 'combined_cal' ? 'Site calibration file' : 'Manual 7-parameter Helmert'}
@@ -1483,13 +1495,8 @@ export function ImageImportPanel({
                 <span>Reader not implemented yet — UI only.</span>
                 {siteCalPath && <code title={siteCalPath}>{fileName(siteCalPath)}</code>}
               </div>
-              <button
-                type="button"
-                className={chat.ghostBtn}
-                disabled={locked}
-                onClick={() => void pickSiteCal()}
-              >
-                {siteCalPath ? 'Change…' : 'Choose file…'}
+              <button type="button" className={chat.ghostBtn} disabled>
+                Choose file…
               </button>
             </div>
             <div className={chat.toolbar}>

@@ -8,6 +8,7 @@ import type {
 import type { ReactNode } from 'react';
 
 import styles from './ImagePropertiesPanel.module.css';
+import { cameraRotationToYawPitchRoll, humanizeEnum } from './photolabFormatting.js';
 
 export function ImagePropertiesPanel({
   image,
@@ -73,14 +74,8 @@ export function ImagePropertiesPanel({
       <Section title="Orientation">
         <Row label="Gimbal" value={formatAttitude(dji.gimbalAttitude)} />
         <Row label="Aircraft" value={formatAttitude(dji.flightAttitude)} />
-        <Row
-          label="Aligned"
-          value={aligned ? formatMatrix(aligned.camera.cameraToReconstructionRotation) : '—'}
-        />
-        <Row
-          label="Optimized"
-          value={optimized ? formatMatrix(optimized.cameraToWorldRotation) : '—'}
-        />
+        <OrientationRow label="Aligned" matrix={aligned?.camera.cameraToReconstructionRotation} />
+        <OrientationRow label="Optimized" matrix={optimized?.cameraToWorldRotation} />
       </Section>
       <Section title="Camera and capture">
         <Row label="Camera" value={[exif.make, exif.model].filter(Boolean).join(' ') || '—'} />
@@ -102,7 +97,7 @@ export function ImagePropertiesPanel({
           label="RTK"
           value={
             dji.rtk
-              ? `Flag ${dji.rtk.flag ?? '—'} · σH ${formatSigma(dji.rtk.standardDeviationHeightMeters)}`
+              ? `Flag ${dji.rtk.flag ?? '—'} · σ horizontal ${formatSigma(horizontalRtkSigma(dji.rtk))} · σ vertical ${formatSigma(dji.rtk.standardDeviationHeightMeters)}`
               : '—'
           }
         />
@@ -157,7 +152,7 @@ export function ImagePropertiesPanel({
       <Section title="Status">
         <div className={styles.tags}>
           {image.metadata.statusTags.length > 0 ? (
-            image.metadata.statusTags.map((tag) => <span key={tag}>{tag}</span>)
+            image.metadata.statusTags.map((tag) => <span key={tag}>{humanizeEnum(tag)}</span>)
           ) : (
             <span>imported</span>
           )}
@@ -165,6 +160,29 @@ export function ImagePropertiesPanel({
         <Row label="Image SHA-256" value={image.metadata.sourceObjectHash} mono />
         <Row label="Metadata SHA-256" value={image.metadataObjectHash} mono />
       </Section>
+    </div>
+  );
+}
+
+function OrientationRow({
+  label,
+  matrix,
+}: {
+  label: string;
+  matrix: readonly number[] | undefined;
+}): JSX.Element {
+  if (!matrix) return <Row label={label} value="—" />;
+  const orientation = cameraRotationToYawPitchRoll(matrix);
+  const value = orientation
+    ? `Yaw ${orientation.yaw.toFixed(2)}° · Pitch ${orientation.pitch.toFixed(2)}° · Roll ${orientation.roll.toFixed(2)}°`
+    : '—';
+  return (
+    <div className={styles.row}>
+      <span>{label}</span>
+      <details className={styles.orientation}>
+        <summary title={`Rotation matrix: ${formatMatrix(matrix)}`}>{value}</summary>
+        <code>{formatMatrix(matrix)}</code>
+      </details>
     </div>
   );
 }
@@ -229,6 +247,16 @@ function formatMatrix(matrix: readonly number[]): string {
 
 function formatSigma(value: number | undefined): string {
   return value == null ? '—' : `${(value * 1000).toFixed(1)} mm`;
+}
+
+function horizontalRtkSigma(rtk: {
+  standardDeviationLongitudeMeters?: number;
+  standardDeviationLatitudeMeters?: number;
+}): number | undefined {
+  const values = [rtk.standardDeviationLongitudeMeters, rtk.standardDeviationLatitudeMeters].filter(
+    (value): value is number => value != null,
+  );
+  return values.length > 0 ? Math.max(...values) : undefined;
 }
 
 function formatQualityWarning(warning: ImageQualityWarning): string {

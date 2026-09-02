@@ -987,7 +987,7 @@ function registerIpc(): void {
   });
   ipcMain.handle(
     'workflows:save',
-    async (_event, request: { suggestedName?: string; workflow: unknown }) => {
+    async (_event, request: { suggestedName?: string; workflow: unknown; prompt?: boolean }) => {
       if (!request || typeof request.workflow !== 'object' || request.workflow == null) {
         throw new Error('Invalid workflow save request');
       }
@@ -1003,6 +1003,19 @@ function registerIpc(): void {
           : 'import-workflow';
       const defaultPath = join(await preferredDirectory('importWorkflow'), `${stem}.hcimport`);
       await mkdir(dirname(defaultPath), { recursive: true });
+      if (request.prompt === false) {
+        const workflowId =
+          'id' in request.workflow && typeof request.workflow.id === 'string'
+            ? request.workflow.id.replace(/[^A-Za-z0-9_.-]+/g, '_').slice(0, 48)
+            : createHash('sha256').update(encoded).digest('hex').slice(0, 16);
+        const filePath = join(dirname(defaultPath), `${stem}-${workflowId}.hcimport`);
+        try {
+          await writeFile(filePath, encoded, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        }
+        return { path: filePath, name: stem };
+      }
       const selection = mainWindow
         ? await dialog.showSaveDialog(mainWindow, {
             title: 'Save import workflow',

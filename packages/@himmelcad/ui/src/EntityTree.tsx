@@ -43,6 +43,8 @@ export interface EntityTreeProps {
   /** Left island navigation tab (Tree / Layers / Imported from). */
   leftNavTab?: LeftNavTabId;
   onLeftNavTabChange?: (tab: LeftNavTabId) => void;
+  /** Optional product-owned sibling ordering. The canonical project order is unchanged. */
+  sortChildren?: (left: EntitySnapshot, right: EntitySnapshot) => number;
 }
 
 export function EntityTree({
@@ -57,6 +59,7 @@ export function EntityTree({
   onContextAction,
   leftNavTab = 'tree',
   onLeftNavTabChange,
+  sortChildren,
 }: EntityTreeProps): JSX.Element {
   const collapseLeft = useLayoutStore((s) => s.toggleLeftPanel);
   const [context, setContext] = useState<{ id: EntityId; x: number; y: number } | null>(null);
@@ -195,7 +198,13 @@ export function EntityTree({
             onSelect={(id, event) => {
               const node = project.entities[id];
               const parentId = node?.parent ?? null;
-              const siblings = parentId ? (project.entities[parentId]?.children ?? []) : [id];
+              const siblings = parentId
+                ? orderedChildren(
+                    project.entities[parentId]?.children ?? [],
+                    project.entities,
+                    sortChildren,
+                  )
+                : [id];
               if (event.shiftKey && selectionAnchor && parentId === activeParentId) {
                 const anchorIndex = siblings.indexOf(selectionAnchor);
                 const currentIndex = siblings.indexOf(id);
@@ -228,6 +237,7 @@ export function EntityTree({
                 y: Math.max(4, Math.min(y, window.innerHeight - 170)),
               });
             }}
+            sortChildren={sortChildren}
           />
         </div>
       </div>
@@ -347,6 +357,7 @@ interface NodeProps {
   onMove: EntityTreeProps['onMove'];
   onVisibilityChange: EntityTreeProps['onVisibilityChange'];
   onContextMenu: (id: EntityId, x: number, y: number) => void;
+  sortChildren?: EntityTreeProps['sortChildren'];
 }
 
 function TreeNode({
@@ -361,12 +372,14 @@ function TreeNode({
   onMove,
   onVisibilityChange,
   onContextMenu,
+  sortChildren,
 }: NodeProps): ReactNode {
   const node: EntitySnapshot | undefined = entities[id];
   const [open, setOpen] = useState(true);
   if (!node) return null;
   const isSelected = selectedIds.has(node.id);
-  const hasChildren = node.children.length > 0;
+  const children = orderedChildren(node.children, entities, sortChildren);
+  const hasChildren = children.length > 0;
 
   return (
     <div role="treeitem" aria-expanded={hasChildren ? open : undefined}>
@@ -449,7 +462,7 @@ function TreeNode({
         </button>
       </div>
       {open &&
-        node.children.map((cid) => (
+        children.map((cid) => (
           <TreeNode
             key={cid}
             id={cid}
@@ -463,10 +476,24 @@ function TreeNode({
             onMove={onMove}
             onVisibilityChange={onVisibilityChange}
             onContextMenu={onContextMenu}
+            sortChildren={sortChildren}
           />
         ))}
     </div>
   );
+}
+
+function orderedChildren(
+  children: readonly EntityId[],
+  entities: ProjectSnapshot['entities'],
+  sortChildren: EntityTreeProps['sortChildren'],
+): readonly EntityId[] {
+  if (!sortChildren) return children;
+  return [...children].sort((leftId, rightId) => {
+    const left = entities[leftId];
+    const right = entities[rightId];
+    return left && right ? sortChildren(left, right) : 0;
+  });
 }
 
 function kindIcon(kind: EntityKind): ReactNode {

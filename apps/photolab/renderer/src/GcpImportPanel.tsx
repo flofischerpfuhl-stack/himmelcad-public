@@ -13,7 +13,7 @@ import {
   MapPinned,
   Search,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   ChatBubble,
@@ -31,12 +31,13 @@ import {
   importChatStyles as chat,
 } from './ImportChat.js';
 import {
-  listWorkflows,
-  saveWorkflow,
-  toStoredGrid,
+  LEGACY_WORKFLOW_KEY,
   enrichGridPaths,
+  legacyWorkflowMigrationPlan,
+  toStoredGrid,
   warningsForOperation,
   type GcpImportWorkflow,
+  type StoredGridRef,
 } from './importWorkflow.js';
 import {
   HORIZONTAL_CRS_PRESETS,
@@ -202,6 +203,7 @@ export function GcpImportPanel({
   const sourceCrs = `EPSG:${sourceCrsEpsg}`;
   const targetCrs = `EPSG:${targetCrsEpsg}`;
   const area = useMemo(() => projectImageArea(projectImages), [projectImages]);
+  const assumedGermany = !projectImages.some(hasImageGps);
   const [discovery, setDiscovery] = useState<CrsOperationDiscovery | null>(null);
   const [discoveryQueryKey, setDiscoveryQueryKey] = useState<string | null>(null);
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null);
@@ -209,7 +211,12 @@ export function GcpImportPanel({
   const [localBusy, setLocalBusy] = useState(false);
   const [localGrid, setLocalGrid] = useState<LocalGridSelection | null>(null);
   const [verticalGrid, setVerticalGrid] = useState<LocalGridSelection | null>(null);
+  const [fileWorkflows, setFileWorkflows] = useState<
+    Array<{ name: string; path: string; savedAt: string; kind?: string; description?: string }>
+  >([]);
+  const [workflowSavedName, setWorkflowSavedName] = useState<string | null>(null);
   const preferencesHydrated = useRef(false);
+  const workflowMigrationStarted = useRef(false);
   const lastPreviewKey = useRef<string | null>(null);
 
   /** True only when a real horizontal CRS change is requested. */
@@ -235,6 +242,34 @@ export function GcpImportPanel({
       })
       .catch(() => undefined);
   }, []);
+
+  const refreshFileWorkflows = useCallback(async (): Promise<void> => {
+    const items = await window.himmelcad?.workflows.list();
+    setFileWorkflows(items?.filter((item) => item.kind === 'gcp') ?? []);
+  }, []);
+
+  useEffect(() => {
+    if (workflowMigrationStarted.current || !window.himmelcad?.workflows) return;
+    workflowMigrationStarted.current = true;
+    void (async () => {
+      const plan = legacyWorkflowMigrationPlan(localStorage.getItem(LEGACY_WORKFLOW_KEY));
+      for (const workflow of plan.workflows) {
+        await window.himmelcad!.workflows.save({
+          suggestedName: workflow.name,
+          workflow,
+          prompt: false,
+        });
+      }
+      if (localStorage.getItem(LEGACY_WORKFLOW_KEY) != null) {
+        localStorage.removeItem(LEGACY_WORKFLOW_KEY);
+      }
+      await refreshFileWorkflows();
+    })().catch((reason: unknown) => {
+      const detail = `Saved import workflows could not be migrated: ${message(reason)}`;
+      setError(detail);
+      onError(detail);
+    });
+  }, [onError, refreshFileWorkflows]);
 
   useEffect(() => {
     if (path && phase === 'pick') setPhase('preview');
@@ -581,38 +616,96 @@ export function GcpImportPanel({
 
   const skipHorizontalGrid = () => setPhase('operations');
 
-  const confirmCombined = () => {
-    if (siteCalPath) {
-      setError(
-        'Trimble .cal / .dc site-calibration import is not implemented yet. Clear the file to continue with a CRS operation.',
-      );
-      return;
-    }
-    rememberCrs('horizontal', sourceCrsEpsg);
-    const remembered = loadRememberedGrid('horizontal');
-    if (remembered) setLocalGrid(remembered);
-    setPhase('combined_grid');
-  };
-
   const confirmCombinedGrid = () => {
     if (localGrid) rememberGrid('horizontal', localGrid);
     setPhase('operations');
   };
 
-  const pickSiteCal = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.cal,.dc,.jxl,.xml,text/*';
-    input.onchange = () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      const pathLike =
-        'path' in file && typeof (file as { path?: string }).path === 'string'
-          ? (file as { path: string }).path
-          : file.name;
-      setSiteCalPath(pathLike);
+  const applyWorkflow = (workflow: GcpImportWorkflow): void => {
+    if (workflow.mode === 'combined') {
+      setError('Not available yet — the site-calibration reader is not implemented');
+      setMode(null);
+      setPhase('mode');
+      return;
+    }
+    setWorkflowSavedName(null);
+    setMode(workflow.mode);
+    setDoVertical(workflow.doVertical);
+    setDoHorizontal(workflow.doHorizontal);
+    setSourceCrsEpsg(workflow.sourceCrsEpsg);
+    setSourceVerticalEpsg(workflow.sourceVerticalEpsg);
+    setTargetVerticalEpsg(workflow.targetVerticalEpsg);
+    setDelimiter(workflow.delimiter);
+    setDecimalSeparator(workflow.decimalSeparator);
+    setHasHeader(workflow.hasHeader);
+    setColumns(workflow.columns);
+    setRole(workflow.role as typeof role);
+    setHorizontalStddev(workflow.horizontalStddev);
+    setHeightStddev(workflow.heightStddev);
+    setLocalGrid(workflow.horizontalGrid ? storedGridSelection(workflow.horizontalGrid) : null);
+    setVerticalGrid(workflow.verticalGrid ? storedGridSelection(workflow.verticalGrid) : null);
+    setPhase(
+      workflow.mode === 'none' ||
+        (workflow.mode === 'separate' &&
+          workflow.doVertical !== 'yes' &&
+          workflow.doHorizontal !== 'yes')
+        ? 'review'
+        : 'operations',
+    );
+  };
+
+  const loadWorkflowFromPath = async (workflowPath: string): Promise<void> => {
+    try {
+      const result = await window.himmelcad?.workflows.loadPath(workflowPath);
+      if (!result || !isGcpWorkflow(result.workflow)) {
+        throw new Error('Not a GCP import workflow.');
+      }
+      applyWorkflow(result.workflow);
+    } catch (reason) {
+      const detail = message(reason);
+      setError(detail);
+      onError(detail);
+    }
+  };
+
+  const saveCurrentWorkflow = async (): Promise<void> => {
+    const workflow: GcpImportWorkflow = {
+      schemaVersion: 1,
+      id: crypto.randomUUID(),
+      name: `GCP · ${mode ?? 'none'} · ${new Date().toLocaleString('en-US')}`,
+      description: '',
+      kind: 'gcp',
+      savedAt: new Date().toISOString(),
+      mode: mode ?? 'none',
+      doVertical,
+      doHorizontal,
+      sourceCrsEpsg,
+      sourceVerticalEpsg,
+      targetVerticalEpsg,
+      gridPolicy: transformCoordinates || transformHeight ? 'ntv2' : null,
+      verticalGrid: verticalGrid ? toStoredGrid(verticalGrid) : null,
+      horizontalGrid: localGrid ? toStoredGrid(localGrid) : null,
+      delimiter,
+      decimalSeparator,
+      hasHeader,
+      columns,
+      role,
+      horizontalStddev,
+      heightStddev,
     };
-    input.click();
+    try {
+      const result = await window.himmelcad?.workflows.save({
+        suggestedName: workflow.name,
+        workflow,
+      });
+      if (!result) return;
+      setWorkflowSavedName(result.name);
+      await refreshFileWorkflows();
+    } catch (reason) {
+      const detail = message(reason);
+      setError(detail);
+      onError(detail);
+    }
   };
 
   const commit = async () => {
@@ -766,36 +859,9 @@ export function GcpImportPanel({
               type="button"
               className={chat.ghostBtn}
               disabled={busy || localBusy}
-              onClick={() => {
-                const workflow: GcpImportWorkflow = {
-                  schemaVersion: 1,
-                  id: crypto.randomUUID(),
-                  name: `GCP · ${mode ?? 'none'} · ${new Date().toLocaleString()}`,
-                  description: '',
-                  kind: 'gcp',
-                  savedAt: new Date().toISOString(),
-                  mode: mode ?? 'none',
-                  doVertical,
-                  doHorizontal,
-                  sourceCrsEpsg,
-                  sourceVerticalEpsg,
-                  targetVerticalEpsg,
-                  gridPolicy: transformCoordinates || transformHeight ? 'ntv2' : null,
-                  verticalGrid: verticalGrid ? toStoredGrid(verticalGrid) : null,
-                  horizontalGrid: localGrid ? toStoredGrid(localGrid) : null,
-                  delimiter,
-                  decimalSeparator,
-                  hasHeader,
-                  columns,
-                  role,
-                  horizontalStddev,
-                  heightStddev,
-                };
-                const result = saveWorkflow(workflow);
-                if (!result.ok) onError(result.error);
-              }}
+              onClick={() => void saveCurrentWorkflow()}
             >
-              Save import workflow
+              {workflowSavedName ? 'Workflow saved ✓' : 'Save import workflow'}
             </button>
             <ChatFooterSpacer />
             <button
@@ -957,74 +1023,30 @@ export function GcpImportPanel({
               onRevert={mode != null ? () => clearFrom('mode') : undefined}
               revertDisabled={locked || mode == null}
             />
-            {mode == null && listWorkflows('gcp').length > 0 && (
+            {assumedGermany && (
+              <div className={chat.warnInline}>
+                <MapPinned size={14} />
+                <span>
+                  Assumed region: Germany — adjust the area of interest if your project lies
+                  elsewhere
+                </span>
+              </div>
+            )}
+            {mode == null && fileWorkflows.length > 0 && (
               <ChatCard title="Saved workflows">
                 <div className={chat.chipGroup}>
-                  {listWorkflows('gcp')
-                    .slice(0, 5)
-                    .map((workflow) => (
-                      <button
-                        key={workflow.id}
-                        type="button"
-                        className={chat.chip}
-                        disabled={locked}
-                        title={workflow.name}
-                        onClick={() => {
-                          if (workflow.kind !== 'gcp') return;
-                          setMode(workflow.mode);
-                          setDoVertical(workflow.doVertical);
-                          setDoHorizontal(workflow.doHorizontal);
-                          setSourceCrsEpsg(workflow.sourceCrsEpsg);
-                          setSourceVerticalEpsg(workflow.sourceVerticalEpsg);
-                          setTargetVerticalEpsg(workflow.targetVerticalEpsg);
-                          setDelimiter(workflow.delimiter);
-                          setDecimalSeparator(workflow.decimalSeparator);
-                          setHasHeader(workflow.hasHeader);
-                          setColumns(workflow.columns);
-                          setRole(workflow.role as typeof role);
-                          setHorizontalStddev(workflow.horizontalStddev);
-                          setHeightStddev(workflow.heightStddev);
-                          if (workflow.horizontalGrid) {
-                            setLocalGrid({
-                              filename: workflow.horizontalGrid.filename,
-                              localPath:
-                                workflow.horizontalGrid.absolutePath ||
-                                workflow.horizontalGrid.localPath,
-                              absolutePath: workflow.horizontalGrid.absolutePath,
-                              relativePath: workflow.horizontalGrid.relativePath,
-                              kind: workflow.horizontalGrid.kind,
-                              driver: workflow.horizontalGrid.driver,
-                              coverage: workflow.horizontalGrid.coverage,
-                            });
-                          }
-                          if (workflow.verticalGrid) {
-                            setVerticalGrid({
-                              filename: workflow.verticalGrid.filename,
-                              localPath:
-                                workflow.verticalGrid.absolutePath ||
-                                workflow.verticalGrid.localPath,
-                              absolutePath: workflow.verticalGrid.absolutePath,
-                              relativePath: workflow.verticalGrid.relativePath,
-                              kind: workflow.verticalGrid.kind,
-                              driver: workflow.verticalGrid.driver,
-                              coverage: workflow.verticalGrid.coverage,
-                            });
-                          }
-                          setPhase(
-                            workflow.mode === 'none' ||
-                              (workflow.mode === 'separate' &&
-                                workflow.doVertical !== 'yes' &&
-                                workflow.doHorizontal !== 'yes')
-                              ? 'review'
-                              : 'operations',
-                          );
-                        }}
-                      >
-                        {workflow.name.length > 42
-                          ? `${workflow.name.slice(0, 40)}…`
-                          : workflow.name}
-                      </button>
-                    ))}
+                  {fileWorkflows.slice(0, 5).map((workflow) => (
+                    <button
+                      key={workflow.path}
+                      type="button"
+                      className={chat.chip}
+                      disabled={locked}
+                      title={workflow.name}
+                      onClick={() => void loadWorkflowFromPath(workflow.path)}
+                    >
+                      {workflow.name.length > 42 ? `${workflow.name.slice(0, 40)}…` : workflow.name}
+                    </button>
+                  ))}
                 </div>
               </ChatCard>
             )}
@@ -1040,6 +1062,12 @@ export function GcpImportPanel({
                 { id: 'combined', label: 'Combined' },
               ]}
             />
+            {mode == null && (
+              <div className={chat.warnInline}>
+                <AlertTriangle size={14} />
+                <span>Not available yet — the site-calibration reader is not implemented</span>
+              </div>
+            )}
             {mode != null && (
               <ChatBubble role="user" onRevert={() => clearFrom('mode')} revertDisabled={locked}>
                 {MODE_LABEL[mode]}
@@ -1301,65 +1329,27 @@ export function GcpImportPanel({
             <div className={chat.gridRow}>
               <Grid3X3 size={16} />
               <div>
-                <strong>Site calibration file</strong>
-                <span>
-                  .cal / .dc parser is not implemented. Leave empty to use PROJ source → {targetCrs}
-                  .
-                </span>
-                {siteCalPath && <code>{fileName(siteCalPath)}</code>}
+                <strong>Site calibration file (.cal / .dc)</strong>
+                <span>Not available yet — the site-calibration reader is not implemented</span>
               </div>
-              <button
-                type="button"
-                className={chat.ghostBtn}
-                disabled={locked || phase !== 'combined_setup'}
-                onClick={pickSiteCal}
-              >
-                {siteCalPath ? 'Change…' : 'Choose .cal / .dc…'}
+              <button type="button" className={chat.ghostBtn} disabled>
+                Choose .cal / .dc…
               </button>
             </div>
-            {siteCalPath && (
-              <div className={chat.errorInline}>
-                <AlertTriangle size={14} /> .cal / .dc reading is not implemented. Core has 7-param
-                Similarity3D, but no Trimble site-cal importer yet.
-              </div>
-            )}
-            {siteCalPath && (
-              <div className={chat.toolbar}>
-                <button type="button" className={chat.choice} onClick={() => setSiteCalPath(null)}>
-                  Clear file · use CRS operation
-                </button>
-              </div>
-            )}
-            <div className={chat.crsPair}>
-              <CrsSearchColumn
-                label="Source CRS"
-                value={sourceCrsEpsg}
-                presets={HORIZONTAL_CRS_PRESETS}
-                popular={POPULAR_HORIZONTAL}
-                recentKey="horizontal"
-                disabled={locked || phase !== 'combined_setup'}
-                onChange={setSourceCrsEpsg}
-              />
-              <div className={chat.crsColumn}>
-                <div className={chat.crsColumnLabel}>Target</div>
-                <div className={chat.crsSelected}>
-                  <strong>{targetCrs}</strong>
-                  <small>Project reference</small>
-                </div>
-              </div>
+            <div className={chat.warnInline}>
+              <AlertTriangle size={14} />
+              <span>Not available yet — the site-calibration reader is not implemented</span>
             </div>
-            {phase === 'combined_setup' && (
-              <div className={chat.toolbar}>
-                <button
-                  type="button"
-                  className={`${chat.choice} ${chat.choicePrimary}`}
-                  disabled={locked || !!siteCalPath}
-                  onClick={confirmCombined}
-                >
-                  Continue with CRS operation
-                </button>
+            <div className={chat.gridRow}>
+              <Grid3X3 size={16} />
+              <div>
+                <strong>7-parameter Helmert</strong>
+                <span>Not available yet — the site-calibration reader is not implemented</span>
               </div>
-            )}
+              <button type="button" className={chat.ghostBtn} disabled>
+                Configure…
+              </button>
+            </div>
           </ChatCard>
         )}
 
@@ -1869,6 +1859,31 @@ function projectImageArea(
   };
 }
 
+function hasImageGps({ metadata }: ProjectCameraImageRecord): boolean {
+  const photo = metadata.inspectedPhoto.metadata;
+  const latitude = photo.djiXmp.latitudeDegrees ?? photo.exif.gps?.latitudeDegrees;
+  const longitude = photo.djiXmp.longitudeDegrees ?? photo.exif.gps?.longitudeDegrees;
+  return Number.isFinite(latitude) && Number.isFinite(longitude);
+}
+
+function storedGridSelection(stored: StoredGridRef): LocalGridSelection {
+  return {
+    filename: stored.filename,
+    localPath: stored.absolutePath || stored.localPath,
+    absolutePath: stored.absolutePath,
+    relativePath: stored.relativePath,
+    kind: stored.kind,
+    driver: stored.driver,
+    coverage: stored.coverage,
+  };
+}
+
+function isGcpWorkflow(value: unknown): value is GcpImportWorkflow {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<GcpImportWorkflow>;
+  return candidate.schemaVersion === 1 && candidate.kind === 'gcp';
+}
+
 function parseEpsgCode(value: string | null): number | null {
   if (!value) return null;
   const match = /^EPSG:\s*(\d+)(?:\+\d+)?$/i.exec(value.trim());
@@ -1889,7 +1904,11 @@ function columnLabel(key: 'name' | 'east' | 'north' | 'height'): string {
 }
 
 function roleLabel(role: GcpRole): string {
-  return role.replace('control', 'Control ').replace('checkpoint', 'Checkpoint ').toUpperCase();
+  return role
+    .replace('control', 'Control ')
+    .replace('checkpoint', 'Checkpoint ')
+    .replace('Xyz', 'XYZ')
+    .replace('Xy', 'XY');
 }
 
 function message(reason: unknown): string {

@@ -106,6 +106,7 @@ import { ImageWorkspace, initialGcpProjection } from './ImageWorkspace.js';
 import { ImagePropertiesPanel } from './ImagePropertiesPanel.js';
 import { SelectionPropertiesPanel } from './SelectionPropertiesPanel.js';
 import { PhotolabBottomPanel, type BottomTab } from './PhotolabBottomPanel.js';
+import { comparePhotolabTreeEntities, splitImageImportPaths } from './photolabFormatting.js';
 import {
   PhotolabKernelViewport,
   type CameraImageRectangle,
@@ -260,7 +261,7 @@ export function App(): JSX.Element {
   const [jobs, setJobs] = useState<readonly PhotolabJob[]>([]);
   const [jobResumeErrors, setJobResumeErrors] = useState<Readonly<Record<string, string>>>({});
   const [imageImportBatch, setImageImportBatch] = useState<PhotoImportBatch | null>(null);
-  const [himmelcapImport, setHimmelcapImport] = useState<HcapImportPreview | null>(null);
+  const [himmelcapImports, setHimmelcapImports] = useState<readonly HcapImportPreview[]>([]);
   const [projectImages, setProjectImages] = useState<readonly ProjectCameraImageRecord[]>([]);
   const [imageQualityAnalyses, setImageQualityAnalyses] = useState<
     readonly ImageQualityAnalysisRecord[]
@@ -310,6 +311,7 @@ export function App(): JSX.Element {
   );
   const [imageImportError, setImageImportError] = useState<string | null>(null);
   const [bottomTab, setBottomTab] = useState<BottomTab>('console');
+  const [autoSwitchTabs, setAutoSwitchTabs] = useState(true);
   const [rightPanelTab, setRightPanelTab] = useState<'function' | 'properties'>('function');
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('scene');
   const [sceneNavigationMode, setSceneNavigationMode] = useState<'3d' | '2d' | '2.5d'>('3d');
@@ -327,7 +329,7 @@ export function App(): JSX.Element {
   const activeImageCommitId = useRef<string | null>(null);
   const activeImageInspectId = useRef<string | null>(null);
   const activeHimmelcapInspectId = useRef<string | null>(null);
-  const himmelcapStagingOperationId = useRef<string | null>(null);
+  const himmelcapStagingOperationIds = useRef<string[]>([]);
   const activeImageProgressKey = useRef<string | null>(null);
   const activeGridProgressKey = useRef<string | null>(null);
   const activeProjectFileOperation = useRef<ProjectFileOperationState | null>(null);
@@ -350,14 +352,25 @@ export function App(): JSX.Element {
   const activate = useCallback(
     (functionId: string | null) => {
       if (functionId === 'alignment.define') {
-        setDefineAlignmentOpen(true);
+        const nextOpen = !defineAlignmentOpen;
+        setDefineAlignmentOpen(nextOpen);
+        activateStoredFunction(nextOpen ? functionId : null);
+        if (nextOpen) setRightPanelTab('function');
         return;
       }
-      if (functionId === 'batch.configure') setBatchRecipeOpen(true);
+      if (functionId === 'batch.configure') {
+        const nextOpen = !batchRecipeOpen;
+        setBatchRecipeOpen(nextOpen);
+        activateStoredFunction(nextOpen ? functionId : null);
+        if (nextOpen) setRightPanelTab('function');
+        return;
+      }
+      setDefineAlignmentOpen(false);
+      setBatchRecipeOpen(false);
       activateStoredFunction(functionId);
       if (functionId) setRightPanelTab('function');
     },
-    [activateStoredFunction],
+    [activateStoredFunction, batchRecipeOpen, defineAlignmentOpen],
   );
 
   useEffect(() => {
@@ -443,10 +456,12 @@ export function App(): JSX.Element {
   const reportPanelError = useCallback(
     (message: string) => {
       logEvent('error', 'renderer', message);
-      setBottomTab('console');
-      setBottomCollapsed(false);
+      if (autoSwitchTabs) {
+        setBottomTab('console');
+        setBottomCollapsed(false);
+      }
     },
-    [setBottomCollapsed],
+    [autoSwitchTabs, setBottomCollapsed],
   );
   useEffect(() => {
     activeProjectFileOperation.current = projectFileOperation;
@@ -1199,24 +1214,24 @@ export function App(): JSX.Element {
   ]);
 
   const releaseHimmelcapStaging = useCallback(async () => {
-    const operationId = himmelcapStagingOperationId.current;
+    const operationIds = [...himmelcapStagingOperationIds.current];
     const api = window.himmelcad;
-    if (!operationId || !api) return;
-    await api.sidecar.call('photolab.himmelcap.release', { operationId });
-    if (himmelcapStagingOperationId.current === operationId) {
-      himmelcapStagingOperationId.current = null;
-      setHimmelcapImport(null);
+    if (operationIds.length === 0 || !api) return;
+    for (const operationId of operationIds) {
+      await api.sidecar.call('photolab.himmelcap.release', { operationId });
     }
+    himmelcapStagingOperationIds.current = [];
+    setHimmelcapImports([]);
   }, []);
 
   const inspectHimmelcap = useCallback(
-    async (selectedPath?: string) => {
+    async (selectedPath?: string, append = false, projectAlreadyReady = false) => {
       const api = window.himmelcad;
       if (!api || imageImportBusy) return;
       const path = selectedPath ?? (await api.himmelcap.selectFile());
       if (!path) return;
-      if (!projectReady && !(await createProject())) return;
-      await releaseHimmelcapStaging();
+      if (!projectReady && !projectAlreadyReady && !(await createProject())) return;
+      if (!append) await releaseHimmelcapStaging();
       const operationId = `himmelcap-inspect-${crypto.randomUUID()}`;
       const progressKey = `image-import:${operationId}`;
       activeHimmelcapInspectId.current = operationId;
@@ -1236,9 +1251,11 @@ export function App(): JSX.Element {
           operationId,
           progressKey,
         });
-        himmelcapStagingOperationId.current = operationId;
-        setHimmelcapImport(preview);
-        setImageImportBatch(preview.batch);
+        himmelcapStagingOperationIds.current.push(operationId);
+        setHimmelcapImports((current) => (append ? [...current, preview] : [preview]));
+        setImageImportBatch((current) =>
+          append ? mergePhotoBatches(current, preview.batch) : preview.batch,
+        );
         logEvent(
           preview.warnings.length > 0 ? 'warn' : 'info',
           'sidecar',
@@ -1247,8 +1264,10 @@ export function App(): JSX.Element {
       } catch (error) {
         const message = errorMessage(error);
         setImageImportError(message.toLowerCase().includes('cancel') ? null : message);
-        setImageImportBatch(null);
-        setHimmelcapImport(null);
+        if (!append) {
+          setImageImportBatch(null);
+          setHimmelcapImports([]);
+        }
         logEvent(
           message.toLowerCase().includes('cancel') ? 'warn' : 'error',
           'sidecar',
@@ -1280,13 +1299,17 @@ export function App(): JSX.Element {
         const paths =
           source === 'files' ? await api.images.selectFiles() : await api.images.selectFolder();
         if (!paths) return;
-        if (paths.length === 1 && paths[0]?.toLocaleLowerCase().endsWith('.hcap')) {
-          await inspectHimmelcap(paths[0]);
-          return;
+        const { himmelcapPaths, imagePaths } = splitImageImportPaths(paths);
+        if (himmelcapPaths.length > 0 && !projectReady && !(await createProject())) return;
+        for (const [index, path] of himmelcapPaths.entries()) {
+          await inspectHimmelcap(path, index > 0, true);
         }
-        if (!projectReady && !(await createProject())) return;
-        await releaseHimmelcapStaging();
-        setHimmelcapImport(null);
+        if (imagePaths.length === 0) return;
+        if (himmelcapPaths.length === 0 && !projectReady && !(await createProject())) return;
+        if (himmelcapPaths.length === 0) {
+          await releaseHimmelcapStaging();
+          setHimmelcapImports([]);
+        }
         const operationId = `image-inspect-${crypto.randomUUID()}`;
         const progressKey = `image-import:${operationId}`;
         activeImageInspectId.current = operationId;
@@ -1300,7 +1323,7 @@ export function App(): JSX.Element {
           indeterminate: true,
         });
         const batch = await api.sidecar.call<PhotoImportBatch>('photolab.images.inspect', {
-          paths,
+          paths: imagePaths,
           operationId,
           progressKey,
         });
@@ -1391,8 +1414,16 @@ export function App(): JSX.Element {
             ],
           })),
         });
-        if (himmelcapImport) {
-          const cameraEntityIds = [...new Set(result.images.map((image) => image.entityId))];
+        for (const himmelcapImport of himmelcapImports) {
+          const capHashes = new Set(himmelcapImport.batch.photos.map((photo) => photo.sha256));
+          const cameraEntityIds = [
+            ...new Set(
+              result.images.flatMap((image, index) => {
+                const importedPhoto = imageImportBatch.photos[index];
+                return importedPhoto && capHashes.has(importedPhoto.sha256) ? [image.entityId] : [];
+              }),
+            ),
+          ];
           if (cameraEntityIds.length < 2) {
             throw new Error('The Cap project did not produce at least two distinct project images');
           }
@@ -1427,8 +1458,8 @@ export function App(): JSX.Element {
         setAutosaveGeneration(result.autosaveGeneration);
         setWorkspaceMode('images');
         setImageImportBatch(null);
-        setHimmelcapImport(null);
-        if (himmelcapStagingOperationId.current) {
+        setHimmelcapImports([]);
+        if (himmelcapStagingOperationIds.current.length > 0) {
           try {
             await releaseHimmelcapStaging();
           } catch (error) {
@@ -1457,7 +1488,7 @@ export function App(): JSX.Element {
     },
     [
       acceptProject,
-      himmelcapImport,
+      himmelcapImports,
       imageImportBatch,
       imageImportBusy,
       projectReady,
@@ -1498,7 +1529,7 @@ export function App(): JSX.Element {
       }
       await releaseHimmelcapStaging();
       setImageImportBatch(null);
-      setHimmelcapImport(null);
+      setHimmelcapImports([]);
       setImageImportProgress(null);
       setImageImportError(null);
     } catch (error) {
@@ -1724,11 +1755,11 @@ export function App(): JSX.Element {
   useEffect(() => {
     return consoleStore.subscribe(() => {
       const latest = consoleStore.getSnapshot().at(-1);
-      if (latest?.level !== 'error') return;
+      if (latest?.level !== 'error' || !autoSwitchTabs) return;
       setBottomTab('console');
       setBottomCollapsed(false);
     });
-  }, [setBottomCollapsed]);
+  }, [autoSwitchTabs, setBottomCollapsed]);
 
   useEffect(() => {
     const active = jobs.filter((job) =>
@@ -1736,10 +1767,10 @@ export function App(): JSX.Element {
     );
     const newlyActive = active.find((job) => !observedActiveJobs.current.has(job.id));
     observedActiveJobs.current = new Set(active.map((job) => job.id));
-    if (!newlyActive) return;
+    if (!newlyActive || !autoSwitchTabs) return;
     setBottomTab('jobs');
     setBottomCollapsed(false);
-  }, [jobs, setBottomCollapsed]);
+  }, [autoSwitchTabs, jobs, setBottomCollapsed]);
 
   useEffect(() => {
     const failedIds = newlyFailedJobIds(jobs, observedFailedJobs.current);
@@ -1751,9 +1782,11 @@ export function App(): JSX.Element {
       logEvent('error', 'sidecar', `${job.kind} failed: ${job.state.code}: ${job.state.message}`);
     }
     setAutoExpandJobId(failedIds.at(-1) ?? null);
-    setBottomTab('jobs');
-    setBottomCollapsed(false);
-  }, [jobs, setBottomCollapsed]);
+    if (autoSwitchTabs) {
+      setBottomTab('jobs');
+      setBottomCollapsed(false);
+    }
+  }, [autoSwitchTabs, jobs, setBottomCollapsed]);
 
   useEffect(() => {
     if (!projectReady) return;
@@ -1937,8 +1970,10 @@ export function App(): JSX.Element {
             ? 'Image-quality analysis queued for the selected processing set'
             : `Image-quality analysis queued for all ${projectImages.length} images`,
         );
-        setBottomTab('jobs');
-        setBottomCollapsed(false);
+        if (autoSwitchTabs) {
+          setBottomTab('jobs');
+          setBottomCollapsed(false);
+        }
       } catch (error) {
         logEvent(
           'error',
@@ -1949,7 +1984,7 @@ export function App(): JSX.Element {
         setImageQualityStarting(false);
       }
     },
-    [imageQualityStarting, projectImages.length, projectReady, setBottomCollapsed],
+    [autoSwitchTabs, imageQualityStarting, projectImages.length, projectReady, setBottomCollapsed],
   );
 
   const startAlignment = useCallback(async () => {
@@ -1990,8 +2025,10 @@ export function App(): JSX.Element {
         },
       });
       setJobs((previous) => [...previous.filter((job) => job.id !== result.job.id), result.job]);
-      setBottomCollapsed(false);
-      setBottomTab('jobs');
+      if (autoSwitchTabs) {
+        setBottomCollapsed(false);
+        setBottomTab('jobs');
+      }
       logEvent(
         'info',
         'sidecar',
@@ -2009,6 +2046,7 @@ export function App(): JSX.Element {
     alignmentScope,
     alignmentStarting,
     activeProcessingSetId,
+    autoSwitchTabs,
     projectReady,
     selectedAlignmentPreset,
     selectedCameraIds,
@@ -2959,13 +2997,15 @@ export function App(): JSX.Element {
         }
         setJobs((previous) => [...previous.filter((job) => job.id !== result.job.id), result.job]);
         logEvent('info', 'sidecar', `Export queued · ${entity.name}`);
-        setBottomTab('jobs');
-        setBottomCollapsed(false);
+        if (autoSwitchTabs) {
+          setBottomTab('jobs');
+          setBottomCollapsed(false);
+        }
       } catch (error) {
         logEvent('error', 'sidecar', `Product could not be exported: ${errorMessage(error)}`);
       }
     },
-    [productDatasets, project.entities, setBottomCollapsed],
+    [autoSwitchTabs, productDatasets, project.entities, setBottomCollapsed],
   );
 
   const confirmProductExport = useCallback(async () => {
@@ -2979,14 +3019,16 @@ export function App(): JSX.Element {
       setJobs((previous) => [...previous.filter((job) => job.id !== result.job.id), result.job]);
       logEvent('info', 'sidecar', `Export queued · ${pendingProductExport.entityName}`);
       setPendingProductExport(null);
-      setBottomTab('jobs');
-      setBottomCollapsed(false);
+      if (autoSwitchTabs) {
+        setBottomTab('jobs');
+        setBottomCollapsed(false);
+      }
     } catch (error) {
       logEvent('error', 'sidecar', `Product could not be exported: ${errorMessage(error)}`);
     } finally {
       setProductExportBusy(false);
     }
-  }, [pendingProductExport, productExportBusy, setBottomCollapsed]);
+  }, [autoSwitchTabs, pendingProductExport, productExportBusy, setBottomCollapsed]);
 
   const cancelProductExport = useCallback(() => {
     if (!pendingProductExport || productExportBusy) return;
@@ -3302,7 +3344,7 @@ export function App(): JSX.Element {
       <AppShell
         titleBar={
           <TitleBar
-            appName="HimmelCAD"
+            appName="Himmel:CAD"
             productLabel="PhotoLab"
             // Project name lives in the left tree only — not in the titlebar.
             brandMark={<img className={styles.brandLogo} src={photolabLogoUrl} alt="" />}
@@ -3313,6 +3355,7 @@ export function App(): JSX.Element {
         leftPanel={
           <EntityTree
             project={project}
+            sortChildren={comparePhotolabTreeEntities}
             selectedIds={selected}
             onSelect={onSelect}
             onSelectMany={(ids) => {
@@ -3407,7 +3450,7 @@ export function App(): JSX.Element {
                             ? undefined
                             : activeFunctionId === 'batch.configure' ||
                                 activeFunctionId === 'batch.queue'
-                              ? 'Batchprocessing'
+                              ? 'Batch processing'
                               : isProjectDiagnosticsKind(activeFunctionId)
                                 ? diagnosticsTitle(activeFunctionId)
                                 : productOperation
@@ -3518,7 +3561,7 @@ export function App(): JSX.Element {
                     }
                   })();
                 }}
-                onDefineAlignment={() => setDefineAlignmentOpen(true)}
+                onDefineAlignment={() => activate('alignment.define')}
               />
             ) : activeFunctionId === 'alignment.optimize' ? (
               <GcpOptimizationPanel
@@ -3606,6 +3649,8 @@ export function App(): JSX.Element {
             autoExpandJobId={autoExpandJobId}
             activeTab={bottomTab}
             onTabChange={setBottomTab}
+            autoSwitchTabs={autoSwitchTabs}
+            onAutoSwitchTabsChange={setAutoSwitchTabs}
           />
         }
         viewport={
@@ -3681,6 +3726,14 @@ export function App(): JSX.Element {
                   onCursorSnap={setSnap}
                   onLog={(level, message) => logEvent(level, 'renderer', message)}
                 />
+                {projectReady && projectImages.length === 0 && !imageImportBusy && (
+                  <div className={styles.emptyProjectViewport}>
+                    <strong>Import images to begin</strong>
+                    <button type="button" onClick={() => void inspectImages('files')}>
+                      Import
+                    </button>
+                  </div>
+                )}
                 {Object.entries(productLayerStatuses).length > 0 && (
                   <div className={styles.productLayerStatus} aria-live="polite">
                     {Object.entries(productLayerStatuses).map(([entityId, status]) => (
@@ -3868,7 +3921,7 @@ export function App(): JSX.Element {
             progress={imageImportProgress}
             gridProgress={gridSelectionProgress}
             error={imageImportError}
-            himmelcap={himmelcapImport}
+            himmelcapImports={himmelcapImports}
             onChooseMoreFiles={() => void inspectImages('files')}
             onChooseFolder={() => void inspectImages('folder')}
             onChooseHimmelcap={() => void inspectHimmelcap()}
@@ -3934,9 +3987,9 @@ export function App(): JSX.Element {
         </FloatingTaskIsland>
       )}
       {defineAlignmentOpen && (
-        <FloatingTaskIsland onRequestClose={() => setDefineAlignmentOpen(false)}>
+        <FloatingTaskIsland onRequestClose={() => activate(null)}>
           <DefineAlignmentDialog
-            onClose={() => setDefineAlignmentOpen(false)}
+            onClose={() => activate(null)}
             onSaved={({ name, path }) => {
               logEvent('info', 'renderer', `Alignment preset saved · ${name} · ${path}`);
             }}
@@ -3944,7 +3997,7 @@ export function App(): JSX.Element {
         </FloatingTaskIsland>
       )}
       {batchRecipeOpen && (
-        <FloatingTaskIsland modal onRequestClose={() => setBatchRecipeOpen(false)}>
+        <FloatingTaskIsland modal onRequestClose={() => activate(null)}>
           <BatchRecipeDialog
             busy={batchStarting}
             allCameraIds={projectImages.map((image) => image.entityId)}
@@ -3967,9 +4020,9 @@ export function App(): JSX.Element {
             onClearProcessingSet={() => setActiveProcessingSetId(null)}
             onRun={(steps, cameraEntityIds, scopeLabel) => {
               void startBatch(steps, cameraEntityIds, scopeLabel);
-              setBatchRecipeOpen(false);
+              activate(null);
             }}
-            onClose={() => setBatchRecipeOpen(false)}
+            onClose={() => activate(null)}
             onError={reportPanelError}
           />
         </FloatingTaskIsland>

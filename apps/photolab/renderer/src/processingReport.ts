@@ -61,11 +61,11 @@ export function buildProcessingReportHtml(input: ProcessingReportInput): string 
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
-<title>HimmelCAD PhotoLab Processing Report</title>
+<title>Himmel:CAD PhotoLab Processing Report</title>
 <style>${REPORT_CSS}</style>
 </head>
 <body>
-<header><div><p class="eyebrow">HimmelCAD PhotoLab</p><h1>${escapeHtml(input.project.name)}</h1><p>Processing report · generated ${escapeHtml(generated)}</p><p><code>${escapeHtml(input.project.id)}</code> · project format ${input.project.formatVersion}</p></div><div class="summary"><strong>${input.jobs.length}</strong> runs · <strong>${completedJobs}</strong> completed · <strong>${interruptedJobs}</strong> interrupted · <strong>${failedJobs}</strong> failed<br><strong>${formatDuration(totalRuntimeMs)}</strong> recorded runtime · <strong>${input.products.length}</strong> products</div></header>
+<header><div><p class="eyebrow">Himmel:CAD PhotoLab</p><h1>${escapeHtml(input.project.name)}</h1><p>Processing report · generated ${escapeHtml(generated)}</p><p><code>${escapeHtml(input.project.id)}</code> · project format ${input.project.formatVersion}</p></div><div class="summary"><strong>${input.jobs.length}</strong> runs · <strong>${completedJobs}</strong> completed · <strong>${interruptedJobs}</strong> interrupted · <strong>${failedJobs}</strong> failed<br><strong>${formatDuration(totalRuntimeMs)}</strong> recorded runtime · <strong>${input.products.length}</strong> products</div></header>
 <main>
 ${hardwareSection(input.hardware)}
 ${processingScopeSection(input.processingSets)}
@@ -74,7 +74,7 @@ ${jobSection(input.jobs)}
 ${productSection(input.products)}
 ${accuracySection(input.accuracy, input.gcpOptimizations, input.processingSets, input.alignmentRuns)}
 </main>
-<footer>HimmelCAD PhotoLab · reproducible photogrammetry processing record</footer>
+<footer>Himmel:CAD PhotoLab · reproducible photogrammetry processing record</footer>
 </body>
 </html>`;
 }

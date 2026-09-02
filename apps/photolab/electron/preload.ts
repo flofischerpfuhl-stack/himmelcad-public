@@ -184,6 +184,7 @@ export interface PhotolabDesktopApi {
     save: (request: {
       suggestedName?: string;
       workflow: unknown;
+      prompt?: boolean;
     }) => Promise<{ path: string; name: string } | null>;
   };
   readonly alignmentPresets: {

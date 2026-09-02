@@ -31,6 +31,24 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.orientation {
+  min-width: 0;
+  color: var(--hc-fg-default);
+  font-size: 9px;
+}
+.orientation summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.orientation code {
+  display: block;
+  margin-top: 4px;
+  color: var(--hc-fg-muted);
+  font: 8px/1.4 var(--hc-font-mono);
+  white-space: normal;
+}
 .mono {
   font-family: var(--hc-font-mono);
   font-size: 8px;

@@ -8,8 +8,47 @@
 
 /* Attached strip host — IslandTabs variant="strip" fills this */
 .tabs {
+  display: flex;
+  align-items: center;
   flex-shrink: 0;
   min-width: 0;
+  background: var(--hc-bg-island-hi);
+  border-bottom: 1px solid var(--hc-border-default);
+}
+
+.tabs > :first-child {
+  flex: 1 1 auto;
+  border-bottom: 0;
+}
+
+.tabActions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+  align-items: center;
+  padding: 0 8px;
+  color: var(--hc-fg-muted);
+  font-size: 10px;
+}
+
+.tabActions button {
+  min-height: var(--hc-size-chip-h);
+  padding: 0 8px;
+  color: var(--hc-fg-default);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-island);
+  font: 10px var(--hc-font-ui);
+}
+
+.tabActions button:hover:not(:disabled) {
+  border-color: var(--hc-border-strong);
+  background: var(--hc-hover-bg);
+}
+
+.tabActions button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .content {
@@ -111,9 +150,12 @@
   text-transform: uppercase;
 }
 
-.state_completed,
-.state_cancelled {
+.state_completed {
   color: var(--hc-success);
+}
+
+.state_cancelled {
+  color: var(--hc-fg-muted);
 }
 
 .state_failed {

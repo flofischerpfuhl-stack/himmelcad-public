@@ -9,7 +9,7 @@ import type {
   ProcessingSetRecord,
   PublishedGcpOptimizationEntry,
 } from '@himmelcad/data';
-import { EmptyState, ExpandChevron, IslandTabs } from '@himmelcad/ui';
+import { Checkbox, EmptyState, ExpandChevron, IslandTabs } from '@himmelcad/ui';
 import { AlertTriangle, Ban, CheckCircle2, FileDown, RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -43,6 +43,8 @@ export interface PhotolabBottomPanelProps {
   autoExpandJobId: string | null | undefined;
   activeTab: BottomTab;
   onTabChange: (tab: BottomTab) => void;
+  autoSwitchTabs: boolean;
+  onAutoSwitchTabsChange: (enabled: boolean) => void;
 }
 
 export type ReportProduct = ProcessingReportProduct;
@@ -67,7 +69,14 @@ export function PhotolabBottomPanel({
   autoExpandJobId,
   activeTab: tab,
   onTabChange,
+  autoSwitchTabs,
+  onAutoSwitchTabsChange,
 }: PhotolabBottomPanelProps): JSX.Element {
+  const [hiddenTerminalJobIds, setHiddenTerminalJobIds] = useState<ReadonlySet<string>>(new Set());
+  const visibleJobs = jobs.filter(
+    (job) => !hiddenTerminalJobIds.has(job.id) || !isTerminalJob(job),
+  );
+  const visibleTerminalIds = visibleJobs.filter(isTerminalJob).map((job) => job.id);
   return (
     <section className={styles.root}>
       <div className={styles.tabs}>
@@ -81,12 +90,28 @@ export function PhotolabBottomPanel({
             {
               id: 'jobs',
               label: 'Jobs',
-              badge: jobs.length > 0 ? jobs.length : undefined,
+              badge: visibleJobs.length > 0 ? visibleJobs.length : undefined,
             },
             { id: 'accuracy', label: 'Accuracy' },
             { id: 'report', label: 'Report' },
           ]}
         />
+        <div className={styles.tabActions}>
+          <Checkbox
+            checked={autoSwitchTabs}
+            onChange={(event) => onAutoSwitchTabsChange(event.currentTarget.checked)}
+            label="Auto-switch tabs"
+          />
+          <button
+            type="button"
+            disabled={visibleTerminalIds.length === 0}
+            onClick={() =>
+              setHiddenTerminalJobIds((current) => new Set([...current, ...visibleTerminalIds]))
+            }
+          >
+            Clear finished
+          </button>
+        </div>
       </div>
       <div className={styles.content}>
         {tab === 'console' && (
@@ -99,7 +124,7 @@ export function PhotolabBottomPanel({
         )}
         {tab === 'jobs' && (
           <JobsView
-            jobs={jobs}
+            jobs={visibleJobs}
             onCancelJob={onCancelJob}
             onResumeJob={onResumeJob}
             resumeErrors={resumeErrors}
@@ -195,6 +220,7 @@ function JobsView({
                     ? ` · ${Math.round((stageFraction(job) as number) * 100)}% of stage`
                     : ''}
                 </span>
+                {' · '}
                 <span>{compactProgress(job, telemetry, now)}</span>
               </div>
               <div className={styles.progressTrack} title="Overall job progress">
@@ -313,7 +339,9 @@ function JobDetails({
       <div>
         <span>Started</span>
         <strong>
-          {job.startedAtUnixMs == null ? 'Queued' : new Date(job.startedAtUnixMs).toLocaleString()}
+          {job.startedAtUnixMs == null
+            ? 'Queued'
+            : new Date(job.startedAtUnixMs).toLocaleString('en-US')}
         </strong>
       </div>
       <div>
@@ -809,4 +837,8 @@ function stateLabel(job: PhotolabJob): string {
     completed: 'Completed',
   };
   return labels[job.state.kind];
+}
+
+function isTerminalJob(job: PhotolabJob): boolean {
+  return ['completed', 'failed', 'cancelled'].includes(job.state.kind);
 }

@@ -44,18 +44,18 @@ export function CaptureGroupsPanel({
   onUpdateIntrinsics: (calibrationGroupId: EntityId, policy: GcpIntrinsicsPolicy) => void;
 }): JSX.Element {
   const [name, setName] = useState('');
-  const [calibrationNames, setCalibrationNames] = useState<readonly string[]>(['Autofocus 1']);
+  const [calibrationNames, setCalibrationNames] = useState<readonly string[]>([
+    'Calibration group 1',
+  ]);
   const [assignments, setAssignments] = useState<Readonly<Record<EntityId, number>>>({});
   const selectionKey = selectedCameras.map((camera) => camera.entityId).join('\u0000');
   useEffect(() => {
-    setCalibrationNames(['Autofocus 1']);
+    const selectedIds = selectionKey.split('\u0000').filter(Boolean) as EntityId[];
     setAssignments(
-      Object.fromEntries(
-        selectionKey
-          .split('\u0000')
-          .filter(Boolean)
-          .map((entityId) => [entityId, 0]),
-      ),
+      (current) =>
+        Object.fromEntries(
+          selectedIds.map((entityId) => [entityId, current[entityId] ?? 0]),
+        ) as Readonly<Record<EntityId, number>>,
     );
   }, [selectionKey]);
   const calibrationDrafts = useMemo(
@@ -90,7 +90,10 @@ export function CaptureGroupsPanel({
               className={styles.iconButton}
               title="Add another autofocus or lens session"
               onClick={() =>
-                setCalibrationNames((current) => [...current, `Autofocus ${current.length + 1}`])
+                setCalibrationNames((current) => [
+                  ...current,
+                  `Calibration group ${current.length + 1}`,
+                ])
               }
             >
               <Plus size={13} /> Add split
@@ -148,7 +151,7 @@ export function CaptureGroupsPanel({
                   >
                     {calibrationNames.map((calibrationName, index) => (
                       <option key={`assignment-${index}`} value={index}>
-                        {calibrationName || `Autofocus ${index + 1}`}
+                        {calibrationName || `Calibration group ${index + 1}`}
                       </option>
                     ))}
                   </Select>

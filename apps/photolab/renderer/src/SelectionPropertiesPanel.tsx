@@ -9,6 +9,7 @@ import type {
 } from '@himmelcad/data';
 
 import styles from './ImagePropertiesPanel.module.css';
+import { humanizeEnum } from './photolabFormatting.js';
 
 export function SelectionPropertiesPanel({
   project,
@@ -61,7 +62,10 @@ export function SelectionPropertiesPanel({
       <section>
         <h3>Selection</h3>
         <Row label="Count" value={String(entities.length)} />
-        <Row label="Type" value={commonValue(entities.map((entity) => entity.kind))} />
+        <Row
+          label="Type"
+          value={commonValue(entities.map((entity) => humanizeEnum(entity.kind)))}
+        />
         <Row
           label="Parent"
           value={commonValue(
@@ -91,7 +95,7 @@ export function SelectionPropertiesPanel({
           <Row label="Dimensions" value={dimensions} />
           <div className={styles.tags}>
             {sharedTags.length > 0 ? (
-              sharedTags.map((tag) => <span key={tag}>{tag}</span>)
+              sharedTags.map((tag) => <span key={tag}>{humanizeEnum(tag)}</span>)
             ) : (
               <span>No shared tags</span>
             )}
@@ -119,7 +123,7 @@ export function SelectionPropertiesPanel({
             label="Grouping"
             value={captureGroup.automatic ? 'Automatically detected' : 'User defined'}
           />
-          <Row label="Review" value={captureGroup.reviewStatus ?? 'confirmed'} />
+          <Row label="Review" value={humanizeEnum(captureGroup.reviewStatus ?? 'confirmed')} />
           <Row label="Image IDs" value={captureGroup.cameraEntityIds.join(', ')} />
           <Row label="Calibration groups" value={String(captureGroup.calibrationGroupIds.length)} />
           <Row label="Membership" value={captureGroup.membershipSha256} />
@@ -137,15 +141,15 @@ export function SelectionPropertiesPanel({
           />
           <Row label="Images" value={String(calibrationGroup.cameraEntityIds.length)} />
           <Row label="Image IDs" value={calibrationGroup.cameraEntityIds.join(', ')} />
-          <Row label="Grouping" value={calibrationGroup.groupingBasis} />
-          <Row label="Review" value={calibrationGroup.reviewStatus ?? 'confirmed'} />
+          <Row label="Grouping" value={humanizeEnum(calibrationGroup.groupingBasis)} />
+          <Row label="Review" value={humanizeEnum(calibrationGroup.reviewStatus ?? 'confirmed')} />
           <Row label="Membership" value={calibrationGroup.membershipSha256} />
         </section>
       )}
       {alignmentMerge && (
         <section>
           <h3>Merged alignment lineage</h3>
-          <Row label="State" value={alignmentMerge.state} />
+          <Row label="State" value={humanizeEnum(alignmentMerge.state)} />
           <Row label="Input alignments" value={alignmentMerge.inputAlignmentEntityIds.join(', ')} />
           <Row
             label="GCP optimizations"

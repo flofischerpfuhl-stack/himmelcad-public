@@ -146,6 +146,38 @@
   height: 100%;
 }
 
+.emptyProjectViewport {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  color: var(--hc-fg-muted);
+  pointer-events: none;
+}
+
+.emptyProjectViewport strong {
+  color: var(--hc-fg-default);
+  font-size: 13px;
+}
+
+.emptyProjectViewport button {
+  min-height: 28px;
+  padding: 0 12px;
+  color: var(--hc-fg-strong);
+  border: 1px solid var(--hc-accent-base);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-island-hi);
+  font: 11px var(--hc-font-ui);
+  pointer-events: auto;
+}
+
+.emptyProjectViewport button:hover {
+  background: var(--hc-hover-bg);
+}
+
 .productLayerStatus {
   position: absolute;
   z-index: 6;
