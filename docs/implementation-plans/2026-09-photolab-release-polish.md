@@ -467,6 +467,39 @@ intact (hands-on repro); close with unsaved changes prompts; recovery banner
 appears after a simulated crash (kill -9 electron during autosave interval);
 english-ui + dialog-policy checks green.
 
+### WP-C3b — Close semantics per doctrine D1/X7 (Size S, supersedes the WP-C3 close guard)
+
+Problem. WP-C3 shipped a "Save and close / Close without saving / Cancel"
+prompt when unsaved autosave generations exist. Owner decision D1
+(`docs/builder-program/OWNER-DECISIONS.md`) rejects exactly this classic
+dirty-flag pattern for the project-lifecycle class, and doctrine X7 binds the
+class across products: PhotoLab's working copy is already durable (30 s
+autosave, always-on recovery, recovery banner since WP-C3, drain before
+close since WP-B3), so the prompt claims a data-loss risk that does not
+exist.
+
+**Decision:** No close prompt. Window close and quit run the drain, flush
+the working copy, and close; the status bar affirms "All changes stored ·
+<time>" (bounded-lag durability indicator per P5) and shows a loud failure
+state if the flush fails. Save (Ctrl+S) stays as the universal affordance
+(P6) and means durability flush; its dropdown offers "Save As…" = `.hcadx`
+archive copy to a chosen path, and "Save snapshot…" is deferred until
+PhotoLab adopts named journal snapshots (WP-B5 follow-up).
+**Derivation:** D1 + X7 (class precedent), X1 (durability is already a
+correctness property of the working copy), P5/P6, `docs/PROJECT-FORMAT.md`
+(archive = copy, working copy = truth).
+**Rejected:** keeping the prompt (contradicts D1; asks the user to decide
+about a loss that cannot happen); removing Save (P6).
+**Tunable:** indicator lag budget (X6; reuse FP-D2's value once set).
+
+Implementation: delete the close-guard prompt path from WP-C3
+(`closeGuardDecision` becomes a durability-flush wait with a bounded
+deadline), keep the ConfirmationDialog extension only where a genuinely
+destructive choice remains (Discard recovery), add the stored-indicator copy
+and failure state, update `projectLifecycle.test.ts` accordingly, and record
+the D1 alignment in `docs/PROJECT-FORMAT.md` if it still describes
+PhotoLab close differently.
+
 ### WP-C4 — Product prerequisite validation + GCP revision selector (Size M)
 
 Problem. Product Start is enabled with zero alignments; failures surface only
