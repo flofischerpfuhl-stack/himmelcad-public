@@ -1085,16 +1085,21 @@ build ran) and passes 3/3 in isolation. Its deadline is a calibration value
 (X6): either widen the fake-worker deadline with a rationale or serialize the
 timing-sensitive tests behind a test-group lock. Tracked under WP-B6.
 
-## R1-gate triage — 2026-09-02 late (owner statement D8, token discipline)
+## R1-gate triage — 2026-09-02 late
 
-Owner statement D8 (`docs/builder-program/OWNER-DECISIONS.md`) sets a
-temporary token discipline; the Builder session relayed the owner's direction
-that PhotoLab finishes R1 without scope growth and packages not on an R1 gate
-are parked. Applied here; the owner can reverse any line.
+Authority, stated precisely: the owner stated "PhotoLab production-ready in
+the next two days" (`docs/CURRENT-DIRECTION.md`, Q1 section) and a hard
+concern about token spend (`docs/builder-program/OWNER-DECISIONS.md` D8).
+"R1 without scope growth, PhotoLab as a free funnel for Builder" is the
+architect's recommendation (D9, strategy candidate awaiting the owner's go),
+not yet an owner decision. The triage below is the sensible reading of the
+owner's two statements; the owner can reverse any line, and D9's outcome will
+be reflected here when it lands.
 
-Reasoning effort for Codex dispatches: `medium` for mechanical packages;
-`high` for design-heavy sidecar work (WP-G1a-2, WP-A3, WP-B5) and for every
-review by the coordinating session.
+Reasoning effort for Codex dispatches (D8 derived decision, vetoable; the
+owner's earlier instruction to this session was `high`): `medium` for
+mechanical packages; `high` for design-heavy sidecar work (WP-G1a-2, WP-A3,
+WP-B5) and for every review by the coordinating session.
 
 | Package                                                                 | R1 gate                                                        | Decision                                                                              |
 | ----------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
