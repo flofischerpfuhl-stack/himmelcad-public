@@ -1,5 +1,5 @@
 import { AlertTriangle, X } from 'lucide-react';
-import { useId } from 'react';
+import { useEffect, useId, useRef, type KeyboardEvent } from 'react';
 
 import styles from './ConfirmationDialog.module.css';
 
@@ -21,8 +21,40 @@ export function ConfirmationDialog({
   onCancel: () => void;
 }): JSX.Element {
   const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    // An aria-modal dialog must move focus inside itself when it opens.
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const primary = dialog.querySelector<HTMLElement>('[data-confirmation-primary="true"]');
+    const first = primary ?? dialog.querySelector<HTMLElement>('button:not([disabled])');
+    first?.focus();
+  }, []);
+  const trapTab = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Tab' || !dialogRef.current) return;
+    const focusable = [
+      ...dialogRef.current.querySelectorAll<HTMLElement>('button:not([disabled])'),
+    ];
+    if (focusable.length === 0) return;
+    const first = focusable[0]!;
+    const last = focusable[focusable.length - 1]!;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
   return (
-    <div className={styles.dialog} role="dialog" aria-modal="true" aria-labelledby={titleId}>
+    <div
+      ref={dialogRef}
+      className={styles.dialog}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      onKeyDown={trapTab}
+    >
       <header data-task-drag-handle>
         <div>
           <span>Confirmation</span>
@@ -40,7 +72,13 @@ export function ConfirmationDialog({
         <button type="button" onClick={onCancel} disabled={busy}>
           Cancel
         </button>
-        <button type="button" className={styles.danger} onClick={onConfirm} disabled={busy}>
+        <button
+          data-confirmation-primary="true"
+          type="button"
+          className={styles.danger}
+          onClick={onConfirm}
+          disabled={busy}
+        >
           {busy ? busyLabel : confirmLabel}
         </button>
       </footer>

@@ -74,6 +74,7 @@
     "photolab:smoke:install:win": "node scripts/photolab-install-smoke.mjs win32-x64",
     "photolab:test:golden:agisoft": "node scripts/test-photolab-agisoft-golden.mjs",
     "photolab:test:visual": "node scripts/photolab-visual-regression.mjs",
+    "photolab:test:a11y": "node scripts/photolab-visual-regression.mjs --a11y --no-compare-baselines",
     "photolab:test:visual:baselines": "node scripts/photolab-visual-regression.mjs --compare-baselines",
     "photolab:test:visual:baselines:update": "node scripts/photolab-visual-regression.mjs --update-baselines",
     "photolab:test:visual-baseline": "node --test scripts/test-photolab-visual-baseline.mjs",
@@ -85,6 +86,7 @@
   "devDependencies": {
     "@eslint/js": "^9.12.0",
     "@types/node": "^22.7.0",
+    "axe-core": "4.13.0",
     "eslint": "^9.12.0",
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-react": "^7.37.1",

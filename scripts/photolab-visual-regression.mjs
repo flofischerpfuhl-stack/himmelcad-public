@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 
 import { chromium } from 'playwright-core';
 
+import { countA11yImpacts, gateA11yFindings, validateA11yExceptions } from './lib/a11y-audit.mjs';
 import { compareImages, decodePng, encodePng } from './lib/png-compare.mjs';
 
 process.env.HIMMELCAD_PHOTOLAB_CLEAN_BOOT = '1';
@@ -25,8 +26,20 @@ const baselineRoot = resolve(root, 'apps/photolab/test/visual-baselines');
 // runs of pixels and lands far above it.
 const CHANNEL_TOLERANCE = 16;
 const MAX_DIFF_RATIO = 0.001;
+const KEYBOARD_MAX_STEPS = 250;
 const updateBaselines = process.argv.includes('--update-baselines');
-const compareBaselines = updateBaselines || process.argv.includes('--compare-baselines');
+const compareBaselines =
+  updateBaselines ||
+  (!process.argv.includes('--no-compare-baselines') &&
+    process.argv.includes('--compare-baselines'));
+const a11yEnabled = !process.argv.includes('--no-a11y');
+const a11yExceptionPath = resolve(root, 'apps/photolab/test/a11y-exceptions.json');
+const a11yExceptions = a11yEnabled
+  ? validateA11yExceptions(JSON.parse(await readFile(a11yExceptionPath, 'utf8')))
+  : [];
+const axeSource = a11yEnabled
+  ? await readFile(resolve(root, 'node_modules/axe-core/axe.min.js'), 'utf8')
+  : null;
 const viewports = [
   { name: '1440x900', width: 1440, height: 900 },
   { name: '1100x720', width: 1100, height: 720 },
@@ -94,8 +107,49 @@ if (updateBaselines)
 
 const reportPath = resolve(root, '.build/visual-regression/report.json');
 await writeFile(reportPath, `${JSON.stringify({ baseline, reports }, null, 2)}\n`, 'utf8');
+const a11ySurfaces = reports.flatMap((report) => report.a11ySurfaces);
+const a11yFindings = a11ySurfaces.flatMap((surface) => surface.violations);
+const a11yGate = gateA11yFindings(a11yFindings, a11yExceptions);
+const excludedRuleIds = [
+  ...new Set(a11ySurfaces.flatMap((surface) => surface.excludedRules)),
+].sort();
+const a11yReport = {
+  schemaVersion: 1,
+  generatedAt: new Date().toISOString(),
+  enabled: a11yEnabled,
+  axeVersion: a11ySurfaces.find((surface) => surface.axeVersion)?.axeVersion ?? null,
+  ruleset: {
+    standardTags: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'],
+    scope:
+      'Desktop app shell rules: colour contrast, form labels, button/link names, ARIA validity, and focus-order semantics.',
+    includedRules: [...new Set(a11ySurfaces.flatMap((surface) => surface.includedRules))].sort(),
+    exclusions: excludedRuleIds.map((ruleId) => ({
+      ruleId,
+      reason:
+        ruleId === 'region'
+          ? 'An Electron app shell is not an article-style browser document; its persistent named panels already provide application navigation, so requiring every node to sit in a landmark creates duplicate-shell noise.'
+          : `The ${ruleId} rule covers content structure, document metadata, media, or browser navigation outside WP-F3's bounded desktop-shell baseline; it is not represented as audited coverage.`,
+    })),
+  },
+  exceptionsFile: relative(root, a11yExceptionPath),
+  exceptions: a11yExceptions,
+  counts: countA11yImpacts(a11yGate.findings),
+  blockingCount: a11yGate.blocking.length,
+  surfaces: a11ySurfaces,
+  keyboard: reports.flatMap((report) => report.keyboardAudits),
+};
+const a11yReportPath = resolve(root, '.build/visual-regression/a11y-report.json');
+const a11ySummaryPath = resolve(root, '.build/visual-regression/a11y-summary.md');
+await writeFile(a11yReportPath, `${JSON.stringify(a11yReport, null, 2)}\n`, 'utf8');
+await writeFile(a11ySummaryPath, renderA11yMarkdown(a11yReport), 'utf8');
 const issues = reports.flatMap((report) =>
   report.issues.map((issue) => `${report.viewport}: ${issue}`),
+);
+issues.push(
+  ...a11yGate.blocking.map(
+    (finding) =>
+      `${finding.viewport}/${finding.surface}: ${finding.ruleId} (${finding.impact}) at ${finding.selector}`,
+  ),
 );
 if (issues.length > 0) {
   throw new Error(
@@ -109,7 +163,9 @@ const baselineSummary = updateBaselines
     ? ` · ${reports.reduce((sum, report) => sum + report.baselinesCompared, 0)} baselines matched`
     : '';
 process.stdout.write(
-  `PhotoLab visual audit passed · ${captureCount} captures${baselineSummary} · ${reportPath}\n`,
+  `PhotoLab visual audit passed · ${captureCount} captures${baselineSummary}` +
+    `${a11yEnabled ? ` · a11y ${formatImpactCounts(a11yReport.counts)}` : ' · a11y skipped'}` +
+    ` · ${reportPath}\n`,
 );
 
 async function auditViewport(browserInstance, viewport) {
@@ -125,6 +181,9 @@ async function auditViewport(browserInstance, viewport) {
   const issues = [];
   const captures = [];
   const comparisons = [];
+  const a11ySurfaces = [];
+  const keyboardAudits = [];
+  const keyboardSignatures = new Map();
   let baselinesWritten = 0;
   let baselinesCompared = 0;
   const pageErrors = [];
@@ -154,6 +213,13 @@ async function auditViewport(browserInstance, viewport) {
         `Body: ${bodyText.slice(0, 500) || '<empty>'}`,
       { cause: error },
     );
+  }
+  if (a11yEnabled) {
+    // Inject once per page document; every surface capture below runs a fresh
+    // axe scan after its screenshot. This ordering keeps pixel baselines
+    // independent of axe and of the keyboard walk's temporary attributes.
+    await page.addScriptTag({ content: axeSource });
+    await page.waitForFunction(() => typeof window.axe?.run === 'function');
   }
 
   const capture = async (name) => {
@@ -290,6 +356,27 @@ async function auditViewport(browserInstance, viewport) {
         issues.push(`${name}: modal dialog does not block background pointers`);
       if (!dialog.activeElementInside) issues.push(`${name}: modal dialog does not contain focus`);
     }
+    if (a11yEnabled) {
+      const surface = await auditA11ySurface(page, viewport.name, name);
+      a11ySurfaces.push(surface);
+      const keyboardAudit = await auditKeyboardReachability(
+        page,
+        viewport.name,
+        name,
+        keyboardSignatures,
+      );
+      keyboardAudits.push(keyboardAudit);
+      if (!keyboardAudit.duplicateOf) {
+        const ribbonFailures = [
+          ...keyboardAudit.ribbon.unreachable.map((control) => `${control.selector} (unreachable)`),
+          ...keyboardAudit.ribbon.withoutFocusIndicator.map(
+            (control) => `${control.selector} (no visible focus indicator)`,
+          ),
+        ];
+        if (ribbonFailures.length > 0)
+          issues.push(`${name}: ribbon keyboard invariant failed: ${ribbonFailures.join(', ')}`);
+      }
+    }
     return audit;
   };
 
@@ -409,7 +496,9 @@ async function auditViewport(browserInstance, viewport) {
     window.__photolabVisualGcpPreviewError = false;
   });
 
-  const cameraTreeItem = page.getByText('DJI_VISUAL_0001.JPG', { exact: true });
+  const cameraTreeItem = page
+    .getByLabel('Entity tree', { exact: true })
+    .getByText('DJI_VISUAL_0001.JPG', { exact: true });
   await cameraTreeItem.click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Remove from project…', exact: true }).click();
   await page.getByRole('dialog', { name: /Remove (?:image|\d+ images)\?/ }).waitFor();
@@ -441,10 +530,372 @@ async function auditViewport(browserInstance, viewport) {
     baselinesWritten,
     baselinesCompared,
     comparisons,
+    a11ySurfaces,
+    keyboardAudits,
     issues,
     nativeDialogs,
     pageErrors,
   };
+}
+
+async function auditA11ySurface(page, viewport, surface) {
+  const scanned = await page.evaluate(
+    async ({ viewportName, surfaceName }) => {
+      const standardTags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
+      const taggedRules = window.axe.getRules(standardTags);
+      const allRuleIds = new Set(window.axe.getRules().map((rule) => rule.ruleId));
+      const namedRules = new Set(['color-contrast', 'label', 'button-name', 'link-name']);
+      const includedRules = taggedRules
+        .map((rule) => rule.ruleId)
+        .filter((ruleId) => namedRules.has(ruleId) || ruleId.startsWith('aria-'));
+      // focus-order-semantics is an axe best-practice rule rather than a WCAG
+      // tagged rule, but keyboard order is explicitly part of the desktop-shell
+      // baseline and is therefore added to the otherwise WCAG 2.1 A/AA set.
+      if (allRuleIds.has('focus-order-semantics')) includedRules.push('focus-order-semantics');
+      const uniqueRules = [...new Set(includedRules)].sort();
+      const excludedRules = [
+        ...taggedRules.map((rule) => rule.ruleId).filter((ruleId) => !uniqueRules.includes(ruleId)),
+        ...(allRuleIds.has('region') ? ['region'] : []),
+      ];
+      const result = await window.axe.run(document, {
+        runOnly: { type: 'rule', values: uniqueRules },
+        resultTypes: ['violations'],
+      });
+      const violations = result.violations.flatMap((violation) =>
+        violation.nodes.map((node) => ({
+          viewport: viewportName,
+          surface: surfaceName,
+          selector: node.target
+            .flat(Number.POSITIVE_INFINITY)
+            .map((part) => String(part))
+            .join(' >>> '),
+          ruleId: violation.id,
+          impact: node.impact ?? violation.impact ?? 'unknown',
+          help: violation.help,
+          helpUrl: violation.helpUrl,
+          failureSummary: node.failureSummary ?? null,
+        })),
+      );
+      const counts = { critical: 0, serious: 0, moderate: 0, minor: 0, unknown: 0 };
+      for (const finding of violations) {
+        const impact = Object.hasOwn(counts, finding.impact) ? finding.impact : 'unknown';
+        counts[impact] += 1;
+      }
+      return {
+        viewport: viewportName,
+        surface: surfaceName,
+        axeVersion: result.testEngine.version,
+        includedRules: uniqueRules,
+        excludedRules: [...new Set(excludedRules)].sort(),
+        counts,
+        violations,
+      };
+    },
+    { viewportName: viewport, surfaceName: surface },
+  );
+  return {
+    ...scanned,
+    violations: gateA11yFindings(scanned.violations, a11yExceptions).findings,
+  };
+}
+
+async function auditKeyboardReachability(page, viewport, surface, priorSignatures) {
+  const prepared = await page.evaluate(
+    ({ surfaceName, hardStepLimit }) => {
+      const visible = (element) => {
+        const style = getComputedStyle(element);
+        const box = element.getBoundingClientRect();
+        return (
+          style.visibility !== 'hidden' &&
+          style.display !== 'none' &&
+          box.width > 0 &&
+          box.height > 0
+        );
+      };
+      const cssPath = (element) => {
+        if (element.id) return `#${CSS.escape(element.id)}`;
+        const parts = [];
+        let current = element;
+        while (current && current !== document.body && parts.length < 6) {
+          const siblings = current.parentElement
+            ? [...current.parentElement.children].filter(
+                (sibling) => sibling.tagName === current.tagName,
+              )
+            : [];
+          const position =
+            siblings.length > 1 ? `:nth-of-type(${siblings.indexOf(current) + 1})` : '';
+          parts.unshift(`${current.tagName.toLowerCase()}${position}`);
+          current = current.parentElement;
+        }
+        return parts.join(' > ');
+      };
+      const descriptor = (element) => ({
+        selector: cssPath(element),
+        tag: element.tagName.toLowerCase(),
+        role: element.getAttribute('role'),
+        name:
+          element.getAttribute('aria-label') ??
+          element.getAttribute('title') ??
+          element.textContent?.trim().replace(/\s+/gu, ' ').slice(0, 120) ??
+          '',
+        disabled: element.matches(':disabled, [aria-disabled="true"]'),
+      });
+      const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter(visible);
+      const activePanel =
+        dialogs.at(-1) ?? document.querySelector('aside[aria-label="Function panel"]');
+      const controlSelector = 'button, [role="button"], input, select, textarea, [tabindex]';
+      const panelControls = activePanel
+        ? [...activePanel.querySelectorAll(controlSelector)].filter(visible)
+        : [];
+      const ribbonTablist = [...document.querySelectorAll('[role="tablist"]')].find((tablist) => {
+        const labels = [...tablist.querySelectorAll('[role="tab"]')].map((tab) =>
+          tab.textContent?.trim(),
+        );
+        return labels.includes('Project') && labels.includes('Automation');
+      });
+      const ribbonTabs = ribbonTablist
+        ? [...ribbonTablist.querySelectorAll('[role="tab"]')].filter(visible)
+        : [];
+      document
+        .querySelectorAll('[data-photolab-a11y-target]')
+        .forEach((element) => element.removeAttribute('data-photolab-a11y-target'));
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      // Start the walk on the ribbon: a WAI-ARIA tablist keeps one tab in the Tab order and
+      // moves between tabs with arrow keys; the audit judges reachability from there.
+      const targets = [];
+      const baselines = {};
+      for (const [group, elements] of [
+        ['ribbon', dialogs.length > 0 ? [] : ribbonTabs],
+        ['panel', panelControls],
+      ])
+        for (const element of elements) {
+          const id = `${group}-${targets.length}`;
+          element.setAttribute('data-photolab-a11y-target', id);
+          const style = getComputedStyle(element);
+          baselines[id] = { outline: style.outline, boxShadow: style.boxShadow };
+          targets.push({ id, group, ...descriptor(element) });
+        }
+      const scrollPositions = [...document.querySelectorAll('*')]
+        .filter((element) => element.scrollTop !== 0 || element.scrollLeft !== 0)
+        .map((element) => ({ element, top: element.scrollTop, left: element.scrollLeft }));
+      // Start the walk on the ribbon only after the unfocused style baselines are captured.
+      if (ribbonTabs[0] instanceof HTMLElement) ribbonTabs[0].focus();
+      window.__photolabA11yKeyboard = { baselines, scrollPositions };
+      const signature = targets
+        .map((target) =>
+          [
+            target.group,
+            target.selector,
+            target.name,
+            target.disabled ? 'disabled' : 'enabled',
+          ].join('|'),
+        )
+        .join('\n');
+      return {
+        surface: surfaceName,
+        panel: dialogs.length > 0 ? 'dialog' : activePanel ? 'function-panel' : 'none',
+        ribbonSkippedForModal: dialogs.length > 0,
+        signature,
+        targets,
+        maxSteps: Math.min(hardStepLimit, Math.max(40, targets.length * 4 + 20)),
+      };
+    },
+    { surfaceName: surface, hardStepLimit: KEYBOARD_MAX_STEPS },
+  );
+
+  const duplicateOf = priorSignatures.get(prepared.signature);
+  if (duplicateOf) {
+    await cleanupKeyboardAudit(page);
+    return {
+      viewport,
+      surface,
+      panel: prepared.panel,
+      duplicateOf,
+      maxSteps: 0,
+      focusedChain: [],
+      ribbon: { total: 0, unreachable: [], withoutFocusIndicator: [] },
+      panelControls: { total: 0, unreachable: [], withoutFocusIndicator: [] },
+    };
+  }
+  priorSignatures.set(prepared.signature, surface);
+
+  const focused = new Map();
+  const focusedChain = [];
+  const seenFocusOrder = new Set();
+  {
+    // The walk starts on the ribbon tablist (see prepare); record that initial focus.
+    const initial = await page.evaluate(() => {
+      const element = document.activeElement;
+      if (!(element instanceof HTMLElement)) return null;
+      const id = element.getAttribute('data-photolab-a11y-target');
+      if (!id) return null;
+      const baseline = window.__photolabA11yKeyboard?.baselines?.[id];
+      const style = getComputedStyle(element);
+      return {
+        id,
+        visibleFocusIndicator:
+          !baseline || style.outline !== baseline.outline || style.boxShadow !== baseline.boxShadow,
+      };
+    });
+    if (initial)
+      focused.set(initial.id, { step: 0, visibleFocusIndicator: initial.visibleFocusIndicator });
+  }
+  for (let step = 0; step < prepared.maxSteps; step += 1) {
+    await page.keyboard.press('Tab');
+    const state = await page.evaluate(() => {
+      const element = document.activeElement;
+      if (!(element instanceof HTMLElement)) return null;
+      const cssPath = (node) => {
+        if (node.id) return `#${CSS.escape(node.id)}`;
+        const parts = [];
+        let current = node;
+        while (current && current !== document.body && parts.length < 6) {
+          const siblings = current.parentElement
+            ? [...current.parentElement.children].filter(
+                (sibling) => sibling.tagName === current.tagName,
+              )
+            : [];
+          const position =
+            siblings.length > 1 ? `:nth-of-type(${siblings.indexOf(current) + 1})` : '';
+          parts.unshift(`${current.tagName.toLowerCase()}${position}`);
+          current = current.parentElement;
+        }
+        return parts.join(' > ') || element.tagName.toLowerCase();
+      };
+      const id = element.getAttribute('data-photolab-a11y-target');
+      const style = getComputedStyle(element);
+      const baseline = id ? window.__photolabA11yKeyboard?.baselines[id] : null;
+      return {
+        id,
+        selector: cssPath(element),
+        name:
+          element.getAttribute('aria-label') ??
+          element.getAttribute('title') ??
+          element.textContent?.trim().replace(/\s+/gu, ' ').slice(0, 120) ??
+          '',
+        visibleFocusIndicator: Boolean(
+          baseline &&
+          (style.outline !== baseline.outline || style.boxShadow !== baseline.boxShadow),
+        ),
+      };
+    });
+    if (!state) continue;
+    if (seenFocusOrder.has(state.selector)) break;
+    seenFocusOrder.add(state.selector);
+    focusedChain.push(state);
+    if (state.id)
+      focused.set(state.id, {
+        visibleFocusIndicator:
+          (focused.get(state.id)?.visibleFocusIndicator ?? false) || state.visibleFocusIndicator,
+      });
+  }
+
+  const summarize = (group) => {
+    const controls = prepared.targets.filter((target) => target.group === group);
+    return {
+      total: controls.length,
+      unreachable: controls.filter((control) => !focused.has(control.id)),
+      withoutFocusIndicator: controls.filter(
+        (control) => focused.has(control.id) && !focused.get(control.id).visibleFocusIndicator,
+      ),
+    };
+  };
+  await cleanupKeyboardAudit(page);
+  return {
+    viewport,
+    surface,
+    panel: prepared.panel,
+    duplicateOf: null,
+    maxSteps: prepared.maxSteps,
+    focusedChain,
+    ribbon: summarize('ribbon'),
+    panelControls: summarize('panel'),
+  };
+}
+
+async function cleanupKeyboardAudit(page) {
+  await page.evaluate(() => {
+    const visible = (element) => {
+      const style = getComputedStyle(element);
+      const box = element.getBoundingClientRect();
+      return (
+        style.visibility !== 'hidden' && style.display !== 'none' && box.width > 0 && box.height > 0
+      );
+    };
+    const dialog = [...document.querySelectorAll('[role="dialog"]')].filter(visible).at(-1);
+    if (dialog) {
+      const first = [
+        ...dialog.querySelectorAll('button, [role="button"], input, select, textarea, [tabindex]'),
+      ].find(
+        (element) => visible(element) && !element.matches(':disabled, [aria-disabled="true"]'),
+      );
+      if (first instanceof HTMLElement) first.focus();
+    } else if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  });
+  await page.evaluate(() => {
+    for (const position of window.__photolabA11yKeyboard?.scrollPositions ?? []) {
+      position.element.scrollTop = position.top;
+      position.element.scrollLeft = position.left;
+    }
+    document
+      .querySelectorAll('[data-photolab-a11y-target]')
+      .forEach((element) => element.removeAttribute('data-photolab-a11y-target'));
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    delete window.__photolabA11yKeyboard;
+  });
+}
+
+function formatImpactCounts(counts) {
+  return ['critical', 'serious', 'moderate', 'minor', 'unknown']
+    .map((impact) => `${impact}=${counts[impact]}`)
+    .join(', ');
+}
+
+function renderA11yMarkdown(report) {
+  const lines = [
+    '# PhotoLab accessibility audit',
+    '',
+    report.enabled
+      ? `axe-core ${report.axeVersion} · ${formatImpactCounts(report.counts)} · ${report.blockingCount} unexcepted blocking findings`
+      : 'Accessibility scanning was disabled with `--no-a11y`.',
+    '',
+    'Rules: WCAG 2.1 A/AA colour contrast, labels, button/link names and ARIA validity, plus the axe `focus-order-semantics` best-practice rule.',
+    '',
+    'Excluded: `region`, because a persistent Electron application shell is not an article-style browser document; other WCAG rules are outside this bounded first shell baseline.',
+    '',
+  ];
+  if (!report.enabled) return `${lines.join('\n')}\n`;
+  lines.push(
+    '| Viewport | Surface | Critical | Serious | Moderate | Minor |',
+    '| --- | --- | ---: | ---: | ---: | ---: |',
+  );
+  for (const surface of report.surfaces)
+    lines.push(
+      `| ${surface.viewport} | ${surface.surface} | ${surface.counts.critical} | ${surface.counts.serious} | ${surface.counts.moderate} | ${surface.counts.minor} |`,
+    );
+  const keyboardFindings = report.keyboard.filter(
+    (audit) =>
+      !audit.duplicateOf &&
+      (audit.ribbon.unreachable.length > 0 ||
+        audit.ribbon.withoutFocusIndicator.length > 0 ||
+        audit.panelControls.unreachable.length > 0 ||
+        audit.panelControls.withoutFocusIndicator.length > 0),
+  );
+  lines.push('', '## Keyboard reachability', '');
+  if (keyboardFindings.length === 0) lines.push('No keyboard reachability findings.');
+  else
+    for (const audit of keyboardFindings)
+      lines.push(
+        `- ${audit.viewport}/${audit.surface}: ribbon unreachable ${audit.ribbon.unreachable.length}, ribbon focus indicator ${audit.ribbon.withoutFocusIndicator.length}, panel unreachable ${audit.panelControls.unreachable.length}, panel focus indicator ${audit.panelControls.withoutFocusIndicator.length}.`,
+      );
+  lines.push('', '## Tracked exceptions', '');
+  if (report.exceptions.length === 0) lines.push('None.');
+  else
+    for (const exception of report.exceptions)
+      lines.push(
+        `- ${exception.ruleId} at \`${exception.selectorPattern}\`: ${exception.reason} (${exception.owner}; review ${exception.reviewDate})`,
+      );
+  return `${lines.join('\n')}\n`;
 }
 
 function slug(value) {
@@ -484,7 +935,7 @@ function mockBridgeSource() {
     const batch={photos:[photo(1),photo(2)],warnings:[]};
     const projectImage=(number)=>({entityId:'camera-'+number,name:'DJI_VISUAL_000'+number+'.JPG',metadataObjectHash:hash,metadata:{schemaVersion:1,sourceObjectHash:photo(number).sha256,transformationObjectHash:hash,inspectedPhoto:photo(number),projectedReference:{sourceLatitudeDegrees:47.6657+number*.0001,sourceLongitudeDegrees:10.3414+number*.0001,sourceHeightMeters:783,easting:4375560+number,northing:5281257+number,transformedHeightMeters:735,transformationDecisionSha256:hash},statusTags:['rtkFixed']}});
     const discovery={candidates:[{operationId:'visual-operation',name:'Explicit offline coordinate operation',kind:'general',projPipeline:'+proj=noop',areaOfUse:{westLongitude:-180,southLatitude:-90,eastLongitude:180,northLatitude:90},expectedAccuracyMm:1,ballpark:false,bestAvailable:true,requiredGrids:[]}],audit:{versions:{projVersion:'9.6.0',epsgDatabaseVersion:'12.004'}},warnings:[]};
-    const preview={header:['Name','East','North','Height'],dataRowCount:2,validPointCount:2,previewRows:[{sourceLine:2,point:{name:'GCP-01',coordinate:{eastMeters:4375560.1,northMeters:5281257.2,heightMeters:735.3},role:'controlXyz'}},{sourceLine:3,point:{name:'GCP-02',coordinate:{eastMeters:4375572.4,northMeters:5281268.5,heightMeters:736.1},role:'checkpointXyz'}}],errors:[]};
+    const preview={header:['Name','East','North','Height'],dataRowCount:2,validPointCount:2,previewRows:[{sourceLine:2,point:{name:'GCP-01',coordinate:{eastMeters:4375560.1,northMeters:5281257.2,heightMeters:735.3},role:'controlXyz',uncertainty:{horizontalStddevMeters:.02,heightStddevMeters:.03},code:'BP'},uncertaintyOrigin:{eastUsedDefault:true,northUsedDefault:true,heightUsedDefault:true}},{sourceLine:3,point:{name:'GCP-02',coordinate:{eastMeters:4375572.4,northMeters:5281268.5,heightMeters:736.1},role:'checkpointXyz',uncertainty:{horizontalStddevMeters:.02,heightStddevMeters:.03},code:'BP'},uncertaintyOrigin:{eastUsedDefault:true,northUsedDefault:true,heightUsedDefault:true}}],errors:[]};
     const productDataset={entityId:'sparse-1',kind:'sparse',relativePath:'products/sparse/metadata.json',format:'potreeV2',visible:false,boundsMin:[4375550,5281247,730],boundsMax:[4375570,5281267,740],renderOffset:[4375560,5281257,735],pointCount:10};
     const call=async(method)=>{
       if(method==='app.negotiate')return {selectedVersion:1,serverName:'visual-sidecar',serverVersion:'visual',sessionId:'visual-app-session',capabilities:['io.formats.read','io.probe','registration.import']};
@@ -504,7 +955,7 @@ function mockBridgeSource() {
     };
     Object.defineProperty(window,'himmelcad',{value:{
       version:'visual',platform:'linux',
-      window:{minimize:async()=>{},maximizeToggle:async()=>false,close:async()=>{},isMaximized:async()=>false,onMaximizeChange:()=>()=>{},onCloseGuardRequested:()=>()=>{},respondToCloseGuard:async()=>true},
+      window:{minimize:async()=>{},maximizeToggle:async()=>{},close:async()=>{},retryClose:async()=>{},cancelClose:async()=>{},forceQuit:async()=>{},isMaximized:async()=>false,onMaximizeChange:()=>()=>{},onCloseBlocked:()=>()=>{}},
       sidecar:{status:async()=>true,call,onStderr:(listener)=>{window.__photolabVisualStderr=listener;return ()=>{window.__photolabVisualStderr=undefined}}},
       agentHarness:{request:async()=>({kind:'unavailable',reason:'visual audit mock'}),subscribe:()=>()=>{},subscribeProductApprovals:()=>()=>{},respondProductApproval:async()=>{}},
       providerCredentials:{status:async()=>({ok:true,value:{provider:'codex',state:'missing',persistentSupported:false,sessionOverride:false}}),replace:async()=>({ok:false,error:{code:'unsupported',message:'Unavailable in visual audit'}}),clearSession:async()=>({ok:true,value:{provider:'codex',state:'missing',persistentSupported:false,sessionOverride:false}}),delete:async()=>({ok:true,value:{provider:'codex',state:'missing',persistentSupported:false,sessionOverride:false}})},

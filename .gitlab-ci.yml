@@ -113,18 +113,24 @@ photolab:visual:
         - apps/photolab/**/*
         - packages/@himmelcad/ui/**/*
         - scripts/photolab-visual-regression.mjs
+        - scripts/lib/a11y-audit.mjs
+        - scripts/lib/a11y-audit.test.mjs
         - scripts/lib/png-compare.mjs
+        - apps/photolab/test/a11y-exceptions.json
   script:
+    - node --test scripts/lib/a11y-audit.test.mjs
     - |
       if [ "$PHOTOLAB_VISUAL_BASELINES" = 'compare' ]; then
-        pnpm photolab:test:visual:baselines
+        pnpm photolab:test:visual:baselines -- --a11y
       else
-        pnpm photolab:test:visual
+        pnpm photolab:test:visual -- --a11y
       fi
   artifacts:
     when: always
     paths:
       - .build/visual-regression/
+      - .build/visual-regression/a11y-report.json
+      - .build/visual-regression/a11y-summary.md
     expire_in: 1 week
 
 node:lint:
