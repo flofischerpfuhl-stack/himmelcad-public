@@ -81,7 +81,8 @@ export function detectGcpColumns(headers: readonly string[]): Partial<GcpColumnS
   return detected;
 }
 
-export function uncertaintyOriginLabel(origin: GcpUncertaintyOrigin): string {
+export function uncertaintyOriginLabel(origin: GcpUncertaintyOrigin | undefined): string {
+  if (!origin) return 'default σ';
   const defaults = [origin.eastUsedDefault, origin.northUsedDefault, origin.heightUsedDefault];
   if (defaults.every(Boolean)) return 'default σ';
   if (defaults.every((value) => !value)) return 'parsed σ';
