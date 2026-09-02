@@ -67,10 +67,11 @@ use himmelcad_io::{
 use crate::project_runtime::{
     AlignmentMergePreflightParams, AppendJournalParams, CancelArchiveParams, CancelImageMaskParams,
     ConfirmCaptureGroupParams, CreateAlignmentMergeParams, CreateCaptureGroupParams,
-    CreateProcessingSetParams, CreateProjectParams, EditImageMaskParams, FinishJournalParams,
-    MoveEntityParams, OpenProjectParams, ProductLineage, ProjectRuntime, PublishedRasterKind,
+    CreateProcessingSetParams, CreateProjectParams, DuplicateCaptureGroupDraftParams,
+    EditImageMaskParams, FinishJournalParams, MergeCaptureGroupProposalsParams, MoveEntityParams,
+    OpenProjectParams, ProductLineage, ProjectRuntime, PublishedRasterKind,
     RemoveCameraImagesParams, RenameEntityParams, SaveProjectAsParams, SetEntityVisibilityParams,
-    UpdateCalibrationGroupIntrinsicsParams,
+    UpdateCalibrationGroupInitialCalibrationParams, UpdateCalibrationGroupIntrinsicsParams,
 };
 use himmelcad_sidecar::alignment_merge_runtime::{
     build_shared_control_merge, resume_shared_control_merge, resume_solved_merge,
@@ -3303,6 +3304,14 @@ async fn handle_project_rpc(
             )
             .await
         }
+        "photolab.project.calibrationGroup.setInitialCalibration" => {
+            rpc_blocking_with_params::<UpdateCalibrationGroupInitialCalibrationParams, _, _>(
+                req.id,
+                req.params,
+                move |params| projects.update_calibration_group_initial_calibration(params),
+            )
+            .await
+        }
         "photolab.project.captureGroup.create" => {
             rpc_blocking_with_params::<CreateCaptureGroupParams, _, _>(
                 req.id,
@@ -3316,6 +3325,22 @@ async fn handle_project_rpc(
                 req.id,
                 req.params,
                 move |params| projects.confirm_capture_group(params),
+            )
+            .await
+        }
+        "photolab.project.captureGroup.duplicateAsDraft" => {
+            rpc_blocking_with_params::<DuplicateCaptureGroupDraftParams, _, _>(
+                req.id,
+                req.params,
+                move |params| projects.create_capture_group_draft_from(params),
+            )
+            .await
+        }
+        "photolab.project.captureGroup.mergeProposals" => {
+            rpc_blocking_with_params::<MergeCaptureGroupProposalsParams, _, _>(
+                req.id,
+                req.params,
+                move |params| projects.merge_capture_group_proposals(params),
             )
             .await
         }

@@ -14,12 +14,12 @@ assert.deepEqual(groups, [
   {
     name: 'Before landing',
     cameraEntityIds: ['camera-a', 'camera-b'],
-    groupingBasis: 'missionAutofocus',
+    groupingBasis: 'manual',
   },
   {
     name: 'After landing',
     cameraEntityIds: ['camera-c'],
-    groupingBasis: 'missionAutofocus',
+    groupingBasis: 'manual',
   },
 ]);
 assert.equal(new Set(groups.flatMap((group) => group.cameraEntityIds)).size, cameras.length);

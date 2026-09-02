@@ -2606,7 +2606,11 @@ fn shared_group_calibration(groups: &[CameraExtractionGroup]) -> Option<&ColmapC
         .then_some(calibration)
 }
 
-fn colmap_camera_model_and_params(calibration: &ColmapCalibrationSeed) -> (&'static str, String) {
+/// Materializes a validated project calibration seed into COLMAP's camera model and parameter
+/// order. Kept public so project-domain tests can verify the complete seed hand-off.
+pub fn colmap_camera_model_and_params(
+    calibration: &ColmapCalibrationSeed,
+) -> (&'static str, String) {
     if let Some(full) = &calibration.full_brown_calibration {
         // COLMAP FULL_OPENCV order:
         // fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, k5, k6.

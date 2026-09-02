@@ -146,15 +146,17 @@ pub struct DjiAttitudeDegrees {
     pub roll: Option<f64>,
 }
 
-/// Provenance of an immutable embedded camera calibration.
+/// Provenance of an immutable full Brown-Conrady camera calibration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DjiCalibrationProvenance {
     /// DJI `drone-dji:DewarpData` Brown-Conrady calibration stored in XMP.
     DewarpData,
+    /// Brown-Conrady parameters entered from a laboratory calibration report.
+    LabCalibration,
 }
 
-/// Full Brown-Conrady calibration decoded from DJI XMP.
+/// Full Brown-Conrady calibration decoded from DJI XMP or entered from a lab report.
 ///
 /// DJI stores principal-point offsets relative to the image center. PhotoLab
 /// persists absolute pixel coordinates so all downstream consumers use the
@@ -170,6 +172,7 @@ pub struct DjiBrownConradyCalibration {
     pub radial_distortion: [f64; 3],
     /// `p1`, `p2` tangential coefficients.
     pub tangential_distortion: [f64; 2],
+    /// ISO date for embedded DJI calibration, empty when no date accompanies a lab report.
     pub calibration_date: String,
     pub provenance: DjiCalibrationProvenance,
 }
@@ -197,7 +200,10 @@ impl DjiBrownConradyCalibration {
                 .iter()
                 .chain(self.tangential_distortion.iter())
                 .all(|value| value.is_finite())
-            && valid_iso_date(&self.calibration_date)
+            && match self.provenance {
+                DjiCalibrationProvenance::DewarpData => valid_iso_date(&self.calibration_date),
+                DjiCalibrationProvenance::LabCalibration => self.calibration_date.is_empty(),
+            }
     }
 }
 

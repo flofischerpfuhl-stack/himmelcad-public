@@ -29,7 +29,7 @@ use himmelcad_core::photolab::AlignmentQualityProfile;
 use himmelcad_core::photolab_crs::{CrsDefinition, FrozenImportTransformation};
 use himmelcad_core::photolab_gcp::GcpOptimizationSnapshot;
 use himmelcad_core::photolab_gcp_optimization::GcpIntrinsicsPolicy;
-use himmelcad_core::photolab_images::DjiBrownConradyCalibration;
+use himmelcad_core::photolab_images::{DjiBrownConradyCalibration, ImageDimensions};
 use himmelcad_core::photolab_jobs::{
     CancellationToken, PhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState,
 };
@@ -284,6 +284,12 @@ pub struct CaptureGroupRecord {
     pub automatic: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<String>,
+    #[serde(default)]
+    pub superseded: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by_capture_group_id: Option<EntityId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supersedes_capture_group_id: Option<EntityId>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -294,6 +300,8 @@ pub struct CreateCalibrationGroupInput {
     pub grouping_basis: CameraCalibrationGroupingBasis,
     #[serde(default)]
     pub initial_calibration: Option<CameraCalibrationSeed>,
+    #[serde(default)]
+    pub intrinsics_policy: GcpIntrinsicsPolicy,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -312,6 +320,27 @@ pub struct ConfirmCaptureGroupParams {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DuplicateCaptureGroupDraftParams {
+    pub capture_group_id: EntityId,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeCaptureGroupProposalsParams {
+    pub first_capture_group_id: EntityId,
+    pub second_capture_group_id: EntityId,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCalibrationGroupInitialCalibrationParams {
+    pub calibration_group_id: EntityId,
+    pub initial_calibration: CameraCalibrationSeed,
+    pub intrinsics_policy: GcpIntrinsicsPolicy,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateCalibrationGroupIntrinsicsParams {
     pub calibration_group_id: EntityId,
     pub intrinsics_policy: GcpIntrinsicsPolicy,
@@ -323,6 +352,7 @@ struct AutomaticCalibrationGroup {
     camera_entity_ids: Vec<EntityId>,
     grouping_basis: CameraCalibrationGroupingBasis,
     initial_calibration: Option<CameraCalibrationSeed>,
+    intrinsics_policy: GcpIntrinsicsPolicy,
     evidence: Vec<String>,
 }
 
@@ -2004,26 +2034,29 @@ impl ProjectRuntime {
             .iter()
             .map(|id| id.0.as_str())
             .collect::<std::collections::BTreeSet<_>>();
+        let effective_capture_ids = effective_capture_group_ids(session)?;
         let mut capture_group_ids = Vec::new();
         let mut calibration_group_ids = Vec::new();
         for entity in session.manifest.entities.values() {
             if entity.kind == EntityKind::CaptureGroup {
                 let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
                 let capture: CaptureGroupRecord = serde_json::from_slice(&bytes)?;
-                if capture
-                    .camera_entity_ids
-                    .iter()
-                    .all(|id| camera_set.contains(id.0.as_str()))
+                if effective_capture_ids.contains(&capture.entity_id.0)
+                    && capture
+                        .camera_entity_ids
+                        .iter()
+                        .all(|id| camera_set.contains(id.0.as_str()))
                 {
                     capture_group_ids.push(capture.entity_id);
                 }
             } else if entity.kind == EntityKind::CameraCalibrationGroup {
                 let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
                 let calibration: CameraCalibrationGroupRecord = serde_json::from_slice(&bytes)?;
-                if calibration
-                    .camera_entity_ids
-                    .iter()
-                    .all(|id| camera_set.contains(id.0.as_str()))
+                if effective_capture_ids.contains(&calibration.capture_group_id.0)
+                    && calibration
+                        .camera_entity_ids
+                        .iter()
+                        .all(|id| camera_set.contains(id.0.as_str()))
                 {
                     calibration_group_ids.push(calibration.entity_id);
                 }
@@ -2094,11 +2127,36 @@ impl ProjectRuntime {
     }
 
     pub fn list_capture_groups(&self) -> Result<Vec<CaptureGroupRecord>> {
-        self.list_records_of_kind(EntityKind::CaptureGroup)
+        Ok(self
+            .list_records_of_kind::<CaptureGroupRecord>(EntityKind::CaptureGroup)?
+            .into_iter()
+            .filter(|record| !record.superseded)
+            .collect())
     }
 
     pub fn list_calibration_groups(&self) -> Result<Vec<CameraCalibrationGroupRecord>> {
-        self.list_records_of_kind(EntityKind::CameraCalibrationGroup)
+        let guard = self.session.lock().expect("project session mutex poisoned");
+        let session = guard.as_ref().context("no project is open")?;
+        let active_capture_ids = active_capture_group_ids(session)?;
+        session
+            .manifest
+            .entities
+            .values()
+            .filter(|entity| entity.kind == EntityKind::CameraCalibrationGroup)
+            .map(|entity| {
+                read_verified_object(&session.working_path, &entity.version_hash)
+                    .and_then(|bytes| serde_json::from_slice(&bytes).map_err(anyhow::Error::from))
+            })
+            .filter_map(
+                |result: Result<CameraCalibrationGroupRecord>| match result {
+                    Ok(record) if active_capture_ids.contains(&record.capture_group_id.0) => {
+                        Some(Ok(record))
+                    }
+                    Ok(_) => None,
+                    Err(error) => Some(Err(error)),
+                },
+            )
+            .collect()
     }
 
     fn ensure_automatic_capture_groups(&self) -> Result<OpenPhotolabProjectResult> {
@@ -2168,16 +2226,359 @@ impl ProjectRuntime {
             affected.push(calibration_id.clone());
             after_refs.push(hash);
         }
+        if let Some(source_id) = capture.supersedes_capture_group_id.as_ref() {
+            let source_entity = candidate
+                .entities
+                .get(&source_id.0)
+                .context("superseded capture group disappeared")?;
+            anyhow::ensure!(
+                source_entity.kind == EntityKind::CaptureGroup,
+                "superseded entity is not a capture group"
+            );
+            let source_bytes =
+                read_verified_object(&session.working_path, &source_entity.version_hash)?;
+            let mut source: CaptureGroupRecord = serde_json::from_slice(&source_bytes)?;
+            anyhow::ensure!(
+                source.review_status == CaptureGroupReviewStatus::Confirmed && !source.superseded,
+                "source capture group is no longer active"
+            );
+            anyhow::ensure!(
+                source.camera_entity_ids == capture.camera_entity_ids,
+                "replacement draft changed the frozen camera membership"
+            );
+            source.schema_version = 2;
+            source.superseded = true;
+            source.superseded_by_capture_group_id = Some(capture.entity_id.clone());
+            let source_hash =
+                put_project_object(&session.working_path, &serde_json::to_vec(&source)?)?;
+            candidate
+                .entities
+                .get_mut(&source_id.0)
+                .context("superseded capture group disappeared")?
+                .version_hash = source_hash.clone();
+            let images = unique_entity_of_kind(&candidate, EntityKind::ImageCollection, "images")?;
+            let parent = candidate
+                .entities
+                .get_mut(&images.0)
+                .context("image collection disappeared")?;
+            parent.children.retain(|id| id != source_id);
+            parent.version_hash = ObjectHash::of_bytes(&serde_json::to_vec(&parent.children)?);
+            affected.push(source_id.clone());
+            after_refs.push(source_hash);
+            after_refs.push(parent.version_hash.clone());
+        }
         commit_domain_entity_change(
             session,
             candidate,
             unix_ms()?,
-            "PhotolabConfirmAutomaticCaptureGroup",
-            serde_json::json!({"captureGroupId": capture.entity_id}),
+            "PhotolabConfirmCaptureGroup",
+            serde_json::json!({
+                "captureGroupId": capture.entity_id,
+                "supersedesCaptureGroupId": capture.supersedes_capture_group_id,
+            }),
             affected,
             after_refs,
-            "Automatic capture and calibration grouping confirmed",
+            "Capture and calibration grouping confirmed",
         )
+    }
+
+    pub fn update_calibration_group_initial_calibration(
+        &self,
+        params: UpdateCalibrationGroupInitialCalibrationParams,
+    ) -> Result<OpenPhotolabProjectResult> {
+        validate_calibration_seed(&params.initial_calibration)?;
+        anyhow::ensure!(
+            matches!(
+                params.intrinsics_policy,
+                GcpIntrinsicsPolicy::Fixed | GcpIntrinsicsPolicy::Prior { .. }
+            ),
+            "lab calibration policy must be fixed or prior"
+        );
+        let mut guard = self.session.lock().expect("project session mutex poisoned");
+        let session = guard.as_mut().context("no project is open")?;
+        ensure_writable(session)?;
+        let snapshot = session
+            .manifest
+            .entities
+            .get(&params.calibration_group_id.0)
+            .context("unknown calibration group")?;
+        anyhow::ensure!(
+            snapshot.kind == EntityKind::CameraCalibrationGroup,
+            "entity is not a camera calibration group"
+        );
+        let bytes = read_verified_object(&session.working_path, &snapshot.version_hash)?;
+        let mut calibration: CameraCalibrationGroupRecord = serde_json::from_slice(&bytes)?;
+        anyhow::ensure!(
+            active_capture_group_ids(session)?.contains(&calibration.capture_group_id.0),
+            "retired calibration groups are immutable"
+        );
+        anyhow::ensure!(
+            calibration.review_status == CaptureGroupReviewStatus::NeedsReview,
+            "confirmed calibration groups are immutable; duplicate the capture group first"
+        );
+        validate_seed_dimensions_for_cameras(
+            session,
+            &params.initial_calibration,
+            &calibration.camera_entity_ids,
+        )?;
+        calibration.schema_version = 2;
+        calibration.initial_calibration = Some(params.initial_calibration);
+        calibration.intrinsics_policy = params.intrinsics_policy;
+        let hash = put_project_object(&session.working_path, &serde_json::to_vec(&calibration)?)?;
+        let mut candidate = session.manifest.clone();
+        candidate
+            .entities
+            .get_mut(&calibration.entity_id.0)
+            .context("calibration group disappeared")?
+            .version_hash = hash.clone();
+        commit_domain_entity_change(
+            session,
+            candidate,
+            unix_ms()?,
+            "PhotolabSetCalibrationGroupInitialCalibration",
+            serde_json::json!({
+                "calibrationGroupId": calibration.entity_id,
+                "intrinsicsPolicy": calibration.intrinsics_policy,
+            }),
+            vec![calibration.entity_id],
+            vec![hash],
+            "Initial lab calibration frozen on draft group",
+        )
+    }
+
+    pub fn create_capture_group_draft_from(
+        &self,
+        params: DuplicateCaptureGroupDraftParams,
+    ) -> Result<OpenPhotolabProjectResult> {
+        let mut guard = self.session.lock().expect("project session mutex poisoned");
+        let session = guard.as_mut().context("no project is open")?;
+        ensure_writable(session)?;
+        let source_entity = session
+            .manifest
+            .entities
+            .get(&params.capture_group_id.0)
+            .context("unknown capture group")?;
+        anyhow::ensure!(
+            source_entity.kind == EntityKind::CaptureGroup,
+            "entity is not a capture group"
+        );
+        let source_bytes =
+            read_verified_object(&session.working_path, &source_entity.version_hash)?;
+        let source: CaptureGroupRecord = serde_json::from_slice(&source_bytes)?;
+        anyhow::ensure!(
+            source.review_status == CaptureGroupReviewStatus::Confirmed && !source.superseded,
+            "only an active confirmed capture group can be duplicated"
+        );
+        anyhow::ensure!(
+            !capture_group_records(session)?.iter().any(|candidate| {
+                !candidate.superseded
+                    && candidate.review_status == CaptureGroupReviewStatus::NeedsReview
+                    && candidate.supersedes_capture_group_id.as_ref() == Some(&source.entity_id)
+            }),
+            "this capture group already has a replacement draft"
+        );
+        let now = unix_ms()?;
+        let capture_id = EntityId(format!(
+            "{}:capture-group:{}",
+            session.manifest.project_id,
+            unique_id("capture-draft", now)
+        ));
+        let mut calibration_records = Vec::new();
+        for (index, calibration_id) in source.calibration_group_ids.iter().enumerate() {
+            let entity = session
+                .manifest
+                .entities
+                .get(&calibration_id.0)
+                .context("source calibration group disappeared")?;
+            let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
+            let calibration: CameraCalibrationGroupRecord = serde_json::from_slice(&bytes)?;
+            calibration_records.push(CameraCalibrationGroupRecord {
+                schema_version: 2,
+                entity_id: EntityId(format!(
+                    "{}:calibration-group:{}:{}",
+                    session.manifest.project_id,
+                    unique_id("calibration-draft", now),
+                    index
+                )),
+                capture_group_id: capture_id.clone(),
+                name: calibration.name,
+                camera_entity_ids: calibration.camera_entity_ids,
+                membership_sha256: calibration.membership_sha256,
+                grouping_basis: calibration.grouping_basis,
+                review_status: CaptureGroupReviewStatus::NeedsReview,
+                automatic: false,
+                evidence: calibration.evidence,
+                initial_calibration: calibration.initial_calibration,
+                intrinsics_policy: calibration.intrinsics_policy,
+            });
+        }
+        let capture = CaptureGroupRecord {
+            schema_version: 2,
+            entity_id: capture_id.clone(),
+            name: format!("{} draft", source.name),
+            camera_entity_ids: source.camera_entity_ids,
+            membership_sha256: source.membership_sha256,
+            calibration_group_ids: calibration_records
+                .iter()
+                .map(|record| record.entity_id.clone())
+                .collect(),
+            review_status: CaptureGroupReviewStatus::NeedsReview,
+            automatic: false,
+            evidence: vec![format!("Drafted from {}", source.name)],
+            superseded: false,
+            superseded_by_capture_group_id: None,
+            supersedes_capture_group_id: Some(source.entity_id),
+        };
+        let images =
+            unique_entity_of_kind(&session.manifest, EntityKind::ImageCollection, "images")?;
+        let mut candidate = session.manifest.clone();
+        let capture_hash =
+            put_project_object(&session.working_path, &serde_json::to_vec(&capture)?)?;
+        candidate.entities.insert(
+            capture_id.0.clone(),
+            EntitySnapshot {
+                id: capture_id.clone(),
+                kind: EntityKind::CaptureGroup,
+                name: capture.name.clone(),
+                parent: Some(images.clone()),
+                children: capture.calibration_group_ids.clone(),
+                visibility: VisibilityState::default(),
+                version_hash: capture_hash.clone(),
+                bounds: None,
+            },
+        );
+        let mut hashes = vec![capture_hash];
+        for record in &calibration_records {
+            let hash = put_project_object(&session.working_path, &serde_json::to_vec(record)?)?;
+            hashes.push(hash.clone());
+            candidate.entities.insert(
+                record.entity_id.0.clone(),
+                EntitySnapshot {
+                    id: record.entity_id.clone(),
+                    kind: EntityKind::CameraCalibrationGroup,
+                    name: record.name.clone(),
+                    parent: Some(capture_id.clone()),
+                    children: Vec::new(),
+                    visibility: VisibilityState::default(),
+                    version_hash: hash,
+                    bounds: None,
+                },
+            );
+        }
+        let parent = candidate
+            .entities
+            .get_mut(&images.0)
+            .context("image collection disappeared")?;
+        parent.children.push(capture_id.clone());
+        parent.children.sort_by(|left, right| left.0.cmp(&right.0));
+        parent.version_hash = ObjectHash::of_bytes(&serde_json::to_vec(&parent.children)?);
+        hashes.push(parent.version_hash.clone());
+        commit_domain_entity_change(
+            session,
+            candidate,
+            now,
+            "PhotolabDuplicateCaptureGroupAsDraft",
+            serde_json::to_value(&capture)?,
+            std::iter::once(capture_id)
+                .chain(capture.calibration_group_ids.iter().cloned())
+                .collect(),
+            hashes,
+            "Confirmed capture group duplicated as an immutable replacement draft",
+        )
+    }
+
+    pub fn merge_capture_group_proposals(
+        &self,
+        params: MergeCaptureGroupProposalsParams,
+    ) -> Result<OpenPhotolabProjectResult> {
+        anyhow::ensure!(
+            params.first_capture_group_id != params.second_capture_group_id,
+            "select two different automatic proposals"
+        );
+        let mut guard = self.session.lock().expect("project session mutex poisoned");
+        let session = guard.as_mut().context("no project is open")?;
+        ensure_writable(session)?;
+        let mut captures = Vec::new();
+        let mut replaced = BTreeSet::new();
+        for id in [
+            &params.first_capture_group_id,
+            &params.second_capture_group_id,
+        ] {
+            let entity = session
+                .manifest
+                .entities
+                .get(&id.0)
+                .context("automatic capture-group proposal disappeared")?;
+            let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
+            let capture: CaptureGroupRecord = serde_json::from_slice(&bytes)?;
+            anyhow::ensure!(
+                capture.automatic
+                    && capture.review_status == CaptureGroupReviewStatus::NeedsReview
+                    && !capture.superseded,
+                "only active automatic proposals awaiting review can be merged"
+            );
+            replaced.insert(id.0.clone());
+            captures.push(capture);
+        }
+        let mut camera_entity_ids = captures
+            .iter()
+            .flat_map(|capture| capture.camera_entity_ids.iter().cloned())
+            .collect::<Vec<_>>();
+        sort_unique_entity_ids(&mut camera_entity_ids, "merged automatic proposal")?;
+        let mut calibration_groups = Vec::new();
+        let mut assigned = Vec::new();
+        for capture in &captures {
+            for calibration_id in &capture.calibration_group_ids {
+                let entity = session
+                    .manifest
+                    .entities
+                    .get(&calibration_id.0)
+                    .context("automatic calibration proposal disappeared")?;
+                let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
+                let calibration: CameraCalibrationGroupRecord = serde_json::from_slice(&bytes)?;
+                anyhow::ensure!(
+                    calibration.automatic
+                        && calibration.review_status == CaptureGroupReviewStatus::NeedsReview,
+                    "automatic calibration proposal is no longer replaceable"
+                );
+                assigned.extend(calibration.camera_entity_ids.iter().cloned());
+                calibration_groups.push(AutomaticCalibrationGroup {
+                    name: calibration.name,
+                    camera_entity_ids: calibration.camera_entity_ids,
+                    grouping_basis: calibration.grouping_basis,
+                    initial_calibration: calibration.initial_calibration,
+                    intrinsics_policy: calibration.intrinsics_policy,
+                    evidence: calibration.evidence,
+                });
+            }
+        }
+        assigned.sort_by(|left, right| left.0.cmp(&right.0));
+        anyhow::ensure!(
+            assigned == camera_entity_ids,
+            "merged automatic calibration groups must partition the two proposals exactly"
+        );
+        let mut evidence = captures
+            .iter()
+            .flat_map(|capture| capture.evidence.iter().cloned())
+            .collect::<Vec<_>>();
+        evidence.push("Merged from two adjacent automatic proposals".into());
+        evidence.sort();
+        evidence.dedup();
+        let combined_name = format!("{} + {}", captures[0].name, captures[1].name)
+            .chars()
+            .take(128)
+            .collect();
+        Self::persist_automatic_capture_groups_replacing(
+            session,
+            vec![AutomaticCaptureGroup {
+                name: combined_name,
+                camera_entity_ids,
+                calibration_groups,
+                evidence,
+            }],
+            &replaced,
+        )?;
+        Ok(session.result())
     }
 
     pub fn update_calibration_group_intrinsics(
@@ -2198,6 +2599,10 @@ impl ProjectRuntime {
         );
         let bytes = read_verified_object(&session.working_path, &snapshot.version_hash)?;
         let mut calibration: CameraCalibrationGroupRecord = serde_json::from_slice(&bytes)?;
+        anyhow::ensure!(
+            active_capture_group_ids(session)?.contains(&calibration.capture_group_id.0),
+            "retired calibration groups are immutable"
+        );
         calibration.schema_version = 2;
         calibration.intrinsics_policy = params.intrinsics_policy;
         let hash = put_project_object(&session.working_path, &serde_json::to_vec(&calibration)?)?;
@@ -2233,6 +2638,7 @@ impl ProjectRuntime {
             .collect::<std::collections::BTreeSet<_>>();
         let mut assigned = std::collections::BTreeSet::new();
         let mut result = Vec::new();
+        let effective_capture_ids = effective_capture_group_ids(session)?;
         for entity in session
             .manifest
             .entities
@@ -2241,6 +2647,9 @@ impl ProjectRuntime {
         {
             let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
             let group: CameraCalibrationGroupRecord = serde_json::from_slice(&bytes)?;
+            if !effective_capture_ids.contains(&group.capture_group_id.0) {
+                continue;
+            }
             let members = group
                 .camera_entity_ids
                 .iter()
@@ -2320,6 +2729,14 @@ impl ProjectRuntime {
         session: &mut ProjectSession,
         groups: Vec<AutomaticCaptureGroup>,
     ) -> Result<()> {
+        Self::persist_automatic_capture_groups_replacing(session, groups, &BTreeSet::new())
+    }
+
+    fn persist_automatic_capture_groups_replacing(
+        session: &mut ProjectSession,
+        groups: Vec<AutomaticCaptureGroup>,
+        replaced_capture_ids: &BTreeSet<String>,
+    ) -> Result<()> {
         if groups.is_empty() {
             return Ok(());
         }
@@ -2327,6 +2744,13 @@ impl ProjectRuntime {
             unique_entity_of_kind(&session.manifest, EntityKind::ImageCollection, "images")?;
         let now = unix_ms()?;
         let mut candidate = session.manifest.clone();
+        for capture_id in replaced_capture_ids {
+            if let Some(capture) = candidate.entities.remove(capture_id) {
+                for calibration_id in capture.children {
+                    candidate.entities.remove(&calibration_id.0);
+                }
+            }
+        }
         let mut affected = Vec::new();
         let mut after_refs = Vec::new();
         let mut capture_ids = Vec::new();
@@ -2359,11 +2783,11 @@ impl ProjectRuntime {
                     automatic: true,
                     evidence: calibration.evidence,
                     initial_calibration: calibration.initial_calibration,
-                    intrinsics_policy: GcpIntrinsicsPolicy::Auto,
+                    intrinsics_policy: calibration.intrinsics_policy,
                 });
             }
             let capture_record = CaptureGroupRecord {
-                schema_version: 1,
+                schema_version: 2,
                 entity_id: capture_id.clone(),
                 name: group.name,
                 membership_sha256: membership_hash(&group.camera_entity_ids)?,
@@ -2375,6 +2799,9 @@ impl ProjectRuntime {
                 review_status: CaptureGroupReviewStatus::NeedsReview,
                 automatic: true,
                 evidence: group.evidence,
+                superseded: false,
+                superseded_by_capture_group_id: None,
+                supersedes_capture_group_id: None,
             };
             let capture_hash =
                 put_project_object(&session.working_path, &serde_json::to_vec(&capture_record)?)?;
@@ -2418,6 +2845,9 @@ impl ProjectRuntime {
             .entities
             .get_mut(&images.0)
             .context("image collection disappeared")?;
+        parent
+            .children
+            .retain(|id| !replaced_capture_ids.contains(&id.0));
         parent.children.extend(capture_ids.iter().cloned());
         parent.children.sort_by(|left, right| left.0.cmp(&right.0));
         parent.children.dedup();
@@ -2430,6 +2860,7 @@ impl ProjectRuntime {
             "PhotolabCreateAutomaticCaptureGroups",
             serde_json::json!({
                 "captureGroupIds": capture_ids,
+                "replacedCaptureGroupIds": replaced_capture_ids,
                 "reviewStatus": "needsReview",
             }),
             affected,
@@ -2471,6 +2902,7 @@ impl ProjectRuntime {
                 ids,
                 input.grouping_basis,
                 input.initial_calibration,
+                input.intrinsics_policy,
             ));
         }
         assigned.sort_by(|left, right| left.0.cmp(&right.0));
@@ -2483,10 +2915,16 @@ impl ProjectRuntime {
         let session = guard.as_mut().context("no project is open")?;
         ensure_writable(session)?;
         validate_camera_entities(&session.manifest, &camera_ids)?;
+        for (_, ids, _, seed, _) in &definitions {
+            if let Some(seed) = seed {
+                validate_seed_dimensions_for_cameras(session, seed, ids)?;
+            }
+        }
         let requested = camera_ids
             .iter()
             .map(|id| id.0.as_str())
             .collect::<std::collections::BTreeSet<_>>();
+        let effective_capture_ids = effective_capture_group_ids(session)?;
         let mut replace_automatic_capture_ids = BTreeSet::new();
         for entity in session
             .manifest
@@ -2496,6 +2934,9 @@ impl ProjectRuntime {
         {
             let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
             let existing: CameraCalibrationGroupRecord = serde_json::from_slice(&bytes)?;
+            if !effective_capture_ids.contains(&existing.capture_group_id.0) {
+                continue;
+            }
             let overlaps = existing
                 .camera_entity_ids
                 .iter()
@@ -2537,7 +2978,9 @@ impl ProjectRuntime {
             unique_id("capture", now)
         ));
         let mut calibration_records = Vec::with_capacity(definitions.len());
-        for (index, (group_name, ids, basis, seed)) in definitions.into_iter().enumerate() {
+        for (index, (group_name, ids, basis, seed, intrinsics_policy)) in
+            definitions.into_iter().enumerate()
+        {
             let entity_id = EntityId(format!(
                 "{}:calibration-group:{}:{}",
                 session.manifest.project_id,
@@ -2556,11 +2999,11 @@ impl ProjectRuntime {
                 automatic: false,
                 evidence: Vec::new(),
                 initial_calibration: seed,
-                intrinsics_policy: GcpIntrinsicsPolicy::Auto,
+                intrinsics_policy,
             });
         }
         let capture_record = CaptureGroupRecord {
-            schema_version: 1,
+            schema_version: 2,
             entity_id: capture_id.clone(),
             name,
             membership_sha256: membership_hash(&camera_ids)?,
@@ -2572,6 +3015,9 @@ impl ProjectRuntime {
             review_status: CaptureGroupReviewStatus::Confirmed,
             automatic: false,
             evidence: Vec::new(),
+            superseded: false,
+            superseded_by_capture_group_id: None,
+            supersedes_capture_group_id: None,
         };
 
         let mut candidate = session.manifest.clone();
@@ -2654,6 +3100,7 @@ impl ProjectRuntime {
                     .and_then(|bytes| serde_json::from_slice::<ProcessingSetRecord>(&bytes).ok())
             })
             .collect::<Vec<_>>();
+        let effective_capture_ids = effective_capture_group_ids(session)?;
         let calibration_groups = session
             .manifest
             .entities
@@ -2666,6 +3113,7 @@ impl ProjectRuntime {
                         serde_json::from_slice::<CameraCalibrationGroupRecord>(&bytes).ok()
                     })
             })
+            .filter(|group| effective_capture_ids.contains(&group.capture_group_id.0))
             .collect::<Vec<_>>();
         let mut candidates = Vec::new();
         for entity in session
@@ -7482,6 +7930,39 @@ fn validate_camera_entities(manifest: &PhotolabProjectManifest, ids: &[EntityId]
     validate_camera_scope(manifest, &strings).map(|_| ())
 }
 
+fn capture_group_records(session: &ProjectSession) -> Result<Vec<CaptureGroupRecord>> {
+    session
+        .manifest
+        .entities
+        .values()
+        .filter(|entity| entity.kind == EntityKind::CaptureGroup)
+        .map(|entity| {
+            let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
+            serde_json::from_slice(&bytes).map_err(anyhow::Error::from)
+        })
+        .collect()
+}
+
+fn active_capture_group_ids(session: &ProjectSession) -> Result<BTreeSet<String>> {
+    Ok(capture_group_records(session)?
+        .into_iter()
+        .filter(|record| !record.superseded)
+        .map(|record| record.entity_id.0)
+        .collect())
+}
+
+fn effective_capture_group_ids(session: &ProjectSession) -> Result<BTreeSet<String>> {
+    Ok(capture_group_records(session)?
+        .into_iter()
+        .filter(|record| {
+            !record.superseded
+                && !(record.review_status == CaptureGroupReviewStatus::NeedsReview
+                    && record.supersedes_capture_group_id.is_some())
+        })
+        .map(|record| record.entity_id.0)
+        .collect())
+}
+
 fn membership_hash(ids: &[EntityId]) -> Result<ObjectHash> {
     Ok(ObjectHash::of_bytes(&serde_json::to_vec(ids)?))
 }
@@ -7507,6 +7988,59 @@ fn validate_calibration_seed(seed: &CameraCalibrationSeed) -> Result<()> {
         seed.focal_pixels.is_none_or(|value| value > 0.0),
         "calibration focal length must be positive"
     );
+    if let Some(full) = seed.full_brown_calibration.as_ref() {
+        anyhow::ensure!(
+            full.is_valid_for_dimensions(ImageDimensions {
+                width_pixels: seed.width_pixels,
+                height_pixels: seed.height_pixels,
+            }),
+            "full Brown-Conrady calibration is invalid for the image dimensions"
+        );
+        anyhow::ensure!(
+            full.radial_distortion
+                .iter()
+                .all(|value| value.abs() <= 10.0)
+                && full
+                    .tangential_distortion
+                    .iter()
+                    .all(|value| value.abs() <= 1.0),
+            "calibration distortion coefficients are outside plausible ranges"
+        );
+        anyhow::ensure!(
+            seed.focal_pixels == Some(full.focal_x_pixels)
+                && seed.principal_x_pixels == Some(full.principal_x_pixels)
+                && seed.principal_y_pixels == Some(full.principal_y_pixels),
+            "full Brown-Conrady calibration disagrees with its pinhole seed"
+        );
+    }
+    Ok(())
+}
+
+fn validate_seed_dimensions_for_cameras(
+    session: &ProjectSession,
+    seed: &CameraCalibrationSeed,
+    camera_ids: &[EntityId],
+) -> Result<()> {
+    for camera_id in camera_ids {
+        let entity = session
+            .manifest
+            .entities
+            .get(&camera_id.0)
+            .context("calibration camera disappeared")?;
+        let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
+        let metadata: CameraImageMetadataRecord = serde_json::from_slice(&bytes)?;
+        let dimensions = metadata
+            .inspected_photo
+            .metadata
+            .exif
+            .dimensions
+            .context("lab calibration requires known source image dimensions")?;
+        anyhow::ensure!(
+            dimensions.width_pixels == seed.width_pixels
+                && dimensions.height_pixels == seed.height_pixels,
+            "lab calibration dimensions must match every image in the calibration group"
+        );
+    }
     Ok(())
 }
 
@@ -9126,6 +9660,7 @@ fn automatic_capture_groups_for_import(
     imported_camera_ids: &[EntityId],
 ) -> Result<Vec<AutomaticCaptureGroup>> {
     let mut assigned = BTreeSet::new();
+    let effective_capture_ids = effective_capture_group_ids(session)?;
     for entity in session
         .manifest
         .entities
@@ -9134,6 +9669,9 @@ fn automatic_capture_groups_for_import(
     {
         let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
         let group: CameraCalibrationGroupRecord = serde_json::from_slice(&bytes)?;
+        if !effective_capture_ids.contains(&group.capture_group_id.0) {
+            continue;
+        }
         assigned.extend(group.camera_entity_ids.into_iter().map(|id| id.0));
     }
     let mut buckets = BTreeMap::<String, Vec<AutomaticCameraCandidate>>::new();
@@ -9221,7 +9759,11 @@ fn automatic_capture_groups_for_import(
         }
         let first = &cameras[0];
         let last = &cameras[cameras.len() - 1];
-        let mut evidence = vec![format!("Camera/lens: {}", first.hardware_label)];
+        let mut evidence = vec![
+            format!("Camera/lens: {}", first.hardware_label),
+            "Split at > 2 min capture gap".into(),
+            "Different source folder starts a separate proposal".into(),
+        ];
         if !first.source_directory.is_empty() {
             evidence.push(format!("Source folder: {}", first.source_directory));
         }
@@ -9313,6 +9855,7 @@ fn automatic_calibration_groups(
                     CameraCalibrationGroupingBasis::MissionAutofocus
                 },
                 initial_calibration,
+                intrinsics_policy: GcpIntrinsicsPolicy::Auto,
                 evidence,
             }
         })
@@ -10361,6 +10904,28 @@ mod tests {
             CaptureGroupReviewStatus::NeedsReview
         );
         assert!(captures[0].automatic);
+        let pending_calibration_id = runtime
+            .list_calibration_groups()
+            .expect("pending calibration groups")[0]
+            .entity_id
+            .clone();
+        runtime
+            .update_calibration_group_initial_calibration(
+                UpdateCalibrationGroupInitialCalibrationParams {
+                    calibration_group_id: pending_calibration_id.clone(),
+                    initial_calibration: test_lab_calibration_seed(),
+                    intrinsics_policy: GcpIntrinsicsPolicy::Fixed,
+                },
+            )
+            .expect("set lab calibration before confirmation");
+        let pending = runtime
+            .list_calibration_groups()
+            .expect("updated pending calibration groups");
+        assert_eq!(
+            pending[0].initial_calibration,
+            Some(test_lab_calibration_seed())
+        );
+        assert_eq!(pending[0].intrinsics_policy, GcpIntrinsicsPolicy::Fixed);
         runtime
             .confirm_capture_group(ConfirmCaptureGroupParams {
                 capture_group_id: captures[0].entity_id.clone(),
@@ -10370,6 +10935,17 @@ mod tests {
             runtime.list_capture_groups().expect("confirmed groups")[0].review_status,
             CaptureGroupReviewStatus::Confirmed
         );
+        assert!(runtime
+            .update_calibration_group_initial_calibration(
+                UpdateCalibrationGroupInitialCalibrationParams {
+                    calibration_group_id: pending_calibration_id,
+                    initial_calibration: test_lab_calibration_seed(),
+                    intrinsics_policy: GcpIntrinsicsPolicy::Fixed,
+                },
+            )
+            .expect_err("confirmed seed is immutable")
+            .to_string()
+            .contains("duplicate the capture group"));
         runtime.close().expect("close");
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -10692,6 +11268,27 @@ mod tests {
             .children
             .push(entity_id.clone());
         entity_id
+    }
+
+    fn test_lab_calibration_seed() -> CameraCalibrationSeed {
+        let full = DjiBrownConradyCalibration {
+            focal_x_pixels: 3713.5,
+            focal_y_pixels: 3713.5,
+            principal_x_pixels: 2640.0,
+            principal_y_pixels: 1978.0,
+            radial_distortion: [-0.1, -0.002, -0.015],
+            tangential_distortion: [0.0003, -0.0004],
+            calibration_date: String::new(),
+            provenance: himmelcad_core::photolab_images::DjiCalibrationProvenance::LabCalibration,
+        };
+        CameraCalibrationSeed {
+            width_pixels: 5280,
+            height_pixels: 3956,
+            focal_pixels: Some(full.focal_x_pixels),
+            principal_x_pixels: Some(full.principal_x_pixels),
+            principal_y_pixels: Some(full.principal_y_pixels),
+            full_brown_calibration: Some(full),
+        }
     }
 
     fn insert_test_alignment(
@@ -11319,12 +11916,14 @@ mod tests {
                         camera_entity_ids: vec![camera_a.clone(), camera_b.clone()],
                         grouping_basis: CameraCalibrationGroupingBasis::MissionAutofocus,
                         initial_calibration: None,
+                        intrinsics_policy: GcpIntrinsicsPolicy::Auto,
                     },
                     CreateCalibrationGroupInput {
                         name: "After landing".into(),
                         camera_entity_ids: vec![camera_c.clone()],
                         grouping_basis: CameraCalibrationGroupingBasis::MissionAutofocus,
                         initial_calibration: None,
+                        intrinsics_policy: GcpIntrinsicsPolicy::Auto,
                     },
                 ],
             })
@@ -11365,6 +11964,297 @@ mod tests {
     }
 
     #[test]
+    fn manual_grouping_and_lab_calibration_materialize_full_opencv_seed() {
+        let root = temp_test_dir("manual-lab-calibration");
+        let runtime = ProjectRuntime::default();
+        runtime
+            .create(CreateProjectParams {
+                path: path_string(&root.join("project.hcad")),
+                name: "Manual lab calibration".into(),
+            })
+            .expect("project");
+        let camera_ids = {
+            let mut guard = runtime.session.lock().expect("session");
+            let session = guard.as_mut().expect("open");
+            let images =
+                unique_entity_of_kind(&session.manifest, EntityKind::ImageCollection, "images")
+                    .expect("images");
+            ["a", "b"].map(|suffix| {
+                let mut metadata = PhotoMetadata::default();
+                metadata.exif.dimensions = Some(ImageDimensions {
+                    width_pixels: 5280,
+                    height_pixels: 3956,
+                });
+                insert_test_camera_with_metadata(session, &images, suffix, [], metadata)
+            })
+        };
+        runtime
+            .create_capture_group(CreateCaptureGroupParams {
+                name: "Bench-calibrated mission".into(),
+                camera_entity_ids: camera_ids.to_vec(),
+                calibration_groups: vec![CreateCalibrationGroupInput {
+                    name: "Calibration group 1".into(),
+                    camera_entity_ids: camera_ids.to_vec(),
+                    grouping_basis: CameraCalibrationGroupingBasis::Manual,
+                    initial_calibration: Some(test_lab_calibration_seed()),
+                    intrinsics_policy: GcpIntrinsicsPolicy::Fixed,
+                }],
+            })
+            .expect("manual capture group");
+        let persisted = runtime
+            .list_calibration_groups()
+            .expect("calibration groups");
+        assert_eq!(
+            persisted[0].grouping_basis,
+            CameraCalibrationGroupingBasis::Manual
+        );
+        assert_eq!(persisted[0].intrinsics_policy, GcpIntrinsicsPolicy::Fixed);
+        let materialized = runtime
+            .calibration_groups_for_camera_scope(
+                &camera_ids
+                    .iter()
+                    .map(|camera| camera.0.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .expect("materialized COLMAP calibration groups");
+        let seed = materialized[0].seed.as_ref().expect("COLMAP seed");
+        let (model, params) =
+            himmelcad_sidecar::colmap_runtime::colmap_camera_model_and_params(seed);
+        assert_eq!(model, "FULL_OPENCV");
+        assert_eq!(
+            params,
+            "3713.500000000000,3713.500000000000,2640.000000000000,1978.000000000000,-0.100000000000,-0.002000000000,0.000300000000,-0.000400000000,-0.015000000000,0,0,0"
+        );
+        runtime.close().expect("close");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn duplicate_draft_supersedes_without_breaking_frozen_alignment_lineage() {
+        let root = temp_test_dir("capture-group-supersede");
+        let runtime = ProjectRuntime::default();
+        runtime
+            .create(CreateProjectParams {
+                path: path_string(&root.join("project.hcad")),
+                name: "Versioned calibration groups".into(),
+            })
+            .expect("project");
+        let camera_ids = {
+            let mut guard = runtime.session.lock().expect("session");
+            let session = guard.as_mut().expect("open");
+            let images =
+                unique_entity_of_kind(&session.manifest, EntityKind::ImageCollection, "images")
+                    .expect("images");
+            ["a", "b"].map(|suffix| {
+                let mut metadata = PhotoMetadata::default();
+                metadata.exif.dimensions = Some(ImageDimensions {
+                    width_pixels: 5280,
+                    height_pixels: 3956,
+                });
+                insert_test_camera_with_metadata(session, &images, suffix, [], metadata)
+            })
+        };
+        runtime
+            .create_capture_group(CreateCaptureGroupParams {
+                name: "Original mission".into(),
+                camera_entity_ids: camera_ids.to_vec(),
+                calibration_groups: vec![CreateCalibrationGroupInput {
+                    name: "Original calibration".into(),
+                    camera_entity_ids: camera_ids.to_vec(),
+                    grouping_basis: CameraCalibrationGroupingBasis::Manual,
+                    initial_calibration: Some(test_lab_calibration_seed()),
+                    intrinsics_policy: GcpIntrinsicsPolicy::Fixed,
+                }],
+            })
+            .expect("original group");
+        let original = runtime.list_capture_groups().expect("groups")[0].clone();
+        let original_calibration = runtime
+            .list_calibration_groups()
+            .expect("calibration groups")[0]
+            .clone();
+        runtime
+            .create_processing_set(CreateProcessingSetParams {
+                name: "Frozen alignment input".into(),
+                camera_entity_ids: camera_ids.to_vec(),
+            })
+            .expect("processing set");
+        let frozen_lineage = runtime.list_processing_sets().expect("processing sets")[0].clone();
+        runtime
+            .create_capture_group_draft_from(DuplicateCaptureGroupDraftParams {
+                capture_group_id: original.entity_id.clone(),
+            })
+            .expect("replacement draft");
+        let draft = runtime
+            .list_capture_groups()
+            .expect("active groups")
+            .into_iter()
+            .find(|group| group.supersedes_capture_group_id.as_ref() == Some(&original.entity_id))
+            .expect("draft");
+        assert_eq!(draft.review_status, CaptureGroupReviewStatus::NeedsReview);
+        assert_eq!(draft.camera_entity_ids, original.camera_entity_ids);
+        let before_confirm_compute = runtime
+            .calibration_groups_for_camera_scope(
+                &camera_ids
+                    .iter()
+                    .map(|camera| camera.0.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .expect("original remains effective while draft is pending");
+        assert_eq!(
+            before_confirm_compute[0].group_id,
+            original.calibration_group_ids[0].0
+        );
+        runtime
+            .confirm_capture_group(ConfirmCaptureGroupParams {
+                capture_group_id: draft.entity_id.clone(),
+            })
+            .expect("confirm replacement");
+        let active = runtime.list_capture_groups().expect("active groups");
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].entity_id, draft.entity_id);
+        let guard = runtime.session.lock().expect("session");
+        let session = guard.as_ref().expect("open");
+        let source_entity = session
+            .manifest
+            .entities
+            .get(&original.entity_id.0)
+            .expect("retired source retained");
+        let retired: CaptureGroupRecord = serde_json::from_slice(
+            &read_verified_object(&session.working_path, &source_entity.version_hash)
+                .expect("retired record"),
+        )
+        .expect("retired capture JSON");
+        assert!(retired.superseded);
+        assert_eq!(
+            retired.superseded_by_capture_group_id,
+            Some(draft.entity_id)
+        );
+        assert_eq!(retired.name, original.name);
+        assert_eq!(retired.camera_entity_ids, original.camera_entity_ids);
+        assert_eq!(
+            retired.calibration_group_ids,
+            original.calibration_group_ids
+        );
+        assert_eq!(retired.membership_sha256, original.membership_sha256);
+        let original_calibration_entity = session
+            .manifest
+            .entities
+            .get(&original_calibration.entity_id.0)
+            .expect("original calibration retained");
+        let retained_calibration: CameraCalibrationGroupRecord = serde_json::from_slice(
+            &read_verified_object(
+                &session.working_path,
+                &original_calibration_entity.version_hash,
+            )
+            .expect("original calibration record"),
+        )
+        .expect("original calibration JSON");
+        assert_eq!(retained_calibration.name, original_calibration.name);
+        assert_eq!(
+            retained_calibration.camera_entity_ids,
+            original_calibration.camera_entity_ids
+        );
+        assert_eq!(
+            retained_calibration.initial_calibration,
+            original_calibration.initial_calibration
+        );
+        validate_processing_set_record(&session.manifest, &frozen_lineage)
+            .expect("alignment lineage may retain retired group ids");
+        drop(guard);
+        runtime.close().expect("close");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn merge_automatic_proposals_replaces_exact_pending_partition() {
+        let root = temp_test_dir("merge-capture-proposals");
+        let runtime = ProjectRuntime::default();
+        runtime
+            .create(CreateProjectParams {
+                path: path_string(&root.join("project.hcad")),
+                name: "Merged proposals".into(),
+            })
+            .expect("project");
+        let camera_ids = {
+            let mut guard = runtime.session.lock().expect("session");
+            let session = guard.as_mut().expect("open");
+            let images =
+                unique_entity_of_kind(&session.manifest, EntityKind::ImageCollection, "images")
+                    .expect("images");
+            let times = ["10:00:00", "10:00:01", "10:05:00", "10:05:01"];
+            let cameras = times.map(|time| {
+                let mut metadata = PhotoMetadata::default();
+                metadata.exif.make = Some("Survey camera".into());
+                metadata.exif.model = Some("One".into());
+                metadata.exif.dimensions = Some(ImageDimensions {
+                    width_pixels: 4000,
+                    height_pixels: 3000,
+                });
+                metadata.exif.captured_at = Some(CaptureTime {
+                    value: format!("2026-09-01 {time}"),
+                    reference: CaptureTimeReference::UnknownLocalTime,
+                });
+                insert_test_camera_with_metadata(session, &images, time, [], metadata)
+            });
+            let proposals = automatic_capture_groups_for_import(session, &cameras)
+                .expect("automatic proposals");
+            assert_eq!(proposals.len(), 2);
+            assert!(proposals[0]
+                .evidence
+                .iter()
+                .any(|item| item == "Split at > 2 min capture gap"));
+            ProjectRuntime::persist_automatic_capture_groups(session, proposals)
+                .expect("persist proposals");
+            cameras
+        };
+        let proposals = runtime.list_capture_groups().expect("proposals");
+        let replaced_ids = proposals
+            .iter()
+            .map(|capture| capture.entity_id.clone())
+            .collect::<Vec<_>>();
+        runtime
+            .merge_capture_group_proposals(MergeCaptureGroupProposalsParams {
+                first_capture_group_id: replaced_ids[0].clone(),
+                second_capture_group_id: replaced_ids[1].clone(),
+            })
+            .expect("merge proposals");
+        let active = runtime.list_capture_groups().expect("merged proposal");
+        assert_eq!(active.len(), 1);
+        assert!(active[0].automatic);
+        assert_eq!(
+            active[0].review_status,
+            CaptureGroupReviewStatus::NeedsReview
+        );
+        let mut expected = camera_ids.to_vec();
+        expected.sort_by(|left, right| left.0.cmp(&right.0));
+        assert_eq!(active[0].camera_entity_ids, expected);
+        let calibrations = runtime
+            .list_calibration_groups()
+            .expect("merged calibrations");
+        let mut assigned = calibrations
+            .iter()
+            .flat_map(|group| group.camera_entity_ids.iter().cloned())
+            .collect::<Vec<_>>();
+        assigned.sort_by(|left, right| left.0.cmp(&right.0));
+        assert_eq!(assigned, expected);
+        let guard = runtime.session.lock().expect("session");
+        let session = guard.as_ref().expect("open");
+        assert!(replaced_ids
+            .iter()
+            .all(|id| !session.manifest.entities.contains_key(&id.0)));
+        drop(guard);
+        let same = runtime
+            .merge_capture_group_proposals(MergeCaptureGroupProposalsParams {
+                first_capture_group_id: active[0].entity_id.clone(),
+                second_capture_group_id: active[0].entity_id.clone(),
+            })
+            .expect_err("one proposal cannot be merged with itself");
+        assert!(same.to_string().contains("two different"));
+        runtime.close().expect("close");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn cameras_outside_capture_groups_keep_independent_intrinsics() {
         let root = temp_test_dir("partial-capture-group");
         let runtime = ProjectRuntime::default();
@@ -11395,6 +12285,7 @@ mod tests {
                     camera_entity_ids: vec![camera_a.clone(), camera_b.clone()],
                     grouping_basis: CameraCalibrationGroupingBasis::MissionAutofocus,
                     initial_calibration: None,
+                    intrinsics_policy: GcpIntrinsicsPolicy::Auto,
                 }],
             })
             .expect("capture group");

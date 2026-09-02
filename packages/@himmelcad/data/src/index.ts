@@ -210,6 +210,16 @@ export interface CameraCalibrationSeed {
   focalPixels?: number;
   principalXPixels?: number;
   principalYPixels?: number;
+  fullBrownCalibration?: {
+    focalXPixels: number;
+    focalYPixels: number;
+    principalXPixels: number;
+    principalYPixels: number;
+    radialDistortion: [number, number, number];
+    tangentialDistortion: [number, number];
+    calibrationDate: string;
+    provenance: 'dewarpData' | 'labCalibration';
+  };
 }
 
 export interface GcpIntrinsicParameterMask {
@@ -285,7 +295,7 @@ export interface CameraCalibrationGroupRecord {
 }
 
 export interface CaptureGroupRecord {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   entityId: EntityId;
   name: string;
   cameraEntityIds: EntityId[];
@@ -294,6 +304,9 @@ export interface CaptureGroupRecord {
   reviewStatus?: CaptureGroupReviewStatus;
   automatic?: boolean;
   evidence?: string[];
+  superseded?: boolean;
+  supersededByCaptureGroupId?: EntityId;
+  supersedesCaptureGroupId?: EntityId;
 }
 
 export type AlignmentMergeConnection =

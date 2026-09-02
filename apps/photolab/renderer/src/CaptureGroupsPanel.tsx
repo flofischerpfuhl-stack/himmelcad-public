@@ -1,6 +1,7 @@
 import type {
   CameraCalibrationGroupRecord,
   CaptureGroupRecord,
+  CameraCalibrationSeed,
   EntityId,
   GcpIntrinsicParameterMask,
   GcpIntrinsicsGroupDiagnostics,
@@ -15,6 +16,15 @@ import {
   buildCaptureCalibrationDrafts,
   type CaptureCalibrationDraft,
 } from './captureGroupDraft.js';
+import {
+  EMPTY_LAB_CALIBRATION,
+  type ImagePixelDimensions,
+  type LabCalibrationFormValues,
+  type LabCalibrationParameter,
+  validateLabCalibration,
+} from './labCalibration.js';
+
+const HELP_SESSION_KEY = 'photolab.capture-groups.help-open';
 
 export function CaptureGroupsPanel({
   captureGroups,
@@ -27,11 +37,22 @@ export function CaptureGroupsPanel({
   onUseAsAlignmentScope,
   intrinsicsDiagnostics,
   onUpdateIntrinsics,
+  onSetInitialCalibration,
+  onDuplicateAsDraft,
+  onMergeProposals,
 }: {
   captureGroups: readonly CaptureGroupRecord[];
   calibrationGroups: readonly CameraCalibrationGroupRecord[];
-  projectCameras: readonly { entityId: EntityId; name: string }[];
-  selectedCameras: readonly { entityId: EntityId; name: string }[];
+  projectCameras: readonly {
+    entityId: EntityId;
+    name: string;
+    dimensions?: ImagePixelDimensions | undefined;
+  }[];
+  selectedCameras: readonly {
+    entityId: EntityId;
+    name: string;
+    dimensions?: ImagePixelDimensions | undefined;
+  }[];
   busy: boolean;
   onCreate: (
     name: string,
@@ -42,12 +63,27 @@ export function CaptureGroupsPanel({
   onUseAsAlignmentScope: (captureGroup: CaptureGroupRecord) => void;
   intrinsicsDiagnostics: readonly GcpIntrinsicsGroupDiagnostics[];
   onUpdateIntrinsics: (calibrationGroupId: EntityId, policy: GcpIntrinsicsPolicy) => void;
+  onSetInitialCalibration: (
+    calibrationGroupId: EntityId,
+    initialCalibration: CameraCalibrationSeed,
+    policy: GcpIntrinsicsPolicy,
+  ) => void;
+  onDuplicateAsDraft: (captureGroupId: EntityId) => void;
+  onMergeProposals: (firstCaptureGroupId: EntityId, secondCaptureGroupId: EntityId) => void;
 }): JSX.Element {
   const [name, setName] = useState('');
   const [calibrationNames, setCalibrationNames] = useState<readonly string[]>([
     'Calibration group 1',
   ]);
   const [assignments, setAssignments] = useState<Readonly<Record<EntityId, number>>>({});
+  const [labForms, setLabForms] = useState<Readonly<Record<number, LabCalibrationFormValues>>>({});
+  const [helpOpen, setHelpOpen] = useState(() => {
+    try {
+      return sessionStorage.getItem(HELP_SESSION_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
   const selectionKey = selectedCameras.map((camera) => camera.entityId).join('\u0000');
   useEffect(() => {
     const selectedIds = selectionKey.split('\u0000').filter(Boolean) as EntityId[];
@@ -62,6 +98,10 @@ export function CaptureGroupsPanel({
     () => buildCaptureCalibrationDrafts(selectedCameras, calibrationNames, assignments),
     [assignments, calibrationNames, selectedCameras],
   );
+  const cameraById = useMemo(
+    () => new Map(projectCameras.map((camera) => [camera.entityId, camera])),
+    [projectCameras],
+  );
   const cameraNameById = useMemo(
     () => new Map(projectCameras.map((camera) => [camera.entityId, camera.name])),
     [projectCameras],
@@ -69,8 +109,52 @@ export function CaptureGroupsPanel({
   const partitionComplete =
     calibrationDrafts.length > 0 &&
     calibrationDrafts.every((group) => group.cameraEntityIds.length);
+  const draftLabResults = calibrationDrafts.map((draft, index) => {
+    const form = labForms[index];
+    return form && labFormHasValues(form)
+      ? validateLabCalibration(form, sharedDimensions(draft.cameraEntityIds, cameraById))
+      : undefined;
+  });
+  const labFormsValid = draftLabResults.every(
+    (result) => !result || Object.keys(result.errors).length === 0,
+  );
+  const frozenDrafts = calibrationDrafts.map((draft, index) => {
+    const result = draftLabResults[index];
+    return result?.initialCalibration && result.intrinsicsPolicy
+      ? {
+          ...draft,
+          initialCalibration: result.initialCalibration,
+          intrinsicsPolicy: result.intrinsicsPolicy,
+        }
+      : draft;
+  });
+  const groupedCameraIds = new Set(calibrationGroups.flatMap((group) => group.cameraEntityIds));
+  const ungroupedCameras = projectCameras.filter(
+    (camera) => !groupedCameraIds.has(camera.entityId),
+  );
   return (
     <div className={styles.root}>
+      <details
+        className={styles.help}
+        open={helpOpen}
+        onToggle={(event) => {
+          const open = event.currentTarget.open;
+          setHelpOpen(open);
+          try {
+            sessionStorage.setItem(HELP_SESSION_KEY, String(open));
+          } catch {
+            // Session storage can be unavailable in isolated renderer tests.
+          }
+        }}
+      >
+        <summary>About capture and calibration groups</summary>
+        <p>A capture group is one photo session used as a processing scope.</p>
+        <p>A calibration group contains cameras that may share one set of intrinsics.</p>
+        <p>
+          Split for a different camera, lens, zoom, or autofocus session; do not split continuous
+          images from the same unchanged setup.
+        </p>
+      </details>
       <section className={styles.create}>
         <div className={styles.sectionTitle}>New capture group</div>
         <label>
@@ -100,39 +184,54 @@ export function CaptureGroupsPanel({
             </button>
           </div>
           {calibrationNames.map((calibrationName, index) => (
-            <div className={styles.calibrationName} key={`calibration-${index}`}>
-              <input
-                aria-label={`Calibration group ${index + 1} name`}
-                value={calibrationName}
-                onChange={(event) =>
-                  setCalibrationNames((current) =>
-                    current.map((value, currentIndex) =>
-                      currentIndex === index ? event.currentTarget.value : value,
-                    ),
-                  )
-                }
-              />
-              <span>{calibrationDrafts[index]?.cameraEntityIds.length ?? 0} images</span>
-              {calibrationNames.length > 1 && (
-                <button
-                  type="button"
-                  className={styles.removeButton}
-                  title="Remove calibration group"
-                  onClick={() => {
-                    setCalibrationNames((current) => current.filter((_, value) => value !== index));
-                    setAssignments((current) =>
-                      Object.fromEntries(
-                        Object.entries(current).map(([entityId, value]) => [
-                          entityId,
-                          value === index ? 0 : value > index ? value - 1 : value,
-                        ]),
+            <div className={styles.draftCalibration} key={`calibration-${index}`}>
+              <div className={styles.calibrationName}>
+                <input
+                  aria-label={`Calibration group ${index + 1} name`}
+                  value={calibrationName}
+                  onChange={(event) =>
+                    setCalibrationNames((current) =>
+                      current.map((value, currentIndex) =>
+                        currentIndex === index ? event.currentTarget.value : value,
                       ),
-                    );
-                  }}
-                >
-                  <Trash2 size={12} />
-                </button>
-              )}
+                    )
+                  }
+                />
+                <span>{calibrationDrafts[index]?.cameraEntityIds.length ?? 0} images</span>
+                {calibrationNames.length > 1 && (
+                  <button
+                    type="button"
+                    className={styles.removeButton}
+                    title="Remove calibration group"
+                    onClick={() => {
+                      setCalibrationNames((current) =>
+                        current.filter((_, value) => value !== index),
+                      );
+                      setAssignments((current) =>
+                        Object.fromEntries(
+                          Object.entries(current).map(([entityId, value]) => [
+                            entityId,
+                            value === index ? 0 : value > index ? value - 1 : value,
+                          ]),
+                        ),
+                      );
+                      setLabForms((current) => removeIndexedForm(current, index));
+                    }}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
+              </div>
+              <LabCalibrationEditor
+                values={labForms[index] ?? EMPTY_LAB_CALIBRATION}
+                dimensions={sharedDimensions(
+                  calibrationDrafts[index]?.cameraEntityIds ?? [],
+                  cameraById,
+                )}
+                busy={busy}
+                optional
+                onChange={(values) => setLabForms((current) => ({ ...current, [index]: values }))}
+              />
             </div>
           ))}
           {calibrationNames.length > 1 && (
@@ -162,25 +261,68 @@ export function CaptureGroupsPanel({
         </div>
         <button
           type="button"
-          disabled={busy || selectedCameras.length < 2 || !partitionComplete}
+          disabled={busy || selectedCameras.length < 2 || !partitionComplete || !labFormsValid}
           onClick={() => {
             onCreate(
               name.trim() || `Mission ${captureGroups.length + 1}`,
               selectedCameras.map((camera) => camera.entityId),
-              calibrationDrafts,
+              frozenDrafts,
             );
             setName('');
+            setLabForms({});
           }}
         >
           {busy ? 'Creating…' : 'Create from selection'}
         </button>
+      </section>
+      <section className={styles.ungrouped}>
+        <div className={styles.sectionTitle}>Ungrouped cameras</div>
+        {ungroupedCameras.length === 0 ? (
+          <p>All cameras belong to an active calibration group.</p>
+        ) : (
+          <>
+            <div className={styles.ungroupedList}>
+              {ungroupedCameras.map((camera) => (
+                <div key={camera.entityId}>
+                  <span title={camera.entityId}>{camera.name}</span>
+                  <mark>Intrinsics pinned — add to a group to refine</mark>
+                </div>
+              ))}
+            </div>
+            {ungroupedCameras.length === 1 && (
+              <small>
+                Automatic grouping skipped this single-image session because proposals require at
+                least 2 images.
+              </small>
+            )}
+            <button
+              type="button"
+              disabled={busy || ungroupedCameras.length < 2}
+              onClick={() =>
+                onCreate(
+                  `Ungrouped cameras ${captureGroups.length + 1}`,
+                  ungroupedCameras.map((camera) => camera.entityId),
+                  [
+                    {
+                      name: 'Calibration group 1',
+                      cameraEntityIds: ungroupedCameras.map((camera) => camera.entityId),
+                      groupingBasis: 'manual',
+                    },
+                  ],
+                )
+              }
+            >
+              Create group from ungrouped
+            </button>
+          </>
+        )}
       </section>
       <section className={styles.groups}>
         <div className={styles.sectionTitle}>Intrinsics sharing plan</div>
         {captureGroups.length === 0 ? (
           <p>No groups are available yet. Imported images remain independent until grouped.</p>
         ) : (
-          captureGroups.map((capture) => (
+          captureGroups.map((capture, captureIndex) => (
             <article key={capture.entityId}>
               <div className={styles.groupHeading}>
                 <strong>{capture.name}</strong>
@@ -192,7 +334,7 @@ export function CaptureGroupsPanel({
                     capture.reviewStatus === 'needsReview' ? styles.needsReview : undefined
                   }
                 >
-                  {capture.automatic ? 'Automatically detected' : 'User defined'} ·{' '}
+                  {capture.automatic ? 'Automatically detected' : 'Manual grouping'} ·{' '}
                   {capture.reviewStatus === 'needsReview' ? 'review required' : 'confirmed'}
                 </span>
                 <div className={styles.groupActions}>
@@ -217,6 +359,39 @@ export function CaptureGroupsPanel({
                       Confirm grouping
                     </button>
                   )}
+                  {capture.reviewStatus === 'confirmed' && (
+                    <button
+                      type="button"
+                      disabled={
+                        busy ||
+                        captureGroups.some(
+                          (candidate) =>
+                            candidate.supersedesCaptureGroupId === capture.entityId &&
+                            candidate.reviewStatus === 'needsReview',
+                        )
+                      }
+                      onClick={() => onDuplicateAsDraft(capture.entityId)}
+                    >
+                      Duplicate as draft
+                    </button>
+                  )}
+                  {capture.automatic &&
+                    capture.reviewStatus === 'needsReview' &&
+                    captureGroups[captureIndex + 1]?.automatic &&
+                    captureGroups[captureIndex + 1]?.reviewStatus === 'needsReview' && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() =>
+                          onMergeProposals(
+                            capture.entityId,
+                            captureGroups[captureIndex + 1]!.entityId,
+                          )
+                        }
+                      >
+                        Merge these proposals
+                      </button>
+                    )}
                 </div>
               </div>
               {capture.evidence?.map((item) => (
@@ -237,6 +412,28 @@ export function CaptureGroupsPanel({
                         {calibration.initialCalibration.widthPixels} ×{' '}
                         {calibration.initialCalibration.heightPixels}
                       </small>
+                    )}
+                    {calibration.reviewStatus === 'needsReview' && (
+                      <LabCalibrationEditor
+                        values={labFormFromSeed(
+                          calibration.initialCalibration,
+                          calibration.intrinsicsPolicy,
+                        )}
+                        dimensions={sharedDimensions(calibration.cameraEntityIds, cameraById)}
+                        busy={busy}
+                        optional={false}
+                        onSave={(initialCalibration, policy) =>
+                          onSetInitialCalibration(calibration.entityId, initialCalibration, policy)
+                        }
+                      />
+                    )}
+                    {calibration.reviewStatus !== 'needsReview' && (
+                      <details className={styles.labCalibration}>
+                        <summary>Enter lab calibration…</summary>
+                        <small>
+                          Duplicate this capture group as a draft to change its frozen calibration.
+                        </small>
+                      </details>
                     )}
                     <IntrinsicsPolicyEditor
                       group={calibration}
@@ -264,6 +461,158 @@ export function CaptureGroupsPanel({
         )}
       </section>
     </div>
+  );
+}
+
+function LabCalibrationEditor({
+  values,
+  dimensions,
+  busy,
+  optional,
+  onChange,
+  onSave,
+}: {
+  values: LabCalibrationFormValues;
+  dimensions: ImagePixelDimensions | undefined;
+  busy: boolean;
+  optional: boolean;
+  onChange?: (values: LabCalibrationFormValues) => void;
+  onSave?: (initialCalibration: CameraCalibrationSeed, policy: GcpIntrinsicsPolicy) => void;
+}): JSX.Element {
+  const [current, setCurrent] = useState(values);
+  const active = !optional || labFormHasValues(current);
+  const result = active ? validateLabCalibration(current, dimensions) : { errors: {} };
+  const update = (next: LabCalibrationFormValues) => {
+    setCurrent(next);
+    onChange?.(next);
+  };
+  return (
+    <details className={styles.labCalibration}>
+      <summary>Enter lab calibration…</summary>
+      <small>Use absolute cx and cy pixels from the top-left image origin.</small>
+      {dimensions ? (
+        <small>
+          Image size {dimensions.widthPixels} × {dimensions.heightPixels} px
+        </small>
+      ) : (
+        <span className={styles.fieldError}>Images must have one known pixel size.</span>
+      )}
+      <div className={styles.labFields}>
+        {(
+          Object.keys(EMPTY_LAB_CALIBRATION).filter(
+            (key) => key !== 'policy',
+          ) as LabCalibrationParameter[]
+        ).map((parameter) => (
+          <label key={parameter}>
+            <span>{labParameterLabel(parameter)}</span>
+            <input
+              inputMode="decimal"
+              value={current[parameter]}
+              disabled={busy}
+              aria-invalid={Boolean(result.errors[parameter])}
+              onChange={(event) => update({ ...current, [parameter]: event.currentTarget.value })}
+            />
+            {result.errors[parameter] && (
+              <span className={styles.fieldError}>{result.errors[parameter]}</span>
+            )}
+          </label>
+        ))}
+      </div>
+      <label className={styles.policyChoice}>
+        <span>Policy</span>
+        <Select
+          value={current.policy}
+          disabled={busy}
+          onChange={(event) =>
+            update({
+              ...current,
+              policy: event.currentTarget.value as LabCalibrationFormValues['policy'],
+            })
+          }
+        >
+          <option value="fixed">Fixed · trust calibration</option>
+          <option value="prior">Prior · refine from calibration</option>
+        </Select>
+      </label>
+      {onSave && (
+        <button
+          type="button"
+          disabled={
+            busy ||
+            Object.keys(result.errors).length > 0 ||
+            !result.initialCalibration ||
+            !result.intrinsicsPolicy
+          }
+          onClick={() => {
+            if (result.initialCalibration && result.intrinsicsPolicy) {
+              onSave(result.initialCalibration, result.intrinsicsPolicy);
+            }
+          }}
+        >
+          Save lab calibration
+        </button>
+      )}
+    </details>
+  );
+}
+
+function labParameterLabel(parameter: LabCalibrationParameter): string {
+  return parameter === 'f' || parameter === 'cx' || parameter === 'cy'
+    ? `${parameter} (px)`
+    : parameter;
+}
+
+function labFormHasValues(values: LabCalibrationFormValues): boolean {
+  return (Object.keys(values) as (keyof LabCalibrationFormValues)[]).some(
+    (key) => key !== 'policy' && values[key].trim() !== '',
+  );
+}
+
+function labFormFromSeed(
+  seed: CameraCalibrationSeed | undefined,
+  policy: GcpIntrinsicsPolicy | undefined,
+): LabCalibrationFormValues {
+  if (!seed) return EMPTY_LAB_CALIBRATION;
+  const full = seed.fullBrownCalibration;
+  return {
+    f: String(seed.focalPixels ?? ''),
+    cx: String(seed.principalXPixels ?? ''),
+    cy: String(seed.principalYPixels ?? ''),
+    k1: String(full?.radialDistortion[0] ?? 0),
+    k2: String(full?.radialDistortion[1] ?? 0),
+    k3: String(full?.radialDistortion[2] ?? 0),
+    p1: String(full?.tangentialDistortion[0] ?? 0),
+    p2: String(full?.tangentialDistortion[1] ?? 0),
+    policy: policy?.kind === 'prior' ? 'prior' : 'fixed',
+  };
+}
+
+function sharedDimensions(
+  cameraIds: readonly EntityId[],
+  cameraById: ReadonlyMap<
+    EntityId,
+    { entityId: EntityId; name: string; dimensions?: ImagePixelDimensions | undefined }
+  >,
+): ImagePixelDimensions | undefined {
+  const dimensions = cameraIds.map((id) => cameraById.get(id)?.dimensions);
+  const first = dimensions[0];
+  return first &&
+    dimensions.every(
+      (value) =>
+        value?.widthPixels === first.widthPixels && value.heightPixels === first.heightPixels,
+    )
+    ? first
+    : undefined;
+}
+
+function removeIndexedForm(
+  forms: Readonly<Record<number, LabCalibrationFormValues>>,
+  removedIndex: number,
+): Readonly<Record<number, LabCalibrationFormValues>> {
+  return Object.fromEntries(
+    Object.entries(forms)
+      .filter(([index]) => Number(index) !== removedIndex)
+      .map(([index, form]) => [Number(index) > removedIndex ? Number(index) - 1 : index, form]),
   );
 }
 
@@ -369,7 +718,7 @@ function enabledParameters(mask: GcpIntrinsicParameterMask): string {
 }
 
 function groupingLabel(value: CameraCalibrationGroupRecord['groupingBasis']): string {
-  if (value === 'missionAutofocus') return 'mission / autofocus';
-  if (value === 'embeddedCalibration') return 'embedded calibration';
-  return 'manual calibration';
+  if (value === 'missionAutofocus') return 'Mission / autofocus grouping';
+  if (value === 'embeddedCalibration') return 'Embedded calibration grouping';
+  return 'Manual grouping';
 }

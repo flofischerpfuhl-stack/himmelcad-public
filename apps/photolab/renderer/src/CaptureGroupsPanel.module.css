@@ -1,8 +1,29 @@
 .root,
 .create,
-.groups {
+.groups,
+.ungrouped {
   display: grid;
   gap: 9px;
+}
+
+.help {
+  padding: 7px 8px;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-muted);
+  background: var(--hc-bg-island-lo);
+  font-size: 9px;
+}
+
+.help summary,
+.labCalibration summary {
+  cursor: pointer;
+  color: var(--hc-fg-default);
+  font-weight: 650;
+}
+
+.help p {
+  margin: 5px 0 0;
 }
 
 .create {
@@ -51,6 +72,11 @@
   border: 1px solid var(--hc-border-subtle);
   border-radius: var(--hc-radius-sm);
   background: var(--hc-bg-island-lo);
+}
+
+.draftCalibration {
+  display: grid;
+  gap: 4px;
 }
 
 .editorHeader,
@@ -137,6 +163,134 @@
 }
 
 .create button:disabled {
+  opacity: 0.4;
+}
+
+.labCalibration {
+  padding: 5px 6px;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-muted);
+  background: var(--hc-bg-island-lo);
+  font-size: 9px;
+}
+
+.labCalibration > small,
+.labCalibration > .fieldError {
+  display: block;
+  margin-top: 5px;
+}
+
+.labFields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.create .labFields label,
+.labFields label {
+  display: grid;
+  grid-template-columns: 43px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+}
+
+.labFields input {
+  min-width: 0;
+  height: 25px;
+  padding: 0 6px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-void);
+}
+
+.labFields input[aria-invalid='true'] {
+  border-color: var(--hc-error);
+}
+
+.create .labFields .fieldError,
+.labFields .fieldError {
+  grid-column: 1 / -1;
+}
+
+.fieldError {
+  color: var(--hc-error);
+  font-size: 8px;
+}
+
+.create .policyChoice,
+.policyChoice {
+  display: grid;
+  grid-template-columns: 43px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.policyChoice select {
+  min-width: 0;
+}
+
+.labCalibration > button {
+  min-height: 27px;
+  margin-top: 6px;
+}
+
+.ungrouped {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--hc-border-subtle);
+}
+
+.ungrouped p,
+.ungrouped small {
+  margin: 0;
+  color: var(--hc-fg-muted);
+  font-size: 9px;
+}
+
+.ungroupedList {
+  display: grid;
+  gap: 4px;
+}
+
+.ungroupedList > div {
+  display: grid;
+  gap: 3px;
+  padding: 5px 6px;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-island-lo);
+  font-size: 9px;
+}
+
+.ungroupedList span {
+  overflow: hidden;
+  color: var(--hc-fg-default);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ungroupedList mark {
+  color: var(--hc-warning);
+  background: transparent;
+  font-size: 8px;
+}
+
+.ungrouped > button {
+  min-height: 29px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-island-hi);
+}
+
+.ungrouped > button:hover:not(:disabled) {
+  background: var(--hc-hover-bg);
+}
+
+.ungrouped > button:disabled {
   opacity: 0.4;
 }
 

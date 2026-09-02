@@ -121,7 +121,7 @@ export function SelectionPropertiesPanel({
           <Row label="Images" value={String(captureGroup.cameraEntityIds.length)} />
           <Row
             label="Grouping"
-            value={captureGroup.automatic ? 'Automatically detected' : 'User defined'}
+            value={captureGroup.automatic ? 'Automatically detected' : 'Manual grouping'}
           />
           <Row label="Review" value={humanizeEnum(captureGroup.reviewStatus ?? 'confirmed')} />
           <Row label="Image IDs" value={captureGroup.cameraEntityIds.join(', ')} />
@@ -141,7 +141,14 @@ export function SelectionPropertiesPanel({
           />
           <Row label="Images" value={String(calibrationGroup.cameraEntityIds.length)} />
           <Row label="Image IDs" value={calibrationGroup.cameraEntityIds.join(', ')} />
-          <Row label="Grouping" value={humanizeEnum(calibrationGroup.groupingBasis)} />
+          <Row
+            label="Grouping"
+            value={
+              calibrationGroup.groupingBasis === 'manual'
+                ? 'Manual grouping'
+                : humanizeEnum(calibrationGroup.groupingBasis)
+            }
+          />
           <Row label="Review" value={humanizeEnum(calibrationGroup.reviewStatus ?? 'confirmed')} />
           <Row label="Membership" value={calibrationGroup.membershipSha256} />
         </section>

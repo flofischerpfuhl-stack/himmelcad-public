@@ -16,6 +16,7 @@ import type {
   AlignmentMergeConnection,
   AlignmentMergeProfileSnapshot,
   CameraCalibrationGroupRecord,
+  CameraCalibrationSeed,
   CaptureGroupRecord,
   EntityId,
   GcpCollectionRecord,
@@ -2905,6 +2906,94 @@ export function App(): JSX.Element {
     [acceptProject, activeProcessingSetId, captureGroupSaving],
   );
 
+  const setCalibrationGroupInitialCalibration = useCallback(
+    async (
+      calibrationGroupId: EntityId,
+      initialCalibration: CameraCalibrationSeed,
+      intrinsicsPolicy: GcpIntrinsicsPolicy,
+    ) => {
+      const api = window.himmelcad;
+      if (!api || captureGroupSaving) return;
+      setCaptureGroupSaving(true);
+      try {
+        const opened = await api.sidecar.call<OpenPhotolabProjectResult>(
+          'photolab.project.calibrationGroup.setInitialCalibration',
+          { calibrationGroupId, initialCalibration, intrinsicsPolicy },
+        );
+        acceptProject(opened, { preserveSelection: true, processingSetId: activeProcessingSetId });
+        setCalibrationGroups(
+          await api.sidecar.call<CameraCalibrationGroupRecord[]>(
+            'photolab.project.calibrationGroup.list',
+          ),
+        );
+        logEvent('info', 'sidecar', 'Initial lab calibration saved on the draft group');
+      } catch (error) {
+        logEvent('error', 'sidecar', `Lab calibration could not be saved: ${errorMessage(error)}`);
+      } finally {
+        setCaptureGroupSaving(false);
+      }
+    },
+    [acceptProject, activeProcessingSetId, captureGroupSaving],
+  );
+
+  const duplicateCaptureGroupAsDraft = useCallback(
+    async (captureGroupId: EntityId) => {
+      const api = window.himmelcad;
+      if (!api || captureGroupSaving) return;
+      setCaptureGroupSaving(true);
+      try {
+        const opened = await api.sidecar.call<OpenPhotolabProjectResult>(
+          'photolab.project.captureGroup.duplicateAsDraft',
+          { captureGroupId },
+        );
+        acceptProject(opened, { preserveSelection: true, processingSetId: activeProcessingSetId });
+        const [captures, calibrations] = await Promise.all([
+          api.sidecar.call<CaptureGroupRecord[]>('photolab.project.captureGroup.list'),
+          api.sidecar.call<CameraCalibrationGroupRecord[]>(
+            'photolab.project.calibrationGroup.list',
+          ),
+        ]);
+        setCaptureGroups(captures);
+        setCalibrationGroups(calibrations);
+        logEvent('info', 'sidecar', 'Replacement calibration-group draft created');
+      } catch (error) {
+        logEvent('error', 'sidecar', `Draft could not be created: ${errorMessage(error)}`);
+      } finally {
+        setCaptureGroupSaving(false);
+      }
+    },
+    [acceptProject, activeProcessingSetId, captureGroupSaving],
+  );
+
+  const mergeCaptureGroupProposals = useCallback(
+    async (firstCaptureGroupId: EntityId, secondCaptureGroupId: EntityId) => {
+      const api = window.himmelcad;
+      if (!api || captureGroupSaving) return;
+      setCaptureGroupSaving(true);
+      try {
+        const opened = await api.sidecar.call<OpenPhotolabProjectResult>(
+          'photolab.project.captureGroup.mergeProposals',
+          { firstCaptureGroupId, secondCaptureGroupId },
+        );
+        acceptProject(opened, { preserveSelection: true, processingSetId: activeProcessingSetId });
+        const [captures, calibrations] = await Promise.all([
+          api.sidecar.call<CaptureGroupRecord[]>('photolab.project.captureGroup.list'),
+          api.sidecar.call<CameraCalibrationGroupRecord[]>(
+            'photolab.project.calibrationGroup.list',
+          ),
+        ]);
+        setCaptureGroups(captures);
+        setCalibrationGroups(calibrations);
+        logEvent('info', 'sidecar', 'Automatic capture-group proposals merged');
+      } catch (error) {
+        logEvent('error', 'sidecar', `Proposals could not be merged: ${errorMessage(error)}`);
+      } finally {
+        setCaptureGroupSaving(false);
+      }
+    },
+    [acceptProject, activeProcessingSetId, captureGroupSaving],
+  );
+
   const setCaptureGroupAsProcessingSet = useCallback(
     async (capture: CaptureGroupRecord) => {
       const api = window.himmelcad;
@@ -3562,6 +3651,7 @@ export function App(): JSX.Element {
                 projectCameras={projectImages.map((image) => ({
                   entityId: image.entityId,
                   name: image.name,
+                  dimensions: image.metadata.inspectedPhoto.metadata.exif.dimensions,
                 }))}
                 selectedCameras={projectImages.filter((image) =>
                   selectedCameraIds.includes(image.entityId),
@@ -3574,6 +3664,15 @@ export function App(): JSX.Element {
                 intrinsicsDiagnostics={gcpOptimization?.artifact.result.intrinsicsDiagnostics ?? []}
                 onUpdateIntrinsics={(groupId, policy) =>
                   void updateCalibrationGroupIntrinsics(groupId, policy)
+                }
+                onSetInitialCalibration={(groupId, seed, policy) =>
+                  void setCalibrationGroupInitialCalibration(groupId, seed, policy)
+                }
+                onDuplicateAsDraft={(captureGroupId) =>
+                  void duplicateCaptureGroupAsDraft(captureGroupId)
+                }
+                onMergeProposals={(firstCaptureGroupId, secondCaptureGroupId) =>
+                  void mergeCaptureGroupProposals(firstCaptureGroupId, secondCaptureGroupId)
                 }
                 onUseAsAlignmentScope={(capture) => void setCaptureGroupAsProcessingSet(capture)}
               />

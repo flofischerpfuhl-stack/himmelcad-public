@@ -54,6 +54,7 @@
     "photolab:test:project-files": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/test-photolab-project-file-operations.mjs",
     "photolab:test:report-pdf": "node scripts/test-photolab-report-pdf.mjs",
     "photolab:test:capture-groups": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/test-photolab-capture-groups.mjs",
+    "photolab:test:lab-calibration": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test scripts/test-photolab-lab-calibration.mjs",
     "photolab:test:himmelcap": "node scripts/test-photolab-himmelcap-import.mjs",
     "test:pointcloud-registration-import": "node scripts/test-pointcloud-registration-import.mjs",
     "test:dxf-registration-import": "node scripts/test-dxf-registration-import.mjs",
