@@ -1054,6 +1054,14 @@ Alignment job records carry `lastCheckpointSequence: None` (honest: no
 cross-restart resume). Not exercised in this run: kill-and-resume, merge, GCP
 optimization (needs the 135-image scope), DEM/ortho/mesh/splat products.
 
+### Robustness note — load-sensitive cancellation test (2026-09-02)
+
+`brush_runtime::tests::cancellation_is_forced_within_the_interactive_deadline`
+fails under concurrent CPU load (observed twice while an e2e run and a Codex
+build ran) and passes 3/3 in isolation. Its deadline is a calibration value
+(X6): either widen the fake-worker deadline with a rationale or serialize the
+timing-sensitive tests behind a test-group lock. Tracked under WP-B6.
+
 ## Execution order and review protocol
 
 Waves (sequential Codex runs; the reviewing session verifies each before the
