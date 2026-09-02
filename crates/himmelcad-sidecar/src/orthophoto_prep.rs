@@ -17,6 +17,7 @@ use thiserror::Error;
 
 use crate::{
     mvs_runtime::{MvsPinholeCamera, MvsSceneImage, MvsSceneManifest},
+    process_group,
     raster_runtime::{OrthophotoSource, RasterBounds, RasterBuildSummary, RasterCrs, RasterGrid},
 };
 
@@ -494,15 +495,14 @@ fn build_georeferenced_vrt(
             command.env("PROJ_DATA", external_tool_path(&proj_data));
         }
     }
-    let mut child = command
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
+        .stderr(Stdio::null());
+    let mut child = process_group::spawn(&mut command)?;
     loop {
         check_cancelled(cancellation).inspect_err(|_| {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.terminate_and_wait();
         })?;
         if let Some(status) = child.try_wait()? {
             if !status.success() {

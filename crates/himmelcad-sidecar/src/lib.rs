@@ -32,6 +32,7 @@ pub mod orthophoto_prep;
 pub mod pointcloud_export;
 pub mod prepared_triangle_mesh;
 pub mod prepared_triangle_mesh_ply;
+pub mod process_group;
 pub mod product_export;
 pub mod project_archive;
 pub mod raster_runtime;

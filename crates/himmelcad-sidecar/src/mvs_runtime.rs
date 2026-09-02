@@ -11,11 +11,13 @@ use std::{
     fs::{self, File},
     io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
-    process::{Child, Command, ExitStatus, Stdio},
+    process::{Command, ExitStatus, Stdio},
     sync::{mpsc, Arc},
     thread,
     time::{Duration, Instant},
 };
+
+use crate::process_group::{self, ProcessGroupChild as Child};
 
 use himmelcad_core::{
     hash::ObjectHash,
@@ -1964,7 +1966,7 @@ fn spawn_worker(
         "SYSTEMROOT",
         std::env::var_os("SYSTEMROOT").unwrap_or_default(),
     );
-    command.spawn().map_err(MvsRuntimeError::Io)
+    process_group::spawn(&mut command).map_err(MvsRuntimeError::Io)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -2087,7 +2089,7 @@ fn supervise_worker(
             cancel_sent_at = Some(Instant::now());
         }
         if cancel_sent_at.is_some_and(|instant| instant.elapsed() >= FORCE_KILL_AFTER) {
-            let _ = child.kill();
+            let _ = child.terminate_and_wait();
         }
         if let Some(status) = child.try_wait()? {
             while let Ok(record) = receiver.try_recv() {
@@ -2250,13 +2252,14 @@ fn map_worker_error(error: JobWorkerError) -> MvsRuntimeError {
 }
 
 fn probe_version(executable: &Path) -> Result<String, MvsRuntimeError> {
-    let mut child = Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .arg("--version")
         .env_clear()
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
+        .stderr(Stdio::null());
+    let mut child = process_group::spawn(&mut command)?;
     let started = Instant::now();
     loop {
         if let Some(status) = child.try_wait()? {
@@ -2281,7 +2284,7 @@ fn probe_version(executable: &Path) -> Result<String, MvsRuntimeError> {
             return Ok(version.into());
         }
         if started.elapsed() >= VERSION_PROBE_TIMEOUT {
-            let _ = child.kill();
+            let _ = child.terminate_and_wait();
             return Err(MvsRuntimeError::InvalidConfig(
                 "worker version probe timed out".into(),
             ));

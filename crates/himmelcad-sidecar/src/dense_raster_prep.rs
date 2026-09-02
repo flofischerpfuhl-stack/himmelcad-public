@@ -13,6 +13,8 @@ use himmelcad_core::photolab_jobs::CancellationToken;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::process_group;
+
 const POLL: Duration = Duration::from_millis(15);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -525,7 +527,7 @@ pub fn inspect_vector_wkt(
 ) -> Result<String, DenseRasterPrepError> {
     let output_path = vector.flatgeobuf_path.with_extension("ogrinfo.json");
     let mut command = offline_gdal_command(ogrinfo);
-    let mut child = command
+    command
         .args([
             "-json",
             "-so",
@@ -534,12 +536,11 @@ pub fn inspect_vector_wkt(
         ])
         .stdin(Stdio::null())
         .stdout(File::create(&output_path)?)
-        .stderr(Stdio::null())
-        .spawn()?;
+        .stderr(Stdio::null());
+    let mut child = process_group::spawn(&mut command)?;
     loop {
         if cancellation.is_cancel_requested() {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.terminate_and_wait();
             return Err(DenseRasterPrepError::Cancelled);
         }
         if let Some(status) = child.try_wait()? {
@@ -571,19 +572,18 @@ pub fn inspect_raster_wkt(
 ) -> Result<String, DenseRasterPrepError> {
     let output_path = raster.with_extension("gdalinfo.json");
     let mut command = offline_gdal_command(gdalinfo);
-    let mut child = command
+    command
         .args([
             "-json",
             external_tool_argument(raster.to_string_lossy().as_ref()).as_str(),
         ])
         .stdin(Stdio::null())
         .stdout(File::create(&output_path)?)
-        .stderr(Stdio::null())
-        .spawn()?;
+        .stderr(Stdio::null());
+    let mut child = process_group::spawn(&mut command)?;
     loop {
         if cancellation.is_cancel_requested() {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.terminate_and_wait();
             return Err(DenseRasterPrepError::Cancelled);
         }
         if let Some(status) = child.try_wait()? {
@@ -981,15 +981,14 @@ fn run_owned_command(
             command.env("LD_LIBRARY_PATH", parent);
         }
     }
-    let mut child = command
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
+        .stderr(Stdio::null());
+    let mut child = process_group::spawn(&mut command)?;
     loop {
         if cancellation.is_cancel_requested() {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.terminate_and_wait();
             return Err(DenseRasterPrepError::Cancelled);
         }
         if let Some(status) = child.try_wait()? {

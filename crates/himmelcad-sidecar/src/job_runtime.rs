@@ -5,7 +5,10 @@ use std::{
     fs::{self, File, OpenOptions},
     io,
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Instant,
 };
 
@@ -22,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use tokio::{
     runtime::Handle,
     sync::{watch, Mutex, OwnedSemaphorePermit, Semaphore},
-    time::{sleep, Duration},
+    time::{sleep, timeout_at, Duration, Instant as TokioInstant},
 };
 
 /// Immutable project identity captured when a job is admitted.
@@ -184,6 +187,33 @@ pub struct JobIdParams {
 pub struct CancelJobResult {
     pub first_request: bool,
     pub job: PhotolabJob,
+}
+
+/// Outcome of a bounded cancellation drain before project replacement or shutdown.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DrainReport {
+    /// Jobs that reached a terminal state within the requested deadline.
+    pub terminal: usize,
+    /// Jobs force-classified as failed after the deadline elapsed.
+    pub timed_out: Vec<PhotolabJobId>,
+}
+
+impl DrainReport {
+    /// An empty report proves that no jobs needed draining.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            terminal: 0,
+            timed_out: Vec::new(),
+        }
+    }
+
+    /// Only a drain with no timed-out workers permits a clean project close.
+    #[must_use]
+    pub fn completed(&self) -> bool {
+        self.timed_out.is_empty()
+    }
 }
 
 /// Failure reported intentionally by a compute worker.
@@ -396,6 +426,8 @@ struct ManagedJob {
     job: PhotolabJob,
     cancellation: CancellationToken,
     updates: watch::Sender<PhotolabJob>,
+    worker_updates: watch::Sender<bool>,
+    worker_active: bool,
     history_scope: Option<JobHistoryScope>,
     frozen_request: Option<FrozenJobRequest>,
     history_dirty: bool,
@@ -408,6 +440,7 @@ struct JobManagerInner {
     concurrency: Arc<Semaphore>,
     jobs: Mutex<BTreeMap<String, ManagedJob>>,
     history: Option<Arc<dyn JobHistoryPersistence>>,
+    draining: AtomicBool,
 }
 
 /// Thread-safe and Tokio-safe bounded job registry and supervisor.
@@ -463,6 +496,7 @@ impl JobManager {
                 concurrency: Arc::new(Semaphore::new(config.max_concurrency)),
                 jobs: Mutex::new(BTreeMap::new()),
                 history,
+                draining: AtomicBool::new(false),
             }),
             runtime,
         })
@@ -513,6 +547,9 @@ impl JobManager {
     where
         F: FnOnce(JobWorkerContext) -> JobWorkerResult + Send + 'static,
     {
+        if self.inner.draining.load(Ordering::Acquire) {
+            return Err(JobManagerError::SchedulerDraining);
+        }
         let job = PhotolabJob::new(request)?;
         let key = job.id.0.clone();
         let cancellation = CancellationToken::new();
@@ -524,6 +561,9 @@ impl JobManager {
         }
         {
             let mut jobs = self.inner.jobs.lock().await;
+            if self.inner.draining.load(Ordering::Acquire) {
+                return Err(JobManagerError::SchedulerDraining);
+            }
             if jobs.contains_key(&key) {
                 return Err(JobManagerError::DuplicateJobId(job.id));
             }
@@ -538,12 +578,15 @@ impl JobManager {
                 });
             }
             let (updates, _) = watch::channel(job.clone());
+            let (worker_updates, _) = watch::channel(true);
             jobs.insert(
                 key.clone(),
                 ManagedJob {
                     job: job.clone(),
                     cancellation: cancellation.clone(),
                     updates,
+                    worker_updates,
+                    worker_active: true,
                     history_scope: history_scope.clone(),
                     frozen_request: frozen_request.clone(),
                     history_dirty: false,
@@ -560,12 +603,13 @@ impl JobManager {
 
         let manager = self.clone();
         let job_id = job.id.clone();
+        let worker_job_id = job_id.clone();
         let job_kind = job.kind;
         let config_hash = job.config_hash.clone();
         let input_hash = job.input_hash.clone();
         self.runtime.spawn(async move {
             manager
-                .supervise(
+                .supervise_inner(
                     job_id,
                     job_kind,
                     config_hash,
@@ -574,6 +618,7 @@ impl JobManager {
                     work,
                 )
                 .await;
+            manager.mark_worker_inactive(&worker_job_id).await;
         });
         Ok(StartJobResult { job })
     }
@@ -671,6 +716,71 @@ impl JobManager {
         changed
     }
 
+    /// Cancels every active job and waits up to one shared deadline for terminal states.
+    ///
+    /// Admission remains closed after this call so a project close or replacement can
+    /// follow without a new worker racing into the old session. Call
+    /// [`Self::resume_admission`] only after a non-shutdown project transition finishes.
+    pub async fn drain(&self, deadline: Duration) -> DrainReport {
+        self.inner.draining.store(true, Ordering::Release);
+        self.cancel_all().await;
+        let ids = self
+            .inner
+            .jobs
+            .lock()
+            .await
+            .values()
+            .filter(|managed| managed.worker_active)
+            .map(|managed| managed.job.id.clone())
+            .collect::<Vec<_>>();
+        let cutoff = TokioInstant::now() + deadline;
+        let mut terminal = 0;
+        let mut timed_out = Vec::new();
+
+        for job_id in ids {
+            match timeout_at(cutoff, self.wait_for_worker_stopped(&job_id)).await {
+                Ok(Ok(_)) => terminal += 1,
+                Ok(Err(error)) => {
+                    tracing::error!(job_id = %job_id.0, %error, "job drain waiter failed");
+                    timed_out.push(job_id);
+                }
+                Err(_) => timed_out.push(job_id),
+            }
+        }
+
+        if !timed_out.is_empty() {
+            let diagnostic = format!(
+                "The worker did not stop within the bounded drain deadline of {} ms. The project was not marked as cleanly closed.",
+                deadline.as_millis()
+            );
+            let mut jobs = self.inner.jobs.lock().await;
+            let mut forced = Vec::with_capacity(timed_out.len());
+            for job_id in timed_out {
+                let Some(managed) = jobs.get_mut(&job_id.0) else {
+                    continue;
+                };
+                forced.push(job_id);
+                if is_terminal(&managed.job.state) {
+                    continue;
+                }
+                managed.job.record_terminal_diagnostic(diagnostic.clone());
+                set_failed(managed, "drainTimeout", diagnostic.clone());
+                self.publish_durable(managed);
+            }
+            timed_out = forced;
+        }
+
+        DrainReport {
+            terminal,
+            timed_out,
+        }
+    }
+
+    /// Reopens admission after a completed project close/create/open transition.
+    pub fn resume_admission(&self) {
+        self.inner.draining.store(false, Ordering::Release);
+    }
+
     /// Waits asynchronously for a terminal state; useful for shutdown and tests.
     pub async fn wait_for_terminal(
         &self,
@@ -695,7 +805,26 @@ impl JobManager {
         }
     }
 
-    async fn supervise<F>(
+    async fn wait_for_worker_stopped(&self, job_id: &PhotolabJobId) -> Result<(), JobManagerError> {
+        let mut updates = {
+            let jobs = self.inner.jobs.lock().await;
+            jobs.get(&job_id.0)
+                .ok_or_else(|| JobManagerError::JobNotFound(job_id.clone()))?
+                .worker_updates
+                .subscribe()
+        };
+        loop {
+            if !*updates.borrow() {
+                return Ok(());
+            }
+            updates
+                .changed()
+                .await
+                .map_err(|_| JobManagerError::UpdateChannelClosed(job_id.clone()))?;
+        }
+    }
+
+    async fn supervise_inner<F>(
         &self,
         job_id: PhotolabJobId,
         job_kind: PhotolabJobKind,
@@ -753,6 +882,19 @@ impl JobManager {
         let outcome = tokio::task::spawn_blocking(move || work(context)).await;
         self.finish_worker(&job_id, outcome, permit).await;
         drop(compute_lease);
+    }
+
+    async fn mark_worker_inactive(&self, job_id: &PhotolabJobId) {
+        let mut jobs = self.inner.jobs.lock().await;
+        let Some(managed) = jobs.get_mut(&job_id.0) else {
+            return;
+        };
+        managed.worker_active = false;
+        managed.worker_updates.send_replace(false);
+        if !is_terminal(&managed.job.state) && managed.cancellation.is_cancel_requested() {
+            transition_or_fail(managed, PhotolabJobState::Cancelled);
+            self.publish_durable(managed);
+        }
     }
 
     async fn mark_running(&self, job_id: &PhotolabJobId) -> bool {
@@ -991,6 +1133,7 @@ pub enum JobManagerError {
     InvalidConfig(&'static str),
     InvalidFrozenRequest(String),
     NoTokioRuntime,
+    SchedulerDraining,
     DuplicateJobId(PhotolabJobId),
     QueueFull {
         max_concurrency: usize,
@@ -1020,6 +1163,9 @@ impl std::fmt::Display for JobManagerError {
             Self::NoTokioRuntime => formatter.write_str(
                 "JobManager must be created inside a Tokio runtime or with an explicit handle",
             ),
+            Self::SchedulerDraining => {
+                formatter.write_str("job scheduler is draining for a project transition")
+            }
             Self::DuplicateJobId(id) => write!(formatter, "job {id:?} already exists"),
             Self::QueueFull {
                 max_concurrency,
@@ -1619,6 +1765,75 @@ mod tests {
                 .state,
             PhotolabJobState::Cancelled
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn drain_cancels_a_slow_worker_and_reports_terminal_state() {
+        let manager = manager(1, 0);
+        let id = PhotolabJobId("drain-slow-worker".into());
+        let (started_tx, started_rx) = mpsc::channel();
+        let cancellation_observed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_observed = Arc::clone(&cancellation_observed);
+        manager
+            .start(request(&id.0), move |context| {
+                started_tx.send(()).expect("signal worker start");
+                loop {
+                    if context.cancellation.is_cancel_requested() {
+                        worker_observed.store(true, Ordering::Release);
+                        return Err(JobWorkerError::Cancelled);
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            })
+            .await
+            .expect("admitted");
+        started_rx.recv().expect("worker started");
+
+        let report = manager.drain(Duration::from_secs(1)).await;
+
+        assert_eq!(report.terminal, 1);
+        assert!(report.timed_out.is_empty());
+        assert!(cancellation_observed.load(Ordering::Acquire));
+        assert_eq!(
+            manager.status(&id).await.expect("terminal status").state,
+            PhotolabJobState::Cancelled
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn drain_timeout_force_marks_the_job_failed_with_a_diagnostic() {
+        let manager = manager(1, 0);
+        let id = PhotolabJobId("drain-timeout-worker".into());
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        manager
+            .start(request(&id.0), move |_| {
+                started_tx.send(()).expect("signal worker start");
+                release_rx.recv().expect("release timed-out worker");
+                Ok(())
+            })
+            .await
+            .expect("admitted");
+        started_rx.recv().expect("worker started");
+
+        let report = manager.drain(Duration::from_millis(20)).await;
+        assert_eq!(report.terminal, 0);
+        assert_eq!(report.timed_out, vec![id.clone()]);
+        let terminal = manager.status(&id).await.expect("forced terminal status");
+        assert!(matches!(
+            terminal.state,
+            PhotolabJobState::Failed { ref code, .. } if code == "drainTimeout"
+        ));
+        assert!(terminal
+            .terminal_diagnostic
+            .as_deref()
+            .is_some_and(|diagnostic| diagnostic.contains("20 ms")));
+        let repeated = manager.drain(Duration::from_millis(20)).await;
+        assert_eq!(repeated.timed_out, vec![id.clone()]);
+        release_tx.send(()).expect("release worker after assertion");
+        let completed = manager.drain(Duration::from_secs(1)).await;
+        assert_eq!(completed.terminal, 1);
+        assert!(completed.timed_out.is_empty());
     }
 
     #[tokio::test]

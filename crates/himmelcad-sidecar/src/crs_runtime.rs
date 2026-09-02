@@ -22,6 +22,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::sync::OnceCell;
 
+use crate::process_group::{self, ProcessGroupDropGuard};
+
 const DEFAULT_CAPTURE_LIMIT: usize = 32 * 1024 * 1024;
 const MAX_CRS_ARGUMENT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_PIPELINE_BYTES: usize = 1024 * 1024;
@@ -460,6 +462,7 @@ impl ProjRuntime {
         let mut command = self.command(&self.config.cct_path, args);
         command.env("PROJ_DATA", self.frozen_proj_search_path(frozen));
         let mut child = command.spawn().map_err(CrsRuntimeError::Spawn)?;
+        let _group_guard = ProcessGroupDropGuard::new(child.id());
         let child_stdin = child
             .stdin
             .take()
@@ -502,7 +505,9 @@ impl ProjRuntime {
                 Ok(TransformStreamSummary { input_bytes, output_bytes })
             }
             () = cancellation_requested(cancellation) => {
-                let _ = child.kill().await;
+                if !process_group::kill_group(child.id()).unwrap_or(false) {
+                    let _ = child.kill().await;
+                }
                 let _ = child.wait().await;
                 Err(CrsRuntimeError::Cancelled)
             }
@@ -1171,6 +1176,7 @@ impl ProjRuntime {
         let mut command = self.command(&self.config.cct_path, args);
         command.env("PROJ_DATA", search_path);
         let mut child = command.spawn().map_err(CrsRuntimeError::Spawn)?;
+        let _group_guard = ProcessGroupDropGuard::new(child.id());
         let mut stdin = child
             .stdin
             .take()
@@ -1217,6 +1223,7 @@ impl ProjRuntime {
             .command(executable, args)
             .spawn()
             .map_err(CrsRuntimeError::Spawn)?;
+        let _group_guard = ProcessGroupDropGuard::new(child.id());
         drop(child.stdin.take());
         let mut stdout = child
             .stdout
@@ -1253,7 +1260,9 @@ impl ProjRuntime {
                 })
             }
             () = cancellation_requested(cancellation) => {
-                let _ = child.kill().await;
+                if !process_group::kill_group(child.id()).unwrap_or(false) {
+                    let _ = child.kill().await;
+                }
                 let _ = child.wait().await;
                 Err(CrsRuntimeError::Cancelled)
             }
@@ -1280,6 +1289,7 @@ impl ProjRuntime {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        process_group::configure(command.as_std_mut());
         command
     }
 

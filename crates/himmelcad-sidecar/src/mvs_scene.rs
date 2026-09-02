@@ -10,6 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::process_group;
 use himmelcad_core::{
     hash::ObjectHash,
     photolab_gcp::ImageCoordinate,
@@ -1025,22 +1026,22 @@ fn run_colmap_with_poll<F>(
 where
     F: FnMut() -> Result<(), MvsSceneError>,
 {
-    let mut child = Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .args(arguments)
         .env_clear()
         .env("COLMAP_NO_NETWORK", "1")
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
+        .stderr(Stdio::null());
+    let mut child = process_group::spawn(&mut command)?;
     let mut last_progress_poll = Instant::now()
         .checked_sub(Duration::from_millis(250))
         .unwrap_or_else(Instant::now);
     loop {
         if cancellation.is_cancel_requested() {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.terminate_and_wait();
             return Err(MvsSceneError::Cancelled);
         }
         if last_progress_poll.elapsed() >= Duration::from_millis(250) {

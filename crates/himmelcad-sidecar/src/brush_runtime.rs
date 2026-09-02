@@ -6,7 +6,7 @@ use std::{
     fs::{self, File},
     io::{self, BufRead, BufReader, Read, Write},
     path::{Component, Path, PathBuf},
-    process::{Child, Command, ExitStatus, Stdio},
+    process::{Command, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc, Arc,
@@ -14,6 +14,8 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+
+use crate::process_group::{self, ProcessGroupChild as Child};
 
 use himmelcad_core::{
     hash::ObjectHash,
@@ -799,7 +801,7 @@ impl BrushRuntime {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        command.spawn().map_err(BrushRuntimeError::Io)
+        process_group::spawn(&mut command).map_err(BrushRuntimeError::Io)
     }
 }
 
@@ -1131,7 +1133,7 @@ where
                 thread::sleep(CANCEL_POLL_INTERVAL);
             }
             if child.try_wait()?.is_none() {
-                child.kill()?;
+                child.terminate_and_wait()?;
             }
             let _ = child.wait();
             let _ = stdout_reader.join();
@@ -1607,14 +1609,15 @@ fn invalid_ply(path: &Path, reason: &str) -> BrushRuntimeError {
 }
 
 fn probe_version(executable: &Path) -> Result<String, BrushRuntimeError> {
-    let mut child = Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .arg("--version")
         .env_clear()
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+        .stderr(Stdio::piped());
+    let mut child = process_group::spawn(&mut command)?;
     let deadline = Instant::now() + VERSION_PROBE_TIMEOUT;
     loop {
         if let Some(status) = child.try_wait()? {
@@ -1641,8 +1644,7 @@ fn probe_version(executable: &Path) -> Result<String, BrushRuntimeError> {
             return Ok(version.to_owned());
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.terminate_and_wait();
             return Err(BrushRuntimeError::InvalidConfig(
                 "Brush --version probe timed out".into(),
             ));

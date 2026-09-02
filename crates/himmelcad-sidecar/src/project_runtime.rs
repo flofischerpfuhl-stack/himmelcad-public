@@ -4,9 +4,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(windows)]
 use std::os::windows::fs::OpenOptionsExt;
@@ -83,7 +83,9 @@ use himmelcad_sidecar::image_quality_runtime::{
 use himmelcad_sidecar::image_quality_runtime::{
     ImageQualityMetrics, ImageQualityScope, ImageQualityWarning,
 };
-use himmelcad_sidecar::job_runtime::{FrozenJobRequest, JobHistoryPersistence, JobHistoryScope};
+use himmelcad_sidecar::job_runtime::{
+    DrainReport, FrozenJobRequest, JobHistoryPersistence, JobHistoryScope,
+};
 use himmelcad_sidecar::mesh_tiler::PreparedMeshProduct;
 use himmelcad_sidecar::mvs_runtime::{
     MvsCommandReport, MvsOutputIndex, MvsRunOutcome, MvsSceneManifest,
@@ -1116,9 +1118,81 @@ pub struct ProjectRuntime {
     active_image_inspections: Mutex<HashMap<String, CancellationToken>>,
     active_image_masks: Mutex<HashMap<String, CancellationToken>>,
     active_gcp_operations: Mutex<HashMap<String, CancellationToken>>,
+    draining_side_operations: AtomicBool,
+}
+
+/// Bounded drain result for project operations that have not yet moved into JobManager.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SideOperationDrainReport {
+    pub timed_out: Vec<String>,
+}
+
+impl SideOperationDrainReport {
+    #[must_use]
+    pub fn completed(&self) -> bool {
+        self.timed_out.is_empty()
+    }
 }
 
 impl ProjectRuntime {
+    /// Cancels archive and image-commit side operations, then waits for their owners to finish.
+    pub async fn drain_side_operations(&self, deadline: Duration) -> SideOperationDrainReport {
+        self.draining_side_operations.store(true, Ordering::Release);
+        for cancellation in self
+            .active_archives
+            .lock()
+            .expect("archive operation mutex poisoned")
+            .values()
+        {
+            cancellation.request_cancel();
+        }
+        for cancellation in self
+            .active_image_commits
+            .lock()
+            .expect("image commit mutex poisoned")
+            .values()
+        {
+            cancellation.request_cancel();
+        }
+
+        let cutoff = tokio::time::Instant::now() + deadline;
+        loop {
+            let active = self.active_drain_operation_ids();
+            if active.is_empty() {
+                return SideOperationDrainReport::default();
+            }
+            if tokio::time::Instant::now() >= cutoff {
+                return SideOperationDrainReport { timed_out: active };
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    fn active_drain_operation_ids(&self) -> Vec<String> {
+        let mut active = self
+            .active_archives
+            .lock()
+            .expect("archive operation mutex poisoned")
+            .keys()
+            .map(|id| format!("archive:{id}"))
+            .collect::<Vec<_>>();
+        active.extend(
+            self.active_image_commits
+                .lock()
+                .expect("image commit mutex poisoned")
+                .keys()
+                .map(|id| format!("imageCommit:{id}")),
+        );
+        active.sort();
+        active
+    }
+
+    /// Reopens side-operation admission after a completed project transition.
+    pub fn resume_side_operation_admission(&self) {
+        self.draining_side_operations
+            .store(false, Ordering::Release);
+    }
+
     pub fn begin_image_inspection(&self, operation_id: &str) -> Result<CancellationToken> {
         let cancellation = CancellationToken::new();
         let mut active = self
@@ -1259,14 +1333,15 @@ impl ProjectRuntime {
         let session_id = unique_id("session", unix_ms()?);
         let lock_path = project_lock_path(&source_path);
         let (lock_file, lease) = acquire_lock(&lock_path, &session_id, &source_path)?;
-        let (operation_id, cancellation) =
-            match self.begin_archive_operation(params.archive_operation_id.as_deref()) {
-                Ok(operation) => operation,
-                Err(error) => {
-                    release_lock(&lock_file, &lock_path, &session_id)?;
-                    return Err(error);
-                }
-            };
+        let (operation_id, cancellation) = match self
+            .begin_project_open_archive_operation(params.archive_operation_id.as_deref())
+        {
+            Ok(operation) => operation,
+            Err(error) => {
+                release_lock(&lock_file, &lock_path, &session_id)?;
+                return Err(error);
+            }
+        };
         let result = self.open_archive_inner(
             params,
             source_path,
@@ -5214,6 +5289,10 @@ impl ProjectRuntime {
     where
         P: FnMut(f64, &str),
     {
+        anyhow::ensure!(
+            !self.draining_side_operations.load(Ordering::Acquire),
+            "image commits are unavailable while the project is draining"
+        );
         let operation_id = params.operation_id.clone();
         let cancellation = CancellationToken::new();
         {
@@ -5221,6 +5300,10 @@ impl ProjectRuntime {
                 .active_image_commits
                 .lock()
                 .expect("image commit mutex poisoned");
+            anyhow::ensure!(
+                !self.draining_side_operations.load(Ordering::Acquire),
+                "image commits are unavailable while the project is draining"
+            );
             if active.contains_key(&operation_id) {
                 anyhow::bail!("image commit operation id is already active: {operation_id}");
             }
@@ -5653,6 +5736,25 @@ impl ProjectRuntime {
         &self,
         requested_id: Option<&str>,
     ) -> Result<(String, CancellationToken)> {
+        self.begin_archive_operation_inner(requested_id, false)
+    }
+
+    fn begin_project_open_archive_operation(
+        &self,
+        requested_id: Option<&str>,
+    ) -> Result<(String, CancellationToken)> {
+        self.begin_archive_operation_inner(requested_id, true)
+    }
+
+    fn begin_archive_operation_inner(
+        &self,
+        requested_id: Option<&str>,
+        permit_project_open: bool,
+    ) -> Result<(String, CancellationToken)> {
+        anyhow::ensure!(
+            permit_project_open || !self.draining_side_operations.load(Ordering::Acquire),
+            "archive operations are unavailable while the project is draining"
+        );
         let operation_id = requested_id.map_or_else(
             || unique_id("archive", unix_ms().unwrap_or_default()),
             str::to_owned,
@@ -5663,6 +5765,10 @@ impl ProjectRuntime {
             .active_archives
             .lock()
             .expect("archive operation mutex poisoned");
+        anyhow::ensure!(
+            permit_project_open || !self.draining_side_operations.load(Ordering::Acquire),
+            "archive operations are unavailable while the project is draining"
+        );
         if guard.contains_key(&operation_id) {
             anyhow::bail!("archive operation id is already active: {operation_id}");
         }
@@ -5677,7 +5783,20 @@ impl ProjectRuntime {
             .remove(operation_id);
     }
 
-    pub fn close(&self) -> Result<()> {
+    /// Closes only after both authoritative job owners prove their drains completed.
+    pub fn close_after_drain(
+        &self,
+        jobs: &DrainReport,
+        side_operations: &SideOperationDrainReport,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            jobs.completed() && side_operations.completed(),
+            "project cannot be marked as cleanly closed after a timed-out drain"
+        );
+        self.close()
+    }
+
+    fn close(&self) -> Result<()> {
         let mut guard = self.session.lock().expect("project session mutex poisoned");
         let Some(mut session) = guard.take() else {
             return Ok(());
@@ -8806,11 +8925,159 @@ mod tests {
         PhotolabJobId, PhotolabJobKind, PhotolabStage, PhotolabStageKind, ProgressMetrics,
     };
     use himmelcad_sidecar::colmap_runtime::{ColmapOutputSummary, SelectedFeatureStore};
+    use himmelcad_sidecar::job_runtime::{JobManager, JobManagerConfig, JobWorkerError};
     use himmelcad_sidecar::mvs_runtime::{MvsCommandReport, MvsComputeDevice, MvsDenseCloudRecord};
     use himmelcad_sidecar::prepared_triangle_mesh::{
         build_prepared_textured_triangle_mesh, build_prepared_triangle_mesh,
         PreparedTriangleMeshOptions, TriangleRecord,
     };
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn clean_shutdown_waits_for_the_running_job_drain() {
+        let root = temp_test_dir("clean-shutdown-drain");
+        let project = root.join("drain.hcad");
+        let runtime = Arc::new(ProjectRuntime::default());
+        runtime
+            .create(CreateProjectParams {
+                path: path_string(&project),
+                name: "Drain lifecycle".into(),
+            })
+            .expect("project");
+        let manager = Arc::new(
+            JobManager::new_with_history(
+                JobManagerConfig {
+                    max_concurrency: 1,
+                    max_queued: 0,
+                },
+                runtime.clone(),
+            )
+            .expect("job manager"),
+        );
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (cancelled_tx, cancelled_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let job_id = PhotolabJobId("close-running-job".into());
+        manager
+            .start(
+                NewPhotolabJob {
+                    id: job_id.clone(),
+                    kind: PhotolabJobKind::AlignPhotos,
+                    config_hash: ObjectHash::of_bytes(b"close-config"),
+                    input_hash: ObjectHash::of_bytes(b"close-input"),
+                    progress: JobProgress {
+                        stage: PhotolabStage {
+                            kind: PhotolabStageKind::FeatureExtraction,
+                            index: 0,
+                            stage_count: 1,
+                            label: "Slow close fixture".into(),
+                        },
+                        metrics: ProgressMetrics::empty(),
+                    },
+                },
+                move |context| {
+                    started_tx.send(()).expect("worker start signal");
+                    while !context.cancellation.is_cancel_requested() {
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                    cancelled_tx.send(()).expect("cancel observed signal");
+                    release_rx.recv().expect("release worker");
+                    Err(JobWorkerError::Cancelled)
+                },
+            )
+            .await
+            .expect("start slow job");
+        started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("worker started");
+
+        let draining_manager = manager.clone();
+        let drain_task =
+            tokio::spawn(async move { draining_manager.drain(Duration::from_secs(2)).await });
+        cancelled_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker observed cancellation");
+        assert!(
+            !read_manifest(&project)
+                .expect("active manifest")
+                .clean_shutdown
+        );
+        assert!(runtime
+            .close_after_drain(
+                &DrainReport {
+                    terminal: 0,
+                    timed_out: vec![job_id],
+                },
+                &SideOperationDrainReport::default(),
+            )
+            .is_err());
+        assert!(
+            !read_manifest(&project)
+                .expect("refused close manifest")
+                .clean_shutdown
+        );
+
+        release_tx.send(()).expect("release worker");
+        let report = drain_task.await.expect("drain task");
+        assert_eq!(report.terminal, 1);
+        assert!(report.timed_out.is_empty());
+        runtime
+            .close_after_drain(&report, &SideOperationDrainReport::default())
+            .expect("close after drain");
+        assert!(
+            read_manifest(&project)
+                .expect("closed manifest")
+                .clean_shutdown
+        );
+        fs::remove_dir_all(root).expect("test cleanup");
+    }
+
+    #[tokio::test]
+    async fn side_operation_drain_cancels_and_waits_for_archive_and_image_commit_owners() {
+        let runtime = Arc::new(ProjectRuntime::default());
+        let archive = CancellationToken::new();
+        let image_commit = CancellationToken::new();
+        runtime
+            .active_archives
+            .lock()
+            .expect("archives")
+            .insert("archive-test".into(), archive.clone());
+        runtime
+            .active_image_commits
+            .lock()
+            .expect("image commits")
+            .insert("images-test".into(), image_commit.clone());
+
+        let draining_runtime = runtime.clone();
+        let drain = tokio::spawn(async move {
+            draining_runtime
+                .drain_side_operations(Duration::from_secs(1))
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !archive.is_cancel_requested() || !image_commit.is_cancel_requested() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("side-operation cancellation");
+        assert!(runtime
+            .begin_archive_operation(Some("rejected-during-drain"))
+            .is_err());
+
+        runtime.active_archives.lock().expect("archives").clear();
+        runtime
+            .active_image_commits
+            .lock()
+            .expect("image commits")
+            .clear();
+        let report = drain.await.expect("side-operation drain task");
+        assert!(report.completed());
+        runtime.resume_side_operation_admission();
+        let (operation_id, _) = runtime
+            .begin_archive_operation(Some("accepted-after-drain"))
+            .expect("archive admission reopened");
+        runtime.finish_archive_operation(&operation_id);
+    }
 
     #[test]
     fn image_quality_catalog_is_atomic_journalled_and_survives_reopen() {

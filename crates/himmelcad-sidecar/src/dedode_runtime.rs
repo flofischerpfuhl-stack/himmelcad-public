@@ -8,7 +8,7 @@ use std::{
     fs::{self, File},
     io::{self, BufRead, BufReader, Read},
     path::{Component, Path, PathBuf},
-    process::{Child, Command, ExitStatus, Stdio},
+    process::{Command, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc, Arc,
@@ -16,6 +16,8 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+
+use crate::process_group::{self, ProcessGroupChild as Child};
 
 use himmelcad_core::{
     hash::ObjectHash,
@@ -836,7 +838,7 @@ impl DedodeRuntime {
         if let Some(system_root) = std::env::var_os("SystemRoot") {
             command.env("SystemRoot", system_root);
         }
-        command.spawn().map_err(DedodeRuntimeError::Io)
+        process_group::spawn(&mut command).map_err(DedodeRuntimeError::Io)
     }
 }
 
@@ -1323,6 +1325,7 @@ fn probe_worker(
     if let Some(system_root) = std::env::var_os("SystemRoot") {
         command.env("SystemRoot", system_root);
     }
+    process_group::configure(&mut command);
     let output = command.output()?;
     if !output.status.success() {
         return Err(DedodeRuntimeError::WorkerProbeFailed(
@@ -1391,6 +1394,7 @@ fn probe_onnx_worker(
     if let Some(system_root) = std::env::var_os("SystemRoot") {
         command.env("SystemRoot", system_root);
     }
+    process_group::configure(&mut command);
     let output = command.output()?;
     if !output.status.success() {
         return Err(DedodeRuntimeError::WorkerProbeFailed(
@@ -1903,8 +1907,7 @@ where
     let status = loop {
         drain_events(&receiver, &mut tail, &mut progress);
         if cancellation.is_cancel_requested() {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.terminate_and_wait();
             let _ = out_reader.join();
             let _ = err_reader.join();
             return Err(DedodeRuntimeError::Cancelled);
@@ -2401,12 +2404,12 @@ print(json.dumps({"schemaVersion":1,"pythonVersion":".".join(map(str,sys.version
 
     #[test]
     fn cancellation_force_kills_fake_worker_without_deadline_delay() {
-        let mut child = Command::new("sh")
+        let mut command = Command::new("sh");
+        command
             .args(["-c", "while :; do sleep 1; done"])
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn slow fake worker");
+            .stderr(Stdio::piped());
+        let mut child = process_group::spawn(&mut command).expect("spawn slow fake worker");
         let cancellation = CancellationToken::new();
         cancellation.request_cancel();
         let started = Instant::now();

@@ -8,7 +8,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufReader as StdBufReader, Read, Write};
+use std::io::{BufRead, BufReader as StdBufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -23,7 +23,7 @@ use himmelcad_core::canonical_resources::CanonicalResourceRef;
 use himmelcad_core::entity::{EntityId, EntityKind};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
 use himmelcad_core::hash::ObjectHash;
@@ -124,8 +124,8 @@ use himmelcad_sidecar::image_quality_runtime::{
 };
 use himmelcad_sidecar::import_registration_runtime::ImportRegistrationRuntime;
 use himmelcad_sidecar::job_runtime::{
-    FrozenJobRequest, JobIdParams, JobManager, JobManagerConfig, JobWorkerContext, JobWorkerError,
-    ListJobsParams, StartJobResult,
+    DrainReport, FrozenJobRequest, JobIdParams, JobManager, JobManagerConfig, JobWorkerContext,
+    JobWorkerError, ListJobsParams, StartJobResult,
 };
 use himmelcad_sidecar::mesh_tiler::{build_tiled_dem_mesh, MeshTilerError};
 use himmelcad_sidecar::mvs_runtime::{
@@ -971,6 +971,8 @@ const fn default_gcp_preview_rows() -> usize {
     100
 }
 
+const SHUTDOWN_DRAIN_DEADLINE: tokio::time::Duration = tokio::time::Duration::from_secs(20);
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -987,8 +989,7 @@ async fn main() -> Result<()> {
         "himmelcad-sidecar starting"
     );
 
-    let stdin = tokio::io::stdin();
-    let mut reader = BufReader::new(stdin).lines();
+    let mut stdin_lines = spawn_stdin_reader();
     let projects = Arc::new(ProjectRuntime::default());
     let jobs = Arc::new(JobManager::new_with_history(
         default_job_manager_config(),
@@ -1012,7 +1013,22 @@ async fn main() -> Result<()> {
         Ok::<(), anyhow::Error>(())
     });
 
-    while let Some(line) = reader.next_line().await? {
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
+    loop {
+        let line = tokio::select! {
+            line = stdin_lines.recv() => match line {
+                Some(line) => Some(line?),
+                None => None,
+            },
+            () = &mut shutdown => {
+                tracing::info!("sidecar shutdown signal received; draining active PhotoLab work");
+                None
+            }
+        };
+        let Some(line) = line else {
+            break;
+        };
         if line.trim().is_empty() {
             continue;
         }
@@ -1058,10 +1074,21 @@ async fn main() -> Result<()> {
             }
         });
     }
+
+    let (job_drain, side_drain) = drain_project_work(&jobs, &projects).await;
+    if !job_drain.completed() || !side_drain.completed() {
+        tracing::error!(
+            timed_out_jobs = ?job_drain.timed_out,
+            timed_out_side_operations = ?side_drain.timed_out,
+            "sidecar drain timed out; leaving the project manifest unclean and terminating worker groups"
+        );
+        himmelcad_sidecar::process_group::terminate_all_registered();
+        std::process::exit(1);
+    }
     drop(response_tx);
     writer.await??;
 
-    if let Err(error) = projects.close() {
+    if let Err(error) = projects.close_after_drain(&job_drain, &side_drain) {
         tracing::error!(%error, "failed to close project cleanly during sidecar shutdown");
     }
     canonical_app
@@ -1070,6 +1097,62 @@ async fn main() -> Result<()> {
         .close();
 
     Ok(())
+}
+
+fn spawn_stdin_reader() -> mpsc::Receiver<std::io::Result<String>> {
+    let (sender, receiver) = mpsc::channel(256);
+    std::thread::Builder::new()
+        .name("sidecar-stdin".into())
+        .spawn(move || {
+            let stdin = std::io::stdin();
+            let reader = StdBufReader::new(stdin.lock());
+            for line in reader.lines() {
+                if sender.blocking_send(line).is_err() {
+                    break;
+                }
+            }
+        })
+        .expect("spawn sidecar stdin reader");
+    receiver
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+
+        let mut terminate = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+        let mut interrupt = signal(SignalKind::interrupt()).expect("install SIGINT handler");
+        tokio::select! {
+            _ = terminate.recv() => {}
+            _ = interrupt.recv() => {}
+        }
+    }
+    #[cfg(windows)]
+    {
+        use tokio::signal::windows::{ctrl_break, ctrl_c};
+
+        let mut interrupt = ctrl_c().expect("install Ctrl+C handler");
+        let mut ctrl_break = ctrl_break().expect("install Ctrl+Break handler");
+        tokio::select! {
+            _ = interrupt.recv() => {}
+            _ = ctrl_break.recv() => {}
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+async fn drain_project_work(
+    jobs: &JobManager,
+    projects: &ProjectRuntime,
+) -> (DrainReport, project_runtime::SideOperationDrainReport) {
+    tokio::join!(
+        jobs.drain(SHUTDOWN_DRAIN_DEADLINE),
+        projects.drain_side_operations(SHUTDOWN_DRAIN_DEADLINE)
+    )
 }
 
 #[allow(clippy::too_many_arguments)] // JSON-RPC routing dependencies are explicit application services.
@@ -1086,6 +1169,18 @@ async fn handle(
 ) -> RpcResponse {
     if req.jsonrpc != "2.0" {
         return rpc_err(req.id, -32600, "invalid jsonrpc version");
+    }
+    if req.method == "photolab.shutdown.drain" {
+        let (job_drain, side_drain) = drain_project_work(&jobs, &projects).await;
+        if side_drain.completed() {
+            return rpc_result(req.id, Ok::<_, anyhow::Error>(job_drain));
+        }
+        return rpc_err_with_data(
+            req.id,
+            -32030,
+            "PhotoLab side operations did not stop before the shutdown deadline",
+            serde_json::json!({ "timedOut": side_drain.timed_out }),
+        );
     }
     if req.method.starts_with("photolab.project.") {
         return handle_project_rpc(req, projects, &jobs).await;
@@ -2930,20 +3025,36 @@ async fn handle_project_rpc(
 ) -> RpcResponse {
     match req.method.as_str() {
         "photolab.project.create" => {
-            jobs.cancel_all().await;
-            rpc_blocking_with_params::<CreateProjectParams, _, _>(
+            let (job_drain, side_drain) = drain_project_work(jobs, &projects).await;
+            if !job_drain.completed() || !side_drain.completed() {
+                return drain_timeout_response(req.id, &job_drain, &side_drain);
+            }
+            let operation_projects = Arc::clone(&projects);
+            let response = rpc_blocking_with_params::<CreateProjectParams, _, _>(
                 req.id,
                 req.params,
-                move |params| projects.create(params),
+                move |params| operation_projects.create(params),
             )
-            .await
+            .await;
+            jobs.resume_admission();
+            projects.resume_side_operation_admission();
+            response
         }
         "photolab.project.open" => {
-            jobs.cancel_all().await;
-            rpc_blocking_with_params::<OpenProjectParams, _, _>(req.id, req.params, move |params| {
-                projects.open(&params)
-            })
-            .await
+            let (job_drain, side_drain) = drain_project_work(jobs, &projects).await;
+            if !job_drain.completed() || !side_drain.completed() {
+                return drain_timeout_response(req.id, &job_drain, &side_drain);
+            }
+            let operation_projects = Arc::clone(&projects);
+            let response = rpc_blocking_with_params::<OpenProjectParams, _, _>(
+                req.id,
+                req.params,
+                move |params| operation_projects.open(&params),
+            )
+            .await;
+            jobs.resume_admission();
+            projects.resume_side_operation_admission();
+            response
         }
         "photolab.project.snapshot" => rpc_blocking(req.id, move || projects.snapshot()).await,
         "photolab.project.journal.start" => {
@@ -3101,11 +3212,37 @@ async fn handle_project_rpc(
             .await
         }
         "photolab.project.close" => {
-            jobs.cancel_all().await;
-            rpc_blocking(req.id, move || projects.close()).await
+            let (job_drain, side_drain) = drain_project_work(jobs, &projects).await;
+            if !job_drain.completed() || !side_drain.completed() {
+                return drain_timeout_response(req.id, &job_drain, &side_drain);
+            }
+            let operation_projects = Arc::clone(&projects);
+            let response = rpc_blocking(req.id, move || {
+                operation_projects.close_after_drain(&job_drain, &side_drain)
+            })
+            .await;
+            jobs.resume_admission();
+            projects.resume_side_operation_admission();
+            response
         }
         other => rpc_err(req.id, -32601, &format!("method not found: {other}")),
     }
+}
+
+fn drain_timeout_response(
+    id: serde_json::Value,
+    jobs: &DrainReport,
+    side_operations: &project_runtime::SideOperationDrainReport,
+) -> RpcResponse {
+    rpc_err_with_data(
+        id,
+        -32030,
+        "PhotoLab work did not stop before the project-transition deadline",
+        serde_json::json!({
+            "timedOutJobs": jobs.timed_out,
+            "timedOutSideOperations": side_operations.timed_out,
+        }),
+    )
 }
 
 async fn handle_job_rpc(
@@ -7883,6 +8020,24 @@ fn rpc_err(id: serde_json::Value, code: i32, message: &str) -> RpcResponse {
             code,
             message: message.to_string(),
             data: None,
+        }),
+    }
+}
+
+fn rpc_err_with_data(
+    id: serde_json::Value,
+    code: i32,
+    message: &str,
+    data: serde_json::Value,
+) -> RpcResponse {
+    RpcResponse {
+        jsonrpc: "2.0",
+        id,
+        result: None,
+        error: Some(RpcError {
+            code,
+            message: message.to_string(),
+            data: Some(data),
         }),
     }
 }

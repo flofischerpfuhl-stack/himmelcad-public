@@ -67,6 +67,8 @@ let automationHost: ReturnType<typeof registerElectronAutomationHost> | null = n
 let currentWorkingPath: string | null = null;
 let currentProjectSourcePath: string | null = null;
 let preferences: PhotolabPreferencesService;
+let quitDrainStarted = false;
+let quitDrainComplete = false;
 const pendingProductExports = new Map<
   string,
   {
@@ -2353,8 +2355,35 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) void createWindow();
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (quitDrainComplete) {
+    stopSidecar();
+    return;
+  }
+  event.preventDefault();
+  if (quitDrainStarted) return;
+  quitDrainStarted = true;
+  console.info('[sidecar] Waiting up to 25 seconds for active PhotoLab work to stop…');
+  let timeoutId: NodeJS.Timeout | null = null;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(
+      () => reject(new Error('sidecar drain acknowledgement timed out')),
+      25_000,
+    );
+  });
   void automationHost?.dispose();
-  automationHost = null;
-  stopSidecar();
+  void Promise.race([callSidecar({ method: 'photolab.shutdown.drain' }), timeout])
+    .then((report) => {
+      console.info(`[sidecar] PhotoLab drain acknowledged: ${JSON.stringify(report)}`);
+    })
+    .catch((error: unknown) => {
+      console.warn(`[sidecar] PhotoLab drain did not acknowledge cleanly: ${String(error)}`);
+    })
+    .finally(() => {
+      if (timeoutId) clearTimeout(timeoutId);
+      automationHost = null;
+      stopSidecar();
+      quitDrainComplete = true;
+      app.quit();
+    });
 });

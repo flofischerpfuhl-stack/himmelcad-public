@@ -19,6 +19,8 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+
+use crate::process_group::{self, ProcessGroupDropGuard};
 use tokio::task::JoinSet;
 
 use crate::job_runtime::CheckpointSink;
@@ -1495,7 +1497,9 @@ impl RasterRuntime {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        process_group::configure(command.as_std_mut());
         let mut child = command.spawn()?;
+        let _group_guard = ProcessGroupDropGuard::new(child.id());
         let stdout = child
             .stdout
             .take()
@@ -1511,7 +1515,9 @@ impl RasterRuntime {
                 status = child.wait() => break status?,
                 () = tokio::time::sleep(Duration::from_millis(20)) => {
                     if cancellation.is_cancel_requested() {
-                        let _ = child.kill().await;
+                        if !process_group::kill_group(child.id()).unwrap_or(false) {
+                            let _ = child.kill().await;
+                        }
                         let _ = child.wait().await;
                         return Err(RasterRuntimeError::Cancelled);
                     }

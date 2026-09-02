@@ -13,7 +13,7 @@ use std::{
     fs::{self, File},
     io::{self, BufRead, BufReader, Read, Write},
     path::{Component, Path, PathBuf},
-    process::{Child, Command, ExitStatus, Stdio},
+    process::{Command, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc, Arc,
@@ -21,6 +21,8 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+
+use crate::process_group::{self, ProcessGroupChild as Child};
 
 use himmelcad_core::{
     hash::ObjectHash,
@@ -2534,7 +2536,7 @@ impl ColmapRuntime {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        command.spawn().map_err(ColmapRuntimeError::Io)
+        process_group::spawn(&mut command).map_err(ColmapRuntimeError::Io)
     }
 }
 
@@ -2966,8 +2968,7 @@ where
     let status = loop {
         drain_log_events(&receiver, &mut tail, &mut last_progress, &mut progress);
         if cancellation.is_cancel_requested() {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.terminate_and_wait();
             let _ = stdout_reader.join();
             let _ = stderr_reader.join();
             return Err(ColmapRuntimeError::Cancelled);
@@ -3182,15 +3183,17 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let output = Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .args(args)
         .env_clear()
         .env("COLMAP_NO_NETWORK", "1")
         .env("HF_HUB_OFFLINE", "1")
         .env("TRANSFORMERS_OFFLINE", "1")
         .env("LC_ALL", "C")
-        .stdin(Stdio::null())
-        .output()?;
+        .stdin(Stdio::null());
+    process_group::configure(&mut command);
+    let output = command.output()?;
     if !output.status.success() {
         return Err(ColmapRuntimeError::InvalidConfig(format!(
             "developer COLMAP capability probe failed with {}",

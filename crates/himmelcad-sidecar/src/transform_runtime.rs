@@ -719,6 +719,7 @@ impl TransformRuntime {
         }
         // Never allow network grid fetch in product paths.
         command.env("PROJ_NETWORK", "OFF");
+        crate::process_group::configure(&mut command);
 
         let mut child = command
             .spawn()

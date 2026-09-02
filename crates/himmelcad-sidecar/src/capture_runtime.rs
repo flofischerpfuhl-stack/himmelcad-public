@@ -3,7 +3,7 @@
 use std::fs::{self, File};
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
@@ -18,6 +18,8 @@ use himmelcad_core::photolab_images::{DiscoveredPhoto, PhotoFormat, PhotoImportB
 use himmelcad_io::import_photo_files_with_capabilities_and_progress;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::process_group::{self, ProcessGroupChild as Child};
 use thiserror::Error;
 
 const HASH_BUFFER_BYTES: usize = 1024 * 1024;
@@ -352,11 +354,11 @@ where
             .args(["-frames:v", "1"])
             .arg(&temporary);
     }
-    let mut child = command
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
+        .stderr(Stdio::piped());
+    let mut child = process_group::spawn(&mut command)
         .map_err(|error| CaptureRuntimeError::ToolStart("image transcoder", error))?;
     progress(0.2, "Decoding capture into a pipeline image");
     wait_for_child(&mut child, &mut cancelled, "image transcoder")?;
@@ -495,7 +497,8 @@ where
         fs::create_dir(&scratch_directory)?;
         progress(0.22, "Extracting bounded analysis thumbnails");
         let thumbnail_pattern = scratch_directory.join("thumb-%08d.png");
-        let mut child = Command::new(ffmpeg)
+        let mut command = Command::new(ffmpeg);
+        command
             .args(["-v", "error", "-i"])
             .arg(&source_archive_path)
             .args([
@@ -507,8 +510,8 @@ where
             .arg(&thumbnail_pattern)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
+            .stderr(Stdio::piped());
+        let mut child = process_group::spawn(&mut command)
             .map_err(|error| CaptureRuntimeError::ToolStart("ffmpeg", error))?;
         wait_for_child(&mut child, &mut cancelled, "ffmpeg thumbnail extraction")?;
         check_cancelled(&mut cancelled, checkpoint_path, &mut checkpoint)?;
@@ -574,15 +577,16 @@ where
             "{:.6}",
             selected.timestamp_microseconds as f64 / 1_000_000.0
         );
-        let mut child = Command::new(ffmpeg)
+        let mut command = Command::new(ffmpeg);
+        command
             .args(["-v", "error", "-ss", &timestamp, "-i"])
             .arg(&source_archive_path)
             .args(["-frames:v", "1", "-map_metadata", "0"])
             .arg(&output_path)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
+            .stderr(Stdio::piped());
+        let mut child = process_group::spawn(&mut command)
             .map_err(|error| CaptureRuntimeError::ToolStart("ffmpeg", error))?;
         wait_for_child(&mut child, &mut cancelled, "ffmpeg frame extraction")?;
         checkpoint.prepared_paths.push(output_text);
@@ -751,8 +755,7 @@ where
 {
     loop {
         if cancelled() {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.terminate_and_wait();
             return Err(CaptureRuntimeError::Cancelled);
         }
         if let Some(status) = child.try_wait()? {
