@@ -84,6 +84,31 @@ residual maps and exact frozen group membership.
 - Internet/unknown photos: begin with the simple radial family. Do not use a
   full per-image Brown model without strong shared evidence.
 
+## Alignment and merge execution
+
+COLMAP's mapper exposes bundle-adjustment refinement as run-wide flags, not as a per-camera mask,
+so the per-group policy is mapped onto exactly three run strategies. A group counts as pinned when
+it carries a complete embedded calibration, or when its explicit policy is `Fixed` and it has a
+laboratory calibration to preserve. `Auto`, `Prior` and `Custom` refine: COLMAP cannot honour a
+partial parameter mask, and the in-house GCP adjustment applies the exact mask afterwards.
+
+- `allFixed` — every group is pinned. The mapper runs with focal, principal point and distortion
+  refinement disabled.
+- `allRefine` — no group is pinned. The mapper runs with COLMAP's focal and distortion refinement.
+- `mixed` — the groups disagree. The mapper refines every seeded group, the pinned groups are then
+  restored to their exact seeds by rewriting `cameras.txt`, and COLMAP's standalone
+  `bundle_adjuster` re-optimizes poses and points with all three refine flags disabled. The run
+  fails when that re-adjustment loses a registered image or more than ten percent of the 3D points,
+  because a pinned calibration that cannot explain the block is a review finding, not a product.
+
+A run whose groups disagree previously froze every group's intrinsics as soon as one group carried
+embedded calibration, which silently froze a metadata-poor mission's default intrinsics in an
+overlap merge. An overlap merge additionally seeds each group from the intrinsics its own input
+alignment solved, instead of restarting the joint solve from COLMAP defaults.
+
+Every alignment and merge record freezes the strategy that ran, the pinned group ids, the
+re-adjustment path and evidence, and the per-group seed and solved focal lengths.
+
 ## Optimize-adjustment parameters beyond intrinsics
 
 The adjustment policy treats the following as separate, visible parameter

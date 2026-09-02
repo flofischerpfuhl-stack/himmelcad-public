@@ -41,8 +41,9 @@ use himmelcad_core::photolab_gcp::{
     GcpCoordinate, GcpCsvImportMapping, GcpObservation, GcpObservationState, ImageCoordinate,
 };
 use himmelcad_core::photolab_gcp_optimization::{
-    propagate_gcp_through_tie_points, GcpCameraModel, GcpOptimizationPhase, GcpSimilarityTransform,
-    GcpSolverOptions, GcpTiePointMeasurement, GcpTiePointTrack, OptimizedGcpCamera,
+    propagate_gcp_through_tie_points, GcpCameraModel, GcpIntrinsicsPolicy, GcpOptimizationPhase,
+    GcpSimilarityTransform, GcpSolverOptions, GcpTiePointMeasurement, GcpTiePointTrack,
+    OptimizedGcpCamera,
 };
 use himmelcad_core::photolab_images::ProjectedPhotoReference;
 use himmelcad_core::photolab_jobs::{
@@ -5714,6 +5715,7 @@ fn prepare_alignment_job(
         matching_worker_threads: colmap_matching_worker_threads(),
         products: ColmapProductRequest::default(),
         intrinsics_refinement: ColmapIntrinsicsRefinement::Refine,
+        pinned_calibration_group_ids: Vec::new(),
     };
     request.calibration_groups = projects.calibration_groups_for_camera_scope(
         &camera_images
@@ -5721,8 +5723,12 @@ fn prepare_alignment_job(
             .map(|camera| camera.entity_id.0.clone())
             .collect::<Vec<_>>(),
     )?;
-    request.intrinsics_refinement =
-        alignment_intrinsics_refinement(params.profile, &request.calibration_groups);
+    let (refinement, pinned) = plan_intrinsics_refinement(
+        &request.calibration_groups,
+        &calibration_group_policies(projects)?,
+    );
+    request.intrinsics_refinement = refinement;
+    request.pinned_calibration_group_ids = pinned;
     let input_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
         &context.manifest.project_id,
         &camera_images,
@@ -5809,22 +5815,64 @@ fn prepare_alignment_job(
     Ok((job, request, runtime, dedode, processing_set_id))
 }
 
-fn alignment_intrinsics_refinement(
-    _profile: AlignmentQualityProfile,
+/// Per-group intrinsics policy, keyed by the immutable calibration-group id.
+///
+/// Implicit metadata-derived groups have no persisted record and fall back to the product default.
+fn calibration_group_policies(
+    projects: &ProjectRuntime,
+) -> anyhow::Result<BTreeMap<String, GcpIntrinsicsPolicy>> {
+    Ok(projects
+        .list_calibration_groups()?
+        .into_iter()
+        .map(|group| (group.entity_id.0, group.intrinsics_policy))
+        .collect())
+}
+
+/// Does this group's effective policy pin its interior orientation for the whole run?
+///
+/// A group is pinned when it carries a complete embedded calibration, or when its explicit policy
+/// is `Fixed` and it actually has a laboratory seed to preserve. `Auto`, `Prior` and `Custom` all
+/// refine: COLMAP cannot honour a partial parameter mask, and the in-house GCP adjustment refines
+/// the exact mask afterwards.
+fn calibration_group_is_pinned(
+    group: &ColmapCalibrationGroup,
+    policies: &BTreeMap<String, GcpIntrinsicsPolicy>,
+) -> bool {
+    let Some(seed) = group.seed.as_ref() else {
+        return false;
+    };
+    seed.full_brown_calibration.is_some()
+        || matches!(
+            policies.get(&group.group_id),
+            Some(GcpIntrinsicsPolicy::Fixed)
+        )
+}
+
+/// Maps the per-group policy outcomes onto the three run strategies COLMAP can actually execute.
+///
+/// All pinned freezes the mapper, none pinned refines it, and a disagreeing run refines every
+/// group and pins the fixed ones back afterwards. The previous run-wide binary froze a
+/// metadata-poor mission whenever any other mission carried embedded calibration.
+fn plan_intrinsics_refinement(
     groups: &[ColmapCalibrationGroup],
-) -> ColmapIntrinsicsRefinement {
-    if groups.iter().any(|group| {
-        group
-            .seed
-            .as_ref()
-            .is_some_and(|seed| seed.full_brown_calibration.is_some())
-    }) {
-        // COLMAP exposes BA refinement as a run-wide policy. All profiles freeze
-        // a run containing reliable embedded calibration: matching robustness is
-        // profile-dependent, while calibrated focal/principal/distortion are not.
-        return ColmapIntrinsicsRefinement::FreezeReliableEmbedded;
+    policies: &BTreeMap<String, GcpIntrinsicsPolicy>,
+) -> (ColmapIntrinsicsRefinement, Vec<String>) {
+    let pinned = groups
+        .iter()
+        .filter(|group| calibration_group_is_pinned(group, policies))
+        .map(|group| group.group_id.clone())
+        .collect::<Vec<_>>();
+    if pinned.is_empty() {
+        return (ColmapIntrinsicsRefinement::Refine, Vec::new());
     }
-    ColmapIntrinsicsRefinement::Refine
+    if pinned.len() == groups.len() {
+        // Matching robustness stays profile-dependent; a fully calibrated run never drifts.
+        return (
+            ColmapIntrinsicsRefinement::FreezeReliableEmbedded,
+            Vec::new(),
+        );
+    }
+    (ColmapIntrinsicsRefinement::Refine, pinned)
 }
 
 /// Stored-feature budget for ALIKED/SIFT extractors.
@@ -5877,6 +5925,43 @@ const fn alignment_primary_store(profile: AlignmentQualityProfile) -> MappingFea
         AlignmentQualityProfile::QualityHybrid | AlignmentQualityProfile::MaximumRobustness => {
             MappingFeatureStore::Aliked
         }
+    }
+}
+
+/// Replaces the merge plan's frozen seeds with the intrinsics each input alignment solved.
+///
+/// The joint solve otherwise restarts a metadata-poor block from COLMAP defaults and discards the
+/// per-mission refinement that block already earned. Pinned groups keep their exact frozen
+/// calibration, which is the value the mixed-policy pass restores after the joint solve.
+fn reseed_merge_calibration_groups(
+    groups: &mut [ColmapCalibrationGroup],
+    input_dataset_roots: &std::collections::HashMap<String, PathBuf>,
+    policies: &BTreeMap<String, GcpIntrinsicsPolicy>,
+) {
+    let mut solved = BTreeMap::new();
+    for root in input_dataset_roots.values() {
+        let Ok(seeds) = himmelcad_sidecar::colmap_runtime::solved_calibration_seeds(root) else {
+            continue;
+        };
+        solved.extend(seeds);
+    }
+    for group in groups {
+        if calibration_group_is_pinned(group, policies) {
+            continue;
+        }
+        let mut members = group
+            .camera_entity_ids
+            .iter()
+            .map(|camera_id| solved.get(camera_id));
+        let Some(Some(first)) = members.next() else {
+            continue;
+        };
+        // One calibration group is one COLMAP camera. Disagreeing members mean the group was split
+        // across inputs, so the conservative choice is to keep the plan's own seed.
+        if !members.all(|seed| seed == Some(first)) {
+            continue;
+        }
+        group.seed = Some(first.clone());
     }
 }
 
@@ -5947,6 +6032,15 @@ fn prepare_alignment_merge_job(
     // evidence must therefore be discovered by an exhaustive cross-run candidate graph.
     request.pair_selection = ColmapPairSelection::Exhaustive;
     request.calibration_groups = merge.calibration_groups;
+    let policies = calibration_group_policies(projects)?;
+    reseed_merge_calibration_groups(
+        &mut request.calibration_groups,
+        &merge.input_dataset_roots,
+        &policies,
+    );
+    let (refinement, pinned) = plan_intrinsics_refinement(&request.calibration_groups, &policies);
+    request.intrinsics_refinement = refinement;
+    request.pinned_calibration_group_ids = pinned;
     job.kind = PhotolabJobKind::MergeAlignments;
     if shared_control_only {
         job.progress = JobProgress {
@@ -9048,8 +9142,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn alignment_profiles_apply_explicit_embedded_intrinsics_policy() {
+    fn embedded_calibration_group(group_id: &str, camera_id: &str) -> ColmapCalibrationGroup {
         let full = himmelcad_core::photolab_images::DjiBrownConradyCalibration {
             focal_x_pixels: 3713.0,
             focal_y_pixels: 3713.0,
@@ -9060,9 +9153,9 @@ mod tests {
             calibration_date: "2025-02-26".into(),
             provenance: himmelcad_core::photolab_images::DjiCalibrationProvenance::DewarpData,
         };
-        let groups = vec![ColmapCalibrationGroup {
-            group_id: "embedded".into(),
-            camera_entity_ids: vec!["camera-a".into()],
+        ColmapCalibrationGroup {
+            group_id: group_id.into(),
+            camera_entity_ids: vec![camera_id.into()],
             seed: Some(ColmapCalibrationSeed {
                 width_pixels: 5280,
                 height_pixels: 3956,
@@ -9071,28 +9164,166 @@ mod tests {
                 principal_y_pixels: full.principal_y_pixels,
                 full_brown_calibration: Some(full),
             }),
-        }];
+        }
+    }
 
+    fn seeded_calibration_group(group_id: &str, camera_id: &str) -> ColmapCalibrationGroup {
+        ColmapCalibrationGroup {
+            group_id: group_id.into(),
+            camera_entity_ids: vec![camera_id.into()],
+            seed: Some(ColmapCalibrationSeed {
+                width_pixels: 5280,
+                height_pixels: 3956,
+                focal_pixels: 3700.0,
+                principal_x_pixels: 2640.0,
+                principal_y_pixels: 1978.0,
+                full_brown_calibration: None,
+            }),
+        }
+    }
+
+    fn unseeded_calibration_group(group_id: &str, camera_id: &str) -> ColmapCalibrationGroup {
+        ColmapCalibrationGroup {
+            group_id: group_id.into(),
+            camera_entity_ids: vec![camera_id.into()],
+            seed: None,
+        }
+    }
+
+    #[test]
+    fn every_group_policy_maps_onto_one_of_the_three_run_strategies() {
+        let no_policies = BTreeMap::new();
+        let embedded = vec![embedded_calibration_group("embedded", "camera-a")];
+        let unseeded = vec![unseeded_calibration_group("poor", "camera-b")];
+        let mixed = vec![
+            embedded_calibration_group("embedded", "camera-a"),
+            unseeded_calibration_group("poor", "camera-b"),
+        ];
+
+        // All fixed and all refine keep their historical run-wide mapper flags.
         assert_eq!(
-            alignment_intrinsics_refinement(AlignmentQualityProfile::Fast, &groups),
-            ColmapIntrinsicsRefinement::FreezeReliableEmbedded
+            plan_intrinsics_refinement(&embedded, &no_policies),
+            (
+                ColmapIntrinsicsRefinement::FreezeReliableEmbedded,
+                Vec::new()
+            )
         );
         assert_eq!(
-            alignment_intrinsics_refinement(AlignmentQualityProfile::QualityHybrid, &groups),
-            ColmapIntrinsicsRefinement::FreezeReliableEmbedded
+            plan_intrinsics_refinement(&unseeded, &no_policies),
+            (ColmapIntrinsicsRefinement::Refine, Vec::new())
         );
         assert_eq!(
-            alignment_intrinsics_refinement(AlignmentQualityProfile::MaximumRobustness, &groups),
-            ColmapIntrinsicsRefinement::FreezeReliableEmbedded
+            plan_intrinsics_refinement(&[], &no_policies),
+            (ColmapIntrinsicsRefinement::Refine, Vec::new())
         );
+        // A disagreeing run refines everything and pins the calibrated group back afterwards
+        // instead of freezing the metadata-poor mission with it.
         assert_eq!(
-            alignment_intrinsics_refinement(AlignmentQualityProfile::QualityHybrid, &[]),
-            ColmapIntrinsicsRefinement::Refine
+            plan_intrinsics_refinement(&mixed, &no_policies),
+            (
+                ColmapIntrinsicsRefinement::Refine,
+                vec!["embedded".to_owned()]
+            )
         );
+
+        // A laboratory seed is pinned only when its explicit policy says Fixed.
+        let lab = vec![
+            seeded_calibration_group("lab", "camera-a"),
+            unseeded_calibration_group("poor", "camera-b"),
+        ];
         assert_eq!(
-            alignment_intrinsics_refinement(AlignmentQualityProfile::Fast, &[]),
-            ColmapIntrinsicsRefinement::Refine
+            plan_intrinsics_refinement(&lab, &no_policies),
+            (ColmapIntrinsicsRefinement::Refine, Vec::new())
         );
+        let fixed = BTreeMap::from([("lab".to_owned(), GcpIntrinsicsPolicy::Fixed)]);
+        assert_eq!(
+            plan_intrinsics_refinement(&lab, &fixed),
+            (ColmapIntrinsicsRefinement::Refine, vec!["lab".to_owned()])
+        );
+        // Auto, Prior and Custom all refine: COLMAP cannot honour a partial parameter mask.
+        for policy in [
+            GcpIntrinsicsPolicy::Auto,
+            GcpIntrinsicsPolicy::Prior {
+                parameters:
+                    himmelcad_core::photolab_gcp_optimization::GcpIntrinsicParameterMask::all(),
+                stddev: himmelcad_core::photolab_gcp_optimization::GcpIntrinsicPriorStddev::default(
+                ),
+            },
+            GcpIntrinsicsPolicy::Custom {
+                parameters:
+                    himmelcad_core::photolab_gcp_optimization::GcpIntrinsicParameterMask::all(),
+            },
+        ] {
+            assert_eq!(
+                plan_intrinsics_refinement(&lab, &BTreeMap::from([("lab".to_owned(), policy)])),
+                (ColmapIntrinsicsRefinement::Refine, Vec::new())
+            );
+        }
+        // A Fixed policy without any calibration has nothing to preserve.
+        assert_eq!(
+            plan_intrinsics_refinement(
+                &mixed,
+                &BTreeMap::from([("poor".to_owned(), GcpIntrinsicsPolicy::Fixed)])
+            ),
+            (
+                ColmapIntrinsicsRefinement::Refine,
+                vec!["embedded".to_owned()]
+            )
+        );
+    }
+
+    #[test]
+    fn a_merge_starts_from_each_input_solve_rather_than_colmap_defaults() {
+        let directory =
+            std::env::temp_dir().join(format!("himmelcad-merge-seeds-{}", std::process::id()));
+        let dataset = directory.join("datasets/colmap/first");
+        std::fs::create_dir_all(dataset.join("sparse-view-source"))
+            .expect("create fake published alignment");
+        std::fs::write(
+            dataset.join("camera-map.json"),
+            br#"[{"entityId":"camera-a","imageName":"calibration-000000/image-00000000.jpg"},
+                 {"entityId":"camera-b","imageName":"calibration-000001/image-00000001.jpg"}]"#,
+        )
+        .expect("write camera map");
+        std::fs::write(
+            dataset.join("sparse-view-source/cameras.txt"),
+            "# cameras\n1 SIMPLE_RADIAL 5280 3956 3713 2660 1961 0.01\n2 SIMPLE_RADIAL 5280 3956 3801 2640 1978 0.02\n",
+        )
+        .expect("write solved cameras");
+        std::fs::write(
+            dataset.join("sparse-view-source/images.txt"),
+            "# images\n1 1 0 0 0 0 0 0 1 calibration-000000/image-00000000.jpg\n0 0 1\n2 1 0 0 0 0 0 0 2 calibration-000001/image-00000001.jpg\n0 0 1\n",
+        )
+        .expect("write solved images");
+        let roots =
+            std::collections::HashMap::from([("alignment-first".to_owned(), dataset.clone())]);
+
+        let mut groups = vec![
+            embedded_calibration_group("embedded", "camera-a"),
+            unseeded_calibration_group("poor", "camera-b"),
+        ];
+        let policies = BTreeMap::new();
+        reseed_merge_calibration_groups(&mut groups, &roots, &policies);
+        // The pinned group keeps the exact frozen calibration the joint solve must restore.
+        assert_eq!(
+            groups[0].seed.as_ref().expect("embedded seed").focal_pixels,
+            3713.0
+        );
+        assert!(groups[0]
+            .seed
+            .as_ref()
+            .expect("embedded seed")
+            .full_brown_calibration
+            .is_some());
+        // The metadata-poor group starts from what its own mission already solved.
+        let poor = groups[1]
+            .seed
+            .as_ref()
+            .expect("reseeded metadata-poor group");
+        assert_eq!(poor.focal_pixels, 3801.0);
+        assert_eq!(poor.principal_x_pixels, 2640.0);
+        assert_eq!(poor.width_pixels, 5280);
+        std::fs::remove_dir_all(&directory).expect("clean up fake published alignment");
     }
 
     fn sample_steps() -> Vec<BatchPipelineStep> {

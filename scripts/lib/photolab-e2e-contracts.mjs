@@ -18,6 +18,7 @@ export const CANCELLATION_STAGE_TARGETS = Object.freeze({
     'build hybrid reconstructions',
     'global mapper',
     'incremental mapper',
+    'refine poses with pinned intrinsics',
     'glomap',
     'mapper',
   ],

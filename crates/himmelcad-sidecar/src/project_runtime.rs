@@ -55,8 +55,9 @@ use himmelcad_sidecar::alignment_merge_runtime::{
 use himmelcad_sidecar::brush_runtime::{BrushOutputSummary, BrushRunOutcome};
 use himmelcad_sidecar::camera_export::CameraCalibrationExportGroup;
 use himmelcad_sidecar::colmap_runtime::{
-    ColmapArtifactKind, ColmapArtifactSummary, ColmapCalibrationGroup, ColmapCalibrationSeed,
-    ColmapIntrinsicsRefinement, ColmapRunOutcome, SelectedMapper,
+    CalibrationGroupIntrinsicsDelta, ColmapArtifactKind, ColmapArtifactSummary,
+    ColmapCalibrationGroup, ColmapCalibrationSeed, ColmapIntrinsicsRefinement,
+    ColmapIntrinsicsStrategy, ColmapRunOutcome, PinnedIntrinsicsReadjustment, SelectedMapper,
 };
 use himmelcad_sidecar::dense_raster_prep::PreparedPotreeCloud;
 use himmelcad_sidecar::gcp_local_estimate_runtime::{
@@ -474,6 +475,15 @@ pub struct MergedAlignmentRunRecord {
     /// Exact union of the immutable input-alignment intrinsics partitions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub calibration_groups: Vec<ColmapCalibrationGroup>,
+    /// Run-level outcome of the per-calibration-group intrinsics policy for the joint solve.
+    #[serde(default)]
+    pub intrinsics_strategy: ColmapIntrinsicsStrategy,
+    /// Per-group seed and solved focal lengths of the joint solve.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub calibration_group_intrinsics: Vec<CalibrationGroupIntrinsicsDelta>,
+    /// Evidence from the mixed-policy pose-only re-adjustment, when one ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_readjustment: Option<PinnedIntrinsicsReadjustment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_mask_scope_sha256: Option<ObjectHash>,
     pub lineage_sha256: ObjectHash,
@@ -713,6 +723,16 @@ pub struct ComputeArtifactRecord {
     pub calibration_groups: Vec<ColmapCalibrationGroup>,
     #[serde(default)]
     pub intrinsics_refinement: ColmapIntrinsicsRefinement,
+    /// Run-level outcome of the per-calibration-group intrinsics policy. Records published before
+    /// per-group policies existed default to the all-refine strategy they actually ran.
+    #[serde(default)]
+    pub intrinsics_strategy: ColmapIntrinsicsStrategy,
+    /// Per-group seed and solved focal lengths behind that strategy.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub calibration_group_intrinsics: Vec<CalibrationGroupIntrinsicsDelta>,
+    /// Evidence from the mixed-policy pose-only re-adjustment, when one ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_readjustment: Option<PinnedIntrinsicsReadjustment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub processing_set_id: Option<EntityId>,
     #[serde(default)]
@@ -3537,6 +3557,9 @@ impl ProjectRuntime {
             merge_profile: Some(params.merge_profile),
             camera_entity_ids: camera_ids,
             calibration_groups,
+            intrinsics_strategy: ColmapIntrinsicsStrategy::default(),
+            calibration_group_intrinsics: Vec::new(),
+            pinned_readjustment: None,
             image_mask_scope_sha256: Some(image_mask_scope_sha256),
             lineage_sha256,
             publication_sequence: 0,
@@ -3686,6 +3709,10 @@ impl ProjectRuntime {
         published.state = MergedAlignmentState::Published;
         published.connections = published_connections;
         published.connection_evidence = connection_evidence;
+        published.intrinsics_strategy = outcome.summary.intrinsics_strategy;
+        published.calibration_group_intrinsics =
+            outcome.summary.calibration_group_intrinsics.clone();
+        published.pinned_readjustment = outcome.summary.pinned_readjustment;
         published.publication_sequence = session.manifest.command_sequence.saturating_add(1);
         published.dataset_relative_path = Some(dataset_relative_path.clone());
         let version_hash =
@@ -5325,6 +5352,9 @@ impl ProjectRuntime {
                 image_mask_scope_sha256: outcome.summary.image_mask_scope_sha256.clone(),
                 calibration_groups: outcome.summary.calibration_groups.clone(),
                 intrinsics_refinement: outcome.summary.intrinsics_refinement,
+                intrinsics_strategy: outcome.summary.intrinsics_strategy,
+                calibration_group_intrinsics: outcome.summary.calibration_group_intrinsics.clone(),
+                pinned_readjustment: outcome.summary.pinned_readjustment,
                 processing_set_id: processing_set_id.clone(),
                 publication_sequence: session.manifest.command_sequence.saturating_add(1),
                 selected_mapper: outcome.summary.selected_mapper,
@@ -10016,7 +10046,9 @@ mod tests {
         CheckpointDescriptor, CheckpointId, JobProgress, NewPendingCheckpoint, NewPhotolabJob,
         PhotolabJobId, PhotolabJobKind, PhotolabStage, PhotolabStageKind, ProgressMetrics,
     };
-    use himmelcad_sidecar::colmap_runtime::{ColmapOutputSummary, SelectedFeatureStore};
+    use himmelcad_sidecar::colmap_runtime::{
+        ColmapOutputSummary, PinnedIntrinsicsReadjustmentPath, SelectedFeatureStore,
+    };
     use himmelcad_sidecar::job_runtime::{JobManager, JobManagerConfig, JobWorkerError};
     use himmelcad_sidecar::mvs_runtime::{MvsCommandReport, MvsComputeDevice, MvsDenseCloudRecord};
     use himmelcad_sidecar::prepared_triangle_mesh::{
@@ -10835,6 +10867,117 @@ mod tests {
     }
 
     #[test]
+    fn alignment_and_merge_records_carry_the_intrinsics_strategy_and_stay_readable_when_older() {
+        let deltas = vec![
+            CalibrationGroupIntrinsicsDelta {
+                group_id: "embedded".into(),
+                pinned: true,
+                seed_focal_pixels: Some(3713.0),
+                solved_focal_pixels: Some(3713.0),
+                focal_delta_pixels: Some(0.0),
+            },
+            CalibrationGroupIntrinsicsDelta {
+                group_id: "poor".into(),
+                pinned: false,
+                seed_focal_pixels: Some(3700.0),
+                solved_focal_pixels: Some(3742.5),
+                focal_delta_pixels: Some(42.5),
+            },
+        ];
+        let readjustment = PinnedIntrinsicsReadjustment {
+            path: PinnedIntrinsicsReadjustmentPath::ColmapBundleAdjuster,
+            registered_images_before: 240,
+            registered_images_after: 240,
+            points3d_before: 180_000,
+            points3d_after: 179_400,
+        };
+        let alignment = ComputeArtifactRecord {
+            schema_version: 3,
+            job_id: "mixed-alignment".into(),
+            dataset_relative_path: "datasets/colmap/mixed-alignment".into(),
+            artifact: ColmapArtifactSummary {
+                kind: ColmapArtifactKind::SparseModel,
+                relative_path: "sparse/0".into(),
+                sha256: ObjectHash::of_bytes(b"model"),
+                bytes: 1,
+            },
+            camera_entity_ids: vec!["camera-a".into()],
+            image_mask_scope_sha256: None,
+            calibration_groups: Vec::new(),
+            intrinsics_refinement: ColmapIntrinsicsRefinement::Refine,
+            intrinsics_strategy: ColmapIntrinsicsStrategy::Mixed,
+            calibration_group_intrinsics: deltas.clone(),
+            pinned_readjustment: Some(readjustment),
+            processing_set_id: None,
+            publication_sequence: 1,
+            selected_mapper: SelectedMapper::Global,
+            tool_manifest_sha256: ObjectHash::of_bytes(b"tools"),
+            parent_alignment_entity_id: None,
+            potree: None,
+        };
+        let mut value = serde_json::to_value(&alignment).expect("serialize alignment record");
+        assert_eq!(value["intrinsicsStrategy"], "mixed");
+        assert_eq!(
+            value["calibrationGroupIntrinsics"][1]["focalDeltaPixels"],
+            42.5
+        );
+        assert_eq!(value["pinnedReadjustment"]["path"], "colmapBundleAdjuster");
+
+        // Projects published before per-group policies existed carry none of these keys.
+        let object = value
+            .as_object_mut()
+            .expect("alignment records are JSON objects");
+        object.remove("intrinsicsStrategy");
+        object.remove("calibrationGroupIntrinsics");
+        object.remove("pinnedReadjustment");
+        let legacy: ComputeArtifactRecord =
+            serde_json::from_value(value).expect("older alignment records stay readable");
+        assert_eq!(
+            legacy.intrinsics_strategy,
+            ColmapIntrinsicsStrategy::AllRefine
+        );
+        assert!(legacy.calibration_group_intrinsics.is_empty());
+        assert!(legacy.pinned_readjustment.is_none());
+
+        let merged = MergedAlignmentRunRecord {
+            schema_version: 1,
+            entity_id: EntityId("project:alignment-merge:one".into()),
+            name: "Mixed merge".into(),
+            state: MergedAlignmentState::Published,
+            input_alignment_entity_ids: Vec::new(),
+            input_gcp_optimization_entity_ids: Vec::new(),
+            connections: Vec::new(),
+            connection_evidence: Vec::new(),
+            merge_profile: None,
+            camera_entity_ids: Vec::new(),
+            calibration_groups: Vec::new(),
+            intrinsics_strategy: ColmapIntrinsicsStrategy::Mixed,
+            calibration_group_intrinsics: deltas,
+            pinned_readjustment: Some(readjustment),
+            image_mask_scope_sha256: None,
+            lineage_sha256: ObjectHash::of_bytes(b"lineage"),
+            publication_sequence: 1,
+            dataset_relative_path: None,
+        };
+        let mut value = serde_json::to_value(&merged).expect("serialize merge record");
+        assert_eq!(value["intrinsicsStrategy"], "mixed");
+        let object = value
+            .as_object_mut()
+            .expect("merge records are JSON objects");
+        object.remove("intrinsicsStrategy");
+        object.remove("calibrationGroupIntrinsics");
+        object.remove("pinnedReadjustment");
+        let legacy: MergedAlignmentRunRecord =
+            serde_json::from_value(value).expect("older merge records stay readable");
+        assert_eq!(
+            legacy.intrinsics_strategy,
+            ColmapIntrinsicsStrategy::AllRefine
+        );
+        assert!(legacy.calibration_group_intrinsics.is_empty());
+        assert!(legacy.pinned_readjustment.is_none());
+    }
+
+    #[test]
     fn automatic_metadata_grouping_shares_intrinsics_for_one_continuous_flight() {
         let root = temp_test_dir("automatic-capture-group");
         let runtime = ProjectRuntime::default();
@@ -11313,6 +11456,9 @@ mod tests {
             image_mask_scope_sha256: None,
             calibration_groups: Vec::new(),
             intrinsics_refinement: ColmapIntrinsicsRefinement::Refine,
+            intrinsics_strategy: ColmapIntrinsicsStrategy::AllRefine,
+            calibration_group_intrinsics: Vec::new(),
+            pinned_readjustment: None,
             processing_set_id: None,
             publication_sequence,
             selected_mapper: SelectedMapper::Global,
@@ -12437,6 +12583,9 @@ mod tests {
                 connection_evidence: Vec::new(),
                 merge_profile: None,
                 camera_entity_ids: cameras.to_vec(),
+                intrinsics_strategy: ColmapIntrinsicsStrategy::AllRefine,
+                calibration_group_intrinsics: Vec::new(),
+                pinned_readjustment: None,
                 calibration_groups: cameras
                     .iter()
                     .map(|camera| ColmapCalibrationGroup {
@@ -12841,6 +12990,10 @@ mod tests {
             image_mask_scope_sha256: None,
             calibration_groups: Vec::new(),
             intrinsics_refinement: ColmapIntrinsicsRefinement::Refine,
+            intrinsics_strategy: ColmapIntrinsicsStrategy::AllRefine,
+            pinned_calibration_group_ids: Vec::new(),
+            pinned_readjustment: None,
+            calibration_group_intrinsics: Vec::new(),
             selected_mapper: SelectedMapper::Global,
             selected_feature_store: SelectedFeatureStore::Aliked,
             mapping_candidates: Vec::new(),
@@ -13048,6 +13201,10 @@ mod tests {
                 seed: None,
             }],
             intrinsics_refinement: ColmapIntrinsicsRefinement::Refine,
+            intrinsics_strategy: ColmapIntrinsicsStrategy::AllRefine,
+            pinned_calibration_group_ids: Vec::new(),
+            pinned_readjustment: None,
+            calibration_group_intrinsics: Vec::new(),
             selected_mapper: SelectedMapper::Global,
             selected_feature_store: SelectedFeatureStore::Aliked,
             mapping_candidates: Vec::new(),
@@ -13204,6 +13361,9 @@ mod tests {
                     image_mask_scope_sha256: None,
                     calibration_groups: Vec::new(),
                     intrinsics_refinement: ColmapIntrinsicsRefinement::Refine,
+                    intrinsics_strategy: ColmapIntrinsicsStrategy::AllRefine,
+                    calibration_group_intrinsics: Vec::new(),
+                    pinned_readjustment: None,
                     processing_set_id: None,
                     publication_sequence: 1,
                     selected_mapper: SelectedMapper::Global,

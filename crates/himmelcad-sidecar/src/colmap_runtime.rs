@@ -54,6 +54,14 @@ const MAX_SIGNATURE_BYTES: u64 = 64 * 1024;
 const LOG_TAIL_LINES: usize = 200;
 const MAX_LOG_LINE_BYTES: usize = 16 * 1024;
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(15);
+/// Stage label of the mixed-policy pose-only re-adjustment.
+const PINNED_INTRINSICS_STAGE: &str = "Refine poses with pinned intrinsics";
+/// A pose-only re-adjustment must keep every registered image. Losing one means the pinned
+/// calibration no longer explains the block, which is a failed job rather than a quiet product.
+const MIN_PINNED_READJUSTMENT_IMAGE_RETENTION: f64 = 1.0;
+/// Ceres filters a few degenerate tracks even when the geometry is sound, so a small triangulation
+/// loss is tolerated. Anything larger is a collapsed reconstruction.
+const MIN_PINNED_READJUSTMENT_POINT_RETENTION: f64 = 0.9;
 
 static NEXT_SCRATCH_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -77,6 +85,8 @@ pub enum ColmapCapability {
     MatchesImporter,
     ModelConverter,
     ModelAligner,
+    /// Standalone bundle adjuster used by the mixed-policy pose-only re-adjustment.
+    BundleAdjuster,
     OfflineOnlyBuild,
 }
 
@@ -311,6 +321,67 @@ pub struct ColmapRunRequest {
     /// Profile-explicit mapper behavior for reliable embedded calibration.
     #[serde(default)]
     pub intrinsics_refinement: ColmapIntrinsicsRefinement,
+    /// Calibration groups whose per-group policy pins their intrinsics while at least one other
+    /// group must still be refined. COLMAP's mapper only knows run-wide refinement flags, so a
+    /// non-empty list selects the mixed strategy: refine everything, then restore exactly these
+    /// groups to their seeds and re-adjust poses only.
+    ///
+    /// Empty for every single-policy run, and skipped when serializing so those runs keep their
+    /// historical configuration hash.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pinned_calibration_group_ids: Vec<String>,
+}
+
+/// Run-level outcome of the per-calibration-group intrinsics policy.
+///
+/// COLMAP cannot mask bundle-adjustment refinement per camera, so a run with disagreeing groups
+/// needs an explicit extra pass instead of a silently wrong run-wide binary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ColmapIntrinsicsStrategy {
+    /// Every group is pinned. The mapper runs with refinement off, exactly as before.
+    AllFixed,
+    /// No group is pinned. The mapper runs with refinement on, exactly as before.
+    #[default]
+    AllRefine,
+    /// Groups disagree. The mapper refines every seeded group, the pinned groups are restored to
+    /// their seeds, and a pose-only re-adjustment re-optimizes poses and points.
+    Mixed,
+}
+
+/// Re-adjustment path that actually ran for a `Mixed` strategy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PinnedIntrinsicsReadjustmentPath {
+    /// The vendored COLMAP `bundle_adjuster` with all three refine flags disabled.
+    ColmapBundleAdjuster,
+}
+
+/// Evidence that the pose-only re-adjustment kept the reconstruction intact.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PinnedIntrinsicsReadjustment {
+    pub path: PinnedIntrinsicsReadjustmentPath,
+    pub registered_images_before: u64,
+    pub registered_images_after: u64,
+    pub points3d_before: u64,
+    pub points3d_after: u64,
+}
+
+/// Per-group interior-orientation movement across one solve.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalibrationGroupIntrinsicsDelta {
+    pub group_id: String,
+    /// True when the group's policy pinned its intrinsics for this run.
+    pub pinned: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed_focal_pixels: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solved_focal_pixels: Option<f64>,
+    /// `solved - seed`, in source-image pixels. Pinned groups must report zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focal_delta_pixels: Option<f64>,
 }
 
 /// Controls whether mapper bundle adjustment may change embedded intrinsics.
@@ -354,6 +425,19 @@ impl ColmapRunRequest {
         ColmapProgressPlan::for_request(self)
     }
 
+    /// Run-level outcome of the per-group intrinsics policy carried by this request.
+    pub fn intrinsics_strategy(&self) -> ColmapIntrinsicsStrategy {
+        if !self.pinned_calibration_group_ids.is_empty() {
+            return ColmapIntrinsicsStrategy::Mixed;
+        }
+        match self.intrinsics_refinement {
+            ColmapIntrinsicsRefinement::Refine => ColmapIntrinsicsStrategy::AllRefine,
+            ColmapIntrinsicsRefinement::FreezeReliableEmbedded => {
+                ColmapIntrinsicsStrategy::AllFixed
+            }
+        }
+    }
+
     fn validate(&self) -> Result<(), ColmapRuntimeError> {
         validate_component("job_id", &self.job_id)?;
         if self.camera_images.is_empty() {
@@ -375,6 +459,7 @@ impl ColmapRunRequest {
             }
         }
         validate_explicit_calibration_groups(self)?;
+        validate_pinned_calibration_groups(self)?;
         if self.aliked_max_features == 0 || self.sift_max_features == 0 {
             return Err(ColmapRuntimeError::InvalidRequest(
                 "feature limits must be greater than zero".into(),
@@ -492,6 +577,12 @@ impl ColmapProgressPlan {
             stages.push(planned(
                 PhotolabStageKind::SparseReconstruction,
                 "Retry incremental reconstruction",
+            ));
+        }
+        if request.intrinsics_strategy() == ColmapIntrinsicsStrategy::Mixed {
+            stages.push(planned(
+                PhotolabStageKind::BundleAdjustment,
+                PINNED_INTRINSICS_STAGE,
             ));
         }
         if projected_reference_count(request) >= 3 {
@@ -629,6 +720,7 @@ pub enum ColmapCommandKind {
     Mapper,
     ModelConverter,
     ModelAligner,
+    BundleAdjuster,
     ImageUndistorter,
     PatchMatchStereo,
     StereoFusion,
@@ -651,6 +743,7 @@ impl ColmapCommandKind {
             Self::Mapper => "mapper",
             Self::ModelConverter => "model_converter",
             Self::ModelAligner => "model_aligner",
+            Self::BundleAdjuster => "bundle_adjuster",
             Self::ImageUndistorter => "image_undistorter",
             Self::PatchMatchStereo => "patch_match_stereo",
             Self::StereoFusion => "stereo_fusion",
@@ -717,6 +810,18 @@ pub struct ColmapOutputSummary {
     pub calibration_groups: Vec<ColmapCalibrationGroup>,
     #[serde(default)]
     pub intrinsics_refinement: ColmapIntrinsicsRefinement,
+    /// Run-level outcome of the per-group intrinsics policy.
+    #[serde(default)]
+    pub intrinsics_strategy: ColmapIntrinsicsStrategy,
+    /// Groups restored to their seeds after a mixed-policy solve.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pinned_calibration_group_ids: Vec<String>,
+    /// Which re-adjustment path ran, and the triangulation-consistency evidence it produced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_readjustment: Option<PinnedIntrinsicsReadjustment>,
+    /// Per-group seed/solved focal lengths for the processing report.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub calibration_group_intrinsics: Vec<CalibrationGroupIntrinsicsDelta>,
     pub selected_mapper: SelectedMapper,
     pub selected_feature_store: SelectedFeatureStore,
     pub mapping_candidates: Vec<MappingCandidateSummary>,
@@ -925,7 +1030,7 @@ impl ColmapRuntime {
                 reason: "developer COLMAP executable is not a regular file".into(),
             });
         }
-        probe_development_cli(&executable)?;
+        let capabilities = probe_development_cli(&executable)?;
         let (resource_records, resources) = development_resources(&config.resources)?;
         fs::create_dir_all(&config.scratch_root)?;
         let scratch_root = canonical_directory(&config.scratch_root)?;
@@ -940,7 +1045,7 @@ impl ColmapRuntime {
                 sha256: executable_sha256.clone(),
             },
             resources: resource_records,
-            capabilities: all_runtime_capabilities(),
+            capabilities,
             licenses: vec![ToolLicenseRecord {
                 component: "UNTRUSTED-DEV-COLMAP".into(),
                 version: config.version.clone(),
@@ -1013,8 +1118,9 @@ impl ColmapRuntime {
             &state.scratch,
             &context.cancellation,
         )?;
-        let materialized_images =
+        let layout =
             prepare_calibration_group_layout(request, &state.scratch, &materialized_images)?;
+        let materialized_images = layout.image_names.clone();
         if let Some(mask_scope) = request.image_mask_scope.as_ref() {
             let image_paths = request
                 .camera_images
@@ -1104,6 +1210,18 @@ impl ColmapRuntime {
                 })?;
             (mapper, store, Vec::new())
         };
+        let pinned_readjustment =
+            if request.intrinsics_strategy() == ColmapIntrinsicsStrategy::Mixed {
+                Some(self.restore_pinned_intrinsics(
+                    request,
+                    context,
+                    &layout,
+                    selected_mapper,
+                    &mut state,
+                )?)
+            } else {
+                None
+            };
         if projected_reference_count(request) >= 3 {
             self.align_sparse_to_project_references(
                 request,
@@ -1114,6 +1232,11 @@ impl ColmapRuntime {
             )?;
         }
         self.export_sparse_point_cloud(context, selected_mapper, &mut state)?;
+        let calibration_group_intrinsics = calibration_group_intrinsics(
+            request,
+            &layout,
+            &state.scratch.join("sparse-view-source"),
+        );
         if mapping_candidates.is_empty() {
             let statistics =
                 parse_sparse_model_statistics(&state.scratch.join("sparse-view-source"))?;
@@ -1160,6 +1283,10 @@ impl ColmapRuntime {
                 .map(|scope| scope.scope_sha256.clone()),
             calibration_groups: request.calibration_groups.clone(),
             intrinsics_refinement: request.intrinsics_refinement,
+            intrinsics_strategy: request.intrinsics_strategy(),
+            pinned_calibration_group_ids: request.pinned_calibration_group_ids.clone(),
+            pinned_readjustment,
+            calibration_group_intrinsics,
             selected_mapper,
             selected_feature_store,
             mapping_candidates,
@@ -1224,6 +1351,26 @@ impl ColmapRuntime {
         }
         if projected_reference_count(request) >= 3 {
             required.insert(ColmapCapability::ModelAligner);
+        }
+        if request.intrinsics_strategy() == ColmapIntrinsicsStrategy::Mixed {
+            // Restoring pinned seeds is only honest when the poses can be re-adjusted against
+            // them. Both the text round trip and the adjuster itself are required.
+            required.insert(ColmapCapability::ModelConverter);
+            if !self
+                .toolchain
+                .manifest
+                .capabilities
+                .contains(&ColmapCapability::BundleAdjuster)
+            {
+                return Err(ColmapRuntimeError::InvalidRequest(
+                    "this run mixes pinned and refined calibration groups, which needs the \
+                     standalone COLMAP bundle adjuster to re-optimize poses against the pinned \
+                     intrinsics; the installed worker does not provide it, so set every \
+                     calibration group to the same intrinsics policy or install a worker that \
+                     does"
+                        .into(),
+                ));
+            }
         }
         required.insert(match request.aliked_variant {
             AlikedModelVariant::N16Rot => ColmapCapability::AlikedN16Rot,
@@ -1453,6 +1600,9 @@ impl FeatureStoreKind {
 
 #[derive(Debug, Clone, PartialEq)]
 struct CameraExtractionGroup {
+    /// Immutable project group id when the partition is explicit, `None` for the metadata-derived
+    /// fallback partition.
+    group_id: Option<String>,
     dimensions: Option<ImageDimensions>,
     calibration: Option<ColmapCalibrationSeed>,
     image_names: Vec<PathBuf>,
@@ -2221,6 +2371,115 @@ impl ColmapRuntime {
         Ok(())
     }
 
+    /// Restores every pinned group's intrinsics to its exact seed and re-optimizes poses only.
+    ///
+    /// COLMAP's mapper exposes bundle-adjustment refinement as a run-wide flag, so a run whose
+    /// calibration groups disagree solves with refinement enabled and is corrected here: the
+    /// solved `cameras.txt` is rewritten so the pinned groups carry their seeds again, and the
+    /// standalone bundle adjuster re-optimizes poses and points against those pinned intrinsics.
+    fn restore_pinned_intrinsics(
+        &self,
+        request: &ColmapRunRequest,
+        context: &JobWorkerContext,
+        layout: &CalibrationGroupLayout,
+        selected_mapper: SelectedMapper,
+        state: &mut RunState,
+    ) -> Result<PinnedIntrinsicsReadjustment, ColmapRuntimeError> {
+        let model = selected_sparse_unaligned_path(&state.scratch, selected_mapper)?;
+        let pin_root = state.scratch.join("intrinsics-pin");
+        let pinned = pin_root.join("pinned");
+        let readjusted = pin_root.join("readjusted");
+        let readjusted_text = pin_root.join("readjusted-text");
+        for directory in [&pinned, &readjusted, &readjusted_text] {
+            fs::create_dir_all(directory)?;
+        }
+        self.execute_required(
+            &CommandSpec {
+                kind: ColmapCommandKind::ModelConverter,
+                stage_label: PINNED_INTRINSICS_STAGE,
+                args: vec![
+                    os("--input_path"),
+                    model.as_os_str().to_owned(),
+                    os("--output_path"),
+                    pinned.as_os_str().to_owned(),
+                    os("--output_type"),
+                    os("TXT"),
+                ],
+            },
+            context,
+            state,
+        )?;
+        let before = parse_sparse_model_statistics(&pinned)?;
+        rewrite_pinned_calibration_cameras(request, layout, &pinned)?;
+        self.execute_required(
+            &CommandSpec {
+                kind: ColmapCommandKind::BundleAdjuster,
+                stage_label: PINNED_INTRINSICS_STAGE,
+                args: vec![
+                    os("--input_path"),
+                    pinned.as_os_str().to_owned(),
+                    os("--output_path"),
+                    readjusted.as_os_str().to_owned(),
+                    os("--BundleAdjustment.refine_focal_length"),
+                    os("0"),
+                    os("--BundleAdjustment.refine_principal_point"),
+                    os("0"),
+                    os("--BundleAdjustment.refine_extra_params"),
+                    os("0"),
+                ],
+            },
+            context,
+            state,
+        )?;
+        if !sparse_model_is_viable(&readjusted) {
+            return Err(ColmapRuntimeError::MissingOutput(readjusted));
+        }
+        self.execute_required(
+            &CommandSpec {
+                kind: ColmapCommandKind::ModelConverter,
+                stage_label: PINNED_INTRINSICS_STAGE,
+                args: vec![
+                    os("--input_path"),
+                    readjusted.as_os_str().to_owned(),
+                    os("--output_path"),
+                    readjusted_text.as_os_str().to_owned(),
+                    os("--output_type"),
+                    os("TXT"),
+                ],
+            },
+            context,
+            state,
+        )?;
+        let after = parse_sparse_model_statistics(&readjusted_text)?;
+        check_pinned_readjustment_consistency(before, after)?;
+        // Republish the adjusted model in the mapper's own binary format so every later stage
+        // reads exactly one reconstruction.
+        self.execute_required(
+            &CommandSpec {
+                kind: ColmapCommandKind::ModelConverter,
+                stage_label: PINNED_INTRINSICS_STAGE,
+                args: vec![
+                    os("--input_path"),
+                    readjusted.as_os_str().to_owned(),
+                    os("--output_path"),
+                    model.as_os_str().to_owned(),
+                    os("--output_type"),
+                    os("BIN"),
+                ],
+            },
+            context,
+            state,
+        )?;
+        state.report_complete(context, PINNED_INTRINSICS_STAGE)?;
+        Ok(PinnedIntrinsicsReadjustment {
+            path: PinnedIntrinsicsReadjustmentPath::ColmapBundleAdjuster,
+            registered_images_before: before.registered_images,
+            registered_images_after: after.registered_images,
+            points3d_before: before.points3d,
+            points3d_after: after.points3d,
+        })
+    }
+
     fn run_products(
         &self,
         request: &ColmapRunRequest,
@@ -2641,11 +2900,20 @@ pub fn colmap_camera_model_and_params(
     )
 }
 
+/// Materialized image names plus the calibration directory each COLMAP camera came from.
+#[derive(Debug, Clone, PartialEq)]
+struct CalibrationGroupLayout {
+    /// One grouped image name per request camera, in request order.
+    image_names: Vec<PathBuf>,
+    /// `calibration-NNNNNN` directory name mapped to its explicit project group id.
+    group_id_by_directory: BTreeMap<String, String>,
+}
+
 fn prepare_calibration_group_layout(
     request: &ColmapRunRequest,
     scratch: &Path,
     materialized_images: &[PathBuf],
-) -> Result<Vec<PathBuf>, ColmapRuntimeError> {
+) -> Result<CalibrationGroupLayout, ColmapRuntimeError> {
     let mut groups = camera_extraction_groups(request, materialized_images)?;
     let source_index = materialized_images
         .iter()
@@ -2663,8 +2931,12 @@ fn prepare_calibration_group_layout(
             .unwrap_or(usize::MAX)
     });
     let mut grouped_by_source = BTreeMap::new();
+    let mut group_id_by_directory = BTreeMap::new();
     for (group_index, group) in groups.iter().enumerate() {
         let group_directory = format!("calibration-{group_index:06}");
+        if let Some(group_id) = group.group_id.as_ref() {
+            group_id_by_directory.insert(group_directory.clone(), group_id.clone());
+        }
         for source_name in &group.image_names {
             let image_index = source_index.get(source_name).copied().ok_or_else(|| {
                 ColmapRuntimeError::InvalidRequest(
@@ -2693,7 +2965,7 @@ fn prepare_calibration_group_layout(
             grouped_by_source.insert(source_name.clone(), grouped_name);
         }
     }
-    materialized_images
+    let image_names = materialized_images
         .iter()
         .map(|source| {
             grouped_by_source.get(source).cloned().ok_or_else(|| {
@@ -2702,7 +2974,11 @@ fn prepare_calibration_group_layout(
                 )
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(CalibrationGroupLayout {
+        image_names,
+        group_id_by_directory,
+    })
 }
 
 fn camera_extraction_groups(
@@ -2749,6 +3025,7 @@ fn camera_extraction_groups(
                 )
             });
             groups.push(CameraExtractionGroup {
+                group_id: Some(definition.group_id.clone()),
                 dimensions,
                 calibration,
                 image_names,
@@ -2774,6 +3051,7 @@ fn camera_extraction_groups(
             group.image_names.push(image_name.clone());
         } else {
             calibrated_groups.push(CameraExtractionGroup {
+                group_id: None,
                 dimensions: Some(dimensions),
                 calibration: Some(calibration),
                 image_names: vec![image_name.clone()],
@@ -2782,6 +3060,7 @@ fn camera_extraction_groups(
     }
     if !fallback_images.is_empty() {
         calibrated_groups.push(CameraExtractionGroup {
+            group_id: None,
             dimensions: None,
             calibration: None,
             image_names: fallback_images,
@@ -2840,6 +3119,361 @@ fn validate_explicit_calibration_groups(
     if assigned != camera_ids {
         return Err(ColmapRuntimeError::InvalidRequest(
             "explicit calibration groups must partition every run camera exactly".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// One parsed `cameras.txt` record.
+#[derive(Debug, Clone, PartialEq)]
+struct ParsedColmapCamera {
+    camera_id: String,
+    model: String,
+    width_pixels: u32,
+    height_pixels: u32,
+    parameters: Vec<f64>,
+}
+
+fn parse_colmap_cameras_text(path: &Path) -> Result<Vec<ParsedColmapCamera>, ColmapRuntimeError> {
+    let contents = fs::read_to_string(path)?;
+    let mut cameras = Vec::new();
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let columns = line.split_whitespace().collect::<Vec<_>>();
+        if columns.len() < 5 {
+            return Err(ColmapRuntimeError::InvalidWorkerOutput(
+                "invalid cameras.txt camera record".into(),
+            ));
+        }
+        let width_pixels = columns[2].parse::<u32>().map_err(|_| {
+            ColmapRuntimeError::InvalidWorkerOutput("invalid cameras.txt image width".into())
+        })?;
+        let height_pixels = columns[3].parse::<u32>().map_err(|_| {
+            ColmapRuntimeError::InvalidWorkerOutput("invalid cameras.txt image height".into())
+        })?;
+        let parameters = columns[4..]
+            .iter()
+            .map(|value| {
+                value.parse::<f64>().map_err(|_| {
+                    ColmapRuntimeError::InvalidWorkerOutput(
+                        "invalid cameras.txt camera parameter".into(),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        cameras.push(ParsedColmapCamera {
+            camera_id: columns[0].to_owned(),
+            model: columns[1].to_owned(),
+            width_pixels,
+            height_pixels,
+            parameters,
+        });
+    }
+    Ok(cameras)
+}
+
+/// Maps the `calibration-NNNNNN` directory of every registered image to its COLMAP camera id.
+fn colmap_camera_ids_by_calibration_directory(
+    images_path: &Path,
+) -> Result<BTreeMap<String, String>, ColmapRuntimeError> {
+    Ok(colmap_camera_ids_by_image_name(images_path)?
+        .into_iter()
+        .filter_map(|(image_name, camera_id)| {
+            let directory = image_name.parent()?.to_str()?.to_owned();
+            (!directory.is_empty()).then_some((directory, camera_id))
+        })
+        .collect())
+}
+
+/// Resolves each explicit calibration group to the COLMAP camera id that carries its intrinsics.
+fn colmap_camera_ids_by_calibration_group(
+    layout: &CalibrationGroupLayout,
+    text_model: &Path,
+) -> Result<BTreeMap<String, String>, ColmapRuntimeError> {
+    let by_directory = colmap_camera_ids_by_calibration_directory(&text_model.join("images.txt"))?;
+    Ok(layout
+        .group_id_by_directory
+        .iter()
+        .filter_map(|(directory, group_id)| {
+            by_directory
+                .get(directory)
+                .map(|camera_id| (group_id.clone(), camera_id.clone()))
+        })
+        .collect())
+}
+
+/// Rewrites the solved `cameras.txt` so every pinned group carries its exact seed again.
+fn rewrite_pinned_calibration_cameras(
+    request: &ColmapRunRequest,
+    layout: &CalibrationGroupLayout,
+    text_model: &Path,
+) -> Result<(), ColmapRuntimeError> {
+    let camera_ids = colmap_camera_ids_by_calibration_group(layout, text_model)?;
+    let mut pinned_lines = BTreeMap::new();
+    for group_id in &request.pinned_calibration_group_ids {
+        let camera_id = camera_ids.get(group_id).ok_or_else(|| {
+            ColmapRuntimeError::InvalidWorkerOutput(format!(
+                "the solved model has no camera for pinned calibration group {group_id}"
+            ))
+        })?;
+        let seed = request
+            .calibration_groups
+            .iter()
+            .find(|group| &group.group_id == group_id)
+            .and_then(|group| group.seed.as_ref())
+            .ok_or_else(|| {
+                ColmapRuntimeError::InvalidRequest(format!(
+                    "pinned calibration group {group_id} has no calibration to restore"
+                ))
+            })?;
+        let (model, parameters) = colmap_camera_model_and_params(seed);
+        pinned_lines.insert(
+            camera_id.clone(),
+            format!(
+                "{camera_id} {model} {} {} {}",
+                seed.width_pixels,
+                seed.height_pixels,
+                parameters.replace(',', " ")
+            ),
+        );
+    }
+    let cameras_path = text_model.join("cameras.txt");
+    let contents = fs::read_to_string(&cameras_path)?;
+    let mut rewritten = String::with_capacity(contents.len());
+    let mut restored = BTreeSet::new();
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        let camera_id = (!trimmed.is_empty() && !trimmed.starts_with('#'))
+            .then(|| trimmed.split_whitespace().next())
+            .flatten();
+        match camera_id.and_then(|camera_id| pinned_lines.get(camera_id)) {
+            Some(replacement) => {
+                restored.insert(
+                    camera_id
+                        .expect("a matched replacement always has a camera id")
+                        .to_owned(),
+                );
+                rewritten.push_str(replacement);
+            }
+            None => rewritten.push_str(line),
+        }
+        rewritten.push('\n');
+    }
+    if restored.len() != pinned_lines.len() {
+        return Err(ColmapRuntimeError::InvalidWorkerOutput(
+            "the solved cameras.txt does not contain every pinned calibration group".into(),
+        ));
+    }
+    atomic_write(&cameras_path, rewritten.as_bytes())
+}
+
+/// Fails a mixed-policy run whose pose-only re-adjustment collapsed the reconstruction.
+fn check_pinned_readjustment_consistency(
+    before: SparseModelStatistics,
+    after: SparseModelStatistics,
+) -> Result<(), ColmapRuntimeError> {
+    let image_floor =
+        (before.registered_images as f64 * MIN_PINNED_READJUSTMENT_IMAGE_RETENTION).ceil();
+    if (after.registered_images as f64) < image_floor {
+        return Err(ColmapRuntimeError::InvalidWorkerOutput(format!(
+            "restoring the pinned calibration dropped registered images from {} to {}; the pinned \
+             calibration does not explain this block, so review the affected calibration group's \
+             intrinsics policy before publishing",
+            before.registered_images, after.registered_images
+        )));
+    }
+    let point_floor = (before.points3d as f64 * MIN_PINNED_READJUSTMENT_POINT_RETENTION).ceil();
+    if (after.points3d as f64) < point_floor {
+        return Err(ColmapRuntimeError::InvalidWorkerOutput(format!(
+            "restoring the pinned calibration dropped 3D points from {} to {}, below the {:.0}% \
+             retention bound; the pinned calibration does not explain this block, so review the \
+             affected calibration group's intrinsics policy before publishing",
+            before.points3d,
+            after.points3d,
+            MIN_PINNED_READJUSTMENT_POINT_RETENTION * 100.0
+        )));
+    }
+    Ok(())
+}
+
+/// Per-group seed and solved focal lengths, read back from the exported text model.
+///
+/// Report evidence only: a model this run cannot map back to its groups yields no rows rather
+/// than failing an otherwise complete alignment.
+fn calibration_group_intrinsics(
+    request: &ColmapRunRequest,
+    layout: &CalibrationGroupLayout,
+    text_model: &Path,
+) -> Vec<CalibrationGroupIntrinsicsDelta> {
+    let Ok(camera_ids) = colmap_camera_ids_by_calibration_group(layout, text_model) else {
+        return Vec::new();
+    };
+    let Ok(cameras) = parse_colmap_cameras_text(&text_model.join("cameras.txt")) else {
+        return Vec::new();
+    };
+    let by_id = cameras
+        .iter()
+        .map(|camera| (camera.camera_id.as_str(), camera))
+        .collect::<BTreeMap<_, _>>();
+    let pinned = request
+        .pinned_calibration_group_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    request
+        .calibration_groups
+        .iter()
+        .map(|group| {
+            let seed_focal_pixels = group.seed.as_ref().map(|seed| seed.focal_pixels);
+            let solved_focal_pixels = camera_ids
+                .get(&group.group_id)
+                .and_then(|camera_id| by_id.get(camera_id.as_str()).copied())
+                .and_then(|camera| camera.parameters.first().copied());
+            CalibrationGroupIntrinsicsDelta {
+                group_id: group.group_id.clone(),
+                pinned: pinned.contains(group.group_id.as_str()),
+                seed_focal_pixels,
+                solved_focal_pixels,
+                focal_delta_pixels: seed_focal_pixels
+                    .zip(solved_focal_pixels)
+                    .map(|(seed, solved)| solved - seed),
+            }
+        })
+        .collect()
+}
+
+/// One persisted `camera-map.json` entry of an earlier alignment dataset.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PublishedCameraMapEntry {
+    entity_id: String,
+    image_name: PathBuf,
+}
+
+/// COLMAP models that carry independent `fx` and `fy` before the principal point.
+fn colmap_model_has_two_focal_lengths(model: &str) -> bool {
+    matches!(
+        model,
+        "PINHOLE"
+            | "OPENCV"
+            | "OPENCV_FISHEYE"
+            | "FULL_OPENCV"
+            | "FOV"
+            | "THIN_PRISM_FISHEYE"
+            | "RAD_TAN_THIN_PRISM_FISHEYE"
+    )
+}
+
+fn parsed_camera_seed(camera: &ParsedColmapCamera) -> Option<ColmapCalibrationSeed> {
+    let principal_index = usize::from(colmap_model_has_two_focal_lengths(&camera.model)) + 1;
+    let seed = ColmapCalibrationSeed {
+        width_pixels: camera.width_pixels,
+        height_pixels: camera.height_pixels,
+        focal_pixels: camera.parameters.first().copied()?,
+        principal_x_pixels: camera.parameters.get(principal_index).copied()?,
+        principal_y_pixels: camera.parameters.get(principal_index + 1).copied()?,
+        full_brown_calibration: None,
+    };
+    valid_calibration_seed(&seed)?;
+    Some(seed)
+}
+
+/// Reads back the intrinsics a published alignment actually solved, keyed by camera entity id.
+///
+/// A merge that re-seeds from these values keeps each mission's own refinement instead of
+/// restarting the joint solve from COLMAP defaults.
+pub fn solved_calibration_seeds(
+    dataset_root: &Path,
+) -> Result<BTreeMap<String, ColmapCalibrationSeed>, ColmapRuntimeError> {
+    let camera_map: Vec<PublishedCameraMapEntry> =
+        serde_json::from_slice(&fs::read(dataset_root.join("camera-map.json"))?)?;
+    let text_model = dataset_root.join("sparse-view-source");
+    let cameras = parse_colmap_cameras_text(&text_model.join("cameras.txt"))?;
+    let seeds_by_camera_id = cameras
+        .iter()
+        .filter_map(|camera| {
+            parsed_camera_seed(camera).map(|seed| (camera.camera_id.clone(), seed))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let camera_ids_by_image = colmap_camera_ids_by_image_name(&text_model.join("images.txt"))?;
+    Ok(camera_map
+        .into_iter()
+        .filter_map(|entry| {
+            let camera_id = camera_ids_by_image.get(&entry.image_name)?;
+            let seed = seeds_by_camera_id.get(camera_id)?;
+            Some((entry.entity_id, seed.clone()))
+        })
+        .collect())
+}
+
+fn colmap_camera_ids_by_image_name(
+    images_path: &Path,
+) -> Result<BTreeMap<PathBuf, String>, ColmapRuntimeError> {
+    let contents = fs::read_to_string(images_path)?;
+    let mut cameras = BTreeMap::new();
+    let mut expecting_image = true;
+    for line in contents.lines() {
+        if line.starts_with('#') {
+            continue;
+        }
+        if !expecting_image {
+            expecting_image = true;
+            continue;
+        }
+        let columns = line.split_whitespace().collect::<Vec<_>>();
+        if columns.is_empty() {
+            continue;
+        }
+        if columns.len() < 10 {
+            return Err(ColmapRuntimeError::InvalidWorkerOutput(
+                "invalid images.txt image record".into(),
+            ));
+        }
+        expecting_image = false;
+        cameras.insert(PathBuf::from(columns[9]), columns[8].to_owned());
+    }
+    Ok(cameras)
+}
+
+fn validate_pinned_calibration_groups(
+    request: &ColmapRunRequest,
+) -> Result<(), ColmapRuntimeError> {
+    if request.pinned_calibration_group_ids.is_empty() {
+        return Ok(());
+    }
+    if request.intrinsics_refinement != ColmapIntrinsicsRefinement::Refine {
+        return Err(ColmapRuntimeError::InvalidRequest(
+            "a mixed intrinsics policy must run the mapper with refinement enabled".into(),
+        ));
+    }
+    let mut pinned = BTreeSet::new();
+    for group_id in &request.pinned_calibration_group_ids {
+        if !pinned.insert(group_id.as_str()) {
+            return Err(ColmapRuntimeError::InvalidRequest(
+                "pinned calibration group ids must be unique".into(),
+            ));
+        }
+        let group = request
+            .calibration_groups
+            .iter()
+            .find(|group| &group.group_id == group_id)
+            .ok_or_else(|| {
+                ColmapRuntimeError::InvalidRequest(format!(
+                    "pinned calibration group {group_id} is not part of this run"
+                ))
+            })?;
+        if group.seed.is_none() {
+            return Err(ColmapRuntimeError::InvalidRequest(format!(
+                "pinned calibration group {group_id} has no calibration to restore"
+            )));
+        }
+    }
+    if pinned.len() == request.calibration_groups.len() {
+        return Err(ColmapRuntimeError::InvalidRequest(
+            "a run whose calibration groups are all pinned must freeze the mapper instead".into(),
         ));
     }
     Ok(())
@@ -3143,7 +3777,10 @@ fn validate_manifest(manifest: &ColmapToolManifest) -> Result<(), ColmapRuntimeE
     Ok(())
 }
 
-fn probe_development_cli(executable: &Path) -> Result<(), ColmapRuntimeError> {
+/// Verifies the locally installed COLMAP and reports the capabilities it actually exposes.
+fn probe_development_cli(
+    executable: &Path,
+) -> Result<BTreeSet<ColmapCapability>, ColmapRuntimeError> {
     let help = development_command_output(executable, ["help"])?;
     for command in [
         "feature_extractor",
@@ -3176,7 +3813,13 @@ fn probe_development_cli(executable: &Path) -> Result<(), ColmapRuntimeError> {
             "developer COLMAP lacks LightGlue matching options".into(),
         ));
     }
-    Ok(())
+    let mut capabilities = all_runtime_capabilities();
+    if !help.contains("bundle_adjuster") {
+        // Only the mixed intrinsics strategy needs the standalone adjuster. Every other run stays
+        // available rather than failing preflight over an optional command.
+        capabilities.remove(&ColmapCapability::BundleAdjuster);
+    }
+    Ok(capabilities)
 }
 
 fn development_command_output<I, S>(
@@ -3280,6 +3923,7 @@ fn all_runtime_capabilities() -> BTreeSet<ColmapCapability> {
         ColmapCapability::MatchesImporter,
         ColmapCapability::ModelConverter,
         ColmapCapability::ModelAligner,
+        ColmapCapability::BundleAdjuster,
         ColmapCapability::OfflineOnlyBuild,
     ])
 }
@@ -4467,6 +5111,7 @@ mod tests {
                 ColmapCapability::MatchesImporter,
                 ColmapCapability::ModelConverter,
                 ColmapCapability::ModelAligner,
+                ColmapCapability::BundleAdjuster,
                 ColmapCapability::OfflineOnlyBuild,
             ]);
             let manifest = ColmapToolManifest {
@@ -4534,6 +5179,7 @@ mod tests {
                 matching_worker_threads: 1,
                 products: ColmapProductRequest::default(),
                 intrinsics_refinement: ColmapIntrinsicsRefinement::Refine,
+                pinned_calibration_group_ids: Vec::new(),
             }
         }
     }
@@ -4783,11 +5429,30 @@ case "$cmd" in
     input="$(value_for --input_path "$@")"
     out="$(value_for --output_path "$@")"
     /bin/mkdir -p "$out"
+    if [ -f "$input/cameras.txt" ]; then
+      # A real converter round-trips the model it is given. Preserving it keeps the pinned
+      # intrinsics observable after the mixed-policy re-adjustment.
+      /bin/cp "$input/cameras.txt" "$input/images.txt" "$input/points3D.txt" "$out/"
+      printf 'HIMMELCAD_PROGRESS 2/2\n'
+      exit 0
+    fi
     printf '# cameras\n' > "$out/cameras.txt"
-    printf '1 PINHOLE 100 100 100 100 50 50\n' >> "$out/cameras.txt"
     printf '# images\n' > "$out/images.txt"
-    printf '1 1 0 0 0 0 0 0 1 a.jpg\n0 0 1 1 1 2\n' >> "$out/images.txt"
-    printf '2 1 0 0 0 0 0 0 1 b.jpg\n0 0 1 1 1 2\n' >> "$out/images.txt"
+    camera_id=0
+    image_id=0
+    group=""
+    while read -r name; do
+      directory="${{name%%/*}}"
+      if [ "$directory" != "$group" ]; then
+        group="$directory"
+        camera_id=$((camera_id + 1))
+        printf '%s SIMPLE_RADIAL 100 100 %s 50 50 0.01\n' \
+          "$camera_id" "$((110 + camera_id))" >> "$out/cameras.txt"
+      fi
+      image_id=$((image_id + 1))
+      printf '%s 1 0 0 0 0 0 0 %s %s\n0 0 1 1 1 2\n' \
+        "$image_id" "$camera_id" "$name" >> "$out/images.txt"
+    done < "$PWD/image-list.txt"
     printf '# points\n' > "$out/points3D.txt"
     case "$input" in
       *dedode-v2-g/global*)
@@ -4797,6 +5462,13 @@ case "$cmd" in
         printf '1 0 0 0 255 255 255 1.0 1 0 2 0\n' >> "$out/points3D.txt"
         ;;
     esac
+    ;;
+  bundle_adjuster)
+    input="$(value_for --input_path "$@")"
+    out="$(value_for --output_path "$@")"
+    /bin/mkdir -p "$out"
+    # Refinement is disabled for every intrinsic, so the adjuster returns the model unchanged.
+    /bin/cp "$input/cameras.txt" "$input/images.txt" "$input/points3D.txt" "$out/"
     ;;
   image_undistorter)
     out="$(value_for --output_path "$@")"
@@ -5205,6 +5877,216 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
         assert!(invocations.contains(
             "--GlobalMapper.ba_refine_focal_length|0|--GlobalMapper.ba_refine_principal_point|0|--GlobalMapper.ba_refine_extra_params|0"
         ));
+    }
+
+    fn mixed_policy_request(rig: &TestRig, job_id: &str) -> ColmapRunRequest {
+        let mut request = rig.request(job_id);
+        request.sift_rescue_only = true;
+        request.intrinsics_refinement = ColmapIntrinsicsRefinement::Refine;
+        let full = DjiBrownConradyCalibration {
+            focal_x_pixels: 80.0,
+            focal_y_pixels: 81.0,
+            principal_x_pixels: 50.25,
+            principal_y_pixels: 49.75,
+            radial_distortion: [-0.1, -0.002, -0.015],
+            tangential_distortion: [0.0003, -0.0004],
+            calibration_date: "2025-02-26".into(),
+            provenance: himmelcad_core::photolab_images::DjiCalibrationProvenance::DewarpData,
+        };
+        request.calibration_groups = vec![
+            ColmapCalibrationGroup {
+                group_id: "embedded-mission".into(),
+                camera_entity_ids: vec!["camera-a".into()],
+                seed: Some(ColmapCalibrationSeed {
+                    width_pixels: 100,
+                    height_pixels: 100,
+                    focal_pixels: full.focal_x_pixels,
+                    principal_x_pixels: full.principal_x_pixels,
+                    principal_y_pixels: full.principal_y_pixels,
+                    full_brown_calibration: Some(full),
+                }),
+            },
+            ColmapCalibrationGroup {
+                group_id: "metadata-poor-mission".into(),
+                camera_entity_ids: vec!["camera-b".into()],
+                seed: Some(ColmapCalibrationSeed {
+                    width_pixels: 100,
+                    height_pixels: 100,
+                    focal_pixels: 70.0,
+                    principal_x_pixels: 50.0,
+                    principal_y_pixels: 50.0,
+                    full_brown_calibration: None,
+                }),
+            },
+        ];
+        request.pinned_calibration_group_ids = vec!["embedded-mission".into()];
+        request
+    }
+
+    #[tokio::test]
+    async fn mixed_policy_refines_every_group_then_restores_only_the_pinned_seed() {
+        let rig = TestRig::new("mixed-intrinsics-policy", false, false);
+        let request = mixed_policy_request(&rig, "mixed-intrinsics-policy-job");
+        assert_eq!(
+            request.intrinsics_strategy(),
+            ColmapIntrinsicsStrategy::Mixed
+        );
+        assert!(request
+            .progress_plan()
+            .stages
+            .iter()
+            .any(|stage| stage.label == PINNED_INTRINSICS_STAGE));
+
+        let outcome = run_successfully(rig.runtime(), request).await;
+        let invocations = fs::read_to_string(outcome.scratch_path.join("invocations.log"))
+            .expect("read invocation log");
+        // The joint solve refines every seeded group instead of freezing the metadata-poor one.
+        assert!(invocations.contains(
+            "--GlobalMapper.ba_refine_focal_length|1|--GlobalMapper.ba_refine_principal_point|0|--GlobalMapper.ba_refine_extra_params|1"
+        ));
+        assert!(invocations.contains("CMD|bundle_adjuster|--input_path"));
+        assert!(invocations.contains(
+            "--BundleAdjustment.refine_focal_length|0|--BundleAdjustment.refine_principal_point|0|--BundleAdjustment.refine_extra_params|0"
+        ));
+
+        let cameras =
+            fs::read_to_string(outcome.scratch_path.join("sparse-view-source/cameras.txt"))
+                .expect("read exported cameras");
+        // The pinned group carries its exact frozen calibration again.
+        assert!(cameras.contains(
+            "1 FULL_OPENCV 100 100 80.000000000000 81.000000000000 50.250000000000 49.750000000000 -0.100000000000 -0.002000000000 0.000300000000 -0.000400000000 -0.015000000000 0 0 0"
+        ));
+        // The refined group keeps what the solve found.
+        assert!(cameras.contains("2 SIMPLE_RADIAL 100 100 112 50 50 0.01"));
+
+        assert_eq!(
+            outcome.summary.intrinsics_strategy,
+            ColmapIntrinsicsStrategy::Mixed
+        );
+        assert_eq!(
+            outcome.summary.pinned_calibration_group_ids,
+            ["embedded-mission"]
+        );
+        let readjustment = outcome
+            .summary
+            .pinned_readjustment
+            .expect("mixed runs record their re-adjustment");
+        assert_eq!(
+            readjustment.path,
+            PinnedIntrinsicsReadjustmentPath::ColmapBundleAdjuster
+        );
+        assert_eq!(readjustment.registered_images_before, 2);
+        assert_eq!(readjustment.registered_images_after, 2);
+        assert_eq!(readjustment.points3d_before, readjustment.points3d_after);
+        assert_eq!(
+            outcome.summary.calibration_group_intrinsics,
+            vec![
+                CalibrationGroupIntrinsicsDelta {
+                    group_id: "embedded-mission".into(),
+                    pinned: true,
+                    seed_focal_pixels: Some(80.0),
+                    solved_focal_pixels: Some(80.0),
+                    focal_delta_pixels: Some(0.0),
+                },
+                CalibrationGroupIntrinsicsDelta {
+                    group_id: "metadata-poor-mission".into(),
+                    pinned: false,
+                    seed_focal_pixels: Some(70.0),
+                    solved_focal_pixels: Some(112.0),
+                    focal_delta_pixels: Some(42.0),
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_published_alignment_hands_its_solved_intrinsics_to_the_next_solve() {
+        let rig = TestRig::new("solved-seed-handoff", false, false);
+        let request = mixed_policy_request(&rig, "solved-seed-handoff-job");
+        let outcome = run_successfully(rig.runtime(), request).await;
+        let seeds =
+            solved_calibration_seeds(&outcome.scratch_path).expect("read solved intrinsics");
+        assert_eq!(seeds["camera-a"].focal_pixels, 80.0);
+        assert_eq!(seeds["camera-a"].principal_x_pixels, 50.25);
+        // A merge seeded from this value keeps the metadata-poor block's own refinement.
+        assert_eq!(seeds["camera-b"].focal_pixels, 112.0);
+        assert_eq!(seeds["camera-b"].principal_x_pixels, 50.0);
+    }
+
+    #[test]
+    fn a_run_needs_a_refinable_group_and_a_restorable_seed_to_be_mixed() {
+        let rig = TestRig::new("mixed-intrinsics-validation", false, false);
+        let request = mixed_policy_request(&rig, "mixed-intrinsics-validation-job");
+        request
+            .validate()
+            .expect("a disagreeing partition is valid");
+
+        let mut unknown = request.clone();
+        unknown.pinned_calibration_group_ids = vec!["absent".into()];
+        assert!(matches!(
+            unknown.validate(),
+            Err(ColmapRuntimeError::InvalidRequest(_))
+        ));
+
+        let mut every_group = request.clone();
+        every_group.pinned_calibration_group_ids =
+            vec!["embedded-mission".into(), "metadata-poor-mission".into()];
+        assert!(matches!(
+            every_group.validate(),
+            Err(ColmapRuntimeError::InvalidRequest(_))
+        ));
+
+        let mut unseeded = request.clone();
+        unseeded.calibration_groups[0].seed = None;
+        assert!(matches!(
+            unseeded.validate(),
+            Err(ColmapRuntimeError::InvalidRequest(_))
+        ));
+
+        let mut frozen_mapper = request;
+        frozen_mapper.intrinsics_refinement = ColmapIntrinsicsRefinement::FreezeReliableEmbedded;
+        assert!(matches!(
+            frozen_mapper.validate(),
+            Err(ColmapRuntimeError::InvalidRequest(_))
+        ));
+    }
+
+    #[test]
+    fn a_collapsed_readjustment_fails_the_job_instead_of_publishing() {
+        let before = SparseModelStatistics {
+            registered_images: 100,
+            points3d: 1_000,
+            observations: 5_000,
+            mean_reprojection_error: Some(0.9),
+        };
+        check_pinned_readjustment_consistency(before, before).expect("an unchanged model is sound");
+        check_pinned_readjustment_consistency(
+            before,
+            SparseModelStatistics {
+                points3d: 900,
+                ..before
+            },
+        )
+        .expect("the tolerated triangulation loss stays inside the bound");
+
+        let lost_image = check_pinned_readjustment_consistency(
+            before,
+            SparseModelStatistics {
+                registered_images: 99,
+                ..before
+            },
+        )
+        .expect_err("losing a registered image fails the job");
+        assert!(lost_image.to_string().contains("intrinsics policy"));
+        let lost_points = check_pinned_readjustment_consistency(
+            before,
+            SparseModelStatistics {
+                points3d: 899,
+                ..before
+            },
+        )
+        .expect_err("collapsing the triangulation fails the job");
+        assert!(lost_points.to_string().contains("retention bound"));
     }
 
     #[tokio::test]

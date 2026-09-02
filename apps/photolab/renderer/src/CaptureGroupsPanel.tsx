@@ -673,6 +673,10 @@ function IntrinsicsPolicyEditor({
           <option value="custom">Custom · refine selected</option>
         </Select>
       </label>
+      <small>
+        This policy applies to alignment, merge and GCP optimization. Fixed groups keep their
+        calibration in every solve; the other policies let the solve refine it.
+      </small>
       {(policy.kind === 'prior' || policy.kind === 'custom') && (
         <div aria-label="Enabled intrinsic parameters">
           {(Object.keys(ALL_INTRINSICS) as (keyof GcpIntrinsicParameterMask)[]).map((parameter) => (
