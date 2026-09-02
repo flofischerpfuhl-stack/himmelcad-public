@@ -886,6 +886,23 @@ the updater contract test green. Flagged for the owner; no Codex run.
 
 ---
 
+## Tunables register (doctrine X6)
+
+Every numeric threshold introduced by this plan is a delegated calibration
+value: chosen with a rationale, recorded here, tightened with evidence, never
+escalated. Constants in code should cite this section.
+
+| Package | Value                                                                                                       | Rationale                                                                                                                         | Evidence to tighten                                                                 |
+| ------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| WP-A1   | LAS scale 0.001 m, offset = bbox minimum                                                                    | Millimetre quantization matches survey deliverable precision; bbox offset keeps i32 range for 7-digit eastings                    | Compare against Metashape LAZ headers on the golden dataset                         |
+| WP-B3   | Drain deadline 20 s; Electron before-quit wait 25 s                                                         | Every worker kill loop is sub-second; 20 s covers checkpoint flush on slow disks; Electron waits slightly longer than the sidecar | Measure drain latency in the cancellation matrix runs                               |
+| WP-B2   | Job polling 500 ms (existing)                                                                               | Interactive feel without saturating the RPC channel                                                                               | Profile RPC load with 10+ terminal jobs listed                                      |
+| WP-C3   | Recent projects MRU 10; Untitled litter: > 14 days and zero images                                          | Reference desktop products keep ~10 recents; two weeks is beyond any active session, zero images means no work                    | Owner usage; adjust if litter prompts annoy                                         |
+| WP-D3   | Preflight neighbour distance = mean nearest-neighbour spacing × 3; low-overlap warning < 10 candidate pairs | ×3 spans two flight-line spacings on a regular grid; < 10 pairs cannot yield ≥ 3 verified tracks reliably                         | Correlate preflight counts with actual verified cross-run tracks on merged datasets |
+| WP-D2   | Triangulation-consistency bound after pinned re-adjustment (set in code)                                    | Registered images and 3D points must not collapse after re-bundling                                                               | Golden-dataset before/after counts                                                  |
+| WP-A4   | SMRF cell size, slope, max window (to be set)                                                               | Standard SMRF defaults for UAV GSD                                                                                                | Synthetic scene precision/recall                                                    |
+| WP-F2   | Pixel diff threshold ≤ 0.1 % pixels, per-channel tolerance 16                                               | Tolerates antialiasing jitter, catches layout shifts                                                                              | False-positive rate over 20 CI runs                                                 |
+
 ## Execution order and review protocol
 
 Waves (sequential Codex runs; the reviewing session verifies each before the
