@@ -10,13 +10,16 @@ hash rules, and states are taken from that contract verbatim; this ADR adds no
 design freedom. It admits the shapes that DATA-MODEL pending item 8 lists so
 that PhotoLab may publish them and Builder and WeltView may consume them.
 
-Scope: this ADR adopts IF-D19 and IF-D22 only. IF-D20 (generated command-table
+Scope: this ADR adopts IF-D19, IF-D22, and (revision 4) IF-D26–IF-D34. IF-D20 (generated command-table
 rows), IF-D23, IF-D24 and IF-D25 (source locking and pinning, bounded listing
 budgets, repeated-registration and update rules, passive consumers, `.hcadx`
 WeltView parity) continue to govern unchanged by their record ids in the
 import-formats specification; nothing in this ADR restates, abbreviates or
 replaces them. Revision 2 (2026-09-02) applies the architect's conformance
-check `docs/adr/0030-conformance-check-2026-09-02.md`.
+check `docs/adr/0030-conformance-check-2026-09-02.md`. Revision 4
+(2026-09-02) adopts IF-D26–IF-D34, which close the nine WP-G1a contract
+gaps; where a record says "specified above", the spec's shape tables are
+adopted by citation without paraphrase.
 
 ## Context
 
@@ -195,6 +198,7 @@ PROJECT-FORMAT, and an accepted ADR before implementation.
 - Orthomosaic: the only R1 arrival is `RasterImageGeometry` plus `RasterMapping::PlanGrid2D`, carrying the source pixel-grid affine XY transform, frozen CRS, no depth, no entity placement, and `z: null`. A zero-height orthomosaic `OrthoGrid` is rejected; `PlanGrid2D` has no Z, depth, or placement authority.
 - Prepared hierarchy: `himmelcad-prepared-hierarchy@1` is not blanket permission to accept arbitrary contents. Validation requires the canonical entity kind, representation slot, geometry/resource hash, root manifest, every referenced artifact, and every tile `ContentKind` to agree. Unsupported or mixed semantics fail before review; registration never relabels Raster, glTF mesh, or GaussianSplats content.
 - A renderer decoder or an inventory label is never semantic admission. Complete lineage is captured by PhotoLab at publication and copied byte-for-byte; Builder never reconstructs missing history.
+- DEM package facts (IF-D30): `product_kind: "dem"` requires `PhotoLabDemFactsV1` with `elevationZ`, exact `RasterInterpolation`, exact `RasterConnectivity`, explicit source NoData semantics, the mandatory validity resource, and a connectivity resource for mask connectivity; the canonical Grid and prepared Raster root bind the same facts and resources; until all are frozen the publication has `package: null` and is not Available.
 
 ## Release gates
 
@@ -222,7 +226,8 @@ gate test).
 ## Primary references
 
 - `docs/builder-program/specs/import-formats/import-formats.md`, section
-  "PhotoLab product datasets — 2026-09-02", IF-D19–IF-D25, and its review
+  "PhotoLab product datasets — 2026-09-02", IF-D19–IF-D25, IF-D26–IF-D34 (the
+  WP-G1a contract-gap dispositions), and its review
   `import-formats-photolab-review-2026-09-02.md`.
 - ADR 0012, ADR 0016, ADR 0018, ADR 0019, ADR 0021, ADR 0025;
   `docs/DECISION-DOCTRINE.md` X1, X2, X3, X7, P5, P11.
