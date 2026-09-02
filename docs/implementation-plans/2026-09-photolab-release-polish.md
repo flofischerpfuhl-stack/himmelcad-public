@@ -1634,6 +1634,7 @@ Footer
 - E2 conflicts/failure/crash: admission, lock-scoped reads, ready-record-last publication, and journal-last registration coordinate all producer/consumer boundaries
 - E3 verification: G1a publication conformance, G1b registration/open flows, and every-row G1c identity/render/pick/snap matrix
 - Decision record: cited unchanged: IF-D19–IF-D25 and ADR 0030
+- ADR 0030 status 2026-09-02 evening: revision 6 (9d4d398) quotes IF-D26–IF-D34 verbatim as blockquotes and was checked CONFORMANT mechanically by the Builder lane (`docs/adr/0030-conformance-recheck5-2026-09-02.md`); no open contract item for WP-G1a-2. Method rule for any future cite-and-adopt ADR from either lane: quote the spec record's Decision text verbatim, never paraphrase, and verify by script diff.
 - Evidence: `e5fc50a` partial PhotoLab publication; open — not executed: complete R1 gate 8
 - Status: in flight
 ```
@@ -1954,6 +1955,8 @@ Footer
 - Status: queued
 ```
 
+Status 2026-09-02 20:35: the Builder lane delegated the UIP-D14 dispatcher to this package under four conditions (one dispatcher in `packages/@himmelcad/ui` with the rung order verbatim from UIP-D14 and no PhotoLab-specific rungs; FunctionPanel close and ImportChat "Cancelling…" per UIP-D7/UIP-D10; ui tests plus Builder typecheck before the landed announcement; a peer conformance check afterwards). The first run had placed the dispatcher under `apps/photolab` and was stopped; re-dispatched with the conditions in the brief. `FloatingTaskIsland.tsx` is PhotoLab-local and becomes a consumer, not a move (recorded in COORDINATION.md by the Builder lane).
+
 ### WP-H4 (documentation)
 
 Per-package A1–E3 footer and evidence ledger.
@@ -2045,6 +2048,8 @@ Footer
 - Evidence: open — not executed
 - Status: queued
 ```
+
+Landed 2026-09-02 (b5fec8e): `pnpm photolab:evidence:ledger --out <file> [--candidate <rev>] [--e2e <dir>…] [--a11y <dir>] [--baselines <dir>] [--cargo-log …] [--node-log …]` writes the R1 ledger from executed artifacts only (presence plus each artifact's own verdict; never certifies closure). 14 unit tests. Implemented by the Grok wrapper (mechanical work under D8).
 
 ## Execution order and review protocol
 
