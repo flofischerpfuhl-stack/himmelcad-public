@@ -57,7 +57,7 @@ export interface GcpAccuracyReport {
 
 export interface GcpAccuracyPanelProps {
   report: GcpAccuracyReport | null;
-  selectedPointId?: string;
+  selectedPointId?: string | null;
   onSelectPoint?: (pointId: string) => void;
 }
 
@@ -118,6 +118,14 @@ export function GcpAccuracyPanel({
                 key={residual.pointId}
                 className={selectedPointId === residual.pointId ? styles.selectedRow : undefined}
                 onClick={() => onSelectPoint?.(residual.pointId)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.preventDefault();
+                  onSelectPoint?.(residual.pointId);
+                }}
+                role="button"
+                tabIndex={0}
+                aria-pressed={selectedPointId === residual.pointId}
               >
                 <td>
                   <strong>{residual.pointName}</strong>

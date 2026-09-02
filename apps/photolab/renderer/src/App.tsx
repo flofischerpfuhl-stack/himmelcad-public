@@ -95,6 +95,7 @@ import type { GcpAccuracyReport } from './GcpAccuracyPanel.js';
 import type { GcpImageMarker, GcpManualMeasurement } from './GcpImageMarkerOverlay.js';
 import { GcpImportPanel } from './GcpImportPanel.js';
 import { GcpImagesPanel } from './GcpImagesPanel.js';
+import { selectWorstResidualImageForPoint } from './gcpAccuracyNavigation.js';
 import { GcpOptimizationPanel, type GcpOptimizationSelection } from './GcpOptimizationPanel.js';
 import { GcpPropertiesPanel, formatHeightReference } from './GcpPropertiesPanel.js';
 import { FloatingTaskIsland } from './FloatingTaskIsland.js';
@@ -545,6 +546,10 @@ export function App(): JSX.Element {
     const id = [...selected][0];
     return projectImages.find((image) => image.entityId === id) ?? null;
   }, [projectImages, selected]);
+  const selectedWorkspaceImage = useMemo(() => {
+    const images = projectImages.filter((image) => selected.has(image.entityId));
+    return images.length === 1 ? images[0]! : null;
+  }, [projectImages, selected]);
   const selectedGcp = useMemo(() => {
     if (selected.size !== 1 || !gcpCollection) return null;
     const id = [...selected][0];
@@ -604,6 +609,19 @@ export function App(): JSX.Element {
       gcpCollection?.[1].points.find(({ point }) => point.id === focusedGcpId)?.point.name ?? 'GCP',
     [focusedGcpId, gcpCollection],
   );
+  const gcpEntityIdByPointId = useMemo(() => {
+    const entityIdByName = new Map(
+      Object.values(project.entities)
+        .filter((entity) => entity.kind === 'GroundControlPoint')
+        .map((entity) => [entity.name, entity.id] as const),
+    );
+    return new Map(
+      (gcpCollection?.[1].points ?? []).flatMap(({ point }) => {
+        const entityId = entityIdByName.get(point.name);
+        return entityId ? [[point.id, entityId] as const] : [];
+      }),
+    );
+  }, [gcpCollection, project.entities]);
   const alignmentImageCount =
     alignmentScope === 'selection' ? selectedCameraIds.length : projectImages.length;
   const productAlignmentInputs = useMemo(() => {
@@ -3529,6 +3547,40 @@ export function App(): JSX.Element {
     });
   }, [pendingProductExport, productExportBusy]);
 
+  const selectGcpAccuracyPoint = useCallback(
+    (pointId: string): void => {
+      const collection = gcpCollection?.[1];
+      const point = collection?.points.find(
+        ({ point: candidate }) => candidate.id === pointId,
+      )?.point;
+      if (!collection || !point) return;
+
+      const observedImageIds = collection.observations
+        .filter(
+          (observation) => observation.pointId === pointId && observation.state.state !== 'blocked',
+        )
+        .map((observation) => observation.imageId);
+      // The published optimization payload currently carries only aggregate point RMS/max,
+      // not its per-observation residual samples. Use the required first-observed fallback
+      // until those samples are included in this renderer payload; do not issue a sidecar RPC.
+      const imageId = selectWorstResidualImageForPoint(pointId, [], observedImageIds);
+      const imageEntityId = alignedGcpCameras.find(
+        (camera) => camera.imageId === imageId,
+      )?.entityId;
+      const pointEntityId = gcpEntityIdByPointId.get(pointId);
+      const nextSelection = new Set<EntityId>();
+      if (pointEntityId) nextSelection.add(pointEntityId);
+      if (imageEntityId) nextSelection.add(imageEntityId);
+
+      setSelected(nextSelection);
+      setFocusedGcpId(pointId);
+      setWorkspaceMode('images');
+      activate('reference.gcp.images');
+      logEvent('info', 'renderer', `Opened worst available image for GCP “${point.name}”`);
+    },
+    [activate, alignedGcpCameras, gcpCollection, gcpEntityIdByPointId],
+  );
+
   const handleTreeContextAction = useCallback(
     (id: EntityId, action: 'showGcpImages' | 'open' | 'properties' | 'export' | 'remove') => {
       const entity = project.entities[id];
@@ -4048,9 +4100,12 @@ export function App(): JSX.Element {
               <GcpImagesPanel
                 pointName={focusedGcpName}
                 images={focusedGcpImages}
-                selectedImageEntityId={selectedImage?.entityId ?? null}
+                selectedImageEntityId={selectedWorkspaceImage?.entityId ?? null}
                 onSelect={(entityId) => {
-                  setSelected(new Set([entityId]));
+                  const pointEntityId = focusedGcpId
+                    ? gcpEntityIdByPointId.get(focusedGcpId)
+                    : undefined;
+                  setSelected(new Set(pointEntityId ? [pointEntityId, entityId] : [entityId]));
                   setWorkspaceMode('images');
                 }}
               />
@@ -4186,6 +4241,8 @@ export function App(): JSX.Element {
             resumeErrors={jobResumeErrors}
             onCollapse={toggleBottom}
             accuracyReport={gcpAccuracyReport}
+            selectedPointId={focusedGcpId}
+            onSelectPoint={selectGcpAccuracyPoint}
             hardware={hardware}
             products={productDatasets}
             processingSets={processingSets}
@@ -4356,7 +4413,7 @@ export function App(): JSX.Element {
                   imageMasks={imageMasks}
                   active={workspaceMode === 'images'}
                   hasEntitySelection={selected.size > 0}
-                  selectedImageEntityId={selectedImage?.entityId ?? null}
+                  selectedImageEntityId={selectedWorkspaceImage?.entityId ?? null}
                   alignedCameras={alignedGcpCameras}
                   gcpCollection={gcpCollection?.[1] ?? null}
                   gcpOptimization={gcpOptimization}
@@ -4367,7 +4424,10 @@ export function App(): JSX.Element {
                   onEditImageMask={editImageMask}
                   depthDatasets={productDatasets.filter((dataset) => dataset.kind === 'depth')}
                   onSelectProjectImage={(entityId) => {
-                    setSelected(new Set([entityId]));
+                    const pointEntityId = focusedGcpId
+                      ? gcpEntityIdByPointId.get(focusedGcpId)
+                      : undefined;
+                    setSelected(new Set(pointEntityId ? [pointEntityId, entityId] : [entityId]));
                     setRightPanelTab('properties');
                     setRightCollapsed(false);
                   }}

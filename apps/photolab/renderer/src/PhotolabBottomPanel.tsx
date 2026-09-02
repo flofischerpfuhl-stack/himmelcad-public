@@ -37,6 +37,8 @@ export interface PhotolabBottomPanelProps {
   resumeErrors: Readonly<Record<string, string>>;
   onCollapse: () => void;
   accuracyReport: GcpAccuracyReport | null;
+  selectedPointId: string | null;
+  onSelectPoint: (pointId: string) => void;
   hardware: HardwareCapabilities | null;
   products: readonly ReportProduct[];
   processingSets: readonly ProcessingSetRecord[];
@@ -63,6 +65,8 @@ export function PhotolabBottomPanel({
   resumeErrors,
   onCollapse,
   accuracyReport,
+  selectedPointId,
+  onSelectPoint,
   hardware,
   products,
   processingSets,
@@ -136,7 +140,13 @@ export function PhotolabBottomPanel({
             autoExpandJobId={autoExpandJobId}
           />
         )}
-        {tab === 'accuracy' && <GcpAccuracyPanel report={accuracyReport} />}
+        {tab === 'accuracy' && (
+          <GcpAccuracyPanel
+            report={accuracyReport}
+            selectedPointId={selectedPointId}
+            onSelectPoint={onSelectPoint}
+          />
+        )}
         {tab === 'report' && (
           <ReportView
             project={project}

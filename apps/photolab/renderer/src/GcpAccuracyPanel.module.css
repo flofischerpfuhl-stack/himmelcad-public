@@ -153,11 +153,16 @@
 }
 
 .table tbody tr {
-  cursor: default;
+  cursor: pointer;
 }
 
 .table tbody tr:hover {
   background: var(--hc-hover-bg);
+}
+
+.table tbody tr:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: -2px;
 }
 
 .selectedRow {
