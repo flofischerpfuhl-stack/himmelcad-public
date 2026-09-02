@@ -120,6 +120,7 @@ import {
   type ProductOperation,
   type ProductRunConfiguration,
 } from './ProductPanel.js';
+import type { ProductPrerequisiteArtifact } from './productPrerequisites.js';
 import { ProjectFileOperationDialog } from './ProjectFileOperationDialog.js';
 import {
   applyProjectProgress,
@@ -232,6 +233,7 @@ export function App(): JSX.Element {
   const [alignmentStarting, setAlignmentStarting] = useState(false);
   const [imageQualityStarting, setImageQualityStarting] = useState(false);
   const [productStarting, setProductStarting] = useState(false);
+  const [productStartError, setProductStartError] = useState<string | null>(null);
   const [batchStarting, setBatchStarting] = useState(false);
   const [batchRecipeOpen, setBatchRecipeOpen] = useState(false);
   const [processingSetSaving, setProcessingSetSaving] = useState(false);
@@ -285,6 +287,7 @@ export function App(): JSX.Element {
   const [alignedGcpCameras, setAlignedGcpCameras] = useState<readonly AlignedGcpCameraRecord[]>([]);
   const [focusedGcpId, setFocusedGcpId] = useState<string | null>(null);
   const [projectTargetCrs, setProjectTargetCrs] = useState<string | null>(null);
+  const [projectLocalMetric, setProjectLocalMetric] = useState(true);
   const [imageImportBusy, setImageImportBusy] = useState(false);
   const [imageImportProgress, setImageImportProgress] = useState<ImageImportProgress | null>(null);
   const [gridSelectionProgress, setGridSelectionProgress] = useState<ImageImportProgress | null>(
@@ -506,16 +509,12 @@ export function App(): JSX.Element {
     alignmentScope === 'selection' ? selectedCameraIds.length : projectImages.length;
   const productAlignmentInputs = useMemo(
     () => [
-      {
-        id: 'latest',
-        label:
-          processingSets.find((set) => set.entityId === activeProcessingSetId)?.name ??
-          'Latest compatible alignment',
-      },
-      ...alignmentMergeCandidates.map((candidate) => ({
-        id: candidate.entityId,
-        label: `${candidate.name} · ${candidate.cameraEntityIds.length} cameras`,
-      })),
+      ...[...alignmentMergeCandidates]
+        .sort((left, right) => right.publicationSequence - left.publicationSequence)
+        .map((candidate) => ({
+          id: candidate.entityId,
+          label: `${candidate.name} · ${candidate.cameraEntityIds.length} cameras`,
+        })),
       ...alignmentMerges
         .filter((merge) => merge.state === 'published')
         .map((merge) => ({
@@ -523,14 +522,27 @@ export function App(): JSX.Element {
           label: `${merge.name} · merged · ${merge.cameraEntityIds.length} cameras`,
         })),
     ],
-    [activeProcessingSetId, alignmentMergeCandidates, alignmentMerges, processingSets],
+    [alignmentMergeCandidates, alignmentMerges],
   );
-  const activeProductProcessingSetId = useMemo(
-    () =>
-      alignmentMergeCandidates.find((candidate) => candidate.entityId === activeProductAlignmentId)
-        ?.processingSetId ?? null,
-    [activeProductAlignmentId, alignmentMergeCandidates],
-  );
+  const selectedProductAlignmentId =
+    activeProductAlignmentId ?? (productAlignmentInputs[0]?.id as EntityId | undefined) ?? null;
+  const productPrerequisites = useMemo(() => {
+    const availableArtifacts = new Set<ProductPrerequisiteArtifact>();
+    for (const dataset of productDatasets) {
+      if (dataset.sourceAlignmentEntityId !== selectedProductAlignmentId) continue;
+      if (dataset.kind === 'depth') {
+        availableArtifacts.add('depth');
+        availableArtifacts.add('depthReuse');
+      } else if (dataset.kind === 'dense') availableArtifacts.add('dense');
+      else if (dataset.kind === 'dem') availableArtifacts.add('dem');
+    }
+    return {
+      hasPublishedAlignment: selectedProductAlignmentId !== null,
+      availableArtifacts,
+      externalDemBound: false,
+      meshSourceKinds: ['dem'] as const,
+    };
+  }, [productDatasets, selectedProductAlignmentId]);
 
   const resolveProfile = useCallback(async () => {
     const api = window.himmelcad;
@@ -678,6 +690,7 @@ export function App(): JSX.Element {
       setLastSavedGeneration(opened.session.lastSavedGeneration);
       setProjectReady(true);
       setProjectTargetCrs(referenceFrameLabel(opened.manifest.referenceFrame));
+      setProjectLocalMetric(opened.manifest.spatialReference.kind === 'localMetric');
       if (!options?.preserveSelection) {
         setSelected(new Set());
         setActiveProcessingSetId(null);
@@ -1845,20 +1858,22 @@ export function App(): JSX.Element {
   ]);
 
   const startProduct = useCallback(
-    async (configuration: ProductRunConfiguration) => {
+    async (
+      configuration: ProductRunConfiguration,
+      gcpOptimizationEntityId: EntityId | null | undefined = undefined,
+    ) => {
       const api = window.himmelcad;
-      if (!api || !projectReady || productStarting) return;
+      if (!api || !projectReady || productStarting || !selectedProductAlignmentId) return;
       const operationId = `${configuration.kind}-${crypto.randomUUID()}`;
       setProductStarting(true);
+      setProductStartError(null);
       const started = performance.now();
       try {
         const result = await api.sidecar.call<{ job: PhotolabJob }>('photolab.jobs.startProduct', {
           operationId,
           configuration,
-          processingSetId: activeProductAlignmentId
-            ? activeProductProcessingSetId
-            : activeProcessingSetId,
-          sourceAlignmentEntityId: activeProductAlignmentId,
+          sourceAlignmentEntityId: selectedProductAlignmentId,
+          ...(gcpOptimizationEntityId !== undefined ? { gcpOptimizationEntityId } : {}),
         });
         setJobs((previous) => [...previous.filter((job) => job.id !== result.job.id), result.job]);
         logEvent(
@@ -1867,22 +1882,18 @@ export function App(): JSX.Element {
           `${productLabel(configuration.kind)} queued · ${(performance.now() - started).toFixed(1)} ms`,
         );
       } catch (error) {
+        const message = errorMessage(error);
+        setProductStartError(message);
         logEvent(
           'error',
           'sidecar',
-          `${productLabel(configuration.kind)} could not start: ${errorMessage(error)}`,
+          `${productLabel(configuration.kind)} could not start: ${message}`,
         );
       } finally {
         setProductStarting(false);
       }
     },
-    [
-      activeProcessingSetId,
-      activeProductAlignmentId,
-      activeProductProcessingSetId,
-      productStarting,
-      projectReady,
-    ],
+    [productStarting, projectReady, selectedProductAlignmentId],
   );
 
   const startBatch = useCallback(
@@ -3353,6 +3364,8 @@ export function App(): JSX.Element {
                 selectedCameraIds={selectedCameraIds}
                 processingSets={processingSets}
                 activeProcessingSetId={activeProcessingSetId}
+                gcpOptimizations={gcpOptimizations}
+                localMetric={projectLocalMetric}
                 onActivateProcessingSet={activateProcessingSet}
                 onClearProcessingSet={() => setActiveProcessingSetId(null)}
                 onStart={(steps, cameraEntityIds, scopeLabel) =>
@@ -3379,11 +3392,20 @@ export function App(): JSX.Element {
                 operation={productOperation}
                 busy={productStarting}
                 inputs={productAlignmentInputs}
-                selectedInputId={activeProductAlignmentId ?? 'latest'}
-                onInputChange={(id) =>
-                  setActiveProductAlignmentId(id === 'latest' ? null : (id as EntityId))
+                selectedInputId={selectedProductAlignmentId ?? ''}
+                gcpOptimizations={gcpOptimizations}
+                localMetric={projectLocalMetric}
+                prerequisites={productPrerequisites}
+                prerequisiteProducts={productDatasets}
+                startError={productStartError}
+                onInputChange={(id) => {
+                  setActiveProductAlignmentId(id ? (id as EntityId) : null);
+                  setProductStartError(null);
+                }}
+                onActivatePrerequisite={activate}
+                onStart={(configuration, gcpOptimizationEntityId) =>
+                  void startProduct(configuration, gcpOptimizationEntityId)
                 }
-                onStart={(configuration) => void startProduct(configuration)}
               />
             ) : null}
           </FunctionPanel>

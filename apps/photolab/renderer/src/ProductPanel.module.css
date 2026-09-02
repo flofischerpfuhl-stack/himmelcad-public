@@ -119,6 +119,90 @@
   line-height: 1.5;
 }
 
+.prerequisite,
+.error {
+  display: grid;
+  gap: 5px;
+  padding: 8px 10px;
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island-lo);
+  border-left: 2px solid var(--hc-warning);
+  border-radius: var(--hc-radius-sm);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.prerequisite button {
+  width: fit-content;
+  padding: 0;
+  color: var(--hc-accent-base);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.error {
+  color: var(--hc-error);
+  border-left-color: var(--hc-error);
+}
+
+.freeze {
+  display: grid;
+  gap: 6px;
+  padding: 9px 10px;
+  color: var(--hc-fg-muted);
+  background: var(--hc-bg-island-lo);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  font-size: 10px;
+}
+
+.freeze > strong {
+  color: var(--hc-fg-default);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.freeze dl {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.freeze dl > div {
+  display: grid;
+  grid-template-columns: minmax(82px, 0.8fr) minmax(120px, 1.2fr);
+  gap: 8px;
+}
+
+.freeze dt,
+.freeze dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.freeze dd {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--hc-fg-default);
+}
+
+.freeze dd span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.freeze code {
+  color: var(--hc-fg-strong);
+  font-family: var(--hc-font-mono);
+}
+
 .warning {
   background: color-mix(in srgb, var(--hc-warning) 10%, var(--hc-bg-island-lo));
   border-left-color: var(--hc-warning);

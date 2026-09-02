@@ -1,11 +1,17 @@
+import type { EntityId, ObjectHash, PublishedGcpOptimizationEntry } from '@himmelcad/data';
 import { Checkbox, Select } from '@himmelcad/ui';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
+import { compatibleGcpOptimizations } from './alignmentMergeDraft.js';
 import {
   defaultProductConfiguration,
   type ProductOperation,
   type ProductRunConfiguration,
 } from './productConfiguration.js';
+import {
+  evaluateProductPrerequisites,
+  type ProductPrerequisiteStatus,
+} from './productPrerequisites.js';
 import styles from './ProductPanel.module.css';
 
 export {
@@ -19,8 +25,30 @@ export interface ProductPanelProps {
   busy: boolean;
   inputs: readonly { id: string; label: string }[];
   selectedInputId: string;
+  gcpOptimizations: readonly PublishedGcpOptimizationEntry[];
+  localMetric: boolean;
+  prerequisites: ProductPrerequisiteStatus;
+  prerequisiteProducts: readonly {
+    kind: 'depth' | 'dense' | 'dem' | string;
+    sourceAlignmentEntityId?: EntityId;
+    gcpOptimizationEntityId?: EntityId;
+    gcpOptimizationSnapshotSha256?: ObjectHash;
+  }[];
+  startError: string | null;
   onInputChange: (id: string) => void;
-  onStart: (configuration: ProductRunConfiguration) => void;
+  onActivatePrerequisite: (functionId: string) => void;
+  onStart: (
+    configuration: ProductRunConfiguration,
+    gcpOptimizationEntityId: EntityId | null | undefined,
+  ) => void;
+}
+
+export interface ResolvedProductInputs {
+  kind: ProductOperation;
+  alignment: { entityId: EntityId; name: string; snapshotSha256: ObjectHash };
+  processingSet?: { entityId: EntityId; name: string; membershipSha256: ObjectHash };
+  gcpOptimization?: { entityId: EntityId; operationId: string; snapshotSha256: ObjectHash };
+  maskScopeSha256?: ObjectHash;
 }
 
 export function ProductPanel({
@@ -28,12 +56,92 @@ export function ProductPanel({
   busy,
   inputs,
   selectedInputId,
+  gcpOptimizations,
+  localMetric,
+  prerequisites,
+  prerequisiteProducts,
+  startError,
   onInputChange,
+  onActivatePrerequisite,
   onStart,
 }: ProductPanelProps): JSX.Element {
   const defaults = useMemo(() => defaultProductConfiguration(operation), [operation]);
   const [configuration, setConfiguration] = useState<ProductRunConfiguration>(defaults);
+  const [gcpSelection, setGcpSelection] = useState('latest');
+  const [resolvedInputs, setResolvedInputs] = useState<ResolvedProductInputs | null>(null);
+  const [resolveError, setResolveError] = useState<string | null>(null);
+  const [resolving, setResolving] = useState(false);
   useEffect(() => setConfiguration(defaults), [defaults]);
+  useEffect(() => setGcpSelection('latest'), [selectedInputId]);
+  const compatibleOptimizations = useMemo(
+    () =>
+      selectedInputId
+        ? compatibleGcpOptimizations(selectedInputId as EntityId, gcpOptimizations)
+        : [],
+    [gcpOptimizations, selectedInputId],
+  );
+  const latestOptimization = compatibleOptimizations.at(-1);
+  const exactPrerequisites = useMemo((): ProductPrerequisiteStatus => {
+    if (!resolvedInputs) return prerequisites;
+    const availableArtifacts = new Set(prerequisites.availableArtifacts);
+    availableArtifacts.clear();
+    for (const product of prerequisiteProducts) {
+      if (product.sourceAlignmentEntityId !== resolvedInputs.alignment.entityId) continue;
+      if (product.gcpOptimizationEntityId !== resolvedInputs.gcpOptimization?.entityId) continue;
+      if (product.gcpOptimizationSnapshotSha256 !== resolvedInputs.gcpOptimization?.snapshotSha256)
+        continue;
+      if (product.kind === 'depth') {
+        availableArtifacts.add('depth');
+        availableArtifacts.add('depthReuse');
+      } else if (product.kind === 'dense') availableArtifacts.add('dense');
+      else if (product.kind === 'dem') availableArtifacts.add('dem');
+    }
+    return { ...prerequisites, availableArtifacts };
+  }, [prerequisiteProducts, prerequisites, resolvedInputs]);
+  const prerequisite = evaluateProductPrerequisites(operation, {
+    ...exactPrerequisites,
+    externalDemBound:
+      exactPrerequisites.externalDemBound ||
+      (configuration.kind === 'ortho' && Boolean(configuration.sourceDemEntityId)),
+  });
+  useEffect(() => {
+    let current = true;
+    setResolvedInputs(null);
+    setResolveError(null);
+    if (!selectedInputId) {
+      setResolving(false);
+      return () => {
+        current = false;
+      };
+    }
+    const api = window.himmelcad;
+    if (!api) {
+      setResolveError('Desktop bridge is missing. Start PhotoLab through Electron.');
+      return () => {
+        current = false;
+      };
+    }
+    setResolving(true);
+    const gcpOptimizationEntityId = decodeGcpSelection(gcpSelection);
+    void api.sidecar
+      .call<ResolvedProductInputs>('photolab.products.resolveInputs', {
+        kind: operation,
+        sourceAlignmentEntityId: selectedInputId,
+        ...(gcpOptimizationEntityId !== undefined ? { gcpOptimizationEntityId } : {}),
+      })
+      .then((resolved) => {
+        if (current) setResolvedInputs(resolved);
+      })
+      .catch((error: unknown) => {
+        if (current) setResolveError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        if (current) setResolving(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [gcpSelection, operation, selectedInputId]);
   if (configuration.kind !== operation) {
     return <div className={styles.root} />;
   }
@@ -47,11 +155,27 @@ export function ProductPanel({
             value={selectedInputId}
             onChange={(event) => onInputChange(event.currentTarget.value)}
           >
+            {inputs.length === 0 && <option value="">No published alignments</option>}
             {inputs.map((input) => (
               <option key={input.id} value={input.id}>
                 {input.label}
               </option>
             ))}
+          </Select>
+        </Field>
+        <Field label="GCP optimization">
+          <Select
+            value={gcpSelection}
+            disabled={!selectedInputId}
+            onChange={(event) => setGcpSelection(event.currentTarget.value)}
+          >
+            <option value="latest">{latestGcpLabel(latestOptimization)}</option>
+            {compatibleOptimizations.map((entry) => (
+              <option key={entry.entityId} value={`revision:${entry.entityId}`}>
+                {entry.optimization.operationId} · {entry.optimization.snapshotSha256.slice(0, 8)}
+              </option>
+            ))}
+            {localMetric && <option value="none">None (unreferenced)</option>}
           </Select>
         </Field>
         {configuration.kind === 'depth' && (
@@ -302,16 +426,113 @@ export function ProductPanel({
         )}
       </section>
 
+      {!prerequisite.met && (
+        <div className={styles.prerequisite} role="status">
+          <span>{prerequisite.reason}</span>
+          {prerequisite.actionFunctionId && prerequisite.actionLabel && (
+            <button
+              type="button"
+              onClick={() => onActivatePrerequisite(prerequisite.actionFunctionId!)}
+            >
+              {prerequisite.actionLabel}
+            </button>
+          )}
+        </div>
+      )}
+      {(resolveError || startError) && (
+        <div className={styles.error} role="alert">
+          {startError ?? resolveError}
+        </div>
+      )}
+      <div className={styles.freeze} aria-busy={resolving}>
+        <strong>This run will freeze</strong>
+        {resolving ? (
+          <span>Resolving exact input artifacts…</span>
+        ) : resolvedInputs ? (
+          <dl>
+            <FreezeRow
+              label="Alignment"
+              name={resolvedInputs.alignment.name}
+              hash={resolvedInputs.alignment.snapshotSha256}
+            />
+            {resolvedInputs.processingSet && (
+              <FreezeRow
+                label="Processing set"
+                name={resolvedInputs.processingSet.name}
+                hash={resolvedInputs.processingSet.membershipSha256}
+              />
+            )}
+            <FreezeRow
+              label="GCP revision"
+              name={resolvedInputs.gcpOptimization?.operationId ?? 'None (unreferenced)'}
+              {...(resolvedInputs.gcpOptimization
+                ? { hash: resolvedInputs.gcpOptimization.snapshotSha256 }
+                : {})}
+            />
+            {resolvedInputs.maskScopeSha256 && (
+              <FreezeRow label="Mask scope" hash={resolvedInputs.maskScopeSha256} />
+            )}
+          </dl>
+        ) : (
+          <span>Select a published alignment to resolve this run.</span>
+        )}
+      </div>
+
       <button
         className={styles.action}
         type="button"
-        disabled={busy || !valid(configuration)}
-        onClick={() => onStart(configuration)}
+        disabled={
+          busy ||
+          !valid(configuration) ||
+          !prerequisite.met ||
+          resolving ||
+          !resolvedInputs ||
+          resolveError !== null
+        }
+        onClick={() =>
+          onStart(
+            configuration,
+            gcpSelection === 'latest'
+              ? (resolvedInputs?.gcpOptimization?.entityId ?? (localMetric ? null : undefined))
+              : decodeGcpSelection(gcpSelection),
+          )
+        }
       >
         {busy ? 'Queueing…' : `Start ${title(operation)}`}
       </button>
     </div>
   );
+}
+
+function FreezeRow({
+  label,
+  name,
+  hash,
+}: {
+  label: string;
+  name?: string;
+  hash?: ObjectHash;
+}): JSX.Element {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>
+        {name && <span>{name}</span>}
+        {hash && <code title={hash}>{hash.slice(0, 8)}</code>}
+      </dd>
+    </div>
+  );
+}
+
+function latestGcpLabel(entry: PublishedGcpOptimizationEntry | undefined): string {
+  if (!entry) return 'Latest converged — none available';
+  return `Latest converged — ${entry.optimization.operationId} · ${entry.optimization.snapshotSha256.slice(0, 8)}`;
+}
+
+function decodeGcpSelection(value: string): EntityId | null | undefined {
+  if (value === 'latest') return undefined;
+  if (value === 'none') return null;
+  return value.startsWith('revision:') ? (value.slice('revision:'.length) as EntityId) : undefined;
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }): JSX.Element {

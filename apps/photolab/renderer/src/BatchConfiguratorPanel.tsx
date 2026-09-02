@@ -1,4 +1,9 @@
-import type { EntityId, ObjectHash, ProcessingSetRecord } from '@himmelcad/data';
+import type {
+  EntityId,
+  ObjectHash,
+  ProcessingSetRecord,
+  PublishedGcpOptimizationEntry,
+} from '@himmelcad/data';
 import { FileDown, FileUp, Play, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -44,6 +49,8 @@ interface BatchConfiguratorPanelProps {
   selectedCameraIds: readonly EntityId[];
   processingSets: readonly ProcessingSetRecord[];
   activeProcessingSetId: EntityId | null;
+  gcpOptimizations: readonly PublishedGcpOptimizationEntry[];
+  localMetric: boolean;
   onActivateProcessingSet: (processingSetId: EntityId) => void;
   onClearProcessingSet: () => void;
   onStart: (
@@ -63,6 +70,8 @@ export function BatchConfiguratorPanel({
   selectedCameraIds,
   processingSets,
   activeProcessingSetId,
+  gcpOptimizations,
+  localMetric,
   onActivateProcessingSet,
   onClearProcessingSet,
   onStart,
@@ -92,6 +101,17 @@ export function BatchConfiguratorPanel({
         candidate.membershipSha256 === configuredScope.membershipSha256,
     );
   }, [file.scope, processingSets]);
+  const convergedGcpOptimizations = useMemo(
+    () =>
+      gcpOptimizations
+        .filter((entry) => entry.optimization.artifact.result.converged)
+        .sort(
+          (left, right) =>
+            left.optimization.publicationSequence - right.optimization.publicationSequence ||
+            left.entityId.localeCompare(right.entityId),
+        ),
+    [gcpOptimizations],
+  );
   const processingSetScopeInvalid = file.scope?.kind === 'processingSet' && !selectedProcessingSet;
   const scopedCameraIds =
     scope === 'all'
@@ -163,6 +183,22 @@ export function BatchConfiguratorPanel({
       steps: current.steps.map((step) =>
         step.kind === 'product' && step.configuration.kind === configuration.kind
           ? { ...step, configuration }
+          : step,
+      ),
+    }));
+  };
+
+  const updateProductGcp = (
+    operation: ProductOperation,
+    gcpOptimizationEntityId: EntityId | null | undefined,
+  ) => {
+    setFile((current) => ({
+      ...current,
+      steps: current.steps.map((step) =>
+        step.kind === 'product' && step.configuration.kind === operation
+          ? gcpOptimizationEntityId === undefined
+            ? omitProductGcpSelection(step)
+            : { ...step, gcpOptimizationEntityId }
           : step,
       ),
     }));
@@ -353,9 +389,8 @@ export function BatchConfiguratorPanel({
         </BatchCard>
 
         {OPERATIONS.map((operation) => {
-          const configuration =
-            productStep(file.steps, operation)?.configuration ??
-            defaultProductConfiguration(operation);
+          const step = productStep(file.steps, operation);
+          const configuration = step?.configuration ?? defaultProductConfiguration(operation);
           return (
             <BatchCard
               key={operation}
@@ -367,6 +402,12 @@ export function BatchConfiguratorPanel({
               onToggle={(enabled) => toggle(operation, enabled)}
               onExpand={() => setExpanded(expanded === operation ? null : operation)}
             >
+              <GcpOptimizationField
+                entries={convergedGcpOptimizations}
+                localMetric={localMetric}
+                value={step?.gcpOptimizationEntityId}
+                onChange={(value) => updateProductGcp(operation, value)}
+              />
               <ProductBatchFields configuration={configuration} onChange={updateProduct} />
             </BatchCard>
           );
@@ -388,6 +429,57 @@ export function BatchConfiguratorPanel({
         <Play size={15} /> {busy ? 'Queueing batch…' : 'Start / resume batch'}
       </button>
     </div>
+  );
+}
+
+function omitProductGcpSelection(
+  step: Extract<BatchPipelineStep, { kind: 'product' }>,
+): Extract<BatchPipelineStep, { kind: 'product' }> {
+  const { gcpOptimizationEntityId: _selection, ...rest } = step;
+  return rest;
+}
+
+function GcpOptimizationField({
+  entries,
+  localMetric,
+  value,
+  onChange,
+}: {
+  entries: readonly PublishedGcpOptimizationEntry[];
+  localMetric: boolean;
+  value: EntityId | null | undefined;
+  onChange: (value: EntityId | null | undefined) => void;
+}): JSX.Element {
+  const latest = entries.at(-1);
+  return (
+    <label className={styles.field}>
+      <span>GCP optimization</span>
+      <Select
+        value={value === undefined ? 'latest' : value === null ? 'none' : `revision:${value}`}
+        onChange={(event) => {
+          const selected = event.currentTarget.value;
+          onChange(
+            selected === 'latest'
+              ? undefined
+              : selected === 'none'
+                ? null
+                : (selected.slice('revision:'.length) as EntityId),
+          );
+        }}
+      >
+        <option value="latest">
+          {latest
+            ? `Latest converged — ${latest.optimization.operationId} · ${latest.optimization.snapshotSha256.slice(0, 8)}`
+            : 'Latest converged — none available'}
+        </option>
+        {entries.map((entry) => (
+          <option key={entry.entityId} value={`revision:${entry.entityId}`}>
+            {entry.optimization.operationId} · {entry.optimization.snapshotSha256.slice(0, 8)}
+          </option>
+        ))}
+        {localMetric && <option value="none">None (unreferenced)</option>}
+      </Select>
+    </label>
   );
 }
 
@@ -867,7 +959,13 @@ function isBatchStep(value: unknown): value is LoadableBatchPipelineStep {
   if (step.kind !== 'product' || !step.configuration || typeof step.configuration !== 'object')
     return false;
   const operation = (step.configuration as { kind?: unknown }).kind;
-  return typeof operation === 'string' && OPERATIONS.some((candidate) => candidate === operation);
+  return (
+    typeof operation === 'string' &&
+    OPERATIONS.some((candidate) => candidate === operation) &&
+    (step.gcpOptimizationEntityId === undefined ||
+      step.gcpOptimizationEntityId === null ||
+      typeof step.gcpOptimizationEntityId === 'string')
+  );
 }
 function productLabel(operation: ProductOperation): string {
   return {

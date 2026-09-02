@@ -3329,6 +3329,32 @@ impl ProjectRuntime {
         })
     }
 
+    pub fn processing_set_id_for_alignment(
+        &self,
+        alignment_entity_id: &EntityId,
+    ) -> Result<Option<EntityId>> {
+        let guard = self.session.lock().expect("project session mutex poisoned");
+        let session = guard.as_ref().context("no project is open")?;
+        let entity = session
+            .manifest
+            .entities
+            .get(&alignment_entity_id.0)
+            .with_context(|| format!("unknown source alignment {}", alignment_entity_id.0))?;
+        match entity.kind {
+            EntityKind::AlignmentRun => {
+                let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
+                let record: ComputeArtifactRecord = serde_json::from_slice(&bytes)?;
+                anyhow::ensure!(
+                    record.artifact.kind == ColmapArtifactKind::SparseModel,
+                    "selected alignment entity is not a sparse model"
+                );
+                Ok(record.processing_set_id)
+            }
+            EntityKind::MergedAlignmentRun => Ok(None),
+            _ => anyhow::bail!("selected product source is not an alignment"),
+        }
+    }
+
     pub fn latest_alignment_dataset_for_camera_scope(
         &self,
         camera_entity_ids: &[String],
@@ -3390,6 +3416,16 @@ impl ProjectRuntime {
                 )
             })
             .max_by(gcp_publication_order))
+    }
+
+    pub fn gcp_optimization_entry_by_entity_id(
+        &self,
+        entity_id: &EntityId,
+    ) -> Result<PublishedGcpOptimizationEntry> {
+        self.list_gcp_optimizations()?
+            .into_iter()
+            .find(|entry| &entry.entity_id == entity_id)
+            .with_context(|| format!("unknown GCP optimization revision {}", entity_id.0))
     }
 
     pub fn latest_gcp_optimization_for_lineage(

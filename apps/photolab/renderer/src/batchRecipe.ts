@@ -16,7 +16,11 @@ import {
 
 export type BatchRecipePipelineStep =
   | { kind: 'alignment'; preset: AlignmentPresetReference }
-  | { kind: 'product'; configuration: ProductRunConfiguration };
+  | {
+      kind: 'product';
+      configuration: ProductRunConfiguration;
+      gcpOptimizationEntityId?: EntityId | null;
+    };
 
 export interface LegacyBatchAlignmentStep {
   kind: 'alignment';
@@ -32,7 +36,11 @@ export interface ResolvedBatchAlignmentPreset {
 
 export type ResolvedBatchPipelineStep =
   | { kind: 'alignment'; preset: ResolvedBatchAlignmentPreset }
-  | { kind: 'product'; configuration: ProductRunConfiguration };
+  | {
+      kind: 'product';
+      configuration: ProductRunConfiguration;
+      gcpOptimizationEntityId?: EntityId | null;
+    };
 
 export interface BatchRecipeCanvasNode {
   id: string;

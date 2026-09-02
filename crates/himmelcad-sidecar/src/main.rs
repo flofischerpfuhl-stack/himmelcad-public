@@ -31,7 +31,9 @@ use himmelcad_core::photolab::{
     resolve_alignment_profile, AlignmentQualityProfile, ResolveAlignmentProfileRequest,
     ResolvedAlignmentConfig,
 };
-use himmelcad_core::photolab_capture::{evaluate_local_scale, LocalScaleConstraint};
+use himmelcad_core::photolab_capture::{
+    evaluate_local_scale, LocalScaleConstraint, PhotolabSpatialReference,
+};
 use himmelcad_core::photolab_crs::{
     CrsDefinition, FrozenImportTransformation, HeightReference, VerticalOperationMode,
 };
@@ -754,6 +756,44 @@ enum ProductRunConfiguration {
     },
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+enum ProductGcpSelection {
+    #[default]
+    Latest,
+    None,
+    Explicit(EntityId),
+}
+
+impl ProductGcpSelection {
+    fn is_latest(&self) -> bool {
+        matches!(self, Self::Latest)
+    }
+}
+
+impl Serialize for ProductGcpSelection {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Latest | Self::None => serializer.serialize_none(),
+            Self::Explicit(entity_id) => entity_id.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ProductGcpSelection {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(match Option::<EntityId>::deserialize(deserializer)? {
+            Some(entity_id) => Self::Explicit(entity_id),
+            None => Self::None,
+        })
+    }
+}
+
 const fn default_dense_image_downscale() -> u32 {
     2
 }
@@ -779,6 +819,54 @@ struct StartProductJobParams {
     processing_set_id: Option<EntityId>,
     #[serde(default)]
     source_alignment_entity_id: Option<EntityId>,
+    #[serde(default, skip_serializing_if = "ProductGcpSelection::is_latest")]
+    gcp_optimization_entity_id: ProductGcpSelection,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResolveProductInputsParams {
+    kind: String,
+    source_alignment_entity_id: EntityId,
+    #[serde(default)]
+    gcp_optimization_entity_id: ProductGcpSelection,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResolvedProductInputs {
+    kind: String,
+    alignment: ResolvedProductInputArtifact,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    processing_set: Option<ResolvedProductProcessingSet>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gcp_optimization: Option<ResolvedProductGcpOptimization>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mask_scope_sha256: Option<ObjectHash>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResolvedProductInputArtifact {
+    entity_id: EntityId,
+    name: String,
+    snapshot_sha256: ObjectHash,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResolvedProductProcessingSet {
+    entity_id: EntityId,
+    name: String,
+    membership_sha256: ObjectHash,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResolvedProductGcpOptimization {
+    entity_id: EntityId,
+    operation_id: String,
+    snapshot_sha256: ObjectHash,
 }
 
 #[derive(Debug, Deserialize)]
@@ -806,6 +894,8 @@ enum BatchPipelineStep {
     },
     Product {
         configuration: ProductRunConfiguration,
+        #[serde(default, skip_serializing_if = "ProductGcpSelection::is_latest")]
+        gcp_optimization_entity_id: ProductGcpSelection,
     },
 }
 
@@ -2287,6 +2377,14 @@ async fn handle_product_rpc(req: RpcRequest, projects: Arc<ProjectRuntime>) -> R
         "photolab.products.list" => {
             rpc_blocking(req.id, move || projects.list_product_datasets()).await
         }
+        "photolab.products.resolveInputs" => {
+            rpc_blocking_with_params::<ResolveProductInputsParams, _, _>(
+                req.id,
+                req.params,
+                move |params| resolve_product_inputs_response(&projects, params),
+            )
+            .await
+        }
         other => rpc_err(req.id, -32601, &format!("method not found: {other}")),
     }
 }
@@ -3754,12 +3852,12 @@ async fn handle_job_rpc(
                                     let mut outcome = runtime.run(&request, &context).map_err(
                                         himmelcad_sidecar::job_runtime::JobWorkerError::from,
                                     )?;
-                                    let project_transform = publisher
-                                        .latest_gcp_optimization_for_lineage(&lineage)
-                                        .map_err(|error| {
-                                            worker_error("projectRead", &error.to_string())
-                                        })?
-                                        .map(|record| record.artifact.result.transform);
+                                    let project_transform =
+                                        pinned_product_gcp_optimization(&publisher, &lineage)
+                                            .map_err(|error| {
+                                                worker_error("projectRead", &error.to_string())
+                                            })?
+                                            .map(|record| record.artifact.result.transform);
                                     let prepared = tile_brush_ply(
                                         &outcome.output_path,
                                         &outcome.scratch_path.join("prepared-splats"),
@@ -4202,8 +4300,7 @@ async fn resume_product_job(
                 let mut outcome = runtime
                     .run(&request, &context)
                     .map_err(JobWorkerError::from)?;
-                let project_transform = publisher
-                    .latest_gcp_optimization_for_lineage(&lineage)
+                let project_transform = pinned_product_gcp_optimization(&publisher, &lineage)
                     .map_err(|error| worker_error("projectRead", &error.to_string()))?
                     .map(|record| record.artifact.result.transform);
                 outcome.prepared_splats = Some(
@@ -4484,6 +4581,7 @@ fn validate_explicit_batch_artifacts(
                     source_dem_version_sha256: Some(expected_version),
                     ..
                 },
+            ..
         } = step
         else {
             continue;
@@ -4559,7 +4657,7 @@ fn validate_unattended_batch_recipe(steps: &[BatchPipelineStep]) -> anyhow::Resu
                 );
             }
         }
-        let BatchPipelineStep::Product { configuration } = step else {
+        let BatchPipelineStep::Product { configuration, .. } = step else {
             continue;
         };
         match configuration {
@@ -4640,6 +4738,31 @@ fn freeze_batch_execution_plan(
             },
         );
     }
+    for step in &params.steps {
+        let BatchPipelineStep::Product {
+            gcp_optimization_entity_id: ProductGcpSelection::Explicit(entity_id),
+            ..
+        } = step
+        else {
+            continue;
+        };
+        let entity = context
+            .manifest
+            .entities
+            .get(&entity_id.0)
+            .context("selected batch GCP optimization revision does not exist")?;
+        anyhow::ensure!(
+            entity.kind == EntityKind::AlignmentRun && entity.id.0.contains(":alignment-gcp:"),
+            "selected batch GCP optimization binding has the wrong entity kind"
+        );
+        entities.insert(
+            entity.id.0.clone(),
+            FrozenBatchEntity {
+                entity_id: entity.id.clone(),
+                entity_revision_sha256: entity.version_hash.clone(),
+            },
+        );
+    }
     let mut external_artifacts = Vec::new();
     for step in &params.steps {
         let BatchPipelineStep::Product {
@@ -4648,6 +4771,7 @@ fn freeze_batch_execution_plan(
                     source_dem_entity_id: Some(entity_id),
                     ..
                 },
+            ..
         } = step
         else {
             continue;
@@ -4838,7 +4962,10 @@ fn run_batch_pipeline(
                     .publish_colmap_outcome_for_processing_set(outcome, processing_set_id)
                     .map_err(|error| worker_error("projectPublish", &error.to_string()))?;
             }
-            BatchPipelineStep::Product { mut configuration } => {
+            BatchPipelineStep::Product {
+                mut configuration,
+                gcp_optimization_entity_id,
+            } => {
                 let source_dem_entity_id = match &mut configuration {
                     ProductRunConfiguration::Ortho {
                         source_dem_entity_id,
@@ -4860,7 +4987,8 @@ fn run_batch_pipeline(
                                 matches!(
                                     candidate,
                                     BatchPipelineStep::Product {
-                                        configuration: ProductRunConfiguration::Dem { .. }
+                                        configuration: ProductRunConfiguration::Dem { .. },
+                                        ..
                                     }
                                 )
                                 .then_some(candidate_index)
@@ -4881,6 +5009,7 @@ fn run_batch_pipeline(
                     &params.operation_id,
                     index,
                     configuration,
+                    gcp_optimization_entity_id,
                     &params.camera_entity_ids,
                     params.processing_set_id.as_ref(),
                     context,
@@ -4937,6 +5066,7 @@ fn execute_batch_product(
     batch_id: &str,
     index: usize,
     configuration: ProductRunConfiguration,
+    gcp_optimization_entity_id: ProductGcpSelection,
     camera_entity_ids: &[String],
     processing_set_id: Option<&EntityId>,
     context: &JobWorkerContext,
@@ -4959,6 +5089,7 @@ fn execute_batch_product(
                     configuration: config,
                     processing_set_id: processing_set_id.cloned(),
                     source_alignment_entity_id: None,
+                    gcp_optimization_entity_id: gcp_optimization_entity_id.clone(),
                 },
                 projects,
                 Some(camera_entity_ids),
@@ -5017,6 +5148,7 @@ fn execute_batch_product(
                     configuration: config,
                     processing_set_id: processing_set_id.cloned(),
                     source_alignment_entity_id: None,
+                    gcp_optimization_entity_id: gcp_optimization_entity_id.clone(),
                 },
                 projects,
                 Some(camera_entity_ids),
@@ -5032,6 +5164,7 @@ fn execute_batch_product(
                     configuration: config,
                     processing_set_id: processing_set_id.cloned(),
                     source_alignment_entity_id: None,
+                    gcp_optimization_entity_id: gcp_optimization_entity_id.clone(),
                 },
                 projects,
                 Some(camera_entity_ids),
@@ -5047,6 +5180,7 @@ fn execute_batch_product(
                     configuration: config,
                     processing_set_id: processing_set_id.cloned(),
                     source_alignment_entity_id: None,
+                    gcp_optimization_entity_id,
                 },
                 projects,
                 Some(camera_entity_ids),
@@ -5055,8 +5189,7 @@ fn execute_batch_product(
             .map_err(|error| worker_error("batchPrepare", &error.to_string()))?;
             let node = context.with_progress_window(base, total);
             let mut outcome = runtime.run(&request, &node).map_err(JobWorkerError::from)?;
-            let transform = projects
-                .latest_gcp_optimization_for_lineage(&lineage)
+            let transform = pinned_product_gcp_optimization(projects, &lineage)
                 .map_err(|error| worker_error("projectRead", &error.to_string()))?
                 .map(|record| record.artifact.result.transform);
             outcome.prepared_splats = Some(
@@ -6120,12 +6253,14 @@ fn prepare_mvs_product_job(
         }
         _ => anyhow::bail!("portable MVS preparation needs a depth or dense configuration"),
     };
-    let alignment = resolve_product_alignment(
+    let resolved_inputs = resolve_product_input_context(
         projects,
         params.processing_set_id.as_ref(),
         params.source_alignment_entity_id.as_ref(),
         required_camera_scope,
+        &params.gcp_optimization_entity_id,
     )?;
+    let alignment = resolved_inputs.alignment;
     anyhow::ensure!(
         alignment.camera_entity_ids.len() >= 3,
         "portable multi-view stereo needs at least three cameras in the selected alignment"
@@ -6167,14 +6302,8 @@ fn prepare_mvs_product_job(
         allowed_scene_roots: vec![scene_parent],
         allowed_resume_roots: vec![published_mvs_root],
     })?;
-    let mut lineage = ProductLineage {
-        source_alignment_entity_id: alignment.source_alignment_entity_id.clone(),
-        processing_set_id: alignment.processing_set_id.clone(),
-        gcp_optimization_entity_id: None,
-        gcp_optimization_snapshot_sha256: None,
-        image_mask_scope_sha256: alignment.image_mask_scope_sha256.clone(),
-    };
-    let gcp_optimization = pin_latest_product_gcp_optimization(projects, &mut lineage)?;
+    let lineage = resolved_inputs.lineage;
+    let gcp_optimization = resolved_inputs.gcp_optimization;
     let project_transform = gcp_optimization
         .as_ref()
         .map(|record| record.artifact.result.transform);
@@ -6283,7 +6412,15 @@ fn resolve_product_alignment(
         "a batch camera scope cannot override an explicit source alignment"
     );
     if let Some(alignment_id) = source_alignment_entity_id {
-        return projects.alignment_dataset_by_entity_id(alignment_id, processing_set_id);
+        let inferred_processing_set_id = if processing_set_id.is_none() {
+            projects.processing_set_id_for_alignment(alignment_id)?
+        } else {
+            None
+        };
+        return projects.alignment_dataset_by_entity_id(
+            alignment_id,
+            processing_set_id.or(inferred_processing_set_id.as_ref()),
+        );
     }
     if let Some(camera_scope) = required_camera_scope {
         let context = projects.compute_context()?;
@@ -6296,6 +6433,110 @@ fn resolve_product_alignment(
     } else {
         projects.latest_alignment_dataset_for_processing_set(processing_set_id)
     }
+}
+
+struct ResolvedProductInputContext {
+    alignment: crate::project_runtime::PublishedAlignmentDataset,
+    lineage: ProductLineage,
+    gcp_optimization: Option<crate::project_runtime::GcpOptimizationPublicationRecord>,
+}
+
+fn resolve_product_input_context(
+    projects: &ProjectRuntime,
+    processing_set_id: Option<&EntityId>,
+    source_alignment_entity_id: Option<&EntityId>,
+    required_camera_scope: Option<&[String]>,
+    gcp_selection: &ProductGcpSelection,
+) -> anyhow::Result<ResolvedProductInputContext> {
+    let alignment = resolve_product_alignment(
+        projects,
+        processing_set_id,
+        source_alignment_entity_id,
+        required_camera_scope,
+    )?;
+    let mut lineage = ProductLineage {
+        source_alignment_entity_id: alignment.source_alignment_entity_id.clone(),
+        processing_set_id: alignment.processing_set_id.clone(),
+        gcp_optimization_entity_id: None,
+        gcp_optimization_snapshot_sha256: None,
+        image_mask_scope_sha256: alignment.image_mask_scope_sha256.clone(),
+    };
+    let gcp_optimization = pin_product_gcp_optimization(projects, &mut lineage, gcp_selection)?;
+    Ok(ResolvedProductInputContext {
+        alignment,
+        lineage,
+        gcp_optimization,
+    })
+}
+
+fn resolve_product_inputs_response(
+    projects: &ProjectRuntime,
+    params: ResolveProductInputsParams,
+) -> anyhow::Result<ResolvedProductInputs> {
+    anyhow::ensure!(
+        matches!(
+            params.kind.as_str(),
+            "depth" | "dense" | "dem" | "ortho" | "mesh" | "splat"
+        ),
+        "unknown product kind '{}'",
+        params.kind
+    );
+    let resolved = resolve_product_input_context(
+        projects,
+        None,
+        Some(&params.source_alignment_entity_id),
+        None,
+        &params.gcp_optimization_entity_id,
+    )?;
+    let context = projects.compute_context()?;
+    let alignment_entity = context
+        .manifest
+        .entities
+        .get(&resolved.lineage.source_alignment_entity_id.0)
+        .context("resolved alignment entity disappeared")?;
+    let processing_set = resolved
+        .lineage
+        .processing_set_id
+        .as_ref()
+        .map(|entity_id| {
+            projects
+                .list_processing_sets()?
+                .into_iter()
+                .find(|record| &record.entity_id == entity_id)
+                .map(|record| ResolvedProductProcessingSet {
+                    entity_id: record.entity_id,
+                    name: record.name,
+                    membership_sha256: record.membership_sha256,
+                })
+                .context("resolved processing set disappeared")
+        })
+        .transpose()?;
+    let gcp_optimization = resolved
+        .gcp_optimization
+        .map(|record| ResolvedProductGcpOptimization {
+            entity_id: resolved
+                .lineage
+                .gcp_optimization_entity_id
+                .clone()
+                .expect("resolved GCP optimization must pin its entity"),
+            operation_id: record.operation_id,
+            snapshot_sha256: record.snapshot_sha256,
+        });
+    let mask_scope = projects.image_mask_compute_scope(
+        &resolved.alignment.camera_entity_ids,
+        resolved.alignment.processing_set_id.as_ref(),
+    )?;
+    Ok(ResolvedProductInputs {
+        kind: params.kind,
+        alignment: ResolvedProductInputArtifact {
+            entity_id: alignment_entity.id.clone(),
+            name: alignment_entity.name.clone(),
+            snapshot_sha256: alignment_entity.version_hash.clone(),
+        },
+        processing_set,
+        gcp_optimization,
+        mask_scope_sha256: (!mask_scope.masks.is_empty()).then_some(mask_scope.scope_sha256),
+    })
 }
 
 fn validated_product_gcp_optimization(
@@ -6339,19 +6580,99 @@ fn validated_product_gcp_optimization(
     Ok(Some(record))
 }
 
-fn pin_latest_product_gcp_optimization(
+fn pin_product_gcp_optimization(
     projects: &ProjectRuntime,
     lineage: &mut ProductLineage,
+    selection: &ProductGcpSelection,
 ) -> anyhow::Result<Option<crate::project_runtime::GcpOptimizationPublicationRecord>> {
-    let Some(entry) = projects.latest_gcp_optimization_entry_for_lineage(lineage)? else {
+    let context = projects.compute_context()?;
+    if matches!(selection, ProductGcpSelection::None) {
+        anyhow::ensure!(
+            matches!(
+                context.manifest.spatial_reference,
+                PhotolabSpatialReference::LocalMetric { .. }
+            ),
+            "a CRS-backed project cannot run a product without a converged GCP optimization"
+        );
         return Ok(None);
+    }
+    let entry = match selection {
+        ProductGcpSelection::Latest => {
+            tracing::warn!(
+                alignment_entity_id = %lineage.source_alignment_entity_id.0,
+                "product request omitted gcpOptimizationEntityId; falling back to the latest converged lineage revision"
+            );
+            projects
+                .list_gcp_optimizations()?
+                .into_iter()
+                .filter(|entry| {
+                    entry.optimization.artifact.result.converged
+                        && gcp_revision_matches_product_lineage(
+                            entry.optimization.source_alignment_entity_id.as_ref(),
+                            entry.optimization.processing_set_id.as_ref(),
+                            lineage,
+                        )
+                })
+                .last()
+        }
+        ProductGcpSelection::Explicit(entity_id) => {
+            let entry = projects.gcp_optimization_entry_by_entity_id(entity_id)?;
+            anyhow::ensure!(
+                gcp_revision_matches_product_lineage(
+                    entry.optimization.source_alignment_entity_id.as_ref(),
+                    entry.optimization.processing_set_id.as_ref(),
+                    lineage,
+                ),
+                "selected GCP optimization belongs to another alignment lineage"
+            );
+            Some(entry)
+        }
+        ProductGcpSelection::None => unreachable!("explicit none handled above"),
     };
+    let Some(entry) = entry else { return Ok(None) };
     let entity_id = entry.entity_id;
     let record = validated_product_gcp_optimization(Some(entry.optimization))?
         .context("validated GCP optimization disappeared")?;
-    lineage.gcp_optimization_entity_id = Some(entity_id);
-    lineage.gcp_optimization_snapshot_sha256 = Some(record.snapshot_sha256.clone());
+    pin_product_gcp_identity(lineage, entity_id, record.snapshot_sha256.clone());
     Ok(Some(record))
+}
+
+fn gcp_revision_matches_product_lineage(
+    source_alignment_entity_id: Option<&EntityId>,
+    processing_set_id: Option<&EntityId>,
+    lineage: &ProductLineage,
+) -> bool {
+    source_alignment_entity_id == Some(&lineage.source_alignment_entity_id)
+        && processing_set_id == lineage.processing_set_id.as_ref()
+}
+
+fn pin_product_gcp_identity(
+    lineage: &mut ProductLineage,
+    entity_id: EntityId,
+    snapshot_sha256: ObjectHash,
+) {
+    lineage.gcp_optimization_entity_id = Some(entity_id);
+    lineage.gcp_optimization_snapshot_sha256 = Some(snapshot_sha256);
+}
+
+fn pinned_product_gcp_optimization(
+    projects: &ProjectRuntime,
+    lineage: &ProductLineage,
+) -> anyhow::Result<Option<crate::project_runtime::GcpOptimizationPublicationRecord>> {
+    let Some(entity_id) = lineage.gcp_optimization_entity_id.as_ref() else {
+        anyhow::ensure!(
+            lineage.gcp_optimization_snapshot_sha256.is_none(),
+            "GCP snapshot is pinned without an optimization entity"
+        );
+        return Ok(None);
+    };
+    let entry = projects.gcp_optimization_entry_by_entity_id(entity_id)?;
+    anyhow::ensure!(
+        Some(&entry.optimization.snapshot_sha256)
+            == lineage.gcp_optimization_snapshot_sha256.as_ref(),
+        "GCP optimization changed after product inputs were resolved"
+    );
+    validated_product_gcp_optimization(Some(entry.optimization))
 }
 
 fn portable_mvs_threads() -> u16 {
@@ -6532,20 +6853,16 @@ fn prepare_raster_product_job(
     let horizontal_srs = crs_definition_text(&reference.target.horizontal.crs);
     let vertical_label = height_reference_text(&reference.target.vertical);
     let config_bytes = serde_json::to_vec(&params.configuration)?;
-    let alignment = resolve_product_alignment(
+    let resolved_inputs = resolve_product_input_context(
         projects,
         params.processing_set_id.as_ref(),
         params.source_alignment_entity_id.as_ref(),
         required_camera_scope,
+        &params.gcp_optimization_entity_id,
     )?;
-    let mut lineage = ProductLineage {
-        source_alignment_entity_id: alignment.source_alignment_entity_id.clone(),
-        processing_set_id: alignment.processing_set_id.clone(),
-        gcp_optimization_entity_id: None,
-        gcp_optimization_snapshot_sha256: None,
-        image_mask_scope_sha256: alignment.image_mask_scope_sha256.clone(),
-    };
-    let gcp_optimization = pin_latest_product_gcp_optimization(projects, &mut lineage)?;
+    let alignment = resolved_inputs.alignment;
+    let lineage = resolved_inputs.lineage;
+    let gcp_optimization = resolved_inputs.gcp_optimization;
     let (kind, dense_ply, dem_dataset, alignment_dataset, colmap_executable, input_evidence) =
         match params.configuration {
             ProductRunConfiguration::Dem { .. } => {
@@ -6671,20 +6988,14 @@ fn prepare_mesh_job(
         "invalid texture detail budget"
     );
     let context = projects.compute_context()?;
-    let alignment = resolve_product_alignment(
+    let resolved_inputs = resolve_product_input_context(
         projects,
         params.processing_set_id.as_ref(),
         params.source_alignment_entity_id.as_ref(),
         required_camera_scope,
+        &params.gcp_optimization_entity_id,
     )?;
-    let mut lineage = ProductLineage {
-        source_alignment_entity_id: alignment.source_alignment_entity_id,
-        processing_set_id: alignment.processing_set_id,
-        gcp_optimization_entity_id: None,
-        gcp_optimization_snapshot_sha256: None,
-        image_mask_scope_sha256: alignment.image_mask_scope_sha256,
-    };
-    pin_latest_product_gcp_optimization(projects, &mut lineage)?;
+    let lineage = resolved_inputs.lineage;
     let (dem_root, dem) = if let Some(entity_id) = source_dem_entity_id.as_ref() {
         projects.raster_dataset_by_entity_id(entity_id, PublishedRasterKind::Dem, None)?
     } else {
@@ -7373,22 +7684,17 @@ fn prepare_brush_product_job(
         initialization == "sparseTiePoints",
         "Gaussian Splat training currently requires calibrated sparse tie points"
     );
-    let alignment = resolve_product_alignment(
+    let resolved_inputs = resolve_product_input_context(
         projects,
         params.processing_set_id.as_ref(),
         params.source_alignment_entity_id.as_ref(),
         required_camera_scope,
+        &params.gcp_optimization_entity_id,
     )?;
+    let alignment = resolved_inputs.alignment;
     let project_root = projects.compute_context()?.working_path;
     let dataset_root = prepare_brush_scene(&alignment.root, &project_root, &params.operation_id)?;
-    let mut lineage = ProductLineage {
-        source_alignment_entity_id: alignment.source_alignment_entity_id,
-        processing_set_id: alignment.processing_set_id,
-        gcp_optimization_entity_id: None,
-        gcp_optimization_snapshot_sha256: None,
-        image_mask_scope_sha256: alignment.image_mask_scope_sha256,
-    };
-    pin_latest_product_gcp_optimization(projects, &mut lineage)?;
+    let lineage = resolved_inputs.lineage;
     let settings = BrushTrainingSettings {
         iterations,
         spherical_harmonics_degree,
@@ -8534,6 +8840,7 @@ mod tests {
                     retain_confidence: true,
                     calculate_colors: true,
                 },
+                gcp_optimization_entity_id: ProductGcpSelection::Latest,
             },
         ]
     }
@@ -8560,6 +8867,7 @@ mod tests {
                     source_dem_entity_id: None,
                     source_dem_version_sha256: None,
                 },
+                gcp_optimization_entity_id: ProductGcpSelection::Latest,
             },
         ];
         let error = validate_unattended_batch_recipe(&steps).expect_err("unbound DEM must fail");
@@ -8579,6 +8887,7 @@ mod tests {
                     interpolate_nodata: false,
                     tile_size_pixels: 512,
                 },
+                gcp_optimization_entity_id: ProductGcpSelection::Latest,
             },
             BatchPipelineStep::Product {
                 configuration: ProductRunConfiguration::Ortho {
@@ -8590,6 +8899,7 @@ mod tests {
                     source_dem_entity_id: None,
                     source_dem_version_sha256: None,
                 },
+                gcp_optimization_entity_id: ProductGcpSelection::Latest,
             },
         ]);
         validate_unattended_batch_recipe(&steps).expect("prior DEM resolves the port");
@@ -8616,6 +8926,95 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    fn test_product_lineage(alignment: &str, processing_set: Option<&str>) -> ProductLineage {
+        ProductLineage {
+            source_alignment_entity_id: EntityId(alignment.into()),
+            processing_set_id: processing_set.map(|value| EntityId(value.into())),
+            gcp_optimization_entity_id: None,
+            gcp_optimization_snapshot_sha256: None,
+            image_mask_scope_sha256: ObjectHash::of_bytes(b"mask-scope"),
+        }
+    }
+
+    #[test]
+    fn explicit_product_gcp_revision_is_honored() {
+        let params: StartProductJobParams = serde_json::from_value(serde_json::json!({
+            "operationId": "depth-explicit-gcp",
+            "configuration": {
+                "kind": "depth",
+                "imageDownscale": 2,
+                "filter": "moderate",
+                "maximumNeighbors": 6,
+                "reuseCompatibleMaps": true
+            },
+            "sourceAlignmentEntityId": "alignment-a",
+            "gcpOptimizationEntityId": "gcp-revision-older"
+        }))
+        .expect("explicit product GCP request");
+        let ProductGcpSelection::Explicit(entity_id) = params.gcp_optimization_entity_id else {
+            panic!("explicit GCP revision was not preserved");
+        };
+        let mut lineage = test_product_lineage("alignment-a", None);
+        let snapshot = ObjectHash::of_bytes(b"older-snapshot");
+        pin_product_gcp_identity(&mut lineage, entity_id.clone(), snapshot.clone());
+        assert_eq!(lineage.gcp_optimization_entity_id, Some(entity_id));
+        assert_eq!(lineage.gcp_optimization_snapshot_sha256, Some(snapshot));
+    }
+
+    #[test]
+    fn explicit_product_gcp_revision_rejects_wrong_lineage() {
+        let lineage = test_product_lineage("alignment-a", Some("set-a"));
+        assert!(!gcp_revision_matches_product_lineage(
+            Some(&EntityId("alignment-b".into())),
+            Some(&EntityId("set-a".into())),
+            &lineage,
+        ));
+        assert!(!gcp_revision_matches_product_lineage(
+            Some(&EntityId("alignment-a".into())),
+            Some(&EntityId("set-b".into())),
+            &lineage,
+        ));
+    }
+
+    #[test]
+    fn resolve_inputs_and_started_product_share_the_pinned_lineage() {
+        let resolve: ResolveProductInputsParams = serde_json::from_value(serde_json::json!({
+            "kind": "dem",
+            "sourceAlignmentEntityId": "alignment-a",
+            "gcpOptimizationEntityId": "gcp-revision-a"
+        }))
+        .expect("resolve request");
+        let start: StartProductJobParams = serde_json::from_value(serde_json::json!({
+            "operationId": "dem-start",
+            "configuration": {
+                "kind": "dem",
+                "surface": "dsm",
+                "resolutionMetersPerPixel": 0.05,
+                "interpolateNodata": false,
+                "tileSizePixels": 512
+            },
+            "sourceAlignmentEntityId": "alignment-a",
+            "gcpOptimizationEntityId": "gcp-revision-a"
+        }))
+        .expect("start request");
+        assert_eq!(
+            resolve.gcp_optimization_entity_id,
+            start.gcp_optimization_entity_id
+        );
+        let snapshot = ObjectHash::of_bytes(b"snapshot-a");
+        let mut resolved_lineage = test_product_lineage("alignment-a", None);
+        let mut started_lineage = test_product_lineage("alignment-a", None);
+        let ProductGcpSelection::Explicit(resolve_id) = resolve.gcp_optimization_entity_id else {
+            panic!("resolve request lost explicit GCP revision");
+        };
+        let ProductGcpSelection::Explicit(start_id) = start.gcp_optimization_entity_id else {
+            panic!("start request lost explicit GCP revision");
+        };
+        pin_product_gcp_identity(&mut resolved_lineage, resolve_id, snapshot.clone());
+        pin_product_gcp_identity(&mut started_lineage, start_id, snapshot);
+        assert_eq!(resolved_lineage, started_lineage);
     }
 
     #[test]

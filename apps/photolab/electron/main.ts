@@ -276,6 +276,7 @@ const RENDERER_SIDECAR_METHODS = new Set([
   'photolab.jobs.status',
   'photolab.jobs.cancel',
   'photolab.products.list',
+  'photolab.products.resolveInputs',
   'photolab.hardware.probe',
 ]);
 const EXPORTABLE_PRODUCT_KINDS = new Set([
