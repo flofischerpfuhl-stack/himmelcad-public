@@ -724,6 +724,17 @@ async function auditKeyboardReachability(page, viewport, surface, priorSignature
   const seenFocusOrder = new Set();
   {
     // The walk starts on the ribbon tablist (see prepare); record that initial focus.
+    // Chromium only paints :focus-visible for programmatic focus when the last
+    // interaction was keyboard-driven; the surface setup clicks, so nudge the
+    // modality with a modifier key and re-focus before sampling the indicator.
+    await page.keyboard.press('Shift');
+    await page.evaluate(() => {
+      const element = document.activeElement;
+      if (element instanceof HTMLElement) {
+        element.blur();
+        element.focus();
+      }
+    });
     const initial = await page.evaluate(() => {
       const element = document.activeElement;
       if (!(element instanceof HTMLElement)) return null;
@@ -948,7 +959,7 @@ function mockBridgeSource() {
       if(method==='photolab.images.quality.list'||method==='photolab.project.imageMask.list')return [];
       if(method==='photolab.products.list')return [productDataset];
       if(method==='photolab.project.processingSet.list'||method==='photolab.project.captureGroup.list'||method==='photolab.project.calibrationGroup.list'||method==='photolab.project.alignmentMerge.candidates'||method==='photolab.project.alignmentMerge.list'||method==='photolab.gcp.optimization.list'||method==='photolab.jobs.list')return [];
-      if(method==='photolab.gcp.list'||method==='photolab.gcp.optimization.latest')return null;
+      if(method==='photolab.gcp.list'||method==='photolab.gcp.optimization.latest'||method==='photolab.gcp.calibrationReport')return null;
       if(method==='photolab.project.autosave')return {autosaveGeneration:0,lastSavedGeneration:0,dirty:false};
       if(method==='photolab.project.snapshot')return opened;
       throw new Error('Visual mock has no response for '+method);

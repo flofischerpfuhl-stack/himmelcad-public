@@ -107,32 +107,41 @@ export function FunctionPanel({
               const label =
                 id === activeFunctionId ? (title ?? functionLabel(id)) : functionLabel(id);
               const active = selectedId === `function:${id}`;
+              // One control per tab: a tablist may only own tabs (ARIA
+              // aria-required-children), so the close affordance is a region of
+              // the tab itself rather than a nested button. Keyboard users close
+              // the active tab with Escape (UIP-D14 rung 7).
               return (
-                <div
+                <button
                   key={id}
-                  className={`${styles.closeableTabGroup} ${active ? styles.closeableTabActive : ''}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  aria-label={`${label} (close with Escape)`}
+                  className={`${styles.closeableTab} ${styles.closeableTabGroup} ${active ? styles.closeableTabActive : ''}`}
+                  onClick={(event) => {
+                    if ((event.target as HTMLElement).closest('[data-close-tab]')) {
+                      closeFunction(id);
+                      return;
+                    }
+                    activateTab(`function:${id}`);
+                  }}
                 >
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    className={styles.closeableTabLabel}
-                    onClick={() => activateTab(`function:${id}`)}
-                  >
+                  <span className={styles.closeableTabLabel}>
                     {label}
                     {id === activeFunctionId && selectedTab === 'properties' ? (
                       <span className={styles.tabDot} aria-hidden />
                     ) : null}
-                  </button>
-                  <button
-                    type="button"
+                  </span>
+                  <span
                     className={styles.tabClose}
-                    aria-label={`Close ${label}`}
-                    onClick={() => closeFunction(id)}
+                    data-close-tab
+                    title={`Close ${label}`}
+                    aria-hidden
                   >
                     <X size={11} />
-                  </button>
-                </div>
+                  </span>
+                </button>
               );
             })}
           </div>
