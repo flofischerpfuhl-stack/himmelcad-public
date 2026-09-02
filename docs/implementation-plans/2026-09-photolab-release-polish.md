@@ -935,8 +935,15 @@ Problem. Gate 8 is not met: Builder's import registration accepts only
 `import_registration_runtime.rs:371`), while PhotoLab publishes
 `potreeV2`, `rasterPyramid`, `tiledMesh`, `mvsDepth` and splat datasets
 (`project_runtime.rs` publication paths); WeltView is a 50-line shell
-(`apps/weltview/src/App.tsx`). The shared render core already decodes
-`potree@2`, `mesh@1` and `himmelcad-prepared-hierarchy@1`.
+(`apps/weltview/src/App.tsx`). The shared render core's adopted prepared formats are `potree@2` and
+`himmelcad-prepared-hierarchy@1` (DEM/ortho pyramids, complete tiled
+meshes, splats); `mesh@1` is only a test proxy identifier. Per the Builder
+review of 2026-09-02, binary PLY, incomplete tiled meshes, standalone MVS
+depth and raw Brush PLY are deferred with reasons; legacy publications get
+an explicit "provenance unknown/partial" state (full lineage fields are
+required only for publications made after the contract exists), and the
+provenance schema is a versioned manifest (pending DATA-MODEL/ADR admission)
+that publication code must target by id/version — see the revised IF-D19.
 
 **Decision:** PhotoLab products become ordinary canonical datasets that
 Builder registers through the existing interactive import-registration
@@ -1006,16 +1013,17 @@ Every numeric threshold introduced by this plan is a delegated calibration
 value: chosen with a rationale, recorded here, tightened with evidence, never
 escalated. Constants in code should cite this section.
 
-| Package | Value                                                                                                       | Rationale                                                                                                                         | Evidence to tighten                                                                 |
-| ------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| WP-A1   | LAS scale 0.001 m, offset = bbox minimum                                                                    | Millimetre quantization matches survey deliverable precision; bbox offset keeps i32 range for 7-digit eastings                    | Compare against Metashape LAZ headers on the golden dataset                         |
-| WP-B3   | Drain deadline 20 s; Electron before-quit wait 25 s                                                         | Every worker kill loop is sub-second; 20 s covers checkpoint flush on slow disks; Electron waits slightly longer than the sidecar | Measure drain latency in the cancellation matrix runs                               |
-| WP-B2   | Job polling 500 ms (existing)                                                                               | Interactive feel without saturating the RPC channel                                                                               | Profile RPC load with 10+ terminal jobs listed                                      |
-| WP-C3   | Recent projects MRU 10; Untitled litter: > 14 days and zero images                                          | Reference desktop products keep ~10 recents; two weeks is beyond any active session, zero images means no work                    | Owner usage; adjust if litter prompts annoy                                         |
-| WP-D3   | Preflight neighbour distance = mean nearest-neighbour spacing × 3; low-overlap warning < 10 candidate pairs | ×3 spans two flight-line spacings on a regular grid; < 10 pairs cannot yield ≥ 3 verified tracks reliably                         | Correlate preflight counts with actual verified cross-run tracks on merged datasets |
-| WP-D2   | Triangulation-consistency bound after pinned re-adjustment (set in code)                                    | Registered images and 3D points must not collapse after re-bundling                                                               | Golden-dataset before/after counts                                                  |
-| WP-A4   | SMRF cell size, slope, max window (to be set)                                                               | Standard SMRF defaults for UAV GSD                                                                                                | Synthetic scene precision/recall                                                    |
-| WP-F2   | Pixel diff threshold ≤ 0.1 % pixels, per-channel tolerance 16                                               | Tolerates antialiasing jitter, catches layout shifts                                                                              | False-positive rate over 20 CI runs                                                 |
+| Package | Value                                                                                                       | Rationale                                                                                                                         | Evidence to tighten                                                                                     |
+| ------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| WP-A1   | LAS scale 0.001 m, offset = bbox minimum                                                                    | Millimetre quantization matches survey deliverable precision; bbox offset keeps i32 range for 7-digit eastings                    | Compare against Metashape LAZ headers on the golden dataset                                             |
+| WP-B3   | Drain deadline 20 s; Electron before-quit wait 25 s                                                         | Every worker kill loop is sub-second; 20 s covers checkpoint flush on slow disks; Electron waits slightly longer than the sidecar | Measure drain latency in the cancellation matrix runs                                                   |
+| WP-B2   | Job polling 500 ms (existing)                                                                               | Interactive feel without saturating the RPC channel                                                                               | Profile RPC load with 10+ terminal jobs listed                                                          |
+| WP-C3   | Recent projects MRU 10; Untitled litter: > 14 days and zero images                                          | Reference desktop products keep ~10 recents; two weeks is beyond any active session, zero images means no work                    | Owner usage; adjust if litter prompts annoy                                                             |
+| WP-D3   | Preflight neighbour distance = mean nearest-neighbour spacing × 3; low-overlap warning < 10 candidate pairs | ×3 spans two flight-line spacings on a regular grid; < 10 pairs cannot yield ≥ 3 verified tracks reliably                         | Correlate preflight counts with actual verified cross-run tracks on merged datasets                     |
+| WP-D2   | Triangulation-consistency bound after pinned re-adjustment (set in code)                                    | Registered images and 3D points must not collapse after re-bundling                                                               | Golden-dataset before/after counts                                                                      |
+| WP-A4   | SMRF cell size, slope, max window (to be set)                                                               | Standard SMRF defaults for UAV GSD                                                                                                | Synthetic scene precision/recall                                                                        |
+| WP-F2   | Pixel diff threshold ≤ 0.1 % pixels, per-channel tolerance 16                                               | Tolerates antialiasing jitter, catches layout shifts                                                                              | False-positive rate over 20 CI runs                                                                     |
+| WP-F2   | Baseline set: 2 viewports × 42 surfaces = 84 PNGs, ≈ 11 MB in-repo                                          | Both layouts matter for the design system; measured run-to-run noise is 0 px                                                      | Move baselines to Git LFS once their history exceeds ≈ 50 MB or churn exceeds one regeneration per week |
 
 ## Execution order and review protocol
 
