@@ -80,3 +80,9 @@
   border-color: var(--hc-danger, var(--hc-border-strong));
   background: color-mix(in srgb, var(--hc-danger, #c45151) 18%, var(--hc-bg-island-hi));
 }
+
+.dialog .primary {
+  color: var(--hc-fg-on-accent);
+  border-color: var(--hc-accent-base);
+  background: var(--hc-accent-base);
+}

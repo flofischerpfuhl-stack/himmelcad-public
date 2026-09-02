@@ -90,6 +90,8 @@ pub struct ProjectSessionSummary {
     pub working_path: String,
     pub uses_local_working_copy: bool,
     pub recovery_available: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_timestamp_unix_ms: Option<u64>,
     pub read_only: bool,
     pub autosave_generation: u64,
     pub last_saved_generation: u64,

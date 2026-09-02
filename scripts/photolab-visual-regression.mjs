@@ -10,6 +10,8 @@ import { pathToFileURL } from 'node:url';
 
 import { chromium } from 'playwright-core';
 
+process.env.HIMMELCAD_PHOTOLAB_CLEAN_BOOT = '1';
+
 const root = resolve(import.meta.dirname, '..');
 const rendererUrl = pathToFileURL(resolve(root, 'apps/photolab/dist/renderer/index.html')).href;
 const viewports = [
@@ -385,13 +387,13 @@ function mockBridgeSource() {
     };
     Object.defineProperty(window,'himmelcad',{value:{
       version:'visual',platform:'linux',
-      window:{minimize:async()=>{},maximizeToggle:async()=>false,close:async()=>{},isMaximized:async()=>false,onMaximizeChange:()=>()=>{}},
+      window:{minimize:async()=>{},maximizeToggle:async()=>false,close:async()=>{},isMaximized:async()=>false,onMaximizeChange:()=>()=>{},onCloseGuardRequested:()=>()=>{},respondToCloseGuard:async()=>true},
       sidecar:{status:async()=>true,call,onStderr:(listener)=>{window.__photolabVisualStderr=listener;return ()=>{window.__photolabVisualStderr=undefined}}},
       agentHarness:{request:async()=>({kind:'unavailable',reason:'visual audit mock'}),subscribe:()=>()=>{},subscribeProductApprovals:()=>()=>{},respondProductApproval:async()=>{}},
       providerCredentials:{status:async()=>({ok:true,value:{provider:'codex',state:'missing',persistentSupported:false,sessionOverride:false}}),replace:async()=>({ok:false,error:{code:'unsupported',message:'Unavailable in visual audit'}}),clearSession:async()=>({ok:true,value:{provider:'codex',state:'missing',persistentSupported:false,sessionOverride:false}}),delete:async()=>({ok:true,value:{provider:'codex',state:'missing',persistentSupported:false,sessionOverride:false}})},
       automationViewHost:{register:()=>()=>{}},
       preferences:{gcpCsv:{get:async()=>defaults,save:async()=>{}}},
-      project:{bootstrap:async()=>opened,create:async()=>opened,open:async()=>opened,save:async()=>opened,saveAs:async()=>opened,cancelArchive:async()=>({})},
+      project:{bootstrap:async()=>({project:opened,recentProjects:[],untitledCleanupCount:0}),create:async()=>opened,open:async()=>opened,openRecent:async()=>opened,recent:async()=>[],removeRecent:async()=>[],reopenWithoutRecovery:async()=>opened,cleanupUntitled:async()=>0,save:async()=>opened,saveAs:async()=>opened,cancelArchive:async()=>({})},
       images:{selectFiles:async()=>['/tmp/DJI_0001.JPG','/tmp/DJI_0002.JPG'],selectFolder:async()=>['/tmp']},
       himmelcap:{selectFile:async()=>null},
       externalImport:{projectRoot:async()=>'/tmp/visual-project',selectFiles:async()=>[],openTransform:async()=>null,saveTransform:async()=>null,materialize:async(sessionId)=>({schemaVersion:1,sessionId,datasets:[]}),revoke:async()=>true,residency:async()=>({schemaVersion:1,entries:[]})},

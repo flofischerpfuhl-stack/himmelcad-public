@@ -52,7 +52,7 @@ test('migrates schema v1 and atomically persists GCP CSV defaults', async () => 
     directories: { project: unknown };
     gcpCsvImportDefaults: unknown;
   };
-  assert.equal(persisted.schemaVersion, 2);
+  assert.equal(persisted.schemaVersion, 3);
   assert.equal(persisted.directories.project, directory);
   assert.deepEqual(persisted.gcpCsvImportDefaults, CUSTOM_DEFAULTS);
   assert.deepEqual(
@@ -78,4 +78,21 @@ test('rejects malformed renderer values without changing persisted preferences',
     /Invalid GCP CSV import preferences/,
   );
   assert.equal(await readFile(path, 'utf8'), before);
+});
+
+test('persists and removes a bounded recent-project list', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'photolab-preferences-'));
+  const path = join(directory, 'preferences.json');
+  const service = new PhotolabPreferencesService(path);
+  for (let index = 0; index < 12; index += 1) {
+    await service.rememberRecentProject({
+      name: `Survey ${String(index)}`,
+      path: join(directory, `survey-${String(index)}.hcadx`),
+      lastOpenedUnixMs: index,
+    });
+  }
+  assert.equal((await service.recentProjects()).length, 10);
+  assert.equal((await service.recentProjects())[0]?.name, 'Survey 11');
+  await service.removeRecentProject(join(directory, 'survey-11.hcadx'));
+  assert.equal((await service.recentProjects())[0]?.name, 'Survey 10');
 });

@@ -1,0 +1,158 @@
+.welcome,
+.panel {
+  display: grid;
+  gap: 16px;
+  color: var(--hc-fg-default);
+}
+
+.welcome {
+  width: min(560px, calc(100% - 40px));
+  max-height: calc(100% - 40px);
+  overflow: auto;
+  padding: 20px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-island);
+  background: var(--hc-bg-island);
+  box-shadow: var(--hc-shadow-island);
+}
+
+.panel {
+  padding: 12px;
+}
+
+.welcome header,
+.panel header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.welcome h2,
+.panel h2,
+.welcome p,
+.panel p {
+  margin: 0;
+}
+
+.welcome h2,
+.panel h2 {
+  font-size: 16px;
+}
+
+.welcome header p {
+  margin-top: 4px;
+  color: var(--hc-fg-muted);
+  font-size: 11px;
+}
+
+.icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  color: var(--hc-accent-base);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-island-hi);
+}
+
+.primaryActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.primaryActions button,
+.project,
+.remove {
+  color: var(--hc-fg-default);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-island-hi);
+  font: inherit;
+  cursor: pointer;
+}
+
+.primaryActions button {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 12px;
+}
+
+.primaryActions .primary {
+  color: var(--hc-fg-on-accent);
+  border-color: var(--hc-accent-base);
+  background: var(--hc-accent-base);
+}
+
+.primaryActions button:hover,
+.project:hover:not(:disabled),
+.remove:hover {
+  border-color: var(--hc-border-strong);
+  background: var(--hc-hover-bg);
+}
+
+.listHeader {
+  color: var(--hc-fg-subtle);
+  font: 9px var(--hc-font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.list {
+  display: grid;
+  gap: 4px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px;
+}
+
+.project {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.project strong,
+.project span,
+.project small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project strong {
+  font-size: 11px;
+}
+
+.project span,
+.project small,
+.empty {
+  color: var(--hc-fg-muted);
+  font: 9px var(--hc-font-mono);
+}
+
+.missing {
+  opacity: 0.55;
+}
+
+.missing .project {
+  cursor: default;
+}
+
+.remove {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  padding: 0;
+}

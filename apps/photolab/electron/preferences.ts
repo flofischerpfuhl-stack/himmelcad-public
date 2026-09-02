@@ -2,6 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
 
+import { removeRecentProject, updateRecentProjects, type RecentProject } from './projectLifecycle';
+
+export type { RecentProject } from './projectLifecycle';
+
 export type DirectoryPreference =
   | 'project'
   | 'image'
@@ -31,9 +35,10 @@ export interface GcpCsvImportDefaults {
   heightStddev: number;
 }
 
-interface PhotolabPreferencesV2 {
-  schemaVersion: 2;
+interface PhotolabPreferencesV3 {
+  schemaVersion: 3;
   lastProjectPath: string | null;
+  recentProjects: RecentProject[];
   directories: Record<DirectoryPreference, string | null>;
   gcpCsvImportDefaults: GcpCsvImportDefaults;
 }
@@ -48,9 +53,10 @@ const DEFAULT_GCP_CSV_IMPORT: GcpCsvImportDefaults = {
   heightStddev: 0.03,
 };
 
-const EMPTY_PREFERENCES: PhotolabPreferencesV2 = {
-  schemaVersion: 2,
+const EMPTY_PREFERENCES: PhotolabPreferencesV3 = {
+  schemaVersion: 3,
   lastProjectPath: null,
+  recentProjects: [],
   directories: {
     project: null,
     image: null,
@@ -66,7 +72,7 @@ const EMPTY_PREFERENCES: PhotolabPreferencesV2 = {
 
 /** Versioned, process-local preferences with serialized atomic persistence. */
 export class PhotolabPreferencesService {
-  private value: PhotolabPreferencesV2 | null = null;
+  private value: PhotolabPreferencesV3 | null = null;
   private writes: Promise<void> = Promise.resolve();
 
   public constructor(private readonly path: string) {}
@@ -93,6 +99,30 @@ export class PhotolabPreferencesService {
     await this.persist(value);
   }
 
+  public async recentProjects(): Promise<RecentProject[]> {
+    return structuredClone((await this.load()).recentProjects);
+  }
+
+  public async rememberRecentProject(project: RecentProject): Promise<void> {
+    if (!isAbsolute(project.path)) {
+      throw new Error(`Recent project path must be absolute: ${project.path}`);
+    }
+    const value = await this.load();
+    value.recentProjects = updateRecentProjects(value.recentProjects, {
+      ...project,
+      path: resolve(project.path),
+    });
+    await this.persist(value);
+  }
+
+  public async removeRecentProject(path: string): Promise<void> {
+    if (!isAbsolute(path)) throw new Error(`Recent project path must be absolute: ${path}`);
+    const value = await this.load();
+    value.recentProjects = removeRecentProject(value.recentProjects, resolve(path));
+    if (value.lastProjectPath === resolve(path)) value.lastProjectPath = null;
+    await this.persist(value);
+  }
+
   public async gcpCsvImportDefaults(): Promise<GcpCsvImportDefaults> {
     return structuredClone((await this.load()).gcpCsvImportDefaults);
   }
@@ -103,7 +133,7 @@ export class PhotolabPreferencesService {
     await this.persist(preferences);
   }
 
-  private async load(): Promise<PhotolabPreferencesV2> {
+  private async load(): Promise<PhotolabPreferencesV3> {
     if (this.value) return this.value;
     try {
       const parsed = JSON.parse(await readFile(this.path, 'utf8')) as unknown;
@@ -117,7 +147,7 @@ export class PhotolabPreferencesService {
     return this.value;
   }
 
-  private async persist(value: PhotolabPreferencesV2): Promise<void> {
+  private async persist(value: PhotolabPreferencesV3): Promise<void> {
     const snapshot = structuredClone(value);
     this.writes = this.writes
       .catch(() => undefined)
@@ -126,13 +156,20 @@ export class PhotolabPreferencesService {
   }
 }
 
-function parsePreferences(value: unknown): PhotolabPreferencesV2 {
-  if (!isRecord(value) || (value.schemaVersion !== 1 && value.schemaVersion !== 2))
+function parsePreferences(value: unknown): PhotolabPreferencesV3 {
+  if (
+    !isRecord(value) ||
+    (value.schemaVersion !== 1 && value.schemaVersion !== 2 && value.schemaVersion !== 3)
+  )
     return structuredClone(EMPTY_PREFERENCES);
   const directories = isRecord(value.directories) ? value.directories : {};
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     lastProjectPath: absolutePathOrNull(value.lastProjectPath),
+    recentProjects:
+      value.schemaVersion === 3 && Array.isArray(value.recentProjects)
+        ? value.recentProjects.flatMap(parseRecentProject)
+        : [],
     directories: {
       project: absolutePathOrNull(directories.project),
       image: absolutePathOrNull(directories.image),
@@ -144,13 +181,30 @@ function parsePreferences(value: unknown): PhotolabPreferencesV2 {
       alignmentPreset: absolutePathOrNull(directories.alignmentPreset),
     },
     gcpCsvImportDefaults:
-      value.schemaVersion === 2
+      value.schemaVersion === 2 || value.schemaVersion === 3
         ? parseGcpCsvImportDefaultsOrDefault(value.gcpCsvImportDefaults)
         : structuredClone(DEFAULT_GCP_CSV_IMPORT),
   };
 }
 
-async function writeAtomically(path: string, value: PhotolabPreferencesV2): Promise<void> {
+function parseRecentProject(value: unknown): RecentProject[] {
+  if (!isRecord(value)) return [];
+  const path = absolutePathOrNull(value.path);
+  if (
+    !path ||
+    typeof value.name !== 'string' ||
+    value.name.trim().length === 0 ||
+    value.name.length > 512 ||
+    typeof value.lastOpenedUnixMs !== 'number' ||
+    !Number.isSafeInteger(value.lastOpenedUnixMs) ||
+    value.lastOpenedUnixMs < 0
+  ) {
+    return [];
+  }
+  return [{ name: value.name, path, lastOpenedUnixMs: value.lastOpenedUnixMs }];
+}
+
+async function writeAtomically(path: string, value: PhotolabPreferencesV3): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
   let handle: Awaited<ReturnType<typeof open>> | null = null;

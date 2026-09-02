@@ -122,6 +122,7 @@ import {
 } from './ProductPanel.js';
 import type { ProductPrerequisiteArtifact } from './productPrerequisites.js';
 import { ProjectFileOperationDialog } from './ProjectFileOperationDialog.js';
+import { RecentProjects, type RecentProjectAvailability } from './RecentProjects.js';
 import {
   applyProjectProgress,
   createProjectFileOperation,
@@ -197,6 +198,11 @@ interface ExternalImportResidency {
   }[];
 }
 
+interface RecoveryNotice {
+  readonly sessionId: string;
+  readonly timestampUnixMs: number;
+}
+
 export function App(): JSX.Element {
   const [project, setProject] = useState<ProjectSnapshot>(createPhotolabProject);
   const [selected, setSelected] = useState<ReadonlySet<EntityId>>(new Set());
@@ -238,6 +244,15 @@ export function App(): JSX.Element {
   const [batchRecipeOpen, setBatchRecipeOpen] = useState(false);
   const [processingSetSaving, setProcessingSetSaving] = useState(false);
   const [projectReady, setProjectReady] = useState(false);
+  const [recentProjects, setRecentProjects] = useState<readonly RecentProjectAvailability[]>([]);
+  const [recoveryNotice, setRecoveryNotice] = useState<RecoveryNotice | null>(null);
+  const recoveryDismissedSessions = useRef(new Set<string>());
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [untitledCleanupCount, setUntitledCleanupCount] = useState(0);
+  const [untitledCleanupConfirm, setUntitledCleanupConfirm] = useState(false);
+  const [untitledCleanupBusy, setUntitledCleanupBusy] = useState(false);
+  const [closeGuardOpen, setCloseGuardOpen] = useState(false);
+  const [closeGuardBusy, setCloseGuardBusy] = useState(false);
   const [projectFileOperation, setProjectFileOperation] =
     useState<ProjectFileOperationState | null>(null);
   const [autosaveGeneration, setAutosaveGeneration] = useState(0);
@@ -630,7 +645,11 @@ export function App(): JSX.Element {
   const acceptProject = useCallback(
     (
       opened: OpenPhotolabProjectResult,
-      options?: { preserveSelection: boolean; processingSetId: EntityId | null },
+      options?: {
+        preserveSelection?: boolean;
+        processingSetId?: EntityId | null;
+        forceReset?: boolean;
+      },
     ) => {
       const nextSceneIdentity: SceneIdentity = {
         projectId: opened.manifest.projectId,
@@ -640,7 +659,9 @@ export function App(): JSX.Element {
           opened.manifest.renderOffset.z,
         ],
       };
-      const fullReset = requiresFullSceneReset(acceptedSceneIdentity.current, nextSceneIdentity);
+      const fullReset =
+        options?.forceReset ||
+        requiresFullSceneReset(acceptedSceneIdentity.current, nextSceneIdentity);
       const refreshTicket = projectRefreshGuard.current.begin(opened.manifest.projectId);
       acceptedSceneIdentity.current = nextSceneIdentity;
       const commitIfCurrent = (commit: () => void): void => {
@@ -689,6 +710,29 @@ export function App(): JSX.Element {
       setAutosaveGeneration(opened.session.autosaveGeneration);
       setLastSavedGeneration(opened.session.lastSavedGeneration);
       setProjectReady(true);
+      setRecentProjects((current) =>
+        [
+          {
+            name: opened.manifest.name,
+            path: opened.session.sourcePath,
+            lastOpenedUnixMs: Date.now(),
+            exists: true,
+          },
+          ...current.filter((candidate) => candidate.path !== opened.session.sourcePath),
+        ].slice(0, 10),
+      );
+      if (
+        opened.session.recoveryAvailable &&
+        opened.session.recoveryTimestampUnixMs != null &&
+        !recoveryDismissedSessions.current.has(opened.session.sessionId)
+      ) {
+        setRecoveryNotice({
+          sessionId: opened.session.sessionId,
+          timestampUnixMs: opened.session.recoveryTimestampUnixMs,
+        });
+      } else if (!opened.session.recoveryAvailable) {
+        setRecoveryNotice(null);
+      }
       setProjectTargetCrs(referenceFrameLabel(opened.manifest.referenceFrame));
       setProjectLocalMetric(opened.manifest.spatialReference.kind === 'localMetric');
       if (!options?.preserveSelection) {
@@ -941,19 +985,23 @@ export function App(): JSX.Element {
     }
   }, [showProjectFileOperationError]);
 
-  const createProject = useCallback(async () => {
+  const createProject = useCallback(async (): Promise<boolean> => {
     const api = window.himmelcad;
-    if (!api) return;
+    if (!api) return false;
     const operation = beginProjectFileOperation('create');
-    if (!operation) return;
+    if (!operation) return false;
     try {
       const opened = await api.project.create<OpenPhotolabProjectResult>(operation);
       if (opened) {
         acceptProject(opened);
         finishProjectFileOperation(operation.archiveOperationId);
-      } else finishProjectFileOperation(operation.archiveOperationId);
+        return true;
+      }
+      finishProjectFileOperation(operation.archiveOperationId);
+      return false;
     } catch (error) {
       showProjectFileOperationError(operation.archiveOperationId, error);
+      return false;
     }
   }, [
     acceptProject,
@@ -983,18 +1031,47 @@ export function App(): JSX.Element {
     showProjectFileOperationError,
   ]);
 
-  const saveProject = useCallback(async () => {
+  const openRecentProject = useCallback(
+    async (path: string) => {
+      const api = window.himmelcad;
+      if (!api) return;
+      const operation = beginProjectFileOperation('open');
+      if (!operation) return;
+      try {
+        const opened = await api.project.openRecent<OpenPhotolabProjectResult>(path, operation);
+        acceptProject(opened);
+        finishProjectFileOperation(operation.archiveOperationId);
+      } catch (error) {
+        showProjectFileOperationError(operation.archiveOperationId, error);
+        setRecentProjects(await api.project.recent());
+      }
+    },
+    [
+      acceptProject,
+      beginProjectFileOperation,
+      finishProjectFileOperation,
+      showProjectFileOperationError,
+    ],
+  );
+
+  const removeRecentProject = useCallback(async (path: string) => {
     const api = window.himmelcad;
-    if (!api || !projectReady) return;
+    if (!api) return;
+    setRecentProjects(await api.project.removeRecent(path));
+  }, []);
+
+  const saveProject = useCallback(async (): Promise<boolean> => {
+    const api = window.himmelcad;
+    if (!api || !projectReady) return false;
     const operation = beginProjectFileOperation('save');
-    if (!operation) return;
+    if (!operation) return false;
     const started = performance.now();
     try {
       // First Save on Untitled opens Save As dialog. Returns full snapshot or null (cancel).
       const result = await api.project.save<OpenPhotolabProjectResult | null>(operation);
       if (!result) {
         finishProjectFileOperation(operation.archiveOperationId);
-        return;
+        return false;
       }
       acceptProject(result);
       logEvent(
@@ -1003,8 +1080,10 @@ export function App(): JSX.Element {
         `Project saved · ${result.session.sourcePath} · ${(performance.now() - started).toFixed(1)} ms`,
       );
       finishProjectFileOperation(operation.archiveOperationId);
+      return true;
     } catch (error) {
       showProjectFileOperationError(operation.archiveOperationId, error);
+      return false;
     }
   }, [
     acceptProject,
@@ -1013,6 +1092,80 @@ export function App(): JSX.Element {
     projectReady,
     showProjectFileOperationError,
   ]);
+
+  useEffect(() => {
+    const api = window.himmelcad;
+    if (!api) return;
+    return api.window.onCloseGuardRequested(() => {
+      setCloseGuardOpen(true);
+      setCloseGuardBusy(false);
+    });
+  }, []);
+
+  const respondToCloseGuard = useCallback(
+    async (response: 'save' | 'discard' | 'cancel') => {
+      const api = window.himmelcad;
+      if (!api || closeGuardBusy) return;
+      if (response === 'cancel') {
+        setCloseGuardOpen(false);
+        await api.window.respondToCloseGuard('cancel');
+        return;
+      }
+      setCloseGuardBusy(true);
+      if (response === 'save' && !(await saveProject())) {
+        setCloseGuardBusy(false);
+        return;
+      }
+      await api.window.respondToCloseGuard(response);
+    },
+    [closeGuardBusy, saveProject],
+  );
+
+  const keepRecovery = useCallback(() => {
+    if (recoveryNotice) recoveryDismissedSessions.current.add(recoveryNotice.sessionId);
+    setRecoveryNotice(null);
+  }, [recoveryNotice]);
+
+  const discardRecovery = useCallback(async () => {
+    const api = window.himmelcad;
+    if (!api || !recoveryNotice || recoveryBusy) return;
+    setRecoveryBusy(true);
+    recoveryDismissedSessions.current.add(recoveryNotice.sessionId);
+    try {
+      const opened = await api.project.reopenWithoutRecovery<OpenPhotolabProjectResult>();
+      acceptProject(opened, { forceReset: true });
+      setRecoveryNotice(null);
+      logEvent('info', 'sidecar', 'Recovered working-copy changes discarded');
+    } catch (error) {
+      logEvent('error', 'sidecar', `Recovery could not be discarded: ${errorMessage(error)}`);
+    } finally {
+      setRecoveryBusy(false);
+    }
+  }, [acceptProject, recoveryBusy, recoveryNotice]);
+
+  const cleanUpUntitledProjects = useCallback(async () => {
+    const api = window.himmelcad;
+    if (!api || untitledCleanupBusy) return;
+    setUntitledCleanupBusy(true);
+    try {
+      const removed = await api.project.cleanupUntitled();
+      setUntitledCleanupConfirm(false);
+      setUntitledCleanupCount(0);
+      logEvent(
+        'info',
+        'renderer',
+        `${removed} unused Untitled project${removed === 1 ? '' : 's'} cleaned up`,
+      );
+    } catch (error) {
+      logEvent(
+        'error',
+        'renderer',
+        `Untitled projects could not be cleaned up: ${errorMessage(error)}`,
+      );
+    } finally {
+      setUntitledCleanupBusy(false);
+    }
+  }, [untitledCleanupBusy]);
 
   const saveProjectAs = useCallback(async () => {
     const api = window.himmelcad;
@@ -1062,6 +1215,7 @@ export function App(): JSX.Element {
       if (!api || imageImportBusy) return;
       const path = selectedPath ?? (await api.himmelcap.selectFile());
       if (!path) return;
+      if (!projectReady && !(await createProject())) return;
       await releaseHimmelcapStaging();
       const operationId = `himmelcap-inspect-${crypto.randomUUID()}`;
       const progressKey = `image-import:${operationId}`;
@@ -1109,7 +1263,7 @@ export function App(): JSX.Element {
         setImageImportProgress(null);
       }
     },
-    [imageImportBusy, releaseHimmelcapStaging],
+    [createProject, imageImportBusy, projectReady, releaseHimmelcapStaging],
   );
 
   const inspectImages = useCallback(
@@ -1130,6 +1284,7 @@ export function App(): JSX.Element {
           await inspectHimmelcap(paths[0]);
           return;
         }
+        if (!projectReady && !(await createProject())) return;
         await releaseHimmelcapStaging();
         setHimmelcapImport(null);
         const operationId = `image-inspect-${crypto.randomUUID()}`;
@@ -1173,7 +1328,7 @@ export function App(): JSX.Element {
         setImageImportProgress(null);
       }
     },
-    [imageImportBusy, inspectHimmelcap, releaseHimmelcapStaging],
+    [createProject, imageImportBusy, inspectHimmelcap, projectReady, releaseHimmelcapStaging],
   );
 
   const discoverImageCrs = useCallback(async (query: CrsOperationQuery) => {
@@ -1383,6 +1538,7 @@ export function App(): JSX.Element {
     try {
       const path = await api.reference.selectGcpCsv();
       if (!path) return;
+      if (!projectReady && !(await createProject())) return;
       setGcpImportOpen(true);
       setGcpImportError(null);
       setGcpPath(path);
@@ -1390,7 +1546,7 @@ export function App(): JSX.Element {
     } catch (error) {
       reportPanelError(`GCP file could not be selected: ${errorMessage(error)}`);
     }
-  }, [gcpBusy, reportPanelError]);
+  }, [createProject, gcpBusy, projectReady, reportPanelError]);
 
   const previewGcpCsv = useCallback(async (path: string, mapping: GcpCsvImportMapping) => {
     const api = window.himmelcad;
@@ -1496,8 +1652,11 @@ export function App(): JSX.Element {
       if (ready && !initialBootstrapRequested.current) {
         initialBootstrapRequested.current = true;
         try {
-          const opened = await api.project.bootstrap<OpenPhotolabProjectResult>();
-          acceptProject(opened);
+          const bootstrap = await api.project.bootstrap<OpenPhotolabProjectResult>();
+          setRecentProjects(bootstrap.recentProjects);
+          setUntitledCleanupCount(bootstrap.untitledCleanupCount);
+          if (bootstrap.project) acceptProject(bootstrap.project);
+          else activate(null);
           void api.sidecar
             .call<HardwareCapabilities>('photolab.hardware.probe')
             .then((snapshot) => {
@@ -2903,7 +3062,8 @@ export function App(): JSX.Element {
 
   const chooseExternalImports = useCallback(async (): Promise<void> => {
     const api = window.himmelcad;
-    if (!api || !projectReady) return;
+    if (!api) return;
+    if (!projectReady && !(await createProject())) return;
     try {
       const projectRoot = await api.externalImport.projectRoot();
       const session = await PhotolabExternalImportSession.open(projectRoot, api.sidecar.call);
@@ -2931,7 +3091,7 @@ export function App(): JSX.Element {
     } catch (error) {
       logEvent('error', 'renderer', `External import could not start: ${errorMessage(error)}`);
     }
-  }, [projectReady]);
+  }, [createProject, projectReady]);
 
   useEffect(() => {
     const api = window.himmelcad;
@@ -2988,6 +3148,7 @@ export function App(): JSX.Element {
         onOpenProject: () => void openProject(),
         onSaveProject: () => void saveProject(),
         onSaveProjectAs: () => void saveProjectAs(),
+        onRecentProjects: () => activate('project.recent'),
         onImportFiles: () => void inspectImages('files'),
         onImportFolder: () => void inspectImages('folder'),
         onImportExternal: () => void chooseExternalImports(),
@@ -3049,7 +3210,7 @@ export function App(): JSX.Element {
         id: 'autosave',
         content: projectReady
           ? `Autosave: ${autosaveGeneration === lastSavedGeneration ? 'saved' : `local · ${autosaveGeneration}`}`
-          : 'Autosave: initializing…',
+          : 'Autosave: no project',
         align: 'left' as const,
       },
       { id: 'images', content: `Images: ${imageCount}`, align: 'right' as const },
@@ -3230,29 +3391,39 @@ export function App(): JSX.Element {
               ) : null
             }
             title={
-              activeFunctionId === 'alignment.run'
-                ? 'Align Photos'
-                : activeFunctionId === 'alignment.optimize'
-                  ? 'Optimize Alignment'
-                  : activeFunctionId === 'alignment.merge'
-                    ? 'Merge Alignments'
-                    : activeFunctionId === 'alignment.groups'
-                      ? 'Capture Groups'
-                      : activeFunctionId === 'reference.gcp.images'
-                        ? 'Images with this GCP'
-                        : activeFunctionId === 'images.import.review'
-                          ? undefined
-                          : activeFunctionId === 'batch.configure' ||
-                              activeFunctionId === 'batch.queue'
-                            ? 'Batchprocessing'
-                            : isProjectDiagnosticsKind(activeFunctionId)
-                              ? diagnosticsTitle(activeFunctionId)
-                              : productOperation
-                                ? productLabel(productOperation)
-                                : undefined
+              activeFunctionId === 'project.recent'
+                ? 'Recent projects'
+                : activeFunctionId === 'alignment.run'
+                  ? 'Align Photos'
+                  : activeFunctionId === 'alignment.optimize'
+                    ? 'Optimize Alignment'
+                    : activeFunctionId === 'alignment.merge'
+                      ? 'Merge Alignments'
+                      : activeFunctionId === 'alignment.groups'
+                        ? 'Capture Groups'
+                        : activeFunctionId === 'reference.gcp.images'
+                          ? 'Images with this GCP'
+                          : activeFunctionId === 'images.import.review'
+                            ? undefined
+                            : activeFunctionId === 'batch.configure' ||
+                                activeFunctionId === 'batch.queue'
+                              ? 'Batchprocessing'
+                              : isProjectDiagnosticsKind(activeFunctionId)
+                                ? diagnosticsTitle(activeFunctionId)
+                                : productOperation
+                                  ? productLabel(productOperation)
+                                  : undefined
             }
           >
-            {activeFunctionId === 'alignment.merge' ? (
+            {activeFunctionId === 'project.recent' ? (
+              <RecentProjects
+                projects={recentProjects}
+                onNew={() => void createProject()}
+                onOpen={() => void openProject()}
+                onOpenRecent={(path) => void openRecentProject(path)}
+                onRemove={(path) => void removeRecentProject(path)}
+              />
+            ) : activeFunctionId === 'alignment.merge' ? (
               <AlignmentMergePanel
                 candidates={alignmentMergeCandidates}
                 merges={alignmentMerges}
@@ -3451,6 +3622,55 @@ export function App(): JSX.Element {
               />
             </div>
             <div className={styles.workspaceBody}>
+              {!projectReady && (
+                <div className={styles.welcomeHost}>
+                  <RecentProjects
+                    welcome
+                    projects={recentProjects}
+                    onNew={() => void createProject()}
+                    onOpen={() => void openProject()}
+                    onOpenRecent={(path) => void openRecentProject(path)}
+                    onRemove={(path) => void removeRecentProject(path)}
+                  />
+                </div>
+              )}
+              {(recoveryNotice || untitledCleanupCount > 0) && (
+                <div className={styles.workspaceNotices} aria-live="polite">
+                  {recoveryNotice && (
+                    <div className={styles.recoveryNotice} role="status">
+                      <span>
+                        Recovered unsaved changes from{' '}
+                        {formatRecoveryTime(recoveryNotice.timestampUnixMs)}
+                      </span>
+                      <button type="button" onClick={keepRecovery} disabled={recoveryBusy}>
+                        Keep (default)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void discardRecovery()}
+                        disabled={recoveryBusy}
+                      >
+                        {recoveryBusy ? 'Discarding…' : 'Discard'}
+                      </button>
+                    </div>
+                  )}
+                  {untitledCleanupCount > 0 && (
+                    <div className={styles.cleanupNotice} role="status">
+                      <span>
+                        {untitledCleanupCount} unused Untitled project
+                        {untitledCleanupCount === 1 ? '' : 's'} can be cleaned up.
+                      </span>
+                      <button type="button" onClick={() => setUntitledCleanupConfirm(true)}>
+                        Clean up {untitledCleanupCount} project
+                        {untitledCleanupCount === 1 ? '' : 's'}
+                      </button>
+                      <button type="button" onClick={() => setUntitledCleanupCount(0)}>
+                        Dismiss
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
               <div
                 className={`${styles.sceneWorkspace} ${workspaceMode === 'images' ? styles.workspacePaneHidden : ''}`}
                 aria-hidden={workspaceMode === 'images'}
@@ -3601,6 +3821,42 @@ export function App(): JSX.Element {
             operation={projectFileOperation}
             onCancel={() => void cancelProjectFileOperation()}
             onClose={() => finishProjectFileOperation(projectFileOperation.archiveOperationId)}
+          />
+        </FloatingTaskIsland>
+      )}
+      {closeGuardOpen && (
+        <FloatingTaskIsland modal onRequestClose={() => void respondToCloseGuard('cancel')}>
+          <ConfirmationDialog
+            title="Save changes before closing?"
+            message={`This project has ${String(Math.max(0, autosaveGeneration - lastSavedGeneration))} unsaved local generation${autosaveGeneration - lastSavedGeneration === 1 ? '' : 's'}. Save them to the project archive before closing, or close without saving.`}
+            confirmLabel="Save and close"
+            secondaryLabel="Close without saving"
+            confirmTone="primary"
+            busy={closeGuardBusy}
+            busyLabel="Saving…"
+            onCancel={() => void respondToCloseGuard('cancel')}
+            onSecondary={() => void respondToCloseGuard('discard')}
+            onConfirm={() => void respondToCloseGuard('save')}
+          />
+        </FloatingTaskIsland>
+      )}
+      {untitledCleanupConfirm && (
+        <FloatingTaskIsland
+          modal
+          onRequestClose={() => {
+            if (!untitledCleanupBusy) setUntitledCleanupConfirm(false);
+          }}
+        >
+          <ConfirmationDialog
+            title={`Clean up ${untitledCleanupCount} unused project${untitledCleanupCount === 1 ? '' : 's'}?`}
+            message="Only Untitled projects older than 14 days with zero imported images will be deleted. This cannot be undone."
+            confirmLabel={`Clean up ${untitledCleanupCount} project${untitledCleanupCount === 1 ? '' : 's'}`}
+            busy={untitledCleanupBusy}
+            busyLabel="Cleaning up…"
+            onCancel={() => {
+              if (!untitledCleanupBusy) setUntitledCleanupConfirm(false);
+            }}
+            onConfirm={() => void cleanUpUntitledProjects()}
           />
         </FloatingTaskIsland>
       )}
@@ -3785,6 +4041,13 @@ function isProfile(value: string | undefined): value is AlignmentQualityProfile 
 function workspaceLabel(mode: WorkspaceMode, sceneMode: '3d' | '2d' | '2.5d'): string {
   if (mode === 'images') return 'Images / Depth';
   return sceneMode === '3d' ? '3D Scene' : `${sceneMode.toUpperCase()} Plan · locked`;
+}
+
+function formatRecoveryTime(timestampUnixMs: number): string {
+  return new Intl.DateTimeFormat('en-US', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(timestampUnixMs));
 }
 
 function hardwareLabel(hardware: HardwareCapabilities): string {

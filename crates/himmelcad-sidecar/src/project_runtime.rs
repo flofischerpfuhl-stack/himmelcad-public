@@ -1102,6 +1102,7 @@ struct ProjectSession {
     lease: ProjectLeaseRecord,
     uses_local_working_copy: bool,
     recovery_available: bool,
+    recovery_timestamp_unix_ms: Option<u64>,
     read_only: bool,
     last_saved_generation: u64,
     manifest: PhotolabProjectManifest,
@@ -1276,10 +1277,9 @@ impl ProjectRuntime {
                         || manifest.autosave_generation > source_manifest.autosave_generation
                         || job_history_differs(&working_path, &source_path)
                 });
+            let recover = recovery_available && params.recover_existing_working_copy;
 
-            if params.use_local_working_copy
-                && (!recovery_available || !params.recover_existing_working_copy)
-            {
+            if params.use_local_working_copy && !recover {
                 if working_path.exists() {
                     fs::remove_dir_all(&working_path).with_context(|| {
                         format!("failed to refresh working copy {}", working_path.display())
@@ -1288,7 +1288,7 @@ impl ProjectRuntime {
                 copy_project_incremental(&source_path, &working_path)?;
             }
 
-            let manifest = if recovery_available && params.recover_existing_working_copy {
+            let manifest = if recover {
                 read_manifest(&working_path)?
             } else {
                 source_manifest
@@ -1298,7 +1298,7 @@ impl ProjectRuntime {
                 working_path,
                 manifest,
                 params.use_local_working_copy,
-                recovery_available,
+                recover,
                 session_id.clone(),
                 lock_path.clone(),
                 Arc::clone(&lock_file),
@@ -1430,7 +1430,7 @@ impl ProjectRuntime {
             working_path,
             manifest,
             true,
-            recovery_available,
+            recover,
             session_id,
             lock_path,
             lock_file,
@@ -1511,6 +1511,7 @@ impl ProjectRuntime {
             anyhow::bail!("a project is already open; close it before opening another one");
         }
         ensure_project_directories(&working_path)?;
+        let recovery_timestamp_unix_ms = recovery_available.then_some(manifest.modified_unix_ms);
         manifest.clean_shutdown = false;
         manifest.modified_unix_ms = unix_ms()?;
         atomic_write_json(&working_path.join("manifest.json"), &manifest)?;
@@ -1526,6 +1527,7 @@ impl ProjectRuntime {
             working_path: path_string(&working_path),
             uses_local_working_copy,
             recovery_available,
+            recovery_timestamp_unix_ms,
             read_only: false,
             autosave_generation: manifest.autosave_generation,
             last_saved_generation,
@@ -1539,6 +1541,7 @@ impl ProjectRuntime {
             lease,
             uses_local_working_copy,
             recovery_available,
+            recovery_timestamp_unix_ms,
             read_only: false,
             last_saved_generation,
             manifest: manifest.clone(),
@@ -6607,6 +6610,7 @@ impl ProjectSession {
                 working_path: path_string(&self.working_path),
                 uses_local_working_copy: self.uses_local_working_copy,
                 recovery_available: self.recovery_available,
+                recovery_timestamp_unix_ms: self.recovery_timestamp_unix_ms,
                 read_only: self.read_only,
                 autosave_generation: self.manifest.autosave_generation,
                 last_saved_generation: self.last_saved_generation,
@@ -12172,6 +12176,7 @@ mod tests {
             })
             .expect("newer workspace must recover");
         assert!(recovered.session.recovery_available);
+        assert!(recovered.session.recovery_timestamp_unix_ms.is_some());
         assert_eq!(recovered.session.autosave_generation, 1);
         assert_eq!(recovered.session.last_saved_generation, 0);
         recovery.close().expect("recovered project must close");

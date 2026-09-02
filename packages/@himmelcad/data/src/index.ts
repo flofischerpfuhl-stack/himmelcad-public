@@ -151,6 +151,7 @@ export interface ProjectSessionSummary {
   workingPath: string;
   usesLocalWorkingCopy: boolean;
   recoveryAvailable: boolean;
+  recoveryTimestampUnixMs?: number;
   readOnly: boolean;
   autosaveGeneration: number;
   lastSavedGeneration: number;

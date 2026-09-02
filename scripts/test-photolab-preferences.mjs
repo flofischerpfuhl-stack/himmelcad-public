@@ -16,6 +16,8 @@ try {
       'tsc',
       'apps/photolab/electron/preferences.ts',
       'apps/photolab/electron/preferences.test.ts',
+      'apps/photolab/electron/projectLifecycle.ts',
+      'apps/photolab/electron/projectLifecycle.test.ts',
       '--module',
       'commonjs',
       '--moduleResolution',
@@ -34,11 +36,15 @@ try {
     ],
     { cwd: workspace, env: process.env, stdio: 'inherit' },
   );
-  execFileSync('node', ['--test', join(output, 'preferences.test.js')], {
-    cwd: workspace,
-    env: process.env,
-    stdio: 'inherit',
-  });
+  execFileSync(
+    'node',
+    ['--test', join(output, 'preferences.test.js'), join(output, 'projectLifecycle.test.js')],
+    {
+      cwd: workspace,
+      env: process.env,
+      stdio: 'inherit',
+    },
+  );
 } finally {
   rmSync(output, { force: true, recursive: true });
 }

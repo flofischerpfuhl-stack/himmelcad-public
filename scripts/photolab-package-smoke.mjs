@@ -97,6 +97,7 @@ const reportPath = join(temporary, 'start-report.json');
 try {
   const appEnvironment = {
     ...process.env,
+    HIMMELCAD_PHOTOLAB_CLEAN_BOOT: '1',
     HIMMELCAD_RELEASE_SMOKE_REPORT: reportPath,
     HIMMELCAD_RELEASE_SMOKE_MODE: 'native',
   };

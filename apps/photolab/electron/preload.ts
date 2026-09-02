@@ -24,6 +24,19 @@ export interface ProjectArchiveOperationRequest {
   progressKey: string;
 }
 
+export interface RecentProjectAvailability {
+  readonly name: string;
+  readonly path: string;
+  readonly lastOpenedUnixMs: number;
+  readonly exists: boolean;
+}
+
+export interface ProjectBootstrapResult<T = unknown> {
+  readonly project: T | null;
+  readonly recentProjects: readonly RecentProjectAvailability[];
+  readonly untitledCleanupCount: number;
+}
+
 export interface StagedResidencyMaterialization {
   readonly schemaVersion: 1;
   readonly sessionId: string;
@@ -48,6 +61,10 @@ export interface PhotolabDesktopApi {
     minimize: () => Promise<void>;
     maximizeToggle: () => Promise<boolean>;
     close: () => Promise<void>;
+    onCloseGuardRequested: (
+      cb: (request: { autosaveGeneration: number; lastSavedGeneration: number }) => void,
+    ) => () => void;
+    respondToCloseGuard: (response: 'save' | 'discard' | 'cancel') => Promise<boolean>;
     isMaximized: () => Promise<boolean>;
     onMaximizeChange: (cb: (maximized: boolean) => void) => () => void;
   };
@@ -87,9 +104,17 @@ export interface PhotolabDesktopApi {
     };
   };
   readonly project: {
-    bootstrap: <T = unknown>() => Promise<T>;
+    bootstrap: <T = unknown>() => Promise<ProjectBootstrapResult<T>>;
     create: <T = unknown>(operation: ProjectArchiveOperationRequest) => Promise<T | null>;
     open: <T = unknown>(operation: ProjectArchiveOperationRequest) => Promise<T | null>;
+    openRecent: <T = unknown>(
+      path: string,
+      operation: ProjectArchiveOperationRequest,
+    ) => Promise<T>;
+    recent: () => Promise<readonly RecentProjectAvailability[]>;
+    removeRecent: (path: string) => Promise<readonly RecentProjectAvailability[]>;
+    reopenWithoutRecovery: <T = unknown>() => Promise<T>;
+    cleanupUntitled: () => Promise<number>;
     save: <T = unknown>(operation: ProjectArchiveOperationRequest) => Promise<T>;
     saveAs: <T = unknown>(operation: ProjectArchiveOperationRequest) => Promise<T | null>;
     cancelArchive: <T = unknown>(archiveOperationId: string) => Promise<T>;
@@ -205,6 +230,15 @@ const api: PhotolabDesktopApi = {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximizeToggle: () => ipcRenderer.invoke('window:maximize-toggle'),
     close: () => ipcRenderer.invoke('window:close'),
+    onCloseGuardRequested: (cb) => {
+      const listener = (
+        _event: unknown,
+        request: { autosaveGeneration: number; lastSavedGeneration: number },
+      ): void => cb(request);
+      ipcRenderer.on('window:close-guard-requested', listener);
+      return () => ipcRenderer.off('window:close-guard-requested', listener);
+    },
+    respondToCloseGuard: (response) => ipcRenderer.invoke('window:close-guard-response', response),
     isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
     onMaximizeChange: (cb) => {
       const listener = (_event: unknown, maximized: boolean): void => cb(maximized);
@@ -298,6 +332,11 @@ const api: PhotolabDesktopApi = {
     bootstrap: () => ipcRenderer.invoke('project:bootstrap'),
     create: (operation) => ipcRenderer.invoke('project:create', operation),
     open: (operation) => ipcRenderer.invoke('project:open', operation),
+    openRecent: (path, operation) => ipcRenderer.invoke('project:open-recent', path, operation),
+    recent: () => ipcRenderer.invoke('project:recent-list'),
+    removeRecent: (path) => ipcRenderer.invoke('project:recent-remove', path),
+    reopenWithoutRecovery: () => ipcRenderer.invoke('project:reopen-without-recovery'),
+    cleanupUntitled: () => ipcRenderer.invoke('project:untitled-cleanup'),
     save: (operation) => ipcRenderer.invoke('project:save', operation),
     saveAs: (operation) => ipcRenderer.invoke('project:save-as', operation),
     cancelArchive: (archiveOperationId) =>

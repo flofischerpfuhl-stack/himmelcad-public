@@ -1,0 +1,76 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  closeGuardDecision,
+  removeRecentProject,
+  selectUntitledLitterCandidates,
+  UNTITLED_PROJECT_MAX_AGE_MS,
+  updateRecentProjects,
+  type RecentProject,
+} from './projectLifecycle';
+
+test('MRU updates, deduplicates and retains the ten most recent projects', () => {
+  const existing: RecentProject[] = Array.from({ length: 10 }, (_, index) => ({
+    name: `Project ${String(index)}`,
+    path: `/projects/${String(index)}.hcadx`,
+    lastOpenedUnixMs: 100 - index,
+  }));
+  const reopened = updateRecentProjects(existing, {
+    name: 'Renamed project',
+    path: '/projects/4.hcadx',
+    lastOpenedUnixMs: 200,
+  });
+  assert.equal(reopened.length, 10);
+  assert.deepEqual(reopened[0], {
+    name: 'Renamed project',
+    path: '/projects/4.hcadx',
+    lastOpenedUnixMs: 200,
+  });
+  assert.equal(reopened.filter(({ path }) => path === '/projects/4.hcadx').length, 1);
+  assert.equal(removeRecentProject(reopened, '/projects/4.hcadx').length, 9);
+});
+
+test('litter selection requires an old Untitled project with zero images', () => {
+  const now = 2_000_000_000;
+  const old = now - UNTITLED_PROJECT_MAX_AGE_MS - 1;
+  const candidates = selectUntitledLitterCandidates(
+    [
+      {
+        path: '/projects/Untitled-old-empty.hcad',
+        directoryName: 'Untitled-old-empty.hcad',
+        modifiedUnixMs: old,
+        imageCount: 0,
+      },
+      {
+        path: '/projects/Untitled-old-used.hcad',
+        directoryName: 'Untitled-old-used.hcad',
+        modifiedUnixMs: old,
+        imageCount: 2,
+      },
+      {
+        path: '/projects/Untitled-new-empty.hcad',
+        directoryName: 'Untitled-new-empty.hcad',
+        modifiedUnixMs: now,
+        imageCount: 0,
+      },
+      {
+        path: '/projects/Named-old-empty.hcad',
+        directoryName: 'Named-old-empty.hcad',
+        modifiedUnixMs: old,
+        imageCount: 0,
+      },
+    ],
+    now,
+  );
+  assert.deepEqual(
+    candidates.map(({ path }) => path),
+    ['/projects/Untitled-old-empty.hcad'],
+  );
+});
+
+test('close guard prompts only when a project has unsaved generations', () => {
+  assert.equal(closeGuardDecision(null), 'close');
+  assert.equal(closeGuardDecision({ autosaveGeneration: 3, lastSavedGeneration: 3 }), 'close');
+  assert.equal(closeGuardDecision({ autosaveGeneration: 4, lastSavedGeneration: 3 }), 'prompt');
+});

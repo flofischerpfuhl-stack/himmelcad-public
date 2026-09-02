@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { constants as fsConstants, createReadStream } from 'node:fs';
+import { constants as fsConstants, createReadStream, type Dirent } from 'node:fs';
 import {
   copyFile,
   mkdir,
@@ -43,6 +43,12 @@ import {
   stopSidecar,
 } from './sidecar';
 import { PhotolabPreferencesService, type DirectoryPreference } from './preferences';
+import {
+  closeGuardDecision,
+  selectUntitledLitterCandidates,
+  type RecentProject,
+  type UntitledProjectInspection,
+} from './projectLifecycle';
 import { startDesktopUpdater } from './updater';
 
 const isDev = !app.isPackaged;
@@ -69,6 +75,8 @@ let currentProjectSourcePath: string | null = null;
 let preferences: PhotolabPreferencesService;
 let quitDrainStarted = false;
 let quitDrainComplete = false;
+let closeGuardPending = false;
+let closeApproved = false;
 const pendingProductExports = new Map<
   string,
   {
@@ -93,7 +101,19 @@ interface CurrentProjectSessionSnapshot {
   session: {
     sourcePath: string;
     usesLocalWorkingCopy: boolean;
+    autosaveGeneration: number;
+    lastSavedGeneration: number;
   };
+}
+
+interface RecentProjectAvailability extends RecentProject {
+  readonly exists: boolean;
+}
+
+interface ProjectBootstrapResult {
+  readonly project: unknown | null;
+  readonly recentProjects: readonly RecentProjectAvailability[];
+  readonly untitledCleanupCount: number;
 }
 
 protocol.registerSchemesAsPrivileged([
@@ -326,6 +346,11 @@ async function createWindow(): Promise<void> {
   window.webContents.on('will-redirect', denyNavigation);
   window.on('maximize', () => window.webContents.send('window:maximize-changed', true));
   window.on('unmaximize', () => window.webContents.send('window:maximize-changed', false));
+  window.on('close', (event) => {
+    if (quitDrainComplete) return;
+    event.preventDefault();
+    void requestCloseGuard();
+  });
   const unsubscribe = onSidecarStderr((line) => window.webContents.send('sidecar:stderr', line));
   window.on('closed', unsubscribe);
 
@@ -520,7 +545,16 @@ function registerIpc(): void {
     else mainWindow.maximize();
     return mainWindow.isMaximized();
   });
-  ipcMain.handle('window:close', () => mainWindow?.close());
+  ipcMain.handle('window:close', () => requestCloseGuard());
+  ipcMain.handle('window:close-guard-response', (_event, response: unknown) => {
+    if (!closeGuardPending) return false;
+    if (response !== 'save' && response !== 'discard' && response !== 'cancel') return false;
+    closeGuardPending = false;
+    if (response === 'cancel') return true;
+    closeApproved = true;
+    app.quit();
+    return true;
+  });
   ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
   ipcMain.handle('sidecar:status', () => isSidecarRunning());
   ipcMain.handle('preferences:gcp-csv:get', () => preferences.gcpCsvImportDefaults());
@@ -1140,17 +1174,16 @@ function registerIpc(): void {
   );
 
   ipcMain.handle('project:bootstrap', async () => {
+    let project: unknown | null = null;
     try {
-      return rememberProject(await callSidecar({ method: 'photolab.project.snapshot' }));
+      project = rememberProject(await callSidecar({ method: 'photolab.project.snapshot' }));
     } catch {
-      // Development sessions are deliberately disposable: always boot into a clean
-      // project unless a capture project was explicitly requested. Packaged builds
-      // retain normal last-project restoration.
+      const cleanBoot = process.env.HIMMELCAD_PHOTOLAB_CLEAN_BOOT === '1';
       const previous =
-        isDev && !process.env.HIMMELCAD_UI_PROJECT_PATH ? null : await readLastProjectPath();
+        cleanBoot && !process.env.HIMMELCAD_UI_PROJECT_PATH ? null : await readLastProjectPath();
       if (previous) {
         try {
-          return rememberProject(
+          project = rememberProject(
             await callSidecar({
               method: 'photolab.project.open',
               params: {
@@ -1167,57 +1200,27 @@ function registerIpc(): void {
           console.warn(`Last PhotoLab project could not be reopened: ${String(error)}`);
         }
       }
-      const timestamp = new Date().toISOString().replaceAll(/[:.]/g, '-');
+    }
+    return {
+      project,
+      recentProjects: await recentProjectAvailability(),
+      untitledCleanupCount: (await untitledLitterCandidates()).length,
+    } satisfies ProjectBootstrapResult;
+  });
+  ipcMain.handle('project:create', async (_event, value: unknown) => {
+    projectArchiveOperationRequest(value);
+    const previous = await currentProjectSessionSnapshot();
+    try {
+      await callSidecar({ method: 'photolab.project.close' });
       return rememberProject(
         await callSidecar({
           method: 'photolab.project.create',
           params: {
-            path: resolve(app.getPath('userData'), 'projects', `Untitled-${timestamp}.hcad`),
+            path: nextUntitledProjectPath(),
             name: 'Untitled PhotoLab Project',
           },
         }),
       );
-    }
-  });
-  ipcMain.handle('project:create', async (_event, value: unknown) => {
-    const operation = projectArchiveOperationRequest(value);
-    const options: Electron.SaveDialogOptions = {
-      title: 'Create PhotoLab Project',
-      defaultPath: join(await preferredDirectory('project'), 'PhotoLab-Project.hcadx'),
-      filters: [{ name: 'HimmelCAD PhotoLab Project', extensions: ['hcadx'] }],
-      properties: ['createDirectory', 'showOverwriteConfirmation'],
-    };
-    const selection = mainWindow
-      ? await dialog.showSaveDialog(mainWindow, options)
-      : await dialog.showSaveDialog(options);
-    if (selection.canceled || !selection.filePath) return null;
-    await preferences.rememberDirectory('project', dirname(selection.filePath));
-    const previous = await currentProjectSessionSnapshot();
-    const localPath = resolve(
-      app.getPath('userData'),
-      'cache',
-      'photolab',
-      'workspaces',
-      `new-${randomUUID()}.hcad`,
-    );
-    try {
-      await callSidecar({ method: 'photolab.project.close' });
-      await callSidecar({
-        method: 'photolab.project.create',
-        params: {
-          path: localPath,
-          name:
-            selection.filePath
-              .split(/[\\/]/)
-              .at(-1)
-              ?.replace(/\.hcadx$/i, '') ?? 'PhotoLab Project',
-        },
-      });
-      await callSidecar({
-        method: 'photolab.project.saveAs',
-        params: archiveOperationParams(selection.filePath, true, operation),
-      });
-      return rememberProject(await callSidecar({ method: 'photolab.project.snapshot' }));
     } catch (error) {
       await restoreProjectSession(previous).catch((restoreError: unknown) => {
         console.error('Previous project session could not be restored', restoreError);
@@ -1239,27 +1242,38 @@ function registerIpc(): void {
     const selectedPath = selection.filePaths[0];
     if (selection.canceled || !selectedPath) return null;
     await preferences.rememberDirectory('project', dirname(selectedPath));
-    const previous = await currentProjectSessionSnapshot();
-    try {
-      await callSidecar({ method: 'photolab.project.close' });
-      return rememberProject(
-        await callSidecar({
-          method: 'photolab.project.open',
-          params: {
-            path: selectedPath,
-            workingRoot: resolve(app.getPath('userData'), 'cache'),
-            useLocalWorkingCopy: true,
-            recoverExistingWorkingCopy: true,
-            ...operation,
-          },
-        }),
-      );
-    } catch (error) {
-      await restoreProjectSession(previous).catch((restoreError: unknown) => {
-        console.error('Previous project session could not be restored', restoreError);
-      });
-      throw error;
+    return openProjectPath(selectedPath, true, operation);
+  });
+  ipcMain.handle('project:open-recent', async (_event, path: unknown, value: unknown) => {
+    if (typeof path !== 'string' || !isAbsolute(path))
+      throw new Error('Invalid recent project path');
+    const resolvedPath = resolve(path);
+    if (
+      !(await preferences.recentProjects()).some((candidate) => candidate.path === resolvedPath)
+    ) {
+      throw new Error('Project is no longer in the recent list');
     }
+    await stat(resolvedPath);
+    return openProjectPath(resolvedPath, true, projectArchiveOperationRequest(value));
+  });
+  ipcMain.handle('project:recent-list', () => recentProjectAvailability());
+  ipcMain.handle('project:recent-remove', async (_event, path: unknown) => {
+    if (typeof path !== 'string' || !isAbsolute(path)) return recentProjectAvailability();
+    await preferences.removeRecentProject(resolve(path));
+    return recentProjectAvailability();
+  });
+  ipcMain.handle('project:reopen-without-recovery', async () => {
+    const snapshot = await currentProjectSessionSnapshot();
+    if (!snapshot) throw new Error('No project is open');
+    return openProjectPath(snapshot.session.sourcePath, false, {
+      archiveOperationId: `archive-discard-recovery-${randomUUID()}`,
+      progressKey: `project-discard-recovery:${randomUUID()}`,
+    });
+  });
+  ipcMain.handle('project:untitled-cleanup', async () => {
+    const candidates = await untitledLitterCandidates();
+    await Promise.all(candidates.map((candidate) => rm(candidate.path, { recursive: true })));
+    return candidates.length;
   });
   ipcMain.handle('project:save', async (_event, value: unknown) => {
     const operation = projectArchiveOperationRequest(value);
@@ -1729,8 +1743,39 @@ async function restoreProjectSession(
   );
 }
 
+async function openProjectPath(
+  path: string,
+  recoverExistingWorkingCopy: boolean,
+  operation: ProjectArchiveOperationRequest,
+): Promise<unknown> {
+  const previous = await currentProjectSessionSnapshot();
+  try {
+    await callSidecar({ method: 'photolab.project.close' });
+    return rememberProject(
+      await callSidecar({
+        method: 'photolab.project.open',
+        params: {
+          path,
+          workingRoot: resolve(app.getPath('userData'), 'cache'),
+          useLocalWorkingCopy: path.toLowerCase().endsWith('.hcadx'),
+          recoverExistingWorkingCopy,
+          ...operation,
+        },
+      }),
+    );
+  } catch (error) {
+    await restoreProjectSession(previous).catch((restoreError: unknown) => {
+      console.error('Previous project session could not be restored', restoreError);
+    });
+    throw error;
+  }
+}
+
 function rememberProject<T>(result: T): T {
-  const candidate = result as { session?: { workingPath?: unknown; sourcePath?: unknown } };
+  const candidate = result as {
+    session?: { workingPath?: unknown; sourcePath?: unknown };
+    manifest?: { name?: unknown };
+  };
   currentWorkingPath =
     typeof candidate.session?.workingPath === 'string'
       ? resolve(candidate.session.workingPath)
@@ -1738,8 +1783,86 @@ function rememberProject<T>(result: T): T {
   if (typeof candidate.session?.sourcePath === 'string') {
     currentProjectSourcePath = resolve(candidate.session.sourcePath);
     void persistLastProjectPath(currentProjectSourcePath);
+    if (typeof candidate.manifest?.name === 'string') {
+      void preferences
+        .rememberRecentProject({
+          name: candidate.manifest.name,
+          path: currentProjectSourcePath,
+          lastOpenedUnixMs: Date.now(),
+        })
+        .catch((error: unknown) => {
+          console.warn(`Recent PhotoLab project could not be stored: ${String(error)}`);
+        });
+    }
   }
   return result;
+}
+
+function nextUntitledProjectPath(): string {
+  const timestamp = new Date().toISOString().replaceAll(/[:.]/g, '-');
+  return resolve(app.getPath('userData'), 'projects', `Untitled-${timestamp}.hcad`);
+}
+
+async function recentProjectAvailability(): Promise<RecentProjectAvailability[]> {
+  const recent = await preferences.recentProjects();
+  return Promise.all(
+    recent.map(async (project) => ({ ...project, exists: await pathExists(project.path) })),
+  );
+}
+
+async function untitledLitterCandidates(): Promise<UntitledProjectInspection[]> {
+  const projectsRoot = resolve(app.getPath('userData'), 'projects');
+  let entries: Dirent[];
+  try {
+    entries = await readdir(projectsRoot, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+  const inspections = await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory() && /^Untitled-.+\.hcad$/i.test(entry.name))
+      .map(async (entry): Promise<UntitledProjectInspection | null> => {
+        const path = resolve(projectsRoot, entry.name);
+        if (path === currentWorkingPath || path === currentProjectSourcePath) return null;
+        try {
+          const [metadata, manifestText] = await Promise.all([
+            stat(path),
+            readFile(join(path, 'manifest.json'), 'utf8'),
+          ]);
+          const manifest = JSON.parse(manifestText) as {
+            modifiedUnixMs?: unknown;
+            entities?: unknown;
+          };
+          const entities =
+            manifest.entities && typeof manifest.entities === 'object'
+              ? Object.values(manifest.entities)
+              : [];
+          const imageCount = entities.filter(
+            (entity) =>
+              entity &&
+              typeof entity === 'object' &&
+              'kind' in entity &&
+              entity.kind === 'CameraImage',
+          ).length;
+          return {
+            path,
+            directoryName: entry.name,
+            modifiedUnixMs:
+              typeof manifest.modifiedUnixMs === 'number'
+                ? manifest.modifiedUnixMs
+                : metadata.mtimeMs,
+            imageCount,
+          };
+        } catch {
+          return null;
+        }
+      }),
+  );
+  return selectUntitledLitterCandidates(
+    inspections.filter((candidate): candidate is UntitledProjectInspection => candidate != null),
+    Date.now(),
+  );
 }
 
 async function readLastProjectPath(): Promise<string | null> {
@@ -2362,6 +2485,36 @@ app.on('before-quit', (event) => {
     return;
   }
   event.preventDefault();
+  if (!closeApproved) {
+    void requestCloseGuard();
+    return;
+  }
+  beginShutdownDrain();
+});
+
+async function requestCloseGuard(): Promise<void> {
+  if (closeGuardPending || quitDrainStarted || quitDrainComplete) return;
+  let snapshot: CurrentProjectSessionSnapshot | null = null;
+  try {
+    snapshot = await currentProjectSessionSnapshot();
+  } catch {
+    // A missing sidecar session has no project generations to protect.
+  }
+  if (closeGuardDecision(snapshot?.session ?? null) === 'prompt' && mainWindow) {
+    closeGuardPending = true;
+    mainWindow.webContents.send('window:close-guard-requested', {
+      autosaveGeneration: snapshot?.session.autosaveGeneration ?? 0,
+      lastSavedGeneration: snapshot?.session.lastSavedGeneration ?? 0,
+    });
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+  closeApproved = true;
+  app.quit();
+}
+
+function beginShutdownDrain(): void {
   if (quitDrainStarted) return;
   quitDrainStarted = true;
   console.info('[sidecar] Waiting up to 25 seconds for active PhotoLab work to stop…');
@@ -2387,4 +2540,4 @@ app.on('before-quit', (event) => {
       quitDrainComplete = true;
       app.quit();
     });
-});
+}

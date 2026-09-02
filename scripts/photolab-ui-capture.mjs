@@ -3,6 +3,8 @@ import { dirname, resolve } from 'node:path';
 
 import { chromium } from 'playwright-core';
 
+process.env.HIMMELCAD_PHOTOLAB_CLEAN_BOOT = '1';
+
 const endpoint = process.env.HIMMELCAD_PHOTOLAB_CDP ?? 'http://127.0.0.1:9223';
 const output = resolve(process.argv[2] ?? '.build/photolab-ui/scene.png');
 const gcpOutput = resolve(dirname(output), 'gcp-properties.png');

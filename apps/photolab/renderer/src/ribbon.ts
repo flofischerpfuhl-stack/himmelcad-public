@@ -9,6 +9,7 @@ import {
   FilePlus,
   FolderOpen,
   Gauge,
+  History,
   Images,
   Layers3,
   Map,
@@ -29,6 +30,7 @@ export interface PhotolabRibbonCallbacks {
   onOpenProject: () => void;
   onSaveProject: () => void;
   onSaveProjectAs: () => void;
+  onRecentProjects: () => void;
   onImportFiles: () => void;
   onImportFolder: () => void;
   onImportExternal: () => void;
@@ -57,6 +59,12 @@ export function createPhotolabRibbonTabs(callbacks: PhotolabRibbonCallbacks): Ri
               label: 'Open',
               icon: icon(FolderOpen),
               onActivate: callbacks.onOpenProject,
+            },
+            {
+              id: 'project.recent',
+              label: 'Recent',
+              icon: icon(History),
+              onActivate: callbacks.onRecentProjects,
             },
             {
               id: 'project.save',
