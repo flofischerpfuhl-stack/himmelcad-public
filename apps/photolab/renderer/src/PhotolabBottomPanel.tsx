@@ -871,6 +871,11 @@ function jobLabel(job: PhotolabJob): string {
     buildGaussianSplat: 'Build Gaussian Splat',
     exportProduct: 'Export Product',
     batch: 'Batch Processing',
+    archiveSave: 'Save Archive',
+    imageInspection: 'Inspect Images',
+    imageCommit: 'Commit Images',
+    imageMask: 'Apply Image Masks',
+    gcpOperation: 'GCP Operation',
   };
   return labels[job.kind];
 }
