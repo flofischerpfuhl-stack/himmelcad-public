@@ -919,6 +919,75 @@ the updater contract test green. Flagged for the owner; no Codex run.
 
 ---
 
+## Phase G — Doctrine and gate closures (added 2026-09-02)
+
+### WP-G1 — PhotoLab products open in Builder and WeltView (R1 gate 8, Size L)
+
+Problem. Gate 8 is not met: Builder's import registration accepts only
+`potree@2` (`apps/builder/renderer/src/BuilderImportRegistrationIsland.tsx`,
+`import_registration_runtime.rs:371`), while PhotoLab publishes
+`potreeV2`, `rasterPyramid`, `tiledMesh`, `mvsDepth` and splat datasets
+(`project_runtime.rs` publication paths); WeltView is a 50-line shell
+(`apps/weltview/src/App.tsx`). The shared render core already decodes
+`potree@2`, `mesh@1` and `himmelcad-prepared-hierarchy@1`.
+
+**Decision:** PhotoLab products become ordinary canonical datasets that
+Builder registers through the existing interactive import-registration
+flow (ADR 0025) for every prepared format the render core can decode —
+point clouds, elevation rasters, prepared meshes, splats — with the product
+lineage (alignment, GCP revision, CRS) carried as dataset provenance;
+WeltView gains a read-only "open local project" path over the same kernel
+and datasets, without choosing a delivery mode (that remains the R3 owner
+gate).
+**Derivation:** ROADMAP R1 gate 8; ADR 0016/0017/0018 (one canonical model,
+one renderer, provider-neutral IO); X3 (registered datasets are canonical
+entities visible to automation); X4 (RealWorks/RIB Civil open survey
+deliverables directly).
+**Rejected:** a PhotoLab-specific viewer in Builder (ADR 0017); WeltView
+streaming modes (reserved R3 decision).
+**Tunable:** none.
+
+Builder rules apply: the Builder-side change is specified as a revision of
+`docs/builder-program/specs/import-formats` and its registry rows (cite and
+revise, never re-disposition), walks `docs/FUNCTION-CONTRACT.md` A1–E3, and
+gets a `demanding-user` review before implementation. Sidecar: extend the
+registration runtime's dataset matching beyond `potree@2`; keep the
+`.hcadx`/prepared-hierarchy contracts unchanged. Tests: register each
+product kind from the smoke project into a Builder project; WeltView opens
+the same project read-only; lineage provenance visible in properties.
+
+### WP-G2 — PhotoLab automation parity (doctrine X3, Size L)
+
+Problem. The automation host allowlists only `app.*`, `automation.*`,
+`view.*` and six app methods (`packages/@himmelcad/automation-host/index.cjs`
+`ALLOWED_METHODS`/`ALLOWED_APP_METHODS`); no `photolab.*` operation is
+reachable by the embedded agent or the Python SDK, and the PhotoLab console
+hand-lists six commands (`App.tsx` `onCommand`). Every workflow this plan
+shipped (resume, product start with pinned inputs, merge preflight,
+capture-group drafts, lab calibration, LAZ export, video import) is
+UI-only — a class-level X3 violation.
+
+**Decision:** PhotoLab operations are exposed as canonical automation
+commands and queries with the existing validate/status/cancel lifecycle
+(`automation.commands.*`), generated from one command table that also
+drives the console vocabulary — never by allowlisting raw sidecar RPCs.
+Approval grants, credentials and confirmation tokens stay user-only (the
+ADR 0024 asymmetry). Long-running operations map to jobs and are observable
+through `photolab.jobs.*` queries exposed the same way.
+**Derivation:** X3 and its P1 precedent; ADR 0024; PHOTOLAB-CONCEPT.md
+"Console, Python, and AI access resolve to the same underlying operations".
+**Rejected:** blanket allowlisting of `photolab.*` RPCs (bypasses the
+trust boundary and the command validation lifecycle); keeping console
+parity separate from automation parity (two tables drift — P6/X7).
+**Tunable:** none.
+
+Implementation: a command table in the sidecar (id, params schema,
+job-or-transaction, cancel route) consumed by the automation router, the
+console and the Python client generator; agent attribution in the journal
+and console per X3; tests: every UI-reachable operation has a table row
+(a test enumerates ribbon/panel actions against the table), and the Python
+client can run import → align → optimize → product on the smoke dataset.
+
 ## Tunables register (doctrine X6)
 
 Every numeric threshold introduced by this plan is a delegated calibration
