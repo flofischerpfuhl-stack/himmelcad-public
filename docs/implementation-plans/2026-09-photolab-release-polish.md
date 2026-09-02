@@ -1549,6 +1549,8 @@ Footer
 - Status: in flight
 ```
 
+Gate evidence 2026-09-02 (6774990, 72aca4e): `pnpm photolab:test:a11y` run 16 — axe-core 4.13.0, 0 findings across 42 surfaces at 1440x900 and 1100x720, 0 keyboard-reachability failures (ribbon and panel controls reachable with a visible focus indicator), 0 native dialogs, 0 page errors; report `.build/visual-regression/a11y-report.json` + `a11y-summary.md`. Along the way the audit caught two real defects (renderer crash on optional GCP report fields; H3's closeable tabs violating aria-required-children) and one harness defect (auto-stubbed mock injected a syntax error).
+
 ### WP-F3b — Accessibility remediation at the root causes (Size M)
 
 First full axe-core run (2026-09-02, 84 surfaces, both viewports): 766
