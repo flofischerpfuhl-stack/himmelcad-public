@@ -422,16 +422,20 @@ mod tests {
             let mut points = Vec::new();
             let mut observations = Vec::new();
             for (id, coordinate, role) in coordinates {
+                let horizontal_stddev_meters = if id == "A" { 0.005 } else { 0.02 };
                 let point = GcpPoint {
                     id: GcpPointId(id.into()),
                     name: id.into(),
+                    code: format!("fixture-{id}"),
                     coordinate: GcpCoordinate {
                         east_meters: 2.0 * coordinate[0] + 500.0,
                         north_meters: 2.0 * coordinate[1] + 600.0,
                         height_meters: 2.0 * coordinate[2] + 50.0,
                     },
                     uncertainty: GcpUncertainty {
-                        horizontal_stddev_meters: 0.01,
+                        horizontal_stddev_meters,
+                        east_stddev_meters: None,
+                        north_stddev_meters: None,
                         height_stddev_meters: 0.02,
                     },
                     role,
@@ -550,6 +554,16 @@ mod tests {
         assert_eq!(checkpoint.artifact_sha256, Some(result.artifact_sha256));
         assert!(phases.contains(&GcpOptimizationPhase::Triangulate));
         assert!(result.artifact.result.statistics.checkpoint.is_some());
+        let accuracy_by_point = result
+            .artifact
+            .result
+            .residuals
+            .iter()
+            .map(|residual| (residual.point_id.0.as_str(), residual))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(accuracy_by_point["A"].east_stddev_meters, Some(0.005));
+        assert_eq!(accuracy_by_point["B"].east_stddev_meters, Some(0.02));
+        assert_eq!(accuracy_by_point["A"].code, "fixture-A");
     }
 
     #[test]

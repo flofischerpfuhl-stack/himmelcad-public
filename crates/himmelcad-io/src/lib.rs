@@ -79,7 +79,7 @@ pub use gaussian_splat_provider::{
 };
 pub use gcp_import::{
     import_gcp_csv_file, import_gcp_csv_file_with_cancel, preview_gcp_csv_file, GcpCsvImportResult,
-    GcpCsvPreview, GcpCsvPreviewRow, GcpCsvRowError,
+    GcpCsvPreview, GcpCsvPreviewRow, GcpCsvRowError, GcpCsvUncertaintyOrigin,
 };
 pub use geotiff_provider::{
     GeoTiffCanonicalProvider, GEOTIFF_FORMAT_ID, GEOTIFF_PROVIDER_ID,

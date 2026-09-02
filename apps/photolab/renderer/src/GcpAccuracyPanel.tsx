@@ -15,6 +15,10 @@ export interface GcpAccuracyResidual {
   pointId: string;
   pointName: string;
   role: GcpAccuracyRole;
+  code?: string;
+  eastStddevMeters?: number;
+  northStddevMeters?: number;
+  heightStddevMeters?: number;
   eastMeters?: number;
   northMeters?: number;
   heightMeters?: number;
@@ -98,6 +102,9 @@ export function GcpAccuracyPanel({
               <th className={styles.numeric}>East</th>
               <th className={styles.numeric}>North</th>
               <th className={styles.numeric}>Height · {report.heightReferenceLabel}</th>
+              <th className={styles.numeric}>σ east</th>
+              <th className={styles.numeric}>σ north</th>
+              <th className={styles.numeric}>σ vertical</th>
               <th className={styles.numeric}>Horizontal</th>
               <th className={styles.numeric}>3D</th>
               <th className={styles.numeric}>Image RMS</th>
@@ -115,6 +122,7 @@ export function GcpAccuracyPanel({
                 <td>
                   <strong>{residual.pointName}</strong>
                   <small>{residual.pointId}</small>
+                  {residual.code && <small>{residual.code}</small>}
                 </td>
                 <td>
                   <RoleBadge role={residual.role} />
@@ -122,6 +130,9 @@ export function GcpAccuracyPanel({
                 <Metric value={residual.eastMeters} unit="m" signed />
                 <Metric value={residual.northMeters} unit="m" signed />
                 <Metric value={residual.heightMeters} unit="m" signed />
+                <Metric value={residual.eastStddevMeters} unit="m" />
+                <Metric value={residual.northStddevMeters} unit="m" />
+                <Metric value={residual.heightStddevMeters} unit="m" />
                 <Metric value={residual.horizontalMeters} unit="m" />
                 <Metric value={residual.spatial3dMeters} unit="m" />
                 <Metric value={residual.reprojectionRmsPixels} unit="px" />

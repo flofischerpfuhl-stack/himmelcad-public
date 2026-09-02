@@ -48,7 +48,13 @@ pub struct GcpCsvImportMapping {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub horizontal_stddev: Option<CsvColumnSelector>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub east_stddev: Option<CsvColumnSelector>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub north_stddev: Option<CsvColumnSelector>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height_stddev: Option<CsvColumnSelector>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<CsvColumnSelector>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<CsvColumnSelector>,
     pub default_role: GcpRole,
@@ -66,12 +72,22 @@ impl GcpCsvImportMapping {
                 "delimiter and decimal separator cannot both be comma",
             ));
         }
+        if self.horizontal_stddev.is_some()
+            && (self.east_stddev.is_some() || self.north_stddev.is_some())
+        {
+            return Err(GcpError::InvalidCsvMapping(
+                "horizontal standard deviation cannot be combined with east or north standard deviation columns",
+            ));
+        }
         let required = [&self.name, &self.east, &self.north, &self.height];
         let mut selectors = BTreeSet::new();
         for selector in required
             .into_iter()
             .chain(self.horizontal_stddev.iter())
+            .chain(self.east_stddev.iter())
+            .chain(self.north_stddev.iter())
             .chain(self.height_stddev.iter())
+            .chain(self.code.iter())
             .chain(self.role.iter())
         {
             validate_selector(selector)?;
@@ -170,6 +186,12 @@ impl GcpCoordinate {
 #[serde(rename_all = "camelCase")]
 pub struct GcpUncertainty {
     pub horizontal_stddev_meters: f64,
+    /// Optional axis-specific override. Missing values use the common horizontal sigma.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub east_stddev_meters: Option<f64>,
+    /// Optional axis-specific override. Missing values use the common horizontal sigma.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub north_stddev_meters: Option<f64>,
     pub height_stddev_meters: f64,
 }
 
@@ -177,7 +199,25 @@ impl GcpUncertainty {
     /// Rejects NaN, infinity and negative uncertainty.
     pub fn validate(self) -> Result<(), GcpError> {
         validate_non_negative_finite(self.horizontal_stddev_meters, "horizontal uncertainty")?;
+        if let Some(value) = self.east_stddev_meters {
+            validate_non_negative_finite(value, "east uncertainty")?;
+        }
+        if let Some(value) = self.north_stddev_meters {
+            validate_non_negative_finite(value, "north uncertainty")?;
+        }
         validate_non_negative_finite(self.height_stddev_meters, "height uncertainty")
+    }
+
+    #[must_use]
+    pub fn east_stddev_meters(self) -> f64 {
+        self.east_stddev_meters
+            .unwrap_or(self.horizontal_stddev_meters)
+    }
+
+    #[must_use]
+    pub fn north_stddev_meters(self) -> f64 {
+        self.north_stddev_meters
+            .unwrap_or(self.horizontal_stddev_meters)
     }
 }
 
@@ -187,6 +227,9 @@ impl GcpUncertainty {
 pub struct GcpPoint {
     pub id: GcpPointId,
     pub name: String,
+    /// Immutable source code or description imported with the point.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub code: String,
     pub coordinate: GcpCoordinate,
     pub uncertainty: GcpUncertainty,
     pub role: GcpRole,
@@ -499,6 +542,14 @@ pub struct ReprojectionErrorSample {
 pub struct GcpResidual {
     pub point_id: GcpPointId,
     pub role: GcpRole,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub east_stddev_meters: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub north_stddev_meters: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height_stddev_meters: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub east_meters: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -568,6 +619,10 @@ pub fn compute_gcp_residual(
     Ok(GcpResidual {
         point_id: point.id.clone(),
         role: point.role,
+        code: point.code.clone(),
+        east_stddev_meters: Some(point.uncertainty.east_stddev_meters()),
+        north_stddev_meters: Some(point.uncertainty.north_stddev_meters()),
+        height_stddev_meters: Some(point.uncertainty.height_stddev_meters),
         east_meters: east,
         north_meters: north,
         height_meters: height,
@@ -660,6 +715,16 @@ fn validate_residual(residual: &GcpResidual) -> Result<(), GcpError> {
     ];
     for value in options.into_iter().flatten() {
         validate_finite(value, "residual")?;
+    }
+    for value in [
+        residual.east_stddev_meters,
+        residual.north_stddev_meters,
+        residual.height_stddev_meters,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        validate_non_negative_finite(value, "point uncertainty")?;
     }
     validate_non_negative_finite(residual.active_component_norm_meters, "active residual")?;
     validate_non_negative_finite(residual.reprojection_rms_pixels, "reprojection RMS")?;
@@ -1195,6 +1260,7 @@ mod tests {
         GcpPoint {
             id: GcpPointId(id.to_owned()),
             name: id.to_owned(),
+            code: String::new(),
             coordinate: GcpCoordinate {
                 east_meters: east,
                 north_meters: north,
@@ -1202,6 +1268,8 @@ mod tests {
             },
             uncertainty: GcpUncertainty {
                 horizontal_stddev_meters: 0.01,
+                east_stddev_meters: None,
+                north_stddev_meters: None,
                 height_stddev_meters: 0.02,
             },
             role,
@@ -1235,11 +1303,16 @@ mod tests {
             north: CsvColumnSelector::Header("north".to_owned()),
             height: CsvColumnSelector::Header("east".to_owned()),
             horizontal_stddev: None,
+            east_stddev: None,
+            north_stddev: None,
             height_stddev: None,
+            code: None,
             role: None,
             default_role: GcpRole::ControlXyz,
             default_uncertainty: GcpUncertainty {
                 horizontal_stddev_meters: 0.01,
+                east_stddev_meters: None,
+                north_stddev_meters: None,
                 height_stddev_meters: 0.02,
             },
         };

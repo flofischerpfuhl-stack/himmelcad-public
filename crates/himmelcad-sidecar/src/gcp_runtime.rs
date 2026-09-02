@@ -912,11 +912,12 @@ fn validate_transformed_points(
     for (source, transformed) in source.iter().zip(transformed) {
         if source.id != transformed.id
             || source.name != transformed.name
+            || source.code != transformed.code
             || source.role != transformed.role
             || source.uncertainty != transformed.uncertainty
         {
             return Err(GcpRuntimeError::InvalidTransformationResult(
-                "identity, role or uncertainty changed",
+                "identity, code, role or uncertainty changed",
             ));
         }
     }
@@ -1682,11 +1683,16 @@ mod tests {
             north: CsvColumnSelector::Header("Nord".into()),
             height: CsvColumnSelector::Header("Höhe".into()),
             horizontal_stddev: None,
+            east_stddev: None,
+            north_stddev: None,
             height_stddev: None,
+            code: None,
             role: Some(CsvColumnSelector::Header("Rolle".into())),
             default_role: GcpRole::ControlXyz,
             default_uncertainty: GcpUncertainty {
                 horizontal_stddev_meters: 0.01,
+                east_stddev_meters: None,
+                north_stddev_meters: None,
                 height_stddev_meters: 0.02,
             },
         }

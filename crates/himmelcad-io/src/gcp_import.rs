@@ -1,6 +1,6 @@
 //! Bounded, cancellation-aware GCP CSV parsing and mapping preview.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -23,6 +23,16 @@ const READ_BUFFER_BYTES: usize = 256 * 1024;
 pub struct GcpCsvPreviewRow {
     pub source_line: u64,
     pub point: GcpPoint,
+    pub uncertainty_origin: GcpCsvUncertaintyOrigin,
+}
+
+/// Identifies whether each frozen one-sigma value came from the row or the import defaults.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GcpCsvUncertaintyOrigin {
+    pub east_used_default: bool,
+    pub north_used_default: bool,
+    pub height_used_default: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -406,7 +416,10 @@ struct ResolvedColumns {
     north: usize,
     height: usize,
     horizontal_stddev: Option<usize>,
+    east_stddev: Option<usize>,
+    north_stddev: Option<usize>,
     height_stddev: Option<usize>,
+    code: Option<usize>,
     role: Option<usize>,
 }
 
@@ -416,7 +429,7 @@ fn resolve_columns(
 ) -> Result<ResolvedColumns, GcpCsvImportError> {
     let resolve =
         |selector: &CsvColumnSelector| resolve_column(selector, header, mapping.has_header);
-    Ok(ResolvedColumns {
+    let columns = ResolvedColumns {
         name: resolve(&mapping.name)?,
         east: resolve(&mapping.east)?,
         north: resolve(&mapping.north)?,
@@ -426,9 +439,35 @@ fn resolve_columns(
             .as_ref()
             .map(resolve)
             .transpose()?,
+        east_stddev: mapping.east_stddev.as_ref().map(resolve).transpose()?,
+        north_stddev: mapping.north_stddev.as_ref().map(resolve).transpose()?,
         height_stddev: mapping.height_stddev.as_ref().map(resolve).transpose()?,
+        code: mapping.code.as_ref().map(resolve).transpose()?,
         role: mapping.role.as_ref().map(resolve).transpose()?,
-    })
+    };
+    let mut unique = BTreeSet::new();
+    for index in [
+        Some(columns.name),
+        Some(columns.east),
+        Some(columns.north),
+        Some(columns.height),
+        columns.horizontal_stddev,
+        columns.east_stddev,
+        columns.north_stddev,
+        columns.height_stddev,
+        columns.code,
+        columns.role,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if !unique.insert(index) {
+            return Err(GcpCsvImportError::InvalidMapping(
+                "one CSV column is mapped to multiple fields".into(),
+            ));
+        }
+    }
+    Ok(columns)
 }
 
 fn resolve_column(
@@ -442,7 +481,7 @@ fn resolve_column(
             let matches = header
                 .iter()
                 .enumerate()
-                .filter(|(_, value)| value.trim() == name.trim())
+                .filter(|(_, value)| value.trim().eq_ignore_ascii_case(name.trim()))
                 .map(|(index, _)| index)
                 .collect::<Vec<_>>();
             match matches.as_slice() {
@@ -473,21 +512,66 @@ fn map_record(
     let east = parse_number(record, columns.east, "east", mapping.decimal_separator)?;
     let north = parse_number(record, columns.north, "north", mapping.decimal_separator)?;
     let height = parse_number(record, columns.height, "height", mapping.decimal_separator)?;
-    let horizontal_stddev = parse_optional_number(
-        record,
-        columns.horizontal_stddev,
-        "horizontalStddev",
-        mapping.decimal_separator,
-    )?
-    .unwrap_or(mapping.default_uncertainty.horizontal_stddev_meters);
-    let height_stddev = parse_optional_number(
+    let default_horizontal = mapping.default_uncertainty.horizontal_stddev_meters;
+    let (horizontal_stddev, east_stddev, north_stddev, east_used_default, north_used_default) =
+        if columns.horizontal_stddev.is_some() {
+            let parsed = parse_optional_number(
+                record,
+                columns.horizontal_stddev,
+                "horizontalStddev",
+                mapping.decimal_separator,
+            )?;
+            let used_default = parsed.is_none();
+            (
+                parsed.unwrap_or(default_horizontal),
+                None,
+                None,
+                used_default,
+                used_default,
+            )
+        } else {
+            let default_east = mapping.default_uncertainty.east_stddev_meters();
+            let default_north = mapping.default_uncertainty.north_stddev_meters();
+            let east = parse_optional_number(
+                record,
+                columns.east_stddev,
+                "eastStddev",
+                mapping.decimal_separator,
+            )?;
+            let north = parse_optional_number(
+                record,
+                columns.north_stddev,
+                "northStddev",
+                mapping.decimal_separator,
+            )?;
+            (
+                default_horizontal,
+                columns
+                    .east_stddev
+                    .map(|_| east.unwrap_or(default_east))
+                    .or(mapping.default_uncertainty.east_stddev_meters),
+                columns
+                    .north_stddev
+                    .map(|_| north.unwrap_or(default_north))
+                    .or(mapping.default_uncertainty.north_stddev_meters),
+                east.is_none(),
+                north.is_none(),
+            )
+        };
+    let parsed_height_stddev = parse_optional_number(
         record,
         columns.height_stddev,
         "heightStddev",
         mapping.decimal_separator,
-    )?
-    .unwrap_or(mapping.default_uncertainty.height_stddev_meters);
-    if horizontal_stddev < 0.0 || height_stddev < 0.0 {
+    )?;
+    let height_used_default = parsed_height_stddev.is_none();
+    let height_stddev =
+        parsed_height_stddev.unwrap_or(mapping.default_uncertainty.height_stddev_meters);
+    if horizontal_stddev < 0.0
+        || east_stddev.is_some_and(|value| value < 0.0)
+        || north_stddev.is_some_and(|value| value < 0.0)
+        || height_stddev < 0.0
+    {
         return Err(row_error(
             record.source_line,
             "uncertainty",
@@ -508,11 +592,18 @@ fn map_record(
             })
         }
     })?;
+    let code = columns
+        .code
+        .and_then(|index| record.fields.get(index))
+        .map_or("", String::as_str)
+        .trim()
+        .to_owned();
     Ok(GcpCsvPreviewRow {
         source_line: record.source_line,
         point: GcpPoint {
             id: GcpPointId(name.clone()),
             name,
+            code,
             coordinate: GcpCoordinate {
                 east_meters: east,
                 north_meters: north,
@@ -520,9 +611,16 @@ fn map_record(
             },
             uncertainty: GcpUncertainty {
                 horizontal_stddev_meters: horizontal_stddev,
+                east_stddev_meters: east_stddev,
+                north_stddev_meters: north_stddev,
                 height_stddev_meters: height_stddev,
             },
             role,
+        },
+        uncertainty_origin: GcpCsvUncertaintyOrigin {
+            east_used_default,
+            north_used_default,
+            height_used_default,
         },
     })
 }
@@ -573,7 +671,10 @@ fn parse_optional_number(
     let Some(index) = index else {
         return Ok(None);
     };
-    if field(record, index, name)?.trim().is_empty() {
+    let Some(value) = record.fields.get(index) else {
+        return Ok(None);
+    };
+    if value.trim().is_empty() {
         Ok(None)
     } else {
         parse_number(record, index, name, decimal).map(Some)
@@ -659,11 +760,16 @@ mod tests {
             north: CsvColumnSelector::Header("Nord".into()),
             height: CsvColumnSelector::Header("Höhe".into()),
             horizontal_stddev: Some(CsvColumnSelector::Header("SigmaXY".into())),
+            east_stddev: None,
+            north_stddev: None,
             height_stddev: Some(CsvColumnSelector::Header("SigmaZ".into())),
+            code: None,
             role: Some(CsvColumnSelector::Header("Rolle".into())),
             default_role: GcpRole::ControlXyz,
             default_uncertainty: GcpUncertainty {
                 horizontal_stddev_meters: 0.01,
+                east_stddev_meters: None,
+                north_stddev_meters: None,
                 height_stddev_meters: 0.02,
             },
         }
@@ -684,6 +790,118 @@ mod tests {
         );
         assert!(preview.preview_truncated);
         assert!(preview.requires_crs_decision);
+        assert_eq!(
+            preview.preview_rows[0].uncertainty_origin,
+            GcpCsvUncertaintyOrigin {
+                east_used_default: false,
+                north_used_default: false,
+                height_used_default: false,
+            }
+        );
+    }
+
+    #[test]
+    fn mixed_axis_accuracy_code_and_missing_values_are_frozen_per_row() {
+        let file = CsvFixture::new(
+            "Name;E;N;H;dE;dN;dH;Description\nRTK;1,0;2,0;3,0;0,020;0,015;0,030;RTK fixed\nTS;4,0;5,0;6,0;0,005;0,006;0,008;Total station\nFallback;7,0;8,0;9,0;;;;\n",
+        );
+        let mut mapping = mapping();
+        mapping.east = CsvColumnSelector::Header("e".into());
+        mapping.north = CsvColumnSelector::Header("n".into());
+        mapping.height = CsvColumnSelector::Header("h".into());
+        mapping.horizontal_stddev = None;
+        mapping.east_stddev = Some(CsvColumnSelector::Header("DE".into()));
+        mapping.north_stddev = Some(CsvColumnSelector::Header("dn".into()));
+        mapping.height_stddev = Some(CsvColumnSelector::Header("Dh".into()));
+        mapping.code = Some(CsvColumnSelector::Header("description".into()));
+        mapping.role = None;
+        let result = import_gcp_csv_file(&file.0, mapping).expect("mixed import");
+
+        assert_eq!(result.points[0].code, "RTK fixed");
+        assert_eq!(result.points[1].code, "Total station");
+        assert_eq!(result.points[1].uncertainty.east_stddev_meters, Some(0.005));
+        assert_eq!(
+            result.points[1].uncertainty.north_stddev_meters,
+            Some(0.006)
+        );
+        assert_eq!(result.points[1].uncertainty.height_stddev_meters, 0.008);
+        assert_eq!(result.points[2].uncertainty.east_stddev_meters, Some(0.01));
+        assert_eq!(result.points[2].uncertainty.north_stddev_meters, Some(0.01));
+        assert_eq!(result.points[2].uncertainty.height_stddev_meters, 0.02);
+
+        let preview = preview_gcp_csv_file(&file.0, &result.mapping, 10).expect("preview");
+        assert_eq!(
+            preview.preview_rows[2].uncertainty_origin,
+            GcpCsvUncertaintyOrigin {
+                east_used_default: true,
+                north_used_default: true,
+                height_used_default: true,
+            }
+        );
+    }
+
+    #[test]
+    fn point_decimal_accuracy_columns_use_the_selected_decimal_separator() {
+        let file = CsvFixture::new(
+            "name,east,north,height,sH,sV,code\nP1,1.0,2.0,3.0,0.005,0.010,stone nail\nP2,4.0,5.0,6.0,,,paint mark\n",
+        );
+        let mapping = GcpCsvImportMapping {
+            delimiter: ',',
+            decimal_separator: CsvDecimalSeparator::Point,
+            has_header: true,
+            name: CsvColumnSelector::Header("NAME".into()),
+            east: CsvColumnSelector::Header("East".into()),
+            north: CsvColumnSelector::Header("North".into()),
+            height: CsvColumnSelector::Header("Height".into()),
+            horizontal_stddev: Some(CsvColumnSelector::Header("sh".into())),
+            east_stddev: None,
+            north_stddev: None,
+            height_stddev: Some(CsvColumnSelector::Header("sv".into())),
+            code: Some(CsvColumnSelector::Header("CODE".into())),
+            role: None,
+            default_role: GcpRole::ControlXyz,
+            default_uncertainty: GcpUncertainty {
+                horizontal_stddev_meters: 0.02,
+                east_stddev_meters: None,
+                north_stddev_meters: None,
+                height_stddev_meters: 0.03,
+            },
+        };
+        let preview = preview_gcp_csv_file(&file.0, &mapping, 10).expect("preview");
+        assert_eq!(
+            preview.preview_rows[0]
+                .point
+                .uncertainty
+                .horizontal_stddev_meters,
+            0.005
+        );
+        assert_eq!(
+            preview.preview_rows[0]
+                .point
+                .uncertainty
+                .height_stddev_meters,
+            0.01
+        );
+        assert_eq!(
+            preview.preview_rows[1]
+                .point
+                .uncertainty
+                .horizontal_stddev_meters,
+            0.02
+        );
+        assert_eq!(
+            preview.preview_rows[1]
+                .point
+                .uncertainty
+                .height_stddev_meters,
+            0.03
+        );
+        assert!(preview.preview_rows[1].uncertainty_origin.east_used_default);
+        assert!(
+            preview.preview_rows[1]
+                .uncertainty_origin
+                .height_used_default
+        );
     }
 
     #[test]

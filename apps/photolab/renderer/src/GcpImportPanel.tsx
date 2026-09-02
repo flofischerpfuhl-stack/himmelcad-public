@@ -53,7 +53,35 @@ import {
   buildGcpOperationQuery,
   isGcpOperationReady,
 } from './gcpImportDecision.js';
+import {
+  detectGcpColumns,
+  emptyGcpColumnSelection,
+  uncertaintyOriginLabel,
+  type GcpColumnSelection,
+  type GcpUncertaintyOrigin,
+} from './gcpCsvMapping.js';
 import { containsArea } from './importFreeze.js';
+
+type GcpColumnSelector = GcpCsvImportMapping['name'];
+type ExtendedGcpCsvImportMapping = GcpCsvImportMapping & {
+  eastStddev?: GcpColumnSelector;
+  northStddev?: GcpColumnSelector;
+  code?: GcpColumnSelector;
+};
+type PreviewPoint = GcpCsvPreview['previewRows'][number]['point'] & {
+  code?: string;
+  uncertainty: GcpCsvPreview['previewRows'][number]['point']['uncertainty'] & {
+    eastStddevMeters?: number;
+    northStddevMeters?: number;
+  };
+};
+type ExtendedGcpCsvPreview = Omit<GcpCsvPreview, 'previewRows'> & {
+  previewRows: Array<{
+    sourceLine: number;
+    point: PreviewPoint;
+    uncertaintyOrigin: GcpUncertaintyOrigin;
+  }>;
+};
 
 export interface GcpImportPanelProps {
   path: string | null;
@@ -188,11 +216,11 @@ export function GcpImportPanel({
   const [delimiter, setDelimiter] = useState(';');
   const [decimalSeparator, setDecimalSeparator] = useState<'point' | 'comma'>('comma');
   const [hasHeader, setHasHeader] = useState(true);
-  const [columns, setColumns] = useState({ name: '0', east: '1', north: '2', height: '3' });
+  const [columns, setColumns] = useState<GcpColumnSelection>(emptyGcpColumnSelection);
   const [role, setRole] = useState<GcpRole>('controlXyz');
   const [horizontalStddev, setHorizontalStddev] = useState(0.02);
   const [heightStddev, setHeightStddev] = useState(0.03);
-  const [preview, setPreview] = useState<GcpCsvPreview | null>(null);
+  const [preview, setPreview] = useState<ExtendedGcpCsvPreview | null>(null);
   const [mode, setMode] = useState<TransformMode | null>(null);
   const [doVertical, setDoVertical] = useState<YesNo | null>(null);
   const [doHorizontal, setDoHorizontal] = useState<YesNo | null>(null);
@@ -219,6 +247,7 @@ export function GcpImportPanel({
   const preferencesHydrated = useRef(false);
   const workflowMigrationStarted = useRef(false);
   const lastPreviewKey = useRef<string | null>(null);
+  const autoDetectedHeaderKey = useRef<string | null>(null);
 
   /** True only when a real horizontal CRS change is requested. */
   const transformCoordinates =
@@ -236,7 +265,7 @@ export function GcpImportPanel({
         setDelimiter(defaults.delimiter);
         setDecimalSeparator(defaults.decimalSeparator);
         setHasHeader(defaults.hasHeader);
-        setColumns(defaults.columns);
+        setColumns({ ...emptyGcpColumnSelection(), ...defaults.columns });
         setRole(defaults.role);
         setHorizontalStddev(defaults.horizontalStddev);
         setHeightStddev(defaults.heightStddev);
@@ -286,7 +315,7 @@ export function GcpImportPanel({
     }
   }, [path, phase]);
 
-  const mapping = useMemo<GcpCsvImportMapping>(
+  const mapping = useMemo<ExtendedGcpCsvImportMapping>(
     () => ({
       delimiter: delimiter.slice(0, 1) || ';',
       decimalSeparator,
@@ -295,6 +324,21 @@ export function GcpImportPanel({
       east: selector(columns.east, hasHeader, preview?.header),
       north: selector(columns.north, hasHeader, preview?.header),
       height: selector(columns.height, hasHeader, preview?.header),
+      ...(columns.horizontalStddev
+        ? {
+            horizontalStddev: selector(columns.horizontalStddev, hasHeader, preview?.header),
+          }
+        : {}),
+      ...(columns.eastStddev
+        ? { eastStddev: selector(columns.eastStddev, hasHeader, preview?.header) }
+        : {}),
+      ...(columns.northStddev
+        ? { northStddev: selector(columns.northStddev, hasHeader, preview?.header) }
+        : {}),
+      ...(columns.heightStddev
+        ? { heightStddev: selector(columns.heightStddev, hasHeader, preview?.header) }
+        : {}),
+      ...(columns.code ? { code: selector(columns.code, hasHeader, preview?.header) } : {}),
       defaultRole: role,
       defaultUncertainty: {
         horizontalStddevMeters: horizontalStddev,
@@ -335,7 +379,7 @@ export function GcpImportPanel({
         .then((nextPreview) => {
           if (cancelled) return;
           lastPreviewKey.current = mappingKey;
-          setPreview(nextPreview);
+          setPreview(nextPreview as ExtendedGcpCsvPreview);
           if (nextPreview.errors.length === 0) {
             void window.himmelcad?.preferences.gcpCsv
               .save({
@@ -367,6 +411,21 @@ export function GcpImportPanel({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mappingKey, path, phase]);
+
+  useEffect(() => {
+    if (!hasHeader) {
+      autoDetectedHeaderKey.current = null;
+      return;
+    }
+    if (!preview?.header.length) return;
+    const key = JSON.stringify([path, delimiter, preview.header]);
+    if (autoDetectedHeaderKey.current === key) return;
+    autoDetectedHeaderKey.current = key;
+    const detected = detectGcpColumns(preview.header);
+    if (Object.keys(detected).length > 0) {
+      setColumns((current) => ({ ...current, ...detected }));
+    }
+  }, [delimiter, hasHeader, path, preview?.header]);
 
   const query = useMemo(
     () =>
@@ -639,7 +698,7 @@ export function GcpImportPanel({
     setDelimiter(workflow.delimiter);
     setDecimalSeparator(workflow.decimalSeparator);
     setHasHeader(workflow.hasHeader);
-    setColumns(workflow.columns);
+    setColumns({ ...emptyGcpColumnSelection(), ...workflow.columns });
     setRole(workflow.role as typeof role);
     setHorizontalStddev(workflow.horizontalStddev);
     setHeightStddev(workflow.heightStddev);
@@ -783,7 +842,7 @@ export function GcpImportPanel({
         label: hasHeader ? header : `Col ${index}`,
       }));
     }
-    return [0, 1, 2, 3, 4, 5, 6, 7].map((index) => ({
+    return Array.from({ length: 12 }, (_, index) => ({
       id: String(index),
       label: `Col ${index}`,
     }));
@@ -927,7 +986,7 @@ export function GcpImportPanel({
             disabled={locked}
             onChange={(id) => {
               setHasHeader(id === 'yes');
-              if (id === 'no') setColumns({ name: '0', east: '1', north: '2', height: '3' });
+              if (id === 'no') setColumns(emptyGcpColumnSelection());
             }}
             options={HEADER_OPTIONS}
           />
@@ -941,6 +1000,34 @@ export function GcpImportPanel({
               options={columnOptions}
             />
           ))}
+          {(
+            [
+              ['horizontalStddev', 'σ horizontal column'],
+              ['eastStddev', 'σ east column'],
+              ['northStddev', 'σ north column'],
+              ['heightStddev', 'σ vertical column'],
+              ['code', 'Code column'],
+            ] as const
+          ).map(([key, label]) => (
+            <ChipGroup
+              key={key}
+              label={label}
+              value={columns[key]}
+              disabled={locked}
+              onChange={(id) =>
+                setColumns((current) => ({
+                  ...current,
+                  [key]: id,
+                  ...(key === 'horizontalStddev' && id
+                    ? { eastStddev: '', northStddev: '' }
+                    : (key === 'eastStddev' || key === 'northStddev') && id
+                      ? { horizontalStddev: '' }
+                      : {}),
+                }))
+              }
+              options={[{ id: '', label: 'Not mapped' }, ...columnOptions]}
+            />
+          ))}
           <ChipGroup
             label="Default role"
             value={role}
@@ -949,14 +1036,14 @@ export function GcpImportPanel({
             options={ROLE_OPTIONS}
           />
           <ChipGroup
-            label="σ horizontal"
+            label="Default σ horizontal"
             value={String(horizontalStddev)}
             disabled={locked}
             onChange={(id) => setHorizontalStddev(Number(id))}
             options={ensureOption(STDDEV_H_OPTIONS, horizontalStddev)}
           />
           <ChipGroup
-            label="σ height"
+            label="Default σ vertical"
             value={String(heightStddev)}
             disabled={locked}
             onChange={(id) => setHeightStddev(Number(id))}
@@ -982,6 +1069,11 @@ export function GcpImportPanel({
                       <th>Easting</th>
                       <th>Northing</th>
                       <th>Height</th>
+                      <th>Code</th>
+                      <th>σ east</th>
+                      <th>σ north</th>
+                      <th>σ vertical</th>
+                      <th>Accuracy source</th>
                       <th>Role</th>
                     </tr>
                   </thead>
@@ -992,6 +1084,21 @@ export function GcpImportPanel({
                         <td>{row.point.coordinate.eastMeters.toFixed(3)}</td>
                         <td>{row.point.coordinate.northMeters.toFixed(3)}</td>
                         <td>{row.point.coordinate.heightMeters.toFixed(3)}</td>
+                        <td>{row.point.code || '—'}</td>
+                        <td>
+                          {formatSigmaMeters(
+                            row.point.uncertainty.eastStddevMeters ??
+                              row.point.uncertainty.horizontalStddevMeters,
+                          )}
+                        </td>
+                        <td>
+                          {formatSigmaMeters(
+                            row.point.uncertainty.northStddevMeters ??
+                              row.point.uncertainty.horizontalStddevMeters,
+                          )}
+                        </td>
+                        <td>{formatSigmaMeters(row.point.uncertainty.heightStddevMeters)}</td>
+                        <td>{uncertaintyOriginLabel(row.uncertaintyOrigin)}</td>
                         <td>{roleLabel(row.point.role)}</td>
                       </tr>
                     ))}
@@ -1815,6 +1922,11 @@ function ensureOption(
   const id = String(value);
   if (options.some((option) => option.id === id)) return options;
   return [...options, { id, label: `${value} m` }];
+}
+
+function formatSigmaMeters(value: number): string {
+  const digits = value < 0.01 ? 4 : 3;
+  return `${value.toFixed(digits)} m`;
 }
 
 function selector(value: string, hasHeader: boolean, headers: readonly string[] | undefined) {

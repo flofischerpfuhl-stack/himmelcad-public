@@ -2404,9 +2404,13 @@ fn accumulate_survey_prior(
         survey.coordinate.north_meters,
         survey.coordinate.height_meters,
     ];
-    let sigma_xy = survey
+    let sigma_east = survey
         .uncertainty
-        .horizontal_stddev_meters
+        .east_stddev_meters()
+        .max(MIN_SIGMA_METERS);
+    let sigma_north = survey
+        .uncertainty
+        .north_stddev_meters()
         .max(MIN_SIGMA_METERS);
     let sigma_z = survey
         .uncertainty
@@ -2416,7 +2420,7 @@ fn accumulate_survey_prior(
     let normalized = {
         let mut sum = 0.0;
         if survey.role.uses_xy() {
-            sum += (residual[0] / sigma_xy).powi(2) + (residual[1] / sigma_xy).powi(2);
+            sum += (residual[0] / sigma_east).powi(2) + (residual[1] / sigma_north).powi(2);
         }
         if survey.role.uses_z() {
             sum += (residual[2] / sigma_z).powi(2);
@@ -2428,7 +2432,7 @@ fn accumulate_survey_prior(
         if (axis < 2 && !survey.role.uses_xy()) || (axis == 2 && !survey.role.uses_z()) {
             continue;
         }
-        let sigma = if axis < 2 { sigma_xy } else { sigma_z };
+        let sigma = [sigma_east, sigma_north, sigma_z][axis];
         let weight = robust / sigma.powi(2);
         normal[axis][axis] += weight;
         gradient[axis] += weight * residual[axis];
@@ -2479,7 +2483,11 @@ fn point_objective(
                     ),
                     survey
                         .uncertainty
-                        .horizontal_stddev_meters
+                        .east_stddev_meters()
+                        .max(MIN_SIGMA_METERS),
+                    survey
+                        .uncertainty
+                        .north_stddev_meters()
                         .max(MIN_SIGMA_METERS),
                     survey
                         .uncertainty
@@ -3225,7 +3233,12 @@ fn initializer_objective(
                 point
                     .definition
                     .uncertainty
-                    .horizontal_stddev_meters
+                    .east_stddev_meters()
+                    .max(MIN_SIGMA_METERS),
+                point
+                    .definition
+                    .uncertainty
+                    .north_stddev_meters()
                     .max(MIN_SIGMA_METERS),
                 point
                     .definition
@@ -3436,17 +3449,23 @@ fn normal_equations(
             point.definition.coordinate.height_meters,
         ];
         let residual = sub3(mapped, target);
-        let sigma_xy = point
+        let sigma_east = point
             .definition
             .uncertainty
-            .horizontal_stddev_meters
+            .east_stddev_meters()
+            .max(MIN_SIGMA_METERS);
+        let sigma_north = point
+            .definition
+            .uncertainty
+            .north_stddev_meters()
             .max(MIN_SIGMA_METERS);
         let sigma_z = point
             .definition
             .uncertainty
             .height_stddev_meters
             .max(MIN_SIGMA_METERS);
-        let normalized_norm = masked_normalized_norm(point, residual, sigma_xy, sigma_z);
+        let normalized_norm =
+            masked_normalized_norm(point, residual, sigma_east, sigma_north, sigma_z);
         let robust = robust_weight(survey_loss(loss), normalized_norm);
         for axis in 0..3 {
             if (axis < 2 && !point.definition.role.uses_xy())
@@ -3454,7 +3473,7 @@ fn normal_equations(
             {
                 continue;
             }
-            let sigma = if axis < 2 { sigma_xy } else { sigma_z };
+            let sigma = [sigma_east, sigma_north, sigma_z][axis];
             let weight = robust / (sigma * sigma);
             let mut jacobian = [0.0; 7];
             jacobian[axis] = 1.0;
@@ -3503,7 +3522,12 @@ fn objective(
                 point
                     .definition
                     .uncertainty
-                    .horizontal_stddev_meters
+                    .east_stddev_meters()
+                    .max(MIN_SIGMA_METERS),
+                point
+                    .definition
+                    .uncertainty
+                    .north_stddev_meters()
                     .max(MIN_SIGMA_METERS),
                 point
                     .definition
@@ -3519,12 +3543,13 @@ fn objective(
 fn masked_normalized_norm(
     point: &TriangulatedPoint,
     residual: [f64; 3],
-    sigma_xy: f64,
+    sigma_east: f64,
+    sigma_north: f64,
     sigma_z: f64,
 ) -> f64 {
     let mut sum = 0.0;
     if point.definition.role.uses_xy() {
-        sum += (residual[0] / sigma_xy).powi(2) + (residual[1] / sigma_xy).powi(2);
+        sum += (residual[0] / sigma_east).powi(2) + (residual[1] / sigma_north).powi(2);
     }
     if point.definition.role.uses_z() {
         sum += (residual[2] / sigma_z).powi(2);
@@ -3678,11 +3703,12 @@ where
                     && coordinate.y_pixels < f64::from(camera.height_pixels)
                 {
                     let jacobian = numeric_point_jacobian(camera, world, coordinate);
-                    let horizontal_variance = point.uncertainty.horizontal_stddev_meters.powi(2);
+                    let east_variance = point.uncertainty.east_stddev_meters().powi(2);
+                    let north_variance = point.uncertainty.north_stddev_meters().powi(2);
                     let vertical_variance = point.uncertainty.height_stddev_meters.powi(2);
                     let covariance_world = [
-                        [horizontal_variance, 0.0, 0.0],
-                        [0.0, horizontal_variance, 0.0],
+                        [east_variance, 0.0, 0.0],
+                        [0.0, north_variance, 0.0],
                         [0.0, 0.0, vertical_variance],
                     ];
                     let covariance_pixels = propagate_point_covariance(jacobian, covariance_world);
@@ -4086,6 +4112,7 @@ mod tests {
             GcpPoint {
                 id: GcpPointId(id.into()),
                 name: id.into(),
+                code: String::new(),
                 coordinate: GcpCoordinate {
                     east_meters: world[0],
                     north_meters: world[1],
@@ -4093,6 +4120,8 @@ mod tests {
                 },
                 uncertainty: GcpUncertainty {
                     horizontal_stddev_meters: 0.01,
+                    east_stddev_meters: None,
+                    north_stddev_meters: None,
                     height_stddev_meters: 0.02,
                 },
                 role,
@@ -4143,6 +4172,7 @@ mod tests {
         GcpPoint {
             id: GcpPointId(id.into()),
             name: id.into(),
+            code: String::new(),
             coordinate: GcpCoordinate {
                 east_meters: coordinate[0],
                 north_meters: coordinate[1],
@@ -4150,10 +4180,44 @@ mod tests {
             },
             uncertainty: GcpUncertainty {
                 horizontal_stddev_meters: 0.01,
+                east_stddev_meters: None,
+                north_stddev_meters: None,
                 height_stddev_meters: 0.02,
             },
             role,
         }
+    }
+
+    #[test]
+    fn mixed_point_accuracy_uses_inverse_variance_weights() {
+        let make_point = |id: &str, east_sigma: f64| {
+            let mut definition = identity_frame_point(id, [0.0, 0.0, 0.0], GcpRole::ControlXy);
+            definition.uncertainty.horizontal_stddev_meters = 0.02;
+            definition.uncertainty.east_stddev_meters = Some(east_sigma);
+            TriangulatedPoint {
+                definition,
+                participation: OptimizationPointParticipation::Control,
+                reconstruction: [0.0, 0.0, 0.0],
+                ray_rms: 0.0,
+            }
+        };
+        let total_station = make_point("TS", 0.005);
+        let rtk = make_point("RTK", 0.02);
+        let active = [true, false, false, false, false, false, false];
+        let (total_station_normal, _) = normal_equations(
+            &[&total_station],
+            GcpSimilarityTransform::identity(),
+            GcpRobustLoss::default(),
+            active,
+        );
+        let (rtk_normal, _) = normal_equations(
+            &[&rtk],
+            GcpSimilarityTransform::identity(),
+            GcpRobustLoss::default(),
+            active,
+        );
+
+        assert!((total_station_normal[0][0] / rtk_normal[0][0] - 16.0).abs() < 1.0e-12);
     }
 
     fn identity_snapshot(

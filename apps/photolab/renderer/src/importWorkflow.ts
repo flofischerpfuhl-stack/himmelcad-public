@@ -4,6 +4,7 @@
  */
 
 import type { LocalGridSelection } from './ImageImportPanel.js';
+import type { GcpColumnSelection } from './gcpCsvMapping.js';
 
 export type TransformMode = 'none' | 'separate' | 'combined';
 export type YesNo = 'yes' | 'no';
@@ -101,7 +102,8 @@ export interface GcpImportWorkflow {
   delimiter: string;
   decimalSeparator: 'point' | 'comma';
   hasHeader: boolean;
-  columns: { name: string; east: string; north: string; height: string };
+  columns: Pick<GcpColumnSelection, 'name' | 'east' | 'north' | 'height'> &
+    Partial<Omit<GcpColumnSelection, 'name' | 'east' | 'north' | 'height'>>;
   role: string;
   horizontalStddev: number;
   heightStddev: number;
