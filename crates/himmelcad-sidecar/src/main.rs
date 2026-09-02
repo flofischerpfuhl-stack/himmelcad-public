@@ -6,6 +6,7 @@
 //! state directly.
 
 #![forbid(unsafe_code)]
+#![cfg_attr(test, recursion_limit = "256")]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader as StdBufReader, Read, Write};
@@ -1284,6 +1285,9 @@ async fn handle(
             move |params| projects.alignment_merge_preflight(params),
         )
         .await;
+    }
+    if req.method == "photolab.report.surveyData" {
+        return rpc_blocking(req.id, move || projects.processing_report_survey_data()).await;
     }
     if req.method.starts_with("photolab.project.") {
         return handle_project_rpc(req, projects, &jobs).await;

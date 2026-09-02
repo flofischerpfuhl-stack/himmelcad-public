@@ -22,6 +22,82 @@ export interface ProcessingReportProduct {
   processingSetId?: string;
   gcpOptimizationEntityId?: string;
   gcpOptimizationSnapshotSha256?: string;
+  imageMaskScopeSha256?: string;
+  toolVersions?: Readonly<Record<string, string>>;
+}
+
+export interface ProcessingReportSurveyData {
+  schemaVersion: number;
+  crs: unknown;
+  alignments: readonly ProcessingReportAlignmentSurveyData[];
+  jobs: readonly ProcessingReportJobConfiguration[];
+}
+
+export interface ProcessingReportAlignmentSurveyData {
+  entityId: string;
+  name: string;
+  kind: string;
+  imageCount: number;
+  gsdMetersPerPixel: number | null;
+  gsdMethod: string;
+  footprintBbox: readonly [number, number, number, number] | null;
+  footprintBboxAreaSquareMeters: number | null;
+  calibrationGroups: readonly ProcessingReportCalibrationGroup[];
+  gcpResiduals: readonly ProcessingReportGcpResidual[];
+  gcpOptimizationEntityId: string | null;
+  gcpOptimizationSnapshotSha256: string | null;
+}
+
+interface ReportIntrinsics {
+  f: number | null;
+  cx: number | null;
+  cy: number | null;
+  k1: number | null;
+  k2: number | null;
+  k3: number | null;
+  p1: number | null;
+  p2: number | null;
+}
+
+interface ReportIntrinsicsFlags {
+  f: boolean;
+  cx: boolean;
+  cy: boolean;
+  k1: boolean;
+  k2: boolean;
+  k3: boolean;
+  p1: boolean;
+  p2: boolean;
+}
+
+export interface ProcessingReportCalibrationGroup {
+  groupId: string;
+  imageCount: number;
+  seed: ReportIntrinsics;
+  solved: ReportIntrinsics;
+  refined: ReportIntrinsicsFlags;
+  fixed: boolean;
+  sigmas: ReportIntrinsics | null;
+  correlation: readonly (readonly number[])[] | null;
+  uncertaintyNote: string;
+}
+
+export interface ProcessingReportGcpResidual {
+  pointId: string;
+  pointName: string;
+  role: string;
+  position: readonly [number, number];
+  vectorMeters: readonly [number | null, number | null];
+  heightMeters: number | null;
+}
+
+export interface ProcessingReportJobConfiguration {
+  jobId: string;
+  kind: string;
+  method: string | null;
+  profileName: string | null;
+  resolvedPresetName: string | null;
+  parameters: unknown | null;
 }
 
 export interface ProcessingReportInput {
@@ -40,12 +116,15 @@ export interface ProcessingReportInput {
   alignmentMerges: readonly MergedAlignmentRunRecord[];
   alignmentRuns: readonly AlignmentMergeCandidateRecord[];
   gcpOptimizations: readonly PublishedGcpOptimizationEntry[];
-  generatedAt?: Date;
+  surveyData: ProcessingReportSurveyData | null;
+  surveyDataUnavailableReason?: string | undefined;
+  generatedAt: Date;
+  generatedAtSource: string;
 }
 
 /** Builds a self-contained, network-inert processing report suitable for HTML and PDF export. */
 export function buildProcessingReportHtml(input: ProcessingReportInput): string {
-  const generated = (input.generatedAt ?? new Date()).toISOString();
+  const generated = input.generatedAt.toISOString();
   const completedJobs = input.jobs.filter((job) => job.state.kind === 'completed').length;
   const interruptedJobs = input.jobs.filter(
     (job) => job.state.kind === 'failed' && job.state.code.startsWith('interrupted'),
@@ -65,8 +144,14 @@ export function buildProcessingReportHtml(input: ProcessingReportInput): string 
 <style>${REPORT_CSS}</style>
 </head>
 <body>
-<header><div><p class="eyebrow">Himmel:CAD PhotoLab</p><h1>${escapeHtml(input.project.name)}</h1><p>Processing report · generated ${escapeHtml(generated)}</p><p><code>${escapeHtml(input.project.id)}</code> · project format ${input.project.formatVersion}</p></div><div class="summary"><strong>${input.jobs.length}</strong> runs · <strong>${completedJobs}</strong> completed · <strong>${interruptedJobs}</strong> interrupted · <strong>${failedJobs}</strong> failed<br><strong>${formatDuration(totalRuntimeMs)}</strong> recorded runtime · <strong>${input.products.length}</strong> products</div></header>
+<header><div><p class="eyebrow">Himmel:CAD PhotoLab</p><h1>${escapeHtml(input.project.name)}</h1><p>Processing report · generated ${escapeHtml(generated)}</p><p>Timestamp source: ${escapeHtml(input.generatedAtSource)}</p><p><code>${escapeHtml(input.project.id)}</code> · project format ${input.project.formatVersion}</p></div><div class="summary"><strong>${input.jobs.length}</strong> runs · <strong>${completedJobs}</strong> completed · <strong>${interruptedJobs}</strong> interrupted · <strong>${failedJobs}</strong> failed<br><strong>${formatDuration(totalRuntimeMs)}</strong> recorded runtime · <strong>${input.products.length}</strong> products</div></header>
 <main>
+${surveyOverviewSection(input.surveyData, input.surveyDataUnavailableReason)}
+${cameraCalibrationSection(input.surveyData, input.surveyDataUnavailableReason)}
+${processingParametersSection(input.surveyData, input.surveyDataUnavailableReason)}
+${gcpAccuracyMapSection(input.surveyData, input.surveyDataUnavailableReason)}
+${mergeEvidenceSection(input.alignmentMerges)}
+<h2 class="annex">Audit annex</h2>
 ${hardwareSection(input.hardware)}
 ${processingScopeSection(input.processingSets)}
 ${alignmentLineageSection(input.captureGroups, input.calibrationGroups, input.alignmentRuns, input.gcpOptimizations, input.alignmentMerges)}
@@ -77,6 +162,162 @@ ${accuracySection(input.accuracy, input.gcpOptimizations, input.processingSets, 
 <footer>Himmel:CAD PhotoLab · reproducible photogrammetry processing record</footer>
 </body>
 </html>`;
+}
+
+function surveyUnavailable(reason?: string): string {
+  return `<p class="empty">${escapeHtml(reason ?? 'Survey data unavailable.')}</p>`;
+}
+
+function surveyOverviewSection(
+  survey: ProcessingReportSurveyData | null,
+  unavailableReason?: string,
+): string {
+  if (!survey) return section('Survey overview', surveyUnavailable(unavailableReason));
+  const crs = humanReadableValue(survey.crs);
+  const rows = [...survey.alignments]
+    .sort((left, right) => left.entityId.localeCompare(right.entityId, 'en-US'))
+    .map(
+      (alignment) =>
+        `<tr><td><strong>${escapeHtml(alignment.name)}</strong><small>${escapeHtml(alignment.entityId)} · ${escapeHtml(humanize(alignment.kind))}</small></td><td>${formatInteger(alignment.imageCount)}</td><td>${formatMetric(alignment.gsdMetersPerPixel ?? undefined, 'm/px')}</td><td>${formatArea(alignment.footprintBboxAreaSquareMeters)}</td><td>${alignment.footprintBbox ? alignment.footprintBbox.map((value) => formatNumber(value, 3)).join(', ') : '—'}</td><td>${escapeHtml(crs)}</td></tr>`,
+    )
+    .join('');
+  const method = survey.alignments.find((alignment) => alignment.gsdMethod)?.gsdMethod;
+  return section(
+    'Survey overview',
+    `${method ? `<p class="note"><strong>GSD method:</strong> ${escapeHtml(method)}</p>` : ''}${rows ? `<table><thead><tr><th>Alignment</th><th>Images</th><th>Mean GSD</th><th>Footprint bbox area</th><th>Footprint bbox (E min, N min, E max, N max)</th><th>CRS</th></tr></thead><tbody>${rows}</tbody></table>` : '<p class="empty">No published alignments were recorded.</p>'}`,
+  );
+}
+
+function cameraCalibrationSection(
+  survey: ProcessingReportSurveyData | null,
+  unavailableReason?: string,
+): string {
+  if (!survey) return section('Camera calibration per group', surveyUnavailable(unavailableReason));
+  const parameterNames = ['f', 'cx', 'cy', 'k1', 'k2', 'k3', 'p1', 'p2'] as const;
+  const rows = [...survey.alignments]
+    .sort((left, right) => left.entityId.localeCompare(right.entityId, 'en-US'))
+    .flatMap((alignment) =>
+      [...alignment.calibrationGroups]
+        .sort((left, right) => left.groupId.localeCompare(right.groupId, 'en-US'))
+        .map((group) => {
+          const values = parameterNames
+            .map((name) => {
+              const seed = group.seed[name];
+              const solved = group.solved[name];
+              const sigma = group.sigmas?.[name];
+              const movement = `${formatNumber(seed)} → ${formatNumber(solved)}`;
+              const flag = group.fixed || !group.refined[name] ? 'fixed' : 'refined';
+              return `<td>${movement}<small>${flag}${sigma == null ? '' : ` · σ ${formatNumber(sigma)}`}</small></td>`;
+            })
+            .join('');
+          const correlation = group.correlation
+            ? stableJson(group.correlation)
+            : `Not available · ${group.uncertaintyNote}`;
+          return `<tr><td><strong>${escapeHtml(group.groupId)}</strong><small>${escapeHtml(alignment.name)} · ${formatInteger(group.imageCount)} images</small></td>${values}<td>${escapeHtml(correlation)}</td></tr>`;
+        }),
+    )
+    .join('');
+  return section(
+    'Camera calibration per group',
+    rows
+      ? `<p class="note">Values are seed → solved. Parameters are marked refined only when the converged GCP snapshot records them as effective.</p><table><thead><tr><th>Group</th>${parameterNames.map((name) => `<th>${name}</th>`).join('')}<th>Sigmas / correlation</th></tr></thead><tbody>${rows}</tbody></table>`
+      : '<p class="empty">No frozen calibration groups were recorded.</p>',
+  );
+}
+
+function processingParametersSection(
+  survey: ProcessingReportSurveyData | null,
+  unavailableReason?: string,
+): string {
+  if (!survey) return section('Processing parameters', surveyUnavailable(unavailableReason));
+  const rows = [...survey.jobs]
+    .sort((left, right) => left.jobId.localeCompare(right.jobId, 'en-US'))
+    .map((job) => {
+      const knobs = flattenParameters(job.parameters)
+        .map(([name, value]) => `<code>${escapeHtml(name)} = ${escapeHtml(value)}</code>`)
+        .join('');
+      return `<tr><td><strong>${escapeHtml(humanize(job.kind))}</strong><small>${escapeHtml(job.jobId)}</small></td><td>${escapeHtml(job.resolvedPresetName ?? 'No named preset recorded')}</td><td>${escapeHtml(job.profileName ? humanize(job.profileName) : 'No profile name recorded')}</td><td>${escapeHtml(job.method ?? 'Legacy job; method unavailable')}</td><td>${knobs || 'Frozen parameters unavailable'}</td></tr>`;
+    })
+    .join('');
+  return section(
+    'Processing parameters',
+    rows
+      ? `<table><thead><tr><th>Job</th><th>Resolved preset</th><th>Profile</th><th>Command</th><th>Frozen knobs</th></tr></thead><tbody>${rows}</tbody></table>`
+      : '<p class="empty">No frozen job configurations were recorded.</p>',
+  );
+}
+
+function gcpAccuracyMapSection(
+  survey: ProcessingReportSurveyData | null,
+  unavailableReason?: string,
+): string {
+  if (!survey) return section('GCP accuracy', surveyUnavailable(unavailableReason));
+  const residuals = survey.alignments.flatMap((alignment) =>
+    alignment.gcpResiduals.map((residual) => ({ alignment, residual })),
+  );
+  if (residuals.length === 0) {
+    return section(
+      'GCP accuracy',
+      '<p class="empty">No residual vectors from a converged GCP optimization were recorded.</p>',
+    );
+  }
+  return section('GCP accuracy', residualMapSvg(residuals));
+}
+
+function residualMapSvg(
+  entries: readonly {
+    alignment: ProcessingReportAlignmentSurveyData;
+    residual: ProcessingReportGcpResidual;
+  }[],
+): string {
+  const width = 760;
+  const height = 320;
+  const margin = 34;
+  const east = entries.map(({ residual }) => residual.position[0]);
+  const north = entries.map(({ residual }) => residual.position[1]);
+  const minE = Math.min(...east);
+  const maxE = Math.max(...east);
+  const minN = Math.min(...north);
+  const maxN = Math.max(...north);
+  const spanE = Math.max(maxE - minE, 1);
+  const spanN = Math.max(maxN - minN, 1);
+  const positionScale = Math.min((width - margin * 2) / spanE, (height - margin * 2) / spanN);
+  const magnitudes = entries.map(({ residual }) =>
+    Math.hypot(residual.vectorMeters[0] ?? 0, residual.vectorMeters[1] ?? 0),
+  );
+  const maximumResidual = Math.max(...magnitudes, 0.001);
+  const residualMetersPerPixel = maximumResidual / 42;
+  const scaleBarMeters = niceScale(maximumResidual);
+  const marks = [...entries]
+    .sort((left, right) => left.residual.pointId.localeCompare(right.residual.pointId, 'en-US'))
+    .map(({ alignment, residual }) => {
+      const x = margin + (residual.position[0] - minE) * positionScale;
+      const y = height - margin - (residual.position[1] - minN) * positionScale;
+      const dx = (residual.vectorMeters[0] ?? 0) / residualMetersPerPixel;
+      const dy = -(residual.vectorMeters[1] ?? 0) / residualMetersPerPixel;
+      const checkpoint = residual.role.startsWith('checkpoint');
+      const color = checkpoint ? 'var(--report-check)' : 'var(--report-control)';
+      return `<g><title>${escapeHtml(`${residual.pointName} · ${alignment.name}`)}</title><circle cx="${formatNumber(x, 3)}" cy="${formatNumber(y, 3)}" r="3.5" fill="${color}"/><line x1="${formatNumber(x, 3)}" y1="${formatNumber(y, 3)}" x2="${formatNumber(x + dx, 3)}" y2="${formatNumber(y + dy, 3)}" stroke="${color}" stroke-width="2" marker-end="url(#arrow)"/><text x="${formatNumber(x + 5, 3)}" y="${formatNumber(y - 5, 3)}">${escapeHtml(residual.pointName)}</text></g>`;
+    })
+    .join('');
+  const barPixels = scaleBarMeters / residualMetersPerPixel;
+  return `<p class="note">Map positions use project East/North coordinates. Residual vectors are enlarged independently of position scale; the vector scale bar represents ${formatMetric(scaleBarMeters)}.</p><svg class="residual-map" viewBox="0 0 ${width} ${height}" role="img" aria-label="GCP residual vector map"><defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/></marker></defs><rect x="0" y="0" width="${width}" height="${height}" fill="var(--report-map-bg)"/>${marks}<g class="scale"><line x1="${margin}" y1="${height - 12}" x2="${formatNumber(margin + barPixels, 3)}" y2="${height - 12}"/><text x="${margin}" y="${height - 17}">${formatMetric(scaleBarMeters)} residual</text></g><g class="legend"><circle cx="${width - 155}" cy="18" r="4" fill="var(--report-control)"/><text x="${width - 146}" y="21">Control</text><circle cx="${width - 82}" cy="18" r="4" fill="var(--report-check)"/><text x="${width - 73}" y="21">Check</text></g></svg>`;
+}
+
+function mergeEvidenceSection(merges: readonly MergedAlignmentRunRecord[]): string {
+  const rows = [...merges]
+    .sort((left, right) => left.entityId.localeCompare(right.entityId, 'en-US'))
+    .map(
+      (merge) =>
+        `<tr><td><strong>${escapeHtml(merge.name)}</strong><small>${escapeHtml(merge.entityId)}</small></td><td>${escapeHtml(merge.mergeProfile?.name ?? 'Legacy default')}</td><td>${escapeHtml(merge.mergeProfile ? stableJson(merge.mergeProfile.overrides) : 'Not recorded')}</td><td>${merge.connections.length}${mergeConnectionList(merge)}</td></tr>`,
+    )
+    .join('');
+  return section(
+    'Merge evidence',
+    rows
+      ? `<table><thead><tr><th>Merge</th><th>Profile</th><th>Profile knobs</th><th>Connection evidence</th></tr></thead><tbody>${rows}</tbody></table>`
+      : '<p class="empty">No merged alignment was recorded.</p>',
+  );
 }
 
 function hardwareSection(hardware: HardwareCapabilities | null): string {
@@ -267,12 +508,12 @@ function productSection(products: readonly ProcessingReportProduct[]): string {
   const rows = products
     .map(
       (product) =>
-        `<tr><td><strong>${escapeHtml(product.kind)}</strong><small>${escapeHtml(product.entityId)}</small></td><td>${escapeHtml(product.format)}</td><td>${product.pointCount?.toLocaleString('en-US') ?? '—'}</td><td><code>${escapeHtml(product.versionHash ?? 'Not exposed by this project record')}</code></td><td><code>${escapeHtml(product.sourceAlignmentEntityId ?? 'Legacy / unavailable')}</code></td><td><code>${escapeHtml(product.processingSetId ?? 'Project-wide / merged')}</code></td><td><code>${escapeHtml(product.gcpOptimizationEntityId ?? 'No GCP optimization')}</code><small>${escapeHtml(product.gcpOptimizationSnapshotSha256 ?? '')}</small></td><td>${escapeHtml(product.relativePath)}</td></tr>`,
+        `<tr><td><strong>${escapeHtml(product.kind)}</strong><small>${escapeHtml(product.entityId)}</small></td><td>${escapeHtml(product.format)}</td><td>${product.pointCount?.toLocaleString('en-US') ?? '—'}</td><td><code>${escapeHtml(product.versionHash ?? 'Not exposed by this project record')}</code></td><td><code>${escapeHtml(product.sourceAlignmentEntityId ?? 'Legacy / unavailable')}</code></td><td><code>${escapeHtml(product.processingSetId ?? 'Project-wide / merged')}</code></td><td><code>${escapeHtml(product.gcpOptimizationEntityId ?? 'No GCP optimization')}</code><small>${escapeHtml(product.gcpOptimizationSnapshotSha256 ?? '')}</small></td><td><code>${escapeHtml(product.imageMaskScopeSha256 ?? 'Legacy / unavailable')}</code></td><td>${product.toolVersions ? escapeHtml(stableJson(product.toolVersions)) : 'Not recorded'}</td><td>${escapeHtml(product.relativePath)}</td></tr>`,
     )
     .join('');
   return section(
     'Published products',
-    `<table><thead><tr><th>Product</th><th>Format</th><th>Points</th><th>Entity version SHA-256</th><th>Source alignment</th><th>Processing set</th><th>GCP revision</th><th>Project path</th></tr></thead><tbody>${rows}</tbody></table>`,
+    `<table><thead><tr><th>Product</th><th>Format</th><th>Points</th><th>Entity version SHA-256</th><th>Source alignment</th><th>Processing set</th><th>GCP revision</th><th>Mask-scope SHA-256</th><th>Tool versions</th><th>Project path</th></tr></thead><tbody>${rows}</tbody></table>`,
   );
 }
 
@@ -403,6 +644,66 @@ function formatMetric(value: number | undefined, unit = 'm'): string {
   return value == null ? '—' : `${value.toFixed(unit === 'px' ? 3 : 4)} ${unit}`;
 }
 
+function formatInteger(value: number): string {
+  return value.toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+
+function formatNumber(value: number | null | undefined, digits = 6): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return value.toLocaleString('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: digits,
+    useGrouping: true,
+  });
+}
+
+function formatArea(value: number | null): string {
+  return value == null ? '—' : `${formatNumber(value, 3)} m²`;
+}
+
+function humanize(value: string): string {
+  const spaced = value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replaceAll('_', ' ');
+  return spaced ? `${spaced[0]?.toUpperCase() ?? ''}${spaced.slice(1)}` : value;
+}
+
+function humanReadableValue(value: unknown): string {
+  if (value == null) return 'Not recorded';
+  if (typeof value === 'string') return humanize(value);
+  return stableJson(value);
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(', ')}]`;
+  if (value && typeof value === 'object') {
+    return `{ ${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right, 'en-US'))
+      .map(([key, item]) => `${key}: ${stableJson(item)}`)
+      .join(', ')} }`;
+  }
+  return String(value);
+}
+
+function flattenParameters(value: unknown, prefix = ''): [string, string][] {
+  if (value == null) return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => flattenParameters(item, `${prefix}[${index}]`));
+  }
+  if (typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right, 'en-US'))
+      .flatMap(([key, item]) => flattenParameters(item, prefix ? `${prefix}.${key}` : key));
+  }
+  if (/(?:hash|sha256)$/i.test(prefix)) return [];
+  return [[prefix || 'value', String(value)]];
+}
+
+function niceScale(maximum: number): number {
+  const exponent = 10 ** Math.floor(Math.log10(maximum));
+  const normalized = maximum / exponent;
+  const step = normalized >= 5 ? 5 : normalized >= 2 ? 2 : 1;
+  return step * exponent;
+}
+
 function jobLabel(job: PhotolabJob): string {
   const labels: Record<PhotolabJob['kind'], string> = {
     analyzeImageQuality: 'Analyze Image Quality',
@@ -431,4 +732,4 @@ function escapeHtml(value: string): string {
 }
 
 const REPORT_CSS = `
-@page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{margin:0;background:#fff;color:#18202d;font:11px system-ui,-apple-system,"Segoe UI",sans-serif}header{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding:0 0 14px;border-bottom:3px solid #238be6}h1{margin:0;font-size:26px}header p{margin:4px 0 0;color:#5c6979}.eyebrow{color:#087dcc;font:700 9px ui-monospace,monospace;letter-spacing:.18em}.summary{text-align:right;line-height:1.7}section{margin-top:18px}h2{margin:0 0 8px;padding-bottom:4px;border-bottom:1px solid #b8c7d8;font-size:16px}h3{margin:12px 0 6px;font-size:12px}table{width:100%;border-collapse:collapse;font-size:8px;table-layout:auto}th,td{padding:4px 5px;border:1px solid #cbd5e0;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{background:#eaf2f9;color:#34465a}td small{display:block;margin-top:2px;color:#66768a}code{font:7.5px ui-monospace,"Cascadia Mono",monospace;overflow-wrap:anywhere}dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:3px 12px;margin:0}dt{color:#617085}dd{margin:0;font-weight:600}.cards{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}.card{padding:9px;border:1px solid #cbd5e0;border-radius:5px;background:#f6f9fc}.card h3{margin-top:0}.optimization{break-before:auto;margin-top:14px;padding-top:2px}.note{color:#617085}.empty{color:#68778a;font-style:italic}.failure{color:#b42318}footer{margin-top:22px;padding-top:8px;border-top:1px solid #cbd5e0;color:#617085;font-size:9px}`;
+:root{--report-control:#238be6;--report-check:#d97706;--report-map-bg:#f6f9fc}@page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{margin:0;background:#fff;color:#18202d;font:11px system-ui,-apple-system,"Segoe UI",sans-serif}header{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding:0 0 14px;border-bottom:3px solid #238be6}h1{margin:0;font-size:26px}header p{margin:4px 0 0;color:#5c6979}.eyebrow{color:#087dcc;font:700 9px ui-monospace,monospace;letter-spacing:.18em}.summary{text-align:right;line-height:1.7}section{margin-top:18px}h2{margin:0 0 8px;padding-bottom:4px;border-bottom:1px solid #b8c7d8;font-size:16px}.annex{margin-top:26px;padding:7px;background:#eaf2f9;border-top:2px solid #238be6;font-size:18px}h3{margin:12px 0 6px;font-size:12px}table{width:100%;border-collapse:collapse;font-size:8px;table-layout:auto}th,td{padding:4px 5px;border:1px solid #cbd5e0;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{background:#eaf2f9;color:#34465a}td small{display:block;margin-top:2px;color:#66768a}code{display:block;font:7.5px ui-monospace,"Cascadia Mono",monospace;overflow-wrap:anywhere}dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:3px 12px;margin:0}dt{color:#617085}dd{margin:0;font-weight:600}.cards{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}.card{padding:9px;border:1px solid #cbd5e0;border-radius:5px;background:#f6f9fc}.card h3{margin-top:0}.optimization{break-before:auto;margin-top:14px;padding-top:2px}.note{color:#617085}.empty{color:#68778a;font-style:italic}.failure{color:#b42318}.residual-map{display:block;width:100%;height:auto;border:1px solid #cbd5e0}.residual-map text{fill:#34465a;font:9px system-ui,sans-serif}.residual-map .scale line{stroke:#34465a;stroke-width:2}footer{margin-top:22px;padding-top:8px;border-top:1px solid #cbd5e0;color:#617085;font-size:9px}`;

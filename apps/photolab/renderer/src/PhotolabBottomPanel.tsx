@@ -5,6 +5,7 @@ import type {
   CaptureGroupRecord,
   HardwareCapabilities,
   MergedAlignmentRunRecord,
+  OpenPhotolabProjectResult,
   PhotolabJob,
   ProcessingSetRecord,
   PublishedGcpOptimizationEntry,
@@ -15,7 +16,11 @@ import { useEffect, useRef, useState } from 'react';
 
 import { GcpAccuracyPanel, type GcpAccuracyReport } from './GcpAccuracyPanel.js';
 import styles from './PhotolabBottomPanel.module.css';
-import { buildProcessingReportHtml, type ProcessingReportProduct } from './processingReport.js';
+import {
+  buildProcessingReportHtml,
+  type ProcessingReportProduct,
+  type ProcessingReportSurveyData,
+} from './processingReport.js';
 
 export type BottomTab = 'console' | 'jobs' | 'accuracy' | 'report';
 
@@ -561,9 +566,26 @@ function ReportView({
     setSaveResult(null);
     logEvent('info', 'renderer', `Exporting processing report as ${format.toUpperCase()}`);
     try {
+      const snapshot = await api.sidecar.call<OpenPhotolabProjectResult>(
+        'photolab.project.snapshot',
+      );
+      let surveyData: ProcessingReportSurveyData | null = null;
+      let surveyDataUnavailableReason: string | undefined;
+      try {
+        surveyData = await api.sidecar.call<ProcessingReportSurveyData>(
+          'photolab.report.surveyData',
+          {},
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        surveyDataUnavailableReason = /not allow/i.test(message)
+          ? 'Survey data unavailable — query not allowlisted'
+          : `Survey data unavailable — ${message || 'query failed'}`;
+      }
+      const snapshotTimestamp = new Date(snapshot.manifest.modifiedUnixMs);
       const saved = await api.reports.save({
         format,
-        suggestedName: `${project.name}-processing-report-${new Date().toISOString().slice(0, 10)}`,
+        suggestedName: `${project.name}-processing-report-${snapshotTimestamp.toISOString().slice(0, 10)}`,
         html: buildProcessingReportHtml({
           project,
           jobs,
@@ -576,6 +598,10 @@ function ReportView({
           alignmentMerges,
           alignmentRuns,
           gcpOptimizations,
+          surveyData,
+          surveyDataUnavailableReason,
+          generatedAt: snapshotTimestamp,
+          generatedAtSource: 'Project snapshot modifiedUnixMs (last autosave/save timestamp)',
         }),
       });
       if (saved) {

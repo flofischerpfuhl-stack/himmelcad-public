@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { stdout } from 'node:process';
-import { setTimeout } from 'node:timers/promises';
 
 import { buildProcessingReportHtml } from '../apps/photolab/renderer/src/processingReport.ts';
 
@@ -11,6 +10,91 @@ const sha = 'a'.repeat(64);
 const fixture = {
   project: { id: 'project-sulzberg', name: 'Sulzberg <Survey>', formatVersion: 1 },
   generatedAt: new Date('2026-07-13T08:30:00.000Z'),
+  generatedAtSource: 'Project snapshot modifiedUnixMs (last autosave/save timestamp)',
+  surveyData: {
+    schemaVersion: 2,
+    crs: {
+      spatialReference: { kind: 'crsBacked' },
+      referenceFrame: { target: { horizontal: { crs: { epsg: 25832 } } } },
+    },
+    alignments: [
+      {
+        entityId: 'alignment-1',
+        name: 'Mission West alignment',
+        kind: 'alignment',
+        imageCount: 2,
+        gsdMetersPerPixel: 0.01875,
+        gsdMethod:
+          'Mean positive camera height above the median-elevation horizontal plane of optimized sparse tie points, divided by mean (fx, fy) focal length in pixels.',
+        footprintBbox: [500000, 5300000, 500120, 5300080],
+        footprintBboxAreaSquareMeters: 9600,
+        calibrationGroups: [
+          {
+            groupId: 'calibration-1',
+            imageCount: 2,
+            seed: { f: 4000, cx: 3000, cy: 2000, k1: -0.01, k2: 0.001, k3: 0, p1: 0, p2: 0 },
+            solved: {
+              f: 4025,
+              cx: 3001,
+              cy: 1999,
+              k1: -0.009,
+              k2: 0.0009,
+              k3: 0.00001,
+              p1: 0.00002,
+              p2: -0.00001,
+            },
+            refined: {
+              f: true,
+              cx: true,
+              cy: true,
+              k1: true,
+              k2: true,
+              k3: false,
+              p1: false,
+              p2: false,
+            },
+            fixed: false,
+            sigmas: null,
+            correlation: null,
+            uncertaintyNote:
+              'Unavailable: this GCP optimization snapshot stores observability diagnostics but no intrinsics covariance.',
+          },
+        ],
+        gcpResiduals: [
+          {
+            pointId: 'gcp-1',
+            pointName: 'Control <1>',
+            role: 'controlXyz',
+            position: [500010, 5300010],
+            vectorMeters: [0.001, -0.002],
+            heightMeters: 0.003,
+          },
+          {
+            pointId: 'check-1',
+            pointName: 'Check 1',
+            role: 'checkpointXyz',
+            position: [500100, 5300070],
+            vectorMeters: [-0.004, 0.003],
+            heightMeters: -0.002,
+          },
+        ],
+        gcpOptimizationEntityId: 'gcp-solution-1',
+        gcpOptimizationSnapshotSha256: '2'.repeat(64),
+      },
+    ],
+    jobs: [
+      {
+        jobId: 'job-alignment',
+        kind: 'alignPhotos',
+        method: 'photolab.jobs.align.start',
+        profileName: 'qualityHybrid',
+        resolvedPresetName: 'Site quality',
+        parameters: {
+          resolved: { maximumImageDimension: 9000, keypointsPerMegapixel: 8000 },
+        },
+      },
+    ],
+  },
   hardware: {
     operatingSystem: 'linux',
     ramBytes: 32 * 1024 ** 3,
@@ -113,6 +197,15 @@ const fixture = {
       processingSetId: 'processing-set-1',
       calibrationGroupIds: ['calibration-1'],
       calibrationGroups: [{ groupId: 'calibration-1', cameraEntityIds: ['camera-1', 'camera-2'] }],
+      calibrationGroupIntrinsics: [
+        {
+          groupId: 'calibration-1',
+          pinned: false,
+          seedFocalPixels: 4000,
+          solvedFocalPixels: 4025,
+          focalDeltaPixels: 25,
+        },
+      ],
     },
   ],
   gcpOptimizations: [
@@ -220,6 +313,8 @@ const fixture = {
       processingSetId: 'processing-set-1',
       gcpOptimizationEntityId: 'gcp-solution-1',
       gcpOptimizationSnapshotSha256: '2'.repeat(64),
+      imageMaskScopeSha256: '6'.repeat(64),
+      toolVersions: { mvs: '1.0.0', toolManifestSha256: '7'.repeat(64) },
     },
   ],
   accuracy: {
@@ -269,6 +364,12 @@ const fixture = {
 const html = buildProcessingReportHtml(fixture);
 
 const SECTION_HEADINGS = [
+  'Survey overview',
+  'Camera calibration per group',
+  'Processing parameters',
+  'GCP accuracy',
+  'Merge evidence',
+  'Audit annex',
   'Hardware',
   'Processing sets and scope',
   'Alignment lineage',
@@ -285,6 +386,8 @@ assert.match(html, /project-sulzberg/);
 assert.match(html, /Sulzberg &lt;Survey&gt;/);
 assert.match(html, /Input SHA-256/);
 assert.match(html, /Entity version SHA-256/);
+assert.match(html, /Mask-scope SHA-256/);
+assert.match(html, /Tool versions/);
 assert.match(html, /fixtureFailure/);
 assert.match(html, /interrupted · recoverable/);
 assert.match(html, /resume available from checkpoint 7/);
@@ -310,6 +413,12 @@ assert.match(html, new RegExp('4'.repeat(64)));
 assert.match(html, new RegExp('5'.repeat(64)));
 assert.match(html, /Mission &lt;West&gt;/);
 assert.match(html, /Control &lt;1&gt;/);
+assert.match(html, /0\.0187 m\/px/);
+assert.match(html, /4,000 → 4,025/);
+assert.match(html, /GSD method/);
+assert.match(html, /residual vector map/);
+assert.match(html, /Quality Hybrid/);
+assert.match(html, /maximumImageDimension = 9000/);
 assert.match(html, /&lt;grid&gt; unavailable &amp; invalid/);
 assert.doesNotMatch(html, /<script/i);
 assert.doesNotMatch(html, /Mission <West>/);
@@ -330,26 +439,16 @@ assert.equal(
 );
 for (const heading of SECTION_HEADINGS) assert.match(golden, new RegExp(heading));
 assert.match(golden, /2026-07-13T08:30:00\.000Z/);
+assert.match(golden, /Timestamp source: Project snapshot modifiedUnixMs/);
+const unavailable = buildProcessingReportHtml({
+  ...fixture,
+  surveyData: null,
+  surveyDataUnavailableReason: 'Survey data unavailable — query not allowlisted',
+});
+assert.match(unavailable, /Survey data unavailable — query not allowlisted/);
 
-// Documented current behaviour, not an endorsement: omitting `generatedAt` falls
-// back to `new Date()` (processingReport.ts:48), so an unpinned report is NOT
-// reproducible. WP-A2 makes `generatedAt` required; this assertion must then be
-// replaced by a compile-time requirement rather than deleted.
-const { generatedAt: _pinned, ...unpinned } = fixture;
-const first = buildProcessingReportHtml(unpinned);
-await setTimeout(2);
-const second = buildProcessingReportHtml(unpinned);
-assert.notEqual(
-  second,
-  first,
-  'an unpinned report is expected to be non-deterministic until WP-A2 makes generatedAt required',
-);
-const stripGenerated = (report) =>
-  report.replace(/generated \d{4}-\d{2}-\d{2}T[\d:.]+Z/, 'generated <unpinned>');
-assert.equal(
-  stripGenerated(second),
-  stripGenerated(first),
-  'the generated timestamp must be the only non-deterministic part of the report',
-);
+// `ProcessingReportInput.generatedAt` is required in TypeScript. The package
+// typecheck compiles the production caller, so omission is rejected before this
+// runtime golden test can execute.
 
 stdout.write('PhotoLab processing report test passed.\n');

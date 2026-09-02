@@ -102,7 +102,9 @@ use himmelcad_sidecar::project_archive::{
     pack_hcadx, unpack_hcadx, ArchivePhase, ArchiveProgress, PackArchiveOptions,
     UnpackArchiveLimits,
 };
-use himmelcad_sidecar::raster_runtime::{raster_checkpoint_content_key, RasterBuildSummary};
+use himmelcad_sidecar::raster_runtime::{
+    raster_checkpoint_content_key, GdalAudit, RasterBuildSummary,
+};
 use himmelcad_sidecar::splat_tiler::PreparedSplatProduct;
 
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -907,6 +909,98 @@ pub struct ProjectProductDatasetRecord {
     pub gcp_optimization_entity_id: Option<EntityId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gcp_optimization_snapshot_sha256: Option<ObjectHash>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_mask_scope_sha256: Option<ObjectHash>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tool_versions: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessingReportSurveyData {
+    pub schema_version: u32,
+    pub crs: serde_json::Value,
+    pub alignments: Vec<ProcessingReportAlignmentSurveyData>,
+    pub jobs: Vec<ProcessingReportJobConfiguration>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessingReportAlignmentSurveyData {
+    pub entity_id: EntityId,
+    pub name: String,
+    pub kind: String,
+    pub image_count: usize,
+    pub gsd_meters_per_pixel: Option<f64>,
+    pub gsd_method: String,
+    pub footprint_bbox: Option<[f64; 4]>,
+    pub footprint_bbox_area_square_meters: Option<f64>,
+    pub calibration_groups: Vec<ProcessingReportCalibrationGroup>,
+    pub gcp_residuals: Vec<ProcessingReportGcpResidual>,
+    pub gcp_optimization_entity_id: Option<EntityId>,
+    pub gcp_optimization_snapshot_sha256: Option<ObjectHash>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessingReportCalibrationGroup {
+    pub group_id: String,
+    pub image_count: usize,
+    pub seed: ProcessingReportIntrinsics,
+    pub solved: ProcessingReportIntrinsics,
+    pub refined: ProcessingReportIntrinsicsFlags,
+    pub fixed: bool,
+    pub sigmas: Option<ProcessingReportIntrinsics>,
+    pub correlation: Option<Vec<Vec<f64>>>,
+    pub uncertainty_note: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessingReportIntrinsics {
+    pub f: Option<f64>,
+    pub cx: Option<f64>,
+    pub cy: Option<f64>,
+    pub k1: Option<f64>,
+    pub k2: Option<f64>,
+    pub k3: Option<f64>,
+    pub p1: Option<f64>,
+    pub p2: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessingReportIntrinsicsFlags {
+    pub f: bool,
+    pub cx: bool,
+    pub cy: bool,
+    pub k1: bool,
+    pub k2: bool,
+    pub k3: bool,
+    pub p1: bool,
+    pub p2: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessingReportGcpResidual {
+    pub point_id: String,
+    pub point_name: String,
+    pub role: String,
+    pub position: [f64; 2],
+    pub vector_meters: [Option<f64>; 2],
+    pub height_meters: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessingReportJobConfiguration {
+    pub job_id: String,
+    pub kind: PhotolabJobKind,
+    pub method: Option<String>,
+    pub profile_name: Option<String>,
+    pub resolved_preset_name: Option<String>,
+    pub parameters: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -4516,6 +4610,8 @@ impl ProjectRuntime {
                     processing_set_id: record.processing_set_id,
                     gcp_optimization_entity_id: record.gcp_optimization_entity_id,
                     gcp_optimization_snapshot_sha256: record.gcp_optimization_snapshot_sha256,
+                    image_mask_scope_sha256: record.image_mask_scope_sha256,
+                    tool_versions: BTreeMap::new(),
                 });
             } else if entity.kind == EntityKind::DepthMap {
                 let record: MvsArtifactRecord = serde_json::from_slice(&bytes)?;
@@ -4535,6 +4631,8 @@ impl ProjectRuntime {
                     processing_set_id: record.processing_set_id,
                     gcp_optimization_entity_id: record.gcp_optimization_entity_id,
                     gcp_optimization_snapshot_sha256: record.gcp_optimization_snapshot_sha256,
+                    image_mask_scope_sha256: record.image_mask_scope_sha256,
+                    tool_versions: BTreeMap::new(),
                 });
             } else if entity.kind == EntityKind::PointCloud {
                 if let Ok(record) = serde_json::from_slice::<MvsArtifactRecord>(&bytes) {
@@ -4565,6 +4663,8 @@ impl ProjectRuntime {
                         processing_set_id: record.processing_set_id,
                         gcp_optimization_entity_id: record.gcp_optimization_entity_id,
                         gcp_optimization_snapshot_sha256: record.gcp_optimization_snapshot_sha256,
+                        image_mask_scope_sha256: record.image_mask_scope_sha256,
+                        tool_versions: BTreeMap::new(),
                     });
                 } else {
                     let record: ComputeArtifactRecord = serde_json::from_slice(&bytes)?;
@@ -4589,9 +4689,14 @@ impl ProjectRuntime {
                         render_offset: Some(potree.render_offset),
                         point_count: Some(potree.point_count),
                         source_alignment_entity_id: record.parent_alignment_entity_id,
-                        processing_set_id: None,
+                        processing_set_id: record.processing_set_id,
                         gcp_optimization_entity_id: None,
                         gcp_optimization_snapshot_sha256: None,
+                        image_mask_scope_sha256: record.image_mask_scope_sha256,
+                        tool_versions: BTreeMap::from([(
+                            "colmapToolManifestSha256".to_owned(),
+                            record.tool_manifest_sha256.0,
+                        )]),
                     });
                 }
             } else if entity.kind == EntityKind::GaussianSplatCloud {
@@ -4622,6 +4727,14 @@ impl ProjectRuntime {
                     processing_set_id: record.processing_set_id,
                     gcp_optimization_entity_id: record.gcp_optimization_entity_id,
                     gcp_optimization_snapshot_sha256: record.gcp_optimization_snapshot_sha256,
+                    image_mask_scope_sha256: record.image_mask_scope_sha256,
+                    tool_versions: BTreeMap::from([
+                        ("brush".to_owned(), record.summary.brush_version),
+                        (
+                            "brushExecutableSha256".to_owned(),
+                            record.summary.executable_sha256.0,
+                        ),
+                    ]),
                 });
             } else {
                 let record: RasterArtifactRecord = serde_json::from_slice(&bytes)?;
@@ -4645,11 +4758,116 @@ impl ProjectRuntime {
                     processing_set_id: record.processing_set_id,
                     gcp_optimization_entity_id: record.gcp_optimization_entity_id,
                     gcp_optimization_snapshot_sha256: record.gcp_optimization_snapshot_sha256,
+                    image_mask_scope_sha256: record.image_mask_scope_sha256,
+                    tool_versions: raster_tool_versions(&record.summary.audit),
                 });
             }
         }
         records.sort_by(|left, right| left.entity_id.0.cmp(&right.entity_id.0));
         Ok(records)
+    }
+
+    /// Builds the immutable, read-only survey evidence consumed by processing report v2.
+    pub fn processing_report_survey_data(&self) -> Result<ProcessingReportSurveyData> {
+        let guard = self.session.lock().expect("project session mutex poisoned");
+        let session = guard.as_ref().context("no project is open")?;
+        let mut optimizations = Vec::new();
+        for entity in session.manifest.entities.values().filter(|entity| {
+            entity.kind == EntityKind::AlignmentRun && entity.id.0.contains(":alignment-gcp:")
+        }) {
+            let record: GcpOptimizationPublicationRecord = serde_json::from_slice(
+                &read_verified_object(&session.working_path, &entity.version_hash)?,
+            )?;
+            if record.artifact.result.converged {
+                optimizations.push((entity.id.clone(), record));
+            }
+        }
+        optimizations.sort_by(|(left_id, left), (right_id, right)| {
+            (left.publication_sequence, &left_id.0).cmp(&(right.publication_sequence, &right_id.0))
+        });
+
+        let mut alignments = Vec::new();
+        for entity in session.manifest.entities.values() {
+            match entity.kind {
+                EntityKind::AlignmentRun => {
+                    let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
+                    let Ok(record) = serde_json::from_slice::<ComputeArtifactRecord>(&bytes) else {
+                        continue;
+                    };
+                    if record.artifact.kind == ColmapArtifactKind::SparseModel {
+                        alignments.push(build_processing_report_alignment(
+                            session,
+                            &optimizations,
+                            entity.id.clone(),
+                            entity.name.clone(),
+                            "alignment",
+                            record.camera_entity_ids.len(),
+                            &record.calibration_groups,
+                            &record.calibration_group_intrinsics,
+                        )?);
+                    }
+                }
+                EntityKind::MergedAlignmentRun => {
+                    let record: MergedAlignmentRunRecord = serde_json::from_slice(
+                        &read_verified_object(&session.working_path, &entity.version_hash)?,
+                    )?;
+                    if record.state == MergedAlignmentState::Published {
+                        alignments.push(build_processing_report_alignment(
+                            session,
+                            &optimizations,
+                            entity.id.clone(),
+                            entity.name.clone(),
+                            "mergedAlignment",
+                            record.camera_entity_ids.len(),
+                            &record.calibration_groups,
+                            &record.calibration_group_intrinsics,
+                        )?);
+                    }
+                }
+                _ => {}
+            }
+        }
+        alignments.sort_by(|left, right| left.entity_id.0.cmp(&right.entity_id.0));
+
+        let mut jobs = Vec::new();
+        for job in session.job_history.values() {
+            let path = job_history_record_path(&session.working_path, &job.id.0);
+            let frozen = path
+                .is_file()
+                .then(|| fs::read(&path))
+                .transpose()?
+                .map(|bytes| serde_json::from_slice::<ProjectJobHistoryRecord>(&bytes))
+                .transpose()?
+                .and_then(|record| record.frozen_request);
+            let parameters = frozen.as_ref().map(|request| request.params.clone());
+            let profile_name = parameters
+                .as_ref()
+                .and_then(|value| find_json_string(value, &["profileName", "profile"]));
+            jobs.push(ProcessingReportJobConfiguration {
+                job_id: job.id.0.clone(),
+                kind: job.kind,
+                method: frozen.as_ref().map(|request| request.method.clone()),
+                profile_name: profile_name.clone(),
+                resolved_preset_name: parameters
+                    .as_ref()
+                    .and_then(|value| {
+                        find_json_string(value, &["resolvedPresetName", "presetName"])
+                    })
+                    .or(profile_name),
+                parameters,
+            });
+        }
+        jobs.sort_by(|left, right| left.job_id.cmp(&right.job_id));
+
+        Ok(ProcessingReportSurveyData {
+            schema_version: 2,
+            crs: serde_json::json!({
+                "spatialReference": session.manifest.spatial_reference,
+                "referenceFrame": session.manifest.reference_frame,
+            }),
+            alignments,
+            jobs,
+        })
     }
 
     pub fn frozen_horizontal_crs(&self) -> Result<Option<CrsDefinition>> {
@@ -8454,6 +8672,252 @@ fn read_verified_object(project_root: &Path, hash: &ObjectHash) -> Result<Vec<u8
         "project object hash mismatch"
     );
     Ok(bytes)
+}
+
+fn raster_tool_versions(audit: &GdalAudit) -> BTreeMap<String, String> {
+    let mut versions = BTreeMap::from([("gdal".to_owned(), audit.version.clone())]);
+    for (tool, hash) in &audit.executable_sha256 {
+        versions.insert(format!("gdal.{tool}.sha256"), hash.0.clone());
+    }
+    versions
+}
+
+fn build_processing_report_alignment(
+    session: &ProjectSession,
+    optimizations: &[(EntityId, GcpOptimizationPublicationRecord)],
+    entity_id: EntityId,
+    name: String,
+    kind: &str,
+    image_count: usize,
+    groups: &[ColmapCalibrationGroup],
+    deltas: &[CalibrationGroupIntrinsicsDelta],
+) -> Result<ProcessingReportAlignmentSurveyData> {
+    let optimization = optimizations
+        .iter()
+        .rev()
+        .find(|(_, record)| record.source_alignment_entity_id.as_ref() == Some(&entity_id));
+    let result = optimization.map(|(_, record)| &record.artifact.result);
+    let sparse_points = result.map_or(&[][..], |result| result.tie_points.as_slice());
+    let footprint_bbox = point_footprint_bbox(
+        sparse_points
+            .iter()
+            .map(|point| point.optimized_world_coordinate),
+    );
+    let footprint_bbox_area_square_meters =
+        footprint_bbox.map(|bbox| ((bbox[2] - bbox[0]) * (bbox[3] - bbox[1])).max(0.0));
+    let gsd_meters_per_pixel = result.and_then(|result| {
+        let mut elevations = sparse_points
+            .iter()
+            .map(|point| point.optimized_world_coordinate[2])
+            .filter(|value| value.is_finite())
+            .collect::<Vec<_>>();
+        let ground_elevation = median(&mut elevations)?;
+        mean(result.cameras.iter().filter_map(|camera| {
+            let focal = (camera.focal_x_pixels + camera.focal_y_pixels) * 0.5;
+            let height = camera.center_world_meters[2] - ground_elevation;
+            (focal.is_finite() && focal > 0.0 && height.is_finite() && height > 0.0)
+                .then_some(height / focal)
+        }))
+    });
+
+    let mut calibration_groups = groups
+        .iter()
+        .map(|group| {
+            let delta = deltas.iter().find(|delta| delta.group_id == group.group_id);
+            let diagnostic = result.and_then(|result| {
+                result
+                    .intrinsics_diagnostics
+                    .iter()
+                    .find(|item| item.calibration_group_id == group.group_id)
+            });
+            let cameras = result
+                .map(|result| {
+                    result
+                        .cameras
+                        .iter()
+                        .filter(|camera| camera.calibration_group_id == group.group_id)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let mut seed = group
+                .seed
+                .as_ref()
+                .map(report_intrinsics_from_seed)
+                .unwrap_or_default();
+            seed.f = seed.f.or_else(|| delta.and_then(|item| item.seed_focal_pixels));
+            let mut solved = if cameras.is_empty() {
+                ProcessingReportIntrinsics::default()
+            } else {
+                ProcessingReportIntrinsics {
+                    f: mean(cameras.iter().map(|camera| {
+                        (camera.focal_x_pixels + camera.focal_y_pixels) * 0.5
+                    })),
+                    cx: mean(cameras.iter().map(|camera| camera.principal_x_pixels)),
+                    cy: mean(cameras.iter().map(|camera| camera.principal_y_pixels)),
+                    k1: mean(cameras.iter().map(|camera| camera.radial_distortion[0])),
+                    k2: mean(cameras.iter().map(|camera| camera.radial_distortion[1])),
+                    k3: mean(cameras.iter().map(|camera| camera.radial_distortion[2])),
+                    p1: mean(cameras.iter().map(|camera| camera.tangential_distortion[0])),
+                    p2: mean(cameras.iter().map(|camera| camera.tangential_distortion[1])),
+                }
+            };
+            solved.f = solved
+                .f
+                .or_else(|| delta.and_then(|item| item.solved_focal_pixels));
+            let refined = diagnostic.map_or_else(ProcessingReportIntrinsicsFlags::default, |item| {
+                ProcessingReportIntrinsicsFlags {
+                    f: item.effective_parameters.f,
+                    cx: item.effective_parameters.cx,
+                    cy: item.effective_parameters.cy,
+                    k1: item.effective_parameters.k1,
+                    k2: item.effective_parameters.k2,
+                    k3: item.effective_parameters.k3,
+                    p1: item.effective_parameters.p1,
+                    p2: item.effective_parameters.p2,
+                }
+            });
+            ProcessingReportCalibrationGroup {
+                group_id: group.group_id.clone(),
+                image_count: group.camera_entity_ids.len(),
+                seed,
+                solved,
+                refined,
+                fixed: delta.is_some_and(|item| item.pinned)
+                    || diagnostic.is_some_and(|item| {
+                        matches!(item.policy, GcpIntrinsicsPolicy::Fixed)
+                    }),
+                sigmas: None,
+                correlation: None,
+                uncertainty_note: "Unavailable: this GCP optimization snapshot stores observability diagnostics but no intrinsics covariance.".to_owned(),
+            }
+        })
+        .collect::<Vec<_>>();
+    calibration_groups.sort_by(|left, right| left.group_id.cmp(&right.group_id));
+
+    let mut gcp_residuals = Vec::new();
+    if let Some((_, optimization)) = optimization {
+        let snapshot: GcpOptimizationSnapshot = serde_json::from_slice(&read_verified_object(
+            &session.working_path,
+            &optimization.snapshot_sha256,
+        )?)?;
+        for residual in &optimization.artifact.result.residuals {
+            let Some(point) = snapshot
+                .points
+                .iter()
+                .find(|point| point.point.id == residual.point_id)
+            else {
+                continue;
+            };
+            let role = serde_json::to_value(residual.role)?
+                .as_str()
+                .unwrap_or("unknown")
+                .to_owned();
+            gcp_residuals.push(ProcessingReportGcpResidual {
+                point_id: residual.point_id.0.clone(),
+                point_name: point.point.name.clone(),
+                role,
+                position: [
+                    point.point.coordinate.east_meters,
+                    point.point.coordinate.north_meters,
+                ],
+                vector_meters: [residual.east_meters, residual.north_meters],
+                height_meters: residual.height_meters,
+            });
+        }
+        gcp_residuals.sort_by(|left, right| left.point_id.cmp(&right.point_id));
+    }
+
+    Ok(ProcessingReportAlignmentSurveyData {
+        entity_id,
+        name,
+        kind: kind.to_owned(),
+        image_count,
+        gsd_meters_per_pixel,
+        gsd_method: "Mean positive camera height above the median-elevation horizontal plane of optimized sparse tie points, divided by mean (fx, fy) focal length in pixels.".to_owned(),
+        footprint_bbox,
+        footprint_bbox_area_square_meters,
+        calibration_groups,
+        gcp_residuals,
+        gcp_optimization_entity_id: optimization.map(|(id, _)| id.clone()),
+        gcp_optimization_snapshot_sha256: optimization
+            .map(|(_, record)| record.snapshot_sha256.clone()),
+    })
+}
+
+fn report_intrinsics_from_seed(seed: &ColmapCalibrationSeed) -> ProcessingReportIntrinsics {
+    if let Some(full) = &seed.full_brown_calibration {
+        return ProcessingReportIntrinsics {
+            f: Some((full.focal_x_pixels + full.focal_y_pixels) * 0.5),
+            cx: Some(full.principal_x_pixels),
+            cy: Some(full.principal_y_pixels),
+            k1: Some(full.radial_distortion[0]),
+            k2: Some(full.radial_distortion[1]),
+            k3: Some(full.radial_distortion[2]),
+            p1: Some(full.tangential_distortion[0]),
+            p2: Some(full.tangential_distortion[1]),
+        };
+    }
+    ProcessingReportIntrinsics {
+        f: Some(seed.focal_pixels),
+        cx: Some(seed.principal_x_pixels),
+        cy: Some(seed.principal_y_pixels),
+        ..ProcessingReportIntrinsics::default()
+    }
+}
+
+fn point_footprint_bbox(points: impl Iterator<Item = [f64; 3]>) -> Option<[f64; 4]> {
+    let mut bbox: Option<[f64; 4]> = None;
+    for [east, north, _] in points.filter(|point| point.iter().all(|value| value.is_finite())) {
+        bbox = Some(match bbox {
+            None => [east, north, east, north],
+            Some([min_e, min_n, max_e, max_n]) => [
+                min_e.min(east),
+                min_n.min(north),
+                max_e.max(east),
+                max_n.max(north),
+            ],
+        });
+    }
+    bbox
+}
+
+fn mean(values: impl Iterator<Item = f64>) -> Option<f64> {
+    let (sum, count) = values
+        .filter(|value| value.is_finite())
+        .fold((0.0, 0_u64), |(sum, count), value| (sum + value, count + 1));
+    (count > 0).then_some(sum / count as f64)
+}
+
+fn median(values: &mut [f64]) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(f64::total_cmp);
+    let middle = values.len() / 2;
+    Some(if values.len() % 2 == 0 {
+        (values[middle - 1] + values[middle]) * 0.5
+    } else {
+        values[middle]
+    })
+}
+
+fn find_json_string(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    match value {
+        serde_json::Value::Object(object) => {
+            for key in keys {
+                if let Some(value) = object.get(*key).and_then(serde_json::Value::as_str) {
+                    return Some(value.to_owned());
+                }
+            }
+            object
+                .values()
+                .find_map(|value| find_json_string(value, keys))
+        }
+        serde_json::Value::Array(values) => values
+            .iter()
+            .find_map(|value| find_json_string(value, keys)),
+        _ => None,
+    }
 }
 
 fn validate_merge_connections(
@@ -13156,14 +13620,28 @@ mod tests {
                 name: "Sparse alignment product".into(),
             })
             .expect("project");
-        let camera_id = {
+        let camera_ids = {
             let mut guard = runtime.session.lock().expect("session");
             let session = guard.as_mut().expect("open project");
             let images =
                 unique_entity_of_kind(&session.manifest, EntityKind::ImageCollection, "images")
                     .expect("images");
-            insert_test_camera(session, &images, "aligned", [])
+            [
+                insert_test_camera(session, &images, "aligned-a", []),
+                insert_test_camera(session, &images, "aligned-b", []),
+            ]
         };
+        runtime
+            .create_processing_set(CreateProcessingSetParams {
+                name: "Alignment scope".into(),
+                camera_entity_ids: camera_ids.to_vec(),
+            })
+            .expect("processing set");
+        let processing_set = runtime
+            .list_processing_sets()
+            .expect("processing sets")
+            .pop()
+            .expect("created processing set");
         let scratch = root.join("alignment-scratch");
         fs::create_dir_all(scratch.join("sparse/0")).expect("sparse model");
         fs::write(scratch.join("sparse/0/cameras.bin"), b"model").expect("model file");
@@ -13186,18 +13664,21 @@ mod tests {
         fs::create_dir_all(scratch.join("sparse-potree/octree")).expect("Potree output");
         fs::write(scratch.join("sparse-potree/octree/metadata.json"), b"{}").expect("metadata");
         fs::write(scratch.join("sparse-potree/export.ply"), b"ply\n").expect("portable PLY");
-        let frozen_camera_id = camera_id.0.clone();
+        let frozen_camera_ids = camera_ids
+            .iter()
+            .map(|camera| camera.0.clone())
+            .collect::<Vec<_>>();
         let summary = ColmapOutputSummary {
             schema_version: 2,
             job_id: "alignment-sparse-test".into(),
             tool_manifest_sha256: ObjectHash::of_bytes(b"tools"),
             executable_sha256: ObjectHash::of_bytes(b"colmap"),
             colmap_version: "test".into(),
-            camera_entity_ids: vec![frozen_camera_id.clone()],
-            image_mask_scope_sha256: None,
+            camera_entity_ids: frozen_camera_ids.clone(),
+            image_mask_scope_sha256: Some(ObjectHash::of_bytes(b"report-mask-scope")),
             calibration_groups: vec![ColmapCalibrationGroup {
                 group_id: "mission-a-autofocus-1".into(),
-                camera_entity_ids: vec![frozen_camera_id.clone()],
+                camera_entity_ids: frozen_camera_ids.clone(),
                 seed: None,
             }],
             intrinsics_refinement: ColmapIntrinsicsRefinement::Refine,
@@ -13242,7 +13723,7 @@ mod tests {
                     prepared_mesh: None,
                     prepared_textured_mesh: None,
                 },
-                None,
+                Some(processing_set.entity_id.clone()),
             )
             .expect("publish sparse alignment");
         assert!(
@@ -13272,7 +13753,7 @@ mod tests {
         assert_eq!(candidate.calibration_groups.len(), 1);
         assert_eq!(
             candidate.calibration_groups[0].camera_entity_ids,
-            vec![frozen_camera_id]
+            frozen_camera_ids
         );
 
         let datasets = runtime.list_product_datasets().expect("product datasets");
@@ -13287,7 +13768,27 @@ mod tests {
             sparse.source_alignment_entity_id.as_ref(),
             Some(alignment_id)
         );
-        assert!(sparse.processing_set_id.is_none());
+        assert_eq!(
+            sparse.processing_set_id.as_ref(),
+            Some(&processing_set.entity_id)
+        );
+        assert_eq!(
+            sparse.image_mask_scope_sha256,
+            Some(ObjectHash::of_bytes(b"report-mask-scope"))
+        );
+        assert_eq!(
+            sparse.tool_versions.get("colmapToolManifestSha256"),
+            Some(&ObjectHash::of_bytes(b"tools").0)
+        );
+        let serialized = serde_json::to_value(sparse).expect("dataset JSON");
+        assert_eq!(
+            serialized["imageMaskScopeSha256"],
+            ObjectHash::of_bytes(b"report-mask-scope").0
+        );
+        assert_eq!(
+            serialized["toolVersions"]["colmapToolManifestSha256"],
+            ObjectHash::of_bytes(b"tools").0
+        );
         assert!(sparse
             .relative_path
             .ends_with("sparse-potree/octree/metadata.json"));
@@ -13312,6 +13813,218 @@ mod tests {
             calibration_groups[0].intrinsics_refinement,
             ColmapIntrinsicsRefinement::Refine
         );
+        runtime.close().expect("close");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn processing_report_survey_query_returns_gsd_residuals_and_explicit_null_uncertainty() {
+        let root = temp_test_dir("processing-report-survey");
+        let runtime = ProjectRuntime::default();
+        runtime
+            .create(CreateProjectParams {
+                path: path_string(&root.join("project.hcad")),
+                name: "Report survey fixture".into(),
+            })
+            .expect("project");
+        let (alignment_id, optimization_id) = {
+            let mut guard = runtime.session.lock().expect("session");
+            let session = guard.as_mut().expect("open project");
+            let images =
+                unique_entity_of_kind(&session.manifest, EntityKind::ImageCollection, "images")
+                    .expect("images");
+            let camera = insert_test_camera(session, &images, "report", []);
+            let alignment_id =
+                insert_test_alignment(session, "report-alignment", 1, &[camera.clone()]);
+            let alignment_entity = session
+                .manifest
+                .entities
+                .get(&alignment_id.0)
+                .expect("alignment")
+                .clone();
+            let mut alignment: ComputeArtifactRecord = serde_json::from_slice(
+                &read_verified_object(&session.working_path, &alignment_entity.version_hash)
+                    .expect("alignment record"),
+            )
+            .expect("alignment JSON");
+            alignment.calibration_groups = vec![ColmapCalibrationGroup {
+                group_id: "calibration-1".into(),
+                camera_entity_ids: vec![camera.0],
+                seed: Some(ColmapCalibrationSeed {
+                    width_pixels: 100,
+                    height_pixels: 80,
+                    focal_pixels: 90.0,
+                    principal_x_pixels: 50.0,
+                    principal_y_pixels: 40.0,
+                    full_brown_calibration: None,
+                }),
+            }];
+            alignment.calibration_group_intrinsics = vec![CalibrationGroupIntrinsicsDelta {
+                group_id: "calibration-1".into(),
+                pinned: false,
+                seed_focal_pixels: Some(90.0),
+                solved_focal_pixels: Some(100.0),
+                focal_delta_pixels: Some(10.0),
+            }];
+            let alignment_hash = put_project_object(
+                &session.working_path,
+                &serde_json::to_vec(&alignment).expect("alignment JSON"),
+            )
+            .expect("alignment object");
+            session
+                .manifest
+                .entities
+                .get_mut(&alignment_id.0)
+                .expect("alignment")
+                .version_hash = alignment_hash;
+
+            let snapshot: GcpOptimizationSnapshot = serde_json::from_value(serde_json::json!({
+                "schemaVersion": 1,
+                "sourceAlignmentEntityId": alignment_id,
+                "scope": {
+                    "label": "Report controls",
+                    "pointIds": ["gcp-1"],
+                    "cameraReferenceImageIds": []
+                },
+                "points": [{
+                    "point": {
+                        "id": "gcp-1",
+                        "name": "Control 1",
+                        "coordinate": { "eastMeters": 1.0, "northMeters": 2.0, "heightMeters": 10.0 },
+                        "uncertainty": { "horizontalStddevMeters": 0.01, "heightStddevMeters": 0.02 },
+                        "role": "controlXyz"
+                    },
+                    "participation": "control"
+                }],
+                "observations": []
+            }))
+            .expect("snapshot fixture");
+            let snapshot_sha256 = put_project_object(
+                &session.working_path,
+                &serde_json::to_vec(&snapshot).expect("snapshot JSON"),
+            )
+            .expect("snapshot object");
+            let optimization: GcpOptimizationPublicationRecord =
+                serde_json::from_value(serde_json::json!({
+                    "schemaVersion": 3,
+                    "operationId": "report-optimization",
+                    "inputSha256": ObjectHash::of_bytes(b"report-input"),
+                    "artifactSha256": ObjectHash::of_bytes(b"report-artifact"),
+                    "snapshotSha256": snapshot_sha256,
+                    "artifact": {
+                        "schemaVersion": 1,
+                        "solver": "fixture",
+                        "inputSha256": ObjectHash::of_bytes(b"report-input"),
+                        "snapshotSha256": snapshot_sha256,
+                        "sourceAlignmentEntityId": alignment_id,
+                        "result": {
+                            "transform": { "scale": 1.0, "rotation": [1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0], "translationMeters": [0.0,0.0,0.0] },
+                            "effectiveMode": "similarity7",
+                            "cameras": [{
+                                "imageId": 1,
+                                "calibrationGroupId": "calibration-1",
+                                "widthPixels": 100,
+                                "heightPixels": 80,
+                                "focalXPixels": 100.0,
+                                "focalYPixels": 100.0,
+                                "principalXPixels": 50.5,
+                                "principalYPixels": 39.5,
+                                "radialDistortion": [-0.01,0.001,0.0],
+                                "tangentialDistortion": [0.0001,-0.0001],
+                                "cameraToWorldRotation": [1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0],
+                                "centerWorldMeters": [10.0,5.0,110.0]
+                            }],
+                            "points": [{
+                                "pointId": "gcp-1",
+                                "reconstructionCoordinate": [1.0,2.0,10.0],
+                                "optimizedCoordinate": { "eastMeters": 1.1, "northMeters": 1.8, "heightMeters": 10.3 },
+                                "rayIntersectionRmsMeters": 0.01,
+                                "observationCount": 3
+                            }],
+                            "tiePoints": [
+                                { "trackId": 1, "reconstructionCoordinate": [0.0,0.0,10.0], "optimizedWorldCoordinate": [0.0,0.0,10.0], "observationCount": 3 },
+                                { "trackId": 2, "reconstructionCoordinate": [20.0,10.0,10.0], "optimizedWorldCoordinate": [20.0,10.0,10.0], "observationCount": 3 }
+                            ],
+                            "residuals": [{
+                                "pointId": "gcp-1", "role": "controlXyz", "eastMeters": 0.1, "northMeters": -0.2,
+                                "heightMeters": 0.3, "horizontalMeters": 0.22360679775, "spatial3dMeters": 0.3741657387,
+                                "activeComponentNormMeters": 0.3741657387, "reprojectionRmsPixels": 0.25, "reprojectionMaxPixels": 0.4
+                            }],
+                            "statistics": {},
+                            "projections": [],
+                            "iterations": 4,
+                            "converged": true,
+                            "finalObjective": 0.1,
+                            "fixedGaugeCameraCount": 1,
+                            "intrinsicsDiagnostics": [{
+                                "calibrationGroupId": "calibration-1", "policy": { "kind": "auto" },
+                                "cameraCount": 1, "observationCount": 3, "occupiedQuadrants": 3,
+                                "radialCoverage": 0.8, "baselineDepthRatio": 0.5, "relativeDepthRange": 0.4,
+                                "effectiveParameters": { "f": true, "cx": true, "cy": true, "k1": true, "k2": false, "k3": false, "p1": false, "p2": false },
+                                "stages": []
+                            }]
+                        }
+                    },
+                    "sourceAlignmentEntityId": alignment_id,
+                    "publicationSequence": 2
+                }))
+                .expect("optimization fixture");
+            let optimization_hash = put_project_object(
+                &session.working_path,
+                &serde_json::to_vec(&optimization).expect("optimization JSON"),
+            )
+            .expect("optimization object");
+            let optimization_id = EntityId(format!(
+                "{}:alignment-gcp:report-optimization",
+                session.manifest.project_id
+            ));
+            session.manifest.entities.insert(
+                optimization_id.0.clone(),
+                EntitySnapshot {
+                    id: optimization_id.clone(),
+                    kind: EntityKind::AlignmentRun,
+                    name: "GCP-optimized report alignment".into(),
+                    parent: None,
+                    children: Vec::new(),
+                    visibility: VisibilityState::default(),
+                    version_hash: optimization_hash,
+                    bounds: None,
+                },
+            );
+            (alignment_id, optimization_id)
+        };
+
+        let report = runtime
+            .processing_report_survey_data()
+            .expect("survey data query");
+        let alignment = report
+            .alignments
+            .iter()
+            .find(|item| item.entity_id == alignment_id)
+            .expect("alignment survey row");
+        assert_eq!(alignment.image_count, 1);
+        assert_eq!(alignment.gsd_meters_per_pixel, Some(1.0));
+        assert_eq!(alignment.footprint_bbox_area_square_meters, Some(200.0));
+        assert!(alignment
+            .gsd_method
+            .contains("median-elevation horizontal plane"));
+        assert_eq!(
+            alignment.gcp_optimization_entity_id.as_ref(),
+            Some(&optimization_id)
+        );
+        assert_eq!(alignment.gcp_residuals[0].position, [1.0, 2.0]);
+        assert_eq!(
+            alignment.gcp_residuals[0].vector_meters,
+            [Some(0.1), Some(-0.2)]
+        );
+        assert_eq!(alignment.calibration_groups[0].seed.f, Some(90.0));
+        assert_eq!(alignment.calibration_groups[0].solved.f, Some(100.0));
+        assert!(alignment.calibration_groups[0].refined.f);
+        assert!(alignment.calibration_groups[0].sigmas.is_none());
+        assert!(alignment.calibration_groups[0].correlation.is_none());
+        assert!(alignment.calibration_groups[0]
+            .uncertainty_note
+            .contains("no intrinsics covariance"));
         runtime.close().expect("close");
         fs::remove_dir_all(root).expect("cleanup");
     }
