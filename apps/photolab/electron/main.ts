@@ -219,6 +219,7 @@ const canonicalArtifacts = new Map<
 >();
 
 const RENDERER_SIDECAR_METHODS = new Set([
+  'photolab.report.surveyData',
   'app.negotiate',
   'canonical.project.open',
   'canonical.residency.bootstrap',
