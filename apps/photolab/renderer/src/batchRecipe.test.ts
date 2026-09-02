@@ -1,7 +1,9 @@
-/** Run from apps/photolab: pnpm exec tsx --test renderer/src/batchRecipe.test.ts */
+/** Batch recipe template tests. Run: pnpm --filter @himmelcad/photolab test */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { EntityId, ObjectHash } from '@himmelcad/data';
+
+import type { BatchRecipePipelineStep } from './batchRecipe.js';
 
 import {
   graphForBatchRecipePreset,
@@ -9,8 +11,12 @@ import {
   isBatchRecipeTemplateFile,
   migrateLegacyBatchAlignmentSteps,
   resolveBatchPipelineSteps,
-} from './batchRecipe.js';
-import { factoryAlignmentPresetForProfile } from './alignmentPreset.js';
+  // @ts-expect-error Node's strip-types test runner loads the TypeScript source directly.
+} from './batchRecipe.ts';
+import {
+  factoryAlignmentPresetForProfile,
+  // @ts-expect-error Node's strip-types test runner loads the TypeScript source directly.
+} from './alignmentPreset.ts';
 
 describe('batch RecipeTemplate', () => {
   it('keeps reusable templates symbolic and rejects concrete-run payloads', () => {
@@ -79,6 +85,25 @@ describe('batch RecipeTemplate', () => {
         },
       },
     ]);
+  });
+
+  it('carries the pinned GCP revision of a product step through resolution', async () => {
+    const [dem, ortho] = instantiateBatchRecipe('allProducts').filter(
+      (step): step is Extract<BatchRecipePipelineStep, { kind: 'product' }> =>
+        step.kind === 'product' &&
+        (step.configuration.kind === 'dem' || step.configuration.kind === 'ortho'),
+    );
+    const steps: BatchRecipePipelineStep[] = [
+      { ...dem!, gcpOptimizationEntityId: 'project:alignment:gcp-7' as EntityId },
+      { ...ortho!, gcpOptimizationEntityId: null },
+    ];
+    const resolved = await resolveBatchPipelineSteps(steps, async () => {
+      throw new Error('a product step must not load an alignment preset');
+    });
+    assert.deepEqual(
+      resolved.map((step) => (step.kind === 'product' ? step.gcpOptimizationEntityId : undefined)),
+      ['project:alignment:gcp-7', null],
+    );
   });
 
   it('freezes the referenced preset and its overrides for execution', async () => {

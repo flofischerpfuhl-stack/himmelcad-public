@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { stdout } from 'node:process';
+import { setTimeout } from 'node:timers/promises';
 
 import { buildProcessingReportHtml } from '../apps/photolab/renderer/src/processingReport.ts';
 
 const sha = 'a'.repeat(64);
-const html = buildProcessingReportHtml({
+
+/** Fixed golden fixture: every field is literal so the report stays reproducible. */
+const fixture = {
   project: { id: 'project-sulzberg', name: 'Sulzberg <Survey>', formatVersion: 1 },
   generatedAt: new Date('2026-07-13T08:30:00.000Z'),
   hardware: {
@@ -260,9 +264,11 @@ const html = buildProcessingReportHtml({
       },
     ],
   },
-});
+};
 
-for (const heading of [
+const html = buildProcessingReportHtml(fixture);
+
+const SECTION_HEADINGS = [
   'Hardware',
   'Processing sets and scope',
   'Alignment lineage',
@@ -270,8 +276,9 @@ for (const heading of [
   'Published products',
   'Ground control and checkpoints',
   'Per-point errors',
-])
-  assert.match(html, new RegExp(heading));
+];
+
+for (const heading of SECTION_HEADINGS) assert.match(html, new RegExp(heading));
 
 assert.match(html, /Configuration SHA-256/);
 assert.match(html, /project-sulzberg/);
@@ -306,5 +313,43 @@ assert.match(html, /Control &lt;1&gt;/);
 assert.match(html, /&lt;grid&gt; unavailable &amp; invalid/);
 assert.doesNotMatch(html, /<script/i);
 assert.doesNotMatch(html, /Mission <West>/);
+
+// Golden determinism (WP-F1). A pinned `generatedAt` must make the whole report
+// byte-identical across invocations, so re-exporting an unchanged project state
+// produces a diff-free artifact a client can re-verify.
+const golden = buildProcessingReportHtml(fixture);
+const goldenAgain = buildProcessingReportHtml(fixture);
+assert.equal(
+  goldenAgain,
+  golden,
+  'buildProcessingReportHtml must be byte-identical for an identical pinned fixture',
+);
+assert.equal(
+  createHash('sha256').update(goldenAgain, 'utf8').digest('hex'),
+  createHash('sha256').update(golden, 'utf8').digest('hex'),
+);
+for (const heading of SECTION_HEADINGS) assert.match(golden, new RegExp(heading));
+assert.match(golden, /2026-07-13T08:30:00\.000Z/);
+
+// Documented current behaviour, not an endorsement: omitting `generatedAt` falls
+// back to `new Date()` (processingReport.ts:48), so an unpinned report is NOT
+// reproducible. WP-A2 makes `generatedAt` required; this assertion must then be
+// replaced by a compile-time requirement rather than deleted.
+const { generatedAt: _pinned, ...unpinned } = fixture;
+const first = buildProcessingReportHtml(unpinned);
+await setTimeout(2);
+const second = buildProcessingReportHtml(unpinned);
+assert.notEqual(
+  second,
+  first,
+  'an unpinned report is expected to be non-deterministic until WP-A2 makes generatedAt required',
+);
+const stripGenerated = (report) =>
+  report.replace(/generated \d{4}-\d{2}-\d{2}T[\d:.]+Z/, 'generated <unpinned>');
+assert.equal(
+  stripGenerated(second),
+  stripGenerated(first),
+  'the generated timestamp must be the only non-deterministic part of the report',
+);
 
 stdout.write('PhotoLab processing report test passed.\n');

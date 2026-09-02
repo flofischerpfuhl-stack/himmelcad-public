@@ -1,19 +1,19 @@
-/**
- * Alignment preset validation tests.
- * Run: pnpm exec tsx --test renderer/src/alignmentPreset.test.ts
- * (from apps/photolab)
- */
+/** Alignment preset validation tests. Run: pnpm --filter @himmelcad/photolab test */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
   ALIGNMENT_PRESET_KIND,
+  alignmentPresetReferenceFromKey,
+  alignmentPresetReferenceKey,
   buildAlignmentPreset,
   DEFAULT_FACTORY_ALIGNMENT_PRESET,
   defaultOverridesForProfile,
   FACTORY_ALIGNMENT_PRESETS,
+  isAlignmentPresetReference,
   parseAlignmentPreset,
-} from './alignmentPreset.js';
+  // @ts-expect-error Node's strip-types test runner loads the TypeScript source directly.
+} from './alignmentPreset.ts';
 
 describe('alignmentPreset', () => {
   it('ships three ordered built-in presets generated from profile defaults', () => {
@@ -27,6 +27,28 @@ describe('alignmentPreset', () => {
       assert.equal(item.path.startsWith('builtin:'), true);
     }
     assert.equal(DEFAULT_FACTORY_ALIGNMENT_PRESET.preset.profile, 'qualityHybrid');
+  });
+
+  it('round-trips a dropdown key for built-in and user presets', () => {
+    for (const item of FACTORY_ALIGNMENT_PRESETS) {
+      const reference = { source: 'builtIn' as const, presetId: item.preset.id };
+      const key = alignmentPresetReferenceKey(reference);
+      assert.equal(key, item.path);
+      assert.deepEqual(alignmentPresetReferenceFromKey(key), reference);
+      assert.equal(isAlignmentPresetReference(reference), true);
+    }
+    const userReference = { source: 'userFile' as const, path: '/presets/site.hcalign' };
+    assert.equal(alignmentPresetReferenceKey(userReference), userReference.path);
+    assert.deepEqual(alignmentPresetReferenceFromKey(userReference.path), userReference);
+    assert.equal(isAlignmentPresetReference(userReference), true);
+  });
+
+  it('rejects a built-in reference whose preset id no longer ships', () => {
+    assert.equal(
+      isAlignmentPresetReference({ source: 'builtIn', presetId: 'retired-preset' }),
+      false,
+    );
+    assert.equal(isAlignmentPresetReference({ source: 'userFile', path: '' }), false);
   });
 
   it('builds a valid .hcalign payload', () => {
