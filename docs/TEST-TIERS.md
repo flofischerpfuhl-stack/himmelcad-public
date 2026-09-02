@@ -5,12 +5,12 @@ It unions tasks by stable ID, so a gate runs at most once per invocation, and
 writes durations to `.build/verify/timings.json`. Timings explain cost; they
 never suppress a required gate.
 
-| Tier    | Command                                     | Purpose                                                                                                                                                |
-| ------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| changed | `pnpm verify:changed`                       | Frequent local feedback: affected package typechecks/tests and direct Rust crate tests. No English, browser, visual, package or real-data gates.       |
-| commit  | `pnpm verify:commit`                        | Staged paths plus changed-file lint/format, Rust format and the currently implemented PhotoLab English UI audit exactly once.                          |
-| push    | `pnpm verify:push`                          | The commits since the upstream merge base, with reverse consumers and risk-triggered contract/browser/visual/clippy gates.                             |
-| release | `pnpm verify:release -- --capabilities=...` | Full release plan. Missing GPU, real-data or native package capabilities fail rather than silently skip. CI fans this plan out across capable runners. |
+| Tier    | Command                                     | Purpose                                                                                                                                                                                  |
+| ------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| changed | `pnpm verify:changed`                       | Frequent local feedback: affected package typechecks/tests and direct Rust crate tests. No English, browser, visual, package or real-data gates.                                         |
+| commit  | `pnpm verify:commit`                        | Staged paths plus changed-file lint/format, Rust format and the currently implemented PhotoLab English UI audit exactly once.                                                            |
+| push    | `pnpm verify:push`                          | The commits since the upstream merge base, with reverse consumers and risk-triggered contract/browser/visual/clippy gates.                                                               |
+| release | `pnpm verify:release -- --capabilities=...` | Full release plan. Missing GPU, real-data or native package capabilities fail rather than silently skip. It is operator-run; no CI job invokes it (see "Where each tier actually runs"). |
 
 Rust Clippy follows the lint levels declared in the workspace manifest:
 `clippy::all` is blocking, while `clippy::pedantic` remains advisory.
@@ -91,5 +91,47 @@ once per clone. Hooks do not stash or rewrite the working tree: staged tests may
 therefore expose an error in an unstaged version of the same source file.
 
 Release capability names currently are `browser-gpu`, `real-data`,
-`linux-package` and `windows-package`. Platform-specific CI jobs must own them;
-a foreign-platform or unavailable-data skip is not a certification pass.
+`linux-package` and `windows-package`. A foreign-platform or unavailable-data
+skip is never a certification pass, which is why the release runner fails on a
+missing capability instead of reporting a skip.
+
+## Where each tier actually runs
+
+- **GitLab CI** runs the portable, deterministic gates only: `node:typecheck`,
+  `node:test` (`pnpm -r test`, which reaches PhotoLab), `node:lint`,
+  `node:policy`, `python:automation-sdk`, the Rust format/clippy/test/build
+  jobs, `node:build` and `licenses:cargo-deny`. Two PhotoLab jobs are scoped to
+  scheduled pipelines and PhotoLab path changes. `photolab:gates` runs the
+  deterministic trio `photolab:test:visual-baseline` (PNG comparator unit
+  tests), `photolab:test:e2e-contracts` and
+  `pnpm --filter @himmelcad/photolab test`. `photolab:visual`
+  runs the headless layout audit only when the operator sets
+  `PHOTOLAB_VISUAL_IMAGE` to a Chrome-capable image — the default
+  `node:22-bookworm` image ships no browser. Setting
+  `PHOTOLAB_VISUAL_BASELINES=compare` additionally enables the pixel-baseline
+  comparison; do that only for an image whose Chromium build and font stack
+  match `apps/photolab/test/visual-baselines/manifest.json`, because rendering
+  is machine-specific. No CI job runs `pnpm verify:release` or owns any release
+  capability.
+- **Local hooks** (`pnpm hooks:install`) run `verify:commit` on commit and
+  `verify:push` on push. The push tier is where the risk-triggered gates live:
+  `photolab.visual` (layout invariants, without pixel comparison) on
+  `apps/photolab/renderer/` changes, plus the PhotoLab contract and
+  dialog-policy gates, the viewer browser kernel, lint and clippy.
+- **Operator-run**, with the cadence the reviewing session enforces per work
+  package and before every release candidate:
+  - `browser-gpu` and `real-data` release tasks (viewer real-parity, real DGM
+    section, large prepared mesh, `photolab:test:golden:agisoft`) — before a
+    release candidate and after any change to the affected pipelines.
+  - `linux-package` and `windows-package` install smokes, plus the native
+    Windows certification of ADR 0013 — before a release candidate.
+  - The real cancellation and resume matrix in
+    `docs/photolab-cancellation-matrix.md` — it needs 24 real images and an
+    idle product chain, so it runs after each robustness work package and
+    before a release candidate; the deterministic subset
+    (`pnpm photolab:test:e2e-contracts`) is the part CI runs on every PhotoLab
+    change.
+  - Pixel-baseline refresh — run
+    `pnpm photolab:test:visual:baselines:update` after an intended UI change
+    and review the resulting PNGs in the diff. On the machine that produced
+    them, `pnpm photolab:test:visual:baselines` must pass on an unchanged tree.

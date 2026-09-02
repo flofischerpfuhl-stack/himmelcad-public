@@ -4,16 +4,29 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Playwright values cross the Node/browser boundary in this standalone visual audit. */
 
 import { spawn } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { chromium } from 'playwright-core';
+
+import { compareImages, decodePng, encodePng } from './lib/png-compare.mjs';
 
 process.env.HIMMELCAD_PHOTOLAB_CLEAN_BOOT = '1';
 
 const root = resolve(import.meta.dirname, '..');
 const rendererUrl = pathToFileURL(resolve(root, 'apps/photolab/dist/renderer/index.html')).href;
+const baselineRoot = resolve(root, 'apps/photolab/test/visual-baselines');
+// A capture fails when more than 0.1 % of its pixels differ from the baseline,
+// counting a pixel as different once any RGBA channel deviates by more than 16.
+// The channel tolerance absorbs Chromium's sub-visual antialiasing jitter; the
+// area threshold absorbs a few stray glyph edges while any real layout shift —
+// a moved control, a changed panel width, a restyled surface — moves whole
+// runs of pixels and lands far above it.
+const CHANNEL_TOLERANCE = 16;
+const MAX_DIFF_RATIO = 0.001;
+const updateBaselines = process.argv.includes('--update-baselines');
+const compareBaselines = updateBaselines || process.argv.includes('--compare-baselines');
 const viewports = [
   { name: '1440x900', width: 1440, height: 900 },
   { name: '1100x720', width: 1100, height: 720 },
@@ -30,7 +43,9 @@ const ribbonActions = {
 if (!process.argv.includes('--skip-build'))
   await run('pnpm', ['--filter', '@himmelcad/photolab', 'exec', 'vite', 'build']);
 let browser;
+let browserVersion = 'unknown';
 const reports = [];
+if (updateBaselines) await mkdir(baselineRoot, { recursive: true });
 try {
   browser = await chromium.launch({
     executablePath: process.env.CHROME_BIN ?? '/usr/bin/google-chrome',
@@ -42,13 +57,43 @@ try {
       '--allow-file-access-from-files',
     ],
   });
+  browserVersion = browser.version();
   for (const viewport of viewports) reports.push(await auditViewport(browser, viewport));
 } finally {
   await browser?.close();
 }
 
+const baseline = {
+  mode: updateBaselines ? 'update' : compareBaselines ? 'compare' : 'off',
+  channelTolerance: CHANNEL_TOLERANCE,
+  maxDiffRatio: MAX_DIFF_RATIO,
+  directory: relative(root, baselineRoot),
+  chromiumVersion: browserVersion,
+  platform: `${process.platform}-${process.arch}`,
+};
+if (updateBaselines)
+  await writeFile(
+    resolve(baselineRoot, 'manifest.json'),
+    `${JSON.stringify(
+      {
+        note: 'Pixel baselines for scripts/photolab-visual-regression.mjs. Rendering depends on the Chromium build and the installed font stack, so comparison is only meaningful on a machine or CI image matching this provenance. Regenerate with `pnpm photolab:test:visual -- --update-baselines`.',
+        channelTolerance: CHANNEL_TOLERANCE,
+        maxDiffRatio: MAX_DIFF_RATIO,
+        chromiumVersion: browserVersion,
+        platform: `${process.platform}-${process.arch}`,
+        viewports: viewports.map((viewport) => viewport.name),
+        captures: Object.fromEntries(
+          reports.map((report) => [report.viewport, report.captures.slice().sort()]),
+        ),
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+
 const reportPath = resolve(root, '.build/visual-regression/report.json');
-await writeFile(reportPath, `${JSON.stringify({ reports }, null, 2)}\n`, 'utf8');
+await writeFile(reportPath, `${JSON.stringify({ baseline, reports }, null, 2)}\n`, 'utf8');
 const issues = reports.flatMap((report) =>
   report.issues.map((issue) => `${report.viewport}: ${issue}`),
 );
@@ -57,13 +102,21 @@ if (issues.length > 0) {
     `PhotoLab visual audit failed:\n${issues.map((issue) => `- ${issue}`).join('\n')}`,
   );
 }
+const captureCount = reports.reduce((sum, report) => sum + report.captures.length, 0);
+const baselineSummary = updateBaselines
+  ? ` · ${reports.reduce((sum, report) => sum + report.baselinesWritten, 0)} baselines written`
+  : compareBaselines
+    ? ` · ${reports.reduce((sum, report) => sum + report.baselinesCompared, 0)} baselines matched`
+    : '';
 process.stdout.write(
-  `PhotoLab visual audit passed · ${reports.reduce((sum, report) => sum + report.captures.length, 0)} captures · ${reportPath}\n`,
+  `PhotoLab visual audit passed · ${captureCount} captures${baselineSummary} · ${reportPath}\n`,
 );
 
 async function auditViewport(browserInstance, viewport) {
   const output = resolve(root, `.build/visual-regression/${viewport.name}`);
+  const baselineDirectory = resolve(baselineRoot, viewport.name);
   await mkdir(output, { recursive: true });
+  if (updateBaselines) await mkdir(baselineDirectory, { recursive: true });
   const context = await browserInstance.newContext({
     viewport: { width: viewport.width, height: viewport.height },
     bypassCSP: true,
@@ -71,9 +124,17 @@ async function auditViewport(browserInstance, viewport) {
   const page = await context.newPage();
   const issues = [];
   const captures = [];
+  const comparisons = [];
+  let baselinesWritten = 0;
+  let baselinesCompared = 0;
   const pageErrors = [];
   const nativeDialogs = [];
-  page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('pageerror', (error) => {
+    pageErrors.push(error.message);
+    // A renderer crash makes every later locator time out, and the timeout
+    // message alone never names the cause. Echo it as it happens.
+    process.stderr.write(`[visual ${viewport.name}] page error: ${error.stack ?? error.message}\n`);
+  });
   page.on('dialog', async (dialog) => {
     nativeDialogs.push(`${dialog.type()}: ${dialog.message()}`);
     await dialog.dismiss();
@@ -103,8 +164,48 @@ async function auditViewport(browserInstance, viewport) {
         ),
     );
     await page.waitForTimeout(120);
-    await page.screenshot({ path: resolve(output, `${name}.png`) });
+    const shot = await page.screenshot({
+      path: resolve(output, `${name}.png`),
+      animations: 'disabled',
+    });
     captures.push(name);
+    if (compareBaselines) {
+      const baselinePath = resolve(baselineDirectory, `${name}.png`);
+      const diffPath = resolve(output, `${name}.diff.png`);
+      if (updateBaselines) {
+        await writeFile(baselinePath, shot);
+        baselinesWritten += 1;
+      } else {
+        const stored = await readFile(baselinePath).catch(() => null);
+        if (!stored)
+          issues.push(
+            `${name}: no pixel baseline at ${relative(root, baselinePath)} — run ` +
+              '`pnpm photolab:test:visual -- --update-baselines` after reviewing the capture',
+          );
+        else {
+          const result = compareImages(decodePng(shot), decodePng(stored), {
+            channelTolerance: CHANNEL_TOLERANCE,
+          });
+          comparisons.push({
+            name,
+            differingPixels: result.differingPixels,
+            totalPixels: result.totalPixels,
+            ratio: Number(result.ratio.toFixed(6)),
+            maxChannelDelta: result.maxChannelDelta,
+            sizeMismatch: result.sizeMismatch,
+          });
+          baselinesCompared += 1;
+          if (result.sizeMismatch || result.ratio > MAX_DIFF_RATIO) {
+            await writeFile(diffPath, encodePng(result.diff));
+            issues.push(
+              `${name}: pixel baseline mismatch — ${result.differingPixels}/${result.totalPixels} ` +
+                `pixels (${(result.ratio * 100).toFixed(3)} % > ${(MAX_DIFF_RATIO * 100).toFixed(3)} %)` +
+                `${result.sizeMismatch ? ', capture size differs from the baseline' : ''}; diff: ${relative(root, diffPath)}`,
+            );
+          } else await rm(diffPath, { force: true });
+        }
+      }
+    }
     const audit = await page.evaluate(() => {
       const visible = (element) => {
         const style = getComputedStyle(element);
@@ -240,7 +341,10 @@ async function auditViewport(browserInstance, viewport) {
       await button.click();
       await capture(`function-${slug(action)}`);
       if (action === 'Configure Batch') {
-        await page.getByRole('button', { name: 'Close batch configuration', exact: true }).click();
+        // The configurator renders inside the right function panel; the legacy
+        // recipe dialog is the only surface with an explicit close button.
+        const close = page.getByRole('button', { name: 'Close batch configuration', exact: true });
+        if ((await close.count()) > 0) await close.click();
       }
       if (action === 'Capture Groups') {
         await page.getByRole('button', { name: 'Add split', exact: true }).click();
@@ -254,7 +358,7 @@ async function auditViewport(browserInstance, viewport) {
   await page.getByText('Scanning folders…', { exact: true }).waitFor();
   await capture('image-import-progress');
   try {
-    await page.getByText('2 images ready', { exact: true }).waitFor({ timeout: 5_000 });
+    await page.getByText('2 images ready', { exact: true }).waitFor({ timeout: 15_000 });
   } catch (error) {
     const bodyText = await page
       .locator('body')
@@ -331,7 +435,16 @@ async function auditViewport(browserInstance, viewport) {
   if (nativeDialogs.length > 0) issues.push(`native dialogs used: ${nativeDialogs.join(' | ')}`);
   if (pageErrors.length > 0) issues.push(`page errors: ${pageErrors.join(' | ')}`);
   await context.close();
-  return { viewport: viewport.name, captures, issues, nativeDialogs, pageErrors };
+  return {
+    viewport: viewport.name,
+    captures,
+    baselinesWritten,
+    baselinesCompared,
+    comparisons,
+    issues,
+    nativeDialogs,
+    pageErrors,
+  };
 }
 
 function slug(value) {
@@ -343,6 +456,10 @@ function slug(value) {
 
 function mockBridgeSource() {
   return `(() => {
+    const frozenUnixMs=1735689600000;
+    class FrozenDate extends Date{constructor(...args){if(args.length===0)super(frozenUnixMs);else super(...args)}static now(){return frozenUnixMs}}
+    window.Date=FrozenDate;
+    window.performance.now=()=>0;
     window.alert=()=>{throw new Error('Native alert is forbidden')};
     window.confirm=()=>{throw new Error('Native confirm is forbidden')};
     window.prompt=()=>{throw new Error('Native prompt is forbidden')};
@@ -360,7 +477,7 @@ function mockBridgeSource() {
     };
     const opened={
       session:{sessionId:'visual',sourcePath:'/tmp/visual.hcad',workingPath:'/tmp/visual.hcad',usesLocalWorkingCopy:false,recoveryAvailable:false,readOnly:false,autosaveGeneration:0,lastSavedGeneration:0},
-      manifest:{formatVersion:1,coordinateAxisContractVersion:2,projectId:'visual',name:'Visual Test Project',createdUnixMs:0,modifiedUnixMs:0,autosaveGeneration:0,commandSequence:0,cleanShutdown:true,rootEntity:'root',entities,renderOffset:{x:4375560,y:5281257,z:735},activeRuns:[]}
+      manifest:{formatVersion:1,coordinateAxisContractVersion:2,projectId:'visual',name:'Visual Test Project',createdUnixMs:0,modifiedUnixMs:0,autosaveGeneration:0,commandSequence:0,cleanShutdown:true,spatialReference:{kind:'crsBacked'},rootEntity:'root',entities,renderOffset:{x:4375560,y:5281257,z:735},activeRuns:[]}
     };
     const defaults={delimiter:';',decimalSeparator:'comma',hasHeader:true,columns:{name:'0',east:'1',north:'2',height:'3'},role:'controlXyz',horizontalStddev:.02,heightStddev:.03};
     const photo=(number)=>({sourcePath:'/tmp/DJI_000'+number+'.JPG',format:'jpeg',byteSize:12000000,sha256:String(number).padStart(64,'0'),metadata:{exif:{make:'DJI',model:'M4E',focalLengthMm:12.29,dimensions:{widthPixels:5280,heightPixels:3956},gps:{latitudeDegrees:47.6657+number*.0001,longitudeDegrees:10.3414+number*.0001,altitude:{meters:783,semanticReference:'unknown'}}},djiXmp:{latitudeDegrees:47.6657+number*.0001,longitudeDegrees:10.3414+number*.0001,absoluteAltitude:{meters:783,semanticReference:'unknown'},gimbalAttitude:{yaw:65,pitch:-90,roll:0},rtk:{flag:'50',standardDeviationLongitudeMeters:.01,standardDeviationLatitudeMeters:.01,standardDeviationHeightMeters:.03}}}});
@@ -373,7 +490,7 @@ function mockBridgeSource() {
       if(method==='app.negotiate')return {selectedVersion:1,serverName:'visual-sidecar',serverVersion:'visual',sessionId:'visual-app-session',capabilities:['io.formats.read','io.probe','registration.import']};
       if(method==='canonical.project.open')return {};
       if(method==='photolab.hardware.probe')return {operatingSystem:'linux',cpu:{physicalCores:8,logicalCores:16,supportsAvx2:true},ramBytes:34359738368,dedicatedVramBytes:0};
-      if(method==='photolab.images.inspect'){await new Promise(resolve=>setTimeout(resolve,450));if(window.__photolabVisualInspectError)throw new Error('Visual image inspection failure');return batch;}
+      if(method==='photolab.images.inspect'){await new Promise(resolve=>setTimeout(resolve,1500));if(window.__photolabVisualInspectError)throw new Error('Visual image inspection failure');return batch;}
       if(method==='photolab.crs.discover')return discovery;
       if(method==='photolab.gcp.preview'){if(window.__photolabVisualGcpPreviewError)throw new Error('Visual GCP preview failure');return preview;}
       if(method==='photolab.images.list')return [projectImage(1),projectImage(2)];
@@ -399,6 +516,8 @@ function mockBridgeSource() {
       externalImport:{projectRoot:async()=>'/tmp/visual-project',selectFiles:async()=>[],openTransform:async()=>null,saveTransform:async()=>null,materialize:async(sessionId)=>({schemaVersion:1,sessionId,datasets:[]}),revoke:async()=>true,residency:async()=>({schemaVersion:1,entries:[]})},
       grids:{select:async()=>null},
       reference:{selectGcpCsv:async()=>'/tmp/visual-gcps.csv'},
+      workflows:{defaultDir:async()=>'/tmp/visual-workflows',list:async()=>[],loadPath:async(path)=>({path,workflow:{}}),open:async()=>null,save:async()=>null},
+      alignmentPresets:{defaultDir:async()=>'/tmp/visual-presets',list:async()=>[],loadPath:async(path)=>({path,preset:{}}),open:async()=>null,save:async()=>null},
       batch:{load:async()=>null,save:async()=>true},reports:{save:async()=>true},products:{export:async()=>({confirmation:{token:'visual-export',displayName:'Sparse Point Cloud'}}),confirmExport:async()=>({job:{id:'visual-export-job',kind:'exportProduct',state:{kind:'queued'},stages:[],createdUnixMs:0,updatedUnixMs:0,progress:{completedWork:0,totalWork:1,completedBytes:0,totalBytes:0}}}),cancelExport:async()=>{}}
     },configurable:false});
   })();`;

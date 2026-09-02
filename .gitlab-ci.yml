@@ -73,6 +73,60 @@ node:policy:
     - pnpm branding:check
     - pnpm product-names:check
 
+# Deterministic PhotoLab gates: no dataset, no GPU, no Electron runtime, no
+# browser. Runs on scheduled pipelines and whenever PhotoLab UI, Electron or
+# contract sources change.
+photolab:gates:
+  extends: .node
+  stage: test
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - changes:
+        - apps/photolab/**/*
+        - packages/@himmelcad/ui/**/*
+        - scripts/photolab-visual-regression.mjs
+        - scripts/test-photolab-e2e-contracts.mjs
+        - scripts/test-photolab-visual-baseline.mjs
+        - scripts/lib/png-compare.mjs
+        - scripts/lib/photolab-e2e-contracts.mjs
+  script:
+    - pnpm photolab:test:visual-baseline
+    - pnpm photolab:test:e2e-contracts
+    - pnpm --filter @himmelcad/photolab test
+
+# Headless-browser layout audit plus optional pixel-baseline comparison.
+# `node:22-bookworm` ships no browser, so this job stays disabled until the
+# operator points PHOTOLAB_VISUAL_IMAGE at a Chrome-capable image (with
+# CHROME_BIN set when the binary is not at /usr/bin/google-chrome).
+# Set PHOTOLAB_VISUAL_BASELINES=compare only for an image whose Chromium build
+# and font stack match apps/photolab/test/visual-baselines/manifest.json;
+# otherwise the job runs the layout-invariant audit without pixel comparison.
+photolab:visual:
+  extends: .node
+  image: $PHOTOLAB_VISUAL_IMAGE
+  stage: test
+  rules:
+    - if: '$PHOTOLAB_VISUAL_IMAGE == null || $PHOTOLAB_VISUAL_IMAGE == ""'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - changes:
+        - apps/photolab/**/*
+        - packages/@himmelcad/ui/**/*
+        - scripts/photolab-visual-regression.mjs
+        - scripts/lib/png-compare.mjs
+  script:
+    - |
+      if [ "$PHOTOLAB_VISUAL_BASELINES" = 'compare' ]; then
+        pnpm photolab:test:visual:baselines
+      else
+        pnpm photolab:test:visual
+      fi
+  artifacts:
+    when: always
+    paths:
+      - .build/visual-regression/
+    expire_in: 1 week
+
 node:lint:
   extends: .node
   stage: lint
