@@ -311,6 +311,42 @@ export type AlignmentMergeConnection =
       controlPointIds: string[];
     };
 
+export interface AlignmentMergeProfileSnapshot {
+  id: string;
+  name: string;
+  profile: AlignmentQualityProfile;
+  overrides: {
+    maxImageEdge?: number;
+    keypointsPerMegapixel?: number;
+    sequentialOverlap?: number;
+    featureBudget?: number;
+  };
+}
+
+export interface AlignmentMergeConnectionEvidence {
+  connectionIndex: number;
+  kind: 'overlap' | 'sharedControls';
+  crossRunTrackCount: number;
+  crossRunReprojectionRmsPx?: number;
+  controlMisclosure?: {
+    east: number;
+    north: number;
+    height: number;
+    count: number;
+  };
+}
+
+export interface AlignmentMergePreflightResult {
+  schemaVersion: number;
+  inputEntityIds: EntityId[];
+  available: boolean;
+  candidateCrossRunPairCount?: number;
+  meanNeighborSpacingMeters?: number;
+  distanceThresholdMeters?: number;
+  lowOverlap: boolean;
+  message: string;
+}
+
 /** Explicit, immutable merge plan. It is not a product source until a joint solve publishes it. */
 export interface MergedAlignmentRunRecord {
   schemaVersion: 1;
@@ -320,6 +356,8 @@ export interface MergedAlignmentRunRecord {
   inputAlignmentEntityIds: EntityId[];
   inputGcpOptimizationEntityIds: EntityId[];
   connections: AlignmentMergeConnection[];
+  connectionEvidence?: AlignmentMergeConnectionEvidence[];
+  mergeProfile?: AlignmentMergeProfileSnapshot;
   cameraEntityIds: EntityId[];
   calibrationGroups?: {
     groupId: string;
@@ -336,6 +374,7 @@ export interface AlignmentMergeCandidateRecord {
   name: string;
   jobId: string;
   publicationSequence: number;
+  versionSha256: ObjectHash;
   cameraEntityIds: EntityId[];
   processingSetId?: EntityId;
   calibrationGroupIds?: EntityId[];

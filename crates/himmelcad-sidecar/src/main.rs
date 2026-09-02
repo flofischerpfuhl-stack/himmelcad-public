@@ -65,10 +65,10 @@ use himmelcad_io::{
 };
 
 use crate::project_runtime::{
-    AppendJournalParams, CancelArchiveParams, CancelImageMaskParams, ConfirmCaptureGroupParams,
-    CreateAlignmentMergeParams, CreateCaptureGroupParams, CreateProcessingSetParams,
-    CreateProjectParams, EditImageMaskParams, FinishJournalParams, MoveEntityParams,
-    OpenProjectParams, ProductLineage, ProjectRuntime, PublishedRasterKind,
+    AlignmentMergePreflightParams, AppendJournalParams, CancelArchiveParams, CancelImageMaskParams,
+    ConfirmCaptureGroupParams, CreateAlignmentMergeParams, CreateCaptureGroupParams,
+    CreateProcessingSetParams, CreateProjectParams, EditImageMaskParams, FinishJournalParams,
+    MoveEntityParams, OpenProjectParams, ProductLineage, ProjectRuntime, PublishedRasterKind,
     RemoveCameraImagesParams, RenameEntityParams, SaveProjectAsParams, SetEntityVisibilityParams,
     UpdateCalibrationGroupIntrinsicsParams,
 };
@@ -692,7 +692,6 @@ struct StartImageQualityJobParams {
 struct StartAlignmentMergeJobParams {
     operation_id: String,
     merge_entity_id: EntityId,
-    profile: AlignmentQualityProfile,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1275,6 +1274,14 @@ async fn handle(
             "PhotoLab side operations did not stop before the shutdown deadline",
             serde_json::json!({ "timedOut": side_drain.timed_out }),
         );
+    }
+    if req.method == "photolab.alignmentMerge.preflight" {
+        return rpc_blocking_with_params::<AlignmentMergePreflightParams, _, _>(
+            req.id,
+            req.params,
+            move |params| projects.alignment_merge_preflight(params),
+        )
+        .await;
     }
     if req.method.starts_with("photolab.project.") {
         return handle_project_rpc(req, projects, &jobs).await;
@@ -5863,6 +5870,19 @@ fn prepare_alignment_merge_job(
     bool,
 )> {
     let merge = projects.alignment_merge_compute_context(&params.merge_entity_id)?;
+    let merge_profile = merge.record.merge_profile.clone().unwrap_or_else(|| {
+        crate::project_runtime::AlignmentMergeProfileSnapshot {
+            id: "photolab.factory.qualityHybrid".into(),
+            name: "Quality Hybrid".into(),
+            profile: AlignmentQualityProfile::QualityHybrid,
+            overrides: crate::project_runtime::AlignmentMergeProfileOverrides {
+                max_image_edge: Some(8_192),
+                keypoints_per_megapixel: Some(8_000),
+                sequential_overlap: Some(24),
+                feature_budget: Some(16_000),
+            },
+        }
+    });
     let shared_control_only = merge.record.connections.iter().all(|connection| {
         matches!(
             connection,
@@ -5881,11 +5901,20 @@ fn prepare_alignment_merge_job(
             profile: if shared_control_only {
                 AlignmentQualityProfile::Fast
             } else {
-                params.profile
+                merge_profile.profile
             },
             camera_entity_ids,
             processing_set_id: None,
-            overrides: AlignmentJobOverrides::default(),
+            overrides: if shared_control_only {
+                AlignmentJobOverrides::default()
+            } else {
+                AlignmentJobOverrides {
+                    max_image_edge: merge_profile.overrides.max_image_edge,
+                    keypoints_per_megapixel: merge_profile.overrides.keypoints_per_megapixel,
+                    sequential_overlap: merge_profile.overrides.sequential_overlap,
+                    feature_budget: merge_profile.overrides.feature_budget,
+                }
+            },
         },
         projects,
     )?;
@@ -5908,6 +5937,7 @@ fn prepare_alignment_merge_job(
     job.config_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
         &request,
         &merge.record.lineage_sha256,
+        &merge_profile,
     ))?);
     job.input_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
         &merge.record.entity_id,

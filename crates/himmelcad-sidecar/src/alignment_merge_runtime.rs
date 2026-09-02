@@ -20,16 +20,28 @@ pub struct MergeInputScope {
 }
 
 /// Authoritative cross-run evidence measured from the solved COLMAP tracks.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SolvedOverlapEvidence {
     pub alignment_a: EntityId,
     pub alignment_b: EntityId,
     pub verified_cross_run_track_count: u64,
+    pub cross_run_reprojection_rms_px: f64,
+}
+
+/// Component-wise mean absolute difference between two independently optimized
+/// representations of the same controls in the common survey frame.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlMisclosure {
+    pub east: f64,
+    pub north: f64,
+    pub height: f64,
+    pub count: u64,
 }
 
 /// Validated camera registration and cross-run observations for publication.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AlignmentMergeEvidenceReport {
     pub schema_version: u32,
@@ -774,7 +786,7 @@ pub fn inspect_solved_merge(
             },
         );
     let points_path = model_root.join("points3D.txt");
-    let mut pair_counts = BTreeMap::<(usize, usize), u64>::new();
+    let mut pair_statistics = BTreeMap::<(usize, usize), (u64, f64)>::new();
     for line in lines(&points_path)? {
         if line.is_empty() || line.starts_with('#') {
             continue;
@@ -783,6 +795,16 @@ pub fn inspect_solved_merge(
         if fields.len() < 10 || (fields.len() - 8) % 2 != 0 {
             return Err(AlignmentMergeRuntimeError::InvalidDataset(
                 "points3D.txt contains a truncated track".into(),
+            ));
+        }
+        let reprojection_error_px = fields[7].parse::<f64>().map_err(|_| {
+            AlignmentMergeRuntimeError::InvalidDataset(
+                "points3D.txt contains an invalid reprojection error".into(),
+            )
+        })?;
+        if !reprojection_error_px.is_finite() || reprojection_error_px < 0.0 {
+            return Err(AlignmentMergeRuntimeError::InvalidDataset(
+                "points3D.txt contains a non-finite or negative reprojection error".into(),
             ));
         }
         let mut participating = BTreeSet::new();
@@ -811,19 +833,24 @@ pub fn inspect_solved_merge(
         let indices = participating.into_iter().collect::<Vec<_>>();
         for left in 0..indices.len() {
             for right in (left + 1)..indices.len() {
-                *pair_counts
+                let statistics = pair_statistics
                     .entry((indices[left], indices[right]))
-                    .or_default() += 1;
+                    .or_default();
+                statistics.0 += 1;
+                statistics.1 += reprojection_error_px * reprojection_error_px;
             }
         }
     }
-    let mut overlap = pair_counts
+    let mut overlap = pair_statistics
         .into_iter()
-        .map(|((left, right), count)| SolvedOverlapEvidence {
-            alignment_a: inputs[left].alignment_id.clone(),
-            alignment_b: inputs[right].alignment_id.clone(),
-            verified_cross_run_track_count: count,
-        })
+        .map(
+            |((left, right), (count, squared_error_sum))| SolvedOverlapEvidence {
+                alignment_a: inputs[left].alignment_id.clone(),
+                alignment_b: inputs[right].alignment_id.clone(),
+                verified_cross_run_track_count: count,
+                cross_run_reprojection_rms_px: (squared_error_sum / count as f64).sqrt(),
+            },
+        )
         .collect::<Vec<_>>();
     overlap.sort_by(|left, right| {
         (&left.alignment_a.0, &left.alignment_b.0)
@@ -833,6 +860,54 @@ pub fn inspect_solved_merge(
         schema_version: 1,
         registered_camera_entity_ids: registered.into_iter().collect(),
         overlap,
+    })
+}
+
+/// Computes shared-control agreement from the optimized coordinates published
+/// by two independent GCP optimizations.
+pub fn compute_control_misclosure(
+    control_point_ids: &[String],
+    left: &[himmelcad_core::photolab_gcp_optimization::OptimizedGcpPoint],
+    right: &[himmelcad_core::photolab_gcp_optimization::OptimizedGcpPoint],
+) -> Result<ControlMisclosure, AlignmentMergeRuntimeError> {
+    if control_point_ids.is_empty() {
+        return Err(AlignmentMergeRuntimeError::InvalidDataset(
+            "shared-control evidence contains no controls".into(),
+        ));
+    }
+    let left = left
+        .iter()
+        .map(|point| (point.point_id.0.as_str(), point.optimized_coordinate))
+        .collect::<BTreeMap<_, _>>();
+    let right = right
+        .iter()
+        .map(|point| (point.point_id.0.as_str(), point.optimized_coordinate))
+        .collect::<BTreeMap<_, _>>();
+    let mut sums = [0.0; 3];
+    for point_id in control_point_ids {
+        let left = left.get(point_id.as_str()).ok_or_else(|| {
+            AlignmentMergeRuntimeError::InvalidDataset(format!(
+                "left optimization has no optimized coordinate for shared control {point_id}"
+            ))
+        })?;
+        let right = right.get(point_id.as_str()).ok_or_else(|| {
+            AlignmentMergeRuntimeError::InvalidDataset(format!(
+                "right optimization has no optimized coordinate for shared control {point_id}"
+            ))
+        })?;
+        sums[0] += (left.east_meters - right.east_meters).abs();
+        sums[1] += (left.north_meters - right.north_meters).abs();
+        sums[2] += (left.height_meters - right.height_meters).abs();
+    }
+    let count = u64::try_from(control_point_ids.len()).map_err(|_| {
+        AlignmentMergeRuntimeError::InvalidDataset("shared-control count overflowed".into())
+    })?;
+    let divisor = count as f64;
+    Ok(ControlMisclosure {
+        east: sums[0] / divisor,
+        north: sums[1] / divisor,
+        height: sums[2] / divisor,
+        count,
     })
 }
 
@@ -916,7 +991,7 @@ mod tests {
         .unwrap();
         fs::write(
             root.join("sparse-view-source/points3D.txt"),
-            "1 0 0 0 255 255 255 0.1 1 0 2 0\n2 0 0 0 255 255 255 0.1 1 1\n",
+            "1 0 0 0 255 255 255 3 1 0 2 0\n2 0 0 0 255 255 255 4 1 1 2 1\n3 0 0 0 255 255 255 9 1 2\n",
         )
         .unwrap();
         let report = inspect_solved_merge(
@@ -934,8 +1009,44 @@ mod tests {
             &BTreeSet::from(["a".into(), "b".into()]),
         )
         .unwrap();
-        assert_eq!(report.overlap[0].verified_cross_run_track_count, 1);
+        assert_eq!(report.overlap[0].verified_cross_run_track_count, 2);
+        assert!((report.overlap[0].cross_run_reprojection_rms_px - 12.5_f64.sqrt()).abs() < 1e-12);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn computes_mean_absolute_shared_control_misclosure() {
+        use himmelcad_core::photolab_gcp::{GcpCoordinate, GcpPointId};
+        use himmelcad_core::photolab_gcp_optimization::OptimizedGcpPoint;
+
+        let point = |id: &str, coordinate: [f64; 3]| OptimizedGcpPoint {
+            point_id: GcpPointId(id.into()),
+            reconstruction_coordinate: [0.0; 3],
+            optimized_coordinate: GcpCoordinate {
+                east_meters: coordinate[0],
+                north_meters: coordinate[1],
+                height_meters: coordinate[2],
+            },
+            ray_intersection_rms_meters: 0.0,
+            observation_count: 2,
+        };
+        let left = [
+            point("a", [10.0, 20.0, 30.0]),
+            point("b", [20.0, 40.0, 60.0]),
+            point("c", [30.0, 60.0, 90.0]),
+        ];
+        let right = [
+            point("a", [11.0, 18.0, 33.0]),
+            point("b", [19.0, 42.0, 57.0]),
+            point("c", [31.0, 58.0, 93.0]),
+        ];
+        let evidence =
+            compute_control_misclosure(&["a".into(), "b".into(), "c".into()], &left, &right)
+                .expect("misclosure");
+        assert_eq!(evidence.count, 3);
+        assert_eq!(evidence.east, 1.0);
+        assert_eq!(evidence.north, 2.0);
+        assert_eq!(evidence.height, 3.0);
     }
 
     #[test]

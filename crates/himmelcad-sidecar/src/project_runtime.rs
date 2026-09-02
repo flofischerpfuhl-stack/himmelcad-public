@@ -25,6 +25,7 @@ use himmelcad_core::entity_validation::{
 use himmelcad_core::geometry_representation_registry::CanonicalRepresentationAdmission;
 use himmelcad_core::geometry_representation_registry::SectionTopologyPartitionManifest;
 use himmelcad_core::hash::ObjectHash;
+use himmelcad_core::photolab::AlignmentQualityProfile;
 use himmelcad_core::photolab_crs::{CrsDefinition, FrozenImportTransformation};
 use himmelcad_core::photolab_gcp::GcpOptimizationSnapshot;
 use himmelcad_core::photolab_gcp_optimization::GcpIntrinsicsPolicy;
@@ -48,7 +49,8 @@ use sha2::{Digest, Sha256};
 
 use himmelcad_io::{CanonicalImportJsonObject, CanonicalPreparedDataset, PreparedDatasetArtifact};
 use himmelcad_sidecar::alignment_merge_runtime::{
-    inspect_solved_merge, AlignmentMergeEvidenceReport, MergeInputScope, SharedControlMergeOutcome,
+    compute_control_misclosure, inspect_solved_merge, AlignmentMergeEvidenceReport,
+    ControlMisclosure, MergeInputScope, SharedControlMergeOutcome,
 };
 use himmelcad_sidecar::brush_runtime::{BrushOutputSummary, BrushRunOutcome};
 use himmelcad_sidecar::camera_export::CameraCalibrationExportGroup;
@@ -333,16 +335,26 @@ struct AutomaticCaptureGroup {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum AlignmentMergeConnection {
     Overlap {
+        #[serde(alias = "alignment_a")]
         alignment_a: EntityId,
+        #[serde(alias = "alignment_b")]
         alignment_b: EntityId,
+        #[serde(alias = "verified_cross_run_track_count")]
         verified_cross_run_track_count: u64,
     },
     SharedControls {
+        #[serde(alias = "alignment_a")]
         alignment_a: EntityId,
+        #[serde(alias = "alignment_b")]
         alignment_b: EntityId,
+        #[serde(alias = "control_point_ids")]
         control_point_ids: Vec<String>,
     },
 }
@@ -371,6 +383,49 @@ pub enum MergedAlignmentState {
     Published,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlignmentMergeProfileOverrides {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_image_edge: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keypoints_per_megapixel: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sequential_overlap: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature_budget: Option<u32>,
+}
+
+/// Complete preset identity and knobs frozen when the merge plan is created.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlignmentMergeProfileSnapshot {
+    pub id: String,
+    pub name: String,
+    pub profile: AlignmentQualityProfile,
+    #[serde(default)]
+    pub overrides: AlignmentMergeProfileOverrides,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AlignmentMergeConnectionEvidenceKind {
+    Overlap,
+    SharedControls,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlignmentMergeConnectionEvidence {
+    pub connection_index: usize,
+    pub kind: AlignmentMergeConnectionEvidenceKind,
+    pub cross_run_track_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cross_run_reprojection_rms_px: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control_misclosure: Option<ControlMisclosure>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MergedAlignmentRunRecord {
@@ -381,6 +436,10 @@ pub struct MergedAlignmentRunRecord {
     pub input_alignment_entity_ids: Vec<EntityId>,
     pub input_gcp_optimization_entity_ids: Vec<EntityId>,
     pub connections: Vec<AlignmentMergeConnection>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connection_evidence: Vec<AlignmentMergeConnectionEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_profile: Option<AlignmentMergeProfileSnapshot>,
     pub camera_entity_ids: Vec<EntityId>,
     /// Exact union of the immutable input-alignment intrinsics partitions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -402,6 +461,7 @@ pub struct CreateAlignmentMergeParams {
     #[serde(default)]
     pub input_gcp_optimization_entity_ids: Vec<EntityId>,
     pub connections: Vec<AlignmentMergeConnection>,
+    pub merge_profile: AlignmentMergeProfileSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -411,6 +471,7 @@ pub struct AlignmentMergeCandidateRecord {
     pub name: String,
     pub job_id: String,
     pub publication_sequence: u64,
+    pub version_sha256: ObjectHash,
     pub camera_entity_ids: Vec<EntityId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub processing_set_id: Option<EntityId>,
@@ -418,6 +479,28 @@ pub struct AlignmentMergeCandidateRecord {
     pub calibration_group_ids: Vec<EntityId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub calibration_groups: Vec<ColmapCalibrationGroup>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlignmentMergePreflightParams {
+    pub input_entity_ids: Vec<EntityId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlignmentMergePreflightResult {
+    pub schema_version: u32,
+    pub input_entity_ids: Vec<EntityId>,
+    pub available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_cross_run_pair_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mean_neighbor_spacing_meters: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distance_threshold_meters: Option<f64>,
+    pub low_overlap: bool,
+    pub message: String,
 }
 
 #[derive(Debug, Clone)]
@@ -2660,6 +2743,7 @@ impl ProjectRuntime {
                 name: entity.name.clone(),
                 job_id: record.job_id,
                 publication_sequence: record.publication_sequence,
+                version_sha256: entity.version_hash.clone(),
                 camera_entity_ids: scope.into_iter().map(EntityId).collect(),
                 processing_set_id: record.processing_set_id.or_else(|| {
                     (matching_sets.len() == 1).then(|| matching_sets[0].entity_id.clone())
@@ -2670,6 +2754,66 @@ impl ProjectRuntime {
         }
         candidates.sort_by(|left, right| left.entity_id.0.cmp(&right.entity_id.0));
         Ok(candidates)
+    }
+
+    /// Estimates cross-run pairing from immutable camera GPS metadata only. It
+    /// does not inspect pixels, features, or a COLMAP database.
+    pub fn alignment_merge_preflight(
+        &self,
+        mut params: AlignmentMergePreflightParams,
+    ) -> Result<AlignmentMergePreflightResult> {
+        sort_unique_entity_ids(&mut params.input_entity_ids, "alignment merge preflight")?;
+        anyhow::ensure!(
+            params.input_entity_ids.len() >= 2,
+            "alignment merge preflight needs at least two input alignments"
+        );
+        let guard = self.session.lock().expect("project session mutex poisoned");
+        let session = guard.as_ref().context("no project is open")?;
+        let mut blocks = Vec::with_capacity(params.input_entity_ids.len());
+        for alignment_id in &params.input_entity_ids {
+            let entity = session
+                .manifest
+                .entities
+                .get(&alignment_id.0)
+                .with_context(|| format!("unknown input alignment {}", alignment_id.0))?;
+            anyhow::ensure!(
+                entity.kind == EntityKind::AlignmentRun,
+                "merge preflight input is not a published alignment run"
+            );
+            let artifact: ComputeArtifactRecord = serde_json::from_slice(&read_verified_object(
+                &session.working_path,
+                &entity.version_hash,
+            )?)?;
+            anyhow::ensure!(
+                artifact.artifact.kind == ColmapArtifactKind::SparseModel,
+                "merge preflight input is not a sparse alignment artifact"
+            );
+            let dataset = session.working_path.join(&artifact.dataset_relative_path);
+            let camera_ids = alignment_camera_scope(&artifact, &dataset, &session.manifest)?;
+            let mut positions = Vec::with_capacity(camera_ids.len());
+            for camera_id in camera_ids {
+                let camera = session
+                    .manifest
+                    .entities
+                    .get(&camera_id)
+                    .with_context(|| format!("missing camera {camera_id}"))?;
+                let metadata: CameraImageMetadataRecord = serde_json::from_slice(
+                    &read_verified_object(&session.working_path, &camera.version_hash)?,
+                )?;
+                let Some(gps) = metadata.inspected_photo.metadata.preferred_gps_position() else {
+                    return Ok(unavailable_merge_preflight(
+                        params.input_entity_ids,
+                        "Overlap cannot be estimated without camera positions",
+                    ));
+                };
+                positions.push(GpsPoint {
+                    latitude_degrees: gps.latitude_degrees,
+                    longitude_degrees: gps.longitude_degrees,
+                });
+            }
+            blocks.push(positions);
+        }
+        Ok(estimate_merge_preflight(params.input_entity_ids, &blocks))
     }
 
     pub fn list_alignment_merges(&self) -> Result<Vec<MergedAlignmentRunRecord>> {
@@ -2793,6 +2937,12 @@ impl ProjectRuntime {
         params: CreateAlignmentMergeParams,
     ) -> Result<OpenPhotolabProjectResult> {
         let name = validated_record_name(&params.name, "alignment merge")?;
+        anyhow::ensure!(
+            !params.merge_profile.id.trim().is_empty()
+                && !params.merge_profile.name.trim().is_empty(),
+            "alignment merge preset identity is incomplete"
+        );
+        validate_merge_profile(&params.merge_profile)?;
         let mut input_ids = params.input_alignment_entity_ids;
         sort_unique_entity_ids(&mut input_ids, "alignment merge")?;
         anyhow::ensure!(
@@ -2922,6 +3072,7 @@ impl ProjectRuntime {
             &input_ids,
             &optimization_ids,
             &params.connections,
+            &params.merge_profile,
             &camera_ids,
             &calibration_groups,
             &image_mask_scope_sha256,
@@ -2934,6 +3085,8 @@ impl ProjectRuntime {
             input_alignment_entity_ids: input_ids,
             input_gcp_optimization_entity_ids: optimization_ids,
             connections: params.connections,
+            connection_evidence: Vec::new(),
+            merge_profile: Some(params.merge_profile),
             camera_entity_ids: camera_ids,
             calibration_groups,
             image_mask_scope_sha256: Some(image_mask_scope_sha256),
@@ -3035,6 +3188,11 @@ impl ProjectRuntime {
                 *verified_cross_run_track_count = actual;
             }
         }
+        let connection_evidence = build_merge_connection_evidence(
+            &context.record.connections,
+            Some(&evidence),
+            &context.optimization_records,
+        )?;
         let evidence_path = outcome.scratch_path.join("alignment-merge-evidence.json");
         atomic_write_json(&evidence_path, &evidence)?;
 
@@ -3079,6 +3237,7 @@ impl ProjectRuntime {
         let mut published = context.record;
         published.state = MergedAlignmentState::Published;
         published.connections = published_connections;
+        published.connection_evidence = connection_evidence;
         published.publication_sequence = session.manifest.command_sequence.saturating_add(1);
         published.dataset_relative_path = Some(dataset_relative_path.clone());
         let version_hash =
@@ -3156,10 +3315,16 @@ impl ProjectRuntime {
                 == expected,
             "shared-control dataset camera scope differs from the immutable merge plan"
         );
+        let connection_evidence = build_merge_connection_evidence(
+            &context.record.connections,
+            None,
+            &context.optimization_records,
+        )?;
         let evidence = serde_json::json!({
             "schemaVersion": 1,
             "method": "sharedControlsCommonSurveyFrame",
             "connections": context.record.connections,
+            "connectionEvidence": connection_evidence,
             "datasetSha256": outcome.dataset_sha256,
             "note": "Blocks retain independent observations and intrinsics; shared controls establish the common survey frame without claiming cross-block bundle observations."
         });
@@ -3167,7 +3332,6 @@ impl ProjectRuntime {
             &outcome.scratch_path.join("alignment-merge-evidence.json"),
             &evidence,
         )?;
-
         let mut guard = self.session.lock().expect("project session mutex poisoned");
         let session = guard.as_mut().context("no project is open")?;
         ensure_writable(session)?;
@@ -3201,6 +3365,7 @@ impl ProjectRuntime {
             .context("failed to atomically publish shared-control alignment dataset")?;
         let mut published = context.record;
         published.state = MergedAlignmentState::Published;
+        published.connection_evidence = connection_evidence;
         published.publication_sequence = session.manifest.command_sequence.saturating_add(1);
         published.dataset_relative_path = Some(dataset_relative_path.clone());
         let version_hash =
@@ -7856,6 +8021,191 @@ fn solved_overlap_count(
         .map_or(0, |item| item.verified_cross_run_track_count)
 }
 
+fn build_merge_connection_evidence(
+    connections: &[AlignmentMergeConnection],
+    solved_overlap: Option<&AlignmentMergeEvidenceReport>,
+    optimization_records: &HashMap<String, GcpOptimizationPublicationRecord>,
+) -> Result<Vec<AlignmentMergeConnectionEvidence>> {
+    connections
+        .iter()
+        .enumerate()
+        .map(|(connection_index, connection)| match connection {
+            AlignmentMergeConnection::Overlap {
+                alignment_a,
+                alignment_b,
+                ..
+            } => {
+                let solved = solved_overlap
+                    .and_then(|report| {
+                        report.overlap.iter().find(|item| {
+                            (&item.alignment_a == alignment_a && &item.alignment_b == alignment_b)
+                                || (&item.alignment_a == alignment_b
+                                    && &item.alignment_b == alignment_a)
+                        })
+                    })
+                    .with_context(|| {
+                        format!(
+                            "joint solve produced no overlap evidence for {} and {}",
+                            alignment_a.0, alignment_b.0
+                        )
+                    })?;
+                Ok(AlignmentMergeConnectionEvidence {
+                    connection_index,
+                    kind: AlignmentMergeConnectionEvidenceKind::Overlap,
+                    cross_run_track_count: solved.verified_cross_run_track_count,
+                    cross_run_reprojection_rms_px: Some(solved.cross_run_reprojection_rms_px),
+                    control_misclosure: None,
+                })
+            }
+            AlignmentMergeConnection::SharedControls {
+                alignment_a,
+                alignment_b,
+                control_point_ids,
+            } => {
+                let left = optimization_records
+                    .get(&alignment_a.0)
+                    .with_context(|| format!("missing GCP optimization for {}", alignment_a.0))?;
+                let right = optimization_records
+                    .get(&alignment_b.0)
+                    .with_context(|| format!("missing GCP optimization for {}", alignment_b.0))?;
+                let control_misclosure = compute_control_misclosure(
+                    control_point_ids,
+                    &left.artifact.result.points,
+                    &right.artifact.result.points,
+                )?;
+                Ok(AlignmentMergeConnectionEvidence {
+                    connection_index,
+                    kind: AlignmentMergeConnectionEvidenceKind::SharedControls,
+                    cross_run_track_count: 0,
+                    cross_run_reprojection_rms_px: None,
+                    control_misclosure: Some(control_misclosure),
+                })
+            }
+        })
+        .collect()
+}
+
+fn validate_merge_profile(profile: &AlignmentMergeProfileSnapshot) -> Result<()> {
+    let overrides = &profile.overrides;
+    anyhow::ensure!(
+        overrides
+            .max_image_edge
+            .is_none_or(|value| (1_024..=32_768).contains(&value)),
+        "merge preset max image edge must be between 1024 and 32768 pixels"
+    );
+    anyhow::ensure!(
+        overrides
+            .keypoints_per_megapixel
+            .is_none_or(|value| (500..=50_000).contains(&value)),
+        "merge preset keypoints per megapixel must be between 500 and 50000"
+    );
+    anyhow::ensure!(
+        overrides
+            .sequential_overlap
+            .is_none_or(|value| (2..=128).contains(&value)),
+        "merge preset sequential overlap must be between 2 and 128"
+    );
+    anyhow::ensure!(
+        overrides
+            .feature_budget
+            .is_none_or(|value| (1_024..=64_000).contains(&value)),
+        "merge preset feature budget must be between 1024 and 64000"
+    );
+    Ok(())
+}
+
+const MERGE_PREFLIGHT_PROXIMITY_FACTOR: f64 = 3.0;
+const MERGE_PREFLIGHT_LOW_PAIR_THRESHOLD: u64 = 10;
+const EARTH_MEAN_RADIUS_METERS: f64 = 6_371_008.8;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct GpsPoint {
+    latitude_degrees: f64,
+    longitude_degrees: f64,
+}
+
+fn unavailable_merge_preflight(
+    input_entity_ids: Vec<EntityId>,
+    message: &str,
+) -> AlignmentMergePreflightResult {
+    AlignmentMergePreflightResult {
+        schema_version: 1,
+        input_entity_ids,
+        available: false,
+        candidate_cross_run_pair_count: None,
+        mean_neighbor_spacing_meters: None,
+        distance_threshold_meters: None,
+        low_overlap: false,
+        message: message.into(),
+    }
+}
+
+fn estimate_merge_preflight(
+    input_entity_ids: Vec<EntityId>,
+    blocks: &[Vec<GpsPoint>],
+) -> AlignmentMergePreflightResult {
+    let neighbor_distances = blocks
+        .iter()
+        .flat_map(|block| {
+            block.iter().enumerate().filter_map(|(index, point)| {
+                block
+                    .iter()
+                    .enumerate()
+                    .filter(|(candidate_index, _)| *candidate_index != index)
+                    .map(|(_, candidate)| gps_distance_meters(*point, *candidate))
+                    .filter(|distance| distance.is_finite() && *distance >= 0.0)
+                    .min_by(f64::total_cmp)
+            })
+        })
+        .collect::<Vec<_>>();
+    if neighbor_distances.is_empty() {
+        return unavailable_merge_preflight(
+            input_entity_ids,
+            "Overlap cannot be estimated from the available camera positions",
+        );
+    }
+    let mean_neighbor_spacing_meters =
+        neighbor_distances.iter().sum::<f64>() / neighbor_distances.len() as f64;
+    let distance_threshold_meters = mean_neighbor_spacing_meters * MERGE_PREFLIGHT_PROXIMITY_FACTOR;
+    let mut candidate_cross_run_pair_count = 0_u64;
+    for left in 0..blocks.len() {
+        for right in (left + 1)..blocks.len() {
+            for left_point in &blocks[left] {
+                for right_point in &blocks[right] {
+                    if gps_distance_meters(*left_point, *right_point) <= distance_threshold_meters {
+                        candidate_cross_run_pair_count =
+                            candidate_cross_run_pair_count.saturating_add(1);
+                    }
+                }
+            }
+        }
+    }
+    let low_overlap = candidate_cross_run_pair_count < MERGE_PREFLIGHT_LOW_PAIR_THRESHOLD;
+    AlignmentMergePreflightResult {
+        schema_version: 1,
+        input_entity_ids,
+        available: true,
+        candidate_cross_run_pair_count: Some(candidate_cross_run_pair_count),
+        mean_neighbor_spacing_meters: Some(mean_neighbor_spacing_meters),
+        distance_threshold_meters: Some(distance_threshold_meters),
+        low_overlap,
+        message: if low_overlap {
+            "Low overlap — the joint solve may fail to connect these missions".into()
+        } else {
+            format!("Approximately {candidate_cross_run_pair_count} candidate cross-run pairs")
+        },
+    }
+}
+
+fn gps_distance_meters(left: GpsPoint, right: GpsPoint) -> f64 {
+    let latitude_left = left.latitude_degrees.to_radians();
+    let latitude_right = right.latitude_degrees.to_radians();
+    let delta_latitude = latitude_right - latitude_left;
+    let delta_longitude = (right.longitude_degrees - left.longitude_degrees).to_radians();
+    let x = delta_longitude * ((latitude_left + latitude_right) * 0.5).cos();
+    EARTH_MEAN_RADIUS_METERS * x.hypot(delta_latitude)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn commit_domain_entity_change(
     session: &mut ProjectSession,
@@ -9850,6 +10200,88 @@ mod tests {
     }
 
     #[test]
+    fn merged_alignment_record_without_connection_evidence_remains_readable() {
+        let record: MergedAlignmentRunRecord = serde_json::from_value(serde_json::json!({
+            "schemaVersion": 1,
+            "entityId": "project:alignment-merge:legacy",
+            "name": "Legacy merge",
+            "state": "published",
+            "inputAlignmentEntityIds": ["project:alignment:a", "project:alignment:b"],
+            "inputGcpOptimizationEntityIds": [],
+            "connections": [{
+                "kind": "overlap",
+                "alignment_a": "project:alignment:a",
+                "alignment_b": "project:alignment:b",
+                "verified_cross_run_track_count": 12
+            }],
+            "cameraEntityIds": ["camera:a", "camera:b"],
+            "lineageSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "publicationSequence": 7,
+            "datasetRelativePath": "datasets/alignment-merges/legacy"
+        }))
+        .expect("legacy merged alignment record");
+        assert!(record.connection_evidence.is_empty());
+        assert!(record.merge_profile.is_none());
+        let current = serde_json::to_value(&record).expect("current merged alignment JSON");
+        assert_eq!(
+            current["connections"][0]["alignmentA"],
+            "project:alignment:a"
+        );
+    }
+
+    #[test]
+    fn merge_preflight_distinguishes_disjoint_and_overlapping_gps_blocks() {
+        let ids = vec![
+            EntityId("alignment-a".into()),
+            EntityId("alignment-b".into()),
+        ];
+        let left = vec![
+            GpsPoint {
+                latitude_degrees: 0.0,
+                longitude_degrees: 0.0,
+            },
+            GpsPoint {
+                latitude_degrees: 0.0,
+                longitude_degrees: 0.0001,
+            },
+            GpsPoint {
+                latitude_degrees: 0.0,
+                longitude_degrees: 0.0002,
+            },
+            GpsPoint {
+                latitude_degrees: 0.0,
+                longitude_degrees: 0.0003,
+            },
+        ];
+        let disjoint = left
+            .iter()
+            .map(|point| GpsPoint {
+                latitude_degrees: point.latitude_degrees + 1.0,
+                longitude_degrees: point.longitude_degrees,
+            })
+            .collect::<Vec<_>>();
+        let disjoint_result = estimate_merge_preflight(ids.clone(), &[left.clone(), disjoint]);
+        assert_eq!(disjoint_result.candidate_cross_run_pair_count, Some(0));
+        assert!(disjoint_result.low_overlap);
+        assert_eq!(
+            disjoint_result.message,
+            "Low overlap — the joint solve may fail to connect these missions"
+        );
+
+        let overlapping = [0.00005, 0.00015, 0.00025, 0.00035]
+            .into_iter()
+            .map(|longitude_degrees| GpsPoint {
+                latitude_degrees: 0.0,
+                longitude_degrees,
+            })
+            .collect::<Vec<_>>();
+        let overlap_result = estimate_merge_preflight(ids, &[left, overlapping]);
+        assert_eq!(overlap_result.candidate_cross_run_pair_count, Some(15));
+        assert!(!overlap_result.low_overlap);
+        assert!(overlap_result.available);
+    }
+
+    #[test]
     fn calibration_groups_must_form_an_exact_partition() {
         let mut capture = vec![EntityId("camera-a".into()), EntityId("camera-b".into())];
         sort_unique_entity_ids(&mut capture, "capture").expect("valid capture");
@@ -11111,6 +11543,8 @@ mod tests {
                     )),
                     verified_cross_run_track_count: 12,
                 }],
+                connection_evidence: Vec::new(),
+                merge_profile: None,
                 camera_entity_ids: cameras.to_vec(),
                 calibration_groups: cameras
                     .iter()

@@ -37,6 +37,19 @@
   background: var(--hc-bg-void);
 }
 
+.presetSummary,
+.preflight {
+  margin: 0;
+  color: var(--hc-fg-muted);
+  font-size: 9px;
+}
+
+.error {
+  color: var(--hc-error);
+  font-size: 9px;
+  white-space: pre-wrap;
+}
+
 .candidates {
   display: grid;
   gap: 5px;
@@ -198,10 +211,37 @@
   background: var(--hc-bg-island-lo);
 }
 
-.runs article > div {
+.runHeader {
   display: flex;
   justify-content: space-between;
   gap: 8px;
+}
+
+.evidenceBlock {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.evidenceTable {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--hc-fg-muted);
+  font-size: 8px;
+}
+
+.evidenceTable th,
+.evidenceTable td {
+  padding: 4px;
+  border: 1px solid var(--hc-border-subtle);
+  text-align: left;
+  vertical-align: top;
+}
+
+.evidenceTable th {
+  color: var(--hc-fg-default);
+  font-weight: 600;
 }
 
 .planned,

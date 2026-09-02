@@ -186,6 +186,20 @@ const html = buildProcessingReportHtml({
           controlPointIds: ['gcp-1'],
         },
       ],
+      connectionEvidence: [
+        {
+          connectionIndex: 0,
+          kind: 'sharedControls',
+          crossRunTrackCount: 0,
+          controlMisclosure: { east: 0.0123, north: 0.0234, height: 0.0345, count: 1 },
+        },
+      ],
+      mergeProfile: {
+        id: 'site-quality',
+        name: 'Site quality',
+        profile: 'qualityHybrid',
+        overrides: { maxImageEdge: 9000 },
+      },
       cameraEntityIds: ['camera-1', 'camera-2'],
       lineageSha256: '1'.repeat(64),
     },
@@ -276,6 +290,8 @@ assert.match(html, /GCP revision/);
 assert.match(html, /merge-1/);
 assert.match(html, /processing-set-1/);
 assert.match(html, /alignment-1 ↔ alignment-2 · shared controls: gcp-1/);
+assert.match(html, /Site quality/);
+assert.match(html, /mean absolute misclosure E 0\.0123 m · N 0\.0234 m · H 0\.0345 m/);
 assert.match(html, /camera-1/);
 assert.match(html, /Independent alignment runs/);
 assert.match(html, /Mission West alignment/);

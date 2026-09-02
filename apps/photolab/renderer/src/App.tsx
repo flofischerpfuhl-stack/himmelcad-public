@@ -14,6 +14,7 @@ import type {
   AlignedGcpCameraRecord,
   AlignmentMergeCandidateRecord,
   AlignmentMergeConnection,
+  AlignmentMergeProfileSnapshot,
   CameraCalibrationGroupRecord,
   CaptureGroupRecord,
   EntityId,
@@ -2962,6 +2963,7 @@ export function App(): JSX.Element {
       inputAlignmentEntityIds: readonly EntityId[],
       inputGcpOptimizationEntityIds: readonly EntityId[],
       connections: readonly AlignmentMergeConnection[],
+      mergeProfile: AlignmentMergeProfileSnapshot,
     ) => {
       const api = window.himmelcad;
       if (!api || alignmentMergeBusy || inputAlignmentEntityIds.length < 2) return;
@@ -2974,6 +2976,7 @@ export function App(): JSX.Element {
             inputAlignmentEntityIds,
             inputGcpOptimizationEntityIds,
             connections,
+            mergeProfile,
           },
         );
         acceptProject(opened, { preserveSelection: true, processingSetId: activeProcessingSetId });
@@ -3007,7 +3010,6 @@ export function App(): JSX.Element {
           {
             operationId: `alignment-merge-${crypto.randomUUID()}`,
             mergeEntityId,
-            profile,
           },
         );
         setJobs((previous) => [...previous.filter((job) => job.id !== result.job.id), result.job]);
@@ -3018,7 +3020,7 @@ export function App(): JSX.Element {
         setAlignmentMergeBusy(false);
       }
     },
-    [alignmentMergeBusy, profile],
+    [alignmentMergeBusy],
   );
 
   const activateProcessingSet = useCallback(
@@ -3542,8 +3544,14 @@ export function App(): JSX.Element {
                 merges={alignmentMerges}
                 gcpOptimizations={gcpOptimizations}
                 busy={alignmentMergeBusy}
-                onCreate={(name, alignmentIds, optimizationIds, connections) =>
-                  void createAlignmentMerge(name, alignmentIds, optimizationIds, connections)
+                onCreate={(name, alignmentIds, optimizationIds, connections, mergeProfile) =>
+                  void createAlignmentMerge(
+                    name,
+                    alignmentIds,
+                    optimizationIds,
+                    connections,
+                    mergeProfile,
+                  )
                 }
                 onStart={(mergeEntityId) => void startAlignmentMerge(mergeEntityId)}
               />

@@ -146,7 +146,7 @@ function alignmentLineageSection(
   const mergeRows = alignmentMerges
     .map(
       (merge) =>
-        `<tr><td><strong>${escapeHtml(merge.name)}</strong><small>${escapeHtml(merge.entityId)}</small></td><td>${escapeHtml(merge.state)}</td><td>${merge.inputAlignmentEntityIds.length}${idList(merge.inputAlignmentEntityIds)}</td><td>${merge.inputGcpOptimizationEntityIds.length}${idList(merge.inputGcpOptimizationEntityIds)}</td><td>${merge.connections.length}${mergeConnectionList(merge)}</td><td>${merge.cameraEntityIds.length}${idList(merge.cameraEntityIds)}</td><td><code>${escapeHtml(merge.lineageSha256)}</code></td></tr>`,
+        `<tr><td><strong>${escapeHtml(merge.name)}</strong><small>${escapeHtml(merge.entityId)}</small></td><td>${escapeHtml(merge.state)}</td><td>${escapeHtml(merge.mergeProfile?.name ?? 'Quality Hybrid (legacy default)')}</td><td>${merge.inputAlignmentEntityIds.length}${idList(merge.inputAlignmentEntityIds)}</td><td>${merge.inputGcpOptimizationEntityIds.length}${idList(merge.inputGcpOptimizationEntityIds)}</td><td>${merge.connections.length}${mergeConnectionList(merge)}</td><td>${merge.cameraEntityIds.length}${idList(merge.cameraEntityIds)}</td><td><code>${escapeHtml(merge.lineageSha256)}</code></td></tr>`,
     )
     .join('');
   const alignmentRows = alignmentRuns
@@ -168,7 +168,7 @@ function alignmentLineageSection(
 <h3>Calibration groups</h3>${calibrationRows ? `<table><thead><tr><th>Group</th><th>Basis</th><th>Cameras</th><th>Capture group</th><th>Membership SHA-256</th></tr></thead><tbody>${calibrationRows}</tbody></table>` : '<p class="empty">No calibration groups recorded.</p>'}
 <h3>Independent alignment runs</h3>${alignmentRows ? `<table><thead><tr><th>Alignment</th><th>Cameras</th><th>Processing set</th><th>Calibration groups</th></tr></thead><tbody>${alignmentRows}</tbody></table>` : '<p class="empty">No published sparse alignments recorded.</p>'}
 <h3>GCP optimizations</h3>${optimizationRows ? `<table><thead><tr><th>Optimization</th><th>Source alignment</th><th>Processing set</th><th>State</th><th>Cameras</th><th>Residuals</th><th>Snapshot SHA-256</th></tr></thead><tbody>${optimizationRows}</tbody></table>` : '<p class="empty">No GCP optimizations recorded.</p>'}
-<h3>Merged alignments</h3>${mergeRows ? `<table><thead><tr><th>Merge</th><th>State</th><th>Alignments</th><th>GCP solutions</th><th>Connections</th><th>Cameras</th><th>Lineage SHA-256</th></tr></thead><tbody>${mergeRows}</tbody></table>` : '<p class="empty">No merged alignment recorded.</p>'}`,
+<h3>Merged alignments</h3>${mergeRows ? `<table><thead><tr><th>Merge</th><th>State</th><th>Preset</th><th>Alignments</th><th>GCP solutions</th><th>Connection evidence</th><th>Cameras</th><th>Lineage SHA-256</th></tr></thead><tbody>${mergeRows}</tbody></table>` : '<p class="empty">No merged alignment recorded.</p>'}`,
   );
 }
 
@@ -190,12 +190,23 @@ function idList(ids: readonly string[]): string {
 
 function mergeConnectionList(merge: MergedAlignmentRunRecord): string {
   if (merge.connections.length === 0) return '';
-  const rows = merge.connections.map((connection) => {
+  const rows = merge.connections.map((connection, connectionIndex) => {
     const endpoints = `${escapeHtml(connection.alignmentA)} ↔ ${escapeHtml(connection.alignmentB)}`;
+    const evidence = merge.connectionEvidence?.find(
+      (item) => item.connectionIndex === connectionIndex,
+    );
     if (connection.kind === 'overlap') {
-      return `<code>${endpoints} · ${connection.verifiedCrossRunTrackCount} verified tracks</code>`;
+      const rms =
+        evidence?.crossRunReprojectionRmsPx == null
+          ? 'RMS unavailable'
+          : `${evidence.crossRunReprojectionRmsPx.toFixed(3)} px RMS`;
+      return `<code>${endpoints} · ${evidence?.crossRunTrackCount ?? connection.verifiedCrossRunTrackCount} verified tracks · ${rms}</code>`;
     }
-    return `<code>${endpoints} · shared controls: ${connection.controlPointIds.map(escapeHtml).join(', ')}</code>`;
+    const misclosure = evidence?.controlMisclosure;
+    const misclosureText = misclosure
+      ? `mean absolute misclosure E ${misclosure.east.toFixed(4)} m · N ${misclosure.north.toFixed(4)} m · H ${misclosure.height.toFixed(4)} m · ${misclosure.count} controls`
+      : 'misclosure unavailable';
+    return `<code>${endpoints} · shared controls: ${connection.controlPointIds.map(escapeHtml).join(', ')} · ${misclosureText}</code>`;
   });
   return `<details><summary>Show evidence</summary>${rows.join('')}</details>`;
 }

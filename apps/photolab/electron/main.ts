@@ -257,6 +257,7 @@ const RENDERER_SIDECAR_METHODS = new Set([
   'photolab.project.alignmentMerge.list',
   'photolab.project.alignmentMerge.candidates',
   'photolab.project.alignmentMerge.create',
+  'photolab.alignmentMerge.preflight',
   'photolab.crs.discover',
   'photolab.crs.freeze',
   'photolab.crs.cancel',
