@@ -2,13 +2,34 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  closeDecisionFor,
   removeRecentProject,
+  saveRouteFor,
   selectUntitledLitterCandidates,
   storedIndicatorState,
   UNTITLED_PROJECT_MAX_AGE_MS,
   updateRecentProjects,
   type RecentProject,
 } from './projectLifecycle';
+
+test('Save routes archive, untitled, and established folder sessions honestly', () => {
+  assert.equal(saveRouteFor({ sourcePath: '/projects/site.hcadx' }), 'archiveSave');
+  assert.equal(saveRouteFor({ sourcePath: 'C:\\Projects\\SITE.HCADX' }), 'archiveSave');
+  assert.equal(
+    saveRouteFor({ sourcePath: '/projects/Untitled-2026-09-02T12-00-00.hcad' }),
+    'saveAs',
+  );
+  assert.equal(saveRouteFor({ sourcePath: '/projects/established.hcad' }), 'workingCopyOnly');
+});
+
+test('close proceeds only when every drain owner acknowledged completion', () => {
+  assert.equal(closeDecisionFor({ timedOut: [] }), 'close');
+  assert.equal(closeDecisionFor({ timedOut: ['job-1'] }), 'blocked');
+  assert.equal(
+    closeDecisionFor({ timedOutJobs: [], timedOutSideOperations: ['archive:save-1'] }),
+    'blocked',
+  );
+});
 
 test('MRU updates, deduplicates and retains the ten most recent projects', () => {
   const existing: RecentProject[] = Array.from({ length: 10 }, (_, index) => ({

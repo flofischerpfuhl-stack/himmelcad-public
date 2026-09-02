@@ -1,0 +1,111 @@
+.dialog {
+  width: min(540px, calc(100vw - 32px));
+  overflow: hidden;
+  color: var(--hc-fg-default);
+  border: 1px solid var(--hc-warning);
+  border-radius: var(--hc-radius-island);
+  background: var(--hc-bg-island);
+  box-shadow: var(--hc-shadow-island);
+}
+
+.dialog header {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  padding: 15px 17px;
+  border-bottom: 1px solid var(--hc-border-subtle);
+  cursor: move;
+}
+
+.dialog header svg {
+  flex: 0 0 auto;
+  color: var(--hc-warning);
+}
+
+.dialog header span {
+  color: var(--hc-fg-subtle);
+  font: 8px var(--hc-font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.dialog h2 {
+  margin: 3px 0 0;
+  font-size: 16px;
+}
+
+.content {
+  display: grid;
+  gap: 13px;
+  padding: 17px;
+}
+
+.content p,
+.content ul {
+  margin: 0;
+  color: var(--hc-fg-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.report {
+  display: grid;
+  gap: 6px;
+  padding: 11px;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-island-lo);
+}
+
+.report h3 {
+  margin: 3px 0 0;
+  color: var(--hc-fg-default);
+  font-size: 11px;
+}
+
+.report ul {
+  max-height: 112px;
+  overflow: auto;
+  padding-left: 20px;
+  font-family: var(--hc-font-mono);
+}
+
+.forceWarning {
+  color: var(--hc-error-fg) !important;
+}
+
+.dialog footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 9px;
+  padding: 12px 17px;
+  border-top: 1px solid var(--hc-border-subtle);
+  background: var(--hc-bg-island-lo);
+}
+
+.dialog button {
+  min-height: 32px;
+  padding: 0 13px;
+  color: var(--hc-fg-default);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-island-hi);
+  font: inherit;
+  cursor: pointer;
+}
+
+.dialog button:hover {
+  border-color: var(--hc-border-strong);
+  background: var(--hc-hover-bg);
+}
+
+.dialog .primary {
+  border-color: var(--hc-accent-base);
+}
+
+.dialog .danger {
+  color: var(--hc-error-fg);
+  border-color: var(--hc-error);
+  background: color-mix(in srgb, var(--hc-error) 18%, var(--hc-bg-island-hi));
+}

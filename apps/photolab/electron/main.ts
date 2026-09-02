@@ -44,6 +44,7 @@ import {
 } from './sidecar';
 import { PhotolabPreferencesService, type DirectoryPreference } from './preferences';
 import {
+  saveRouteFor,
   selectUntitledLitterCandidates,
   type RecentProject,
   type UntitledProjectInspection,
@@ -74,6 +75,17 @@ let currentProjectSourcePath: string | null = null;
 let preferences: PhotolabPreferencesService;
 let quitDrainStarted = false;
 let quitDrainComplete = false;
+let closeBlocked = false;
+let shutdownDrainAttempt = 0;
+// X6 tunable: five seconds beyond the sidecar's 20-second drain deadline allows its refusal report to arrive.
+const SHUTDOWN_DRAIN_ACKNOWLEDGEMENT_TIMEOUT_MS = 25_000;
+
+interface CloseBlockedReport {
+  readonly reason: string;
+  readonly timedOutJobs: readonly string[];
+  readonly timedOutSideOperations: readonly string[];
+  readonly durableDescription: string;
+}
 const pendingProductExports = new Map<
   string,
   {
@@ -550,6 +562,9 @@ function registerIpc(): void {
     return mainWindow.isMaximized();
   });
   ipcMain.handle('window:close', () => requestClose());
+  ipcMain.handle('window:close-retry', () => retryClose());
+  ipcMain.handle('window:close-cancel', () => cancelClose());
+  ipcMain.handle('window:force-quit', () => forceQuit());
   ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
   ipcMain.handle('sidecar:status', () => isSidecarRunning());
   ipcMain.handle('preferences:gcp-csv:get', () => preferences.gcpCsvImportDefaults());
@@ -1287,12 +1302,17 @@ function registerIpc(): void {
     const snapshot = await callSidecar<{
       session: { sourcePath: string };
     }>({ method: 'photolab.project.snapshot' });
-    // Untitled folder projects have no archive copy yet, so their first Save is Save As.
-    if (!snapshot.session.sourcePath.toLowerCase().endsWith('.hcadx')) {
-      const operation = projectArchiveOperationRequest(value);
-      return saveProjectAsWithDialog(operation, null);
+    const route = saveRouteFor(snapshot.session);
+    if (route === 'saveAs') {
+      return saveProjectAsWithDialog(projectArchiveOperationRequest(value), null);
     }
-    // The working copy is the durable truth. Save forces its manifest flush; Save As writes a copy.
+    if (route === 'archiveSave') {
+      const operation = projectArchiveOperationRequest(value);
+      emitDesktopProgress(operation.progressKey, 0.02, 'Publishing project archive');
+      await callSidecar({ method: 'photolab.project.save', params: operation });
+      emitDesktopProgress(operation.progressKey, 1, 'Project archive published');
+      return rememberProject(await callSidecar({ method: 'photolab.project.snapshot' }));
+    }
     await callSidecar({ method: 'photolab.project.autosave' });
     return rememberProject(await callSidecar({ method: 'photolab.project.snapshot' }));
   });
@@ -2494,43 +2514,95 @@ app.on('before-quit', (event) => {
 });
 
 function requestClose(): void {
-  if (quitDrainStarted || quitDrainComplete) return;
+  if (quitDrainStarted || quitDrainComplete || closeBlocked) return;
+  app.quit();
+}
+
+function retryClose(): void {
+  if (!closeBlocked || quitDrainComplete) return;
+  closeBlocked = false;
+  app.quit();
+}
+
+function cancelClose(): void {
+  if (!closeBlocked || quitDrainComplete) return;
+  closeBlocked = false;
+}
+
+function forceQuit(): void {
+  if (!closeBlocked || quitDrainComplete) return;
+  closeBlocked = false;
+  shutdownDrainAttempt += 1;
+  stopSidecar();
+  quitDrainComplete = true;
   app.quit();
 }
 
 function beginShutdownDrain(): void {
   if (quitDrainStarted) return;
   quitDrainStarted = true;
-  console.info('[sidecar] Waiting up to 25 seconds for active PhotoLab work to stop…');
+  const attempt = ++shutdownDrainAttempt;
+  console.info(
+    `[sidecar] Waiting up to ${String(SHUTDOWN_DRAIN_ACKNOWLEDGEMENT_TIMEOUT_MS / 1_000)} seconds for active PhotoLab work to stop…`,
+  );
   let timeoutId: NodeJS.Timeout | null = null;
   const timeout = new Promise<never>((_resolve, reject) => {
     timeoutId = setTimeout(
       () => reject(new Error('sidecar shutdown durability acknowledgement timed out')),
-      25_000,
+      SHUTDOWN_DRAIN_ACKNOWLEDGEMENT_TIMEOUT_MS,
     );
   });
-  void automationHost?.dispose();
   const drainAndFlush = async (): Promise<void> => {
-    const report = await callSidecar({ method: 'photolab.shutdown.drain' });
-    console.info(`[sidecar] PhotoLab drain acknowledged: ${JSON.stringify(report)}`);
-    // close_after_drain atomically publishes the clean working-copy manifest before it replies.
+    // The sidecar drains every owner, refuses with its complete report, and only then atomically
+    // publishes the clean working-copy manifest. It also reopens admission after a refusal.
     await callSidecar({ method: 'photolab.project.close' });
-    console.info('[sidecar] PhotoLab working copy flush acknowledged');
+    console.info('[sidecar] PhotoLab drain and working copy flush acknowledged');
   };
   void Promise.race([drainAndFlush(), timeout])
-    .then(() => {
+    .then(async () => {
+      if (attempt !== shutdownDrainAttempt || !quitDrainStarted) return;
       console.info('[sidecar] PhotoLab shutdown durability boundary completed');
+      quitDrainComplete = true;
+      try {
+        await automationHost?.dispose();
+      } catch (error) {
+        console.warn(`[automation] Host disposal failed during shutdown: ${String(error)}`);
+      }
+      automationHost = null;
+      stopSidecar();
+      app.quit();
     })
     .catch((error: unknown) => {
+      if (attempt !== shutdownDrainAttempt) return;
       console.warn(
         `[sidecar] PhotoLab shutdown durability boundary did not complete cleanly: ${String(error)}`,
       );
+      quitDrainStarted = false;
+      closeBlocked = true;
+      mainWindow?.webContents.send('window:close-blocked', closeBlockedReport(error));
     })
     .finally(() => {
       if (timeoutId) clearTimeout(timeoutId);
-      automationHost = null;
-      stopSidecar();
-      quitDrainComplete = true;
-      app.quit();
     });
+}
+
+function closeBlockedReport(error: unknown): CloseBlockedReport {
+  const data =
+    typeof error === 'object' && error != null && 'data' in error
+      ? (error as { data?: unknown }).data
+      : undefined;
+  const details = typeof data === 'object' && data != null ? (data as Record<string, unknown>) : {};
+  return {
+    reason: error instanceof Error ? error.message : String(error),
+    timedOutJobs: stringArray(details.timedOutJobs),
+    timedOutSideOperations: stringArray(details.timedOutSideOperations ?? details.timedOut),
+    durableDescription:
+      'Previously stored working-copy state and completed job records remain durable.',
+  };
+}
+
+function stringArray(value: unknown): readonly string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
 }

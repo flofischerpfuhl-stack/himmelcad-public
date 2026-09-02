@@ -16,6 +16,19 @@ export type WorkingCopyDurability =
   | { readonly kind: 'pending' }
   | { readonly kind: 'failed'; readonly reason: string };
 
+export type SaveRoute = 'archiveSave' | 'saveAs' | 'workingCopyOnly';
+export type CloseDecision = 'close' | 'blocked';
+
+export interface ProjectSessionRouteInput {
+  readonly sourcePath: string;
+}
+
+export interface DrainReportInput {
+  readonly timedOut?: readonly unknown[];
+  readonly timedOutJobs?: readonly unknown[];
+  readonly timedOutSideOperations?: readonly unknown[];
+}
+
 export type StoredIndicatorState =
   | { readonly kind: 'noProject' }
   | {
@@ -38,6 +51,22 @@ export type StoredIndicatorState =
 
 const MAX_RECENT_PROJECTS = 10;
 export const UNTITLED_PROJECT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1_000;
+
+export function saveRouteFor(session: ProjectSessionRouteInput): SaveRoute {
+  const sourcePath = session.sourcePath.replace(/[\\/]+$/, '');
+  if (sourcePath.toLowerCase().endsWith('.hcadx')) return 'archiveSave';
+  if (/(?:^|[\\/])Untitled-[^\\/]+\.hcad$/i.test(sourcePath)) return 'saveAs';
+  return 'workingCopyOnly';
+}
+
+export function closeDecisionFor(report: DrainReportInput): CloseDecision {
+  const stillActive = [
+    ...(report.timedOut ?? []),
+    ...(report.timedOutJobs ?? []),
+    ...(report.timedOutSideOperations ?? []),
+  ];
+  return stillActive.length === 0 ? 'close' : 'blocked';
+}
 
 export function updateRecentProjects(
   recent: readonly RecentProject[],

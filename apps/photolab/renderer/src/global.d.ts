@@ -20,6 +20,13 @@ interface ProjectArchiveOperationRequest {
   progressKey: string;
 }
 
+interface CloseBlockedReport {
+  readonly reason: string;
+  readonly timedOutJobs: readonly string[];
+  readonly timedOutSideOperations: readonly string[];
+  readonly durableDescription: string;
+}
+
 interface RecentProjectAvailability {
   readonly name: string;
   readonly path: string;
@@ -40,8 +47,12 @@ interface PhotolabDesktopApi {
     minimize: () => Promise<void>;
     maximizeToggle: () => Promise<boolean>;
     close: () => Promise<void>;
+    retryClose: () => Promise<void>;
+    cancelClose: () => Promise<void>;
+    forceQuit: () => Promise<void>;
     isMaximized: () => Promise<boolean>;
     onMaximizeChange: (cb: (maximized: boolean) => void) => () => void;
+    onCloseBlocked: (cb: (report: CloseBlockedReport) => void) => () => void;
   };
   readonly sidecar: {
     status: () => Promise<boolean>;
@@ -105,7 +116,7 @@ interface PhotolabDesktopApi {
     removeRecent: (path: string) => Promise<readonly RecentProjectAvailability[]>;
     reopenWithoutRecovery: <T = unknown>() => Promise<T>;
     cleanupUntitled: () => Promise<number>;
-    save: <T = unknown>(operation?: ProjectArchiveOperationRequest) => Promise<T>;
+    save: <T = unknown>(operation: ProjectArchiveOperationRequest) => Promise<T>;
     saveAs: <T = unknown>(operation: ProjectArchiveOperationRequest) => Promise<T | null>;
     cancelArchive: <T = unknown>(archiveOperationId: string) => Promise<T>;
   };

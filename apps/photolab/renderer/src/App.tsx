@@ -91,6 +91,7 @@ import { resolveBatchPipelineSteps } from './batchRecipe.js';
 import { CaptureGroupsPanel } from './CaptureGroupsPanel.js';
 import type { CaptureCalibrationDraft } from './captureGroupDraft.js';
 import { ConfirmationDialog } from './ConfirmationDialog.js';
+import { CloseBlockedDialog, type CloseBlockedReport } from './CloseBlockedDialog.js';
 import type { GcpAccuracyReport } from './GcpAccuracyPanel.js';
 import type { GcpImageMarker, GcpManualMeasurement } from './GcpImageMarkerOverlay.js';
 import { GcpImportPanel } from './GcpImportPanel.js';
@@ -169,6 +170,10 @@ const SIDECAR_PROGRESS_PREFIX = '__HC_PROGRESS__';
 const VIDEO_IMPORT_HINT =
   'Video files are not inspected as still images. Use Images > Video frames… to extract traceable frames.';
 type WorkspaceMode = 'scene' | 'images';
+type ArchiveSaveStatus =
+  | { readonly kind: 'saved'; readonly savedAtUnixMs: number }
+  | { readonly kind: 'failed'; readonly reason: string }
+  | null;
 interface ProjectProductDatasetRecord {
   entityId: EntityId;
   kind: 'gaussianSplat' | 'dem' | 'orthomosaic' | 'mesh' | 'depth' | 'dense' | 'sparse';
@@ -281,6 +286,8 @@ export function App(): JSX.Element {
   const [autosaveGeneration, setAutosaveGeneration] = useState(0);
   const [lastSavedGeneration, setLastSavedGeneration] = useState(0);
   const [projectHasArchiveCopy, setProjectHasArchiveCopy] = useState(false);
+  const [archiveSaveStatus, setArchiveSaveStatus] = useState<ArchiveSaveStatus>(null);
+  const [closeBlockedReport, setCloseBlockedReport] = useState<CloseBlockedReport | null>(null);
   const [workingCopyDurability, setWorkingCopyDurability] = useState<WorkingCopyDurability>({
     kind: 'durable',
     storedAtUnixMs: Date.now(),
@@ -871,6 +878,7 @@ export function App(): JSX.Element {
       });
       setAutosaveGeneration(opened.session.autosaveGeneration);
       setLastSavedGeneration(opened.session.lastSavedGeneration);
+      setArchiveSaveStatus(null);
       observedAutosaveGeneration.current = opened.session.autosaveGeneration;
       durabilityFlushSequence.current += 1;
       setWorkingCopyDurability({
@@ -1112,6 +1120,8 @@ export function App(): JSX.Element {
     setWorkingCopyDurability({ kind: 'durable', storedAtUnixMs: Date.now() });
   }, [autosaveGeneration, projectReady]);
 
+  useEffect(() => window.himmelcad?.window.onCloseBlocked(setCloseBlockedReport), []);
+
   const beginProjectFileOperation = useCallback(
     (kind: ProjectFileOperationState['kind']): ProjectFileOperationState | null => {
       if (activeProjectFileOperation.current) return null;
@@ -1156,7 +1166,23 @@ export function App(): JSX.Element {
     activeProjectFileOperation.current = requested;
     setProjectFileOperation(requested);
     try {
-      await api.project.cancelArchive(operation.archiveOperationId);
+      const result = await api.project.cancelArchive<{ cancellationRequested: boolean }>(
+        operation.archiveOperationId,
+      );
+      if (!result.cancellationRequested) {
+        setProjectFileOperation((current) => {
+          if (!current || current.archiveOperationId !== operation.archiveOperationId) {
+            return current;
+          }
+          const continuing = {
+            ...current,
+            cancelRequested: false,
+            message: 'Archive publication is already committing and cannot be cancelled',
+          };
+          activeProjectFileOperation.current = continuing;
+          return continuing;
+        });
+      }
     } catch (error) {
       showProjectFileOperationError(operation.archiveOperationId, error);
     }
@@ -1240,34 +1266,35 @@ export function App(): JSX.Element {
   const saveProject = useCallback(async (): Promise<boolean> => {
     const api = window.himmelcad;
     if (!api || !projectReady) return false;
-    const operation = projectHasArchiveCopy ? null : beginProjectFileOperation('save');
-    if (!projectHasArchiveCopy && !operation) return false;
-    const flushSequence = projectHasArchiveCopy ? beginWorkingCopyFlush() : null;
+    const operation = beginProjectFileOperation('save');
+    if (!operation) return false;
     const started = performance.now();
     try {
-      const result = await api.project.save<OpenPhotolabProjectResult | null>(
-        operation ?? undefined,
-      );
+      const result = await api.project.save<OpenPhotolabProjectResult | null>(operation);
       if (!result) {
-        if (operation) finishProjectFileOperation(operation.archiveOperationId);
+        finishProjectFileOperation(operation.archiveOperationId);
         return false;
       }
       acceptProject(result);
+      if (projectHasArchiveCopy) {
+        setArchiveSaveStatus({ kind: 'saved', savedAtUnixMs: Date.now() });
+      }
       logEvent(
         'info',
         'sidecar',
         projectHasArchiveCopy
-          ? `All changes stored · ${(performance.now() - started).toFixed(1)} ms`
+          ? `Archive saved · ${(performance.now() - started).toFixed(1)} ms`
           : `Project archive written · ${result.session.sourcePath} · ${(performance.now() - started).toFixed(1)} ms`,
       );
-      if (operation) finishProjectFileOperation(operation.archiveOperationId);
+      finishProjectFileOperation(operation.archiveOperationId);
       return true;
     } catch (error) {
       const message = errorMessage(error);
-      if (flushSequence != null) {
-        failWorkingCopyFlush(flushSequence, message);
-        logEvent('error', 'sidecar', `Storing failed: ${message}`);
-      } else if (operation) {
+      if (projectHasArchiveCopy) {
+        setArchiveSaveStatus({ kind: 'failed', reason: message });
+        finishProjectFileOperation(operation.archiveOperationId);
+        logEvent('error', 'sidecar', `Archive save failed — ${message}`);
+      } else {
         showProjectFileOperationError(operation.archiveOperationId, error);
       }
       return false;
@@ -1275,8 +1302,6 @@ export function App(): JSX.Element {
   }, [
     acceptProject,
     beginProjectFileOperation,
-    beginWorkingCopyFlush,
-    failWorkingCopyFlush,
     finishProjectFileOperation,
     projectHasArchiveCopy,
     projectReady,
@@ -1345,6 +1370,7 @@ export function App(): JSX.Element {
       }
       // Full snapshot refreshes title (no more "Untitled") and keeps session paths in sync.
       acceptProject(result);
+      setArchiveSaveStatus({ kind: 'saved', savedAtUnixMs: Date.now() });
       logEvent(
         'info',
         'sidecar',
@@ -3778,23 +3804,28 @@ export function App(): JSX.Element {
       hasArchiveCopy: projectHasArchiveCopy,
     });
     const storedPrimary = (() => {
+      if (archiveSaveStatus?.kind === 'failed') {
+        return `Archive save failed — ${archiveSaveStatus.reason}`;
+      }
       switch (stored.kind) {
         case 'noProject':
           return 'No project open';
         case 'pending':
           return 'Storing…';
         case 'failed':
-          return `Storing failed — ${stored.reason}`;
+          return `Working copy store failed — ${stored.reason}`;
         case 'durable':
-          return `All changes stored · ${formatStoredTime(stored.storedAtUnixMs)}`;
+          return archiveSaveStatus?.kind === 'saved' && stored.archiveChanges === 0
+            ? `Archive saved · ${formatStoredTime(archiveSaveStatus.savedAtUnixMs)}`
+            : `Working copy stored · ${formatStoredTime(stored.storedAtUnixMs)}`;
       }
     })();
     const archiveSecondary =
       stored.kind === 'noProject'
         ? null
         : stored.hasArchiveCopy
-          ? `Archive: ${stored.archiveChanges} change${stored.archiveChanges === 1 ? '' : 's'} since last Save As`
-          : 'Archive: no copy written';
+          ? `Archive: ${stored.archiveChanges} change${stored.archiveChanges === 1 ? '' : 's'} since last save`
+          : 'Archive: no copy saved';
     return [
       {
         id: 'core',
@@ -3816,10 +3847,17 @@ export function App(): JSX.Element {
         id: 'storage',
         content: (
           <span
-            className={`${styles.storedStatus} ${stored.kind === 'failed' ? styles.storedFailure : ''}`}
-            role={stored.kind === 'failed' ? 'alert' : undefined}
+            className={`${styles.storedStatus} ${stored.kind === 'failed' || archiveSaveStatus?.kind === 'failed' ? styles.storedFailure : ''}`}
+            role={
+              stored.kind === 'failed' || archiveSaveStatus?.kind === 'failed' ? 'alert' : undefined
+            }
           >
             <span>{storedPrimary}</span>
+            {archiveSaveStatus?.kind === 'failed' && (
+              <button type="button" onClick={() => void saveProject()}>
+                Retry
+              </button>
+            )}
             {archiveSecondary && (
               <span className={styles.archiveStatus}> · {archiveSecondary}</span>
             )}
@@ -3853,6 +3891,7 @@ export function App(): JSX.Element {
       { id: 'panels', content: <PanelToggles />, align: 'right' as const },
     ];
   }, [
+    archiveSaveStatus,
     autosaveGeneration,
     coreReady,
     gcpCollection,
@@ -3867,6 +3906,7 @@ export function App(): JSX.Element {
     themeMode,
     workingCopyDurability,
     workspaceMode,
+    saveProject,
   ]);
 
   const onSelect = (id: EntityId, mode: 'replace' | 'add' | 'toggle') => {
@@ -4523,6 +4563,30 @@ export function App(): JSX.Element {
             operation={projectFileOperation}
             onCancel={() => void cancelProjectFileOperation()}
             onClose={() => finishProjectFileOperation(projectFileOperation.archiveOperationId)}
+          />
+        </FloatingTaskIsland>
+      )}
+      {closeBlockedReport && (
+        <FloatingTaskIsland
+          modal
+          onRequestClose={() => {
+            setCloseBlockedReport(null);
+            void window.himmelcad?.window.cancelClose();
+          }}
+        >
+          <CloseBlockedDialog
+            report={closeBlockedReport}
+            onRetry={() => {
+              setCloseBlockedReport(null);
+              void window.himmelcad?.window.retryClose();
+            }}
+            onCancel={() => {
+              setCloseBlockedReport(null);
+              void window.himmelcad?.window.cancelClose();
+            }}
+            onForceQuit={() => {
+              void window.himmelcad?.window.forceQuit();
+            }}
           />
         </FloatingTaskIsland>
       )}

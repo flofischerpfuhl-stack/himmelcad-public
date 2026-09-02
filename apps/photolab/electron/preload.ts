@@ -24,6 +24,13 @@ export interface ProjectArchiveOperationRequest {
   progressKey: string;
 }
 
+export interface CloseBlockedReport {
+  readonly reason: string;
+  readonly timedOutJobs: readonly string[];
+  readonly timedOutSideOperations: readonly string[];
+  readonly durableDescription: string;
+}
+
 export interface RecentProjectAvailability {
   readonly name: string;
   readonly path: string;
@@ -61,8 +68,12 @@ export interface PhotolabDesktopApi {
     minimize: () => Promise<void>;
     maximizeToggle: () => Promise<boolean>;
     close: () => Promise<void>;
+    retryClose: () => Promise<void>;
+    cancelClose: () => Promise<void>;
+    forceQuit: () => Promise<void>;
     isMaximized: () => Promise<boolean>;
     onMaximizeChange: (cb: (maximized: boolean) => void) => () => void;
+    onCloseBlocked: (cb: (report: CloseBlockedReport) => void) => () => void;
   };
   readonly sidecar: {
     status: () => Promise<boolean>;
@@ -111,7 +122,7 @@ export interface PhotolabDesktopApi {
     removeRecent: (path: string) => Promise<readonly RecentProjectAvailability[]>;
     reopenWithoutRecovery: <T = unknown>() => Promise<T>;
     cleanupUntitled: () => Promise<number>;
-    save: <T = unknown>(operation?: ProjectArchiveOperationRequest) => Promise<T>;
+    save: <T = unknown>(operation: ProjectArchiveOperationRequest) => Promise<T>;
     saveAs: <T = unknown>(operation: ProjectArchiveOperationRequest) => Promise<T | null>;
     cancelArchive: <T = unknown>(archiveOperationId: string) => Promise<T>;
   };
@@ -227,11 +238,19 @@ const api: PhotolabDesktopApi = {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximizeToggle: () => ipcRenderer.invoke('window:maximize-toggle'),
     close: () => ipcRenderer.invoke('window:close'),
+    retryClose: () => ipcRenderer.invoke('window:close-retry'),
+    cancelClose: () => ipcRenderer.invoke('window:close-cancel'),
+    forceQuit: () => ipcRenderer.invoke('window:force-quit'),
     isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
     onMaximizeChange: (cb) => {
       const listener = (_event: unknown, maximized: boolean): void => cb(maximized);
       ipcRenderer.on('window:maximize-changed', listener);
       return () => ipcRenderer.off('window:maximize-changed', listener);
+    },
+    onCloseBlocked: (cb) => {
+      const listener = (_event: unknown, report: CloseBlockedReport): void => cb(report);
+      ipcRenderer.on('window:close-blocked', listener);
+      return () => ipcRenderer.off('window:close-blocked', listener);
     },
   },
   sidecar: {
