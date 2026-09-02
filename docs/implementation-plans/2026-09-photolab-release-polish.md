@@ -22,6 +22,18 @@ Execution model:
   respect ADR boundaries (no chunk model, no network processing, batch never
   interactive per ADR 0021).
 - Commit per package with a conventional message; do not push.
+- Two-lane coordination (binding since 2026-09-02, owner decision Q1 →
+  Branch A): `docs/builder-program/COORDINATION.md`. This lane owns
+  PhotoLab paths and the PhotoLab-only sidecar/core modules; shared
+  substrate (packages/@himmelcad/\*, render core, core entity/document/
+  protocol modules, himmelcad-io, sidecar `main.rs`, schemas, sdk,
+  verification scripts, root configs) is edited only after announcing files
+  and intent to the Builder session and announced again when landed. The P11
+  command table, job registry, base controls and gesture map are implemented
+  once in the Builder lane; this plan supplies rows and gates. Cargo builds
+  use `CARGO_TARGET_DIR=target/photolab` (export it before `git commit` so the
+  hook inherits it; e2e and export drivers point at `target/photolab/debug`).
+  A failing PhotoLab release gate has priority on shared resources.
 
 Phases are ordered by product value; inside a phase, packages are ordered by
 dependency. "Size" is an implementation-effort estimate (S < 2h, M ≈ half
@@ -998,40 +1010,34 @@ version/content hashes, prepared bindings, exact provenance bytes and the
 row's render/pick/snap semantics. Gate 8 stays open until this passes for
 every renderable product kind in the release.
 
-### WP-G2 — PhotoLab automation parity (doctrine X3, Size L)
+### WP-G2 — PhotoLab automation parity (doctrine P11, re-scoped 2026-09-02)
 
-Problem. The automation host allowlists only `app.*`, `automation.*`,
-`view.*` and six app methods (`packages/@himmelcad/automation-host/index.cjs`
-`ALLOWED_METHODS`/`ALLOWED_APP_METHODS`); no `photolab.*` operation is
-reachable by the embedded agent or the Python SDK, and the PhotoLab console
-hand-lists six commands (`App.tsx` `onCommand`). Every workflow this plan
-shipped (resume, product start with pinned inputs, merge preflight,
-capture-group drafts, lab calibration, LAZ export, video import) is
-UI-only — a class-level X3 violation.
+Problem unchanged (no `photolab.*` operation reaches the agent or the Python
+SDK; console vocabulary is hand-listed). Per `COORDINATION.md`, the one
+generated command table is implemented once in the Builder lane. This
+package therefore delivers PhotoLab's inputs and gates, not the table:
 
-**Decision:** PhotoLab operations are exposed as canonical automation
-commands and queries with the existing validate/status/cancel lifecycle
-(`automation.commands.*`), generated from one command table that also
-drives the console vocabulary — never by allowlisting raw sidecar RPCs.
-Approval grants, credentials and confirmation tokens stay user-only (the
-ADR 0024 asymmetry). Long-running operations map to jobs and are observable
-through `photolab.jobs.*` queries exposed the same way.
-**Derivation:** doctrine precedent P11 (recorded 2026-09-02 from this
-finding: one generated command table drives automation, console and the
-Python SDK; raw-RPC allowlisting is never the exposure mechanism), X3 and
-P1; ADR 0024; PHOTOLAB-CONCEPT.md "Console, Python, and AI access resolve to
-the same underlying operations".
-**Rejected:** blanket allowlisting of `photolab.*` RPCs (bypasses the
-trust boundary and the command validation lifecycle); keeping console
-parity separate from automation parity (two tables drift — P6/X7).
-**Tunable:** none.
+1. **Command rows** — for every UI-reachable PhotoLab operation (import
+   inspect/commit, CRS discover/freeze, capture groups create/confirm/draft/
+   merge, alignment start/resume/cancel, merge plan/preflight/run, GCP
+   preview/commit/observation/optimize, product resolveInputs/start/export,
+   report surveyData/export, project open/close/diagnostics, jobs list/status/
+   cancel/resume): id, request/result schema (from the existing serde
+   structs), job-or-transaction kind, cancel route, ADR 0024 trust class
+   (user-only confirmation where a destination is overwritten). Delivered as
+   `docs/photolab-automation-command-rows.md` (this lane's path) in the
+   spec's row format.
+2. **Gates** — a test that enumerates ribbon/panel actions against the row
+   list (every UI-reachable operation has a row), and a Python-client smoke
+   (import → align → optimize → product on the smoke dataset) that the
+   Builder lane must run before the table is "done".
+3. After the table lands: replace the hand-listed console switch in `App.tsx`
+   with the generated vocabulary and remove any PhotoLab-private RPC exposure
+   the table supersedes.
 
-Implementation: a command table in the sidecar (id, params schema,
-job-or-transaction, cancel route) consumed by the automation router, the
-console and the Python client generator; agent attribution in the journal
-and console per X3; tests: every UI-reachable operation has a table row
-(a test enumerates ribbon/panel actions against the table), and the Python
-client can run import → align → optimize → product on the smoke dataset.
+**Decision:** unchanged (P11: one generated table; no raw-RPC allowlisting;
+approval/credential surfaces user-only). **Ownership:** rows and gates here;
+table, router and SDK generator in the Builder lane.
 
 ## Tunables register (doctrine X6)
 
