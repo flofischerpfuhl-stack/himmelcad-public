@@ -189,7 +189,13 @@ export type PhotolabJobKind =
   | 'buildMesh'
   | 'buildGaussianSplat'
   | 'exportProduct'
-  | 'batch';
+  | 'batch'
+  // WP-H2 side operations mirrored into the durable job list (origin 'sideOperation').
+  | 'archiveSave'
+  | 'imageInspection'
+  | 'imageCommit'
+  | 'imageMask'
+  | 'gcpOperation';
 
 export interface ProcessingSetRecord {
   schemaVersion: 1 | 2;
@@ -484,6 +490,8 @@ export interface PhotolabJob {
   schemaVersion: number;
   id: string;
   kind: PhotolabJobKind;
+  /** Absent or 'job' for JobManager jobs; 'sideOperation' for project-runtime operations mirrored into the list (WP-H2). */
+  origin?: 'job' | 'sideOperation';
   configHash: ObjectHash;
   inputHash: ObjectHash;
   state: PhotolabJobState;
