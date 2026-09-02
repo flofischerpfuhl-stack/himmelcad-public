@@ -40,6 +40,7 @@
     "photolab:build:numpy:win": "bash scripts/build-photolab-windows-numpy.sh",
     "photolab:build:potree:win": "node scripts/build-potreeconverter-windows.mjs",
     "photolab:e2e": "node scripts/photolab-e2e.mjs",
+    "photolab:evidence:ledger": "node scripts/photolab-evidence-ledger.mjs",
     "photolab:test:image-quality": "node scripts/test-photolab-image-quality-e2e.mjs",
     "photolab:test:e2e-contracts": "node scripts/test-photolab-e2e-contracts.mjs",
     "photolab:ui:capture": "node scripts/photolab-ui-capture.mjs",
