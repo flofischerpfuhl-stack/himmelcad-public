@@ -3824,7 +3824,10 @@ export function App(): JSX.Element {
     if (project.entities[id] && mode === 'replace') {
       setRightPanelTab('properties');
       setRightCollapsed(false);
-      if (project.entities[id]?.kind === 'CameraImage') setFocusedGcpId(null);
+      if (project.entities[id]?.kind === 'CameraImage') {
+        setFocusedGcpId(null);
+        if (activeFunctionId === 'reference.gcp.images') activateStoredFunction(null);
+      }
     }
     setSelected((previous) => {
       const next = new Set(previous);
@@ -3887,6 +3890,7 @@ export function App(): JSX.Element {
               setSelected(new Set(ids));
               if (ids.some((id) => project.entities[id]?.kind === 'CameraImage')) {
                 setFocusedGcpId(null);
+                if (activeFunctionId === 'reference.gcp.images') activateStoredFunction(null);
                 setRightPanelTab('properties');
                 setRightCollapsed(false);
               }
@@ -4350,12 +4354,14 @@ export function App(): JSX.Element {
                   batch={imageImportBatch}
                   projectImages={projectImages}
                   imageMasks={imageMasks}
+                  active={workspaceMode === 'images'}
+                  hasEntitySelection={selected.size > 0}
                   selectedImageEntityId={selectedImage?.entityId ?? null}
                   alignedCameras={alignedGcpCameras}
                   gcpCollection={gcpCollection?.[1] ?? null}
                   gcpOptimization={gcpOptimization}
                   gcpLocalEstimates={gcpLocalEstimates}
-                  focusedGcpId={focusedGcpId}
+                  focusedGcpId={activeFunctionId === 'reference.gcp.images' ? focusedGcpId : null}
                   onCommitGcpMeasurement={commitGcpMeasurement}
                   onEditGcpObservation={(marker, edit) => void editGcpObservation(marker, edit)}
                   onEditImageMask={editImageMask}
@@ -4364,6 +4370,10 @@ export function App(): JSX.Element {
                     setSelected(new Set([entityId]));
                     setRightPanelTab('properties');
                     setRightCollapsed(false);
+                  }}
+                  onClearGcpFilter={() => {
+                    setFocusedGcpId(null);
+                    if (activeFunctionId === 'reference.gcp.images') activate(null);
                   }}
                   onError={reportPanelError}
                 />

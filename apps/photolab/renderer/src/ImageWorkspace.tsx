@@ -42,6 +42,7 @@ import {
   type GcpImageMarker,
   type GcpManualMeasurement,
 } from './GcpImageMarkerOverlay.js';
+import { ImageFilmstrip } from './ImageFilmstrip.js';
 import styles from './ImageWorkspace.module.css';
 
 type ImageLayer = 'original' | 'depth' | 'confidence' | 'normals';
@@ -63,8 +64,11 @@ export interface ImageWorkspaceProps {
     edit: ImageMaskEdit,
   ) => Promise<void>;
   depthDatasets: readonly { relativePath: string }[];
+  active: boolean;
+  hasEntitySelection: boolean;
   selectedImageEntityId: EntityId | null;
   onSelectProjectImage: (entityId: EntityId) => void;
+  onClearGcpFilter: () => void;
   onError: (message: string) => void;
 }
 
@@ -100,11 +104,13 @@ export function ImageWorkspace({
   onEditGcpObservation,
   onEditImageMask,
   depthDatasets,
+  active,
+  hasEntitySelection,
   selectedImageEntityId,
   onSelectProjectImage,
+  onClearGcpFilter,
   onError,
 }: ImageWorkspaceProps): JSX.Element {
-  const rootRef = useRef<HTMLElement>(null);
   const [depthProduct, setDepthProduct] = useState<{
     index: MvsOutputIndex;
     basePath: string;
@@ -179,6 +185,15 @@ export function ImageWorkspace({
     );
     return allPhotos.filter((photo) => hashes.has(photo.sha256));
   }, [alignedCameras, allPhotos, relevantCameraIds]);
+  const filmstripImages = useMemo(() => {
+    if (!relevantCameraIds) return projectImages;
+    const entityIds = new Set(
+      alignedCameras
+        .filter((camera) => relevantCameraIds.has(camera.imageId))
+        .map((camera) => camera.entityId),
+    );
+    return projectImages.filter((image) => entityIds.has(image.entityId));
+  }, [alignedCameras, projectImages, relevantCameraIds]);
   const tagsByHash = useMemo(
     () =>
       new Map(
@@ -194,62 +209,54 @@ export function ImageWorkspace({
     () => projectImages.find((image) => image.entityId === selectedImageEntityId) ?? null,
     [projectImages, selectedImageEntityId],
   );
+  useEffect(() => {
+    if (!active || filmstripImages.length === 0) return;
+    if (
+      selectedProjectImage &&
+      filmstripImages.some((image) => image.entityId === selectedProjectImage.entityId)
+    ) {
+      return;
+    }
+    if (!focusedGcpId && hasEntitySelection) return;
+    const firstImage = filmstripImages[0];
+    if (firstImage) onSelectProjectImage(firstImage.entityId);
+  }, [
+    active,
+    filmstripImages,
+    focusedGcpId,
+    hasEntitySelection,
+    onSelectProjectImage,
+    selectedProjectImage,
+  ]);
   const selected = useMemo(() => {
     if (selectedProjectImage) {
       const selectedHash = selectedProjectImage.metadata.sourceObjectHash;
-      const controlledPhoto = allPhotos.find((photo) => photo.sha256 === selectedHash);
+      const controlledPhoto = photos.find((photo) => photo.sha256 === selectedHash);
       if (controlledPhoto) return controlledPhoto;
     }
-    return photos[0] ?? null;
-  }, [allPhotos, photos, selectedProjectImage]);
-  const navigationPhotos = useMemo(() => {
-    if (!selected || photos.includes(selected)) return photos;
-    return [selected, ...photos];
-  }, [photos, selected]);
-  const selectPhoto = useCallback(
-    (photo: DiscoveredPhoto): void => {
-      const record = projectImages.find(
-        (image) => image.metadata.sourceObjectHash === photo.sha256,
-      );
-      if (record) onSelectProjectImage(record.entityId);
-    },
-    [onSelectProjectImage, projectImages],
-  );
-
-  useEffect(() => {
-    const navigate = (event: KeyboardEvent): void => {
-      if (
-        event.defaultPrevented ||
-        event.altKey ||
-        event.ctrlKey ||
-        event.metaKey ||
-        event.isComposing ||
-        keyboardTargetOwnsNavigation(event.target) ||
-        document.querySelector('[data-task-drag-handle]')
-      ) {
-        return;
-      }
-      const root = rootRef.current;
-      if (!root || root.getClientRects().length === 0 || navigationPhotos.length === 0) return;
-      const currentIndex = selected ? navigationPhotos.indexOf(selected) : -1;
-      let nextIndex: number | null = null;
-      if (event.key === 'ArrowLeft') nextIndex = Math.max(0, currentIndex - 1);
-      if (event.key === 'ArrowRight')
-        nextIndex = Math.min(navigationPhotos.length - 1, Math.max(0, currentIndex + 1));
-      if (event.key === 'Home') nextIndex = 0;
-      if (event.key === 'End') nextIndex = navigationPhotos.length - 1;
-      if (nextIndex == null || nextIndex === currentIndex) return;
-      const nextPhoto = navigationPhotos[nextIndex];
-      if (!nextPhoto) return;
-      event.preventDefault();
-      selectPhoto(nextPhoto);
-    };
-    window.addEventListener('keydown', navigate);
-    return () => window.removeEventListener('keydown', navigate);
-  }, [navigationPhotos, selectPhoto, selected]);
+    return projectImages.length === 0 ? (photos[0] ?? null) : null;
+  }, [photos, projectImages.length, selectedProjectImage]);
+  const gcpObservationCounts = useMemo(() => {
+    if (!gcpCollection) return null;
+    const countByImageId = new Map<number, number>();
+    for (const observation of gcpCollection.observations) {
+      countByImageId.set(observation.imageId, (countByImageId.get(observation.imageId) ?? 0) + 1);
+    }
+    const countByEntityId = new Map<EntityId, number>(
+      projectImages.map((image) => [image.entityId, 0]),
+    );
+    for (const camera of alignedCameras) {
+      countByEntityId.set(camera.entityId, countByImageId.get(camera.imageId) ?? 0);
+    }
+    return countByEntityId;
+  }, [alignedCameras, gcpCollection, projectImages]);
+  const focusedGcpName = focusedGcpId
+    ? (gcpCollection?.points.find(({ point }) => point.id === focusedGcpId)?.point.name ??
+      'this GCP')
+    : null;
 
   return (
-    <section ref={rootRef} className={styles.root} aria-label="Image and depth-map view">
+    <section className={styles.root} aria-label="Image and depth-map view">
       <div className={styles.stage}>
         <div className={styles.layerToolbar} aria-label="Image layer">
           {(['original', 'depth', 'confidence', 'normals'] as const).map((candidate) => (
@@ -291,11 +298,38 @@ export function ImageWorkspace({
         ) : (
           <div className={styles.empty}>
             <ImageIcon size={34} />
-            <strong>No images in this workspace yet</strong>
-            <span>Imported originals and measurable depth maps appear here.</span>
+            <strong>
+              {focusedGcpId
+                ? 'No image selected in this filter'
+                : projectImages.length > 0
+                  ? 'Select one image'
+                  : 'No images in this workspace yet'}
+            </strong>
+            <span>
+              {focusedGcpId
+                ? 'Choose a filtered thumbnail or clear the filter.'
+                : projectImages.length > 0
+                  ? 'Choose a thumbnail to inspect the image.'
+                  : 'Imported originals and measurable depth maps appear here.'}
+            </span>
           </div>
         )}
       </div>
+      <ImageFilmstrip
+        images={filmstripImages}
+        selectedImageEntityId={selectedImageEntityId}
+        gcpObservationCounts={gcpObservationCounts}
+        filter={
+          focusedGcpName
+            ? {
+                label: focusedGcpName,
+                totalImageCount: projectImages.length,
+                onClear: onClearGcpFilter,
+              }
+            : null
+        }
+        onSelect={onSelectProjectImage}
+      />
     </section>
   );
 }
@@ -1162,6 +1196,12 @@ function ImageContentFrame({
         <OverlayChip as="button" onClick={fit} aria-label="Fit image">
           <Maximize2 size={13} />
         </OverlayChip>
+        <OverlayChip
+          muted
+          title="Left/Right Arrow selects the previous or next image. Home/End selects the first or last image. Page Up/Down moves by one page."
+        >
+          Image keys: ←/→ · Home/End · Page Up/Down
+        </OverlayChip>
         {focusedGcpNeedsObservation && (
           <>
             <OverlayChip muted>Right-click to place a marker</OverlayChip>
@@ -1510,15 +1550,6 @@ function pointerTargetOwnsInteraction(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&
     target.closest('button, input, select, textarea, a, [contenteditable="true"]') !== null
-  );
-}
-
-function keyboardTargetOwnsNavigation(target: EventTarget | null): boolean {
-  return (
-    target instanceof Element &&
-    target.closest(
-      'input, select, textarea, [contenteditable="true"], [role="textbox"], [role="combobox"], [role="listbox"], [role="spinbutton"]',
-    ) !== null
   );
 }
 

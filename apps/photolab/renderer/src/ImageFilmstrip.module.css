@@ -1,0 +1,259 @@
+.root {
+  flex: 0 0 126px;
+  min-width: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--hc-border-default);
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island-lo);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--hc-border-subtle);
+  font: 10px var(--hc-font-mono);
+}
+
+.count {
+  color: var(--hc-fg-muted);
+}
+
+.filterChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  height: 20px;
+  padding: 0 7px;
+  overflow: hidden;
+  border: 1px solid var(--hc-border-strong);
+  border-radius: var(--hc-radius-chip);
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-chip);
+  white-space: nowrap;
+}
+
+.filterChip button,
+.shortcutHelp button {
+  padding: 0;
+  border: 0;
+  color: var(--hc-fg-default);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.filterChip button:hover,
+.filterChip button:focus-visible {
+  color: var(--hc-accent-base);
+}
+
+.shortcutHelp {
+  position: relative;
+  display: inline-flex;
+  margin-left: auto;
+}
+
+.shortcutHelp button {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-muted);
+}
+
+.shortcutHelp button:hover,
+.shortcutHelp button:focus-visible {
+  color: var(--hc-fg-strong);
+  background: var(--hc-hover-bg);
+}
+
+.shortcutHelp [role='tooltip'] {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 310px;
+  padding: 7px 9px;
+  border: 1px solid var(--hc-border-strong);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-elevated);
+  box-shadow: var(--hc-shadow-popover);
+  line-height: 1.4;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(2px);
+  transition:
+    opacity var(--hc-motion-fast),
+    transform var(--hc-motion-fast);
+}
+
+.shortcutHelp:hover [role='tooltip'],
+.shortcutHelp:focus-within [role='tooltip'] {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.scroller {
+  width: 100%;
+  height: 98px;
+  padding: 6px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-color: var(--hc-border-strong) var(--hc-bg-island-lo);
+  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+}
+
+.scroller::-webkit-scrollbar {
+  height: 6px;
+}
+
+.scroller::-webkit-scrollbar-track {
+  background: var(--hc-bg-island-lo);
+}
+
+.scroller::-webkit-scrollbar-thumb {
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-border-strong);
+}
+
+.track {
+  position: relative;
+  height: 82px;
+}
+
+.window {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  gap: 8px;
+  height: 82px;
+  padding-left: 0;
+  will-change: transform;
+}
+
+.thumbnail {
+  display: grid;
+  flex: 0 0 132px;
+  grid-template-rows: 62px 18px;
+  width: 132px;
+  height: 82px;
+  padding: 1px;
+  overflow: hidden;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island);
+  font: 9px var(--hc-font-mono);
+  text-align: left;
+  cursor: pointer;
+}
+
+.thumbnail:hover {
+  border-color: var(--hc-border-strong);
+  background: var(--hc-hover-bg);
+}
+
+.thumbnail.selected {
+  border-color: var(--hc-selection-accent-border);
+  background: var(--hc-selection-bg);
+}
+
+.thumbnail:focus-visible,
+.filterChip button:focus-visible,
+.shortcutHelp button:focus-visible {
+  outline: 1px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.preview {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  overflow: hidden;
+  border-radius: calc(var(--hc-radius-sm) - 1px);
+  color: var(--hc-fg-subtle);
+  background: var(--hc-bg-input);
+}
+
+.preview img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity var(--hc-motion-fast);
+}
+
+.preview[data-state='ready'] img {
+  opacity: 1;
+}
+
+.placeholderIcon {
+  color: var(--hc-fg-subtle);
+}
+
+.previewError {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  color: var(--hc-error-fg);
+  font-size: 8px;
+}
+
+.badge {
+  position: absolute;
+  z-index: 2;
+  top: 3px;
+  left: 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 16px;
+  padding: 0 4px;
+  border: 1px solid var(--hc-border-strong);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-muted);
+  background: var(--hc-bg-overlay);
+  font-size: 8px;
+  line-height: 1;
+}
+
+.alignedBadge {
+  border-color: var(--hc-success);
+  color: var(--hc-success-fg);
+}
+
+.gcpBadge {
+  right: 3px;
+  left: auto;
+  color: var(--hc-fg-default);
+}
+
+.name {
+  align-self: center;
+  min-width: 0;
+  padding: 0 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty {
+  display: grid;
+  height: 98px;
+  place-items: center;
+  color: var(--hc-fg-muted);
+  font: 11px var(--hc-font-ui);
+}
