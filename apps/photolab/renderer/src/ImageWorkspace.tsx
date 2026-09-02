@@ -16,6 +16,7 @@ import type {
 import { OverlayChip, Select } from '@himmelcad/ui';
 import {
   Brush,
+  Crosshair,
   Eraser,
   Image as ImageIcon,
   Layers3,
@@ -374,6 +375,14 @@ function ImageLayerContent({
     const markers = camera
       ? markersForCamera(camera, projectImage, gcpCollection, gcpOptimization, gcpLocalEstimates)
       : [];
+    const focusedGcpNeedsObservation =
+      camera != null &&
+      focusedGcpId != null &&
+      gcpCollection?.points.some(({ point }) => point.id === focusedGcpId) === true &&
+      !gcpCollection.observations.some(
+        (observation) =>
+          observation.imageId === camera.imageId && observation.pointId === focusedGcpId,
+      );
     return (
       <div className={styles.imageCanvas}>
         <ImageContentFrame
@@ -390,6 +399,7 @@ function ImageLayerContent({
           imageEntityId={projectImage?.entityId}
           imageMask={imageMask}
           focusedGcpId={focusedGcpId}
+          focusedGcpNeedsObservation={focusedGcpNeedsObservation}
           onError={() => {
             setLoadFailed(true);
             onError(`Image could not be loaded: ${fileName(photo)}`);
@@ -817,6 +827,7 @@ function ImageContentFrame({
   imageEntityId,
   imageMask,
   focusedGcpId,
+  focusedGcpNeedsObservation,
   onError,
   onMaskError,
   onCommitGcpMeasurement,
@@ -834,6 +845,7 @@ function ImageContentFrame({
   imageEntityId: EntityId | undefined;
   imageMask: ListedImageMaskRevision | undefined;
   focusedGcpId: string | null;
+  focusedGcpNeedsObservation: boolean;
   onError: () => void;
   onMaskError: (message: string) => void;
   onCommitGcpMeasurement: (measurement: GcpManualMeasurement) => Promise<boolean>;
@@ -855,6 +867,7 @@ function ImageContentFrame({
     pointId: string;
   } | null>(null);
   const [observationBusy, setObservationBusy] = useState(false);
+  const [placeMarkerArmed, setPlaceMarkerArmed] = useState(false);
   const previousSourceRef = useRef<string | null>(null);
   const strokeRef = useRef<{ pointerId: number; points: ImageMaskPoint[] } | null>(null);
   const fitMode = useRef(true);
@@ -910,7 +923,21 @@ function ImageContentFrame({
     });
     return () => cancelAnimationFrame(animationFrame);
   }, [commitTransform, container, fit, focusedMarker, source]);
-  useEffect(() => setObservationMenu(null), [source]);
+  useEffect(() => {
+    setObservationMenu(null);
+    setPlaceMarkerArmed(false);
+  }, [focusedGcpId, focusedGcpNeedsObservation, source]);
+  useEffect(() => {
+    if (!placeMarkerArmed) return;
+    const disarmWithEscape = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setPlaceMarkerArmed(false);
+    };
+    window.addEventListener('keydown', disarmWithEscape, true);
+    return () => window.removeEventListener('keydown', disarmWithEscape, true);
+  }, [placeMarkerArmed]);
   useEffect(() => {
     if (!container) return;
     const update = () => {
@@ -958,9 +985,46 @@ function ImageContentFrame({
       event.clientY,
     );
   };
+  const commitObservation = async (
+    pointId: string,
+    coordinate: GcpManualMeasurement['coordinate'],
+  ): Promise<boolean> => {
+    if (imageId == null || observationBusy) return false;
+    setObservationBusy(true);
+    try {
+      return await onCommitGcpMeasurement({
+        pointId,
+        imageId,
+        state: 'manual',
+        coordinate,
+      });
+    } finally {
+      setObservationBusy(false);
+    }
+  };
   const startPan = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0 || event.defaultPrevented || pointerTargetOwnsInteraction(event.target))
       return;
+    if (
+      placeMarkerArmed &&
+      focusedGcpNeedsObservation &&
+      focusedGcpId &&
+      maskTool === 'pan' &&
+      !observationBusy
+    ) {
+      const coordinate = imagePointAt(
+        event,
+        event.currentTarget,
+        transformRef.current,
+        width,
+        height,
+      );
+      if (!coordinate) return;
+      event.preventDefault();
+      setPlaceMarkerArmed(false);
+      void commitObservation(focusedGcpId, coordinate);
+      return;
+    }
     if (maskTool !== 'pan' && imageEntityId && !maskBusy) {
       const point = imagePointAt(event, event.currentTarget, transformRef.current, width, height);
       if (!point) return;
@@ -1057,25 +1121,16 @@ function ImageContentFrame({
     });
   };
   const commitContextObservation = async (): Promise<void> => {
-    if (!observationMenu || imageId == null || observationBusy) return;
-    setObservationBusy(true);
-    try {
-      const saved = await onCommitGcpMeasurement({
-        pointId: observationMenu.pointId,
-        imageId,
-        state: 'manual',
-        coordinate: observationMenu.coordinate,
-      });
-      if (saved) setObservationMenu(null);
-    } finally {
-      setObservationBusy(false);
-    }
+    if (!observationMenu) return;
+    const saved = await commitObservation(observationMenu.pointId, observationMenu.coordinate);
+    if (saved) setObservationMenu(null);
   };
   return (
     <div
       ref={setContainer}
       className={`${styles.frameHost} ${drag.current ? styles.frameDragging : ''}`}
       data-mask-tool={maskTool}
+      data-place-marker={placeMarkerArmed ? 'true' : 'false'}
       onWheel={wheel}
       onPointerDown={startPan}
       onPointerMove={movePan}
@@ -1107,13 +1162,39 @@ function ImageContentFrame({
         <OverlayChip as="button" onClick={fit} aria-label="Fit image">
           <Maximize2 size={13} />
         </OverlayChip>
+        {focusedGcpNeedsObservation && (
+          <>
+            <OverlayChip muted>Right-click to place a marker</OverlayChip>
+            <OverlayChip
+              as="button"
+              active={placeMarkerArmed}
+              disabled={observationBusy || maskBusy}
+              aria-pressed={placeMarkerArmed}
+              onClick={() => {
+                if (placeMarkerArmed) {
+                  setPlaceMarkerArmed(false);
+                  return;
+                }
+                setMaskTool('pan');
+                setObservationMenu(null);
+                setPlaceMarkerArmed(true);
+              }}
+            >
+              <Crosshair size={13} />
+              Place marker
+            </OverlayChip>
+          </>
+        )}
       </div>
       {imageEntityId && (
         <div className={styles.maskToolbar} aria-label="Image exclusion mask tools">
           <OverlayChip
             as="button"
             active={maskTool === 'add'}
-            onClick={() => setMaskTool((current) => (current === 'add' ? 'pan' : 'add'))}
+            onClick={() => {
+              setPlaceMarkerArmed(false);
+              setMaskTool((current) => (current === 'add' ? 'pan' : 'add'));
+            }}
             disabled={maskBusy}
             aria-label="Paint excluded area"
             title="Exclude areas from processing (cars, sky, people…)"
@@ -1123,7 +1204,10 @@ function ImageContentFrame({
           <OverlayChip
             as="button"
             active={maskTool === 'remove'}
-            onClick={() => setMaskTool((current) => (current === 'remove' ? 'pan' : 'remove'))}
+            onClick={() => {
+              setPlaceMarkerArmed(false);
+              setMaskTool((current) => (current === 'remove' ? 'pan' : 'remove'));
+            }}
             disabled={maskBusy}
             aria-label="Restore masked area"
             title="Erase mask — include area again"

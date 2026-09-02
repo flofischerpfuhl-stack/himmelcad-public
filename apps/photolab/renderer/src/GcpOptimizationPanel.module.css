@@ -60,6 +60,56 @@
   color: var(--hc-fg-strong);
   font-size: 15px;
 }
+.suggestion,
+.revertRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 9px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-md);
+  color: var(--hc-fg-muted);
+  background: var(--hc-bg-elevated);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.suggestion svg {
+  flex: 0 0 auto;
+}
+.suggestion span,
+.revertRow span {
+  flex: 1;
+}
+.suggestion button,
+.revertRow button {
+  min-height: var(--hc-size-control-h);
+  padding: 0 10px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-input);
+  font: 11px var(--hc-font-ui);
+  cursor: pointer;
+}
+.suggestion button:hover:not(:disabled),
+.revertRow button:hover:not(:disabled) {
+  color: var(--hc-fg-strong);
+  background: var(--hc-hover-bg);
+  border-color: var(--hc-border-strong);
+}
+.suggestion button:focus-visible,
+.revertRow button:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+.suggestion button:disabled,
+.revertRow button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.revertRow {
+  justify-content: flex-end;
+}
 .table {
   overflow: auto;
   max-height: 390px;

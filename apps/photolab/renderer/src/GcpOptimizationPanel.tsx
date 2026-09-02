@@ -3,6 +3,7 @@ import { Checkbox, Select } from '@himmelcad/ui';
 import { CheckCircle2, CircleGauge, Info, Shuffle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
+import { spatialCheckpointIds } from './gcpCheckpointSuggestion.js';
 import styles from './GcpOptimizationPanel.module.css';
 
 export interface GcpOptimizationSelection {
@@ -51,26 +52,25 @@ export function GcpOptimizationPanel({
     }
     return counts;
   }, [collection]);
+  const usable = useMemo(
+    () => points.filter((point) => (observationCounts.get(point.id) ?? 0) >= 2),
+    [observationCounts, points],
+  );
+  const importedRoles = useMemo(
+    () =>
+      Object.fromEntries(usable.map((point) => [point.id, point.role])) as Record<string, GcpRole>,
+    [usable],
+  );
   const [included, setIncluded] = useState<Set<string>>(new Set());
   const [roles, setRoles] = useState<Record<string, GcpRole>>({});
   const [cameraReferences, setCameraReferences] = useState<Set<number>>(new Set());
 
   useEffect(() => {
-    const usable = points.filter((point) => (observationCounts.get(point.id) ?? 0) >= 2);
-    const nextRoles = Object.fromEntries(usable.map((point) => [point.id, point.role])) as Record<
-      string,
-      GcpRole
-    >;
-    if (!usable.some((point) => point.role.startsWith('checkpoint')) && usable.length >= 5) {
-      for (const id of spatialCheckpointIds(usable)) {
-        nextRoles[id] = asCheckpoint(nextRoles[id] ?? 'controlXyz');
-      }
-    }
     setIncluded(
       new Set(usable.filter((point) => point.role !== 'disabled').map((point) => point.id)),
     );
-    setRoles(nextRoles);
-  }, [observationCounts, points]);
+    setRoles(importedRoles);
+  }, [importedRoles, usable]);
 
   useEffect(
     () =>
@@ -91,6 +91,12 @@ export function GcpOptimizationPanel({
   const checkpoints = selected.filter((point) =>
     (roles[point.id] ?? point.role).startsWith('checkpoint'),
   );
+  const suggestedCheckpointIds = usable.some((point) =>
+    (roles[point.id] ?? point.role).startsWith('checkpoint'),
+  )
+    ? []
+    : spatialCheckpointIds(usable);
+  const rolesChanged = usable.some((point) => (roles[point.id] ?? point.role) !== point.role);
   const cameraOnly = controls.length === 0 && cameraReferences.size >= 3;
   const canStart =
     !busy &&
@@ -139,6 +145,39 @@ export function GcpOptimizationPanel({
           <b>{cameraReferences.size}</b> camera priors
         </span>
       </div>
+
+      {suggestedCheckpointIds.length > 0 && (
+        <div className={styles.suggestion}>
+          <Shuffle size={14} />
+          <span>
+            No check points assigned — suggest {suggestedCheckpointIds.length} spatially
+            distributed?
+          </span>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              setRoles((previous) => {
+                const next = { ...previous };
+                for (const id of suggestedCheckpointIds) {
+                  next[id] = asCheckpoint(next[id] ?? importedRoles[id] ?? 'controlXyz');
+                }
+                return next;
+              })
+            }
+          >
+            Apply
+          </button>
+        </div>
+      )}
+      {rolesChanged && (
+        <div className={styles.revertRow}>
+          <span>Role assignments differ from the imported set.</span>
+          <button type="button" disabled={busy} onClick={() => setRoles(importedRoles)}>
+            Revert
+          </button>
+        </div>
+      )}
 
       {points.length === 0 ? (
         <div className={styles.empty}>
@@ -203,10 +242,6 @@ export function GcpOptimizationPanel({
         </div>
       )}
 
-      <div className={styles.hint}>
-        <Shuffle size={14} />
-        <span>Spatially distributed points are suggested when no checkpoints are assigned.</span>
-      </div>
       <details>
         <summary>
           Camera reference priors ·{' '}
@@ -283,20 +318,4 @@ function asCheckpoint(role: GcpRole): GcpRole {
   if (role === 'controlXy') return 'checkpointXy';
   if (role === 'controlZ') return 'checkpointZ';
   return 'checkpointXyz';
-}
-
-function spatialCheckpointIds(points: GcpCollectionRecord['points'][number]['point'][]): string[] {
-  const target = Math.max(1, Math.min(10, Math.round(points.length * 0.2)));
-  const sorted = [...points].sort(
-    (left, right) =>
-      left.coordinate.eastMeters - right.coordinate.eastMeters ||
-      left.coordinate.northMeters - right.coordinate.northMeters ||
-      left.coordinate.heightMeters - right.coordinate.heightMeters ||
-      left.id.localeCompare(right.id),
-  );
-  if (target === 1) return [sorted[Math.floor(sorted.length / 2)]?.id ?? ''].filter(Boolean);
-  return Array.from(
-    { length: target },
-    (_, index) => sorted[Math.round((index * (sorted.length - 1)) / (target - 1))]?.id,
-  ).filter((id): id is string => id != null);
 }

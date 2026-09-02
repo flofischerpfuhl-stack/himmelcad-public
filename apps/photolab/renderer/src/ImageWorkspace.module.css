@@ -94,6 +94,10 @@
 .frameHost[data-mask-tool='remove'] {
   cursor: crosshair;
 }
+.frameHost[data-place-marker='true'],
+.frameHost[data-place-marker='true']:active {
+  cursor: crosshair;
+}
 .imageFrame {
   position: absolute;
   top: 0;
