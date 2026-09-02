@@ -12,7 +12,7 @@ import {
   assertCancellationAcknowledged,
   assertCancellationLatencies,
   assertCompatibleResume,
-  assertIncompatibleCheckpointRejected,
+  assertSidecarResumeIdentityRejection,
   assertNoPartialPublication,
   CancellationTracker,
   canonicalCancellationStage,
@@ -76,6 +76,9 @@ async function main() {
     await rpc.start();
     if (options.resumeAudit && previousReport?.cancellation?.resumeIdentity == null) {
       throw new Error('Resume verification requires a reused result with a cancelled job identity');
+    }
+    if (options.resumeAudit && previousReport?.cancellation?.historyJobId == null) {
+      throw new Error('Resume verification requires a sidecar-owned history job id');
     }
     if (options.resumeAudit && previousReport?.cancellation?.terminalState !== 'cancelled') {
       throw new Error('Resume verification requires a prior terminal cancelled state');
@@ -205,7 +208,7 @@ async function main() {
           cameraEntityIds: [],
         }),
       );
-      const resumeAudit = verifyQueuedResumeIdentity(alignment.job);
+      const resumeAudit = await verifyQueuedResumeIdentity(alignment.job);
       if (resumeAudit === 'rejected') {
         await cancelRejectedResumeJob(alignment.job.id, publicationBefore);
         return;
@@ -229,7 +232,7 @@ async function main() {
           processingSetId: null,
         }),
       );
-      const resumeAudit = verifyQueuedResumeIdentity(queued.job);
+      const resumeAudit = await verifyQueuedResumeIdentity(queued.job);
       if (resumeAudit === 'rejected') {
         await cancelRejectedResumeJob(queued.job.id, publicationBefore);
         return;
@@ -826,6 +829,7 @@ async function waitForJob(jobId) {
       );
       report.cancellation = {
         ...cancellationTracker.result,
+        historyJobId: job.id,
         resumeIdentity: immutableResumeIdentity(job),
         checkpointSequenceAtRequest: job.lastCheckpointSequence ?? null,
       };
@@ -877,7 +881,7 @@ async function captureCurrentPublicationState() {
   return capturePublicationState(snapshot, products);
 }
 
-function verifyQueuedResumeIdentity(job) {
+async function verifyQueuedResumeIdentity(job) {
   if (!options.resumeAudit || resumeIdentityVerified || incompatibleCheckpointRejected)
     return 'none';
   const expected = previousReport.cancellation.resumeIdentity;
@@ -886,22 +890,24 @@ function verifyQueuedResumeIdentity(job) {
     const field = options.expectIncompatibleCheckpoint;
     if (field !== 'kind' && job.kind !== expected.kind) return 'none';
     if (field === 'kind' && job.kind === expected.kind) return 'none';
-    const mismatches = assertIncompatibleCheckpointRejected(expected, requested);
-    if (!mismatches.includes(field)) {
-      throw new Error(
-        `Queued job is not incompatible in the requested ${field} field: ${mismatches.join(', ')}`,
-      );
+    try {
+      await rpc.call('photolab.jobs.resume', {
+        historyJobId: previousReport.cancellation.historyJobId,
+      });
+    } catch (error) {
+      const rejection = assertSidecarResumeIdentityRejection(error, field);
+      incompatibleCheckpointRejected = true;
+      report.incompatibleCheckpointVerification = {
+        rejected: true,
+        rejectedBy: 'photolab.jobs.resume',
+        expected,
+        requested,
+        field: rejection.field,
+        historyJobId: previousReport.cancellation.historyJobId,
+      };
+      return 'rejected';
     }
-    incompatibleCheckpointRejected = true;
-    report.incompatibleCheckpointVerification = {
-      rejected: true,
-      rejectedBy: 'e2eResumeIdentityGate',
-      expected,
-      requested,
-      mismatches,
-      queuedJobId: job.id,
-    };
-    return 'rejected';
+    throw new Error(`Sidecar accepted an incompatible ${field} resume checkpoint`);
   }
   if (job.kind !== expected.kind) return 'none';
   assertCompatibleResume(expected, requested);
@@ -1385,8 +1391,11 @@ class RpcClient {
       const pending = this.pending.get(response.id);
       if (!pending) return;
       this.pending.delete(response.id);
-      if (response.error) pending.reject(new Error(response.error.message));
-      else pending.resolve(response.result);
+      if (response.error) {
+        const error = new Error(response.error.message);
+        error.rpcError = response.error;
+        pending.reject(error);
+      } else pending.resolve(response.result);
     });
     readline.createInterface({ input: this.child.stderr }).on('line', (line) => {
       process.stderr.write(`[sidecar] ${line}\n`);

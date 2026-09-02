@@ -711,6 +711,20 @@ impl BrushRuntime {
         Ok(recovered)
     }
 
+    /// Revalidates one discovered recovery artifact and converts it to run input.
+    pub fn validate_recovery_checkpoint(
+        &self,
+        recovery: &BrushRecoveryCheckpoint,
+    ) -> Result<BrushResumeCheckpoint, BrushRuntimeError> {
+        let resume = BrushResumeCheckpoint {
+            ply_path: recovery.checkpoint_path.clone(),
+            ply_sha256: recovery.checkpoint.sha256.clone(),
+            completed_iterations: recovery.checkpoint.iteration,
+        };
+        self.validate_resume(&resume, &CancellationToken::new())?;
+        Ok(resume)
+    }
+
     fn validate_dataset_root(&self, path: &Path) -> Result<PathBuf, BrushRuntimeError> {
         let canonical = canonical_directory(path)?;
         if !self
@@ -2154,12 +2168,22 @@ printf '[00:01] 3000/3000 Steps\n' >&2
         write_valid_degree_zero_ply(&checkpoint_path);
         let checkpoint_hash = hash_file(&checkpoint_path).expect("checkpoint hash");
         let mut request = rig.request("splat-resume");
-        request.resume = Some(BrushResumeCheckpoint {
-            ply_path: checkpoint_path,
-            ply_sha256: checkpoint_hash.clone(),
-            completed_iterations: 2_000,
-        });
         let runtime = rig.runtime.clone();
+        request.resume = Some(
+            runtime
+                .validate_recovery_checkpoint(&BrushRecoveryCheckpoint {
+                    scratch_path: checkpoint_directory,
+                    checkpoint_path,
+                    checkpoint: BrushCheckpointSummary {
+                        iteration: 2_000,
+                        relative_path: PathBuf::from("checkpoints/checkpoint_1999.ply"),
+                        sha256: checkpoint_hash.clone(),
+                        bytes: 0,
+                        splat_count: 1,
+                    },
+                })
+                .expect("validated recovery checkpoint"),
+        );
         let manager = JobManager::new(JobManagerConfig {
             max_concurrency: 1,
             max_queued: 0,

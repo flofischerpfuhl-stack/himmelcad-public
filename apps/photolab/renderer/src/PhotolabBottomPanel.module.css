@@ -169,7 +169,8 @@
   white-space: nowrap;
 }
 
-.cancel {
+.cancel,
+.resume {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -179,6 +180,24 @@
   border-radius: var(--hc-radius-sm);
   color: var(--hc-fg-default);
   font-size: 10px;
+}
+
+.resume:hover:not(:disabled) {
+  color: var(--hc-accent-strong);
+  border-color: var(--hc-accent-strong);
+  background: color-mix(in srgb, var(--hc-accent-base) 10%, transparent);
+}
+
+.resume:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.jobInlineError {
+  margin-top: 6px;
+  color: var(--hc-error);
+  font-size: 10px;
+  line-height: 1.35;
 }
 
 .cancel:hover:not(:disabled) {

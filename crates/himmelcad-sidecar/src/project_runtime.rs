@@ -29,7 +29,7 @@ use himmelcad_core::photolab_crs::{CrsDefinition, FrozenImportTransformation};
 use himmelcad_core::photolab_gcp_optimization::GcpIntrinsicsPolicy;
 use himmelcad_core::photolab_images::DjiBrownConradyCalibration;
 use himmelcad_core::photolab_jobs::{
-    CancellationToken, PhotolabJob, PhotolabJobKind, PhotolabJobState,
+    CancellationToken, PhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState,
 };
 use himmelcad_core::photolab_masks::{
     ComputeImageMask, ImageMaskCatalog, ImageMaskCatalogEntry, ImageMaskComputeScope,
@@ -83,7 +83,7 @@ use himmelcad_sidecar::image_quality_runtime::{
 use himmelcad_sidecar::image_quality_runtime::{
     ImageQualityMetrics, ImageQualityScope, ImageQualityWarning,
 };
-use himmelcad_sidecar::job_runtime::{JobHistoryPersistence, JobHistoryScope};
+use himmelcad_sidecar::job_runtime::{FrozenJobRequest, JobHistoryPersistence, JobHistoryScope};
 use himmelcad_sidecar::mesh_tiler::PreparedMeshProduct;
 use himmelcad_sidecar::mvs_runtime::{
     MvsCommandReport, MvsOutputIndex, MvsRunOutcome, MvsSceneManifest,
@@ -96,7 +96,7 @@ use himmelcad_sidecar::project_archive::{
     pack_hcadx, unpack_hcadx, ArchivePhase, ArchiveProgress, PackArchiveOptions,
     UnpackArchiveLimits,
 };
-use himmelcad_sidecar::raster_runtime::RasterBuildSummary;
+use himmelcad_sidecar::raster_runtime::{raster_checkpoint_content_key, RasterBuildSummary};
 use himmelcad_sidecar::splat_tiler::PreparedSplatProduct;
 
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -120,6 +120,8 @@ struct ProjectJobHistoryRecord {
     schema_version: u32,
     project_id: String,
     job: PhotolabJob,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    frozen_request: Option<FrozenJobRequest>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1413,7 +1415,7 @@ impl ProjectRuntime {
                 .expect("job history mutex poisoned");
             let mut history = read_project_job_history(&working_path, &manifest.project_id)?;
             for job in mark_interrupted_jobs(&mut history)? {
-                write_project_job_history_record(&working_path, &manifest.project_id, &job)?;
+                write_project_job_history_record(&working_path, &manifest.project_id, &job, None)?;
             }
             for job in history
                 .values()
@@ -5710,6 +5712,47 @@ impl ProjectRuntime {
         }
         Ok(hash)
     }
+
+    /// Loads the sidecar-owned request bound to one durable job history row.
+    pub fn frozen_job_request(
+        &self,
+        history_job_id: &PhotolabJobId,
+    ) -> Result<Option<FrozenJobRequest>> {
+        let (project_id, project_root) = {
+            let guard = self.session.lock().expect("project session mutex poisoned");
+            let session = guard.as_ref().context("no project is open")?;
+            (
+                session.manifest.project_id.clone(),
+                session.working_path.clone(),
+            )
+        };
+        let _history_guard = self
+            .job_history_io
+            .lock()
+            .map_err(|_| anyhow::anyhow!("job history mutex poisoned"))?;
+        let path = job_history_record_path(&project_root, &history_job_id.0);
+        if !path.is_file() {
+            return Ok(None);
+        }
+        let record: ProjectJobHistoryRecord = serde_json::from_slice(&fs::read(&path)?)
+            .with_context(|| format!("invalid job history record {}", path.display()))?;
+        anyhow::ensure!(
+            record.schema_version == JOB_HISTORY_SCHEMA_VERSION
+                && record.project_id == project_id
+                && record.job.id == *history_job_id,
+            "frozen request belongs to a different job history record"
+        );
+        if let Some(frozen_request) = &record.frozen_request {
+            frozen_request.validate().map_err(anyhow::Error::msg)?;
+            anyhow::ensure!(
+                frozen_request.job_kind == record.job.kind
+                    && frozen_request.config_hash == record.job.config_hash
+                    && frozen_request.input_hash == record.job.input_hash,
+                "frozen job request identity does not match its history record"
+            );
+        }
+        Ok(record.frozen_request)
+    }
 }
 
 impl JobHistoryPersistence for ProjectRuntime {
@@ -5738,14 +5781,20 @@ impl JobHistoryPersistence for ProjectRuntime {
         &self,
         scope: &JobHistoryScope,
         job: &PhotolabJob,
+        frozen_request: Option<&FrozenJobRequest>,
     ) -> std::result::Result<(), String> {
         {
             let _history_guard = self
                 .job_history_io
                 .lock()
                 .map_err(|_| "job history mutex poisoned".to_owned())?;
-            write_project_job_history_record(&scope.project_root, &scope.project_id, job)
-                .map_err(|error| error.to_string())?;
+            write_project_job_history_record(
+                &scope.project_root,
+                &scope.project_id,
+                job,
+                frozen_request,
+            )
+            .map_err(|error| error.to_string())?;
         }
 
         {
@@ -5852,7 +5901,7 @@ fn cleanup_terminal_job_scratch(project_root: &Path, job: &PhotolabJob) -> Resul
             cleanup_mvs_job(project_root, job_id, completed)?;
         }
         PhotolabJobKind::BuildDem | PhotolabJobKind::BuildOrthomosaic => {
-            cleanup_raster_job(project_root, job_id, completed)?;
+            cleanup_raster_job(project_root, job_id, completed, Some(job))?;
         }
         PhotolabJobKind::BuildMesh => {
             remove_path_if_exists(&project_root.join(".photolab/mesh-staging").join(job_id))?;
@@ -5903,6 +5952,7 @@ fn cleanup_batch_job(project_root: &Path, batch_id: &str) -> Result<()> {
             project_root,
             &job_id,
             project_root.join("datasets/raster").join(&job_id).is_dir(),
+            None,
         )?;
     }
 
@@ -5962,7 +6012,12 @@ fn is_batch_child_operation(batch_id: &str, operation_id: &str) -> bool {
     bytes.len() >= 4 && bytes[0].is_ascii_digit() && bytes[1].is_ascii_digit() && bytes[2] == b'-'
 }
 
-fn cleanup_raster_job(project_root: &Path, job_id: &str, completed: bool) -> Result<()> {
+fn cleanup_raster_job(
+    project_root: &Path,
+    job_id: &str,
+    completed: bool,
+    identity: Option<&PhotolabJob>,
+) -> Result<()> {
     remove_path_if_exists(&project_root.join(".photolab/raster-inputs").join(job_id))?;
     let staging = project_root.join(".photolab/raster-staging");
     let checkpoint = staging
@@ -5976,7 +6031,28 @@ fn cleanup_raster_job(project_root: &Path, job_id: &str, completed: bool) -> Res
     } else if !checkpoint.is_file() {
         remove_path_if_exists(&job_directory)?;
     }
-    remove_path_if_exists(&staging.join("raster-locks").join(format!("{job_id}.lock")))
+    remove_path_if_exists(&staging.join("raster-locks").join(format!("{job_id}.lock")))?;
+    if let Some(identity) = identity {
+        let kind = match identity.kind {
+            PhotolabJobKind::BuildDem => "buildDem",
+            PhotolabJobKind::BuildOrthomosaic => "buildOrthomosaic",
+            _ => return Ok(()),
+        };
+        let key = raster_checkpoint_content_key(kind, &identity.config_hash, &identity.input_hash)?;
+        let checkpoint = staging
+            .join("raster-checkpoints")
+            .join(format!("{key}.json"));
+        let content_job_directory = staging.join("raster-jobs").join(&key);
+        if completed {
+            remove_path_if_exists(&checkpoint)?;
+            remove_path_if_exists(&checkpoint.with_extension("steps"))?;
+            remove_path_if_exists(&content_job_directory)?;
+        } else if !checkpoint.is_file() {
+            remove_path_if_exists(&content_job_directory)?;
+        }
+        remove_path_if_exists(&staging.join("raster-locks").join(format!("{key}.lock")))?;
+    }
+    Ok(())
 }
 
 fn cleanup_brush_job(project_root: &Path, job_id: &str, completed: bool) -> Result<()> {
@@ -6225,6 +6301,15 @@ fn read_project_job_history(
                 "job history record belongs to a different schema or project"
             );
             validate_project_job(&record.job)?;
+            if let Some(frozen_request) = &record.frozen_request {
+                frozen_request.validate().map_err(anyhow::Error::msg)?;
+                anyhow::ensure!(
+                    frozen_request.job_kind == record.job.kind
+                        && frozen_request.config_hash == record.job.config_hash
+                        && frozen_request.input_hash == record.job.input_hash,
+                    "frozen job request identity does not match its history record"
+                );
+            }
             anyhow::ensure!(
                 path == job_history_record_path(project_root, &record.job.id.0),
                 "job history record file name does not match its job id"
@@ -6257,12 +6342,35 @@ fn write_project_job_history_record(
     project_root: &Path,
     project_id: &str,
     job: &PhotolabJob,
+    frozen_request: Option<&FrozenJobRequest>,
 ) -> Result<()> {
     validate_project_job(job)?;
+    let existing_frozen_request = if frozen_request.is_none() {
+        let path = job_history_record_path(project_root, &job.id.0);
+        path.is_file()
+            .then(|| fs::read(&path))
+            .transpose()?
+            .map(|bytes| serde_json::from_slice::<ProjectJobHistoryRecord>(&bytes))
+            .transpose()?
+            .and_then(|record| record.frozen_request)
+    } else {
+        None
+    };
+    let frozen_request = frozen_request.cloned().or(existing_frozen_request);
+    if let Some(frozen_request) = &frozen_request {
+        frozen_request.validate().map_err(anyhow::Error::msg)?;
+        anyhow::ensure!(
+            frozen_request.job_kind == job.kind
+                && frozen_request.config_hash == job.config_hash
+                && frozen_request.input_hash == job.input_hash,
+            "frozen job request identity does not match its history record"
+        );
+    }
     let record = ProjectJobHistoryRecord {
         schema_version: JOB_HISTORY_SCHEMA_VERSION,
         project_id: project_id.to_owned(),
         job: job.clone(),
+        frozen_request,
     };
     atomic_write_json(&job_history_record_path(project_root, &job.id.0), &record)
 }
@@ -8833,6 +8941,18 @@ mod tests {
         interrupted
             .record_checkpoint(&test_checkpoint(&interrupted))
             .expect("checkpoint");
+        let frozen_interrupted = FrozenJobRequest::new(
+            "photolab.jobs.startProduct",
+            serde_json::json!({ "operationId": interrupted.id.0.clone() }),
+            &NewPhotolabJob {
+                id: interrupted.id.clone(),
+                kind: interrupted.kind,
+                config_hash: interrupted.config_hash.clone(),
+                input_hash: interrupted.input_hash.clone(),
+                progress: interrupted.progress.clone(),
+            },
+        )
+        .expect("frozen interrupted request");
         let mut alignment = test_job_with_kind("alignment-job", PhotolabJobKind::AlignPhotos);
         alignment
             .transition_to(PhotolabJobState::Running)
@@ -8843,15 +8963,15 @@ mod tests {
 
         let manifest_before = fs::read(project.join("manifest.json")).expect("manifest before");
         runtime
-            .persist(&scope, &completed)
+            .persist(&scope, &completed, None)
             .expect("persist completed");
         let completed_record_before =
             fs::read(job_history_record_path(&project, "completed-job")).expect("completed record");
         runtime
-            .persist(&scope, &interrupted)
+            .persist(&scope, &interrupted, Some(&frozen_interrupted))
             .expect("persist interrupted");
         runtime
-            .persist(&scope, &alignment)
+            .persist(&scope, &alignment, None)
             .expect("persist alignment");
         let interrupted_scratch =
             project.join(format!("tmp/colmap/colmap-{}-123-1", alignment.id.0));
@@ -8907,6 +9027,13 @@ mod tests {
                     && message.contains("committed checkpoint 1")
         ));
         assert!(recovered.finished_at_unix_ms.is_some());
+        assert_eq!(
+            reopened
+                .frozen_job_request(&recovered.id)
+                .expect("frozen request after interruption"),
+            Some(frozen_interrupted),
+            "interruption classification must preserve the sidecar-owned request"
+        );
         let restarted = jobs
             .iter()
             .find(|job| job.id.0 == "alignment-job")

@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import {
   assertCancellationLatencies,
   assertCompatibleResume,
-  assertIncompatibleCheckpointRejected,
+  assertSidecarResumeIdentityRejection,
   assertNoPartialPublication,
   CancellationTracker,
   canonicalCancellationStage,
@@ -194,9 +194,26 @@ assert.deepEqual(resumeCompatibility(resumeIdentity, { ...resumeIdentity }), {
 });
 for (const key of ['kind', 'configHash', 'inputHash']) {
   const incompatible = { ...resumeIdentity, [key]: `changed-${key}` };
-  assert.deepEqual(assertIncompatibleCheckpointRejected(resumeIdentity, incompatible), [key]);
+  assert.deepEqual(resumeCompatibility(resumeIdentity, incompatible).mismatches, [key]);
   assert.throws(() => assertCompatibleResume(resumeIdentity, incompatible), new RegExp(key));
+  const rejection = assertSidecarResumeIdentityRejection(
+    {
+      code: -32020,
+      message: `Resume identity mismatch: ${key}`,
+      data: { code: 'resumeIdentityMismatch', field: key, retryable: false },
+    },
+    key,
+  );
+  assert.equal(rejection.field, key);
 }
+assert.throws(
+  () =>
+    assertSidecarResumeIdentityRejection(
+      { data: { code: 'resumeNotAvailable', field: null } },
+      'configHash',
+    ),
+  /resumeIdentityMismatch/,
+);
 assert.throws(() => immutableResumeIdentity({ kind: 'buildDepthMaps' }), /does not expose/);
 
 const e2eCli = resolve(import.meta.dirname, 'photolab-e2e.mjs');

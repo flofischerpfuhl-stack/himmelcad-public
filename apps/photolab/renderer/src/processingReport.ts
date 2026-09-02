@@ -221,6 +221,7 @@ function jobSection(jobs: readonly PhotolabJob[]): string {
 }
 
 function reportJobState(job: PhotolabJob): string {
+  if (job.state.kind === 'pauseRequested' || job.state.kind === 'paused') return 'running';
   if (job.state.kind !== 'failed') return job.state.kind;
   if (job.state.code === 'interruptedRecoverable') return 'interrupted · recoverable';
   if (job.state.code === 'interrupted') return 'interrupted · restart required';

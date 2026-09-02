@@ -247,6 +247,15 @@ pub enum RasterPhase {
     Committing,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RasterResumeCheckpointValidation {
+    Compatible,
+    Missing,
+    ConfigHashMismatch,
+    InputHashMismatch,
+    Invalid,
+}
+
 /// Incremental progress; completed steps are durable checkpoint boundaries.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -563,6 +572,58 @@ impl RasterRuntime {
         })
     }
 
+    /// Validates the durable identity envelope before a history job is resubmitted.
+    pub async fn validate_resume_checkpoint_identity(
+        &self,
+        kind: &str,
+        config_hash: &ObjectHash,
+        input_hash: &ObjectHash,
+        legacy_job_id: &str,
+    ) -> Result<RasterResumeCheckpointValidation, RasterRuntimeError> {
+        let key = raster_checkpoint_content_key(kind, config_hash, input_hash)?;
+        let current = self
+            .config
+            .staging_root
+            .join("raster-checkpoints")
+            .join(format!("{key}.json"));
+        let legacy = self
+            .config
+            .staging_root
+            .join("raster-checkpoints")
+            .join(format!("{legacy_job_id}.json"));
+        let path = if current.is_file() {
+            current
+        } else if legacy.is_file() {
+            legacy
+        } else {
+            return Ok(RasterResumeCheckpointValidation::Missing);
+        };
+        let bytes = tokio::task::spawn_blocking({
+            let path = path.clone();
+            move || fs::read(path)
+        })
+        .await
+        .map_err(|error| RasterRuntimeError::BackgroundTask(error.to_string()))??;
+        let checkpoint: RasterCheckpoint = match serde_json::from_slice(&bytes) {
+            Ok(checkpoint) => checkpoint,
+            Err(_) => return Ok(RasterResumeCheckpointValidation::Invalid),
+        };
+        if checkpoint.config_hash != *config_hash {
+            return Ok(RasterResumeCheckpointValidation::ConfigHashMismatch);
+        }
+        if checkpoint.input_hash != *input_hash {
+            return Ok(RasterResumeCheckpointValidation::InputHashMismatch);
+        }
+        if checkpoint.schema_version != CHECKPOINT_SCHEMA
+            || load_completed_steps(checkpoint_marker_directory(&path))
+                .await?
+                .is_empty()
+        {
+            return Ok(RasterResumeCheckpointValidation::Invalid);
+        }
+        Ok(RasterResumeCheckpointValidation::Compatible)
+    }
+
     /// Executes a resumable raster product build and atomically publishes its directory.
     #[allow(clippy::too_many_lines)]
     pub async fn execute<P>(
@@ -589,27 +650,20 @@ impl RasterRuntime {
                 &output_directory,
             )?));
         }
+        let command_hash = command_hash(command)?;
+        let checkpoint_key = raster_checkpoint_identity_key(command)?;
         let _job_lock = acquire_job_lock(
             self.config
                 .staging_root
                 .join("raster-locks")
-                .join(format!("{}.lock", command.job_id)),
-            command.job_id.clone(),
+                .join(format!("{checkpoint_key}.lock")),
+            checkpoint_key.clone(),
         )
         .await?;
         let audit = self.audit(cancellation).await?;
         self.validate_inputs(command, cancellation).await?;
-        let command_hash = command_hash(command)?;
-        let job_directory = self
-            .config
-            .staging_root
-            .join("raster-jobs")
-            .join(&command.job_id);
-        let checkpoint_path = self
-            .config
-            .staging_root
-            .join("raster-checkpoints")
-            .join(format!("{}.json", command.job_id));
+        let (job_directory, checkpoint_path) =
+            raster_checkpoint_storage(&self.config.staging_root, command)?;
         create_job_directories(job_directory.clone(), checkpoint_path.clone()).await?;
         let mut checkpoint = load_checkpoint(
             checkpoint_path.clone(),
@@ -1545,6 +1599,60 @@ impl RasterRuntime {
     }
 }
 
+fn raster_product_kind(product: &RasterProductRequest) -> &'static str {
+    match product {
+        RasterProductRequest::Elevation(_) => "buildDem",
+        RasterProductRequest::Orthomosaic(_) => "buildOrthomosaic",
+    }
+}
+
+/// Stable checkpoint key shared by identical raster submissions.
+pub fn raster_checkpoint_content_key(
+    kind: &str,
+    config_hash: &ObjectHash,
+    input_hash: &ObjectHash,
+) -> Result<String, RasterRuntimeError> {
+    if !matches!(kind, "buildDem" | "buildOrthomosaic") {
+        return Err(RasterRuntimeError::InvalidRequest(
+            "unsupported raster checkpoint kind".into(),
+        ));
+    }
+    Ok(ObjectHash::of_bytes(&serde_json::to_vec(&(kind, config_hash, input_hash))?).0)
+}
+
+fn raster_checkpoint_identity_key(
+    command: &RasterBuildCommand,
+) -> Result<String, RasterRuntimeError> {
+    raster_checkpoint_content_key(
+        raster_product_kind(&command.product),
+        &command.config_hash,
+        &command.input_hash,
+    )
+}
+
+fn raster_checkpoint_storage(
+    staging_root: &Path,
+    command: &RasterBuildCommand,
+) -> Result<(PathBuf, PathBuf), RasterRuntimeError> {
+    let key = raster_checkpoint_identity_key(command)?;
+    let current_checkpoint = staging_root
+        .join("raster-checkpoints")
+        .join(format!("{key}.json"));
+    let legacy_checkpoint = staging_root
+        .join("raster-checkpoints")
+        .join(format!("{}.json", command.job_id));
+    if !current_checkpoint.is_file() && legacy_checkpoint.is_file() {
+        return Ok((
+            staging_root.join("raster-jobs").join(&command.job_id),
+            legacy_checkpoint,
+        ));
+    }
+    Ok((
+        staging_root.join("raster-jobs").join(key),
+        current_checkpoint,
+    ))
+}
+
 fn remove_partial_step_outputs(output: &Path) -> Result<(), RasterRuntimeError> {
     let appended_aux = PathBuf::from(format!("{}.aux.xml", output.display()));
     let appended_header = PathBuf::from(format!("{}.hdr", output.display()));
@@ -2145,7 +2253,11 @@ fn required_driver_evidence(
 }
 
 fn command_hash(command: &RasterBuildCommand) -> Result<ObjectHash, RasterRuntimeError> {
-    Ok(ObjectHash::of_bytes(&serde_json::to_vec(command)?))
+    Ok(ObjectHash::of_bytes(&serde_json::to_vec(&(
+        raster_product_kind(&command.product),
+        &command.config_hash,
+        &command.input_hash,
+    ))?))
 }
 
 async fn load_checkpoint(
@@ -2793,6 +2905,30 @@ mod tests {
             check_cancelled(&token),
             Err(RasterRuntimeError::Cancelled)
         ));
+    }
+
+    #[test]
+    fn raster_checkpoint_lookup_uses_content_identity_across_operation_ids() {
+        let root = std::env::temp_dir().join(format!(
+            "himmelcad-raster-content-key-{}",
+            std::process::id()
+        ));
+        let checkpoints = root.join("raster-checkpoints");
+        fs::create_dir_all(&checkpoints).expect("checkpoint directory");
+        let first = elevation_command(Path::new("/tmp/input.fgb"), Path::new("/tmp/output-a"));
+        let key = raster_checkpoint_identity_key(&first).expect("content key");
+        fs::write(checkpoints.join(format!("{key}.json")), b"{}").expect("checkpoint marker");
+        let mut resubmitted = first.clone();
+        resubmitted.job_id = "fresh-operation-id".into();
+        resubmitted.output_directory = "/tmp/output-b".into();
+        let (first_jobs, first_checkpoint) =
+            raster_checkpoint_storage(&root, &first).expect("first lookup");
+        let (resumed_jobs, resumed_checkpoint) =
+            raster_checkpoint_storage(&root, &resubmitted).expect("resubmitted lookup");
+        assert_eq!(first_checkpoint, resumed_checkpoint);
+        assert_eq!(first_jobs, resumed_jobs);
+        assert!(first_checkpoint.ends_with(format!("{key}.json")));
+        fs::remove_dir_all(root).expect("test cleanup");
     }
 
     #[cfg(unix)]

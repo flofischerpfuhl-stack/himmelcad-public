@@ -241,6 +241,7 @@ export function App(): JSX.Element {
   const [autosaveGeneration, setAutosaveGeneration] = useState(0);
   const [lastSavedGeneration, setLastSavedGeneration] = useState(0);
   const [jobs, setJobs] = useState<readonly PhotolabJob[]>([]);
+  const [jobResumeErrors, setJobResumeErrors] = useState<Readonly<Record<string, string>>>({});
   const [imageImportBatch, setImageImportBatch] = useState<PhotoImportBatch | null>(null);
   const [himmelcapImport, setHimmelcapImport] = useState<HcapImportPreview | null>(null);
   const [projectImages, setProjectImages] = useState<readonly ProjectCameraImageRecord[]>([]);
@@ -658,6 +659,7 @@ export function App(): JSX.Element {
         setGcpLocalEstimates([]);
         setAlignedGcpCameras([]);
         setJobs([]);
+        setJobResumeErrors({});
         observedActiveJobs.current.clear();
         observedFailedJobs.current.clear();
         refreshedCompletedJobs.current.clear();
@@ -1615,7 +1617,7 @@ export function App(): JSX.Element {
             jobPollErrorLogged.current = false;
             for (const job of next) {
               if (job.kind !== 'alignPhotos') continue;
-              if (!['queued', 'running', 'pauseRequested'].includes(job.state.kind)) continue;
+              if (!['queued', 'running'].includes(job.state.kind)) continue;
               const total = job.progress.metrics.totalUnits;
               const stageFrac = total
                 ? Math.min(1, job.progress.metrics.completedUnits / total)
@@ -1718,6 +1720,27 @@ export function App(): JSX.Element {
       );
     } catch (error) {
       logEvent('error', 'sidecar', `Job could not be cancelled: ${errorMessage(error)}`);
+    }
+  }, []);
+
+  const resumeJob = useCallback(async (historyJobId: string) => {
+    const api = window.himmelcad;
+    if (!api) return;
+    setJobResumeErrors((current) => {
+      const next = { ...current };
+      delete next[historyJobId];
+      return next;
+    });
+    try {
+      const { job } = await api.sidecar.call<{ job: PhotolabJob }>('photolab.jobs.resume', {
+        historyJobId,
+      });
+      setJobs((previous) => [...previous.filter((current) => current.id !== job.id), job]);
+      logEvent('info', 'sidecar', `Resume queued for ${historyJobId}`);
+    } catch (error) {
+      const message = errorMessage(error);
+      setJobResumeErrors((current) => ({ ...current, [historyJobId]: message }));
+      logEvent('error', 'sidecar', `Job could not be resumed: ${message}`);
     }
   }, []);
 
@@ -3375,6 +3398,8 @@ export function App(): JSX.Element {
             jobs={jobs}
             onCommand={onCommand}
             onCancelJob={(jobId) => void cancelJob(jobId)}
+            onResumeJob={resumeJob}
+            resumeErrors={jobResumeErrors}
             onCollapse={toggleBottom}
             accuracyReport={gcpAccuracyReport}
             hardware={hardware}

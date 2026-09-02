@@ -210,10 +210,17 @@ export function assertCompatibleResume(expected, requested) {
   }
 }
 
-export function assertIncompatibleCheckpointRejected(expected, requested) {
-  const result = resumeCompatibility(expected, requested);
-  if (result.compatible) {
-    throw new Error('Incompatible checkpoint fixture unexpectedly matches the requested job');
+export function assertSidecarResumeIdentityRejection(error, expectedField) {
+  const rpcError = error?.rpcError ?? error;
+  if (rpcError?.data?.code !== 'resumeIdentityMismatch') {
+    throw new Error(
+      `Sidecar rejection code is ${String(rpcError?.data?.code)}, expected resumeIdentityMismatch`,
+    );
   }
-  return result.mismatches;
+  if (rpcError.data.field !== expectedField) {
+    throw new Error(
+      `Sidecar rejected ${String(rpcError.data.field)}, expected ${String(expectedField)}`,
+    );
+  }
+  return rpcError.data;
 }

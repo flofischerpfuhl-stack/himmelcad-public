@@ -32,6 +32,83 @@ pub struct JobHistoryScope {
     pub project_root: PathBuf,
 }
 
+/// Opaque, integrity-bound request retained beside a durable job record.
+///
+/// The sidecar owns this value. Renderers only identify the history job they
+/// want resumed and never reconstruct execution parameters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrozenJobRequest {
+    pub schema_version: u32,
+    pub method: String,
+    pub params: serde_json::Value,
+    pub job_kind: PhotolabJobKind,
+    pub config_hash: ObjectHash,
+    pub input_hash: ObjectHash,
+    pub binding_sha256: ObjectHash,
+}
+
+impl FrozenJobRequest {
+    pub fn new(
+        method: impl Into<String>,
+        params: serde_json::Value,
+        job: &NewPhotolabJob,
+    ) -> Result<Self, serde_json::Error> {
+        let method = method.into();
+        let binding_sha256 = frozen_request_binding_hash(
+            &method,
+            &params,
+            job.kind,
+            &job.config_hash,
+            &job.input_hash,
+        )?;
+        Ok(Self {
+            schema_version: 1,
+            method,
+            params,
+            job_kind: job.kind,
+            config_hash: job.config_hash.clone(),
+            input_hash: job.input_hash.clone(),
+            binding_sha256,
+        })
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema_version != 1 {
+            return Err("unsupported frozen job request schema".into());
+        }
+        let expected = frozen_request_binding_hash(
+            &self.method,
+            &self.params,
+            self.job_kind,
+            &self.config_hash,
+            &self.input_hash,
+        )
+        .map_err(|error| error.to_string())?;
+        if self.binding_sha256 != expected {
+            return Err("frozen job request binding hash does not match its payload".into());
+        }
+        Ok(())
+    }
+}
+
+fn frozen_request_binding_hash(
+    method: &str,
+    params: &serde_json::Value,
+    kind: PhotolabJobKind,
+    config_hash: &ObjectHash,
+    input_hash: &ObjectHash,
+) -> Result<ObjectHash, serde_json::Error> {
+    Ok(ObjectHash::of_bytes(&serde_json::to_vec(&(
+        1_u32,
+        method,
+        params,
+        kind,
+        config_hash,
+        input_hash,
+    ))?))
+}
+
 /// Project storage adapter used by the process-local scheduler.
 pub trait JobHistoryPersistence: Send + Sync {
     /// Returns the project that currently owns newly admitted jobs.
@@ -41,7 +118,12 @@ pub trait JobHistoryPersistence: Send + Sync {
     fn load_current(&self) -> Result<Vec<PhotolabJob>, String>;
 
     /// Atomically upserts one lifecycle snapshot in its captured project.
-    fn persist(&self, scope: &JobHistoryScope, job: &PhotolabJob) -> Result<(), String>;
+    fn persist(
+        &self,
+        scope: &JobHistoryScope,
+        job: &PhotolabJob,
+        frozen_request: Option<&FrozenJobRequest>,
+    ) -> Result<(), String>;
 }
 
 /// Bounded scheduling policy for one sidecar process.
@@ -315,6 +397,7 @@ struct ManagedJob {
     cancellation: CancellationToken,
     updates: watch::Sender<PhotolabJob>,
     history_scope: Option<JobHistoryScope>,
+    frozen_request: Option<FrozenJobRequest>,
     history_dirty: bool,
     last_history_persisted_at: Instant,
 }
@@ -394,6 +477,42 @@ impl JobManager {
     where
         F: FnOnce(JobWorkerContext) -> JobWorkerResult + Send + 'static,
     {
+        self.start_inner(request, None, work).await
+    }
+
+    /// Admits a resumable job and atomically retains its sidecar-owned request.
+    pub async fn start_with_frozen_request<F>(
+        &self,
+        request: NewPhotolabJob,
+        frozen_request: FrozenJobRequest,
+        work: F,
+    ) -> Result<StartJobResult, JobManagerError>
+    where
+        F: FnOnce(JobWorkerContext) -> JobWorkerResult + Send + 'static,
+    {
+        frozen_request
+            .validate()
+            .map_err(JobManagerError::InvalidFrozenRequest)?;
+        if frozen_request.job_kind != request.kind
+            || frozen_request.config_hash != request.config_hash
+            || frozen_request.input_hash != request.input_hash
+        {
+            return Err(JobManagerError::InvalidFrozenRequest(
+                "frozen request identity does not match the admitted job".into(),
+            ));
+        }
+        self.start_inner(request, Some(frozen_request), work).await
+    }
+
+    async fn start_inner<F>(
+        &self,
+        request: NewPhotolabJob,
+        frozen_request: Option<FrozenJobRequest>,
+        work: F,
+    ) -> Result<StartJobResult, JobManagerError>
+    where
+        F: FnOnce(JobWorkerContext) -> JobWorkerResult + Send + 'static,
+    {
         let job = PhotolabJob::new(request)?;
         let key = job.id.0.clone();
         let cancellation = CancellationToken::new();
@@ -426,12 +545,13 @@ impl JobManager {
                     cancellation: cancellation.clone(),
                     updates,
                     history_scope: history_scope.clone(),
+                    frozen_request: frozen_request.clone(),
                     history_dirty: false,
                     last_history_persisted_at: Instant::now(),
                 },
             );
             if let (Some(history), Some(scope)) = (&self.inner.history, &history_scope) {
-                if let Err(message) = history.persist(scope, &job) {
+                if let Err(message) = history.persist(scope, &job, frozen_request.as_ref()) {
                     jobs.remove(&key);
                     return Err(JobManagerError::HistoryPersistence(message));
                 }
@@ -760,7 +880,7 @@ impl JobManager {
             publish(managed);
             return;
         };
-        match history.persist(scope, &managed.job) {
+        match history.persist(scope, &managed.job, managed.frozen_request.as_ref()) {
             Ok(()) => {
                 managed.history_dirty = false;
                 managed.last_history_persisted_at = Instant::now();
@@ -785,7 +905,7 @@ impl JobManager {
         let (Some(history), Some(scope)) = (&self.inner.history, &managed.history_scope) else {
             return;
         };
-        if let Err(error) = history.persist(scope, &managed.job) {
+        if let Err(error) = history.persist(scope, &managed.job, managed.frozen_request.as_ref()) {
             tracing::error!(
                 job_id = managed.job.id.0,
                 project_id = scope.project_id,
@@ -869,6 +989,7 @@ fn set_failed(managed: &mut ManagedJob, code: &str, message: String) {
 #[derive(Debug, PartialEq, Eq)]
 pub enum JobManagerError {
     InvalidConfig(&'static str),
+    InvalidFrozenRequest(String),
     NoTokioRuntime,
     DuplicateJobId(PhotolabJobId),
     QueueFull {
@@ -892,6 +1013,9 @@ impl std::fmt::Display for JobManagerError {
         match self {
             Self::InvalidConfig(message) => {
                 write!(formatter, "invalid job manager configuration: {message}")
+            }
+            Self::InvalidFrozenRequest(message) => {
+                write!(formatter, "invalid frozen job request: {message}")
             }
             Self::NoTokioRuntime => formatter.write_str(
                 "JobManager must be created inside a Tokio runtime or with an explicit handle",
@@ -947,6 +1071,7 @@ mod tests {
     struct MemoryHistory {
         current: StdMutex<Option<JobHistoryScope>>,
         records: StdMutex<BTreeMap<String, BTreeMap<String, PhotolabJob>>>,
+        frozen_requests: StdMutex<BTreeMap<String, FrozenJobRequest>>,
         persist_count: AtomicUsize,
     }
 
@@ -981,7 +1106,12 @@ mod tests {
                 .map_or_else(Vec::new, |jobs| jobs.values().cloned().collect()))
         }
 
-        fn persist(&self, scope: &JobHistoryScope, job: &PhotolabJob) -> Result<(), String> {
+        fn persist(
+            &self,
+            scope: &JobHistoryScope,
+            job: &PhotolabJob,
+            frozen_request: Option<&FrozenJobRequest>,
+        ) -> Result<(), String> {
             self.persist_count.fetch_add(1, Ordering::Relaxed);
             self.records
                 .lock()
@@ -989,6 +1119,12 @@ mod tests {
                 .entry(scope.project_id.clone())
                 .or_default()
                 .insert(job.id.0.clone(), job.clone());
+            if let Some(frozen_request) = frozen_request {
+                self.frozen_requests
+                    .lock()
+                    .map_err(|error| error.to_string())?
+                    .insert(job.id.0.clone(), frozen_request.clone());
+            }
             Ok(())
         }
     }
@@ -1012,6 +1148,120 @@ mod tests {
                 total_bytes: Some(1_000),
             },
         }
+    }
+
+    #[tokio::test]
+    async fn resumable_start_persists_the_hash_bound_request_before_work_runs() {
+        let history = Arc::new(MemoryHistory::default());
+        history.select("project-a");
+        let manager = JobManager::new_with_history(
+            JobManagerConfig {
+                max_concurrency: 1,
+                max_queued: 0,
+            },
+            history.clone(),
+        )
+        .expect("manager");
+        let request = request("resume-job");
+        let frozen = FrozenJobRequest::new(
+            "photolab.jobs.startProduct",
+            serde_json::json!({ "operationId": "resume-job" }),
+            &request,
+        )
+        .expect("frozen request");
+        manager
+            .start_with_frozen_request(request, frozen.clone(), |_| Ok(()))
+            .await
+            .expect("start resumable job");
+        assert_eq!(
+            history
+                .frozen_requests
+                .lock()
+                .expect("frozen requests")
+                .get("resume-job"),
+            Some(&frozen)
+        );
+        let terminal = manager
+            .wait_for_terminal(&PhotolabJobId("resume-job".into()))
+            .await
+            .expect("terminal");
+        assert_eq!(terminal.state, PhotolabJobState::Completed);
+    }
+
+    #[test]
+    fn frozen_request_binding_rejects_payload_tampering() {
+        let request = request("bound-job");
+        let mut frozen = FrozenJobRequest::new(
+            "photolab.jobs.startProduct",
+            serde_json::json!({ "operationId": "bound-job" }),
+            &request,
+        )
+        .expect("frozen request");
+        frozen.validate().expect("valid binding");
+        frozen.params["operationId"] = serde_json::json!("other-job");
+        assert!(frozen.validate().is_err());
+    }
+
+    #[tokio::test]
+    async fn recoverable_history_job_is_resubmitted_with_resume_work() {
+        let history = Arc::new(MemoryHistory::default());
+        history.select("project-a");
+        let scope = history
+            .current_scope()
+            .expect("scope")
+            .expect("selected scope");
+        let request = request_for_kind("resume-history", PhotolabJobKind::BuildGaussianSplat);
+        let frozen = FrozenJobRequest::new(
+            "photolab.jobs.startProduct",
+            serde_json::json!({ "operationId": "resume-history" }),
+            &request,
+        )
+        .expect("frozen request");
+        let mut interrupted = PhotolabJob::new(request.clone()).expect("history job");
+        interrupted
+            .transition_to(PhotolabJobState::Running)
+            .expect("running");
+        interrupted
+            .transition_to(PhotolabJobState::Failed {
+                code: "interruptedRecoverable".into(),
+                message: "Resume is available.".into(),
+            })
+            .expect("interrupted");
+        history
+            .persist(&scope, &interrupted, Some(&frozen))
+            .expect("persist history");
+
+        let manager = JobManager::new_with_history(
+            JobManagerConfig {
+                max_concurrency: 1,
+                max_queued: 0,
+            },
+            history,
+        )
+        .expect("manager");
+        assert_eq!(
+            manager
+                .status(&request.id)
+                .await
+                .expect("history status")
+                .state,
+            interrupted.state
+        );
+        let resumed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let resumed_in_worker = resumed.clone();
+        manager
+            .start_with_frozen_request(request.clone(), frozen, move |_| {
+                resumed_in_worker.store(true, Ordering::Release);
+                Ok(())
+            })
+            .await
+            .expect("resubmit");
+        let terminal = manager
+            .wait_for_terminal(&request.id)
+            .await
+            .expect("resumed terminal");
+        assert_eq!(terminal.state, PhotolabJobState::Completed);
+        assert!(resumed.load(Ordering::Acquire));
     }
 
     fn request(id: &str) -> NewPhotolabJob {

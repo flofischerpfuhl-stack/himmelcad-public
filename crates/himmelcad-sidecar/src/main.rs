@@ -44,8 +44,8 @@ use himmelcad_core::photolab_gcp_optimization::{
 };
 use himmelcad_core::photolab_images::ProjectedPhotoReference;
 use himmelcad_core::photolab_jobs::{
-    JobProgress, NewPhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabStage, PhotolabStageKind,
-    ProgressMetrics,
+    JobProgress, NewPhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState, PhotolabStage,
+    PhotolabStageKind, ProgressMetrics,
 };
 use himmelcad_core::photolab_matching::ImageId;
 use himmelcad_core::registration::{
@@ -124,7 +124,8 @@ use himmelcad_sidecar::image_quality_runtime::{
 };
 use himmelcad_sidecar::import_registration_runtime::ImportRegistrationRuntime;
 use himmelcad_sidecar::job_runtime::{
-    JobIdParams, JobManager, JobManagerConfig, JobWorkerContext, JobWorkerError, ListJobsParams,
+    FrozenJobRequest, JobIdParams, JobManager, JobManagerConfig, JobWorkerContext, JobWorkerError,
+    ListJobsParams, StartJobResult,
 };
 use himmelcad_sidecar::mesh_tiler::{build_tiled_dem_mesh, MeshTilerError};
 use himmelcad_sidecar::mvs_runtime::{
@@ -149,7 +150,7 @@ use himmelcad_sidecar::raster_runtime::{
     ElevationSurface, ElevationViewRange, GdalToolchainConfig, MosaicOrder,
     OrthomosaicElevationSupport, OrthomosaicRequest, RasterBounds, RasterBuildCommand, RasterCrs,
     RasterGrid, RasterNoDataValue, RasterPhase, RasterProductRequest, RasterProgress,
-    RasterResampling, RasterRuntime,
+    RasterResampling, RasterResumeCheckpointValidation, RasterRuntime,
 };
 use himmelcad_sidecar::site_calibration_reader::inspect_site_calibration;
 use himmelcad_sidecar::splat_tiler::{tile_brush_ply, SplatTilerError};
@@ -769,7 +770,7 @@ const fn default_splat_maximum_resolution() -> u32 {
     1_920
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StartProductJobParams {
     operation_id: String,
@@ -808,7 +809,7 @@ enum BatchPipelineStep {
     },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StartBatchJobParams {
     operation_id: String,
@@ -817,6 +818,12 @@ struct StartBatchJobParams {
     camera_entity_ids: Vec<String>,
     #[serde(default)]
     processing_set_id: Option<EntityId>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ResumeJobParams {
+    history_job_id: PhotolabJobId,
 }
 
 /// Immutable execution evidence created before a batch enters the job queue.
@@ -3160,9 +3167,14 @@ async fn handle_job_rpc(
             match serde_json::from_value::<StartBatchJobParams>(req.params) {
                 Ok(params) => match prepare_batch_job(&params, &projects) {
                     Ok((job, frozen_plan)) => {
+                        let frozen_request =
+                            match freeze_job_request("photolab.jobs.startBatch", &params, &job) {
+                                Ok(request) => request,
+                                Err(error) => return rpc_err(req.id, -32000, &error.to_string()),
+                            };
                         let publisher = Arc::clone(&projects);
                         let result = jobs
-                            .start(job, move |context| {
+                            .start_with_frozen_request(job, frozen_request, move |context| {
                                 run_batch_pipeline(params, frozen_plan, &context, &publisher)
                             })
                             .await
@@ -3588,11 +3600,20 @@ async fn handle_job_rpc(
                 Ok(params)
                     if matches!(params.configuration, ProductRunConfiguration::Splat { .. }) =>
                 {
-                    match prepare_brush_product_job(params, &projects, None) {
+                    let frozen_params = params.clone();
+                    match prepare_brush_product_job(params, &projects, None, false) {
                         Ok((job, request, runtime, lineage)) => {
+                            let frozen_request = match freeze_job_request(
+                                "photolab.jobs.startProduct",
+                                &frozen_params,
+                                &job,
+                            ) {
+                                Ok(request) => request,
+                                Err(error) => return rpc_err(req.id, -32000, &error.to_string()),
+                            };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
-                                .start(job, move |context| {
+                                .start_with_frozen_request(job, frozen_request, move |context| {
                                     let mut outcome = runtime.run(&request, &context).map_err(
                                         himmelcad_sidecar::job_runtime::JobWorkerError::from,
                                     )?;
@@ -3635,49 +3656,64 @@ async fn handle_job_rpc(
                             | ProductRunConfiguration::Dense { .. }
                     ) =>
                 {
+                    let frozen_params = params.clone();
                     match prepare_mvs_product_job(params, &projects, None) {
                         Ok(prepared) => {
+                            let frozen_request = match freeze_job_request(
+                                "photolab.jobs.startProduct",
+                                &frozen_params,
+                                &prepared.job,
+                            ) {
+                                Ok(request) => request,
+                                Err(error) => return rpc_err(req.id, -32000, &error.to_string()),
+                            };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
-                                .start(prepared.job.clone(), move |context| {
-                                    let scene = prepare_or_reuse_mvs_scene(&prepared, &context)?;
-                                    let resume = if prepared.reuse_compatible_maps {
-                                        prepared.runtime.compatible_resume_checkpoint(
-                                            &scene.manifest_sha256,
-                                            &prepared.settings,
-                                        )?
-                                    } else {
-                                        None
-                                    };
-                                    let request = MvsRunRequest {
-                                        job_id: prepared.operation_id,
-                                        scene_manifest_path: scene.manifest_path,
-                                        scene_manifest_sha256: scene.manifest_sha256,
-                                        device: MvsComputeDevice::Cpu {
-                                            threads: portable_mvs_threads(),
-                                        },
-                                        settings: prepared.settings,
-                                        fuse_dense_point_cloud: prepared.fuse_dense_point_cloud,
-                                        resume,
-                                    };
-                                    let mut outcome =
+                                .start_with_frozen_request(
+                                    prepared.job.clone(),
+                                    frozen_request,
+                                    move |context| {
+                                        let scene =
+                                            prepare_or_reuse_mvs_scene(&prepared, &context)?;
+                                        let resume = if prepared.reuse_compatible_maps {
+                                            prepared.runtime.compatible_resume_checkpoint(
+                                                &scene.manifest_sha256,
+                                                &prepared.settings,
+                                            )?
+                                        } else {
+                                            None
+                                        };
+                                        let request = MvsRunRequest {
+                                            job_id: prepared.operation_id,
+                                            scene_manifest_path: scene.manifest_path,
+                                            scene_manifest_sha256: scene.manifest_sha256,
+                                            device: MvsComputeDevice::Cpu {
+                                                threads: portable_mvs_threads(),
+                                            },
+                                            settings: prepared.settings,
+                                            fuse_dense_point_cloud: prepared.fuse_dense_point_cloud,
+                                            resume,
+                                        };
+                                        let mut outcome =
                                         prepared.runtime.run(&request, &context).map_err(
                                             himmelcad_sidecar::job_runtime::JobWorkerError::from,
                                         )?;
-                                    if let Some(dense) = outcome.output.dense_point_cloud.as_ref() {
-                                        let dense_path =
-                                            outcome.output_path.join(&dense.relative_path);
-                                        let potree = prepare_dense_potree(
-                                            &dense_path,
-                                            &outcome.scratch_path.join("potree"),
-                                            &potree_converter_executable()?,
-                                            &context.cancellation,
-                                        )
-                                        .map_err(map_dense_prep_error)?;
-                                        outcome.potree = Some(potree);
-                                    }
-                                    context.check_cancelled()?;
-                                    publisher
+                                        if let Some(dense) =
+                                            outcome.output.dense_point_cloud.as_ref()
+                                        {
+                                            let dense_path =
+                                                outcome.output_path.join(&dense.relative_path);
+                                            let potree = prepare_dense_potree(
+                                                &dense_path,
+                                                &outcome.scratch_path.join("potree"),
+                                                &potree_converter_executable()?,
+                                                &context.cancellation,
+                                            )
+                                            .map_err(map_dense_prep_error)?;
+                                            outcome.potree = Some(potree);
+                                        }
+                                        context.check_cancelled()?;
+                                        publisher
                                         .publish_mvs_outcome(
                                             outcome,
                                             &prepared.camera_entity_ids,
@@ -3690,8 +3726,9 @@ async fn handle_job_rpc(
                                                 message: error.to_string(),
                                             }
                                         })?;
-                                    Ok(())
-                                })
+                                        Ok(())
+                                    },
+                                )
                                 .await
                                 .map_err(anyhow::Error::from);
                             rpc_result(req.id, result)
@@ -3705,13 +3742,26 @@ async fn handle_job_rpc(
                         ProductRunConfiguration::Dem { .. } | ProductRunConfiguration::Ortho { .. }
                     ) =>
                 {
+                    let frozen_params = params.clone();
                     match prepare_raster_product_job(params, &projects, None) {
                         Ok(prepared) => {
+                            let frozen_request = match freeze_job_request(
+                                "photolab.jobs.startProduct",
+                                &frozen_params,
+                                &prepared.job,
+                            ) {
+                                Ok(request) => request,
+                                Err(error) => return rpc_err(req.id, -32000, &error.to_string()),
+                            };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
-                                .start(prepared.job.clone(), move |context| {
-                                    run_raster_product(prepared, &context, &publisher)
-                                })
+                                .start_with_frozen_request(
+                                    prepared.job.clone(),
+                                    frozen_request,
+                                    move |context| {
+                                        run_raster_product(prepared, &context, &publisher)
+                                    },
+                                )
                                 .await
                                 .map_err(anyhow::Error::from);
                             rpc_result(req.id, result)
@@ -3744,6 +3794,13 @@ async fn handle_job_rpc(
                 Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
             }
         }
+        "photolab.jobs.resume" => match serde_json::from_value::<ResumeJobParams>(req.params) {
+            Ok(params) => match resume_history_job(params, jobs, &projects).await {
+                Ok(result) => rpc_result(req.id, Ok::<_, anyhow::Error>(result)),
+                Err(error) => rpc_resume_err(req.id, &error),
+            },
+            Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+        },
         "photolab.jobs.list" => match serde_json::from_value::<ListJobsParams>(req.params) {
             Ok(params) => rpc_result(req.id, jobs.list(params).await.map_err(anyhow::Error::from)),
             Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
@@ -3768,6 +3825,419 @@ async fn handle_job_rpc(
         },
         other => rpc_err(req.id, -32601, &format!("method not found: {other}")),
     }
+}
+
+fn freeze_job_request<T: Serialize>(
+    method: &str,
+    params: &T,
+    job: &NewPhotolabJob,
+) -> anyhow::Result<FrozenJobRequest> {
+    Ok(FrozenJobRequest::new(
+        method,
+        serde_json::to_value(params)?,
+        job,
+    )?)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum ResumeIdentityField {
+    Kind,
+    ConfigHash,
+    InputHash,
+    CheckpointMissing,
+}
+
+#[derive(Debug)]
+struct ResumeRpcFailure {
+    code: &'static str,
+    field: Option<ResumeIdentityField>,
+    message: String,
+}
+
+impl ResumeRpcFailure {
+    fn mismatch(field: ResumeIdentityField, message: impl Into<String>) -> Self {
+        Self {
+            code: "resumeIdentityMismatch",
+            field: Some(field),
+            message: message.into(),
+        }
+    }
+
+    fn rejected(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            field: None,
+            message: message.into(),
+        }
+    }
+}
+
+fn validate_resume_identity(
+    history: &himmelcad_core::photolab_jobs::PhotolabJob,
+    kind: PhotolabJobKind,
+    config_hash: &ObjectHash,
+    input_hash: &ObjectHash,
+) -> Result<(), ResumeRpcFailure> {
+    if history.kind != kind {
+        return Err(ResumeRpcFailure::mismatch(
+            ResumeIdentityField::Kind,
+            "The stored job kind does not match the resumable request.",
+        ));
+    }
+    if history.config_hash != *config_hash {
+        return Err(ResumeRpcFailure::mismatch(
+            ResumeIdentityField::ConfigHash,
+            "The stored configuration has changed since the checkpoint was committed.",
+        ));
+    }
+    if history.input_hash != *input_hash {
+        return Err(ResumeRpcFailure::mismatch(
+            ResumeIdentityField::InputHash,
+            "The job inputs have changed since the checkpoint was committed.",
+        ));
+    }
+    Ok(())
+}
+
+fn supports_history_resume(kind: PhotolabJobKind) -> bool {
+    matches!(
+        kind,
+        PhotolabJobKind::BuildDepthMaps
+            | PhotolabJobKind::BuildDensePointCloud
+            | PhotolabJobKind::BuildDem
+            | PhotolabJobKind::BuildOrthomosaic
+            | PhotolabJobKind::BuildGaussianSplat
+            | PhotolabJobKind::Batch
+    )
+}
+
+fn validate_history_resume_candidate(
+    history: &himmelcad_core::photolab_jobs::PhotolabJob,
+) -> Result<(), ResumeRpcFailure> {
+    if !matches!(
+        &history.state,
+        PhotolabJobState::Failed { code, .. } if code == "interruptedRecoverable"
+    ) {
+        return Err(ResumeRpcFailure::rejected(
+            "resumeNotAvailable",
+            "Only an interrupted job with a committed recoverable checkpoint can be resumed.",
+        ));
+    }
+    if !supports_history_resume(history.kind) {
+        return Err(ResumeRpcFailure::rejected(
+            "resumeNotSupported",
+            "This PhotoLab job kind does not support cross-restart resume.",
+        ));
+    }
+    Ok(())
+}
+
+async fn resume_history_job(
+    params: ResumeJobParams,
+    jobs: &JobManager,
+    projects: &Arc<ProjectRuntime>,
+) -> Result<StartJobResult, ResumeRpcFailure> {
+    let history = jobs
+        .status(&params.history_job_id)
+        .await
+        .map_err(|error| ResumeRpcFailure::rejected("resumeJobNotFound", error.to_string()))?;
+    validate_history_resume_candidate(&history)?;
+    let frozen = projects
+        .frozen_job_request(&params.history_job_id)
+        .map_err(|error| ResumeRpcFailure::rejected("resumeHistoryInvalid", error.to_string()))?
+        .ok_or_else(|| {
+            ResumeRpcFailure::mismatch(
+                ResumeIdentityField::CheckpointMissing,
+                "This job predates sidecar-owned resume requests and cannot be resumed safely.",
+            )
+        })?;
+    validate_resume_identity(
+        &history,
+        frozen.job_kind,
+        &frozen.config_hash,
+        &frozen.input_hash,
+    )?;
+
+    match frozen.method.as_str() {
+        "photolab.jobs.startProduct" => {
+            let product: StartProductJobParams = serde_json::from_value(frozen.params.clone())
+                .map_err(|error| {
+                    ResumeRpcFailure::rejected("resumeHistoryInvalid", error.to_string())
+                })?;
+            resume_product_job(product, history, frozen, jobs, projects).await
+        }
+        "photolab.jobs.startBatch" => {
+            let batch: StartBatchJobParams = serde_json::from_value(frozen.params.clone())
+                .map_err(|error| {
+                    ResumeRpcFailure::rejected("resumeHistoryInvalid", error.to_string())
+                })?;
+            resume_batch_job(batch, history, frozen, jobs, projects).await
+        }
+        _ => Err(ResumeRpcFailure::rejected(
+            "resumeNotSupported",
+            "The stored job request is not a resumable PhotoLab operation.",
+        )),
+    }
+}
+
+async fn resume_batch_job(
+    params: StartBatchJobParams,
+    history: himmelcad_core::photolab_jobs::PhotolabJob,
+    frozen: FrozenJobRequest,
+    jobs: &JobManager,
+    projects: &Arc<ProjectRuntime>,
+) -> Result<StartJobResult, ResumeRpcFailure> {
+    let (job, frozen_plan) = prepare_batch_job(&params, projects).map_err(|error| {
+        ResumeRpcFailure::rejected("resumePreparationFailed", error.to_string())
+    })?;
+    validate_resume_identity(&history, job.kind, &job.config_hash, &job.input_hash)?;
+    let project_root = projects
+        .compute_context()
+        .map_err(|error| ResumeRpcFailure::rejected("resumePreparationFailed", error.to_string()))?
+        .working_path;
+    let checkpoint_path = project_root
+        .join(".photolab/batch")
+        .join(&frozen_plan.plan_sha256.0)
+        .join("checkpoint.json");
+    let checkpoint = checkpoint_path
+        .is_file()
+        .then(|| std::fs::read(&checkpoint_path))
+        .transpose()
+        .map_err(|error| ResumeRpcFailure::rejected("resumeCheckpointInvalid", error.to_string()))?
+        .map(|bytes| serde_json::from_slice::<BatchCheckpoint>(&bytes))
+        .transpose()
+        .map_err(|error| ResumeRpcFailure::rejected("resumeCheckpointInvalid", error.to_string()))?
+        .ok_or_else(|| checkpoint_missing("No committed batch checkpoint was found."))?;
+    if checkpoint.steps_sha256 != job.config_hash {
+        return Err(ResumeRpcFailure::mismatch(
+            ResumeIdentityField::ConfigHash,
+            "The batch checkpoint configuration does not match the stored job.",
+        ));
+    }
+    if checkpoint.plan_sha256 != job.input_hash
+        || checkpoint.input_sha256 != frozen_plan.input_sha256
+    {
+        return Err(ResumeRpcFailure::mismatch(
+            ResumeIdentityField::InputHash,
+            "The batch checkpoint inputs do not match the stored job.",
+        ));
+    }
+    if checkpoint.schema_version != 3 || checkpoint.completed_steps == 0 {
+        return Err(checkpoint_missing(
+            "The batch checkpoint has no committed step to resume.",
+        ));
+    }
+    let publisher = Arc::clone(projects);
+    jobs.start_with_frozen_request(job, frozen, move |context| {
+        run_batch_pipeline(params, frozen_plan, &context, &publisher)
+    })
+    .await
+    .map_err(|error| ResumeRpcFailure::rejected("resumeStartFailed", error.to_string()))
+}
+
+async fn resume_product_job(
+    params: StartProductJobParams,
+    history: himmelcad_core::photolab_jobs::PhotolabJob,
+    frozen: FrozenJobRequest,
+    jobs: &JobManager,
+    projects: &Arc<ProjectRuntime>,
+) -> Result<StartJobResult, ResumeRpcFailure> {
+    match history.kind {
+        PhotolabJobKind::BuildGaussianSplat => {
+            let (prepared_job, _, _, _) =
+                prepare_brush_product_job(params.clone(), projects, None, false).map_err(
+                    |error| {
+                        ResumeRpcFailure::rejected("resumePreparationFailed", error.to_string())
+                    },
+                )?;
+            validate_resume_identity(
+                &history,
+                prepared_job.kind,
+                &prepared_job.config_hash,
+                &prepared_job.input_hash,
+            )?;
+            let (job, request, runtime, lineage) =
+                prepare_brush_product_job(params, projects, None, true)
+                    .map_err(|error| checkpoint_missing(error.to_string()))?;
+            let publisher = Arc::clone(projects);
+            jobs.start_with_frozen_request(job, frozen, move |context| {
+                let mut outcome = runtime
+                    .run(&request, &context)
+                    .map_err(JobWorkerError::from)?;
+                let project_transform = publisher
+                    .latest_gcp_optimization_for_lineage(&lineage)
+                    .map_err(|error| worker_error("projectRead", &error.to_string()))?
+                    .map(|record| record.artifact.result.transform);
+                outcome.prepared_splats = Some(
+                    tile_brush_ply(
+                        &outcome.output_path,
+                        &outcome.scratch_path.join("prepared-splats"),
+                        project_transform,
+                        &context.cancellation,
+                    )
+                    .map_err(map_splat_tiler_error)?,
+                );
+                context.check_cancelled()?;
+                publisher
+                    .publish_brush_outcome(outcome, &lineage)
+                    .map_err(|error| worker_error("projectPublish", &error.to_string()))?;
+                Ok(())
+            })
+            .await
+            .map_err(|error| ResumeRpcFailure::rejected("resumeStartFailed", error.to_string()))
+        }
+        PhotolabJobKind::BuildDepthMaps | PhotolabJobKind::BuildDensePointCloud => {
+            let prepared = prepare_mvs_product_job(params, projects, None).map_err(|error| {
+                ResumeRpcFailure::rejected("resumePreparationFailed", error.to_string())
+            })?;
+            validate_resume_identity(
+                &history,
+                prepared.job.kind,
+                &prepared.job.config_hash,
+                &prepared.job.input_hash,
+            )?;
+            let (scene_path, scene_sha256) =
+                prepared.reusable_scene_manifest.clone().unwrap_or_else(|| {
+                    let path = prepared.scene_root.join("scene.json");
+                    let sha256 = std::fs::read(&path)
+                        .map(|bytes| ObjectHash::of_bytes(&bytes))
+                        .unwrap_or_else(|_| ObjectHash::of_bytes(b"missing-scene"));
+                    (path, sha256)
+                });
+            if !scene_path.is_file()
+                || prepared
+                    .runtime
+                    .compatible_resume_checkpoint(&scene_sha256, &prepared.settings)
+                    .map_err(|error| {
+                        ResumeRpcFailure::rejected("resumeCheckpointInvalid", error.to_string())
+                    })?
+                    .is_none()
+            {
+                return Err(checkpoint_missing(
+                    "No compatible MVS checkpoint was found for the stored job identity.",
+                ));
+            }
+            let publisher = Arc::clone(projects);
+            jobs.start_with_frozen_request(prepared.job.clone(), frozen, move |context| {
+                let scene = prepare_or_reuse_mvs_scene(&prepared, &context)?;
+                let resume = prepared
+                    .runtime
+                    .compatible_resume_checkpoint(&scene.manifest_sha256, &prepared.settings)?
+                    .ok_or_else(|| {
+                        worker_error(
+                            "resumeCheckpointMissing",
+                            "the validated MVS checkpoint is no longer available",
+                        )
+                    })?;
+                let request = MvsRunRequest {
+                    job_id: prepared.operation_id,
+                    scene_manifest_path: scene.manifest_path,
+                    scene_manifest_sha256: scene.manifest_sha256,
+                    device: MvsComputeDevice::Cpu {
+                        threads: portable_mvs_threads(),
+                    },
+                    settings: prepared.settings,
+                    fuse_dense_point_cloud: prepared.fuse_dense_point_cloud,
+                    resume: Some(resume),
+                };
+                let mut outcome = prepared
+                    .runtime
+                    .run(&request, &context)
+                    .map_err(JobWorkerError::from)?;
+                if let Some(dense) = outcome.output.dense_point_cloud.as_ref() {
+                    outcome.potree = Some(
+                        prepare_dense_potree(
+                            &outcome.output_path.join(&dense.relative_path),
+                            &outcome.scratch_path.join("potree"),
+                            &potree_converter_executable()?,
+                            &context.cancellation,
+                        )
+                        .map_err(map_dense_prep_error)?,
+                    );
+                }
+                context.check_cancelled()?;
+                publisher
+                    .publish_mvs_outcome(
+                        outcome,
+                        &prepared.camera_entity_ids,
+                        &prepared.image_mask_scope.scope_sha256,
+                        &prepared.lineage,
+                    )
+                    .map_err(|error| worker_error("projectPublish", &error.to_string()))?;
+                Ok(())
+            })
+            .await
+            .map_err(|error| ResumeRpcFailure::rejected("resumeStartFailed", error.to_string()))
+        }
+        PhotolabJobKind::BuildDem | PhotolabJobKind::BuildOrthomosaic => {
+            let prepared = prepare_raster_product_job(params, projects, None).map_err(|error| {
+                ResumeRpcFailure::rejected("resumePreparationFailed", error.to_string())
+            })?;
+            validate_resume_identity(
+                &history,
+                prepared.job.kind,
+                &prepared.job.config_hash,
+                &prepared.job.input_hash,
+            )?;
+            let tools = gdal_executables().map_err(|error| {
+                ResumeRpcFailure::rejected("resumePreparationFailed", error.to_string())
+            })?;
+            let runtime = open_raster_runtime(&prepared.project_root, &tools).map_err(|error| {
+                ResumeRpcFailure::rejected("resumePreparationFailed", error.to_string())
+            })?;
+            let kind = match prepared.job.kind {
+                PhotolabJobKind::BuildDem => "buildDem",
+                PhotolabJobKind::BuildOrthomosaic => "buildOrthomosaic",
+                _ => unreachable!("raster branch checked above"),
+            };
+            match runtime
+                .validate_resume_checkpoint_identity(
+                    kind,
+                    &prepared.job.config_hash,
+                    &prepared.job.input_hash,
+                    &prepared.operation_id,
+                )
+                .await
+                .map_err(|error| {
+                    ResumeRpcFailure::rejected("resumeCheckpointInvalid", error.to_string())
+                })? {
+                RasterResumeCheckpointValidation::Compatible => {}
+                RasterResumeCheckpointValidation::ConfigHashMismatch => {
+                    return Err(ResumeRpcFailure::mismatch(
+                        ResumeIdentityField::ConfigHash,
+                        "The raster checkpoint configuration does not match the stored job.",
+                    ));
+                }
+                RasterResumeCheckpointValidation::InputHashMismatch => {
+                    return Err(ResumeRpcFailure::mismatch(
+                        ResumeIdentityField::InputHash,
+                        "The raster checkpoint inputs do not match the stored job.",
+                    ));
+                }
+                RasterResumeCheckpointValidation::Missing
+                | RasterResumeCheckpointValidation::Invalid => {
+                    return Err(checkpoint_missing(
+                        "No valid committed raster checkpoint was found.",
+                    ));
+                }
+            }
+            let publisher = Arc::clone(projects);
+            jobs.start_with_frozen_request(prepared.job.clone(), frozen, move |context| {
+                run_raster_product(prepared, &context, &publisher)
+            })
+            .await
+            .map_err(|error| ResumeRpcFailure::rejected("resumeStartFailed", error.to_string()))
+        }
+        _ => Err(ResumeRpcFailure::rejected(
+            "resumeNotSupported",
+            "This PhotoLab job kind does not support cross-restart resume.",
+        )),
+    }
+}
+
+fn checkpoint_missing(message: impl Into<String>) -> ResumeRpcFailure {
+    ResumeRpcFailure::mismatch(ResumeIdentityField::CheckpointMissing, message)
 }
 
 type PreparedGcpOptimizationJob = (
@@ -4443,6 +4913,7 @@ fn execute_batch_product(
                 },
                 projects,
                 Some(camera_entity_ids),
+                false,
             )
             .map_err(|error| worker_error("batchPrepare", &error.to_string()))?;
             let node = context.with_progress_window(base, total);
@@ -6743,6 +7214,7 @@ fn prepare_brush_product_job(
     params: StartProductJobParams,
     projects: &ProjectRuntime,
     required_camera_scope: Option<&[String]>,
+    resume: bool,
 ) -> anyhow::Result<(
     NewPhotolabJob,
     BrushRunRequest,
@@ -6789,7 +7261,7 @@ fn prepare_brush_product_job(
         checkpoint_every: iterations.min(5_000),
         retain_training_checkpoints,
     };
-    let request = BrushRunRequest {
+    let mut request = BrushRunRequest {
         job_id: params.operation_id.clone(),
         colmap_dataset_root: dataset_root.clone(),
         settings,
@@ -6827,6 +7299,15 @@ fn prepare_brush_product_job(
         scratch_root: project_root.join("tmp").join("brush"),
         allowed_dataset_roots: vec![project_root],
     })?;
+    if resume {
+        let recovery = runtime
+            .recovery_checkpoints(&request.job_id, &request.settings)?
+            .into_iter()
+            .rev()
+            .find(|checkpoint| checkpoint.checkpoint.iteration < request.settings.iterations)
+            .context("no compatible Brush recovery checkpoint is available")?;
+        request.resume = Some(runtime.validate_recovery_checkpoint(&recovery)?);
+    }
     Ok((job, request, runtime, lineage))
 }
 
@@ -7406,6 +7887,24 @@ fn rpc_err(id: serde_json::Value, code: i32, message: &str) -> RpcResponse {
     }
 }
 
+fn rpc_resume_err(id: serde_json::Value, error: &ResumeRpcFailure) -> RpcResponse {
+    RpcResponse {
+        jsonrpc: "2.0",
+        id,
+        result: None,
+        error: Some(RpcError {
+            code: -32020,
+            message: error.message.clone(),
+            data: Some(serde_json::json!({
+                "code": error.code,
+                "field": error.field,
+                "message": error.message,
+                "retryable": false,
+            })),
+        }),
+    }
+}
+
 fn rpc_automation_err(id: serde_json::Value, message: &str) -> RpcResponse {
     let stable_code = message
         .split_once(':')
@@ -7458,6 +7957,142 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    fn resume_test_job(kind: PhotolabJobKind) -> himmelcad_core::photolab_jobs::PhotolabJob {
+        himmelcad_core::photolab_jobs::PhotolabJob::new(NewPhotolabJob {
+            id: PhotolabJobId(format!("resume-{kind:?}")),
+            kind,
+            config_hash: ObjectHash::of_bytes(b"resume-config"),
+            input_hash: ObjectHash::of_bytes(b"resume-input"),
+            progress: JobProgress {
+                stage: PhotolabStage {
+                    kind: PhotolabStageKind::Preparing,
+                    index: 0,
+                    stage_count: 1,
+                    label: "Validate resume identity".into(),
+                },
+                metrics: ProgressMetrics::empty(),
+            },
+        })
+        .expect("resume test job")
+    }
+
+    #[test]
+    fn resume_identity_rejects_each_field_for_every_job_kind() {
+        let kinds = [
+            PhotolabJobKind::AnalyzeImageQuality,
+            PhotolabJobKind::AlignPhotos,
+            PhotolabJobKind::MergeAlignments,
+            PhotolabJobKind::OptimizeAlignment,
+            PhotolabJobKind::BuildDepthMaps,
+            PhotolabJobKind::BuildDensePointCloud,
+            PhotolabJobKind::BuildDem,
+            PhotolabJobKind::BuildOrthomosaic,
+            PhotolabJobKind::BuildMesh,
+            PhotolabJobKind::BuildGaussianSplat,
+            PhotolabJobKind::ExportProduct,
+            PhotolabJobKind::Batch,
+        ];
+        for kind in kinds {
+            let job = resume_test_job(kind);
+            let other_kind = if kind == PhotolabJobKind::Batch {
+                PhotolabJobKind::BuildDem
+            } else {
+                PhotolabJobKind::Batch
+            };
+            assert_eq!(
+                validate_resume_identity(&job, other_kind, &job.config_hash, &job.input_hash)
+                    .expect_err("kind mismatch")
+                    .field,
+                Some(ResumeIdentityField::Kind),
+                "kind mismatch for {kind:?}"
+            );
+            assert_eq!(
+                validate_resume_identity(
+                    &job,
+                    kind,
+                    &ObjectHash::of_bytes(b"changed-config"),
+                    &job.input_hash
+                )
+                .expect_err("config mismatch")
+                .field,
+                Some(ResumeIdentityField::ConfigHash),
+                "config mismatch for {kind:?}"
+            );
+            assert_eq!(
+                validate_resume_identity(
+                    &job,
+                    kind,
+                    &job.config_hash,
+                    &ObjectHash::of_bytes(b"changed-input")
+                )
+                .expect_err("input mismatch")
+                .field,
+                Some(ResumeIdentityField::InputHash),
+                "input mismatch for {kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_checkpoint_capable_job_kinds_are_resumable() {
+        for kind in [
+            PhotolabJobKind::AnalyzeImageQuality,
+            PhotolabJobKind::AlignPhotos,
+            PhotolabJobKind::MergeAlignments,
+            PhotolabJobKind::OptimizeAlignment,
+            PhotolabJobKind::BuildMesh,
+            PhotolabJobKind::ExportProduct,
+        ] {
+            assert!(!supports_history_resume(kind), "{kind:?}");
+            let mut job = resume_test_job(kind);
+            job.transition_to(PhotolabJobState::Running)
+                .expect("running");
+            job.transition_to(PhotolabJobState::Failed {
+                code: "interruptedRecoverable".into(),
+                message: "Synthetic recoverable state".into(),
+            })
+            .expect("synthetic interrupted state");
+            assert_eq!(
+                validate_history_resume_candidate(&job)
+                    .expect_err("non-recoverable kind must be rejected")
+                    .code,
+                "resumeNotSupported"
+            );
+        }
+        for kind in [
+            PhotolabJobKind::BuildDepthMaps,
+            PhotolabJobKind::BuildDensePointCloud,
+            PhotolabJobKind::BuildDem,
+            PhotolabJobKind::BuildOrthomosaic,
+            PhotolabJobKind::BuildGaussianSplat,
+            PhotolabJobKind::Batch,
+        ] {
+            assert!(supports_history_resume(kind), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn resume_identity_mismatch_is_a_typed_rpc_error() {
+        let response = rpc_resume_err(
+            serde_json::json!(7),
+            &ResumeRpcFailure::mismatch(
+                ResumeIdentityField::InputHash,
+                "The checkpoint inputs changed.",
+            ),
+        );
+        let error = response.error.expect("RPC error");
+        assert_eq!(error.code, -32020);
+        assert_eq!(
+            error.data,
+            Some(serde_json::json!({
+                "code": "resumeIdentityMismatch",
+                "field": "inputHash",
+                "message": "The checkpoint inputs changed.",
+                "retryable": false,
+            }))
+        );
+    }
 
     fn rpc_request(method: &str, params: serde_json::Value) -> RpcRequest {
         RpcRequest {

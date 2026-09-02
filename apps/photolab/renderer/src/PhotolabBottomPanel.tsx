@@ -10,7 +10,7 @@ import type {
   PublishedGcpOptimizationEntry,
 } from '@himmelcad/data';
 import { EmptyState, ExpandChevron, IslandTabs } from '@himmelcad/ui';
-import { AlertTriangle, Ban, CheckCircle2, FileDown } from 'lucide-react';
+import { AlertTriangle, Ban, CheckCircle2, FileDown, RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { GcpAccuracyPanel, type GcpAccuracyReport } from './GcpAccuracyPanel.js';
@@ -28,6 +28,8 @@ export interface PhotolabBottomPanelProps {
   jobs: readonly PhotolabJob[];
   onCommand: (raw: string) => void;
   onCancelJob: (jobId: string) => void;
+  onResumeJob: (historyJobId: string) => Promise<void>;
+  resumeErrors: Readonly<Record<string, string>>;
   onCollapse: () => void;
   accuracyReport: GcpAccuracyReport | null;
   hardware: HardwareCapabilities | null;
@@ -50,6 +52,8 @@ export function PhotolabBottomPanel({
   jobs,
   onCommand,
   onCancelJob,
+  onResumeJob,
+  resumeErrors,
   onCollapse,
   accuracyReport,
   hardware,
@@ -94,7 +98,13 @@ export function PhotolabBottomPanel({
           />
         )}
         {tab === 'jobs' && (
-          <JobsView jobs={jobs} onCancelJob={onCancelJob} autoExpandJobId={autoExpandJobId} />
+          <JobsView
+            jobs={jobs}
+            onCancelJob={onCancelJob}
+            onResumeJob={onResumeJob}
+            resumeErrors={resumeErrors}
+            autoExpandJobId={autoExpandJobId}
+          />
         )}
         {tab === 'accuracy' && <GcpAccuracyPanel report={accuracyReport} />}
         {tab === 'report' && (
@@ -120,13 +130,18 @@ export function PhotolabBottomPanel({
 function JobsView({
   jobs,
   onCancelJob,
+  onResumeJob,
+  resumeErrors,
   autoExpandJobId,
 }: {
   jobs: readonly PhotolabJob[];
   onCancelJob: (jobId: string) => void;
+  onResumeJob: (historyJobId: string) => Promise<void>;
+  resumeErrors: Readonly<Record<string, string>>;
   autoExpandJobId: string | null | undefined;
 }): JSX.Element {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const [resuming, setResuming] = useState<ReadonlySet<string>>(new Set());
   const telemetryRef = useRef(new Map<string, JobTelemetry>());
   useEffect(() => {
     if (!autoExpandJobId) return;
@@ -151,7 +166,9 @@ function JobsView({
       {jobs.map((job) => {
         const telemetry = observeJob(telemetryRef.current, job, now);
         const fraction = overallFraction(job);
-        const cancellable = ['queued', 'running', 'pauseRequested'].includes(job.state.kind);
+        const cancellable = ['queued', 'running'].includes(job.state.kind);
+        const resumable =
+          job.state.kind === 'failed' && job.state.code === 'interruptedRecoverable';
         const isExpanded = expanded.has(job.id);
         return (
           <article className={`${styles.job} ${isExpanded ? styles.jobExpanded : ''}`} key={job.id}>
@@ -194,6 +211,9 @@ function JobsView({
                   />
                 </div>
               )}
+              {resumeErrors[job.id] && (
+                <div className={styles.jobInlineError}>{resumeErrors[job.id]}</div>
+              )}
             </div>
             <span className={styles.percent} title="Overall · stage">
               {Math.round(fraction * 100)}%
@@ -201,16 +221,38 @@ function JobsView({
                 ? ` · ${Math.round((stageFraction(job) as number) * 100)}%`
                 : ''}
             </span>
-            <button
-              type="button"
-              className={styles.cancel}
-              disabled={!cancellable}
-              onClick={() => onCancelJob(job.id)}
-              title="Cancel cooperatively; the latest complete checkpoint remains valid"
-            >
-              <Ban size={14} />
-              Cancel
-            </button>
+            {resumable ? (
+              <button
+                type="button"
+                className={styles.resume}
+                disabled={resuming.has(job.id)}
+                onClick={() => {
+                  setResuming((current) => new Set(current).add(job.id));
+                  void onResumeJob(job.id).finally(() => {
+                    setResuming((current) => {
+                      const next = new Set(current);
+                      next.delete(job.id);
+                      return next;
+                    });
+                  });
+                }}
+                title="Resume from the latest committed checkpoint"
+              >
+                <RotateCcw size={14} />
+                {resuming.has(job.id) ? 'Resuming…' : 'Resume'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={styles.cancel}
+                disabled={!cancellable}
+                onClick={() => onCancelJob(job.id)}
+                title="Cancel cooperatively; the latest complete checkpoint remains valid"
+              >
+                <Ban size={14} />
+                Cancel
+              </button>
+            )}
             {isExpanded && <JobDetails job={job} telemetry={telemetry} now={now} />}
           </article>
         );
@@ -382,7 +424,7 @@ function observeJob(
     activity.completedUnits = metrics.completedUnits;
     activity.totalUnits = metrics.totalUnits ?? activity.totalUnits;
   }
-  if (!['queued', 'running', 'pauseRequested', 'cancelRequested'].includes(job.state.kind)) {
+  if (!['queued', 'running', 'cancelRequested'].includes(job.state.kind)) {
     activity.finishedAt ??= job.finishedAtUnixMs ?? now;
   }
   return telemetry;
@@ -760,8 +802,8 @@ function stateLabel(job: PhotolabJob): string {
   const labels: Record<Exclude<PhotolabJob['state']['kind'], 'failed'>, string> = {
     queued: 'Queued',
     running: 'Running',
-    pauseRequested: 'Pausing',
-    paused: 'Paused',
+    pauseRequested: 'Running',
+    paused: 'Running',
     cancelRequested: 'Cancellation requested',
     cancelled: 'Cancelled',
     completed: 'Completed',

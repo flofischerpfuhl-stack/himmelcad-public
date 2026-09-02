@@ -269,6 +269,7 @@ const RENDERER_SIDECAR_METHODS = new Set([
   'photolab.jobs.startGcpOptimization',
   'photolab.jobs.startProduct',
   'photolab.jobs.startBatch',
+  'photolab.jobs.resume',
   'photolab.jobs.list',
   'photolab.jobs.status',
   'photolab.jobs.cancel',
