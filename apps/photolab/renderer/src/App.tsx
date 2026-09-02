@@ -70,6 +70,10 @@ import { AlertTriangle, LoaderCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import photolabLogoUrl from '../../build/mark.png';
+import {
+  storedIndicatorState,
+  type WorkingCopyDurability,
+} from '../../electron/projectLifecycle.js';
 
 import { AlignmentProfilePanel } from './AlignmentProfilePanel.js';
 import { AlignmentMergePanel } from './AlignmentMergePanel.js';
@@ -265,15 +269,19 @@ export function App(): JSX.Element {
   const [recoveryNotice, setRecoveryNotice] = useState<RecoveryNotice | null>(null);
   const recoveryDismissedSessions = useRef(new Set<string>());
   const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [recoveryDiscardConfirm, setRecoveryDiscardConfirm] = useState(false);
   const [untitledCleanupCount, setUntitledCleanupCount] = useState(0);
   const [untitledCleanupConfirm, setUntitledCleanupConfirm] = useState(false);
   const [untitledCleanupBusy, setUntitledCleanupBusy] = useState(false);
-  const [closeGuardOpen, setCloseGuardOpen] = useState(false);
-  const [closeGuardBusy, setCloseGuardBusy] = useState(false);
   const [projectFileOperation, setProjectFileOperation] =
     useState<ProjectFileOperationState | null>(null);
   const [autosaveGeneration, setAutosaveGeneration] = useState(0);
   const [lastSavedGeneration, setLastSavedGeneration] = useState(0);
+  const [projectHasArchiveCopy, setProjectHasArchiveCopy] = useState(false);
+  const [workingCopyDurability, setWorkingCopyDurability] = useState<WorkingCopyDurability>({
+    kind: 'durable',
+    storedAtUnixMs: Date.now(),
+  });
   const [jobs, setJobs] = useState<readonly PhotolabJob[]>([]);
   const [jobResumeErrors, setJobResumeErrors] = useState<Readonly<Record<string, string>>>({});
   const [imageImportBatch, setImageImportBatch] = useState<PhotoImportBatch | null>(null);
@@ -375,6 +383,8 @@ export function App(): JSX.Element {
   const activeImageProgressKey = useRef<string | null>(null);
   const activeGridProgressKey = useRef<string | null>(null);
   const activeProjectFileOperation = useRef<ProjectFileOperationState | null>(null);
+  const durabilityFlushSequence = useRef(0);
+  const observedAutosaveGeneration = useRef(0);
   const activeGcpOperationId = useRef<string | null>(null);
   const gcpCollectionRef = useRef<readonly [ObjectHash, GcpCollectionRecord] | null>(null);
   const gcpMeasurementQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -414,6 +424,23 @@ export function App(): JSX.Element {
     },
     [activateStoredFunction, batchRecipeOpen, defineAlignmentOpen],
   );
+
+  const beginWorkingCopyFlush = useCallback((): number => {
+    const sequence = durabilityFlushSequence.current + 1;
+    durabilityFlushSequence.current = sequence;
+    setWorkingCopyDurability({ kind: 'pending' });
+    return sequence;
+  }, []);
+
+  const finishWorkingCopyFlush = useCallback((sequence: number, storedAtUnixMs: number): void => {
+    if (durabilityFlushSequence.current !== sequence) return;
+    setWorkingCopyDurability({ kind: 'durable', storedAtUnixMs });
+  }, []);
+
+  const failWorkingCopyFlush = useCallback((sequence: number, reason: string): void => {
+    if (durabilityFlushSequence.current !== sequence) return;
+    setWorkingCopyDurability({ kind: 'failed', reason });
+  }, []);
 
   useEffect(() => {
     const bridge = window.himmelcad?.automationViewHost;
@@ -830,6 +857,13 @@ export function App(): JSX.Element {
       });
       setAutosaveGeneration(opened.session.autosaveGeneration);
       setLastSavedGeneration(opened.session.lastSavedGeneration);
+      observedAutosaveGeneration.current = opened.session.autosaveGeneration;
+      durabilityFlushSequence.current += 1;
+      setWorkingCopyDurability({
+        kind: 'durable',
+        storedAtUnixMs: opened.manifest.modifiedUnixMs,
+      });
+      setProjectHasArchiveCopy(opened.session.sourcePath.toLowerCase().endsWith('.hcadx'));
       setProjectReady(true);
       setRecentProjects((current) =>
         [
@@ -1057,6 +1091,13 @@ export function App(): JSX.Element {
     [],
   );
 
+  useEffect(() => {
+    if (!projectReady || observedAutosaveGeneration.current === autosaveGeneration) return;
+    observedAutosaveGeneration.current = autosaveGeneration;
+    durabilityFlushSequence.current += 1;
+    setWorkingCopyDurability({ kind: 'durable', storedAtUnixMs: Date.now() });
+  }, [autosaveGeneration, projectReady]);
+
   const beginProjectFileOperation = useCallback(
     (kind: ProjectFileOperationState['kind']): ProjectFileOperationState | null => {
       if (activeProjectFileOperation.current) return null;
@@ -1185,66 +1226,52 @@ export function App(): JSX.Element {
   const saveProject = useCallback(async (): Promise<boolean> => {
     const api = window.himmelcad;
     if (!api || !projectReady) return false;
-    const operation = beginProjectFileOperation('save');
-    if (!operation) return false;
+    const operation = projectHasArchiveCopy ? null : beginProjectFileOperation('save');
+    if (!projectHasArchiveCopy && !operation) return false;
+    const flushSequence = projectHasArchiveCopy ? beginWorkingCopyFlush() : null;
     const started = performance.now();
     try {
-      // First Save on Untitled opens Save As dialog. Returns full snapshot or null (cancel).
-      const result = await api.project.save<OpenPhotolabProjectResult | null>(operation);
+      const result = await api.project.save<OpenPhotolabProjectResult | null>(
+        operation ?? undefined,
+      );
       if (!result) {
-        finishProjectFileOperation(operation.archiveOperationId);
+        if (operation) finishProjectFileOperation(operation.archiveOperationId);
         return false;
       }
       acceptProject(result);
       logEvent(
         'info',
         'sidecar',
-        `Project saved · ${result.session.sourcePath} · ${(performance.now() - started).toFixed(1)} ms`,
+        projectHasArchiveCopy
+          ? `All changes stored · ${(performance.now() - started).toFixed(1)} ms`
+          : `Project archive written · ${result.session.sourcePath} · ${(performance.now() - started).toFixed(1)} ms`,
       );
-      finishProjectFileOperation(operation.archiveOperationId);
+      if (operation) finishProjectFileOperation(operation.archiveOperationId);
       return true;
     } catch (error) {
-      showProjectFileOperationError(operation.archiveOperationId, error);
+      const message = errorMessage(error);
+      if (flushSequence != null) {
+        failWorkingCopyFlush(flushSequence, message);
+        logEvent('error', 'sidecar', `Storing failed: ${message}`);
+      } else if (operation) {
+        showProjectFileOperationError(operation.archiveOperationId, error);
+      }
       return false;
     }
   }, [
     acceptProject,
     beginProjectFileOperation,
+    beginWorkingCopyFlush,
+    failWorkingCopyFlush,
     finishProjectFileOperation,
+    projectHasArchiveCopy,
     projectReady,
     showProjectFileOperationError,
   ]);
 
-  useEffect(() => {
-    const api = window.himmelcad;
-    if (!api) return;
-    return api.window.onCloseGuardRequested(() => {
-      setCloseGuardOpen(true);
-      setCloseGuardBusy(false);
-    });
-  }, []);
-
-  const respondToCloseGuard = useCallback(
-    async (response: 'save' | 'discard' | 'cancel') => {
-      const api = window.himmelcad;
-      if (!api || closeGuardBusy) return;
-      if (response === 'cancel') {
-        setCloseGuardOpen(false);
-        await api.window.respondToCloseGuard('cancel');
-        return;
-      }
-      setCloseGuardBusy(true);
-      if (response === 'save' && !(await saveProject())) {
-        setCloseGuardBusy(false);
-        return;
-      }
-      await api.window.respondToCloseGuard(response);
-    },
-    [closeGuardBusy, saveProject],
-  );
-
   const keepRecovery = useCallback(() => {
     if (recoveryNotice) recoveryDismissedSessions.current.add(recoveryNotice.sessionId);
+    setRecoveryDiscardConfirm(false);
     setRecoveryNotice(null);
   }, [recoveryNotice]);
 
@@ -1256,6 +1283,7 @@ export function App(): JSX.Element {
     try {
       const opened = await api.project.reopenWithoutRecovery<OpenPhotolabProjectResult>();
       acceptProject(opened, { forceReset: true });
+      setRecoveryDiscardConfirm(false);
       setRecoveryNotice(null);
       logEvent('info', 'sidecar', 'Recovered working-copy changes discarded');
     } catch (error) {
@@ -2153,6 +2181,7 @@ export function App(): JSX.Element {
     const api = window.himmelcad;
     if (!api) return;
     const autosave = window.setInterval(() => {
+      const flushSequence = beginWorkingCopyFlush();
       void api.sidecar
         .call<{ autosaveGeneration: number; lastSavedGeneration: number; dirty: boolean }>(
           'photolab.project.autosave',
@@ -2160,13 +2189,16 @@ export function App(): JSX.Element {
         .then((result) => {
           setAutosaveGeneration(result.autosaveGeneration);
           setLastSavedGeneration(result.lastSavedGeneration);
+          finishWorkingCopyFlush(flushSequence, Date.now());
         })
         .catch((error: unknown) => {
-          logEvent('error', 'sidecar', `Autosave failed: ${errorMessage(error)}`);
+          const message = errorMessage(error);
+          failWorkingCopyFlush(flushSequence, message);
+          logEvent('error', 'sidecar', `Storing failed: ${message}`);
         });
     }, 30_000);
     return () => window.clearInterval(autosave);
-  }, [projectReady]);
+  }, [beginWorkingCopyFlush, failWorkingCopyFlush, finishWorkingCopyFlush, projectReady]);
 
   useEffect(() => {
     if (!coreReady) return;
@@ -3688,8 +3720,33 @@ export function App(): JSX.Element {
     document.documentElement.classList.toggle('hc-theme-light', themeMode === 'light');
   }, [themeMode]);
 
-  const statusItems = useMemo(
-    () => [
+  const statusItems = useMemo(() => {
+    const stored = storedIndicatorState({
+      projectReady,
+      durability: workingCopyDurability,
+      autosaveGeneration,
+      lastSavedGeneration,
+      hasArchiveCopy: projectHasArchiveCopy,
+    });
+    const storedPrimary = (() => {
+      switch (stored.kind) {
+        case 'noProject':
+          return 'No project open';
+        case 'pending':
+          return 'Storing…';
+        case 'failed':
+          return `Storing failed — ${stored.reason}`;
+        case 'durable':
+          return `All changes stored · ${formatStoredTime(stored.storedAtUnixMs)}`;
+      }
+    })();
+    const archiveSecondary =
+      stored.kind === 'noProject'
+        ? null
+        : stored.hasArchiveCopy
+          ? `Archive: ${stored.archiveChanges} change${stored.archiveChanges === 1 ? '' : 's'} since last Save As`
+          : 'Archive: no copy written';
+    return [
       {
         id: 'core',
         content: coreReady ? '● Core ready' : '○ Core unavailable',
@@ -3707,10 +3764,19 @@ export function App(): JSX.Element {
         align: 'left' as const,
       },
       {
-        id: 'autosave',
-        content: projectReady
-          ? `Autosave: ${autosaveGeneration === lastSavedGeneration ? 'saved' : `local · ${autosaveGeneration}`}`
-          : 'Autosave: no project',
+        id: 'storage',
+        content: (
+          <span
+            className={`${styles.storedStatus} ${stored.kind === 'failed' ? styles.storedFailure : ''}`}
+            role={stored.kind === 'failed' ? 'alert' : undefined}
+          >
+            <span>{storedPrimary}</span>
+            {archiveSecondary && (
+              <span className={styles.archiveStatus}> · {archiveSecondary}</span>
+            )}
+          </span>
+        ),
+        title: storedPrimary,
         align: 'left' as const,
       },
       { id: 'images', content: `Images: ${imageCount}`, align: 'right' as const },
@@ -3736,22 +3802,23 @@ export function App(): JSX.Element {
         align: 'right' as const,
       },
       { id: 'panels', content: <PanelToggles />, align: 'right' as const },
-    ],
-    [
-      autosaveGeneration,
-      coreReady,
-      gcpCollection,
-      hardware,
-      imageCount,
-      lastSavedGeneration,
-      themeMode,
-      profile,
-      projectReady,
-      snap,
-      sceneNavigationMode,
-      workspaceMode,
-    ],
-  );
+    ];
+  }, [
+    autosaveGeneration,
+    coreReady,
+    gcpCollection,
+    hardware,
+    imageCount,
+    lastSavedGeneration,
+    profile,
+    projectHasArchiveCopy,
+    projectReady,
+    sceneNavigationMode,
+    snap,
+    themeMode,
+    workingCopyDurability,
+    workspaceMode,
+  ]);
 
   const onSelect = (id: EntityId, mode: 'replace' | 'add' | 'toggle') => {
     if (project.entities[id] && mode === 'replace') {
@@ -4161,7 +4228,7 @@ export function App(): JSX.Element {
                   {recoveryNotice && (
                     <div className={styles.recoveryNotice} role="status">
                       <span>
-                        Recovered unsaved changes from{' '}
+                        Recovered working-copy changes from{' '}
                         {formatRecoveryTime(recoveryNotice.timestampUnixMs)}
                       </span>
                       <button type="button" onClick={keepRecovery} disabled={recoveryBusy}>
@@ -4169,7 +4236,7 @@ export function App(): JSX.Element {
                       </button>
                       <button
                         type="button"
-                        onClick={() => void discardRecovery()}
+                        onClick={() => setRecoveryDiscardConfirm(true)}
                         disabled={recoveryBusy}
                       >
                         {recoveryBusy ? 'Discarding…' : 'Discard'}
@@ -4373,19 +4440,23 @@ export function App(): JSX.Element {
           />
         </FloatingTaskIsland>
       )}
-      {closeGuardOpen && (
-        <FloatingTaskIsland modal onRequestClose={() => void respondToCloseGuard('cancel')}>
+      {recoveryDiscardConfirm && recoveryNotice && (
+        <FloatingTaskIsland
+          modal
+          onRequestClose={() => {
+            if (!recoveryBusy) setRecoveryDiscardConfirm(false);
+          }}
+        >
           <ConfirmationDialog
-            title="Save changes before closing?"
-            message={`This project has ${String(Math.max(0, autosaveGeneration - lastSavedGeneration))} unsaved local generation${autosaveGeneration - lastSavedGeneration === 1 ? '' : 's'}. Save them to the project archive before closing, or close without saving.`}
-            confirmLabel="Save and close"
-            secondaryLabel="Close without saving"
-            confirmTone="primary"
-            busy={closeGuardBusy}
-            busyLabel="Saving…"
-            onCancel={() => void respondToCloseGuard('cancel')}
-            onSecondary={() => void respondToCloseGuard('discard')}
-            onConfirm={() => void respondToCloseGuard('save')}
+            title="Discard recovered changes?"
+            message="This permanently removes the recovered working-copy changes and reopens the project without them. This cannot be undone."
+            confirmLabel="Discard recovered changes"
+            busy={recoveryBusy}
+            busyLabel="Discarding…"
+            onCancel={() => {
+              if (!recoveryBusy) setRecoveryDiscardConfirm(false);
+            }}
+            onConfirm={() => void discardRecovery()}
           />
         </FloatingTaskIsland>
       )}
@@ -4548,6 +4619,13 @@ export function App(): JSX.Element {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function formatStoredTime(timestampUnixMs: number): string {
+  return new Date(timestampUnixMs).toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function hasFixedDjiRtk(

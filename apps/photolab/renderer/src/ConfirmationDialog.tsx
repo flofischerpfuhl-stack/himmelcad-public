@@ -9,9 +9,6 @@ export function ConfirmationDialog({
   confirmLabel,
   busyLabel = 'Working…',
   busy = false,
-  secondaryLabel,
-  onSecondary,
-  confirmTone = 'danger',
   onConfirm,
   onCancel,
 }: {
@@ -20,9 +17,6 @@ export function ConfirmationDialog({
   confirmLabel: string;
   busyLabel?: string;
   busy?: boolean;
-  secondaryLabel?: string;
-  onSecondary?: () => void;
-  confirmTone?: 'danger' | 'primary';
   onConfirm: () => void;
   onCancel: () => void;
 }): JSX.Element {
@@ -46,17 +40,7 @@ export function ConfirmationDialog({
         <button type="button" onClick={onCancel} disabled={busy}>
           Cancel
         </button>
-        {secondaryLabel && onSecondary && (
-          <button type="button" className={styles.danger} onClick={onSecondary} disabled={busy}>
-            {secondaryLabel}
-          </button>
-        )}
-        <button
-          type="button"
-          className={confirmTone === 'primary' ? styles.primary : styles.danger}
-          onClick={onConfirm}
-          disabled={busy}
-        >
+        <button type="button" className={styles.danger} onClick={onConfirm} disabled={busy}>
           {busy ? busyLabel : confirmLabel}
         </button>
       </footer>

@@ -40,10 +40,6 @@ interface PhotolabDesktopApi {
     minimize: () => Promise<void>;
     maximizeToggle: () => Promise<boolean>;
     close: () => Promise<void>;
-    onCloseGuardRequested: (
-      cb: (request: { autosaveGeneration: number; lastSavedGeneration: number }) => void,
-    ) => () => void;
-    respondToCloseGuard: (response: 'save' | 'discard' | 'cancel') => Promise<boolean>;
     isMaximized: () => Promise<boolean>;
     onMaximizeChange: (cb: (maximized: boolean) => void) => () => void;
   };
@@ -109,7 +105,7 @@ interface PhotolabDesktopApi {
     removeRecent: (path: string) => Promise<readonly RecentProjectAvailability[]>;
     reopenWithoutRecovery: <T = unknown>() => Promise<T>;
     cleanupUntitled: () => Promise<number>;
-    save: <T = unknown>(operation: ProjectArchiveOperationRequest) => Promise<T>;
+    save: <T = unknown>(operation?: ProjectArchiveOperationRequest) => Promise<T>;
     saveAs: <T = unknown>(operation: ProjectArchiveOperationRequest) => Promise<T | null>;
     cancelArchive: <T = unknown>(archiveOperationId: string) => Promise<T>;
   };

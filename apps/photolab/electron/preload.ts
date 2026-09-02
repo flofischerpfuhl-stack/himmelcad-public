@@ -61,10 +61,6 @@ export interface PhotolabDesktopApi {
     minimize: () => Promise<void>;
     maximizeToggle: () => Promise<boolean>;
     close: () => Promise<void>;
-    onCloseGuardRequested: (
-      cb: (request: { autosaveGeneration: number; lastSavedGeneration: number }) => void,
-    ) => () => void;
-    respondToCloseGuard: (response: 'save' | 'discard' | 'cancel') => Promise<boolean>;
     isMaximized: () => Promise<boolean>;
     onMaximizeChange: (cb: (maximized: boolean) => void) => () => void;
   };
@@ -115,7 +111,7 @@ export interface PhotolabDesktopApi {
     removeRecent: (path: string) => Promise<readonly RecentProjectAvailability[]>;
     reopenWithoutRecovery: <T = unknown>() => Promise<T>;
     cleanupUntitled: () => Promise<number>;
-    save: <T = unknown>(operation: ProjectArchiveOperationRequest) => Promise<T>;
+    save: <T = unknown>(operation?: ProjectArchiveOperationRequest) => Promise<T>;
     saveAs: <T = unknown>(operation: ProjectArchiveOperationRequest) => Promise<T | null>;
     cancelArchive: <T = unknown>(archiveOperationId: string) => Promise<T>;
   };
@@ -231,15 +227,6 @@ const api: PhotolabDesktopApi = {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximizeToggle: () => ipcRenderer.invoke('window:maximize-toggle'),
     close: () => ipcRenderer.invoke('window:close'),
-    onCloseGuardRequested: (cb) => {
-      const listener = (
-        _event: unknown,
-        request: { autosaveGeneration: number; lastSavedGeneration: number },
-      ): void => cb(request);
-      ipcRenderer.on('window:close-guard-requested', listener);
-      return () => ipcRenderer.off('window:close-guard-requested', listener);
-    },
-    respondToCloseGuard: (response) => ipcRenderer.invoke('window:close-guard-response', response),
     isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
     onMaximizeChange: (cb) => {
       const listener = (_event: unknown, maximized: boolean): void => cb(maximized);

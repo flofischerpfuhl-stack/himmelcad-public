@@ -71,13 +71,15 @@ export function createPhotolabRibbonTabs(callbacks: PhotolabRibbonCallbacks): Ri
             {
               id: 'project.save',
               label: 'Save',
+              title: 'Save — store all changes now',
               shortcut: 'Ctrl+S',
               icon: icon(Save),
               onActivate: callbacks.onSaveProject,
             },
             {
               id: 'project.saveAs',
-              label: 'Save As',
+              label: 'Save As…',
+              title: 'Save As… — write an archive copy',
               icon: icon(SaveAll),
               onActivate: callbacks.onSaveProjectAs,
             },

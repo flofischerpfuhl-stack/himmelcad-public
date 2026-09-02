@@ -76,13 +76,7 @@
   border-top: 1px solid var(--hc-border-subtle);
 }
 .dialog .danger {
-  color: var(--hc-danger-fg, var(--hc-fg-default));
-  border-color: var(--hc-danger, var(--hc-border-strong));
-  background: color-mix(in srgb, var(--hc-danger, #c45151) 18%, var(--hc-bg-island-hi));
-}
-
-.dialog .primary {
-  color: var(--hc-fg-on-accent);
-  border-color: var(--hc-accent-base);
-  background: var(--hc-accent-base);
+  color: var(--hc-error-fg);
+  border-color: var(--hc-error);
+  background: color-mix(in srgb, var(--hc-error) 18%, var(--hc-bg-island-hi));
 }

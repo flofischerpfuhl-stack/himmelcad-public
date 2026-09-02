@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  closeGuardDecision,
   removeRecentProject,
   selectUntitledLitterCandidates,
+  storedIndicatorState,
   UNTITLED_PROJECT_MAX_AGE_MS,
   updateRecentProjects,
   type RecentProject,
@@ -69,8 +69,55 @@ test('litter selection requires an old Untitled project with zero images', () =>
   );
 });
 
-test('close guard prompts only when a project has unsaved generations', () => {
-  assert.equal(closeGuardDecision(null), 'close');
-  assert.equal(closeGuardDecision({ autosaveGeneration: 3, lastSavedGeneration: 3 }), 'close');
-  assert.equal(closeGuardDecision({ autosaveGeneration: 4, lastSavedGeneration: 3 }), 'prompt');
+test('stored indicator distinguishes durable, pending and failed working-copy flushes', () => {
+  assert.deepEqual(
+    storedIndicatorState({
+      projectReady: true,
+      durability: { kind: 'durable', storedAtUnixMs: 1_234 },
+      autosaveGeneration: 7,
+      lastSavedGeneration: 5,
+      hasArchiveCopy: true,
+    }),
+    {
+      kind: 'durable',
+      storedAtUnixMs: 1_234,
+      archiveChanges: 2,
+      hasArchiveCopy: true,
+    },
+  );
+  assert.deepEqual(
+    storedIndicatorState({
+      projectReady: true,
+      durability: { kind: 'pending' },
+      autosaveGeneration: 7,
+      lastSavedGeneration: 5,
+      hasArchiveCopy: true,
+    }),
+    { kind: 'pending', archiveChanges: 2, hasArchiveCopy: true },
+  );
+  assert.deepEqual(
+    storedIndicatorState({
+      projectReady: true,
+      durability: { kind: 'failed', reason: 'disk full' },
+      autosaveGeneration: 7,
+      lastSavedGeneration: 5,
+      hasArchiveCopy: false,
+    }),
+    {
+      kind: 'failed',
+      reason: 'disk full',
+      archiveChanges: 2,
+      hasArchiveCopy: false,
+    },
+  );
+  assert.deepEqual(
+    storedIndicatorState({
+      projectReady: false,
+      durability: { kind: 'pending' },
+      autosaveGeneration: 0,
+      lastSavedGeneration: 0,
+      hasArchiveCopy: false,
+    }),
+    { kind: 'noProject' },
+  );
 });

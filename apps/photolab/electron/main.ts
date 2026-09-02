@@ -44,7 +44,6 @@ import {
 } from './sidecar';
 import { PhotolabPreferencesService, type DirectoryPreference } from './preferences';
 import {
-  closeGuardDecision,
   selectUntitledLitterCandidates,
   type RecentProject,
   type UntitledProjectInspection,
@@ -75,8 +74,6 @@ let currentProjectSourcePath: string | null = null;
 let preferences: PhotolabPreferencesService;
 let quitDrainStarted = false;
 let quitDrainComplete = false;
-let closeGuardPending = false;
-let closeApproved = false;
 const pendingProductExports = new Map<
   string,
   {
@@ -354,7 +351,7 @@ async function createWindow(): Promise<void> {
   window.on('close', (event) => {
     if (quitDrainComplete) return;
     event.preventDefault();
-    void requestCloseGuard();
+    requestClose();
   });
   const unsubscribe = onSidecarStderr((line) => window.webContents.send('sidecar:stderr', line));
   window.on('closed', unsubscribe);
@@ -550,16 +547,7 @@ function registerIpc(): void {
     else mainWindow.maximize();
     return mainWindow.isMaximized();
   });
-  ipcMain.handle('window:close', () => requestCloseGuard());
-  ipcMain.handle('window:close-guard-response', (_event, response: unknown) => {
-    if (!closeGuardPending) return false;
-    if (response !== 'save' && response !== 'discard' && response !== 'cancel') return false;
-    closeGuardPending = false;
-    if (response === 'cancel') return true;
-    closeApproved = true;
-    app.quit();
-    return true;
-  });
+  ipcMain.handle('window:close', () => requestClose());
   ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
   ipcMain.handle('sidecar:status', () => isSidecarRunning());
   ipcMain.handle('preferences:gcp-csv:get', () => preferences.gcpCsvImportDefaults());
@@ -1294,19 +1282,16 @@ function registerIpc(): void {
     return candidates.length;
   });
   ipcMain.handle('project:save', async (_event, value: unknown) => {
-    const operation = projectArchiveOperationRequest(value);
     const snapshot = await callSidecar<{
       session: { sourcePath: string };
     }>({ method: 'photolab.project.snapshot' });
-    // Untitled folder projects are never a durable archive — first Save is Save As.
+    // Untitled folder projects have no archive copy yet, so their first Save is Save As.
     if (!snapshot.session.sourcePath.toLowerCase().endsWith('.hcadx')) {
+      const operation = projectArchiveOperationRequest(value);
       return saveProjectAsWithDialog(operation, null);
     }
-    // Already bound to a .hcadx path: re-zip the local working copy into that file.
-    await callSidecar({
-      method: 'photolab.project.saveAs',
-      params: archiveOperationParams(snapshot.session.sourcePath, true, operation),
-    });
+    // The working copy is the durable truth. Save forces its manifest flush; Save As writes a copy.
+    await callSidecar({ method: 'photolab.project.autosave' });
     return rememberProject(await callSidecar({ method: 'photolab.project.snapshot' }));
   });
   ipcMain.handle('project:save-as', async (_event, value: unknown) => {
@@ -2503,32 +2488,11 @@ app.on('before-quit', (event) => {
     return;
   }
   event.preventDefault();
-  if (!closeApproved) {
-    void requestCloseGuard();
-    return;
-  }
   beginShutdownDrain();
 });
 
-async function requestCloseGuard(): Promise<void> {
-  if (closeGuardPending || quitDrainStarted || quitDrainComplete) return;
-  let snapshot: CurrentProjectSessionSnapshot | null = null;
-  try {
-    snapshot = await currentProjectSessionSnapshot();
-  } catch {
-    // A missing sidecar session has no project generations to protect.
-  }
-  if (closeGuardDecision(snapshot?.session ?? null) === 'prompt' && mainWindow) {
-    closeGuardPending = true;
-    mainWindow.webContents.send('window:close-guard-requested', {
-      autosaveGeneration: snapshot?.session.autosaveGeneration ?? 0,
-      lastSavedGeneration: snapshot?.session.lastSavedGeneration ?? 0,
-    });
-    mainWindow.show();
-    mainWindow.focus();
-    return;
-  }
-  closeApproved = true;
+function requestClose(): void {
+  if (quitDrainStarted || quitDrainComplete) return;
   app.quit();
 }
 
@@ -2539,17 +2503,26 @@ function beginShutdownDrain(): void {
   let timeoutId: NodeJS.Timeout | null = null;
   const timeout = new Promise<never>((_resolve, reject) => {
     timeoutId = setTimeout(
-      () => reject(new Error('sidecar drain acknowledgement timed out')),
+      () => reject(new Error('sidecar shutdown durability acknowledgement timed out')),
       25_000,
     );
   });
   void automationHost?.dispose();
-  void Promise.race([callSidecar({ method: 'photolab.shutdown.drain' }), timeout])
-    .then((report) => {
-      console.info(`[sidecar] PhotoLab drain acknowledged: ${JSON.stringify(report)}`);
+  const drainAndFlush = async (): Promise<void> => {
+    const report = await callSidecar({ method: 'photolab.shutdown.drain' });
+    console.info(`[sidecar] PhotoLab drain acknowledged: ${JSON.stringify(report)}`);
+    // close_after_drain atomically publishes the clean working-copy manifest before it replies.
+    await callSidecar({ method: 'photolab.project.close' });
+    console.info('[sidecar] PhotoLab working copy flush acknowledged');
+  };
+  void Promise.race([drainAndFlush(), timeout])
+    .then(() => {
+      console.info('[sidecar] PhotoLab shutdown durability boundary completed');
     })
     .catch((error: unknown) => {
-      console.warn(`[sidecar] PhotoLab drain did not acknowledge cleanly: ${String(error)}`);
+      console.warn(
+        `[sidecar] PhotoLab shutdown durability boundary did not complete cleanly: ${String(error)}`,
+      );
     })
     .finally(() => {
       if (timeoutId) clearTimeout(timeoutId);

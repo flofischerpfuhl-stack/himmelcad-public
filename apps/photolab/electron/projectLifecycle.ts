@@ -11,10 +11,30 @@ export interface UntitledProjectInspection {
   readonly imageCount: number;
 }
 
-export interface ProjectGenerationSnapshot {
-  readonly autosaveGeneration: number;
-  readonly lastSavedGeneration: number;
-}
+export type WorkingCopyDurability =
+  | { readonly kind: 'durable'; readonly storedAtUnixMs: number }
+  | { readonly kind: 'pending' }
+  | { readonly kind: 'failed'; readonly reason: string };
+
+export type StoredIndicatorState =
+  | { readonly kind: 'noProject' }
+  | {
+      readonly kind: 'durable';
+      readonly archiveChanges: number;
+      readonly hasArchiveCopy: boolean;
+      readonly storedAtUnixMs: number;
+    }
+  | {
+      readonly kind: 'pending';
+      readonly archiveChanges: number;
+      readonly hasArchiveCopy: boolean;
+    }
+  | {
+      readonly kind: 'failed';
+      readonly archiveChanges: number;
+      readonly hasArchiveCopy: boolean;
+      readonly reason: string;
+    };
 
 const MAX_RECENT_PROJECTS = 10;
 export const UNTITLED_PROJECT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1_000;
@@ -47,8 +67,24 @@ export function selectUntitledLitterCandidates(
   );
 }
 
-export function closeGuardDecision(snapshot: ProjectGenerationSnapshot | null): 'prompt' | 'close' {
-  return snapshot && snapshot.autosaveGeneration !== snapshot.lastSavedGeneration
-    ? 'prompt'
-    : 'close';
+export function storedIndicatorState(input: {
+  readonly projectReady: boolean;
+  readonly durability: WorkingCopyDurability;
+  readonly autosaveGeneration: number;
+  readonly lastSavedGeneration: number;
+  readonly hasArchiveCopy: boolean;
+}): StoredIndicatorState {
+  if (!input.projectReady) return { kind: 'noProject' };
+  const archive = {
+    archiveChanges: Math.max(0, input.autosaveGeneration - input.lastSavedGeneration),
+    hasArchiveCopy: input.hasArchiveCopy,
+  };
+  switch (input.durability.kind) {
+    case 'durable':
+      return { ...archive, kind: 'durable', storedAtUnixMs: input.durability.storedAtUnixMs };
+    case 'pending':
+      return { ...archive, kind: 'pending' };
+    case 'failed':
+      return { ...archive, kind: 'failed', reason: input.durability.reason };
+  }
 }

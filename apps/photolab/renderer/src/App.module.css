@@ -29,6 +29,26 @@
   background: var(--hc-hover-bg);
 }
 
+.storedStatus {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 480px;
+}
+
+.storedStatus > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storedFailure {
+  color: var(--hc-error-fg);
+}
+
+.archiveStatus {
+  color: var(--hc-fg-subtle);
+}
+
 .workspace {
   position: relative;
   display: flex;

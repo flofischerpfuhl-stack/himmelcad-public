@@ -7,6 +7,7 @@ import { useLayoutStore } from './useLayoutStore.js';
 export interface RibbonAction {
   id: string;
   label: string;
+  title?: string;
   shortcut?: string;
   icon?: ReactNode;
   onActivate?: () => void;
@@ -168,6 +169,7 @@ export function Ribbon({ tabs }: RibbonProps): JSX.Element {
                     className={`${styles.dropdownItem} ${
                       activeFunctionId === action.id ? styles.dropdownItemActive : ''
                     }`}
+                    title={action.title ?? action.label}
                     onClick={() => {
                       if (action.onActivate) action.onActivate();
                       else activate(action.id);
@@ -203,7 +205,9 @@ function RibbonActionButton({
     <button
       type="button"
       className={`${styles.action} ${isActive ? styles.actionActive : ''}`}
-      title={action.shortcut ? `${action.label} (${action.shortcut})` : action.label}
+      title={
+        action.title ?? (action.shortcut ? `${action.label} (${action.shortcut})` : action.label)
+      }
       onClick={onSelect}
     >
       {action.icon && <span className={styles.actionIcon}>{action.icon}</span>}
