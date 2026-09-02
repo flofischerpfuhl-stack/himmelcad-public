@@ -1087,17 +1087,17 @@ export function GcpImportPanel({
                         <td>{row.point.code || '—'}</td>
                         <td>
                           {formatSigmaMeters(
-                            row.point.uncertainty.eastStddevMeters ??
-                              row.point.uncertainty.horizontalStddevMeters,
+                            row.point.uncertainty?.eastStddevMeters ??
+                              row.point.uncertainty?.horizontalStddevMeters,
                           )}
                         </td>
                         <td>
                           {formatSigmaMeters(
-                            row.point.uncertainty.northStddevMeters ??
-                              row.point.uncertainty.horizontalStddevMeters,
+                            row.point.uncertainty?.northStddevMeters ??
+                              row.point.uncertainty?.horizontalStddevMeters,
                           )}
                         </td>
-                        <td>{formatSigmaMeters(row.point.uncertainty.heightStddevMeters)}</td>
+                        <td>{formatSigmaMeters(row.point.uncertainty?.heightStddevMeters)}</td>
                         <td>{uncertaintyOriginLabel(row.uncertaintyOrigin)}</td>
                         <td>{roleLabel(row.point.role)}</td>
                       </tr>
@@ -1924,7 +1924,8 @@ function ensureOption(
   return [...options, { id, label: `${value} m` }];
 }
 
-function formatSigmaMeters(value: number): string {
+function formatSigmaMeters(value: number | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—';
   const digits = value < 0.01 ? 4 : 3;
   return `${value.toFixed(digits)} m`;
 }
