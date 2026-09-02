@@ -802,7 +802,7 @@ Footer
 - E3 verification: project-lifecycle tests, real archive Save hash, drain timeout/failure choices, Force-quit recovery truth, and crash reopen
 - Decision record: cited unchanged: FP-D14 and adoption-audit F01/F05 supersede the package's earlier D1/X7 archive-copy derivation
 - Evidence: `9593bd9`; open — not executed: real archive Save, drain refusal choices, and Force-quit recovery acceptance
-- Status: landed
+- Status: landed — close prompt removed; Save semantics superseded by WP-H1 (F01)
 ```
 
 ### WP-C4 — Product prerequisite validation + GCP revision selector (Size M)
