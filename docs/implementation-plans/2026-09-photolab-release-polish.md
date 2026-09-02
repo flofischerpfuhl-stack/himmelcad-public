@@ -738,6 +738,13 @@ no-seed group (params move from defaults, artifact records it) while the
 DJI group's params stay pinned within tolerance; single-mission runs
 unchanged vs baseline; unit tests on the policy→strategy mapping.
 
+Status 2026-09-02: implemented (`bundle_adjuster` path; capability probed).
+Remaining, deliberately not shipped: the in-house per-group-masked pose-only
+fallback for workers without `bundle_adjuster` — an unverified second
+definition of "adjusted" was judged worse than an actionable failure on a
+branch the vendored runtime cannot reach. Reopen only if a shipped worker
+lacks the capability. ADR 0014 carries a dated amendment.
+
 ### WP-D3 — Merge quality evidence (Size M)
 
 Problem. Post-merge feedback is a track count

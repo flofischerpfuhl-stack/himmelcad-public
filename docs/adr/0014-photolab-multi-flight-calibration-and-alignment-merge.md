@@ -78,3 +78,15 @@ input block, and only then create the merge plan. The live and exported reports 
 membership, the frozen intrinsics groups, alignment job, processing set, GCP snapshot and final
 product lineage. Identical processing-set memberships are rejected so two labels cannot make the
 same immutable scope appear to be different computational input.
+
+## Amendment 2026-09-02 — per-group intrinsics refinement
+
+The sentence "any alignment run containing reliable embedded calibration
+freezes focal length, principal point and distortion" is superseded for runs
+whose calibration groups disagree. Per `docs/photolab-intrinsics-policy.md`
+"Alignment and merge execution", a run is `allFixed`, `allRefine` or `mixed`;
+mixed runs refine every seeded group, restore pinned groups to their exact
+seeds and re-adjust poses with pinned intrinsics, failing when the block
+cannot be explained by the pinned calibration. Single-policy runs are
+unchanged (characterization tests in `colmap_runtime.rs`). Overlap merges seed
+each group from its input solve. Records carry `intrinsicsStrategy`.
