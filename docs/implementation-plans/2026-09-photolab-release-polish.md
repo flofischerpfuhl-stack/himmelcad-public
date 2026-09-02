@@ -1085,6 +1085,33 @@ build ran) and passes 3/3 in isolation. Its deadline is a calibration value
 (X6): either widen the fake-worker deadline with a rationale or serialize the
 timing-sensitive tests behind a test-group lock. Tracked under WP-B6.
 
+## R1-gate triage — 2026-09-02 late (owner statement D8, token discipline)
+
+Owner statement D8 (`docs/builder-program/OWNER-DECISIONS.md`) sets a
+temporary token discipline; the Builder session relayed the owner's direction
+that PhotoLab finishes R1 without scope growth and packages not on an R1 gate
+are parked. Applied here; the owner can reverse any line.
+
+Reasoning effort for Codex dispatches: `medium` for mechanical packages;
+`high` for design-heavy sidecar work (WP-G1a-2, WP-A3, WP-B5) and for every
+review by the coordinating session.
+
+| Package                                                                 | R1 gate                                                        | Decision                                                                              |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| WP-F3 commit + pixel-baseline regeneration + `ConfirmationDialog` focus | gate 7 (accessibility, visual tests)                           | keep — next                                                                           |
+| Hands-on re-test of the changed surfaces                                | gate 1 evidence                                                | keep                                                                                  |
+| WP-E1 calibration inspector (in flight)                                 | gate 2 (accuracy evidence must be inspectable)                 | finish, no extension                                                                  |
+| WP-A5 golden-gate levers (spatial pair selection)                       | gate 2                                                         | keep — evidence-bounded                                                               |
+| WP-B4 same-target admission; WP-B5 journal ordering + orphan GC         | gate 3 + completion discipline (conflicts, recovery)           | keep                                                                                  |
+| WP-A4 SMRF ground classification (DTM)                                  | gate 1 (DSM/DTM is a declared primary product)                 | keep                                                                                  |
+| WP-A3 mesh from dense cloud, stage 1                                    | gate 1 ("textured terrain and spatial meshes" primary product) | keep, stage 1 only                                                                    |
+| WP-G1a-2 / G1b / G1c                                                    | gate 8                                                         | keep — after the import-formats revision and the Builder-lane command table           |
+| WP-G2 rows + gates (re-scoped)                                          | gate 8 prerequisite                                            | keep (document + G-1 test only)                                                       |
+| WP-C6b batch stages (optimize/export/report)                            | none (convenience)                                             | **parked** — batch already runs unattended for the R1 product chain                   |
+| WP-E2 observation QC editing                                            | none (Metashape parity)                                        | **parked** — per-observation residuals stay in the accuracy payload scope of WP-E1/A2 |
+| WP-E4 overlap visualization                                             | none (parity)                                                  | **parked**                                                                            |
+| WP-A6 GPU runtimes, WP-F4 Windows signing                               | owner decisions                                                | unchanged                                                                             |
+
 ## Execution order and review protocol
 
 Waves (sequential Codex runs; the reviewing session verifies each before the
