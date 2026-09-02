@@ -1,4 +1,5 @@
 import { Ban, Crosshair, Link2, Trash2, Unlock } from 'lucide-react';
+import { registerEscapeRung } from '@himmelcad/ui';
 import {
   useEffect,
   useMemo,
@@ -116,6 +117,21 @@ export function GcpImageMarkerOverlay({
       return next ?? current;
     });
   }, [markers]);
+
+  useEffect(
+    () =>
+      registerEscapeRung('drag', () => {
+        const current = dragRef.current;
+        if (!current) return false;
+        dragRef.current = null;
+        if (rootRef.current?.hasPointerCapture(current.pointerId)) {
+          rootRef.current.releasePointerCapture(current.pointerId);
+        }
+        setDrag(null);
+        return true;
+      }),
+    [],
+  );
 
   function coordinateFromPointer(event: ReactPointerEvent): GcpImageCoordinate | null {
     const bounds = rootRef.current?.getBoundingClientRect();

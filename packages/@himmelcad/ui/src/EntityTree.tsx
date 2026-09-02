@@ -21,6 +21,11 @@ import {
 } from 'react';
 
 import styles from './EntityTree.module.css';
+import {
+  consumeEscapeBlurCommitSuppression,
+  registerEscapeRung,
+  revertEscapeField,
+} from './escapeLadder.js';
 import { ExpandChevron } from './ExpandChevron.js';
 import { IslandTabs } from './IslandTabs.js';
 import { useLayoutStore } from './useLayoutStore.js';
@@ -82,6 +87,13 @@ export function EntityTree({
       window.removeEventListener('pointerdown', close);
       window.removeEventListener('blur', close);
     };
+  }, [context]);
+  useEffect(() => {
+    if (!context) return;
+    return registerEscapeRung('menu', () => {
+      setContext(null);
+      return true;
+    });
   }, [context]);
   const headerCollapse = (
     <button
@@ -376,6 +388,17 @@ function TreeNode({
 }: NodeProps): ReactNode {
   const node: EntitySnapshot | undefined = entities[id];
   const [open, setOpen] = useState(true);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (!node || editingId !== node.id) return;
+    return registerEscapeRung('fieldRevert', () => {
+      const input = renameInputRef.current;
+      if (!input || input.ownerDocument.activeElement !== input) return false;
+      revertEscapeField(input, node.name);
+      onEditingChange(null);
+      return true;
+    });
+  }, [editingId, node, onEditingChange]);
   if (!node) return null;
   const isSelected = selectedIds.has(node.id);
   const children = orderedChildren(node.children, entities, sortChildren);
@@ -436,18 +459,22 @@ function TreeNode({
         </span>
         {editingId === node.id ? (
           <input
+            ref={renameInputRef}
             className={styles.renameInput}
             defaultValue={node.name}
             autoFocus
             onClick={(event) => event.stopPropagation()}
             onBlur={(event) => {
+              if (consumeEscapeBlurCommitSuppression(event.currentTarget)) {
+                onEditingChange(null);
+                return;
+              }
               const value = event.currentTarget.value.trim();
               if (value && value !== node.name) onRename?.(node.id, value);
               onEditingChange(null);
             }}
             onKeyDown={(event) => {
               if (event.key === 'Enter') event.currentTarget.blur();
-              if (event.key === 'Escape') onEditingChange(null);
             }}
           />
         ) : (

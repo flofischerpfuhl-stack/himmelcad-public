@@ -13,7 +13,7 @@ import type {
   PhotoImportBatch,
   ProjectCameraImageRecord,
 } from '@himmelcad/data';
-import { OverlayChip, Select } from '@himmelcad/ui';
+import { OverlayChip, registerEscapeRung, Select } from '@himmelcad/ui';
 import {
   Brush,
   Crosshair,
@@ -912,6 +912,7 @@ function ImageContentFrame({
     y: number;
     transformX: number;
     transformY: number;
+    fitMode: boolean;
   } | null>(null);
   const commitTransform = useCallback((next: ImageViewTransform): void => {
     transformRef.current = next;
@@ -961,16 +962,47 @@ function ImageContentFrame({
     setObservationMenu(null);
     setPlaceMarkerArmed(false);
   }, [focusedGcpId, focusedGcpNeedsObservation, source]);
+  useEffect(
+    () =>
+      registerEscapeRung('drag', () => {
+        const stroke = strokeRef.current;
+        if (stroke) {
+          strokeRef.current = null;
+          if (container?.hasPointerCapture(stroke.pointerId)) {
+            container.releasePointerCapture(stroke.pointerId);
+          }
+          setActiveStroke([]);
+          return true;
+        }
+        const current = drag.current;
+        if (!current) return false;
+        drag.current = null;
+        if (container?.hasPointerCapture(current.pointerId)) {
+          container.releasePointerCapture(current.pointerId);
+        }
+        commitTransform({
+          ...transformRef.current,
+          x: current.transformX,
+          y: current.transformY,
+        });
+        fitMode.current = current.fitMode;
+        return true;
+      }),
+    [commitTransform, container],
+  );
+  useEffect(() => {
+    if (!observationMenu) return;
+    return registerEscapeRung('menu', () => {
+      setObservationMenu(null);
+      return true;
+    });
+  }, [observationMenu]);
   useEffect(() => {
     if (!placeMarkerArmed) return;
-    const disarmWithEscape = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
+    return registerEscapeRung('tool', () => {
       setPlaceMarkerArmed(false);
-    };
-    window.addEventListener('keydown', disarmWithEscape, true);
-    return () => window.removeEventListener('keydown', disarmWithEscape, true);
+      return true;
+    });
   }, [placeMarkerArmed]);
   useEffect(() => {
     if (!container) return;
@@ -1074,6 +1106,7 @@ function ImageContentFrame({
       y: event.clientY,
       transformX: current.x,
       transformY: current.y,
+      fitMode: fitMode.current,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   };

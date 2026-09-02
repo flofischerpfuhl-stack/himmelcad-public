@@ -1,7 +1,8 @@
-import type { ReactNode } from 'react';
-import { PanelRightClose, Settings2 } from 'lucide-react';
+import { useCallback, useEffect, type ReactNode } from 'react';
+import { PanelRightClose, Settings2, X } from 'lucide-react';
 
 import styles from './FunctionPanel.module.css';
+import { registerEscapeRung } from './escapeLadder.js';
 import { IslandTabs } from './IslandTabs.js';
 import { useLayoutStore } from './useLayoutStore.js';
 
@@ -13,6 +14,9 @@ export interface FunctionPanelProps {
   propertiesTitle?: string | undefined;
   activeTab?: 'function' | 'properties';
   onActiveTabChange?: (tab: 'function' | 'properties') => void;
+  /** Enables UIP-D7 close affordances without changing existing consumers by default. */
+  closeFunctionTabs?: boolean;
+  onCloseFunction?: (functionId: string) => void;
 }
 
 export function FunctionPanel({
@@ -23,10 +27,13 @@ export function FunctionPanel({
   propertiesTitle,
   activeTab,
   onActiveTabChange,
+  closeFunctionTabs = false,
+  onCloseFunction,
 }: FunctionPanelProps): JSX.Element {
   const collapseRight = useLayoutStore((s) => s.toggleRightPanel);
   const openFunctionIds = useLayoutStore((s) => s.openFunctionIds);
   const activateFunction = useLayoutStore((s) => s.activateFunction);
+  const closeStoredFunction = useLayoutStore((s) => s.closeFunction);
   const collapseButton = (
     <button
       type="button"
@@ -57,34 +64,97 @@ export function FunctionPanel({
     selectedTab === 'properties' || activeFunctionId === null
       ? 'properties'
       : `function:${activeFunctionId}`;
+  const closeFunction = useCallback(
+    (functionId: string) => {
+      if (onCloseFunction) onCloseFunction(functionId);
+      else closeStoredFunction(functionId);
+      if (functionIds.length === 1) onActiveTabChange?.('properties');
+    },
+    [closeStoredFunction, functionIds.length, onActiveTabChange, onCloseFunction],
+  );
+  useEffect(() => {
+    if (!closeFunctionTabs || selectedTab !== 'function' || !activeFunctionId) return;
+    return registerEscapeRung('functionTab', () => {
+      closeFunction(activeFunctionId);
+      return true;
+    });
+  }, [activeFunctionId, closeFunction, closeFunctionTabs, selectedTab]);
+
+  const activateTab = (id: string): void => {
+    if (id === 'properties') {
+      onActiveTabChange?.('properties');
+      return;
+    }
+    const functionId = id.slice('function:'.length);
+    if (!closeFunctionTabs || functionId !== activeFunctionId) activateFunction(functionId);
+    onActiveTabChange?.('function');
+  };
   return (
     <div className={styles.root}>
       <div className={styles.header}>
-        <IslandTabs
-          ariaLabel="Right panel"
-          value={selectedId}
-          onChange={(id) => {
-            if (id === 'properties') {
-              onActiveTabChange?.('properties');
-              return;
-            }
-            const functionId = id.slice('function:'.length);
-            activateFunction(functionId);
-            onActiveTabChange?.('function');
-          }}
-          items={[
-            {
-              id: 'properties',
-              label: 'Properties',
-              disabled: !propertiesAvailable,
-            },
-            ...functionIds.map((id) => ({
-              id: `function:${id}`,
-              label: id === activeFunctionId ? (title ?? functionLabel(id)) : functionLabel(id),
-              showDot: Boolean(id === activeFunctionId && selectedTab === 'properties'),
-            })),
-          ]}
-        />
+        {closeFunctionTabs ? (
+          <div className={styles.closeableTabs} role="tablist" aria-label="Right panel">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={selectedId === 'properties'}
+              className={`${styles.closeableTab} ${selectedId === 'properties' ? styles.closeableTabActive : ''}`}
+              onClick={() => activateTab('properties')}
+            >
+              Properties
+            </button>
+            {functionIds.map((id) => {
+              const label =
+                id === activeFunctionId ? (title ?? functionLabel(id)) : functionLabel(id);
+              const active = selectedId === `function:${id}`;
+              return (
+                <div
+                  key={id}
+                  className={`${styles.closeableTabGroup} ${active ? styles.closeableTabActive : ''}`}
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    className={styles.closeableTabLabel}
+                    onClick={() => activateTab(`function:${id}`)}
+                  >
+                    {label}
+                    {id === activeFunctionId && selectedTab === 'properties' ? (
+                      <span className={styles.tabDot} aria-hidden />
+                    ) : null}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.tabClose}
+                    aria-label={`Close ${label}`}
+                    onClick={() => closeFunction(id)}
+                  >
+                    <X size={11} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <IslandTabs
+            ariaLabel="Right panel"
+            value={selectedId}
+            onChange={activateTab}
+            items={[
+              {
+                id: 'properties',
+                label: 'Properties',
+                disabled: !propertiesAvailable,
+              },
+              ...functionIds.map((id) => ({
+                id: `function:${id}`,
+                label: id === activeFunctionId ? (title ?? functionLabel(id)) : functionLabel(id),
+                showDot: Boolean(id === activeFunctionId && selectedTab === 'properties'),
+              })),
+            ]}
+          />
+        )}
         {collapseButton}
       </div>
       <div className={styles.islandBody}>

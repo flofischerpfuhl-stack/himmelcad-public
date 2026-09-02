@@ -8,6 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
+import { registerEscapeRung } from '@himmelcad/ui';
 
 import styles from './FloatingTaskIsland.module.css';
 
@@ -20,16 +21,21 @@ const FOCUSABLE = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
+let islandFocusOrder = 0;
+
 export function FloatingTaskIsland({
   children,
   modal = false,
   onRequestClose,
+  escapeBehavior = onRequestClose ? 'detachedFunction' : 'persistent',
 }: {
   children: ReactNode;
   modal?: boolean;
   onRequestClose?: () => void;
+  escapeBehavior?: 'detachedFunction' | 'persistent';
 }): JSX.Element {
   const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [escapeOrder, setEscapeOrder] = useState(() => ++islandFocusOrder);
   const positioner = useRef<HTMLDivElement | null>(null);
   const drag = useRef<{
     pointerId: number;
@@ -49,18 +55,42 @@ export function FloatingTaskIsland({
 
   useEffect(() => {
     const keepVisible = (): void => setOffset((current) => constrain(current));
-    const resetWithEscape = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape' || drag.current || modal) return;
-      if (onRequestClose) onRequestClose();
-      else setOffset({ x: 0, y: 0 });
-    };
     window.addEventListener('resize', keepVisible);
-    window.addEventListener('keydown', resetWithEscape);
     return () => {
       window.removeEventListener('resize', keepVisible);
-      window.removeEventListener('keydown', resetWithEscape);
     };
-  }, [constrain, modal, onRequestClose]);
+  }, [constrain]);
+
+  useEffect(
+    () =>
+      registerEscapeRung(
+        'drag',
+        () => {
+          const current = drag.current;
+          if (!current) return false;
+          drag.current = null;
+          if (positioner.current?.hasPointerCapture(current.pointerId)) {
+            positioner.current.releasePointerCapture(current.pointerId);
+          }
+          setOffset({ x: current.startX, y: current.startY });
+          return true;
+        },
+        { order: escapeOrder },
+      ),
+    [escapeOrder],
+  );
+
+  useEffect(() => {
+    if (!modal && escapeBehavior !== 'detachedFunction') return;
+    return registerEscapeRung(
+      modal ? 'modal' : 'detachedFunction',
+      () => {
+        onRequestClose?.();
+        return true;
+      },
+      { order: escapeOrder },
+    );
+  }, [escapeBehavior, escapeOrder, modal, onRequestClose]);
 
   useEffect(() => {
     if (!modal) return;
@@ -79,11 +109,6 @@ export function FloatingTaskIsland({
   const keepModalFocus = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
     if (!modal) return;
     event.stopPropagation();
-    if (event.key === 'Escape' && onRequestClose) {
-      event.preventDefault();
-      onRequestClose();
-      return;
-    }
     if (event.key !== 'Tab') return;
     const focusable = [...(positioner.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])];
     if (focusable.length === 0) {
@@ -103,6 +128,7 @@ export function FloatingTaskIsland({
   };
 
   const startDrag = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    setEscapeOrder(++islandFocusOrder);
     const target = event.target as HTMLElement;
     if (!target.closest('[data-task-drag-handle]') || target.closest('button,input,select')) return;
     drag.current = {
@@ -141,6 +167,7 @@ export function FloatingTaskIsland({
       className={`${styles.layer} ${modal ? styles.modalLayer : ''}`}
       role="presentation"
       onKeyDown={keepModalFocus}
+      onFocusCapture={() => setEscapeOrder(++islandFocusOrder)}
     >
       <div
         ref={positioner}

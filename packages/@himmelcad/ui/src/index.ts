@@ -40,6 +40,7 @@ export {
   ChipGroup,
   EmptyPick,
   ImportChatRoot,
+  ImportChatCancellationScope,
   ImportChatStream,
   Metric,
   Metrics,
@@ -56,3 +57,12 @@ export type {
 } from './importRegistrationProfile.js';
 export { ImportRegistrationWizard } from './ImportRegistrationWizard.js';
 export type { ImportRegistrationWizardProps } from './ImportRegistrationWizard.js';
+export {
+  consumeEscapeBlurCommitSuppression,
+  dispatchEscape,
+  escapeFreeTextProps,
+  installEscapeLadder,
+  registerEscapeRung,
+  revertEscapeField,
+} from './escapeLadder.js';
+export type { EscapeRungHandler, EscapeRungKind } from './escapeLadder.js';

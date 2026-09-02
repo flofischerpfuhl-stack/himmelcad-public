@@ -50,7 +50,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 46px;
+  min-width: 46px;
   height: 100%;
   border: 0;
   border-radius: 0;
@@ -59,7 +59,13 @@
   cursor: pointer;
 }
 
-.iconButton:hover {
+.iconButton:disabled {
+  padding: 0 10px;
+  color: var(--hc-fg-muted);
+  cursor: wait;
+}
+
+.iconButton:hover:not(:disabled) {
   background: var(--hc-error);
   color: #ffffff;
 }

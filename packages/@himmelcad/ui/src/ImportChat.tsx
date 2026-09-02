@@ -1,5 +1,13 @@
 import { Bot, RotateCcw, X } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 
 import styles from './ImportChat.module.css';
 
@@ -10,6 +18,17 @@ export interface ChatChoice {
   label: string;
   primary?: boolean;
   disabled?: boolean;
+}
+
+const AcknowledgeBusyCancellationContext = createContext(false);
+
+/** Enables cancel-acknowledge-close behavior for import surfaces in this product subtree. */
+export function ImportChatCancellationScope({ children }: { children: ReactNode }): JSX.Element {
+  return (
+    <AcknowledgeBusyCancellationContext.Provider value>
+      {children}
+    </AcknowledgeBusyCancellationContext.Provider>
+  );
 }
 
 export function ImportChatRoot({
@@ -29,6 +48,15 @@ export function ImportChatRoot({
   busy?: boolean;
   layout?: 'default' | 'wide';
 }): JSX.Element {
+  const acknowledgeBusyCancellation = useContext(AcknowledgeBusyCancellationContext);
+  const [cancelling, setCancelling] = useState(false);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    if (!acknowledgeBusyCancellation || busy || !cancelling) return;
+    setCancelling(false);
+    onCloseRef.current();
+  }, [acknowledgeBusyCancellation, busy, cancelling]);
   return (
     <section className={styles.root} data-layout={layout} aria-busy={busy}>
       <header className={styles.header} data-task-drag-handle>
@@ -36,10 +64,14 @@ export function ImportChatRoot({
         <button
           className={styles.iconButton}
           type="button"
-          onClick={onClose}
-          aria-label={closeLabel}
+          onClick={() => {
+            if (busy && acknowledgeBusyCancellation) setCancelling(true);
+            onClose();
+          }}
+          disabled={acknowledgeBusyCancellation && cancelling}
+          aria-label={acknowledgeBusyCancellation && cancelling ? 'Cancelling…' : closeLabel}
         >
-          <X size={14} />
+          {acknowledgeBusyCancellation && cancelling ? <span>Cancelling…</span> : <X size={14} />}
         </button>
       </header>
       {children}
