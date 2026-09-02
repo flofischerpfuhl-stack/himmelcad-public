@@ -39,6 +39,7 @@ import {
 } from './importWorkflow.js';
 import {
   attachLocalGridsToOperation,
+  containsArea,
   gridLocalPath,
   heightReference,
   isVerticalGridFilename,
@@ -2393,15 +2394,6 @@ function userGrid(selection: LocalGridSelection): GridCatalogEntry {
     coverage: selection.coverage,
     localPath: selection.localPath,
   };
-}
-
-function containsArea(coverage: GeographicArea, area: GeographicArea): boolean {
-  return (
-    coverage.westLongitude <= area.westLongitude &&
-    coverage.southLatitude <= area.southLatitude &&
-    coverage.eastLongitude >= area.eastLongitude &&
-    coverage.northLatitude >= area.northLatitude
-  );
 }
 
 function formatArea(area: GeographicArea): string {

@@ -53,6 +53,7 @@ import {
   buildGcpOperationQuery,
   isGcpOperationReady,
 } from './gcpImportDecision.js';
+import { containsArea } from './importFreeze.js';
 
 export interface GcpImportPanelProps {
   path: string | null;
@@ -1821,18 +1822,6 @@ function selector(value: string, hasHeader: boolean, headers: readonly string[] 
     return { kind: 'header' as const, value };
   const index = Number.parseInt(value, 10);
   return { kind: 'index' as const, value: Number.isSafeInteger(index) && index >= 0 ? index : 0 };
-}
-
-function containsArea(
-  coverage: CrsOperationQuery['areaOfInterest'],
-  area: CrsOperationQuery['areaOfInterest'],
-): boolean {
-  return (
-    coverage.westLongitude <= area.westLongitude &&
-    coverage.southLatitude <= area.southLatitude &&
-    coverage.eastLongitude >= area.eastLongitude &&
-    coverage.northLatitude >= area.northLatitude
-  );
 }
 
 function projectImageArea(

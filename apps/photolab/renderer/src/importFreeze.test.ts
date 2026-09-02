@@ -13,6 +13,7 @@ import { describe, it } from 'node:test';
 
 import {
   attachLocalGridsToOperation,
+  containsArea,
   defaultGridLicense,
   gridLocalPath,
   heightReference,
@@ -48,6 +49,52 @@ describe('normalizeGridKind', () => {
 
   it('keeps geoid for vertical names', () => {
     assert.equal(normalizeGridKind('gtg', 'de_bkg_gcg2016.tif', true), 'geoid');
+  });
+});
+
+describe('containsArea', () => {
+  it('accepts full coverage and rejects any overhang', () => {
+    assert.equal(containsArea(AREA, AREA), true);
+    assert.equal(containsArea({ ...AREA, westLongitude: 8, northLatitude: 50 }, AREA), true);
+    assert.equal(containsArea(AREA, { ...AREA, eastLongitude: 10.5 }), false);
+    assert.equal(containsArea(AREA, { ...AREA, southLatitude: 47.5 }), false);
+  });
+});
+
+describe('user grid catalog entry (image import wizard)', () => {
+  it('freezes a GDAL-mislabeled .gsb as ntv2', () => {
+    // `ImageImportPanel.userGrid` and `gcpImportDecision.userGrid` both build
+    // the catalog kind with exactly these arguments — keep them in sync.
+    const selection: LocalGridSelection = {
+      filename: 'kanu_ntv2_schwaben.gsb',
+      localPath: '/data/grids/kanu_ntv2_schwaben.gsb',
+      kind: 'gtg', // mislabeled by GDAL
+      driver: 'GTiff',
+      coverage: AREA,
+    };
+    assert.equal(
+      normalizeGridKind(selection.kind, selection.filename, selection.kind === 'geoid'),
+      'ntv2',
+    );
+
+    const mislabeledOp: CrsOperationCandidate = {
+      operationId: 'proj:mislabeled',
+      name: 'DHDN to ETRS',
+      kind: 'gaussKruegerDatumTransformation',
+      projPipeline: '+proj=pipeline +step +proj=hgridshift +grids=kanu_ntv2_schwaben.gsb',
+      areaOfUse: AREA,
+      ballpark: false,
+      bestAvailable: true,
+      requiredGrids: [
+        {
+          kind: 'gtg',
+          officialFilename: 'kanu_ntv2_schwaben.gsb',
+          availability: { state: 'missing' },
+        },
+      ],
+    };
+    const attached = attachLocalGridsToOperation(mislabeledOp, null, selection, [], AREA);
+    assert.equal(attached.requiredGrids[0]!.kind, 'ntv2');
   });
 });
 

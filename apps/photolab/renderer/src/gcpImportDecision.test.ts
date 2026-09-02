@@ -125,6 +125,57 @@ describe('GCP height decisions', () => {
     });
   });
 
+  it('normalizes a GDAL-mislabeled .gsb to ntv2 in the frozen grid catalog', () => {
+    // GDAL reports NTv2 binaries as a generic raster, so the picker stores
+    // kind 'gtg'. The image wizard already normalizes this; the GCP wizard must
+    // freeze the identical catalog entry or PROJ binds the wrong grid driver.
+    const horizontalGrid: LocalGridSelection = {
+      filename: 'kanu_ntv2_schwaben.gsb',
+      localPath: '/fixtures/kanu_ntv2_schwaben.gsb',
+      kind: 'gtg',
+      driver: 'GTiff',
+      coverage: area,
+    };
+    const query = buildGcpOperationQuery({
+      sourceHorizontalEpsg: 31468,
+      targetHorizontalEpsg: 25832,
+      sourceVerticalEpsg: 4979,
+      targetVerticalEpsg: 4979,
+      transformHorizontal: true,
+      transformHeight: false,
+      areaOfInterest: area,
+      verticalGrid: null,
+      horizontalGrid,
+    });
+    assert.equal(query.gridCatalog.length, 1);
+    assert.equal(query.gridCatalog[0]?.officialFilename, 'kanu_ntv2_schwaben.gsb');
+    assert.equal(query.gridCatalog[0]?.kind, 'ntv2');
+    assert.equal(query.gridCatalog[0]?.localPath, '/fixtures/kanu_ntv2_schwaben.gsb');
+    assert.equal(query.gridCatalog[0]?.officialSha256, undefined);
+  });
+
+  it('still classifies a mislabeled vertical grid as geoid', () => {
+    const verticalGrid: LocalGridSelection = {
+      filename: 'gcg2016_local.tif',
+      localPath: '/fixtures/gcg2016_local.tif',
+      kind: 'gtg',
+      driver: 'GTiff',
+      coverage: area,
+    };
+    const query = buildGcpOperationQuery({
+      sourceHorizontalEpsg: 25832,
+      targetHorizontalEpsg: 25832,
+      sourceVerticalEpsg: 7837,
+      targetVerticalEpsg: 4979,
+      transformHorizontal: false,
+      transformHeight: true,
+      areaOfInterest: area,
+      verticalGrid,
+      horizontalGrid: null,
+    });
+    assert.equal(query.gridCatalog[0]?.kind, 'geoid');
+  });
+
   it('blocks an operation whose required geoid is missing', () => {
     assert.equal(isGcpOperationReady(false, true, true, candidate('missing'), area), false);
     assert.equal(isGcpOperationReady(false, true, true, candidate('presentVerified'), area), true);

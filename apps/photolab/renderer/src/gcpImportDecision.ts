@@ -1,3 +1,4 @@
+import { containsArea, normalizeGridKind } from './importFreeze.js';
 import type {
   CrsOperationCandidate,
   CrsOperationDiscovery,
@@ -150,8 +151,12 @@ function compoundHeightCrs(horizontalEpsg: number, verticalEpsg: number) {
 }
 
 function userGrid(selection: LocalGridSelection): GridCatalogEntry {
+  // Same normalization as the image import wizard: GDAL reports .gsb as a
+  // generic raster ("gtg"), but PROJ needs ntv2 or the freeze binds the wrong
+  // driver.
+  const kind = normalizeGridKind(selection.kind, selection.filename, selection.kind === 'geoid');
   return {
-    kind: selection.kind,
+    kind,
     officialFilename: selection.filename,
     license: {
       licenseName: 'User-supplied local grid',
@@ -165,16 +170,4 @@ function userGrid(selection: LocalGridSelection): GridCatalogEntry {
 
 function isGaussKrueger(epsg: number): boolean {
   return epsg >= 31466 && epsg <= 31469;
-}
-
-function containsArea(
-  coverage: CrsOperationQuery['areaOfInterest'],
-  area: CrsOperationQuery['areaOfInterest'],
-): boolean {
-  return (
-    coverage.westLongitude <= area.westLongitude &&
-    coverage.southLatitude <= area.southLatitude &&
-    coverage.eastLongitude >= area.eastLongitude &&
-    coverage.northLatitude >= area.northLatitude
-  );
 }

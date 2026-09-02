@@ -78,6 +78,21 @@ export interface LocalGridSelection {
   relativePath?: string;
 }
 
+/**
+ * True when `coverage` fully encloses `area` (both in WGS84 degrees).
+ *
+ * Single source of truth for the image and GCP import wizards — the wizards
+ * must agree on whether an operation or grid covers the project area.
+ */
+export function containsArea(coverage: GeographicArea, area: GeographicArea): boolean {
+  return (
+    coverage.westLongitude <= area.westLongitude &&
+    coverage.southLatitude <= area.southLatitude &&
+    coverage.eastLongitude >= area.eastLongitude &&
+    coverage.northLatitude >= area.northLatitude
+  );
+}
+
 export function isVerticalGridFilename(name: string): boolean {
   return /geoid|gcg|egm|quasi|gtx|vert/i.test(name);
 }
