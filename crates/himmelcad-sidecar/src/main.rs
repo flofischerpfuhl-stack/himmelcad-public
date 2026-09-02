@@ -136,6 +136,7 @@ use himmelcad_sidecar::mvs_scene::{
 use himmelcad_sidecar::orthophoto_prep::{
     prepare_camera_orthophotos, CameraBlendMode, OrthophotoPreparation, OrthophotoPreparationError,
 };
+use himmelcad_sidecar::pointcloud_export::PointCloudExportFormat;
 use himmelcad_sidecar::prepared_triangle_mesh::PreparedTriangleMeshOptions;
 use himmelcad_sidecar::prepared_triangle_mesh_ply::{
     build_prepared_triangle_mesh_from_colmap_textured_directory,
@@ -784,6 +785,8 @@ struct StartProductExportJobParams {
     operation_id: String,
     entity_id: EntityId,
     destination_path: String,
+    #[serde(default)]
+    format: Option<PointCloudExportFormat>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1080,7 +1083,7 @@ async fn handle(
         return handle_project_rpc(req, projects, &jobs).await;
     }
     if req.method.starts_with("photolab.jobs.") {
-        return handle_job_rpc(req, &jobs, projects).await;
+        return handle_job_rpc(req, &jobs, projects, &crs).await;
     }
     if req.method.starts_with("photolab.crs.") {
         return handle_crs_rpc(req, &crs).await;
@@ -3079,11 +3082,12 @@ async fn handle_job_rpc(
     req: RpcRequest,
     jobs: &JobManager,
     projects: Arc<ProjectRuntime>,
+    crs: &CrsService,
 ) -> RpcResponse {
     match req.method.as_str() {
         "photolab.jobs.startProductExport" => {
             match serde_json::from_value::<StartProductExportJobParams>(req.params) {
-                Ok(params) => match prepare_product_export_job(params, &projects) {
+                Ok(params) => match prepare_product_export_job(params, &projects, crs).await {
                     Ok((job, request)) => {
                         let result = jobs
                             .start(job, move |context| {
@@ -5775,15 +5779,34 @@ fn prefix_prepared_mesh_product(
     prepared
 }
 
-fn prepare_product_export_job(
+async fn prepare_product_export_job(
     params: StartProductExportJobParams,
     projects: &ProjectRuntime,
+    crs: &CrsService,
 ) -> anyhow::Result<(NewPhotolabJob, ProductExportRequest)> {
-    let source = projects.product_export_source(&params.entity_id)?;
+    let pointcloud_format = projects.pointcloud_export_format(&params.entity_id, params.format)?;
+    let crs_wkt = if matches!(
+        pointcloud_format,
+        Some(PointCloudExportFormat::Las | PointCloudExportFormat::Laz)
+    ) {
+        if let Some(definition) = projects.frozen_horizontal_crs()? {
+            Some(crs.canonical_wkt(&definition).await?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let source = projects.product_export_source_with_format(
+        &params.entity_id,
+        pointcloud_format,
+        crs_wkt,
+    )?;
     let metadata = source.source_path.metadata()?;
     let config_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
         &params.entity_id,
         &params.destination_path,
+        &params.format,
     ))?);
     let input_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
         &source,

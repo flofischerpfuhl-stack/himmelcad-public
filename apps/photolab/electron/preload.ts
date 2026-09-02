@@ -191,6 +191,7 @@ export interface PhotolabDesktopApi {
       entityId: string;
       kind: string;
       name: string;
+      format?: 'ply' | 'las' | 'laz';
     }) => Promise<T | null>;
     confirmExport: <T = unknown>(token: string) => Promise<T>;
     cancelExport: (token: string) => Promise<void>;

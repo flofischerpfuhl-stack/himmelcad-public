@@ -1150,6 +1150,7 @@ dependencies = [
  "himmelcad-spatial",
  "hmac",
  "image",
+ "las",
  "serde",
  "serde_json",
  "sha2",

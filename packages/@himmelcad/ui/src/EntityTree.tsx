@@ -35,6 +35,7 @@ export interface EntityTreeProps {
   onRename?: (id: EntityId, name: string) => void;
   onMove?: (id: EntityId, newParentId: EntityId) => void;
   onVisibilityChange?: (id: EntityId, visible: boolean) => void;
+  canExport?: (entity: EntitySnapshot) => boolean;
   onContextAction?: (
     id: EntityId,
     action: 'showGcpImages' | 'open' | 'properties' | 'export' | 'remove',
@@ -52,6 +53,7 @@ export function EntityTree({
   onRename,
   onMove,
   onVisibilityChange,
+  canExport,
   onContextAction,
   leftNavTab = 'tree',
   onLeftNavTabChange,
@@ -258,18 +260,20 @@ export function EntityTree({
               Images containing this GCP
             </button>
           )}
-          {isExportableProduct(project.entities[context.id]?.kind) && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                onContextAction?.(context.id, 'export');
-                setContext(null);
-              }}
-            >
-              Export…
-            </button>
-          )}
+          {project.entities[context.id] &&
+            (canExport?.(project.entities[context.id]!) ??
+              isExportableProduct(project.entities[context.id]?.kind)) && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onContextAction?.(context.id, 'export');
+                  setContext(null);
+                }}
+              >
+                Export…
+              </button>
+            )}
           {project.entities[context.id]?.kind === 'CameraImage' && (
             <button
               type="button"

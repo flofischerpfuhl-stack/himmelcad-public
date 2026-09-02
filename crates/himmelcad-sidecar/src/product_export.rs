@@ -10,6 +10,13 @@ use himmelcad_core::photolab_jobs::CancellationToken;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::camera_export::{
+    export_cameras_atomic, CameraCalibrationExportGroup, CameraExportError,
+};
+use crate::pointcloud_export::{
+    transcode_ply_atomic, PointCloudExportError, PointCloudExportFormat,
+};
+
 const COPY_BUFFER_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +32,23 @@ pub struct ProductExportSource {
     pub source_path: PathBuf,
     pub kind: ProductExportSourceKind,
     pub suggested_name: String,
+    #[serde(default)]
+    pub conversion: ProductExportConversion,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ProductExportConversion {
+    #[default]
+    Copy,
+    PointCloud {
+        format: PointCloudExportFormat,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        crs_wkt: Option<String>,
+    },
+    Cameras {
+        calibration_groups: Vec<CameraCalibrationExportGroup>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +111,47 @@ pub fn export_product(
         return Err(ProductExportError::InvalidRequest(
             "source and destination overlap".into(),
         ));
+    }
+    if let ProductExportConversion::PointCloud { format, crs_wkt } = &request.source.conversion {
+        let source_bytes = source.metadata()?.len().max(1);
+        let summary = transcode_ply_atomic(
+            &source,
+            &destination,
+            &request.operation_id,
+            *format,
+            crs_wkt.as_deref(),
+            cancellation,
+            |completed_points, total_points| {
+                let completed_bytes = completed_points
+                    .saturating_mul(source_bytes)
+                    .checked_div(total_points.max(1))
+                    .unwrap_or(0)
+                    .min(source_bytes);
+                progress(completed_bytes, source_bytes);
+            },
+        )
+        .map_err(map_pointcloud_error)?;
+        return Ok(ProductExportSummary {
+            destination_path: destination.to_string_lossy().into_owned(),
+            bytes: summary.bytes,
+            files: 1,
+        });
+    }
+    if let ProductExportConversion::Cameras { calibration_groups } = &request.source.conversion {
+        let summary = export_cameras_atomic(
+            &source,
+            &destination,
+            &request.operation_id,
+            calibration_groups,
+            cancellation,
+            progress,
+        )
+        .map_err(map_camera_error)?;
+        return Ok(ProductExportSummary {
+            destination_path: destination.to_string_lossy().into_owned(),
+            bytes: summary.bytes,
+            files: summary.files,
+        });
     }
     let temporary = destination_parent.join(format!(
         ".{}.{}.partial",
@@ -230,7 +295,7 @@ fn copy_file(
     Ok(completed)
 }
 
-fn publish_replace(
+pub(crate) fn publish_replace(
     temporary: &Path,
     destination: &Path,
     operation_id: &str,
@@ -254,6 +319,24 @@ fn publish_replace(
         return Err(error.into());
     }
     remove_path(&backup)
+}
+
+fn map_pointcloud_error(error: PointCloudExportError) -> ProductExportError {
+    match error {
+        PointCloudExportError::Cancelled => ProductExportError::Cancelled,
+        PointCloudExportError::Io(error) => ProductExportError::Io(error),
+        PointCloudExportError::InvalidPly(message) => ProductExportError::InvalidRequest(message),
+        PointCloudExportError::Las(error) => ProductExportError::InvalidRequest(error.to_string()),
+    }
+}
+
+fn map_camera_error(error: CameraExportError) -> ProductExportError {
+    match error {
+        CameraExportError::Cancelled => ProductExportError::Cancelled,
+        CameraExportError::Io(error) => ProductExportError::Io(error),
+        CameraExportError::InvalidModel(message) => ProductExportError::InvalidRequest(message),
+        CameraExportError::Json(error) => ProductExportError::InvalidRequest(error.to_string()),
+    }
 }
 
 fn remove_path(path: &Path) -> Result<(), ProductExportError> {
@@ -320,6 +403,7 @@ mod tests {
                     source_path: source,
                     kind: ProductExportSourceKind::File,
                     suggested_name: "map.tif".into(),
+                    conversion: ProductExportConversion::Copy,
                 },
                 destination_path: destination.clone(),
             },
@@ -351,6 +435,7 @@ mod tests {
                     source_path: source,
                     kind: ProductExportSourceKind::File,
                     suggested_name: "cloud.ply".into(),
+                    conversion: ProductExportConversion::Copy,
                 },
                 destination_path: destination.clone(),
             },

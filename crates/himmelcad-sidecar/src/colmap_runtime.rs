@@ -713,6 +713,8 @@ pub struct ColmapOutputSummary {
     /// the project's potentially newer capture-group view.
     #[serde(default)]
     pub calibration_groups: Vec<ColmapCalibrationGroup>,
+    #[serde(default)]
+    pub intrinsics_refinement: ColmapIntrinsicsRefinement,
     pub selected_mapper: SelectedMapper,
     pub selected_feature_store: SelectedFeatureStore,
     pub mapping_candidates: Vec<MappingCandidateSummary>,
@@ -1155,6 +1157,7 @@ impl ColmapRuntime {
                 .as_ref()
                 .map(|scope| scope.scope_sha256.clone()),
             calibration_groups: request.calibration_groups.clone(),
+            intrinsics_refinement: request.intrinsics_refinement,
             selected_mapper,
             selected_feature_store,
             mapping_candidates,

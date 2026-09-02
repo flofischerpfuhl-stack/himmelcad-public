@@ -5,6 +5,7 @@
 pub mod alignment_merge_runtime;
 pub mod automation_runtime;
 pub mod brush_runtime;
+pub mod camera_export;
 pub mod canonical_app_runtime;
 pub mod canonical_project_store;
 pub mod capture_runtime;
@@ -28,6 +29,7 @@ pub mod mesh_tiler;
 pub mod mvs_runtime;
 pub mod mvs_scene;
 pub mod orthophoto_prep;
+pub mod pointcloud_export;
 pub mod prepared_triangle_mesh;
 pub mod prepared_triangle_mesh_ply;
 pub mod product_export;

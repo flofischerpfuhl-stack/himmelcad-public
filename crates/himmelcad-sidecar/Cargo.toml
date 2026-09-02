@@ -29,6 +29,7 @@ hmac = "0.12.1"
 zip.workspace = true
 fs2 = "0.4.3"
 image = { version = "0.25.8", default-features = false, features = ["jpeg", "png", "tiff"] }
+las.workspace = true
 
 [dev-dependencies]
 gltf.workspace = true

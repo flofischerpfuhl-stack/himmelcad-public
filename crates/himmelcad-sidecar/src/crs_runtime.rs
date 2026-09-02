@@ -247,6 +247,44 @@ impl ProjRuntime {
             .cloned()
     }
 
+    /// Resolves one frozen CRS definition through the configured offline database as WKT2:2019.
+    pub async fn canonical_wkt(
+        &self,
+        definition: &CrsDefinition,
+        cancellation: &CancellationToken,
+    ) -> Result<String, CrsRuntimeError> {
+        let captured = self
+            .run_capture(
+                &self.config.projinfo_path,
+                [
+                    crs_argument(definition)?,
+                    OsString::from("-o"),
+                    OsString::from("WKT2:2019"),
+                    OsString::from("--single-line"),
+                ],
+                cancellation,
+            )
+            .await?;
+        let wkt = captured
+            .stdout
+            .lines()
+            .map(str::trim)
+            .find(|line| {
+                line.starts_with("PROJCRS[")
+                    || line.starts_with("GEOGCRS[")
+                    || line.starts_with("COMPOUNDCRS[")
+                    || line.starts_with("BOUNDCRS[")
+                    || line.starts_with("VERTCRS[")
+                    || line.starts_with("ENGCRS[")
+            })
+            .ok_or_else(|| {
+                CrsRuntimeError::MalformedOutput(
+                    "projinfo did not return a WKT2:2019 CRS definition".into(),
+                )
+            })?;
+        Ok(wkt.to_owned())
+    }
+
     /// Discovers every locally known candidate while retaining missing-grid candidates for UI.
     pub async fn discover_operations(
         &self,

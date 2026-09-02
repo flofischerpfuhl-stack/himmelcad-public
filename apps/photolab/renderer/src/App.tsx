@@ -2730,14 +2730,25 @@ export function App(): JSX.Element {
       const api = window.himmelcad;
       const entity = project.entities[id];
       const dataset = productDatasets.find((candidate) => candidate.entityId === id);
-      if (!api || !entity || !dataset) return;
+      if (!api || !entity) return;
+      const kind =
+        dataset?.kind ??
+        (entity.kind === 'AlignmentRun'
+          ? 'alignment'
+          : entity.kind === 'MergedAlignmentRun'
+            ? 'mergedAlignment'
+            : null);
+      if (!kind) return;
+      const format =
+        dataset?.kind === 'dense' ? 'laz' : dataset?.kind === 'sparse' ? 'ply' : undefined;
       try {
         const result = await api.products.export<
           { job: PhotolabJob } | { confirmation: { token: string; displayName: string } }
         >({
           entityId: id,
-          kind: dataset.kind,
+          kind,
           name: entity.name,
+          ...(format ? { format } : {}),
         });
         if (!result) return;
         if ('confirmation' in result) {
@@ -3128,6 +3139,11 @@ export function App(): JSX.Element {
                 { entityId, visible },
                 visible ? 'Entity shown' : 'Entity hidden',
               )
+            }
+            canExport={(entity) =>
+              entity.kind === 'AlignmentRun' ||
+              entity.kind === 'MergedAlignmentRun' ||
+              productDatasets.some((dataset) => dataset.entityId === entity.id)
             }
             onContextAction={handleTreeContextAction}
           />

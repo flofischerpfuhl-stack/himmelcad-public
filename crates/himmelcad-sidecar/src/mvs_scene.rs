@@ -46,6 +46,14 @@ pub struct PreparedGcpCamera {
     pub camera: GcpCameraModel,
 }
 
+/// Re-reads a public COLMAP text model through PhotoLab's production parser.
+pub fn validate_colmap_text_model(root: &Path) -> Result<(usize, usize), MvsSceneError> {
+    let cameras = parse_cameras(&root.join("cameras.txt"))?;
+    let images = parse_images(&root.join("images.txt"), &cameras)?;
+    let _ = parse_points(&root.join("points3D.txt"), &images)?;
+    Ok((cameras.len(), images.len()))
+}
+
 #[derive(Debug, Error)]
 pub enum MvsSceneError {
     #[error("invalid COLMAP reconstruction: {0}")]

@@ -25,7 +25,7 @@ use himmelcad_core::entity_validation::{
 use himmelcad_core::geometry_representation_registry::CanonicalRepresentationAdmission;
 use himmelcad_core::geometry_representation_registry::SectionTopologyPartitionManifest;
 use himmelcad_core::hash::ObjectHash;
-use himmelcad_core::photolab_crs::FrozenImportTransformation;
+use himmelcad_core::photolab_crs::{CrsDefinition, FrozenImportTransformation};
 use himmelcad_core::photolab_gcp_optimization::GcpIntrinsicsPolicy;
 use himmelcad_core::photolab_images::DjiBrownConradyCalibration;
 use himmelcad_core::photolab_jobs::{
@@ -50,9 +50,10 @@ use himmelcad_sidecar::alignment_merge_runtime::{
     inspect_solved_merge, AlignmentMergeEvidenceReport, MergeInputScope, SharedControlMergeOutcome,
 };
 use himmelcad_sidecar::brush_runtime::{BrushOutputSummary, BrushRunOutcome};
+use himmelcad_sidecar::camera_export::CameraCalibrationExportGroup;
 use himmelcad_sidecar::colmap_runtime::{
     ColmapArtifactKind, ColmapArtifactSummary, ColmapCalibrationGroup, ColmapCalibrationSeed,
-    ColmapRunOutcome, SelectedMapper,
+    ColmapIntrinsicsRefinement, ColmapRunOutcome, SelectedMapper,
 };
 use himmelcad_sidecar::dense_raster_prep::PreparedPotreeCloud;
 use himmelcad_sidecar::gcp_local_estimate_runtime::{
@@ -87,7 +88,10 @@ use himmelcad_sidecar::mesh_tiler::PreparedMeshProduct;
 use himmelcad_sidecar::mvs_runtime::{
     MvsCommandReport, MvsOutputIndex, MvsRunOutcome, MvsSceneManifest,
 };
-use himmelcad_sidecar::product_export::{ProductExportSource, ProductExportSourceKind};
+use himmelcad_sidecar::pointcloud_export::PointCloudExportFormat;
+use himmelcad_sidecar::product_export::{
+    ProductExportConversion, ProductExportSource, ProductExportSourceKind,
+};
 use himmelcad_sidecar::project_archive::{
     pack_hcadx, unpack_hcadx, ArchivePhase, ArchiveProgress, PackArchiveOptions,
     UnpackArchiveLimits,
@@ -584,6 +588,8 @@ pub struct ComputeArtifactRecord {
     /// Frozen intrinsics partition copied from the worker request that produced this alignment.
     #[serde(default)]
     pub calibration_groups: Vec<ColmapCalibrationGroup>,
+    #[serde(default)]
+    pub intrinsics_refinement: ColmapIntrinsicsRefinement,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub processing_set_id: Option<EntityId>,
     #[serde(default)]
@@ -3789,7 +3795,54 @@ impl ProjectRuntime {
         Ok(records)
     }
 
+    pub fn frozen_horizontal_crs(&self) -> Result<Option<CrsDefinition>> {
+        let guard = self.session.lock().expect("project session mutex poisoned");
+        let session = guard.as_ref().context("no project is open")?;
+        Ok(session
+            .manifest
+            .reference_frame
+            .as_ref()
+            .map(|frame| frame.target.horizontal.crs.clone()))
+    }
+
     pub fn product_export_source(&self, entity_id: &EntityId) -> Result<ProductExportSource> {
+        self.product_export_source_with_format(entity_id, None, None)
+    }
+
+    pub fn pointcloud_export_format(
+        &self,
+        entity_id: &EntityId,
+        requested: Option<PointCloudExportFormat>,
+    ) -> Result<Option<PointCloudExportFormat>> {
+        let guard = self.session.lock().expect("project session mutex poisoned");
+        let session = guard.as_ref().context("no project is open")?;
+        let entity = session
+            .manifest
+            .entities
+            .get(&entity_id.0)
+            .context("product entity does not exist")?;
+        if entity.kind != EntityKind::PointCloud {
+            anyhow::ensure!(
+                requested.is_none(),
+                "an explicit point-cloud format is only valid for point-cloud products"
+            );
+            return Ok(None);
+        }
+        let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
+        let dense = serde_json::from_slice::<MvsArtifactRecord>(&bytes).is_ok();
+        Ok(Some(requested.unwrap_or(if dense {
+            PointCloudExportFormat::Laz
+        } else {
+            PointCloudExportFormat::Ply
+        })))
+    }
+
+    pub fn product_export_source_with_format(
+        &self,
+        entity_id: &EntityId,
+        requested_format: Option<PointCloudExportFormat>,
+        crs_wkt: Option<String>,
+    ) -> Result<ProductExportSource> {
         let guard = self.session.lock().expect("project session mutex poisoned");
         let session = guard.as_ref().context("no project is open")?;
         let entity = session
@@ -3807,6 +3860,7 @@ impl ProjectRuntime {
         );
         let dataset_root = session.working_path.canonicalize()?.join("datasets");
         let stem = safe_export_stem(&entity.name);
+        let mut conversion = ProductExportConversion::Copy;
         let (path, kind, suggested_name) = match entity.kind {
             EntityKind::DigitalElevationModel | EntityKind::Orthomosaic => {
                 let record: RasterArtifactRecord = serde_json::from_slice(&bytes)?;
@@ -3822,40 +3876,56 @@ impl ProjectRuntime {
                 )
             }
             EntityKind::PointCloud => {
-                if let Ok(record) = serde_json::from_slice::<MvsArtifactRecord>(&bytes) {
-                    let dense = record
-                        .output
-                        .dense_point_cloud
-                        .context("point-cloud record has no dense output")?;
-                    (
-                        session
-                            .working_path
-                            .join(record.dataset_relative_path)
-                            .join("output")
-                            .join(dense.relative_path),
-                        ProductExportSourceKind::File,
-                        format!("{stem}.ply"),
-                    )
+                let (path, dense) =
+                    if let Ok(record) = serde_json::from_slice::<MvsArtifactRecord>(&bytes) {
+                        let dense = record
+                            .output
+                            .dense_point_cloud
+                            .context("point-cloud record has no dense output")?;
+                        (
+                            session
+                                .working_path
+                                .join(record.dataset_relative_path)
+                                .join("output")
+                                .join(dense.relative_path),
+                            true,
+                        )
+                    } else {
+                        let record: ComputeArtifactRecord = serde_json::from_slice(&bytes)?;
+                        anyhow::ensure!(
+                            record.artifact.kind == ColmapArtifactKind::SparsePointCloud,
+                            "point-cloud compute record is not a sparse point cloud"
+                        );
+                        let relative = record
+                            .potree
+                            .as_ref()
+                            .and_then(|potree| potree.export_relative_path.as_ref())
+                            .context("sparse point cloud has no portable export")?;
+                        (
+                            session
+                                .working_path
+                                .join(record.dataset_relative_path)
+                                .join(relative),
+                            false,
+                        )
+                    };
+                let format = requested_format.unwrap_or(if dense {
+                    PointCloudExportFormat::Laz
                 } else {
-                    let record: ComputeArtifactRecord = serde_json::from_slice(&bytes)?;
+                    PointCloudExportFormat::Ply
+                });
+                if format != PointCloudExportFormat::Ply {
                     anyhow::ensure!(
-                        record.artifact.kind == ColmapArtifactKind::SparsePointCloud,
-                        "point-cloud compute record is not a sparse point cloud"
+                        session.manifest.reference_frame.is_none() || crs_wkt.is_some(),
+                        "the frozen project CRS could not be resolved to WKT"
                     );
-                    let relative = record
-                        .potree
-                        .as_ref()
-                        .and_then(|potree| potree.export_relative_path.as_ref())
-                        .context("sparse point cloud has no portable export")?;
-                    (
-                        session
-                            .working_path
-                            .join(record.dataset_relative_path)
-                            .join(relative),
-                        ProductExportSourceKind::File,
-                        format!("{stem}.ply"),
-                    )
+                    conversion = ProductExportConversion::PointCloud { format, crs_wkt };
                 }
+                (
+                    path,
+                    ProductExportSourceKind::File,
+                    format!("{stem}.{}", format.extension()),
+                )
             }
             EntityKind::DepthMap => {
                 let record: MvsArtifactRecord = serde_json::from_slice(&bytes)?;
@@ -3931,8 +4001,54 @@ impl ProjectRuntime {
                     }
                 }
             }
+            EntityKind::AlignmentRun => {
+                let record: ComputeArtifactRecord = serde_json::from_slice(&bytes)?;
+                anyhow::ensure!(
+                    record.artifact.kind == ColmapArtifactKind::SparseModel,
+                    "alignment export source is not a sparse model"
+                );
+                let dataset = session.working_path.join(&record.dataset_relative_path);
+                let refinement = recorded_intrinsics_refinement(&record)?;
+                conversion = ProductExportConversion::Cameras {
+                    calibration_groups: camera_export_groups(
+                        &record.calibration_groups,
+                        refinement,
+                    ),
+                };
+                (
+                    dataset.join("sparse-view-source"),
+                    ProductExportSourceKind::Directory,
+                    format!("{stem}-cameras"),
+                )
+            }
+            EntityKind::MergedAlignmentRun => {
+                let record: MergedAlignmentRunRecord = serde_json::from_slice(&bytes)?;
+                anyhow::ensure!(
+                    record.state == MergedAlignmentState::Published,
+                    "alignment merge has not published a camera model"
+                );
+                let relative = record
+                    .dataset_relative_path
+                    .clone()
+                    .context("published alignment merge has no dataset")?;
+                conversion = ProductExportConversion::Cameras {
+                    calibration_groups: merged_camera_export_groups(session, &record)?,
+                };
+                (
+                    session
+                        .working_path
+                        .join(relative)
+                        .join("sparse-view-source"),
+                    ProductExportSourceKind::Directory,
+                    format!("{stem}-cameras"),
+                )
+            }
             _ => anyhow::bail!("entity is not an exportable PhotoLab product"),
         };
+        anyhow::ensure!(
+            requested_format.is_none() || entity.kind == EntityKind::PointCloud,
+            "an explicit point-cloud format is only valid for point-cloud products"
+        );
         let path = path.canonicalize()?;
         anyhow::ensure!(
             path.starts_with(&dataset_root),
@@ -3942,6 +4058,7 @@ impl ProjectRuntime {
             source_path: path,
             kind,
             suggested_name,
+            conversion,
         })
     }
 
@@ -4370,13 +4487,14 @@ impl ProjectRuntime {
                 continue;
             };
             let record = ComputeArtifactRecord {
-                schema_version: 2,
+                schema_version: 3,
                 job_id: outcome.summary.job_id.clone(),
                 dataset_relative_path: dataset_relative_path.clone(),
                 artifact: artifact.clone(),
                 camera_entity_ids: camera_scope.clone(),
                 image_mask_scope_sha256: outcome.summary.image_mask_scope_sha256.clone(),
                 calibration_groups: outcome.summary.calibration_groups.clone(),
+                intrinsics_refinement: outcome.summary.intrinsics_refinement,
                 processing_set_id: processing_set_id.clone(),
                 publication_sequence: session.manifest.command_sequence.saturating_add(1),
                 selected_mapper: outcome.summary.selected_mapper,
@@ -8118,6 +8236,75 @@ fn safe_export_stem(name: &str) -> String {
     }
 }
 
+fn camera_export_groups(
+    groups: &[ColmapCalibrationGroup],
+    refinement: ColmapIntrinsicsRefinement,
+) -> Vec<CameraCalibrationExportGroup> {
+    groups
+        .iter()
+        .map(|group| CameraCalibrationExportGroup {
+            group_id: group.group_id.clone(),
+            camera_entity_ids: group.camera_entity_ids.clone(),
+            intrinsics_refinement: refinement,
+        })
+        .collect()
+}
+
+fn merged_camera_export_groups(
+    session: &ProjectSession,
+    merge: &MergedAlignmentRunRecord,
+) -> Result<Vec<CameraCalibrationExportGroup>> {
+    let mut inputs = Vec::new();
+    for entity_id in &merge.input_alignment_entity_ids {
+        let entity = session
+            .manifest
+            .entities
+            .get(&entity_id.0)
+            .with_context(|| format!("missing input alignment {}", entity_id.0))?;
+        anyhow::ensure!(
+            entity.kind == EntityKind::AlignmentRun,
+            "merged camera export input is not an alignment"
+        );
+        let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
+        let record: ComputeArtifactRecord = serde_json::from_slice(&bytes)?;
+        inputs.extend(camera_export_groups(
+            &record.calibration_groups,
+            recorded_intrinsics_refinement(&record)?,
+        ));
+    }
+    if merge
+        .connections
+        .iter()
+        .all(|connection| matches!(connection, AlignmentMergeConnection::SharedControls { .. }))
+    {
+        return Ok(inputs);
+    }
+    // Joint overlap solves use one run-wide policy and receive their calibration groups in
+    // deterministic project-id order.
+    inputs.sort_by(|left, right| left.group_id.cmp(&right.group_id));
+    let refinement = if inputs.iter().any(|group| {
+        group.intrinsics_refinement == ColmapIntrinsicsRefinement::FreezeReliableEmbedded
+    }) {
+        ColmapIntrinsicsRefinement::FreezeReliableEmbedded
+    } else {
+        ColmapIntrinsicsRefinement::Refine
+    };
+    for group in &mut inputs {
+        group.intrinsics_refinement = refinement;
+    }
+    Ok(inputs)
+}
+
+fn recorded_intrinsics_refinement(
+    record: &ComputeArtifactRecord,
+) -> Result<ColmapIntrinsicsRefinement> {
+    anyhow::ensure!(
+        record.schema_version >= 3,
+        "legacy alignment does not record which calibration parameters were refined; rerun alignment before camera export"
+    );
+    Ok(record.intrinsics_refinement)
+}
+
 const fn default_true() -> bool {
     true
 }
@@ -9441,6 +9628,7 @@ mod tests {
             camera_entity_ids: camera_entity_ids.iter().map(|id| id.0.clone()).collect(),
             image_mask_scope_sha256: None,
             calibration_groups: Vec::new(),
+            intrinsics_refinement: ColmapIntrinsicsRefinement::Refine,
             processing_set_id: None,
             publication_sequence,
             selected_mapper: SelectedMapper::Global,
@@ -10516,6 +10704,7 @@ mod tests {
             camera_entity_ids: vec![camera_id.0],
             image_mask_scope_sha256: None,
             calibration_groups: Vec::new(),
+            intrinsics_refinement: ColmapIntrinsicsRefinement::Refine,
             selected_mapper: SelectedMapper::Global,
             selected_feature_store: SelectedFeatureStore::Aliked,
             mapping_candidates: Vec::new(),
@@ -10691,6 +10880,16 @@ mod tests {
         fs::write(scratch.join("sparse/0/cameras.bin"), b"model").expect("model file");
         fs::create_dir_all(scratch.join("sparse-view-source")).expect("sparse source");
         fs::write(
+            scratch.join("sparse-view-source/cameras.txt"),
+            b"1 PINHOLE 100 80 90 91 50 40\n",
+        )
+        .expect("cameras");
+        fs::write(
+            scratch.join("sparse-view-source/images.txt"),
+            b"1 1 0 0 0 0 0 0 1 image.jpg\n\n",
+        )
+        .expect("images");
+        fs::write(
             scratch.join("sparse-view-source/points3D.txt"),
             b"1 1000 2000 3000 10 20 30 0.25\n",
         )
@@ -10712,6 +10911,7 @@ mod tests {
                 camera_entity_ids: vec![frozen_camera_id.clone()],
                 seed: None,
             }],
+            intrinsics_refinement: ColmapIntrinsicsRefinement::Refine,
             selected_mapper: SelectedMapper::Global,
             selected_feature_store: SelectedFeatureStore::Aliked,
             mapping_candidates: Vec::new(),
@@ -10804,6 +11004,21 @@ mod tests {
             .expect("sparse product export");
         assert_eq!(export.kind, ProductExportSourceKind::File);
         assert!(export.source_path.ends_with("sparse-potree/export.ply"));
+        let camera_export = runtime
+            .product_export_source(alignment_id)
+            .expect("alignment camera export");
+        assert_eq!(camera_export.kind, ProductExportSourceKind::Directory);
+        assert!(camera_export.source_path.ends_with("sparse-view-source"));
+        assert!(camera_export.suggested_name.ends_with("-cameras"));
+        let ProductExportConversion::Cameras { calibration_groups } = camera_export.conversion
+        else {
+            panic!("alignment export must carry calibration metadata");
+        };
+        assert_eq!(calibration_groups.len(), 1);
+        assert_eq!(
+            calibration_groups[0].intrinsics_refinement,
+            ColmapIntrinsicsRefinement::Refine
+        );
         runtime.close().expect("close");
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -10852,6 +11067,7 @@ mod tests {
                     camera_entity_ids: Vec::new(),
                     image_mask_scope_sha256: None,
                     calibration_groups: Vec::new(),
+                    intrinsics_refinement: ColmapIntrinsicsRefinement::Refine,
                     processing_set_id: None,
                     publication_sequence: 1,
                     selected_mapper: SelectedMapper::Global,

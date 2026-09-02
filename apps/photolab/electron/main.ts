@@ -25,6 +25,7 @@ import {
   nativeImage,
   protocol,
   safeStorage,
+  type FileFilter,
   type OpenDialogOptions,
 } from 'electron';
 import {
@@ -68,8 +69,14 @@ let currentProjectSourcePath: string | null = null;
 let preferences: PhotolabPreferencesService;
 const pendingProductExports = new Map<
   string,
-  { entityId: string; destinationPath: string; createdAt: number }
+  {
+    entityId: string;
+    destinationPath: string;
+    format?: PointCloudExportFormat;
+    createdAt: number;
+  }
 >();
+type PointCloudExportFormat = 'ply' | 'las' | 'laz';
 const previewGenerationTasks = new Map<string, Promise<void>>();
 const previewGenerationWaiters: Array<() => void> = [];
 let activePreviewGenerations = 0;
@@ -271,10 +278,13 @@ const RENDERER_SIDECAR_METHODS = new Set([
 const EXPORTABLE_PRODUCT_KINDS = new Set([
   'depth',
   'dense',
+  'sparse',
   'dem',
   'orthomosaic',
   'mesh',
   'gaussianSplat',
+  'alignment',
+  'mergedAlignment',
 ]);
 
 app.commandLine.appendSwitch('disable-features', 'MiddleClickAutoscroll');
@@ -404,12 +414,15 @@ function safeExportName(name: string, kind: string): string {
   const base = cleaned || 'PhotoLab-Product';
   if (kind === 'depth') return `${base}-Depth-Maps`;
   if (kind === 'mesh') return `${base}-Mesh`;
+  if (kind === 'alignment' || kind === 'mergedAlignment') return `${base}-cameras`;
   return base;
 }
 
-function exportExtension(kind: string): string {
+function exportExtension(kind: string, format?: PointCloudExportFormat): string {
   if (kind === 'dem' || kind === 'orthomosaic') return 'tif';
-  if (kind === 'dense' || kind === 'gaussianSplat') return 'ply';
+  if (kind === 'dense') return format ?? 'laz';
+  if (kind === 'sparse') return format ?? 'ply';
+  if (kind === 'gaussianSplat') return 'ply';
   throw new Error(`Product kind “${kind}” is exported as a package`);
 }
 
@@ -418,6 +431,26 @@ function exportFilterName(kind: string): string {
   if (kind === 'orthomosaic') return 'Cloud Optimized GeoTIFF (Orthomosaic)';
   if (kind === 'gaussianSplat') return 'Gaussian-Splat PLY';
   return 'Point Cloud (PLY)';
+}
+
+function pointCloudExportFilters(defaultFormat: PointCloudExportFormat): FileFilter[] {
+  const filters: Record<PointCloudExportFormat, FileFilter> = {
+    ply: { name: 'PLY point cloud', extensions: ['ply'] },
+    las: { name: 'LAS point cloud', extensions: ['las'] },
+    laz: { name: 'Compressed point cloud (LAZ)', extensions: ['laz'] },
+  };
+  return [
+    defaultFormat,
+    ...(['laz', 'las', 'ply'] as const).filter((value) => value !== defaultFormat),
+  ].map((format) => filters[format]);
+}
+
+function pointCloudFormatFromPath(
+  path: string,
+  fallback: PointCloudExportFormat,
+): PointCloudExportFormat {
+  const extension = extname(path).slice(1).toLowerCase();
+  return extension === 'ply' || extension === 'las' || extension === 'laz' ? extension : fallback;
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -439,13 +472,18 @@ async function atomicWriteExport(path: string, data: string | Uint8Array): Promi
   }
 }
 
-function startProductExport(entityId: string, destinationPath: string): Promise<unknown> {
+function startProductExport(
+  entityId: string,
+  destinationPath: string,
+  format?: PointCloudExportFormat,
+): Promise<unknown> {
   return callSidecar({
     method: 'photolab.jobs.startProductExport',
     params: {
       operationId: `export-${randomUUID()}`,
       entityId,
       destinationPath,
+      format,
     },
   });
 }
@@ -454,6 +492,7 @@ function requireProductExportConfirmation(
   entityId: string,
   destinationPath: string,
   displayName: string,
+  format?: PointCloudExportFormat,
 ): { confirmation: { token: string; displayName: string } } {
   const token = randomUUID();
   const cutoff = Date.now() - 15 * 60_000;
@@ -463,6 +502,7 @@ function requireProductExportConfirmation(
   pendingProductExports.set(token, {
     entityId,
     destinationPath,
+    ...(format ? { format } : {}),
     createdAt: Date.now(),
   });
   return { confirmation: { token, displayName } };
@@ -577,20 +617,35 @@ function registerIpc(): void {
   });
   ipcMain.handle(
     'products:export',
-    async (_event, request: { entityId: string; kind: string; name: string }): Promise<unknown> => {
+    async (
+      _event,
+      request: {
+        entityId: string;
+        kind: string;
+        name: string;
+        format?: PointCloudExportFormat;
+      },
+    ): Promise<unknown> => {
       if (
         !request ||
         typeof request.entityId !== 'string' ||
         request.entityId.length > 512 ||
         typeof request.kind !== 'string' ||
         !EXPORTABLE_PRODUCT_KINDS.has(request.kind) ||
-        typeof request.name !== 'string'
+        typeof request.name !== 'string' ||
+        (request.format !== undefined && !['ply', 'las', 'laz'].includes(request.format))
       ) {
         throw new Error('Invalid product export request');
       }
-      const packageExport = request.kind === 'depth' || request.kind === 'mesh';
+      const pointCloudExport = request.kind === 'dense' || request.kind === 'sparse';
+      const packageExport =
+        request.kind === 'depth' ||
+        request.kind === 'mesh' ||
+        request.kind === 'alignment' ||
+        request.kind === 'mergedAlignment';
       const safeName = safeExportName(request.name, request.kind);
       let destinationPath: string;
+      let selectedFormat = request.format;
       if (packageExport) {
         const defaultPath = await preferredDirectory('export');
         const selection = mainWindow
@@ -611,29 +666,44 @@ function registerIpc(): void {
         await preferences.rememberDirectory('export', parent);
         destinationPath = join(parent, safeName);
       } else {
-        const extension = exportExtension(request.kind);
+        const defaultFormat = pointCloudExport
+          ? (request.format ?? (request.kind === 'dense' ? 'laz' : 'ply'))
+          : undefined;
+        const extension = exportExtension(request.kind, defaultFormat);
         const defaultPath = join(await preferredDirectory('export'), `${safeName}.${extension}`);
         const selection = mainWindow
           ? await dialog.showSaveDialog(mainWindow, {
               title: `Export ${request.name}`,
               defaultPath,
               properties: ['createDirectory'],
-              filters: [{ name: exportFilterName(request.kind), extensions: [extension] }],
+              filters: pointCloudExport
+                ? pointCloudExportFilters(defaultFormat!)
+                : [{ name: exportFilterName(request.kind), extensions: [extension] }],
             })
           : await dialog.showSaveDialog({
               title: `Export ${request.name}`,
               defaultPath,
               properties: ['createDirectory'],
-              filters: [{ name: exportFilterName(request.kind), extensions: [extension] }],
+              filters: pointCloudExport
+                ? pointCloudExportFilters(defaultFormat!)
+                : [{ name: exportFilterName(request.kind), extensions: [extension] }],
             });
         if (selection.canceled || !selection.filePath) return null;
         destinationPath = selection.filePath;
+        if (pointCloudExport && defaultFormat) {
+          selectedFormat = pointCloudFormatFromPath(destinationPath, defaultFormat);
+        }
         await preferences.rememberDirectory('export', dirname(destinationPath));
       }
       if (await pathExists(destinationPath)) {
-        return requireProductExportConfirmation(request.entityId, destinationPath, safeName);
+        return requireProductExportConfirmation(
+          request.entityId,
+          destinationPath,
+          safeName,
+          selectedFormat,
+        );
       }
-      return startProductExport(request.entityId, destinationPath);
+      return startProductExport(request.entityId, destinationPath, selectedFormat);
     },
   );
   ipcMain.handle('products:export-confirm', (_event, token: string) => {
@@ -646,7 +716,7 @@ function registerIpc(): void {
       throw new Error('The product export confirmation expired. Choose the destination again.');
     }
     pendingProductExports.delete(token);
-    return startProductExport(pending.entityId, pending.destinationPath);
+    return startProductExport(pending.entityId, pending.destinationPath, pending.format);
   });
   ipcMain.handle('products:export-cancel', (_event, token: string) => {
     if (typeof token === 'string') pendingProductExports.delete(token);

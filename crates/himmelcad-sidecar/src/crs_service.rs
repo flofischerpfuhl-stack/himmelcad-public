@@ -3,7 +3,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use himmelcad_core::{
-    photolab_crs::{FrozenImportTransformation, ImportTransformationDecision},
+    photolab_crs::{CrsDefinition, FrozenImportTransformation, ImportTransformationDecision},
     photolab_jobs::CancellationToken,
 };
 use serde::{Deserialize, Serialize};
@@ -125,6 +125,16 @@ impl CrsService {
         .await;
         self.finish(operation_id).await;
         result
+    }
+
+    pub async fn canonical_wkt(
+        &self,
+        definition: &CrsDefinition,
+    ) -> Result<String, CrsServiceError> {
+        self.runtime
+            .canonical_wkt(definition, &CancellationToken::new())
+            .await
+            .map_err(CrsServiceError::Runtime)
     }
 
     async fn begin(&self, operation_id: &str) -> Result<CancellationToken, CrsServiceError> {
