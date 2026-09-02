@@ -1343,6 +1343,8 @@ Footer
 - Status: in flight
 ```
 
+Landed 2026-09-02 (171791b): per-group intrinsic covariance (sigma_0^2 N^-1, log-focal mapped to pixels, unit-diagonal correlation, `uncertainty: null` with reason when singular/condition-gated), eight-bin before/after radial profiles, read-only `photolab.gcp.calibrationReport` (P11 row `photolab.gcp.calibration_report`, Electron allowlist admitted), calibration inspector in the capture-groups panel, processing-report evidence. Review fixes: direct sidecar bridge call (Codex had guessed a `window.invoke` API), helper tests, and a test-isolation defect found on the way — sidecar unit tests queued behind the machine-wide compute lease held by the running golden e2e sidecar (every 2 s cancellation timing test failed); `job_runtime.rs` now uses a per-process lease for `cfg(test)` and cargo-launched processes. Verified: core 208, sidecar 260+13+84, renderer 80.
+
 ### WP-E2 — Observation QC: show the solver's work (Size L, depends E1)
 
 Problem. No gradual selection, no way to see or act on bad observations; the
