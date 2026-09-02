@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   Check,
   FileImage,
+  Film,
   FolderOpen,
   Grid3X3,
   LoaderCircle,
@@ -129,10 +130,12 @@ export interface ImageImportPanelProps {
   progress: ImageImportProgress | null;
   gridProgress: ImageImportProgress | null;
   error: string | null;
+  videoImportHint: string | null;
   himmelcapImports: readonly HcapImportPreview[];
   onChooseMoreFiles: () => void;
   onChooseFolder: () => void;
   onChooseHimmelcap: () => void;
+  onChooseVideo: () => void;
   onSelectGrid: (kind: 'horizontal' | 'vertical') => Promise<LocalGridSelection | null>;
   onDiscoverCrs: (query: CrsOperationQuery) => Promise<CrsOperationDiscovery>;
   onCommit: (decision: ImageImportDecision) => Promise<void>;
@@ -277,10 +280,12 @@ export function ImageImportPanel({
   progress,
   gridProgress,
   error,
+  videoImportHint,
   himmelcapImports,
   onChooseMoreFiles,
   onChooseFolder,
   onChooseHimmelcap,
+  onChooseVideo,
   onSelectGrid,
   onDiscoverCrs,
   onCommit,
@@ -992,13 +997,20 @@ export function ImageImportPanel({
               <FileImage size={34} />
             )
           }
-          title={error ?? progress?.message ?? 'Choose images, a folder or a Cap project'}
+          title={
+            error ??
+            videoImportHint ??
+            progress?.message ??
+            'Choose images, a folder or a Cap project'
+          }
           detail={
             error
               ? 'No image or project data was changed.'
-              : busy
-                ? 'EXIF, XMP, DJI, GPS and RTK metadata are retained. Nothing is committed yet.'
-                : 'Select a .hcap project, folder or image files to inspect metadata before import.'
+              : videoImportHint
+                ? 'Video extraction is a separate flow so the original capture and frame-selection policy stay traceable.'
+                : busy
+                  ? 'EXIF, XMP, DJI, GPS and RTK metadata are retained. Nothing is committed yet.'
+                  : 'Select a .hcap project, folder or image files to inspect metadata before import.'
           }
         >
           {error || !busy ? (
@@ -1015,6 +1027,9 @@ export function ImageImportPanel({
               </button>
               <button type="button" className={chat.choice} onClick={onChooseHimmelcap}>
                 <PackageOpen size={14} /> Import .hcap
+              </button>
+              <button type="button" className={chat.choice} onClick={onChooseVideo}>
+                <Film size={14} /> Video frames…
               </button>
             </>
           ) : (
@@ -1053,6 +1068,15 @@ export function ImageImportPanel({
       <ImportChatStream scrollKey={scrollKey}>
         {error && (
           <ChatBubble role="system" tone="error" title="Import could not continue" detail={error} />
+        )}
+
+        {videoImportHint && (
+          <ChatBubble
+            role="system"
+            tone="warn"
+            title="Use Video frames…"
+            detail={videoImportHint}
+          />
         )}
 
         <ChatBubble

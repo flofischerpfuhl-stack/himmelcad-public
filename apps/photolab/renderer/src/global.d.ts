@@ -120,6 +120,9 @@ interface PhotolabDesktopApi {
   readonly himmelcap: {
     selectFile: () => Promise<string | null>;
   };
+  readonly capture: {
+    selectVideo: () => Promise<string | null>;
+  };
   readonly grids: {
     select: {
       (

@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import {
   cameraRotationToYawPitchRoll,
   humanizeEnum,
+  isVideoImportPath,
   naturalNameCompare,
   splitImageImportPaths,
   // @ts-expect-error Node's strip-types test runner loads the TypeScript source directly.
@@ -19,7 +20,21 @@ describe('PhotoLab formatting', () => {
     assert.deepEqual(splitImageImportPaths(['/survey/A.HCAP', '/survey/DJI_1.JPG']), {
       himmelcapPaths: ['/survey/A.HCAP'],
       imagePaths: ['/survey/DJI_1.JPG'],
+      videoPaths: [],
     });
+  });
+
+  it('routes video files away from ordinary image inspection', () => {
+    assert.deepEqual(
+      splitImageImportPaths(['/survey/walk.MP4', '/survey/frame.jpg', '/survey/clip.webm']),
+      {
+        himmelcapPaths: [],
+        imagePaths: ['/survey/frame.jpg'],
+        videoPaths: ['/survey/walk.MP4', '/survey/clip.webm'],
+      },
+    );
+    assert.equal(isVideoImportPath('/survey/clip.m4v'), true);
+    assert.equal(isVideoImportPath('/survey/photo.jpeg'), false);
   });
 
   it('humanizes camel-case and compatibility enum spellings', () => {

@@ -7,6 +7,7 @@ import {
   CloudUpload,
   FileImage,
   FilePlus,
+  Film,
   FolderOpen,
   Gauge,
   History,
@@ -33,6 +34,7 @@ export interface PhotolabRibbonCallbacks {
   onRecentProjects: () => void;
   onImportFiles: () => void;
   onImportFolder: () => void;
+  onImportVideo: () => void;
   onImportExternal: () => void;
   onImportGcps: () => void;
   onActivateFunction: (id: string) => void;
@@ -108,6 +110,12 @@ export function createPhotolabRibbonTabs(callbacks: PhotolabRibbonCallbacks): Ri
               label: 'Folder',
               icon: icon(Images),
               onActivate: callbacks.onImportFolder,
+            },
+            {
+              id: 'images.import.videoFrames',
+              label: 'Video frames…',
+              icon: icon(Film),
+              onActivate: callbacks.onImportVideo,
             },
             {
               id: 'data.import.external',

@@ -5,6 +5,7 @@ const NATURAL_COLLATOR = new Intl.Collator('en-US', {
   sensitivity: 'base',
 });
 const NATURALLY_SORTED_TREE_KINDS = new Set(['CameraImage', 'GroundControlPoint']);
+const VIDEO_IMPORT_EXTENSIONS = new Set(['mp4', 'mov', 'm4v', 'mkv', 'avi', 'webm']);
 
 export function naturalNameCompare(left: string, right: string): number {
   return NATURAL_COLLATOR.compare(left, right);
@@ -13,13 +14,22 @@ export function naturalNameCompare(left: string, right: string): number {
 export function splitImageImportPaths(paths: readonly string[]): {
   himmelcapPaths: string[];
   imagePaths: string[];
+  videoPaths: string[];
 } {
   const himmelcapPaths: string[] = [];
   const imagePaths: string[] = [];
+  const videoPaths: string[] = [];
   for (const path of paths) {
-    (path.toLocaleLowerCase('en-US').endsWith('.hcap') ? himmelcapPaths : imagePaths).push(path);
+    if (path.toLocaleLowerCase('en-US').endsWith('.hcap')) himmelcapPaths.push(path);
+    else if (isVideoImportPath(path)) videoPaths.push(path);
+    else imagePaths.push(path);
   }
-  return { himmelcapPaths, imagePaths };
+  return { himmelcapPaths, imagePaths, videoPaths };
+}
+
+export function isVideoImportPath(path: string): boolean {
+  const extension = path.split('.').at(-1)?.toLocaleLowerCase('en-US');
+  return extension != null && VIDEO_IMPORT_EXTENSIONS.has(extension);
 }
 
 export function comparePhotolabTreeEntities(left: EntitySnapshot, right: EntitySnapshot): number {

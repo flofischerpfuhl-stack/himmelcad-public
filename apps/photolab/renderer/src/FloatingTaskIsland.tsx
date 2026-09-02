@@ -50,7 +50,9 @@ export function FloatingTaskIsland({
   useEffect(() => {
     const keepVisible = (): void => setOffset((current) => constrain(current));
     const resetWithEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && !drag.current) setOffset({ x: 0, y: 0 });
+      if (event.key !== 'Escape' || drag.current || modal) return;
+      if (onRequestClose) onRequestClose();
+      else setOffset({ x: 0, y: 0 });
     };
     window.addEventListener('resize', keepVisible);
     window.addEventListener('keydown', resetWithEscape);
@@ -58,7 +60,7 @@ export function FloatingTaskIsland({
       window.removeEventListener('resize', keepVisible);
       window.removeEventListener('keydown', resetWithEscape);
     };
-  }, [constrain]);
+  }, [constrain, modal, onRequestClose]);
 
   useEffect(() => {
     if (!modal) return;

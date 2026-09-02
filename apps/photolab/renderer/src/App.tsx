@@ -17,6 +17,7 @@ import type {
   AlignmentMergeProfileSnapshot,
   CameraCalibrationGroupRecord,
   CameraCalibrationSeed,
+  CaptureCapabilityInventory,
   CaptureGroupRecord,
   EntityId,
   GcpCollectionRecord,
@@ -39,6 +40,7 @@ import type {
   PhotolabJournalEntry,
   PhotolabJob,
   PhotoImportBatch,
+  PreparedVideoFrames,
   ProcessingSetRecord,
   PublishedGcpOptimizationEntry,
   ProjectCameraImageRecord,
@@ -108,7 +110,11 @@ import { ImageWorkspace, initialGcpProjection } from './ImageWorkspace.js';
 import { ImagePropertiesPanel } from './ImagePropertiesPanel.js';
 import { SelectionPropertiesPanel } from './SelectionPropertiesPanel.js';
 import { PhotolabBottomPanel, type BottomTab } from './PhotolabBottomPanel.js';
-import { comparePhotolabTreeEntities, splitImageImportPaths } from './photolabFormatting.js';
+import {
+  comparePhotolabTreeEntities,
+  isVideoImportPath,
+  splitImageImportPaths,
+} from './photolabFormatting.js';
 import {
   PhotolabKernelViewport,
   type CameraImageRectangle,
@@ -146,9 +152,17 @@ import {
   requiresFullSceneReset,
   type SceneIdentity,
 } from './viewerLifecycle.js';
+import { VideoFrameImportPanel, type VideoFrameImportProgress } from './VideoFrameImportPanel.js';
+import {
+  DEFAULT_VIDEO_FRAME_PLAN,
+  validateVideoFramePlan,
+  type VideoFramePlanDraft,
+} from './videoFramePlan.js';
 
 const DEFAULT_IMAGE_COUNT = 0;
 const SIDECAR_PROGRESS_PREFIX = '__HC_PROGRESS__';
+const VIDEO_IMPORT_HINT =
+  'Video files are not inspected as still images. Use Images > Video frames… to extract traceable frames.';
 type WorkspaceMode = 'scene' | 'images';
 interface ProjectProductDatasetRecord {
   entityId: EntityId;
@@ -263,6 +277,21 @@ export function App(): JSX.Element {
   const [jobs, setJobs] = useState<readonly PhotolabJob[]>([]);
   const [jobResumeErrors, setJobResumeErrors] = useState<Readonly<Record<string, string>>>({});
   const [imageImportBatch, setImageImportBatch] = useState<PhotoImportBatch | null>(null);
+  const [videoImportHint, setVideoImportHint] = useState<string | null>(null);
+  const [videoSourcePath, setVideoSourcePath] = useState<string | null>(null);
+  const [videoCapabilities, setVideoCapabilities] = useState<CaptureCapabilityInventory | null>(
+    null,
+  );
+  const [videoCapabilitiesBusy, setVideoCapabilitiesBusy] = useState(false);
+  const [videoFramePlan, setVideoFramePlan] = useState<VideoFramePlanDraft>(() => ({
+    ...DEFAULT_VIDEO_FRAME_PLAN,
+  }));
+  const [videoImportBusy, setVideoImportBusy] = useState(false);
+  const [videoImportCancelling, setVideoImportCancelling] = useState(false);
+  const [videoImportProgress, setVideoImportProgress] = useState<VideoFrameImportProgress | null>(
+    null,
+  );
+  const [videoImportError, setVideoImportError] = useState<string | null>(null);
   const [himmelcapImports, setHimmelcapImports] = useState<readonly HcapImportPreview[]>([]);
   const [projectImages, setProjectImages] = useState<readonly ProjectCameraImageRecord[]>([]);
   const [imageQualityAnalyses, setImageQualityAnalyses] = useState<
@@ -331,6 +360,16 @@ export function App(): JSX.Element {
   const jobPollErrorLogged = useRef(false);
   const activeImageCommitId = useRef<string | null>(null);
   const activeImageInspectId = useRef<string | null>(null);
+  const activeVideoOperationId = useRef<string | null>(null);
+  const activeVideoInspectId = useRef<string | null>(null);
+  const activeVideoProgressKey = useRef<{
+    key: string;
+    offset: number;
+    scale: number;
+  } | null>(null);
+  const videoFlowGeneration = useRef(0);
+  const videoFrameImportWasOpen = useRef(false);
+  const projectWorkingPath = useRef<string | null>(null);
   const activeHimmelcapInspectId = useRef<string | null>(null);
   const himmelcapStagingOperationIds = useRef<string[]>([]);
   const activeImageProgressKey = useRef<string | null>(null);
@@ -732,6 +771,7 @@ export function App(): JSX.Element {
         forceReset?: boolean;
       },
     ) => {
+      projectWorkingPath.current = opened.session.workingPath;
       const nextSceneIdentity: SceneIdentity = {
         projectId: opened.manifest.projectId,
         renderOffset: [
@@ -1355,7 +1395,7 @@ export function App(): JSX.Element {
   const inspectImages = useCallback(
     async (source: 'files' | 'folder') => {
       const api = window.himmelcad;
-      if (!api || imageImportBusy) return;
+      if (!api || imageImportBusy || videoImportBusy) return;
       const started = performance.now();
       logEvent(
         'info',
@@ -1366,7 +1406,8 @@ export function App(): JSX.Element {
         const paths =
           source === 'files' ? await api.images.selectFiles() : await api.images.selectFolder();
         if (!paths) return;
-        const { himmelcapPaths, imagePaths } = splitImageImportPaths(paths);
+        const { himmelcapPaths, imagePaths, videoPaths } = splitImageImportPaths(paths);
+        setVideoImportHint(videoPaths.length > 0 ? VIDEO_IMPORT_HINT : null);
         if (himmelcapPaths.length > 0 && !projectReady && !(await createProject())) return;
         for (const [index, path] of himmelcapPaths.entries()) {
           await inspectHimmelcap(path, index > 0, true);
@@ -1395,7 +1436,14 @@ export function App(): JSX.Element {
           progressKey,
         });
         if (!batch) return;
-        setImageImportBatch((previous) => mergePhotoBatches(previous, batch));
+        const containsVideo = batch.warnings.some(
+          (warning) =>
+            warning.code === 'unsupportedFormat' && isVideoImportPath(warning.sourcePath),
+        );
+        if (containsVideo) setVideoImportHint(VIDEO_IMPORT_HINT);
+        if (batch.photos.length > 0 || !containsVideo) {
+          setImageImportBatch((previous) => mergePhotoBatches(previous, batch));
+        }
         logEvent(
           batch.warnings.length > 0 ? 'warn' : 'info',
           'sidecar',
@@ -1418,8 +1466,244 @@ export function App(): JSX.Element {
         setImageImportProgress(null);
       }
     },
-    [createProject, imageImportBusy, inspectHimmelcap, projectReady, releaseHimmelcapStaging],
+    [
+      createProject,
+      imageImportBusy,
+      inspectHimmelcap,
+      projectReady,
+      releaseHimmelcapStaging,
+      videoImportBusy,
+    ],
   );
+
+  const chooseVideoFrames = useCallback(async (): Promise<void> => {
+    const api = window.himmelcad;
+    if (!api || videoImportBusy || videoCapabilitiesBusy) return;
+    const flow = ++videoFlowGeneration.current;
+    try {
+      const sourcePath = await api.capture.selectVideo();
+      if (flow !== videoFlowGeneration.current || !sourcePath) return;
+      setVideoSourcePath(sourcePath);
+      setVideoCapabilities(null);
+      setVideoCapabilitiesBusy(true);
+      setVideoImportError(null);
+      const capabilities = await api.sidecar.call<CaptureCapabilityInventory>(
+        'photolab.capture.capabilities',
+      );
+      if (flow !== videoFlowGeneration.current) return;
+      setVideoCapabilities(capabilities);
+      logEvent(
+        capabilities.ffmpeg.available && capabilities.ffprobe.available ? 'info' : 'warn',
+        'sidecar',
+        capabilities.ffmpeg.available
+          ? `Video runtime checked · FFmpeg ${capabilities.ffmpeg.version ?? 'available'} · FFprobe ${capabilities.ffprobe.available ? 'available' : 'missing'}`
+          : 'Video runtime checked · FFmpeg unavailable',
+      );
+    } catch (error) {
+      if (flow !== videoFlowGeneration.current) return;
+      const message = errorMessage(error);
+      setVideoImportError(message);
+      logEvent('error', 'sidecar', `Video runtime check failed: ${message}`);
+    } finally {
+      if (flow === videoFlowGeneration.current) setVideoCapabilitiesBusy(false);
+    }
+  }, [videoCapabilitiesBusy, videoImportBusy]);
+
+  const openVideoFrameImport = useCallback((): void => {
+    activate('images.videoFrames');
+    if (imageImportBusy || himmelcapImports.length > 0) {
+      setVideoImportError(
+        himmelcapImports.length > 0
+          ? 'Finish or cancel the current Cap import before preparing video frames.'
+          : 'Wait for the current image import operation to finish before preparing video frames.',
+      );
+      return;
+    }
+    void chooseVideoFrames();
+  }, [activate, chooseVideoFrames, himmelcapImports.length, imageImportBusy]);
+
+  const leaveVideoFrameImport = useCallback(
+    (deactivate: boolean): void => {
+      const api = window.himmelcad;
+      const captureOperationId = activeVideoOperationId.current;
+      const inspectOperationId = activeVideoInspectId.current;
+      ++videoFlowGeneration.current;
+      activeVideoOperationId.current = null;
+      activeVideoInspectId.current = null;
+      activeVideoProgressKey.current = null;
+      setVideoSourcePath(null);
+      setVideoCapabilities(null);
+      setVideoCapabilitiesBusy(false);
+      setVideoImportBusy(false);
+      setVideoImportCancelling(false);
+      setVideoImportProgress(null);
+      setVideoImportError(null);
+      setVideoFramePlan({ ...DEFAULT_VIDEO_FRAME_PLAN });
+      if (deactivate) activate(null);
+      if (!api || (!captureOperationId && !inspectOperationId)) return;
+      void Promise.allSettled([
+        ...(captureOperationId
+          ? [api.sidecar.call('photolab.capture.cancel', { operationId: captureOperationId })]
+          : []),
+        ...(inspectOperationId
+          ? [
+              api.sidecar.call('photolab.images.inspect.cancel', {
+                operationId: inspectOperationId,
+              }),
+            ]
+          : []),
+      ]).then((results) => {
+        const rejected = results.find(
+          (result): result is PromiseRejectedResult => result.status === 'rejected',
+        );
+        if (rejected) {
+          logEvent(
+            'error',
+            'sidecar',
+            `Video import cancellation failed: ${errorMessage(rejected.reason)}`,
+          );
+        } else {
+          logEvent('warn', 'sidecar', 'Video frame extraction cancellation requested');
+        }
+      });
+    },
+    [activate],
+  );
+
+  const closeVideoFrameImport = useCallback((): void => {
+    leaveVideoFrameImport(true);
+  }, [leaveVideoFrameImport]);
+
+  const cancelVideoFrameImport = useCallback((): void => {
+    setVideoImportCancelling(true);
+    closeVideoFrameImport();
+  }, [closeVideoFrameImport]);
+
+  useEffect(() => {
+    if (activeFunctionId === 'images.videoFrames') {
+      videoFrameImportWasOpen.current = true;
+      return;
+    }
+    if (!videoFrameImportWasOpen.current) return;
+    videoFrameImportWasOpen.current = false;
+    leaveVideoFrameImport(false);
+  }, [activeFunctionId, leaveVideoFrameImport]);
+
+  const prepareVideoFrames = useCallback(async (): Promise<void> => {
+    const api = window.himmelcad;
+    const validation = validateVideoFramePlan(videoFramePlan);
+    if (
+      !api ||
+      !videoSourcePath ||
+      !videoCapabilities?.ffmpeg.available ||
+      !videoCapabilities.ffprobe.available ||
+      !validation.valid ||
+      videoImportBusy ||
+      imageImportBusy ||
+      himmelcapImports.length > 0
+    ) {
+      return;
+    }
+    if (!projectReady && !(await createProject())) return;
+    const workingPath = projectWorkingPath.current;
+    if (!workingPath) {
+      setVideoImportError('The project working directory is not available.');
+      return;
+    }
+
+    const flow = ++videoFlowGeneration.current;
+    const operationId = `video-frames-${crypto.randomUUID()}`;
+    const captureProgressKey = `video-import:${operationId}:capture`;
+    const artifactRoot = joinNativePath(workingPath, 'tmp', 'video-capture', operationId);
+    activeVideoOperationId.current = operationId;
+    activeVideoProgressKey.current = { key: captureProgressKey, offset: 0, scale: 0.9 };
+    setVideoImportBusy(true);
+    setVideoImportCancelling(false);
+    setVideoImportError(null);
+    setVideoImportProgress({ fraction: 0, message: 'Preparing video capture…' });
+    const started = performance.now();
+    logEvent('info', 'renderer', `Video frame extraction started · ${videoSourcePath}`);
+
+    try {
+      const prepared = await api.sidecar.call<PreparedVideoFrames>(
+        'photolab.capture.video.prepare',
+        {
+          operationId,
+          sourcePath: videoSourcePath,
+          artifactRoot,
+          checkpointPath: joinNativePath(artifactRoot, 'checkpoint.json'),
+          selection: validation.value.policy,
+          progressKey: captureProgressKey,
+        },
+      );
+      if (flow !== videoFlowGeneration.current) return;
+      activeVideoOperationId.current = null;
+
+      const extractedPaths = prepared.images.photos.map((photo) => photo.sourcePath);
+      if (extractedPaths.length === 0) throw new Error('No frames passed the selection policy.');
+      const inspectOperationId = `image-inspect-${crypto.randomUUID()}`;
+      const inspectProgressKey = `video-import:${operationId}:inspect`;
+      activeVideoInspectId.current = inspectOperationId;
+      activeVideoProgressKey.current = { key: inspectProgressKey, offset: 0.9, scale: 0.1 };
+      setVideoImportProgress({ fraction: 0.9, message: 'Inspecting extracted frames…' });
+      const inspected = await api.sidecar.call<PhotoImportBatch>('photolab.images.inspect', {
+        paths: extractedPaths,
+        operationId: inspectOperationId,
+        progressKey: inspectProgressKey,
+      });
+      if (flow !== videoFlowGeneration.current) return;
+      activeVideoInspectId.current = null;
+      activeVideoProgressKey.current = null;
+      const batch = reconcilePreparedVideoFrames(prepared.images, inspected);
+      if (batch.photos.length === 0) {
+        throw new Error('The extracted frames could not be validated as project images.');
+      }
+      setImageImportBatch((previous) => mergePhotoBatches(previous, batch));
+      setHimmelcapImports([]);
+      setImageImportError(null);
+      setVideoImportHint(null);
+      setVideoSourcePath(null);
+      setVideoCapabilities(null);
+      setVideoImportProgress(null);
+      setVideoImportBusy(false);
+      activate(null);
+      logEvent(
+        prepared.selection.rejectedCount > 0 ? 'warn' : 'info',
+        'sidecar',
+        `${prepared.selection.selected.length} video frames ready for image import · ${prepared.selection.rejectedCount} rejected · ${(performance.now() - started).toFixed(1)} ms`,
+      );
+    } catch (error) {
+      if (flow !== videoFlowGeneration.current) return;
+      const message = errorMessage(error);
+      const cancelled = message.toLowerCase().includes('cancel');
+      setVideoImportError(cancelled ? null : message);
+      logEvent(
+        cancelled ? 'warn' : 'error',
+        'sidecar',
+        cancelled
+          ? 'Video frame extraction cancelled; no images were committed'
+          : `Video frame extraction failed: ${message}`,
+      );
+    } finally {
+      if (flow === videoFlowGeneration.current) {
+        activeVideoOperationId.current = null;
+        activeVideoInspectId.current = null;
+        activeVideoProgressKey.current = null;
+        setVideoImportBusy(false);
+        setVideoImportCancelling(false);
+      }
+    }
+  }, [
+    activate,
+    createProject,
+    himmelcapImports.length,
+    imageImportBusy,
+    projectReady,
+    videoCapabilities,
+    videoFramePlan,
+    videoImportBusy,
+    videoSourcePath,
+  ]);
 
   const discoverImageCrs = useCallback(async (query: CrsOperationQuery) => {
     const api = window.himmelcad;
@@ -1525,6 +1809,7 @@ export function App(): JSX.Element {
         setAutosaveGeneration(result.autosaveGeneration);
         setWorkspaceMode('images');
         setImageImportBatch(null);
+        setVideoImportHint(null);
         setHimmelcapImports([]);
         if (himmelcapStagingOperationIds.current.length > 0) {
           try {
@@ -1596,6 +1881,7 @@ export function App(): JSX.Element {
       }
       await releaseHimmelcapStaging();
       setImageImportBatch(null);
+      setVideoImportHint(null);
       setHimmelcapImports([]);
       setImageImportProgress(null);
       setImageImportError(null);
@@ -1795,6 +2081,13 @@ export function App(): JSX.Element {
             phase: current?.phase ?? 'inspect',
             indeterminate: progress.message.startsWith('Scanning folders'),
           }));
+        }
+        const videoProgress = activeVideoProgressKey.current;
+        if (progress.progressKey === videoProgress?.key) {
+          setVideoImportProgress({
+            fraction: videoProgress.offset + progress.fraction * videoProgress.scale,
+            message: progress.message,
+          });
         }
         if (progress.progressKey === activeGridProgressKey.current) {
           setGridSelectionProgress({
@@ -3282,7 +3575,9 @@ export function App(): JSX.Element {
         'avif',
         'mp4',
         'mov',
+        'm4v',
         'mkv',
+        'avi',
         'webm',
       ]);
       const extensions = formats
@@ -3354,6 +3649,7 @@ export function App(): JSX.Element {
         onRecentProjects: () => activate('project.recent'),
         onImportFiles: () => void inspectImages('files'),
         onImportFolder: () => void inspectImages('folder'),
+        onImportVideo: openVideoFrameImport,
         onImportExternal: () => void chooseExternalImports(),
         onImportGcps: () => void chooseGcpCsv(),
         onActivateFunction: activate,
@@ -3363,6 +3659,7 @@ export function App(): JSX.Element {
       chooseGcpCsv,
       createProject,
       inspectImages,
+      openVideoFrameImport,
       openProject,
       saveProject,
       saveProjectAs,
@@ -4024,6 +4321,25 @@ export function App(): JSX.Element {
           />
         </FloatingTaskIsland>
       ) : null}
+      {activeFunctionId === 'images.videoFrames' ? (
+        <FloatingTaskIsland onRequestClose={closeVideoFrameImport}>
+          <VideoFrameImportPanel
+            sourcePath={videoSourcePath}
+            capabilities={videoCapabilities}
+            capabilitiesBusy={videoCapabilitiesBusy}
+            draft={videoFramePlan}
+            busy={videoImportBusy}
+            cancelling={videoImportCancelling}
+            progress={videoImportProgress}
+            error={videoImportError}
+            onDraftChange={setVideoFramePlan}
+            onChooseVideo={() => void chooseVideoFrames()}
+            onPrepare={() => void prepareVideoFrames()}
+            onCancel={cancelVideoFrameImport}
+            onClose={closeVideoFrameImport}
+          />
+        </FloatingTaskIsland>
+      ) : null}
       {externalImportPaths[0] && externalImportSessionRef.current ? (
         <FloatingTaskIsland modal onRequestClose={() => undefined}>
           <PhotolabExternalImportDialog
@@ -4093,26 +4409,32 @@ export function App(): JSX.Element {
           />
         </FloatingTaskIsland>
       )}
-      {(imageImportBusy || imageImportBatch != null || imageImportError != null) && (
-        <FloatingTaskIsland>
-          <ImageImportPanel
-            batch={imageImportBatch}
-            busy={imageImportBusy}
-            progress={imageImportProgress}
-            gridProgress={gridSelectionProgress}
-            error={imageImportError}
-            himmelcapImports={himmelcapImports}
-            onChooseMoreFiles={() => void inspectImages('files')}
-            onChooseFolder={() => void inspectImages('folder')}
-            onChooseHimmelcap={() => void inspectHimmelcap()}
-            onSelectGrid={selectTransformationGrid}
-            onDiscoverCrs={discoverImageCrs}
-            onCommit={commitImageImport}
-            onCancel={() => void cancelImageImport()}
-            onError={reportPanelError}
-          />
-        </FloatingTaskIsland>
-      )}
+      {(imageImportBusy ||
+        imageImportBatch != null ||
+        imageImportError != null ||
+        videoImportHint != null) &&
+        activeFunctionId !== 'images.videoFrames' && (
+          <FloatingTaskIsland onRequestClose={() => void cancelImageImport()}>
+            <ImageImportPanel
+              batch={imageImportBatch}
+              busy={imageImportBusy}
+              progress={imageImportProgress}
+              gridProgress={gridSelectionProgress}
+              error={imageImportError}
+              videoImportHint={videoImportHint}
+              himmelcapImports={himmelcapImports}
+              onChooseMoreFiles={() => void inspectImages('files')}
+              onChooseFolder={() => void inspectImages('folder')}
+              onChooseHimmelcap={() => void inspectHimmelcap()}
+              onChooseVideo={openVideoFrameImport}
+              onSelectGrid={selectTransformationGrid}
+              onDiscoverCrs={discoverImageCrs}
+              onCommit={commitImageImport}
+              onCancel={() => void cancelImageImport()}
+              onError={reportPanelError}
+            />
+          </FloatingTaskIsland>
+        )}
       {gcpImportOpen && (
         <FloatingTaskIsland>
           <GcpImportPanel
@@ -4259,6 +4581,39 @@ function mergePhotoBatches(
     if (!duplicateOf) firstPathByHash.set(photo.sha256, photo.sourcePath);
   }
   return { photos, warnings };
+}
+
+function reconcilePreparedVideoFrames(
+  prepared: PhotoImportBatch,
+  inspected: PhotoImportBatch,
+): PhotoImportBatch {
+  const preparedByHash = new Map(prepared.photos.map((photo) => [photo.sha256, photo]));
+  const photos = inspected.photos.flatMap((photo) => {
+    const derived = preparedByHash.get(photo.sha256);
+    if (!derived) return [];
+    return [
+      {
+        ...photo,
+        captureSource: derived.captureSource,
+        ...(derived.derivedProvenance ? { derivedProvenance: derived.derivedProvenance } : {}),
+      },
+    ];
+  });
+  const warningKeys = new Set<string>();
+  const warnings = [...prepared.warnings, ...inspected.warnings].filter((warning) => {
+    const key = `${warning.sourcePath}\0${warning.code}\0${warning.message}`;
+    if (warningKeys.has(key)) return false;
+    warningKeys.add(key);
+    return true;
+  });
+  return { photos, warnings };
+}
+
+function joinNativePath(root: string, ...parts: string[]): string {
+  const separator = root.includes('\\') ? '\\' : '/';
+  return [root.replace(/[\\/]+$/, ''), ...parts.map((part) => part.replace(/^[\\/]+|[\\/]+$/g, ''))]
+    .filter(Boolean)
+    .join(separator);
 }
 
 function profileLabel(profile: AlignmentQualityProfile): string {
