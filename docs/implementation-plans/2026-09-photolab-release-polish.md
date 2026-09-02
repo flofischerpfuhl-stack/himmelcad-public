@@ -1042,6 +1042,13 @@ Per-run review checklist (the reviewing session):
   targeted hands-on re-test for UX packages.
 - Fix-forward small issues directly; re-dispatch to Codex with the review
   notes for structural misses; every package ends in one commit.
+- Before any end-to-end run (`scripts/photolab-e2e.mjs`, export drivers):
+  `cargo build -p himmelcad-sidecar --bins` from a clean HEAD. `cargo test`
+  does not refresh `target/debug/himmelcad-sidecar` or
+  `himmelcad-portable-mvs` (the package has no integration-test directory),
+  so a stale binary silently tests old code; `cargo clean -p` removes the
+  MVS worker entirely. Write e2e logs outside the `--output` directory —
+  the script recreates that directory and unlinks anything inside it.
 
 Owner-decision flags encoded as defaults in this plan (veto reverses the
 package design, not the finding): report identity (WP-A2: one document),
