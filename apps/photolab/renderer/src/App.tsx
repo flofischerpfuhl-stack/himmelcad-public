@@ -263,7 +263,9 @@ export function App(): JSX.Element {
   const [productStarting, setProductStarting] = useState(false);
   const [productStartError, setProductStartError] = useState<string | null>(null);
   const [batchStarting, setBatchStarting] = useState(false);
-  const [batchRecipeOpen, setBatchRecipeOpen] = useState(false);
+  const [pipelinePreviewSteps, setPipelinePreviewSteps] = useState<
+    readonly BatchPipelineStep[] | null
+  >(null);
   const [processingSetSaving, setProcessingSetSaving] = useState(false);
   const [projectReady, setProjectReady] = useState(false);
   const [recentProjects, setRecentProjects] = useState<readonly RecentProjectAvailability[]>([]);
@@ -407,23 +409,17 @@ export function App(): JSX.Element {
       if (functionId === 'alignment.define') {
         const nextOpen = !defineAlignmentOpen;
         setDefineAlignmentOpen(nextOpen);
-        activateStoredFunction(nextOpen ? functionId : null);
-        if (nextOpen) setRightPanelTab('function');
-        return;
-      }
-      if (functionId === 'batch.configure') {
-        const nextOpen = !batchRecipeOpen;
-        setBatchRecipeOpen(nextOpen);
+        setPipelinePreviewSteps(null);
         activateStoredFunction(nextOpen ? functionId : null);
         if (nextOpen) setRightPanelTab('function');
         return;
       }
       setDefineAlignmentOpen(false);
-      setBatchRecipeOpen(false);
+      setPipelinePreviewSteps(null);
       activateStoredFunction(functionId);
       if (functionId) setRightPanelTab('function');
     },
-    [activateStoredFunction, batchRecipeOpen, defineAlignmentOpen],
+    [activateStoredFunction, defineAlignmentOpen],
   );
 
   const beginWorkingCopyFlush = useCallback((): number => {
@@ -2534,14 +2530,15 @@ export function App(): JSX.Element {
           'sidecar',
           `Batch queued · ${steps.length} nodes · ${scopeLabel} · automatic recovery active`,
         );
-        toggleBottom();
+        setBottomTab('jobs');
+        setBottomCollapsed(false);
       } catch (error) {
         logEvent('error', 'sidecar', `Batch could not start: ${errorMessage(error)}`);
       } finally {
         setBatchStarting(false);
       }
     },
-    [activeProcessingSetId, batchStarting, projectReady, toggleBottom],
+    [activeProcessingSetId, batchStarting, projectReady, setBottomCollapsed],
   );
 
   const startGcpOptimization = useCallback(
@@ -4182,12 +4179,31 @@ export function App(): JSX.Element {
                 processingSets={processingSets}
                 activeProcessingSetId={activeProcessingSetId}
                 gcpOptimizations={gcpOptimizations}
+                artifacts={productDatasets.flatMap((dataset) =>
+                  dataset.kind === 'dem' && dataset.versionHash
+                    ? [
+                        {
+                          entityId: dataset.entityId,
+                          label: `DEM · ${project.entities[dataset.entityId]?.name ?? dataset.entityId}`,
+                          kind: 'dem' as const,
+                          versionHash: dataset.versionHash,
+                        },
+                      ]
+                    : [],
+                )}
+                jobs={jobs}
+                focusQueue={activeFunctionId === 'batch.queue'}
                 localMetric={projectLocalMetric}
                 onActivateProcessingSet={activateProcessingSet}
                 onClearProcessingSet={() => setActiveProcessingSetId(null)}
                 onStart={(steps, cameraEntityIds, scopeLabel) =>
                   void startBatch(steps, cameraEntityIds, scopeLabel)
                 }
+                onPreview={(steps) => setPipelinePreviewSteps([...steps])}
+                onOpenJobs={() => {
+                  setBottomTab('jobs');
+                  setBottomCollapsed(false);
+                }}
                 onError={reportPanelError}
               />
             ) : isProjectDiagnosticsKind(activeFunctionId) ? (
@@ -4639,34 +4655,11 @@ export function App(): JSX.Element {
           />
         </FloatingTaskIsland>
       )}
-      {batchRecipeOpen && (
-        <FloatingTaskIsland modal onRequestClose={() => activate(null)}>
+      {pipelinePreviewSteps && (
+        <FloatingTaskIsland modal onRequestClose={() => setPipelinePreviewSteps(null)}>
           <BatchRecipeDialog
-            busy={batchStarting}
-            allCameraIds={projectImages.map((image) => image.entityId)}
-            selectedCameraIds={selectedCameraIds}
-            processingSets={processingSets}
-            activeProcessingSetId={activeProcessingSetId}
-            artifacts={productDatasets.flatMap((dataset) =>
-              dataset.kind === 'dem' && dataset.versionHash
-                ? [
-                    {
-                      entityId: dataset.entityId,
-                      label: `DEM · ${project.entities[dataset.entityId]?.name ?? dataset.entityId}`,
-                      kind: 'dem' as const,
-                      versionHash: dataset.versionHash,
-                    },
-                  ]
-                : [],
-            )}
-            onActivateProcessingSet={activateProcessingSet}
-            onClearProcessingSet={() => setActiveProcessingSetId(null)}
-            onRun={(steps, cameraEntityIds, scopeLabel) => {
-              void startBatch(steps, cameraEntityIds, scopeLabel);
-              activate(null);
-            }}
-            onClose={() => activate(null)}
-            onError={reportPanelError}
+            steps={pipelinePreviewSteps}
+            onClose={() => setPipelinePreviewSteps(null)}
           />
         </FloatingTaskIsland>
       )}

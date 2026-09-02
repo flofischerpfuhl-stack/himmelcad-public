@@ -1,11 +1,12 @@
 import type {
   EntityId,
   ObjectHash,
+  PhotolabJob,
   ProcessingSetRecord,
   PublishedGcpOptimizationEntry,
 } from '@himmelcad/data';
-import { FileDown, FileUp, Play, RotateCcw } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { FileDown, FileUp, Play, RotateCcw, Workflow } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   alignmentPresetReferenceFromKey,
@@ -15,10 +16,14 @@ import {
   type AlignmentPresetReference,
 } from './alignmentPreset.js';
 import {
-  isBatchAlignmentStep,
-  migrateLegacyBatchAlignmentSteps,
+  BATCH_PIPELINE_FORMAT_VERSION,
+  BATCH_PIPELINE_SCHEMA,
+  decodeBatchProcessingSetValue,
+  encodeBatchProcessingSetValue,
+  loadBatchPipeline,
+  type BatchPipelineFile,
+  type BatchPipelineScope,
   type BatchRecipePipelineStep,
-  type LegacyBatchAlignmentStep,
 } from './batchRecipe.js';
 import styles from './BatchConfiguratorPanel.module.css';
 import {
@@ -28,19 +33,14 @@ import {
 } from './ProductPanel.js';
 import { ExpandChevron, Checkbox, Select } from '@himmelcad/ui';
 
-export interface BatchPipelineFile {
-  formatVersion: 1;
-  name: string;
-  steps: BatchPipelineStep[];
-  scope?: BatchPipelineScope;
-}
-
-export type BatchPipelineScope =
-  | { kind: 'all' }
-  | { kind: 'currentSelection' }
-  | { kind: 'processingSet'; entityId: EntityId; membershipSha256: ObjectHash };
-
 export type BatchPipelineStep = BatchRecipePipelineStep;
+
+export interface BatchArtifactCandidate {
+  entityId: EntityId;
+  label: string;
+  kind: 'dem';
+  versionHash: ObjectHash;
+}
 
 interface BatchConfiguratorPanelProps {
   busy: boolean;
@@ -50,6 +50,9 @@ interface BatchConfiguratorPanelProps {
   processingSets: readonly ProcessingSetRecord[];
   activeProcessingSetId: EntityId | null;
   gcpOptimizations: readonly PublishedGcpOptimizationEntry[];
+  artifacts: readonly BatchArtifactCandidate[];
+  jobs: readonly PhotolabJob[];
+  focusQueue: boolean;
   localMetric: boolean;
   onActivateProcessingSet: (processingSetId: EntityId) => void;
   onClearProcessingSet: () => void;
@@ -58,6 +61,8 @@ interface BatchConfiguratorPanelProps {
     cameraEntityIds: readonly EntityId[],
     scopeLabel: string,
   ) => void;
+  onPreview: (steps: readonly BatchPipelineStep[]) => void;
+  onOpenJobs: () => void;
   onError: (message: string) => void;
 }
 
@@ -71,16 +76,23 @@ export function BatchConfiguratorPanel({
   processingSets,
   activeProcessingSetId,
   gcpOptimizations,
+  artifacts,
+  jobs,
+  focusQueue,
   localMetric,
   onActivateProcessingSet,
   onClearProcessingSet,
   onStart,
+  onPreview,
+  onOpenJobs,
   onError,
 }: BatchConfiguratorPanelProps): JSX.Element {
   const [file, setFile] = useState<BatchPipelineFile>(createDefaultBatch);
   const [expanded, setExpanded] = useState<string | null>('alignment');
   const [batchError, setBatchError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [userPresets, setUserPresets] = useState<Array<{ name: string; path: string }>>([]);
+  const queueSectionRef = useRef<HTMLElement | null>(null);
   const scope = scopeValue(file.scope);
   const enabledKinds = useMemo(() => new Set(file.steps.map(stepKey)), [file.steps]);
   const selectedAlignmentReference = alignmentStep(file.steps)?.preset;
@@ -150,6 +162,11 @@ export function BatchConfiguratorPanel({
     setFile((current) => ({ ...current, scope: processingSetScope(processingSet) }));
   }, [activeProcessingSetId, processingSets]);
 
+  useEffect(() => {
+    if (!focusQueue) return;
+    queueSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [focusQueue]);
+
   const toggle = (key: string, enabled: boolean) => {
     setFile((current) => {
       if (!enabled) {
@@ -206,21 +223,20 @@ export function BatchConfiguratorPanel({
 
   const load = async () => {
     setBatchError(null);
+    setNotice(null);
     try {
       const loaded = await window.himmelcad?.batch.load<unknown>();
       if (loaded == null) return;
-      if (!isBatchPipelineFile(loaded))
-        throw new Error('The batch file does not use a supported PhotoLab format.');
-      const migration = migrateLegacyBatchAlignmentSteps(loaded.steps);
+      const migration = loadBatchPipeline(loaded);
+      if (!migration) throw new Error('The batch file does not use a supported PhotoLab format.');
       for (const profile of migration.migratedProfiles) {
         console.info(
           `[PhotoLab] Loaded a legacy batch alignment profile and mapped it to the built-in ${profile} preset.`,
         );
       }
       const normalized: BatchPipelineFile = {
-        ...loaded,
-        steps: normalizeSteps(migration.steps),
-        scope: loaded.scope ?? { kind: 'all' },
+        ...migration.file,
+        steps: normalizeSteps(migration.file.steps),
       };
       const loadedScope = normalized.scope;
       if (loadedScope?.kind === 'processingSet') {
@@ -236,6 +252,7 @@ export function BatchConfiguratorPanel({
         onClearProcessingSet();
       }
       setFile(normalized);
+      setNotice(migration.notices.join(' · ') || null);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setBatchError(message);
@@ -245,6 +262,7 @@ export function BatchConfiguratorPanel({
 
   const save = async () => {
     setBatchError(null);
+    setNotice(null);
     try {
       await window.himmelcad?.batch.save(file);
     } catch (error) {
@@ -274,7 +292,7 @@ export function BatchConfiguratorPanel({
           onChange={(event) => {
             const value = event.currentTarget.value;
             setBatchError(null);
-            const processingSetId = decodeProcessingSetValue(value);
+            const processingSetId = decodeBatchProcessingSetValue(value);
             if (processingSetId) {
               const processingSet = processingSets.find(
                 (candidate) => candidate.entityId === processingSetId,
@@ -300,7 +318,7 @@ export function BatchConfiguratorPanel({
               {processingSets.map((processingSet) => (
                 <option
                   key={processingSet.entityId}
-                  value={encodeProcessingSetValue(processingSet.entityId)}
+                  value={encodeBatchProcessingSetValue(processingSet.entityId)}
                 >
                   {processingSet.name} · {processingSet.cameraEntityIds.length}
                 </option>
@@ -326,6 +344,11 @@ export function BatchConfiguratorPanel({
             'The saved processing set is missing or its membership hash does not match.'}
         </div>
       )}
+      {notice && (
+        <div className={styles.notice} role="status">
+          {notice}
+        </div>
+      )}
 
       <div className={styles.toolbar}>
         <button type="button" disabled={busy} onClick={() => void load()}>
@@ -340,10 +363,18 @@ export function BatchConfiguratorPanel({
           onClick={() => {
             setFile(createDefaultBatch());
             setBatchError(null);
+            setNotice(null);
             onClearProcessingSet();
           }}
         >
           <RotateCcw size={14} /> Defaults
+        </button>
+        <button
+          type="button"
+          disabled={file.steps.length === 0}
+          onClick={() => onPreview(file.steps)}
+        >
+          <Workflow size={14} /> Pipeline preview
         </button>
       </div>
 
@@ -388,6 +419,8 @@ export function BatchConfiguratorPanel({
           </label>
         </BatchCard>
 
+        <UnavailableBatchCard label="GCP optimization" />
+
         {OPERATIONS.map((operation) => {
           const step = productStep(file.steps, operation);
           const configuration = step?.configuration ?? defaultProductConfiguration(operation);
@@ -408,10 +441,20 @@ export function BatchConfiguratorPanel({
                 value={step?.gcpOptimizationEntityId}
                 onChange={(value) => updateProductGcp(operation, value)}
               />
+              {configuration.kind === 'ortho' && (
+                <ExternalDemField
+                  configuration={configuration}
+                  artifacts={artifacts}
+                  onChange={updateProduct}
+                />
+              )}
               <ProductBatchFields configuration={configuration} onChange={updateProduct} />
             </BatchCard>
           );
         })}
+        {(['Export', 'Report'] as const).map((label) => (
+          <UnavailableBatchCard key={label} label={label} />
+        ))}
       </div>
 
       <button
@@ -428,8 +471,137 @@ export function BatchConfiguratorPanel({
       >
         <Play size={15} /> {busy ? 'Queueing batch…' : 'Start / resume batch'}
       </button>
+
+      <BatchQueueSection
+        sectionRef={queueSectionRef}
+        jobs={jobs.filter((job) => job.kind === 'batch')}
+        onOpenJobs={onOpenJobs}
+      />
     </div>
   );
+}
+
+function ExternalDemField({
+  configuration,
+  artifacts,
+  onChange,
+}: {
+  configuration: Extract<ProductRunConfiguration, { kind: 'ortho' }>;
+  artifacts: readonly BatchArtifactCandidate[];
+  onChange: (configuration: ProductRunConfiguration) => void;
+}): JSX.Element {
+  const referencedArtifact = artifacts.find(
+    (artifact) =>
+      artifact.entityId === configuration.sourceDemEntityId &&
+      artifact.versionHash === configuration.sourceDemVersionSha256,
+  );
+  const hasUnavailableReference = Boolean(configuration.sourceDemEntityId && !referencedArtifact);
+  return (
+    <label className={styles.field}>
+      <span>External DEM</span>
+      <Select
+        value={referencedArtifact?.entityId ?? (hasUnavailableReference ? 'unavailable' : '')}
+        onChange={(event) => {
+          const artifact = artifacts.find(
+            (candidate) => candidate.entityId === event.currentTarget.value,
+          );
+          if (artifact) {
+            onChange({
+              ...configuration,
+              sourceDemEntityId: artifact.entityId,
+              sourceDemVersionSha256: artifact.versionHash,
+            });
+            return;
+          }
+          const {
+            sourceDemEntityId: _entityId,
+            sourceDemVersionSha256: _versionHash,
+            ...withoutBinding
+          } = configuration;
+          onChange(withoutBinding);
+        }}
+      >
+        <option value="">Use a DEM built by this pipeline</option>
+        {hasUnavailableReference && (
+          <option value="unavailable" disabled>
+            Referenced DEM is unavailable
+          </option>
+        )}
+        {artifacts.map((artifact) => (
+          <option key={artifact.entityId} value={artifact.entityId}>
+            {artifact.label} · {artifact.versionHash.slice(0, 10)}
+          </option>
+        ))}
+      </Select>
+    </label>
+  );
+}
+
+function UnavailableBatchCard({ label }: { label: string }): JSX.Element {
+  return (
+    <section className={`${styles.card} ${styles.unavailableCard}`} aria-disabled="true">
+      <div className={styles.cardHeader}>
+        <span className={styles.placeholderCheck} aria-hidden="true" />
+        <div className={styles.unavailableContent}>
+          <strong>{label}</strong>
+          <small>Available with the next release — see plan WP-C6b</small>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BatchQueueSection({
+  sectionRef,
+  jobs,
+  onOpenJobs,
+}: {
+  sectionRef: React.RefObject<HTMLElement | null>;
+  jobs: readonly PhotolabJob[];
+  onOpenJobs: () => void;
+}): JSX.Element {
+  const orderedJobs = [...jobs].sort(
+    (left, right) =>
+      right.createdAtUnixMs - left.createdAtUnixMs || right.id.localeCompare(left.id),
+  );
+  return (
+    <section ref={sectionRef} className={styles.queueSection} tabIndex={-1}>
+      <div className={styles.queueHeader}>
+        <div>
+          <strong>Queued / running batches</strong>
+          <span>
+            {orderedJobs.length === 0 ? 'No batch jobs yet' : `${orderedJobs.length} batch jobs`}
+          </span>
+        </div>
+        <button type="button" onClick={onOpenJobs}>
+          Open Jobs tab
+        </button>
+      </div>
+      {orderedJobs.length > 0 && (
+        <ul className={styles.queueList}>
+          {orderedJobs.map((job) => (
+            <li key={job.id}>
+              <code title={job.id}>{job.id.slice(0, 18)}</code>
+              <span>{batchJobStateLabel(job)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function batchJobStateLabel(job: PhotolabJob): string {
+  if (job.state.kind === 'failed') return `Failed · ${job.state.code}`;
+  return {
+    queued: 'Queued',
+    running: 'Running',
+    pauseRequested: 'Pause requested',
+    paused: 'Paused',
+    cancelRequested: 'Cancellation requested',
+    cancelled: 'Cancelled',
+    completed: 'Completed',
+  }[job.state.kind];
 }
 
 function omitProductGcpSelection(
@@ -481,18 +653,6 @@ function GcpOptimizationField({
       </Select>
     </label>
   );
-}
-
-const PROCESSING_SET_PREFIX = 'processing-set:';
-
-function encodeProcessingSetValue(entityId: EntityId): string {
-  return `${PROCESSING_SET_PREFIX}${entityId}`;
-}
-
-function decodeProcessingSetValue(value: string): EntityId | null {
-  return value.startsWith(PROCESSING_SET_PREFIX)
-    ? (value.slice(PROCESSING_SET_PREFIX.length) as EntityId)
-    : null;
 }
 
 function BatchCard({
@@ -875,7 +1035,8 @@ function TileField({
 
 export function createDefaultBatch(): BatchPipelineFile {
   return {
-    formatVersion: 1,
+    schema: BATCH_PIPELINE_SCHEMA,
+    formatVersion: BATCH_PIPELINE_FORMAT_VERSION,
     name: 'Standard Photogrammetry',
     scope: { kind: 'all' },
     steps: [
@@ -911,34 +1072,6 @@ function productStep(
       step.kind === 'product' && step.configuration.kind === kind,
   );
 }
-type LoadableBatchPipelineStep = BatchPipelineStep | LegacyBatchAlignmentStep;
-type LoadableBatchPipelineFile = Omit<BatchPipelineFile, 'steps'> & {
-  steps: LoadableBatchPipelineStep[];
-};
-
-function isBatchPipelineFile(value: unknown): value is LoadableBatchPipelineFile {
-  if (!value || typeof value !== 'object') return false;
-  const candidate = value as Partial<LoadableBatchPipelineFile>;
-  return (
-    candidate.formatVersion === 1 &&
-    typeof candidate.name === 'string' &&
-    Array.isArray(candidate.steps) &&
-    candidate.steps.every((step) => isBatchStep(step)) &&
-    (candidate.scope == null || isBatchPipelineScope(candidate.scope))
-  );
-}
-
-function isBatchPipelineScope(value: unknown): value is BatchPipelineScope {
-  if (!value || typeof value !== 'object') return false;
-  const scope = value as Record<string, unknown>;
-  if (scope.kind === 'all' || scope.kind === 'currentSelection') return true;
-  return (
-    scope.kind === 'processingSet' &&
-    typeof scope.entityId === 'string' &&
-    typeof scope.membershipSha256 === 'string'
-  );
-}
-
 function processingSetScope(processingSet: ProcessingSetRecord): BatchPipelineScope {
   return {
     kind: 'processingSet',
@@ -950,22 +1083,7 @@ function processingSetScope(processingSet: ProcessingSetRecord): BatchPipelineSc
 function scopeValue(scope: BatchPipelineScope | undefined): string {
   if (!scope || scope.kind === 'all') return 'all';
   if (scope.kind === 'currentSelection') return 'selection';
-  return encodeProcessingSetValue(scope.entityId);
-}
-function isBatchStep(value: unknown): value is LoadableBatchPipelineStep {
-  if (!value || typeof value !== 'object') return false;
-  const step = value as Record<string, unknown>;
-  if (step.kind === 'alignment') return isBatchAlignmentStep(step);
-  if (step.kind !== 'product' || !step.configuration || typeof step.configuration !== 'object')
-    return false;
-  const operation = (step.configuration as { kind?: unknown }).kind;
-  return (
-    typeof operation === 'string' &&
-    OPERATIONS.some((candidate) => candidate === operation) &&
-    (step.gcpOptimizationEntityId === undefined ||
-      step.gcpOptimizationEntityId === null ||
-      typeof step.gcpOptimizationEntityId === 'string')
-  );
+  return encodeBatchProcessingSetValue(scope.entityId);
 }
 function productLabel(operation: ProductOperation): string {
   return {

@@ -8,11 +8,25 @@ import {
   type AlignmentPresetFile,
   type AlignmentPresetReference,
 } from './alignmentPreset.js';
-
 import {
   defaultProductConfiguration,
+  type ProductOperation,
   type ProductRunConfiguration,
 } from './productConfiguration.js';
+import { productPrerequisiteArtifactGroups } from './productPrerequisites.js';
+
+export const BATCH_PIPELINE_SCHEMA = 'himmelcad.photolab.batch-pipeline';
+export const BATCH_PIPELINE_FORMAT_VERSION = 2;
+export const BATCH_PROCESSING_SET_PREFIX = 'processing-set:';
+
+const PRODUCT_OPERATIONS: readonly ProductOperation[] = [
+  'depth',
+  'dense',
+  'dem',
+  'ortho',
+  'mesh',
+  'splat',
+];
 
 export type BatchRecipePipelineStep =
   | { kind: 'alignment'; preset: AlignmentPresetReference }
@@ -25,6 +39,29 @@ export type BatchRecipePipelineStep =
 export interface LegacyBatchAlignmentStep {
   kind: 'alignment';
   profile: AlignmentQualityProfile;
+}
+
+export type BatchPipelineScope =
+  | { kind: 'all' }
+  | { kind: 'currentSelection' }
+  | { kind: 'processingSet'; entityId: EntityId; membershipSha256: ObjectHash };
+
+/**
+ * The schema discriminator distinguishes the current pipeline from the retired
+ * formatVersion 2 recipeTemplate file. Version 1 pipelines had no discriminator.
+ */
+export interface BatchPipelineFile {
+  schema: typeof BATCH_PIPELINE_SCHEMA;
+  formatVersion: typeof BATCH_PIPELINE_FORMAT_VERSION;
+  name: string;
+  steps: BatchRecipePipelineStep[];
+  scope: BatchPipelineScope;
+}
+
+export interface LoadedBatchPipeline {
+  file: BatchPipelineFile;
+  notices: string[];
+  migratedProfiles: AlignmentQualityProfile[];
 }
 
 export interface ResolvedBatchAlignmentPreset {
@@ -42,101 +79,98 @@ export type ResolvedBatchPipelineStep =
       gcpOptimizationEntityId?: EntityId | null;
     };
 
-export interface BatchRecipeCanvasNode {
-  id: string;
-  label: string;
-  kind: 'alignment' | 'depth' | 'dense' | 'dem' | 'ortho' | 'mesh' | 'splat';
-  position: { x: number; y: number };
-  inputs: readonly string[];
-  output: string;
+export interface BatchPipelineEdge {
+  from: number;
+  to: number;
+  artifact: 'alignment' | 'depth' | 'dense' | 'dem';
 }
 
-export interface BatchRecipeCanvasEdge {
-  from: string;
-  to: string;
-  artifact: string;
+export function encodeBatchProcessingSetValue(entityId: EntityId): string {
+  return `${BATCH_PROCESSING_SET_PREFIX}${entityId}`;
 }
 
-export interface BatchRecipeTemplateFile {
-  formatVersion: 2;
-  lifecycle: 'recipeTemplate';
-  name: string;
-  preset: BatchRecipePreset;
-  nodes: BatchRecipeCanvasNode[];
-  edges: BatchRecipeCanvasEdge[];
+export function decodeBatchProcessingSetValue(value: string): EntityId | null {
+  return value.startsWith(BATCH_PROCESSING_SET_PREFIX)
+    ? (value.slice(BATCH_PROCESSING_SET_PREFIX.length) as EntityId)
+    : null;
 }
 
-export type BatchRecipePreset = 'allProducts' | 'orthomosaicExternalDem';
-
-export function graphForBatchRecipePreset(preset: BatchRecipePreset): {
-  nodes: BatchRecipeCanvasNode[];
-  edges: BatchRecipeCanvasEdge[];
-} {
-  if (preset === 'orthomosaicExternalDem') {
+export function loadBatchPipeline(value: unknown): LoadedBatchPipeline | null {
+  if (isCurrentBatchPipelineFile(value)) {
+    return { file: value, notices: [], migratedProfiles: [] };
+  }
+  if (isLegacyBatchPipelineFile(value)) {
+    const migration = migrateLegacyBatchAlignmentSteps(value.steps);
     return {
-      nodes: [
-        node('alignment', 'Align Photos', 'alignment', 50, 145, [], 'alignment'),
-        node(
-          'ortho',
-          'Orthomosaic',
-          'ortho',
-          510,
-          145,
-          ['alignment', 'images', 'dem'],
-          'orthomosaic',
-        ),
-      ],
-      edges: [{ from: 'alignment', to: 'ortho', artifact: 'alignment' }],
+      file: {
+        schema: BATCH_PIPELINE_SCHEMA,
+        formatVersion: BATCH_PIPELINE_FORMAT_VERSION,
+        name: value.name,
+        steps: migration.steps,
+        scope: value.scope ?? { kind: 'all' },
+      },
+      notices: ['Updated batch pipeline to format version 2'],
+      migratedProfiles: migration.migratedProfiles,
     };
   }
+  if (!isLegacyRecipeTemplateFile(value)) return null;
+
   return {
-    nodes: [
-      node('alignment', 'Align Photos', 'alignment', 30, 190, [], 'alignment'),
-      node('depth', 'Depth Maps', 'depth', 180, 80, ['alignment'], 'depthMaps'),
-      node('dense', 'Dense Cloud', 'dense', 330, 80, ['depthMaps'], 'densePointCloud'),
-      node('dem', 'DEM', 'dem', 480, 30, ['densePointCloud'], 'dem'),
-      node('ortho', 'Orthomosaic', 'ortho', 650, 30, ['alignment', 'images', 'dem'], 'orthomosaic'),
-      node('mesh', 'Mesh', 'mesh', 480, 210, ['densePointCloud'], 'mesh'),
-      node('splat', 'Gaussian Splat', 'splat', 650, 210, ['mesh'], 'gaussianSplat'),
-    ],
-    edges: [
-      { from: 'alignment', to: 'depth', artifact: 'alignment' },
-      { from: 'depth', to: 'dense', artifact: 'depthMaps' },
-      { from: 'dense', to: 'dem', artifact: 'densePointCloud' },
-      { from: 'dem', to: 'ortho', artifact: 'dem' },
-      { from: 'dense', to: 'mesh', artifact: 'densePointCloud' },
-      { from: 'mesh', to: 'splat', artifact: 'mesh' },
-    ],
+    file: {
+      schema: BATCH_PIPELINE_SCHEMA,
+      formatVersion: BATCH_PIPELINE_FORMAT_VERSION,
+      name: value.name,
+      steps: migrateLegacyRecipeSteps(value),
+      scope: { kind: 'all' },
+    },
+    notices: ['Migrated from recipe template'],
+    migratedProfiles: [],
   };
 }
 
-export function instantiateBatchRecipe(
-  preset: BatchRecipePreset,
-  demEntityId?: EntityId,
-  demVersionSha256?: ObjectHash,
-): BatchRecipePipelineStep[] {
-  const alignment: BatchRecipePipelineStep = {
-    kind: 'alignment',
-    preset: builtInAlignmentPresetReference('qualityHybrid'),
-  };
-  if (preset === 'orthomosaicExternalDem') {
-    const configuration = {
-      ...defaultProductConfiguration('ortho'),
-      ...(demEntityId && demVersionSha256
-        ? { sourceDemEntityId: demEntityId, sourceDemVersionSha256: demVersionSha256 }
-        : {}),
-    } satisfies ProductRunConfiguration;
-    return [alignment, { kind: 'product', configuration }];
-  }
-  return [
-    alignment,
-    ...(['depth', 'dense', 'dem', 'ortho', 'mesh', 'splat'] as const).map(
-      (operation): BatchRecipePipelineStep => ({
-        kind: 'product',
-        configuration: defaultProductConfiguration(operation),
-      }),
-    ),
-  ];
+export function deriveBatchPipelineEdges(
+  steps: readonly BatchRecipePipelineStep[],
+): BatchPipelineEdge[] {
+  const alignmentIndex = steps.findIndex((step) => step.kind === 'alignment');
+  const productIndex = new Map<ProductOperation, number>();
+  steps.forEach((step, index) => {
+    if (step.kind === 'product') productIndex.set(step.configuration.kind, index);
+  });
+
+  const edges: BatchPipelineEdge[] = [];
+  steps.forEach((step, to) => {
+    if (step.kind !== 'product') return;
+    if (alignmentIndex >= 0) edges.push({ from: alignmentIndex, to, artifact: 'alignment' });
+
+    const externalDemBound =
+      step.configuration.kind === 'ortho' && Boolean(step.configuration.sourceDemEntityId);
+    const meshSourceKinds =
+      step.configuration.kind === 'mesh' && step.configuration.sourceDemEntityId
+        ? ([] as const)
+        : (['dem'] as const);
+    const prerequisiteGroups = productPrerequisiteArtifactGroups(step.configuration.kind, {
+      externalDemBound,
+      meshSourceKinds,
+    });
+    for (const group of prerequisiteGroups) {
+      const source = group
+        .map((artifact) => ({
+          artifact,
+          index:
+            artifact === 'depthReuse'
+              ? productIndex.get('depth')
+              : productIndex.get(artifact as ProductOperation),
+        }))
+        .find((candidate) => candidate.index !== undefined);
+      if (!source || source.index === undefined || source.index === to) continue;
+      edges.push({
+        from: source.index,
+        to,
+        artifact: source.artifact === 'depthReuse' ? 'depth' : source.artifact,
+      });
+    }
+  });
+  return edges;
 }
 
 export function migrateLegacyBatchAlignmentSteps(
@@ -197,9 +231,103 @@ export function isBatchAlignmentStep(
   );
 }
 
-export function isBatchRecipeTemplateFile(value: unknown): value is BatchRecipeTemplateFile {
-  if (typeof value !== 'object' || value === null) return false;
-  const candidate = value as Partial<BatchRecipeTemplateFile>;
+function migrateLegacyRecipeSteps(template: Record<string, unknown>): BatchRecipePipelineStep[] {
+  const alignment: BatchRecipePipelineStep = {
+    kind: 'alignment',
+    preset: builtInAlignmentPresetReference('qualityHybrid'),
+  };
+  if (template.preset !== 'orthomosaicExternalDem') {
+    return [
+      alignment,
+      ...PRODUCT_OPERATIONS.map(
+        (operation): BatchRecipePipelineStep => ({
+          kind: 'product',
+          configuration: defaultProductConfiguration(operation),
+        }),
+      ),
+    ];
+  }
+
+  const configuration = defaultProductConfiguration('ortho');
+  const binding = legacyDemBinding(template);
+  return [
+    alignment,
+    {
+      kind: 'product',
+      configuration: binding ? { ...configuration, ...binding } : configuration,
+    },
+  ];
+}
+
+function legacyDemBinding(
+  template: Record<string, unknown>,
+): Pick<
+  Extract<ProductRunConfiguration, { kind: 'ortho' }>,
+  'sourceDemEntityId' | 'sourceDemVersionSha256'
+> | null {
+  const nodes = Array.isArray(template.nodes) ? template.nodes : [];
+  const candidates = [
+    template.externalDemBinding,
+    template.demBinding,
+    ...nodes.flatMap((node) => {
+      if (!node || typeof node !== 'object') return [];
+      const record = node as Record<string, unknown>;
+      return [record.binding, record.configuration, record];
+    }),
+  ];
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const record = candidate as Record<string, unknown>;
+    const entityId = record.sourceDemEntityId ?? record.entityId;
+    const version = record.sourceDemVersionSha256 ?? record.versionSha256 ?? record.versionHash;
+    if (typeof entityId === 'string' && typeof version === 'string') {
+      return {
+        sourceDemEntityId: entityId as EntityId,
+        sourceDemVersionSha256: version as ObjectHash,
+      };
+    }
+  }
+  return null;
+}
+
+function isCurrentBatchPipelineFile(value: unknown): value is BatchPipelineFile {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<BatchPipelineFile>;
+  return (
+    candidate.schema === BATCH_PIPELINE_SCHEMA &&
+    candidate.formatVersion === BATCH_PIPELINE_FORMAT_VERSION &&
+    typeof candidate.name === 'string' &&
+    Array.isArray(candidate.steps) &&
+    candidate.steps.every(isBatchStep) &&
+    isBatchPipelineScope(candidate.scope)
+  );
+}
+
+type LoadableBatchPipelineStep = BatchRecipePipelineStep | LegacyBatchAlignmentStep;
+interface LegacyBatchPipelineFile {
+  formatVersion: 1;
+  name: string;
+  steps: LoadableBatchPipelineStep[];
+  scope?: BatchPipelineScope;
+}
+
+function isLegacyBatchPipelineFile(value: unknown): value is LegacyBatchPipelineFile {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<LegacyBatchPipelineFile>;
+  return (
+    candidate.formatVersion === 1 &&
+    typeof candidate.name === 'string' &&
+    Array.isArray(candidate.steps) &&
+    candidate.steps.every(isBatchStep) &&
+    (candidate.scope == null || isBatchPipelineScope(candidate.scope))
+  );
+}
+
+function isLegacyRecipeTemplateFile(
+  value: unknown,
+): value is Record<string, unknown> & { name: string } {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
   return (
     candidate.formatVersion === 2 &&
     candidate.lifecycle === 'recipeTemplate' &&
@@ -210,14 +338,30 @@ export function isBatchRecipeTemplateFile(value: unknown): value is BatchRecipeT
   );
 }
 
-function node(
-  id: string,
-  label: string,
-  kind: BatchRecipeCanvasNode['kind'],
-  x: number,
-  y: number,
-  inputs: string[],
-  output: string,
-): BatchRecipeCanvasNode {
-  return { id, label, kind, position: { x, y }, inputs, output };
+function isBatchPipelineScope(value: unknown): value is BatchPipelineScope {
+  if (!value || typeof value !== 'object') return false;
+  const scope = value as Record<string, unknown>;
+  if (scope.kind === 'all' || scope.kind === 'currentSelection') return true;
+  return (
+    scope.kind === 'processingSet' &&
+    typeof scope.entityId === 'string' &&
+    typeof scope.membershipSha256 === 'string'
+  );
+}
+
+function isBatchStep(value: unknown): value is LoadableBatchPipelineStep {
+  if (!value || typeof value !== 'object') return false;
+  const step = value as Record<string, unknown>;
+  if (step.kind === 'alignment') return isBatchAlignmentStep(step);
+  if (step.kind !== 'product' || !step.configuration || typeof step.configuration !== 'object') {
+    return false;
+  }
+  const operation = (step.configuration as { kind?: unknown }).kind;
+  return (
+    typeof operation === 'string' &&
+    PRODUCT_OPERATIONS.some((candidate) => candidate === operation) &&
+    (step.gcpOptimizationEntityId === undefined ||
+      step.gcpOptimizationEntityId === null ||
+      typeof step.gcpOptimizationEntityId === 'string')
+  );
 }

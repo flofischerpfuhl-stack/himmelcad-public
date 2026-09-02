@@ -17,6 +17,29 @@ export interface ProductPrerequisiteDecision {
   actionFunctionId?: string;
 }
 
+export interface ProductPrerequisiteOptions {
+  externalDemBound: boolean;
+  meshSourceKinds: readonly Extract<ProductPrerequisiteArtifact, 'dem' | 'dense'>[];
+}
+
+/**
+ * Artifact alternatives for each prerequisite gate. Every returned group must
+ * have at least one available artifact. Alignment is a shared prerequisite for
+ * every product and is intentionally represented separately by callers.
+ */
+export function productPrerequisiteArtifactGroups(
+  kind: ProductOperation,
+  options: ProductPrerequisiteOptions,
+): readonly (readonly ProductPrerequisiteArtifact[])[] {
+  if (kind === 'depth' || kind === 'splat') return [];
+  if (kind === 'dense') return [['depth', 'depthReuse']];
+  if (kind === 'dem') return [['dense']];
+  if (kind === 'ortho') {
+    return options.externalDemBound ? [['dense']] : [['dense'], ['dem']];
+  }
+  return [options.meshSourceKinds];
+}
+
 export function evaluateProductPrerequisites(
   kind: ProductOperation,
   status: ProductPrerequisiteStatus,
@@ -35,9 +58,10 @@ export function evaluateProductPrerequisites(
       'alignment.optimize',
     );
   }
-  if (kind === 'depth' || kind === 'splat') return { met: true };
+  const prerequisiteGroups = productPrerequisiteArtifactGroups(kind, status);
+  if (prerequisiteGroups.length === 0) return { met: true };
   if (kind === 'dense') {
-    if (hasAny(status, ['depth', 'depthReuse'])) return { met: true };
+    if (hasAny(status, prerequisiteGroups[0] ?? [])) return { met: true };
     return missing(
       'Dense point clouds need compatible depth maps.',
       'Build depth maps first',
@@ -45,7 +69,7 @@ export function evaluateProductPrerequisites(
     );
   }
   if (kind === 'dem') {
-    if (status.availableArtifacts.has('dense')) return { met: true };
+    if (hasAny(status, prerequisiteGroups[0] ?? [])) return { met: true };
     return missing(
       'DEMs need a dense point cloud from this alignment lineage.',
       'Build a dense point cloud first',
@@ -53,21 +77,21 @@ export function evaluateProductPrerequisites(
     );
   }
   if (kind === 'ortho') {
-    if (!status.availableArtifacts.has('dense')) {
+    if (!hasAny(status, prerequisiteGroups[0] ?? [])) {
       return missing(
         'Orthomosaics need a dense point cloud from this alignment lineage.',
         'Build a dense point cloud first',
         'products.dense',
       );
     }
-    if (status.externalDemBound || status.availableArtifacts.has('dem')) return { met: true };
+    if (prerequisiteGroups.slice(1).every((group) => hasAny(status, group))) return { met: true };
     return missing(
       'Orthomosaics need a DEM unless an external DEM is bound.',
       'Build a DEM first',
       'products.dem',
     );
   }
-  if (hasAny(status, status.meshSourceKinds)) return { met: true };
+  if (hasAny(status, prerequisiteGroups[0] ?? [])) return { met: true };
   const denseAllowed = status.meshSourceKinds.includes('dense');
   return missing(
     denseAllowed
