@@ -918,6 +918,20 @@ rest as tracked exceptions.
 Acceptance criteria: axe pass wired and green with a documented exception
 list; keyboard focus visibly reaches every ribbon tab and panel control.
 
+### WP-F3b — Accessibility remediation at the root causes (Size M)
+
+First full axe-core run (2026-09-02, 84 surfaces, both viewports): 766
+critical + 2 035 serious findings, collapsing into four root causes —
+`aria-required-parent` (588, 5 selectors: the shared entity tree nests
+`treeitem` without `role="group"`), `label` (178, 14 selectors: shared
+checkbox/radio/toggle inputs without accessible names), `color-contrast`
+(2 033, 163 selectors: muted text, inactive tabs, panel headings and status
+text below 4.5:1 — a theme-token issue), and `aria-progressbar-name` (2).
+Remediation lives in `@himmelcad/ui` and `@himmelcad/theme` (shared with
+Builder; behaviour-preserving). Exceptions are recorded only by the
+reviewer. Acceptance: serious + critical at or near zero with every remainder
+justified; layout invariants and pixel baselines regenerated afterwards.
+
 ### WP-F4 — Windows delivery and signing (owner decision, not codable)
 
 Native-Windows install certification needs a Windows machine (ADR 0013
