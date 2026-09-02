@@ -2,6 +2,9 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+pub(crate) static CANCELLATION_TIMING_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub mod alignment_merge_runtime;
 pub mod automation_runtime;
 pub mod brush_runtime;

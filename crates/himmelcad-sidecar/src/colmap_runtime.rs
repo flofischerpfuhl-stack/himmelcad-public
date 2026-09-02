@@ -6304,6 +6304,9 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
 
     #[tokio::test]
     async fn cancellation_force_kills_the_active_child_without_publishing_summary() {
+        let _timing_guard = crate::CANCELLATION_TIMING_TEST_LOCK
+            .lock()
+            .expect("cancellation timing test lock");
         let rig = TestRig::new("cancel", false, true);
         let runtime = rig.runtime();
         let mut request = rig.request("cancel-job");

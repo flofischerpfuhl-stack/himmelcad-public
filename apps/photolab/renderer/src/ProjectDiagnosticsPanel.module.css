@@ -1,3 +1,36 @@
+.container {
+  display: grid;
+  gap: 14px;
+}
+
+.warning {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  color: var(--hc-fg-default);
+  border: 1px solid var(--hc-warning);
+  border-radius: var(--hc-radius-md);
+  background: var(--hc-bg-island-lo);
+  font-size: 11px;
+}
+
+.warning strong {
+  color: var(--hc-warning-fg);
+  font-size: 12px;
+}
+
+.warning span {
+  color: var(--hc-fg-muted);
+}
+
+.warning code {
+  overflow: hidden;
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .root {
   display: grid;
   gap: 14px;

@@ -684,6 +684,20 @@ pub struct SaveResult {
     pub source_path: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectUnreadableRecord {
+    pub path: String,
+    pub record_kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDiagnostics {
+    pub unreadable_record_count: usize,
+    pub unreadable_record_paths: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ProjectComputeContext {
     pub working_path: PathBuf,
@@ -1503,13 +1517,20 @@ impl ProjectRuntime {
             } else {
                 source_path.clone()
             };
-            let recovery_available = params.use_local_working_copy
-                && working_path.join("manifest.json").is_file()
-                && read_manifest(&working_path).is_ok_and(|manifest| {
+            let recovery_available =
+                if params.use_local_working_copy && working_path.join("manifest.json").is_file() {
+                    let manifest = read_manifest(&working_path).with_context(|| {
+                        format!(
+                            "failed to inspect recoverable working copy {}; it was left untouched",
+                            working_path.display()
+                        )
+                    })?;
                     !manifest.clean_shutdown
                         || manifest.autosave_generation > source_manifest.autosave_generation
-                        || job_history_differs(&working_path, &source_path)
-                });
+                        || job_history_differs(&working_path, &source_path)?
+                } else {
+                    false
+                };
             let recover = recovery_available && params.recover_existing_working_copy;
 
             if params.use_local_working_copy && !recover {
@@ -1635,12 +1656,19 @@ impl ProjectRuntime {
         let source_manifest = read_manifest(&incoming_path)?;
         validate_manifest(&source_manifest)?;
         let source_saved_generation = source_manifest.autosave_generation;
-        let recovery_available = working_path.join("manifest.json").is_file()
-            && read_manifest(&working_path).is_ok_and(|manifest| {
-                !manifest.clean_shutdown
-                    || manifest.autosave_generation > source_manifest.autosave_generation
-                    || job_history_differs(&working_path, &incoming_path)
-            });
+        let recovery_available = if working_path.join("manifest.json").is_file() {
+            let manifest = read_manifest(&working_path).with_context(|| {
+                format!(
+                    "failed to inspect recoverable archive working copy {}; it was left untouched",
+                    working_path.display()
+                )
+            })?;
+            !manifest.clean_shutdown
+                || manifest.autosave_generation > source_manifest.autosave_generation
+                || job_history_differs(&working_path, &incoming_path)?
+        } else {
+            false
+        };
         let recover = recovery_available && params.recover_existing_working_copy;
         if recover {
             remove_path_if_exists(&incoming_path)?;
@@ -1790,6 +1818,27 @@ impl ProjectRuntime {
         let guard = self.session.lock().expect("project session mutex poisoned");
         let session = guard.as_ref().context("no project is open")?;
         Ok(session.result())
+    }
+
+    pub fn diagnostics(&self) -> Result<ProjectDiagnostics> {
+        let guard = self.session.lock().expect("project session mutex poisoned");
+        let session = guard.as_ref().context("no project is open")?;
+        let mut unreadable = session
+            .manifest
+            .entities
+            .values()
+            .filter_map(|entity| diagnose_entity_record(session, entity))
+            .collect::<Vec<_>>();
+        unreadable.sort_by(|left, right| left.path.cmp(&right.path));
+        unreadable.dedup_by(|left, right| left.path == right.path);
+        Ok(ProjectDiagnostics {
+            unreadable_record_count: unreadable.len(),
+            unreadable_record_paths: unreadable
+                .into_iter()
+                .take(3)
+                .map(|record| record.path)
+                .collect(),
+        })
     }
 
     pub fn list_camera_images(&self) -> Result<Vec<ProjectCameraImageRecord>> {
@@ -3208,11 +3257,7 @@ impl ProjectRuntime {
             .entities
             .values()
             .filter(|entity| entity.kind == EntityKind::ProcessingSet)
-            .filter_map(|entity| {
-                read_verified_object(&session.working_path, &entity.version_hash)
-                    .ok()
-                    .and_then(|bytes| serde_json::from_slice::<ProcessingSetRecord>(&bytes).ok())
-            })
+            .filter_map(|entity| read_record_or_warn::<ProcessingSetRecord>(session, entity))
             .collect::<Vec<_>>();
         let effective_capture_ids = effective_capture_group_ids(session)?;
         let calibration_groups = session
@@ -3221,11 +3266,7 @@ impl ProjectRuntime {
             .values()
             .filter(|entity| entity.kind == EntityKind::CameraCalibrationGroup)
             .filter_map(|entity| {
-                read_verified_object(&session.working_path, &entity.version_hash)
-                    .ok()
-                    .and_then(|bytes| {
-                        serde_json::from_slice::<CameraCalibrationGroupRecord>(&bytes).ok()
-                    })
+                read_record_or_warn::<CameraCalibrationGroupRecord>(session, entity)
             })
             .filter(|group| effective_capture_ids.contains(&group.capture_group_id.0))
             .collect::<Vec<_>>();
@@ -3236,19 +3277,27 @@ impl ProjectRuntime {
             .values()
             .filter(|entity| entity.kind == EntityKind::AlignmentRun)
         {
-            let Ok(bytes) = read_verified_object(&session.working_path, &entity.version_hash)
-            else {
+            if entity.id.0.contains(":alignment-gcp:") {
                 continue;
-            };
-            let Ok(record) = serde_json::from_slice::<ComputeArtifactRecord>(&bytes) else {
+            }
+            let Some(record) = read_record_or_warn::<ComputeArtifactRecord>(session, entity) else {
                 continue;
             };
             if record.artifact.kind != ColmapArtifactKind::SparseModel {
                 continue;
             }
             let dataset = session.working_path.join(&record.dataset_relative_path);
-            let Ok(scope) = alignment_camera_scope(&record, &dataset, &session.manifest) else {
-                continue;
+            let scope = match alignment_camera_scope(&record, &dataset, &session.manifest) {
+                Ok(scope) => scope,
+                Err(error) => {
+                    tracing::warn!(
+                        file_path = %dataset.join("camera-map.json").display(),
+                        record_kind = "AlignmentCameraMap",
+                        %error,
+                        "project record is unreadable"
+                    );
+                    continue;
+                }
             };
             let scope_set = scope
                 .iter()
@@ -4224,9 +4273,8 @@ impl ProjectRuntime {
         for entity in session.manifest.entities.values().filter(|entity| {
             entity.kind == EntityKind::AlignmentRun && entity.id.0.contains(":alignment-gcp:")
         }) {
-            let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
-            let Ok(optimization) =
-                serde_json::from_slice::<GcpOptimizationPublicationRecord>(&bytes)
+            let Some(optimization) =
+                read_record_or_warn::<GcpOptimizationPublicationRecord>(session, entity)
             else {
                 continue;
             };
@@ -4292,8 +4340,7 @@ impl ProjectRuntime {
             .collect::<Vec<_>>();
         entities.sort_by(|left, right| right.id.0.cmp(&left.id.0));
         for entity in entities {
-            let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
-            let Ok(record) = serde_json::from_slice::<MvsArtifactRecord>(&bytes) else {
+            let Some(record) = read_record_or_warn::<MvsArtifactRecord>(session, entity) else {
                 continue;
             };
             if record.output.settings_sha256 != *settings_sha256
@@ -4315,14 +4362,37 @@ impl ProjectRuntime {
                 .join(".photolab/mvs-scenes")
                 .join(&record.job_id)
                 .join("scene.json");
-            let Ok(scene_bytes) = fs::read(&scene_manifest) else {
-                continue;
+            let scene_bytes = match fs::read(&scene_manifest) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    tracing::warn!(
+                        file_path = %scene_manifest.display(),
+                        record_kind = "MvsSceneManifest",
+                        %error,
+                        "project cache record is unreadable; depth will be recomputed"
+                    );
+                    continue;
+                }
             };
             if ObjectHash::of_bytes(&scene_bytes) != record.output.scene_manifest_sha256 {
+                tracing::warn!(
+                    file_path = %scene_manifest.display(),
+                    record_kind = "MvsSceneManifest",
+                    "project cache record hash does not match; depth will be recomputed"
+                );
                 continue;
             }
-            let Ok(scene) = serde_json::from_slice::<MvsSceneManifest>(&scene_bytes) else {
-                continue;
+            let scene = match serde_json::from_slice::<MvsSceneManifest>(&scene_bytes) {
+                Ok(scene) => scene,
+                Err(error) => {
+                    tracing::warn!(
+                        file_path = %scene_manifest.display(),
+                        record_kind = "MvsSceneManifest",
+                        %error,
+                        "project cache record is unreadable; depth will be recomputed"
+                    );
+                    continue;
+                }
             };
             if scene.image_mask_scope_sha256.as_ref() != Some(image_mask_scope_sha256) {
                 continue;
@@ -4365,6 +4435,9 @@ impl ProjectRuntime {
                 "dense MVS record hash mismatch"
             );
             let Ok(record) = serde_json::from_slice::<MvsArtifactRecord>(&bytes) else {
+                // Point-cloud entities may legitimately contain sparse COLMAP records; diagnose
+                // only when neither supported record shape is readable.
+                let _diagnostic = diagnose_entity_record(session, entity);
                 continue;
             };
             if !product_record_matches_lineage(
@@ -4790,8 +4863,12 @@ impl ProjectRuntime {
         for entity in session.manifest.entities.values() {
             match entity.kind {
                 EntityKind::AlignmentRun => {
-                    let bytes = read_verified_object(&session.working_path, &entity.version_hash)?;
-                    let Ok(record) = serde_json::from_slice::<ComputeArtifactRecord>(&bytes) else {
+                    if entity.id.0.contains(":alignment-gcp:") {
+                        continue;
+                    }
+                    let Some(record) =
+                        read_record_or_warn::<ComputeArtifactRecord>(session, entity)
+                    else {
                         continue;
                     };
                     if record.artifact.kind == ColmapArtifactKind::SparseModel {
@@ -5314,14 +5391,17 @@ impl ProjectRuntime {
             if selected.contains(entity.id.0.as_str())
                 || entity.kind == EntityKind::ImageCollection
                 || discarded_automatic_entity_ids.contains(&entity.id.0)
+                || !is_project_object_record(entity.kind)
             {
                 continue;
             }
-            let path = project_object_path(&session.working_path, &entity.version_hash);
-            let Ok(bytes) = fs::read(path) else { continue };
-            let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-                continue;
-            };
+            let value: serde_json::Value =
+                read_record_with_warning(session, entity).with_context(|| {
+                    format!(
+                        "cannot verify image dependencies because the {:?} record is unreadable",
+                        entity.kind
+                    )
+                })?;
             if ids.iter().any(|id| json_contains_string(&value, &id.0)) {
                 anyhow::bail!(
                     "cannot remove selected images because they are referenced by {:?} “{}”; remove the dependent alignment, processing set, group, GCP observation, or product first",
@@ -7364,36 +7444,42 @@ fn job_history_record_path(project_root: &Path, job_id: &str) -> PathBuf {
     job_history_records_path(project_root).join(file_name)
 }
 
-fn job_history_differs(working_root: &Path, source_root: &Path) -> bool {
-    job_history_snapshot(working_root)
-        .is_some_and(|working| Some(working) != job_history_snapshot(source_root))
+fn job_history_differs(working_root: &Path, source_root: &Path) -> Result<bool> {
+    let working = job_history_snapshot(working_root)?;
+    let source = job_history_snapshot(source_root)?;
+    Ok(working.is_some_and(|working| Some(working) != source))
 }
 
-fn job_history_snapshot(project_root: &Path) -> Option<Vec<(String, Vec<u8>)>> {
+fn job_history_snapshot(project_root: &Path) -> Result<Option<Vec<(String, Vec<u8>)>>> {
     let mut snapshot = Vec::new();
-    if let Ok(bytes) = fs::read(job_history_path(project_root)) {
-        snapshot.push(("history.json".into(), bytes));
+    let legacy_path = job_history_path(project_root);
+    if legacy_path.is_file() {
+        snapshot.push((
+            "history.json".into(),
+            fs::read(&legacy_path)
+                .with_context(|| format!("failed to read job history {}", legacy_path.display()))?,
+        ));
     }
     let records_root = job_history_records_path(project_root);
     if !records_root.is_dir() {
-        return (!snapshot.is_empty()).then_some(snapshot);
+        return Ok((!snapshot.is_empty()).then_some(snapshot));
     }
-    let mut entries = fs::read_dir(records_root)
-        .ok()?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .ok()?;
+    let mut entries = fs::read_dir(&records_root)?.collect::<std::result::Result<Vec<_>, _>>()?;
     entries.sort_by_key(std::fs::DirEntry::file_name);
     for entry in entries {
-        if entry.file_type().ok()?.is_file()
+        if entry.file_type()?.is_file()
             && is_job_history_record_filename(&entry.file_name().to_string_lossy())
         {
+            let path = entry.path();
             snapshot.push((
                 entry.file_name().to_string_lossy().into_owned(),
-                fs::read(entry.path()).ok()?,
+                fs::read(&path).with_context(|| {
+                    format!("failed to read job history record {}", path.display())
+                })?,
             ));
         }
     }
-    (!snapshot.is_empty()).then_some(snapshot)
+    Ok((!snapshot.is_empty()).then_some(snapshot))
 }
 
 fn read_project_job_history(
@@ -7844,20 +7930,10 @@ fn select_alignment_dataset(
         .map(|scope| validate_camera_scope(&session.manifest, scope))
         .transpose()?;
     let mut candidates = Vec::new();
-    for entity in session
-        .manifest
-        .entities
-        .values()
-        .filter(|entity| entity.kind == EntityKind::AlignmentRun)
-    {
-        let record_path = project_object_path(&session.working_path, &entity.version_hash);
-        let Ok(bytes) = fs::read(record_path) else {
-            continue;
-        };
-        if ObjectHash::of_bytes(&bytes) != entity.version_hash {
-            continue;
-        }
-        let Ok(record) = serde_json::from_slice::<ComputeArtifactRecord>(&bytes) else {
+    for entity in session.manifest.entities.values().filter(|entity| {
+        entity.kind == EntityKind::AlignmentRun && !entity.id.0.contains(":alignment-gcp:")
+    }) {
+        let Some(record) = read_record_or_warn::<ComputeArtifactRecord>(session, entity) else {
             continue;
         };
         if record.artifact.kind != ColmapArtifactKind::SparseModel {
@@ -8674,6 +8750,142 @@ fn read_verified_object(project_root: &Path, hash: &ObjectHash) -> Result<Vec<u8
     Ok(bytes)
 }
 
+fn read_record_or_warn<T: serde::de::DeserializeOwned>(
+    session: &ProjectSession,
+    entity: &EntitySnapshot,
+) -> Option<T> {
+    match read_record_with_warning(session, entity) {
+        Ok(record) => Some(record),
+        Err(_) => None,
+    }
+}
+
+fn read_record_with_warning<T: serde::de::DeserializeOwned>(
+    session: &ProjectSession,
+    entity: &EntitySnapshot,
+) -> Result<T> {
+    let path = project_object_path(&session.working_path, &entity.version_hash);
+    let result = read_verified_object(&session.working_path, &entity.version_hash)
+        .and_then(|bytes| serde_json::from_slice(&bytes).map_err(anyhow::Error::from));
+    match result {
+        Ok(record) => Ok(record),
+        Err(error) => {
+            tracing::warn!(
+                file_path = %path.display(),
+                record_kind = ?entity.kind,
+                %error,
+                "project record is unreadable"
+            );
+            Err(error)
+        }
+    }
+}
+
+fn diagnose_entity_record(
+    session: &ProjectSession,
+    entity: &EntitySnapshot,
+) -> Option<ProjectUnreadableRecord> {
+    let record_kind = format!("{:?}", entity.kind);
+    if !is_project_object_record(entity.kind) {
+        return None;
+    }
+    let path = project_object_path(&session.working_path, &entity.version_hash);
+    let result =
+        read_verified_object(&session.working_path, &entity.version_hash).and_then(|bytes| {
+            match entity.kind {
+                EntityKind::CameraImage => {
+                    serde_json::from_slice::<CameraImageMetadataRecord>(&bytes)
+                        .map(|_| ())
+                        .map_err(anyhow::Error::from)
+                }
+                EntityKind::CaptureGroup => serde_json::from_slice::<CaptureGroupRecord>(&bytes)
+                    .map(|_| ())
+                    .map_err(anyhow::Error::from),
+                EntityKind::CameraCalibrationGroup => {
+                    serde_json::from_slice::<CameraCalibrationGroupRecord>(&bytes)
+                        .map(|_| ())
+                        .map_err(anyhow::Error::from)
+                }
+                EntityKind::ProcessingSet => serde_json::from_slice::<ProcessingSetRecord>(&bytes)
+                    .map(|_| ())
+                    .map_err(anyhow::Error::from),
+                EntityKind::GroundControlPoint => {
+                    serde_json::from_slice::<GcpCollectionRecord>(&bytes)
+                        .map(|_| ())
+                        .map_err(anyhow::Error::from)
+                }
+                EntityKind::AlignmentRun if entity.id.0.contains(":alignment-gcp:") => {
+                    serde_json::from_slice::<GcpOptimizationPublicationRecord>(&bytes)
+                        .map(|_| ())
+                        .map_err(anyhow::Error::from)
+                }
+                EntityKind::AlignmentRun => serde_json::from_slice::<ComputeArtifactRecord>(&bytes)
+                    .map(|_| ())
+                    .map_err(anyhow::Error::from),
+                EntityKind::MergedAlignmentRun => {
+                    serde_json::from_slice::<MergedAlignmentRunRecord>(&bytes)
+                        .map(|_| ())
+                        .map_err(anyhow::Error::from)
+                }
+                EntityKind::DepthMap => serde_json::from_slice::<MvsArtifactRecord>(&bytes)
+                    .map(|_| ())
+                    .map_err(anyhow::Error::from),
+                EntityKind::Orthomosaic | EntityKind::DigitalElevationModel => {
+                    serde_json::from_slice::<RasterArtifactRecord>(&bytes)
+                        .map(|_| ())
+                        .map_err(anyhow::Error::from)
+                }
+                EntityKind::PointCloud => serde_json::from_slice::<MvsArtifactRecord>(&bytes)
+                    .map(|_| ())
+                    .or_else(|_| {
+                        serde_json::from_slice::<ComputeArtifactRecord>(&bytes).map(|_| ())
+                    })
+                    .map_err(anyhow::Error::from),
+                EntityKind::Mesh | EntityKind::TexturedMesh => {
+                    decode_published_mesh_record(&bytes, entity.kind).map(|_| ())
+                }
+                EntityKind::GaussianSplatCloud => {
+                    serde_json::from_slice::<BrushArtifactRecord>(&bytes)
+                        .map(|_| ())
+                        .map_err(anyhow::Error::from)
+                }
+                _ => Ok(()),
+            }
+        });
+    result.err().map(|error| {
+        tracing::warn!(
+            file_path = %path.display(),
+            record_kind = %record_kind,
+            %error,
+            "project record is unreadable"
+        );
+        ProjectUnreadableRecord {
+            path: path_string(&path),
+            record_kind,
+        }
+    })
+}
+
+const fn is_project_object_record(kind: EntityKind) -> bool {
+    matches!(
+        kind,
+        EntityKind::CameraImage
+            | EntityKind::CaptureGroup
+            | EntityKind::CameraCalibrationGroup
+            | EntityKind::ProcessingSet
+            | EntityKind::GroundControlPoint
+            | EntityKind::AlignmentRun
+            | EntityKind::MergedAlignmentRun
+            | EntityKind::DepthMap
+            | EntityKind::Orthomosaic
+            | EntityKind::DigitalElevationModel
+            | EntityKind::PointCloud
+            | EntityKind::Mesh
+            | EntityKind::TexturedMesh
+            | EntityKind::GaussianSplatCloud
+    )
+}
+
 fn raster_tool_versions(audit: &GdalAudit) -> BTreeMap<String, String> {
     let mut versions = BTreeMap::from([("gdal".to_owned(), audit.version.clone())]);
     for (tool, hash) in &audit.executable_sha256 {
@@ -9402,9 +9614,25 @@ fn normalize_legacy_coordinate_axes(
         .entities
         .values()
         .find(|entity| entity.kind == EntityKind::CameraImage)
-        .and_then(|entity| fs::read(project_object_path(project_root, &entity.version_hash)).ok())
-        .and_then(|bytes| serde_json::from_slice::<CameraImageMetadataRecord>(&bytes).ok())
-        .is_some_and(|metadata| metadata.schema_version == 1);
+        .map(|entity| {
+            let path = project_object_path(project_root, &entity.version_hash);
+            let bytes = fs::read(&path).with_context(|| {
+                format!(
+                    "failed to read camera record {} while checking legacy coordinate axes",
+                    path.display()
+                )
+            })?;
+            let metadata: CameraImageMetadataRecord =
+                serde_json::from_slice(&bytes).with_context(|| {
+                    format!(
+                        "invalid camera record {} while checking legacy coordinate axes",
+                        path.display()
+                    )
+                })?;
+            Ok::<_, anyhow::Error>(metadata.schema_version == 1)
+        })
+        .transpose()?
+        .unwrap_or(false);
     if !legacy_camera {
         return Ok(());
     }
@@ -10519,6 +10747,51 @@ mod tests {
         build_prepared_textured_triangle_mesh, build_prepared_triangle_mesh,
         PreparedTriangleMeshOptions, TriangleRecord,
     };
+
+    #[test]
+    fn corrupt_record_fixture_surfaces_in_project_diagnostics() {
+        let root = temp_test_dir("corrupt-record-diagnostics");
+        let project = root.join("diagnostics.hcad");
+        let runtime = ProjectRuntime::default();
+        runtime
+            .create(CreateProjectParams {
+                path: path_string(&project),
+                name: "Diagnostics fixture".into(),
+            })
+            .expect("project");
+        let corrupt_hash = put_project_object(&project, br#"{"#).expect("corrupt object fixture");
+        let corrupt_path = project_object_path(&project, &corrupt_hash);
+        {
+            let mut guard = runtime.session.lock().expect("session");
+            let session = guard.as_mut().expect("open session");
+            let entity_id = EntityId(format!(
+                "{}:processing-set:corrupt",
+                session.manifest.project_id
+            ));
+            session.manifest.entities.insert(
+                entity_id.0.clone(),
+                EntitySnapshot {
+                    id: entity_id,
+                    kind: EntityKind::ProcessingSet,
+                    name: "Corrupt processing set".into(),
+                    parent: None,
+                    children: Vec::new(),
+                    visibility: VisibilityState::default(),
+                    version_hash: corrupt_hash,
+                    bounds: None,
+                },
+            );
+        }
+
+        let diagnostics = runtime.diagnostics().expect("project diagnostics");
+        assert_eq!(diagnostics.unreadable_record_count, 1);
+        assert_eq!(
+            diagnostics.unreadable_record_paths,
+            vec![path_string(&corrupt_path)]
+        );
+        runtime.close().expect("close project");
+        fs::remove_dir_all(root).expect("test cleanup");
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn clean_shutdown_waits_for_the_running_job_drain() {

@@ -1925,6 +1925,7 @@ async fn handle_registration_rpc(
                             .map_err(anyhow::Error::from)
                     })();
                     if result.is_err() {
+                        // This scratch tree is transient; preserving the original import error is more useful than a cleanup error.
                         let _ = std::fs::remove_dir_all(&scratch_root);
                     } else {
                         emit_progress(
@@ -2984,16 +2985,13 @@ fn load_aligned_gcp_cameras(
         &cancellation,
     )?;
     let calibration_groups = projects.list_calibration_groups()?;
-    attach_camera_reference_priors(
+    let persisted_map = attach_camera_reference_priors(
         &mut prepared,
         &context.camera_images,
         &alignment,
         &calibration_groups,
         &frozen_calibration_partition,
-    );
-    let persisted_map = std::fs::read(alignment.join("camera-map.json"))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Vec<MaterializedCameraMapEntry>>(&bytes).ok());
+    )?;
     let by_entity = context
         .camera_images
         .iter()
@@ -3002,12 +3000,8 @@ fn load_aligned_gcp_cameras(
     let mut result = Vec::with_capacity(prepared.len());
     for entry in prepared {
         let mapped_entity = persisted_map
-            .as_ref()
-            .and_then(|entries| {
-                entries
-                    .iter()
-                    .find(|item| item.image_name == entry.image_name)
-            })
+            .iter()
+            .find(|item| item.image_name == entry.image_name)
             .map(|item| item.entity_id.as_str());
         let fallback_index = entry
             .image_name
@@ -3219,6 +3213,9 @@ async fn handle_project_rpc(
             response
         }
         "photolab.project.snapshot" => rpc_blocking(req.id, move || projects.snapshot()).await,
+        "photolab.project.diagnostics" => {
+            rpc_blocking(req.id, move || projects.diagnostics()).await
+        }
         "photolab.project.journal.start" => {
             rpc_blocking_with_params::<AppendJournalParams, _, _>(
                 req.id,
@@ -3552,7 +3549,13 @@ async fn handle_job_rpc(
                                     &alignment_dataset,
                                     &calibration_groups,
                                     &frozen_calibration_partition,
-                                );
+                                )
+                                .map_err(|error| {
+                                    himmelcad_sidecar::job_runtime::JobWorkerError::Failed {
+                                        code: "gcpCameraPreparation".into(),
+                                        message: error.to_string(),
+                                    }
+                                })?;
                                 let tie_points = load_gcp_bundle_tie_points(
                                     &camera_root,
                                     run_params.options.maximum_tie_points,
@@ -3775,7 +3778,8 @@ async fn handle_job_rpc(
                                         metrics: ProgressMetrics::empty(),
                                     }).map_err(JobWorkerError::from)?;
                                     publisher.publish_shared_control_merge_outcome(&merge_entity_id, outcome, &checkpoint_operation_id).map_err(|error| worker_error("alignmentMergePublish", &error.to_string()))?;
-                                    let _ = write_merge_checkpoint(&checkpoint_project_root, &AlignmentMergeCheckpoint { schema_version: 1, operation_id: checkpoint_operation_id, merge_entity_id, input_hash: checkpoint_input_hash, config_hash: checkpoint_config_hash, state: AlignmentMergeCheckpointState::Published, scratch_relative_path: None, summary_sha256: None });
+                                    write_merge_checkpoint(&checkpoint_project_root, &AlignmentMergeCheckpoint { schema_version: 1, operation_id: checkpoint_operation_id, merge_entity_id, input_hash: checkpoint_input_hash, config_hash: checkpoint_config_hash, state: AlignmentMergeCheckpointState::Published, scratch_relative_path: None, summary_sha256: None })
+                                        .map_err(|error| worker_error("alignmentMergeCheckpoint", &error.to_string()))?;
                                     return Ok(());
                                 }
                                 let solve = resumed.map_or_else(
@@ -3896,7 +3900,7 @@ async fn handle_job_rpc(
                                     .map_err(|error| {
                                         worker_error("alignmentMergePublish", &error.to_string())
                                     })?;
-                                let _ = write_merge_checkpoint(
+                                write_merge_checkpoint(
                                     &checkpoint_project_root,
                                     &AlignmentMergeCheckpoint {
                                         schema_version: 1,
@@ -3908,7 +3912,10 @@ async fn handle_job_rpc(
                                         scratch_relative_path: None,
                                         summary_sha256: None,
                                     },
-                                );
+                                )
+                                .map_err(|error| {
+                                    worker_error("alignmentMergeCheckpoint", &error.to_string())
+                                })?;
                                 Ok(())
                             })
                             .await
@@ -5487,11 +5494,22 @@ fn attach_camera_reference_priors(
     alignment_dataset: &Path,
     calibration_groups: &[crate::project_runtime::CameraCalibrationGroupRecord],
     frozen_calibration_partition: &[ColmapCalibrationGroup],
-) {
-    let camera_map = std::fs::read(alignment_dataset.join("camera-map.json"))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Vec<MaterializedCameraMapEntry>>(&bytes).ok())
-        .unwrap_or_default();
+) -> anyhow::Result<Vec<MaterializedCameraMapEntry>> {
+    let camera_map_path = alignment_dataset.join("camera-map.json");
+    let camera_map = serde_json::from_slice::<Vec<MaterializedCameraMapEntry>>(
+        &std::fs::read(&camera_map_path).with_context(|| {
+            format!(
+                "Failed to read the alignment camera map at {}. Re-run the alignment to rebuild it",
+                camera_map_path.display()
+            )
+        })?,
+    )
+    .with_context(|| {
+        format!(
+            "The alignment camera map at {} is corrupt. Re-run the alignment to rebuild it",
+            camera_map_path.display()
+        )
+    })?;
     let by_entity = camera_images
         .iter()
         .map(|camera| (camera.entity_id.0.as_str(), camera))
@@ -5571,6 +5589,7 @@ fn attach_camera_reference_priors(
                 .max(height_floor),
         ]);
     }
+    Ok(camera_map)
 }
 
 fn gcp_job_progress(
@@ -7582,6 +7601,7 @@ fn run_raster_product(
                     cancellation: &context.cancellation,
                 },
                 |completed, total| {
+                    // Intermediate progress is best-effort; the worker result and checkpoints remain authoritative.
                     let _ = progress_sink.report_blocking(JobProgress {
                         stage: PhotolabStage {
                             kind: PhotolabStageKind::Preparing,
@@ -7689,6 +7709,7 @@ fn run_raster_product(
             move |progress| {
                 let sink = progress_sink.clone();
                 tokio::spawn(async move {
+                    // Intermediate progress is best-effort; terminal state persistence is handled by JobManager.
                     let _ = sink
                         .report(raster_job_progress(progress, stage_offset, stage_count))
                         .await;
@@ -9486,6 +9507,67 @@ mod tests {
             Some(&EntityId("set-b".into())),
             &lineage,
         ));
+    }
+
+    #[tokio::test]
+    async fn corrupt_camera_map_fails_job_with_its_path_and_recovery_action() {
+        let dataset = std::env::temp_dir().join(format!(
+            "himmelcad-corrupt-camera-map-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dataset).expect("camera-map fixture directory");
+        let camera_map_path = dataset.join("camera-map.json");
+        std::fs::write(&camera_map_path, b"not JSON").expect("corrupt camera map");
+        let manager = JobManager::new(JobManagerConfig {
+            max_concurrency: 1,
+            max_queued: 0,
+        })
+        .expect("job manager");
+        let job_id = PhotolabJobId("corrupt-camera-map".into());
+        let worker_dataset = dataset.clone();
+        manager
+            .start(
+                NewPhotolabJob {
+                    id: job_id.clone(),
+                    kind: PhotolabJobKind::OptimizeAlignment,
+                    config_hash: ObjectHash::of_bytes(b"camera-map-config"),
+                    input_hash: ObjectHash::of_bytes(b"camera-map-input"),
+                    progress: JobProgress {
+                        stage: PhotolabStage {
+                            kind: PhotolabStageKind::Preparing,
+                            index: 0,
+                            stage_count: 1,
+                            label: "Prepare GCP cameras".into(),
+                        },
+                        metrics: ProgressMetrics::empty(),
+                    },
+                },
+                move |_| {
+                    attach_camera_reference_priors(&mut [], &[], &worker_dataset, &[], &[])
+                        .map(|_| ())
+                        .map_err(|error| JobWorkerError::Failed {
+                            code: "gcpCameraPreparation".into(),
+                            message: error.to_string(),
+                        })
+                },
+            )
+            .await
+            .expect("start corrupt camera-map job");
+        let terminal = manager
+            .wait_for_terminal(&job_id)
+            .await
+            .expect("failed terminal state");
+        let PhotolabJobState::Failed { code, message } = terminal.state else {
+            panic!("corrupt camera map did not fail the job");
+        };
+        assert_eq!(code, "gcpCameraPreparation");
+        assert!(message.contains(&camera_map_path.display().to_string()));
+        assert!(message.contains("Re-run the alignment"));
+        std::fs::remove_dir_all(dataset).expect("camera-map fixture cleanup");
     }
 
     #[test]

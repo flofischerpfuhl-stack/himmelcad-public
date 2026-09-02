@@ -2404,6 +2404,9 @@ print(json.dumps({"schemaVersion":1,"pythonVersion":".".join(map(str,sys.version
 
     #[test]
     fn cancellation_force_kills_fake_worker_without_deadline_delay() {
+        let _timing_guard = crate::CANCELLATION_TIMING_TEST_LOCK
+            .lock()
+            .expect("cancellation timing test lock");
         let mut command = Command::new("sh");
         command
             .args(["-c", "while :; do sleep 1; done"])

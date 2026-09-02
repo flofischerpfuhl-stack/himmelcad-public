@@ -2110,6 +2110,9 @@ printf '[00:01] 3000/3000 Steps\n' >&2
     #[cfg(unix)]
     #[tokio::test]
     async fn cancellation_is_forced_within_the_interactive_deadline() {
+        let _timing_guard = crate::CANCELLATION_TIMING_TEST_LOCK
+            .lock()
+            .expect("cancellation timing test lock");
         let rig = TestRig::new("cancel", true, false);
         let request = rig.request("splat-cancel");
         let manager = JobManager::new(JobManagerConfig {

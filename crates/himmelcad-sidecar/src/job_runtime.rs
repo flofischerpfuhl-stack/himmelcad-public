@@ -28,6 +28,10 @@ use tokio::{
     time::{sleep, timeout_at, Duration, Instant as TokioInstant},
 };
 
+// WP-B6 calibration governed by the release-polish plan's tunables register: 500 ms
+// bounds memory-only terminal history without hot-looping a persistently failing disk.
+const HISTORY_RETRY_INTERVAL: Duration = Duration::from_millis(500);
+
 /// Immutable project identity captured when a job is admitted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobHistoryScope {
@@ -489,17 +493,31 @@ impl JobManager {
         history: Option<Arc<dyn JobHistoryPersistence>>,
     ) -> Result<Self, JobManagerError> {
         let capacity = config.capacity()?;
-        Ok(Self {
-            inner: Arc::new(JobManagerInner {
-                config,
-                capacity,
-                concurrency: Arc::new(Semaphore::new(config.max_concurrency)),
-                jobs: Mutex::new(BTreeMap::new()),
-                history,
-                draining: AtomicBool::new(false),
-            }),
-            runtime,
-        })
+        let inner = Arc::new(JobManagerInner {
+            config,
+            capacity,
+            concurrency: Arc::new(Semaphore::new(config.max_concurrency)),
+            jobs: Mutex::new(BTreeMap::new()),
+            history,
+            draining: AtomicBool::new(false),
+        });
+        if inner.history.is_some() {
+            let weak_inner = Arc::downgrade(&inner);
+            runtime.spawn(async move {
+                loop {
+                    sleep(HISTORY_RETRY_INTERVAL).await;
+                    let Some(inner) = weak_inner.upgrade() else {
+                        break;
+                    };
+                    let history = inner.history.clone();
+                    let mut jobs = inner.jobs.lock().await;
+                    for managed in jobs.values_mut() {
+                        retry_history_persistence(history.as_ref(), managed);
+                    }
+                }
+            });
+        }
+        Ok(Self { inner, runtime })
     }
 
     /// Admits a job without waiting for a worker slot or blocking the RPC loop.
@@ -637,7 +655,7 @@ impl JobManager {
             .collect::<BTreeMap<_, _>>();
         let mut jobs = self.inner.jobs.lock().await;
         for managed in jobs.values_mut() {
-            self.retry_history_persistence(managed);
+            retry_history_persistence(self.inner.history.as_ref(), managed);
             if self.inner.history.is_some() && managed.history_scope != current_scope {
                 continue;
             }
@@ -708,7 +726,9 @@ impl JobManager {
                 continue;
             }
             if was_queued {
-                let _ = managed.job.transition_to(PhotolabJobState::Cancelled);
+                if let Err(error) = managed.job.transition_to(PhotolabJobState::Cancelled) {
+                    tracing::error!(job_id = %managed.job.id.0, %error, "failed to cancel queued job");
+                }
             }
             self.publish_durable(managed);
             changed.push(managed.job.clone());
@@ -937,7 +957,9 @@ impl JobManager {
             }
             Ok(Err(JobWorkerError::Cancelled)) if managed.cancellation.is_cancel_requested() => {
                 if managed.job.state != PhotolabJobState::CancelRequested {
-                    let _ = managed.job.request_cancel(&managed.cancellation);
+                    if let Err(error) = managed.job.request_cancel(&managed.cancellation) {
+                        tracing::error!(job_id = %managed.job.id.0, %error, "failed to record worker cancellation request");
+                    }
                 }
                 transition_or_fail(managed, PhotolabJobState::Cancelled);
             }
@@ -1039,25 +1061,28 @@ impl JobManager {
         }
         publish(managed);
     }
+}
 
-    fn retry_history_persistence(&self, managed: &mut ManagedJob) {
-        if !managed.history_dirty {
-            return;
-        }
-        let (Some(history), Some(scope)) = (&self.inner.history, &managed.history_scope) else {
-            return;
-        };
-        if let Err(error) = history.persist(scope, &managed.job, managed.frozen_request.as_ref()) {
-            tracing::error!(
-                job_id = managed.job.id.0,
-                project_id = scope.project_id,
-                %error,
-                "failed to retry PhotoLab job lifecycle persistence"
-            );
-        } else {
-            managed.history_dirty = false;
-            managed.last_history_persisted_at = Instant::now();
-        }
+fn retry_history_persistence(
+    history: Option<&Arc<dyn JobHistoryPersistence>>,
+    managed: &mut ManagedJob,
+) {
+    if !managed.history_dirty {
+        return;
+    }
+    let (Some(history), Some(scope)) = (history, &managed.history_scope) else {
+        return;
+    };
+    if let Err(error) = history.persist(scope, &managed.job, managed.frozen_request.as_ref()) {
+        tracing::error!(
+            job_id = managed.job.id.0,
+            project_id = scope.project_id,
+            %error,
+            "failed to retry PhotoLab job lifecycle persistence"
+        );
+    } else {
+        managed.history_dirty = false;
+        managed.last_history_persisted_at = Instant::now();
     }
 }
 
@@ -1124,7 +1149,9 @@ fn set_failed(managed: &mut ManagedJob, code: &str, message: String) {
         code: code.into(),
         message,
     };
-    let _ = managed.job.transition_to(failed);
+    if let Err(error) = managed.job.transition_to(failed) {
+        tracing::error!(job_id = %managed.job.id.0, failure_code = code, %error, "failed to record terminal job failure");
+    }
 }
 
 /// Scheduling and authoritative-state failures returned to RPC integration.
@@ -1275,6 +1302,63 @@ mod tests {
         }
     }
 
+    struct FailingThenSucceedingHistory {
+        inner: MemoryHistory,
+        terminal_failures_remaining: AtomicUsize,
+    }
+
+    impl FailingThenSucceedingHistory {
+        fn new() -> Self {
+            Self {
+                inner: MemoryHistory::default(),
+                terminal_failures_remaining: AtomicUsize::new(1),
+            }
+        }
+
+        fn select(&self, project_id: &str) {
+            self.inner.select(project_id);
+        }
+
+        fn persisted_job(&self, project_id: &str, job_id: &str) -> Option<PhotolabJob> {
+            self.inner
+                .records
+                .lock()
+                .expect("history records")
+                .get(project_id)
+                .and_then(|jobs| jobs.get(job_id))
+                .cloned()
+        }
+    }
+
+    impl JobHistoryPersistence for FailingThenSucceedingHistory {
+        fn current_scope(&self) -> Result<Option<JobHistoryScope>, String> {
+            self.inner.current_scope()
+        }
+
+        fn load_current(&self) -> Result<Vec<PhotolabJob>, String> {
+            self.inner.load_current()
+        }
+
+        fn persist(
+            &self,
+            scope: &JobHistoryScope,
+            job: &PhotolabJob,
+            frozen_request: Option<&FrozenJobRequest>,
+        ) -> Result<(), String> {
+            if is_terminal(&job.state)
+                && self
+                    .terminal_failures_remaining
+                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+                        remaining.checked_sub(1)
+                    })
+                    .is_ok()
+            {
+                return Err("injected terminal history write failure".into());
+            }
+            self.inner.persist(scope, job, frozen_request)
+        }
+    }
+
     fn hash(value: &str) -> ObjectHash {
         ObjectHash::of_bytes(value.as_bytes())
     }
@@ -1332,6 +1416,44 @@ mod tests {
             .await
             .expect("terminal");
         assert_eq!(terminal.state, PhotolabJobState::Completed);
+    }
+
+    #[tokio::test]
+    async fn background_tick_retries_a_failed_terminal_history_write_without_listing() {
+        let history = Arc::new(FailingThenSucceedingHistory::new());
+        history.select("retry-project");
+        let manager = JobManager::new_with_history(
+            JobManagerConfig {
+                max_concurrency: 1,
+                max_queued: 0,
+            },
+            history.clone(),
+        )
+        .expect("manager");
+        let job_id = PhotolabJobId("retry-terminal-job".into());
+        manager
+            .start(request(&job_id.0), |_| Ok(()))
+            .await
+            .expect("start job");
+        let terminal = manager
+            .wait_for_terminal(&job_id)
+            .await
+            .expect("terminal memory state");
+        assert_eq!(terminal.state, PhotolabJobState::Completed);
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if history
+                    .persisted_job("retry-project", &job_id.0)
+                    .is_some_and(|job| job.state == PhotolabJobState::Completed)
+                {
+                    break;
+                }
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("background history retry");
     }
 
     #[test]

@@ -33,6 +33,11 @@ interface ProjectDiagnosticsPanelProps {
   onAnalyzeImageQuality: (processingSetId: EntityId | null) => void;
 }
 
+interface ProjectDiagnostics {
+  unreadableRecordCount: number;
+  unreadableRecordPaths: string[];
+}
+
 export function ProjectDiagnosticsPanel({
   kind,
   images,
@@ -46,9 +51,30 @@ export function ProjectDiagnosticsPanel({
   imageQualityStarting,
   onAnalyzeImageQuality,
 }: ProjectDiagnosticsPanelProps): JSX.Element {
-  if (kind === 'images.metadata') return <MetadataView images={images} />;
+  const [projectDiagnostics, setProjectDiagnostics] = useState<ProjectDiagnostics | null>(null);
+  const [diagnosticsUnavailable, setDiagnosticsUnavailable] = useState(false);
+  useEffect(() => {
+    let current = true;
+    setDiagnosticsUnavailable(false);
+    void window.himmelcad?.sidecar
+      .call<ProjectDiagnostics>('photolab.project.diagnostics')
+      .then((diagnostics) => {
+        if (current) setProjectDiagnostics(diagnostics);
+      })
+      .catch(() => {
+        if (current) {
+          setProjectDiagnostics(null);
+          setDiagnosticsUnavailable(true);
+        }
+      });
+    return () => {
+      current = false;
+    };
+  }, [images]);
+
+  let content: JSX.Element = <MetadataView images={images} />;
   if (kind === 'images.quality') {
-    return (
+    content = (
       <ImageStatusView
         images={images}
         analyses={imageQualityAnalyses}
@@ -59,17 +85,43 @@ export function ProjectDiagnosticsPanel({
         onAnalyze={onAnalyzeImageQuality}
       />
     );
+  } else if (kind === 'reference.transform') {
+    content = <ReferenceView images={images} projectTargetCrs={projectTargetCrs} />;
+  } else if (kind === 'alignment.report') {
+    content = (
+      <AlignmentReportView
+        images={images}
+        alignedCameras={alignedCameras}
+        jobs={jobs}
+        gcpOptimization={gcpOptimization}
+      />
+    );
   }
-  if (kind === 'reference.transform') {
-    return <ReferenceView images={images} projectTargetCrs={projectTargetCrs} />;
-  }
+
   return (
-    <AlignmentReportView
-      images={images}
-      alignedCameras={alignedCameras}
-      jobs={jobs}
-      gcpOptimization={gcpOptimization}
-    />
+    <div className={styles.container}>
+      {diagnosticsUnavailable && (
+        <section className={styles.warning} role="status">
+          <strong>Project diagnostics unavailable</strong>
+          <span>The project record integrity check could not be completed.</span>
+        </section>
+      )}
+      {projectDiagnostics && projectDiagnostics.unreadableRecordCount > 0 && (
+        <section className={styles.warning} role="status">
+          <strong>
+            {projectDiagnostics.unreadableRecordCount} unreadable{' '}
+            {projectDiagnostics.unreadableRecordCount === 1 ? 'record' : 'records'}
+          </strong>
+          <span>First paths:</span>
+          {projectDiagnostics.unreadableRecordPaths.map((path) => (
+            <code key={path} title={path}>
+              {path}
+            </code>
+          ))}
+        </section>
+      )}
+      {content}
+    </div>
   );
 }
 
