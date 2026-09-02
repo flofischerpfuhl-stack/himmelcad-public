@@ -109,11 +109,7 @@ PROJECT-FORMAT, and an accepted ADR before implementation.
     component in one journal-last transaction.
 
 5.  **Publication atomicity.** PhotoLab publication creates a candidate
-    package, fsyncs its manifest and declared artifacts, and writes a small
-    ready record containing `schema_id`, `manifest_id`, product id and
-    version, publication generation, normalized format, manifest hash, lineage
-    hash and status, `artifact_count`, `object_count`, `total_bytes`, and
-    `package_sha256` last. The product publication record mirrors that summary;
+    package, fsyncs its manifest and declared artifacts, and writes a small ready record (schema id `hcad.product-import-package-ready@1`, IF-D29) containing `manifest_id`, product id and version, publication generation, normalized format, manifest hash, lineage hash and status, `artifact_count`, `object_count`, `total_bytes`, and `package_sha256` last. Per IF-D29, `publication_generation` is the checked next PhotoLab journal command sequence and is identical in lineage, manifest, ready record, publication record, and committed journal entry; `publication_id` and a non-null package's `manifest_id` equal `"product-" + sha256(canonical_json([source_project_id, product_entity_id, product_entity_version_hash, publication_generation]))`; dataset ids are copied from admitted prepared datasets, resource ids equal their SHA-256, and resource/artifact roles use only the spec's closed role enumerations. The product publication record mirrors that summary;
     it and the ready record become visible atomically and must agree. Listing
     reads only this bounded summary. Builder never accepts an inventory
     assembled by walking a product directory after publication.
@@ -151,8 +147,7 @@ PROJECT-FORMAT, and an accepted ADR before implementation.
     `unknown` rows list their available facts and exact `missingFieldIds`,
     show "Needs republish/recompute", and cannot register. Builder never reads
     the current alignment, processing set, GCP, masks, CRS, project manifest,
-    or tool versions to fill history. Current PhotoLab publications are legacy
-    until PhotoLab republishes or recomputes them.
+    or tool versions to fill history. Current PhotoLab publications are legacy until PhotoLab republishes or recomputes them. Per IF-D27, `missing_field_ids` and its `missingFieldIds` projection contain only exact `ProductLineageV1` serialized member ids — top-level ids, dot paths for members of present objects, zero-based bracket paths for members of present array items; whole missing arrays use their top-level id; inapplicable conditionals are not missing; invalid values are invalid rather than missing; the list is de-duplicated and UTF-8-byte-order sorted. Per IF-D28, dispositions use one closed reason-code enumeration — `available`, `needs_republish_recompute`, `needs_preparation`, `no_package`, `unsupported_format`, `invalid_package`, `unsupported_package_schema` — with the spec's disposition, meaning, precedence, and required base copy; UI may only append a product label or diagnostic id. Per IF-D33, every post-contract publication writes the complete hash-bound lineage envelope in `PhotoLabProductPublicationRecordV1`; if no package exists the required member is exactly `package: null`, with no fabricated manifest id or zero hash; the legacy five-field relation is only a read-only projection that can produce `partial` or `unknown`, never `complete` or reconstructed history.
 
 9.  **Compatibility.** Compatibility is fail-closed and lossless: an unknown
     manifest major or type id or an unknown `required_features` value returns
