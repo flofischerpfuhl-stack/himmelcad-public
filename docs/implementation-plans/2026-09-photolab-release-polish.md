@@ -954,10 +954,12 @@ deliverables directly).
 streaming modes (reserved R3 decision).
 **Tunable:** none.
 
-Builder rules apply: the Builder-side change is specified as a revision of
-`docs/builder-program/specs/import-formats` and its registry rows (cite and
-revise, never re-disposition), walks `docs/FUNCTION-CONTRACT.md` A1–E3, and
-gets a `demanding-user` review before implementation. Sidecar: extend the
+Builder rules apply: the Builder thread is amending
+`docs/builder-program/specs/import-formats/import-formats.md` (accepted
+2026-09-02: "register a PhotoLab product dataset" per prepared format, ADR
+0021/0025 lifecycle, lineage as immutable provenance, automation via P11) with
+a `demanding-user` review; implementation starts only after that spec and
+review exist. Sidecar: extend the
 registration runtime's dataset matching beyond `potree@2`; keep the
 `.hcadx`/prepared-hierarchy contracts unchanged. Tests: register each
 product kind from the smoke project into a Builder project; WeltView opens
@@ -981,8 +983,11 @@ drives the console vocabulary — never by allowlisting raw sidecar RPCs.
 Approval grants, credentials and confirmation tokens stay user-only (the
 ADR 0024 asymmetry). Long-running operations map to jobs and are observable
 through `photolab.jobs.*` queries exposed the same way.
-**Derivation:** X3 and its P1 precedent; ADR 0024; PHOTOLAB-CONCEPT.md
-"Console, Python, and AI access resolve to the same underlying operations".
+**Derivation:** doctrine precedent P11 (recorded 2026-09-02 from this
+finding: one generated command table drives automation, console and the
+Python SDK; raw-RPC allowlisting is never the exposure mechanism), X3 and
+P1; ADR 0024; PHOTOLAB-CONCEPT.md "Console, Python, and AI access resolve to
+the same underlying operations".
 **Rejected:** blanket allowlisting of `photolab.*` RPCs (bypasses the
 trust boundary and the command validation lifecycle); keeping console
 parity separate from automation parity (two tables drift — P6/X7).
