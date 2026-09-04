@@ -42,6 +42,11 @@ pub enum PhotolabJobKind {
     BuildGaussianSplat,
     ExportProduct,
     Batch,
+    ArchiveSave,
+    ImageInspection,
+    ImageCommit,
+    ImageMask,
+    GcpOperation,
 }
 
 /// Machine-readable phase within a job.
@@ -330,7 +335,7 @@ pub struct NewPhotolabJob {
 }
 
 /// Authoritative, persistable job record. Runtime cancellation handles are separate.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PhotolabJob {
     pub schema_version: u32,
@@ -351,6 +356,51 @@ pub struct PhotolabJob {
     /// Non-fatal terminal-path detail that must survive in durable job history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_diagnostic: Option<String>,
+}
+
+impl Serialize for PhotolabJob {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        let mut record = serializer.serialize_struct("PhotolabJob", 14)?;
+        record.serialize_field("schemaVersion", &self.schema_version)?;
+        record.serialize_field("id", &self.id)?;
+        record.serialize_field("kind", &self.kind)?;
+        let origin = if matches!(
+            self.kind,
+            PhotolabJobKind::ArchiveSave
+                | PhotolabJobKind::ImageInspection
+                | PhotolabJobKind::ImageCommit
+                | PhotolabJobKind::ImageMask
+                | PhotolabJobKind::GcpOperation
+        ) {
+            "sideOperation"
+        } else {
+            "job"
+        };
+        record.serialize_field("origin", origin)?;
+        record.serialize_field("configHash", &self.config_hash)?;
+        record.serialize_field("inputHash", &self.input_hash)?;
+        record.serialize_field("state", &self.state)?;
+        record.serialize_field("progress", &self.progress)?;
+        record.serialize_field("createdAtUnixMs", &self.created_at_unix_ms)?;
+        if let Some(value) = self.started_at_unix_ms {
+            record.serialize_field("startedAtUnixMs", &value)?;
+        }
+        if let Some(value) = self.finished_at_unix_ms {
+            record.serialize_field("finishedAtUnixMs", &value)?;
+        }
+        if let Some(value) = self.last_checkpoint_sequence {
+            record.serialize_field("lastCheckpointSequence", &value)?;
+        }
+        if let Some(value) = &self.terminal_diagnostic {
+            record.serialize_field("terminalDiagnostic", value)?;
+        }
+        record.end()
+    }
 }
 
 impl PhotolabJob {

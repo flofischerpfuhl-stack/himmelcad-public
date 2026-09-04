@@ -15,6 +15,7 @@ import { AlertTriangle, Ban, CheckCircle2, FileDown, RotateCcw } from 'lucide-re
 import { useEffect, useRef, useState } from 'react';
 
 import { GcpAccuracyPanel, type GcpAccuracyReport } from './GcpAccuracyPanel.js';
+import { jobDisplayLabel } from './jobsChip.js';
 import styles from './PhotolabBottomPanel.module.css';
 import {
   buildProcessingReportHtml,
@@ -221,7 +222,7 @@ function JobsView({
                   onClick={() => setExpanded((current) => toggleSet(current, job.id))}
                 >
                   <ExpandChevron expanded={isExpanded} size={14} />
-                  <span className={styles.jobTitle}>{jobLabel(job)}</span>
+                  <span className={styles.jobTitle}>{jobDisplayLabel(job)}</span>
                 </button>
                 <span className={`${styles.state} ${styles[`state_${job.state.kind}`] ?? ''}`}>
                   {stateLabel(job)}
@@ -699,7 +700,7 @@ function ReportView({
         <article className={styles.job} key={job.id}>
           <div className={styles.jobMain}>
             <div className={styles.jobTitleRow}>
-              <span className={styles.jobTitle}>{jobLabel(job)}</span>
+              <span className={styles.jobTitle}>{jobDisplayLabel(job)}</span>
               <span className={`${styles.state} ${styles[`state_${job.state.kind}`] ?? ''}`}>
                 {stateLabel(job)}
               </span>
@@ -855,29 +856,6 @@ function overallFraction(job: PhotolabJob): number {
     1,
     (job.progress.stage.index + within) / Math.max(1, job.progress.stage.stageCount),
   );
-}
-
-function jobLabel(job: PhotolabJob): string {
-  const labels: Record<PhotolabJob['kind'], string> = {
-    analyzeImageQuality: 'Analyze Image Quality',
-    alignPhotos: 'Align Photos',
-    mergeAlignments: 'Merge Alignments',
-    optimizeAlignment: 'Optimize Alignment',
-    buildDepthMaps: 'Build Depth Maps',
-    buildDensePointCloud: 'Build Dense Point Cloud',
-    buildDem: 'Build DEM',
-    buildOrthomosaic: 'Build Orthomosaic',
-    buildMesh: 'Build Textured Mesh',
-    buildGaussianSplat: 'Build Gaussian Splat',
-    exportProduct: 'Export Product',
-    batch: 'Batch Processing',
-    archiveSave: 'Save Archive',
-    imageInspection: 'Inspect Images',
-    imageCommit: 'Commit Images',
-    imageMask: 'Apply Image Masks',
-    gcpOperation: 'GCP Operation',
-  };
-  return labels[job.kind];
 }
 
 function stateLabel(job: PhotolabJob): string {

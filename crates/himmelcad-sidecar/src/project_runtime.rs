@@ -34,7 +34,8 @@ use himmelcad_core::photolab_gcp_optimization::{
 };
 use himmelcad_core::photolab_images::{DjiBrownConradyCalibration, ImageDimensions};
 use himmelcad_core::photolab_jobs::{
-    CancellationToken, PhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState,
+    CancellationToken, JobProgress, PhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState,
+    PhotolabStage, PhotolabStageKind, ProgressMetrics,
 };
 use himmelcad_core::photolab_masks::{
     ComputeImageMask, ImageMaskCatalog, ImageMaskCatalogEntry, ImageMaskComputeScope,
@@ -101,7 +102,7 @@ use himmelcad_sidecar::image_quality_runtime::{
     ImageQualityMetrics, ImageQualityScope, ImageQualityWarning,
 };
 use himmelcad_sidecar::job_runtime::{
-    DrainReport, FrozenJobRequest, JobHistoryPersistence, JobHistoryScope,
+    CancelJobResult, DrainReport, FrozenJobRequest, JobHistoryPersistence, JobHistoryScope,
 };
 use himmelcad_sidecar::mesh_tiler::PreparedMeshProduct;
 use himmelcad_sidecar::mvs_runtime::{
@@ -2438,16 +2439,67 @@ struct ProjectSession {
     job_history: BTreeMap<String, PhotolabJob>,
 }
 
+#[derive(Debug, Clone)]
+struct ActiveSideOperation {
+    cancellation: CancellationToken,
+    kind: PhotolabJobKind,
+    label: &'static str,
+    created_at_unix_ms: u64,
+}
+
+impl ActiveSideOperation {
+    fn new(kind: PhotolabJobKind, label: &'static str) -> Self {
+        Self {
+            cancellation: CancellationToken::new(),
+            kind,
+            label,
+            created_at_unix_ms: unix_ms().unwrap_or_default(),
+        }
+    }
+
+    fn record(&self, operation_id: &str) -> PhotolabJob {
+        let identity = format!("side-operation:{operation_id}");
+        PhotolabJob {
+            schema_version: 1,
+            id: PhotolabJobId(operation_id.to_owned()),
+            kind: self.kind,
+            config_hash: ObjectHash::of_bytes(identity.as_bytes()),
+            input_hash: ObjectHash::of_bytes(identity.as_bytes()),
+            state: if self.cancellation.is_cancel_requested() {
+                PhotolabJobState::CancelRequested
+            } else {
+                PhotolabJobState::Running
+            },
+            // These owners expose cancellation but no retained progress handle. A real
+            // 1/1 stage with unknown units is honest until each owner gains one.
+            progress: JobProgress {
+                stage: PhotolabStage {
+                    kind: PhotolabStageKind::Preparing,
+                    index: 0,
+                    stage_count: 1,
+                    label: self.label.to_owned(),
+                },
+                metrics: ProgressMetrics::empty(),
+            },
+            created_at_unix_ms: self.created_at_unix_ms,
+            started_at_unix_ms: Some(self.created_at_unix_ms),
+            finished_at_unix_ms: None,
+            last_checkpoint_sequence: None,
+            terminal_diagnostic: None,
+        }
+    }
+}
+
 /// Exactly one project is authoritative in a sidecar process.
 #[derive(Debug, Default)]
 pub struct ProjectRuntime {
     session: Mutex<Option<ProjectSession>>,
     job_history_io: Mutex<()>,
-    active_archives: Mutex<HashMap<String, CancellationToken>>,
-    active_image_commits: Mutex<HashMap<String, CancellationToken>>,
-    active_image_inspections: Mutex<HashMap<String, CancellationToken>>,
-    active_image_masks: Mutex<HashMap<String, CancellationToken>>,
-    active_gcp_operations: Mutex<HashMap<String, CancellationToken>>,
+    active_archives: Mutex<HashMap<String, ActiveSideOperation>>,
+    active_image_commits: Mutex<HashMap<String, ActiveSideOperation>>,
+    active_image_inspections: Mutex<HashMap<String, ActiveSideOperation>>,
+    active_image_masks: Mutex<HashMap<String, ActiveSideOperation>>,
+    active_gcp_operations: Mutex<HashMap<String, ActiveSideOperation>>,
     draining_side_operations: AtomicBool,
 }
 
@@ -2465,7 +2517,7 @@ impl SideOperationDrainReport {
 }
 
 impl ProjectRuntime {
-    /// Cancels archive and image-commit side operations, then waits for their owners to finish.
+    /// Cancels all project-runtime side operations, then waits for their owners to finish.
     pub async fn drain_side_operations(&self, deadline: Duration) -> SideOperationDrainReport {
         self.draining_side_operations.store(true, Ordering::Release);
         for cancellation in self
@@ -2474,7 +2526,7 @@ impl ProjectRuntime {
             .expect("archive operation mutex poisoned")
             .values()
         {
-            cancellation.request_cancel();
+            cancellation.cancellation.request_cancel();
         }
         for cancellation in self
             .active_image_commits
@@ -2482,7 +2534,31 @@ impl ProjectRuntime {
             .expect("image commit mutex poisoned")
             .values()
         {
-            cancellation.request_cancel();
+            cancellation.cancellation.request_cancel();
+        }
+        for operation in self
+            .active_image_inspections
+            .lock()
+            .expect("image inspection mutex poisoned")
+            .values()
+        {
+            operation.cancellation.request_cancel();
+        }
+        for operation in self
+            .active_image_masks
+            .lock()
+            .expect("image mask operation mutex poisoned")
+            .values()
+        {
+            operation.cancellation.request_cancel();
+        }
+        for operation in self
+            .active_gcp_operations
+            .lock()
+            .expect("GCP operation mutex poisoned")
+            .values()
+        {
+            operation.cancellation.request_cancel();
         }
 
         let cutoff = tokio::time::Instant::now() + deadline;
@@ -2513,8 +2589,90 @@ impl ProjectRuntime {
                 .keys()
                 .map(|id| format!("imageCommit:{id}")),
         );
+        active.extend(
+            self.active_image_inspections
+                .lock()
+                .expect("image inspection mutex poisoned")
+                .keys()
+                .map(|id| format!("imageInspection:{id}")),
+        );
+        active.extend(
+            self.active_image_masks
+                .lock()
+                .expect("image mask operation mutex poisoned")
+                .keys()
+                .map(|id| format!("imageMask:{id}")),
+        );
+        active.extend(
+            self.active_gcp_operations
+                .lock()
+                .expect("GCP operation mutex poisoned")
+                .keys()
+                .map(|id| format!("gcpOperation:{id}")),
+        );
         active.sort();
         active
+    }
+
+    fn active_side_operation_records(&self) -> Vec<PhotolabJob> {
+        let mut records = Vec::new();
+        for registry in [
+            &self.active_archives,
+            &self.active_image_inspections,
+            &self.active_image_commits,
+            &self.active_image_masks,
+            &self.active_gcp_operations,
+        ] {
+            records.extend(
+                registry
+                    .lock()
+                    .expect("side operation mutex poisoned")
+                    .iter()
+                    .map(|(id, operation)| operation.record(id)),
+            );
+        }
+        records.sort_by(|left, right| left.id.0.cmp(&right.id.0));
+        records
+    }
+
+    fn active_side_operation_status(&self, job_id: &PhotolabJobId) -> Option<PhotolabJob> {
+        for registry in [
+            &self.active_archives,
+            &self.active_image_inspections,
+            &self.active_image_commits,
+            &self.active_image_masks,
+            &self.active_gcp_operations,
+        ] {
+            if let Some(record) = registry
+                .lock()
+                .expect("side operation mutex poisoned")
+                .get(&job_id.0)
+                .map(|operation| operation.record(&job_id.0))
+            {
+                return Some(record);
+            }
+        }
+        None
+    }
+
+    fn cancel_active_side_operation(&self, job_id: &PhotolabJobId) -> Option<CancelJobResult> {
+        for registry in [
+            &self.active_archives,
+            &self.active_image_inspections,
+            &self.active_image_commits,
+            &self.active_image_masks,
+            &self.active_gcp_operations,
+        ] {
+            let registry = registry.lock().expect("side operation mutex poisoned");
+            if let Some(operation) = registry.get(&job_id.0) {
+                let first_request = operation.cancellation.request_cancel();
+                return Some(CancelJobResult {
+                    first_request,
+                    job: operation.record(&job_id.0),
+                });
+            }
+        }
+        None
     }
 
     /// Reopens side-operation admission after a completed project transition.
@@ -2524,7 +2682,13 @@ impl ProjectRuntime {
     }
 
     pub fn begin_image_inspection(&self, operation_id: &str) -> Result<CancellationToken> {
-        let cancellation = CancellationToken::new();
+        anyhow::ensure!(
+            !self.draining_side_operations.load(Ordering::Acquire),
+            "image inspections are unavailable while the project is draining"
+        );
+        let operation =
+            ActiveSideOperation::new(PhotolabJobKind::ImageInspection, "Inspect images");
+        let cancellation = operation.cancellation.clone();
         let mut active = self
             .active_image_inspections
             .lock()
@@ -2532,7 +2696,11 @@ impl ProjectRuntime {
         if active.contains_key(operation_id) {
             anyhow::bail!("image inspection operation id is already active: {operation_id}");
         }
-        active.insert(operation_id.to_owned(), cancellation.clone());
+        anyhow::ensure!(
+            !self.draining_side_operations.load(Ordering::Acquire),
+            "image inspections are unavailable while the project is draining"
+        );
+        active.insert(operation_id.to_owned(), operation);
         Ok(cancellation)
     }
 
@@ -2553,7 +2721,7 @@ impl ProjectRuntime {
             .expect("image inspection mutex poisoned");
         let cancellation_requested = active
             .get(&params.operation_id)
-            .is_some_and(CancellationToken::request_cancel);
+            .is_some_and(|operation| operation.cancellation.request_cancel());
         CancelImageCommitResult {
             operation_id: params.operation_id,
             cancellation_requested,
@@ -2953,19 +3121,28 @@ impl ProjectRuntime {
     }
 
     pub fn edit_image_mask(&self, params: EditImageMaskParams) -> Result<EditImageMaskResult> {
+        anyhow::ensure!(
+            !self.draining_side_operations.load(Ordering::Acquire),
+            "image-mask operations are unavailable while the project is draining"
+        );
         validate_compute_job_id(&params.operation_id)?;
         let operation_id = params.operation_id.clone();
-        let cancellation = CancellationToken::new();
+        let operation = ActiveSideOperation::new(PhotolabJobKind::ImageMask, "Apply image masks");
+        let cancellation = operation.cancellation.clone();
         {
             let mut active = self
                 .active_image_masks
                 .lock()
                 .expect("image mask operation mutex poisoned");
             anyhow::ensure!(
+                !self.draining_side_operations.load(Ordering::Acquire),
+                "image-mask operations are unavailable while the project is draining"
+            );
+            anyhow::ensure!(
                 !active.contains_key(&operation_id),
                 "image-mask operation id is already active: {operation_id}"
             );
-            active.insert(operation_id.clone(), cancellation.clone());
+            active.insert(operation_id.clone(), operation);
         }
         let result = (|| {
             let mut guard = self.session.lock().expect("project session mutex poisoned");
@@ -2987,7 +3164,7 @@ impl ProjectRuntime {
             .expect("image mask operation mutex poisoned");
         let cancellation_requested = active
             .get(&params.operation_id)
-            .is_some_and(CancellationToken::request_cancel);
+            .is_some_and(|operation| operation.cancellation.request_cancel());
         CancelImageMaskResult {
             operation_id: params.operation_id,
             cancellation_requested,
@@ -7779,7 +7956,8 @@ impl ProjectRuntime {
             "image commits are unavailable while the project is draining"
         );
         let operation_id = params.operation_id.clone();
-        let cancellation = CancellationToken::new();
+        let operation = ActiveSideOperation::new(PhotolabJobKind::ImageCommit, "Commit images");
+        let cancellation = operation.cancellation.clone();
         {
             let mut active = self
                 .active_image_commits
@@ -7792,7 +7970,7 @@ impl ProjectRuntime {
             if active.contains_key(&operation_id) {
                 anyhow::bail!("image commit operation id is already active: {operation_id}");
             }
-            active.insert(operation_id.clone(), cancellation.clone());
+            active.insert(operation_id.clone(), operation);
         }
         let result = (|| {
             let mut guard = self.session.lock().expect("project session mutex poisoned");
@@ -7839,7 +8017,7 @@ impl ProjectRuntime {
             .expect("image commit mutex poisoned");
         let cancellation_requested = active
             .get(&params.operation_id)
-            .is_some_and(CancellationToken::request_cancel);
+            .is_some_and(|operation| operation.cancellation.request_cancel());
         CancelImageCommitResult {
             operation_id: params.operation_id,
             cancellation_requested,
@@ -7994,7 +8172,7 @@ impl ProjectRuntime {
             .expect("GCP operation mutex poisoned");
         let cancellation_requested = active
             .get(&params.operation_id)
-            .is_some_and(CancellationToken::request_cancel);
+            .is_some_and(|operation| operation.cancellation.request_cancel());
         CancelGcpOperationResult {
             operation_id: params.operation_id,
             cancellation_requested,
@@ -8006,16 +8184,26 @@ impl ProjectRuntime {
         operation_id: &str,
         operation: impl FnOnce(&mut ProjectSession, &CancellationToken) -> Result<T>,
     ) -> Result<T> {
-        let cancellation = CancellationToken::new();
+        anyhow::ensure!(
+            !self.draining_side_operations.load(Ordering::Acquire),
+            "GCP operations are unavailable while the project is draining"
+        );
+        let active_operation =
+            ActiveSideOperation::new(PhotolabJobKind::GcpOperation, "GCP operation");
+        let cancellation = active_operation.cancellation.clone();
         {
             let mut active = self
                 .active_gcp_operations
                 .lock()
                 .expect("GCP operation mutex poisoned");
+            anyhow::ensure!(
+                !self.draining_side_operations.load(Ordering::Acquire),
+                "GCP operations are unavailable while the project is draining"
+            );
             if active.contains_key(operation_id) {
                 anyhow::bail!("GCP operation id is already active: {operation_id}");
             }
-            active.insert(operation_id.to_owned(), cancellation.clone());
+            active.insert(operation_id.to_owned(), active_operation);
         }
         let result = (|| {
             let mut guard = self.session.lock().expect("project session mutex poisoned");
@@ -8225,7 +8413,7 @@ impl ProjectRuntime {
             .expect("archive operation mutex poisoned");
         let cancellation_requested = guard
             .get(&params.archive_operation_id)
-            .is_some_and(CancellationToken::request_cancel);
+            .is_some_and(|operation| operation.cancellation.request_cancel());
         Ok(CancelArchiveResult {
             archive_operation_id: params.archive_operation_id,
             cancellation_requested,
@@ -8260,7 +8448,8 @@ impl ProjectRuntime {
             str::to_owned,
         );
         validate_archive_operation_id(&operation_id)?;
-        let cancellation = CancellationToken::new();
+        let operation = ActiveSideOperation::new(PhotolabJobKind::ArchiveSave, "Save archive");
+        let cancellation = operation.cancellation.clone();
         let mut guard = self
             .active_archives
             .lock()
@@ -8272,7 +8461,7 @@ impl ProjectRuntime {
         if guard.contains_key(&operation_id) {
             anyhow::bail!("archive operation id is already active: {operation_id}");
         }
-        guard.insert(operation_id.clone(), cancellation.clone());
+        guard.insert(operation_id.clone(), operation);
         Ok((operation_id, cancellation))
     }
 
@@ -8394,6 +8583,26 @@ impl JobHistoryPersistence for ProjectRuntime {
         Ok(guard.as_ref().map_or_else(Vec::new, |session| {
             session.job_history.values().cloned().collect()
         }))
+    }
+
+    fn list_side_operations(&self) -> std::result::Result<Vec<PhotolabJob>, String> {
+        // Side operations have no durable terminal history. They are synthesized only
+        // while active; durable history remains exclusively owned by JobManager.
+        Ok(self.active_side_operation_records())
+    }
+
+    fn side_operation_status(
+        &self,
+        job_id: &PhotolabJobId,
+    ) -> std::result::Result<Option<PhotolabJob>, String> {
+        Ok(self.active_side_operation_status(job_id))
+    }
+
+    fn cancel_side_operation(
+        &self,
+        job_id: &PhotolabJobId,
+    ) -> std::result::Result<Option<CancelJobResult>, String> {
+        Ok(self.cancel_active_side_operation(job_id))
     }
 
     fn persist(
@@ -8574,7 +8783,12 @@ fn cleanup_terminal_job_scratch(project_root: &Path, job: &PhotolabJob) -> Resul
         }
         PhotolabJobKind::AnalyzeImageQuality
         | PhotolabJobKind::OptimizeAlignment
-        | PhotolabJobKind::ExportProduct => {}
+        | PhotolabJobKind::ExportProduct
+        | PhotolabJobKind::ArchiveSave
+        | PhotolabJobKind::ImageInspection
+        | PhotolabJobKind::ImageCommit
+        | PhotolabJobKind::ImageMask
+        | PhotolabJobKind::GcpOperation => {}
         PhotolabJobKind::Batch => cleanup_batch_job(project_root, job_id)?,
     }
     Ok(())
@@ -9095,7 +9309,12 @@ const fn job_kind_supports_cross_restart_resume(kind: PhotolabJobKind) -> bool {
         | PhotolabJobKind::OptimizeAlignment
         | PhotolabJobKind::MergeAlignments
         | PhotolabJobKind::BuildMesh
-        | PhotolabJobKind::ExportProduct => false,
+        | PhotolabJobKind::ExportProduct
+        | PhotolabJobKind::ArchiveSave
+        | PhotolabJobKind::ImageInspection
+        | PhotolabJobKind::ImageCommit
+        | PhotolabJobKind::ImageMask
+        | PhotolabJobKind::GcpOperation => false,
     }
 }
 
@@ -12441,20 +12660,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn side_operation_drain_cancels_and_waits_for_archive_and_image_commit_owners() {
+    async fn side_operation_drain_cancels_and_waits_for_every_owner() {
         let runtime = Arc::new(ProjectRuntime::default());
-        let archive = CancellationToken::new();
-        let image_commit = CancellationToken::new();
-        runtime
-            .active_archives
-            .lock()
-            .expect("archives")
-            .insert("archive-test".into(), archive.clone());
-        runtime
-            .active_image_commits
-            .lock()
-            .expect("image commits")
-            .insert("images-test".into(), image_commit.clone());
+        let operations = [
+            (
+                &runtime.active_archives,
+                "archive-test",
+                ActiveSideOperation::new(PhotolabJobKind::ArchiveSave, "Save archive"),
+            ),
+            (
+                &runtime.active_image_inspections,
+                "inspection-test",
+                ActiveSideOperation::new(PhotolabJobKind::ImageInspection, "Inspect images"),
+            ),
+            (
+                &runtime.active_image_commits,
+                "commit-test",
+                ActiveSideOperation::new(PhotolabJobKind::ImageCommit, "Commit images"),
+            ),
+            (
+                &runtime.active_image_masks,
+                "mask-test",
+                ActiveSideOperation::new(PhotolabJobKind::ImageMask, "Apply image masks"),
+            ),
+            (
+                &runtime.active_gcp_operations,
+                "gcp-test",
+                ActiveSideOperation::new(PhotolabJobKind::GcpOperation, "GCP operation"),
+            ),
+        ];
+        let cancellations = operations
+            .into_iter()
+            .map(|(registry, id, operation)| {
+                let cancellation = operation.cancellation.clone();
+                registry
+                    .lock()
+                    .expect("side operation registry")
+                    .insert(id.into(), operation);
+                cancellation
+            })
+            .collect::<Vec<_>>();
 
         let draining_runtime = runtime.clone();
         let drain = tokio::spawn(async move {
@@ -12463,7 +12708,10 @@ mod tests {
                 .await
         });
         tokio::time::timeout(Duration::from_secs(1), async {
-            while !archive.is_cancel_requested() || !image_commit.is_cancel_requested() {
+            while cancellations
+                .iter()
+                .any(|cancellation| !cancellation.is_cancel_requested())
+            {
                 tokio::task::yield_now().await;
             }
         })
@@ -12472,12 +12720,26 @@ mod tests {
         assert!(runtime
             .begin_archive_operation(Some("rejected-during-drain"))
             .is_err());
+        assert!(runtime
+            .begin_image_inspection("inspection-rejected-during-drain")
+            .is_err());
 
         runtime.active_archives.lock().expect("archives").clear();
+        runtime
+            .active_image_inspections
+            .lock()
+            .expect("inspections")
+            .clear();
         runtime
             .active_image_commits
             .lock()
             .expect("image commits")
+            .clear();
+        runtime.active_image_masks.lock().expect("masks").clear();
+        runtime
+            .active_gcp_operations
+            .lock()
+            .expect("GCP operations")
             .clear();
         let report = drain.await.expect("side-operation drain task");
         assert!(report.completed());
@@ -12486,6 +12748,84 @@ mod tests {
             .begin_archive_operation(Some("accepted-after-drain"))
             .expect("archive admission reopened");
         runtime.finish_archive_operation(&operation_id);
+    }
+
+    #[tokio::test]
+    async fn side_operation_drain_reports_every_timed_out_owner() {
+        let runtime = ProjectRuntime::default();
+        runtime
+            .active_image_inspections
+            .lock()
+            .expect("inspections")
+            .insert(
+                "slow-inspection".into(),
+                ActiveSideOperation::new(PhotolabJobKind::ImageInspection, "Inspect images"),
+            );
+        runtime.active_image_masks.lock().expect("masks").insert(
+            "slow-mask".into(),
+            ActiveSideOperation::new(PhotolabJobKind::ImageMask, "Apply image masks"),
+        );
+        runtime
+            .active_gcp_operations
+            .lock()
+            .expect("GCP operations")
+            .insert(
+                "slow-gcp".into(),
+                ActiveSideOperation::new(PhotolabJobKind::GcpOperation, "GCP operation"),
+            );
+
+        let report = runtime.drain_side_operations(Duration::ZERO).await;
+        assert_eq!(
+            report.timed_out,
+            vec![
+                "gcpOperation:slow-gcp",
+                "imageInspection:slow-inspection",
+                "imageMask:slow-mask",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn jobs_adapter_lists_statuses_and_cancels_active_side_operations() {
+        let runtime = Arc::new(ProjectRuntime::default());
+        let cancellation = runtime
+            .begin_image_inspection("synthetic-inspection")
+            .expect("inspection admitted");
+        let manager = JobManager::new_with_history(
+            JobManagerConfig {
+                max_concurrency: 1,
+                max_queued: 0,
+            },
+            runtime.clone(),
+        )
+        .expect("job manager");
+        let job_id = PhotolabJobId("synthetic-inspection".into());
+
+        let listed = manager
+            .list(himmelcad_sidecar::job_runtime::ListJobsParams::default())
+            .await
+            .expect("jobs list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].kind, PhotolabJobKind::ImageInspection);
+        assert_eq!(
+            serde_json::to_value(&listed[0]).expect("serialized synthetic job")["origin"],
+            "sideOperation"
+        );
+        assert_eq!(manager.status(&job_id).await.expect("status"), listed[0]);
+
+        let cancelled = manager
+            .cancel(&job_id)
+            .await
+            .expect("cancel side operation");
+        assert!(cancelled.first_request);
+        assert_eq!(cancelled.job.state, PhotolabJobState::CancelRequested);
+        assert!(cancellation.is_cancel_requested());
+
+        runtime.finish_image_inspection(&job_id.0);
+        assert!(matches!(
+            manager.status(&job_id).await,
+            Err(himmelcad_sidecar::job_runtime::JobManagerError::JobNotFound(_))
+        ));
     }
 
     #[test]

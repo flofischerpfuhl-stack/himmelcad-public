@@ -116,6 +116,7 @@ import type {
   LocalGridSelection,
 } from './ImageImportPanel.js';
 import { ImageWorkspace, initialGcpProjection } from './ImageWorkspace.js';
+import { jobsChipState } from './jobsChip.js';
 import { revalidateSelection } from './selectionLifecycle.js';
 import { ImagePropertiesPanel } from './ImagePropertiesPanel.js';
 import { SelectionPropertiesPanel } from './SelectionPropertiesPanel.js';
@@ -415,6 +416,11 @@ export function App(): JSX.Element {
   const refreshedCompletedJobs = useRef<Set<string>>(new Set());
   const observedActiveJobs = useRef<Set<string>>(new Set());
   const observedFailedJobs = useRef<Set<string>>(new Set());
+  const observedTerminalJobs = useRef<Set<string>>(new Set());
+  const previousJobsChipTab = useRef<BottomTab>('console');
+  const [acknowledgedFailedJobIds, setAcknowledgedFailedJobIds] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
   const [autoExpandJobId, setAutoExpandJobId] = useState<string | null>(null);
   const activeFunctionId = useLayoutStore((state) => state.activeFunctionId);
   const activateStoredFunction = useLayoutStore((state) => state.activateFunction);
@@ -554,6 +560,7 @@ export function App(): JSX.Element {
     gcpCollectionRef.current = gcpCollection;
   }, [gcpCollection]);
   const toggleBottom = useLayoutStore((state) => state.toggleBottomPanel);
+  const bottomPanelCollapsed = useLayoutStore((state) => state.bottomPanelCollapsed);
   const setBottomCollapsed = useLayoutStore((state) => state.setBottomPanelCollapsed);
   const setRightCollapsed = useLayoutStore((state) => state.setRightPanelCollapsed);
   const reportPanelError = useCallback(
@@ -896,7 +903,9 @@ export function App(): JSX.Element {
         setJobResumeErrors({});
         observedActiveJobs.current.clear();
         observedFailedJobs.current.clear();
+        observedTerminalJobs.current.clear();
         refreshedCompletedJobs.current.clear();
+        setAcknowledgedFailedJobIds(new Set());
         lastLoadedGcpOptimizationJobId.current = null;
         setAutoExpandJobId(null);
       }
@@ -2242,6 +2251,20 @@ export function App(): JSX.Element {
     setBottomTab('jobs');
     setBottomCollapsed(false);
   }, [autoSwitchTabs, jobs, setBottomCollapsed]);
+
+  useEffect(() => {
+    for (const job of jobs) {
+      if (!['completed', 'cancelled'].includes(job.state.kind)) continue;
+      if (observedTerminalJobs.current.has(job.id)) continue;
+      observedTerminalJobs.current.add(job.id);
+      logEvent(
+        job.state.kind === 'completed' ? 'info' : 'warn',
+        'sidecar',
+        `${job.progress.stage.label} ${job.state.kind === 'completed' ? 'completed' : 'cancelled'}`,
+      );
+      // toast: pending Builder-lane primitive (UIP-D10 chain)
+    }
+  }, [jobs]);
 
   useEffect(() => {
     const failedIds = newlyFailedJobIds(jobs, observedFailedJobs.current);
@@ -3869,6 +3892,10 @@ export function App(): JSX.Element {
         : stored.hasArchiveCopy
           ? `Archive: ${stored.archiveChanges} change${stored.archiveChanges === 1 ? '' : 's'} since last save`
           : 'Archive: no copy saved';
+    const chip = jobsChipState(
+      jobs.filter((job) => job.state.kind !== 'failed' || !acknowledgedFailedJobIds.has(job.id)),
+      Date.now(),
+    );
     return [
       {
         id: 'core',
@@ -3932,14 +3959,52 @@ export function App(): JSX.Element {
         align: 'right' as const,
       },
       { id: 'panels', content: <PanelToggles />, align: 'right' as const },
+      ...(chip.tone === 'hidden'
+        ? []
+        : [
+            {
+              id: 'jobs',
+              content: (
+                <button
+                  type="button"
+                  className={styles.jobsChip}
+                  data-tone={chip.tone}
+                  aria-label={`Jobs: ${chip.label}`}
+                  title="Open or close jobs"
+                  onClick={() => {
+                    if (!bottomPanelCollapsed && bottomTab === 'jobs') {
+                      setBottomTab(previousJobsChipTab.current);
+                      setBottomCollapsed(true);
+                      return;
+                    }
+                    if (bottomTab !== 'jobs') previousJobsChipTab.current = bottomTab;
+                    setAcknowledgedFailedJobIds(
+                      new Set(
+                        jobs.filter((job) => job.state.kind === 'failed').map((job) => job.id),
+                      ),
+                    );
+                    setBottomTab('jobs');
+                    setBottomCollapsed(false);
+                  }}
+                >
+                  {chip.label}
+                </button>
+              ),
+              align: 'right' as const,
+            },
+          ]),
     ];
   }, [
+    acknowledgedFailedJobIds,
     archiveSaveStatus,
     autosaveGeneration,
+    bottomPanelCollapsed,
+    bottomTab,
     coreReady,
     gcpCollection,
     hardware,
     imageCount,
+    jobs,
     lastSavedGeneration,
     profile,
     projectHasArchiveCopy,
@@ -3950,6 +4015,7 @@ export function App(): JSX.Element {
     workingCopyDurability,
     workspaceMode,
     saveProject,
+    setBottomCollapsed,
   ]);
 
   const onSelect = (id: EntityId, mode: 'replace' | 'add' | 'toggle') => {

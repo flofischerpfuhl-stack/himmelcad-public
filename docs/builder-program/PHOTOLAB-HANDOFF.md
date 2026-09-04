@@ -7,7 +7,7 @@ landing by the PhotoLab session. Plan of record:
 `.claude/codex/prompts/photolab/`, the token ledger under
 `.claude/codex/logs/photolab/ledger.json`.
 
-Last update: 2026-09-04 12:40 (A4 code committed; landing pending G17 review + DTM smoke).
+Last update: 2026-09-04 13:45 (A4 + H2 code landed; A4 DTM smoke running).
 
 ## Current work packages
 
@@ -46,8 +46,9 @@ close/durability (03bd235), ADR 0030 rev 6 (9d4d398), pixel baselines
 1. Get the sidecar gate green (Builder lane fixes `entity_compiler.rs`), run
    A4's full tests + the 24-image DTM-vs-DSM smoke, capture light/dark
    screenshots of the DEM panel (G17), commit A4, update this file.
-2. Relaunch the golden run detached (see "Golden run" below) and dispatch H2
-   (medium) once the cargo lane is free.
+2. Golden run is running (relaunched 12:12); next dispatch B5 (high) once the
+   A4 smoke frees the lane binary — copy lane binaries to `.build/photolab-runtime/bin/`
+   before any e2e (cargo relinks the lane binary and breaks running e2e publishes).
 3. B5 → B4 → H1b (announce main.rs) → A3 stage 1, one review each, ledger
    entry per run.
 

@@ -131,6 +131,27 @@ pub trait JobHistoryPersistence: Send + Sync {
         job: &PhotolabJob,
         frozen_request: Option<&FrozenJobRequest>,
     ) -> Result<(), String>;
+
+    /// Active project-runtime operations exposed through the global jobs surface.
+    fn list_side_operations(&self) -> Result<Vec<PhotolabJob>, String> {
+        Ok(Vec::new())
+    }
+
+    /// Returns an active side operation, if this history owner has one with the id.
+    fn side_operation_status(
+        &self,
+        _job_id: &PhotolabJobId,
+    ) -> Result<Option<PhotolabJob>, String> {
+        Ok(None)
+    }
+
+    /// Requests cancellation from the original side-operation owner.
+    fn cancel_side_operation(
+        &self,
+        _job_id: &PhotolabJobId,
+    ) -> Result<Option<CancelJobResult>, String> {
+        Ok(None)
+    }
 }
 
 /// Bounded scheduling policy for one sidecar process.
@@ -661,10 +682,19 @@ impl JobManager {
             }
             records.insert(managed.job.id.0.clone(), managed.job.clone());
         }
-        Ok(records
+        let mut records = records
             .into_values()
             .filter(|job| params.include_terminal || !is_terminal(&job.state))
-            .collect())
+            .collect::<Vec<_>>();
+        if let Some(history) = &self.inner.history {
+            records.extend(
+                history
+                    .list_side_operations()
+                    .map_err(JobManagerError::HistoryPersistence)?,
+            );
+        }
+        records.sort_by(|left, right| left.id.0.cmp(&right.id.0));
+        Ok(records)
     }
 
     /// Returns the current authoritative record for one job.
@@ -681,26 +711,46 @@ impl JobManager {
             return Ok(job);
         }
         drop(jobs);
-        self.inner
+        if let Some(job) = self
+            .inner
             .history
             .as_ref()
             .map_or_else(|| Ok(Vec::new()), |history| history.load_current())
             .map_err(JobManagerError::HistoryPersistence)?
             .into_iter()
             .find(|job| job.id == *job_id)
-            .ok_or_else(|| JobManagerError::JobNotFound(job_id.clone()))
+        {
+            return Ok(job);
+        }
+        if let Some(history) = &self.inner.history {
+            if let Some(job) = history
+                .side_operation_status(job_id)
+                .map_err(JobManagerError::HistoryPersistence)?
+            {
+                return Ok(job);
+            }
+        }
+        Err(JobManagerError::JobNotFound(job_id.clone()))
     }
 
     /// Makes cancellation visible before returning to the caller.
     pub async fn cancel(&self, job_id: &PhotolabJobId) -> Result<CancelJobResult, JobManagerError> {
         let current_scope = self.current_history_scope()?;
         let mut jobs = self.inner.jobs.lock().await;
-        let managed = jobs
-            .get_mut(&job_id.0)
-            .filter(|managed| {
-                self.inner.history.is_none() || managed.history_scope == current_scope
-            })
-            .ok_or_else(|| JobManagerError::JobNotFound(job_id.clone()))?;
+        let Some(managed) = jobs.get_mut(&job_id.0).filter(|managed| {
+            self.inner.history.is_none() || managed.history_scope == current_scope
+        }) else {
+            drop(jobs);
+            if let Some(history) = &self.inner.history {
+                if let Some(result) = history
+                    .cancel_side_operation(job_id)
+                    .map_err(JobManagerError::HistoryPersistence)?
+                {
+                    return Ok(result);
+                }
+            }
+            return Err(JobManagerError::JobNotFound(job_id.clone()));
+        };
         let was_queued = managed.job.state == PhotolabJobState::Queued;
         let first_request = managed.job.request_cancel(&managed.cancellation)?;
         if was_queued {

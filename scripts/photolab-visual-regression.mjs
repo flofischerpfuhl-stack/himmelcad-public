@@ -405,7 +405,7 @@ async function auditViewport(browserInstance, viewport) {
   await page.getByRole('tab', { name: 'Properties', exact: true }).click();
   await capture('right-panel-properties');
 
-  await page.getByRole('tab', { name: 'Jobs', exact: true }).click();
+  await page.getByRole('tab', { name: /^Jobs\b/ }).click();
   await capture('bottom-jobs');
   await page.getByRole('tab', { name: 'Accuracy', exact: true }).click();
   await capture('bottom-accuracy');
@@ -983,7 +983,8 @@ function mockBridgeSource() {
       if(method==='photolab.images.list')return [projectImage(1),projectImage(2)];
       if(method==='photolab.images.quality.list'||method==='photolab.project.imageMask.list')return [];
       if(method==='photolab.products.list')return [productDataset];
-      if(method==='photolab.project.processingSet.list'||method==='photolab.project.captureGroup.list'||method==='photolab.project.calibrationGroup.list'||method==='photolab.project.alignmentMerge.candidates'||method==='photolab.project.alignmentMerge.list'||method==='photolab.gcp.optimization.list'||method==='photolab.jobs.list')return [];
+      if(method==='photolab.jobs.list')return [{schemaVersion:1,id:'visual-depth',kind:'buildDepthMaps',origin:'job',configHash:hash,inputHash:hash,state:{kind:'running'},progress:{stage:{kind:'depthEstimation',index:1,stageCount:3,label:'Estimate depth'},metrics:{completedUnits:42,totalUnits:100,completedBytes:0}},createdAtUnixMs:0,startedAtUnixMs:0},{schemaVersion:1,id:'visual-archive',kind:'archiveSave',origin:'sideOperation',configHash:hash,inputHash:hash,state:{kind:'running'},progress:{stage:{kind:'featureExtraction',index:0,stageCount:1,label:'Writing archive'},metrics:{completedUnits:0,completedBytes:0}},createdAtUnixMs:0,startedAtUnixMs:0}];
+      if(method==='photolab.project.processingSet.list'||method==='photolab.project.captureGroup.list'||method==='photolab.project.calibrationGroup.list'||method==='photolab.project.alignmentMerge.candidates'||method==='photolab.project.alignmentMerge.list'||method==='photolab.gcp.optimization.list')return [];
       if(method==='photolab.gcp.list'||method==='photolab.gcp.optimization.latest'||method==='photolab.gcp.calibrationReport')return null;
       if(method==='photolab.project.autosave')return {autosaveGeneration:0,lastSavedGeneration:0,dirty:false};
       if(method==='photolab.project.snapshot')return opened;
