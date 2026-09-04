@@ -7,7 +7,7 @@ landing by the PhotoLab session. Plan of record:
 `.claude/codex/prompts/photolab/`, the token ledger under
 `.claude/codex/logs/photolab/ledger.json`.
 
-Last update: 2026-09-04 15:20 (A4, H2, B5, B4 landed; A4 DSM smoke running).
+Last update: 2026-09-04 15:40 (A4 landed with DTM evidence; H2, B5, B4 landed; H1b in flight).
 
 ## Current work packages
 
@@ -83,3 +83,4 @@ lease and are unaffected. Result: `result.json` in the output directory.
 
 - H2 landed 2ef29d5 — G17 screenshots: `.build/photolab-ui/h2-{dark,light}/00-main-view.png` (chip "2 jobs running") and `bottom-jobs.png` (Jobs tab badge, side operation with Cancel). Chip spec for S-05 convergence: one button at the right end of the status bar, 18 px, 10 px UI font, 1 px tone border (progress = accent, warning, danger with error text, success), labels "n jobs running" / "1 job running · label pct%" / "Cancelling…" / "Job failed — label" / "Job completed — label" (4 s linger), aria-label "Jobs: label", click toggles the Jobs tab. Obligation: PhotoLab adopts the shared chip + jobs island when S-05 lands. Findings for the shared side: light theme viewport toolbar contrast (active "3D" segment, axis chip); jobs list shows "overall 0%" for unknown units — render "in progress".
 - B4 landed: crates/himmelcad-sidecar/src/main.rs changed inside `handle_job_rpc` only (job-start handlers pass frozen publication targets and disk estimates); no routes added.
+- A4 landed with evidence: DTM removes elevated objects (median DSM−DTM 1.32 m over the smoke area, 25 % of cells > 3 m, DTM never above DSM); screenshots `.build/photolab-ui/a4-{dark,light}/function-dem-dtm.png`.
