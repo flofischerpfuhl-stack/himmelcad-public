@@ -7,7 +7,7 @@ landing by the PhotoLab session. Plan of record:
 `.claude/codex/prompts/photolab/`, the token ledger under
 `.claude/codex/logs/photolab/ledger.json`.
 
-Last update: 2026-09-04 17:45 (A3 fix landed; dense-mesh smoke running; Builder session back at 10-himmelcad-a2).
+Last update: 2026-09-04 18:30 (A3 fixes 1148ffd/601efde landed; dense-mesh smoke blocked by a Builder-lane compile error).
 
 ## Current work packages
 
@@ -86,3 +86,4 @@ lease and are unaffected. Result: `result.json` in the output directory.
 - B4 landed: crates/himmelcad-sidecar/src/main.rs changed inside `handle_job_rpc` only (job-start handlers pass frozen publication targets and disk estimates); no routes added.
 - A4 landed with evidence: DTM removes elevated objects (median DSM−DTM 1.32 m over the smoke area, 25 % of cells > 3 m, DTM never above DSM); screenshots `.build/photolab-ui/a4-{dark,light}/function-dem-dtm.png`.
 - H1b landed: crates/himmelcad-sidecar/src/main.rs — `photolab.project.save` gained optional params `archiveOperationId`/`progressKey` (deny_unknown_fields, null-compatible); no new route.
+- Blocker 2026-09-04 18:20: Builder-lane WIP `crates/himmelcad-sidecar/src/canonical_app_runtime.rs` calls `create_snapshot_marker`, missing from `release_05_admissions.rs` → sidecar does not compile; reported to `10-himmelcad-a2`. Rerun after their fix: rebuild in target/photolab-b5, copy to `.build/photolab-runtime/bin/`, then `node scripts/photolab-e2e.mjs --source '…/01_Photos' --output .build/photolab-e2e/a3-mesh-smoke --max-images 24 --smoke --profile fast --products depth,dense,mesh --mesh-source dense --target-epsg 31468 --target-vertical-epsg 7837 --sidecar .build/photolab-runtime/bin/himmelcad-sidecar` with `HIMMELCAD_COMPUTE_LEASE_PATH=/tmp/himmelcad-compute-a3-smoke.lock`.
