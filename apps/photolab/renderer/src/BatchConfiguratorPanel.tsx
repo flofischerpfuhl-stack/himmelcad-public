@@ -31,6 +31,7 @@ import {
   type ProductOperation,
   type ProductRunConfiguration,
 } from './ProductPanel.js';
+import { validDemGroundParameters } from './productConfiguration.js';
 import { ExpandChevron, Checkbox, Select } from '@himmelcad/ui';
 
 export type BatchPipelineStep = BatchRecipePipelineStep;
@@ -125,6 +126,13 @@ export function BatchConfiguratorPanel({
     [gcpOptimizations],
   );
   const processingSetScopeInvalid = file.scope?.kind === 'processingSet' && !selectedProcessingSet;
+  const dtmConfigurationInvalid = file.steps.some(
+    (step) =>
+      step.kind === 'product' &&
+      step.configuration.kind === 'dem' &&
+      step.configuration.surface === 'dtm' &&
+      !validDemGroundParameters(step.configuration),
+  );
   const scopedCameraIds =
     scope === 'all'
       ? allCameraIds
@@ -464,6 +472,7 @@ export function BatchConfiguratorPanel({
           busy ||
           !canStart ||
           file.steps.length === 0 ||
+          dtmConfigurationInvalid ||
           processingSetScopeInvalid ||
           scopedCameraIds.length < 2
         }
@@ -798,6 +807,41 @@ function ProductBatchFields({
             step={0.001}
             onChange={(value) => onChange({ ...configuration, resolutionMetersPerPixel: value })}
           />
+          {configuration.surface === 'dtm' && (
+            <>
+              <label className={styles.field}>
+                <span>Ground classification</span>
+                <small>
+                  Ground points are classified with a morphological filter (SMRF); DSM uses all
+                  points.
+                </small>
+              </label>
+              <NumberField
+                label="Ground cell size [m]"
+                value={configuration.cellSizeM}
+                min={0.01}
+                max={1_000}
+                step={0.1}
+                onChange={(value) => onChange({ ...configuration, cellSizeM: value })}
+              />
+              <NumberField
+                label="Terrain slope"
+                value={configuration.slope}
+                min={0.001}
+                max={1}
+                step={0.01}
+                onChange={(value) => onChange({ ...configuration, slope: value })}
+              />
+              <NumberField
+                label="Maximum window [m]"
+                value={configuration.maxWindowM}
+                min={0.01}
+                max={10_000}
+                step={1}
+                onChange={(value) => onChange({ ...configuration, maxWindowM: value })}
+              />
+            </>
+          )}
           <TileField configuration={configuration} onChange={onChange} />
           <ToggleField
             label="Interpolate NoData"
@@ -986,16 +1030,36 @@ function NumberField({
   step: number;
   onChange: (value: number) => void;
 }): JSX.Element {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+
+  const commit = (): void => {
+    const parsed = Number(draft);
+    if (Number.isFinite(parsed)) {
+      onChange(parsed);
+    } else {
+      setDraft(String(value));
+    }
+  };
+
   return (
     <label className={styles.field}>
       <span>{label}</span>
       <input
         type="number"
-        value={value}
+        value={draft}
         min={min}
         max={max}
         step={step}
-        onChange={(event) => onChange(Number(event.currentTarget.value))}
+        onChange={(event) => setDraft(event.currentTarget.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            setDraft(String(value));
+          }
+        }}
       />
     </label>
   );
@@ -1009,16 +1073,14 @@ function ToggleField({
   checked: boolean;
   onChange: (checked: boolean) => void;
 }): JSX.Element {
+  // One control: the shared Checkbox draws its own box, so no local pill.
   return (
-    <label className={styles.toggle}>
-      <Checkbox
-        aria-label={label}
-        checked={checked}
-        onChange={(event) => onChange(event.currentTarget.checked)}
-      />
-      <span />
-      <strong>{label}</strong>
-    </label>
+    <Checkbox
+      className={styles.toggle}
+      label={label}
+      checked={checked}
+      onChange={(event) => onChange(event.currentTarget.checked)}
+    />
   );
 }
 function TileField({

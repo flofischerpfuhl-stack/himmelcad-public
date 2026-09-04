@@ -1,5 +1,37 @@
 import type { EntityId, ObjectHash } from '@himmelcad/data';
 
+export interface DemGroundParameters {
+  cellSizeM: number;
+  slope: number;
+  maxWindowM: number;
+  initialDistanceM: number;
+}
+
+export const DEFAULT_DEM_GROUND_PARAMETERS: Readonly<DemGroundParameters> = {
+  // About 2–5 times typical UAV GSD balances samples per cell and structure detail.
+  cellSizeM: 1.0,
+  // A 15% terrain tolerance retains common surveyed ramps and embankments.
+  slope: 0.15,
+  // Eighteen metres removes typical buildings without a city-scale kernel.
+  maxWindowM: 18.0,
+  // Half a metre tolerates dense-cloud noise and low vegetation near terrain.
+  initialDistanceM: 0.5,
+};
+
+export function validDemGroundParameters(parameters: DemGroundParameters): boolean {
+  return (
+    Number.isFinite(parameters.cellSizeM) &&
+    parameters.cellSizeM > 0 &&
+    Number.isFinite(parameters.slope) &&
+    parameters.slope > 0 &&
+    parameters.slope <= 1 &&
+    Number.isFinite(parameters.maxWindowM) &&
+    parameters.maxWindowM >= parameters.cellSizeM &&
+    Number.isFinite(parameters.initialDistanceM) &&
+    parameters.initialDistanceM >= 0
+  );
+}
+
 export type ProductOperation = 'depth' | 'dense' | 'dem' | 'ortho' | 'mesh' | 'splat';
 
 export type ProductRunConfiguration =
@@ -22,6 +54,10 @@ export type ProductRunConfiguration =
       resolutionMetersPerPixel: number;
       interpolateNodata: boolean;
       tileSizePixels: 512;
+      cellSizeM: number;
+      slope: number;
+      maxWindowM: number;
+      initialDistanceM: number;
     }
   | {
       kind: 'ortho';
@@ -71,6 +107,7 @@ export function defaultProductConfiguration(operation: ProductOperation): Produc
       resolutionMetersPerPixel: 0.05,
       interpolateNodata: false,
       tileSizePixels: 512,
+      ...DEFAULT_DEM_GROUND_PARAMETERS,
     };
   }
   if (operation === 'ortho') {

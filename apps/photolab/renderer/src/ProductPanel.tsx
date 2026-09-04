@@ -7,6 +7,7 @@ import {
   defaultProductConfiguration,
   type ProductOperation,
   type ProductRunConfiguration,
+  validDemGroundParameters,
 } from './productConfiguration.js';
 import {
   evaluateProductPrerequisites,
@@ -284,6 +285,40 @@ export function ProductPanel({
               </Select>
             </Field>
             <Resolution configuration={configuration} setConfiguration={setConfiguration} />
+            {configuration.surface === 'dtm' && (
+              <>
+                <Field label="Ground classification">
+                  <span className={styles.readonly}>
+                    Ground points are classified with a morphological filter (SMRF); DSM uses all
+                    points.
+                  </span>
+                </Field>
+                <NumberField
+                  label="Ground cell size [m]"
+                  value={configuration.cellSizeM}
+                  min={0.01}
+                  max={1_000}
+                  step={0.1}
+                  onChange={(value) => setConfiguration({ ...configuration, cellSizeM: value })}
+                />
+                <NumberField
+                  label="Terrain slope"
+                  value={configuration.slope}
+                  min={0.001}
+                  max={1}
+                  step={0.01}
+                  onChange={(value) => setConfiguration({ ...configuration, slope: value })}
+                />
+                <NumberField
+                  label="Maximum window [m]"
+                  value={configuration.maxWindowM}
+                  min={0.01}
+                  max={10_000}
+                  step={1}
+                  onChange={(value) => setConfiguration({ ...configuration, maxWindowM: value })}
+                />
+              </>
+            )}
             <Field label="Streaming tiles">
               <span className={styles.readonly}>512 px · fixed COG/quadtree pyramid</span>
             </Field>
@@ -564,15 +599,35 @@ function NumberField({
   step: number;
   onChange: (value: number) => void;
 }): JSX.Element {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+
+  const commit = (): void => {
+    const parsed = Number(draft);
+    if (Number.isFinite(parsed)) {
+      onChange(parsed);
+    } else {
+      setDraft(String(value));
+    }
+  };
+
   return (
     <Field label={label}>
       <input
         type="number"
-        value={value}
+        value={draft}
         min={min}
         max={max}
         step={step}
-        onChange={(event) => onChange(Number(event.currentTarget.value))}
+        onChange={(event) => setDraft(event.currentTarget.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            setDraft(String(value));
+          }
+        }}
       />
     </Field>
   );
@@ -587,12 +642,14 @@ function Toggle({
   checked: boolean;
   onChange: (checked: boolean) => void;
 }): JSX.Element {
+  // One control: the shared Checkbox draws its own box, so no local pill.
   return (
-    <label className={styles.toggle}>
-      <Checkbox checked={checked} onChange={(event) => onChange(event.currentTarget.checked)} />
-      <span aria-hidden="true" />
-      <strong>{label}</strong>
-    </label>
+    <Checkbox
+      className={styles.toggle}
+      label={label}
+      checked={checked}
+      onChange={(event) => onChange(event.currentTarget.checked)}
+    />
   );
 }
 
@@ -618,7 +675,14 @@ function Resolution({
 }
 
 function valid(configuration: ProductRunConfiguration): boolean {
-  if ('resolutionMetersPerPixel' in configuration) {
+  if (configuration.kind === 'dem') {
+    return (
+      Number.isFinite(configuration.resolutionMetersPerPixel) &&
+      configuration.resolutionMetersPerPixel > 0 &&
+      (configuration.surface === 'dsm' || validDemGroundParameters(configuration))
+    );
+  }
+  if (configuration.kind === 'ortho') {
     return (
       Number.isFinite(configuration.resolutionMetersPerPixel) &&
       configuration.resolutionMetersPerPixel > 0

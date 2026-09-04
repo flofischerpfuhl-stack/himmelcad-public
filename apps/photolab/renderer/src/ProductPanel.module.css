@@ -52,63 +52,10 @@
 }
 
 .toggle {
-  display: grid;
-  grid-template-columns: 30px 1fr;
-  align-items: center;
-  gap: 8px;
   min-height: 27px;
   color: var(--hc-fg-default);
-  cursor: pointer;
   font-size: 11px;
 }
-
-.toggle input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-}
-
-.toggle > span {
-  position: relative;
-  width: 29px;
-  height: 16px;
-  background: var(--hc-bg-void);
-  border: 1px solid var(--hc-border-default);
-  border-radius: 10px;
-  transition:
-    background 120ms ease,
-    border-color 120ms ease;
-}
-
-.toggle > span::after {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 10px;
-  height: 10px;
-  background: var(--hc-fg-muted);
-  border-radius: 50%;
-  content: '';
-  transition:
-    transform 120ms ease,
-    background 120ms ease;
-}
-
-.toggle input:checked + span {
-  background: var(--hc-press-bg);
-  border-color: var(--hc-accent-base);
-}
-
-.toggle input:checked + span::after {
-  background: var(--hc-accent-base);
-  transform: translateX(13px);
-}
-
-.toggle strong {
-  font-weight: 450;
-}
-
 .warning {
   padding: 9px 10px;
   color: var(--hc-fg-default);

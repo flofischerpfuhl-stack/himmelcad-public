@@ -829,6 +829,10 @@ pub struct RasterArtifactRecord {
     pub gcp_optimization_snapshot_sha256: Option<ObjectHash>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_mask_scope_sha256: Option<ObjectHash>,
+    /// SHA-256 of the immutable `dense.classification.bin` (LAS class per dense
+    /// vertex) a DTM was derived from; absent for DSM/orthomosaic runs (WP-A4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ground_classification_sha256: Option<ObjectHash>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -7492,6 +7496,7 @@ impl ProjectRuntime {
         kind: PublishedRasterKind,
         summary: RasterBuildSummary,
         lineage: &ProductLineage,
+        ground_classification_sha256: Option<ObjectHash>,
     ) -> Result<PublishColmapResult> {
         validate_compute_job_id(job_id)?;
         let mut guard = self.session.lock().expect("project session mutex poisoned");
@@ -7518,6 +7523,7 @@ impl ProjectRuntime {
             gcp_optimization_entity_id: lineage.gcp_optimization_entity_id.clone(),
             gcp_optimization_snapshot_sha256: lineage.gcp_optimization_snapshot_sha256.clone(),
             image_mask_scope_sha256: Some(lineage.image_mask_scope_sha256.clone()),
+            ground_classification_sha256,
         };
         let version_hash =
             put_project_object(&session.working_path, &serde_json::to_vec(&record)?)?;

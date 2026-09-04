@@ -108,8 +108,9 @@ use himmelcad_sidecar::dedode_runtime::{
     DevDedodeOnnxRuntimeConfig, DevDedodeRuntimeConfig,
 };
 use himmelcad_sidecar::dense_raster_prep::{
-    inspect_raster_wkt, inspect_vector_wkt, prepare_dense_potree, prepare_dense_vector,
-    prepare_sparse_potree, DenseRasterPrepError,
+    inspect_raster_wkt, inspect_vector_wkt, persist_dense_classification, prepare_dense_potree,
+    prepare_dense_vector_with_classification, prepare_sparse_potree, read_dense_points,
+    DenseRasterPrepError,
 };
 use himmelcad_sidecar::gcp_local_estimate_runtime::{
     ComputeGcpLocalEstimateParams, ReadGcpLocalEstimateParams,
@@ -120,6 +121,9 @@ use himmelcad_sidecar::gcp_optimization_runtime::{
 use himmelcad_sidecar::gcp_runtime::{
     CancelGcpOperationParams, CommitGcpsParams, CreateGcpOptimizationSnapshotParams,
     EditGcpObservationParams, UpsertGcpObservationParams, UpsertGcpObservationsParams,
+};
+use himmelcad_sidecar::ground_classification::{
+    classify_ground, GroundClassificationError, PointClass, SmrfParams,
 };
 use himmelcad_sidecar::hardware_runtime::probe_hardware;
 use himmelcad_sidecar::image_commit::{CancelImageCommitParams, CommitImagesParams};
@@ -734,6 +738,14 @@ enum ProductRunConfiguration {
         resolution_meters_per_pixel: f64,
         interpolate_nodata: bool,
         tile_size_pixels: u32,
+        #[serde(default = "default_smrf_cell_size_m")]
+        cell_size_m: f64,
+        #[serde(default = "default_smrf_slope")]
+        slope: f64,
+        #[serde(default = "default_smrf_max_window_m")]
+        max_window_m: f64,
+        #[serde(default = "default_smrf_initial_distance_m")]
+        initial_distance_m: f64,
     },
     Ortho {
         resolution_meters_per_pixel: f64,
@@ -817,6 +829,26 @@ const fn default_mvs_maximum_neighbors() -> u32 {
 
 const fn default_splat_maximum_resolution() -> u32 {
     1_920
+}
+
+/// X6 default: about 2–5 times typical UAV GSD balances samples per cell and detail.
+const fn default_smrf_cell_size_m() -> f64 {
+    1.0
+}
+
+/// X6 default: 15% terrain tolerance retains common ramps and embankments.
+const fn default_smrf_slope() -> f64 {
+    0.15
+}
+
+/// X6 default: 18 m removes typical buildings without a city-scale kernel.
+const fn default_smrf_max_window_m() -> f64 {
+    18.0
+}
+
+/// X6 default: 0.5 m tolerates dense-cloud noise and low vegetation near terrain.
+const fn default_smrf_initial_distance_m() -> f64 {
+    0.5
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -7280,6 +7312,13 @@ fn prepare_raster_product_job(
             .as_ref()
             .map(|record| record.artifact_sha256.clone()),
     ))?);
+    let has_pre_raster_stage =
+        matches!(&params.configuration, ProductRunConfiguration::Ortho { .. })
+            || matches!(
+                &params.configuration,
+                ProductRunConfiguration::Dem { surface, .. }
+                    if surface.eq_ignore_ascii_case("dtm")
+            );
     let job = NewPhotolabJob {
         id: PhotolabJobId(params.operation_id.clone()),
         kind,
@@ -7289,11 +7328,7 @@ fn prepare_raster_product_job(
             stage: PhotolabStage {
                 kind: PhotolabStageKind::Preparing,
                 index: 0,
-                stage_count: if matches!(kind, PhotolabJobKind::BuildOrthomosaic) {
-                    8
-                } else {
-                    7
-                },
+                stage_count: if has_pre_raster_stage { 8 } else { 7 },
                 label: if matches!(kind, PhotolabJobKind::BuildDem) {
                     "Prepare dense point cloud for DEM".into()
                 } else {
@@ -7483,20 +7518,67 @@ fn run_raster_product(
             "invalid GSD or tile size; raster streaming uses fixed 512-pixel tiles",
         ));
     }
+    let mut classification_to_persist: Option<(PathBuf, Vec<PointClass>)> = None;
     let (crs, grid, product) = match &prepared.configuration {
         ProductRunConfiguration::Dem {
             surface,
             interpolate_nodata,
+            cell_size_m,
+            slope,
+            max_window_m,
+            initial_distance_m,
             ..
         } => {
             let dense_ply = prepared.dense_ply.as_ref().ok_or_else(|| {
                 worker_error("invalidRasterInput", "DEM has no dense point-cloud input")
             })?;
-            let vector = prepare_dense_vector(
+            let surface = if surface.eq_ignore_ascii_case("dtm") {
+                ElevationSurface::Dtm
+            } else {
+                ElevationSurface::Dsm
+            };
+            let classifications = if surface == ElevationSurface::Dtm {
+                let points = read_dense_points(dense_ply, &context.cancellation)
+                    .map_err(map_dense_prep_error)?;
+                let params = SmrfParams {
+                    cell_size_m: *cell_size_m,
+                    slope: *slope,
+                    max_window_m: *max_window_m,
+                    initial_distance_m: *initial_distance_m,
+                };
+                let progress_sink = context.progress.clone();
+                let classes = classify_ground(
+                    &points,
+                    &params,
+                    &context.cancellation,
+                    |completed, total| {
+                        let _ = progress_sink.report_blocking(JobProgress {
+                            stage: PhotolabStage {
+                                kind: PhotolabStageKind::Preparing,
+                                index: 0,
+                                stage_count: 8,
+                                label: "Classifying ground".into(),
+                            },
+                            metrics: ProgressMetrics {
+                                completed_units: completed,
+                                total_units: Some(total),
+                                completed_bytes: 0,
+                                total_bytes: None,
+                            },
+                        });
+                    },
+                )
+                .map_err(map_ground_classification_error)?;
+                Some(classes)
+            } else {
+                None
+            };
+            let vector = prepare_dense_vector_with_classification(
                 dense_ply,
                 &input_root,
                 &tools.ogr2ogr,
                 &prepared.horizontal_srs,
+                classifications.as_deref(),
                 &context.cancellation,
             )
             .map_err(map_dense_prep_error)?;
@@ -7510,11 +7592,6 @@ fn run_raster_product(
             };
             let grid = aligned_raster_grid(vector.minimum, vector.maximum, gsd)
                 .map_err(worker_failed("rasterGrid"))?;
-            let surface = if surface.eq_ignore_ascii_case("dtm") {
-                ElevationSurface::Dtm
-            } else {
-                ElevationSurface::Dsm
-            };
             let interpolation = if surface == ElevationSurface::Dtm {
                 ElevationInterpolation::Minimum {
                     radius: gsd * if *interpolate_nodata { 8.0 } else { 3.0 },
@@ -7533,8 +7610,11 @@ fn run_raster_product(
                     minimum_elevation: vector.minimum[2],
                     maximum_elevation: vector.maximum[2].max(vector.minimum[2] + 0.001),
                 },
-                tiles: elevation_tiles(&grid, &crs, &vector),
+                tiles: elevation_tiles(&grid, &crs, &vector, surface == ElevationSurface::Dtm),
             });
+            if let Some(classifications) = classifications {
+                classification_to_persist = Some((dense_ply.clone(), classifications));
+            }
             (crs, grid, product)
         }
         ProductRunConfiguration::Ortho {
@@ -7721,7 +7801,11 @@ fn run_raster_product(
         prepared.configuration,
         ProductRunConfiguration::Ortho { .. }
     );
-    let stage_offset = u32::from(orthomosaic);
+    let dtm = matches!(
+        &prepared.configuration,
+        ProductRunConfiguration::Dem { surface, .. } if surface.eq_ignore_ascii_case("dtm")
+    );
+    let stage_offset = u32::from(orthomosaic || dtm);
     let stage_count = 7 + stage_offset;
     let handle = tokio::runtime::Handle::current();
     let summary = handle
@@ -7750,13 +7834,31 @@ fn run_raster_product(
             }
         })?;
     context.check_cancelled()?;
+    let mut ground_classification_sha256 = None;
+    if let Some((dense_ply, classifications)) = classification_to_persist {
+        ground_classification_sha256 = Some(
+            persist_dense_classification(
+                &dense_ply,
+                &prepared.operation_id,
+                &classifications,
+                &context.cancellation,
+            )
+            .map_err(map_dense_prep_error)?,
+        );
+    }
     let kind = if matches!(prepared.configuration, ProductRunConfiguration::Dem { .. }) {
         PublishedRasterKind::Dem
     } else {
         PublishedRasterKind::Orthomosaic
     };
     publisher
-        .publish_raster_summary(&prepared.operation_id, kind, summary, &prepared.lineage)
+        .publish_raster_summary(
+            &prepared.operation_id,
+            kind,
+            summary,
+            &prepared.lineage,
+            ground_classification_sha256,
+        )
         .map_err(|error| worker_error("projectPublish", &error.to_string()))?;
     Ok(())
 }
@@ -7796,6 +7898,7 @@ fn elevation_tiles(
     grid: &RasterGrid,
     crs: &RasterCrs,
     vector: &himmelcad_sidecar::dense_raster_prep::PreparedDenseVector,
+    ground_only: bool,
 ) -> Vec<ElevationInputTile> {
     let columns = grid.width_pixels.div_ceil(512);
     let rows = grid.height_pixels.div_ceil(512);
@@ -7820,8 +7923,8 @@ fn elevation_tiles(
                     path: vector.flatgeobuf_path.to_string_lossy().into_owned(),
                     layer: vector.layer.clone(),
                     elevation_field: "z".into(),
-                    classification_field: None,
-                    accepted_classifications: Vec::new(),
+                    classification_field: ground_only.then(|| "classification".into()),
+                    accepted_classifications: if ground_only { vec![2] } else { Vec::new() },
                 },
             });
         }
@@ -7972,6 +8075,14 @@ fn map_dense_prep_error(error: DenseRasterPrepError) -> JobWorkerError {
         JobWorkerError::Cancelled
     } else {
         worker_error("denseRasterPreparation", &error.to_string())
+    }
+}
+
+fn map_ground_classification_error(error: GroundClassificationError) -> JobWorkerError {
+    if matches!(error, GroundClassificationError::Cancelled) {
+        JobWorkerError::Cancelled
+    } else {
+        worker_error("groundClassification", &error.to_string())
     }
 }
 
@@ -9451,6 +9562,10 @@ mod tests {
                     resolution_meters_per_pixel: 0.05,
                     interpolate_nodata: false,
                     tile_size_pixels: 512,
+                    cell_size_m: default_smrf_cell_size_m(),
+                    slope: default_smrf_slope(),
+                    max_window_m: default_smrf_max_window_m(),
+                    initial_distance_m: default_smrf_initial_distance_m(),
                 },
                 gcp_optimization_entity_id: ProductGcpSelection::Latest,
             },

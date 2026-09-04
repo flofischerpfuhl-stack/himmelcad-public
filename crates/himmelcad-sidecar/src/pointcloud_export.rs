@@ -7,7 +7,7 @@ use std::{
 };
 
 use himmelcad_core::photolab_jobs::CancellationToken;
-use las::{Builder, Color, Point, Transform, Vector, Writer};
+use las::{point::Classification, Builder, Color, Point, Transform, Vector, Writer};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -139,6 +139,16 @@ pub fn transcode_ply_atomic(
     remove_file_if_present(&temporary)?;
     let result = (|| {
         let layout = read_layout(&source)?;
+        let classification_path = source.with_file_name("dense.classification.bin");
+        let classification_path = if classification_path.exists() {
+            let length = classification_path.metadata()?.len();
+            if length != layout.point_count {
+                return invalid("classification sidecar length differs from the PLY vertex count");
+            }
+            Some(classification_path)
+        } else {
+            None
+        };
         let total_work = layout.point_count.saturating_mul(2);
         let bounds = scan_bounds(&source, &layout, cancellation, total_work, &mut progress)?;
         check_quantization_range(bounds)?;
@@ -146,6 +156,7 @@ pub fn transcode_ply_atomic(
             &source,
             &temporary,
             &layout,
+            classification_path.as_deref(),
             bounds,
             crs_wkt,
             cancellation,
@@ -324,6 +335,7 @@ fn write_las(
     source: &Path,
     destination: &Path,
     layout: &PlyLayout,
+    classification_path: Option<&Path>,
     bounds: ([f64; 3], [f64; 3]),
     crs_wkt: Option<&str>,
     cancellation: &CancellationToken,
@@ -358,7 +370,12 @@ fn write_las(
     }
     let mut writer = Writer::from_path(destination, header)?;
     let mut reader = point_reader(source, layout)?;
+    let mut classifications = classification_path
+        .map(File::open)
+        .transpose()?
+        .map(BufReader::new);
     let mut record = vec![0_u8; layout.stride];
+    let mut classification = [0_u8; 1];
     for index in 0..layout.point_count {
         if index.is_multiple_of(POINT_CHUNK) {
             check_cancelled(cancellation)?;
@@ -366,6 +383,16 @@ fn write_las(
         }
         reader.read_exact(&mut record)?;
         let coordinate = coordinates(&record, layout)?;
+        let classification = if let Some(reader) = classifications.as_mut() {
+            reader.read_exact(&mut classification)?;
+            match classification[0] {
+                1 => Classification::Unclassified,
+                2 => Classification::Ground,
+                _ => return invalid("classification sidecar contains a value other than 1 or 2"),
+            }
+        } else {
+            Classification::CreatedNeverClassified
+        };
         writer.write_point(Point {
             x: coordinate[0],
             y: coordinate[1],
@@ -375,6 +402,7 @@ fn write_las(
                 u16::from(read_u8(&record, layout.rgb[1])?) * 257,
                 u16::from(read_u8(&record, layout.rgb[2])?) * 257,
             )),
+            classification,
             ..Point::default()
         })?;
     }
@@ -531,11 +559,13 @@ mod tests {
     }
 
     #[test]
-    fn las_14_format_2_preserves_count_color_scale_offset_and_wkt() {
+    fn las_14_format_2_preserves_count_color_classification_scale_offset_and_wkt() {
         let root = root("header");
         let source = root.join("source.ply");
         let destination = root.join("output.las");
         let expected = write_ply(&source, 3);
+        fs::write(root.join("dense.classification.bin"), [2_u8, 1, 2])
+            .expect("classification sidecar");
         let wkt = "PROJCRS[\"ETRS89 / UTM zone 32N\"]";
         let summary = transcode_ply_atomic(
             &source,
@@ -565,7 +595,7 @@ mod tests {
             .points()
             .collect::<Result<Vec<_>, _>>()
             .expect("points");
-        for (actual, (coordinate, color)) in points.iter().zip(expected) {
+        for (index, (actual, (coordinate, color))) in points.iter().zip(expected).enumerate() {
             assert!((actual.x - coordinate[0]).abs() <= 0.000_5);
             assert!((actual.y - coordinate[1]).abs() <= 0.000_5);
             assert!((actual.z - coordinate[2]).abs() <= 0.000_5);
@@ -576,6 +606,14 @@ mod tests {
                     u16::from(color[1]) * 257,
                     u16::from(color[2]) * 257,
                 ))
+            );
+            assert_eq!(
+                actual.classification,
+                if index == 1 {
+                    Classification::Unclassified
+                } else {
+                    Classification::Ground
+                }
             );
         }
         fs::remove_dir_all(root).expect("cleanup");
@@ -597,9 +635,12 @@ mod tests {
             |_, _| {},
         )
         .expect("transcode");
-        let reader = Reader::from_path(destination).expect("LAZ reader");
+        let mut reader = Reader::from_path(destination).expect("LAZ reader");
         assert!(reader.header().point_format().is_compressed);
         assert!(reader.header().get_wkt_crs_bytes().is_none());
+        assert!(reader.points().all(|point| {
+            point.expect("LAZ point").classification == Classification::CreatedNeverClassified
+        }));
         fs::remove_dir_all(root).expect("cleanup");
     }
 

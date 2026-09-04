@@ -1161,7 +1161,7 @@ function productConfiguration(kind, smoke) {
   if (kind === 'dem')
     return {
       kind,
-      surface: 'dsm',
+      surface: options.demSurface,
       resolutionMetersPerPixel: smoke ? 0.25 : options.demResolutionMetersPerPixel,
       interpolateNodata: true,
       tileSizePixels: 512,
@@ -1246,6 +1246,7 @@ function parseArguments(args) {
     imageStride: Math.max(1, Number.parseInt(get('--image-stride', '1'), 10)),
     targetEpsg: Number.parseInt(get('--target-epsg', goldenAgisoft ? '31468' : '25832'), 10),
     targetVerticalEpsg: targetVertical ? Number.parseInt(targetVertical, 10) : null,
+    demSurface: get('--dem-surface', 'dsm'),
     demResolutionMetersPerPixel: positiveNumber(
       get('--dem-resolution', goldenAgisoft ? '0.015' : '0.05'),
       '--dem-resolution',
@@ -1271,6 +1272,8 @@ function parseArguments(args) {
     expectIncompatibleCheckpoint,
     resumeAudit: verifyResume || Boolean(expectIncompatibleCheckpoint),
   };
+  if (!['dsm', 'dtm'].includes(result.demSurface))
+    throw new Error(`--dem-surface must be dsm or dtm, got ${result.demSurface}`);
   if (goldenAgisoft) {
     if (result.profile !== 'qualityHybrid')
       throw new Error('--golden-agisoft requires --profile qualityHybrid');
@@ -1331,6 +1334,7 @@ Options:
   --profile <profile>             fast | qualityHybrid | maximumRobustness
   --products <list>               depth,dense,dem,ortho,mesh,splat
   --dem-resolution <meters>       DEM pixel size (golden: 0.015)
+  --dem-surface <dsm|dtm>         DEM surface kind (WP-A4 SMRF ground classification for dtm)
   --ortho-resolution <meters>     Orthomosaic pixel size (golden: 0.0075199430321273)
   --max-images <count>            Limit imported images
   --image-stride <count>          Import every nth image

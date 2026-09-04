@@ -9,13 +9,18 @@ use std::{
     time::Duration,
 };
 
+use himmelcad_core::hash::ObjectHash;
 use himmelcad_core::photolab_jobs::CancellationToken;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::ground_classification::{Point3, PointClass};
 use crate::process_group;
 
 const POLL: Duration = Duration::from_millis(15);
+/// X6 stream chunk: bounds cancellation latency while keeping class I/O allocations small.
+const CLASSIFICATION_CHUNK_POINTS: usize = 8_192;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PlyCoordinateKind {
@@ -68,6 +73,10 @@ pub enum DenseRasterPrepError {
     Cancelled,
     #[error("GDAL preparation command failed with exit code {0:?}")]
     GdalFailed(Option<i32>),
+    #[error("classification has {actual} entries but the dense cloud has {expected} vertices")]
+    ClassificationLength { expected: u64, actual: usize },
+    #[error("dense cloud already has a different immutable ground classification")]
+    ClassificationConflict,
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -80,13 +89,33 @@ pub fn prepare_dense_vector(
     gdal_srs: &str,
     cancellation: &CancellationToken,
 ) -> Result<PreparedDenseVector, DenseRasterPrepError> {
+    prepare_dense_vector_with_classification(
+        dense_ply,
+        output_root,
+        ogr2ogr,
+        gdal_srs,
+        None,
+        cancellation,
+    )
+}
+
+/// Converts a portable dense cloud and carries an optional vertex-order LAS classification.
+pub fn prepare_dense_vector_with_classification(
+    dense_ply: &Path,
+    output_root: &Path,
+    ogr2ogr: &Path,
+    gdal_srs: &str,
+    classifications: Option<&[PointClass]>,
+    cancellation: &CancellationToken,
+) -> Result<PreparedDenseVector, DenseRasterPrepError> {
     if output_root.exists() {
         fs::remove_dir_all(output_root)?;
     }
     fs::create_dir_all(output_root)?;
     let csv_path = output_root.join("dense.csv");
     let fgb_path = output_root.join("dense.fgb");
-    let (point_count, minimum, maximum) = ply_to_csv(dense_ply, &csv_path, cancellation)?;
+    let (point_count, minimum, maximum) =
+        ply_to_csv(dense_ply, &csv_path, classifications, cancellation)?;
     run_command(
         ogr2ogr,
         &[
@@ -100,6 +129,8 @@ pub fn prepare_dense_vector(
             "Y_POSSIBLE_NAMES=y",
             "-oo",
             "Z_POSSIBLE_NAMES=z",
+            "-oo",
+            "AUTODETECT_TYPE=YES",
             "-a_srs",
             gdal_srs,
             "-nln",
@@ -116,6 +147,139 @@ pub fn prepare_dense_vector(
         minimum,
         maximum,
     })
+}
+
+/// Reads dense PLY coordinates in immutable vertex order for classification.
+pub fn read_dense_points(
+    path: &Path,
+    cancellation: &CancellationToken,
+) -> Result<Vec<Point3>, DenseRasterPrepError> {
+    let (vertex_count, data_offset, layout, _, _) = inspect_ply(path, cancellation)?;
+    let capacity = usize::try_from(vertex_count).map_err(|_| {
+        DenseRasterPrepError::InvalidPly("vertex count does not fit address space".into())
+    })?;
+    let mut points = Vec::with_capacity(capacity);
+    let mut reader = BufReader::new(File::open(path)?);
+    use std::io::Seek;
+    reader.seek(std::io::SeekFrom::Start(data_offset))?;
+    let mut record = vec![0_u8; layout.stride];
+    for index in 0..vertex_count {
+        if index.is_multiple_of(CLASSIFICATION_CHUNK_POINTS as u64)
+            && cancellation.is_cancel_requested()
+        {
+            return Err(DenseRasterPrepError::Cancelled);
+        }
+        reader.read_exact(&mut record)?;
+        let [x, y, z] = read_coordinates(&record, layout)?;
+        points.push(Point3 { x, y, z });
+    }
+    Ok(points)
+}
+
+/// Publishes the vertex-order class bytes and returns their content hash.
+///
+/// Two files are maintained next to the dense PLY: the immutable,
+/// content-addressed `dense.classification.<hash16>.bin` (created once; an
+/// existing file with the same name is verified byte-for-byte, never
+/// overwritten) and `dense.classification.bin`, the *current* classification
+/// that LAS/LAZ export consumes. Rebuilding a DTM with other SMRF parameters
+/// therefore never fails: it adds another immutable artifact and atomically
+/// repoints the current file. Which classification a DTM used is recorded by
+/// its `ground_classification_sha256` on the raster artifact record (WP-A4).
+pub fn persist_dense_classification(
+    dense_ply: &Path,
+    operation_id: &str,
+    classifications: &[PointClass],
+    cancellation: &CancellationToken,
+) -> Result<ObjectHash, DenseRasterPrepError> {
+    let mut hasher = Sha256::new();
+    for chunk in classifications.chunks(CLASSIFICATION_CHUNK_POINTS) {
+        if cancellation.is_cancel_requested() {
+            return Err(DenseRasterPrepError::Cancelled);
+        }
+        let bytes = chunk.iter().copied().map(u8::from).collect::<Vec<_>>();
+        hasher.update(bytes);
+    }
+    let hash = ObjectHash(format!("{:x}", hasher.finalize()));
+    let parent = dense_ply.parent().ok_or_else(|| {
+        DenseRasterPrepError::InvalidPly("dense PLY has no parent directory".into())
+    })?;
+    let immutable = parent.join(classification_artifact_name(&hash));
+    let current = parent.join("dense.classification.bin");
+    if immutable.exists() {
+        verify_dense_classification(&immutable, classifications, cancellation)?;
+    } else {
+        let temporary = parent.join(format!(".dense.classification.bin.{operation_id}.partial"));
+        if temporary.exists() {
+            fs::remove_file(&temporary)?;
+        }
+        let result = (|| {
+            let mut writer = BufWriter::with_capacity(1024 * 1024, File::create(&temporary)?);
+            for chunk in classifications.chunks(CLASSIFICATION_CHUNK_POINTS) {
+                if cancellation.is_cancel_requested() {
+                    return Err(DenseRasterPrepError::Cancelled);
+                }
+                let bytes = chunk.iter().copied().map(u8::from).collect::<Vec<_>>();
+                writer.write_all(&bytes)?;
+            }
+            writer.flush()?;
+            writer.get_ref().sync_all()?;
+            if cancellation.is_cancel_requested() {
+                return Err(DenseRasterPrepError::Cancelled);
+            }
+            match fs::hard_link(&temporary, &immutable) {
+                Ok(()) => fs::remove_file(&temporary)?,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    fs::remove_file(&temporary)?;
+                    verify_dense_classification(&immutable, classifications, cancellation)?;
+                }
+                Err(error) => return Err(DenseRasterPrepError::Io(error)),
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(temporary);
+        }
+        result?;
+    }
+    // Repoint the current classification atomically: a hard link to the
+    // immutable bytes under a temporary name, then rename over the old current.
+    let current_temporary = parent.join(format!(".dense.classification.current.{operation_id}"));
+    let _ = fs::remove_file(&current_temporary);
+    fs::hard_link(&immutable, &current_temporary)?;
+    fs::rename(&current_temporary, &current)?;
+    Ok(hash)
+}
+
+/// File name of the immutable, content-addressed classification artifact.
+pub fn classification_artifact_name(hash: &ObjectHash) -> String {
+    format!("dense.classification.{}.bin", &hash.0[..16])
+}
+
+fn verify_dense_classification(
+    path: &Path,
+    classifications: &[PointClass],
+    cancellation: &CancellationToken,
+) -> Result<(), DenseRasterPrepError> {
+    if path.metadata()?.len() != u64::try_from(classifications.len()).unwrap_or(u64::MAX) {
+        return Err(DenseRasterPrepError::ClassificationConflict);
+    }
+    let mut reader = BufReader::new(File::open(path)?);
+    let mut actual = vec![0_u8; CLASSIFICATION_CHUNK_POINTS];
+    for chunk in classifications.chunks(CLASSIFICATION_CHUNK_POINTS) {
+        if cancellation.is_cancel_requested() {
+            return Err(DenseRasterPrepError::Cancelled);
+        }
+        reader.read_exact(&mut actual[..chunk.len()])?;
+        if actual[..chunk.len()]
+            .iter()
+            .copied()
+            .ne(chunk.iter().copied().map(u8::from))
+        {
+            return Err(DenseRasterPrepError::ClassificationConflict);
+        }
+    }
+    Ok(())
 }
 
 /// Converts the portable dense PLY to LAS 1.2 and then to the shared Potree 2.0 stream format.
@@ -608,6 +772,7 @@ pub fn inspect_raster_wkt(
 fn ply_to_csv(
     path: &Path,
     csv_path: &Path,
+    classifications: Option<&[PointClass]>,
     cancellation: &CancellationToken,
 ) -> Result<(u64, [f64; 3], [f64; 3]), DenseRasterPrepError> {
     let mut reader = BufReader::new(File::open(path)?);
@@ -630,6 +795,14 @@ fn ply_to_csv(
     }
     let vertex_count = vertex_count
         .ok_or_else(|| DenseRasterPrepError::InvalidPly("vertex count missing".into()))?;
+    if let Some(classifications) = classifications {
+        if u64::try_from(classifications.len()).unwrap_or(u64::MAX) != vertex_count {
+            return Err(DenseRasterPrepError::ClassificationLength {
+                expected: vertex_count,
+                actual: classifications.len(),
+            });
+        }
+    }
     let header_text = String::from_utf8_lossy(&header);
     for required in [
         "format binary_little_endian 1.0",
@@ -645,7 +818,11 @@ fn ply_to_csv(
         }
     }
     let mut writer = BufWriter::with_capacity(1024 * 1024, File::create(csv_path)?);
-    writer.write_all(b"x,y,z,red,green,blue,confidence\n")?;
+    if classifications.is_some() {
+        writer.write_all(b"x,y,z,red,green,blue,confidence,classification\n")?;
+    } else {
+        writer.write_all(b"x,y,z,red,green,blue,confidence\n")?;
+    }
     let mut minimum = [f64::INFINITY; 3];
     let mut maximum = [f64::NEG_INFINITY; 3];
     let layout = ply_vertex_layout(&header_text)?;
@@ -662,11 +839,32 @@ fn ply_to_csv(
             maximum[axis] = maximum[axis].max(values[axis]);
         }
         let confidence = read_f32(&record, confidence_offset);
-        writeln!(
-            writer,
-            "{},{},{},{},{},{},{}",
-            values[0], values[1], values[2], record[red], record[green], record[blue], confidence
-        )?;
+        if let Some(classifications) = classifications {
+            writeln!(
+                writer,
+                "{},{},{},{},{},{},{},{}",
+                values[0],
+                values[1],
+                values[2],
+                record[red],
+                record[green],
+                record[blue],
+                confidence,
+                u8::from(classifications[usize::try_from(index).expect("vertex index fits usize")])
+            )?;
+        } else {
+            writeln!(
+                writer,
+                "{},{},{},{},{},{},{}",
+                values[0],
+                values[1],
+                values[2],
+                record[red],
+                record[green],
+                record[blue],
+                confidence
+            )?;
+        }
     }
     writer.flush()?;
     Ok((vertex_count, minimum, maximum))
@@ -1172,6 +1370,7 @@ printf '%s' '{"points":2,"offset":[500000,5400000,100],"boundingBox":{"min":[500
             ply_to_csv(
                 &root.join("bad.ply"),
                 &root.join("x.csv"),
+                None,
                 &CancellationToken::new()
             ),
             Err(DenseRasterPrepError::InvalidPly(_))
@@ -1279,6 +1478,68 @@ printf '%s' '{"points":2,"offset":[500000,5400000,100],"boundingBox":{"min":[500
     }
 
     #[test]
+    fn classification_sidecar_is_content_addressed_and_current_is_repointed() {
+        let root =
+            std::env::temp_dir().join(format!("hcad-dense-classification-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let dense_ply = root.join("dense.ply");
+        fs::write(&dense_ply, b"placeholder").unwrap();
+        let classes = [
+            PointClass::Ground,
+            PointClass::Unclassified,
+            PointClass::Ground,
+        ];
+        let cancellation = CancellationToken::new();
+        let hash = persist_dense_classification(&dense_ply, "first", &classes, &cancellation)
+            .expect("publish classification");
+        assert_eq!(hash, ObjectHash::of_bytes(&[2, 1, 2]));
+        assert_eq!(
+            fs::read(root.join("dense.classification.bin")).unwrap(),
+            [2, 1, 2]
+        );
+        persist_dense_classification(&dense_ply, "reuse", &classes, &cancellation)
+            .expect("reuse identical classification");
+        assert!(root.join(classification_artifact_name(&hash)).is_file());
+        // A DTM rebuilt with other SMRF parameters adds a second immutable
+        // artifact and repoints the current file; nothing is overwritten.
+        let other = persist_dense_classification(
+            &dense_ply,
+            "other-parameters",
+            &[PointClass::Ground; 3],
+            &cancellation,
+        )
+        .expect("second classification is content-addressed");
+        assert_ne!(other, hash);
+        assert_eq!(
+            fs::read(root.join(classification_artifact_name(&hash))).unwrap(),
+            [2, 1, 2]
+        );
+        assert_eq!(
+            fs::read(root.join(classification_artifact_name(&other))).unwrap(),
+            [2, 2, 2]
+        );
+        assert_eq!(
+            fs::read(root.join("dense.classification.bin")).unwrap(),
+            [2, 2, 2]
+        );
+        // Tampered immutable bytes are still detected on reuse.
+        fs::write(root.join(classification_artifact_name(&other)), [2, 1, 1]).unwrap();
+        let conflict = persist_dense_classification(
+            &dense_ply,
+            "tampered",
+            &[PointClass::Ground; 3],
+            &cancellation,
+        )
+        .expect_err("immutable conflict");
+        assert!(matches!(
+            conflict,
+            DenseRasterPrepError::ClassificationConflict
+        ));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     #[cfg(target_os = "linux")]
     fn system_gdal_accepts_the_streamed_flatgeobuf() {
         if !Path::new("/usr/bin/ogr2ogr").is_file() || !Path::new("/usr/bin/ogrinfo").is_file() {
@@ -1304,15 +1565,52 @@ printf '%s' '{"points":2,"offset":[500000,5400000,100],"boundingBox":{"min":[500
         }
         drop(file);
         let cancellation = CancellationToken::new();
-        let vector = prepare_dense_vector(
+        let classifications = [
+            PointClass::Ground,
+            PointClass::Unclassified,
+            PointClass::Ground,
+        ];
+        let vector = prepare_dense_vector_with_classification(
             &ply,
             &root.join("vector"),
             Path::new("/usr/bin/ogr2ogr"),
             "EPSG:25832",
+            Some(&classifications),
             &cancellation,
         )
         .unwrap();
         assert_eq!(vector.point_count, 3);
+        // GDAL >= 3.7: `-json` nests features under `layers[]` and only lists
+        // them with `-features`.
+        let layer = Command::new("/usr/bin/ogrinfo")
+            .args(["-json", "-features"])
+            .arg(&vector.flatgeobuf_path)
+            .output()
+            .expect("ogrinfo classification");
+        assert!(layer.status.success());
+        let layer: serde_json::Value = serde_json::from_slice(&layer.stdout).unwrap();
+        let actual = layer["layers"][0]["features"]
+            .as_array()
+            .unwrap_or_else(|| panic!("ogrinfo json without features: {layer}"))
+            .iter()
+            .map(|feature| {
+                let class = feature["properties"]["classification"].as_i64().unwrap();
+                let z = feature["properties"]["z"].as_f64().unwrap();
+                (z.to_bits(), class)
+            })
+            .collect::<Vec<_>>();
+        // FlatGeobuf writes a spatial index and reorders features, so match
+        // classes to points through their elevation rather than input order.
+        let mut actual = actual;
+        actual.sort_unstable();
+        assert_eq!(
+            actual,
+            vec![
+                (100.5_f64.to_bits(), 2),
+                (101.0_f64.to_bits(), 1),
+                (102.0_f64.to_bits(), 2)
+            ]
+        );
         let wkt =
             inspect_vector_wkt(Path::new("/usr/bin/ogrinfo"), &vector, &cancellation).unwrap();
         assert!(wkt.contains("ETRS89"));

@@ -133,12 +133,6 @@
   cursor: pointer;
 }
 .check input,
-.toggle input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-}
 .check span {
   width: 14px;
   height: 14px;
@@ -180,46 +174,6 @@
   gap: 7px;
   padding: 9px 10px 11px 31px;
   border-top: 1px solid var(--hc-border-default);
-}
-.toggle {
-  display: grid;
-  grid-template-columns: 28px 1fr;
-  align-items: center;
-  gap: 7px;
-  min-height: 24px;
-  color: var(--hc-fg-default);
-  cursor: pointer;
-  font-size: 10px;
-}
-.toggle > span {
-  position: relative;
-  width: 27px;
-  height: 14px;
-  background: var(--hc-bg-void);
-  border: 1px solid var(--hc-border-default);
-  border-radius: 9px;
-}
-.toggle > span::after {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 8px;
-  height: 8px;
-  background: var(--hc-fg-muted);
-  border-radius: 50%;
-  content: '';
-  transition: transform 120ms ease;
-}
-.toggle input:checked + span {
-  background: var(--hc-press-bg);
-  border-color: var(--hc-accent-base);
-}
-.toggle input:checked + span::after {
-  background: var(--hc-accent-base);
-  transform: translateX(13px);
-}
-.toggle strong {
-  font-weight: 450;
 }
 .start {
   display: flex;
@@ -303,4 +257,10 @@
   font-family: var(--hc-font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.toggle {
+  min-height: 24px;
+  color: var(--hc-fg-default);
+  font-size: 11px;
 }

@@ -261,6 +261,8 @@ Footer
 - Status: queued
 ```
 
+Status 2026-09-04 (code committed, landing pending G17 screenshot review + DTM smoke): SMRF in `ground_classification.rs` (deterministic, chunk-cancellable, `MAX_GRID_CELLS` guard); synthetic plane+ramp+boxes scene recall 1.000 / precision 1.000, repeat-run SHA-256 equal; DTM tiles filter on class 2 through a `classification` FlatGeobuf column; class bytes persisted content-addressed as `dense.classification.<hash16>.bin` with `dense.classification.bin` atomically repointed to the latest DTM's classification (review decision closing Codex gap 3: rebuilding a DTM with other parameters never fails); the raster artifact record carries `ground_classification_sha256` (review closes gap 1); LAS/LAZ export writes class 2 from the current sidecar. Parameters (X6): cell 1.0 m, slope 0.15, max window 18 m, initial distance 0.5 m (frozen, not exposed). Review fixes beyond the brief: the DEM/batch toggles rendered two controls with a word-wrapped label since the F1 Checkbox change (fixed: shared Checkbox with label); e2e gained `--dem-surface dsm|dtm`; the visual harness captures `function-dem-dtm` and supports light-theme captures via the product's theme button. Verified: core 216, sidecar lib 263 (+2 cancellation timing tests green in isolation, load flake during the golden run), sidecar bin 84, renderer 77, typecheck, English UI, prettier. Open: DTM-vs-DSM smoke on 24 images (running), G17 screenshot review.
+
 ### WP-A5 — Golden-gate accuracy investigation (Size XL, evidence-gated)
 
 Problem. The repo's own parity gate has never passed: best 135-image run
@@ -2092,3 +2094,5 @@ Owner-decision flags encoded as defaults in this plan (veto reverses the
 package design, not the finding): report identity (WP-A2: one document),
 batch surface (WP-C6: configurator wins), QC philosophy (WP-E1/E2:
 transparency-first), pause UI removal (WP-B2), Untitled GC prompt (WP-C3).
+
+G17 (owner directive, relayed 2026-09-04 and binding for this lane): every UI result Codex produces is reviewed by eye by the coordinating Claude session on rendered light and dark screenshots — reports and passing tests never substitute for the look — and a UI package counts as landed only after that screenshot review. Every UI brief given to Codex carries a pixel-level visual specification before launch (layout, sizes, spacing, states, tokens, reference screenshot or mockup). Screenshots are attached to each landing message to the Builder session so cross-product inconsistencies are caught. Capture path: `node scripts/photolab-visual-regression.mjs --no-compare-baselines --no-a11y` (dark, default) and the same with `PHOTOLAB_VISUAL_THEME=light --skip-build` (light); captures land in `.build/visual-regression/<viewport>/`.

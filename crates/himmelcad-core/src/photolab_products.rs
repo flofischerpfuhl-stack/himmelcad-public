@@ -35,6 +35,63 @@ pub enum DemSurfaceKind {
     Dtm,
 }
 
+/// Frozen SMRF parameters used to derive a terrain-only DEM.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SmrfGroundParameters {
+    pub cell_size_m: f64,
+    pub slope: f64,
+    pub max_window_m: f64,
+    pub initial_distance_m: f64,
+}
+
+impl Default for SmrfGroundParameters {
+    fn default() -> Self {
+        Self {
+            // About 2–5 times typical UAV GSD balances sampling density and structure detail.
+            cell_size_m: 1.0,
+            // A 15% terrain tolerance retains common surveyed ramps and embankments.
+            slope: 0.15,
+            // Eighteen metres removes typical building footprints without a city-scale kernel.
+            max_window_m: 18.0,
+            // Half a metre tolerates dense-cloud noise and low vegetation near terrain.
+            initial_distance_m: 0.5,
+        }
+    }
+}
+
+impl SmrfGroundParameters {
+    fn validate(self) -> Result<(), ProductError> {
+        validate_positive_finite(self.cell_size_m, "SMRF cell size")?;
+        validate_positive_finite(self.slope, "SMRF slope")?;
+        if self.slope > 1.0 {
+            return Err(ProductError::InvalidRun("SMRF slope must be at most one"));
+        }
+        validate_positive_finite(self.max_window_m, "SMRF maximum window")?;
+        if self.max_window_m < self.cell_size_m {
+            return Err(ProductError::InvalidRun(
+                "SMRF maximum window must be at least one cell",
+            ));
+        }
+        validate_non_negative_finite(self.initial_distance_m, "SMRF initial distance")
+    }
+}
+
+/// Immutable evidence linking a DTM to its classifier settings and vertex-order class bytes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DemGroundClassification {
+    pub parameters: SmrfGroundParameters,
+    pub classification_sha256: ObjectHash,
+}
+
+impl DemGroundClassification {
+    fn validate(&self) -> Result<(), ProductError> {
+        self.parameters.validate()?;
+        validate_hash(&self.classification_sha256, "DEM ground classification")
+    }
+}
+
 /// Explicit warning that an appearance product is not survey geometry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -285,6 +342,8 @@ pub enum ProductDescriptor {
     DensePointCloud,
     Dem {
         surface_kind: DemSurfaceKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ground_classification: Option<DemGroundClassification>,
         raster: RasterPyramid,
     },
     Orthomosaic {
@@ -461,7 +520,28 @@ impl ProductRun {
                     "depth-map run needs at least one image",
                 ));
             }
-            ProductDescriptor::Dem { raster, .. } | ProductDescriptor::Orthomosaic { raster } => {
+            ProductDescriptor::Dem {
+                surface_kind,
+                ground_classification,
+                raster,
+            } => {
+                raster.validate()?;
+                match (surface_kind, ground_classification) {
+                    (DemSurfaceKind::Dtm, Some(classification)) => classification.validate()?,
+                    (DemSurfaceKind::Dsm, None) => {}
+                    (DemSurfaceKind::Dtm, None) => {
+                        return Err(ProductError::InvalidRun(
+                            "DTM needs frozen ground-classification evidence",
+                        ));
+                    }
+                    (DemSurfaceKind::Dsm, Some(_)) => {
+                        return Err(ProductError::InvalidRun(
+                            "DSM cannot claim ground-classification evidence",
+                        ));
+                    }
+                }
+            }
+            ProductDescriptor::Orthomosaic { raster } => {
                 raster.validate()?;
             }
             _ => {}
@@ -528,7 +608,28 @@ impl ProductRun {
                     "depth-map run needs at least one image",
                 ));
             }
-            ProductDescriptor::Dem { raster, .. } | ProductDescriptor::Orthomosaic { raster } => {
+            ProductDescriptor::Dem {
+                surface_kind,
+                ground_classification,
+                raster,
+            } => {
+                raster.validate()?;
+                match (surface_kind, ground_classification) {
+                    (DemSurfaceKind::Dtm, Some(classification)) => classification.validate()?,
+                    (DemSurfaceKind::Dsm, None) => {}
+                    (DemSurfaceKind::Dtm, None) => {
+                        return Err(ProductError::InvalidRun(
+                            "DTM needs frozen ground-classification evidence",
+                        ));
+                    }
+                    (DemSurfaceKind::Dsm, Some(_)) => {
+                        return Err(ProductError::InvalidRun(
+                            "DSM cannot claim ground-classification evidence",
+                        ));
+                    }
+                }
+            }
+            ProductDescriptor::Orthomosaic { raster } => {
                 raster.validate()?;
             }
             _ => {}
@@ -1219,6 +1320,7 @@ mod tests {
             ProductRunId("dem-1".to_owned()),
             ProductDescriptor::Dem {
                 surface_kind: DemSurfaceKind::Dsm,
+                ground_classification: None,
                 raster: raster(),
             },
             hash("dem-output"),
@@ -1441,6 +1543,52 @@ mod tests {
         let far = select_raster_level_for_screen_gsd(&pyramid, 1.0)
             .expect("coarsest level should be selected");
         assert_eq!(far.level, 3);
+    }
+
+    #[test]
+    fn dtm_descriptor_freezes_smrf_parameters_and_classification_hash() {
+        let evidence = DemGroundClassification {
+            parameters: SmrfGroundParameters::default(),
+            classification_sha256: hash("classification"),
+        };
+        let run = ProductRun::new(
+            ProductRunId("dtm-1".into()),
+            ProductDescriptor::Dem {
+                surface_kind: DemSurfaceKind::Dtm,
+                ground_classification: Some(evidence.clone()),
+                raster: raster(),
+            },
+            hash("dtm-output"),
+            lineage(base_dependencies()),
+            vec![dataset("dtm", TiledDatasetKind::Raster)],
+        )
+        .expect("DTM descriptor");
+        let ProductDescriptor::Dem {
+            ground_classification,
+            ..
+        } = run.descriptor()
+        else {
+            panic!("DEM descriptor")
+        };
+        assert_eq!(ground_classification.as_ref(), Some(&evidence));
+
+        let missing = ProductRun::new(
+            ProductRunId("dtm-without-evidence".into()),
+            ProductDescriptor::Dem {
+                surface_kind: DemSurfaceKind::Dtm,
+                ground_classification: None,
+                raster: raster(),
+            },
+            hash("invalid-output"),
+            lineage(base_dependencies()),
+            vec![dataset("invalid-dtm", TiledDatasetKind::Raster)],
+        );
+        assert_eq!(
+            missing,
+            Err(ProductError::InvalidRun(
+                "DTM needs frozen ground-classification evidence"
+            ))
+        );
     }
 
     #[test]

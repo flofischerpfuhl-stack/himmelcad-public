@@ -380,6 +380,11 @@ async function auditViewport(browserInstance, viewport) {
     return audit;
   };
 
+  if (process.env.PHOTOLAB_VISUAL_THEME === 'light') {
+    // G17 light-theme captures use the product's own theme control (status bar).
+    await page.getByRole('button', { name: 'Light', exact: true }).click();
+    await page.waitForFunction(() => document.documentElement.classList.contains('hc-theme-light'));
+  }
   const mainAudit = await capture('00-main-view');
   const viewTab = mainAudit.selectedTabs.find((tab) => tab.label === 'View');
   const rightTab = mainAudit.selectedTabs.find(
@@ -427,6 +432,20 @@ async function auditViewport(browserInstance, viewport) {
       }
       await button.click();
       await capture(`function-${slug(action)}`);
+      if (action === 'DEM') {
+        // WP-A4: the DTM surface exposes the ground-classification parameters.
+        // The shared Select is a button + listbox, not a native <select>.
+        const pickSurface = async (optionName) => {
+          await page
+            .locator('button[aria-haspopup="listbox"]', { hasText: /D[ST]M · / })
+            .first()
+            .click();
+          await page.getByRole('option', { name: optionName }).click();
+        };
+        await pickSurface(/^DTM · /);
+        await capture('function-dem-dtm');
+        await pickSurface(/^DSM · /);
+      }
       if (action === 'Configure Batch') {
         // The configurator renders inside the right function panel; the legacy
         // recipe dialog is the only surface with an explicit close button.
