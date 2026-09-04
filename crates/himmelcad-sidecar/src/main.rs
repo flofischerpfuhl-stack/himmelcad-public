@@ -768,6 +768,8 @@ enum ProductRunConfiguration {
         source_dem_version_sha256: Option<ObjectHash>,
     },
     Mesh {
+        #[serde(default)]
+        mesh_source: himmelcad_core::photolab_products::MeshSource,
         target_face_count: u64,
         interpolate_holes: bool,
         build_texture: bool,
@@ -1100,8 +1102,11 @@ struct PreparedMeshJob {
     job: NewPhotolabJob,
     operation_id: String,
     project_root: PathBuf,
-    dem_root: PathBuf,
-    dem_summary: himmelcad_sidecar::raster_runtime::RasterBuildSummary,
+    mesh_source: himmelcad_core::photolab_products::MeshSource,
+    dem_root: Option<PathBuf>,
+    dem_summary: Option<himmelcad_sidecar::raster_runtime::RasterBuildSummary>,
+    dense_ply: Option<PathBuf>,
+    colmap_executable: Option<PathBuf>,
     texture_dataset_root: Option<PathBuf>,
     texture_summary: Option<himmelcad_sidecar::raster_runtime::RasterBuildSummary>,
     textured: bool,
@@ -1109,6 +1114,7 @@ struct PreparedMeshJob {
     interpolate_holes: bool,
     texture_size: u32,
     lineage: ProductLineage,
+    provenance: project_runtime::MeshProvenance,
 }
 
 const fn default_gcp_preview_rows() -> usize {
@@ -4476,8 +4482,17 @@ async fn handle_job_rpc(
                 Ok(params)
                     if matches!(params.configuration, ProductRunConfiguration::Mesh { .. }) =>
                 {
+                    let frozen_params = params.clone();
                     match prepare_mesh_job(params, &projects, None) {
                         Ok(prepared) => {
+                            let frozen_request = match freeze_job_request(
+                                "photolab.jobs.startProduct",
+                                &frozen_params,
+                                &prepared.job,
+                            ) {
+                                Ok(request) => request,
+                                Err(error) => return rpc_err(req.id, -32000, &error.to_string()),
+                            };
                             let admission = himmelcad_sidecar::job_runtime::JobAdmission {
                                 publication_targets: vec![
                                     himmelcad_sidecar::job_runtime::PublicationTarget::product(
@@ -4496,8 +4511,9 @@ async fn handle_job_rpc(
                             };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
-                                .start_with_admission(
+                                .start_with_frozen_request_and_admission(
                                     prepared.job.clone(),
+                                    frozen_request,
                                     admission,
                                     move |context| run_mesh_job(prepared, &context, &publisher),
                                 )
@@ -5168,8 +5184,15 @@ fn validate_unattended_batch_recipe(steps: &[BatchPipelineStep]) -> anyhow::Resu
                     "orthomosaic needs an exact external DEM entity/version binding or a prior DEM node"
                 );
             }
-            ProductRunConfiguration::Mesh { .. } => {
-                anyhow::ensure!(dem_ready, "mesh needs a prior DEM node");
+            ProductRunConfiguration::Mesh { mesh_source, .. } => {
+                match mesh_source {
+                    himmelcad_core::photolab_products::MeshSource::Dem => {
+                        anyhow::ensure!(dem_ready, "DEM mesh needs a prior DEM node");
+                    }
+                    himmelcad_core::photolab_products::MeshSource::Dense => {
+                        anyhow::ensure!(dense_ready, "dense mesh needs a prior dense-cloud node");
+                    }
+                }
                 mesh_ready = true;
             }
             ProductRunConfiguration::Splat { .. } => {
@@ -5464,6 +5487,7 @@ fn run_batch_pipeline(
                         ..
                     }
                     | ProductRunConfiguration::Mesh {
+                        mesh_source: himmelcad_core::photolab_products::MeshSource::Dem,
                         source_dem_entity_id,
                         ..
                     } => Some(source_dem_entity_id),
@@ -7706,6 +7730,7 @@ fn prepare_mesh_job(
     required_camera_scope: Option<&[String]>,
 ) -> anyhow::Result<PreparedMeshJob> {
     let ProductRunConfiguration::Mesh {
+        mesh_source,
         target_face_count,
         interpolate_holes,
         build_texture,
@@ -7729,33 +7754,114 @@ fn prepare_mesh_job(
         &params.gcp_optimization_entity_id,
     )?;
     let lineage = resolved_inputs.lineage;
-    let (dem_root, dem) = if let Some(entity_id) = source_dem_entity_id.as_ref() {
-        projects.raster_dataset_by_entity_id(entity_id, PublishedRasterKind::Dem, None)?
-    } else {
-        projects.latest_raster_dataset_for_lineage(PublishedRasterKind::Dem, &lineage)?
+    let (
+        dem_root,
+        dem_summary,
+        dense_ply,
+        colmap_executable,
+        texture_dataset_root,
+        texture_summary,
+        textured,
+        config_hash,
+        input_hash,
+        provenance,
+    ) = match mesh_source {
+        himmelcad_core::photolab_products::MeshSource::Dem => {
+            let (dem_root, dem) = if let Some(entity_id) = source_dem_entity_id.as_ref() {
+                projects.raster_dataset_by_entity_id(entity_id, PublishedRasterKind::Dem, None)?
+            } else {
+                projects.latest_raster_dataset_for_lineage(PublishedRasterKind::Dem, &lineage)?
+            };
+            let dem_evidence = ObjectHash::of_bytes(&serde_json::to_vec(&dem)?);
+            let (texture_dataset_root, texture_summary) = if build_texture {
+                let (ortho_root, ortho) = projects.latest_raster_dataset_for_lineage(
+                    PublishedRasterKind::Orthomosaic,
+                    &lineage,
+                )?;
+                (Some(ortho_root), Some(ortho.summary))
+            } else {
+                (None, None)
+            };
+            // Preserve the historical DEM configuration and input hashes byte-for-byte.
+            let config_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
+                target_face_count,
+                interpolate_holes,
+                build_texture,
+                texture_size,
+                &source_dem_entity_id,
+            ))?);
+            let input_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
+                &dem_evidence,
+                &texture_dataset_root,
+                &lineage.source_alignment_entity_id,
+                &lineage.processing_set_id,
+                &lineage.image_mask_scope_sha256,
+            ))?);
+            let provenance = project_runtime::MeshProvenance {
+                mesh_source,
+                dense_run_id: None,
+                // The DEM resolved by lineage keeps its identity in the lineage;
+                // an explicitly chosen DEM is frozen by entity id.
+                source_dem_entity_id: source_dem_entity_id.clone(),
+                source_artifact_sha256: None,
+            };
+            (
+                Some(dem_root),
+                Some(dem.summary),
+                None,
+                None,
+                texture_dataset_root,
+                texture_summary,
+                build_texture,
+                config_hash,
+                input_hash,
+                provenance,
+            )
+        }
+        himmelcad_core::photolab_products::MeshSource::Dense => {
+            let (dense_ply, dense_record) =
+                projects.latest_dense_mvs_dataset_for_lineage(&lineage)?;
+            let dense = dense_record
+                .output
+                .dense_point_cloud
+                .as_ref()
+                .context("published dense-cloud run has no fused cloud")?;
+            let config_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
+                mesh_source,
+                target_face_count,
+                interpolate_holes,
+                build_texture,
+                texture_size,
+            ))?);
+            let input_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
+                &dense_record.job_id,
+                &dense.sha256,
+                &lineage.source_alignment_entity_id,
+                &lineage.processing_set_id,
+                &lineage.image_mask_scope_sha256,
+                &lineage.gcp_optimization_entity_id,
+                &lineage.gcp_optimization_snapshot_sha256,
+            ))?);
+            let provenance = project_runtime::MeshProvenance {
+                mesh_source,
+                dense_run_id: Some(dense_record.job_id.clone()),
+                source_dem_entity_id: None,
+                source_artifact_sha256: Some(dense.sha256.clone()),
+            };
+            (
+                None,
+                None,
+                Some(dense_ply),
+                Some(development_colmap_executable()?),
+                None,
+                None,
+                false,
+                config_hash,
+                input_hash,
+                provenance,
+            )
+        }
     };
-    let dem_evidence = ObjectHash::of_bytes(&serde_json::to_vec(&dem)?);
-    let (texture_dataset_root, texture_summary) = if build_texture {
-        let (ortho_root, ortho) = projects
-            .latest_raster_dataset_for_lineage(PublishedRasterKind::Orthomosaic, &lineage)?;
-        (Some(ortho_root), Some(ortho.summary))
-    } else {
-        (None, None)
-    };
-    let config_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
-        target_face_count,
-        interpolate_holes,
-        build_texture,
-        texture_size,
-        &source_dem_entity_id,
-    ))?);
-    let input_hash = ObjectHash::of_bytes(&serde_json::to_vec(&(
-        &dem_evidence,
-        &texture_dataset_root,
-        &lineage.source_alignment_entity_id,
-        &lineage.processing_set_id,
-        &lineage.image_mask_scope_sha256,
-    ))?);
     let job = NewPhotolabJob {
         id: PhotolabJobId(params.operation_id.clone()),
         kind: PhotolabJobKind::BuildMesh,
@@ -7766,7 +7872,11 @@ fn prepare_mesh_job(
                 kind: PhotolabStageKind::Meshing,
                 index: 0,
                 stage_count: 2,
-                label: "Prepare DEM tiles for mesh".into(),
+                label: if mesh_source == himmelcad_core::photolab_products::MeshSource::Dense {
+                    "Build dense-cloud mesh".into()
+                } else {
+                    "Prepare DEM tiles for mesh".into()
+                },
             },
             metrics: ProgressMetrics::empty(),
         },
@@ -7775,11 +7885,15 @@ fn prepare_mesh_job(
         job,
         operation_id: params.operation_id,
         project_root: context.working_path,
+        mesh_source,
         dem_root,
-        dem_summary: dem.summary,
+        dem_summary,
+        dense_ply,
+        colmap_executable,
         texture_dataset_root,
         texture_summary,
-        textured: build_texture,
+        textured,
+        provenance,
         target_face_count,
         interpolate_holes,
         texture_size,
@@ -7799,18 +7913,83 @@ fn run_mesh_job(
     if let Some(parent) = staging.parent() {
         std::fs::create_dir_all(parent).map_err(|error| worker_error("io", &error.to_string()))?;
     }
-    let result = build_tiled_dem_mesh(
-        &prepared.dem_root,
-        &prepared.dem_summary,
-        &staging,
-        prepared.texture_dataset_root.as_deref(),
-        prepared.texture_summary.as_ref(),
-        prepared.target_face_count,
-        prepared.interpolate_holes,
-        prepared.texture_size,
-        &context.cancellation,
-    )
-    .map_err(map_mesh_tiler_error)?;
+    let result = match prepared.mesh_source {
+        himmelcad_core::photolab_products::MeshSource::Dem => build_tiled_dem_mesh(
+            prepared
+                .dem_root
+                .as_deref()
+                .expect("DEM mesh freezes a DEM root"),
+            prepared
+                .dem_summary
+                .as_ref()
+                .expect("DEM mesh freezes a DEM summary"),
+            &staging,
+            prepared.texture_dataset_root.as_deref(),
+            prepared.texture_summary.as_ref(),
+            prepared.target_face_count,
+            prepared.interpolate_holes,
+            prepared.texture_size,
+            &context.cancellation,
+        )
+        .map_err(map_mesh_tiler_error)?,
+        himmelcad_core::photolab_products::MeshSource::Dense => {
+            let candidate = prepared
+                .project_root
+                .join(".photolab/mesh-candidates")
+                .join(&prepared.operation_id);
+            if candidate.exists() {
+                std::fs::remove_dir_all(&candidate)
+                    .map_err(|error| worker_error("io", &error.to_string()))?;
+            }
+            std::fs::create_dir_all(&candidate)
+                .map_err(|error| worker_error("io", &error.to_string()))?;
+            let mesh_ply = candidate.join("mesh.ply");
+            let dense_result = (|| {
+                himmelcad_sidecar::colmap_runtime::run_colmap_mesher(
+                    &himmelcad_sidecar::colmap_runtime::ColmapMeshRequest {
+                        executable: prepared
+                            .colmap_executable
+                            .clone()
+                            .expect("dense mesh freezes a COLMAP executable"),
+                        project_root: prepared.project_root.clone(),
+                        input_path: prepared
+                            .dense_ply
+                            .clone()
+                            .expect("dense mesh freezes a fused cloud"),
+                        output_path: mesh_ply.clone(),
+                        mesher: himmelcad_sidecar::colmap_runtime::ColmapMesher::Poisson,
+                    },
+                    context,
+                )
+                .map_err(JobWorkerError::from)?;
+                context
+                    .progress
+                    .report_blocking(JobProgress {
+                        stage: PhotolabStage {
+                            kind: PhotolabStageKind::Meshing,
+                            index: 1,
+                            stage_count: 2,
+                            label: "Prepare mesh for viewing".into(),
+                        },
+                        metrics: ProgressMetrics::empty(),
+                    })
+                    .map_err(JobWorkerError::from)?;
+                build_prepared_triangle_mesh_from_ply(
+                    &mesh_ply,
+                    &staging,
+                    PreparedTriangleMeshOptions::default(),
+                    &context.cancellation,
+                )
+                .map_err(|error| worker_error("meshPreparation", &error.to_string()))
+            })();
+            let cleanup = std::fs::remove_dir_all(&candidate);
+            match (dense_result, cleanup) {
+                (Ok(result), Ok(())) => result,
+                (Ok(_), Err(error)) => return Err(worker_error("io", &error.to_string())),
+                (Err(error), _) => return Err(error),
+            }
+        }
+    };
     context.check_cancelled()?;
     publisher
         .publish_mesh_product(
@@ -7819,6 +7998,7 @@ fn run_mesh_job(
             result,
             prepared.textured,
             &prepared.lineage,
+            prepared.provenance.clone(),
             &context.cancellation,
         )
         .map_err(|error| map_project_publish_error(error, &context.cancellation))?;
@@ -9944,6 +10124,37 @@ mod tests {
             ProductRunConfiguration::Depth {
                 image_downscale: 8,
                 reuse_compatible_maps: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn mesh_rpc_configuration_defaults_to_dem_and_accepts_dense() {
+        let base = serde_json::json!({
+            "kind": "mesh",
+            "targetFaceCount": 100000,
+            "interpolateHoles": false,
+            "buildTexture": true,
+            "textureSize": 2048
+        });
+        let dem: ProductRunConfiguration =
+            serde_json::from_value(base.clone()).expect("legacy DEM mesh configuration");
+        assert!(matches!(
+            dem,
+            ProductRunConfiguration::Mesh {
+                mesh_source: himmelcad_core::photolab_products::MeshSource::Dem,
+                ..
+            }
+        ));
+        let mut dense_value = base;
+        dense_value["meshSource"] = serde_json::json!("dense");
+        let dense: ProductRunConfiguration =
+            serde_json::from_value(dense_value).expect("dense mesh configuration");
+        assert!(matches!(
+            dense,
+            ProductRunConfiguration::Mesh {
+                mesh_source: himmelcad_core::photolab_products::MeshSource::Dense,
                 ..
             }
         ));

@@ -456,6 +456,21 @@ async function auditViewport(browserInstance, viewport) {
         await capture('function-dem-dtm');
         await pickSurface(/^DSM · /);
       }
+      if (action === 'Textured Mesh') {
+        // WP-A3: the dense-cloud source shows its own prerequisite and stage copy.
+        const pickSource = async (optionName) => {
+          await page
+            .locator('button[aria-haspopup="listbox"]', {
+              hasText: /(DEM · terrain|Dense cloud ·)/,
+            })
+            .first()
+            .click();
+          await page.getByRole('option', { name: optionName }).click();
+        };
+        await pickSource(/^Dense cloud · /);
+        await capture('function-textured-mesh-dense');
+        await pickSource(/^DEM · /);
+      }
       if (action === 'Configure Batch') {
         // The configurator renders inside the right function panel; the legacy
         // recipe dialog is the only surface with an explicit close button.

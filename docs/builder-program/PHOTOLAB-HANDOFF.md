@@ -7,7 +7,7 @@ landing by the PhotoLab session. Plan of record:
 `.claude/codex/prompts/photolab/`, the token ledger under
 `.claude/codex/logs/photolab/ledger.json`.
 
-Last update: 2026-09-04 16:05 (A4, H2, B5, B4, H1b landed; A3 next).
+Last update: 2026-09-04 16:50 (A3 stage-1 code landed; dense-mesh smoke next).
 
 ## Current work packages
 

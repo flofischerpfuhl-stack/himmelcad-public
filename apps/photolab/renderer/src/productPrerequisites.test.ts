@@ -2,6 +2,12 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  defaultProductConfiguration,
+  validProductConfiguration,
+  // @ts-expect-error Node's strip-types test runner loads the TypeScript source directly.
+} from './productConfiguration.ts';
+
+import {
   inlineProductStartError,
   evaluateProductPrerequisites,
   type ProductPrerequisiteArtifact,
@@ -63,11 +69,20 @@ describe('product prerequisite evaluation', () => {
     assert.equal(evaluateProductPrerequisites('dense', unresolved).met, true);
   });
 
-  it('keeps mesh source requirements data-driven', () => {
-    assert.equal(evaluateProductPrerequisites('mesh', status(['dense'])).met, false);
+  it('requires the selected frozen mesh source', () => {
+    const demMissing = evaluateProductPrerequisites('mesh', status(['dense']));
+    assert.equal(demMissing.met, false);
+    assert.equal(demMissing.reason, 'Needs a published DEM.');
+    assert.equal(evaluateProductPrerequisites('mesh', status(['dem'])).met, true);
+
+    const denseMissing = evaluateProductPrerequisites(
+      'mesh',
+      status(['dem'], { meshSourceKinds: ['dense'] }),
+    );
+    assert.equal(denseMissing.met, false);
+    assert.equal(denseMissing.reason, 'Needs a published dense cloud.');
     assert.equal(
-      evaluateProductPrerequisites('mesh', status(['dense'], { meshSourceKinds: ['dem', 'dense'] }))
-        .met,
+      evaluateProductPrerequisites('mesh', status(['dense'], { meshSourceKinds: ['dense'] })).met,
       true,
     );
   });
@@ -75,6 +90,24 @@ describe('product prerequisite evaluation', () => {
   it('allows depth maps and splats from a published alignment', () => {
     assert.equal(evaluateProductPrerequisites('depth', status()).met, true);
     assert.equal(evaluateProductPrerequisites('splat', status()).met, true);
+  });
+});
+
+describe('mesh product configuration', () => {
+  it('defaults to the byte-compatible DEM source and validates both source values', () => {
+    const configuration = defaultProductConfiguration('mesh');
+    assert.equal(configuration.kind, 'mesh');
+    if (configuration.kind !== 'mesh') return;
+    assert.equal(configuration.meshSource, 'dem');
+    assert.equal(validProductConfiguration(configuration), true);
+    assert.equal(validProductConfiguration({ ...configuration, meshSource: 'dense' }), true);
+    assert.equal(
+      validProductConfiguration({
+        ...configuration,
+        meshSource: 'unsupported' as 'dem',
+      }),
+      false,
+    );
   });
 });
 

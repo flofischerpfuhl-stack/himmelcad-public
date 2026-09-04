@@ -105,13 +105,12 @@ export function evaluateProductPrerequisites(
     );
   }
   if (hasAny(status, prerequisiteGroups[0] ?? [])) return { met: true };
-  const denseAllowed = status.meshSourceKinds.includes('dense');
+  const denseSelected =
+    status.meshSourceKinds.length === 1 && status.meshSourceKinds[0] === 'dense';
   return missing(
-    denseAllowed
-      ? 'Meshes need a DEM or dense point cloud from this alignment lineage.'
-      : 'Meshes need a DEM from this alignment lineage.',
-    denseAllowed ? 'Build a mesh source first' : 'Build a DEM first',
-    denseAllowed ? 'products.dense' : 'products.dem',
+    denseSelected ? 'Needs a published dense cloud.' : 'Needs a published DEM.',
+    denseSelected ? 'Build a dense point cloud first' : 'Build a DEM first',
+    denseSelected ? 'products.dense' : 'products.dem',
   );
 }
 

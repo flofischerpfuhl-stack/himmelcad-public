@@ -895,6 +895,21 @@ pub struct GcpCalibrationReport {
     pub groups: Vec<himmelcad_core::photolab_gcp_optimization::GcpCalibrationGroupReport>,
 }
 
+/// Frozen mesh source provenance (WP-A3): which artifact the mesh was built
+/// from, so a later dense rebuild or DEM republish cannot silently change what
+/// a published mesh claims to represent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshProvenance {
+    pub mesh_source: himmelcad_core::photolab_products::MeshSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dense_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_dem_entity_id: Option<EntityId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_artifact_sha256: Option<ObjectHash>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MeshArtifactRecord {
@@ -917,6 +932,9 @@ pub struct MeshArtifactRecord {
     pub gcp_optimization_snapshot_sha256: Option<ObjectHash>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_mask_scope_sha256: Option<ObjectHash>,
+    /// Absent on records published before WP-A3 (all of them were DEM drapes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<MeshProvenance>,
 }
 
 #[derive(Debug)]
@@ -7073,6 +7091,7 @@ impl ProjectRuntime {
                         gcp_optimization_entity_id: None,
                         gcp_optimization_snapshot_sha256: None,
                         image_mask_scope_sha256: outcome.summary.image_mask_scope_sha256.clone(),
+                        provenance: None,
                     })?
                 } else {
                     serde_json::to_vec(&record)?
@@ -7791,6 +7810,7 @@ impl ProjectRuntime {
         prepared: PreparedMeshProduct,
         textured: bool,
         lineage: &ProductLineage,
+        provenance: MeshProvenance,
         cancellation: &CancellationToken,
     ) -> Result<PublishColmapResult> {
         validate_compute_job_id(job_id)?;
@@ -7825,6 +7845,7 @@ impl ProjectRuntime {
             gcp_optimization_entity_id: lineage.gcp_optimization_entity_id.clone(),
             gcp_optimization_snapshot_sha256: lineage.gcp_optimization_snapshot_sha256.clone(),
             image_mask_scope_sha256: Some(lineage.image_mask_scope_sha256.clone()),
+            provenance: Some(provenance),
         };
         let version_hash =
             put_project_object(&session.working_path, &serde_json::to_vec(&record)?)?;

@@ -7,7 +7,7 @@ import {
   defaultProductConfiguration,
   type ProductOperation,
   type ProductRunConfiguration,
-  validDemGroundParameters,
+  validProductConfiguration,
 } from './productConfiguration.js';
 import {
   evaluateProductPrerequisites,
@@ -111,6 +111,10 @@ export function ProductPanel({
     externalDemBound:
       exactPrerequisites.externalDemBound ||
       (configuration.kind === 'ortho' && Boolean(configuration.sourceDemEntityId)),
+    meshSourceKinds:
+      configuration.kind === 'mesh'
+        ? [configuration.meshSource]
+        : exactPrerequisites.meshSourceKinds,
   });
   const inlineStartError = inlineProductStartError(startError);
   useEffect(() => {
@@ -369,42 +373,78 @@ export function ProductPanel({
         )}
         {configuration.kind === 'mesh' && (
           <>
-            <NumberField
-              label="Target face count"
-              value={configuration.targetFaceCount}
-              min={10_000}
-              max={500_000_000}
-              step={10_000}
-              onChange={(value) => setConfiguration({ ...configuration, targetFaceCount: value })}
-            />
-            <Toggle
-              label="Interpolate holes"
-              checked={configuration.interpolateHoles}
-              onChange={(checked) =>
-                setConfiguration({ ...configuration, interpolateHoles: checked })
-              }
-            />
-            <Toggle
-              label="Build texture"
-              checked={configuration.buildTexture}
-              onChange={(checked) => setConfiguration({ ...configuration, buildTexture: checked })}
-            />
-            <Field label="Texture detail budget">
+            <Field label="Source">
               <Select
-                value={configuration.textureSize}
-                disabled={!configuration.buildTexture}
+                value={configuration.meshSource}
                 onChange={(event) =>
                   setConfiguration({
                     ...configuration,
-                    textureSize: Number(event.currentTarget.value) as 2048 | 4096 | 8192 | 16384,
+                    meshSource: event.currentTarget.value as 'dem' | 'dense',
                   })
                 }
               >
-                {[2048, 4096, 8192, 16384].map((size) => (
-                  <option key={size} value={size}>{`${size} × ${size}`}</option>
-                ))}
+                <option value="dem">DEM · terrain drape</option>
+                <option value="dense">Dense cloud · true 3D</option>
               </Select>
             </Field>
+            <p className={styles.help}>
+              {configuration.meshSource === 'dense'
+                ? 'Needs a published dense cloud.'
+                : 'Needs a published DEM.'}
+            </p>
+            {configuration.meshSource === 'dense' && (
+              <p className={styles.help}>
+                Stage 1 produces true 3D geometry; image texturing follows in a later release.
+              </p>
+            )}
+            {configuration.meshSource === 'dem' && (
+              <>
+                <NumberField
+                  label="Target face count"
+                  value={configuration.targetFaceCount}
+                  min={10_000}
+                  max={500_000_000}
+                  step={10_000}
+                  onChange={(value) =>
+                    setConfiguration({ ...configuration, targetFaceCount: value })
+                  }
+                />
+                <Toggle
+                  label="Interpolate holes"
+                  checked={configuration.interpolateHoles}
+                  onChange={(checked) =>
+                    setConfiguration({ ...configuration, interpolateHoles: checked })
+                  }
+                />
+                <Toggle
+                  label="Build texture"
+                  checked={configuration.buildTexture}
+                  onChange={(checked) =>
+                    setConfiguration({ ...configuration, buildTexture: checked })
+                  }
+                />
+                <Field label="Texture detail budget">
+                  <Select
+                    value={configuration.textureSize}
+                    disabled={!configuration.buildTexture}
+                    onChange={(event) =>
+                      setConfiguration({
+                        ...configuration,
+                        textureSize: Number(event.currentTarget.value) as
+                          | 2048
+                          | 4096
+                          | 8192
+                          | 16384,
+                      })
+                    }
+                  >
+                    {[2048, 4096, 8192, 16384].map((size) => (
+                      <option key={size} value={size}>{`${size} × ${size}`}</option>
+                    ))}
+                  </Select>
+                </Field>
+              </>
+            )}
           </>
         )}
         {configuration.kind === 'splat' && (
@@ -524,7 +564,7 @@ export function ProductPanel({
         type="button"
         disabled={
           busy ||
-          !valid(configuration) ||
+          !validProductConfiguration(configuration) ||
           !prerequisite.met ||
           resolving ||
           !resolvedInputs ||
@@ -673,32 +713,6 @@ function Resolution({
       onChange={(value) => setConfiguration({ ...configuration, resolutionMetersPerPixel: value })}
     />
   );
-}
-
-function valid(configuration: ProductRunConfiguration): boolean {
-  if (configuration.kind === 'dem') {
-    return (
-      Number.isFinite(configuration.resolutionMetersPerPixel) &&
-      configuration.resolutionMetersPerPixel > 0 &&
-      (configuration.surface === 'dsm' || validDemGroundParameters(configuration))
-    );
-  }
-  if (configuration.kind === 'ortho') {
-    return (
-      Number.isFinite(configuration.resolutionMetersPerPixel) &&
-      configuration.resolutionMetersPerPixel > 0
-    );
-  }
-  if (configuration.kind === 'dense') return configuration.minimumViews >= 2;
-  if (configuration.kind === 'mesh') return configuration.targetFaceCount >= 10_000;
-  if (configuration.kind === 'splat') {
-    return (
-      configuration.iterations >= 1_000 &&
-      configuration.maximumSplats >= 100_000 &&
-      configuration.maximumResolution >= 256
-    );
-  }
-  return true;
 }
 
 function title(operation: ProductOperation): string {

@@ -54,6 +54,11 @@ const MAX_SIGNATURE_BYTES: u64 = 64 * 1024;
 const LOG_TAIL_LINES: usize = 200;
 const MAX_LOG_LINE_BYTES: usize = 16 * 1024;
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(15);
+// X6 tunable: depth 11 retains facade-scale detail without the extreme memory growth of
+// deeper Poisson octrees on typical workstation dense clouds.
+const POISSON_MESHING_DEPTH: u32 = 11;
+// X6 tunable: trim 7 removes low-support extrapolated surface while retaining observed edges.
+const POISSON_MESHING_TRIM: u32 = 7;
 /// Stage label of the mixed-policy pose-only re-adjustment.
 const PINNED_INTRINSICS_STAGE: &str = "Refine poses with pinned intrinsics";
 /// A pose-only re-adjustment must keep every registered image. Losing one means the pinned
@@ -261,6 +266,16 @@ pub enum LargeMatchingBackend {
 pub enum ColmapMesher {
     Poisson,
     Delaunay,
+}
+
+/// One independently admitted mesh reconstruction from an immutable dense cloud.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColmapMeshRequest {
+    pub executable: PathBuf,
+    pub project_root: PathBuf,
+    pub input_path: PathBuf,
+    pub output_path: PathBuf,
+    pub mesher: ColmapMesher,
 }
 
 /// Optional dense-product stages. Dependencies are validated before spawning.
@@ -871,6 +886,138 @@ impl std::fmt::Debug for ColmapRuntime {
             .field("scratch_root", &self.scratch_root)
             .finish_non_exhaustive()
     }
+}
+
+/// Runs only the requested COLMAP mesher under the same bounded child-process supervisor used by
+/// complete reconstruction jobs. The caller owns publication and must keep `input_path` immutable.
+pub fn run_colmap_mesher(
+    request: &ColmapMeshRequest,
+    context: &JobWorkerContext,
+) -> Result<ColmapCommandReport, ColmapRuntimeError> {
+    context.check_cancelled().map_err(map_worker_error)?;
+    let project_root = canonical_directory(&request.project_root)?;
+    let executable =
+        request
+            .executable
+            .canonicalize()
+            .map_err(|error| ColmapRuntimeError::InvalidPath {
+                path: request.executable.clone(),
+                reason: error.to_string(),
+            })?;
+    if !executable.is_file() {
+        return Err(ColmapRuntimeError::InvalidPath {
+            path: executable,
+            reason: "COLMAP executable is not a regular file".into(),
+        });
+    }
+    let input = canonical_file_inside(&request.input_path, &project_root)?;
+    let output_parent =
+        request
+            .output_path
+            .parent()
+            .ok_or_else(|| ColmapRuntimeError::InvalidPath {
+                path: request.output_path.clone(),
+                reason: "mesh output has no parent directory".into(),
+            })?;
+    fs::create_dir_all(output_parent)?;
+    let output_parent = canonical_directory(output_parent)?;
+    if !output_parent.starts_with(&project_root) {
+        return Err(ColmapRuntimeError::PathOutsideTrustedRoot(output_parent));
+    }
+    let output = output_parent.join(request.output_path.file_name().ok_or_else(|| {
+        ColmapRuntimeError::InvalidPath {
+            path: request.output_path.clone(),
+            reason: "mesh output has no file name".into(),
+        }
+    })?);
+    if output.exists() || input == output {
+        return Err(ColmapRuntimeError::InvalidPath {
+            path: output,
+            reason: "mesh output must be a new file distinct from the immutable input".into(),
+        });
+    }
+    let (kind, args) = match request.mesher {
+        ColmapMesher::Poisson => (
+            ColmapCommandKind::PoissonMesher,
+            vec![
+                os("--input_path"),
+                input.as_os_str().to_owned(),
+                os("--output_path"),
+                output.as_os_str().to_owned(),
+                os("--PoissonMeshing.depth"),
+                os(POISSON_MESHING_DEPTH.to_string()),
+                os("--PoissonMeshing.trim"),
+                os(POISSON_MESHING_TRIM.to_string()),
+            ],
+        ),
+        ColmapMesher::Delaunay => (
+            ColmapCommandKind::DelaunayMesher,
+            vec![
+                os("--input_path"),
+                input.as_os_str().to_owned(),
+                os("--output_path"),
+                output.as_os_str().to_owned(),
+            ],
+        ),
+    };
+    let spec = CommandSpec {
+        kind,
+        stage_label: "Build dense-cloud mesh",
+        args,
+    };
+    let plan = ColmapProgressPlan {
+        stages: vec![
+            planned(PhotolabStageKind::Meshing, "Build dense-cloud mesh"),
+            planned(PhotolabStageKind::Meshing, "Prepare mesh for viewing"),
+        ],
+    };
+    let mut state = RunState::new(output_parent, plan);
+    let report = {
+        let started = Instant::now();
+        state.report_stage(context, spec.stage_label, ProgressMetrics::empty())?;
+        let mut child = spawn_colmap_child(&executable, &spec, &state.scratch)?;
+        let mut progress_error = None;
+        let outcome = supervise_child(&mut child, &context.cancellation, |completed, total| {
+            if progress_error.is_none() {
+                progress_error = state
+                    .report_stage(
+                        context,
+                        spec.stage_label,
+                        ProgressMetrics {
+                            completed_units: completed,
+                            total_units: Some(total),
+                            completed_bytes: 0,
+                            total_bytes: None,
+                        },
+                    )
+                    .err();
+            }
+        })?;
+        if let Some(error) = progress_error {
+            return Err(error);
+        }
+        ColmapCommandReport {
+            command: spec.kind,
+            stage_index: 0,
+            argv: spec
+                .args
+                .iter()
+                .map(|value| value.to_string_lossy().into_owned())
+                .collect(),
+            success: outcome.status.success(),
+            exit_code: outcome.status.code(),
+            duration_ms: millis_u64(started.elapsed()),
+            log_tail: outcome.log_tail,
+        }
+    };
+    if !report.success {
+        return Err(command_failure(&report));
+    }
+    state.report_complete(context, spec.stage_label)?;
+    if !output.is_file() {
+        return Err(ColmapRuntimeError::MissingOutput(output));
+    }
+    Ok(report)
 }
 
 impl ColmapRuntime {
@@ -2616,6 +2763,10 @@ impl ColmapRuntime {
                     fused.as_os_str().to_owned(),
                     os("--output_path"),
                     mesh.as_os_str().to_owned(),
+                    os("--PoissonMeshing.depth"),
+                    os(POISSON_MESHING_DEPTH.to_string()),
+                    os("--PoissonMeshing.trim"),
+                    os(POISSON_MESHING_TRIM.to_string()),
                 ],
             },
             ColmapMesher::Delaunay => CommandSpec {
@@ -2770,33 +2921,41 @@ impl ColmapRuntime {
     }
 
     fn spawn_child(&self, spec: &CommandSpec, scratch: &Path) -> Result<Child, ColmapRuntimeError> {
-        let home = scratch.join("home");
-        let temp = scratch.join("tmp");
-        let cache = scratch.join("cache");
-        fs::create_dir_all(&home)?;
-        fs::create_dir_all(&temp)?;
-        fs::create_dir_all(&cache)?;
-        let mut command = Command::new(&self.toolchain.executable);
-        command
-            .arg(spec.kind.as_str())
-            .args(&spec.args)
-            .current_dir(scratch)
-            .env_clear()
-            .env("HOME", &home)
-            .env("TMPDIR", &temp)
-            .env("TEMP", &temp)
-            .env("TMP", &temp)
-            .env("XDG_CACHE_HOME", &cache)
-            .env("CUDA_CACHE_PATH", cache.join("cuda"))
-            .env("COLMAP_NO_NETWORK", "1")
-            .env("HF_HUB_OFFLINE", "1")
-            .env("TRANSFORMERS_OFFLINE", "1")
-            .env("LC_ALL", "C")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        process_group::spawn(&mut command).map_err(ColmapRuntimeError::Io)
+        spawn_colmap_child(&self.toolchain.executable, spec, scratch)
     }
+}
+
+fn spawn_colmap_child(
+    executable: &Path,
+    spec: &CommandSpec,
+    scratch: &Path,
+) -> Result<Child, ColmapRuntimeError> {
+    let home = scratch.join("home");
+    let temp = scratch.join("tmp");
+    let cache = scratch.join("cache");
+    fs::create_dir_all(&home)?;
+    fs::create_dir_all(&temp)?;
+    fs::create_dir_all(&cache)?;
+    let mut command = Command::new(executable);
+    command
+        .arg(spec.kind.as_str())
+        .args(&spec.args)
+        .current_dir(scratch)
+        .env_clear()
+        .env("HOME", &home)
+        .env("TMPDIR", &temp)
+        .env("TEMP", &temp)
+        .env("TMP", &temp)
+        .env("XDG_CACHE_HOME", &cache)
+        .env("CUDA_CACHE_PATH", cache.join("cuda"))
+        .env("COLMAP_NO_NETWORK", "1")
+        .env("HF_HUB_OFFLINE", "1")
+        .env("TRANSFORMERS_OFFLINE", "1")
+        .env("LC_ALL", "C")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    process_group::spawn(&mut command).map_err(ColmapRuntimeError::Io)
 }
 
 fn camera_dji_calibration(
@@ -5480,9 +5639,14 @@ case "$cmd" in
     /bin/mkdir -p "$workspace/stereo/depth_maps"
     printf 'depth' > "$workspace/stereo/depth_maps/a.jpg.geometric.bin"
     ;;
-  stereo_fusion|poisson_mesher|delaunay_mesher)
+  stereo_fusion|delaunay_mesher)
     out="$(value_for --output_path "$@")"
     printf '%s' "$cmd" > "$out"
+    ;;
+  poisson_mesher)
+    case "$PWD" in *poisson-cancel*) while :; do :; done ;; esac
+    out="$(value_for --output_path "$@")"
+    printf 'ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n' > "$out"
     ;;
   mesh_texturer)
     out="$(value_for --output_path "$@")"
@@ -6345,6 +6509,152 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
         assert_eq!(terminal.state, PhotolabJobState::Cancelled);
         assert!(started.elapsed() < Duration::from_secs(2));
         assert!(!scratch.join("output-summary.json").exists());
+    }
+
+    #[tokio::test]
+    async fn standalone_poisson_mesher_uses_frozen_args_and_feeds_the_ply_tiler() {
+        let rig = TestRig::new("poisson-product", false, false);
+        let input = rig.project.join("fused.ply");
+        fs::write(&input, b"immutable dense cloud").expect("write dense input");
+        let candidate = rig.project.join("poisson-product-candidate");
+        let output = candidate.join("mesh.ply");
+        let request = ColmapMeshRequest {
+            executable: rig.tool_root.join("colmap"),
+            project_root: rig.project.clone(),
+            input_path: input.clone(),
+            output_path: output.clone(),
+            mesher: ColmapMesher::Poisson,
+        };
+        let manager = JobManager::new(JobManagerConfig {
+            max_concurrency: 1,
+            max_queued: 0,
+        })
+        .expect("create job manager");
+        let job_id = PhotolabJobId("poisson-product-job".into());
+        manager
+            .start(
+                NewPhotolabJob {
+                    id: job_id.clone(),
+                    kind: PhotolabJobKind::BuildMesh,
+                    config_hash: ObjectHash::of_bytes(b"poisson-config"),
+                    input_hash: ObjectHash::of_bytes(b"fused-input"),
+                    progress: JobProgress {
+                        stage: PhotolabStage {
+                            kind: PhotolabStageKind::Meshing,
+                            index: 0,
+                            stage_count: 2,
+                            label: "Build dense-cloud mesh".into(),
+                        },
+                        metrics: ProgressMetrics::empty(),
+                    },
+                },
+                move |context| {
+                    let report = run_colmap_mesher(&request, &context)?;
+                    assert_eq!(
+                        report.argv,
+                        vec![
+                            "--input_path".to_owned(),
+                            input.to_string_lossy().into_owned(),
+                            "--output_path".to_owned(),
+                            output.to_string_lossy().into_owned(),
+                            "--PoissonMeshing.depth".to_owned(),
+                            "11".to_owned(),
+                            "--PoissonMeshing.trim".to_owned(),
+                            "7".to_owned(),
+                        ]
+                    );
+                    Ok(())
+                },
+            )
+            .await
+            .expect("start poisson mesh job");
+        let terminal = manager
+            .wait_for_terminal(&job_id)
+            .await
+            .expect("wait for poisson mesh job");
+        assert_eq!(terminal.state, PhotolabJobState::Completed);
+        let product = crate::prepared_triangle_mesh_ply::build_prepared_triangle_mesh_from_ply(
+            &candidate.join("mesh.ply"),
+            &rig.project.join("prepared-poisson-product"),
+            crate::prepared_triangle_mesh::PreparedTriangleMeshOptions::default(),
+            &CancellationToken::new(),
+        )
+        .expect("poisson output reaches the PLY tiler");
+        assert_eq!(product.triangle_count, 1);
+    }
+
+    #[tokio::test]
+    async fn standalone_poisson_cancellation_kills_the_child_within_the_bound() {
+        let _timing_guard = crate::CANCELLATION_TIMING_TEST_LOCK
+            .lock()
+            .expect("cancellation timing test lock");
+        let rig = TestRig::new("poisson-cancel", false, false);
+        let input = rig.project.join("fused.ply");
+        fs::write(&input, b"immutable dense cloud").expect("write dense input");
+        let frozen_input = input.clone();
+        let candidate = rig.project.join("poisson-cancel-candidate");
+        let output = candidate.join("mesh.ply");
+        let request = ColmapMeshRequest {
+            executable: rig.tool_root.join("colmap"),
+            project_root: rig.project.clone(),
+            input_path: input,
+            output_path: output.clone(),
+            mesher: ColmapMesher::Poisson,
+        };
+        let manager = JobManager::new(JobManagerConfig {
+            max_concurrency: 1,
+            max_queued: 0,
+        })
+        .expect("create job manager");
+        let job_id = PhotolabJobId("poisson-cancel-job".into());
+        manager
+            .start(
+                NewPhotolabJob {
+                    id: job_id.clone(),
+                    kind: PhotolabJobKind::BuildMesh,
+                    config_hash: ObjectHash::of_bytes(b"poisson-config"),
+                    input_hash: ObjectHash::of_bytes(b"fused-input"),
+                    progress: JobProgress {
+                        stage: PhotolabStage {
+                            kind: PhotolabStageKind::Meshing,
+                            index: 0,
+                            stage_count: 2,
+                            label: "Build dense-cloud mesh".into(),
+                        },
+                        metrics: ProgressMetrics::empty(),
+                    },
+                },
+                move |context| {
+                    run_colmap_mesher(&request, &context)
+                        .map(|_| ())
+                        .map_err(JobWorkerError::from)
+                },
+            )
+            .await
+            .expect("start cancellable poisson mesh job");
+        for _ in 0..300 {
+            if fs::read_to_string(candidate.join("invocations.log"))
+                .unwrap_or_default()
+                .contains("CMD|poisson_mesher")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(candidate.join("invocations.log").is_file());
+        let started = Instant::now();
+        manager.cancel(&job_id).await.expect("request cancellation");
+        let terminal = manager
+            .wait_for_terminal(&job_id)
+            .await
+            .expect("wait for cancellation");
+        assert_eq!(terminal.state, PhotolabJobState::Cancelled);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(!output.exists());
+        assert_eq!(
+            fs::read(&frozen_input).expect("dense input survives"),
+            b"immutable dense cloud"
+        );
     }
 
     async fn wait_for_invocation(root: &Path, needle: &str) -> PathBuf {

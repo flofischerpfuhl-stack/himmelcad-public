@@ -1178,6 +1178,7 @@ function productConfiguration(kind, smoke) {
   if (kind === 'mesh')
     return {
       kind,
+      meshSource: options.meshSource,
       targetFaceCount: smoke ? 100_000 : 5_000_000,
       interpolateHoles: true,
       buildTexture: true,
@@ -1255,6 +1256,7 @@ function parseArguments(args) {
       get('--ortho-resolution', goldenAgisoft ? '0.0075199430321273' : '0.03'),
       '--ortho-resolution',
     ),
+    meshSource: get('--mesh-source', 'dem'),
     horizontalGrid: get('--horizontal-grid', ''),
     verticalGrid: get('--vertical-grid', ''),
     pollMs: positiveInteger(get('--poll-ms', '1000'), '--poll-ms'),
@@ -1274,6 +1276,8 @@ function parseArguments(args) {
   };
   if (!['dsm', 'dtm'].includes(result.demSurface))
     throw new Error(`--dem-surface must be dsm or dtm, got ${result.demSurface}`);
+  if (!['dem', 'dense'].includes(result.meshSource))
+    throw new Error(`--mesh-source must be dem or dense, got ${result.meshSource}`);
   if (goldenAgisoft) {
     if (result.profile !== 'qualityHybrid')
       throw new Error('--golden-agisoft requires --profile qualityHybrid');
@@ -1335,6 +1339,7 @@ Options:
   --products <list>               depth,dense,dem,ortho,mesh,splat
   --dem-resolution <meters>       DEM pixel size (golden: 0.015)
   --dem-surface <dsm|dtm>         DEM surface kind (WP-A4 SMRF ground classification for dtm)
+  --mesh-source <dem|dense>       Mesh geometry source (default: dem)
   --ortho-resolution <meters>     Orthomosaic pixel size (golden: 0.0075199430321273)
   --max-images <count>            Limit imported images
   --image-stride <count>          Import every nth image

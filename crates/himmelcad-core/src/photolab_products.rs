@@ -332,6 +332,15 @@ pub enum RasterDisplayMode {
     TexturedMesh3d { mesh_run_id: ProductRunId },
 }
 
+/// Frozen geometry source selected for a mesh product.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum MeshSource {
+    #[default]
+    Dem,
+    Dense,
+}
+
 /// Product-specific immutable metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "kind")]
@@ -349,7 +358,24 @@ pub enum ProductDescriptor {
     Orthomosaic {
         raster: RasterPyramid,
     },
-    TexturedMesh,
+    TexturedMesh {
+        #[serde(rename = "meshSource")]
+        mesh_source: MeshSource,
+        #[serde(
+            rename = "denseRunId",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        dense_run_id: Option<ProductRunId>,
+        #[serde(
+            rename = "sourceDemEntityId",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        source_dem_entity_id: Option<String>,
+        #[serde(rename = "sourceArtifactSha256")]
+        source_artifact_sha256: ObjectHash,
+    },
     GaussianSplat,
 }
 
@@ -361,7 +387,7 @@ impl ProductDescriptor {
             Self::DensePointCloud => ProductKind::DensePointCloud,
             Self::Dem { .. } => ProductKind::Dem,
             Self::Orthomosaic { .. } => ProductKind::Orthomosaic,
-            Self::TexturedMesh => ProductKind::TexturedMesh,
+            Self::TexturedMesh { .. } => ProductKind::TexturedMesh,
             Self::GaussianSplat => ProductKind::GaussianSplat,
         }
     }
@@ -544,6 +570,19 @@ impl ProductRun {
             ProductDescriptor::Orthomosaic { raster } => {
                 raster.validate()?;
             }
+            ProductDescriptor::TexturedMesh {
+                mesh_source,
+                dense_run_id,
+                source_dem_entity_id,
+                source_artifact_sha256,
+            } => {
+                validate_mesh_source(
+                    *mesh_source,
+                    dense_run_id.as_ref(),
+                    source_dem_entity_id.as_deref(),
+                    source_artifact_sha256,
+                )?;
+            }
             _ => {}
         }
         Ok(Self {
@@ -632,9 +671,51 @@ impl ProductRun {
             ProductDescriptor::Orthomosaic { raster } => {
                 raster.validate()?;
             }
+            ProductDescriptor::TexturedMesh {
+                mesh_source,
+                dense_run_id,
+                source_dem_entity_id,
+                source_artifact_sha256,
+            } => {
+                validate_mesh_source(
+                    *mesh_source,
+                    dense_run_id.as_ref(),
+                    source_dem_entity_id.as_deref(),
+                    source_artifact_sha256,
+                )?;
+            }
             _ => {}
         }
         Ok(())
+    }
+}
+
+fn validate_mesh_source(
+    mesh_source: MeshSource,
+    dense_run_id: Option<&ProductRunId>,
+    source_dem_entity_id: Option<&str>,
+    source_artifact_sha256: &ObjectHash,
+) -> Result<(), ProductError> {
+    validate_hash(source_artifact_sha256, "mesh source artifact")?;
+    match mesh_source {
+        MeshSource::Dem
+            if dense_run_id.is_none()
+                && source_dem_entity_id.is_some_and(|id| !id.trim().is_empty()) =>
+        {
+            Ok(())
+        }
+        MeshSource::Dense
+            if source_dem_entity_id.is_none()
+                && dense_run_id.is_some_and(|id| !id.0.trim().is_empty()) =>
+        {
+            Ok(())
+        }
+        MeshSource::Dem => Err(ProductError::InvalidRun(
+            "DEM mesh needs exactly one frozen DEM entity id",
+        )),
+        MeshSource::Dense => Err(ProductError::InvalidRun(
+            "dense mesh needs exactly one frozen dense run id",
+        )),
     }
 }
 
@@ -647,7 +728,7 @@ fn validate_descriptor_datasets(
         | ProductDescriptor::Dem { .. }
         | ProductDescriptor::Orthomosaic { .. } => TiledDatasetKind::Raster,
         ProductDescriptor::DensePointCloud => TiledDatasetKind::PointCloud,
-        ProductDescriptor::TexturedMesh => TiledDatasetKind::Mesh,
+        ProductDescriptor::TexturedMesh { .. } => TiledDatasetKind::Mesh,
         ProductDescriptor::GaussianSplat => TiledDatasetKind::Splat,
     };
     if datasets.iter().all(|dataset| dataset.kind == expected) {
@@ -723,7 +804,29 @@ fn validate_run_dependencies(
             has_images
                 && has_alignment
                 && has(ProductKind::DepthMaps)
-                && has(ProductKind::DensePointCloud)
+                && match run.descriptor() {
+                    ProductDescriptor::TexturedMesh {
+                        mesh_source: MeshSource::Dem,
+                        ..
+                    } => has(ProductKind::Dem),
+                    ProductDescriptor::TexturedMesh {
+                        mesh_source: MeshSource::Dense,
+                        dense_run_id,
+                        ..
+                    } => dense_run_id.as_ref().is_some_and(|expected_run_id| {
+                        dependencies.iter().any(|dependency| {
+                            matches!(
+                                dependency,
+                                ProductDependency::Product {
+                                    run_id,
+                                    kind: ProductKind::DensePointCloud,
+                                    ..
+                                } if run_id == expected_run_id
+                            )
+                        })
+                    }),
+                    _ => unreachable!("textured-mesh kind comes from a mesh descriptor"),
+                }
         }
     };
     if valid {
@@ -1336,7 +1439,12 @@ mod tests {
         .expect("DEM run");
         let mesh = ProductRun::new(
             ProductRunId("mesh-1".to_owned()),
-            ProductDescriptor::TexturedMesh,
+            ProductDescriptor::TexturedMesh {
+                mesh_source: MeshSource::Dense,
+                dense_run_id: Some(dense.id().clone()),
+                source_dem_entity_id: None,
+                source_artifact_sha256: hash("fused-cloud"),
+            },
             hash("mesh-output"),
             lineage(vec![
                 ProductDependency::SourceImages {
@@ -1394,6 +1502,53 @@ mod tests {
         let encoded = serde_json::to_string(splat).expect("serialize run");
         let decoded: ProductRun = serde_json::from_str(&encoded).expect("deserialize run");
         assert_eq!(decoded, *splat);
+    }
+
+    #[test]
+    fn mesh_descriptor_freezes_source_identity_and_artifact_hash() {
+        let dense = ProductDescriptor::TexturedMesh {
+            mesh_source: MeshSource::Dense,
+            dense_run_id: Some(ProductRunId("dense-frozen".into())),
+            source_dem_entity_id: None,
+            source_artifact_sha256: hash("fused-cloud-frozen"),
+        };
+        let encoded = serde_json::to_value(&dense).expect("serialize dense mesh descriptor");
+        assert_eq!(encoded["meshSource"], "dense");
+        assert_eq!(encoded["denseRunId"], "dense-frozen");
+        assert_eq!(
+            encoded["sourceArtifactSha256"],
+            hash("fused-cloud-frozen").as_str()
+        );
+
+        let dem = ProductDescriptor::TexturedMesh {
+            mesh_source: MeshSource::Dem,
+            dense_run_id: None,
+            source_dem_entity_id: Some("project:raster:dem-frozen".into()),
+            source_artifact_sha256: hash("dem-frozen"),
+        };
+        let encoded = serde_json::to_value(&dem).expect("serialize DEM mesh descriptor");
+        assert_eq!(encoded["meshSource"], "dem");
+        assert_eq!(encoded["sourceDemEntityId"], "project:raster:dem-frozen");
+        assert!(encoded.get("denseRunId").is_none());
+
+        let invalid = ProductRun::new(
+            ProductRunId("mesh-invalid-source".into()),
+            ProductDescriptor::TexturedMesh {
+                mesh_source: MeshSource::Dense,
+                dense_run_id: None,
+                source_dem_entity_id: Some("project:raster:dem".into()),
+                source_artifact_sha256: hash("wrong-source"),
+            },
+            hash("mesh-output"),
+            lineage(base_dependencies()),
+            vec![dataset("mesh-invalid", TiledDatasetKind::Mesh)],
+        );
+        assert_eq!(
+            invalid,
+            Err(ProductError::InvalidRun(
+                "dense mesh needs exactly one frozen dense run id"
+            ))
+        );
     }
 
     #[test]

@@ -222,6 +222,8 @@ Footer
 - Status: queued
 ```
 
+Stage 1 code landed 2026-09-04 (landing pending the dense-mesh smoke and the light-theme G17 review): mesh configuration gains `meshSource: dem | dense` (default `dem`, DEM path byte-identical); `dense` takes the frozen published dense cloud and runs `colmap poisson_mesher --input_path <fused.ply> --output_path <mesh.ply> --PoissonMeshing.depth 11 --PoissonMeshing.trim 7` (X6 tunables) under the existing supervised-child cancellation (kill within the bound, candidate discarded, dense input survives), then the existing PLY tiler publishes it with the 5-tuple lineage. Provenance: the core descriptor and the durable job identity freeze source, dense run id and fused-cloud SHA-256; the review added `MeshProvenance` to `MeshArtifactRecord` (`meshSource`, `denseRunId`/`sourceDemEntityId`, `sourceArtifactSha256`; older records carry none — all were DEM drapes). Known stage-1 limits (Codex gap 1, accepted): the PLY tiler has neither a face-count decimation input nor a vertex-colour channel, so the dense mesh is untextured geometry and the face-count field is hidden for `dense`; the panel says "Stage 1 produces true 3D geometry; image texturing follows in a later release." e2e gained `--mesh-source dem|dense`. Verified: sidecar 273 lib + 13 + 92 bin (fake `poisson_mesher` rig: args, cancellation, tiler hand-off), core 217, renderer 86, typecheck, English UI, prettier. G17 dark review accepted (`.build/photolab-ui/a3-dark/function-textured-mesh{,-dense}.png`).
+
 ### WP-A4 — Ground classification for a real DTM (Size L)
 
 Problem. DTM is a class filter (`raster_runtime.rs:116-134`) over classes the

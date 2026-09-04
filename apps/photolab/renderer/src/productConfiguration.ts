@@ -71,6 +71,7 @@ export type ProductRunConfiguration =
     }
   | {
       kind: 'mesh';
+      meshSource: 'dem' | 'dense';
       targetFaceCount: number;
       interpolateHoles: boolean;
       buildTexture: boolean;
@@ -123,6 +124,7 @@ export function defaultProductConfiguration(operation: ProductOperation): Produc
   if (operation === 'mesh') {
     return {
       kind: 'mesh',
+      meshSource: 'dem',
       targetFaceCount: 5_000_000,
       interpolateHoles: false,
       buildTexture: true,
@@ -138,4 +140,35 @@ export function defaultProductConfiguration(operation: ProductOperation): Produc
     maximumResolution: 1_920,
     retainTrainingCheckpoints: true,
   };
+}
+
+export function validProductConfiguration(configuration: ProductRunConfiguration): boolean {
+  if (configuration.kind === 'dem') {
+    return (
+      Number.isFinite(configuration.resolutionMetersPerPixel) &&
+      configuration.resolutionMetersPerPixel > 0 &&
+      (configuration.surface === 'dsm' || validDemGroundParameters(configuration))
+    );
+  }
+  if (configuration.kind === 'ortho') {
+    return (
+      Number.isFinite(configuration.resolutionMetersPerPixel) &&
+      configuration.resolutionMetersPerPixel > 0
+    );
+  }
+  if (configuration.kind === 'dense') return configuration.minimumViews >= 2;
+  if (configuration.kind === 'mesh') {
+    return (
+      (configuration.meshSource === 'dem' || configuration.meshSource === 'dense') &&
+      configuration.targetFaceCount >= 10_000
+    );
+  }
+  if (configuration.kind === 'splat') {
+    return (
+      configuration.iterations >= 1_000 &&
+      configuration.maximumSplats >= 100_000 &&
+      configuration.maximumResolution >= 256
+    );
+  }
+  return true;
 }
