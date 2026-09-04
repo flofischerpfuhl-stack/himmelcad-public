@@ -7,7 +7,7 @@ landing by the PhotoLab session. Plan of record:
 `.claude/codex/prompts/photolab/`, the token ledger under
 `.claude/codex/logs/photolab/ledger.json`.
 
-Last update: 2026-09-04 16:50 (A3 stage-1 code landed; dense-mesh smoke next).
+Last update: 2026-09-04 17:45 (A3 fix landed; dense-mesh smoke running; Builder session back at 10-himmelcad-a2).
 
 ## Current work packages
 
@@ -54,10 +54,11 @@ close/durability (03bd235), ADR 0030 rev 6 (9d4d398), pixel baselines
 
 ## Shared-substrate state (as known to this lane)
 
-- Builder lane in flight: S-03 gesture arbiter (viewer + app; PhotoLab
-  typecheck in its gate), ui component gallery (no component source change),
-  S-01 landed uncommitted (core `release_05_admissions.rs`, generated TS,
-  ViewState v2). `packages/@himmelcad/data/src/index.ts` is PhotoLab's for H2.
+- Builder lane (address `10-himmelcad-a2` since 17:40): S-01, S-04 (selection
+  store), S-05 (main-process job registry + shared chip/island in
+  `@himmelcad/ui` JobsSurfaces.tsx) landed uncommitted; root `pnpm typecheck`
+  consistent; V-01 (viewer measurement) next — avoid heavy cargo/e2e while its
+  GPU baseline runs. PhotoLab adopts the shared jobs chip when S-05 is consumable.
 - Builder lane fixed the `GeometryObject::Measurement` arms in render/io on
   2026-09-04 (uncommitted in its lane); sidecar tests compile again.
 - Owner rules in force: D8 token discipline (medium default, high for
@@ -79,7 +80,7 @@ CARGO_TARGET_DIR=target/photolab setsid nohup node scripts/photolab-e2e.mjs \
 The run holds the machine-wide compute lease; unit tests use a per-process
 lease and are unaffected. Result: `result.json` in the output directory.
 
-## Messages pending to the Builder session (peer was offline at 13:50)
+## Messages to the Builder session (sent 2026-09-04 17:45 to `10-himmelcad-a2`; kept for the record)
 
 - H2 landed 2ef29d5 — G17 screenshots: `.build/photolab-ui/h2-{dark,light}/00-main-view.png` (chip "2 jobs running") and `bottom-jobs.png` (Jobs tab badge, side operation with Cancel). Chip spec for S-05 convergence: one button at the right end of the status bar, 18 px, 10 px UI font, 1 px tone border (progress = accent, warning, danger with error text, success), labels "n jobs running" / "1 job running · label pct%" / "Cancelling…" / "Job failed — label" / "Job completed — label" (4 s linger), aria-label "Jobs: label", click toggles the Jobs tab. Obligation: PhotoLab adopts the shared chip + jobs island when S-05 lands. Findings for the shared side: light theme viewport toolbar contrast (active "3D" segment, axis chip); jobs list shows "overall 0%" for unknown units — render "in progress".
 - B4 landed: crates/himmelcad-sidecar/src/main.rs changed inside `handle_job_rpc` only (job-start handlers pass frozen publication targets and disk estimates); no routes added.
