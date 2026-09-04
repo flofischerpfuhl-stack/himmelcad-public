@@ -11,7 +11,9 @@ import {
 } from './productConfiguration.js';
 import {
   evaluateProductPrerequisites,
+  inlineProductStartError,
   type ProductPrerequisiteStatus,
+  type ProductStartError,
 } from './productPrerequisites.js';
 import styles from './ProductPanel.module.css';
 
@@ -35,7 +37,7 @@ export interface ProductPanelProps {
     gcpOptimizationEntityId?: EntityId;
     gcpOptimizationSnapshotSha256?: ObjectHash;
   }[];
-  startError: string | null;
+  startError: string | ProductStartError | null;
   onInputChange: (id: string) => void;
   onActivatePrerequisite: (functionId: string) => void;
   onStart: (
@@ -110,6 +112,7 @@ export function ProductPanel({
       exactPrerequisites.externalDemBound ||
       (configuration.kind === 'ortho' && Boolean(configuration.sourceDemEntityId)),
   });
+  const inlineStartError = inlineProductStartError(startError);
   useEffect(() => {
     let current = true;
     setResolvedInputs(null);
@@ -477,9 +480,9 @@ export function ProductPanel({
           )}
         </div>
       )}
-      {(resolveError || startError) && (
+      {(resolveError || inlineStartError) && (
         <div className={styles.error} role="alert">
-          {startError ?? resolveError}
+          {inlineStartError ?? resolveError}
         </div>
       )}
       <div className={styles.freeze} aria-busy={resolving}>

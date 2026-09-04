@@ -4,7 +4,8 @@ use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
     io,
-    path::PathBuf,
+    path::{Path, PathBuf},
+    process::Command,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -14,12 +15,14 @@ use std::{
 
 use fs2::FileExt;
 use himmelcad_core::{
+    entity::EntityId,
     hash::ObjectHash,
     photolab_jobs::{
         CancellationToken, CheckpointCommitState, CheckpointDescriptor, CheckpointId, JobError,
         JobProgress, NewPhotolabJob, PhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState,
         CHECKPOINT_SCHEMA_VERSION,
     },
+    photolab_products::ProductKind,
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -31,6 +34,288 @@ use tokio::{
 // WP-B6 calibration governed by the release-polish plan's tunables register: 500 ms
 // bounds memory-only terminal history without hot-looping a persistently failing disk.
 const HISTORY_RETRY_INTERVAL: Duration = Duration::from_millis(500);
+
+const GIB: u64 = 1024 * 1024 * 1024;
+const MIB: u64 = 1024 * 1024;
+
+#[derive(Debug, Clone, Copy)]
+struct DiskEstimateTuning {
+    kind: PhotolabJobKind,
+    formula: DiskEstimateFormula,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DiskEstimateFormula {
+    Images {
+        fixed_bytes: u64,
+        bytes_per_image: u64,
+        multiplier_numerator: u64,
+        multiplier_denominator: u64,
+    },
+    RasterPyramid {
+        bytes_per_pixel: u64,
+        overview_numerator: u64,
+        overview_denominator: u64,
+        scratch_output_multiplier: u64,
+    },
+}
+
+// WP-B4 X6 tunables. These deliberately over-budget scratch plus output: alignment keeps a
+// 2 GiB database/tool reserve plus 8 MiB per image; depth maps reserve 40 MiB per image;
+// dense fusion reserves 1.5 times that depth footprint; mesh and splat cover their large
+// intermediate representations with fixed 2 GiB and 6 GiB reserves. Raster work is computed
+// as four times a four-byte-per-pixel pyramid; 4/3 accounts for every power-of-two overview.
+const DISK_ESTIMATE_TUNING: &[DiskEstimateTuning] = &[
+    DiskEstimateTuning {
+        kind: PhotolabJobKind::AlignPhotos,
+        formula: DiskEstimateFormula::Images {
+            fixed_bytes: 2 * GIB,
+            bytes_per_image: 8 * MIB,
+            multiplier_numerator: 1,
+            multiplier_denominator: 1,
+        },
+    },
+    DiskEstimateTuning {
+        kind: PhotolabJobKind::MergeAlignments,
+        formula: DiskEstimateFormula::Images {
+            fixed_bytes: 2 * GIB,
+            bytes_per_image: 8 * MIB,
+            multiplier_numerator: 1,
+            multiplier_denominator: 1,
+        },
+    },
+    DiskEstimateTuning {
+        kind: PhotolabJobKind::BuildDepthMaps,
+        formula: DiskEstimateFormula::Images {
+            fixed_bytes: 0,
+            bytes_per_image: 40 * MIB,
+            multiplier_numerator: 1,
+            multiplier_denominator: 1,
+        },
+    },
+    DiskEstimateTuning {
+        kind: PhotolabJobKind::BuildDensePointCloud,
+        formula: DiskEstimateFormula::Images {
+            fixed_bytes: 0,
+            bytes_per_image: 40 * MIB,
+            multiplier_numerator: 3,
+            multiplier_denominator: 2,
+        },
+    },
+    DiskEstimateTuning {
+        kind: PhotolabJobKind::BuildDem,
+        formula: DiskEstimateFormula::RasterPyramid {
+            bytes_per_pixel: 4,
+            overview_numerator: 4,
+            overview_denominator: 3,
+            scratch_output_multiplier: 4,
+        },
+    },
+    DiskEstimateTuning {
+        kind: PhotolabJobKind::BuildOrthomosaic,
+        formula: DiskEstimateFormula::RasterPyramid {
+            bytes_per_pixel: 4,
+            overview_numerator: 4,
+            overview_denominator: 3,
+            scratch_output_multiplier: 4,
+        },
+    },
+    DiskEstimateTuning {
+        kind: PhotolabJobKind::BuildMesh,
+        formula: DiskEstimateFormula::Images {
+            fixed_bytes: 2 * GIB,
+            bytes_per_image: 0,
+            multiplier_numerator: 1,
+            multiplier_denominator: 1,
+        },
+    },
+    DiskEstimateTuning {
+        kind: PhotolabJobKind::BuildGaussianSplat,
+        formula: DiskEstimateFormula::Images {
+            fixed_bytes: 6 * GIB,
+            bytes_per_image: 0,
+            multiplier_numerator: 1,
+            multiplier_denominator: 1,
+        },
+    },
+];
+
+/// Immutable publication class used to serialize jobs that could overwrite the same lineage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PublicationTargetKind {
+    Alignment,
+    Optimization,
+    DepthMaps,
+    DensePointCloud,
+    Dem,
+    Orthomosaic,
+    TexturedMesh,
+    GaussianSplat,
+}
+
+/// Publication identity captured from a frozen request before scheduler admission.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicationTarget {
+    pub kind: PublicationTargetKind,
+    pub target_entity_id: EntityId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lineage_target: Option<EntityId>,
+}
+
+impl PublicationTarget {
+    #[must_use]
+    pub const fn alignment(target_entity_id: EntityId, lineage_target: Option<EntityId>) -> Self {
+        Self {
+            kind: PublicationTargetKind::Alignment,
+            target_entity_id,
+            lineage_target,
+        }
+    }
+
+    #[must_use]
+    pub const fn optimization(
+        target_entity_id: EntityId,
+        lineage_target: Option<EntityId>,
+    ) -> Self {
+        Self {
+            kind: PublicationTargetKind::Optimization,
+            target_entity_id,
+            lineage_target,
+        }
+    }
+
+    #[must_use]
+    pub const fn product(
+        kind: ProductKind,
+        target_entity_id: EntityId,
+        lineage_target: Option<EntityId>,
+    ) -> Self {
+        let kind = match kind {
+            ProductKind::DepthMaps => PublicationTargetKind::DepthMaps,
+            ProductKind::DensePointCloud => PublicationTargetKind::DensePointCloud,
+            ProductKind::Dem => PublicationTargetKind::Dem,
+            ProductKind::Orthomosaic => PublicationTargetKind::Orthomosaic,
+            ProductKind::TexturedMesh => PublicationTargetKind::TexturedMesh,
+            ProductKind::GaussianSplat => PublicationTargetKind::GaussianSplat,
+        };
+        Self {
+            kind,
+            target_entity_id,
+            lineage_target,
+        }
+    }
+
+    fn description(&self) -> (&'static str, &'static str) {
+        match self.kind {
+            PublicationTargetKind::Alignment => ("an alignment", "target"),
+            PublicationTargetKind::Optimization => ("an optimization", "alignment"),
+            PublicationTargetKind::DepthMaps => ("depth maps", "alignment"),
+            PublicationTargetKind::DensePointCloud => ("a dense point cloud", "alignment"),
+            PublicationTargetKind::Dem => ("a DEM", "alignment"),
+            PublicationTargetKind::Orthomosaic => ("an orthomosaic", "alignment"),
+            PublicationTargetKind::TexturedMesh => ("a mesh", "alignment"),
+            PublicationTargetKind::GaussianSplat => ("a Gaussian splat", "alignment"),
+        }
+    }
+}
+
+/// Inputs whose size determines the conservative scratch-plus-output estimate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiskEstimateScale {
+    Images(u64),
+    RasterPixels(u64),
+    Fixed,
+}
+
+/// One free-space check attached to an immutable job admission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiskPreflight {
+    pub required_bytes: u64,
+    pub path: PathBuf,
+}
+
+impl DiskPreflight {
+    #[must_use]
+    pub fn for_job(kind: PhotolabJobKind, scale: DiskEstimateScale, path: PathBuf) -> Self {
+        Self {
+            required_bytes: estimate_job_bytes(kind, scale),
+            path,
+        }
+    }
+}
+
+/// Scheduler metadata captured alongside the frozen compute request.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct JobAdmission {
+    pub publication_targets: Vec<PublicationTarget>,
+    pub disk_preflight: Option<DiskPreflight>,
+}
+
+#[must_use]
+pub fn estimate_job_bytes(kind: PhotolabJobKind, scale: DiskEstimateScale) -> u64 {
+    let Some(tuning) = DISK_ESTIMATE_TUNING.iter().find(|entry| entry.kind == kind) else {
+        return 0;
+    };
+    match (tuning.formula, scale) {
+        (
+            DiskEstimateFormula::Images {
+                fixed_bytes,
+                bytes_per_image,
+                multiplier_numerator,
+                multiplier_denominator,
+            },
+            DiskEstimateScale::Images(image_count),
+        ) => fixed_bytes.saturating_add(
+            bytes_per_image
+                .saturating_mul(image_count)
+                .saturating_mul(multiplier_numerator)
+                .saturating_add(multiplier_denominator - 1)
+                .saturating_div(multiplier_denominator),
+        ),
+        (DiskEstimateFormula::Images { fixed_bytes, .. }, DiskEstimateScale::Fixed) => fixed_bytes,
+        (
+            DiskEstimateFormula::RasterPyramid {
+                bytes_per_pixel,
+                overview_numerator,
+                overview_denominator,
+                scratch_output_multiplier,
+            },
+            DiskEstimateScale::RasterPixels(pixels),
+        ) => pixels
+            .saturating_mul(bytes_per_pixel)
+            .saturating_mul(overview_numerator)
+            .saturating_add(overview_denominator - 1)
+            .saturating_div(overview_denominator)
+            .saturating_mul(scratch_output_multiplier),
+        _ => 0,
+    }
+}
+
+/// Returns the level-zero pixel count for a finite projected extent and GSD.
+#[must_use]
+pub fn raster_pixel_count(minimum: [f64; 3], maximum: [f64; 3], gsd: f64) -> Option<u64> {
+    if !gsd.is_finite()
+        || gsd <= 0.0
+        || minimum[..2]
+            .iter()
+            .chain(&maximum[..2])
+            .any(|value| !value.is_finite())
+        || minimum[0] >= maximum[0]
+        || minimum[1] >= maximum[1]
+    {
+        return None;
+    }
+    let width = ((maximum[0] - minimum[0]) / gsd).ceil();
+    let height = ((maximum[1] - minimum[1]) / gsd).ceil();
+    if width > u64::MAX as f64 || height > u64::MAX as f64 {
+        return None;
+    }
+    (width as u64).checked_mul(height as u64)
+}
+
+type DiskAvailability = dyn Fn(&Path) -> Result<u64, String> + Send + Sync;
 
 /// Immutable project identity captured when a job is admitted.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -449,6 +734,7 @@ impl JobWorkerContext {
 
 struct ManagedJob {
     job: PhotolabJob,
+    publication_targets: Vec<PublicationTarget>,
     cancellation: CancellationToken,
     updates: watch::Sender<PhotolabJob>,
     worker_updates: watch::Sender<bool>,
@@ -465,6 +751,7 @@ struct JobManagerInner {
     concurrency: Arc<Semaphore>,
     jobs: Mutex<BTreeMap<String, ManagedJob>>,
     history: Option<Arc<dyn JobHistoryPersistence>>,
+    disk_availability: Arc<DiskAvailability>,
     draining: AtomicBool,
 }
 
@@ -513,6 +800,20 @@ impl JobManager {
         runtime: Handle,
         history: Option<Arc<dyn JobHistoryPersistence>>,
     ) -> Result<Self, JobManagerError> {
+        Self::with_runtime_history_and_disk_availability(
+            config,
+            runtime,
+            history,
+            Arc::new(system_available_bytes),
+        )
+    }
+
+    fn with_runtime_history_and_disk_availability(
+        config: JobManagerConfig,
+        runtime: Handle,
+        history: Option<Arc<dyn JobHistoryPersistence>>,
+        disk_availability: Arc<DiskAvailability>,
+    ) -> Result<Self, JobManagerError> {
         let capacity = config.capacity()?;
         let inner = Arc::new(JobManagerInner {
             config,
@@ -520,6 +821,7 @@ impl JobManager {
             concurrency: Arc::new(Semaphore::new(config.max_concurrency)),
             jobs: Mutex::new(BTreeMap::new()),
             history,
+            disk_availability,
             draining: AtomicBool::new(false),
         });
         if inner.history.is_some() {
@@ -550,7 +852,21 @@ impl JobManager {
     where
         F: FnOnce(JobWorkerContext) -> JobWorkerResult + Send + 'static,
     {
-        self.start_inner(request, None, work).await
+        self.start_inner(request, None, JobAdmission::default(), work)
+            .await
+    }
+
+    /// Admits a job with publication serialization and an optional free-space preflight.
+    pub async fn start_with_admission<F>(
+        &self,
+        request: NewPhotolabJob,
+        admission: JobAdmission,
+        work: F,
+    ) -> Result<StartJobResult, JobManagerError>
+    where
+        F: FnOnce(JobWorkerContext) -> JobWorkerResult + Send + 'static,
+    {
+        self.start_inner(request, None, admission, work).await
     }
 
     /// Admits a resumable job and atomically retains its sidecar-owned request.
@@ -574,13 +890,41 @@ impl JobManager {
                 "frozen request identity does not match the admitted job".into(),
             ));
         }
-        self.start_inner(request, Some(frozen_request), work).await
+        self.start_inner(request, Some(frozen_request), JobAdmission::default(), work)
+            .await
+    }
+
+    /// Admits a resumable job with frozen publication and disk metadata.
+    pub async fn start_with_frozen_request_and_admission<F>(
+        &self,
+        request: NewPhotolabJob,
+        frozen_request: FrozenJobRequest,
+        admission: JobAdmission,
+        work: F,
+    ) -> Result<StartJobResult, JobManagerError>
+    where
+        F: FnOnce(JobWorkerContext) -> JobWorkerResult + Send + 'static,
+    {
+        frozen_request
+            .validate()
+            .map_err(JobManagerError::InvalidFrozenRequest)?;
+        if frozen_request.job_kind != request.kind
+            || frozen_request.config_hash != request.config_hash
+            || frozen_request.input_hash != request.input_hash
+        {
+            return Err(JobManagerError::InvalidFrozenRequest(
+                "frozen request identity does not match the admitted job".into(),
+            ));
+        }
+        self.start_inner(request, Some(frozen_request), admission, work)
+            .await
     }
 
     async fn start_inner<F>(
         &self,
         request: NewPhotolabJob,
         frozen_request: Option<FrozenJobRequest>,
+        mut admission: JobAdmission,
         work: F,
     ) -> Result<StartJobResult, JobManagerError>
     where
@@ -588,6 +932,29 @@ impl JobManager {
     {
         if self.inner.draining.load(Ordering::Acquire) {
             return Err(JobManagerError::SchedulerDraining);
+        }
+        let mut unique_targets = Vec::with_capacity(admission.publication_targets.len());
+        for target in admission.publication_targets.drain(..) {
+            if !unique_targets.contains(&target) {
+                unique_targets.push(target);
+            }
+        }
+        admission.publication_targets = unique_targets;
+        if let Some(preflight) = admission.disk_preflight.as_ref() {
+            let path = preflight.path.clone();
+            let required_bytes = preflight.required_bytes;
+            let availability = Arc::clone(&self.inner.disk_availability);
+            let available_bytes = tokio::task::spawn_blocking(move || availability(&path))
+                .await
+                .map_err(|error| JobManagerError::DiskPreflight(error.to_string()))?
+                .map_err(JobManagerError::DiskPreflight)?;
+            if available_bytes < required_bytes {
+                return Err(JobManagerError::InsufficientDisk {
+                    required_bytes,
+                    available_bytes,
+                    path: preflight.path.clone(),
+                });
+            }
         }
         let job = PhotolabJob::new(request)?;
         let key = job.id.0.clone();
@@ -606,6 +973,26 @@ impl JobManager {
             if jobs.contains_key(&key) {
                 return Err(JobManagerError::DuplicateJobId(job.id));
             }
+            for managed in jobs
+                .values()
+                .filter(|managed| !is_terminal(&managed.job.state))
+            {
+                if let Some(target) = admission
+                    .publication_targets
+                    .iter()
+                    .find(|target| managed.publication_targets.contains(target))
+                {
+                    return Err(JobManagerError::ConflictingTarget {
+                        running_job_id: managed.job.id.clone(),
+                        target: target.clone(),
+                        state: if matches!(managed.job.state, PhotolabJobState::Queued) {
+                            ConflictingJobState::Queued
+                        } else {
+                            ConflictingJobState::Running
+                        },
+                    });
+                }
+            }
             let active = jobs
                 .values()
                 .filter(|managed| !is_terminal(&managed.job.state))
@@ -622,6 +1009,7 @@ impl JobManager {
                 key.clone(),
                 ManagedJob {
                     job: job.clone(),
+                    publication_targets: admission.publication_targets,
                     cancellation: cancellation.clone(),
                     updates,
                     worker_updates,
@@ -1218,6 +1606,92 @@ fn set_failed(managed: &mut ManagedJob, code: &str, message: String) {
     }
 }
 
+#[cfg(unix)]
+fn system_available_bytes(path: &Path) -> Result<u64, String> {
+    let output = Command::new("df")
+        .args(["-k", "--output=avail", "--"])
+        .arg(path)
+        .output()
+        .map_err(|error| {
+            format!(
+                "failed to inspect free space for {}: {error}",
+                path.display()
+            )
+        })?;
+    if !output.status.success() {
+        return Err(format!(
+            "free-space probe failed for {}: {}",
+            path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|_| "free-space probe returned non-UTF-8 output".to_owned())?;
+    let kilobytes = stdout
+        .lines()
+        .rev()
+        .find_map(|line| line.trim().parse::<u64>().ok())
+        .ok_or_else(|| {
+            format!(
+                "free-space probe returned no available-byte value for {}",
+                path.display()
+            )
+        })?;
+    kilobytes
+        .checked_mul(1024)
+        .ok_or_else(|| "free-space probe value overflowed bytes".to_owned())
+}
+
+#[cfg(windows)]
+fn system_available_bytes(path: &Path) -> Result<u64, String> {
+    let output = Command::new("fsutil")
+        .args(["volume", "diskfree"])
+        .arg(path)
+        .output()
+        .map_err(|error| {
+            format!(
+                "failed to inspect free space for {}: {error}",
+                path.display()
+            )
+        })?;
+    if !output.status.success() {
+        return Err(format!(
+            "free-space probe failed for {}: {}",
+            path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .find_map(|line| {
+            line.split(|character: char| !character.is_ascii_digit())
+                .filter(|token| !token.is_empty())
+                .filter_map(|token| token.parse::<u64>().ok())
+                .max()
+        })
+        .ok_or_else(|| {
+            format!(
+                "free-space probe returned no available-byte value for {}",
+                path.display()
+            )
+        })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn system_available_bytes(path: &Path) -> Result<u64, String> {
+    Err(format!(
+        "free-space probing is unsupported for {} on this platform",
+        path.display()
+    ))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictingJobState {
+    Queued,
+    Running,
+}
+
 /// Scheduling and authoritative-state failures returned to RPC integration.
 #[derive(Debug, PartialEq, Eq)]
 pub enum JobManagerError {
@@ -1230,6 +1704,17 @@ pub enum JobManagerError {
         max_concurrency: usize,
         max_queued: usize,
     },
+    ConflictingTarget {
+        running_job_id: PhotolabJobId,
+        target: PublicationTarget,
+        state: ConflictingJobState,
+    },
+    InsufficientDisk {
+        required_bytes: u64,
+        available_bytes: u64,
+        path: PathBuf,
+    },
+    DiskPreflight(String),
     JobNotFound(PhotolabJobId),
     UpdateChannelClosed(PhotolabJobId),
     HistoryPersistence(String),
@@ -1265,6 +1750,35 @@ impl std::fmt::Display for JobManagerError {
                 formatter,
                 "job queue is full ({max_concurrency} running, {max_queued} queued)"
             ),
+            Self::ConflictingTarget {
+                running_job_id,
+                target,
+                state,
+            } => {
+                let (publication, target_name) = target.description();
+                let state = match state {
+                    ConflictingJobState::Queued => "queued",
+                    ConflictingJobState::Running => "running",
+                };
+                write!(
+                    formatter,
+                    "{} for this {target_name} is already {state} (job {}). Wait for it or cancel it.",
+                    sentence_start(publication),
+                    running_job_id.0
+                )
+            }
+            Self::InsufficientDisk {
+                required_bytes,
+                available_bytes,
+                path,
+            } => write!(
+                formatter,
+                "Not enough free space on {}: about {} needed, {} free.",
+                path.display(),
+                format_bytes(*required_bytes),
+                format_bytes(*available_bytes)
+            ),
+            Self::DiskPreflight(message) => write!(formatter, "disk preflight failed: {message}"),
             Self::JobNotFound(id) => write!(formatter, "job {id:?} was not found"),
             Self::UpdateChannelClosed(id) => {
                 write!(formatter, "job {id:?} update channel closed unexpectedly")
@@ -1275,6 +1789,27 @@ impl std::fmt::Display for JobManagerError {
             Self::Core(error) => error.fmt(formatter),
         }
     }
+}
+
+fn sentence_start(value: &'static str) -> String {
+    let mut characters = value.chars();
+    match characters.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + characters.as_str(),
+        None => String::new(),
+    }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: &[(&str, u64)] = &[("TB", GIB * 1024), ("GB", GIB), ("MB", MIB), ("KB", 1024)];
+    for (label, unit) in UNITS {
+        if bytes >= *unit {
+            if bytes % *unit == 0 {
+                return format!("{} {label}", bytes / *unit);
+            }
+            return format!("{:.1} {label}", bytes as f64 / *unit as f64);
+        }
+    }
+    format!("{bytes} bytes")
 }
 
 impl std::error::Error for JobManagerError {
@@ -1295,11 +1830,13 @@ mod tests {
     };
 
     use himmelcad_core::{
+        entity::EntityId,
         hash::ObjectHash,
         photolab_jobs::{
             CheckpointDescriptor, CheckpointId, JobProgress, NewPendingCheckpoint, PhotolabJobKind,
             PhotolabStage, PhotolabStageKind, ProgressMetrics,
         },
+        photolab_products::ProductKind,
     };
 
     use super::*;
@@ -1686,6 +2223,239 @@ mod tests {
             max_queued: queued,
         })
         .expect("manager")
+    }
+
+    fn admission(targets: Vec<PublicationTarget>) -> JobAdmission {
+        JobAdmission {
+            publication_targets: targets,
+            disk_preflight: None,
+        }
+    }
+
+    fn dem_target(alignment: &str, lineage: Option<&str>) -> PublicationTarget {
+        PublicationTarget::product(
+            ProductKind::Dem,
+            EntityId(alignment.into()),
+            lineage.map(|value| EntityId(value.into())),
+        )
+    }
+
+    #[test]
+    fn disk_estimate_table_matches_wp_b4_calibration() {
+        assert_eq!(
+            estimate_job_bytes(PhotolabJobKind::AlignPhotos, DiskEstimateScale::Images(10)),
+            2 * GIB + 80 * MIB
+        );
+        assert_eq!(
+            estimate_job_bytes(
+                PhotolabJobKind::BuildDepthMaps,
+                DiskEstimateScale::Images(10)
+            ),
+            400 * MIB
+        );
+        assert_eq!(
+            estimate_job_bytes(
+                PhotolabJobKind::BuildDensePointCloud,
+                DiskEstimateScale::Images(10)
+            ),
+            600 * MIB
+        );
+        assert_eq!(
+            estimate_job_bytes(
+                PhotolabJobKind::BuildDem,
+                DiskEstimateScale::RasterPixels(3)
+            ),
+            64
+        );
+        assert_eq!(
+            estimate_job_bytes(PhotolabJobKind::BuildMesh, DiskEstimateScale::Fixed),
+            2 * GIB
+        );
+        assert_eq!(
+            estimate_job_bytes(
+                PhotolabJobKind::BuildGaussianSplat,
+                DiskEstimateScale::Fixed
+            ),
+            6 * GIB
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn same_running_or_queued_publication_target_is_rejected() {
+        let manager = manager(1, 2);
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        manager
+            .start_with_admission(
+                request("running-dem"),
+                admission(vec![dem_target("alignment-a", None)]),
+                move |_| {
+                    started_tx.send(()).expect("started");
+                    release_rx.recv().expect("release");
+                    Ok(())
+                },
+            )
+            .await
+            .expect("running target admitted");
+        started_rx.recv().expect("running worker started");
+
+        let running = manager
+            .start_with_admission(
+                request("running-conflict"),
+                admission(vec![dem_target("alignment-a", None)]),
+                |_| Ok(()),
+            )
+            .await;
+        assert_eq!(
+            running.expect_err("running target must conflict").to_string(),
+            "A DEM for this alignment is already running (job running-dem). Wait for it or cancel it."
+        );
+
+        manager
+            .start_with_admission(
+                request("queued-dem"),
+                admission(vec![dem_target("alignment-b", None)]),
+                |_| Ok(()),
+            )
+            .await
+            .expect("different queued target admitted");
+        let queued = manager
+            .start_with_admission(
+                request("queued-conflict"),
+                admission(vec![dem_target("alignment-b", None)]),
+                |_| Ok(()),
+            )
+            .await;
+        assert_eq!(
+            queued.expect_err("queued target must conflict").to_string(),
+            "A DEM for this alignment is already queued (job queued-dem). Wait for it or cancel it."
+        );
+        release_tx.send(()).expect("release running worker");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn different_lineage_target_and_terminal_target_are_admitted() {
+        let manager = manager(2, 1);
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        manager
+            .start_with_admission(
+                request("lineage-a"),
+                admission(vec![dem_target("alignment-a", Some("gcp-a"))]),
+                move |_| {
+                    started_tx.send(()).expect("started");
+                    release_rx.recv().expect("release");
+                    Ok(())
+                },
+            )
+            .await
+            .expect("first lineage admitted");
+        started_rx.recv().expect("worker started");
+        manager
+            .start_with_admission(
+                request("lineage-b"),
+                admission(vec![dem_target("alignment-a", Some("gcp-b"))]),
+                |_| Ok(()),
+            )
+            .await
+            .expect("different lineage admitted");
+        release_tx.send(()).expect("release first lineage");
+        manager
+            .wait_for_terminal(&PhotolabJobId("lineage-a".into()))
+            .await
+            .expect("first lineage terminal");
+        manager
+            .start_with_admission(
+                request("after-terminal"),
+                admission(vec![dem_target("alignment-a", Some("gcp-a"))]),
+                |_| Ok(()),
+            )
+            .await
+            .expect("terminal target does not conflict");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn batch_target_union_conflicts_on_any_member() {
+        let manager = manager(1, 1);
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        manager
+            .start_with_admission(
+                request("batch"),
+                admission(vec![
+                    PublicationTarget::product(
+                        ProductKind::DepthMaps,
+                        EntityId("alignment-a".into()),
+                        None,
+                    ),
+                    dem_target("alignment-a", None),
+                ]),
+                move |_| {
+                    started_tx.send(()).expect("started");
+                    release_rx.recv().expect("release");
+                    Ok(())
+                },
+            )
+            .await
+            .expect("batch admitted");
+        started_rx.recv().expect("batch worker started");
+        let conflict = manager
+            .start_with_admission(
+                request("single-dem"),
+                admission(vec![dem_target("alignment-a", None)]),
+                |_| Ok(()),
+            )
+            .await;
+        assert!(matches!(
+            conflict,
+            Err(JobManagerError::ConflictingTarget { .. })
+        ));
+        release_tx.send(()).expect("release batch");
+    }
+
+    #[tokio::test]
+    async fn disk_preflight_rejects_before_admission_with_injected_availability() {
+        let manager = JobManager::with_runtime_history_and_disk_availability(
+            JobManagerConfig {
+                max_concurrency: 1,
+                max_queued: 0,
+            },
+            Handle::current(),
+            None,
+            Arc::new(|_| Ok(GIB)),
+        )
+        .expect("manager");
+        let path = PathBuf::from("/working-copy");
+        let error = manager
+            .start_with_admission(
+                request("disk-rejected"),
+                JobAdmission {
+                    publication_targets: vec![],
+                    disk_preflight: Some(DiskPreflight::for_job(
+                        PhotolabJobKind::BuildMesh,
+                        DiskEstimateScale::Fixed,
+                        path.clone(),
+                    )),
+                },
+                |_| Ok(()),
+            )
+            .await
+            .expect_err("insufficient disk must reject");
+        assert_eq!(
+            error,
+            JobManagerError::InsufficientDisk {
+                required_bytes: 2 * GIB,
+                available_bytes: GIB,
+                path,
+            }
+        );
+        assert!(manager
+            .list(ListJobsParams {
+                include_terminal: true
+            })
+            .await
+            .expect("list")
+            .is_empty());
     }
 
     #[tokio::test]

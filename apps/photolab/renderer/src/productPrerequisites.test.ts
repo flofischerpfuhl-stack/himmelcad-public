@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  inlineProductStartError,
   evaluateProductPrerequisites,
   type ProductPrerequisiteArtifact,
   type ProductPrerequisiteStatus,
@@ -74,5 +75,30 @@ describe('product prerequisite evaluation', () => {
   it('allows depth maps and splats from a published alignment', () => {
     assert.equal(evaluateProductPrerequisites('depth', status()).met, true);
     assert.equal(evaluateProductPrerequisites('splat', status()).met, true);
+  });
+});
+
+describe('inlineProductStartError', () => {
+  it('passes plain strings and null through', () => {
+    assert.equal(inlineProductStartError(null), null);
+    assert.equal(inlineProductStartError('Start failed'), 'Start failed');
+  });
+
+  it('shows the admission sentence for conflicting targets and low disk', () => {
+    assert.equal(
+      inlineProductStartError({
+        code: 'conflictingTarget',
+        message:
+          'A DEM for this alignment is already running (job dem-1). Wait for it or cancel it.',
+      }),
+      'A DEM for this alignment is already running (job dem-1). Wait for it or cancel it.',
+    );
+    assert.equal(
+      inlineProductStartError({
+        code: 'insufficientDisk',
+        message: 'Not enough free space on /: about 3.2 GB needed, 1.1 GB free.',
+      }),
+      'Not enough free space on /: about 3.2 GB needed, 1.1 GB free.',
+    );
   });
 });

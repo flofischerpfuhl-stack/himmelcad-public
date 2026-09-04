@@ -3483,6 +3483,48 @@ async fn handle_job_rpc(
     projects: Arc<ProjectRuntime>,
     crs: &CrsService,
 ) -> RpcResponse {
+    let job_start_response = |id,
+                              result: std::result::Result<
+        StartJobResult,
+        himmelcad_sidecar::job_runtime::JobManagerError,
+    >| {
+        match result {
+            Ok(value) => rpc_result(id, Ok::<_, anyhow::Error>(value)),
+            Err(
+                error @ himmelcad_sidecar::job_runtime::JobManagerError::ConflictingTarget {
+                    ..
+                },
+            ) => {
+                let message = error.to_string();
+                rpc_err_with_data(
+                    id,
+                    -32041,
+                    &message,
+                    serde_json::json!({
+                        "code": "conflictingTarget",
+                        "message": message,
+                        "retryable": true,
+                    }),
+                )
+            }
+            Err(
+                error @ himmelcad_sidecar::job_runtime::JobManagerError::InsufficientDisk { .. },
+            ) => {
+                let message = error.to_string();
+                rpc_err_with_data(
+                    id,
+                    -32042,
+                    &message,
+                    serde_json::json!({
+                        "code": "insufficientDisk",
+                        "message": message,
+                        "retryable": true,
+                    }),
+                )
+            }
+            Err(error) => rpc_err(id, -32000, &error.to_string()),
+        }
+    };
     match req.method.as_str() {
         "photolab.jobs.startProductExport" => {
             match serde_json::from_value::<StartProductExportJobParams>(req.params) {
@@ -3534,24 +3576,106 @@ async fn handle_job_rpc(
         }
         "photolab.jobs.startBatch" => {
             match serde_json::from_value::<StartBatchJobParams>(req.params) {
-                Ok(params) => match prepare_batch_job(&params, &projects) {
-                    Ok((job, frozen_plan)) => {
-                        let frozen_request =
-                            match freeze_job_request("photolab.jobs.startBatch", &params, &job) {
-                                Ok(request) => request,
+                Ok(params) => {
+                    match prepare_batch_job(&params, &projects) {
+                        Ok((job, frozen_plan)) => {
+                            let frozen_request =
+                                match freeze_job_request("photolab.jobs.startBatch", &params, &job)
+                                {
+                                    Ok(request) => request,
+                                    Err(error) => {
+                                        return rpc_err(req.id, -32000, &error.to_string())
+                                    }
+                                };
+                            let admission_context = match projects.compute_context() {
+                                Ok(context) => context,
                                 Err(error) => return rpc_err(req.id, -32000, &error.to_string()),
                             };
-                        let publisher = Arc::clone(&projects);
-                        let result = jobs
-                            .start_with_frozen_request(job, frozen_request, move |context| {
-                                run_batch_pipeline(params, frozen_plan, &context, &publisher)
-                            })
-                            .await
-                            .map_err(anyhow::Error::from);
-                        rpc_result(req.id, result)
+                            let batch_image_count = if params.camera_entity_ids.is_empty() {
+                                admission_context.camera_images.len()
+                            } else {
+                                params.camera_entity_ids.len()
+                            };
+                            let batch_target = EntityId(frozen_plan.project_id.clone());
+                            let lineage_target = params.processing_set_id.clone();
+                            let mut publication_targets = vec![
+                                himmelcad_sidecar::job_runtime::PublicationTarget::alignment(
+                                    batch_target.clone(),
+                                    lineage_target.clone(),
+                                ),
+                            ];
+                            let mut required_bytes =
+                                himmelcad_sidecar::job_runtime::estimate_job_bytes(
+                                    PhotolabJobKind::AlignPhotos,
+                                    himmelcad_sidecar::job_runtime::DiskEstimateScale::Images(
+                                        u64::try_from(batch_image_count).unwrap_or(u64::MAX),
+                                    ),
+                                );
+                            for step in &params.steps {
+                                let BatchPipelineStep::Product {
+                                    configuration,
+                                    gcp_optimization_entity_id,
+                                } = step
+                                else {
+                                    continue;
+                                };
+                                let (product_kind, job_kind, scale) = match configuration {
+                                ProductRunConfiguration::Depth { .. } => (himmelcad_core::photolab_products::ProductKind::DepthMaps, PhotolabJobKind::BuildDepthMaps, himmelcad_sidecar::job_runtime::DiskEstimateScale::Images(u64::try_from(batch_image_count).unwrap_or(u64::MAX))),
+                                ProductRunConfiguration::Dense { .. } => (himmelcad_core::photolab_products::ProductKind::DensePointCloud, PhotolabJobKind::BuildDensePointCloud, himmelcad_sidecar::job_runtime::DiskEstimateScale::Images(u64::try_from(batch_image_count).unwrap_or(u64::MAX))),
+                                ProductRunConfiguration::Dem { .. } => (himmelcad_core::photolab_products::ProductKind::Dem, PhotolabJobKind::BuildDem, himmelcad_sidecar::job_runtime::DiskEstimateScale::RasterPixels(0)),
+                                ProductRunConfiguration::Ortho { .. } => (himmelcad_core::photolab_products::ProductKind::Orthomosaic, PhotolabJobKind::BuildOrthomosaic, himmelcad_sidecar::job_runtime::DiskEstimateScale::RasterPixels(0)),
+                                ProductRunConfiguration::Mesh { .. } => (himmelcad_core::photolab_products::ProductKind::TexturedMesh, PhotolabJobKind::BuildMesh, himmelcad_sidecar::job_runtime::DiskEstimateScale::Fixed),
+                                ProductRunConfiguration::Splat { .. } => (himmelcad_core::photolab_products::ProductKind::GaussianSplat, PhotolabJobKind::BuildGaussianSplat, himmelcad_sidecar::job_runtime::DiskEstimateScale::Fixed),
+                            };
+                                let product_lineage_target = match gcp_optimization_entity_id {
+                                    ProductGcpSelection::Explicit(entity_id) => {
+                                        Some(entity_id.clone())
+                                    }
+                                    ProductGcpSelection::Latest | ProductGcpSelection::None => None,
+                                };
+                                publication_targets.push(
+                                    himmelcad_sidecar::job_runtime::PublicationTarget::product(
+                                        product_kind,
+                                        batch_target.clone(),
+                                        product_lineage_target,
+                                    ),
+                                );
+                                required_bytes = required_bytes.saturating_add(
+                                    himmelcad_sidecar::job_runtime::estimate_job_bytes(
+                                        job_kind, scale,
+                                    ),
+                                );
+                            }
+                            let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                                publication_targets,
+                                disk_preflight: Some(
+                                    himmelcad_sidecar::job_runtime::DiskPreflight {
+                                        required_bytes,
+                                        path: admission_context.working_path,
+                                    },
+                                ),
+                            };
+                            let publisher = Arc::clone(&projects);
+                            let result = jobs
+                                .start_with_frozen_request_and_admission(
+                                    job,
+                                    frozen_request,
+                                    admission,
+                                    move |context| {
+                                        run_batch_pipeline(
+                                            params,
+                                            frozen_plan,
+                                            &context,
+                                            &publisher,
+                                        )
+                                    },
+                                )
+                                .await;
+                            job_start_response(req.id, result)
+                        }
+                        Err(error) => rpc_err(req.id, -32000, &error.to_string()),
                     }
-                    Err(error) => rpc_err(req.id, -32000, &error.to_string()),
-                },
+                }
                 Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
             }
         }
@@ -3570,9 +3694,18 @@ async fn handle_job_rpc(
                         frozen_calibration_partition,
                         lineage,
                     )) => {
+                        let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                            publication_targets: vec![
+                                himmelcad_sidecar::job_runtime::PublicationTarget::optimization(
+                                    lineage.source_alignment_entity_id.clone(),
+                                    lineage.processing_set_id.clone(),
+                                ),
+                            ],
+                            disk_preflight: None,
+                        };
                         let publisher = Arc::clone(&projects);
                         let result = jobs
-                            .start(job, move |context| {
+                            .start_with_admission(job, admission, move |context| {
                                 let mut prepared_cameras = prepare_gcp_cameras(
                                     &colmap,
                                     &alignment_dataset,
@@ -3665,9 +3798,8 @@ async fn handle_job_rpc(
                                     })?;
                                 Ok(())
                             })
-                            .await
-                            .map_err(anyhow::Error::from);
-                        rpc_result(req.id, result)
+                            .await;
+                        job_start_response(req.id, result)
                     }
                     Err(error) => rpc_err(req.id, -32000, &error.to_string()),
                 },
@@ -3715,9 +3847,31 @@ async fn handle_job_rpc(
                     Ok((job, request, runtime, dedode, processing_set_id)) => {
                         let combined_stage_count = job.progress.stage.stage_count;
                         let colmap_stage_base = if dedode.is_some() { 3 } else { 0 };
+                        let admission_context = match projects.compute_context() {
+                            Ok(context) => context,
+                            Err(error) => return rpc_err(req.id, -32000, &error.to_string()),
+                        };
+                        let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                            publication_targets: vec![
+                                himmelcad_sidecar::job_runtime::PublicationTarget::alignment(
+                                    EntityId(admission_context.manifest.project_id),
+                                    processing_set_id.clone(),
+                                ),
+                            ],
+                            disk_preflight: Some(
+                                himmelcad_sidecar::job_runtime::DiskPreflight::for_job(
+                                    PhotolabJobKind::AlignPhotos,
+                                    himmelcad_sidecar::job_runtime::DiskEstimateScale::Images(
+                                        u64::try_from(request.camera_images.len())
+                                            .unwrap_or(u64::MAX),
+                                    ),
+                                    request.project_root.clone(),
+                                ),
+                            ),
+                        };
                         let publisher = Arc::clone(&projects);
                         let result = jobs
-                            .start(job, move |context| {
+                            .start_with_admission(job, admission, move |context| {
                                 let mut outcome = match dedode {
                                     Some((dedode_runtime, dedode_request)) => {
                                         let dedode_context =
@@ -3759,9 +3913,8 @@ async fn handle_job_rpc(
                                     })?;
                                 Ok(())
                             })
-                            .await
-                            .map_err(anyhow::Error::from);
-                        rpc_result(req.id, result)
+                            .await;
+                        job_start_response(req.id, result)
                     }
                     Err(error) => rpc_err(req.id, -32000, &error.to_string()),
                 },
@@ -3783,13 +3936,31 @@ async fn handle_job_rpc(
                     )) => {
                         let combined_stage_count = job.progress.stage.stage_count;
                         let colmap_stage_base = if dedode.is_some() { 3 } else { 0 };
+                        let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                            publication_targets: vec![
+                                himmelcad_sidecar::job_runtime::PublicationTarget::alignment(
+                                    merge_entity_id.clone(),
+                                    None,
+                                ),
+                            ],
+                            disk_preflight: Some(
+                                himmelcad_sidecar::job_runtime::DiskPreflight::for_job(
+                                    PhotolabJobKind::MergeAlignments,
+                                    himmelcad_sidecar::job_runtime::DiskEstimateScale::Images(
+                                        u64::try_from(request.camera_images.len())
+                                            .unwrap_or(u64::MAX),
+                                    ),
+                                    request.project_root.clone(),
+                                ),
+                            ),
+                        };
                         let checkpoint_project_root = request.project_root.clone();
                         let checkpoint_operation_id = request.job_id.clone();
                         let checkpoint_input_hash = job.input_hash.clone();
                         let checkpoint_config_hash = job.config_hash.clone();
                         let publisher = Arc::clone(&projects);
                         let result = jobs
-                            .start(job, move |context| {
+                            .start_with_admission(job, admission, move |context| {
                                 if shared_control_only {
                                     context.progress.report_blocking(JobProgress {
                                         stage: PhotolabStage { kind: PhotolabStageKind::Preparing, index: 0, stage_count: 3, label: "Validate shared controls".into() },
@@ -3965,9 +4136,8 @@ async fn handle_job_rpc(
                                 })?;
                                 Ok(())
                             })
-                            .await
-                            .map_err(anyhow::Error::from);
-                        rpc_result(req.id, result)
+                            .await;
+                        job_start_response(req.id, result)
                     }
                     Err(error) => rpc_err(req.id, -32000, &error.to_string()),
                 },
@@ -3990,28 +4160,52 @@ async fn handle_job_rpc(
                                 Ok(request) => request,
                                 Err(error) => return rpc_err(req.id, -32000, &error.to_string()),
                             };
+                            let project_root = match projects.compute_context() {
+                                Ok(context) => context.working_path,
+                                Err(error) => return rpc_err(req.id, -32000, &error.to_string()),
+                            };
+                            let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                                publication_targets: vec![
+                                    himmelcad_sidecar::job_runtime::PublicationTarget::product(
+                                        himmelcad_core::photolab_products::ProductKind::GaussianSplat,
+                                        lineage.source_alignment_entity_id.clone(),
+                                        lineage.gcp_optimization_entity_id.clone(),
+                                    ),
+                                ],
+                                disk_preflight: Some(
+                                    himmelcad_sidecar::job_runtime::DiskPreflight::for_job(
+                                        PhotolabJobKind::BuildGaussianSplat,
+                                        himmelcad_sidecar::job_runtime::DiskEstimateScale::Fixed,
+                                        project_root,
+                                    ),
+                                ),
+                            };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
-                                .start_with_frozen_request(job, frozen_request, move |context| {
-                                    let mut outcome = runtime.run(&request, &context).map_err(
-                                        himmelcad_sidecar::job_runtime::JobWorkerError::from,
-                                    )?;
-                                    let project_transform =
-                                        pinned_product_gcp_optimization(&publisher, &lineage)
-                                            .map_err(|error| {
-                                                worker_error("projectRead", &error.to_string())
-                                            })?
-                                            .map(|record| record.artifact.result.transform);
-                                    let prepared = tile_brush_ply(
-                                        &outcome.output_path,
-                                        &outcome.scratch_path.join("prepared-splats"),
-                                        project_transform,
-                                        &context.cancellation,
-                                    )
-                                    .map_err(map_splat_tiler_error)?;
-                                    outcome.prepared_splats = Some(prepared);
-                                    context.check_cancelled()?;
-                                    publisher.publish_brush_outcome(outcome, &lineage).map_err(
+                                .start_with_frozen_request_and_admission(
+                                    job,
+                                    frozen_request,
+                                    admission,
+                                    move |context| {
+                                        let mut outcome = runtime.run(&request, &context).map_err(
+                                            himmelcad_sidecar::job_runtime::JobWorkerError::from,
+                                        )?;
+                                        let project_transform =
+                                            pinned_product_gcp_optimization(&publisher, &lineage)
+                                                .map_err(|error| {
+                                                    worker_error("projectRead", &error.to_string())
+                                                })?
+                                                .map(|record| record.artifact.result.transform);
+                                        let prepared = tile_brush_ply(
+                                            &outcome.output_path,
+                                            &outcome.scratch_path.join("prepared-splats"),
+                                            project_transform,
+                                            &context.cancellation,
+                                        )
+                                        .map_err(map_splat_tiler_error)?;
+                                        outcome.prepared_splats = Some(prepared);
+                                        context.check_cancelled()?;
+                                        publisher.publish_brush_outcome(outcome, &lineage).map_err(
                                         |error| {
                                             himmelcad_sidecar::job_runtime::JobWorkerError::Failed {
                                                 code: "projectPublish".into(),
@@ -4019,11 +4213,11 @@ async fn handle_job_rpc(
                                             }
                                         },
                                     )?;
-                                    Ok(())
-                                })
-                                .await
-                                .map_err(anyhow::Error::from);
-                            rpc_result(req.id, result)
+                                        Ok(())
+                                    },
+                                )
+                                .await;
+                            job_start_response(req.id, result)
                         }
                         Err(error) => product_rpc_err(req.id, &error),
                     }
@@ -4046,11 +4240,42 @@ async fn handle_job_rpc(
                                 Ok(request) => request,
                                 Err(error) => return rpc_err(req.id, -32000, &error.to_string()),
                             };
+                            let (product_kind, job_kind) = match prepared.job.kind {
+                                PhotolabJobKind::BuildDepthMaps => (
+                                    himmelcad_core::photolab_products::ProductKind::DepthMaps,
+                                    PhotolabJobKind::BuildDepthMaps,
+                                ),
+                                PhotolabJobKind::BuildDensePointCloud => (
+                                    himmelcad_core::photolab_products::ProductKind::DensePointCloud,
+                                    PhotolabJobKind::BuildDensePointCloud,
+                                ),
+                                _ => unreachable!("MVS product preparation returned another kind"),
+                            };
+                            let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                                publication_targets: vec![
+                                    himmelcad_sidecar::job_runtime::PublicationTarget::product(
+                                        product_kind,
+                                        prepared.lineage.source_alignment_entity_id.clone(),
+                                        prepared.lineage.gcp_optimization_entity_id.clone(),
+                                    ),
+                                ],
+                                disk_preflight: Some(
+                                    himmelcad_sidecar::job_runtime::DiskPreflight::for_job(
+                                        job_kind,
+                                        himmelcad_sidecar::job_runtime::DiskEstimateScale::Images(
+                                            u64::try_from(prepared.camera_entity_ids.len())
+                                                .unwrap_or(u64::MAX),
+                                        ),
+                                        prepared.project_root.clone(),
+                                    ),
+                                ),
+                            };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
-                                .start_with_frozen_request(
+                                .start_with_frozen_request_and_admission(
                                     prepared.job.clone(),
                                     frozen_request,
+                                    admission,
                                     move |context| {
                                         let scene =
                                             prepare_or_reuse_mvs_scene(&prepared, &context)?;
@@ -4109,9 +4334,8 @@ async fn handle_job_rpc(
                                         Ok(())
                                     },
                                 )
-                                .await
-                                .map_err(anyhow::Error::from);
-                            rpc_result(req.id, result)
+                                .await;
+                            job_start_response(req.id, result)
                         }
                         Err(error) => product_rpc_err(req.id, &error),
                     }
@@ -4133,18 +4357,92 @@ async fn handle_job_rpc(
                                 Ok(request) => request,
                                 Err(error) => return rpc_err(req.id, -32000, &error.to_string()),
                             };
+                            let (product_kind, gsd) = match &prepared.configuration {
+                                ProductRunConfiguration::Dem {
+                                    resolution_meters_per_pixel,
+                                    ..
+                                } => (
+                                    himmelcad_core::photolab_products::ProductKind::Dem,
+                                    *resolution_meters_per_pixel,
+                                ),
+                                ProductRunConfiguration::Ortho {
+                                    resolution_meters_per_pixel,
+                                    ..
+                                } => (
+                                    himmelcad_core::photolab_products::ProductKind::Orthomosaic,
+                                    *resolution_meters_per_pixel,
+                                ),
+                                _ => {
+                                    unreachable!("raster product preparation returned another kind")
+                                }
+                            };
+                            let bounds = if prepared.job.kind == PhotolabJobKind::BuildDem {
+                                match projects.latest_dense_mvs_dataset_for_lineage(&prepared.lineage) {
+                                    Ok((_, record)) => match record.potree {
+                                        Some(potree) => (potree.bounds_min, potree.bounds_max),
+                                        None => return rpc_err(req.id, -32000, "dense point cloud has no frozen bounds for disk preflight"),
+                                    },
+                                    Err(error) => return product_rpc_err(req.id, &error),
+                                }
+                            } else {
+                                let summary = &prepared
+                                    .dem_dataset
+                                    .as_ref()
+                                    .expect("orthomosaic preparation pins a DEM")
+                                    .1
+                                    .summary;
+                                (
+                                    [
+                                        summary.grid.bounds.minimum_east,
+                                        summary.grid.bounds.minimum_north,
+                                        0.0,
+                                    ],
+                                    [
+                                        summary.grid.bounds.maximum_east,
+                                        summary.grid.bounds.maximum_north,
+                                        0.0,
+                                    ],
+                                )
+                            };
+                            let Some(raster_pixels) =
+                                himmelcad_sidecar::job_runtime::raster_pixel_count(
+                                    bounds.0, bounds.1, gsd,
+                                )
+                            else {
+                                return rpc_err(
+                                    req.id,
+                                    -32000,
+                                    "raster extent or GSD is invalid for disk preflight",
+                                );
+                            };
+                            let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                                publication_targets: vec![
+                                    himmelcad_sidecar::job_runtime::PublicationTarget::product(
+                                        product_kind,
+                                        prepared.lineage.source_alignment_entity_id.clone(),
+                                        prepared.lineage.gcp_optimization_entity_id.clone(),
+                                    ),
+                                ],
+                                disk_preflight: Some(
+                                    himmelcad_sidecar::job_runtime::DiskPreflight::for_job(
+                                        prepared.job.kind,
+                                        himmelcad_sidecar::job_runtime::DiskEstimateScale::RasterPixels(raster_pixels),
+                                        prepared.project_root.clone(),
+                                    ),
+                                ),
+                            };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
-                                .start_with_frozen_request(
+                                .start_with_frozen_request_and_admission(
                                     prepared.job.clone(),
                                     frozen_request,
+                                    admission,
                                     move |context| {
                                         run_raster_product(prepared, &context, &publisher)
                                     },
                                 )
-                                .await
-                                .map_err(anyhow::Error::from);
-                            rpc_result(req.id, result)
+                                .await;
+                            job_start_response(req.id, result)
                         }
                         Err(error) => product_rpc_err(req.id, &error),
                     }
@@ -4154,14 +4452,31 @@ async fn handle_job_rpc(
                 {
                     match prepare_mesh_job(params, &projects, None) {
                         Ok(prepared) => {
+                            let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                                publication_targets: vec![
+                                    himmelcad_sidecar::job_runtime::PublicationTarget::product(
+                                        himmelcad_core::photolab_products::ProductKind::TexturedMesh,
+                                        prepared.lineage.source_alignment_entity_id.clone(),
+                                        prepared.lineage.gcp_optimization_entity_id.clone(),
+                                    ),
+                                ],
+                                disk_preflight: Some(
+                                    himmelcad_sidecar::job_runtime::DiskPreflight::for_job(
+                                        PhotolabJobKind::BuildMesh,
+                                        himmelcad_sidecar::job_runtime::DiskEstimateScale::Fixed,
+                                        prepared.project_root.clone(),
+                                    ),
+                                ),
+                            };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
-                                .start(prepared.job.clone(), move |context| {
-                                    run_mesh_job(prepared, &context, &publisher)
-                                })
-                                .await
-                                .map_err(anyhow::Error::from);
-                            rpc_result(req.id, result)
+                                .start_with_admission(
+                                    prepared.job.clone(),
+                                    admission,
+                                    move |context| run_mesh_job(prepared, &context, &publisher),
+                                )
+                                .await;
+                            job_start_response(req.id, result)
                         }
                         Err(error) => rpc_err(req.id, -32000, &error.to_string()),
                     }

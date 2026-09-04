@@ -22,6 +22,19 @@ export interface ProductPrerequisiteOptions {
   meshSourceKinds: readonly Extract<ProductPrerequisiteArtifact, 'dem' | 'dense'>[];
 }
 
+export interface ProductStartError {
+  code: string;
+  message: string;
+}
+
+/** Keeps admission failures beside Start while preserving the sidecar's frozen-target detail. */
+export function inlineProductStartError(error: string | ProductStartError | null): string | null {
+  // Admission errors (conflictingTarget, insufficientDisk) already carry the
+  // sentence the user needs; the code stays on the error for callers that
+  // want to branch on it.
+  return typeof error === 'string' || error === null ? error : error.message;
+}
+
 /**
  * Artifact alternatives for each prerequisite gate. Every returned group must
  * have at least one available artifact. Alignment is a shared prerequisite for
