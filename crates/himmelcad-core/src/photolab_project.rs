@@ -79,6 +79,15 @@ pub struct PhotolabJournalEntry {
     pub after_refs: Vec<ObjectHash>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// Re-emitted on open from the staged commit intent because the manifest
+    /// had committed but the journal write never completed (WP-B5); evidence,
+    /// never a second authority.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub recovered: bool,
+    /// Written before its manifest commit by a pre-B5 store and found ahead of
+    /// the manifest on open; the manifest wins and the entry is kept as evidence.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub orphaned: bool,
 }
 
 /// Source and local working paths are explicit so network projects never hide I/O behavior.

@@ -2434,6 +2434,7 @@ struct ProjectSession {
     recovery_available: bool,
     recovery_timestamp_unix_ms: Option<u64>,
     read_only: bool,
+    journal_repair_pending: bool,
     last_saved_generation: u64,
     manifest: PhotolabProjectManifest,
     job_history: BTreeMap<String, PhotolabJob>,
@@ -2994,6 +2995,9 @@ impl ProjectRuntime {
         mut lease: ProjectLeaseRecord,
         last_saved_generation: u64,
     ) -> Result<OpenPhotolabProjectResult> {
+        ensure_project_directories(&working_path)?;
+        let journal_repair_pending = reconcile_journal_with_manifest(&working_path, &manifest)?;
+        quarantine_orphaned_datasets(&working_path, &manifest)?;
         let job_history = {
             let _history_guard = self
                 .job_history_io
@@ -3007,7 +3011,7 @@ impl ProjectRuntime {
                 .values()
                 .filter(|job| job_state_is_terminal(&job.state))
             {
-                if let Err(error) = cleanup_terminal_job_scratch(&working_path, job) {
+                if let Err(error) = cleanup_terminal_job_scratch(&working_path, &manifest, job) {
                     tracing::warn!(
                         job_id = %job.id.0,
                         %error,
@@ -3022,7 +3026,6 @@ impl ProjectRuntime {
         if guard.is_some() {
             anyhow::bail!("a project is already open; close it before opening another one");
         }
-        ensure_project_directories(&working_path)?;
         let recovery_timestamp_unix_ms = recovery_available.then_some(manifest.modified_unix_ms);
         manifest.clean_shutdown = false;
         manifest.modified_unix_ms = unix_ms()?;
@@ -3055,6 +3058,7 @@ impl ProjectRuntime {
             recovery_available,
             recovery_timestamp_unix_ms,
             read_only: false,
+            journal_repair_pending,
             last_saved_generation,
             manifest: manifest.clone(),
             job_history,
@@ -3342,6 +3346,8 @@ impl ProjectRuntime {
         candidate.modified_unix_ms = now;
         candidate.clean_shutdown = false;
         let journal = PhotolabJournalEntry {
+            recovered: false,
+            orphaned: false,
             sequence: candidate.command_sequence,
             command_id: job_id.to_owned(),
             command_kind: "PhotolabAnalyzeImageQuality".into(),
@@ -3360,9 +3366,7 @@ impl ProjectRuntime {
             after_refs: vec![catalog_hash],
             message: Some("Measured image-quality analysis published atomically".into()),
         };
-        write_journal_entry(&session.working_path, &journal)?;
-        atomic_write_json(&session.working_path.join("manifest.json"), &candidate)?;
-        session.manifest = candidate;
+        commit_manifest_then_journal(session, candidate, &journal)?;
         Ok(session.result())
     }
 
@@ -3525,6 +3529,8 @@ impl ProjectRuntime {
         candidate.modified_unix_ms = now;
         candidate.clean_shutdown = false;
         let journal = PhotolabJournalEntry {
+            recovered: false,
+            orphaned: false,
             sequence: candidate.command_sequence,
             command_id: unique_id("processing-set-create", now),
             command_kind: "PhotolabCreateProcessingSet".into(),
@@ -3543,9 +3549,7 @@ impl ProjectRuntime {
             after_refs: vec![version_hash, parent_hash],
             message: Some("Immutable camera processing set created".into()),
         };
-        write_journal_entry(&session.working_path, &journal)?;
-        atomic_write_json(&session.working_path.join("manifest.json"), &candidate)?;
-        session.manifest = candidate;
+        commit_manifest_then_journal(session, candidate, &journal)?;
         Ok(session.result())
     }
 
@@ -5131,6 +5135,8 @@ impl ProjectRuntime {
         candidate.modified_unix_ms = unix_ms()?;
         candidate.clean_shutdown = false;
         let journal = PhotolabJournalEntry {
+            recovered: false,
+            orphaned: false,
             sequence: candidate.command_sequence,
             command_id: format!("alignment-merge-publish-{}", outcome.summary.job_id),
             command_kind: "PhotolabPublishAlignmentMerge".into(),
@@ -5148,11 +5154,10 @@ impl ProjectRuntime {
             after_refs: vec![version_hash],
             message: Some("Joint alignment merge validated and atomically published".into()),
         };
-        write_journal_entry(&session.working_path, &journal)?;
-        atomic_write_json(&session.working_path.join("manifest.json"), &candidate)?;
-        session.manifest = candidate;
+        commit_manifest_then_journal(session, candidate, &journal)?;
         cleanup_published_job_scratch(
             &session.working_path,
+            &session.manifest,
             &outcome.summary.job_id,
             PhotolabJobKind::MergeAlignments,
         );
@@ -5259,6 +5264,8 @@ impl ProjectRuntime {
         candidate.modified_unix_ms = unix_ms()?;
         candidate.clean_shutdown = false;
         let journal = PhotolabJournalEntry {
+            recovered: false,
+            orphaned: false,
             sequence: candidate.command_sequence,
             command_id: format!("alignment-merge-publish-{operation_id}"),
             command_kind: "PhotolabPublishSharedControlAlignmentMerge".into(),
@@ -5273,11 +5280,10 @@ impl ProjectRuntime {
                     .into(),
             ),
         };
-        write_journal_entry(&session.working_path, &journal)?;
-        atomic_write_json(&session.working_path.join("manifest.json"), &candidate)?;
-        session.manifest = candidate;
+        commit_manifest_then_journal(session, candidate, &journal)?;
         cleanup_published_job_scratch(
             &session.working_path,
+            &session.manifest,
             operation_id,
             PhotolabJobKind::MergeAlignments,
         );
@@ -6878,6 +6884,8 @@ impl ProjectRuntime {
         candidate.clean_shutdown = false;
         let after_refs = next_mask_catalog_hash.into_iter().collect();
         let journal = PhotolabJournalEntry {
+            recovered: false,
+            orphaned: false,
             sequence: candidate.command_sequence,
             command_id: unique_id("remove-camera-images", now),
             command_kind: "PhotolabRemoveCameraImages".to_owned(),
@@ -6889,9 +6897,7 @@ impl ProjectRuntime {
             after_refs,
             message: Some("Camera images removed from project".to_owned()),
         };
-        write_journal_entry(&session.working_path, &journal)?;
-        atomic_write_json(&session.working_path.join("manifest.json"), &candidate)?;
-        session.manifest = candidate;
+        commit_manifest_then_journal(session, candidate, &journal)?;
         Ok(session.result())
     }
 
@@ -6912,6 +6918,8 @@ impl ProjectRuntime {
         candidate.modified_unix_ms = unix_ms()?;
         candidate.clean_shutdown = false;
         let journal = PhotolabJournalEntry {
+            recovered: false,
+            orphaned: false,
             sequence: candidate.command_sequence,
             command_id: unique_id("entity-command", candidate.modified_unix_ms),
             command_kind: command_kind.to_owned(),
@@ -6923,9 +6931,7 @@ impl ProjectRuntime {
             after_refs: Vec::new(),
             message: None,
         };
-        write_journal_entry(&session.working_path, &journal)?;
-        atomic_write_json(&session.working_path.join("manifest.json"), &candidate)?;
-        session.manifest = candidate;
+        commit_manifest_then_journal(session, candidate, &journal)?;
         Ok(session.result())
     }
 
@@ -7248,6 +7254,8 @@ impl ProjectRuntime {
             affected_entities.extend(camera_scope.iter().cloned().map(EntityId));
         }
         let journal = PhotolabJournalEntry {
+            recovered: false,
+            orphaned: false,
             sequence: candidate.command_sequence,
             command_id: format!("compute-publish-{}", outcome.summary.job_id),
             command_kind: "PhotolabPublishColmapOutcome".into(),
@@ -7265,11 +7273,10 @@ impl ProjectRuntime {
             after_refs,
             message: Some("COLMAP artifacts validated and atomically published".into()),
         };
-        write_journal_entry(&session.working_path, &journal)?;
-        atomic_write_json(&session.working_path.join("manifest.json"), &candidate)?;
-        session.manifest = candidate;
+        commit_manifest_then_journal(session, candidate, &journal)?;
         cleanup_published_job_scratch(
             &session.working_path,
+            &session.manifest,
             &outcome.summary.job_id,
             PhotolabJobKind::AlignPhotos,
         );
@@ -7356,6 +7363,8 @@ impl ProjectRuntime {
         candidate.modified_unix_ms = unix_ms()?;
         candidate.clean_shutdown = false;
         let journal = PhotolabJournalEntry {
+            recovered: false,
+            orphaned: false,
             sequence: candidate.command_sequence,
             command_id: format!("splat-publish-{}", outcome.summary.job_id),
             command_kind: "PhotolabPublishBrushOutcome".into(),
@@ -7375,11 +7384,10 @@ impl ProjectRuntime {
             after_refs: vec![version_hash, group_hash],
             message: Some("Brush output validated and atomically published".into()),
         };
-        write_journal_entry(&session.working_path, &journal)?;
-        atomic_write_json(&session.working_path.join("manifest.json"), &candidate)?;
-        session.manifest = candidate;
+        commit_manifest_then_journal(session, candidate, &journal)?;
         cleanup_published_job_scratch(
             &session.working_path,
+            &session.manifest,
             &outcome.summary.job_id,
             PhotolabJobKind::BuildGaussianSplat,
         );
@@ -7539,6 +7547,8 @@ impl ProjectRuntime {
         let mut affected_entities = entity_ids.clone();
         affected_entities.extend(record.camera_entity_ids.iter().cloned().map(EntityId));
         let journal = PhotolabJournalEntry {
+            recovered: false,
+            orphaned: false,
             sequence: candidate.command_sequence,
             command_id: format!("mvs-publish-{}", record.job_id),
             command_kind: "PhotolabPublishMvsOutcome".into(),
@@ -7558,11 +7568,10 @@ impl ProjectRuntime {
             after_refs,
             message: Some("Portable MVS output validated and atomically published".into()),
         };
-        write_journal_entry(&session.working_path, &journal)?;
-        atomic_write_json(&session.working_path.join("manifest.json"), &candidate)?;
-        session.manifest = candidate;
+        commit_manifest_then_journal(session, candidate, &journal)?;
         cleanup_published_job_scratch(
             &session.working_path,
+            &session.manifest,
             &record.job_id,
             if record.output.dense_point_cloud.is_some() {
                 PhotolabJobKind::BuildDensePointCloud
@@ -7639,6 +7648,8 @@ impl ProjectRuntime {
         candidate.modified_unix_ms = unix_ms()?;
         candidate.clean_shutdown = false;
         let journal = PhotolabJournalEntry {
+            recovered: false,
+            orphaned: false,
             sequence: candidate.command_sequence,
             command_id: format!("gcp-optimize-{}", record.operation_id),
             command_kind: "PhotolabPublishGcpOptimization".into(),
@@ -7657,9 +7668,7 @@ impl ProjectRuntime {
             after_refs: vec![version_hash, group_hash],
             message: Some("GCP optimization validated and atomically published".into()),
         };
-        write_journal_entry(&session.working_path, &journal)?;
-        atomic_write_json(&session.working_path.join("manifest.json"), &candidate)?;
-        session.manifest = candidate;
+        commit_manifest_then_journal(session, candidate, &journal)?;
         Ok(PublishColmapResult {
             job_id: record.operation_id,
             entity_ids: vec![entity_id],
@@ -7737,6 +7746,8 @@ impl ProjectRuntime {
         candidate.modified_unix_ms = unix_ms()?;
         candidate.clean_shutdown = false;
         let journal = PhotolabJournalEntry {
+            recovered: false,
+            orphaned: false,
             sequence: candidate.command_sequence,
             command_id: format!("raster-publish-{job_id}"),
             command_kind: "PhotolabPublishRasterOutcome".into(),
@@ -7756,11 +7767,10 @@ impl ProjectRuntime {
             after_refs: vec![version_hash, group_hash],
             message: Some("GDAL raster validated and atomically published".into()),
         };
-        write_journal_entry(&session.working_path, &journal)?;
-        atomic_write_json(&session.working_path.join("manifest.json"), &candidate)?;
-        session.manifest = candidate;
+        commit_manifest_then_journal(session, candidate, &journal)?;
         cleanup_published_job_scratch(
             &session.working_path,
+            &session.manifest,
             job_id,
             match kind {
                 PublishedRasterKind::Dem => PhotolabJobKind::BuildDem,
@@ -7909,6 +7919,8 @@ impl ProjectRuntime {
             cancellation,
         )?;
         let journal = PhotolabJournalEntry {
+            recovered: false,
+            orphaned: false,
             sequence: candidate.command_sequence,
             command_id: format!("mesh-publish-{job_id}"),
             command_kind: "PhotolabPublishTiledMesh".into(),
@@ -7928,10 +7940,13 @@ impl ProjectRuntime {
             after_refs: vec![version_hash, group_hash],
             message: Some("Tiled mesh atomically published".into()),
         };
-        write_journal_entry(&session.working_path, &journal)?;
-        atomic_write_json(&session.working_path.join("manifest.json"), &candidate)?;
-        session.manifest = candidate;
-        cleanup_published_job_scratch(&session.working_path, job_id, PhotolabJobKind::BuildMesh);
+        commit_manifest_then_journal(session, candidate, &journal)?;
+        cleanup_published_job_scratch(
+            &session.working_path,
+            &session.manifest,
+            job_id,
+            PhotolabJobKind::BuildMesh,
+        );
         Ok(PublishColmapResult {
             job_id: job_id.into(),
             entity_ids: vec![entity_id],
@@ -8222,12 +8237,19 @@ impl ProjectRuntime {
         let mut guard = self.session.lock().expect("project session mutex poisoned");
         let session = guard.as_mut().context("no project is open")?;
         ensure_writable(session)?;
-        let sequence = session.manifest.command_sequence.saturating_add(1);
+        let now = unix_ms()?;
+        let mut candidate = session.manifest.clone();
+        candidate.command_sequence = candidate.command_sequence.saturating_add(1);
+        candidate.autosave_generation = candidate.autosave_generation.saturating_add(1);
+        candidate.modified_unix_ms = now;
+        candidate.clean_shutdown = false;
         let entry = PhotolabJournalEntry {
-            sequence,
-            command_id: unique_id("command", unix_ms()?),
+            recovered: false,
+            orphaned: false,
+            sequence: candidate.command_sequence,
+            command_id: unique_id("command", now),
             command_kind: params.command_kind,
-            timestamp_unix_ms: unix_ms()?,
+            timestamp_unix_ms: now,
             state: JournalCommandState::Started,
             payload: params.payload,
             affected_entities: params.affected_entities,
@@ -8235,9 +8257,8 @@ impl ProjectRuntime {
             after_refs: params.after_refs,
             message: params.message,
         };
-        write_journal_entry(&session.working_path, &entry)?;
-        session.manifest.command_sequence = sequence;
-        touch_and_autosave(session)?;
+        commit_manifest_then_journal(session, candidate, &entry)?;
+        heartbeat_session_lease(session, session.working_path == session.source_path)?;
         Ok(entry)
     }
 
@@ -8245,12 +8266,19 @@ impl ProjectRuntime {
         let mut guard = self.session.lock().expect("project session mutex poisoned");
         let session = guard.as_mut().context("no project is open")?;
         ensure_writable(session)?;
-        let sequence = session.manifest.command_sequence.saturating_add(1);
+        let now = unix_ms()?;
+        let mut candidate = session.manifest.clone();
+        candidate.command_sequence = candidate.command_sequence.saturating_add(1);
+        candidate.autosave_generation = candidate.autosave_generation.saturating_add(1);
+        candidate.modified_unix_ms = now;
+        candidate.clean_shutdown = false;
         let entry = PhotolabJournalEntry {
-            sequence,
+            recovered: false,
+            orphaned: false,
+            sequence: candidate.command_sequence,
             command_id: params.command_id,
             command_kind: "CommandResult".to_owned(),
-            timestamp_unix_ms: unix_ms()?,
+            timestamp_unix_ms: now,
             state: params.state,
             payload: serde_json::Value::Null,
             affected_entities: params.affected_entities,
@@ -8258,9 +8286,8 @@ impl ProjectRuntime {
             after_refs: params.after_refs,
             message: params.message,
         };
-        write_journal_entry(&session.working_path, &entry)?;
-        session.manifest.command_sequence = sequence;
-        touch_and_autosave(session)?;
+        commit_manifest_then_journal(session, candidate, &entry)?;
+        heartbeat_session_lease(session, session.working_path == session.source_path)?;
         Ok(entry)
     }
 
@@ -8638,7 +8665,10 @@ impl JobHistoryPersistence for ProjectRuntime {
             }
         }
         if job_state_is_terminal(&job.state) {
-            if let Err(error) = cleanup_terminal_job_scratch(&scope.project_root, job) {
+            let cleanup_result = read_manifest(&scope.project_root).and_then(|manifest| {
+                cleanup_terminal_job_scratch(&scope.project_root, &manifest, job)
+            });
+            if let Err(error) = cleanup_result {
                 tracing::warn!(
                     job_id = %job.id.0,
                     %error,
@@ -8657,7 +8687,12 @@ fn job_state_is_terminal(state: &PhotolabJobState) -> bool {
     )
 }
 
-fn cleanup_published_job_scratch(project_root: &Path, job_id: &str, kind: PhotolabJobKind) {
+fn cleanup_published_job_scratch(
+    project_root: &Path,
+    manifest: &PhotolabProjectManifest,
+    job_id: &str,
+    kind: PhotolabJobKind,
+) {
     let job = PhotolabJob {
         schema_version: 1,
         id: himmelcad_core::photolab_jobs::PhotolabJobId(job_id.to_owned()),
@@ -8680,7 +8715,7 @@ fn cleanup_published_job_scratch(project_root: &Path, job_id: &str, kind: Photol
         last_checkpoint_sequence: None,
         terminal_diagnostic: None,
     };
-    if let Err(error) = cleanup_terminal_job_scratch(project_root, &job) {
+    if let Err(error) = cleanup_terminal_job_scratch(project_root, manifest, &job) {
         tracing::warn!(
             job_id,
             %error,
@@ -8733,16 +8768,135 @@ fn cleanup_unpublished_product_import_packages(
     Ok(())
 }
 
+fn manifest_dataset_references(
+    project_root: &Path,
+    manifest: &PhotolabProjectManifest,
+) -> Result<BTreeSet<(String, String)>> {
+    let mut references = BTreeSet::new();
+    for entity in manifest.entities.values() {
+        let object_path = project_object_path(project_root, &entity.version_hash);
+        if !object_path.is_file() {
+            continue;
+        }
+        let bytes = read_verified_object(project_root, &entity.version_hash)?;
+        let value: serde_json::Value = serde_json::from_slice(&bytes).with_context(|| {
+            format!(
+                "manifest entity record is not valid JSON: {}",
+                object_path.display()
+            )
+        })?;
+        let Some(relative_path) = value
+            .get("datasetRelativePath")
+            .and_then(serde_json::Value::as_str)
+        else {
+            continue;
+        };
+        let mut components = Path::new(relative_path).components();
+        let Some(std::path::Component::Normal(root)) = components.next() else {
+            continue;
+        };
+        let Some(std::path::Component::Normal(family)) = components.next() else {
+            continue;
+        };
+        let Some(std::path::Component::Normal(id)) = components.next() else {
+            continue;
+        };
+        if root == std::ffi::OsStr::new("datasets") {
+            references.insert((
+                family.to_string_lossy().into_owned(),
+                id.to_string_lossy().into_owned(),
+            ));
+        }
+    }
+    Ok(references)
+}
+
+fn manifest_references_dataset(
+    references: &BTreeSet<(String, String)>,
+    family: &str,
+    id: &str,
+) -> bool {
+    references.contains(&(family.to_owned(), id.to_owned()))
+}
+
+/// This physical check is intentionally limited to the quarantine move itself. Publication is
+/// determined exclusively from manifest references.
+fn dataset_dir_exists(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(metadata.is_dir() && !metadata.file_type().is_symlink()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn quarantine_orphaned_datasets(
+    project_root: &Path,
+    manifest: &PhotolabProjectManifest,
+) -> Result<()> {
+    let datasets_root = project_root.join("datasets");
+    if !datasets_root.is_dir() {
+        return Ok(());
+    }
+    let references = manifest_dataset_references(project_root, manifest)?;
+    for family_entry in fs::read_dir(&datasets_root)? {
+        let family_entry = family_entry?;
+        if !family_entry.file_type()?.is_dir() {
+            continue;
+        }
+        let family = family_entry.file_name().to_string_lossy().into_owned();
+        for dataset_entry in fs::read_dir(family_entry.path())? {
+            let dataset_entry = dataset_entry?;
+            let id = dataset_entry.file_name().to_string_lossy().into_owned();
+            let source = dataset_entry.path();
+            if manifest_references_dataset(&references, &family, &id)
+                || !dataset_dir_exists(&source)?
+            {
+                continue;
+            }
+            let quarantine_family = project_root.join("tmp/orphaned").join(&family);
+            fs::create_dir_all(&quarantine_family)?;
+            let mut timestamp = unix_ms()?;
+            let destination = loop {
+                let candidate = quarantine_family.join(format!("{id}-{timestamp}"));
+                if !candidate.exists() {
+                    break candidate;
+                }
+                timestamp = timestamp.saturating_add(1);
+            };
+            fs::rename(&source, &destination).with_context(|| {
+                format!(
+                    "failed to quarantine unpublished dataset {}",
+                    source.display()
+                )
+            })?;
+            sync_parent_directory(&source)?;
+            sync_parent_directory(&destination)?;
+            tracing::warn!(
+                family,
+                dataset_id = id,
+                destination = %destination.display(),
+                "unreferenced dataset was quarantined during project open"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Removes only rebuildable, job-owned scratch after the worker has reached a durable terminal
 /// state. Published datasets and the files required by a committed resume checkpoint are outside
 /// this deletion set (or explicitly retained below).
-fn cleanup_terminal_job_scratch(project_root: &Path, job: &PhotolabJob) -> Result<()> {
+fn cleanup_terminal_job_scratch(
+    project_root: &Path,
+    manifest: &PhotolabProjectManifest,
+    job: &PhotolabJob,
+) -> Result<()> {
     if !job_state_is_terminal(&job.state) {
         return Ok(());
     }
     validate_compute_job_id(&job.id.0)?;
     let job_id = &job.id.0;
     let completed = job.state == PhotolabJobState::Completed;
+    let dataset_references = manifest_dataset_references(project_root, manifest)?;
 
     match job.kind {
         PhotolabJobKind::AlignPhotos => {
@@ -8770,16 +8924,29 @@ fn cleanup_terminal_job_scratch(project_root: &Path, job: &PhotolabJob) -> Resul
             }
         }
         PhotolabJobKind::BuildDepthMaps | PhotolabJobKind::BuildDensePointCloud => {
-            cleanup_mvs_job(project_root, job_id, completed)?;
+            cleanup_mvs_job(
+                project_root,
+                job_id,
+                manifest_references_dataset(&dataset_references, "mvs", job_id),
+            )?;
         }
         PhotolabJobKind::BuildDem | PhotolabJobKind::BuildOrthomosaic => {
-            cleanup_raster_job(project_root, job_id, completed, Some(job))?;
+            cleanup_raster_job(
+                project_root,
+                job_id,
+                manifest_references_dataset(&dataset_references, "raster", job_id),
+                Some(job),
+            )?;
         }
         PhotolabJobKind::BuildMesh => {
             remove_path_if_exists(&project_root.join(".photolab/mesh-staging").join(job_id))?;
         }
         PhotolabJobKind::BuildGaussianSplat => {
-            cleanup_brush_job(project_root, job_id, completed)?;
+            cleanup_brush_job(
+                project_root,
+                job_id,
+                manifest_references_dataset(&dataset_references, "splats", job_id),
+            )?;
         }
         PhotolabJobKind::AnalyzeImageQuality
         | PhotolabJobKind::OptimizeAlignment
@@ -8789,12 +8956,16 @@ fn cleanup_terminal_job_scratch(project_root: &Path, job: &PhotolabJob) -> Resul
         | PhotolabJobKind::ImageCommit
         | PhotolabJobKind::ImageMask
         | PhotolabJobKind::GcpOperation => {}
-        PhotolabJobKind::Batch => cleanup_batch_job(project_root, job_id)?,
+        PhotolabJobKind::Batch => cleanup_batch_job(project_root, job_id, &dataset_references)?,
     }
     Ok(())
 }
 
-fn cleanup_batch_job(project_root: &Path, batch_id: &str) -> Result<()> {
+fn cleanup_batch_job(
+    project_root: &Path,
+    batch_id: &str,
+    dataset_references: &BTreeSet<(String, String)>,
+) -> Result<()> {
     let operation_prefix = format!("{batch_id}-");
     for index in 0..32 {
         let alignment_id = format!("{batch_id}-{index:02}-alignment");
@@ -8828,7 +8999,7 @@ fn cleanup_batch_job(project_root: &Path, batch_id: &str) -> Result<()> {
         cleanup_raster_job(
             project_root,
             &job_id,
-            project_root.join("datasets/raster").join(&job_id).is_dir(),
+            manifest_references_dataset(dataset_references, "raster", &job_id),
             None,
         )?;
     }
@@ -8857,7 +9028,7 @@ fn cleanup_batch_job(project_root: &Path, batch_id: &str) -> Result<()> {
         cleanup_brush_job(
             project_root,
             &job_id,
-            project_root.join("datasets/splats").join(&job_id).is_dir(),
+            manifest_references_dataset(dataset_references, "splats", &job_id),
         )?;
     }
 
@@ -8875,7 +9046,7 @@ fn cleanup_batch_job(project_root: &Path, batch_id: &str) -> Result<()> {
         cleanup_mvs_job(
             project_root,
             &job_id,
-            project_root.join("datasets/mvs").join(&job_id).is_dir(),
+            manifest_references_dataset(dataset_references, "mvs", &job_id),
         )?;
     }
     Ok(())
@@ -8963,8 +9134,7 @@ fn cleanup_mvs_job(project_root: &Path, job_id: &str, completed: bool) -> Result
     )?;
 
     let scene = project_root.join(".photolab/mvs-scenes").join(job_id);
-    let published_dataset = project_root.join("datasets/mvs").join(job_id).is_dir();
-    if !(published_dataset || retained_checkpoint) {
+    if !(completed || retained_checkpoint) {
         remove_path_if_exists(&scene)?;
     }
     Ok(())
@@ -9348,17 +9518,6 @@ impl ProjectSession {
             manifest: self.manifest.clone(),
         }
     }
-}
-
-fn touch_and_autosave(session: &mut ProjectSession) -> Result<()> {
-    session.manifest.autosave_generation = session.manifest.autosave_generation.saturating_add(1);
-    session.manifest.modified_unix_ms = unix_ms()?;
-    session.manifest.clean_shutdown = false;
-    atomic_write_json(
-        &session.working_path.join("manifest.json"),
-        &session.manifest,
-    )?;
-    heartbeat_session_lease(session, session.working_path == session.source_path)
 }
 
 fn heartbeat_session_lease(session: &mut ProjectSession, refresh_source: bool) -> Result<()> {
@@ -10282,6 +10441,8 @@ fn edit_image_mask_transaction(
     let mut after_refs = vec![catalog_sha256, revision_sha256.clone(), metadata_sha256];
     after_refs.extend(raster_object_hash.clone());
     let journal = PhotolabJournalEntry {
+        recovered: false,
+        orphaned: false,
         sequence: candidate.command_sequence,
         command_id: params.operation_id.clone(),
         command_kind: match &params.edit {
@@ -10305,9 +10466,7 @@ fn edit_image_mask_transaction(
         after_refs,
         message: Some("Immutable image-mask revision published atomically".into()),
     };
-    write_journal_entry(&session.working_path, &journal)?;
-    atomic_write_json(&session.working_path.join("manifest.json"), &candidate)?;
-    session.manifest = candidate;
+    commit_manifest_then_journal(session, candidate, &journal)?;
     Ok(EditImageMaskResult {
         operation_id: params.operation_id,
         revision_sha256,
@@ -11183,6 +11342,8 @@ fn commit_domain_entity_change(
     candidate.modified_unix_ms = now;
     candidate.clean_shutdown = false;
     let journal = PhotolabJournalEntry {
+        recovered: false,
+        orphaned: false,
         sequence: candidate.command_sequence,
         command_id: unique_id("domain-create", now),
         command_kind: command_kind.into(),
@@ -11194,9 +11355,7 @@ fn commit_domain_entity_change(
         after_refs,
         message: Some(message.into()),
     };
-    write_journal_entry(&session.working_path, &journal)?;
-    atomic_write_json(&session.working_path.join("manifest.json"), &candidate)?;
-    session.manifest = candidate;
+    commit_manifest_then_journal(session, candidate, &journal)?;
     Ok(session.result())
 }
 
@@ -11557,10 +11716,239 @@ fn project_lock_guard_path(lease_path: &Path) -> PathBuf {
 }
 
 fn write_journal_entry(root: &Path, entry: &PhotolabJournalEntry) -> Result<()> {
+    write_journal_entry_with_evidence(root, entry, false, false)
+}
+
+fn write_journal_entry_with_evidence(
+    root: &Path,
+    entry: &PhotolabJournalEntry,
+    recovered: bool,
+    orphaned: bool,
+) -> Result<()> {
     let path = root
         .join("journal")
         .join(format!("{:016}.json", entry.sequence));
-    atomic_write_json(&path, entry)
+    let mut value = serde_json::to_value(entry)?;
+    let object = value
+        .as_object_mut()
+        .context("journal entry did not serialize as an object")?;
+    if recovered {
+        object.insert("recovered".to_owned(), serde_json::Value::Bool(true));
+    }
+    if orphaned {
+        object.insert("orphaned".to_owned(), serde_json::Value::Bool(true));
+    }
+    atomic_write_json(&path, &value)
+}
+
+fn pending_journal_entry_path(root: &Path, sequence: u64) -> PathBuf {
+    root.join("tmp")
+        .join("journal-recovery")
+        .join(format!("{sequence:016}.json"))
+}
+
+/// Makes the manifest the commit boundary while retaining enough pre-commit intent to repair the
+/// exact journal payload after a crash. The staged intent is temporary transaction state and is
+/// not part of the canonical journal until the manifest has committed.
+fn commit_manifest_then_journal(
+    session: &mut ProjectSession,
+    candidate_manifest: PhotolabProjectManifest,
+    journal_entry: &PhotolabJournalEntry,
+) -> Result<()> {
+    anyhow::ensure!(
+        candidate_manifest.command_sequence == journal_entry.sequence,
+        "journal sequence does not match candidate manifest"
+    );
+    let pending_path = pending_journal_entry_path(&session.working_path, journal_entry.sequence);
+    atomic_write_json(&pending_path, journal_entry)?;
+    atomic_write_json(
+        &session.working_path.join("manifest.json"),
+        &candidate_manifest,
+    )?;
+    session.manifest = candidate_manifest;
+
+    match write_journal_entry(&session.working_path, journal_entry) {
+        Ok(()) => {
+            if let Err(error) = remove_path_if_exists(&pending_path) {
+                tracing::debug!(
+                    sequence = journal_entry.sequence,
+                    %error,
+                    "committed journal recovery intent could not be removed"
+                );
+            }
+        }
+        Err(error) => {
+            session.journal_repair_pending = true;
+            tracing::warn!(
+                sequence = journal_entry.sequence,
+                %error,
+                "manifest committed but journal evidence is pending repair on the next open"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn reconcile_journal_with_manifest(
+    root: &Path,
+    manifest: &PhotolabProjectManifest,
+) -> Result<bool> {
+    let journal_root = root.join("journal");
+    let mut entries = Vec::new();
+    for item in fs::read_dir(&journal_root)? {
+        let item = item?;
+        if !item.file_type()?.is_file()
+            || item.path().extension() != Some(std::ffi::OsStr::new("json"))
+        {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_slice(&fs::read(item.path())?)
+            .with_context(|| format!("invalid journal entry {}", item.path().display()))?;
+        let sequence = value
+            .get("sequence")
+            .and_then(serde_json::Value::as_u64)
+            .with_context(|| format!("journal entry has no sequence: {}", item.path().display()))?;
+        entries.push((sequence, item.path(), value));
+    }
+    entries.sort_by_key(|(sequence, _, _)| *sequence);
+
+    let mut repair_pending = false;
+    let ahead = entries
+        .iter_mut()
+        .filter(|(sequence, _, _)| *sequence > manifest.command_sequence)
+        .collect::<Vec<_>>();
+    if !ahead.is_empty() {
+        let first_sequence = ahead.first().map(|entry| entry.0).unwrap_or_default();
+        let last_sequence = ahead.last().map(|entry| entry.0).unwrap_or_default();
+        for (sequence, path, value) in ahead {
+            if value.get("orphaned").and_then(serde_json::Value::as_bool) == Some(true) {
+                continue;
+            }
+            let Some(object) = value.as_object_mut() else {
+                anyhow::bail!("journal entry is not an object: {}", path.display());
+            };
+            object.insert("orphaned".to_owned(), serde_json::Value::Bool(true));
+            if let Err(error) = atomic_write_json(path, value) {
+                repair_pending = true;
+                tracing::warn!(
+                    sequence = *sequence,
+                    %error,
+                    "pre-manifest journal evidence could not be marked orphaned"
+                );
+            }
+        }
+        tracing::warn!(
+            manifest_sequence = manifest.command_sequence,
+            first_journal_sequence = first_sequence,
+            last_journal_sequence = last_sequence,
+            "journal was ahead of the manifest; manifest state won and later evidence was marked orphaned"
+        );
+    }
+
+    let last_committed_sequence = entries
+        .iter()
+        .filter(|(sequence, _, value)| {
+            *sequence <= manifest.command_sequence
+                && value.get("orphaned").and_then(serde_json::Value::as_bool) != Some(true)
+        })
+        .map(|(sequence, _, _)| *sequence)
+        .max()
+        .unwrap_or(0);
+    if last_committed_sequence < manifest.command_sequence {
+        let pending_path = pending_journal_entry_path(root, manifest.command_sequence);
+        let entry = if pending_path.is_file() {
+            let entry: PhotolabJournalEntry = serde_json::from_slice(&fs::read(&pending_path)?)
+                .with_context(|| {
+                    format!(
+                        "invalid pending journal recovery entry {}",
+                        pending_path.display()
+                    )
+                })?;
+            anyhow::ensure!(
+                entry.sequence == manifest.command_sequence,
+                "pending journal recovery sequence does not match the manifest"
+            );
+            entry
+        } else {
+            // Pre-B5 manifests do not retain the original command payload. Preserve the manifest
+            // as truth and emit an explicit recovery record rather than inventing that payload.
+            PhotolabJournalEntry {
+                recovered: false,
+                orphaned: false,
+                sequence: manifest.command_sequence,
+                command_id: format!("manifest-recovery-{}", manifest.command_sequence),
+                command_kind: "PhotolabRecoveredManifestCommit".to_owned(),
+                timestamp_unix_ms: manifest.modified_unix_ms,
+                state: JournalCommandState::Committed,
+                payload: serde_json::json!({
+                    "projectId": manifest.project_id,
+                    "autosaveGeneration": manifest.autosave_generation,
+                    "commandSequence": manifest.command_sequence,
+                }),
+                affected_entities: Vec::new(),
+                before_refs: Vec::new(),
+                after_refs: Vec::new(),
+                message: Some(
+                    "Recovered committed manifest state without original journal intent".to_owned(),
+                ),
+            }
+        };
+        match write_journal_entry_with_evidence(root, &entry, true, false) {
+            Ok(()) => {
+                if let Err(error) = remove_path_if_exists(&pending_path) {
+                    tracing::debug!(
+                        sequence = manifest.command_sequence,
+                        %error,
+                        "recovered journal intent could not be removed"
+                    );
+                }
+                tracing::warn!(
+                    manifest_sequence = manifest.command_sequence,
+                    previous_journal_sequence = last_committed_sequence,
+                    "journal was behind the manifest; committed evidence was re-emitted as recovered"
+                );
+            }
+            Err(error) => {
+                repair_pending = true;
+                tracing::warn!(
+                    manifest_sequence = manifest.command_sequence,
+                    previous_journal_sequence = last_committed_sequence,
+                    %error,
+                    "journal remains behind the manifest and will be repaired on a later open"
+                );
+            }
+        }
+    }
+    let pending_root = root.join("tmp/journal-recovery");
+    if pending_root.is_dir() {
+        for item in fs::read_dir(&pending_root)? {
+            let item = item?;
+            if !item.file_type()?.is_file() {
+                continue;
+            }
+            let value: serde_json::Value = serde_json::from_slice(&fs::read(item.path())?)
+                .with_context(|| {
+                    format!(
+                        "invalid pending journal recovery entry {}",
+                        item.path().display()
+                    )
+                })?;
+            let sequence = value
+                .get("sequence")
+                .and_then(serde_json::Value::as_u64)
+                .with_context(|| {
+                    format!(
+                        "pending journal recovery entry has no sequence: {}",
+                        item.path().display()
+                    )
+                })?;
+            let journal_path = journal_root.join(format!("{sequence:016}.json"));
+            if sequence > manifest.command_sequence || journal_path.is_file() {
+                remove_path_if_exists(&item.path())?;
+            }
+        }
+    }
+    Ok(repair_pending)
 }
 
 fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<()> {
@@ -13121,6 +13509,35 @@ mod tests {
         job
     }
 
+    fn test_manifest_with_dataset_references(
+        root: &Path,
+        relative_paths: &[&str],
+    ) -> PhotolabProjectManifest {
+        let mut manifest = initial_photolab_manifest("cleanup-project".into(), "Cleanup".into(), 1);
+        for (index, relative_path) in relative_paths.iter().enumerate() {
+            let bytes = serde_json::to_vec(&serde_json::json!({
+                "datasetRelativePath": relative_path,
+            }))
+            .expect("dataset record");
+            let version_hash = put_project_object(root, &bytes).expect("dataset record object");
+            let entity_id = EntityId(format!("cleanup-project:dataset:{index}"));
+            manifest.entities.insert(
+                entity_id.0.clone(),
+                EntitySnapshot {
+                    id: entity_id,
+                    kind: EntityKind::Group,
+                    name: format!("Dataset {index}"),
+                    parent: None,
+                    children: Vec::new(),
+                    visibility: VisibilityState::default(),
+                    version_hash,
+                    bounds: None,
+                },
+            );
+        }
+        manifest
+    }
+
     #[test]
     fn terminal_scratch_cleanup_preserves_products_and_resume_material() {
         let root = temp_test_dir("terminal-scratch-cleanup");
@@ -13156,7 +13573,11 @@ mod tests {
             PhotolabJobKind::BuildDem,
             PhotolabJobState::Completed,
         );
-        cleanup_terminal_job_scratch(&root, &completed_raster).expect("raster cleanup");
+        let manifest = test_manifest_with_dataset_references(
+            &root,
+            &["datasets/raster/raster-done", "datasets/mvs/mvs-done"],
+        );
+        cleanup_terminal_job_scratch(&root, &manifest, &completed_raster).expect("raster cleanup");
         assert!(!root.join(".photolab/raster-inputs/raster-done").exists());
         assert!(!root
             .join(".photolab/raster-staging/raster-jobs/raster-done")
@@ -13196,7 +13617,8 @@ mod tests {
                 message: "test".into(),
             },
         );
-        cleanup_terminal_job_scratch(&root, &failed_raster).expect("failed raster cleanup");
+        cleanup_terminal_job_scratch(&root, &manifest, &failed_raster)
+            .expect("failed raster cleanup");
         assert!(!root.join(".photolab/raster-inputs/raster-failed").exists());
         assert!(root
             .join(".photolab/raster-staging/raster-jobs/raster-failed/tile.tif")
@@ -13222,7 +13644,7 @@ mod tests {
             PhotolabJobKind::BuildDensePointCloud,
             PhotolabJobState::Cancelled,
         );
-        cleanup_terminal_job_scratch(&root, &failed_mvs).expect("MVS cleanup");
+        cleanup_terminal_job_scratch(&root, &manifest, &failed_mvs).expect("MVS cleanup");
         assert!(root.join(".photolab/mvs-scenes/mvs-failed").is_dir());
         assert!(mvs_scratch.join("checkpoints/checkpoint-1.json").is_file());
         assert!(mvs_scratch.join("output/raw/tile.bin").is_file());
@@ -13251,7 +13673,8 @@ mod tests {
             PhotolabJobKind::BuildDepthMaps,
             PhotolabJobState::Completed,
         );
-        cleanup_terminal_job_scratch(&root, &completed_mvs).expect("completed MVS cleanup");
+        cleanup_terminal_job_scratch(&root, &manifest, &completed_mvs)
+            .expect("completed MVS cleanup");
         assert!(root
             .join("datasets/mvs/mvs-done/output/index.json")
             .is_file());
@@ -13271,7 +13694,8 @@ mod tests {
         active
             .transition_to(PhotolabJobState::Running)
             .expect("active job");
-        cleanup_terminal_job_scratch(&root, &active).expect("active cleanup is a no-op");
+        let manifest = test_manifest_with_dataset_references(&root, &[]);
+        cleanup_terminal_job_scratch(&root, &manifest, &active).expect("active cleanup is a no-op");
         assert!(active_input.join("source.bin").is_file());
 
         let brush_scene = root.join(".photolab/brush-scenes/splat-failed/images");
@@ -13290,7 +13714,7 @@ mod tests {
             PhotolabJobKind::BuildGaussianSplat,
             PhotolabJobState::Cancelled,
         );
-        cleanup_terminal_job_scratch(&root, &failed_splat).expect("splat cleanup");
+        cleanup_terminal_job_scratch(&root, &manifest, &failed_splat).expect("splat cleanup");
         assert!(!root.join(".photolab/brush-scenes/splat-failed").exists());
         assert!(brush_scratch
             .join("checkpoints/checkpoint_5000.ply")
@@ -13323,7 +13747,14 @@ mod tests {
             .expect("stale MVS checkpoint");
 
         let batch = terminal_test_job("batch", PhotolabJobKind::Batch, PhotolabJobState::Completed);
-        cleanup_terminal_job_scratch(&root, &batch).expect("batch cleanup");
+        let manifest = test_manifest_with_dataset_references(
+            &root,
+            &[
+                "datasets/raster/batch-01-dem",
+                "datasets/mvs/batch-02-dense",
+            ],
+        );
+        cleanup_terminal_job_scratch(&root, &manifest, &batch).expect("batch cleanup");
         assert!(!batch_input.exists());
         assert!(foreign_input.join("large.gpkg").is_file());
         assert!(!stale_mvs.exists());
@@ -16564,6 +16995,149 @@ mod tests {
         assert!(text.contains('2'));
         assert_eq!(fs::read_dir(&root).expect("root readable").count(), 1);
         fs::remove_dir_all(root).expect("test directory must be removable");
+    }
+
+    fn reconciliation_test_entry(sequence: u64) -> PhotolabJournalEntry {
+        PhotolabJournalEntry {
+            recovered: false,
+            orphaned: false,
+            sequence,
+            command_id: format!("reconciliation-{sequence}"),
+            command_kind: "PhotolabReconciliationFixture".to_owned(),
+            timestamp_unix_ms: 42,
+            state: JournalCommandState::Committed,
+            payload: serde_json::json!({ "fixture": sequence }),
+            affected_entities: Vec::new(),
+            before_refs: Vec::new(),
+            after_refs: Vec::new(),
+            message: Some("Reconciliation fixture".to_owned()),
+        }
+    }
+
+    fn open_reconciliation_fixture(
+        runtime: &ProjectRuntime,
+        project: &Path,
+        root: &Path,
+    ) -> OpenPhotolabProjectResult {
+        runtime
+            .open(&OpenProjectParams {
+                path: path_string(project),
+                working_root: path_string(&root.join("cache")),
+                use_local_working_copy: false,
+                recover_existing_working_copy: true,
+                archive_operation_id: None,
+                progress_key: None,
+            })
+            .expect("fixture project must open")
+    }
+
+    #[test]
+    fn open_marks_pre_manifest_journal_evidence_orphaned() {
+        let root = temp_test_dir("journal-ahead-reconciliation");
+        let project = root.join("journal-ahead.hcad");
+        ensure_project_directories(&project).expect("project directories");
+        let manifest = initial_photolab_manifest("journal-ahead".into(), "Journal ahead".into(), 1);
+        atomic_write_json(&project.join("manifest.json"), &manifest).expect("manifest");
+        write_journal_entry(&project, &reconciliation_test_entry(1)).expect("ahead journal");
+
+        let runtime = ProjectRuntime::default();
+        let opened = open_reconciliation_fixture(&runtime, &project, &root);
+        assert_eq!(
+            opened.manifest.command_sequence, 0,
+            "manifest remains truth"
+        );
+        let evidence: serde_json::Value = serde_json::from_slice(
+            &fs::read(project.join("journal/0000000000000001.json")).expect("journal evidence"),
+        )
+        .expect("journal JSON");
+        assert_eq!(evidence["orphaned"], true);
+        runtime.close().expect("close");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn open_reemits_pending_manifest_commit_with_exact_payload() {
+        let root = temp_test_dir("journal-behind-reconciliation");
+        let project = root.join("journal-behind.hcad");
+        ensure_project_directories(&project).expect("project directories");
+        let mut manifest =
+            initial_photolab_manifest("journal-behind".into(), "Journal behind".into(), 1);
+        manifest.command_sequence = 1;
+        manifest.autosave_generation = 1;
+        manifest.modified_unix_ms = 42;
+        let pending = reconciliation_test_entry(1);
+        atomic_write_json(&pending_journal_entry_path(&project, 1), &pending)
+            .expect("pending journal intent");
+        atomic_write_json(&project.join("manifest.json"), &manifest).expect("committed manifest");
+
+        let runtime = ProjectRuntime::default();
+        let opened = open_reconciliation_fixture(&runtime, &project, &root);
+        assert_eq!(opened.manifest.command_sequence, 1);
+        let evidence: serde_json::Value = serde_json::from_slice(
+            &fs::read(project.join("journal/0000000000000001.json")).expect("recovered journal"),
+        )
+        .expect("journal JSON");
+        assert_eq!(evidence["recovered"], true);
+        assert_eq!(evidence["sequence"], pending.sequence);
+        assert_eq!(evidence["commandKind"], pending.command_kind);
+        assert_eq!(evidence["payload"], pending.payload);
+        assert!(!pending_journal_entry_path(&project, 1).exists());
+        runtime.close().expect("close");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn open_quarantines_dataset_missing_from_manifest() {
+        let root = temp_test_dir("orphan-dataset-quarantine");
+        let project = root.join("orphan-dataset.hcad");
+        ensure_project_directories(&project).expect("project directories");
+        let manifest = initial_photolab_manifest("orphan-dataset".into(), "Orphan".into(), 1);
+        atomic_write_json(&project.join("manifest.json"), &manifest).expect("manifest");
+        let orphan = project.join("datasets/mvs/uncommitted-job");
+        fs::create_dir_all(&orphan).expect("renamed dataset fixture");
+        fs::write(orphan.join("output.bin"), b"uncommitted").expect("dataset payload");
+
+        let runtime = ProjectRuntime::default();
+        let opened = open_reconciliation_fixture(&runtime, &project, &root);
+        assert_eq!(opened.manifest.entities.len(), manifest.entities.len());
+        assert!(!orphan.exists());
+        let quarantined = fs::read_dir(project.join("tmp/orphaned/mvs"))
+            .expect("quarantine family")
+            .map(|entry| entry.expect("quarantine entry").path())
+            .find(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with("uncommitted-job-"))
+            })
+            .expect("orphan quarantine");
+        assert_eq!(
+            fs::read(quarantined.join("output.bin")).expect("payload"),
+            b"uncommitted"
+        );
+        runtime.close().expect("close");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn open_never_quarantines_manifest_referenced_dataset() {
+        let root = temp_test_dir("referenced-dataset-retained");
+        let project = root.join("referenced-dataset.hcad");
+        ensure_project_directories(&project).expect("project directories");
+        let manifest =
+            test_manifest_with_dataset_references(&project, &["datasets/raster/referenced-job"]);
+        atomic_write_json(&project.join("manifest.json"), &manifest).expect("manifest");
+        let referenced = project.join("datasets/raster/referenced-job");
+        fs::create_dir_all(&referenced).expect("referenced dataset");
+        fs::write(referenced.join("product.tif"), b"published").expect("dataset payload");
+
+        let runtime = ProjectRuntime::default();
+        open_reconciliation_fixture(&runtime, &project, &root);
+        assert_eq!(
+            fs::read(referenced.join("product.tif")).expect("retained"),
+            b"published"
+        );
+        assert!(!project.join("tmp/orphaned/raster").exists());
+        runtime.close().expect("close");
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]

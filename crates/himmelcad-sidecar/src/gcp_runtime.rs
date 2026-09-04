@@ -1339,6 +1339,8 @@ fn committed_journal(
     after_refs: Vec<ObjectHash>,
 ) -> PhotolabJournalEntry {
     PhotolabJournalEntry {
+        recovered: false,
+        orphaned: false,
         sequence: manifest.command_sequence,
         command_id: operation_id.to_owned(),
         command_kind: command_kind.to_owned(),

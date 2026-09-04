@@ -591,6 +591,8 @@ Footer
 - Status: queued
 ```
 
+Landed 2026-09-04: every mutating command commits through `commit_manifest_then_journal` — the exact journal entry is staged as a write-ahead intent, the manifest is written atomically, then the journal entry; a journal failure after the manifest marks the session for repair instead of failing the command. Open/recovery reconciliation: journal behind → the staged entry is re-emitted with `recovered: true`; journal ahead (pre-B5 stores) → the manifest wins and the entry is kept as evidence with `orphaned: true`; a legacy manifest-ahead store without intent gets an explicitly identified recovery record (the manifest stores only `command_sequence`, so payloads are never invented — Codex gap 2 accepted as the honest reading). Unreferenced `datasets/<family>/<id>` directories are quarantined to `tmp/orphaned/<family>/<id>-<unix ms>`; publication checks read manifest references, not directory existence. Windows `sync_dir` flushes a `FILE_FLAG_BACKUP_SEMANTICS` directory handle, best effort. Review closed Codex gap 1: `PhotolabJournalEntry` (core `photolab_project.rs`) gained serde-defaulted `recovered`/`orphaned` fields. Verified: sidecar 266 lib + 13 + 90 bin (57 project_runtime tests, four new reconciliation/quarantine tests), core 216; Windows cross-compile not run (registry read-only in the sandbox).
+
 ### WP-B6 — Error-swallowing cleanup (Size S)
 
 Problem. Material `let _ =` / `.ok()` sites: cancelled-checkpoint write for

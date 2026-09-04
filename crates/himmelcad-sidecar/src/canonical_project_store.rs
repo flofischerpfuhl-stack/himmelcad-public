@@ -12,6 +12,9 @@ use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
+
 use fs2::FileExt;
 use himmelcad_core::canonical_document::{
     CanonicalCommandTransaction, CanonicalDocument, CanonicalDocumentError, CanonicalJournalEntry,
@@ -1802,7 +1805,29 @@ fn sync_dir(path: &Path) -> Result<(), CanonicalProjectStoreError> {
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn sync_dir(path: &Path) -> Result<(), CanonicalProjectStoreError> {
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+
+    let directory = match OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+    {
+        Ok(directory) => directory,
+        Err(error) => {
+            // Directory handles can be denied by Windows policy or the backing filesystem.
+            // Publication remains recoverable through synchronized files, so this flush is
+            // deliberately best effort when the directory handle itself cannot be opened.
+            tracing::debug!(path = %path.display(), %error, "directory synchronization unavailable");
+            return Ok(());
+        }
+    };
+    directory.sync_all()?;
+    Ok(())
+}
+
+#[cfg(all(not(unix), not(windows)))]
 fn sync_dir(_path: &Path) -> Result<(), CanonicalProjectStoreError> {
     Ok(())
 }

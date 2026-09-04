@@ -309,6 +309,8 @@ where
     progress(0.97, "Publishing image metadata and project journal");
 
     let journal = PhotolabJournalEntry {
+        recovered: false,
+        orphaned: false,
         sequence: candidate_manifest.command_sequence,
         command_id: params.operation_id.clone(),
         command_kind: "PhotolabCommitImages".to_owned(),
