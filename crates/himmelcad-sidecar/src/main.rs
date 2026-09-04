@@ -55,7 +55,6 @@ use himmelcad_core::photolab_matching::ImageId;
 use himmelcad_core::registration::{
     IcpMode, IcpOptions, RegistrationPointPair, RegistrationRecipe, RegistrationTargetSample,
 };
-use himmelcad_core::release_05_admissions::SnapshotOriginV1;
 use himmelcad_core::transform::{Similarity3D, WorldPoint};
 use himmelcad_io::{
     canonical_builtin_import_registry, hcap_import::import_hcap_path_with_progress,
@@ -1379,12 +1378,10 @@ async fn handle(
     }
     if req.method == "app.negotiate"
         || req.method == "app.protocol"
-        || req.method == "project.flush"
-        || req.method.starts_with("snapshot.")
         || req.method.starts_with("canonical.project.")
         || req.method.starts_with("canonical.residency.")
     {
-        return handle_canonical_app_rpc(req, canonical_app, automation).await;
+        return handle_canonical_app_rpc(req, &canonical_app, &automation);
     }
 
     match req.method.as_str() {
@@ -1650,31 +1647,21 @@ async fn handle_capture_rpc(req: RpcRequest, projects: Arc<ProjectRuntime>) -> R
     }
 }
 
-async fn handle_canonical_app_rpc(
+fn handle_canonical_app_rpc(
     req: RpcRequest,
-    runtime: Arc<Mutex<CanonicalAppRuntime>>,
-    automation: Arc<AutomationRuntime>,
+    runtime: &Mutex<CanonicalAppRuntime>,
+    automation: &AutomationRuntime,
 ) -> RpcResponse {
-    let queue_flush = req.method == "snapshot.create"
-        || (req.method == "app.protocol"
-            && serde_json::from_value::<AppProtocolRequestEnvelope>(req.params.clone())
-                .is_ok_and(|envelope| {
-                    matches!(
-                        envelope.request,
-                        AppProtocolRequest::ExecuteCanonicalTransaction(_)
-                    )
-                }));
     if req.method == "app.negotiate" {
         return handle_app_negotiation(req);
     }
     if req.method == "io.formats.page" {
         return handle_io_formats_page(req);
     }
-    let runtime_owner = Arc::clone(&runtime);
     let mut runtime = runtime
         .lock()
         .expect("canonical app runtime mutex poisoned");
-    let response = match req.method.as_str() {
+    match req.method.as_str() {
         "canonical.project.open" => {
             match serde_json::from_value::<OpenCanonicalProjectParams>(req.params) {
                 Ok(params) => rpc_result(
@@ -1694,38 +1681,6 @@ async fn handle_canonical_app_rpc(
                 Ok::<_, anyhow::Error>(serde_json::json!({ "closed": closed })),
             )
         }
-        "canonical.project.durability" => rpc_result(
-            req.id,
-            runtime.durability_status().map_err(anyhow::Error::from),
-        ),
-        "project.flush" => {
-            let result = runtime
-                .flush()
-                .and_then(|_| runtime.create_snapshot("Save", SnapshotOriginV1::Ui))
-                .and_then(|_| runtime.flush())
-                .map_err(anyhow::Error::from);
-            rpc_result(req.id, result)
-        }
-        "snapshot.create" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            struct Params {
-                name: String,
-            }
-            match serde_json::from_value::<Params>(req.params) {
-                Ok(params) => rpc_result(
-                    req.id,
-                    runtime
-                        .create_snapshot(&params.name, SnapshotOriginV1::Ui)
-                        .map_err(anyhow::Error::from),
-                ),
-                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
-            }
-        }
-        "snapshot.list" => rpc_result(
-            req.id,
-            runtime.list_snapshots().map_err(anyhow::Error::from),
-        ),
         "canonical.residency.bootstrap" => rpc_result(
             req.id,
             runtime.residency_bootstrap().map_err(anyhow::Error::from),
@@ -1774,40 +1729,15 @@ async fn handle_canonical_app_rpc(
                         }
                     }
                 }
-                let response = rpc_result(
+                rpc_result(
                     req.id,
                     serde_json::to_value(runtime.dispatch(envelope)).map_err(anyhow::Error::from),
-                );
-                response
+                )
             }
             Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
         },
         _ => rpc_err(req.id, -32601, "canonical application method not found"),
-    };
-    drop(runtime);
-    if queue_flush {
-        schedule_canonical_group_flush(runtime_owner);
     }
-    response
-}
-
-fn schedule_canonical_group_flush(runtime: Arc<Mutex<CanonicalAppRuntime>>) {
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(
-            std::env::var("HCAD_JOURNAL_FLUSH_INTERVAL_MS")
-                .ok()
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(50),
-        ))
-        .await;
-        let result = runtime
-            .lock()
-            .expect("canonical app runtime mutex poisoned")
-            .flush();
-        if let Err(error) = result {
-            tracing::error!(%error, "Builder canonical journal group flush failed");
-        }
-    });
 }
 
 fn handle_app_negotiation(req: RpcRequest) -> RpcResponse {
