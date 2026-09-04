@@ -78,3 +78,7 @@ CARGO_TARGET_DIR=target/photolab setsid nohup node scripts/photolab-e2e.mjs \
 
 The run holds the machine-wide compute lease; unit tests use a per-process
 lease and are unaffected. Result: `result.json` in the output directory.
+
+## Messages pending to the Builder session (peer was offline at 13:50)
+
+- H2 landed 2ef29d5 — G17 screenshots: `.build/photolab-ui/h2-{dark,light}/00-main-view.png` (chip "2 jobs running") and `bottom-jobs.png` (Jobs tab badge, side operation with Cancel). Chip spec for S-05 convergence: one button at the right end of the status bar, 18 px, 10 px UI font, 1 px tone border (progress = accent, warning, danger with error text, success), labels "n jobs running" / "1 job running · label pct%" / "Cancelling…" / "Job failed — label" / "Job completed — label" (4 s linger), aria-label "Jobs: label", click toggles the Jobs tab. Obligation: PhotoLab adopts the shared chip + jobs island when S-05 lands. Findings for the shared side: light theme viewport toolbar contrast (active "3D" segment, axis chip); jobs list shows "overall 0%" for unknown units — render "in progress".
