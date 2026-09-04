@@ -8308,7 +8308,37 @@ impl ProjectRuntime {
         })
     }
 
+    #[cfg(test)]
     pub fn save(&self) -> Result<SaveResult> {
+        self.save_with_archive_operation(None, None)
+    }
+
+    pub fn save_with_archive_operation(
+        &self,
+        archive_operation_id: Option<&str>,
+        progress_key: Option<&str>,
+    ) -> Result<SaveResult> {
+        let archive_source = {
+            let guard = self.session.lock().expect("project session mutex poisoned");
+            let session = guard.as_ref().context("no project is open")?;
+            is_hcadx_path(&session.source_path)
+        };
+        if archive_source {
+            let (operation_id, cancellation) =
+                self.begin_archive_operation(archive_operation_id)?;
+            let result = self.save_inner(Some((&operation_id, &cancellation)), progress_key);
+            self.finish_archive_operation(&operation_id);
+            result
+        } else {
+            self.save_inner(None, None)
+        }
+    }
+
+    fn save_inner(
+        &self,
+        active_operation: Option<(&str, &CancellationToken)>,
+        progress_key: Option<&str>,
+    ) -> Result<SaveResult> {
         let mut guard = self.session.lock().expect("project session mutex poisoned");
         let session = guard.as_mut().context("no project is open")?;
         ensure_writable(session)?;
@@ -8319,7 +8349,14 @@ impl ProjectRuntime {
         )?;
         if is_hcadx_path(&session.source_path) {
             let destination = session.source_path.clone();
-            save_archive_session(session, &destination, true, false, None, None)?;
+            save_archive_session(
+                session,
+                &destination,
+                true,
+                false,
+                active_operation,
+                progress_key,
+            )?;
         } else if session.uses_local_working_copy {
             copy_project_incremental(&session.working_path, &session.source_path)?;
             let mut saved_manifest = session.manifest.clone();
@@ -12048,9 +12085,33 @@ fn save_archive_session(
     active_operation: Option<(&str, &CancellationToken)>,
     progress_key: Option<&str>,
 ) -> Result<()> {
+    save_archive_session_with_progress(
+        session,
+        destination,
+        overwrite,
+        include_rebuildable_index,
+        active_operation,
+        |operation_id, progress| {
+            emit_save_archive_progress(progress_key, operation_id, progress);
+        },
+    )
+}
+
+fn save_archive_session_with_progress<P>(
+    session: &mut ProjectSession,
+    destination: &Path,
+    overwrite: bool,
+    include_rebuildable_index: bool,
+    active_operation: Option<(&str, &CancellationToken)>,
+    mut progress: P,
+) -> Result<()>
+where
+    P: FnMut(&str, &ArchiveProgress),
+{
     let owned_cancellation = CancellationToken::new();
     let (operation_id, cancellation) =
         active_operation.unwrap_or(("archive-save", &owned_cancellation));
+    ensure_archive_not_cancelled(cancellation)?;
     let candidate = archive_candidate_path(destination)?;
     remove_path_if_exists(&candidate)?;
 
@@ -12068,7 +12129,13 @@ fn save_archive_session(
             include_rebuildable_index,
         },
         cancellation,
-        |progress| emit_archive_progress(progress_key, operation_id, &progress),
+        |archive_progress| {
+            // `Committing` here only publishes the writer's private temporary file to the
+            // candidate path. The user-visible verification phase begins after packing returns.
+            if archive_progress.phase != ArchivePhase::Committing {
+                progress(operation_id, &archive_progress);
+            }
+        },
     );
     let restore_result = atomic_write_json(
         &session.working_path.join("manifest.json"),
@@ -12083,6 +12150,23 @@ fn save_archive_session(
         remove_path_if_exists(&candidate)?;
         return Err(error).context("failed to restore live manifest after archive creation");
     }
+    if let Err(error) = ensure_archive_not_cancelled(cancellation) {
+        remove_path_if_exists(&candidate)?;
+        return Err(error);
+    }
+    let verification_progress = ArchiveProgress {
+        phase: ArchivePhase::Committing,
+        files_completed: 0,
+        files_total: 0,
+        bytes_completed: 0,
+        bytes_total: 0,
+        current_path: None,
+    };
+    progress(operation_id, &verification_progress);
+    if let Err(error) = verify_archive_candidate(&candidate, cancellation) {
+        remove_path_if_exists(&candidate)?;
+        return Err(error);
+    }
     if destination == session.source_path {
         if let Err(error) = ensure_source_unchanged(session) {
             remove_path_if_exists(&candidate)?;
@@ -12091,8 +12175,37 @@ fn save_archive_session(
             );
         }
     }
+    if let Err(error) = ensure_archive_not_cancelled(cancellation) {
+        remove_path_if_exists(&candidate)?;
+        return Err(error);
+    }
     publish_archive_candidate(&candidate, destination, overwrite)?;
     Ok(())
+}
+
+fn ensure_archive_not_cancelled(cancellation: &CancellationToken) -> Result<()> {
+    anyhow::ensure!(
+        !cancellation.is_cancel_requested(),
+        "archive operation cancelled"
+    );
+    Ok(())
+}
+
+fn verify_archive_candidate(candidate: &Path, cancellation: &CancellationToken) -> Result<()> {
+    ensure_archive_not_cancelled(cancellation)?;
+    let input = File::open(candidate)
+        .with_context(|| format!("failed to open archive candidate {}", candidate.display()))?;
+    let mut archive = zip::ZipArchive::new(BufReader::new(input))
+        .with_context(|| format!("invalid archive candidate {}", candidate.display()))?;
+    ensure_archive_not_cancelled(cancellation)?;
+    let manifest = archive
+        .by_name("manifest.json")
+        .context("archive candidate has no manifest.json")?;
+    anyhow::ensure!(
+        !manifest.is_dir(),
+        "archive candidate manifest is not a file"
+    );
+    ensure_archive_not_cancelled(cancellation)
 }
 
 fn publish_archive_candidate(candidate: &Path, destination: &Path, overwrite: bool) -> Result<()> {
@@ -12249,6 +12362,51 @@ fn emit_archive_progress(
         "archive": progress,
     });
     eprintln!("__HC_PROGRESS__{payload}");
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn emit_save_archive_progress(
+    progress_key: Option<&str>,
+    operation_id: &str,
+    progress: &ArchiveProgress,
+) {
+    let Some(progress_key) = progress_key else {
+        return;
+    };
+    let phase_fraction = if progress.bytes_total == 0 {
+        if progress.files_total == 0 {
+            1.0
+        } else {
+            progress.files_completed as f64 / progress.files_total as f64
+        }
+    } else {
+        progress.bytes_completed as f64 / progress.bytes_total as f64
+    };
+    // Save reserves the final 5% for the atomic publication that follows verification.
+    let fraction = match progress.phase {
+        ArchivePhase::Scanning => 0.05,
+        ArchivePhase::Packing => 0.1 + phase_fraction.clamp(0.0, 1.0) * 0.8,
+        ArchivePhase::Committing => 0.95,
+        ArchivePhase::Validating | ArchivePhase::Extracting => return,
+    };
+    let message = archive_save_phase_label(progress.phase);
+    let payload = serde_json::json!({
+        "progressKey": progress_key,
+        "operationId": operation_id,
+        "fraction": fraction,
+        "message": message,
+        "archive": progress,
+    });
+    eprintln!("__HC_PROGRESS__{payload}");
+}
+
+fn archive_save_phase_label(phase: ArchivePhase) -> &'static str {
+    match phase {
+        ArchivePhase::Scanning => "Packing working copy",
+        ArchivePhase::Packing => "Writing archive",
+        ArchivePhase::Committing => "Verifying archive",
+        ArchivePhase::Validating | ArchivePhase::Extracting => "Verifying archive",
+    }
 }
 
 /// Maps the two archive phase sequences onto one monotonic user-facing scale.
@@ -17301,20 +17459,29 @@ mod tests {
             .expect("snapshot before cancellation")
             .manifest;
         let cancellation = CancellationToken::new();
-        cancellation.request_cancel();
+        let mut cancelled_during_write = false;
         let error = {
             let mut guard = runtime.session.lock().expect("session mutex");
             let session = guard.as_mut().expect("open session");
-            save_archive_session(
+            save_archive_session_with_progress(
                 session,
                 &archive,
                 true,
                 false,
                 Some(("cancel-preserve", &cancellation)),
-                None,
+                |_, progress| {
+                    if progress.phase == ArchivePhase::Packing && progress.bytes_completed > 0 {
+                        cancelled_during_write = true;
+                        cancellation.request_cancel();
+                    }
+                },
             )
-            .expect_err("pre-cancelled archive must not publish")
+            .expect_err("mid-write cancellation must not publish")
         };
+        assert!(
+            cancelled_during_write,
+            "test must cancel inside the writer loop"
+        );
         assert!(error.to_string().to_lowercase().contains("cancel"));
         assert_eq!(
             fs::read(&archive).expect("archive after cancellation"),
@@ -17326,6 +17493,50 @@ mod tests {
                 .expect("snapshot after cancellation")
                 .manifest,
             manifest_before
+        );
+        runtime.close().expect("runtime must close");
+        fs::remove_dir_all(root).expect("test directory must be removable");
+    }
+
+    #[test]
+    fn archive_save_progress_phases_are_emitted_in_order() {
+        let root = temp_test_dir("project-archive-save-progress");
+        fs::create_dir_all(&root).expect("test root must exist");
+        let runtime = ProjectRuntime::default();
+        runtime
+            .create(CreateProjectParams {
+                path: path_string(&root.join("workspace.hcad")),
+                name: "Progress survey".to_owned(),
+            })
+            .expect("workspace must be created");
+        let destination = root.join("survey.hcadx");
+        let cancellation = CancellationToken::new();
+        let mut phases = Vec::new();
+        {
+            let mut guard = runtime.session.lock().expect("session mutex");
+            let session = guard.as_mut().expect("open session");
+            save_archive_session_with_progress(
+                session,
+                &destination,
+                false,
+                false,
+                Some(("progress-order", &cancellation)),
+                |_, progress| {
+                    let label = archive_save_phase_label(progress.phase);
+                    if phases.last().copied() != Some(label) {
+                        phases.push(label);
+                    }
+                },
+            )
+            .expect("archive must be written");
+        }
+        assert_eq!(
+            phases,
+            vec![
+                "Packing working copy",
+                "Writing archive",
+                "Verifying archive"
+            ]
         );
         runtime.close().expect("runtime must close");
         fs::remove_dir_all(root).expect("test directory must be removable");

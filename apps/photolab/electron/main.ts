@@ -1309,9 +1309,7 @@ function registerIpc(): void {
     }
     if (route === 'archiveSave') {
       const operation = projectArchiveOperationRequest(value);
-      emitDesktopProgress(operation.progressKey, 0.02, 'Publishing project archive');
       await callSidecar({ method: 'photolab.project.save', params: operation });
-      emitDesktopProgress(operation.progressKey, 1, 'Project archive published');
       return rememberProject(await callSidecar({ method: 'photolab.project.snapshot' }));
     }
     await callSidecar({ method: 'photolab.project.autosave' });

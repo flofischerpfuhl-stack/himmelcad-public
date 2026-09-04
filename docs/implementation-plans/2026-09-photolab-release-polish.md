@@ -1917,6 +1917,8 @@ Footer
 - Status: queued
 ```
 
+H1b landed 2026-09-04 (F01 residual): `photolab.project.save` accepts `{ archiveOperationId?, progressKey? }` (unknown fields → -32602; null/omitted stays compatible); the save registers in `active_archives` with a cancellation token, reports the phases `Packing working copy` → `Writing archive` → `Verifying archive` through the progress channel, checks cancellation before packing, inside the chunked archive writer, after packing, during verification and immediately before publication, and leaves the previous archive untouched until the atomic replacement. Electron forwards the operation identity instead of synthetic progress; the status bar shows `Archive saving… <phase>`; because H2 mirrors `active_archives` into the jobs list, the running save appears in Jobs with Cancel. Verified: sidecar 271 lib + 13 + 91 bin (cancellation + ordered-progress tests), Electron 8, renderer 85, typecheck, English UI, prettier. G17: status-bar copy reviewed textually (no mock save in the harness).
+
 ### WP-H2 (Size M, gates 3/4)
 
 Side-operation drain coverage (inspection, mask, GCP operations) + global jobs

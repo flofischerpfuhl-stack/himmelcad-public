@@ -3870,6 +3870,13 @@ export function App(): JSX.Element {
       hasArchiveCopy: projectHasArchiveCopy,
     });
     const storedPrimary = (() => {
+      if (
+        projectHasArchiveCopy &&
+        projectFileOperation?.kind === 'save' &&
+        !projectFileOperation.error
+      ) {
+        return `Archive saving… ${projectFileOperation.message}`;
+      }
       if (archiveSaveStatus?.kind === 'failed') {
         return `Archive save failed — ${archiveSaveStatus.reason}`;
       }
@@ -4008,6 +4015,7 @@ export function App(): JSX.Element {
     lastSavedGeneration,
     profile,
     projectHasArchiveCopy,
+    projectFileOperation,
     projectReady,
     sceneNavigationMode,
     snap,

@@ -210,6 +210,15 @@ struct RpcError {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SavePhotolabProjectParams {
+    #[serde(default)]
+    archive_operation_id: Option<String>,
+    #[serde(default)]
+    progress_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct OpenCanonicalProjectParams {
     project_root: PathBuf,
 }
@@ -3410,7 +3419,24 @@ async fn handle_project_rpc(
             .await
         }
         "photolab.project.autosave" => rpc_blocking(req.id, move || projects.autosave()).await,
-        "photolab.project.save" => rpc_blocking(req.id, move || projects.save()).await,
+        "photolab.project.save" => {
+            let params = if req.params.is_null() {
+                serde_json::json!({})
+            } else {
+                req.params
+            };
+            rpc_blocking_with_params::<SavePhotolabProjectParams, _, _>(
+                req.id,
+                params,
+                move |params| {
+                    projects.save_with_archive_operation(
+                        params.archive_operation_id.as_deref(),
+                        params.progress_key.as_deref(),
+                    )
+                },
+            )
+            .await
+        }
         "photolab.project.saveAs" => {
             rpc_blocking_with_params::<SaveProjectAsParams, _, _>(
                 req.id,
