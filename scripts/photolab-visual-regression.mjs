@@ -424,6 +424,10 @@ async function auditViewport(browserInstance, viewport) {
     await page.getByRole('tab', { name: tabName, exact: true }).first().click();
     await capture(`ribbon-${slug(tabName)}`);
     for (const action of actions) {
+      // The keyboard walk of the previous surface may have left the ribbon on
+      // another tab (automatic activation); return to this tab first.
+      const ribbonTab = page.getByRole('tab', { name: tabName, exact: true }).first();
+      if ((await ribbonTab.getAttribute('aria-selected')) !== 'true') await ribbonTab.click();
       const button = page.getByRole('button', { name: action, exact: true }).first();
       if ((await button.count()) === 0) {
         issues.push(`${tabName}: missing ribbon action ${action}`);
@@ -776,9 +780,8 @@ async function auditKeyboardReachability(page, viewport, surface, priorSignature
     if (initial)
       focused.set(initial.id, { step: 0, visibleFocusIndicator: initial.visibleFocusIndicator });
   }
-  for (let step = 0; step < prepared.maxSteps; step += 1) {
-    await page.keyboard.press('Tab');
-    const state = await page.evaluate(() => {
+  const readFocusState = () =>
+    page.evaluate(() => {
       const element = document.activeElement;
       if (!(element instanceof HTMLElement)) return null;
       const cssPath = (node) => {
@@ -799,10 +802,12 @@ async function auditKeyboardReachability(page, viewport, surface, priorSignature
         return parts.join(' > ') || element.tagName.toLowerCase();
       };
       const id = element.getAttribute('data-photolab-a11y-target');
+      const role = element.getAttribute('role');
       const style = getComputedStyle(element);
       const baseline = id ? window.__photolabA11yKeyboard?.baselines[id] : null;
       return {
         id,
+        role,
         selector: cssPath(element),
         name:
           element.getAttribute('aria-label') ??
@@ -815,15 +820,66 @@ async function auditKeyboardReachability(page, viewport, surface, priorSignature
         ),
       };
     });
-    if (!state) continue;
-    if (seenFocusOrder.has(state.selector)) break;
-    seenFocusOrder.add(state.selector);
+  const record = (state) => {
     focusedChain.push(state);
     if (state.id)
       focused.set(state.id, {
         visibleFocusIndicator:
           (focused.get(state.id)?.visibleFocusIndicator ?? false) || state.visibleFocusIndicator,
       });
+  };
+  // WAI-ARIA tablists keep one tab in the Tab order (roving tabindex); the
+  // sibling tabs are reached with ArrowRight, so walk them from any focused tab.
+  const walkedTablists = new Set();
+  const arrowWalkTablist = async (origin) => {
+    if (!origin || origin.role !== 'tab') return;
+    // One walk per tablist and surface: mark the selected tab (automatic
+    // activation moves the panel with the arrows, so the walk must end on it)
+    // and count the tabs so the arrow loop is bounded by the real tab count.
+    const tablist = await page.evaluate((selector) => {
+      const element = document.querySelector(selector);
+      const list = element?.closest('[role="tablist"]');
+      if (!(list instanceof HTMLElement)) return null;
+      const tabs = [...list.querySelectorAll('[role="tab"]')];
+      const key = list.getAttribute('aria-label') ?? list.id ?? tabs.map((tab) => tab.id).join('|');
+      const selected = tabs.find((tab) => tab.getAttribute('aria-selected') === 'true');
+      if (selected instanceof HTMLElement) selected.setAttribute('data-a11y-walk-return', '1');
+      return { key, count: tabs.length, hasSelected: selected instanceof HTMLElement };
+    }, origin.selector);
+    if (!tablist || walkedTablists.has(tablist.key)) return;
+    walkedTablists.add(tablist.key);
+    await page.keyboard.press('Home');
+    let previous = null;
+    for (let hop = 0; hop < tablist.count; hop += 1) {
+      const state = await readFocusState();
+      if (!state || state.role !== 'tab' || state.selector === previous) break;
+      record(state);
+      previous = state.selector;
+      if (hop < tablist.count - 1) await page.keyboard.press('ArrowRight');
+    }
+    if (!tablist.hasSelected) return;
+    await page.keyboard.press('Home');
+    for (let hop = 0; hop < tablist.count; hop += 1) {
+      const back = await page.evaluate(() => {
+        const element = document.activeElement;
+        if (!(element instanceof HTMLElement) || !element.hasAttribute('data-a11y-walk-return'))
+          return false;
+        element.removeAttribute('data-a11y-walk-return');
+        return true;
+      });
+      if (back) break;
+      await page.keyboard.press('ArrowRight');
+    }
+  };
+  await arrowWalkTablist(await readFocusState());
+  for (let step = 0; step < prepared.maxSteps; step += 1) {
+    await page.keyboard.press('Tab');
+    const state = await readFocusState();
+    if (!state) continue;
+    if (seenFocusOrder.has(state.selector)) break;
+    seenFocusOrder.add(state.selector);
+    record(state);
+    await arrowWalkTablist(state);
   }
 
   const summarize = (group) => {
