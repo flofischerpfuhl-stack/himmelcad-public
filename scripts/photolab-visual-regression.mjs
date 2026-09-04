@@ -384,6 +384,12 @@ async function auditViewport(browserInstance, viewport) {
     // G17 light-theme captures use the product's own theme control (status bar).
     await page.getByRole('button', { name: 'Light', exact: true }).click();
     await page.waitForFunction(() => document.documentElement.classList.contains('hc-theme-light'));
+    const themeProbe = await page.evaluate(() => ({
+      classes: document.documentElement.className,
+      island: getComputedStyle(document.body).getPropertyValue('--hc-bg-island').trim(),
+      bodyBackground: getComputedStyle(document.body).backgroundColor,
+    }));
+    process.stderr.write(`[visual ${viewport.name}] theme probe ${JSON.stringify(themeProbe)}\n`);
   }
   const mainAudit = await capture('00-main-view');
   const viewTab = mainAudit.selectedTabs.find((tab) => tab.label === 'View');

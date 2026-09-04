@@ -287,12 +287,10 @@ export function ProductPanel({
             <Resolution configuration={configuration} setConfiguration={setConfiguration} />
             {configuration.surface === 'dtm' && (
               <>
-                <Field label="Ground classification">
-                  <span className={styles.readonly}>
-                    Ground points are classified with a morphological filter (SMRF); DSM uses all
-                    points.
-                  </span>
-                </Field>
+                <p className={styles.help}>
+                  Ground points are classified with a morphological filter (SMRF); DSM uses all
+                  points.
+                </p>
                 <NumberField
                   label="Ground cell size [m]"
                   value={configuration.cellSizeM}
@@ -302,7 +300,7 @@ export function ProductPanel({
                   onChange={(value) => setConfiguration({ ...configuration, cellSizeM: value })}
                 />
                 <NumberField
-                  label="Terrain slope"
+                  label="Terrain slope [m/m]"
                   value={configuration.slope}
                   min={0.001}
                   max={1}
