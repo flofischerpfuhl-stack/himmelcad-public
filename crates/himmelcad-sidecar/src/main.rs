@@ -7804,6 +7804,7 @@ fn prepare_mesh_job(
                 // an explicitly chosen DEM is frozen by entity id.
                 source_dem_entity_id: source_dem_entity_id.clone(),
                 source_artifact_sha256: None,
+                degenerate_faces_dropped: None,
             };
             (
                 Some(dem_root),
@@ -7847,6 +7848,7 @@ fn prepare_mesh_job(
                 dense_run_id: Some(dense_record.job_id.clone()),
                 source_dem_entity_id: None,
                 source_artifact_sha256: Some(dense.sha256.clone()),
+                degenerate_faces_dropped: None,
             };
             (
                 None,
@@ -7913,6 +7915,7 @@ fn run_mesh_job(
     if let Some(parent) = staging.parent() {
         std::fs::create_dir_all(parent).map_err(|error| worker_error("io", &error.to_string()))?;
     }
+    let mut degenerate_faces_dropped: Option<u64> = None;
     let result = match prepared.mesh_source {
         himmelcad_core::photolab_products::MeshSource::Dem => build_tiled_dem_mesh(
             prepared
@@ -7974,13 +7977,23 @@ fn run_mesh_job(
                         metrics: ProgressMetrics::empty(),
                     })
                     .map_err(JobWorkerError::from)?;
-                build_prepared_triangle_mesh_from_ply(
-                    &mesh_ply,
-                    &staging,
-                    PreparedTriangleMeshOptions::default(),
-                    &context.cancellation,
-                )
-                .map_err(|error| worker_error("meshPreparation", &error.to_string()))
+                let report =
+                    himmelcad_sidecar::prepared_triangle_mesh_ply::build_prepared_triangle_mesh_from_generated_ply(
+                        &mesh_ply,
+                        &staging,
+                        PreparedTriangleMeshOptions::default(),
+                        &context.cancellation,
+                    )
+                    .map_err(|error| worker_error("meshPreparation", &error.to_string()))?;
+                if report.degenerate_faces_dropped > 0 {
+                    tracing::info!(
+                        operation_id = %prepared.operation_id,
+                        dropped = report.degenerate_faces_dropped,
+                        "dropped zero-area faces from the Poisson mesh before tiling"
+                    );
+                }
+                degenerate_faces_dropped = Some(report.degenerate_faces_dropped);
+                Ok(report.prepared)
             })();
             let cleanup = std::fs::remove_dir_all(&candidate);
             match (dense_result, cleanup) {
@@ -7991,6 +8004,8 @@ fn run_mesh_job(
         }
     };
     context.check_cancelled()?;
+    let mut provenance = prepared.provenance.clone();
+    provenance.degenerate_faces_dropped = degenerate_faces_dropped;
     publisher
         .publish_mesh_product(
             &prepared.operation_id,
@@ -7998,7 +8013,7 @@ fn run_mesh_job(
             result,
             prepared.textured,
             &prepared.lineage,
-            prepared.provenance.clone(),
+            provenance,
             &context.cancellation,
         )
         .map_err(|error| map_project_publish_error(error, &context.cancellation))?;

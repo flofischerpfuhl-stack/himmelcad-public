@@ -213,6 +213,59 @@ pub fn build_prepared_triangle_mesh_from_ply(
 }
 
 /// Reads COLMAP's `mesh.ply` plus `texture.png` directory contract and feeds
+/// Result of preparing a mesh that PhotoLab generated itself (WP-A3 stage 1).
+#[derive(Debug)]
+pub struct GeneratedMeshReport {
+    pub prepared: PreparedMeshProduct,
+    /// Zero-area faces removed before tiling. Poisson reconstruction emits
+    /// them routinely; the shared producer rightly refuses them as
+    /// authoritative topology, so a generated mesh is cleaned first.
+    pub degenerate_faces_dropped: u64,
+}
+
+/// Prepares a PhotoLab-generated (untextured) PLY, dropping zero-area faces.
+///
+/// Only meshes this product computed itself go through this path; imported or
+/// authoritative meshes keep the strict `build_prepared_triangle_mesh_from_ply`.
+pub fn build_prepared_triangle_mesh_from_generated_ply(
+    source: &Path,
+    output_root: &Path,
+    options: PreparedTriangleMeshOptions,
+    cancellation: &CancellationToken,
+) -> Result<GeneratedMeshReport, PreparedTriangleMeshError> {
+    let (stream, texture_file) = parse_ply_to_disk(source, cancellation)?;
+    if stream.textured || texture_file.is_some() {
+        return Err(invalid("generated mesh PLY must not carry texture data"));
+    }
+    let dropped = std::cell::Cell::new(0_u64);
+    let filtered = stream.filter(|item| match item {
+        Ok(triangle) if is_zero_area(triangle) => {
+            dropped.set(dropped.get() + 1);
+            false
+        }
+        _ => true,
+    });
+    let prepared = build_prepared_triangle_mesh(filtered, output_root, options, cancellation)?;
+    Ok(GeneratedMeshReport {
+        prepared,
+        degenerate_faces_dropped: dropped.get(),
+    })
+}
+
+/// Same criterion as the shared producer's rejection: an exactly zero cross
+/// product (repeated vertices or collinear corners).
+fn is_zero_area(triangle: &TriangleRecord) -> bool {
+    let [a, b, c] = triangle.positions;
+    let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    let cross = [
+        ab[1] * ac[2] - ab[2] * ac[1],
+        ab[2] * ac[0] - ab[0] * ac[2],
+        ab[0] * ac[1] - ab[1] * ac[0],
+    ];
+    cross.iter().all(|value| *value == 0.0)
+}
+
 /// its exact per-face-corner UVs into the shared prepared-mesh producer.
 pub fn build_prepared_triangle_mesh_from_colmap_textured_directory(
     source_root: &Path,
@@ -753,7 +806,7 @@ mod tests {
 
     use super::{
         build_prepared_triangle_mesh_from_colmap_textured_directory,
-        build_prepared_triangle_mesh_from_ply,
+        build_prepared_triangle_mesh_from_generated_ply, build_prepared_triangle_mesh_from_ply,
     };
     use crate::prepared_triangle_mesh::PreparedTriangleMeshOptions;
 
@@ -790,6 +843,34 @@ mod tests {
         .expect("valid reordered PLY");
         assert_eq!(product.triangle_count, 2);
         assert!(product.preparation_descriptor_resource.is_some());
+    }
+
+    #[test]
+    fn generated_ply_drops_zero_area_faces_and_reports_them() {
+        let root = TestDirectory::new();
+        let source = root.0.join("poisson.ply");
+        fs::write(
+            &source,
+            b"ply\nformat ascii 1.0\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\nelement face 4\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n3 0 1 2\n3 1 3 2\n3 0 0 1\n3 0 1 1\n",
+        )
+        .unwrap();
+        let report = build_prepared_triangle_mesh_from_generated_ply(
+            &source,
+            &root.0.join("prepared"),
+            PreparedTriangleMeshOptions::default(),
+            &CancellationToken::new(),
+        )
+        .expect("generated mesh with degenerate faces");
+        assert_eq!(report.degenerate_faces_dropped, 2);
+        assert_eq!(report.prepared.triangle_count, 2);
+        // The strict adapter keeps refusing the same file.
+        assert!(build_prepared_triangle_mesh_from_ply(
+            &source,
+            &root.0.join("prepared-strict"),
+            PreparedTriangleMeshOptions::default(),
+            &CancellationToken::new(),
+        )
+        .is_err());
     }
 
     #[test]

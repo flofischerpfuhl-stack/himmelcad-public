@@ -908,6 +908,9 @@ pub struct MeshProvenance {
     pub source_dem_entity_id: Option<EntityId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_artifact_sha256: Option<ObjectHash>,
+    /// Zero-area faces removed from a generated (Poisson) mesh before tiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub degenerate_faces_dropped: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
