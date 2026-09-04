@@ -231,6 +231,7 @@ pub fn build_prepared_triangle_mesh_from_generated_ply(
     source: &Path,
     output_root: &Path,
     options: PreparedTriangleMeshOptions,
+    origin: [f64; 3],
     cancellation: &CancellationToken,
 ) -> Result<GeneratedMeshReport, PreparedTriangleMeshError> {
     let (stream, texture_file) = parse_ply_to_disk(source, cancellation)?;
@@ -238,13 +239,26 @@ pub fn build_prepared_triangle_mesh_from_generated_ply(
         return Err(invalid("generated mesh PLY must not carry texture data"));
     }
     let dropped = std::cell::Cell::new(0_u64);
-    let filtered = stream.filter(|item| match item {
-        Ok(triangle) if is_zero_area(triangle) => {
-            dropped.set(dropped.get() + 1);
-            false
-        }
-        _ => true,
-    });
+    // The mesher worked in a local frame (see dense_raster_prep::write_dense_local_frame_ply);
+    // restore world coordinates in f64 before the producer sees the triangles.
+    let filtered = stream
+        .map(move |item| {
+            item.map(|mut triangle| {
+                for position in &mut triangle.positions {
+                    position[0] += origin[0];
+                    position[1] += origin[1];
+                    position[2] += origin[2];
+                }
+                triangle
+            })
+        })
+        .filter(|item| match item {
+            Ok(triangle) if is_zero_area(triangle) => {
+                dropped.set(dropped.get() + 1);
+                false
+            }
+            _ => true,
+        });
     let prepared = build_prepared_triangle_mesh(filtered, output_root, options, cancellation)?;
     Ok(GeneratedMeshReport {
         prepared,
@@ -858,6 +872,7 @@ mod tests {
             &source,
             &root.0.join("prepared"),
             PreparedTriangleMeshOptions::default(),
+            [4_375_000.0, 5_281_000.0, 700.0],
             &CancellationToken::new(),
         )
         .expect("generated mesh with degenerate faces");

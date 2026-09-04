@@ -55,6 +55,7 @@ use himmelcad_core::photolab_matching::ImageId;
 use himmelcad_core::registration::{
     IcpMode, IcpOptions, RegistrationPointPair, RegistrationRecipe, RegistrationTargetSample,
 };
+use himmelcad_core::release_05_admissions::SnapshotOriginV1;
 use himmelcad_core::transform::{Similarity3D, WorldPoint};
 use himmelcad_io::{
     canonical_builtin_import_registry, hcap_import::import_hcap_path_with_progress,
@@ -1378,10 +1379,12 @@ async fn handle(
     }
     if req.method == "app.negotiate"
         || req.method == "app.protocol"
+        || req.method == "project.flush"
+        || req.method.starts_with("snapshot.")
         || req.method.starts_with("canonical.project.")
         || req.method.starts_with("canonical.residency.")
     {
-        return handle_canonical_app_rpc(req, &canonical_app, &automation);
+        return handle_canonical_app_rpc(req, canonical_app, automation).await;
     }
 
     match req.method.as_str() {
@@ -1647,21 +1650,31 @@ async fn handle_capture_rpc(req: RpcRequest, projects: Arc<ProjectRuntime>) -> R
     }
 }
 
-fn handle_canonical_app_rpc(
+async fn handle_canonical_app_rpc(
     req: RpcRequest,
-    runtime: &Mutex<CanonicalAppRuntime>,
-    automation: &AutomationRuntime,
+    runtime: Arc<Mutex<CanonicalAppRuntime>>,
+    automation: Arc<AutomationRuntime>,
 ) -> RpcResponse {
+    let queue_flush = req.method == "snapshot.create"
+        || (req.method == "app.protocol"
+            && serde_json::from_value::<AppProtocolRequestEnvelope>(req.params.clone())
+                .is_ok_and(|envelope| {
+                    matches!(
+                        envelope.request,
+                        AppProtocolRequest::ExecuteCanonicalTransaction(_)
+                    )
+                }));
     if req.method == "app.negotiate" {
         return handle_app_negotiation(req);
     }
     if req.method == "io.formats.page" {
         return handle_io_formats_page(req);
     }
+    let runtime_owner = Arc::clone(&runtime);
     let mut runtime = runtime
         .lock()
         .expect("canonical app runtime mutex poisoned");
-    match req.method.as_str() {
+    let response = match req.method.as_str() {
         "canonical.project.open" => {
             match serde_json::from_value::<OpenCanonicalProjectParams>(req.params) {
                 Ok(params) => rpc_result(
@@ -1681,6 +1694,38 @@ fn handle_canonical_app_rpc(
                 Ok::<_, anyhow::Error>(serde_json::json!({ "closed": closed })),
             )
         }
+        "canonical.project.durability" => rpc_result(
+            req.id,
+            runtime.durability_status().map_err(anyhow::Error::from),
+        ),
+        "project.flush" => {
+            let result = runtime
+                .flush()
+                .and_then(|_| runtime.create_snapshot("Save", SnapshotOriginV1::Ui))
+                .and_then(|_| runtime.flush())
+                .map_err(anyhow::Error::from);
+            rpc_result(req.id, result)
+        }
+        "snapshot.create" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Params {
+                name: String,
+            }
+            match serde_json::from_value::<Params>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    runtime
+                        .create_snapshot(&params.name, SnapshotOriginV1::Ui)
+                        .map_err(anyhow::Error::from),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        "snapshot.list" => rpc_result(
+            req.id,
+            runtime.list_snapshots().map_err(anyhow::Error::from),
+        ),
         "canonical.residency.bootstrap" => rpc_result(
             req.id,
             runtime.residency_bootstrap().map_err(anyhow::Error::from),
@@ -1729,15 +1774,40 @@ fn handle_canonical_app_rpc(
                         }
                     }
                 }
-                rpc_result(
+                let response = rpc_result(
                     req.id,
                     serde_json::to_value(runtime.dispatch(envelope)).map_err(anyhow::Error::from),
-                )
+                );
+                response
             }
             Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
         },
         _ => rpc_err(req.id, -32601, "canonical application method not found"),
+    };
+    drop(runtime);
+    if queue_flush {
+        schedule_canonical_group_flush(runtime_owner);
     }
+    response
+}
+
+fn schedule_canonical_group_flush(runtime: Arc<Mutex<CanonicalAppRuntime>>) {
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(
+            std::env::var("HCAD_JOURNAL_FLUSH_INTERVAL_MS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(50),
+        ))
+        .await;
+        let result = runtime
+            .lock()
+            .expect("canonical app runtime mutex poisoned")
+            .flush();
+        if let Err(error) = result {
+            tracing::error!(%error, "Builder canonical journal group flush failed");
+        }
+    });
 }
 
 fn handle_app_negotiation(req: RpcRequest) -> RpcResponse {
@@ -7947,7 +8017,19 @@ fn run_mesh_job(
             std::fs::create_dir_all(&candidate)
                 .map_err(|error| worker_error("io", &error.to_string()))?;
             let mesh_ply = candidate.join("mesh.ply");
+            let local_ply = candidate.join("local.ply");
             let dense_result = (|| {
+                // COLMAP meshes in float32: work in a local frame and restore
+                // world coordinates when the mesh is tiled.
+                let origin = himmelcad_sidecar::dense_raster_prep::write_dense_local_frame_ply(
+                    prepared
+                        .dense_ply
+                        .as_deref()
+                        .expect("dense mesh freezes a fused cloud"),
+                    &local_ply,
+                    &context.cancellation,
+                )
+                .map_err(map_dense_prep_error)?;
                 himmelcad_sidecar::colmap_runtime::run_colmap_mesher(
                     &himmelcad_sidecar::colmap_runtime::ColmapMeshRequest {
                         executable: prepared
@@ -7955,10 +8037,7 @@ fn run_mesh_job(
                             .clone()
                             .expect("dense mesh freezes a COLMAP executable"),
                         project_root: prepared.project_root.clone(),
-                        input_path: prepared
-                            .dense_ply
-                            .clone()
-                            .expect("dense mesh freezes a fused cloud"),
+                        input_path: local_ply.clone(),
                         output_path: mesh_ply.clone(),
                         mesher: himmelcad_sidecar::colmap_runtime::ColmapMesher::Poisson,
                     },
@@ -7982,6 +8061,7 @@ fn run_mesh_job(
                         &mesh_ply,
                         &staging,
                         PreparedTriangleMeshOptions::default(),
+                        origin,
                         &context.cancellation,
                     )
                     .map_err(|error| worker_error("meshPreparation", &error.to_string()))?;

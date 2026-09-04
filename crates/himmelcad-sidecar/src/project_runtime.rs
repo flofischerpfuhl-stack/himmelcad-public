@@ -1432,7 +1432,10 @@ fn package_prepared_mesh_dataset(
         dataset_id: format!("prepared-mesh-{}", render_resource.object_hash.as_str()),
         format_id: render_resource.media_type.clone(),
         entity_id: entity_id.0.clone(),
-        representation_slot: "primary".to_owned(),
+        // Must equal the admission slot (`canonical_prepared_mesh_contract`),
+        // as the raster path does; "primary" never matched and no mesh package
+        // had been published before the WP-A3 smoke.
+        representation_slot: "source".to_owned(),
         root_metadata: render_resource.clone(),
         artifacts,
     };

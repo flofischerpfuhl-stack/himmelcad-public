@@ -41,6 +41,9 @@ struct PlyVertexLayout {
     green: Option<usize>,
     blue: Option<usize>,
     confidence: Option<usize>,
+    nx: Option<usize>,
+    ny: Option<usize>,
+    nz: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -150,6 +153,84 @@ pub fn prepare_dense_vector_with_classification(
 }
 
 /// Reads dense PLY coordinates in immutable vertex order for classification.
+/// Writes a float32 copy of a dense PLY in a local frame (WP-A3).
+///
+/// COLMAP's meshers read and write float32 coordinates; in a projected CRS
+/// (eastings around 4.4e6 m) float32 has ~0.25 m resolution, which collapses
+/// neighbouring points and yields zero-area faces. The copy keeps colours and
+/// normals when present and returns the origin (per-axis floor of the minimum)
+/// that must be added back to every output vertex.
+pub fn write_dense_local_frame_ply(
+    dense_ply: &Path,
+    output: &Path,
+    cancellation: &CancellationToken,
+) -> Result<[f64; 3], DenseRasterPrepError> {
+    let (vertex_count, data_offset, layout, _, _) = inspect_ply(dense_ply, cancellation)?;
+    let count = usize::try_from(vertex_count).map_err(|_| {
+        DenseRasterPrepError::InvalidPly("vertex count does not fit address space".into())
+    })?;
+    let mut reader = BufReader::with_capacity(8 * 1024 * 1024, File::open(dense_ply)?);
+    std::io::Seek::seek(&mut reader, std::io::SeekFrom::Start(data_offset))?;
+    let mut record = vec![0_u8; layout.stride];
+    let mut minimum = [f64::INFINITY; 3];
+    for index in 0..count {
+        if index % CLASSIFICATION_CHUNK_POINTS == 0 && cancellation.is_cancel_requested() {
+            return Err(DenseRasterPrepError::Cancelled);
+        }
+        reader.read_exact(&mut record)?;
+        let [x, y, z] = read_coordinates(&record, layout)?;
+        minimum = [minimum[0].min(x), minimum[1].min(y), minimum[2].min(z)];
+    }
+    if count == 0 || minimum.iter().any(|value| !value.is_finite()) {
+        return Err(DenseRasterPrepError::InvalidPly(
+            "dense cloud has no finite coordinates".into(),
+        ));
+    }
+    let origin = [minimum[0].floor(), minimum[1].floor(), minimum[2].floor()];
+    let has_color = layout.red.is_some() && layout.green.is_some() && layout.blue.is_some();
+    let has_normals = layout.nx.is_some() && layout.ny.is_some() && layout.nz.is_some();
+    let mut header = String::from("ply\nformat binary_little_endian 1.0\n");
+    header.push_str(&format!(
+        "comment himmelcad local frame origin {} {} {}\n",
+        origin[0], origin[1], origin[2]
+    ));
+    header.push_str(&format!("element vertex {count}\n"));
+    header.push_str("property float x\nproperty float y\nproperty float z\n");
+    if has_color {
+        header.push_str("property uchar red\nproperty uchar green\nproperty uchar blue\n");
+    }
+    if has_normals {
+        header.push_str("property float nx\nproperty float ny\nproperty float nz\n");
+    }
+    header.push_str("end_header\n");
+    let mut writer = BufWriter::with_capacity(8 * 1024 * 1024, File::create(output)?);
+    writer.write_all(header.as_bytes())?;
+    std::io::Seek::seek(&mut reader, std::io::SeekFrom::Start(data_offset))?;
+    for index in 0..count {
+        if index % CLASSIFICATION_CHUNK_POINTS == 0 && cancellation.is_cancel_requested() {
+            return Err(DenseRasterPrepError::Cancelled);
+        }
+        reader.read_exact(&mut record)?;
+        let [x, y, z] = read_coordinates(&record, layout)?;
+        for value in [x - origin[0], y - origin[1], z - origin[2]] {
+            writer.write_all(&(value as f32).to_le_bytes())?;
+        }
+        if has_color {
+            for offset in [layout.red, layout.green, layout.blue] {
+                writer.write_all(&[record[offset.unwrap_or(0)]])?;
+            }
+        }
+        if has_normals {
+            for offset in [layout.nx, layout.ny, layout.nz] {
+                writer.write_all(&record[offset.unwrap_or(0)..offset.unwrap_or(0) + 4])?;
+            }
+        }
+    }
+    writer.flush()?;
+    writer.get_ref().sync_all()?;
+    Ok(origin)
+}
+
 pub fn read_dense_points(
     path: &Path,
     cancellation: &CancellationToken,
@@ -987,6 +1068,9 @@ fn ply_vertex_layout(header: &str) -> Result<PlyVertexLayout, DenseRasterPrepErr
     let mut green = None;
     let mut blue = None;
     let mut confidence = None;
+    let mut nx = None;
+    let mut ny = None;
+    let mut nz = None;
     for line in header.lines().map(str::trim) {
         if line.starts_with("element vertex ") {
             in_vertex = true;
@@ -1042,6 +1126,9 @@ fn ply_vertex_layout(header: &str) -> Result<PlyVertexLayout, DenseRasterPrepErr
             "green" if matches!(*scalar, "uchar" | "uint8") => green = Some(stride),
             "blue" if matches!(*scalar, "uchar" | "uint8") => blue = Some(stride),
             "confidence" if matches!(*scalar, "float" | "float32") => confidence = Some(stride),
+            "nx" if matches!(*scalar, "float" | "float32") => nx = Some(stride),
+            "ny" if matches!(*scalar, "float" | "float32") => ny = Some(stride),
+            "nz" if matches!(*scalar, "float" | "float32") => nz = Some(stride),
             _ => {}
         }
         stride = stride
@@ -1060,6 +1147,9 @@ fn ply_vertex_layout(header: &str) -> Result<PlyVertexLayout, DenseRasterPrepErr
         green,
         blue,
         confidence,
+        nx,
+        ny,
+        nz,
     })
 }
 
