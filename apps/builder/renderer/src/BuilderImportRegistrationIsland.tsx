@@ -36,6 +36,7 @@ interface StagedResidency {
 type Placement = NonNullable<CanonicalRepresentationAdmission['entity']['placement']>;
 
 export function BuilderImportRegistrationIsland({
+  jobId,
   sourcePath,
   projectLabel,
   session,
@@ -43,6 +44,7 @@ export function BuilderImportRegistrationIsland({
   onCommitted,
   onClose,
 }: {
+  readonly jobId: string;
   readonly sourcePath: string;
   readonly projectLabel: string;
   readonly session: BuilderCanonicalProjectSession;
@@ -74,6 +76,19 @@ export function BuilderImportRegistrationIsland({
   const sourceViewport = useRef<BuilderKernelViewportHandle | null>(null);
   const projectViewport = useRef<BuilderKernelViewportHandle | null>(null);
   const stagedResidency = useRef<StagedResidency | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void window.himmelcad?.sidecar
+      .call<ImportRegistrationState>('registration.session.state', { sessionId: jobId })
+      .then((restored) => {
+        if (active) setState(restored);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [jobId]);
 
   useEffect(() => {
     let active = true;
@@ -210,6 +225,14 @@ export function BuilderImportRegistrationIsland({
     setSemanticLosses([]);
     setPendingRecipe(recipe);
     setPendingProviderOptions(providerOptions);
+    if ((await window.himmelcad?.jobs.get(jobId))?.state === 'needs-input') {
+      await window.himmelcad?.jobs.respond(jobId);
+    }
+    await window.himmelcad?.jobs.update(jobId, {
+      phase: 'Preparing import',
+      progressKey: jobId,
+      cancellation: { cancellable: true },
+    });
     if (backgroundOperation) {
       logEvent('info', 'renderer', `Import running in background: ${fileLabel(sourcePath)}`);
       onBackgroundStateChange(true);
@@ -219,6 +242,7 @@ export function BuilderImportRegistrationIsland({
         sourcePath,
         recipe,
         withAcceptedLossCodes(providerOptions, acceptedLossCodes),
+        jobId,
       );
       if (recipe.method.kind === 'sourceCoordinates') {
         if (stagedState.phase !== 'readyToCommit' || stagedState.preview?.accepted !== true) {
@@ -227,6 +251,7 @@ export function BuilderImportRegistrationIsland({
         await session.commitRegisteredImport(stagedState.sessionId);
         await window.himmelcad?.stagedRegistration.revoke(stagedState.sessionId);
         await onCommitted();
+        await window.himmelcad?.jobs.complete(jobId, `Import committed: ${fileLabel(sourcePath)}`);
         logEvent(
           'info',
           'renderer',
@@ -239,11 +264,13 @@ export function BuilderImportRegistrationIsland({
       setPairs([]);
       setPendingSource(null);
       setPreparedSourceSamples([]);
+      await window.himmelcad?.jobs.needsInput(jobId, 'Registration input required');
     } catch (error: unknown) {
       const message = errorMessage(error);
       const losses = explicitSemanticLosses(message);
       if (losses.length > 0) {
         setSemanticLosses(losses);
+        await window.himmelcad?.jobs.needsInput(jobId, 'Waiting for semantic-loss confirmation');
         if (backgroundOperation) {
           logEvent(
             'warn',
@@ -253,6 +280,9 @@ export function BuilderImportRegistrationIsland({
         }
       } else {
         setOperationError(message);
+        const job = await window.himmelcad?.jobs.get(jobId);
+        if (job?.state === 'cancelling') await window.himmelcad?.jobs.cancelled(jobId);
+        else await window.himmelcad?.jobs.fail(jobId, message);
         if (backgroundOperation) {
           logEvent(
             'error',
@@ -271,6 +301,7 @@ export function BuilderImportRegistrationIsland({
       await window.himmelcad?.stagedRegistration.revoke(state.sessionId);
       await session.cancelRegisteredImport(state.sessionId);
     }
+    await window.himmelcad?.jobs.cancelled(jobId);
     onClose();
   };
   const requestPick = (side: 'source' | 'target'): void => {
@@ -345,11 +376,20 @@ export function BuilderImportRegistrationIsland({
     setBusy(true);
     setOperationError(null);
     logEvent('info', 'renderer', `Import commit running in background: ${fileLabel(sourcePath)}`);
+    await window.himmelcad?.jobs.update(jobId, {
+      phase: 'Publishing one atomic journal entry',
+      cancellation: {
+        cancellable: false,
+        reason: 'Publishing one atomic journal entry',
+        atNextSafeBoundary: true,
+      },
+    });
     onBackgroundStateChange(true);
     try {
       await session.commitRegisteredImport(state.sessionId);
       await window.himmelcad?.stagedRegistration.revoke(state.sessionId);
       await onCommitted();
+      await window.himmelcad?.jobs.complete(jobId, `Import committed: ${fileLabel(sourcePath)}`);
       logEvent(
         'info',
         'renderer',
@@ -359,6 +399,9 @@ export function BuilderImportRegistrationIsland({
     } catch (error: unknown) {
       const message = errorMessage(error);
       setOperationError(message);
+      const job = await window.himmelcad?.jobs.get(jobId);
+      if (job?.state === 'cancelling') await window.himmelcad?.jobs.cancelled(jobId);
+      else await window.himmelcad?.jobs.fail(jobId, message);
       logEvent(
         'error',
         'renderer',

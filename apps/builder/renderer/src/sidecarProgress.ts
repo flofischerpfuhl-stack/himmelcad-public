@@ -9,9 +9,8 @@ export interface SidecarProgress {
 export function parseSidecarProgress(line: string): SidecarProgress | null {
   const index = line.indexOf(SIDECAR_PROGRESS_PREFIX);
   if (index < 0) return null;
-  const raw = line.slice(index + SIDECAR_PROGRESS_PREFIX.length).trim();
   try {
-    const parsed = JSON.parse(raw) as {
+    const parsed = JSON.parse(line.slice(index + SIDECAR_PROGRESS_PREFIX.length).trim()) as {
       progressKey?: unknown;
       fraction?: unknown;
       message?: unknown;

@@ -47,7 +47,7 @@
 .propertiesEmpty strong,
 .propertySummary strong {
   color: var(--hc-fg-strong);
-  font-size: 12px;
+  font: 500 13px/1.3 var(--hc-font-ui);
 }
 
 .propertiesEmpty span,
@@ -127,6 +127,12 @@
   border-color: var(--hc-selection-border);
   outline: none;
   box-shadow: 0 0 0 1px var(--hc-selection-border);
+}
+
+.propertyEditor input::placeholder {
+  color: var(--hc-fg-muted);
+  font-style: italic;
+  opacity: 1;
 }
 
 .propertyEditor button:not(:disabled) {

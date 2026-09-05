@@ -1,4 +1,6 @@
 import type {
+  AppJob,
+  JobEvent,
   PropertyAssignment,
   PropertyQueryResult,
   PropertyQueryRow,
@@ -8,18 +10,45 @@ import type {
   ScreenshotRequestV1,
   ViewStateV1,
 } from '@himmelcad/app';
-import { encodeRgbaScreenshot, parseViewState, validateScreenshotRequest } from '@himmelcad/app';
-import { Console, consoleStore, logEvent } from '@himmelcad/console';
+import {
+  JOB_CHIP_DEBOUNCE_MS,
+  JOB_COMPLETED_RETENTION_MS,
+  JobMirror,
+  LocalStorageSelectionPersistence,
+  SELECTION_COMMAND_TABLE,
+  SelectionStore,
+  commandById,
+  dispatchRegistryShortcut,
+  encodeRgbaScreenshot,
+  executeSelectionCommand,
+  parseViewState,
+  validateScreenshotRequest,
+  type CommandContext,
+  type CommandInvocation,
+} from '@himmelcad/app';
+import { Console, consoleStore, logEvent, runConsoleCommand } from '@himmelcad/console';
 import { ManagedAgentChat, ManagedAutomationApproval } from '@himmelcad/agent';
-import type { EntityId, ProjectSnapshot, SnapResult } from '@himmelcad/data';
+import type { EntityId, EntityKind, ProjectSnapshot, SnapResult } from '@himmelcad/data';
 import {
   AppShell,
+  Button,
+  DurabilityIndicator,
   EntityTree,
+  EntityCommandMenu,
   FunctionPanel,
+  JobsIsland,
+  JobsStatusChip,
   PanelToggles,
+  QuickCommandSurface,
   Ribbon,
+  MixedPropertyMarker,
+  SelectionCandidateIndicator,
+  SelectionPropertiesSummary,
   StatusBar,
+  Toast,
+  ToastRegion,
   TitleBar,
+  installEscapeLadder,
   useLayoutStore,
   type WindowControls,
 } from '@himmelcad/ui';
@@ -34,7 +63,15 @@ import {
   type KernelClipVolume,
   type KernelWorldCamera,
 } from '@himmelcad/viewer/kernel';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 
 import builderLogoUrl from '../../build/mark.png';
 
@@ -47,7 +84,11 @@ import {
 import { FloatingTaskIsland } from './FloatingTaskIsland.js';
 import { PlanIsland } from './PlanIsland.js';
 import { SpecsIsland } from './SpecsIsland.js';
-import { BuilderCanonicalProjectSession } from './project.js';
+import {
+  BuilderCanonicalProjectSession,
+  startDurabilityPolling,
+  type BuilderDurabilityStatus,
+} from './project.js';
 import { ribbonTabs } from './ribbon.js';
 import { parseSidecarProgress } from './sidecarProgress.js';
 
@@ -66,8 +107,22 @@ interface BuilderResidencyBootstrap {
 }
 
 export function App(): JSX.Element {
+  useEffect(() => installEscapeLadder(window), []);
   const [project, setProject] = useState<ProjectSnapshot | null>(null);
-  const [selected, setSelected] = useState<ReadonlySet<EntityId>>(new Set());
+  const selectionStoreRef = useRef<SelectionStore | null>(null);
+  if (!selectionStoreRef.current) {
+    selectionStoreRef.current = new SelectionStore({
+      persistence: new LocalStorageSelectionPersistence(window.localStorage),
+      onRecovery: (message) => logEvent('warn', 'renderer', message),
+    });
+  }
+  const selectionStore = selectionStoreRef.current;
+  const selection = useSyncExternalStore(
+    selectionStore.subscribe,
+    selectionStore.getSnapshot,
+    selectionStore.getSnapshot,
+  );
+  const selected = selection.selectedEntityIds as ReadonlySet<EntityId>;
   const [navigationMode, setNavigationMode] = useState<'3d' | '2d' | '2.5d'>('3d');
   const [snap, setSnap] = useState<SnapResult | null>(null);
   const [pointSize, setPointSize] = useState(DEFAULT_POINT_SIZE);
@@ -81,12 +136,31 @@ export function App(): JSX.Element {
   const [specsOpen, setSpecsOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
-  const [registrationSourcePaths, setRegistrationSourcePaths] = useState<readonly string[]>([]);
-  const registrationSourcePath = registrationSourcePaths[0] ?? null;
-  const [backgroundedRegistrationPath, setBackgroundedRegistrationPath] = useState<string | null>(
+  const [jobsOpen, setJobsOpen] = useState(false);
+  const [jobToasts, setJobToasts] = useState<readonly AppJob[]>([]);
+  const [jobClock, setJobClock] = useState(() => Date.now());
+  const [durability, setDurability] = useState<BuilderDurabilityStatus | null>(null);
+  const [durabilityFailureToast, setDurabilityFailureToast] = useState(false);
+  const [registrationItems, setRegistrationItems] = useState<
+    readonly { readonly jobId: string; readonly sourcePath: string }[]
+  >([]);
+  const [foregroundRegistrationJobId, setForegroundRegistrationJobId] = useState<string | null>(
+    null,
+  );
+  const registrationItem =
+    registrationItems.find((item) => item.jobId === foregroundRegistrationJobId) ??
+    registrationItems[0] ??
+    null;
+  const registrationSourcePath = registrationItem?.sourcePath ?? null;
+  const [backgroundedRegistrationJobId, setBackgroundedRegistrationJobId] = useState<string | null>(
     null,
   );
   const [rightPanelTab, setRightPanelTab] = useState<'function' | 'properties'>('function');
+  const [commandSurface, setCommandSurface] = useState<{
+    readonly kind: 'entity' | 'void';
+    readonly x: number;
+    readonly y: number;
+  } | null>(null);
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() =>
     document.documentElement.classList.contains('hc-theme-light') ? 'light' : 'dark',
   );
@@ -99,6 +173,19 @@ export function App(): JSX.Element {
   const initialMixedSceneStartedRef = useRef(false);
   const canonicalSessionRef = useRef<BuilderCanonicalProjectSession | null>(null);
   const canonicalReadyRef = useRef<Promise<BuilderCanonicalProjectSession> | null>(null);
+  const durabilityRecoveryReportedRef = useRef(false);
+  const jobMirrorRef = useRef<JobMirror | null>(null);
+  const executeRegistryCommandRef = useRef<
+    (invocation: CommandInvocation) => void | Promise<void>
+  >(() => undefined);
+  if (!jobMirrorRef.current && window.himmelcad) {
+    jobMirrorRef.current = new JobMirror(window.himmelcad.jobs);
+  }
+  const jobs = useSyncExternalStore(
+    jobMirrorRef.current?.subscribe ?? (() => () => undefined),
+    jobMirrorRef.current?.snapshot ?? (() => []),
+    () => [],
+  );
   const entityGroupsRef = useRef({
     cloud: [] as EntityId[],
     ifc: [] as EntityId[],
@@ -114,6 +201,77 @@ export function App(): JSX.Element {
   projectRef.current = project;
   navigationModeRef.current = navigationMode;
   const selectedEntityKey = useMemo(() => [...selected].sort().join('\u0000'), [selected]);
+
+  useEffect(() => {
+    const mirror = jobMirrorRef.current;
+    if (!mirror) return;
+    let unmount: (() => void) | undefined;
+    void mirror.mount().then((off) => {
+      unmount = off;
+      setRegistrationItems(
+        mirror
+          .snapshot()
+          .filter(
+            (job) =>
+              job.owner === 'builder.import' &&
+              job.state !== 'completed' &&
+              job.state !== 'failed' &&
+              job.state !== 'cancelled',
+          )
+          .flatMap((job) =>
+            typeof job.context?.sourcePath === 'string'
+              ? [{ jobId: job.id, sourcePath: job.context.sourcePath }]
+              : [],
+          ),
+      );
+    });
+    return () => unmount?.();
+  }, []);
+
+  useEffect(() => {
+    const candidates = jobs
+      .filter(
+        (job) =>
+          job.owner === 'builder.import' &&
+          job.state !== 'completed' &&
+          job.state !== 'failed' &&
+          job.state !== 'cancelled',
+      )
+      .flatMap((job) =>
+        typeof job.context?.sourcePath === 'string'
+          ? [{ jobId: job.id, sourcePath: job.context.sourcePath }]
+          : [],
+      );
+    setRegistrationItems((current) => [
+      ...current,
+      ...candidates.filter((candidate) => !current.some((item) => item.jobId === candidate.jobId)),
+    ]);
+  }, [jobs]);
+
+  useEffect(() => {
+    if (jobs.length === 0) return;
+    const timer = window.setInterval(() => setJobClock(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [jobs]);
+
+  useEffect(() => {
+    const api = window.himmelcad;
+    if (!api) return;
+    return api.jobs.onEvent((event: JobEvent) => {
+      if (event.kind !== 'completed' && event.kind !== 'failed' && event.kind !== 'cancelled')
+        return;
+      const job = event.job;
+      setJobToasts((current) => [...current.filter((item) => item.id !== job.id), job]);
+      const duration = ((job.finishedAtUnixMs! - job.createdAtUnixMs) / 1_000).toFixed(1);
+      logEvent(
+        event.kind === 'failed' ? 'error' : event.kind === 'cancelled' ? 'warn' : 'info',
+        'renderer',
+        event.kind === 'failed'
+          ? `${job.label} failed after ${duration} s; canonical project remains unchanged: ${job.error}`
+          : `${job.label} ${event.kind} · ${duration} s`,
+      );
+    });
+  }, []);
 
   useEffect(() => {
     document.documentElement.classList.toggle('hc-theme-dark', themeMode === 'dark');
@@ -142,6 +300,47 @@ export function App(): JSX.Element {
         if (!captureRect) throw new Error('Builder viewport has no capture rectangle.');
         return { captureRect };
       }
+      const registryEntry = commandById(method);
+      if (registryEntry?.surfaces.automation) {
+        await executeRegistryCommandRef.current({
+          id: registryEntry.id,
+          args: [],
+          source: 'automation',
+          payload: params,
+        });
+        return { schemaId: 'hcad.command-result@1', payload: { commandId: registryEntry.id } };
+      }
+      if (method.startsWith('select.') || method.startsWith('selection.history.')) {
+        if (!(method in SELECTION_COMMAND_TABLE)) {
+          throw new Error(`Unsupported selection method: ${method}`);
+        }
+        return executeSelectionCommand(
+          selectionStore,
+          method as Parameters<typeof executeSelectionCommand>[1],
+          params,
+        );
+      }
+      if (method === 'view.diagnostics.get') return viewport.diagnosticsSnapshot();
+      if (method === 'view.diagnostics.sample') {
+        const envelope = params as {
+          readonly schemaId?: unknown;
+          readonly payload?: { readonly durationMs?: unknown; readonly lastFrames?: unknown };
+        };
+        if (envelope.schemaId !== 'hcad.view-diagnostics-sample-request@1') {
+          throw new TypeError('view.diagnostics.sample requires the S-01 request envelope');
+        }
+        const request = envelope.payload ?? {};
+        if (typeof request.durationMs !== 'number') {
+          throw new TypeError('view.diagnostics.sample requires numeric durationMs');
+        }
+        return Object.freeze({
+          schemaId: 'hcad.view-diagnostics-sample-result@1',
+          payload: await viewport.sampleDiagnostics({
+            durationMs: request.durationMs,
+            ...(typeof request.lastFrames === 'number' ? { lastFrames: request.lastFrames } : {}),
+          }),
+        });
+      }
       if (method === 'view.state.get') return currentBuilderViewState();
       if (method !== 'view.state.set') throw new Error(`Unsupported view host method: ${method}`);
       const state = parseViewState(params);
@@ -155,11 +354,15 @@ export function App(): JSX.Element {
         if (!nextHidden.has(id)) {
           const visible = projectRef.current?.entities[id]?.visibility.visible ?? true;
           viewport.setEntityVisibility([id], visible);
+          selectionStore.entitiesHidden([id], !visible);
         }
       }
-      for (const id of nextHidden) viewport.setEntityVisibility([id], false);
+      for (const id of nextHidden) {
+        viewport.setEntityVisibility([id], false);
+        selectionStore.entitiesHidden([id], true);
+      }
       automationHiddenRef.current = nextHidden;
-      setSelected(new Set(state.selectedEntityIds as readonly EntityId[]));
+      selectionStore.replace(state.selectedEntityIds);
       const volumes = state.scopedClips.filter((clip) => clip.enabled).map(scopedClipVolume);
       viewport.setAutomationClipVolumes(volumes);
       automationClipsRef.current = state.scopedClips;
@@ -191,7 +394,7 @@ export function App(): JSX.Element {
         },
       };
     }
-  }, []);
+  }, [selectionStore]);
 
   const ensureCanonicalProject = useCallback(async (): Promise<BuilderCanonicalProjectSession> => {
     if (canonicalSessionRef.current) return canonicalSessionRef.current;
@@ -203,7 +406,16 @@ export function App(): JSX.Element {
       const projectRoot = await api.canonicalProject.defaultRoot();
       const session = await BuilderCanonicalProjectSession.open(projectRoot, api.sidecar.call);
       canonicalSessionRef.current = session;
-      setProject(session.projectSnapshot());
+      const snapshot = session.projectSnapshot();
+      await selectionStore.openProject(
+        snapshot.projectId,
+        new Set(Object.keys(snapshot.entities)),
+        (entityId) => snapshot.entities[entityId]?.kind,
+        Object.values(snapshot.entities)
+          .filter((entity) => !entity.visibility.visible)
+          .map((entity) => entity.id),
+      );
+      setProject(snapshot);
       logEvent('info', 'renderer', `Canonical project opened: ${projectRoot}`);
       const viewport = viewportRef.current;
       if (!viewport) throw new Error('viewer bridge is not ready for canonical residency');
@@ -227,21 +439,23 @@ export function App(): JSX.Element {
       canonicalReadyRef.current = null;
       throw error;
     }
-  }, []);
+  }, [selectionStore]);
 
   const reloadCanonicalResidency = useCallback(async (): Promise<void> => {
     const session = canonicalSessionRef.current;
     const viewport = viewportRef.current;
     const api = window.himmelcad;
     if (!session || !viewport || !api) return;
-    setProject(await session.refresh());
+    const refreshed = await session.refresh();
+    pruneRemovedSelection(selectionStore, projectRef.current, refreshed);
+    setProject(refreshed);
     const restored = await restoreCanonicalResidency(
       viewport,
       await api.canonicalProject.residencyBootstrap(),
     );
     entityGroupsRef.current.cloud = restored.clouds;
     entityGroupsRef.current.ifc = restored.inlineMeshes;
-  }, []);
+  }, [selectionStore]);
 
   useEffect(() => {
     logEvent('info', 'renderer', 'Builder renderer mounted');
@@ -278,6 +492,65 @@ export function App(): JSX.Element {
     });
   }, [ensureCanonicalProject]);
 
+  const flushProject = useCallback(async (): Promise<void> => {
+    try {
+      setDurability((current) => ({
+        state: 'storing',
+        visibleGeneration: current?.visibleGeneration ?? 0,
+        durableGeneration: current?.durableGeneration ?? 0,
+        acknowledgedAtMs: current?.acknowledgedAtMs ?? 0,
+        pendingCount: current?.pendingCount ?? 1,
+        reason: null,
+        recoveredTailCount: current?.recoveredTailCount ?? 0,
+      }));
+      const status = await (await ensureCanonicalProject()).flushAndSnapshot();
+      setDurability(status);
+      setDurabilityFailureToast(false);
+      logEvent(
+        'info',
+        'renderer',
+        `All changes stored · ${new Date(status.acknowledgedAtMs).toLocaleTimeString()}`,
+      );
+    } catch (error: unknown) {
+      const reason = error instanceof Error ? error.message : String(error);
+      setDurability((current) => ({
+        state: 'failed',
+        visibleGeneration: current?.visibleGeneration ?? 0,
+        durableGeneration: current?.durableGeneration ?? 0,
+        acknowledgedAtMs: current?.acknowledgedAtMs ?? 0,
+        pendingCount: current?.pendingCount ?? 1,
+        reason,
+        recoveredTailCount: current?.recoveredTailCount ?? 0,
+      }));
+      setDurabilityFailureToast(true);
+      logEvent('error', 'renderer', `Changes are not stored: ${reason}`);
+    }
+  }, [ensureCanonicalProject]);
+
+  useEffect(() => {
+    return startDurabilityPolling(
+      async () => {
+      const session = canonicalSessionRef.current;
+        if (!session) throw new Error('canonical project is opening');
+        return session.durabilityStatus();
+      },
+      (status) => {
+        setDurability(status);
+        if (status.state === 'failed') setDurabilityFailureToast(true);
+        if (status.recoveredTailCount > 0 && !durabilityRecoveryReportedRef.current) {
+          durabilityRecoveryReportedRef.current = true;
+          logEvent(
+            'warn',
+            'renderer',
+            `Recovered ${status.recoveredTailCount} journal append(s) from an interrupted flush`,
+          );
+        }
+      },
+      () => undefined,
+      25,
+    );
+  }, [project?.projectId]);
+
   useEffect(() => {
     let syncing = false;
     let reportedError = false;
@@ -287,7 +560,10 @@ export function App(): JSX.Element {
       void ensureCanonicalProject()
         .then((session) => session.catchUp())
         .then((nextProject) => {
-          if (nextProject) setProject(nextProject);
+          if (nextProject) {
+            pruneRemovedSelection(selectionStore, projectRef.current, nextProject);
+            setProject(nextProject);
+          }
           reportedError = false;
         })
         .catch((error: unknown) => {
@@ -301,7 +577,7 @@ export function App(): JSX.Element {
         });
     }, 1_500);
     return () => window.clearInterval(timer);
-  }, [ensureCanonicalProject]);
+  }, [ensureCanonicalProject, selectionStore]);
 
   useEffect(() => {
     if (initialImportStartedRef.current) return;
@@ -321,7 +597,8 @@ export function App(): JSX.Element {
         const paths = await api.dev.initialPointCloudPaths();
         if (paths.length === 0) return;
         logEvent('info', 'renderer', `Loading development point cloud: ${paths[0] ?? ''}`);
-        setRegistrationSourcePaths((current) => [...current, ...paths]);
+        const items = await registerImportJobs(api, paths);
+        setRegistrationItems((current) => [...current, ...items]);
       })
       .catch((error: unknown) => {
         logEvent('error', 'renderer', `Development point-cloud import failed: ${String(error)}`);
@@ -344,7 +621,8 @@ export function App(): JSX.Element {
             'renderer',
             `Development IFC awaits registration: ${developmentIfcPath}`,
           );
-          setRegistrationSourcePaths((current) => [...current, developmentIfcPath]);
+          const items = await registerImportJobs(api, [developmentIfcPath]);
+          setRegistrationItems((current) => [...current, ...items]);
         }
         if (scene.orthophoto) {
           const [a, d, b, e, c, f] = scene.orthophoto.worldFile;
@@ -418,7 +696,8 @@ export function App(): JSX.Element {
             .map((value) => value.replace(/^\./, ''));
           const paths = await api.dialog.openImport(extensions);
           if (paths.length > 0) {
-            setRegistrationSourcePaths((current) => [...current, ...paths]);
+            const items = await registerImportJobs(api, paths);
+            setRegistrationItems((current) => [...current, ...items]);
           }
         } catch (error: unknown) {
           logEvent('error', 'renderer', `Import selection failed: ${String(error)}`);
@@ -446,9 +725,11 @@ export function App(): JSX.Element {
     } else if (id === 'automation.agent') {
       setAgentOpen(true);
       closeFunction(id);
+    } else if (id === 'project.flush' || id === 'project.save') {
+      void flushProject().finally(() => closeFunction(id));
     }
     // Other ribbon actions only highlight + show their function panel for now.
-  }, [activeFunctionId, closeFunction, ensureCanonicalProject, viewingBox]);
+  }, [activeFunctionId, closeFunction, ensureCanonicalProject, flushProject, viewingBox]);
 
   useEffect(() => {
     if (activeFunctionId !== 'view.viewing-box') setPlacingViewingBoxCenter(false);
@@ -517,20 +798,9 @@ export function App(): JSX.Element {
   );
 
   const onSelect = (id: EntityId, mode: 'replace' | 'add' | 'toggle') => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (mode === 'replace') {
-        next.clear();
-        next.add(id);
-      } else if (mode === 'add') {
-        next.add(id);
-      } else if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
+    if (mode === 'replace') selectionStore.replace([id]);
+    else if (mode === 'toggle') selectionStore.toggle(id);
+    else selectionStore.replace([...selected, id]);
   };
 
   const onVisibilityChange = useCallback(
@@ -542,6 +812,8 @@ export function App(): JSX.Element {
           ? [...groups.cloud, ...groups.ifc, ...groups.orthophoto, ...groups.mesh]
           : [id];
       viewportRef.current?.setEntityVisibility(entityIds, visible);
+      selectionStore.entitiesHidden(entityIds, !visible);
+      selectionStore.invalidateCandidates('permissionChange');
       setProject((previous) => {
         if (!previous) return previous;
         const entity = previous.entities[id];
@@ -555,10 +827,117 @@ export function App(): JSX.Element {
         };
       });
     },
-    [project],
+    [project, selectionStore],
   );
 
-  const onCommand = useCallback(
+  const commandContext = useMemo<CommandContext>(() => {
+    const entities = [...selected].flatMap((id) => {
+      const entity = project?.entities[id];
+      return entity ? [entity] : [];
+    });
+    const visibility = entities.every((entity) => entity.visibility.visible)
+      ? 'visible'
+      : entities.every((entity) => !entity.visibility.visible)
+        ? 'hidden'
+        : 'mixed';
+    return {
+      hasProject: project !== null,
+      selectedEntityIds: [...selected],
+      selectedEntityKinds: entities.map((entity) => commandEntityKind(entity.kind)),
+      selectionVisibility: visibility,
+      selectionEditable: entities.every((entity) => !entity.visibility.locked),
+      selectionExportable:
+        entities.length > 0 && entities.every((entity) => isCommandExportable(entity.kind)),
+      clipboardAdmissible: false,
+      candidates: selection.candidates?.items ?? [],
+    };
+  }, [project, selected, selection.candidates]);
+
+  const executeRegistryCommand = useCallback(
+    async (invocation: CommandInvocation): Promise<void> => {
+      const ids = selectedRef.current;
+      switch (invocation.id) {
+        case 'select.set': {
+          const envelope = invocation.payload as
+            | { readonly entityIds?: readonly string[]; readonly payload?: { readonly entityIds?: readonly string[] } }
+            | undefined;
+          const next = envelope?.entityIds ?? envelope?.payload?.entityIds ?? invocation.args;
+          selectionStore.replace(next);
+          return;
+        }
+        case 'select.clear':
+          selectionStore.clear();
+          return;
+        case 'view.frame':
+        case 'entity.zoom_to':
+          viewportRef.current?.frameAll();
+          return;
+        case 'view.preset.top':
+          setNavigationMode('2d');
+          await viewportRef.current?.setViewMode('2d');
+          return;
+        case 'view.preset.front':
+        case 'view.preset.right':
+        case 'view.preset.isometric':
+          setNavigationMode('3d');
+          await viewportRef.current?.setViewMode('3d');
+          return;
+        case 'entity.hide':
+          for (const id of ids) onVisibilityChange(id, false);
+          return;
+        case 'entity.show':
+          for (const id of ids) onVisibilityChange(id, true);
+          return;
+        case 'entity.isolate': {
+          const current = projectRef.current;
+          if (!current) return;
+          for (const entity of Object.values(current.entities)) {
+            if (entity.id !== current.rootEntity) onVisibilityChange(entity.id, ids.has(entity.id));
+          }
+          return;
+        }
+        case 'entity.properties':
+          setRightPanelTab('properties');
+          return;
+        case 'project.flush':
+          await flushProject();
+          return;
+        case 'entity.rename':
+        case 'entity.export':
+        case 'edit.clipboard.paste_in_place':
+          activate(invocation.id);
+          return;
+      }
+    },
+    [activate, flushProject, onVisibilityChange, selectionStore],
+  );
+  executeRegistryCommandRef.current = executeRegistryCommand;
+
+  const registryConsoleCommand = useCallback(
+    (raw: string): void => {
+      void runConsoleCommand(raw, commandContext, executeRegistryCommand).then(
+        (result) => {
+          if (result.kind === 'help') {
+            for (const line of result.lines) logEvent('info', 'renderer', line);
+          }
+        },
+        (error: unknown) =>
+          logEvent('warn', 'renderer', error instanceof Error ? error.message : String(error)),
+      );
+    },
+    [commandContext, executeRegistryCommand],
+  );
+
+  useEffect(() => {
+    const routeShortcut = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || isTypingTarget(event.target)) return;
+      dispatchRegistryShortcut(event, commandContext, executeRegistryCommand);
+    };
+    window.addEventListener('keydown', routeShortcut);
+    return () => window.removeEventListener('keydown', routeShortcut);
+  }, [commandContext, executeRegistryCommand]);
+
+  const legacyCommand = useCallback(
     (raw: string) => {
       const trimmed = raw.trim();
       if (!trimmed) return;
@@ -572,7 +951,7 @@ export function App(): JSX.Element {
             source: 'renderer',
             timestamp: Date.now(),
             message:
-              'commands: help · clear · import · view.frame · view.point-size <px> · view.3d · view.2.5d · view.2d · view.clip.horizontal <z> · view.clip.vertical-x <x> · view.clip.vertical-y <y> · view.clip.clear · view.opacity <group> <0..1> · view.exaggeration <group> <factor> · ribbon.<id>',
+              'commands: help · clear · import · jobs.list · jobs.get <id> · jobs.cancel <id> · jobs.respond <id> · view.frame · view.point-size <px> · view.3d · view.2.5d · view.2d · view.clip.horizontal <z> · view.clip.vertical-x <x> · view.clip.vertical-y <y> · view.clip.clear · view.opacity <group> <0..1> · view.exaggeration <group> <factor> · ribbon.<id>',
           });
           return;
         case 'clear':
@@ -593,9 +972,44 @@ export function App(): JSX.Element {
               .map((value) => value.replace(/^\./, ''));
             const paths = rest.length > 0 ? rest : await api.dialog.openImport(extensions);
             if (paths.length === 0) return;
-            setRegistrationSourcePaths((current) => [...current, ...paths]);
+            const items = await registerImportJobs(api, paths);
+            setRegistrationItems((current) => [...current, ...items]);
           })();
           return;
+        case 'jobs':
+        case 'jobs.list':
+          void window.himmelcad?.jobs.list().then((listed) => {
+            logEvent(
+              'info',
+              'renderer',
+              listed.length === 0
+                ? 'No jobs'
+                : listed.map((job) => `${job.id} · ${job.state} · ${job.label}`).join('\n'),
+            );
+          });
+          return;
+        case 'jobs.get':
+          if (!rest[0]) {
+            logEvent('warn', 'renderer', 'jobs.get requires a job id');
+            return;
+          }
+          void window.himmelcad?.jobs
+            .get(rest[0])
+            .then((job) => logEvent('info', 'renderer', `${job.id} · ${job.state} · ${job.phase}`));
+          return;
+        case 'jobs.cancel':
+        case 'jobs.respond': {
+          const id = rest[0];
+          if (!id) {
+            logEvent('warn', 'renderer', `${head_} requires a job id`);
+            return;
+          }
+          const operation = head_.toLowerCase() === 'jobs.cancel' ? 'cancel' : 'respond';
+          void window.himmelcad?.jobs[operation](id).catch((error: unknown) =>
+            logEvent('error', 'renderer', `${head_} failed: ${String(error)}`),
+          );
+          return;
+        }
         case 'view.frame':
           viewportRef.current?.frameAll();
           return;
@@ -678,15 +1092,47 @@ export function App(): JSX.Element {
     [activate, ensureCanonicalProject],
   );
 
+  const registerImports = useCallback(async (paths: readonly string[]): Promise<void> => {
+    const api = window.himmelcad;
+    if (!api) return;
+    const items = await registerImportJobs(api, paths);
+    setRegistrationItems((current) => [...current, ...items]);
+  }, []);
+
   const statusItems = useMemo(
     () => [
-      { id: 'tool', content: activeFunctionId ?? 'Idle', align: 'left' as const },
-      { id: 'sel', content: `Selected: ${selected.size}`, align: 'left' as const },
       {
-        id: 'imp',
-        content: registrationSourcePath ? 'Registering import…' : 'Idle',
+        id: 'durability',
+        content: (
+          <DurabilityIndicator
+            state={
+              durability?.state === 'failed'
+                ? { kind: 'failed', reason: durability.reason ?? 'Storage failed' }
+                : durability?.state === 'stored'
+                  ? { kind: 'stored' }
+                  : { kind: 'storing' }
+            }
+            onRetry={() => void flushProject()}
+          />
+        ),
         align: 'left' as const,
       },
+      { id: 'tool', content: activeFunctionId ?? 'Idle', align: 'left' as const },
+      { id: 'sel', content: `Selected: ${selected.size}`, align: 'left' as const },
+      ...(selection.candidates
+        ? [
+            {
+              id: 'selection-candidates',
+              content: (
+                <SelectionCandidateIndicator
+                  index={selection.candidates.index}
+                  count={selection.candidates.items.length}
+                />
+              ),
+              align: 'left' as const,
+            },
+          ]
+        : []),
       {
         id: 'pc',
         content: `Clouds: ${
@@ -720,13 +1166,29 @@ export function App(): JSX.Element {
         align: 'right' as const,
       },
       { id: 'panels', content: <PanelToggles />, align: 'right' as const },
+      {
+        id: 'jobs',
+        content: (
+          <JobsStatusChip
+            jobs={jobs}
+            now={jobClock}
+            debounceMs={JOB_CHIP_DEBOUNCE_MS}
+            onClick={() => setJobsOpen((open) => !open)}
+          />
+        ),
+        align: 'right' as const,
+      },
     ],
     [
       activeFunctionId,
+      durability,
+      flushProject,
       pointSize,
       project?.entities,
-      registrationSourcePath,
+      jobClock,
+      jobs,
       selected.size,
+      selection.candidates,
       snap,
       themeMode,
     ],
@@ -743,6 +1205,7 @@ export function App(): JSX.Element {
       onMaximizeChange: (cb) => api.window.onMaximizeChange(cb),
     };
   }, []);
+  void legacyCommand;
 
   return (
     <>
@@ -772,15 +1235,22 @@ export function App(): JSX.Element {
         rightPanel={
           <FunctionPanel
             activeFunctionId={activeFunctionId}
+            closeFunctionTabs
+            onCloseFunction={closeFunction}
             title={functionTitle(activeFunctionId)}
             activeTab={rightPanelTab}
             onActiveTabChange={setRightPanelTab}
             propertiesTitle={
-              selected.size === 1 ? project?.entities[[...selected][0]!]?.name : undefined
+              selected.size > 1
+                ? `${selected.size} selected`
+                : selected.size === 1
+                  ? project?.entities[[...selected][0]!]?.name
+                  : undefined
             }
             properties={
               <BuilderPropertiesPanel
                 selectedCount={selected.size}
+                perKind={selectionKindCounts(selected, project)}
                 query={propertyQuery}
                 loading={propertyQueryLoading}
                 editing={propertyEditing}
@@ -801,13 +1271,50 @@ export function App(): JSX.Element {
           </FunctionPanel>
         }
         bottomPanel={
-          <Console defaultLevel="info" onCommand={onCommand} onCollapse={toggleBottom} />
+          <Console defaultLevel="info" onCommand={registryConsoleCommand} onCollapse={toggleBottom} />
         }
         viewport={
           <BuilderKernelViewport
             ref={viewportRef}
             pointSize={pointSize}
             onCursorSnap={setSnap}
+            selectedEntityIds={selected}
+            onSelectEntity={(id, mode) => {
+              const kind = projectRef.current?.entities[id]?.kind;
+              if (kind === 'PointCloud' || kind === 'GaussianSplatCloud') return;
+              onSelect(id, mode);
+            }}
+            onClearSelection={() => selectionStore.clear()}
+            isEntityClickPickable={(id) => {
+              const entity = projectRef.current?.entities[id];
+              return Boolean(entity?.visibility.visible);
+            }}
+            isEntitySelectionHighlightable={(id) => {
+              const kind = projectRef.current?.entities[id]?.kind;
+              return kind !== 'PointCloud' && kind !== 'GaussianSplatCloud';
+            }}
+            onCandidateSet={(candidates, index) =>
+              selectionStore.setCandidates(
+                candidates.map((candidate) => {
+                  const entityId = candidate.address.entityId as EntityId;
+                  const entity = projectRef.current?.entities[entityId];
+                  return {
+                    entityId,
+                    name: entity?.name ?? entityId,
+                    kind: entity?.kind ?? 'Object',
+                  };
+                }),
+                index,
+              )
+            }
+            onCandidateSetClear={() => selectionStore.invalidateCandidates('viewportBlur')}
+            onContextSurface={(candidate, position) => {
+              if (candidate) selectionStore.replace([candidate.address.entityId as EntityId]);
+              setCommandSurface({ kind: candidate ? 'entity' : 'void', ...position });
+            }}
+            onRegistryShortcut={(event) =>
+              void dispatchRegistryShortcut(event, commandContext, executeRegistryCommand)
+            }
             viewingBox={viewingBox}
             placingViewingBoxCenter={placingViewingBoxCenter}
             onViewportPoint={(position) => {
@@ -830,7 +1337,7 @@ export function App(): JSX.Element {
               setPlacingViewingBoxCenter(false);
             }}
             onViewingBoxChange={setViewingBox}
-            onDropFiles={(paths) => setRegistrationSourcePaths((current) => [...current, ...paths])}
+            onDropFiles={(paths) => void registerImports(paths)}
             onLog={(level, message) => logEvent(level, 'renderer', message)}
           />
         }
@@ -859,29 +1366,133 @@ export function App(): JSX.Element {
           />
         </FloatingTaskIsland>
       ) : null}
+      {jobsOpen && window.himmelcad ? (
+        <FloatingTaskIsland onRequestClose={() => setJobsOpen(false)}>
+          <JobsIsland
+            jobs={jobs}
+            now={jobClock}
+            completedRetentionMs={JOB_COMPLETED_RETENTION_MS}
+            onCancel={(id) => void window.himmelcad?.jobs.cancel(id)}
+            onRespond={(id) => {
+              void window.himmelcad?.jobs.respond(id).then((job) => {
+                const sourcePath = job.context?.sourcePath;
+                if (typeof sourcePath !== 'string') return;
+                setRegistrationItems((current) => [
+                  { jobId: job.id, sourcePath },
+                  ...current.filter((item) => item.jobId !== job.id),
+                ]);
+                setForegroundRegistrationJobId(job.id);
+                setJobsOpen(false);
+              });
+            }}
+            onClearFinished={() => void window.himmelcad?.jobs.clearFinished()}
+          />
+        </FloatingTaskIsland>
+      ) : null}
       {registrationSourcePath && canonicalSessionRef.current ? (
         <FloatingTaskIsland
           modal
-          hidden={backgroundedRegistrationPath === registrationSourcePath}
+          hidden={
+            backgroundedRegistrationJobId === registrationItem!.jobId ||
+            jobs.find((job) => job.id === registrationItem!.jobId)?.state === 'running' ||
+            jobs.find((job) => job.id === registrationItem!.jobId)?.state === 'cancelling'
+          }
           onRequestClose={() => undefined}
         >
           <BuilderImportRegistrationIsland
+            jobId={registrationItem!.jobId}
             sourcePath={registrationSourcePath}
             projectLabel={project?.name ?? 'Current project'}
             session={canonicalSessionRef.current}
-            onBackgroundStateChange={(backgrounded) =>
-              setBackgroundedRegistrationPath(backgrounded ? registrationSourcePath : null)
-            }
+            onBackgroundStateChange={(backgrounded) => {
+              setBackgroundedRegistrationJobId(backgrounded ? registrationItem!.jobId : null);
+              if (backgrounded) {
+                setForegroundRegistrationJobId(
+                  registrationItems.find((item) => item.jobId !== registrationItem!.jobId)?.jobId ??
+                    null,
+                );
+              }
+            }}
             onCommitted={async () => {
               await reloadCanonicalResidency();
               logEvent('info', 'renderer', 'Registered import committed and loaded');
             }}
             onClose={() => {
-              setBackgroundedRegistrationPath(null);
-              setRegistrationSourcePaths((current) => current.slice(1));
+              setBackgroundedRegistrationJobId(null);
+              setRegistrationItems((current) =>
+                current.filter((item) => item.jobId !== registrationItem!.jobId),
+              );
+              setForegroundRegistrationJobId((current) =>
+                current === registrationItem!.jobId ? null : current,
+              );
             }}
           />
         </FloatingTaskIsland>
+      ) : null}
+      <ToastRegion>
+        {durabilityFailureToast && durability?.state === 'failed' ? (
+          <Toast
+            tone="error"
+            autoDismiss={false}
+            action={
+              <Button size="small" variant="quiet" onClick={() => void flushProject()}>
+                Retry
+              </Button>
+            }
+            onDismiss={() => setDurabilityFailureToast(false)}
+          >
+            Not stored — {durability.reason ?? 'Storage failed'}. Changes remain queued.
+          </Toast>
+        ) : null}
+        {jobToasts.map((job) => (
+          <Toast
+            key={job.id}
+            tone={
+              job.state === 'failed' ? 'error' : job.state === 'cancelled' ? 'warning' : 'success'
+            }
+            action={
+              <Button
+                size="small"
+                variant="quiet"
+                onClick={() => {
+                  if (job.state === 'completed') viewportRef.current?.frameAll();
+                  else toggleBottom();
+                }}
+              >
+                {job.state === 'completed' ? 'Frame' : 'Console'}
+              </Button>
+            }
+            onDismiss={() =>
+              setJobToasts((current) => current.filter((item) => item.id !== job.id))
+            }
+          >
+            {job.state === 'failed'
+              ? `${job.label} failed. The canonical project remains safe.`
+              : job.state === 'cancelled'
+                ? `${job.label} cancelled`
+                : (job.resultLabel ?? `${job.label} completed`)}
+          </Toast>
+        ))}
+      </ToastRegion>
+      {commandSurface?.kind === 'entity' ? (
+        <EntityCommandMenu
+          x={commandSurface.x}
+          y={commandSurface.y}
+          context={commandContext}
+          {...(selection.candidates?.items[selection.candidates.index]?.entityId
+            ? { currentCandidateId: selection.candidates.items[selection.candidates.index]!.entityId }
+            : {})}
+          onExecute={executeRegistryCommand}
+          onClose={() => setCommandSurface(null)}
+        />
+      ) : commandSurface?.kind === 'void' ? (
+        <QuickCommandSurface
+          x={commandSurface.x}
+          y={commandSurface.y}
+          context={commandContext}
+          onExecute={executeRegistryCommand}
+          onClose={() => setCommandSurface(null)}
+        />
       ) : null}
     </>
   );
@@ -947,6 +1558,7 @@ function functionBody(
 
 interface BuilderPropertiesPanelProps {
   readonly selectedCount: number;
+  readonly perKind: Readonly<Record<string, number>>;
   readonly query: PropertyQueryResult | null;
   readonly loading: boolean;
   readonly editing: boolean;
@@ -956,6 +1568,7 @@ interface BuilderPropertiesPanelProps {
 
 function BuilderPropertiesPanel({
   selectedCount,
+  perKind,
   query,
   loading,
   editing,
@@ -972,10 +1585,14 @@ function BuilderPropertiesPanel({
   }
   return (
     <div className={styles.propertyPanel} aria-busy={loading || editing}>
-      <div className={styles.propertySummary}>
-        <strong>{selectedCount === 1 ? '1 entity' : `${selectedCount} entities`}</strong>
-        <span>{loading ? 'Reading exact revisions…' : 'Canonical selection'}</span>
-      </div>
+      {loading ? (
+        <div className={styles.propertySummary}>
+          <strong>{selectedCount} selected</strong>
+          <span>Reading exact revisions…</span>
+        </div>
+      ) : (
+        <SelectionPropertiesSummary count={selectedCount} perKind={perKind} />
+      )}
       {error ? <div className={styles.propertyError}>{error}</div> : null}
       {query?.properties.map((row) => (
         <PropertyRowEditor
@@ -1016,7 +1633,7 @@ function PropertyRowEditor({ row, disabled, onAssign }: PropertyRowEditorProps):
           <input
             aria-label={propertyDisplayName(row)}
             value={draft}
-            placeholder={row.aggregate.state === 'mixed' ? 'Mixed values' : undefined}
+            placeholder={row.aggregate.state === 'mixed' ? 'Mixed' : undefined}
             disabled={disabled}
             onChange={(event) => setDraft(event.currentTarget.value)}
             onKeyDown={(event) => {
@@ -1037,7 +1654,7 @@ function PropertyRowEditor({ row, disabled, onAssign }: PropertyRowEditorProps):
         </div>
       ) : (
         <output className={styles.propertyValue}>
-          {sharedValue ? propertyValueText(sharedValue) || 'None' : 'Mixed values'}
+          {sharedValue ? propertyValueText(sharedValue) || 'None' : <MixedPropertyMarker />}
         </output>
       )}
     </section>
@@ -1383,6 +2000,30 @@ function quaternionAxes(
   ];
 }
 
+async function registerImportJobs(
+  api: NonNullable<Window['himmelcad']>,
+  paths: readonly string[],
+): Promise<readonly { readonly jobId: string; readonly sourcePath: string }[]> {
+  const items: { jobId: string; sourcePath: string }[] = [];
+  for (const sourcePath of paths) {
+    const jobId = `registration-${crypto.randomUUID()}`;
+    const label = `Import ${sourcePath.split(/[\\/]/).pop() ?? sourcePath}`;
+    await api.jobs.register({
+      id: jobId,
+      label,
+      owner: 'builder.import',
+      expectedDurationMs: 2_000,
+      needsInput: true,
+      progressKey: jobId,
+      cancellable: true,
+      context: { sourcePath },
+    });
+    logEvent('info', 'renderer', `${label} started`);
+    items.push({ jobId, sourcePath });
+  }
+  return items;
+}
+
 async function restoreCanonicalResidency(
   viewport: BuilderKernelViewportHandle,
   bootstrap: BuilderResidencyBootstrap,
@@ -1479,6 +2120,66 @@ function parseCanonicalAdmission(value: unknown): CanonicalRepresentationAdmissi
   return value as unknown as CanonicalRepresentationAdmission;
 }
 
+function pruneRemovedSelection(
+  store: SelectionStore,
+  previous: ProjectSnapshot | null,
+  next: ProjectSnapshot,
+): void {
+  if (!previous) return;
+  const deleted = Object.keys(previous.entities).filter((id) => next.entities[id] === undefined);
+  if (deleted.length > 0) store.pruneDeleted(deleted);
+}
+
+function selectionKindCounts(
+  selection: ReadonlySet<EntityId>,
+  project: ProjectSnapshot | null,
+): Readonly<Record<string, number>> {
+  const result: Record<string, number> = {};
+  for (const id of selection) {
+    const kind = project?.entities[id]?.kind ?? 'Object';
+    const labels: Readonly<Record<string, string>> = {
+      SinglePoint: 'point',
+      Polyline3D: 'polyline',
+      PointCloud: 'point cloud',
+      GaussianSplatCloud: 'splat cloud',
+      IfcElement: 'IFC element',
+    };
+    const label = labels[kind] ?? kind.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+    result[label] = (result[label] ?? 0) + 1;
+  }
+  return result;
+}
+
+function commandEntityKind(kind: EntityKind): CommandContext['selectedEntityKinds'][number] {
+  if (kind === 'SinglePoint' || kind === 'GroundControlPoint') return 'point';
+  if (kind === 'Polyline3D') return 'polyline';
+  if (kind === 'Surface' || kind === 'Mesh' || kind === 'TexturedMesh') return 'mesh';
+  if (kind === 'PointCloud' || kind === 'GaussianSplatCloud') return 'cloud';
+  return 'other';
+}
+
+function isCommandExportable(kind: EntityKind): boolean {
+  return (
+    kind === 'SinglePoint' ||
+    kind === 'Polyline3D' ||
+    kind === 'Surface' ||
+    kind === 'Mesh' ||
+    kind === 'TexturedMesh' ||
+    kind === 'DepthMap' ||
+    kind === 'Orthomosaic' ||
+    kind === 'DigitalElevationModel'
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
 }

@@ -43,7 +43,7 @@ export const ribbonTabs: RibbonTab[] = [
         actions: [
           { id: 'project.new', label: 'New', icon: i(FilePlus) },
           { id: 'project.open', label: 'Open', icon: i(FolderOpen) },
-          { id: 'project.save', label: 'Save', icon: i(Save) },
+          { id: 'project.flush', label: 'Save', shortcut: 'Ctrl+S', icon: i(Save) },
           { id: 'project.export', label: 'Export', icon: i(HardDriveDownload) },
           { id: 'automation.agent', label: 'Agent', icon: i(Bot) },
         ],

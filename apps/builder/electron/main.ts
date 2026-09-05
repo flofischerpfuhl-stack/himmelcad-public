@@ -18,6 +18,12 @@ import {
   defaultAutomationPaths,
   registerElectronAutomationHost,
 } from '@himmelcad/automation-host/electron';
+import {
+  JobRegistry,
+  parseSidecarJobProgress,
+  type AppJob,
+  type RegisterJobInput,
+} from '@himmelcad/app';
 import { ProviderCredentialStore } from '@himmelcad/automation-host/provider-credentials';
 
 import {
@@ -59,6 +65,8 @@ if (process.platform === 'linux') app.setDesktopName('himmelcad-builder.desktop'
 
 let mainWindow: BrowserWindow | null = null;
 let automationHost: ReturnType<typeof registerElectronAutomationHost> | null = null;
+const jobRegistry = new JobRegistry();
+jobRegistry.subscribe((event) => mainWindow?.webContents.send('jobs:event', event));
 
 interface DevelopmentRasterTile {
   readonly x: number;
@@ -310,6 +318,18 @@ async function createWindow(): Promise<void> {
   // window has loaded. This lets the user copy them out from the in-app
   // console without inspecting the OS terminal.
   const offStderr = onSidecarStderr((line) => {
+    const progress = parseSidecarJobProgress(line);
+    if (progress) {
+      const job = jobRegistry.updateByProgressKey(
+        progress.progressKey,
+        progress.fraction,
+        progress.message,
+      );
+      if (job?.state === 'cancelling') void cancelSidecarRegistration(job);
+      if (job && job.state !== 'cancelling' && progress.message.includes('ready for project commit')) {
+        jobRegistry.needsInput(job.id, 'Ready for project commit');
+      }
+    }
     win.webContents.send('sidecar:stderr', line);
   });
   win.on('closed', offStderr);
@@ -639,6 +659,35 @@ function registerIpc(): void {
   ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
 
   ipcMain.handle('sidecar:status', () => isSidecarRunning());
+  ipcMain.handle('jobs:list', () => jobRegistry.list());
+  ipcMain.handle('jobs:get', (_event, id: unknown) => jobRegistry.get(assertJobId(id)));
+  ipcMain.handle('jobs:register', (_event, input: unknown) => {
+    const registration = assertJobRegistration(input);
+    return jobRegistry.register(registration, {
+      cancel: async (job) => {
+        await cancelSidecarRegistration(job);
+      },
+    });
+  });
+  ipcMain.handle('jobs:update', (_event, id: unknown, patch: unknown) =>
+    jobRegistry.update(assertJobId(id), assertJobUpdate(patch)),
+  );
+  ipcMain.handle('jobs:needs-input', (_event, id: unknown, phase: unknown) =>
+    jobRegistry.needsInput(assertJobId(id), typeof phase === 'string' ? phase : undefined),
+  );
+  ipcMain.handle('jobs:complete', (_event, id: unknown, resultLabel: unknown) =>
+    jobRegistry.complete(assertJobId(id), typeof resultLabel === 'string' ? resultLabel : undefined),
+  );
+  ipcMain.handle('jobs:fail', (_event, id: unknown, error: unknown) => {
+    if (typeof error !== 'string' || !error.trim()) throw new Error('job failure must name an error');
+    return jobRegistry.fail(assertJobId(id), error);
+  });
+  ipcMain.handle('jobs:cancelled', (_event, id: unknown) =>
+    jobRegistry.cancelled(assertJobId(id)),
+  );
+  ipcMain.handle('jobs:cancel', (_event, id: unknown) => jobRegistry.cancel(assertJobId(id)));
+  ipcMain.handle('jobs:respond', (_event, id: unknown) => jobRegistry.respond(assertJobId(id)));
+  ipcMain.handle('jobs:clear-finished', () => jobRegistry.clearFinished());
   ipcMain.handle('canonical-residency:bootstrap', async () => {
     const bootstrap = await callSidecar<SidecarResidencyBootstrap>({
       method: 'canonical.residency.bootstrap',
@@ -995,6 +1044,71 @@ function safeArtifactSegments(relativePath: string): string[] {
     throw new Error('canonical artifact path contains unsafe segments');
   }
   return segments;
+}
+
+function assertJobId(value: unknown): string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_.-]{1,160}$/.test(value)) {
+    throw new Error('invalid job id');
+  }
+  return value;
+}
+
+function assertJobRegistration(value: unknown): RegisterJobInput {
+  if (!value || typeof value !== 'object') throw new Error('invalid job registration');
+  const candidate = value as Record<string, unknown>;
+  const id = assertJobId(candidate.id);
+  if (typeof candidate.label !== 'string' || !candidate.label.trim()) {
+    throw new Error('job label is required');
+  }
+  if (typeof candidate.owner !== 'string' || !candidate.owner.trim()) {
+    throw new Error('job owner is required');
+  }
+  if (typeof candidate.cancellable !== 'boolean') throw new Error('job cancellation is required');
+  return { ...(candidate as unknown as RegisterJobInput), id };
+}
+
+function assertJobUpdate(
+  value: unknown,
+): Partial<Pick<AppJob, 'phase' | 'fraction' | 'progressKey' | 'cancellation'>> {
+  if (!value || typeof value !== 'object') throw new Error('invalid job update');
+  const candidate = value as Record<string, unknown>;
+  if (candidate.phase !== undefined && typeof candidate.phase !== 'string') {
+    throw new Error('invalid job phase');
+  }
+  if (
+    candidate.fraction !== undefined &&
+    (typeof candidate.fraction !== 'number' || !Number.isFinite(candidate.fraction))
+  ) {
+    throw new Error('invalid job fraction');
+  }
+  if (candidate.progressKey !== undefined && typeof candidate.progressKey !== 'string') {
+    throw new Error('invalid progress key');
+  }
+  return candidate as Partial<
+    Pick<AppJob, 'phase' | 'fraction' | 'progressKey' | 'cancellation'>
+  >;
+}
+
+async function cancelSidecarRegistration(job: AppJob): Promise<void> {
+  if (!job.progressKey) return;
+  const acknowledgement = await callSidecar<{ readonly cancellationRequested?: boolean }>({
+    method: 'registration.session.cancel',
+    params: { sessionId: job.progressKey },
+  });
+  if (acknowledgement.cancellationRequested) {
+    jobRegistry.cancelled(job.id);
+    return;
+  }
+  if (jobRegistry.get(job.id).state === 'cancelling') {
+    jobRegistry.update(job.id, {
+      phase: 'Cancelling at next safe boundary',
+      cancellation: {
+        cancellable: false,
+        reason: 'The current import unit must finish safely',
+        atNextSafeBoundary: true,
+      },
+    });
+  }
 }
 
 /**

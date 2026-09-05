@@ -10,7 +10,7 @@ import {
 } from 'react';
 
 import type { EntityId, SnapKind, SnapResult, SourcePosition3, Vec3 } from '@himmelcad/data';
-import { OverlayChip } from '@himmelcad/ui';
+import { OverlayChip, registerEscapeRung } from '@himmelcad/ui';
 import {
   type CanonicalEntity,
   type CanonicalRepresentationAdmission,
@@ -19,6 +19,9 @@ import {
   type KernelPickCandidate,
   type KernelCanonicalRenderAdmission,
   type KernelClipVolume,
+  type KernelDiagnosticsSampleRequest,
+  type KernelDiagnosticsSampleResult,
+  type KernelDiagnosticsSnapshot,
   type KernelRgbaCaptureRequest,
   type KernelRgbaCaptureResult,
   type KernelRenderStyle,
@@ -130,6 +133,8 @@ export interface BuilderKernelViewportHandle {
   worldCamera(): KernelWorldCamera | null;
   adoptWorldCamera(camera: KernelWorldCamera): KernelWorldCamera;
   waitForNextPresentedFrame(): Promise<void>;
+  diagnosticsSnapshot(lastFrames?: number): KernelDiagnosticsSnapshot;
+  sampleDiagnostics(request: KernelDiagnosticsSampleRequest): Promise<KernelDiagnosticsSampleResult>;
   captureRgba(request: KernelRgbaCaptureRequest): Promise<KernelRgbaCaptureResult>;
   captureRectangle(): { x: number; y: number; width: number; height: number } | null;
   setEntityAppearance(
@@ -152,6 +157,18 @@ interface BuilderKernelViewportProps {
   readonly placingViewingBoxCenter?: boolean;
   readonly onViewportPoint?: (position: SourcePosition3) => void;
   readonly onViewingBoxChange?: (state: KernelViewingBoxState | null) => void;
+  readonly selectedEntityIds?: ReadonlySet<EntityId>;
+  readonly onSelectEntity?: (id: EntityId, mode: 'replace' | 'toggle') => void;
+  readonly onClearSelection?: () => void;
+  readonly isEntityClickPickable?: (id: EntityId) => boolean;
+  readonly isEntitySelectionHighlightable?: (id: EntityId) => boolean;
+  readonly onCandidateSet?: (candidates: readonly KernelPickCandidate[], index: number) => void;
+  readonly onCandidateSetClear?: () => void;
+  readonly onContextSurface?: (
+    candidate: KernelPickCandidate | null,
+    position: { readonly x: number; readonly y: number },
+  ) => void;
+  readonly onRegistryShortcut?: (event: KeyboardEvent) => void;
 }
 
 interface ScreenPoint {
@@ -211,6 +228,15 @@ export const BuilderKernelViewport = forwardRef<
     placingViewingBoxCenter = false,
     onViewportPoint,
     onViewingBoxChange,
+    selectedEntityIds = new Set<EntityId>(),
+    onSelectEntity,
+    onClearSelection,
+    isEntityClickPickable,
+    isEntitySelectionHighlightable,
+    onCandidateSet,
+    onCandidateSetClear,
+    onContextSurface,
+    onRegistryShortcut,
   },
   ref,
 ): JSX.Element {
@@ -227,7 +253,17 @@ export const BuilderKernelViewport = forwardRef<
     onLog,
     onViewportPoint,
     onViewingBoxChange,
+    selectedEntityIds,
+    onSelectEntity,
+    onClearSelection,
+    isEntityClickPickable,
+    isEntitySelectionHighlightable,
+    onCandidateSet,
+    onCandidateSetClear,
+    onContextSurface,
+    onRegistryShortcut,
   });
+  const pointerPositionRef = useRef({ x: 0, y: 0 });
   const activeSourcePositionRef = useRef<SourcePosition3 | null>(null);
   const viewingBoxRef = useRef(viewingBox);
   const viewingBoxInteractionRef = useRef<ViewingBoxPointerInteraction | null>(null);
@@ -236,12 +272,22 @@ export const BuilderKernelViewport = forwardRef<
   const pointSizeRef = useRef(pointSize);
   const viewModeRef = useRef<KernelViewMode>('3d');
   const automationClipIdsRef = useRef(new Set<string>());
+  const highlightedSelectionRef = useRef(new Set<EntityId>());
   callbacksRef.current = {
     onCursorSnap,
     onDropFiles,
     onLog,
     onViewportPoint,
     onViewingBoxChange,
+    selectedEntityIds,
+    onSelectEntity,
+    onClearSelection,
+    isEntityClickPickable,
+    isEntitySelectionHighlightable,
+    onCandidateSet,
+    onCandidateSetClear,
+    onContextSurface,
+    onRegistryShortcut,
   };
   viewingBoxRef.current = viewingBox;
   const [cursor, setCursor] = useState<SourcePosition3 | null>(null);
@@ -255,6 +301,25 @@ export const BuilderKernelViewport = forwardRef<
     pointSizeRef.current = pointSize;
     kernelRef.current?.session.setPointSize(pointSize);
   }, [pointSize]);
+
+  useEffect(() => {
+    const kernel = kernelRef.current;
+    if (!kernel) return;
+    const next = new Set(
+      [...selectedEntityIds].filter(
+        (id) => callbacksRef.current.isEntitySelectionHighlightable?.(id) ?? true,
+      ),
+    );
+    for (const id of highlightedSelectionRef.current) {
+      if (!next.has(id)) kernel.session.setEntityInteractionState(id, { selected: false, hovered: false });
+    }
+    for (const id of next) {
+      if (!highlightedSelectionRef.current.has(id)) {
+        kernel.session.setEntityInteractionState(id, { selected: true, hovered: false });
+      }
+    }
+    highlightedSelectionRef.current = next;
+  }, [selectedEntityIds]);
 
   useEffect(() => {
     drawViewingBoxOverlay(
@@ -422,6 +487,16 @@ export const BuilderKernelViewport = forwardRef<
         if (!kernel) throw new Error('viewer is not ready');
         await kernel.session.waitForNextPresentedFrame();
       },
+      diagnosticsSnapshot(lastFrames) {
+        const kernel = kernelRef.current;
+        if (!kernel) throw new Error('viewer is not ready');
+        return kernel.session.diagnosticsSnapshot(lastFrames);
+      },
+      sampleDiagnostics(request) {
+        const kernel = kernelRef.current;
+        if (!kernel) throw new Error('viewer is not ready');
+        return kernel.session.sampleDiagnostics(request);
+      },
       async captureRgba(request) {
         const kernel = kernelRef.current;
         if (!kernel) throw new Error('viewer is not ready');
@@ -462,15 +537,18 @@ export const BuilderKernelViewport = forwardRef<
       setEntityVisibility(entityIds, visible) {
         const kernel = kernelRef.current;
         if (!kernel) return;
+        kernel.navigation.gestures.clearCandidateIndicator();
         for (const entityId of entityIds) kernel.scene.setEntityVisibility(entityId, visible);
         kernel.requestFrame();
       },
       setClipVolumes(volumes) {
+        kernelRef.current?.navigation.gestures.clearCandidateIndicator();
         kernelRef.current?.session.setClipVolumes(volumes);
       },
       setAutomationClipVolumes(volumes) {
         const kernel = kernelRef.current;
         if (!kernel) throw new Error('viewer is not ready');
+        kernel.navigation.gestures.clearCandidateIndicator();
         const next = new Set(volumes.map((volume) => volume.id));
         for (const id of automationClipIdsRef.current) {
           if (!next.has(id)) kernel.session.setScopedClipVolume(`automation:${id}`, null);
@@ -541,6 +619,15 @@ export const BuilderKernelViewport = forwardRef<
     if (import.meta.env.DEV) Object.assign(window, { __hcadBuilderKernel: handle });
     handle.session.setClearColor([0.008, 0.011, 0.016, 1]);
     handle.session.setPointSize(pointSizeRef.current);
+    const selected = new Set(
+      [...callbacksRef.current.selectedEntityIds].filter(
+        (id) => callbacksRef.current.isEntitySelectionHighlightable?.(id) ?? true,
+      ),
+    );
+    for (const id of selected) {
+      handle.session.setEntityInteractionState(id, { selected: true, hovered: false });
+    }
+    highlightedSelectionRef.current = selected;
     void handle.session.setViewMode(viewModeRef.current, 0).catch((error: unknown) => {
       callbacksRef.current.onLog('error', `Initial view mode failed: ${String(error)}`);
     });
@@ -794,7 +881,10 @@ export const BuilderKernelViewport = forwardRef<
       className={placingViewingBoxCenter ? `${styles.root} ${styles.placingCenter}` : styles.root}
       style={placingViewingBoxCenter ? undefined : { cursor: viewingBoxCursor }}
       onPointerDownCapture={handleViewingBoxPointerDown}
-      onPointerMoveCapture={handleViewingBoxPointerMove}
+      onPointerMoveCapture={(event) => {
+        pointerPositionRef.current = { x: event.clientX, y: event.clientY };
+        handleViewingBoxPointerMove(event);
+      }}
       onPointerUpCapture={finishViewingBoxInteraction}
       onPointerCancelCapture={finishViewingBoxInteraction}
       onPointerUp={(event) => {
@@ -822,6 +912,29 @@ export const BuilderKernelViewport = forwardRef<
         onReady={handleReady}
         onActivePick={handlePick}
         onCursorCoordinate={handleCursor}
+        registerEscapeRung={registerEscapeRung}
+        gestures={{
+          isPickable: (candidate) =>
+            callbacksRef.current.isEntityClickPickable?.(candidate.address.entityId as EntityId) ??
+            true,
+          isSelected: (candidate) =>
+            callbacksRef.current.selectedEntityIds.has(candidate.address.entityId as EntityId),
+          hasSelection: () => callbacksRef.current.selectedEntityIds.size > 0,
+          select: (candidate) =>
+            callbacksRef.current.onSelectEntity?.(
+              candidate.address.entityId as EntityId,
+              'replace',
+            ),
+          toggleSelection: (candidate) =>
+            callbacksRef.current.onSelectEntity?.(candidate.address.entityId as EntityId, 'toggle'),
+          clearSelection: () => callbacksRef.current.onClearSelection?.(),
+          candidateSetChanged: (candidates, index) =>
+            callbacksRef.current.onCandidateSet?.(candidates, index),
+          candidateSetCleared: () => callbacksRef.current.onCandidateSetClear?.(),
+          openContextSurface: (candidate) =>
+            callbacksRef.current.onContextSurface?.(candidate, pointerPositionRef.current),
+          routeRegistryShortcut: (event) => callbacksRef.current.onRegistryShortcut?.(event),
+        }}
         onFrame={() =>
           drawViewingBoxOverlay(
             viewingBoxOverlayRef.current,

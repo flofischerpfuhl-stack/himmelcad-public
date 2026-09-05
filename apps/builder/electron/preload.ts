@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { AgentHarnessHostTransport } from '@himmelcad/agent/src/transport.js';
 import type { ProviderCredentialRendererTransport } from '@himmelcad/agent/src/providerCredentials.js';
+import type { AppJob, JobEvent, RegisterJobInput } from '@himmelcad/app';
 
 export interface BuilderResidencyBootstrap {
   readonly schemaVersion: 1;
@@ -56,6 +57,23 @@ export interface HimmelCADApi {
     status: () => Promise<boolean>;
     call: <T = unknown>(method: string, params?: unknown) => Promise<T>;
     onStderr: (cb: (line: string) => void) => () => void;
+  };
+  readonly jobs: {
+    list: () => Promise<readonly AppJob[]>;
+    get: (id: string) => Promise<AppJob>;
+    register: (input: RegisterJobInput) => Promise<AppJob>;
+    update: (
+      id: string,
+      patch: Partial<Pick<AppJob, 'phase' | 'fraction' | 'progressKey' | 'cancellation'>>,
+    ) => Promise<AppJob>;
+    needsInput: (id: string, phase?: string) => Promise<AppJob>;
+    complete: (id: string, resultLabel?: string) => Promise<AppJob>;
+    fail: (id: string, error: string) => Promise<AppJob>;
+    cancelled: (id: string) => Promise<AppJob>;
+    cancel: (id: string) => Promise<AppJob>;
+    respond: (id: string) => Promise<AppJob>;
+    clearFinished: () => Promise<void>;
+    onEvent: (listener: (event: JobEvent) => void) => () => void;
   };
   readonly agentHarness: AgentHarnessHostTransport;
   readonly providerCredentials: ProviderCredentialRendererTransport;
@@ -140,6 +158,24 @@ const api: HimmelCADApi = {
       const listener = (_e: unknown, line: string): void => cb(line);
       ipcRenderer.on('sidecar:stderr', listener);
       return () => ipcRenderer.off('sidecar:stderr', listener);
+    },
+  },
+  jobs: {
+    list: () => ipcRenderer.invoke('jobs:list'),
+    get: (id) => ipcRenderer.invoke('jobs:get', id),
+    register: (input) => ipcRenderer.invoke('jobs:register', input),
+    update: (id, patch) => ipcRenderer.invoke('jobs:update', id, patch),
+    needsInput: (id, phase) => ipcRenderer.invoke('jobs:needs-input', id, phase),
+    complete: (id, resultLabel) => ipcRenderer.invoke('jobs:complete', id, resultLabel),
+    fail: (id, error) => ipcRenderer.invoke('jobs:fail', id, error),
+    cancelled: (id) => ipcRenderer.invoke('jobs:cancelled', id),
+    cancel: (id) => ipcRenderer.invoke('jobs:cancel', id),
+    respond: (id) => ipcRenderer.invoke('jobs:respond', id),
+    clearFinished: () => ipcRenderer.invoke('jobs:clear-finished'),
+    onEvent: (listener) => {
+      const ipcListener = (_event: unknown, jobEvent: JobEvent): void => listener(jobEvent);
+      ipcRenderer.on('jobs:event', ipcListener);
+      return () => ipcRenderer.off('jobs:event', ipcListener);
     },
   },
   agentHarness: {

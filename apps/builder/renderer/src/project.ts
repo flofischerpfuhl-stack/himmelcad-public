@@ -27,10 +27,26 @@ import {
 import type { ProjectSnapshot } from '@himmelcad/data';
 
 import { projectSnapshotFromJournalMirror } from './projectProjection.js';
+import type { BuilderDurabilityStatus } from './durabilityPolling.js';
 
 export { projectSnapshotFromJournalMirror } from './projectProjection.js';
+export { startDurabilityPolling } from './durabilityPolling.js';
+export type { BuilderDurabilityStatus } from './durabilityPolling.js';
 
 type SidecarCall = <T = unknown>(method: string, params?: unknown) => Promise<T>;
+
+export interface BuilderSnapshotSummary {
+  readonly entityId: string;
+  readonly name: string;
+  readonly marker: {
+    readonly schemaId: 'hcad.snapshot-marker@1';
+    readonly schemaVersion: 1;
+    readonly markedGeneration: number;
+    readonly markerKind: 'manual' | 'session_start' | 'pre_restore';
+    readonly createdAt: string;
+    readonly origin: 'ui' | 'sdk' | 'agent' | 'system';
+  };
+}
 
 /** Typed renderer adapter over the single Electron/sidecar RPC boundary. */
 export class BuilderSidecarTransport implements RpcTransport<AppFacadeMethods> {
@@ -58,6 +74,7 @@ export class BuilderCanonicalProjectSession {
     private readonly document: DocumentClient,
     private readonly io: IoClient,
     private readonly registration: RegistrationClient,
+    private readonly call: SidecarCall,
     private mirror: JournalMirror,
   ) {}
 
@@ -84,12 +101,29 @@ export class BuilderCanonicalProjectSession {
       new DocumentClient(transport, negotiated),
       new IoClient(transport, negotiated),
       new RegistrationClient(transport, negotiated),
+      call,
       createJournalMirror(snapshot),
     );
   }
 
   projectSnapshot(): ProjectSnapshot {
     return projectSnapshotFromJournalMirror(this.mirror);
+  }
+
+  durabilityStatus(): Promise<BuilderDurabilityStatus> {
+    return this.call('canonical.project.durability', {});
+  }
+
+  flushAndSnapshot(): Promise<BuilderDurabilityStatus> {
+    return this.call('project.flush', {});
+  }
+
+  createSnapshot(name: string): Promise<BuilderSnapshotSummary> {
+    return this.call('snapshot.create', { name });
+  }
+
+  listSnapshots(): Promise<readonly BuilderSnapshotSummary[]> {
+    return this.call('snapshot.list', {});
   }
 
   async acceptCommittedEntry(entry: CanonicalJournalEntry): Promise<ProjectSnapshot> {
@@ -137,9 +171,10 @@ export class BuilderCanonicalProjectSession {
     sourcePath: string,
     recipe: RegistrationRecipe,
     options: JsonValue = {},
+    requestedSessionId?: string,
   ) {
     const selection = await this.probeImport(sourcePath);
-    const sessionId = `registration-${crypto.randomUUID()}`;
+    const sessionId = requestedSessionId ?? `registration-${crypto.randomUUID()}`;
     const commandId = `builder-import-${crypto.randomUUID()}`;
     return this.registration.stage({
       sessionId,

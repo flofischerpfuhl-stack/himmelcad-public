@@ -1,6 +1,6 @@
 .layer {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--hc-z-floating);
   inset: 0;
   display: grid;
   place-items: center;
