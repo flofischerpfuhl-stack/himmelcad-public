@@ -1898,6 +1898,8 @@ audit's author, not into divergent code.
 
 New packages from this disposition (all on R1 gates):
 
+F15 (2026-09-05, Builder-lane a540935): the shared EntityTree's context menu became the command-table `EntityCommandMenu`, dropping PhotoLab's `remove` and `showGcpImages` actions ("Remove from project…" with its confirmation dialog; "Images containing this GCP"). Disposition: **fix before release** via the command table (P11: rows `photolab.images.remove`, `photolab.gcp.images` with surface contextMenu; EntityTree forwards `photolab.*` invocations) — Builder lane owns the extension point, PhotoLab adapts `handleTreeContextAction`. Gate 7 evidence (audit) is frozen at 22 until the tree flow is back.
+
 ### WP-H1 (Size S, gates 1/3)
 
 F01 archive Save route + F05 close refusal with Retry / Cancel close / Force

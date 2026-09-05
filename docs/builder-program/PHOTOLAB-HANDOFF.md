@@ -7,7 +7,7 @@ landing by the PhotoLab session. Plan of record:
 `.claude/codex/prompts/photolab/`, the token ledger under
 `.claude/codex/logs/photolab/ledger.json`.
 
-Last update: 2026-09-05 10:20 (H2b committed 6cc334b + pushed; G17 captures from a private worktree; blocker on main reported).
+Last update: 2026-09-05 10:50 (regression from a540935 reported: tree context menu lost PhotoLab actions).
 
 ## Current work packages
 
@@ -89,3 +89,4 @@ lease and are unaffected. Result: `result.json` in the output directory.
 - Incident 2026-09-04 (repaired): commit 601efde staged the whole sidecar main.rs and carried five uncommitted Builder-lane S-07 hunks (release_05_admissions import, project.flush/snapshot.\* routing, async handle_canonical_app_rpc with canonical.project.durability + flush response); HEAD stopped building standalone. ea66991 removed exactly those hunks from HEAD via an index-only reverse patch; the working tree was not touched (the Builder WIP shows as uncommitted again). Rule now: stage shared files hunk-by-hunk and grep the staged diff for foreign identifiers. Message to the Builder session pending (its address `10-himmelcad-a2` went offline at 19:00).
 - Release blocker on main reported 2026-09-05 10:15: a540935 committed generated `packages/@himmelcad/app/src/commands.js`/`commands.d.ts` next to `commands.ts`; vite resolves `./commands.js` to the CJS file and every PhotoLab renderer build from a clean checkout fails ("commandsForSurface is not exported"). Fix is Builder-lane (`git rm --cached` the generated siblings + ignore); until then PhotoLab captures/baselines are produced in a private worktree with those two files deleted.
 - Push rule (owner, 2026-09-05): every landing is pushed; the pre-push hook cannot pass on the multi-lane working tree, so pushes use `--no-verify` after the lane's own gates (COORDINATION.md "Hooks on a multi-lane tree").
+- Regression reported 2026-09-05 10:45 (Builder-lane a540935): the shared EntityTree now renders the command-table `EntityCommandMenu`; PhotoLab's tree actions 'remove' ("Remove from project…", confirmation flow, audited surface `confirmation-remove-image`) and 'showGcpImages' are no longer reachable from the tree. Proposal sent: command-table rows `photolab.images.remove` / `photolab.gcp.images` with surface contextMenu, EntityTree forwarding `photolab.*` invocations to `onContextAction`, or an `additionalCommands` prop. PhotoLab adapts `handleTreeContextAction` once the extension point lands; the visual harness stops at that step until then.
