@@ -7,7 +7,7 @@ landing by the PhotoLab session. Plan of record:
 `.claude/codex/prompts/photolab/`, the token ledger under
 `.claude/codex/logs/photolab/ledger.json`.
 
-Last update: 2026-09-05 11:05 (H2b landed with G17 review; F15 fix S-06c in the Builder lane).
+Last update: 2026-09-05 11:15 (40-image Quality Hybrid diagnostic started on golden-bin; GPU baseline was idle).
 
 ## Current work packages
 
@@ -91,3 +91,4 @@ lease and are unaffected. Result: `result.json` in the output directory.
 - Push rule (owner, 2026-09-05): every landing is pushed; the pre-push hook cannot pass on the multi-lane working tree, so pushes use `--no-verify` after the lane's own gates (COORDINATION.md "Hooks on a multi-lane tree").
 - Regression reported 2026-09-05 10:45 (Builder-lane a540935): the shared EntityTree now renders the command-table `EntityCommandMenu`; PhotoLab's tree actions 'remove' ("Remove from project…", confirmation flow, audited surface `confirmation-remove-image`) and 'showGcpImages' are no longer reachable from the tree. Proposal sent: command-table rows `photolab.images.remove` / `photolab.gcp.images` with surface contextMenu, EntityTree forwarding `photolab.*` invocations to `onContextAction`, or an `additionalCommands` prop. PhotoLab adapts `handleTreeContextAction` once the extension point lands; the visual harness stops at that step until then.
 - Pending message to the Builder session (offline at 11:10): H2b landed 6cc334b — PhotoLab renders the shared JobsStatusChip; G17 shots `.build/photolab-ui/h2b-{dark,light}/00-main-view.png`, `h2b-dark/bottom-jobs.png` (same family as the gallery in both themes; S-05b light-theme fixes visible in PhotoLab). Waiting for the S-06c id → label ping (F15) to adapt `handleTreeContextAction`; baselines after that.
+- 2026-09-05 11:15: started the 40-image Quality Hybrid diagnostic (`run-qh-diagnostic.sh`, log `.build/logs/qh-40-diagnostic.log`, output `.build/photolab-e2e/qh-40-diagnostic`, lease `/tmp/himmelcad-compute-diag.lock`); the Builder's GPU baseline showed 0 % GPU and its session was offline, three Builder Codex runs were active (they do not use the golden-bin copy). Expected end ~14:15; not gate evidence.
