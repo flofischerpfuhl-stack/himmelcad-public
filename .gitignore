@@ -127,3 +127,7 @@ apps/cap/**/Secrets.local.*
 .claude/codex/out/
 website/.check-out/
 .build/
+
+# emitted next to sources by accident (tsc without -b/noEmit)
+packages/@himmelcad/app/src/**/*.js
+packages/@himmelcad/app/src/**/*.d.ts
