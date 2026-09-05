@@ -7,6 +7,8 @@ import tseslint from 'typescript-eslint';
 export default tseslint.config(
   {
     ignores: [
+      '**/.build/**',
+      '**/.tsbuild/**',
       '**/dist/**',
       '**/build/**',
       '**/node_modules/**',

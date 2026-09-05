@@ -149,7 +149,7 @@ const indexHtml = readFileSync(join(websiteRoot, 'index.html'), 'utf8');
 const impressumHtml = readFileSync(join(websiteRoot, 'impressum.html'), 'utf8');
 const datenschutzHtml = readFileSync(join(websiteRoot, 'datenschutz.html'), 'utf8');
 const css = readFileSync(join(websiteRoot, 'assets/css/site.css'), 'utf8');
-const allHtml = [...htmlByFile.values()].join('\n');
+const _allHtml = [...htmlByFile.values()].join('\n');
 const roadmapBlock = indexHtml.match(/<section class="roadmap-section"[\s\S]*?<\/section>/)?.[0] ?? '';
 const heroBlock = indexHtml.match(/<section class="hero[^>]*>[\s\S]*?<\/section>/)?.[0] ?? '';
 
