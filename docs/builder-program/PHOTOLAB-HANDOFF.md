@@ -7,14 +7,14 @@ landing by the PhotoLab session. Plan of record:
 `.claude/codex/prompts/photolab/`, the token ledger under
 `.claude/codex/logs/photolab/ledger.json`.
 
-Last update: 2026-09-05 09:50 (golden deferred by the owner; diagnostic subset run planned).
+Last update: 2026-09-05 10:20 (H2b committed 6cc334b + pushed; G17 captures from a private worktree; blocker on main reported).
 
 ## Current work packages
 
 | WP                                        | State                                                                                                                                                      |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A4 SMRF ground classification (DTM)       | landed 2026-09-04 (3e05da1, 6b87d00) with DTM-vs-DSM evidence (median DSM−DTM 1.32 m, 25 % of cells > 3 m); G17 reviewed                                   |
-| H2 jobs chip + side-operation drain       | landed 2026-09-04 (2ef29d5); adopt the shared `JobsStatusChip` (S-05) once the Builder lane commits it — brief `h2b.md` ready                              |
+| H2 jobs chip + side-operation drain       | landed (2ef29d5); H2b adopted the shared `JobsStatusChip` (6cc334b, pushed) — G17 captures + baselines from a private worktree pending                     |
 | B5 journal/manifest order + orphan GC     | landed 2026-09-04 (b66a66b): manifest-first commit with write-ahead intent, open-time repair, orphan quarantine                                            |
 | B4 same-target admission + disk preflight | landed 2026-09-04 (fcf75c8): frozen publication targets, ConflictingTarget, InsufficientDisk, inline errors                                                |
 | H1b cancellable archive Save              | landed 2026-09-04 (e0da2a8): params on `photolab.project.save`, phases, cancellation, Jobs-tab Cancel via H2                                               |
@@ -87,3 +87,5 @@ lease and are unaffected. Result: `result.json` in the output directory.
 - H1b landed: crates/himmelcad-sidecar/src/main.rs — `photolab.project.save` gained optional params `archiveOperationId`/`progressKey` (deny_unknown_fields, null-compatible); no new route.
 - Blocker 2026-09-04 18:20: Builder-lane WIP `crates/himmelcad-sidecar/src/canonical_app_runtime.rs` calls `create_snapshot_marker`, missing from `release_05_admissions.rs` → sidecar does not compile; reported to `10-himmelcad-a2`. Rerun after their fix: rebuild in target/photolab-b5, copy to `.build/photolab-runtime/bin/`, then `node scripts/photolab-e2e.mjs --source '…/01_Photos' --output .build/photolab-e2e/a3-mesh-smoke --max-images 24 --smoke --profile fast --products depth,dense,mesh --mesh-source dense --target-epsg 31468 --target-vertical-epsg 7837 --sidecar .build/photolab-runtime/bin/himmelcad-sidecar` with `HIMMELCAD_COMPUTE_LEASE_PATH=/tmp/himmelcad-compute-a3-smoke.lock`.
 - Incident 2026-09-04 (repaired): commit 601efde staged the whole sidecar main.rs and carried five uncommitted Builder-lane S-07 hunks (release_05_admissions import, project.flush/snapshot.\* routing, async handle_canonical_app_rpc with canonical.project.durability + flush response); HEAD stopped building standalone. ea66991 removed exactly those hunks from HEAD via an index-only reverse patch; the working tree was not touched (the Builder WIP shows as uncommitted again). Rule now: stage shared files hunk-by-hunk and grep the staged diff for foreign identifiers. Message to the Builder session pending (its address `10-himmelcad-a2` went offline at 19:00).
+- Release blocker on main reported 2026-09-05 10:15: a540935 committed generated `packages/@himmelcad/app/src/commands.js`/`commands.d.ts` next to `commands.ts`; vite resolves `./commands.js` to the CJS file and every PhotoLab renderer build from a clean checkout fails ("commandsForSurface is not exported"). Fix is Builder-lane (`git rm --cached` the generated siblings + ignore); until then PhotoLab captures/baselines are produced in a private worktree with those two files deleted.
+- Push rule (owner, 2026-09-05): every landing is pushed; the pre-push hook cannot pass on the multi-lane working tree, so pushes use `--no-verify` after the lane's own gates (COORDINATION.md "Hooks on a multi-lane tree").
