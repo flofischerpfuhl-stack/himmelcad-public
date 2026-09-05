@@ -15,7 +15,7 @@ import { AlertTriangle, Ban, CheckCircle2, FileDown, RotateCcw } from 'lucide-re
 import { useEffect, useRef, useState } from 'react';
 
 import { GcpAccuracyPanel, type GcpAccuracyReport } from './GcpAccuracyPanel.js';
-import { jobDisplayLabel } from './jobsChip.js';
+import { jobDisplayLabel } from './jobSurfaceItems.js';
 import styles from './PhotolabBottomPanel.module.css';
 import {
   buildProcessingReportHtml,

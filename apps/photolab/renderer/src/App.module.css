@@ -29,35 +29,6 @@
   background: var(--hc-hover-bg);
 }
 
-/* Global jobs chip (WP-H2): the tone carries the state through tokens; the
-   label is the only text. Accent border = selection rule (no soft fill). */
-.jobsChip {
-  composes: themeToggle;
-  max-width: 320px;
-  overflow: hidden;
-  color: var(--hc-fg-default);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.jobsChip[data-tone='progress'] {
-  border-color: var(--hc-accent-base);
-}
-
-.jobsChip[data-tone='warning'] {
-  border-color: var(--hc-warning);
-  color: var(--hc-warning);
-}
-
-.jobsChip[data-tone='danger'] {
-  border-color: var(--hc-error);
-  color: var(--hc-error-fg);
-}
-
-.jobsChip[data-tone='success'] {
-  border-color: var(--hc-success);
-}
-
 .storedStatus {
   display: inline-flex;
   gap: 5px;

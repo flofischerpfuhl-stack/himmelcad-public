@@ -59,6 +59,7 @@ import {
   PanelToggles,
   Ribbon,
   registerEscapeRung,
+  JobsStatusChip,
   StatusBar,
   TitleBar,
   useLayoutStore,
@@ -116,7 +117,7 @@ import type {
   LocalGridSelection,
 } from './ImageImportPanel.js';
 import { ImageWorkspace, initialGcpProjection } from './ImageWorkspace.js';
-import { jobsChipState } from './jobsChip.js';
+import { jobSurfaceItems } from './jobSurfaceItems.js';
 import { revalidateSelection } from './selectionLifecycle.js';
 import { ImagePropertiesPanel } from './ImagePropertiesPanel.js';
 import { SelectionPropertiesPanel } from './SelectionPropertiesPanel.js';
@@ -3861,6 +3862,25 @@ export function App(): JSX.Element {
     document.documentElement.classList.toggle('hc-theme-light', themeMode === 'light');
   }, [themeMode]);
 
+  const visibleJobs = useMemo(
+    () =>
+      jobs.filter((job) => job.state.kind !== 'failed' || !acknowledgedFailedJobIds.has(job.id)),
+    [acknowledgedFailedJobIds, jobs],
+  );
+  const toggleJobsTab = useCallback(() => {
+    if (!bottomPanelCollapsed && bottomTab === 'jobs') {
+      setBottomTab(previousJobsChipTab.current);
+      setBottomCollapsed(true);
+      return;
+    }
+    if (bottomTab !== 'jobs') previousJobsChipTab.current = bottomTab;
+    setAcknowledgedFailedJobIds(
+      new Set(jobs.filter((job) => job.state.kind === 'failed').map((job) => job.id)),
+    );
+    setBottomTab('jobs');
+    setBottomCollapsed(false);
+  }, [bottomPanelCollapsed, bottomTab, jobs, setBottomCollapsed]);
+
   const statusItems = useMemo(() => {
     const stored = storedIndicatorState({
       projectReady,
@@ -3899,10 +3919,6 @@ export function App(): JSX.Element {
         : stored.hasArchiveCopy
           ? `Archive: ${stored.archiveChanges} change${stored.archiveChanges === 1 ? '' : 's'} since last save`
           : 'Archive: no copy saved';
-    const chip = jobsChipState(
-      jobs.filter((job) => job.state.kind !== 'failed' || !acknowledgedFailedJobIds.has(job.id)),
-      Date.now(),
-    );
     return [
       {
         id: 'core',
@@ -3966,52 +3982,19 @@ export function App(): JSX.Element {
         align: 'right' as const,
       },
       { id: 'panels', content: <PanelToggles />, align: 'right' as const },
-      ...(chip.tone === 'hidden'
-        ? []
-        : [
-            {
-              id: 'jobs',
-              content: (
-                <button
-                  type="button"
-                  className={styles.jobsChip}
-                  data-tone={chip.tone}
-                  aria-label={`Jobs: ${chip.label}`}
-                  title="Open or close jobs"
-                  onClick={() => {
-                    if (!bottomPanelCollapsed && bottomTab === 'jobs') {
-                      setBottomTab(previousJobsChipTab.current);
-                      setBottomCollapsed(true);
-                      return;
-                    }
-                    if (bottomTab !== 'jobs') previousJobsChipTab.current = bottomTab;
-                    setAcknowledgedFailedJobIds(
-                      new Set(
-                        jobs.filter((job) => job.state.kind === 'failed').map((job) => job.id),
-                      ),
-                    );
-                    setBottomTab('jobs');
-                    setBottomCollapsed(false);
-                  }}
-                >
-                  {chip.label}
-                </button>
-              ),
-              align: 'right' as const,
-            },
-          ]),
+      {
+        id: 'jobs',
+        content: <JobsStatusChip jobs={jobSurfaceItems(visibleJobs)} onClick={toggleJobsTab} />,
+        align: 'right' as const,
+      },
     ];
   }, [
-    acknowledgedFailedJobIds,
     archiveSaveStatus,
     autosaveGeneration,
-    bottomPanelCollapsed,
-    bottomTab,
     coreReady,
     gcpCollection,
     hardware,
     imageCount,
-    jobs,
     lastSavedGeneration,
     profile,
     projectHasArchiveCopy,
@@ -4023,7 +4006,8 @@ export function App(): JSX.Element {
     workingCopyDurability,
     workspaceMode,
     saveProject,
-    setBottomCollapsed,
+    toggleJobsTab,
+    visibleJobs,
   ]);
 
   const onSelect = (id: EntityId, mode: 'replace' | 'add' | 'toggle') => {
