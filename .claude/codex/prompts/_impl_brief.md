@@ -7,3 +7,5 @@ Definition of done (MASTER-PLAN §9.3, condensed): the user flow works end to en
 Your package's owning records, gates, and files are listed below this brief. Read those spec sections only (by decision id), not whole specs.
 
 - Adding a variant to a core enum (`GeometryObject`, `EntityKind`, job kinds…) obliges `cargo check --workspace --all-targets` before reporting: downstream crates (render, io, sidecar) match exhaustively and break otherwise (evidence: S-01 2026-09-03 left two E0004 sites that blocked the PhotoLab lane's sidecar tests).
+
+- Never run a bare `tsc`/`tsc -p` that emits next to sources; use the package scripts (`pnpm --filter <pkg> typecheck` = `tsc -b` to `.tsbuild/`). Emitted `.js/.d.ts/.map` siblings under `src/` break Vite resolution for every consumer (evidence: a540935, 2026-09-05).

@@ -51,3 +51,7 @@ classes become doctrine precedents.
   Builder lane's S-03 consumes it instead of re-implementing.
 
 - 2026-09-02 night: WP-H3 landed (be8bc6e) — the shared UIP-D14 Escape dispatcher lives in `packages/@himmelcad/ui/src/escapeLadder.ts`; Builder consumes it in S-03 and must enable `closeFunctionTabs` (UIP-D7 revision). E1 landed (171791b, additive `@himmelcad/data` types). Builder lane landed I-04 (parallel verifier, cargo lane keys) and runs I-03b (tsconfigs) with the PhotoLab lane holding WP-H2's `PhotolabJob.kind` edit until "I-03b landed". H3 landed be8bc6e.
+
+## Hooks on a multi-lane tree (2026-09-05)
+
+The pre-commit (`verify:commit`) and pre-push (`verify:push`) hooks verify the _working tree_, which is mid-edit by two to four Codex lanes at any time; they fail on lane noise (stale generated SDK, half-written packages) unrelated to the commit being made. Rule: an architect landing commit is gated by the slice's evidence file plus the architect's independent re-run of the affected gates (recorded in the commit message), and is committed and pushed with `--no-verify`. Owner instruction 2026-09-05: every landing is committed **and pushed**. Hooks stay in place for single-writer human commits. Follow-up (queued, I-08): a `verify:clean` job that checks out `HEAD` into a scratch worktree with its own `CARGO_TARGET_DIR` and runs the commit-tier plan there, so pushed commits get a hook-equivalent verdict without lane noise.
