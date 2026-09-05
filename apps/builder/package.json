@@ -16,7 +16,7 @@
     "prepare:viewer:dev": "node ../../scripts/stage-builder-viewer-wasm.mjs --profile dev",
     "dev": "pnpm prepare:viewer:dev && concurrently -k -n vite,electron -c blue,green \"pnpm dev:vite\" \"pnpm dev:electron\"",
     "dev:vite": "vite",
-    "dev:electron": "tsc -p tsconfig.electron.json && wait-on http://localhost:5173 && node ../../scripts/run-electron.mjs .",
+    "dev:electron": "tsc -b tsconfig.electron.json && wait-on http://localhost:5173 && node ../../scripts/run-electron.mjs .",
     "build:sidecar": "node ../../scripts/run-cargo.mjs build --release --bin himmelcad-sidecar --manifest-path ../../Cargo.toml",
     "build:sidecar:win": "node ../../scripts/build-photolab-windows-rust.mjs",
     "build": "pnpm build:sidecar && pnpm prepare:viewer && vite build && tsc -p tsconfig.electron.json",

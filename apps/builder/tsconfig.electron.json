@@ -16,5 +16,10 @@
     "incremental": true,
     "tsBuildInfoFile": "dist/electron/.tsbuildinfo"
   },
-  "include": ["electron"]
+  "include": ["electron"],
+  "references": [
+    { "path": "../../packages/@himmelcad/app" },
+    { "path": "../../packages/@himmelcad/agent" },
+    { "path": "../../packages/@himmelcad/automation-host" }
+  ]
 }
