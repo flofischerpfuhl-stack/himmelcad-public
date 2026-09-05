@@ -7,7 +7,7 @@ landing by the PhotoLab session. Plan of record:
 `.claude/codex/prompts/photolab/`, the token ledger under
 `.claude/codex/logs/photolab/ledger.json`.
 
-Last update: 2026-09-05 09:35 (A3 landed; golden relaunch pending the Builder GPU baseline).
+Last update: 2026-09-05 09:50 (golden deferred by the owner; diagnostic subset run planned).
 
 ## Current work packages
 
@@ -30,22 +30,22 @@ close/durability (03bd235), ADR 0030 rev 6 (9d4d398), pixel baselines
 
 ## Open R1 gates (executed evidence only)
 
-| Gate                                   | Status                                                                                                                                             |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1 complete workflows import → products | 24-image smokes green: waves 1–4 (LAZ validated), DTM + DSM (A4), dense mesh (A3)                                                                  |
-| 2 real-dataset accuracy                | golden run died 2026-09-04 21:53 (lane binary relinked under it); relaunch on `.build/photolab-runtime/golden-bin/` after the Builder GPU baseline |
-| 3 lineage/recovery                     | H1 close drain, B5 journal/manifest reconciliation, B4 same-target admission, H1b cancellable save landed                                          |
-| 4 cancellation/reload                  | H2 landed: side operations drain, list, cancel; chip rehydrates from the sidecar after reload                                                      |
-| 5 project format/journal               | B5 landed (crash-injection tests for both orders + dataset quarantine)                                                                             |
-| 6 automation parity (P11)              | 72 rows documented + G-1 test; command table generation is Builder-lane (G2)                                                                       |
-| 7 accessibility / visual               | executed: audit 22 clean (88 captures × 2 viewports, roving-tabindex ribbon walk), baselines refreshed 311c848                                     |
-| 8 products open in Builder/WeltView    | G1a-2 pending; ADR 0030 rev 6 conformant                                                                                                           |
+| Gate                                   | Status                                                                                                                                                                                     |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1 complete workflows import → products | 24-image smokes green: waves 1–4 (LAZ validated), DTM + DSM (A4), dense mesh (A3)                                                                                                          |
+| 2 real-dataset accuracy                | owner 2026-09-05: full 135-image golden deferred to the end, on another machine (`run-golden.sh`); meanwhile 24-image smokes + 40-image Quality Hybrid diagnostic (`run-qh-diagnostic.sh`) |
+| 3 lineage/recovery                     | H1 close drain, B5 journal/manifest reconciliation, B4 same-target admission, H1b cancellable save landed                                                                                  |
+| 4 cancellation/reload                  | H2 landed: side operations drain, list, cancel; chip rehydrates from the sidecar after reload                                                                                              |
+| 5 project format/journal               | B5 landed (crash-injection tests for both orders + dataset quarantine)                                                                                                                     |
+| 6 automation parity (P11)              | 72 rows documented + G-1 test; command table generation is Builder-lane (G2)                                                                                                               |
+| 7 accessibility / visual               | executed: audit 22 clean (88 captures × 2 viewports, roving-tabindex ribbon walk), baselines refreshed 311c848                                                                             |
+| 8 products open in Builder/WeltView    | G1a-2 pending; ADR 0030 rev 6 conformant                                                                                                                                                   |
 
 ## Next three steps
 
-1. Relaunch the golden run on `.build/photolab-runtime/golden-bin/` after the
-   Builder's "baseline done" (never rebuild into a lane an e2e uses); message
-   the Builder when started/finished.
+1. After the Builder's "baseline done": run the 40-image Quality Hybrid
+   diagnostic (`run-qh-diagnostic.sh`, ~3 h, all six products); the full golden
+   is deferred to the end on another machine (owner, 2026-09-05).
 2. Dispatch H2b (adopt the shared JobsStatusChip, brief `h2b.md`) once the
    Builder lane commits S-05; then A5 levers once the golden result is in.
 3. G1a-2 after the Builder-lane command table; hands-on re-test of the

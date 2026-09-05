@@ -1873,6 +1873,8 @@ WP-B5) and for every review by the coordinating session.
 | WP-E4 overlap visualization                                             | none (parity)                                                  | **parked**                                                                            |
 | WP-A6 GPU runtimes, WP-F4 Windows signing                               | owner decisions                                                | unchanged                                                                             |
 
+Owner decision 2026-09-05 (gate 2 sequencing): the full 135-image Quality Hybrid golden run is deferred to the end of the release work and executed on another machine (this workstation has no GPU; the run needs ~10 h of CPU and died once when its lane binary was relinked). The gate definition itself is unchanged (135 images, Quality Hybrid, 0.8299 px reference). Until then gate 2 carries the 24-image smokes plus a 40-image Quality Hybrid diagnostic over every product (not gate evidence; it de-risks the product stages under the golden profile). Runner scripts: `.build/photolab-runtime/run-golden.sh` and `run-qh-diagnostic.sh` on the dedicated `golden-bin` copy.
+
 ## Adoption-audit disposition — 2026-09-02
 
 Source: `docs/builder-program/PHOTOLAB-ADOPTION-AUDIT-2026-09-02.md` (12
