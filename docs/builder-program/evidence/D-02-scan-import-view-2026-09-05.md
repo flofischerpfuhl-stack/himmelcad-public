@@ -180,3 +180,7 @@ additive; no PhotoLab provider or route was removed.
 | command-table and Python SDK generator checks | PASS/current. |
 | `git diff --check` | PASS. |
 | 180-frame V-01 p95 under concurrent import | BLOCKED before frame 1: no Builder renderer CDP target; no p95 claimed. |
+
+## Architect acceptance (G17, 2026-09-06)
+
+`gallery/shots/dark/import-surfaces.png`: jobs island rows with the four import phases and cancel, placement row "CRS: EPSG:25832 · offset 0 0 0 · source units m" with the secondary Change… button, cloud Properties with point-size Slider, color-mode Select and P9 tri-state class checkboxes — matches the brief. Accepted. Open: the live V-01 p95 gate (Electron CDP target did not appear in the run's contended environment) is covered by the architect's baseline run; per-entity point size awaits a renderer API (queued under V-05).

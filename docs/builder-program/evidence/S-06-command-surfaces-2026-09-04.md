@@ -185,3 +185,7 @@ Not verified: no PhotoLab renderer integration click-through was performed,
 because this slice was explicitly prohibited from editing `apps/photolab`.
 The PhotoLab lane must add the product id and the exact two-id mapping above;
 the existing confirmation and GCP filtering handlers remain authoritative.
+
+## Architect acceptance of S-06c (G17, 2026-09-06)
+
+`gallery/shots/dark/command-surfaces.png` row "PhotoLab image node menu": "Remove from project…" sits in the entity group under Rename, Builder's polyline menu is unchanged, submenu anchoring intact. S-06c accepted; PhotoLab wires the two ids in its lane.
