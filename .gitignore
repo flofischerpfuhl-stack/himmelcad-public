@@ -131,3 +131,4 @@ website/.check-out/
 # emitted next to sources by accident (tsc without -b/noEmit)
 packages/@himmelcad/app/src/**/*.js
 packages/@himmelcad/app/src/**/*.d.ts
+packages/@himmelcad/app/src/**/*.map
