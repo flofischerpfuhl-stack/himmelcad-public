@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { resolve } from 'node:path';
+import { availableParallelism } from 'node:os';
 import process from 'node:process';
 
 import { changedPathsForTier, shallowUnknownUntracked } from './verification/git-changes.mjs';
@@ -14,7 +15,16 @@ if (!['changed', 'commit', 'push', 'release'].includes(tier)) {
 }
 const readOption = (name) => {
   const prefix = `--${name}=`;
-  return process.argv.find((argument) => argument.startsWith(prefix))?.slice(prefix.length);
+  const inline = process.argv.find((argument) => argument.startsWith(prefix))?.slice(prefix.length);
+  if (inline !== undefined) return inline;
+  const index = process.argv.indexOf(`--${name}`);
+  return index >= 0 ? process.argv[index + 1] : undefined;
+};
+const parseJobs = (value) => {
+  const jobs = Number(value);
+  if (!Number.isSafeInteger(jobs) || jobs < 1)
+    throw new Error(`invalid verifier job cap: ${value}`);
+  return jobs;
 };
 const dryRun = process.argv.includes('--dry-run');
 const explicitPaths = process.argv
@@ -24,6 +34,8 @@ const paths = explicitPaths.length
   ? explicitPaths
   : changedPathsForTier(tier, { base: readOption('base') });
 const capabilities = (readOption('capabilities') ?? '').split(',').filter(Boolean);
+const defaultJobs = Math.max(1, Math.min(4, Math.floor(availableParallelism() / 2)));
+const jobs = parseJobs(readOption('jobs') ?? process.env.VERIFY_JOBS ?? defaultJobs);
 
 if (tier === 'changed') {
   for (const path of shallowUnknownUntracked()) {
@@ -34,4 +46,4 @@ if (tier === 'changed') {
 }
 
 const plan = createVerificationPlan({ root, tier, paths });
-process.exitCode = runPlan(plan, { root, dryRun, capabilities });
+process.exitCode = await runPlan(plan, { root, dryRun, capabilities, jobs });

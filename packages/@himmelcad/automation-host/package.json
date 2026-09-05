@@ -24,7 +24,7 @@
   },
   "scripts": {
     "test": "node --test test/*.test.cjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc -b"
   },
   "devDependencies": {
     "@himmelcad/agent": "workspace:*",

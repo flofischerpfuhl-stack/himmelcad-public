@@ -291,6 +291,9 @@ importers:
 
   packages/@himmelcad/console:
     dependencies:
+      '@himmelcad/app':
+        specifier: workspace:*
+        version: link:../app
       '@himmelcad/data':
         specifier: workspace:*
         version: link:../data

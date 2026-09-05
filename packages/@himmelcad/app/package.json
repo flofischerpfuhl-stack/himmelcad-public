@@ -6,8 +6,8 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "rm -rf ../../../.build/tests/app && tsc -p tsconfig.test.json && node --test ../../../.build/tests/app/packages/@himmelcad/app/test/*.test.js"
+    "typecheck": "tsc -b",
+    "test": "node ../../../scripts/generate-command-table.mjs --check && rm -rf ../../../.build/tests/app && tsc -p tsconfig.test.json && node --test ../../../.build/tests/app/packages/@himmelcad/app/test/*.test.js"
   },
   "dependencies": {
     "@himmelcad/data": "workspace:*"

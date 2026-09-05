@@ -555,7 +555,7 @@ from .models import (
     CanonicalEntityEdit, CanonicalEntityMutation,
     CasDescription, CommandCancelResult, CommandStatus, CommandValidationPlan, EntityPage,
     EntityVersionRef, JournalPage, PropertyId, PropertyQueryResult, ProtocolNegotiationResponse, ScreenshotResultV1,
-    ViewStateV1, WireModel, to_wire,
+    ViewStateV2, WireModel, to_wire,
 )
 
 LIMITS = MappingProxyType({limits})
@@ -724,11 +724,11 @@ class HimmelcadClient:
     def cas_describe(self, content_hash: str) -> CasDescription:
         return CasDescription.from_dict(self._call("automation.cas.describe", {{"contentHash": content_hash}}))
 
-    def get_view(self) -> ViewStateV1:
-        return ViewStateV1.from_dict(self._call("view.state.get", {{}}))
+    def get_view(self) -> ViewStateV2:
+        return ViewStateV2.from_dict(self._call("view.state.get", {{}}))
 
-    def set_view(self, state: ViewStateV1) -> ViewStateV1:
-        return ViewStateV1.from_dict(self._call("view.state.set", to_wire(state)))
+    def set_view(self, state: ViewStateV2) -> ViewStateV2:
+        return ViewStateV2.from_dict(self._call("view.state.set", to_wire(state)))
 
     def screenshot(self, request: WireModel | Mapping[str, Any]) -> bytes | BulkLease:
         request_wire = _params(request)
@@ -869,11 +869,11 @@ class AsyncHimmelcadClient:
     async def cas_describe(self, content_hash: str) -> CasDescription:
         return CasDescription.from_dict(await self._call("automation.cas.describe", {{"contentHash": content_hash}}))
 
-    async def get_view(self) -> ViewStateV1:
-        return ViewStateV1.from_dict(await self._call("view.state.get", {{}}))
+    async def get_view(self) -> ViewStateV2:
+        return ViewStateV2.from_dict(await self._call("view.state.get", {{}}))
 
-    async def set_view(self, state: ViewStateV1) -> ViewStateV1:
-        return ViewStateV1.from_dict(await self._call("view.state.set", to_wire(state)))
+    async def set_view(self, state: ViewStateV2) -> ViewStateV2:
+        return ViewStateV2.from_dict(await self._call("view.state.set", to_wire(state)))
 
     async def screenshot(self, request: WireModel | Mapping[str, Any]) -> bytes | AsyncBulkLease:
         request_wire = _params(request)

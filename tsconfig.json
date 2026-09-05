@@ -1,0 +1,20 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/@himmelcad/data" },
+    { "path": "packages/@himmelcad/app" },
+    { "path": "packages/@himmelcad/theme" },
+    { "path": "packages/@himmelcad/ui" },
+    { "path": "packages/@himmelcad/console" },
+    { "path": "packages/@himmelcad/viewer" },
+    { "path": "packages/@himmelcad/agent" },
+    { "path": "packages/@himmelcad/automation-host" },
+    { "path": "packages/@himmelcad/plan" },
+    { "path": "packages/@himmelcad/specs" },
+    { "path": "apps/builder" },
+    { "path": "apps/builder/tsconfig.typecheck-electron.json" },
+    { "path": "apps/photolab" },
+    { "path": "apps/photolab/tsconfig.typecheck-electron.json" },
+    { "path": "apps/weltview" }
+  ]
+}

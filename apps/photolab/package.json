@@ -13,7 +13,8 @@
   "main": "dist/electron/main.js",
   "scripts": {
     "prepare:viewer": "node ../../scripts/stage-builder-viewer-wasm.mjs",
-    "dev": "pnpm prepare:viewer && concurrently -k -n vite,electron -c blue,green \"pnpm dev:vite\" \"pnpm dev:electron\"",
+    "prepare:viewer:dev": "node ../../scripts/stage-builder-viewer-wasm.mjs --profile dev",
+    "dev": "pnpm prepare:viewer:dev && concurrently -k -n vite,electron -c blue,green \"pnpm dev:vite\" \"pnpm dev:electron\"",
     "dev:vite": "vite",
     "dev:electron": "tsc -p tsconfig.electron.json && wait-on http://localhost:5174 && node ../../scripts/run-electron.mjs .",
     "build:sidecar": "node ../../scripts/run-cargo.mjs build --release --bins --package himmelcad-sidecar --manifest-path ../../Cargo.toml",
@@ -37,7 +38,7 @@
     "test:renderer": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --import ../../scripts/lib/renderer-ts-resolve.mjs --test \"renderer/src/**/*.test.ts\"",
     "test:electron": "node ../../scripts/test-photolab-preferences.mjs",
     "test:contracts": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types ../../scripts/test-photolab-processing-report.mjs && node ../../scripts/test-photolab-himmelcap-import.mjs",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit && node ../../scripts/check-photolab-english-ui.mjs",
+    "typecheck": "tsc -b tsconfig.json && node ../../scripts/check-photolab-english-ui.mjs",
     "check:english-ui": "node ../../scripts/check-photolab-english-ui.mjs"
   },
   "dependencies": {

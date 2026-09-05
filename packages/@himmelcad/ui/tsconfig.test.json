@@ -1,13 +1,15 @@
 {
   "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
+    "composite": false,
+    "emitDeclarationOnly": false,
     "noEmit": false,
-    "rootDir": ".",
+    "rootDir": "../../..",
     "outDir": "./dist/ui-tests",
     "declaration": false,
     "declarationMap": false,
     "sourceMap": false,
     "types": ["node"]
   },
-  "include": ["src/importRegistrationProfile.ts", "src/useLayoutStore.ts", "test"]
+  "include": ["src", "test", "../../../types"]
 }

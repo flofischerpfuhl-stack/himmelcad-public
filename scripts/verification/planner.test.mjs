@@ -3,12 +3,159 @@ import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
 
 import { parseNulList, shallowUnknownUntracked } from './git-changes.mjs';
+import { resolveCargoExecutable } from './cargo-resolver.mjs';
 import { createVerificationPlan } from './planner.mjs';
 
 const root = resolve(import.meta.dirname, '../..');
 const ids = (plan) => plan.tasks.map((task) => task.id);
 
 describe('verification planner', () => {
+  it('resolves Cargo from the override, known homes, rustup shims and PATH', () => {
+    const resolveFrom = (environment, executable) =>
+      resolveCargoExecutable({
+        environment,
+        platform: 'linux',
+        isExecutable: (path) => path === executable,
+      });
+
+    assert.equal(
+      resolveFrom({ CARGO: '/toolchain/cargo' }, '/toolchain/cargo'),
+      '/toolchain/cargo',
+    );
+    assert.equal(
+      resolveFrom({ CARGO_HOME: '/cargo-home' }, '/cargo-home/bin/cargo'),
+      '/cargo-home/bin/cargo',
+    );
+    assert.equal(
+      resolveFrom({ HOME: '/home/tester' }, '/home/tester/.cargo/bin/cargo'),
+      '/home/tester/.cargo/bin/cargo',
+    );
+    assert.equal(
+      resolveFrom({ RUSTUP_HOME: '/rustup' }, '/rustup/shims/cargo'),
+      '/rustup/shims/cargo',
+    );
+    assert.equal(
+      resolveFrom({ PATH: '/usr/local/bin:/usr/bin' }, '/usr/bin/cargo'),
+      '/usr/bin/cargo',
+    );
+    assert.equal(
+      resolveCargoExecutable({
+        environment: { Path: String.raw`C:\Windows;C:\Rust\bin` },
+        platform: 'win32',
+        isExecutable: (path) => path === String.raw`C:\Rust\bin\cargo.exe`,
+      }),
+      String.raw`C:\Rust\bin\cargo.exe`,
+    );
+  });
+
+  it('reports every Cargo search location when Cargo is absent', () => {
+    assert.throws(
+      () =>
+        resolveCargoExecutable({
+          environment: {
+            CARGO: '/custom/cargo',
+            CARGO_HOME: '/cargo-home',
+            HOME: '/home/tester',
+            RUSTUP_HOME: '/rustup',
+            PATH: '/usr/local/bin:/usr/bin',
+          },
+          platform: 'linux',
+          isExecutable: () => false,
+        }),
+      (error) => {
+        assert.match(error.message, /CARGO \(\/custom\/cargo\)/);
+        assert.match(error.message, /CARGO_HOME\/bin \(\/cargo-home\/bin\/cargo\)/);
+        assert.match(error.message, /HOME\/\.cargo\/bin rustup proxy/);
+        assert.match(error.message, /RUSTUP_HOME\/shims \(\/rustup\/shims\/cargo\)/);
+        assert.match(error.message, /PATH \(\/usr\/bin\/cargo\)/);
+        return true;
+      },
+    );
+  });
+
+  it('uses the resolved Cargo executable for every emitted Cargo task', () => {
+    const cargoExecutable = '/toolchains/pinned/bin/cargo';
+    const releasePlan = createVerificationPlan({
+      root,
+      tier: 'release',
+      paths: [],
+      cargoExecutable,
+    });
+    const schemaPlan = createVerificationPlan({
+      root,
+      tier: 'changed',
+      paths: ['schemas/automation/fixtures/automation-wire-v1.json'],
+      cargoExecutable,
+    });
+    const packagePlan = createVerificationPlan({
+      root,
+      tier: 'changed',
+      paths: ['crates/himmelcad-core/src/lib.rs'],
+      cargoExecutable,
+    });
+    const cargoTasks = [...releasePlan.tasks, ...schemaPlan.tasks, ...packagePlan.tasks].filter(
+      ({ id }) =>
+        id.startsWith('rust.') || id === 'automation.wire-rust' || id === 'licenses.cargo-deny',
+    );
+
+    const expectedArgs = new Map([
+      [
+        'automation.wire-rust',
+        ['test', '-p', 'himmelcad-core', '--test', 'automation_schema_golden'],
+      ],
+      ['rust.test:workspace', ['test', '--workspace']],
+      ['rust.test:himmelcad-core', ['test', '-p', 'himmelcad-core']],
+      ['rust.fmt', ['fmt', '--all', '--', '--check']],
+      ['rust.clippy', ['clippy', '--workspace', '--all-targets']],
+      ['licenses.cargo-deny', ['deny', 'check']],
+    ]);
+
+    assert.deepEqual(new Set(cargoTasks.map(({ id }) => id)), new Set(expectedArgs.keys()));
+    for (const cargoTask of cargoTasks) {
+      assert.equal(cargoTask.command, cargoExecutable);
+      assert.deepEqual(cargoTask.args, expectedArgs.get(cargoTask.id));
+      assert.ok(cargoTask.resourceKeys.some((key) => key.startsWith('cargo:')));
+    }
+  });
+
+  it('declares exclusive lanes for Cargo, package outputs, staging, fixtures and targets', () => {
+    const previousTarget = process.env.CARGO_TARGET_DIR;
+    process.env.CARGO_TARGET_DIR = 'target/builder';
+    try {
+      const release = createVerificationPlan({
+        root,
+        tier: 'release',
+        paths: [],
+        cargoExecutable: '/toolchains/pinned/bin/cargo',
+      });
+      const byId = new Map(release.tasks.map((task) => [task.id, task]));
+      assert.ok(byId.get('rust.test:workspace').resourceKeys.includes('cargo:target/builder'));
+      assert.ok(byId.get('rust.clippy').resourceKeys.includes('cargo:target/builder'));
+      assert.ok(
+        byId.get('viewer.browser-real-parity').resourceKeys.includes('wasm-staging:viewer-kernel'),
+      );
+      assert.ok(
+        byId.get('viewer.real-dgm').resourceKeys.includes('fixture:target/viewer-real-dgm-section'),
+      );
+      assert.ok(
+        byId.get('photolab.package-linux').resourceKeys.includes('package-staging:photolab'),
+      );
+      assert.deepEqual(byId.get('node.typecheck:@himmelcad/builder').resourceKeys, [
+        'node-package:@himmelcad/builder',
+      ]);
+      assert.deepEqual(byId.get('node.test:@himmelcad/builder').resourceKeys, [
+        'node-package:@himmelcad/builder',
+      ]);
+      assert.notDeepEqual(
+        byId.get('node.typecheck:@himmelcad/builder').resourceKeys,
+        byId.get('node.typecheck:@himmelcad/viewer').resourceKeys,
+      );
+    } finally {
+      if (previousTarget === undefined) delete process.env.CARGO_TARGET_DIR;
+      else process.env.CARGO_TARGET_DIR = previousTarget;
+    }
+  });
+
   it('parses names with spaces and rename output without line splitting', () => {
     assert.deepEqual(parseNulList('docs/a file.md\0apps/builder/new.ts\0'), [
       'docs/a file.md',

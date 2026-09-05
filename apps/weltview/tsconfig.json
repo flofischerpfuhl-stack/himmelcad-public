@@ -1,8 +1,18 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true,
+    "composite": true,
+    "emitDeclarationOnly": true,
+    "rootDir": ".",
+    "outDir": ".tsbuild/types",
+    "tsBuildInfoFile": ".tsbuild/tsconfig.tsbuildinfo",
     "types": ["vite/client"]
   },
-  "include": ["src", "../../types"]
+  "include": ["src", "../../types"],
+  "references": [
+    { "path": "../../packages/@himmelcad/data" },
+    { "path": "../../packages/@himmelcad/theme" },
+    { "path": "../../packages/@himmelcad/ui" },
+    { "path": "../../packages/@himmelcad/viewer" }
+  ]
 }

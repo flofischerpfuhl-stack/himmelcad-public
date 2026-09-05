@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.electron.json",
+  "compilerOptions": {
+    "composite": true,
+    "emitDeclarationOnly": true,
+    "rootDir": "electron",
+    "outDir": ".tsbuild/electron/types",
+    "tsBuildInfoFile": ".tsbuild/electron/tsconfig.tsbuildinfo"
+  },
+  "references": [
+    { "path": "../../packages/@himmelcad/app" },
+    { "path": "../../packages/@himmelcad/agent" },
+    { "path": "../../packages/@himmelcad/automation-host" }
+  ]
+}

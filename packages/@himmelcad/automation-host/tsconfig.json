@@ -7,7 +7,11 @@
     "types": ["node"],
     "allowJs": true,
     "checkJs": false,
-    "noEmit": true
+    "composite": true,
+    "emitDeclarationOnly": true,
+    "rootDir": ".",
+    "outDir": ".tsbuild/types",
+    "tsBuildInfoFile": ".tsbuild/tsconfig.tsbuildinfo"
   },
   "include": [
     "index.cjs",
@@ -16,5 +20,6 @@
     "electron.d.ts",
     "provider-credentials.cjs",
     "provider-credentials.d.ts"
-  ]
+  ],
+  "references": [{ "path": "../agent" }]
 }

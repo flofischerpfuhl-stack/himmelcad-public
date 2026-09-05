@@ -12,19 +12,38 @@ import {
   reverseNodeClosure,
   rustPackageForPath,
 } from './workspace-graph.mjs';
+import { resolveCargoExecutable } from './cargo-resolver.mjs';
 
 function task(id, command, args, options = {}) {
-  return { id, command, args, cwd: options.cwd, requiredCapability: options.requiredCapability };
+  return {
+    id,
+    command,
+    args,
+    cwd: options.cwd,
+    requiredCapability: options.requiredCapability,
+    resourceKeys: options.resourceKeys ?? [],
+    dependsOn: options.dependsOn ?? [],
+  };
 }
 
 function add(map, value) {
   if (!map.has(value.id)) map.set(value.id, value);
 }
 
-export function createVerificationPlan({ root, tier, paths }) {
+export function createVerificationPlan({ root, tier, paths, cargoExecutable }) {
   const classifications = paths.map((path) => ({ path, ...classifyPath(path) }));
   const risk = tier === 'release' ? 'release' : maxRisk(classifications);
   const tasks = new Map();
+  const cargoResourceKey = `cargo:${process.env.CARGO_TARGET_DIR || 'target'}`;
+  const cargoTask = (id, args, options) => {
+    cargoExecutable ??= resolveCargoExecutable();
+    return task(id, cargoExecutable, args, {
+      ...options,
+      resourceKeys: [cargoResourceKey, ...(options?.resourceKeys ?? [])],
+    });
+  };
+  const nodeTask = (id, name, script) =>
+    task(id, 'pnpm', ['--filter', name, script], { resourceKeys: [`node-package:${name}`] });
   const activePaths = classifications
     .filter(({ risk: pathRisk }) => pathRisk !== 'none')
     .map(({ path }) => path);
@@ -42,7 +61,7 @@ export function createVerificationPlan({ root, tier, paths }) {
   if (tier === 'release' || groups.has('verification')) {
     add(
       tasks,
-      task('verification.self-test', 'node', ['--test', 'scripts/verification/planner.test.mjs'], {
+      task('verification.self-test', 'pnpm', ['verify:matrix:check'], {
         cwd: root,
       }),
     );
@@ -70,7 +89,10 @@ export function createVerificationPlan({ root, tier, paths }) {
           'automation.runtime-stage-linux',
           'node',
           ['scripts/stage-automation-runtime.mjs', 'linux-x64', '--release'],
-          { requiredCapability: 'linux-package' },
+          {
+            requiredCapability: 'linux-package',
+            resourceKeys: ['package-staging:automation-runtime', 'external-target:linux-x64'],
+          },
         ),
       );
       add(
@@ -79,31 +101,30 @@ export function createVerificationPlan({ root, tier, paths }) {
           'automation.runtime-stage-windows',
           'node',
           ['scripts/stage-automation-runtime.mjs', 'win32-x64', '--release'],
-          { requiredCapability: 'windows-package' },
+          {
+            requiredCapability: 'windows-package',
+            resourceKeys: ['package-staging:automation-runtime', 'external-target:win32-x64'],
+          },
         ),
       );
     }
     add(
       tasks,
-      task('node.typecheck:@himmelcad/automation-host', 'pnpm', [
-        '--filter',
+      nodeTask(
+        'node.typecheck:@himmelcad/automation-host',
         '@himmelcad/automation-host',
         'typecheck',
-      ]),
+      ),
     );
     add(
       tasks,
-      task('node.test:@himmelcad/automation-host', 'pnpm', [
-        '--filter',
-        '@himmelcad/automation-host',
-        'test',
-      ]),
+      nodeTask('node.test:@himmelcad/automation-host', '@himmelcad/automation-host', 'test'),
     );
   }
   if (groups.has('automation-schema') && (tier === 'changed' || tier === 'commit')) {
     add(
       tasks,
-      task('automation.wire-rust', 'cargo', [
+      cargoTask('automation.wire-rust', [
         'test',
         '-p',
         'himmelcad-core',
@@ -124,10 +145,10 @@ export function createVerificationPlan({ root, tier, paths }) {
   for (const name of affectedPackages) {
     const manifest = packages.get(name)?.manifest;
     if (manifest?.scripts?.typecheck) {
-      add(tasks, task(`node.typecheck:${name}`, 'pnpm', ['--filter', name, 'typecheck']));
+      add(tasks, nodeTask(`node.typecheck:${name}`, name, 'typecheck'));
     }
     if (manifest?.scripts?.test && (tier !== 'changed' || directlyAffected.includes(name))) {
-      add(tasks, task(`node.test:${name}`, 'pnpm', ['--filter', name, 'test']));
+      add(tasks, nodeTask(`node.test:${name}`, name, 'test'));
     }
   }
 
@@ -139,10 +160,10 @@ export function createVerificationPlan({ root, tier, paths }) {
     (tier === 'push' && RISK[risk] >= RISK.high) ||
     groups.has('workspace')
   ) {
-    add(tasks, task('rust.test:workspace', 'cargo', ['test', '--workspace']));
+    add(tasks, cargoTask('rust.test:workspace', ['test', '--workspace']));
   } else {
     for (const name of rustPackages)
-      add(tasks, task(`rust.test:${name}`, 'cargo', ['test', '-p', name]));
+      add(tasks, cargoTask(`rust.test:${name}`, ['test', '-p', name]));
   }
 
   if (tier === 'commit') {
@@ -164,14 +185,22 @@ export function createVerificationPlan({ root, tier, paths }) {
           ...lintPaths,
         ]),
       );
-    if (rustPackages.length)
-      add(tasks, task('rust.fmt', 'cargo', ['fmt', '--all', '--', '--check']));
+    if (rustPackages.length) add(tasks, cargoTask('rust.fmt', ['fmt', '--all', '--', '--check']));
     add(tasks, task('photolab.english-ui', 'pnpm', ['photolab:check:english-ui']));
   }
 
   if (tier === 'push') {
     if (groups.has('photolab-ui'))
-      add(tasks, task('photolab.visual', 'pnpm', ['photolab:test:visual']));
+      add(
+        tasks,
+        task('photolab.visual', 'pnpm', ['photolab:test:visual'], {
+          resourceKeys: [
+            'node-package:@himmelcad/photolab',
+            'fixture:photolab-visual',
+            'port:4173',
+          ],
+        }),
+      );
     if (groups.has('photolab') || groups.has('electron')) {
       add(tasks, task('photolab.contracts', 'pnpm', ['photolab:test:e2e-contracts']));
       add(tasks, task('photolab.dialog-policy', 'pnpm', ['photolab:test:dialog-policy']));
@@ -179,18 +208,21 @@ export function createVerificationPlan({ root, tier, paths }) {
     if (groups.has('viewer') || groups.has('core')) {
       add(
         tasks,
-        task('viewer.browser-kernel', 'pnpm', [
-          '--filter',
-          '@himmelcad/viewer',
-          'test:browser-kernel',
-        ]),
+        task(
+          'viewer.browser-kernel',
+          'pnpm',
+          ['--filter', '@himmelcad/viewer', 'test:browser-kernel'],
+          {
+            resourceKeys: [cargoResourceKey, 'wasm-staging:viewer-kernel', 'port:viewer-kernel'],
+          },
+        ),
       );
     }
     if (activePaths.some(affectsEnglishUi))
       add(tasks, task('photolab.english-ui', 'pnpm', ['photolab:check:english-ui']));
     if (RISK[risk] >= RISK.high) {
       add(tasks, task('node.lint', 'pnpm', ['lint']));
-      add(tasks, task('rust.clippy', 'cargo', ['clippy', '--workspace', '--all-targets']));
+      add(tasks, cargoTask('rust.clippy', ['clippy', '--workspace', '--all-targets']));
     }
   }
 
@@ -198,8 +230,8 @@ export function createVerificationPlan({ root, tier, paths }) {
     for (const value of [
       task('node.lint', 'pnpm', ['lint']),
       task('node.format', 'pnpm', ['format:check']),
-      task('rust.fmt', 'cargo', ['fmt', '--all', '--', '--check']),
-      task('rust.clippy', 'cargo', ['clippy', '--workspace', '--all-targets']),
+      cargoTask('rust.fmt', ['fmt', '--all', '--', '--check']),
+      cargoTask('rust.clippy', ['clippy', '--workspace', '--all-targets']),
       task('photolab.english-ui', 'pnpm', ['photolab:check:english-ui']),
       task('branding', 'pnpm', ['branding:check']),
       task('product-names', 'pnpm', ['product-names:check']),
@@ -208,24 +240,37 @@ export function createVerificationPlan({ root, tier, paths }) {
         'viewer.browser-real-parity',
         'pnpm',
         ['--filter', '@himmelcad/viewer', 'test:browser-kernel-real-parity'],
-        { requiredCapability: 'browser-gpu' },
+        {
+          requiredCapability: 'browser-gpu',
+          resourceKeys: [
+            cargoResourceKey,
+            'wasm-staging:viewer-kernel',
+            'port:viewer-kernel',
+            'external-target:browser-gpu',
+          ],
+        },
       ),
       task('viewer.real-dgm', 'pnpm', ['viewer:test:real-dgm-section'], {
         requiredCapability: 'real-data',
+        resourceKeys: [cargoResourceKey, 'fixture:target/viewer-real-dgm-section'],
       }),
       task('viewer.large-mesh', 'pnpm', ['viewer:test:large-prepared-mesh'], {
         requiredCapability: 'real-data',
+        resourceKeys: [cargoResourceKey],
       }),
       task('photolab.golden', 'pnpm', ['photolab:test:golden:agisoft'], {
         requiredCapability: 'real-data',
+        resourceKeys: ['fixture:photolab-agisoft'],
       }),
       task('photolab.package-linux', 'pnpm', ['photolab:smoke:install:linux'], {
         requiredCapability: 'linux-package',
+        resourceKeys: ['package-staging:photolab', 'external-target:linux-x64'],
       }),
       task('photolab.package-windows', 'pnpm', ['photolab:smoke:install:win'], {
         requiredCapability: 'windows-package',
+        resourceKeys: ['package-staging:photolab', 'external-target:win32-x64'],
       }),
-      task('licenses.cargo-deny', 'cargo', ['deny', 'check']),
+      cargoTask('licenses.cargo-deny', ['deny', 'check']),
     ])
       add(tasks, value);
   }

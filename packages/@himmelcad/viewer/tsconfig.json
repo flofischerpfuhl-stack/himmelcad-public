@@ -1,5 +1,21 @@
 {
   "extends": "../../../tsconfig.base.json",
-  "compilerOptions": { "noEmit": true, "types": ["node"] },
-  "include": ["src", "test/*.test.ts", "../../../types"]
+  "compilerOptions": {
+    "composite": true,
+    "emitDeclarationOnly": true,
+    "rootDir": ".",
+    "outDir": ".tsbuild/types",
+    "tsBuildInfoFile": ".tsbuild/tsconfig.tsbuildinfo",
+    "types": ["node"]
+  },
+  "include": [
+    "src",
+    "test/*.test.ts",
+    "test/browser/public-session-host.ts",
+    "test/consumer/public-mixed-scene.ts",
+    "test/electron/public-session-host.ts",
+    "test/scale/streaming-telemetry-fixture.ts",
+    "../../../types"
+  ],
+  "references": [{ "path": "../data" }]
 }

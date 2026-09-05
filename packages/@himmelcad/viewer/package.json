@@ -24,7 +24,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -b",
     "typecheck:browser-kernel-contract": "tsc -p tsconfig.browser.json",
     "test": "rm -rf dist/viewer-tests && tsc -p tsconfig.test.json && node --test dist/viewer-tests/test/*.test.js",
     "test:streaming-telemetry-scale": "rm -rf dist/viewer-tests && tsc -p tsconfig.test.json && node dist/viewer-tests/test/scale/streaming-telemetry-gate.js",

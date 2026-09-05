@@ -30,3 +30,5 @@ docs/TRANSFORM-MODULE-PLAN.md
 # Generated PhotoLab pixel baselines and their provenance manifest
 # (scripts/photolab-visual-regression.mjs --update-baselines).
 apps/photolab/test/visual-baselines/
+.claude/
+website/.check-out/

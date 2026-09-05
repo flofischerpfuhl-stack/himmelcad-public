@@ -111,6 +111,9 @@ photolab/*.zip
 photolab/*.crdownload*
 photolab/.xdp-*
 .build/
+.tsbuild/
+packages/@himmelcad/ui/gallery/dist/
+packages/@himmelcad/ui/gallery/shots/
 
 # himmel:cap secrets (NTRIP, OAuth) — never commit
 .env.local
@@ -119,3 +122,8 @@ photolab/.xdp-*
 **/google-services.json.local
 apps/cap/android/key.properties
 apps/cap/**/Secrets.local.*
+
+# Codex run logs (large, local)
+.claude/codex/out/
+website/.check-out/
+.build/

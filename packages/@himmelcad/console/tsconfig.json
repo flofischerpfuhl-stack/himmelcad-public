@@ -1,5 +1,18 @@
 {
   "extends": "../../../tsconfig.base.json",
-  "compilerOptions": { "noEmit": true, "types": ["node"] },
-  "include": ["src", "../../../types"]
+  "compilerOptions": {
+    "composite": true,
+    "emitDeclarationOnly": true,
+    "rootDir": ".",
+    "outDir": ".tsbuild/types",
+    "tsBuildInfoFile": ".tsbuild/tsconfig.tsbuildinfo",
+    "types": ["node"]
+  },
+  "include": ["src", "../../../types"],
+  "references": [
+    { "path": "../app" },
+    { "path": "../data" },
+    { "path": "../theme" },
+    { "path": "../ui" }
+  ]
 }

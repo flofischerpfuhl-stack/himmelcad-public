@@ -1,6 +1,8 @@
 {
   "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
+    "composite": false,
+    "emitDeclarationOnly": false,
     "noEmit": false,
     "rootDir": "../../..",
     "outDir": "../../../.build/tests/app",

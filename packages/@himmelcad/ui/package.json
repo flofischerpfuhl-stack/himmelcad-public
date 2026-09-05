@@ -6,8 +6,9 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "rm -rf dist/ui-tests && tsc -p tsconfig.test.json && node --test dist/ui-tests/test/*.test.js"
+    "gallery:shots": "node gallery/shoot.mjs",
+    "typecheck": "tsc -b",
+    "test": "rm -rf dist/ui-tests && tsc -p tsconfig.test.json && node --experimental-loader ./test/css-loader.mjs --test dist/ui-tests/packages/@himmelcad/ui/test/*.test.js"
   },
   "peerDependencies": {
     "react": "^19.0.0",

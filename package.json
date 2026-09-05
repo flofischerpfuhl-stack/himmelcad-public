@@ -19,7 +19,7 @@
     "dev:photolab": "pnpm --filter @himmelcad/photolab dev",
     "dev:weltview": "pnpm --filter @himmelcad/weltview dev",
     "lint": "eslint . --max-warnings 0",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "tsc -b && pnpm --filter @himmelcad/photolab check:english-ui",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "pnpm -r test",
@@ -29,7 +29,7 @@
     "verify:release": "node scripts/verify.mjs release",
     "verify:matrix:check": "node --test scripts/verification/*.test.mjs",
     "hooks:install": "git config core.hooksPath .githooks",
-    "clean": "pnpm -r exec rm -rf dist build .vite *.tsbuildinfo && rm -rf node_modules",
+    "clean": "pnpm -r exec rm -rf dist build .vite .tsbuild *.tsbuildinfo && rm -rf node_modules",
     "fetch-vendor": "node scripts/fetch-vendor.mjs",
     "photolab:fetch:msvc-runtime": "node scripts/fetch-msvc-runtime.mjs",
     "fetch-photolab-models": "node scripts/fetch-photolab-models.mjs",
@@ -80,7 +80,9 @@
     "photolab:test:visual-baseline": "node --test scripts/test-photolab-visual-baseline.mjs",
     "branding:generate": "node scripts/generate-brand-assets.mjs",
     "branding:check": "node scripts/generate-brand-assets.mjs --check",
+    "website:check": "node website/check.mjs",
     "product-names:check": "node scripts/check-product-names.mjs",
+    "registry:lint": "node scripts/registry-lint.mjs",
     "postinstall": "node scripts/fetch-vendor.mjs && node scripts/fetch-photolab-models.mjs"
   },
   "devDependencies": {

@@ -1,8 +1,22 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true,
+    "composite": true,
+    "emitDeclarationOnly": true,
+    "rootDir": ".",
+    "outDir": ".tsbuild/types",
+    "tsBuildInfoFile": ".tsbuild/tsconfig.tsbuildinfo",
     "types": ["vite/client"]
   },
-  "include": ["renderer/src", "vite.config.ts", "../../types"]
+  "include": ["renderer/src", "vite.config.ts", "../../types"],
+  "references": [
+    { "path": "../../packages/@himmelcad/app" },
+    { "path": "../../packages/@himmelcad/agent" },
+    { "path": "../../packages/@himmelcad/console" },
+    { "path": "../../packages/@himmelcad/data" },
+    { "path": "../../packages/@himmelcad/theme" },
+    { "path": "../../packages/@himmelcad/ui" },
+    { "path": "../../packages/@himmelcad/viewer" },
+    { "path": "./tsconfig.typecheck-electron.json" }
+  ]
 }
