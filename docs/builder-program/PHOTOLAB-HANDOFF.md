@@ -7,14 +7,14 @@ landing by the PhotoLab session. Plan of record:
 `.claude/codex/prompts/photolab/`, the token ledger under
 `.claude/codex/logs/photolab/ledger.json`.
 
-Last update: 2026-09-05 10:50 (regression from a540935 reported: tree context menu lost PhotoLab actions).
+Last update: 2026-09-05 11:05 (H2b landed with G17 review; F15 fix S-06c in the Builder lane).
 
 ## Current work packages
 
 | WP                                        | State                                                                                                                                                      |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A4 SMRF ground classification (DTM)       | landed 2026-09-04 (3e05da1, 6b87d00) with DTM-vs-DSM evidence (median DSM−DTM 1.32 m, 25 % of cells > 3 m); G17 reviewed                                   |
-| H2 jobs chip + side-operation drain       | landed (2ef29d5); H2b adopted the shared `JobsStatusChip` (6cc334b, pushed) — G17 captures + baselines from a private worktree pending                     |
+| H2 jobs chip + side-operation drain       | landed (2ef29d5); H2b adopted the shared `JobsStatusChip` (6cc334b, pushed, G17 accepted); baselines wait for the F15 fix                                  |
 | B5 journal/manifest order + orphan GC     | landed 2026-09-04 (b66a66b): manifest-first commit with write-ahead intent, open-time repair, orphan quarantine                                            |
 | B4 same-target admission + disk preflight | landed 2026-09-04 (fcf75c8): frozen publication targets, ConflictingTarget, InsufficientDisk, inline errors                                                |
 | H1b cancellable archive Save              | landed 2026-09-04 (e0da2a8): params on `photolab.project.save`, phases, cancellation, Jobs-tab Cancel via H2                                               |
