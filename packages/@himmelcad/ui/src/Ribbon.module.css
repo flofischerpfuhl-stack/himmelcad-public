@@ -194,6 +194,56 @@
     color var(--hc-motion-fast);
 }
 
+.actionHost {
+  position: relative;
+  display: flex;
+  align-self: stretch;
+}
+
+.actionHost > .action {
+  height: 100%;
+}
+
+.actionMenuTrigger {
+  align-self: stretch;
+  width: 18px;
+  margin-left: -4px;
+  color: var(--hc-fg-muted);
+  border-left: 1px solid var(--hc-border-subtle);
+  border-radius: 0 var(--hc-radius-md) var(--hc-radius-md) 0;
+}
+
+.actionMenuTrigger:hover {
+  color: var(--hc-fg-strong);
+  background: var(--hc-hover-bg);
+}
+
+.actionMenu {
+  z-index: 1100;
+  min-width: 320px;
+  max-width: min(560px, calc(100vw - 24px));
+}
+
+.actionMenuCopy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  text-align: left;
+}
+
+.actionMenuDescription,
+.actionMenuPath {
+  overflow: hidden;
+  color: var(--hc-fg-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actionMenuPath {
+  font-family: var(--hc-font-mono);
+}
+
 .action:hover {
   background: var(--hc-hover-bg);
   color: var(--hc-fg-strong);

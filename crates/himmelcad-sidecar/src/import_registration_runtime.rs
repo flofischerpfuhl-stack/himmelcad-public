@@ -29,6 +29,7 @@ use thiserror::Error;
 const MAX_STAGED_RESOURCE_READ_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_STAGED_RESOURCE_REQUESTS: u32 = 100_000;
 const MAX_REGISTRATION_SAMPLE_NODE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_CONCURRENT_IMPORT_PREPARATIONS: usize = 2;
 
 /// Path-free session state safe to expose to product UIs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -118,6 +119,15 @@ pub struct RegistrationSourceSamples {
     pub points: Vec<WorldPoint>,
 }
 
+/// Result of requesting cancellation from any registration phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RegistrationCancelOutcome {
+    pub cancellation_requested: bool,
+    /// True only when all transient data was synchronously removed.
+    pub cancelled_immediately: bool,
+}
+
 #[derive(Debug, Clone)]
 struct VerifiedStagedResource {
     descriptor: StagedResourceDescriptor,
@@ -145,9 +155,47 @@ struct Session {
 #[derive(Debug, Default)]
 pub struct ImportRegistrationRuntime {
     sessions: Mutex<BTreeMap<String, Session>>,
+    preparations: Mutex<BTreeMap<String, CancellationToken>>,
 }
 
 impl ImportRegistrationRuntime {
+    /// Registers cancellation before provider preparation begins.
+    pub fn begin_preparation(
+        &self,
+        session_id: &str,
+    ) -> Result<CancellationToken, ImportRegistrationRuntimeError> {
+        validate_identity(session_id)?;
+        if self
+            .sessions
+            .lock()
+            .expect("registration sessions poisoned")
+            .contains_key(session_id)
+        {
+            return Err(ImportRegistrationRuntimeError::DuplicateSession);
+        }
+        let token = CancellationToken::new();
+        let mut preparations = self
+            .preparations
+            .lock()
+            .expect("registration preparations poisoned");
+        if preparations.contains_key(session_id) {
+            return Err(ImportRegistrationRuntimeError::DuplicateSession);
+        }
+        if preparations.len() >= MAX_CONCURRENT_IMPORT_PREPARATIONS {
+            return Err(ImportRegistrationRuntimeError::TooManyConcurrentPreparations);
+        }
+        preparations.insert(session_id.to_owned(), token.clone());
+        Ok(token)
+    }
+
+    /// Releases a failed or completed provider-preparation registration.
+    pub fn finish_preparation(&self, session_id: &str) {
+        self.preparations
+            .lock()
+            .expect("registration preparations poisoned")
+            .remove(session_id);
+    }
+
     /// Takes ownership of a provider-staged import. Nothing is published yet.
     pub fn begin(
         &self,
@@ -157,10 +205,33 @@ impl ImportRegistrationRuntime {
         staged: CanonicalStagedImport,
         scratch_root: PathBuf,
     ) -> Result<ImportRegistrationState, ImportRegistrationRuntimeError> {
+        self.begin_with_cancellation(
+            session_id,
+            command_id,
+            recipe,
+            staged,
+            scratch_root,
+            CancellationToken::new(),
+        )
+    }
+
+    /// Takes ownership of a provider stage registered before preparation.
+    pub fn begin_with_cancellation(
+        &self,
+        session_id: String,
+        command_id: String,
+        recipe: RegistrationRecipe,
+        staged: CanonicalStagedImport,
+        scratch_root: PathBuf,
+        cancellation: CancellationToken,
+    ) -> Result<ImportRegistrationState, ImportRegistrationRuntimeError> {
         validate_identity(&session_id)?;
         validate_identity(&command_id)?;
         recipe.validate()?;
         staged.validate()?;
+        if cancellation.is_cancel_requested() {
+            return Err(ImportRegistrationRuntimeError::ResourceCapabilityRevoked);
+        }
         let source_entity_count = u32::try_from(staged.package.admissions.len())
             .map_err(|_| ImportRegistrationRuntimeError::TooManyEntities)?;
         let (phase, preview) = automatic_preview(&recipe)?;
@@ -182,7 +253,7 @@ impl ImportRegistrationRuntime {
             state: state.clone(),
             staged: Some(staged),
             scratch_root,
-            cancellation: CancellationToken::new(),
+            cancellation,
             resource_capability,
             verified_resources: None,
             resource_requests: 0,
@@ -191,9 +262,11 @@ impl ImportRegistrationRuntime {
             .sessions
             .lock()
             .expect("registration sessions poisoned");
+        let preparation_id = session_id.clone();
         match sessions.entry(session_id) {
             std::collections::btree_map::Entry::Vacant(entry) => {
                 entry.insert(session);
+                self.finish_preparation(&preparation_id);
             }
             std::collections::btree_map::Entry::Occupied(_) => {
                 return Err(ImportRegistrationRuntimeError::DuplicateSession);
@@ -519,7 +592,10 @@ impl ImportRegistrationRuntime {
     pub fn take_ready(
         &self,
         session_id: &str,
-    ) -> Result<(CanonicalStagedImport, String, PathBuf), ImportRegistrationRuntimeError> {
+    ) -> Result<
+        (CanonicalStagedImport, String, PathBuf, CancellationToken),
+        ImportRegistrationRuntimeError,
+    > {
         let mut sessions = self
             .sessions
             .lock()
@@ -551,6 +627,7 @@ impl ImportRegistrationRuntime {
             staged,
             session.state.command_id.clone(),
             session.scratch_root.clone(),
+            session.cancellation.clone(),
         ))
     }
 
@@ -573,19 +650,46 @@ impl ImportRegistrationRuntime {
 
     /// Cancels a running preview or discards an uncommitted staged import.
     pub fn cancel(&self, session_id: &str) -> bool {
+        self.cancel_with_outcome(session_id).cancellation_requested
+    }
+
+    /// Cancels preparation, preview, waiting or commit without racing cleanup.
+    pub fn cancel_with_outcome(&self, session_id: &str) -> RegistrationCancelOutcome {
+        if let Some(token) = self
+            .preparations
+            .lock()
+            .expect("registration preparations poisoned")
+            .get(session_id)
+            .cloned()
+        {
+            return RegistrationCancelOutcome {
+                cancellation_requested: token.request_cancel(),
+                cancelled_immediately: false,
+            };
+        }
         let mut sessions = self
             .sessions
             .lock()
             .expect("registration sessions poisoned");
         let Some(session) = sessions.get_mut(session_id) else {
-            return false;
+            return RegistrationCancelOutcome {
+                cancellation_requested: false,
+                cancelled_immediately: false,
+            };
         };
         let first = session.cancellation.request_cancel();
-        if session.state.phase != RegistrationPhase::Previewing {
+        let running = matches!(
+            session.state.phase,
+            RegistrationPhase::Previewing | RegistrationPhase::Committing
+        );
+        if !running {
             let session = sessions.remove(session_id).expect("session exists");
             cleanup_scratch(&session.scratch_root);
         }
-        first
+        RegistrationCancelOutcome {
+            cancellation_requested: first,
+            cancelled_immediately: !running,
+        }
     }
 }
 
@@ -1257,6 +1361,8 @@ pub enum ImportRegistrationRuntimeError {
     InvalidIdentity,
     #[error("registration session already exists")]
     DuplicateSession,
+    #[error("at most two import preparations may run concurrently")]
+    TooManyConcurrentPreparations,
     #[error("registration session is unknown")]
     UnknownSession,
     #[error("registration method does not support this preview")]
@@ -1401,6 +1507,59 @@ mod tests {
             runtime.take_ready("session-cancel-before-publish"),
             Err(ImportRegistrationRuntimeError::UnknownSession)
         ));
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn import_provider_preparation_is_cancellable_before_a_session_exists() {
+        let runtime = ImportRegistrationRuntime::default();
+        let token = runtime
+            .begin_preparation("session-provider-stage")
+            .expect("register preparation");
+        let outcome = runtime.cancel_with_outcome("session-provider-stage");
+        assert!(outcome.cancellation_requested);
+        assert!(!outcome.cancelled_immediately);
+        assert!(token.is_cancel_requested());
+        runtime.finish_preparation("session-provider-stage");
+    }
+
+    #[test]
+    fn import_provider_preparation_concurrency_is_bounded_to_two() {
+        let runtime = ImportRegistrationRuntime::default();
+        runtime
+            .begin_preparation("session-provider-a")
+            .expect("first preparation");
+        runtime
+            .begin_preparation("session-provider-b")
+            .expect("second preparation");
+        assert!(matches!(
+            runtime.begin_preparation("session-provider-c"),
+            Err(ImportRegistrationRuntimeError::TooManyConcurrentPreparations)
+        ));
+        runtime.finish_preparation("session-provider-a");
+        runtime
+            .begin_preparation("session-provider-c")
+            .expect("released preparation slot");
+    }
+
+    #[test]
+    fn import_committing_session_defers_cleanup_until_the_worker_finishes() {
+        let (runtime, root) = resource_runtime("commit-cancel");
+        let token = {
+            let mut sessions = runtime.sessions.lock().expect("sessions");
+            let session = sessions
+                .get_mut("session-commit-cancel")
+                .expect("registered session");
+            session.state.phase = RegistrationPhase::Committing;
+            session.staged = None;
+            session.cancellation.clone()
+        };
+        let outcome = runtime.cancel_with_outcome("session-commit-cancel");
+        assert!(outcome.cancellation_requested);
+        assert!(!outcome.cancelled_immediately);
+        assert!(token.is_cancel_requested());
+        assert!(root.exists());
+        runtime.finish_commit("session-commit-cancel", false);
         assert!(!root.exists());
     }
 

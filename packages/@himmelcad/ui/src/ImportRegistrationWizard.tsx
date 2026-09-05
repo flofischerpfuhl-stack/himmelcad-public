@@ -10,6 +10,7 @@ import { FileUp, Save, Target } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 
 import { CrsTransformPair } from './CrsTransformPair.js';
+import { Button } from './Button.js';
 import {
   ChatBubble,
   ChatCard,
@@ -54,6 +55,8 @@ export interface ImportRegistrationWizardProps {
   readonly sourcePickReady?: boolean;
   readonly targetPickReady?: boolean;
   readonly busy?: boolean;
+  readonly placementSummary?: string | null;
+  readonly onChangePlacement?: () => void;
   readonly onStage: (recipe: RegistrationRecipe, providerOptions: JsonValue) => void;
   readonly onLoadTransform?: () => Promise<LoadedImportTransform | null>;
   readonly onSaveTransform?: (transform: RegistrationSimilarity3d) => Promise<string | null>;
@@ -81,6 +84,8 @@ export function ImportRegistrationWizard({
   sourcePickReady = false,
   targetPickReady = false,
   busy = false,
+  placementSummary = null,
+  onChangePlacement,
   onStage,
   onLoadTransform,
   onSaveTransform,
@@ -276,7 +281,7 @@ export function ImportRegistrationWizard({
             >
               Check placement
             </button>
-          ) : staged && mode !== 'none' ? (
+          ) : staged ? (
             <button type="button" disabled={!ready || busy} onClick={onCommit}>
               Import
             </button>
@@ -321,6 +326,27 @@ export function ImportRegistrationWizard({
 
         {operationError ? (
           <ChatBubble tone="error" title="Import could not continue" detail={operationError} />
+        ) : null}
+
+        {state && placementSummary ? (
+          <ChatCard title="Placement">
+            <div className={styles.placementRow}>
+              <span>{placementSummary}</span>
+              {onChangePlacement ? (
+                <Button
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    setMode(null);
+                    setCombinedMethod(null);
+                    onChangePlacement();
+                  }}
+                >
+                  Change…
+                </Button>
+              ) : null}
+            </div>
+          </ChatCard>
         ) : null}
 
         {format && !staged ? (

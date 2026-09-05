@@ -23,6 +23,7 @@ import {
   type RegistrationTargetSample,
   type RegistrationSimilarity3d,
   type RegistrationIcpOptions,
+  type PointCloudDisplayStyle,
 } from '@himmelcad/app';
 import type { ProjectSnapshot } from '@himmelcad/data';
 
@@ -126,6 +127,11 @@ export class BuilderCanonicalProjectSession {
     return this.call('snapshot.list', {});
   }
 
+  async close(): Promise<boolean> {
+    const result = await this.call<{ readonly closed: boolean }>('canonical.project.close', {});
+    return result.closed;
+  }
+
   async acceptCommittedEntry(entry: CanonicalJournalEntry): Promise<ProjectSnapshot> {
     this.mirror = reduceJournalMirror(this.mirror, entry);
     if (this.mirror.status === 'refresh-required') await this.refresh();
@@ -220,6 +226,18 @@ export class BuilderCanonicalProjectSession {
 
   async cancelRegisteredImport(sessionId: string): Promise<boolean> {
     return this.registration.cancel(sessionId);
+  }
+
+  async setPointCloudDisplay(
+    entityIds: readonly string[],
+    display: PointCloudDisplayStyle,
+  ): Promise<ProjectSnapshot> {
+    const entry = await this.call<CanonicalJournalEntry>('pointcloud.display.set', {
+      commandId: `builder/pointcloud-display/${crypto.randomUUID()}`,
+      entities: this.exactEntityVersions(entityIds),
+      display,
+    });
+    return this.acceptCommittedEntry(entry);
   }
 
   async planExport(request: Parameters<IoClient['planExport']>[0]) {

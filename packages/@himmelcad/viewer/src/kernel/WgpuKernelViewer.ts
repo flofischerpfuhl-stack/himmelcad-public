@@ -103,6 +103,7 @@ export interface WasmViewerBinding {
     metadataUri: string,
     metadataJson: Uint8Array,
     firstHierarchyChunk: Uint8Array,
+    preparedMetadataJson: Uint8Array,
   ): void;
   register_prepared_dataset(
     datasetId: string,
@@ -796,6 +797,7 @@ export interface KernelFrameBudget {
 export interface KernelStreamingFrameOptions {
   readonly resourceBudget: KernelResourceBudget;
   readonly frameBudget: KernelFrameBudget;
+  readonly frontierBudget?: KernelFrontierBudget;
   readonly maximumScreenSpaceError?: number;
   readonly detailScale?: number;
   readonly maximumTraversedNodes?: number;
@@ -803,6 +805,13 @@ export interface KernelStreamingFrameOptions {
   readonly includeRenderKeys?: boolean;
   /** Predicted motion camera used only for bounded auxiliary admission. */
   readonly prefetchCamera?: KernelWorldCamera;
+}
+
+export interface KernelFrontierBudget {
+  readonly hardwareClass: 'I' | 'W' | 'D';
+  readonly points: number;
+  readonly bytes: number;
+  readonly drawCalls: number;
 }
 
 export interface KernelHardwareInventory {
@@ -844,6 +853,7 @@ export interface KernelResolvedHardwarePolicy {
     readonly triangles: number;
     readonly splats: number;
   };
+  readonly frontier: KernelFrontierBudget;
   readonly maximumRenderScale: number;
   readonly maximumDetailScale: number;
   readonly maximumMsaaSamples: number;
@@ -1037,6 +1047,20 @@ export interface KernelTileDescriptor {
     readonly contentHash: string | null;
     readonly decoderParameters?: Readonly<Record<string, unknown>> | null;
   } | null;
+  readonly preparedPointMetadata?: {
+    readonly screenSpaceError: {
+      readonly geometricError: number;
+      readonly pointSpacing: number;
+    };
+    readonly sampleStatistics: {
+      readonly sampledPoints: number;
+      readonly sourcePoints: number | null;
+      readonly method: string | null;
+    };
+    readonly stationIds: readonly string[] | null;
+    readonly contentHash: string | null;
+    readonly origin: 'baked' | 'potree2Compatibility';
+  } | null;
   readonly providerMetadata?: Readonly<Record<string, unknown>> | null;
 }
 
@@ -1070,6 +1094,13 @@ export interface KernelStreamingFramePlan {
   readonly admission: Readonly<Record<string, unknown>>;
   readonly eviction: Readonly<Record<string, unknown>>;
   readonly claimedDecodeMs: number;
+  readonly frontier: {
+    readonly budget: KernelFrontierBudget;
+    readonly selected: KernelResourceCost;
+    readonly coarsenedTiles: number;
+    readonly reasonCodes: readonly ('budget:points' | 'budget:bytes' | 'budget:draws')[];
+    readonly budgetSatisfied: boolean;
+  };
 }
 
 export interface KernelPickAddress {
@@ -2133,6 +2164,7 @@ export class WgpuKernelViewer {
     metadataUri: string,
     metadataJson: Uint8Array,
     firstHierarchyChunk: Uint8Array,
+    preparedMetadataJson: Uint8Array = new Uint8Array(0),
   ): void {
     this.assertAlive();
     this.binding.register_potree_dataset(
@@ -2141,6 +2173,7 @@ export class WgpuKernelViewer {
       metadataUri,
       metadataJson,
       firstHierarchyChunk,
+      preparedMetadataJson,
     );
   }
 
@@ -2586,7 +2619,34 @@ export class WgpuKernelViewer {
     ) {
       throw new TypeError('kernel streaming frame plan is malformed');
     }
-    return value as unknown as KernelStreamingFramePlan;
+    if (isRecord(value.frontier)) return value as unknown as KernelStreamingFramePlan;
+    const budget = options.frontierBudget ?? {
+      hardwareClass: 'W' as const,
+      points: options.resourceBudget.points,
+      bytes:
+        options.resourceBudget.gpuBufferBytes + options.resourceBudget.gpuTextureBytes,
+      drawCalls: options.resourceBudget.drawCalls,
+    };
+    return {
+      ...(value as Omit<KernelStreamingFramePlan, 'frontier'>),
+      frontier: {
+        budget,
+        selected: {
+          cpuCompressedBytes: 0,
+          cpuDecodedBytes: 0,
+          gpuBufferBytes: 0,
+          gpuTextureBytes: 0,
+          stagingBytes: 0,
+          points: 0,
+          triangles: 0,
+          splats: 0,
+          drawCalls: 0,
+        },
+        coarsenedTiles: 0,
+        reasonCodes: [],
+        budgetSatisfied: true,
+      },
+    };
   }
 
   /** Authoritative Rust claim ceilings and currently occupied coordinator slots. */
@@ -3244,7 +3304,17 @@ export class WgpuKernelViewer {
     ) {
       throw new TypeError('kernel hardware policy is malformed');
     }
-    return value as unknown as KernelResolvedHardwarePolicy;
+    if (isRecord(value.frontier)) return value as unknown as KernelResolvedHardwarePolicy;
+    const legacy = value as unknown as Omit<KernelResolvedHardwarePolicy, 'frontier'>;
+    return {
+      ...legacy,
+      frontier: {
+        hardwareClass: this.capabilities.deviceKind === 'discreteGpu' ? 'W' : 'I',
+        points: Math.min(legacy.workload.points, legacy.resources.points),
+        bytes: legacy.resources.gpuBufferBytes + legacy.resources.gpuTextureBytes,
+        drawCalls: legacy.resources.drawCalls,
+      },
+    };
   }
 
   /** Current presentation quality owned by the Rust runtime governor. */

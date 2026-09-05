@@ -50,7 +50,10 @@ use crate::canonical_provider::{
     ImportProbeRequest, PreparedResourceArtifact, ProviderContractError, ProviderOperationContext,
     ProviderOptionContract, ProviderProgress, StagedArtifactRoots, CANONICAL_IO_SCHEMA_VERSION,
 };
-use crate::las_import::{import_las_file_with_progress_and_cancel, ConverterProgress};
+use crate::las_import::{
+    epsg_label_from_wkt, import_las_file_with_progress_and_cancel, streaming_file_hash,
+    ConverterProgress, ScanSourceTruth,
+};
 use crate::ImportError;
 
 const E57_FORMAT_ID: &str = "e57@1.0";
@@ -148,6 +151,16 @@ impl CanonicalImportProvider for E57CanonicalProvider {
         let staging = StagingDirectory::create(&self.cache_dir, request.source)?;
         let laz_path = staging.path.join("merged-source.laz");
         let context = Mutex::new(context);
+        let (source_hash, source_length) = streaming_file_hash(request.source, &|| {
+            context
+                .lock()
+                .expect("provider context lock poisoned")
+                .is_cancelled()
+        })
+        .map_err(|error| match error {
+            ImportError::Cancelled => ProviderContractError::Cancelled,
+            other => ProviderContractError::Provider(other.to_string()),
+        })?;
         let transcode = transcode_e57_to_laz(
             request.source,
             &laz_path,
@@ -190,17 +203,54 @@ impl CanonicalImportProvider for E57CanonicalProvider {
         let package = summary
             .canonical_import_package()
             .map_err(|error| ProviderContractError::Canonical(error.to_string()))?;
-        let package = canonicalize_e57_package(package, request.source, &transcode)?;
-        let context = context.into_inner().map_err(|_| {
-            ProviderContractError::Provider("provider context lock poisoned".to_owned())
-        })?;
-        attach_e57_images(
+        let source_truth = ScanSourceTruth {
+            path: std::fs::canonicalize(request.source)
+                .unwrap_or_else(|_| request.source.to_path_buf())
+                .to_string_lossy()
+                .into_owned(),
+            sha256: source_hash.0,
+            byte_length: source_length,
+            declared_crs: transcode
+                .source
+                .coordinate_metadata
+                .as_deref()
+                .and_then(epsg_label_from_wkt),
+            declared_units: Some("m".to_owned()),
+        };
+        let package = canonicalize_e57_package_with_source_truth(
             package,
             request.source,
-            &self.cache_dir,
             &transcode,
-            context,
-        )
+            &source_truth,
+        )?;
+        let package = {
+            let mut context = context.lock().map_err(|_| {
+                ProviderContractError::Provider("provider context lock poisoned".to_owned())
+            })?;
+            attach_e57_images(
+                package,
+                request.source,
+                &self.cache_dir,
+                &transcode,
+                &mut **context,
+            )?
+        };
+        let (verified_hash, verified_length) = streaming_file_hash(request.source, &|| {
+            context
+                .lock()
+                .expect("provider context lock poisoned")
+                .is_cancelled()
+        })
+        .map_err(|error| match error {
+            ImportError::Cancelled => ProviderContractError::Cancelled,
+            other => ProviderContractError::Provider(other.to_string()),
+        })?;
+        if verified_hash.0 != source_truth.sha256 || verified_length != source_truth.byte_length {
+            return Err(ProviderContractError::Provider(
+                "E57 source changed while the prepared dataset was built".to_owned(),
+            ));
+        }
+        Ok(package)
     }
 
     fn staged_artifact_roots(
@@ -863,10 +913,11 @@ fn provider_error(error: E57ImportError) -> ProviderContractError {
     }
 }
 
-fn canonicalize_e57_package(
+fn canonicalize_e57_package_with_source_truth(
     mut package: CanonicalImportPackage,
     source_path: &Path,
     summary: &E57TranscodeSummary,
+    source_truth: &ScanSourceTruth,
 ) -> Result<CanonicalImportPackage, ProviderContractError> {
     package.provider_id.clear();
     package.provider_id.push_str(E57_PROVIDER_ID);
@@ -915,6 +966,11 @@ fn canonicalize_e57_package(
             "hasIntensity".to_owned(),
             serde_json::Value::Bool(summary.has_intensity),
         );
+        point_cloud.insert(
+            "source".to_owned(),
+            serde_json::to_value(source_truth)
+                .map_err(|error| ProviderContractError::Canonical(error.to_string()))?,
+        );
     }
     map.insert(
         "hcad.e57-import@1".to_owned(),
@@ -931,6 +987,30 @@ fn canonicalize_e57_package(
         .map_err(|error| ProviderContractError::Canonical(error.to_string()))?;
     package.validate()?;
     Ok(package)
+}
+
+#[cfg(test)]
+fn canonicalize_e57_package(
+    package: CanonicalImportPackage,
+    source_path: &Path,
+    summary: &E57TranscodeSummary,
+) -> Result<CanonicalImportPackage, ProviderContractError> {
+    canonicalize_e57_package_with_source_truth(
+        package,
+        source_path,
+        summary,
+        &ScanSourceTruth {
+            path: source_path.to_string_lossy().into_owned(),
+            sha256: "0".repeat(64),
+            byte_length: source_path.metadata().map_or(0, |metadata| metadata.len()),
+            declared_crs: summary
+                .source
+                .coordinate_metadata
+                .as_deref()
+                .and_then(epsg_label_from_wkt),
+            declared_units: Some("m".to_owned()),
+        },
+    )
 }
 
 #[allow(clippy::too_many_lines)]

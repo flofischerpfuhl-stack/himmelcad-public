@@ -111,3 +111,19 @@ void test('sample windows are private, immutable, idle-safe, and reject overlap'
   assert.equal(sample.presentedFrameIntervalMs, null);
   assert.equal(Object.isFrozen(sample), true);
 });
+
+void test('HUD two-second window equals sample for identical fixture frames and expires while idle', async () => {
+  const diagnostics = new KernelFrameDiagnostics();
+  diagnostics.recordFrame(frame(0, 100));
+  const pending = diagnostics.sample({ durationMs: 15, lastFrames: 1 });
+  const timestamp = performance.now();
+  diagnostics.recordFrame(frame(timestamp, 16.4, 41_200_000));
+  diagnostics.recordFrame(frame(timestamp + 0.01, 24.1, 41_200_000));
+  const sample = await pending;
+  const hud = diagnostics.snapshotWindow(sample.window.startedAtMs, sample.window.endedAtMs, 1);
+  assert.deepEqual(hud.presentedFrameIntervalMs, sample.presentedFrameIntervalMs);
+  assert.deepEqual(hud.lastFrames, sample.lastFrames);
+  assert.equal(hud.lastFrames[0]?.primitives.points, 41_200_000);
+  assert.equal(diagnostics.snapshotWindow(timestamp + 2001, timestamp + 4001).frames, 0);
+  assert.throws(() => diagnostics.snapshotWindow(2, 1), RangeError);
+});

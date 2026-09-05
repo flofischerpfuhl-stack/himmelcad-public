@@ -59,6 +59,11 @@ pub struct SelectedTile {
     pub key: TileKey,
     /// Projected geometric error at selection time.
     pub screen_space_error: f64,
+    /// View-dependent priority combining projected error with proximity to the
+    /// viewport center. Higher values refine first.
+    pub visibility_priority: f64,
+    /// Positive camera-space depth used for deterministic front-to-back ties.
+    pub camera_depth: f64,
     /// Current content lifecycle state.
     pub residency: TileResidency,
     /// Provider descriptor retained for request, decode and proxy construction.
@@ -253,8 +258,10 @@ impl TileSelector {
 
 fn wanted_order(left: &SelectedTile, right: &SelectedTile) -> std::cmp::Ordering {
     right
-        .screen_space_error
-        .total_cmp(&left.screen_space_error)
+        .visibility_priority
+        .total_cmp(&left.visibility_priority)
+        .then_with(|| left.camera_depth.total_cmp(&right.camera_depth))
+        .then_with(|| right.screen_space_error.total_cmp(&left.screen_space_error))
         .then_with(|| left.key.cmp(&right.key))
 }
 
@@ -331,13 +338,23 @@ where
             descriptor.geometric_error * placement_scale * self.presentation.maximum_linear_scale(),
             presented_sphere,
         );
+        let camera_depth = self.camera.depth(presented_sphere);
+        let visibility_priority = self
+            .camera
+            .visibility_priority(screen_space_error, presented_sphere);
         let wants_refinement = screen_space_error > self.camera.maximum_sse
             && (!descriptor.children.is_empty() || descriptor.child_page.is_some());
         if !wants_refinement || self.traversed_nodes >= self.maximum_nodes {
             if wants_refinement {
                 self.work_limit_reached = true;
             }
-            return Ok(self.select_content(key, descriptor, screen_space_error));
+            return Ok(self.select_content(
+                key,
+                descriptor,
+                screen_space_error,
+                visibility_priority,
+                camera_depth,
+            ));
         }
 
         let page_missing = descriptor.child_page.is_some();
@@ -359,7 +376,13 @@ where
             children.covered &= selected.covered;
             children.render.extend(selected.render);
         }
-        let own = self.select_content(key, Arc::clone(&descriptor), screen_space_error);
+        let own = self.select_content(
+            key,
+            Arc::clone(&descriptor),
+            screen_space_error,
+            visibility_priority,
+            camera_depth,
+        );
         match descriptor.refinement {
             RefinementMode::Add => {
                 let mut render = own.render;
@@ -387,6 +410,8 @@ where
         key: TileKey,
         descriptor: Arc<TileDescriptor>,
         screen_space_error: f64,
+        visibility_priority: f64,
+        camera_depth: f64,
     ) -> BranchSelection {
         if descriptor.contents.is_empty() {
             return BranchSelection {
@@ -398,6 +423,8 @@ where
         let selected = SelectedTile {
             key: key.clone(),
             screen_space_error,
+            visibility_priority,
+            camera_depth,
             residency,
             descriptor,
         };
@@ -530,6 +557,42 @@ impl SelectionCamera {
                 geometric_error * self.viewport_height / vertical_span
             }
         }
+    }
+
+    fn depth(self, sphere: Sphere) -> f64 {
+        (sphere.center - self.eye).dot(self.forward).max(0.0)
+    }
+
+    fn visibility_priority(self, screen_space_error: f64, sphere: Sphere) -> f64 {
+        if screen_space_error <= 0.0 {
+            return 0.0;
+        }
+        let relative = sphere.center - self.eye;
+        let x = relative.dot(self.right);
+        let y = relative.dot(self.up);
+        let normalized_radius = match self.projection {
+            CameraProjection::Perspective {
+                vertical_fov_radians,
+                aspect,
+                near,
+                ..
+            } => {
+                let depth = relative.dot(self.forward).max(near);
+                let half_height = depth * (vertical_fov_radians * 0.5).tan();
+                let half_width = half_height * aspect;
+                (x / half_width).hypot(y / half_height)
+            }
+            CameraProjection::Orthographic {
+                vertical_span,
+                aspect,
+                ..
+            } => {
+                let half_height = vertical_span * 0.5;
+                let half_width = half_height * aspect;
+                (x / half_width).hypot(y / half_height)
+            }
+        };
+        screen_space_error / (1.0 + normalized_radius.max(0.0))
     }
 }
 
@@ -906,6 +969,7 @@ mod tests {
                 decoder_parameters: None,
             }],
             child_page: None,
+            prepared_point_metadata: None,
             provider_metadata: None,
         }
     }

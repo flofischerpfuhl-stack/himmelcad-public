@@ -219,7 +219,6 @@ export function BuilderImportRegistrationIsland({
     acceptedLossCodes: readonly string[] = [],
   ): Promise<void> => {
     const backgroundOperation = !importStageNeedsFurtherInput(recipe.method.kind);
-    const startedAt = performance.now();
     setBusy(true);
     setOperationError(null);
     setSemanticLosses([]);
@@ -244,27 +243,12 @@ export function BuilderImportRegistrationIsland({
         withAcceptedLossCodes(providerOptions, acceptedLossCodes),
         jobId,
       );
-      if (recipe.method.kind === 'sourceCoordinates') {
-        if (stagedState.phase !== 'readyToCommit' || stagedState.preview?.accepted !== true) {
-          throw new Error('The import could not be prepared for direct loading.');
-        }
-        await session.commitRegisteredImport(stagedState.sessionId);
-        await window.himmelcad?.stagedRegistration.revoke(stagedState.sessionId);
-        await onCommitted();
-        await window.himmelcad?.jobs.complete(jobId, `Import committed: ${fileLabel(sourcePath)}`);
-        logEvent(
-          'info',
-          'renderer',
-          `Import completed: ${fileLabel(sourcePath)} · ${stagedState.sourceEntityCount} entity · ${((performance.now() - startedAt) / 1_000).toFixed(1)} s`,
-        );
-        onClose();
-        return;
-      }
       setState(stagedState);
       setPairs([]);
       setPendingSource(null);
       setPreparedSourceSamples([]);
-      await window.himmelcad?.jobs.needsInput(jobId, 'Registration input required');
+      onBackgroundStateChange(false);
+      await window.himmelcad?.jobs.needsInput(jobId, 'Review placement');
     } catch (error: unknown) {
       const message = errorMessage(error);
       const losses = explicitSemanticLosses(message);
@@ -297,12 +281,19 @@ export function BuilderImportRegistrationIsland({
     }
   };
   const cancel = async (): Promise<void> => {
-    if (state) {
-      await window.himmelcad?.stagedRegistration.revoke(state.sessionId);
-      await session.cancelRegisteredImport(state.sessionId);
-    }
-    await window.himmelcad?.jobs.cancelled(jobId);
+    await window.himmelcad?.jobs.cancel(jobId);
+    if (state) await window.himmelcad?.stagedRegistration.revoke(state.sessionId);
     onClose();
+  };
+  const changePlacement = async (): Promise<void> => {
+    if (!state) return;
+    await window.himmelcad?.stagedRegistration.revoke(state.sessionId);
+    await session.cancelRegisteredImport(state.sessionId);
+    setState(null);
+    setPendingRecipe(null);
+    setPairs([]);
+    onBackgroundStateChange(false);
+    await window.himmelcad?.jobs.needsInput(jobId, 'Choose placement');
   };
   const requestPick = (side: 'source' | 'target'): void => {
     if (side === 'source') {
@@ -377,12 +368,8 @@ export function BuilderImportRegistrationIsland({
     setOperationError(null);
     logEvent('info', 'renderer', `Import commit running in background: ${fileLabel(sourcePath)}`);
     await window.himmelcad?.jobs.update(jobId, {
-      phase: 'Publishing one atomic journal entry',
-      cancellation: {
-        cancellable: false,
-        reason: 'Publishing one atomic journal entry',
-        atNextSafeBoundary: true,
-      },
+      phase: 'Registering dataset',
+      cancellation: { cancellable: true },
     });
     onBackgroundStateChange(true);
     try {
@@ -422,6 +409,8 @@ export function BuilderImportRegistrationIsland({
       operationError={operationError}
       semanticLosses={semanticLosses}
       state={state}
+      placementSummary={state ? placementSummary(state) : null}
+      onChangePlacement={() => void changePlacement()}
       pointPairs={pairs}
       nextPickSide={pendingSource ? 'target' : 'source'}
       sourcePickReady={sourceSnap !== null}
@@ -710,6 +699,28 @@ function errorMessage(error: unknown): string {
 
 function fileLabel(path: string): string {
   return path.split(/[\\/]/).at(-1) ?? path;
+}
+
+function placementSummary(state: ImportRegistrationState): string {
+  const package_ = isRecord(state.sourcePreview) ? state.sourcePreview : {};
+  const objects = Array.isArray(package_.objects) ? package_.objects : [];
+  const source = objects
+    .filter(isRecord)
+    .map((object) => (isRecord(object.value) ? object.value['hcad.point-cloud-import@1'] : null))
+    .filter(isRecord)
+    .map((attributes) => attributes.source)
+    .find(isRecord);
+  const crs = typeof source?.declaredCrs === 'string' ? source.declaredCrs : 'Not declared';
+  const units = typeof source?.declaredUnits === 'string' ? source.declaredUnits : 'Not declared';
+  const transform = state.preview?.transform;
+  const offset = transform ? [transform.tx, transform.ty, transform.tz] : [0, 0, 0];
+  return `CRS: ${crs} · offset ${offset.map(formatOffset).join(' ')} · source units ${units}`;
+}
+
+function formatOffset(value: number): string {
+  return Number.isInteger(value)
+    ? value.toFixed(0)
+    : value.toLocaleString(undefined, { maximumFractionDigits: 3 });
 }
 
 function explicitSemanticLosses(message: string): readonly string[] {

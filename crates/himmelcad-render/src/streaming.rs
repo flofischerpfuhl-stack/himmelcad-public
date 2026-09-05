@@ -11,6 +11,105 @@ use crate::{
     TileLoadEstimate, TileResidency, TileSelection,
 };
 
+const MEBIBYTE: u64 = 1_048_576;
+
+/// Hardware class from Viewer Core addendum section 1.1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FrontierHardwareClass {
+    /// Integrated/entry hardware floor.
+    I,
+    /// Laptop-workstation floor.
+    W,
+    /// Desktop discrete-GPU floor.
+    D,
+}
+
+/// Tunable hard limits for the visible prepared frontier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrontierBudget {
+    /// Hardware class whose checked-in policy selected these values.
+    pub hardware_class: FrontierHardwareClass,
+    /// Maximum submitted point samples in one frame.
+    pub points: u64,
+    /// Maximum selected GPU buffer bytes in one frame.
+    pub bytes: u64,
+    /// Maximum selected draw calls in one frame.
+    pub draw_calls: u32,
+}
+
+impl FrontierBudget {
+    /// Checked-in V-02 class defaults. Values are calibration tunables; the
+    /// class semantics and hard-ceiling behavior are not.
+    #[must_use]
+    pub const fn for_hardware_class(hardware_class: FrontierHardwareClass) -> Self {
+        match hardware_class {
+            FrontierHardwareClass::I => Self {
+                hardware_class,
+                points: 4_000_000,
+                bytes: 96 * MEBIBYTE,
+                draw_calls: 1_000,
+            },
+            FrontierHardwareClass::W => Self {
+                hardware_class,
+                points: 8_000_000,
+                bytes: 192 * MEBIBYTE,
+                draw_calls: 2_000,
+            },
+            FrontierHardwareClass::D => Self {
+                hardware_class,
+                points: 16_000_000,
+                bytes: 384 * MEBIBYTE,
+                draw_calls: 4_000,
+            },
+        }
+    }
+
+    /// Compatibility ceiling used by callers that do not yet distinguish
+    /// visible-frontier limits from residency limits.
+    #[must_use]
+    pub const fn from_resource_budget(budget: ResourceBudget) -> Self {
+        Self {
+            hardware_class: FrontierHardwareClass::W,
+            points: budget.points,
+            bytes: budget
+                .gpu_buffer_bytes
+                .saturating_add(budget.gpu_texture_bytes),
+            draw_calls: budget.draw_calls,
+        }
+    }
+}
+
+/// Exact reason why the visible frontier could not retain more detail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FrontierLimitReason {
+    /// Point ceiling was reached.
+    #[serde(rename = "budget:points")]
+    Points,
+    /// GPU-buffer byte ceiling was reached.
+    #[serde(rename = "budget:bytes")]
+    Bytes,
+    /// Draw-call ceiling was reached.
+    #[serde(rename = "budget:draws")]
+    Draws,
+}
+
+/// Selected-frontier accounting returned with every streaming plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrontierStatistics {
+    /// Effective class policy.
+    pub budget: FrontierBudget,
+    /// Exact resident cost selected for rendering after safe coarsening.
+    pub selected: ResourceCost,
+    /// Detail tiles removed while retaining resident coarse coverage.
+    pub coarsened_tiles: u32,
+    /// Limits that prevented the pre-budget frontier from being retained.
+    pub reason_codes: Vec<FrontierLimitReason>,
+    /// False only when the sole resident coarse fallback itself exceeds policy.
+    pub budget_satisfied: bool,
+}
+
 /// Per-dataset admission frontier kept beyond the current frame's request
 /// allowance. At 60 Hz this retains roughly one second of look-ahead while
 /// preventing enormous visible hierarchies from producing enormous JSON plans.
@@ -77,6 +176,8 @@ pub struct StreamingFramePlan {
     pub eviction: EvictionPlan,
     /// Estimated decoder time claimed by already fetched content.
     pub claimed_decode_ms: f32,
+    /// Hard-budget accounting for the exact visible render frontier.
+    pub frontier: FrontierStatistics,
 }
 
 /// Runtime concurrency ceilings for provider I/O and CPU decoding.
@@ -215,7 +316,13 @@ impl StreamingCoordinator {
         resource_budget: ResourceBudget,
         frame_budget: FrameBudget,
     ) -> Result<StreamingFramePlan, ResidencyError> {
-        self.plan_frame_with_auxiliary(selections, &[], resource_budget, frame_budget)
+        self.plan_frame_with_auxiliary_and_frontier(
+            selections,
+            &[],
+            resource_budget,
+            frame_budget,
+            FrontierBudget::from_resource_budget(resource_budget),
+        )
     }
 
     /// Plans one frame while retaining auxiliary consumer residency without
@@ -233,22 +340,47 @@ impl StreamingCoordinator {
         resource_budget: ResourceBudget,
         frame_budget: FrameBudget,
     ) -> Result<StreamingFramePlan, ResidencyError> {
-        let render = primary
+        self.plan_frame_with_auxiliary_and_frontier(
+            primary,
+            auxiliary,
+            resource_budget,
+            frame_budget,
+            FrontierBudget::from_resource_budget(resource_budget),
+        )
+    }
+
+    /// Plans one frame and safely coarsens only optional resident detail until
+    /// the selected point/byte/draw frontier fits its hardware-class policy.
+    pub fn plan_frame_with_auxiliary_and_frontier(
+        &mut self,
+        primary: &[TileSelection],
+        auxiliary: &[TileSelection],
+        resource_budget: ResourceBudget,
+        frame_budget: FrameBudget,
+        frontier_budget: FrontierBudget,
+    ) -> Result<StreamingFramePlan, ResidencyError> {
+        let requested_render = primary
             .iter()
             .flat_map(|selection| selection.render.iter().cloned())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
-        let active_render = primary
+        let (render, frontier) =
+            self.budget_render_frontier(primary, requested_render, frontier_budget);
+        let active_render = render
             .iter()
-            .chain(auxiliary)
-            .flat_map(|selection| selection.render.iter().cloned())
+            .cloned()
+            .chain(
+                auxiliary
+                    .iter()
+                    .flat_map(|selection| selection.render.iter().cloned()),
+            )
             .collect::<BTreeSet<_>>();
         let wanted = coalesce_wanted(primary, auxiliary);
         self.plan_frame = self.plan_frame.saturating_add(1).max(1);
         let mut current_priorities = BTreeMap::<TileKey, f64>::new();
         for tile in &wanted {
-            let priority = tile.screen_space_error.max(0.0);
+            let priority = tile.visibility_priority.max(0.0);
             current_priorities
                 .entry(tile.key.clone())
                 .and_modify(|current| *current = current.max(priority))
@@ -328,7 +460,134 @@ impl StreamingCoordinator {
             admission,
             eviction,
             claimed_decode_ms,
+            frontier,
         })
+    }
+
+    fn budget_render_frontier(
+        &self,
+        selections: &[TileSelection],
+        requested: Vec<TileKey>,
+        budget: FrontierBudget,
+    ) -> (Vec<TileKey>, FrontierStatistics) {
+        let tiles = selections
+            .iter()
+            .flat_map(|selection| selection.wanted.iter())
+            .map(|tile| (tile.key.clone(), tile))
+            .collect::<BTreeMap<_, _>>();
+        let requested_set = requested.into_iter().collect::<BTreeSet<_>>();
+        let requested_cost = self.frontier_cost(&requested_set, &tiles);
+        let mut reasons = frontier_limit_reasons(requested_cost, budget);
+        let mut render = requested_set;
+        let mut coarsened = 0_u32;
+
+        while !frontier_fits(self.frontier_cost(&render, &tiles), budget) {
+            let removable = render
+                .iter()
+                .filter_map(|key| {
+                    let tile = tiles.get(key)?;
+                    let parent_id = tile.descriptor.parent.as_ref()?;
+                    let parent_key = TileKey {
+                        dataset_id: key.dataset_id.clone(),
+                        tile_id: parent_id.clone(),
+                    };
+                    let parent = tiles.get(&parent_key)?;
+                    (render.contains(&parent_key)
+                        && parent.descriptor.refinement == crate::RefinementMode::Add)
+                        .then_some((key.clone(), tile.visibility_priority, tile.camera_depth))
+                })
+                .min_by(|left, right| {
+                    left.1
+                        .total_cmp(&right.1)
+                        .then_with(|| right.2.total_cmp(&left.2))
+                        .then_with(|| left.0.cmp(&right.0))
+                });
+            if let Some((key, _, _)) = removable {
+                render.remove(&key);
+                coarsened = coarsened.saturating_add(1);
+                continue;
+            }
+
+            let collapsible = tiles
+                .iter()
+                .filter(|(key, tile)| {
+                    !render.contains(*key)
+                        && tile.residency == TileResidency::Resident
+                        && tile.descriptor.refinement == crate::RefinementMode::Replace
+                })
+                .filter_map(|(parent_key, parent)| {
+                    let descendants = render
+                        .iter()
+                        .filter(|key| is_descendant_of(key, parent_key, &tiles))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if descendants.is_empty() {
+                        return None;
+                    }
+                    let old = self.frontier_cost(&descendants.iter().cloned().collect(), &tiles);
+                    let replacement = self.frontier_tile_cost(parent_key, &tiles);
+                    (frontier_scalar_cost(old) > frontier_scalar_cost(replacement)).then_some((
+                        parent_key.clone(),
+                        descendants,
+                        parent.visibility_priority,
+                    ))
+                })
+                .min_by(|left, right| {
+                    left.2
+                        .total_cmp(&right.2)
+                        .then_with(|| left.0.cmp(&right.0))
+                });
+            let Some((parent, descendants, _)) = collapsible else {
+                break;
+            };
+            for child in descendants {
+                render.remove(&child);
+                coarsened = coarsened.saturating_add(1);
+            }
+            render.insert(parent);
+        }
+
+        let selected = self.frontier_cost(&render, &tiles);
+        reasons.sort_unstable_by_key(|reason| match reason {
+            FrontierLimitReason::Points => 0,
+            FrontierLimitReason::Bytes => 1,
+            FrontierLimitReason::Draws => 2,
+        });
+        (
+            render.into_iter().collect(),
+            FrontierStatistics {
+                budget,
+                selected,
+                coarsened_tiles: coarsened,
+                reason_codes: reasons,
+                budget_satisfied: frontier_fits(selected, budget),
+            },
+        )
+    }
+
+    fn frontier_cost(
+        &self,
+        keys: &BTreeSet<TileKey>,
+        tiles: &BTreeMap<TileKey, &SelectedTile>,
+    ) -> ResourceCost {
+        keys.iter().fold(ResourceCost::default(), |cost, key| {
+            cost.saturating_add(self.frontier_tile_cost(key, tiles))
+        })
+    }
+
+    fn frontier_tile_cost(
+        &self,
+        key: &TileKey,
+        tiles: &BTreeMap<TileKey, &SelectedTile>,
+    ) -> ResourceCost {
+        self.residency.snapshot(key).map_or_else(
+            || {
+                tiles.get(key).map_or(ResourceCost::default(), |tile| {
+                    estimate_tile_load(tile).cost
+                })
+            },
+            |snapshot| snapshot.cost,
+        )
     }
 
     fn evict_to_budget(
@@ -741,7 +1000,7 @@ fn coalesce_wanted<'a>(
         .flat_map(|selection| selection.wanted.iter())
     {
         match wanted.get(&tile.key) {
-            Some(existing) if existing.screen_space_error >= tile.screen_space_error => {}
+            Some(existing) if existing.visibility_priority >= tile.visibility_priority => {}
             _ => {
                 wanted.insert(&tile.key, tile);
             }
@@ -750,18 +1009,126 @@ fn coalesce_wanted<'a>(
     wanted.into_values().collect()
 }
 
+fn frontier_limit_reasons(cost: ResourceCost, budget: FrontierBudget) -> Vec<FrontierLimitReason> {
+    let mut reasons = Vec::new();
+    if cost.points > budget.points {
+        reasons.push(FrontierLimitReason::Points);
+    }
+    if cost.gpu_buffer_bytes.saturating_add(cost.gpu_texture_bytes) > budget.bytes {
+        reasons.push(FrontierLimitReason::Bytes);
+    }
+    if cost.draw_calls > budget.draw_calls {
+        reasons.push(FrontierLimitReason::Draws);
+    }
+    reasons
+}
+
+fn frontier_fits(cost: ResourceCost, budget: FrontierBudget) -> bool {
+    frontier_limit_reasons(cost, budget).is_empty()
+}
+
+fn frontier_scalar_cost(cost: ResourceCost) -> u128 {
+    u128::from(cost.points)
+        .saturating_add(u128::from(cost.gpu_buffer_bytes))
+        .saturating_add(u128::from(cost.gpu_texture_bytes))
+        .saturating_add(u128::from(cost.draw_calls))
+}
+
+fn is_descendant_of(
+    candidate: &TileKey,
+    ancestor: &TileKey,
+    tiles: &BTreeMap<TileKey, &SelectedTile>,
+) -> bool {
+    if candidate.dataset_id != ancestor.dataset_id || candidate == ancestor {
+        return false;
+    }
+    let mut current = candidate.clone();
+    while let Some(tile) = tiles.get(&current) {
+        let Some(parent) = &tile.descriptor.parent else {
+            return false;
+        };
+        current = TileKey {
+            dataset_id: current.dataset_id.clone(),
+            tile_id: parent.clone(),
+        };
+        if &current == ancestor {
+            return true;
+        }
+    }
+    false
+}
+
 fn selected_tile_priority(left: &SelectedTile, right: &SelectedTile) -> std::cmp::Ordering {
-    left.screen_space_error
-        .total_cmp(&right.screen_space_error)
+    left.visibility_priority
+        .total_cmp(&right.visibility_priority)
+        .then_with(|| right.camera_depth.total_cmp(&left.camera_depth))
         .then_with(|| right.key.cmp(&left.key))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        coalesce_wanted, StreamingAction, StreamingCoordinator, StreamingRuntimeLimits,
-        ADMISSION_LOOKAHEAD_FRAMES, RETRY_BACKOFF_FRAMES,
+        coalesce_wanted, FrontierBudget, FrontierHardwareClass, FrontierLimitReason,
+        StreamingAction, StreamingCoordinator, StreamingRuntimeLimits, ADMISSION_LOOKAHEAD_FRAMES,
+        RETRY_BACKOFF_FRAMES,
     };
+
+    #[test]
+    fn hard_frontier_budget_drops_additive_detail_but_keeps_resident_coarse_coverage() {
+        let mut root = selected_tile("budgeted", "root", ContentKind::PotreePoints);
+        let mut child = selected_tile("budgeted", "child", ContentKind::PotreePoints);
+        std::sync::Arc::make_mut(&mut root.descriptor).children = vec![TileId("child".to_owned())];
+        std::sync::Arc::make_mut(&mut root.descriptor).refinement = RefinementMode::Add;
+        std::sync::Arc::make_mut(&mut child.descriptor).parent = Some(TileId("root".to_owned()));
+        let root_only = TileSelection {
+            wanted: vec![root.clone()],
+            render: Vec::new(),
+            hierarchy_pages: Vec::new(),
+            traversed_nodes: 1,
+            culled_nodes: 0,
+            work_limit_reached: false,
+        };
+        let child_only = TileSelection {
+            wanted: vec![child.clone()],
+            render: Vec::new(),
+            hierarchy_pages: Vec::new(),
+            traversed_nodes: 1,
+            culled_nodes: 0,
+            work_limit_reached: false,
+        };
+        let mut coordinator = StreamingCoordinator::default();
+        make_resident(&mut coordinator, &root_only, 100);
+        make_resident(&mut coordinator, &child_only, 100);
+        let visible = TileSelection {
+            wanted: vec![root.clone(), child],
+            render: vec![root.key.clone(), child_only.wanted[0].key.clone()],
+            hierarchy_pages: Vec::new(),
+            traversed_nodes: 2,
+            culled_nodes: 0,
+            work_limit_reached: false,
+        };
+
+        let plan = coordinator
+            .plan_frame_with_auxiliary_and_frontier(
+                &[visible],
+                &[],
+                unlimited_budget(),
+                frame_budget(),
+                FrontierBudget {
+                    hardware_class: FrontierHardwareClass::W,
+                    points: u64::MAX,
+                    bytes: 100,
+                    draw_calls: u32::MAX,
+                },
+            )
+            .expect("budgeted visible frontier");
+
+        assert_eq!(plan.render, vec![root.key]);
+        assert_eq!(plan.frontier.selected.gpu_buffer_bytes, 100);
+        assert_eq!(plan.frontier.coarsened_tiles, 1);
+        assert_eq!(plan.frontier.reason_codes, vec![FrontierLimitReason::Bytes]);
+        assert!(plan.frontier.budget_satisfied);
+    }
 
     #[test]
     fn auxiliary_draws_are_pinned_without_leaking_into_primary_render() {
@@ -1147,7 +1514,9 @@ mod tests {
         }
 
         selection.wanted[0].screen_space_error = 1.0;
+        selection.wanted[0].visibility_priority = 1.0;
         selection.wanted[1].screen_space_error = 100.0;
+        selection.wanted[1].visibility_priority = 100.0;
         let decode = coordinator
             .plan_frame(
                 &[selection.clone()],
@@ -1601,6 +1970,7 @@ mod tests {
     impl SelectionTestExt for TileSelection {
         fn with_sse(mut self, sse: f64) -> Self {
             self.wanted[0].screen_space_error = sse;
+            self.wanted[0].visibility_priority = sse;
             self
         }
     }
@@ -1655,11 +2025,14 @@ mod tests {
             }],
             children: Vec::new(),
             child_page: None,
+            prepared_point_metadata: None,
             provider_metadata: None,
         };
         SelectedTile {
             key,
             screen_space_error: 10.0,
+            visibility_priority: 10.0,
+            camera_depth: 1.0,
             residency: TileResidency::Unloaded,
             descriptor: std::sync::Arc::new(descriptor),
         }

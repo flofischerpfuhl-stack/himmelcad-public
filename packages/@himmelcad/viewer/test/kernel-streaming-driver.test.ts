@@ -164,6 +164,62 @@ void test('prepared tile content hash is verified before decode residency', asyn
   driver.dispose();
 });
 
+void test('legacy Potree content derives and retains its missing prepared-node hash', async () => {
+  const target = new RecordingTarget();
+  const bytes = new Uint8Array([1, 2, 3, 4]);
+  const expectedHash = await testSha256Hex(bytes);
+  const driver = streamingDriver(target, () =>
+    Promise.resolve(new Response(Uint8Array.from(bytes), { status: 200 })),
+  );
+  const ticket = tileTicket();
+  const descriptor = {
+    id: 'r',
+    parent: null,
+    children: [],
+    bounds: { kind: 'sphere' as const, center: { x: 0, y: 0, z: 0 }, radius: 1 },
+    contentTransform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    geometricError: 1,
+    refinement: 'add' as const,
+    contents: [
+      {
+        kind: 'potreePoints' as const,
+        uri: 'https://example.test/legacy-octree.bin',
+        byteOffset: null,
+        byteLength: null,
+        primitiveCount: 1,
+        contentHash: null,
+        decoderParameters: null,
+      },
+    ],
+    childPage: null,
+    providerMetadata: null,
+    preparedPointMetadata: {
+      screenSpaceError: { geometricError: 1, pointSpacing: 1 },
+      sampleStatistics: { sampledPoints: 1, sourcePoints: null, method: null },
+      stationIds: null,
+      contentHash: null,
+      origin: 'potree2Compatibility' as const,
+    },
+  };
+
+  driver.execute(plan({ kind: 'fetchTile', ticket, descriptor }));
+  await driver.settled();
+  driver.execute(plan({ kind: 'decodeTile', ticket }));
+  await driver.settled();
+  driver.execute(plan({ kind: 'uploadTile', ticket }));
+
+  assert.deepEqual(driver.metadataForRenderProxy('stream:scan/r/0'), {
+    tile: {
+      preparedPoint: {
+        ...descriptor.preparedPointMetadata,
+        contentHash: expectedHash,
+      },
+    },
+    content: { contentHash: expectedHash },
+  });
+  driver.dispose();
+});
+
 void test('heterogeneous tile upload crosses the kernel boundary as one atomic transaction', async () => {
   const target = new RecordingTarget();
   target.batchPublishError = new Error('second GPU allocation failed');
@@ -1104,6 +1160,7 @@ void test('compatible point ranges coalesce into one bounded physical page', asy
     admission: {},
     eviction: {},
     claimedDecodeMs: 0,
+    frontier: emptyFrontier(),
   });
   await nextTask();
   assert.equal(networkRequests, 1);
@@ -1207,6 +1264,7 @@ void test('decode ceiling remains a Rust claim invariant with real worker capaci
         admission: {},
         eviction: {},
         claimedDecodeMs: 0,
+        frontier: emptyFrontier(),
       }),
     /decoder claim ceiling/,
   );
@@ -1257,6 +1315,7 @@ async function runConcurrencyScenario(contentRequests: number): Promise<{
     admission: {},
     eviction: {},
     claimedDecodeMs: 0,
+    frontier: emptyFrontier(),
   });
   await driver.settled();
   driver.execute(plan({ kind: 'decodeTile', ticket }));
@@ -1597,6 +1656,17 @@ function plan(action: KernelStreamingFramePlan['actions'][number]): KernelStream
     admission: {},
     eviction: {},
     claimedDecodeMs: 0,
+    frontier: emptyFrontier(),
+  };
+}
+
+function emptyFrontier(): KernelStreamingFramePlan['frontier'] {
+  return {
+    budget: { hardwareClass: 'W', points: 8_000_000, bytes: 192 * 1024 * 1024, drawCalls: 2_000 },
+    selected: zeroCost(),
+    coarsenedTiles: 0,
+    reasonCodes: [],
+    budgetSatisfied: true,
   };
 }
 

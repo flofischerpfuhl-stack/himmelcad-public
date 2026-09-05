@@ -232,6 +232,53 @@ where
     })
 }
 
+/// Packs to a private sibling and replaces the published archive only at the
+/// final rename. Cancellation and failure therefore preserve any prior file.
+pub fn pack_hcadx_replace_with_cancel<C, P>(
+    project_root: &Path,
+    destination: &Path,
+    options: PackArchiveOptions,
+    mut is_cancelled: C,
+    mut progress: P,
+) -> Result<ArchiveSummary, ProjectArchiveError>
+where
+    C: FnMut() -> bool,
+    P: FnMut(ArchiveProgress),
+{
+    check_cancelled(&mut is_cancelled)?;
+    let candidate = temporary_sibling(destination, "archive-candidate")?;
+    let mut cleanup = CleanupPath::file(candidate.clone());
+    let summary = pack_hcadx_with_cancel(
+        project_root,
+        &candidate,
+        options,
+        &mut is_cancelled,
+        |update| {
+            if update.phase != ArchivePhase::Committing {
+                progress(update);
+            }
+        },
+    )?;
+    check_cancelled(&mut is_cancelled)?;
+    progress(ArchiveProgress {
+        phase: ArchivePhase::Committing,
+        files_completed: summary.files,
+        files_total: summary.files,
+        bytes_completed: summary.bytes,
+        bytes_total: summary.bytes,
+        current_path: None,
+    });
+    fs::rename(&candidate, destination)
+        .map_err(|error| io_error("atomically replace archive", destination, error))?;
+    cleanup.disarm();
+    sync_parent(destination)?;
+    Ok(ArchiveSummary {
+        files: summary.files,
+        bytes: summary.bytes,
+        path: path_string(destination)?,
+    })
+}
+
 /// Unpacks an archive using a core cancellation token.
 pub fn unpack_hcadx<P>(
     archive_path: &Path,
@@ -465,6 +512,7 @@ fn is_excluded(relative: &Path, options: PackArchiveOptions) -> bool {
         )
         || (!options.include_rebuildable_index
             && matches!(first, Some(Component::Normal(name)) if name == "index"))
+        || relative == Path::new("canonical").join("store.lock")
 }
 
 fn relative_utf8(path: &Path) -> Result<String, ProjectArchiveError> {
@@ -525,9 +573,28 @@ fn is_special_file(mode: Option<u32>) -> bool {
 
 fn validate_manifest(staging: &Path) -> Result<(), ProjectArchiveError> {
     let path = staging.join("manifest.json");
-    let file = File::open(&path).map_err(|error| io_error("open manifest", &path, error))?;
-    let manifest: PhotolabProjectManifest = serde_json::from_reader(BufReader::new(file))
-        .map_err(ProjectArchiveError::InvalidManifest)?;
+    let bytes = fs::read(&path).map_err(|error| io_error("open manifest", &path, error))?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(ProjectArchiveError::InvalidManifest)?;
+    if value.get("schemaId").and_then(serde_json::Value::as_str) == Some("hcad.project-manifest@1")
+    {
+        let schema_version = value
+            .get("schemaVersion")
+            .and_then(serde_json::Value::as_u64);
+        let format_version = value
+            .get("formatVersion")
+            .and_then(serde_json::Value::as_u64);
+        let project_id = value.get("projectId").and_then(serde_json::Value::as_str);
+        if schema_version == Some(1)
+            && format_version == Some(1)
+            && project_id.is_some_and(|id| !id.trim().is_empty())
+        {
+            return Ok(());
+        }
+        return Err(ProjectArchiveError::InvalidCanonicalManifest);
+    }
+    let manifest: PhotolabProjectManifest =
+        serde_json::from_value(value).map_err(ProjectArchiveError::InvalidManifest)?;
     if manifest.format_version != PHOTOLAB_PROJECT_FORMAT_VERSION {
         return Err(ProjectArchiveError::UnsupportedFormatVersion {
             found: manifest.format_version,
@@ -757,6 +824,7 @@ pub enum ProjectArchiveError {
     },
     ManifestMissing,
     InvalidManifest(serde_json::Error),
+    InvalidCanonicalManifest,
     UnsupportedFormatVersion {
         found: u32,
         supported: u32,
@@ -817,6 +885,7 @@ impl std::fmt::Display for ProjectArchiveError {
             }
             Self::ManifestMissing => f.write_str("archive does not contain manifest.json"),
             Self::InvalidManifest(e) => write!(f, "invalid manifest.json: {e}"),
+            Self::InvalidCanonicalManifest => f.write_str("invalid canonical manifest.json"),
             Self::UnsupportedFormatVersion { found, supported } => write!(
                 f,
                 "unsupported formatVersion {found}; supported is {supported}"
@@ -1093,6 +1162,35 @@ mod tests {
             .file_name()
             .to_string_lossy()
             .contains("archive-tmp")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn g_fp_2_cancelled_replacement_preserves_existing_archive_and_cleans_candidates() {
+        let root = temp("cancel-replace");
+        project(&root);
+        let archive = root.join("existing.hcadx");
+        fs::write(&archive, b"previous complete archive").unwrap();
+        let mut checks = 0_u32;
+        let result = pack_hcadx_replace_with_cancel(
+            &root.join("sample.hcad"),
+            &archive,
+            PackArchiveOptions {
+                include_rebuildable_index: false,
+            },
+            || {
+                checks += 1;
+                checks > 6
+            },
+            |_| {},
+        );
+        assert!(matches!(result, Err(ProjectArchiveError::Cancelled)));
+        assert_eq!(fs::read(&archive).unwrap(), b"previous complete archive");
+        assert!(!fs::read_dir(&root).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("archive-candidate")));
         fs::remove_dir_all(root).unwrap();
     }
 }

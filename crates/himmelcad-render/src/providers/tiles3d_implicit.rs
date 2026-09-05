@@ -949,6 +949,7 @@ fn tile_descriptor(
         refinement: configuration.refinement,
         contents,
         child_page: None,
+        prepared_point_metadata: None,
         provider_metadata,
     }
 }
@@ -982,6 +983,7 @@ fn placeholder_descriptor(
             content_hash: None,
             decoder_parameters: None,
         }),
+        prepared_point_metadata: None,
         provider_metadata: None,
     }
 }

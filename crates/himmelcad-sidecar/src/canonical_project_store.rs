@@ -34,6 +34,8 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 const STORE_SCHEMA_VERSION: u32 = 1;
+const PROJECT_FORMAT_VERSION: u32 = 1;
+const PROJECT_MANIFEST_SCHEMA_ID: &str = "hcad.project-manifest@1";
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 /// Durable descriptor of one imported immutable payload.
@@ -273,6 +275,17 @@ pub struct CanonicalProjectStore {
     recovered_tail_count: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CanonicalProjectManifest {
+    schema_id: String,
+    schema_version: u32,
+    format_version: u32,
+    project_id: String,
+    generation: u64,
+    journal_head_sequence: u64,
+}
+
 /// Truthful state of the ordinary-command durability boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -309,6 +322,9 @@ pub enum CanonicalProjectStoreError {
     /// Import provider package validation failed.
     #[error("canonical import package: {0}")]
     Provider(#[from] ProviderContractError),
+    /// Import cancellation was observed before the journal-last publication boundary.
+    #[error("canonical import was cancelled")]
+    ImportCancelled,
     /// Another process currently owns the canonical store.
     #[error("canonical project store is already locked")]
     Locked,
@@ -490,8 +506,12 @@ impl CanonicalProjectStore {
         &mut self,
     ) -> Result<CanonicalDurabilityStatus, CanonicalProjectStoreError> {
         if self.pending_group_commits.is_empty() {
-            self.durability_failure = None;
             self.acknowledged_at_ms = unix_timestamp_millis();
+            if let Err(error) = self.publish_manifest() {
+                self.durability_failure = Some(error.to_string());
+                return Err(error);
+            }
+            self.durability_failure = None;
             return Ok(self.durability_status());
         }
         let flush_result = self.flush_group_commit_files();
@@ -500,6 +520,10 @@ impl CanonicalProjectStore {
                 self.pending_group_commits.clear();
                 self.durable_generation = self.document.generation();
                 self.acknowledged_at_ms = unix_timestamp_millis();
+                if let Err(error) = self.publish_manifest() {
+                    self.durability_failure = Some(error.to_string());
+                    return Err(error);
+                }
                 self.durability_failure = None;
                 Ok(self.durability_status())
             }
@@ -550,6 +574,33 @@ impl CanonicalProjectStore {
             fs::remove_dir_all(transaction_dir)?;
         }
         sync_dir(&transactions_root(&self.root))?;
+        Ok(())
+    }
+
+    fn publish_manifest(&self) -> Result<(), CanonicalProjectStoreError> {
+        let project_id = self
+            .document
+            .entities()
+            .find(|entity| entity.owner.is_none())
+            .map(|entity| entity.id.0.clone())
+            .unwrap_or_else(|| "project-root".to_owned());
+        let manifest = CanonicalProjectManifest {
+            schema_id: PROJECT_MANIFEST_SCHEMA_ID.to_owned(),
+            schema_version: STORE_SCHEMA_VERSION,
+            format_version: PROJECT_FORMAT_VERSION,
+            project_id,
+            generation: self.durable_generation,
+            journal_head_sequence: self
+                .document
+                .journal()
+                .last()
+                .map_or(0, |entry| entry.sequence),
+        };
+        let destination = self.root.join("manifest.json");
+        let candidate = unique_staging_file(&self.root, "manifest");
+        write_new_synced(&candidate, &serde_json::to_vec_pretty(&manifest)?)?;
+        fs::rename(&candidate, &destination)?;
+        sync_dir(&self.root)?;
         Ok(())
     }
 
@@ -873,6 +924,28 @@ impl CanonicalProjectStore {
         command_id: &str,
         progress: &mut dyn FnMut(CanonicalImportProgress),
     ) -> Result<CanonicalImportCommit, CanonicalProjectStoreError> {
+        self.publish_import_package_with_progress_and_cancel(
+            package,
+            source_roots,
+            command_id,
+            progress,
+            &|| false,
+        )
+    }
+
+    /// Publishes an import with cooperative cancellation until atomic publication starts.
+    #[allow(clippy::too_many_lines)]
+    pub fn publish_import_package_with_progress_and_cancel(
+        &mut self,
+        package: &CanonicalImportPackage,
+        source_roots: &CanonicalImportSourceRoots,
+        command_id: &str,
+        progress: &mut dyn FnMut(CanonicalImportProgress),
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<CanonicalImportCommit, CanonicalProjectStoreError> {
+        if is_cancelled() {
+            return Err(CanonicalProjectStoreError::ImportCancelled);
+        }
         self.prepare_synchronous_publication()?;
         package.validate()?;
         self.validate_source_roots(package, source_roots)?;
@@ -894,6 +967,9 @@ impl CanonicalProjectStore {
             total_bytes: staging_total,
         });
         for object in &package.objects {
+            if is_cancelled() {
+                return Err(CanonicalProjectStoreError::ImportCancelled);
+            }
             let bytes = serde_json::to_vec(&object.value)?;
             self.stage_bytes(
                 &staged_objects,
@@ -957,6 +1033,7 @@ impl CanonicalProjectStore {
                             completed_bytes: staging_completed.min(staging_total),
                             total_bytes: staging_total,
                         });
+                        !is_cancelled()
                     },
                 )?;
                 let byte_length = artifact
@@ -997,6 +1074,7 @@ impl CanonicalProjectStore {
                             completed_bytes: staging_completed.min(staging_total),
                             total_bytes: staging_total,
                         });
+                        !is_cancelled()
                     },
                 )?;
                 let byte_length = artifact
@@ -1068,6 +1146,11 @@ impl CanonicalProjectStore {
         let marker_bytes = serde_json::to_vec(&pending)?;
         write_new_synced(&transaction_dir.join("ready.json"), &marker_bytes)?;
         sync_dir(&transaction_dir)?;
+        if is_cancelled() {
+            return Err(CanonicalProjectStoreError::ImportCancelled);
+        }
+        // From this point the ready marker makes recovery complete publication;
+        // cancellation is deferred until this short journal-last unit finishes.
         cleanup.preserve();
 
         let publishing_total = self.pending_publication_bytes(&transaction_dir, &pending)?;
@@ -1220,7 +1303,9 @@ impl CanonicalProjectStore {
         resource: &GeometryResource,
         object_hashes: &mut BTreeSet<String>,
     ) -> Result<(), CanonicalProjectStoreError> {
-        self.stage_file_with_progress(staged_objects, source, resource, object_hashes, &mut |_| {})
+        self.stage_file_with_progress(staged_objects, source, resource, object_hashes, &mut |_| {
+            true
+        })
     }
 
     fn stage_file_with_progress(
@@ -1229,7 +1314,7 @@ impl CanonicalProjectStore {
         source: &Path,
         resource: &GeometryResource,
         object_hashes: &mut BTreeSet<String>,
-        progress: &mut dyn FnMut(u64),
+        progress: &mut dyn FnMut(u64) -> bool,
     ) -> Result<(), CanonicalProjectStoreError> {
         validate_hash(&resource.object_hash)?;
         let staged = staged_objects.join(resource.object_hash.as_str());
@@ -1339,7 +1424,10 @@ impl CanonicalProjectStore {
             let staged = transaction_dir.join("objects").join(object_hash.as_str());
             let destination = object_path(&self.root, object_hash)?;
             if destination.exists() {
-                verify_file_with_progress(&destination, object_hash, None, progress)?;
+                verify_file_with_progress(&destination, object_hash, None, &mut |bytes| {
+                    progress(bytes);
+                    true
+                })?;
             } else {
                 publish_immutable_file_with_progress(
                     &staged,
@@ -1780,7 +1868,7 @@ fn copy_new_verified_with_progress(
     destination: &Path,
     expected_hash: &ObjectHash,
     expected_length: Option<u64>,
-    progress: &mut dyn FnMut(u64),
+    progress: &mut dyn FnMut(u64) -> bool,
 ) -> Result<(), CanonicalProjectStoreError> {
     let input = File::open(source)?;
     let output = OpenOptions::new()
@@ -1799,7 +1887,11 @@ fn copy_new_verified_with_progress(
         }
         writer.write_all(&buffer[..read])?;
         hasher.update(&buffer[..read]);
-        progress(u64::try_from(read).unwrap_or(u64::MAX));
+        if !progress(u64::try_from(read).unwrap_or(u64::MAX)) {
+            drop(writer);
+            let _ = fs::remove_file(destination);
+            return Err(CanonicalProjectStoreError::ImportCancelled);
+        }
         length = length
             .checked_add(u64::try_from(read).map_err(|_| {
                 CanonicalProjectStoreError::ObjectLengthMismatch {
@@ -1844,14 +1936,14 @@ fn verify_file(
     expected_hash: &ObjectHash,
     expected_length: Option<u64>,
 ) -> Result<(), CanonicalProjectStoreError> {
-    verify_file_with_progress(path, expected_hash, expected_length, &mut |_| {})
+    verify_file_with_progress(path, expected_hash, expected_length, &mut |_| true)
 }
 
 fn verify_file_with_progress(
     path: &Path,
     expected_hash: &ObjectHash,
     expected_length: Option<u64>,
-    progress: &mut dyn FnMut(u64),
+    progress: &mut dyn FnMut(u64) -> bool,
 ) -> Result<(), CanonicalProjectStoreError> {
     let mut file = File::open(path)?;
     verify_open_file_with_progress(&mut file, expected_hash, expected_length, progress)
@@ -1862,14 +1954,14 @@ fn verify_open_file(
     expected_hash: &ObjectHash,
     expected_length: Option<u64>,
 ) -> Result<(), CanonicalProjectStoreError> {
-    verify_open_file_with_progress(file, expected_hash, expected_length, &mut |_| {})
+    verify_open_file_with_progress(file, expected_hash, expected_length, &mut |_| true)
 }
 
 fn verify_open_file_with_progress(
     file: &mut File,
     expected_hash: &ObjectHash,
     expected_length: Option<u64>,
-    progress: &mut dyn FnMut(u64),
+    progress: &mut dyn FnMut(u64) -> bool,
 ) -> Result<(), CanonicalProjectStoreError> {
     file.seek(SeekFrom::Start(0))?;
     let mut reader = BufReader::new(file);
@@ -1882,7 +1974,9 @@ fn verify_open_file_with_progress(
             break;
         }
         hasher.update(&buffer[..read]);
-        progress(u64::try_from(read).unwrap_or(u64::MAX));
+        if !progress(u64::try_from(read).unwrap_or(u64::MAX)) {
+            return Err(CanonicalProjectStoreError::ImportCancelled);
+        }
         length = length
             .checked_add(u64::try_from(read).map_err(|_| {
                 CanonicalProjectStoreError::ObjectLengthMismatch {
@@ -1935,9 +2029,15 @@ fn publish_immutable_file_with_progress(
     expected_length: Option<u64>,
     progress: &mut dyn FnMut(u64),
 ) -> Result<(), CanonicalProjectStoreError> {
-    verify_file_with_progress(staged, expected_hash, expected_length, progress)?;
+    verify_file_with_progress(staged, expected_hash, expected_length, &mut |bytes| {
+        progress(bytes);
+        true
+    })?;
     publish_link(staged, destination)?;
-    verify_file_with_progress(destination, expected_hash, expected_length, progress)
+    verify_file_with_progress(destination, expected_hash, expected_length, &mut |bytes| {
+        progress(bytes);
+        true
+    })
 }
 
 fn publish_named_file_with_progress(
@@ -1946,13 +2046,22 @@ fn publish_named_file_with_progress(
     expected_hash: &ObjectHash,
     progress: &mut dyn FnMut(u64),
 ) -> Result<(), CanonicalProjectStoreError> {
-    verify_file_with_progress(staged, expected_hash, None, progress)?;
+    verify_file_with_progress(staged, expected_hash, None, &mut |bytes| {
+        progress(bytes);
+        true
+    })?;
     if destination.exists() {
-        verify_file_with_progress(destination, expected_hash, None, progress)?;
+        verify_file_with_progress(destination, expected_hash, None, &mut |bytes| {
+            progress(bytes);
+            true
+        })?;
         return Ok(());
     }
     publish_link(staged, destination)?;
-    verify_file_with_progress(destination, expected_hash, None, progress)
+    verify_file_with_progress(destination, expected_hash, None, &mut |bytes| {
+        progress(bytes);
+        true
+    })
 }
 
 fn publish_link(staged: &Path, destination: &Path) -> Result<(), CanonicalProjectStoreError> {
@@ -2332,6 +2441,45 @@ mod tests {
         );
         drop(reopened);
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn cancelled_import_removes_staging_without_publishing_entity_or_cas_object() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let root = temp_project("cancel-staging");
+        let source = artifact_root(&root, "cancel-source");
+        let package = package("scan-cancel", "dataset-cancel");
+        let roots = dataset_sources("dataset-cancel", source);
+        let cancelled = AtomicBool::new(false);
+        let mut store = CanonicalProjectStore::open(&root).expect("open");
+        let result = store.publish_import_package_with_progress_and_cancel(
+            &package,
+            &roots,
+            "import-cancel",
+            &mut |update| {
+                if update.phase == CanonicalImportProgressPhase::Staging
+                    && update.completed_bytes > 0
+                {
+                    cancelled.store(true, Ordering::Release);
+                }
+            },
+            &|| cancelled.load(Ordering::Acquire),
+        );
+        assert!(matches!(
+            result,
+            Err(CanonicalProjectStoreError::ImportCancelled)
+        ));
+        assert!(store
+            .document()
+            .entity(&EntityId("scan-cancel".to_owned()))
+            .is_none());
+        assert_eq!(
+            fs::read_dir(transactions_root(&root))
+                .expect("transactions")
+                .count(),
+            0
+        );
     }
 
     #[test]

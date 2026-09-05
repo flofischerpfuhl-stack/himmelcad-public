@@ -50,6 +50,7 @@ export interface HimmelCADApi {
     minimize: () => Promise<void>;
     maximizeToggle: () => Promise<boolean>;
     close: () => Promise<void>;
+    closeReady: () => Promise<void>;
     isMaximized: () => Promise<boolean>;
     onMaximizeChange: (cb: (m: boolean) => void) => () => void;
   };
@@ -85,6 +86,20 @@ export interface HimmelCADApi {
   readonly canonicalProject: {
     /** Stable Builder project root below Electron's per-user application-data directory. */
     defaultRoot: () => Promise<string>;
+    startup: () => Promise<{
+      readonly projectRoot: string;
+      readonly recent: readonly RecentProjectEntry[];
+      readonly fallbackNotice: string | null;
+    }>;
+    create: () => Promise<string | null>;
+    open: () => Promise<string | null>;
+    openArchive: () => Promise<string | null>;
+    openPath: (path: string) => Promise<string | null>;
+    opened: (projectRoot: string) => Promise<readonly RecentProjectEntry[]>;
+    recent: () => Promise<readonly RecentProjectEntry[]>;
+    openRecent: (projectRoot: string) => Promise<string>;
+    saveAs: (projectRoot: string) => Promise<ArchiveSummary | null>;
+    onCloseRequested: (listener: () => void) => () => void;
     /** Reconstructs path-free live viewer admissions from the durable store. */
     residencyBootstrap: () => Promise<BuilderResidencyBootstrap>;
   };
@@ -137,6 +152,18 @@ export interface HimmelCADApi {
   };
 }
 
+export interface RecentProjectEntry {
+  readonly path: string;
+  readonly name: string;
+  readonly openedAtUnixMs: number;
+}
+
+export interface ArchiveSummary {
+  readonly files: number;
+  readonly bytes: number;
+  readonly path: string;
+}
+
 const api: HimmelCADApi = {
   version: '0.0.0',
   platform: process.platform,
@@ -144,6 +171,7 @@ const api: HimmelCADApi = {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximizeToggle: () => ipcRenderer.invoke('window:maximize-toggle'),
     close: () => ipcRenderer.invoke('window:close'),
+    closeReady: () => ipcRenderer.invoke('window:close-ready'),
     isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
     onMaximizeChange: (cb) => {
       const listener = (_e: unknown, m: boolean): void => cb(m);
@@ -238,6 +266,20 @@ const api: HimmelCADApi = {
   },
   canonicalProject: {
     defaultRoot: () => ipcRenderer.invoke('canonical-project:default-root'),
+    startup: () => ipcRenderer.invoke('canonical-project:startup'),
+    create: () => ipcRenderer.invoke('canonical-project:new'),
+    open: () => ipcRenderer.invoke('canonical-project:open'),
+    openArchive: () => ipcRenderer.invoke('canonical-project:open-archive'),
+    openPath: (path) => ipcRenderer.invoke('canonical-project:open-path', path),
+    opened: (projectRoot) => ipcRenderer.invoke('canonical-project:opened', projectRoot),
+    recent: () => ipcRenderer.invoke('canonical-project:recent'),
+    openRecent: (projectRoot) => ipcRenderer.invoke('canonical-project:open-recent', projectRoot),
+    saveAs: (projectRoot) => ipcRenderer.invoke('canonical-project:save-as', projectRoot),
+    onCloseRequested: (listener) => {
+      const ipcListener = (): void => listener();
+      ipcRenderer.on('canonical-project:close-requested', ipcListener);
+      return () => ipcRenderer.off('canonical-project:close-requested', ipcListener);
+    },
     residencyBootstrap: () => ipcRenderer.invoke('canonical-residency:bootstrap'),
   },
   stagedRegistration: {

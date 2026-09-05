@@ -4,6 +4,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 import styles from './Ribbon.module.css';
 import { nextLinearIndex } from './controlInteractions.js';
 import { registerEscapeRung } from './escapeLadder.js';
+import { Menu, MenuItem, MenuSubmenu } from './Menu.js';
 import { useLayoutStore } from './useLayoutStore.js';
 
 export interface RibbonAction {
@@ -13,6 +14,16 @@ export interface RibbonAction {
   shortcut?: string;
   icon?: ReactNode;
   onActivate?: () => void;
+  menuItems?: readonly RibbonActionMenuItem[];
+}
+
+export interface RibbonActionMenuItem {
+  readonly id: string;
+  readonly label: string;
+  readonly description?: string;
+  readonly descriptionMono?: boolean;
+  readonly disabled?: boolean;
+  readonly onSelect: () => void;
 }
 
 export interface RibbonGroup {
@@ -202,26 +213,58 @@ export function Ribbon({ tabs }: RibbonProps): JSX.Element {
               <div className={styles.dropdownGroupLabel}>{group.label}</div>
               <div className={styles.dropdownItems}>
                 {group.actions.map((action) => (
-                  <button
-                    key={action.id}
-                    type="button"
-                    role="menuitem"
-                    className={`${styles.dropdownItem} ${
-                      activeFunctionId === action.id ? styles.dropdownItemActive : ''
-                    }`}
-                    title={action.title ?? action.label}
-                    onClick={() => {
-                      if (action.onActivate) action.onActivate();
-                      else activate(action.id);
-                      setDropdownTabId(null);
-                    }}
-                  >
-                    {action.icon && <span className={styles.dropdownItemIcon}>{action.icon}</span>}
-                    <span className={styles.dropdownItemLabel}>{action.label}</span>
-                    {action.shortcut && (
-                      <span className={styles.dropdownItemShortcut}>{action.shortcut}</span>
-                    )}
-                  </button>
+                  action.menuItems ? (
+                    <MenuSubmenu
+                      key={action.id}
+                      ariaLabel={`${action.label} projects`}
+                      label={action.label}
+                      className={styles.dropdownItem ?? ''}
+                    >
+                      {action.onActivate ? (
+                        <MenuItem onSelect={action.onActivate}>
+                          <span className={styles.actionMenuCopy}>
+                            <span>{action.label}</span>
+                            {action.shortcut ? (
+                              <span className={styles.actionMenuDescription}>{action.shortcut}</span>
+                            ) : null}
+                          </span>
+                        </MenuItem>
+                      ) : null}
+                      {action.menuItems.map((item) => (
+                        <MenuItem key={item.id} disabled={item.disabled} onSelect={item.onSelect}>
+                          <span className={styles.actionMenuCopy}>
+                            <span>{item.label}</span>
+                            {item.description ? (
+                              <span className={item.descriptionMono ? styles.actionMenuPath : styles.actionMenuDescription}>
+                                {item.description}
+                              </span>
+                            ) : null}
+                          </span>
+                        </MenuItem>
+                      ))}
+                    </MenuSubmenu>
+                  ) : (
+                    <button
+                      key={action.id}
+                      type="button"
+                      role="menuitem"
+                      className={`${styles.dropdownItem} ${
+                        activeFunctionId === action.id ? styles.dropdownItemActive : ''
+                      }`}
+                      title={action.title ?? action.label}
+                      onClick={() => {
+                        if (action.onActivate) action.onActivate();
+                        else activate(action.id);
+                        setDropdownTabId(null);
+                      }}
+                    >
+                      {action.icon && <span className={styles.dropdownItemIcon}>{action.icon}</span>}
+                      <span className={styles.dropdownItemLabel}>{action.label}</span>
+                      {action.shortcut && (
+                        <span className={styles.dropdownItemShortcut}>{action.shortcut}</span>
+                      )}
+                    </button>
+                  )
                 ))}
               </div>
             </div>
@@ -241,17 +284,61 @@ function RibbonActionButton({
   isActive: boolean;
   onSelect: () => void;
 }): JSX.Element {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
+  const rect = menuOpen ? anchorRef.current?.getBoundingClientRect() : null;
   return (
-    <button
-      type="button"
-      className={`${styles.action} ${isActive ? styles.actionActive : ''}`}
-      title={
-        action.title ?? (action.shortcut ? `${action.label} (${action.shortcut})` : action.label)
-      }
-      onClick={onSelect}
-    >
-      {action.icon && <span className={styles.actionIcon}>{action.icon}</span>}
-      <span className={styles.actionLabel}>{action.label}</span>
-    </button>
+    <div className={styles.actionHost}>
+      <button
+        ref={anchorRef}
+        type="button"
+        className={`${styles.action} ${isActive ? styles.actionActive : ''}`}
+        title={
+          action.title ?? (action.shortcut ? `${action.label} (${action.shortcut})` : action.label)
+        }
+        aria-haspopup={action.menuItems ? 'menu' : undefined}
+        aria-expanded={action.menuItems && !action.onActivate ? menuOpen : undefined}
+        onClick={() => {
+          if (action.menuItems && !action.onActivate) setMenuOpen((open) => !open);
+          else onSelect();
+        }}
+      >
+        {action.icon && <span className={styles.actionIcon}>{action.icon}</span>}
+        <span className={styles.actionLabel}>{action.label}</span>
+      </button>
+      {action.menuItems && action.onActivate ? (
+        <button
+          type="button"
+          className={styles.actionMenuTrigger}
+          aria-label={`${action.label} options`}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((open) => !open)}
+        >
+          <ChevronDown size={12} />
+        </button>
+      ) : null}
+      {menuOpen && rect ? (
+        <Menu
+          ariaLabel={`${action.label} projects`}
+          onClose={() => setMenuOpen(false)}
+          className={styles.actionMenu!}
+          style={{ position: 'fixed', left: rect.left, top: rect.bottom + 4 }}
+        >
+          {action.menuItems!.map((item) => (
+            <MenuItem key={item.id} disabled={item.disabled} onSelect={item.onSelect}>
+              <span className={styles.actionMenuCopy}>
+                <span>{item.label}</span>
+                {item.description ? (
+                  <span className={item.descriptionMono ? styles.actionMenuPath : styles.actionMenuDescription}>
+                    {item.description}
+                  </span>
+                ) : null}
+              </span>
+            </MenuItem>
+          ))}
+        </Menu>
+      ) : null}
+    </div>
   );
 }

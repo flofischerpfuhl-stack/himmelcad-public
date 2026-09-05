@@ -37,6 +37,18 @@ test('jobs chip uses the shared label grammar and honest progress', () => {
   assert.doesNotMatch(multi, /\+1/);
 });
 
+test('jobs island pairs every determinate phase with its visible percentage', () => {
+  const html = renderToStaticMarkup(
+    <JobsIsland
+      jobs={[job('running', { phase: 'Preparing hierarchy', fraction: 0.42 })]}
+      onCancel={() => {}}
+      onRespond={() => {}}
+    />,
+  );
+  assert.match(html, /Preparing hierarchy/);
+  assert.match(html, />42%<\/code>/);
+});
+
 test('jobs chip covers needs-input, cancellation, failure and completion linger', () => {
   const render = (item: JobSurfaceItem, now = 1_000) =>
     renderToStaticMarkup(<JobsStatusChip jobs={[item]} now={now} onClick={() => {}} />);

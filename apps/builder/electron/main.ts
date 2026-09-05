@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -35,6 +35,13 @@ import {
   stopSidecar,
 } from './sidecar';
 import { startDesktopUpdater } from './updater';
+import {
+  BuilderProjectLifecycleStore,
+  projectDisplayName,
+  withArchiveExtension,
+  withProjectExtension,
+  type RecentProjectEntry,
+} from './projectLifecycle';
 
 const isDev = !app.isPackaged;
 const CACHE_DIR = resolve(tmpdir(), 'himmelcad-cache');
@@ -65,6 +72,8 @@ if (process.platform === 'linux') app.setDesktopName('himmelcad-builder.desktop'
 
 let mainWindow: BrowserWindow | null = null;
 let automationHost: ReturnType<typeof registerElectronAutomationHost> | null = null;
+let projectLifecycle: BuilderProjectLifecycleStore | null = null;
+let allowWindowClose = false;
 const jobRegistry = new JobRegistry();
 jobRegistry.subscribe((event) => mainWindow?.webContents.send('jobs:event', event));
 
@@ -275,6 +284,7 @@ const canonicalResidencyArtifacts = new Map<string, CanonicalResidencyArtifactBi
 const stagedArtifacts = new Map<string, StagedArtifactBinding>();
 
 async function createWindow(): Promise<void> {
+  allowWindowClose = false;
   const applicationIcon = nativeImage.createFromPath(resolve(__dirname, '../../build/icon.png'));
   const win = new BrowserWindow({
     title: 'HimmelCAD Builder',
@@ -313,6 +323,11 @@ async function createWindow(): Promise<void> {
 
   win.on('maximize', () => win.webContents.send('window:maximize-changed', true));
   win.on('unmaximize', () => win.webContents.send('window:maximize-changed', false));
+  win.on('close', (event) => {
+    if (allowWindowClose) return;
+    event.preventDefault();
+    win.webContents.send('canonical-project:close-requested');
+  });
 
   // Forward sidecar stderr lines to the renderer console as soon as the
   // window has loaded. This lets the user copy them out from the in-app
@@ -325,8 +340,34 @@ async function createWindow(): Promise<void> {
         progress.fraction,
         progress.message,
       );
-      if (job?.state === 'cancelling') void cancelSidecarRegistration(job);
-      if (job && job.state !== 'cancelling' && progress.message.includes('ready for project commit')) {
+      if (job?.owner === 'builder.archive' && progress.message === 'Publishing archive') {
+        jobRegistry.update(job.id, {
+          cancellation: {
+            cancellable: false,
+            reason: 'The final atomic rename is in progress',
+          },
+        });
+      }
+      if (
+        job?.owner === 'builder.import' &&
+        progress.message.startsWith('Registering journal head')
+      ) {
+        jobRegistry.update(job.id, {
+          cancellation: {
+            cancellable: false,
+            reason: 'The journal-last publication unit is in progress',
+            atNextSafeBoundary: true,
+          },
+        });
+      }
+      if (job?.owner === 'builder.import' && job.state === 'cancelling') {
+        void cancelSidecarRegistration(job);
+      }
+      if (
+        job &&
+        job.state !== 'cancelling' &&
+        progress.message.includes('ready for project commit')
+      ) {
         jobRegistry.needsInput(job.id, 'Ready for project commit');
       }
     }
@@ -604,6 +645,10 @@ void app.whenReady().then(async () => {
     });
   }
 
+  projectLifecycle = new BuilderProjectLifecycleStore(
+    resolve(app.getPath('userData'), 'builder-project-lifecycle.v1.json'),
+  );
+  await projectLifecycle.load();
   registerIpc();
   await startSidecar();
   const repositoryRoot = resolve(__dirname, '..', '..', '..', '..');
@@ -654,6 +699,10 @@ function registerIpc(): void {
     return mainWindow.isMaximized();
   });
   ipcMain.handle('window:close', () => {
+    mainWindow?.webContents.send('canonical-project:close-requested');
+  });
+  ipcMain.handle('window:close-ready', () => {
+    allowWindowClose = true;
     mainWindow?.close();
   });
   ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
@@ -676,15 +725,17 @@ function registerIpc(): void {
     jobRegistry.needsInput(assertJobId(id), typeof phase === 'string' ? phase : undefined),
   );
   ipcMain.handle('jobs:complete', (_event, id: unknown, resultLabel: unknown) =>
-    jobRegistry.complete(assertJobId(id), typeof resultLabel === 'string' ? resultLabel : undefined),
+    jobRegistry.complete(
+      assertJobId(id),
+      typeof resultLabel === 'string' ? resultLabel : undefined,
+    ),
   );
   ipcMain.handle('jobs:fail', (_event, id: unknown, error: unknown) => {
-    if (typeof error !== 'string' || !error.trim()) throw new Error('job failure must name an error');
+    if (typeof error !== 'string' || !error.trim())
+      throw new Error('job failure must name an error');
     return jobRegistry.fail(assertJobId(id), error);
   });
-  ipcMain.handle('jobs:cancelled', (_event, id: unknown) =>
-    jobRegistry.cancelled(assertJobId(id)),
-  );
+  ipcMain.handle('jobs:cancelled', (_event, id: unknown) => jobRegistry.cancelled(assertJobId(id)));
   ipcMain.handle('jobs:cancel', (_event, id: unknown) => jobRegistry.cancel(assertJobId(id)));
   ipcMain.handle('jobs:respond', (_event, id: unknown) => jobRegistry.respond(assertJobId(id)));
   ipcMain.handle('jobs:clear-finished', () => jobRegistry.clearFinished());
@@ -699,6 +750,102 @@ function registerIpc(): void {
     const projectsDirectory = resolve(app.getPath('userData'), CANONICAL_PROJECTS_DIRECTORY);
     await fs.mkdir(projectsDirectory, { recursive: true });
     return defaultCanonicalProjectRoot();
+  });
+  ipcMain.handle('canonical-project:startup', async () => {
+    const lifecycle = requireProjectLifecycle();
+    let projectRoot = lifecycle.lastProjectPath();
+    let fallbackNotice: string | null = null;
+    if (projectRoot && (await pathAvailability(projectRoot, 250)) !== true) {
+      fallbackNotice = `Last project is unavailable; opened the default project instead: ${projectRoot}`;
+      projectRoot = null;
+    }
+    if (!projectRoot) projectRoot = defaultCanonicalProjectRoot();
+    return { projectRoot, recent: lifecycle.recent(), fallbackNotice };
+  });
+  ipcMain.handle('canonical-project:recent', async () =>
+    existingRecentProjects(requireProjectLifecycle().recent()),
+  );
+  ipcMain.handle('canonical-project:open-recent', async (_event, projectRoot: unknown) => {
+    const root = assertProjectRoot(projectRoot);
+    if (
+      !requireProjectLifecycle()
+        .recent()
+        .some((entry) => entry.path === root)
+    ) {
+      throw new Error('project is not in the recent list');
+    }
+    if (!(await pathExists(root))) {
+      await requireProjectLifecycle().forget(root);
+      throw new Error(`Recent project is no longer available: ${root}`);
+    }
+    return root;
+  });
+  ipcMain.handle('canonical-project:opened', async (_event, projectRoot: unknown) => {
+    const root = assertProjectRoot(projectRoot);
+    return requireProjectLifecycle().opened(root);
+  });
+  ipcMain.handle('canonical-project:new', async () => {
+    const selected = await dialog.showSaveDialog(requireMainWindow(), {
+      title: 'Create HimmelCAD project',
+      defaultPath: resolve(app.getPath('documents'), 'Untitled.hcad'),
+      buttonLabel: 'Create project',
+      filters: [{ name: 'HimmelCAD project', extensions: ['hcad'] }],
+      properties: ['createDirectory', 'showOverwriteConfirmation'],
+    });
+    if (selected.canceled || !selected.filePath) return null;
+    const projectRoot = resolve(withProjectExtension(selected.filePath));
+    if (await pathExists(projectRoot)) throw new Error(`Project already exists: ${projectRoot}`);
+    await fs.mkdir(projectRoot, { recursive: false });
+    return projectRoot;
+  });
+  ipcMain.handle('canonical-project:open', async () => {
+    const selected = await dialog.showOpenDialog(requireMainWindow(), {
+      title: 'Open HimmelCAD project',
+      buttonLabel: 'Open project',
+      defaultPath: resolve(app.getPath('documents')),
+      properties: ['openDirectory'],
+    });
+    if (selected.canceled || !selected.filePaths[0]) return null;
+    return assertProjectRoot(resolve(selected.filePaths[0]));
+  });
+  ipcMain.handle('canonical-project:open-archive', async () => {
+    const selected = await dialog.showOpenDialog(requireMainWindow(), {
+      title: 'Open HimmelCAD archive',
+      buttonLabel: 'Choose archive',
+      defaultPath: resolve(app.getPath('documents')),
+      properties: ['openFile'],
+      filters: [{ name: 'HimmelCAD archive', extensions: ['hcadx'] }],
+    });
+    if (selected.canceled || !selected.filePaths[0]) return null;
+    const source = resolve(selected.filePaths[0]);
+    const destination = await chooseArchiveDestination(source);
+    if (!destination) return null;
+    return openBuilderArchive(source, destination);
+  });
+  ipcMain.handle('canonical-project:open-path', async (_event, droppedPath: unknown) => {
+    if (typeof droppedPath !== 'string' || !droppedPath.trim()) {
+      throw new Error('dropped project path is required');
+    }
+    const source = resolve(droppedPath);
+    const stat = await fs.stat(source);
+    if (source.toLowerCase().endsWith('.hcadx') && stat.isFile()) {
+      const destination = await chooseArchiveDestination(source);
+      return destination ? openBuilderArchive(source, destination) : null;
+    }
+    if (!stat.isDirectory()) throw new Error('a .hcad project must be a directory');
+    return assertProjectRoot(source);
+  });
+  ipcMain.handle('canonical-project:save-as', async (_event, projectRoot: unknown) => {
+    const root = assertProjectRoot(projectRoot);
+    const selected = await dialog.showSaveDialog(requireMainWindow(), {
+      title: 'Save archive copy',
+      defaultPath: resolve(app.getPath('documents'), `${projectDisplayName(root)}.hcadx`),
+      buttonLabel: 'Save archive',
+      filters: [{ name: 'HimmelCAD archive', extensions: ['hcadx'] }],
+      properties: ['createDirectory', 'showOverwriteConfirmation'],
+    });
+    if (selected.canceled || !selected.filePath) return null;
+    return saveBuilderArchive(root, resolve(withArchiveExtension(selected.filePath)));
   });
   ipcMain.handle('registration-staged:materialize', async (_event, sessionId: unknown) => {
     if (typeof sessionId !== 'string' || !/^[A-Za-z0-9_.-]{1,160}$/.test(sessionId)) {
@@ -1084,22 +1231,23 @@ function assertJobUpdate(
   if (candidate.progressKey !== undefined && typeof candidate.progressKey !== 'string') {
     throw new Error('invalid progress key');
   }
-  return candidate as Partial<
-    Pick<AppJob, 'phase' | 'fraction' | 'progressKey' | 'cancellation'>
-  >;
+  return candidate as Partial<Pick<AppJob, 'phase' | 'fraction' | 'progressKey' | 'cancellation'>>;
 }
 
 async function cancelSidecarRegistration(job: AppJob): Promise<void> {
   if (!job.progressKey) return;
-  const acknowledgement = await callSidecar<{ readonly cancellationRequested?: boolean }>({
+  const acknowledgement = await callSidecar<{
+    readonly cancellationRequested?: boolean;
+    readonly cancelledImmediately?: boolean;
+  }>({
     method: 'registration.session.cancel',
     params: { sessionId: job.progressKey },
   });
-  if (acknowledgement.cancellationRequested) {
+  if (acknowledgement.cancelledImmediately) {
     jobRegistry.cancelled(job.id);
     return;
   }
-  if (jobRegistry.get(job.id).state === 'cancelling') {
+  if (acknowledgement.cancellationRequested && jobRegistry.get(job.id).state === 'cancelling') {
     jobRegistry.update(job.id, {
       phase: 'Cancelling at next safe boundary',
       cancellation: {
@@ -1164,8 +1312,173 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) void createWindow();
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (!allowWindowClose && mainWindow) {
+    event.preventDefault();
+    mainWindow.webContents.send('canonical-project:close-requested');
+    return;
+  }
   void automationHost?.dispose();
   automationHost = null;
   stopSidecar();
 });
+
+function requireProjectLifecycle(): BuilderProjectLifecycleStore {
+  if (!projectLifecycle) throw new Error('project lifecycle preferences are not ready');
+  return projectLifecycle;
+}
+
+function requireMainWindow(): BrowserWindow {
+  if (!mainWindow) throw new Error('Builder window is not ready');
+  return mainWindow;
+}
+
+async function existingRecentProjects(
+  entries: readonly RecentProjectEntry[],
+): Promise<readonly RecentProjectEntry[]> {
+  const availability = await Promise.all(
+    entries.map(async (entry) => ({ entry, available: await pathAvailability(entry.path, 250) })),
+  );
+  return availability.filter(({ available }) => available !== false).map(({ entry }) => entry);
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await fs.access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function pathAvailability(path: string, timeoutMs: number): Promise<boolean | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      fs.access(path).then(
+        () => true,
+        () => false,
+      ),
+      new Promise<null>((resolveTimeout) => {
+        timer = setTimeout(() => resolveTimeout(null), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function chooseArchiveDestination(source: string): Promise<string | null> {
+  const target = await dialog.showSaveDialog(requireMainWindow(), {
+    title: 'Choose unpacked project location',
+    buttonLabel: 'Unpack project',
+    defaultPath: resolve(app.getPath('documents'), `${projectDisplayName(source)}.hcad`),
+    filters: [{ name: 'HimmelCAD project', extensions: ['hcad'] }],
+    properties: ['createDirectory'],
+  });
+  if (target.canceled || !target.filePath) return null;
+  const destination = resolve(withProjectExtension(target.filePath));
+  if (await pathExists(destination)) {
+    throw new Error(`Choose a new project location: ${destination} already exists`);
+  }
+  return destination;
+}
+
+function assertProjectRoot(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error('project path is required');
+  const path = resolve(value);
+  if (!path.toLowerCase().endsWith('.hcad')) throw new Error('working projects use .hcad');
+  return path;
+}
+
+async function saveBuilderArchive(projectRoot: string, destination: string): Promise<unknown> {
+  const jobId = `builder-save-as-${randomUUID()}`;
+  let cancelRequested = false;
+  jobRegistry.register(
+    {
+      id: jobId,
+      label: 'Saving archive',
+      owner: 'builder.archive',
+      phase: 'Flushing journal',
+      expectedDurationMs: 1_001,
+      progressKey: jobId,
+      cancellable: true,
+      context: { projectRoot, destination },
+    },
+    {
+      cancel: async () => {
+        cancelRequested = true;
+        await callSidecar({
+          method: 'builder.project.archive.cancel',
+          params: { operationId: jobId },
+        });
+      },
+    },
+  );
+  try {
+    await callSidecar({ method: 'project.flush', params: {} });
+    if (cancelRequested) {
+      jobRegistry.cancelled(jobId);
+      return null;
+    }
+    const summary = await callSidecar<{ readonly path: string; readonly bytes: number }>({
+      method: 'builder.project.archive.pack',
+      params: { projectRoot, destination, operationId: jobId, progressKey: jobId },
+    });
+    jobRegistry.complete(jobId, `Archive stored · ${summary.path}`);
+    return summary;
+  } catch (error) {
+    const current = jobRegistry.get(jobId);
+    const message = error instanceof Error ? error.message : String(error);
+    if (current.state === 'cancelling' || /cancelled/i.test(message)) jobRegistry.cancelled(jobId);
+    else jobRegistry.fail(jobId, message);
+    throw error;
+  }
+}
+
+async function openBuilderArchive(source: string, destination: string): Promise<string> {
+  const jobId = `builder-open-archive-${randomUUID()}`;
+  let cancelRequested = false;
+  jobRegistry.register(
+    {
+      id: jobId,
+      label: 'Opening archive',
+      owner: 'builder.archive',
+      phase: 'Validating archive',
+      expectedDurationMs: 1_001,
+      progressKey: jobId,
+      cancellable: true,
+      context: { source, destination },
+    },
+    {
+      cancel: async () => {
+        cancelRequested = true;
+        await callSidecar({
+          method: 'builder.project.archive.cancel',
+          params: { operationId: jobId },
+        });
+      },
+    },
+  );
+  try {
+    await fs.mkdir(resolve(app.getPath('userData'), CANONICAL_PROJECTS_DIRECTORY), {
+      recursive: true,
+    });
+    if (cancelRequested) {
+      jobRegistry.cancelled(jobId);
+      throw new Error('archive operation cancelled');
+    }
+    await callSidecar({
+      method: 'builder.project.archive.unpack',
+      params: { source, destination, operationId: jobId, progressKey: jobId },
+    });
+    jobRegistry.complete(jobId, `Archive opened · ${destination}`);
+    return destination;
+  } catch (error) {
+    const current = jobRegistry.get(jobId);
+    const message = error instanceof Error ? error.message : String(error);
+    if (current.state === 'cancelling' || /cancelled/i.test(message)) jobRegistry.cancelled(jobId);
+    else jobRegistry.fail(jobId, message);
+    throw error;
+  }
+}

@@ -204,6 +204,7 @@ pub fn publish_prepared_raster_surface_hierarchy(
                         })),
                     }],
                     child_page: None,
+                    prepared_point_metadata: None,
                     provider_metadata: Some(serde_json::json!({
                         "schemaId": "hcad.provider.raster-surface-tile@1",
                         "level": color_level.level,

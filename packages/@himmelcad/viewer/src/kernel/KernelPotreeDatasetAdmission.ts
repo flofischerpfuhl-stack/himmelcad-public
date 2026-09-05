@@ -16,6 +16,31 @@ export interface KernelPotreeDatasetAdmission {
   readonly metadataUri: string;
   readonly admission: CanonicalRepresentationAdmission;
   readonly style?: KernelRenderStyle;
+  /** Optional independently hashed bake contract; Potree metadata stays byte-for-byte unchanged. */
+  readonly preparedMetadata?: KernelPreparedPointDatasetMetadata;
+}
+
+export interface KernelPreparedPointDatasetMetadata {
+  readonly schemaVersion: 1;
+  readonly rawSourceContentHash: string | null;
+  readonly nodes: Readonly<Record<string, KernelPreparedPointNodeMetadata>>;
+}
+
+export interface KernelPreparedPointNodeMetadata {
+  readonly screenSpaceError: {
+    readonly geometricError: number;
+    readonly pointSpacing: number;
+  };
+  readonly sampleStatistics: {
+    readonly sampledPoints: number;
+    readonly sourcePoints: number | null;
+    readonly method: string | null;
+  };
+  /** `null` means the source did not declare station partitioning. */
+  readonly stationIds: readonly string[] | null;
+  /** Null is resolved from fetched bytes and cached by the streaming driver. */
+  readonly contentHash: string | null;
+  readonly origin: 'baked';
 }
 
 interface PotreeAdmissionTarget {
@@ -27,6 +52,7 @@ interface PotreeAdmissionTarget {
     metadataUri: string,
     metadataJson: Uint8Array,
     firstHierarchyChunk: Uint8Array,
+    preparedMetadataJson: Uint8Array,
   ): void;
   publishCanonicalRepresentations(
     admissions: readonly KernelCanonicalRenderAdmission[],
@@ -104,6 +130,7 @@ export async function admitCanonicalPotreeDatasetWith(
   signal?.throwIfAborted();
   reportLoadProgress(progress, 'verifying', 1, total);
   const firstChunkSize = parseFirstHierarchyChunkSize(metadataBytes);
+  const preparedMetadataBytes = encodePreparedMetadata(input.preparedMetadata);
   const hierarchyUri = resolveSiblingUri(input.metadataUri, 'hierarchy.bin');
   const firstHierarchyChunk = await streaming.fetchImmutableResource(
     { uri: hierarchyUri, byteOffset: 0, byteLength: firstChunkSize },
@@ -118,6 +145,7 @@ export async function admitCanonicalPotreeDatasetWith(
     input.metadataUri,
     metadataBytes,
     firstHierarchyChunk,
+    preparedMetadataBytes,
   );
   const mutation = viewer.publishCanonicalRepresentations([
     {
@@ -128,6 +156,44 @@ export async function admitCanonicalPotreeDatasetWith(
   ]);
   reportLoadProgress(progress, 'complete', total, total);
   return mutation;
+}
+
+function encodePreparedMetadata(
+  metadata: KernelPreparedPointDatasetMetadata | undefined,
+): Uint8Array {
+  if (metadata === undefined) return new Uint8Array(0);
+  if (
+    metadata.schemaVersion !== 1 ||
+    (metadata.rawSourceContentHash !== null && !canonicalSha256(metadata.rawSourceContentHash))
+  ) {
+    throw new TypeError('prepared point dataset metadata header is invalid');
+  }
+  for (const [nodeId, node] of Object.entries(metadata.nodes)) {
+    const stations = node.stationIds;
+    if (
+      nodeId.length === 0 ||
+      node.origin !== 'baked' ||
+      !Number.isFinite(node.screenSpaceError.geometricError) ||
+      node.screenSpaceError.geometricError <= 0 ||
+      !Number.isFinite(node.screenSpaceError.pointSpacing) ||
+      node.screenSpaceError.pointSpacing <= 0 ||
+      !Number.isSafeInteger(node.sampleStatistics.sampledPoints) ||
+      node.sampleStatistics.sampledPoints < 0 ||
+      (node.sampleStatistics.sourcePoints !== null &&
+        (!Number.isSafeInteger(node.sampleStatistics.sourcePoints) ||
+          node.sampleStatistics.sourcePoints < node.sampleStatistics.sampledPoints)) ||
+      (node.contentHash !== null && !canonicalSha256(node.contentHash)) ||
+      (stations !== null &&
+        (stations.some((station) => station.length === 0) || new Set(stations).size !== stations.length))
+    ) {
+      throw new TypeError(`prepared point node metadata is invalid: ${nodeId}`);
+    }
+  }
+  return new TextEncoder().encode(JSON.stringify(metadata));
+}
+
+function canonicalSha256(value: string): boolean {
+  return /^[0-9a-f]{64}$/.test(value);
 }
 
 function parseFirstHierarchyChunkSize(bytes: Uint8Array): number {

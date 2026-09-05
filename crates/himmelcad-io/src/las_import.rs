@@ -41,6 +41,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use las::Reader as LasReader;
+
+use himmelcad_core::canonical_resources::PointCloudDisplayStyle;
 use himmelcad_core::entity::EntityId;
 use himmelcad_core::entity_model::{
     built_in_type, CanonicalEntity, EntityTypeId, GeometryObject, GeometryResource, Representation,
@@ -278,6 +281,21 @@ pub struct LasImportSummary {
     pub canonical_objects: Vec<CanonicalImportJsonObject>,
 }
 
+/// Frozen identity and audit-only coordinate declaration of the raw source.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScanSourceTruth {
+    /// Original raw file reference. Import never writes through this path.
+    pub path: String,
+    /// Full-file digest verified before and after preparation.
+    pub sha256: String,
+    pub byte_length: u64,
+    /// CRS declaration read from source metadata; never inferred from coordinates.
+    pub declared_crs: Option<String>,
+    /// Source unit read from source metadata; absent when metadata is insufficient.
+    pub declared_units: Option<String>,
+}
+
 impl LasImportSummary {
     /// Revalidates the complete serialized importer-to-project contract.
     pub fn validate_canonical_contract(&self) -> Result<(), ImportError> {
@@ -347,6 +365,12 @@ impl LasImportSummary {
                 .canonical_objects
                 .iter()
                 .any(|object| object.object_hash == entity.relations_ref)
+            || entity.style_ref.as_ref().is_some_and(|style_ref| {
+                !self
+                    .canonical_objects
+                    .iter()
+                    .any(|object| &object.object_hash == style_ref)
+            })
         {
             return Err(ImportError::Canonical(
                 "canonical entity references a missing support object".to_string(),
@@ -421,6 +445,64 @@ impl LasImportSummary {
     }
 }
 
+struct LasHeaderSummary {
+    point_count: u64,
+    declared_crs: Option<String>,
+    declared_units: Option<String>,
+}
+
+fn inspect_las_header(path: &Path) -> Result<LasHeaderSummary, ImportError> {
+    let reader = LasReader::from_path(path)
+        .map_err(|error| ImportError::Metadata(format!("read LAS/LAZ header: {error}")))?;
+    let header = reader.header();
+    let wkt = header
+        .get_wkt_crs_bytes()
+        .and_then(|bytes| std::str::from_utf8(bytes).ok());
+    let geotiff_epsg = header
+        .get_geotiff_crs()
+        .map_err(|error| ImportError::Metadata(format!("read LAS GeoTIFF CRS: {error}")))?
+        .and_then(|crs| {
+            crs.get_projected_crs_geo_key_value()
+                .or_else(|| crs.get_geodetic_crs_geo_key_value())
+        })
+        .filter(|code| (1024..=32766).contains(code));
+    Ok(LasHeaderSummary {
+        point_count: header.number_of_points(),
+        declared_crs: wkt
+            .and_then(epsg_label_from_wkt)
+            .or_else(|| geotiff_epsg.map(|code| format!("EPSG:{code}"))),
+        declared_units: wkt.and_then(unit_label_from_wkt),
+    })
+}
+
+pub(crate) fn epsg_label_from_wkt(wkt: &str) -> Option<String> {
+    for marker in ["ID[\"EPSG\",", "AUTHORITY[\"EPSG\",\""] {
+        let Some(start) = wkt.rfind(marker).map(|index| index + marker.len()) else {
+            continue;
+        };
+        let digits = wkt[start..]
+            .chars()
+            .skip_while(|character| character.is_ascii_whitespace() || *character == '"')
+            .take_while(char::is_ascii_digit)
+            .collect::<String>();
+        if !digits.is_empty() {
+            return Some(format!("EPSG:{digits}"));
+        }
+    }
+    None
+}
+
+fn unit_label_from_wkt(wkt: &str) -> Option<String> {
+    let lower = wkt.to_ascii_lowercase();
+    if lower.contains("lengthunit[\"metre\",1") || lower.contains("unit[\"metre\",1") {
+        Some("m".to_owned())
+    } else if lower.contains("lengthunit[\"foot") || lower.contains("unit[\"foot") {
+        Some("ft".to_owned())
+    } else {
+        None
+    }
+}
+
 fn provider_contract_import_error(error: ProviderContractError) -> ImportError {
     ImportError::Canonical(error.to_string())
 }
@@ -464,6 +546,26 @@ where
     C: Fn() -> bool + Send + Sync,
 {
     check_cancelled(&is_cancelled)?;
+    progress(ConverterProgress {
+        fraction: Some(0.0),
+        message: "reading source header".to_owned(),
+    });
+    let header = inspect_las_header(path)?;
+    let (source_hash, source_length) = streaming_file_hash(path, &is_cancelled)?;
+    let source_truth = ScanSourceTruth {
+        path: std::fs::canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .into_owned(),
+        sha256: source_hash.0,
+        byte_length: source_length,
+        declared_crs: header.declared_crs,
+        declared_units: header.declared_units,
+    };
+    progress(ConverterProgress {
+        fraction: Some(0.08),
+        message: format!("source header read · {} points", header.point_count),
+    });
     let converter = locate_potreeconverter()?;
     let entity_id = new_entity_id(path);
     let mut prepared_dir = PreparedDirectory::create(cache_dir, path)?;
@@ -483,7 +585,7 @@ where
 
     let converter_progress = |update: ConverterProgress| {
         progress(ConverterProgress {
-            fraction: update.fraction.map(|fraction| fraction * 0.9),
+            fraction: update.fraction.map(|fraction| 0.08 + fraction * 0.74),
             message: update.message,
         });
     };
@@ -502,6 +604,17 @@ where
             tail(&converter_output.stderr_tail, 800),
             tail(&converter_output.stdout_tail, 400),
         )));
+    }
+
+    progress(ConverterProgress {
+        fraction: Some(0.82),
+        message: "verifying unchanged raw source".to_owned(),
+    });
+    let (verified_hash, verified_length) = streaming_file_hash(path, &is_cancelled)?;
+    if verified_hash.0 != source_truth.sha256 || verified_length != source_truth.byte_length {
+        return Err(ImportError::Canonical(
+            "raw source changed while the prepared dataset was built".to_owned(),
+        ));
     }
 
     let metadata_path = prepared_dir.path.join("metadata.json");
@@ -567,6 +680,7 @@ where
         bb_max,
         has_color,
         has_intensity,
+        &source_truth,
         &dataset_manifest,
         &dataset_manifest_hash,
     )?;
@@ -995,9 +1109,9 @@ fn verify_prepared_files(
     Ok(())
 }
 
-fn streaming_file_hash(
+pub(crate) fn streaming_file_hash(
     path: &Path,
-    is_cancelled: &(dyn Fn() -> bool + Send + Sync),
+    is_cancelled: &dyn Fn() -> bool,
 ) -> Result<(ObjectHash, u64), ImportError> {
     let file = File::open(path)?;
     let expected_length = file.metadata()?.len();
@@ -1032,6 +1146,7 @@ fn canonical_point_cloud_admission(
     bounds_max: [f64; 3],
     has_color: bool,
     has_intensity: bool,
+    source_truth: &ScanSourceTruth,
     manifest: &PreparedPotreeManifest,
     manifest_hash: &ObjectHash,
 ) -> Result<
@@ -1050,6 +1165,7 @@ fn canonical_point_cloud_admission(
     let attributes = serde_json::json!({
         "hcad.point-cloud-import@1": {
             "sourceName": source_name,
+            "source": source_truth,
             "pointCount": point_count,
             "boundsMin": bounds_min,
             "boundsMax": bounds_max,
@@ -1058,10 +1174,20 @@ fn canonical_point_cloud_admission(
         }
     });
     let relations = serde_json::json!([]);
+    let display = PointCloudDisplayStyle::release_05_default();
+    display
+        .validate()
+        .map_err(|error| ImportError::Canonical(error.to_string()))?;
+    let display =
+        serde_json::to_value(display).map_err(|error| ImportError::Canonical(error.to_string()))?;
     let canonical_objects = [
         ("application/vnd.himmelcad.components+json", components),
         ("application/vnd.himmelcad.attributes+json", attributes),
         ("application/vnd.himmelcad.relations+json", relations),
+        (
+            "application/vnd.himmelcad.point-cloud-display+json",
+            display,
+        ),
     ]
     .into_iter()
     .map(|(media_type, value)| {
@@ -1105,7 +1231,7 @@ fn canonical_point_cloud_admission(
         components_ref: canonical_objects[0].object_hash.clone(),
         attributes_ref: canonical_objects[1].object_hash.clone(),
         relations_ref: canonical_objects[2].object_hash.clone(),
-        style_ref: None,
+        style_ref: Some(canonical_objects[3].object_hash.clone()),
         schema_version: 1,
         version_hash: ObjectHash::of_bytes(b"uninitialized canonical LAS import"),
     };
@@ -1125,7 +1251,7 @@ fn canonical_point_cloud_admission(
     ))
 }
 
-fn check_cancelled(is_cancelled: &(dyn Fn() -> bool + Send + Sync)) -> Result<(), ImportError> {
+fn check_cancelled(is_cancelled: &dyn Fn() -> bool) -> Result<(), ImportError> {
     if is_cancelled() {
         Err(ImportError::Cancelled)
     } else {
@@ -1555,6 +1681,16 @@ mod tests {
         }
     }
 
+    fn source_truth() -> ScanSourceTruth {
+        ScanSourceTruth {
+            path: "/survey.laz".to_owned(),
+            sha256: "0".repeat(64),
+            byte_length: 1,
+            declared_crs: Some("EPSG:25832".to_owned()),
+            declared_units: Some("m".to_owned()),
+        }
+    }
+
     fn write_prepared_files(directory: &Path) {
         std::fs::write(
             directory.join("metadata.json"),
@@ -1782,6 +1918,7 @@ mod tests {
             [4.0, 5.0, 6.0],
             true,
             true,
+            &source_truth(),
             &manifest,
             &manifest_hash,
         )
@@ -1859,6 +1996,7 @@ mod tests {
             [1.0; 3],
             false,
             false,
+            &source_truth(),
             &manifest,
             &manifest_hash,
         )

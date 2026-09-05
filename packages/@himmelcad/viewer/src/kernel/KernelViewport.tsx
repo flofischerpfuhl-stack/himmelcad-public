@@ -51,6 +51,7 @@ export interface KernelViewportProps {
     index: number,
     count: number,
   ) => void;
+  readonly onCameraGestureEnd?: KernelNavigationCallbacks['onCameraGestureEnd'];
   readonly onCursorCoordinate?: KernelNavigationCallbacks['onCursorCoordinate'];
   readonly gestures?: PlatformGestureCallbacks<KernelPickCandidate>;
   readonly registerEscapeRung?: EscapeRungRegistrar;
@@ -73,6 +74,7 @@ export function KernelViewport({
   className,
   onReady,
   onActivePick,
+  onCameraGestureEnd,
   onCursorCoordinate,
   gestures,
   registerEscapeRung,
@@ -87,6 +89,7 @@ export function KernelViewport({
   const callbacksRef = useRef({
     onReady,
     onActivePick,
+    onCameraGestureEnd,
     onCursorCoordinate,
     gestures,
     registerEscapeRung,
@@ -98,6 +101,7 @@ export function KernelViewport({
   callbacksRef.current = {
     onReady,
     onActivePick,
+    onCameraGestureEnd,
     onCursorCoordinate,
     gestures,
     registerEscapeRung,
@@ -219,6 +223,7 @@ export function KernelViewport({
         created.subscribe(observeSession);
         created.camera.frame({ x: -25, y: -25, z: -1 }, { x: 25, y: 25, z: 1 });
         const navigation = created.attachNavigation({
+          onCameraGestureEnd: (cancelled) => callbacksRef.current.onCameraGestureEnd?.(cancelled),
           onActivePick: (candidate, index, count) =>
             callbacksRef.current.onActivePick?.(candidate, index, count),
           onCursorCoordinate: (coordinate, source) =>

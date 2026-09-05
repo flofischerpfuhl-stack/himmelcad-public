@@ -60,7 +60,9 @@ try {
   await rpc('canonical.project.open', { projectRoot });
   const selection = await rpc('io.probe', { sourcePath });
   assert.ok(
-    selection.formatId.startsWith('las@') || selection.formatId.startsWith('laz@'),
+    selection.formatId.startsWith('las@') ||
+      selection.formatId.startsWith('laz@') ||
+      selection.formatId.startsWith('e57@'),
     `unexpected provider selection: ${JSON.stringify(selection)}`,
   );
 
@@ -125,6 +127,15 @@ try {
       entry.dataset?.formatId === 'potree@2' && entry.dataset.datasetId === potree.datasetId,
   );
   assert.ok(admitted, 'committed project residency did not contain the imported point cloud');
+  assert.ok(admitted.pointCloud, 'point-cloud residency metadata is absent');
+  assert.ok(admitted.pointCloud.pointCount > 0, 'point-cloud residency has no exact point count');
+  admitted.pointCloud.placementOffset.forEach((coordinate, index) => {
+    const expected = [translation.x, translation.y, translation.z][index];
+    assert.ok(Math.abs(coordinate - expected) < 1e-6, 'committed placement changed');
+  });
+  assert.equal(admitted.pointCloud.display.schemaId, 'hcad.resource.point-cloud-display@1');
+  assert.equal(admitted.pointCloud.display.pointSizePixels, 2);
+  assert.equal(admitted.pointCloud.display.colorMode, 'rgb');
   const targetSamples = await rpc('registration.samples.projectPointCloud', {
     datasetId: potree.datasetId,
     maximumSamples: 128,
@@ -135,8 +146,22 @@ try {
   );
   assert.equal(targetSamples.datasetId, potree.datasetId);
 
+  await rpc('project.flush');
+  const durability = await rpc('canonical.project.durability');
+  assert.equal(durability.state, 'stored');
+  assert.equal(durability.pendingCount, 0);
+  assert.equal(durability.durableGeneration, durability.visibleGeneration);
+  await rpc('canonical.project.close');
+  await rpc('canonical.project.open', { projectRoot });
+  const reopenedResidency = await rpc('canonical.residency.bootstrap');
+  const reopened = reopenedResidency.entries.find(
+    (entry) => entry.dataset?.datasetId === potree.datasetId,
+  );
+  assert.ok(reopened, 'reopened project did not restore the imported point cloud');
+  assert.deepEqual(reopened.pointCloud, admitted.pointCloud);
+
   process.stdout.write(
-    `Point-cloud registration smoke passed: ${selection.formatId}, ${sampled.points.length} source samples, ${targetSamples.points.length} target samples, ${pairs.length} point pairs, RMS ${preview.preview.residuals.rmsSpatialMeters.toExponential(2)} m.\n`,
+    `Point-cloud registration smoke passed and reopened: ${selection.formatId}, ${sampled.points.length} source samples, ${targetSamples.points.length} target samples, ${pairs.length} point pairs, RMS ${preview.preview.residuals.rmsSpatialMeters.toExponential(2)} m.\n`,
   );
 } catch (error) {
   process.stderr.write(`${stderr.join('\n')}\n`);
@@ -144,6 +169,9 @@ try {
 } finally {
   child.stdin.end();
   child.kill('SIGTERM');
+  if (child.exitCode === null) {
+    await new Promise((resolveExit) => child.once('exit', resolveExit));
+  }
   await rm(projectRoot, { recursive: true, force: true });
 }
 

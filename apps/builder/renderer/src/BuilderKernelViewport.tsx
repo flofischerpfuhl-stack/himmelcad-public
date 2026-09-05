@@ -9,7 +9,11 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 
-import { LocalStorageViewHistoryPersistence, ViewLocalHistory } from '@himmelcad/app';
+import {
+  LocalStorageViewHistoryPersistence,
+  ViewLocalHistory,
+  type PointCloudDisplayStyle,
+} from '@himmelcad/app';
 import type { EntityId, SnapKind, SnapResult, SourcePosition3, Vec3 } from '@himmelcad/data';
 import { ViewportHud, OverlayChip, registerEscapeRung } from '@himmelcad/ui';
 import {
@@ -87,6 +91,44 @@ const RASTER_STYLE: KernelRenderStyle = {
   baseColor: [1, 1, 1, 1],
 };
 
+function renderPointCloudStyle(
+  display: PointCloudDisplayStyle | undefined,
+  bounds: {
+    readonly min: readonly [number, number, number];
+    readonly max: readonly [number, number, number];
+  },
+): KernelRenderStyle {
+  if (!display || display.colorMode === 'rgb') return POINT_CLOUD_STYLE;
+  if (display.colorMode === 'intensity') {
+    return { ...POINT_CLOUD_STYLE, colorMode: { kind: 'pointIntensity' } };
+  }
+  if (display.colorMode === 'elevation') {
+    return {
+      ...POINT_CLOUD_STYLE,
+      colorMode: {
+        kind: 'height',
+        minimum: bounds.min[2],
+        maximum: bounds.max[2],
+        colors: [
+          [0.08, 0.34, 0.95, 1],
+          [0.15, 0.95, 0.65, 1],
+          [1, 0.35, 0.08, 1],
+        ],
+      },
+    };
+  }
+  const maximumCode = Math.max(0, ...display.classes.map((item) => item.code));
+  const colors = Array.from({ length: maximumCode + 1 }, (_, code) => {
+    const visible = display.classes.find((item) => item.code === code)?.visible ?? true;
+    const hue = (code * 0.61803398875) % 1;
+    const red = 0.35 + Math.abs(hue * 6 - 3) * 0.16;
+    const green = 0.35 + Math.abs(((hue + 0.333) % 1) * 6 - 3) * 0.16;
+    const blue = 0.35 + Math.abs(((hue + 0.666) % 1) * 6 - 3) * 0.16;
+    return [Math.min(red, 0.95), Math.min(green, 0.95), Math.min(blue, 0.95), visible ? 1 : 0];
+  });
+  return { ...POINT_CLOUD_STYLE, colorMode: { kind: 'pointClassification', colors } };
+}
+
 export interface BuilderPointCloudOptions {
   readonly datasetId: string;
   /** Exact admission already committed by the canonical project runtime. */
@@ -95,6 +137,7 @@ export interface BuilderPointCloudOptions {
     readonly min: readonly [number, number, number];
     readonly max: readonly [number, number, number];
   };
+  readonly display?: PointCloudDisplayStyle;
 }
 
 export interface BuilderCanonicalImportPackage {
@@ -131,20 +174,23 @@ export interface BuilderKernelViewportHandle {
   ): Promise<void>;
   cameraHistory(action: 'undo' | 'redo'): Promise<void>;
   frameAll(): void;
-  setPreset(preset: 'top' | 'front' | 'right' | 'isometric'): void;
+  setPreset(preset: 'top' | 'front' | 'right' | 'isometric' | 'perspective'): void;
   setPointSize(pointSize: number): void;
   setViewMode(mode: KernelViewMode): Promise<void>;
   worldCamera(): KernelWorldCamera | null;
   adoptWorldCamera(camera: KernelWorldCamera): KernelWorldCamera;
   waitForNextPresentedFrame(): Promise<void>;
   diagnosticsSnapshot(lastFrames?: number): KernelDiagnosticsSnapshot;
-  sampleDiagnostics(request: KernelDiagnosticsSampleRequest): Promise<KernelDiagnosticsSampleResult>;
+  sampleDiagnostics(
+    request: KernelDiagnosticsSampleRequest,
+  ): Promise<KernelDiagnosticsSampleResult>;
   captureRgba(request: KernelRgbaCaptureRequest): Promise<KernelRgbaCaptureResult>;
   captureRectangle(): { x: number; y: number; width: number; height: number } | null;
   setEntityAppearance(
     entityIds: readonly EntityId[],
     options: { readonly opacity?: number; readonly verticalExaggeration?: number },
   ): void;
+  setPointCloudDisplay(entityIds: readonly EntityId[], display: PointCloudDisplayStyle): void;
   setEntityVisibility(entityIds: readonly EntityId[], visible: boolean): void;
   setClipVolumes(volumes: readonly KernelClipVolume[]): void;
   setAutomationClipVolumes(volumes: readonly KernelClipVolume[]): void;
@@ -153,7 +199,7 @@ export interface BuilderKernelViewportHandle {
 }
 
 interface BuilderKernelViewportProps {
-  readonly projectId?: string;
+  readonly projectId?: string | undefined;
   readonly hudVisible?: boolean;
   readonly pointSize: number;
   readonly onCursorSnap: (snap: SnapResult | null) => void;
@@ -253,31 +299,52 @@ export const BuilderKernelViewport = forwardRef<
   const restoringCameraRef = useRef(false);
   const recordCamera = useCallback(() => {
     const kernel = kernelRef.current;
-    if (kernel && !restoringCameraRef.current) cameraHistoryRef.current?.commit({ camera: kernel.camera.worldCamera(), mode: viewModeRef.current }, crypto.randomUUID());
+    if (kernel && !restoringCameraRef.current)
+      cameraHistoryRef.current?.commit(
+        { camera: kernel.camera.worldCamera(), mode: viewModeRef.current },
+        crypto.randomUUID(),
+      );
   }, []);
   useEffect(() => {
     let cancelled = false;
     cameraHistoryRef.current = null;
     if (!projectId) return;
-    void readyRef.current.promise.then(async (kernel) => {
-      if (cancelled) return;
-      const history = new ViewLocalHistory(projectId, 'camera', { camera: kernel.camera.worldCamera(), mode: viewModeRef.current }, parseCameraHistory,
-        new LocalStorageViewHistoryPersistence(window.localStorage, 'camera'),
-        (message) => callbacksRef.current.onLog('warn', message));
-      await history.open();
-      if (cancelled) return;
-      restoringCameraRef.current = true;
-      try {
-        const state = history.current;
-        await kernel.session.setViewMode(state.mode, 0);
+    void readyRef.current.promise
+      .then(async (kernel) => {
         if (cancelled) return;
-        kernel.session.adoptWorldCamera(state.camera);
-        viewModeRef.current = state.mode;
-        setViewModeState(state.mode);
-        cameraHistoryRef.current = history;
-      } finally { restoringCameraRef.current = false; }
-    }).catch((error: unknown) => callbacksRef.current.onLog('error', String(error)));
-    return () => { cancelled = true; cameraHistoryRef.current = null; };
+        const history = new ViewLocalHistory(
+          projectId,
+          'camera',
+          { camera: kernel.camera.worldCamera(), mode: viewModeRef.current },
+          parseCameraHistory,
+          new LocalStorageViewHistoryPersistence(window.localStorage, 'camera'),
+          (message) => callbacksRef.current.onLog('warn', message),
+        );
+        kernel.navigation.setEnabled(false);
+        await history.open();
+        if (cancelled) {
+          kernel.navigation.setEnabled(true);
+          return;
+        }
+        restoringCameraRef.current = true;
+        try {
+          const state = history.current;
+          await kernel.session.setViewMode(state.mode, 0);
+          if (cancelled) return;
+          kernel.session.adoptWorldCamera(state.camera);
+          viewModeRef.current = state.mode;
+          setViewModeState(state.mode);
+          cameraHistoryRef.current = history;
+        } finally {
+          restoringCameraRef.current = false;
+          kernel.navigation.setEnabled(true);
+        }
+      })
+      .catch((error: unknown) => callbacksRef.current.onLog('error', String(error)));
+    return () => {
+      cancelled = true;
+      cameraHistoryRef.current = null;
+    };
   }, [projectId]);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewingBoxOverlayRef = useRef<HTMLCanvasElement | null>(null);
@@ -349,7 +416,8 @@ export const BuilderKernelViewport = forwardRef<
       ),
     );
     for (const id of highlightedSelectionRef.current) {
-      if (!next.has(id)) kernel.session.setEntityInteractionState(id, { selected: false, hovered: false });
+      if (!next.has(id))
+        kernel.session.setEntityInteractionState(id, { selected: false, hovered: false });
     }
     for (const id of next) {
       if (!highlightedSelectionRef.current.has(id)) {
@@ -391,15 +459,18 @@ export const BuilderKernelViewport = forwardRef<
     recordCamera();
   }, [recordCamera]);
 
-  const changeViewMode = useCallback(async (mode: KernelViewMode): Promise<void> => {
-    viewModeRef.current = mode;
-    setViewModeState(mode);
-    await kernelRef.current?.session.setViewMode(mode).catch((error: unknown) => {
-      callbacksRef.current.onLog('error', `View mode change failed: ${String(error)}`);
-      throw error;
-    });
-    recordCamera();
-  }, [recordCamera]);
+  const changeViewMode = useCallback(
+    async (mode: KernelViewMode): Promise<void> => {
+      viewModeRef.current = mode;
+      setViewModeState(mode);
+      await kernelRef.current?.session.setViewMode(mode).catch((error: unknown) => {
+        callbacksRef.current.onLog('error', `View mode change failed: ${String(error)}`);
+        throw error;
+      });
+      recordCamera();
+    },
+    [recordCamera],
+  );
 
   useImperativeHandle(
     ref,
@@ -410,16 +481,18 @@ export const BuilderKernelViewport = forwardRef<
         if (options.admission.resolvedGeometry.kind !== 'pointCloud') {
           throw new Error('committed LAS admission does not resolve to point-cloud geometry');
         }
+        const pointCloudStyle = renderPointCloudStyle(options.display, options.bounds);
         await kernel.session.loadPotree(
           {
             datasetId: options.datasetId,
             metadataUri: metadataUrl,
             admission: options.admission,
-            style: POINT_CLOUD_STYLE,
+            style: pointCloudStyle,
           },
           { operationId: `builder/load/${entityId}` },
         );
-        entityStylesRef.current.set(entityId, POINT_CLOUD_STYLE);
+        entityStylesRef.current.set(entityId, pointCloudStyle);
+        if (options.display) kernel.session.setPointSize(options.display.pointSizePixels);
         entityExaggerationDatumsRef.current.set(entityId, options.bounds.min[2]);
         loadedBoundsRef.current = unionBounds(loadedBoundsRef.current, options.bounds);
         frameAll();
@@ -508,30 +581,39 @@ export const BuilderKernelViewport = forwardRef<
         kernel.requestFrame();
       },
       async cameraHistory(action) {
-        const history = cameraHistoryRef.current, kernel = kernelRef.current;
-        if (!history || !kernel || restoringCameraRef.current) throw new Error('Camera history is not ready');
+        const history = cameraHistoryRef.current,
+          kernel = kernelRef.current;
+        if (!history || !kernel || restoringCameraRef.current)
+          throw new Error('Camera history is not ready');
         restoringCameraRef.current = true;
         try {
-          const state = action === 'undo' ? history.undo() : history.redo();
+          const snapshot = history.snapshot;
+          const state =
+            action === 'undo' && history.canUndo
+              ? parseCameraHistory(snapshot.entries[snapshot.cursor - 1]!.before)
+              : action === 'redo' && history.canRedo
+                ? parseCameraHistory(snapshot.entries[snapshot.cursor]!.after)
+                : history.current;
+          kernel.navigation.setEnabled(false);
           await kernel.session.setViewMode(state.mode, 0);
           kernel.session.adoptWorldCamera(state.camera);
           viewModeRef.current = state.mode;
           setViewModeState(state.mode);
-        } finally { restoringCameraRef.current = false; }
+          if (action === 'undo') history.undo();
+          else history.redo();
+        } finally {
+          restoringCameraRef.current = false;
+          kernel.navigation.setEnabled(true);
+        }
       },
       frameAll,
       setPreset(preset) {
         const kernel = kernelRef.current;
         if (!kernel) throw new Error('viewer is not ready');
         const camera = kernel.camera.worldCamera();
-        if (viewModeRef.current === '2d' && preset !== 'top') throw new Error('This preset requires 3D or 2.5D navigation.');
-        const distance = Math.hypot(camera.eye.x - camera.target.x, camera.eye.y - camera.target.y, camera.eye.z - camera.target.z);
-        // KernelCameraController.eye/worldCamera: Z up, yaw zero looks from -Y.
-        const axis = preset === 'top' ? [0, 0, 1] : preset === 'front' ? [0, -1, 0] : preset === 'right' ? [1, 0, 0] : [0, -Math.SQRT1_2, Math.SQRT1_2];
-        kernel.session.adoptWorldCamera({ ...camera,
-          eye: { x: camera.target.x + axis[0]! * distance, y: camera.target.y + axis[1]! * distance, z: camera.target.z + axis[2]! * distance },
-          up: preset === 'top' ? { x: 0, y: 1, z: 0 } : { x: 0, y: 0, z: 1 },
-        });
+        if (viewModeRef.current === '2d' && preset !== 'top')
+          throw new Error('This preset requires 3D or 2.5D navigation.');
+        kernel.session.adoptWorldCamera(KernelCameraController.preset(camera, preset));
         recordCamera();
       },
       setPointSize(pointSize) {
@@ -593,6 +675,26 @@ export const BuilderKernelViewport = forwardRef<
             ...(options.verticalExaggeration === undefined
               ? {}
               : { verticalExaggeration: options.verticalExaggeration }),
+          };
+          kernel.session.setEntityStyle(
+            entityId,
+            next,
+            entityExaggerationDatumsRef.current.get(entityId) ?? 0,
+          );
+          entityStylesRef.current.set(entityId, next);
+        }
+      },
+      setPointCloudDisplay(entityIds, display) {
+        const kernel = kernelRef.current;
+        if (!kernel) return;
+        kernel.session.setPointSize(display.pointSizePixels);
+        for (const entityId of entityIds) {
+          const bounds = loadedBoundsRef.current;
+          if (!bounds) continue;
+          const current = entityStylesRef.current.get(entityId) ?? POINT_CLOUD_STYLE;
+          const next = {
+            ...current,
+            colorMode: renderPointCloudStyle(display, bounds).colorMode,
           };
           kernel.session.setEntityStyle(
             entityId,
@@ -726,7 +828,7 @@ export const BuilderKernelViewport = forwardRef<
     setDragging(false);
     const paths = Array.from(event.dataTransfer.files)
       .map((file) => (file as File & { readonly path?: string }).path ?? '')
-      .filter((path) => /\.(?:las|laz)$/i.test(path));
+      .filter((path) => /\.(?:las|laz|e57)$/i.test(path));
     if (paths.length > 0) void callbacksRef.current.onDropFiles(paths);
   }, []);
 
@@ -1044,7 +1146,7 @@ export const BuilderKernelViewport = forwardRef<
           </OverlayChip>
         ))}
       </div>
-      {dragging ? <div className={styles.dropOverlay}>Drop LAS / LAZ to import</div> : null}
+      {dragging ? <div className={styles.dropOverlay}>Drop LAS / LAZ / E57 to import</div> : null}
     </div>
   );
 });
@@ -1719,28 +1821,58 @@ function createDeferred<T>(): {
   return { promise, resolve, reject };
 }
 
-function BuilderHud({ kernelRef }: { readonly kernelRef: { readonly current: KernelViewportHandle | null } }): JSX.Element {
+function BuilderHud({
+  kernelRef,
+}: {
+  readonly kernelRef: { readonly current: KernelViewportHandle | null };
+}): JSX.Element {
   const [snapshot, setSnapshot] = useState<KernelDiagnosticsSnapshot | null>(null);
   useEffect(() => {
-    const update = (): void => { if (kernelRef.current) setSnapshot(kernelRef.current.session.diagnosticsWindow()); };
+    const update = (): void => {
+      if (kernelRef.current) setSnapshot(kernelRef.current.session.diagnosticsWindow());
+    };
     update();
     const timer = window.setInterval(update, 250);
     return () => window.clearInterval(timer);
   }, [kernelRef]);
   const frame = snapshot?.lastFrames.at(-1);
   const reasons = frame?.deadlineReasonCodes.filter((reason) => reason !== 'within_target') ?? [];
-  const budget = reasons.map((reason) => reason === 'gpu_deadline' ? 'gpu' : reason === 'cpu_deadline' ? 'cpu' : reason).join(', ') || (frame ? 'within target' : '—');
-  return <ViewportHud p95={snapshot?.presentedFrameIntervalMs?.p95 ?? null}
-    p50={snapshot?.presentedFrameIntervalMs?.p50 ?? null} points={frame?.primitives.points ?? null}
-    targetMs={kernelRef.current?.session.hardwarePolicy.frame.targetFrameMs ?? Infinity}
-    quality={null} budget={budget}
-    backlog={frame ? frame.requestBacklog + frame.decodeBacklog + frame.uploadBacklog : null} />;
+  const budgetLabels = {
+    gpu_deadline: 'gpu',
+    cpu_deadline: 'cpu',
+    recovery_headroom: 'recovery',
+    invalid_timing: 'timing',
+    resource_budget: 'resource',
+    frame_budget: 'frame',
+    invalid_benefit: 'benefit',
+    protected_work_over_budget: 'protected',
+    'budget:points': 'points',
+    'budget:bytes': 'bytes',
+    'decode:backlog': 'decode',
+    'upload:backlog': 'upload',
+  };
+  const budget = reasons[0] ? budgetLabels[reasons[0]] : frame ? 'within' : '—';
+  return (
+    <ViewportHud
+      p95={snapshot?.presentedFrameIntervalMs?.p95 ?? null}
+      p50={snapshot?.presentedFrameIntervalMs?.p50 ?? null}
+      points={frame?.primitives.points ?? null}
+      targetMs={kernelRef.current?.session.hardwarePolicy.frame.targetFrameMs ?? Infinity}
+      quality={null}
+      budget={budget}
+      backlog={frame ? frame.requestBacklog + frame.decodeBacklog + frame.uploadBacklog : null}
+    />
+  );
 }
 
-interface CameraHistoryState { readonly camera: KernelWorldCamera; readonly mode: KernelViewMode }
+interface CameraHistoryState {
+  readonly camera: KernelWorldCamera;
+  readonly mode: KernelViewMode;
+}
 function parseCameraHistory(input: unknown): CameraHistoryState {
   const state = input as CameraHistoryState;
-  if (!state || !['3d', '2d', '2.5d'].includes(state.mode)) throw new TypeError('Invalid camera history mode');
+  if (!state || !['3d', '2d', '2.5d'].includes(state.mode))
+    throw new TypeError('Invalid camera history mode');
   new KernelCameraController(1, 1).adoptWorldCamera(state.camera);
   return state;
 }

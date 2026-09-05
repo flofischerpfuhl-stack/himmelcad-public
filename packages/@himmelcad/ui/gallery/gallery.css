@@ -115,6 +115,10 @@ textarea {
   grid-template-columns: 132px minmax(0, 1fr);
 }
 
+.gallerySection[data-gallery-section='import-surfaces'] {
+  grid-column: 1 / -1;
+}
+
 .stateLabel {
   padding: 18px 10px;
   border-right: 1px solid var(--hc-border-subtle);
@@ -189,6 +193,35 @@ textarea {
   gap: 4px;
   color: var(--hc-fg-default);
   font-size: 11px;
+}
+
+.importSurfacesFixture {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(260px, 0.85fr);
+  gap: 12px;
+  width: 100%;
+  padding: 12px;
+}
+
+.importJobsFixture,
+.importPropertiesFixture {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-island);
+  background: var(--hc-bg-island);
+}
+
+.importPlacementFixture {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--hc-border-subtle);
+  color: var(--hc-fg-muted);
+  font-family: var(--hc-font-mono);
+  font-size: 10px;
 }
 
 .viewportChromeFixture,

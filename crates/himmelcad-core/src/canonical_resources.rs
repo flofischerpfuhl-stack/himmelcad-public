@@ -40,10 +40,110 @@ pub const HATCH_PATTERN_RESOURCE_SCHEMA_ID: &str = "hcad.resource.hatch-pattern@
 pub const LINE_TYPE_RESOURCE_SCHEMA_ID: &str = "hcad.resource.line-type@1";
 /// Schema identifier for annotation-style resources.
 pub const ANNOTATION_STYLE_RESOURCE_SCHEMA_ID: &str = "hcad.resource.annotation-style@1";
+/// Schema identifier for canonical point-cloud display styles.
+pub const POINT_CLOUD_DISPLAY_STYLE_SCHEMA_ID: &str = "hcad.resource.point-cloud-display@1";
 /// Schema identifier for BIM classification components.
 pub const BIM_CLASSIFICATION_COMPONENT_SCHEMA_ID: &str = "hcad.component.bim-classification@1";
 /// Schema identifier for utility-network topology components.
 pub const NETWORK_TOPOLOGY_SCHEMA_ID: &str = "hcad.component.network-topology@1";
+
+/// Canonical point-cloud color source below the view-level VD-D8 override.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum PointCloudColorMode {
+    /// Source RGB when present, otherwise the renderer's neutral source fallback.
+    Rgb,
+    /// LAS/E57 intensity.
+    Intensity,
+    /// LAS-compatible classification code.
+    Classification,
+    /// Authoritative world elevation.
+    Elevation,
+}
+
+/// One project-owned LAS/civil class display row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PointCloudClassDisplay {
+    /// LAS-compatible classification code.
+    pub code: u8,
+    /// Concise user-facing class name.
+    pub name: String,
+    /// Canonical P9 visibility state.
+    pub visible: bool,
+}
+
+/// Immutable per-entity point-cloud display state referenced by `styleRef`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PointCloudDisplayStyle {
+    /// Exact versioned schema identifier.
+    pub schema_id: String,
+    /// Explicit per-entity size in physical screen pixels for Release 0.5.
+    pub point_size_pixels: f32,
+    /// Entity-level color source.
+    pub color_mode: PointCloudColorMode,
+    /// Stable, code-ordered class table and visibility state.
+    pub classes: Vec<PointCloudClassDisplay>,
+}
+
+impl PointCloudDisplayStyle {
+    /// Release-0.5 LAS/civil defaults. Unknown source codes remain visible.
+    #[must_use]
+    pub fn release_05_default() -> Self {
+        Self {
+            schema_id: POINT_CLOUD_DISPLAY_STYLE_SCHEMA_ID.to_owned(),
+            point_size_pixels: 2.0,
+            color_mode: PointCloudColorMode::Rgb,
+            classes: [
+                (0, "Created, never classified"),
+                (1, "Unclassified"),
+                (2, "Ground"),
+                (3, "Low vegetation"),
+                (4, "Medium vegetation"),
+                (5, "High vegetation"),
+                (6, "Building"),
+                (7, "Low point"),
+                (9, "Water"),
+                (17, "Bridge deck"),
+                (18, "High noise"),
+            ]
+            .into_iter()
+            .map(|(code, name)| PointCloudClassDisplay {
+                code,
+                name: name.to_owned(),
+                visible: true,
+            })
+            .collect(),
+        }
+    }
+
+    /// Validates the closed Release-0.5 style contract.
+    pub fn validate(&self) -> Result<(), CanonicalResourceValidationError> {
+        if self.schema_id != POINT_CLOUD_DISPLAY_STYLE_SCHEMA_ID {
+            return Err(CanonicalResourceValidationError::InvalidSchema);
+        }
+        if !self.point_size_pixels.is_finite() || !(1.0..=8.0).contains(&self.point_size_pixels) {
+            return Err(CanonicalResourceValidationError::InvalidNumber);
+        }
+        if self.classes.len() > 256 {
+            return Err(CanonicalResourceValidationError::CollectionLimit);
+        }
+        let mut codes = HashSet::new();
+        for class in &self.classes {
+            if class.name.trim().is_empty() || class.name.len() > MAX_IDENTIFIER_BYTES {
+                return Err(CanonicalResourceValidationError::InvalidIdentifier);
+            }
+            if !codes.insert(class.code) {
+                return Err(CanonicalResourceValidationError::DuplicateIdentifier);
+            }
+        }
+        Ok(())
+    }
+}
 
 /// Stable immutable resource identity used by resource-to-resource bindings.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2114,5 +2214,29 @@ mod tests {
             }]
         });
         assert!(serde_json::from_value::<BimClassificationComponent>(nested.take()).is_err());
+    }
+
+    #[test]
+    fn point_cloud_display_is_bounded_and_strict() {
+        let display = PointCloudDisplayStyle::release_05_default();
+        assert_eq!(display.validate(), Ok(()));
+        assert_eq!(display.point_size_pixels, 2.0);
+        assert!(display
+            .classes
+            .iter()
+            .any(|item| item.code == 2 && item.name == "Ground"));
+
+        let mut invalid = display.clone();
+        invalid.point_size_pixels = 8.5;
+        assert_eq!(
+            invalid.validate(),
+            Err(CanonicalResourceValidationError::InvalidNumber)
+        );
+        let mut duplicate = display;
+        duplicate.classes.push(duplicate.classes[0].clone());
+        assert_eq!(
+            duplicate.validate(),
+            Err(CanonicalResourceValidationError::DuplicateIdentifier)
+        );
     }
 }

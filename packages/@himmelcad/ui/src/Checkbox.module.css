@@ -29,7 +29,8 @@
     background var(--hc-motion-fast);
 }
 
-.box[data-checked='true'] {
+.box[data-checked='true'],
+.box[data-indeterminate='true'] {
   border-color: var(--hc-accent-base);
   background: var(--hc-accent-base);
   box-shadow:
@@ -57,6 +58,23 @@
 .box[data-checked='true'] svg {
   opacity: 1;
   transform: scale(1);
+}
+
+.box[data-indeterminate='true'] svg {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.mixed {
+  display: none;
+}
+
+.box[data-indeterminate='true'] path:not(.mixed) {
+  display: none;
+}
+
+.box[data-indeterminate='true'] .mixed {
+  display: block;
 }
 
 .root:hover:not(:has(input:disabled)) .box {

@@ -115,3 +115,73 @@ S-06b gates:
 ## Architect acceptance (G17, 2026-09-05)
 
 S-06b verified in `gallery/shots/dark/command-surfaces.png`: the candidate submenu is anchored at the parent item's right edge, top-aligned, with the current candidate marked. S-06 accepted.
+
+## S-06c — PhotoLab product-row regression closure (2026-09-05)
+
+The generated command table now carries optional product ownership, exact
+entity-kind applicability, and multi-selection applicability. Context surfaces
+filter those fields together with the existing enablement predicate. Shared
+rows remain product-neutral; the two PhotoLab rows are admitted only when the
+host identifies itself as `photolab`, so the Builder polyline menu is unchanged.
+For a multi-selection, every selected entity must satisfy the row's exact kind
+predicate.
+
+`EntityCommandMenu` dispatches every row as
+`onExecute(commandId, { entityIds, kind })`. `EntityTree` retains its local
+rename/visibility handling and its existing export/properties/zoom-to host
+mappings, then forwards every other unhandled id unchanged to
+`onContextAction(commandId, entityIds)`. The optional product id defaults to
+`builder`; the legacy callback compatibility branch exists only so the
+read-only PhotoLab renderer continues to typecheck until its lane opts in with
+`productId="photolab"` and the canonical callback mapping.
+
+Exact PhotoLab host wiring:
+
+| Command id | UI label | Existing PhotoLab action |
+| --- | --- | --- |
+| `photolab.images.remove` | `Remove from project…` | `remove` (continues into the existing `Remove image?` confirmation) |
+| `photolab.gcp.images` | `Images containing this GCP` | `showGcpImages` |
+
+S-06c files:
+
+- `schemas/automation/himmelcad-automation-v1.schema.json`
+- `scripts/generate-command-table.mjs`
+- generated `packages/@himmelcad/app/src/generated/commandTable.ts` and
+  `packages/@himmelcad/automation-host/generated-command-table.cjs`
+- `packages/@himmelcad/app/src/commands.ts` and `test/commands.test.ts`
+- `packages/@himmelcad/ui/src/CommandSurfaces.tsx`, `EntityTree.tsx`, and
+  `index.ts`
+- `packages/@himmelcad/ui/test/commandSurfaces.test.tsx` and
+  `gallery/Gallery.tsx`
+- the Builder entity-surface adapter in `apps/builder/renderer/src/App.tsx`
+- regenerated ignored gallery captures at
+  `packages/@himmelcad/ui/gallery/shots/{dark,light}/command-surfaces.png`
+
+The PhotoLab renderer, render crate, viewer kernel, and Builder import paths
+were read-only for S-06c.
+
+S-06c gates:
+
+- `node scripts/generate-command-table.mjs --check`: exit 0.
+- `pnpm --filter @himmelcad/app test`: 44 passed, 0 failed.
+- `pnpm --filter @himmelcad/ui test`: 35 passed, 0 failed.
+- `pnpm --filter @himmelcad/ui typecheck`: exit 0.
+- `pnpm --filter @himmelcad/photolab typecheck`: exit 0; `PhotoLab English UI
+  check passed.`
+- `pnpm --filter @himmelcad/automation-host test`: 45 passed, 0 failed, 1
+  skipped (the existing real-Codex version pin expected 0.144.5 and found
+  0.153.4).
+- `pnpm --filter @himmelcad/ui gallery:shots`: `Captured 66 screenshots for 32
+  sections`; both regenerated Command surfaces theme shots were inspected and
+  contain the new PhotoLab image-node row.
+- `pnpm --filter @himmelcad/builder typecheck`: S-06c-owned code typechecks, but
+  the full gate remains red in concurrent V-02 work at
+  `BuilderKernelViewport.tsx:1731` because the budget-reason label table does
+  not yet cover `budget:points`, `budget:bytes`, `decode:backlog`, and
+  `upload:backlog`. S-06c did not edit that viewer integration path.
+- `git diff --check`: exit 0.
+
+Not verified: no PhotoLab renderer integration click-through was performed,
+because this slice was explicitly prohibited from editing `apps/photolab`.
+The PhotoLab lane must add the product id and the exact two-id mapping above;
+the existing confirmation and GCP filtering handlers remain authoritative.

@@ -1,0 +1,40 @@
+.hud {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  padding: 6px 8px;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--hc-bg-island-hi) 88%, transparent);
+  color: var(--hc-fg-default);
+  font: 11px/1.5 var(--hc-font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.number,
+.quality,
+.budget,
+.backlog {
+  display: inline-block;
+  text-align: right;
+}
+.number {
+  width: 5ch;
+}
+.quality {
+  width: 4ch;
+}
+.budget {
+  width: 10ch;
+}
+.backlog {
+  width: 4ch;
+}
+.number[data-tone='warning'] {
+  color: var(--hc-warning);
+}
+.number[data-tone='error'] {
+  color: var(--hc-error);
+}

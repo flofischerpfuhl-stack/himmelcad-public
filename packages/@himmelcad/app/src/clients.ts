@@ -287,11 +287,35 @@ export interface CanonicalResidencyDataset {
   readonly artifacts: readonly CanonicalResidencyArtifact[];
 }
 
+export type PointCloudColorMode = 'rgb' | 'intensity' | 'classification' | 'elevation';
+
+export interface PointCloudClassDisplay {
+  readonly code: number;
+  readonly name: string;
+  readonly visible: boolean;
+}
+
+export interface PointCloudDisplayStyle {
+  readonly schemaId: 'hcad.resource.point-cloud-display@1';
+  readonly pointSizePixels: number;
+  readonly colorMode: PointCloudColorMode;
+  readonly classes: readonly PointCloudClassDisplay[];
+}
+
+export interface CanonicalPointCloudMetadata {
+  readonly pointCount: number;
+  readonly sourceCrs: string | null;
+  readonly sourceUnits: string | null;
+  readonly placementOffset: readonly [number, number, number];
+  readonly display: PointCloudDisplayStyle;
+}
+
 export interface CanonicalResidencyEntry {
   readonly providerId: string;
   readonly providerVersion: string;
   readonly admission: CanonicalRepresentationAdmission;
   readonly dataset: CanonicalResidencyDataset | null;
+  readonly pointCloud?: CanonicalPointCloudMetadata;
 }
 
 export interface CanonicalResidencyBootstrap {
@@ -403,6 +427,7 @@ export interface AppFacadeMethods extends AppProtocolMethods {
       readonly schemaVersion: 1;
       readonly sessionId: string;
       readonly cancellationRequested: boolean;
+      readonly cancelledImmediately: boolean;
     };
   };
   readonly 'registration.siteCalibration.inspect': {

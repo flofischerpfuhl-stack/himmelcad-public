@@ -3,20 +3,18 @@ import type { SelectionCandidate } from './selection.js';
 
 export const QUICK_SURFACE_ENTRY_CAP = 7;
 
-export type CommandSurface =
-  | 'ribbon'
-  | 'contextMenu'
-  | 'quickSurface'
-  | 'console'
-  | 'automation';
+export type CommandSurface = 'ribbon' | 'contextMenu' | 'quickSurface' | 'console' | 'automation';
 export type CommandGroup = 'selection' | 'edit' | 'view' | 'entity-specific';
 export type CommandEntityKind = 'point' | 'polyline' | 'mesh' | 'cloud' | 'other';
 export type RuntimeCommandId = (typeof GENERATED_COMMAND_TABLE)[number]['id'];
 
 export interface CommandContext {
   readonly hasProject: boolean;
+  readonly productId?: string;
   readonly selectedEntityIds: readonly string[];
   readonly selectedEntityKinds: readonly CommandEntityKind[];
+  readonly selectedCanonicalEntityKinds?: readonly string[];
+  readonly entityKind?: string;
   readonly selectionVisibility?: 'visible' | 'hidden' | 'mixed';
   readonly selectionEditable?: boolean;
   readonly selectionExportable?: boolean;
@@ -41,6 +39,9 @@ export interface RuntimeCommandEntry {
   readonly surfaces: Readonly<Record<CommandSurface, boolean>>;
   readonly group: CommandGroup;
   readonly ownerSpec: string;
+  readonly owner: string | null;
+  readonly entityKinds: readonly string[] | null;
+  readonly allowMultiSelect: boolean;
   readonly isEnabled: (context: CommandContext) => boolean;
 }
 
@@ -48,10 +49,16 @@ const CLOUD = new Set<CommandEntityKind>(['cloud']);
 
 function predicate(name: string): (context: CommandContext) => boolean {
   switch (name) {
+    case 'always':
+      return () => true;
     case 'hasProject':
       return (context) => context.hasProject;
     case 'hasSelection':
       return (context) => context.selectedEntityIds.length > 0;
+    case 'cloudSelection':
+      return (context) =>
+        context.selectedEntityIds.length > 0 &&
+        context.selectedEntityKinds.every((kind) => kind === 'cloud');
     case 'pickCandidates':
       return (context) => (context.candidates?.length ?? 0) > 1;
     case 'clipboardAdmissible':
@@ -87,6 +94,9 @@ export const COMMAND_REGISTRY: readonly RuntimeCommandEntry[] = Object.freeze(
       surfaces: row.surfaces,
       group: row.group,
       ownerSpec: row.ownerSpec,
+      owner: 'owner' in row ? row.owner : null,
+      entityKinds: 'entityKinds' in row ? row.entityKinds : null,
+      allowMultiSelect: 'allowMultiSelect' in row ? row.allowMultiSelect : true,
       isEnabled: predicate(row.enablement),
     }),
   ),
@@ -103,7 +113,17 @@ export function commandsForSurface(
   context: CommandContext,
 ): readonly RuntimeCommandEntry[] {
   const entries = COMMAND_REGISTRY.filter(
-    (entry) => entry.surfaces[surface] && entry.isEnabled(context),
+    (entry) =>
+      entry.surfaces[surface] &&
+      (entry.owner === null || entry.owner === context.productId) &&
+      (entry.entityKinds === null ||
+        (context.selectedCanonicalEntityKinds !== undefined &&
+          context.selectedCanonicalEntityKinds.length === context.selectedEntityIds.length &&
+          context.selectedCanonicalEntityKinds.every((kind) =>
+            entry.entityKinds!.includes(kind),
+          ))) &&
+      (entry.allowMultiSelect || context.selectedEntityIds.length === 1) &&
+      entry.isEnabled(context),
   );
   if (surface !== 'quickSurface') return entries;
   const quickOrder: Readonly<Record<CommandGroup, number>> = {
@@ -129,7 +149,8 @@ export function assertRuntimeCommandRegistry(): void {
     if (!entry.shortcut) continue;
     const key = entry.shortcut.toLowerCase();
     const collision = shortcuts.get(key);
-    if (collision) throw new Error(`Shortcut collision: ${entry.shortcut} (${collision}, ${entry.id})`);
+    if (collision)
+      throw new Error(`Shortcut collision: ${entry.shortcut} (${collision}, ${entry.id})`);
     shortcuts.set(key, entry.id);
   }
 }
@@ -185,7 +206,10 @@ export async function executeConsoleLine(
   raw: string,
   context: CommandContext,
   execute: CommandExecutor,
-): Promise<{ readonly kind: 'help'; readonly lines: readonly string[] } | { readonly kind: 'executed'; readonly id: RuntimeCommandId }> {
+): Promise<
+  | { readonly kind: 'help'; readonly lines: readonly string[] }
+  | { readonly kind: 'executed'; readonly id: RuntimeCommandId }
+> {
   const [head = '', ...args] = raw.trim().split(/\s+/);
   if (head.toLowerCase() === 'help') {
     return {

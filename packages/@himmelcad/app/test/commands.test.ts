@@ -17,6 +17,7 @@ import {
 
 const base = (overrides: Partial<CommandContext> = {}): CommandContext => ({
   hasProject: true,
+  productId: 'builder',
   selectedEntityIds: [],
   selectedEntityKinds: [],
   selectionVisibility: 'visible',
@@ -35,6 +36,20 @@ void test('G-UIP-CMD every generated row is reachable and runtime shortcuts do n
       true,
       entry.id,
     );
+  }
+});
+
+void test('P-01 exposes one generated row for every Builder project lifecycle act', () => {
+  const ids = new Set(COMMAND_REGISTRY.map((entry) => entry.id));
+  for (const id of [
+    'project.new',
+    'project.open',
+    'project.recent',
+    'project.save',
+    'project.save_as',
+    'project.close',
+  ] as const) {
+    assert.equal(ids.has(id), true, id);
   }
 });
 
@@ -64,6 +79,49 @@ void test('context menu content follows selection kind and cloud stays deliberat
   ]);
 });
 
+void test('PhotoLab entity rows are product-, kind-, and cardinality-scoped', () => {
+  const ids = (overrides: Partial<CommandContext>) =>
+    commandsForSurface('contextMenu', base(overrides)).map((entry) => entry.id);
+  const camera = {
+    selectedEntityIds: ['image-1'],
+    selectedEntityKinds: ['other'] as const,
+    selectedCanonicalEntityKinds: ['CameraImage'],
+    entityKind: 'CameraImage',
+  };
+  assert.equal(ids({ ...camera, productId: 'photolab' }).includes('photolab.images.remove'), true);
+  assert.equal(ids({ ...camera, productId: 'builder' }).includes('photolab.images.remove'), false);
+  assert.equal(
+    ids({
+      productId: 'photolab',
+      selectedEntityIds: ['gcp-1'],
+      selectedEntityKinds: ['point'],
+      selectedCanonicalEntityKinds: ['GroundControlPoint'],
+      entityKind: 'GroundControlPoint',
+    }).includes('photolab.gcp.images'),
+    true,
+  );
+  assert.equal(
+    ids({
+      productId: 'photolab',
+      selectedEntityIds: ['gcp-1', 'gcp-2'],
+      selectedEntityKinds: ['point', 'point'],
+      selectedCanonicalEntityKinds: ['GroundControlPoint', 'GroundControlPoint'],
+      entityKind: 'GroundControlPoint',
+    }).includes('photolab.gcp.images'),
+    false,
+  );
+  assert.equal(
+    ids({
+      productId: 'photolab',
+      selectedEntityIds: ['image-1', 'surface-1'],
+      selectedEntityKinds: ['other', 'mesh'],
+      selectedCanonicalEntityKinds: ['CameraImage', 'Mesh'],
+      entityKind: 'CameraImage',
+    }).includes('photolab.images.remove'),
+    false,
+  );
+});
+
 void test('UIP-D13 quick surface is capped and selection-sensitive', () => {
   const entries = commandsForSurface(
     'quickSurface',
@@ -81,7 +139,7 @@ void test('console help and completion are derived exactly from the table', asyn
     assert.deepEqual(result.lines.map((line) => line.split(/\s/)[0]), consoleHelpEntries().map((entry) => entry.id));
   }
   assert.deepEqual(completeConsoleCommand('view.preset.'), [
-    'view.preset.top', 'view.preset.front', 'view.preset.right', 'view.preset.isometric',
+    'view.preset.perspective', 'view.preset.top', 'view.preset.front', 'view.preset.right', 'view.preset.isometric',
   ]);
 });
 

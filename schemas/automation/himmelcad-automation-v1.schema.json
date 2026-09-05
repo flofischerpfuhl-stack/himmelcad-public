@@ -117,18 +117,24 @@
       "response": "ViewDiagnosticsSampleResult"
     },
     "view.frame": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Frame all", "kind": "command", "shortcut": "F", "enablement": "hasProject", "surfaces": { "ribbon": true, "contextMenu": false, "quickSurface": true, "console": true, "automation": true }, "group": "view", "ownerSpec": "View VD-D1", "host": "renderer" } },
+    "view.camera.undo": {"capability":"view.write","request":"AdmissionOperationRequest","response":"AdmissionOperationResult","command":{"label":"Undo camera","kind":"command","shortcut":null,"enablement":"hasProject","surfaces":{"ribbon":true,"contextMenu":false,"quickSurface":false,"console":true,"automation":true},"group":"view","ownerSpec":"View VD-D14","host":"renderer"}},
+    "view.camera.redo": {"capability":"view.write","request":"AdmissionOperationRequest","response":"AdmissionOperationResult","command":{"label":"Redo camera","kind":"command","shortcut":null,"enablement":"hasProject","surfaces":{"ribbon":true,"contextMenu":false,"quickSurface":false,"console":true,"automation":true},"group":"view","ownerSpec":"View VD-D14","host":"renderer"}},
+    "view.preset.perspective": {"capability":"view.write","request":"AdmissionOperationRequest","response":"AdmissionOperationResult","command":{"label":"Perspective","kind":"command","shortcut":null,"enablement":"hasProject","surfaces":{"ribbon":true,"contextMenu":false,"quickSurface":false,"console":true,"automation":true},"group":"view","ownerSpec":"View VD-D9","host":"renderer"}},
+    "view.hud.toggle": {"capability":"view.write","request":"AdmissionOperationRequest","response":"AdmissionOperationResult","command":{"label":"Viewport HUD","kind":"command","shortcut":null,"enablement":"hasProject","surfaces":{"ribbon":true,"contextMenu":false,"quickSurface":false,"console":true,"automation":true},"group":"view","ownerSpec":"View VD-D10","host":"renderer"}},
     "view.preset.top": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Top", "kind": "command", "shortcut": "7", "enablement": "hasProject", "surfaces": { "ribbon": true, "contextMenu": false, "quickSurface": true, "console": true, "automation": true }, "group": "view", "ownerSpec": "View VD-D1", "host": "renderer" } },
     "view.preset.front": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Front", "kind": "command", "shortcut": "1", "enablement": "hasProject", "surfaces": { "ribbon": true, "contextMenu": false, "quickSurface": true, "console": true, "automation": true }, "group": "view", "ownerSpec": "View VD-D1", "host": "renderer" } },
     "view.preset.right": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Right", "kind": "command", "shortcut": "3", "enablement": "hasProject", "surfaces": { "ribbon": true, "contextMenu": false, "quickSurface": true, "console": true, "automation": true }, "group": "view", "ownerSpec": "View VD-D1", "host": "renderer" } },
     "view.preset.isometric": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Perspective", "kind": "command", "shortcut": "5", "enablement": "hasProject", "surfaces": { "ribbon": true, "contextMenu": false, "quickSurface": true, "console": true, "automation": true }, "group": "view", "ownerSpec": "View VD-D1", "host": "renderer" } },
     "edit.clipboard.paste_in_place": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Paste in place", "kind": "command", "shortcut": "Ctrl+Shift+V", "enablement": "clipboardAdmissible", "surfaces": { "ribbon": true, "contextMenu": false, "quickSurface": true, "console": true, "automation": true }, "group": "edit", "ownerSpec": "Select/Edit SE-D7", "host": "renderer" } },
     "entity.rename": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Rename", "kind": "command", "shortcut": "F2", "enablement": "singleEditableNonCloud", "surfaces": { "ribbon": false, "contextMenu": true, "quickSurface": false, "console": true, "automation": true }, "group": "edit", "ownerSpec": "UI Platform UIP-D5", "host": "renderer" } },
+    "photolab.images.remove": {"capability":"document.write","request":"AdmissionOperationRequest","response":"AdmissionOperationResult","command":{"label":"Remove from project…","kind":"command","shortcut":null,"enablement":"hasSelection","surfaces":{"ribbon":false,"contextMenu":true,"quickSurface":false,"console":false,"automation":false},"group":"edit","ownerSpec":"PhotoLab P11 command rows","host":"renderer","owner":"photolab","entityKinds":["CameraImage"],"allowMultiSelect":true}},
     "entity.zoom_to": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Zoom to", "kind": "command", "shortcut": "Z", "enablement": "hasSelection", "surfaces": { "ribbon": false, "contextMenu": true, "quickSurface": false, "console": true, "automation": true }, "group": "view", "ownerSpec": "UI Platform UIP-D5", "host": "renderer" } },
     "entity.hide": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Hide", "kind": "command", "shortcut": "H", "enablement": "visibleSelection", "surfaces": { "ribbon": false, "contextMenu": true, "quickSurface": false, "console": true, "automation": true }, "group": "view", "ownerSpec": "UI Platform UIP-D5", "host": "renderer" } },
     "entity.show": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Show", "kind": "command", "shortcut": "Shift+H", "enablement": "hiddenSelection", "surfaces": { "ribbon": false, "contextMenu": true, "quickSurface": false, "console": true, "automation": true }, "group": "view", "ownerSpec": "UI Platform UIP-D5", "host": "renderer" } },
     "entity.isolate": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Isolate", "kind": "command", "shortcut": "I", "enablement": "hasSelection", "surfaces": { "ribbon": false, "contextMenu": true, "quickSurface": false, "console": true, "automation": true }, "group": "view", "ownerSpec": "UI Platform UIP-D5", "host": "renderer" } },
     "entity.properties": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Properties", "kind": "query", "shortcut": "Alt+Enter", "enablement": "hasSelection", "surfaces": { "ribbon": false, "contextMenu": true, "quickSurface": false, "console": true, "automation": true }, "group": "entity-specific", "ownerSpec": "UI Platform UIP-D5", "host": "renderer" } },
     "entity.export": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Export…", "kind": "command", "shortcut": null, "enablement": "exportableSelection", "surfaces": { "ribbon": true, "contextMenu": true, "quickSurface": false, "console": true, "automation": true }, "group": "entity-specific", "ownerSpec": "Import/Export IF-D20", "host": "renderer" } },
+    "photolab.gcp.images": {"capability":"document.read","request":"AdmissionOperationRequest","response":"AdmissionOperationResult","command":{"label":"Images containing this GCP","kind":"query","shortcut":null,"enablement":"hasSelection","surfaces":{"ribbon":false,"contextMenu":true,"quickSurface":false,"console":false,"automation":false},"group":"entity-specific","ownerSpec":"PhotoLab P11 command rows","host":"renderer","owner":"photolab","entityKinds":["GroundControlPoint"],"allowMultiSelect":false}},
     "measurement.create": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
     "measurement.list": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
     "measurement.get": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
@@ -152,7 +158,15 @@
     "viewing_box.list": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
     "view.presentation.set": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
     "view.point_size.set": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
-    "project.flush": { "capability": "document.write", "request": "EmptyRequest", "response": "AdmissionOperationResult", "command": { "label": "Save", "kind": "command", "shortcut": "Ctrl+S", "enablement": "hasProject", "surfaces": { "ribbon": true, "contextMenu": false, "quickSurface": false, "console": true, "automation": true }, "group": "edit", "ownerSpec": "File/project FP-D19", "host": "renderer" } },
+    "file.import": {"capability":"document.write","request":"ImportOpenRequest","response":"AdmissionOperationResult","command":{"label":"Import…","kind":"command","shortcut":null,"enablement":"hasProject","surfaces":{"ribbon":true,"contextMenu":false,"quickSurface":false,"console":true,"automation":true},"group":"edit","ownerSpec":"Import/Export IF-D1–IF-D14","host":"renderer"}},
+    "pointcloud.display.set": {"capability":"document.write","request":"PointCloudDisplaySetRequest","response":"AdmissionOperationResult","command":{"label":"Display properties","kind":"command","shortcut":null,"enablement":"cloudSelection","surfaces":{"ribbon":false,"contextMenu":true,"quickSurface":false,"console":true,"automation":true},"group":"entity-specific","ownerSpec":"Point cloud PC-D11","host":"renderer","entityKinds":["PointCloud"],"allowMultiSelect":true}},
+    "project.flush": {"capability":"document.write","request":"EmptyRequest","response":"AdmissionOperationResult"},
+    "project.new": {"capability":"document.write","request":"AdmissionOperationRequest","response":"AdmissionOperationResult","command":{"label":"New","kind":"command","shortcut":null,"enablement":"always","surfaces":{"ribbon":true,"contextMenu":false,"quickSurface":false,"console":true,"automation":true},"group":"edit","ownerSpec":"File/project FP-D1","host":"renderer"}},
+    "project.open": {"capability":"document.write","request":"AdmissionOperationRequest","response":"AdmissionOperationResult","command":{"label":"Open","kind":"command","shortcut":"Ctrl+O","enablement":"always","surfaces":{"ribbon":true,"contextMenu":false,"quickSurface":false,"console":true,"automation":true},"group":"edit","ownerSpec":"File/project FP-D1","host":"renderer"}},
+    "project.recent": {"capability":"document.read","request":"AdmissionOperationRequest","response":"AdmissionOperationResult","command":{"label":"Recent","kind":"query","shortcut":null,"enablement":"always","surfaces":{"ribbon":true,"contextMenu":false,"quickSurface":false,"console":true,"automation":true},"group":"edit","ownerSpec":"File/project FP-D1","host":"renderer"}},
+    "project.save": {"capability":"document.write","request":"EmptyRequest","response":"AdmissionOperationResult","command":{"label":"Save","kind":"command","shortcut":"Ctrl+S","enablement":"hasProject","surfaces":{"ribbon":true,"contextMenu":false,"quickSurface":false,"console":true,"automation":true},"group":"edit","ownerSpec":"File/project FP-D2/FP-D19","host":"renderer"}},
+    "project.save_as": {"capability":"document.write","request":"AdmissionOperationRequest","response":"AdmissionOperationResult","command":{"label":"Save As…","kind":"command","shortcut":"Ctrl+Shift+S","enablement":"hasProject","surfaces":{"ribbon":true,"contextMenu":false,"quickSurface":false,"console":true,"automation":true},"group":"edit","ownerSpec":"File/project FP-D3/FP-D20","host":"renderer"}},
+    "project.close": {"capability":"document.write","request":"AdmissionOperationRequest","response":"AdmissionOperationResult","command":{"label":"Close","kind":"command","shortcut":null,"enablement":"hasProject","surfaces":{"ribbon":true,"contextMenu":false,"quickSurface":false,"console":true,"automation":true},"group":"edit","ownerSpec":"File/project FP-D1/FP-D21","host":"renderer"}},
     "snapshot.create": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
     "snapshot.list": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
     "snapshot.rename": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
@@ -321,6 +335,126 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {}
+    },
+    "ImportOpenRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaId",
+        "payload"
+      ],
+      "properties": {
+        "schemaId": {
+          "const": "hcad.import-open-request@1"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "maxItems": 1000
+            }
+          }
+        }
+      }
+    },
+    "PointCloudDisplaySetRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaId",
+        "payload"
+      ],
+      "properties": {
+        "schemaId": {
+          "const": "hcad.point-cloud-display-set-request@1"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "entityIds",
+            "display"
+          ],
+          "properties": {
+            "entityIds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1,
+              "maxItems": 1000,
+              "uniqueItems": true
+            },
+            "display": {
+              "$ref": "#/$defs/PointCloudDisplayStyle"
+            }
+          }
+        }
+      }
+    },
+    "PointCloudDisplayStyle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaId",
+        "pointSizePixels",
+        "colorMode",
+        "classes"
+      ],
+      "properties": {
+        "schemaId": {
+          "const": "hcad.resource.point-cloud-display@1"
+        },
+        "pointSizePixels": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "colorMode": {
+          "type": "string",
+          "enum": [
+            "rgb",
+            "intensity",
+            "classification",
+            "elevation"
+          ]
+        },
+        "classes": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "name",
+              "visible"
+            ],
+            "properties": {
+              "code": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "visible": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
     },
     "ViewDiagnosticsSampleRequest": {
       "type": "object",

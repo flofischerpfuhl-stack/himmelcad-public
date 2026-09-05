@@ -8,6 +8,8 @@ import {
   QuickCommandSurface,
   clampMenuPosition,
 } from '../src/CommandSurfaces.js';
+import { dispatchEntityTreeCommand } from '../src/EntityTree.js';
+import type { EntityId } from '@himmelcad/data';
 
 const context: CommandContext = {
   hasProject: true,
@@ -29,6 +31,7 @@ void test('entity command menu groups registry rows and renders the candidate su
       x={24}
       y={32}
       context={context}
+      target={{ entityIds: ['line'], kind: 'Polyline3D' }}
       currentCandidateId="line"
       candidateSubmenuOpen
       onExecute={() => undefined}
@@ -40,6 +43,49 @@ void test('entity command menu groups registry rows and renders the candidate su
   assert.match(html, /Mesh · Existing ground/);
   assert.match(html, /aria-current="true"/);
   assert.ok((html.match(/role="separator"/g) ?? []).length >= 2);
+});
+
+void test('PhotoLab image command is visible only for the PhotoLab CameraImage menu', () => {
+  const imageContext: CommandContext = {
+    ...context,
+    productId: 'photolab',
+    selectedEntityIds: ['image-1'],
+    selectedEntityKinds: ['other'],
+    selectedCanonicalEntityKinds: ['CameraImage'],
+    entityKind: 'CameraImage',
+    candidates: [],
+  };
+  const render = (productId: string) =>
+    renderToStaticMarkup(
+      <EntityCommandMenu
+        x={24}
+        y={32}
+        context={{ ...imageContext, productId }}
+        target={{ entityIds: ['image-1'], kind: 'CameraImage' }}
+        onExecute={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+  assert.match(render('photolab'), /Remove from project…/);
+  assert.doesNotMatch(render('builder'), /Remove from project…/);
+});
+
+void test('tree-unhandled command ids are forwarded unchanged with the selected ids', () => {
+  const calls: Array<{ commandId: string; entityIds: readonly EntityId[] }> = [];
+  dispatchEntityTreeCommand(
+    'photolab.images.remove',
+    { entityIds: ['image-1', 'image-2'], kind: 'CameraImage' },
+    'image-1' as EntityId,
+    {
+      productId: 'photolab',
+      onRename: () => undefined,
+      onContextAction: (commandId: string, entityIds: readonly EntityId[]) =>
+        calls.push({ commandId, entityIds }),
+    },
+  );
+  assert.deepEqual(calls, [
+    { commandId: 'photolab.images.remove', entityIds: ['image-1', 'image-2'] },
+  ]);
 });
 
 void test('quick surface has the exact header and registry cap', () => {

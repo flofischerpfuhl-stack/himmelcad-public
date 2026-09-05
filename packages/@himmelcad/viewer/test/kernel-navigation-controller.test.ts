@@ -319,6 +319,7 @@ void test('camera orbit, pan and wheel remain platform-owned while a tool is arm
   const camera = new KernelCameraController(1_280, 720);
   const canvas = new NavigationCanvas();
   const published: ReturnType<KernelCameraController['worldCamera']>[] = [];
+  const settlements: boolean[] = [];
   const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
   globalThis.requestAnimationFrame = () => 1;
   try {
@@ -335,6 +336,7 @@ void test('camera orbit, pan and wheel remain platform-owned while a tool is arm
         pick: async () => ({ candidates: [], stale: false, generation: 1 }),
       },
       camera,
+      { onCameraGestureEnd: (cancelled) => settlements.push(cancelled) },
     );
     controller.gestures.registerGestureClaims('draw.point', [
       { row: 'lmbClick', handle: () => undefined },
@@ -348,13 +350,16 @@ void test('camera orbit, pan and wheel remain platform-owned while a tool is arm
     const beforeOrbit = camera.worldCamera();
     canvas.dispatchEvent(pointerInput('pointerdown', 0, 100, 100, 1));
     canvas.dispatchEvent(pointerInput('pointermove', 0, 112, 106, 1));
+    assert.equal(settlements.length, 0, 'pointer moves never journal');
     canvas.dispatchEvent(pointerInput('pointerup', 0, 112, 106, 1));
+    assert.deepEqual(settlements, [false], 'one settlement at release');
     assert.notDeepEqual(camera.worldCamera().eye, beforeOrbit.eye);
 
     const beforePan = camera.worldCamera();
     canvas.dispatchEvent(pointerInput('pointerdown', 2, 200, 200, 2));
     canvas.dispatchEvent(pointerInput('pointermove', 2, 215, 210, 2));
     canvas.dispatchEvent(pointerInput('pointerup', 2, 215, 210, 2));
+    assert.deepEqual(settlements, [false, false]);
     assert.notDeepEqual(camera.worldCamera().target, beforePan.target);
 
     const beforeWheel = camera.worldCamera();

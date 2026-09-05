@@ -11,7 +11,11 @@ export type KernelDeadlineReasonCode =
   | 'resource_budget'
   | 'frame_budget'
   | 'invalid_benefit'
-  | 'protected_work_over_budget';
+  | 'protected_work_over_budget'
+  | 'budget:points'
+  | 'budget:bytes'
+  | 'decode:backlog'
+  | 'upload:backlog';
 
 export interface KernelFramePrimitiveCounts {
   readonly points: number;
@@ -59,6 +63,17 @@ export interface KernelPresentedFrameSample {
   readonly decodeBacklog: number;
   readonly uploadBacklog: number;
   readonly residencyBytes: number;
+  readonly frontier?: {
+    readonly hardwareClass: 'I' | 'W' | 'D';
+    readonly budgetPoints: number;
+    readonly budgetBytes: number;
+    readonly budgetDrawCalls: number;
+    readonly selectedPoints: number;
+    readonly selectedBytes: number;
+    readonly selectedDrawCalls: number;
+    readonly coarsenedTiles: number;
+    readonly budgetSatisfied: boolean;
+  };
   readonly freshness: 'fresh' | 'reprojected';
 }
 
@@ -144,6 +159,9 @@ export class KernelFrameDiagnostics {
       deadlineReasonCodes: Object.freeze([...sample.deadlineReasonCodes]),
       primitives: Object.freeze({ ...sample.primitives }),
       phases: Object.freeze({ ...sample.phases }),
+      ...(sample.frontier === undefined
+        ? {}
+        : { frontier: Object.freeze({ ...sample.frontier }) }),
     });
     if (this.values.length < KERNEL_FRAME_DIAGNOSTICS_CAPACITY) this.values.push(value);
     else {
@@ -164,6 +182,16 @@ export class KernelFrameDiagnostics {
 
   snapshot(lastFrames = 120): KernelDiagnosticsSnapshot {
     return snapshotOf(this.ordered(), lastFrames);
+  }
+
+  /** Same aggregation as sample(), restricted by actual presentation time. */
+  snapshotWindow(startedAtMs: number, endedAtMs: number, lastFrames = 1): KernelDiagnosticsSnapshot {
+    if (!finiteDuration(startedAtMs) || !finiteDuration(endedAtMs) || endedAtMs < startedAtMs) {
+      throw new RangeError('diagnostics window requires ordered finite timestamps');
+    }
+    return snapshotOf(this.ordered().filter((frame) =>
+      frame.presentTimestampMs >= startedAtMs && frame.presentTimestampMs <= endedAtMs,
+    ), lastFrames);
   }
 
   async sample(request: KernelDiagnosticsSampleRequest): Promise<KernelDiagnosticsSampleResult> {

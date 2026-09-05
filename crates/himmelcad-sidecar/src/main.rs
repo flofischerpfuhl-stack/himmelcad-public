@@ -20,7 +20,7 @@ use himmelcad_core::app_protocol::{
     AppProtocolResponseEnvelope, APP_PROTOCOL_SCHEMA_ID,
 };
 use himmelcad_core::canonical_document::EntityVersionRef;
-use himmelcad_core::canonical_resources::CanonicalResourceRef;
+use himmelcad_core::canonical_resources::{CanonicalResourceRef, PointCloudDisplayStyle};
 use himmelcad_core::entity::{EntityId, EntityKind};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -155,6 +155,10 @@ use himmelcad_sidecar::prepared_triangle_mesh_ply::{
     build_prepared_triangle_mesh_from_ply,
 };
 use himmelcad_sidecar::product_export::{export_product, ProductExportError, ProductExportRequest};
+use himmelcad_sidecar::project_archive::{
+    pack_hcadx_replace_with_cancel, unpack_hcadx_with_cancel, ArchivePhase, PackArchiveOptions,
+    UnpackArchiveLimits,
+};
 use himmelcad_sidecar::raster_runtime::{
     ElevationGeometrySource, ElevationInputTile, ElevationInterpolation, ElevationRasterRequest,
     ElevationSurface, ElevationViewRange, GdalToolchainConfig, MosaicOrder,
@@ -222,6 +226,32 @@ struct SavePhotolabProjectParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct OpenCanonicalProjectParams {
     project_root: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SetPointCloudDisplayParams {
+    command_id: String,
+    entities: Vec<EntityVersionRef>,
+    display: PointCloudDisplayStyle,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BuilderArchivePackParams {
+    project_root: PathBuf,
+    destination: PathBuf,
+    operation_id: String,
+    progress_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BuilderArchiveUnpackParams {
+    source: PathBuf,
+    destination: PathBuf,
+    operation_id: String,
+    progress_key: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -537,20 +567,22 @@ impl ProviderOperationContext for LoggingProviderContext {
 struct RegistrationProviderContext {
     progress_key: String,
     last_fraction: f64,
+    cancellation: CancellationToken,
 }
 
 impl RegistrationProviderContext {
-    fn new(progress_key: String) -> Self {
+    fn new(progress_key: String, cancellation: CancellationToken) -> Self {
         Self {
             progress_key,
             last_fraction: 0.0,
+            cancellation,
         }
     }
 }
 
 impl ProviderOperationContext for RegistrationProviderContext {
     fn is_cancelled(&self) -> bool {
-        false
+        self.cancellation.is_cancel_requested()
     }
 
     #[allow(clippy::cast_precision_loss)]
@@ -566,7 +598,7 @@ impl ProviderOperationContext for RegistrationProviderContext {
         emit_progress(
             Some(&self.progress_key),
             0.02 + self.last_fraction * 0.68,
-            &format!("Preparing import · {}", progress.message),
+            &format!("Preparing hierarchy · {}", progress.message),
         );
         tracing::info!(
             phase = %progress.phase,
@@ -1374,6 +1406,9 @@ async fn handle(
     if req.method.starts_with("io.") {
         return handle_io_rpc(req, io_operations, canonical_app).await;
     }
+    if req.method.starts_with("builder.project.archive.") {
+        return handle_builder_archive_rpc(req, io_operations, canonical_app).await;
+    }
     if req.method.starts_with("automation.") {
         return handle_automation_rpc(req, automation, canonical_app);
     }
@@ -1383,6 +1418,7 @@ async fn handle(
         || req.method.starts_with("snapshot.")
         || req.method.starts_with("canonical.project.")
         || req.method.starts_with("canonical.residency.")
+        || req.method.starts_with("pointcloud.")
     {
         return handle_canonical_app_rpc(req, canonical_app, automation).await;
     }
@@ -1467,6 +1503,124 @@ async fn handle(
         }
         other => rpc_err(req.id, -32601, &format!("method not found: {other}")),
     }
+}
+
+async fn handle_builder_archive_rpc(
+    req: RpcRequest,
+    operations: Arc<IoOperations>,
+    canonical_app: Arc<Mutex<CanonicalAppRuntime>>,
+) -> RpcResponse {
+    match req.method.as_str() {
+        "builder.project.archive.pack" => {
+            let params = match serde_json::from_value::<BuilderArchivePackParams>(req.params) {
+                Ok(params) => params,
+                Err(error) => {
+                    return rpc_err(req.id, -32602, &format!("invalid params: {error}"));
+                }
+            };
+            let operation_id = params.operation_id.clone();
+            let operation_id_for_finish = operation_id.clone();
+            let finish_operations = Arc::clone(&operations);
+            let result = rpc_blocking(req.id, move || {
+                let context = operations.begin(operation_id.clone())?;
+                let result = (|| -> anyhow::Result<serde_json::Value> {
+                    let mut runtime = canonical_app
+                        .lock()
+                        .expect("canonical app runtime mutex poisoned");
+                    runtime.flush()?;
+                    let opened_root = runtime.project_root()?;
+                    anyhow::ensure!(
+                        opened_root == params.project_root,
+                        "archive source is not the open Builder project"
+                    );
+                    let summary = pack_hcadx_replace_with_cancel(
+                        &opened_root,
+                        &params.destination,
+                        PackArchiveOptions {
+                            include_rebuildable_index: false,
+                        },
+                        || context.cancellation.load(Ordering::Acquire),
+                        |progress| emit_builder_archive_progress(&params.progress_key, &progress),
+                    )?;
+                    Ok(serde_json::to_value(summary)?)
+                })();
+                finish_operations.finish(&operation_id_for_finish, &result);
+                result
+            })
+            .await;
+            result
+        }
+        "builder.project.archive.unpack" => {
+            let params = match serde_json::from_value::<BuilderArchiveUnpackParams>(req.params) {
+                Ok(params) => params,
+                Err(error) => {
+                    return rpc_err(req.id, -32602, &format!("invalid params: {error}"));
+                }
+            };
+            let operation_id = params.operation_id.clone();
+            let operation_id_for_finish = operation_id.clone();
+            let finish_operations = Arc::clone(&operations);
+            rpc_blocking(req.id, move || {
+                let context = operations.begin(operation_id.clone())?;
+                let result = (|| -> anyhow::Result<serde_json::Value> {
+                    let summary = unpack_hcadx_with_cancel(
+                        &params.source,
+                        &params.destination,
+                        UnpackArchiveLimits {
+                            max_entries: 1_000_000,
+                            max_declared_bytes: 2_u64 * 1024 * 1024 * 1024 * 1024,
+                        },
+                        || context.cancellation.load(Ordering::Acquire),
+                        |progress| emit_builder_archive_progress(&params.progress_key, &progress),
+                    )?;
+                    Ok(serde_json::to_value(summary)?)
+                })();
+                finish_operations.finish(&operation_id_for_finish, &result);
+                result
+            })
+            .await
+        }
+        "builder.project.archive.cancel" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Params {
+                operation_id: String,
+            }
+            match serde_json::from_value::<Params>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    Ok::<_, anyhow::Error>(serde_json::json!({
+                        "operationId": params.operation_id,
+                        "cancellationRequested": operations.cancel(&params.operation_id),
+                    })),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        other => rpc_err(req.id, -32601, &format!("method not found: {other}")),
+    }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn emit_builder_archive_progress(
+    progress_key: &str,
+    progress: &himmelcad_sidecar::project_archive::ArchiveProgress,
+) {
+    let fraction = if progress.bytes_total > 0 {
+        progress.bytes_completed as f64 / progress.bytes_total as f64
+    } else if progress.files_total > 0 {
+        progress.files_completed as f64 / progress.files_total as f64
+    } else {
+        0.0
+    };
+    let phase = match progress.phase {
+        ArchivePhase::Scanning => "Scanning project",
+        ArchivePhase::Packing => "Saving archive",
+        ArchivePhase::Validating => "Validating archive",
+        ArchivePhase::Extracting => "Opening archive",
+        ArchivePhase::Committing => "Publishing archive",
+    };
+    emit_progress(Some(progress_key), fraction.clamp(0.0, 1.0), phase);
 }
 
 #[derive(Debug, Deserialize)]
@@ -1656,6 +1810,7 @@ async fn handle_canonical_app_rpc(
     automation: Arc<AutomationRuntime>,
 ) -> RpcResponse {
     let queue_flush = req.method == "snapshot.create"
+        || req.method == "pointcloud.display.set"
         || (req.method == "app.protocol"
             && serde_json::from_value::<AppProtocolRequestEnvelope>(req.params.clone()).is_ok_and(
                 |envelope| {
@@ -1731,6 +1886,17 @@ async fn handle_canonical_app_rpc(
             req.id,
             runtime.residency_bootstrap().map_err(anyhow::Error::from),
         ),
+        "pointcloud.display.set" => {
+            match serde_json::from_value::<SetPointCloudDisplayParams>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    runtime
+                        .set_point_cloud_display(params.command_id, params.entities, params.display)
+                        .map_err(anyhow::Error::from),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
         "app.protocol" => match serde_json::from_value::<AppProtocolRequestEnvelope>(req.params) {
             Ok(envelope) => {
                 if let AppProtocolRequest::ExecuteCanonicalTransaction(transaction) =
@@ -2026,13 +2192,23 @@ async fn handle_registration_rpc(
                     validate_io_identity(&params.session_id, "sessionId")?;
                     validate_io_identity(&params.command_id, "commandId")?;
                     let progress_key = params.session_id.clone();
-                    emit_progress(Some(&progress_key), 0.0, "Starting registered import");
+                    emit_progress(Some(&progress_key), 0.0, "Reading header");
                     let source = PathBuf::from(&params.source_path);
                     anyhow::ensure!(source.is_file(), "registration source is not a file");
-                    let scratch_root = create_registration_scratch(&params.session_id)?;
+                    let cancellation = registrations.begin_preparation(&params.session_id)?;
+                    let scratch_root = match create_registration_scratch(&params.session_id) {
+                        Ok(root) => root,
+                        Err(error) => {
+                            registrations.finish_preparation(&params.session_id);
+                            return Err(error);
+                        }
+                    };
                     let result = (|| {
                         let registry = canonical_builtin_import_registry(scratch_root.clone())?;
-                        let mut context = RegistrationProviderContext::new(progress_key.clone());
+                        let mut context = RegistrationProviderContext::new(
+                            progress_key.clone(),
+                            cancellation.clone(),
+                        );
                         let staged = registry.import(
                             &params.selection,
                             &source,
@@ -2040,16 +2216,18 @@ async fn handle_registration_rpc(
                             &mut context,
                         )?;
                         registrations
-                            .begin(
+                            .begin_with_cancellation(
                                 params.session_id,
                                 params.command_id,
                                 params.recipe,
                                 staged,
                                 scratch_root.clone(),
+                                cancellation,
                             )
                             .map_err(anyhow::Error::from)
                     })();
                     if result.is_err() {
+                        registrations.finish_preparation(&progress_key);
                         // This scratch tree is transient; preserving the original import error is more useful than a cleanup error.
                         let _ = std::fs::remove_dir_all(&scratch_root);
                     } else {
@@ -2183,19 +2361,15 @@ async fn handle_registration_rpc(
                 req.params,
                 move |params| {
                     let progress_key = params.session_id.clone();
-                    emit_progress(
-                        Some(&progress_key),
-                        0.70,
-                        "Committing import to the project",
-                    );
-                    let (staged, command_id, _scratch_root) =
+                    emit_progress(Some(&progress_key), 0.70, "Registering dataset");
+                    let (staged, command_id, _scratch_root, cancellation) =
                         registrations.take_ready(&params.session_id)?;
                     let mut last_phase = None;
                     let mut last_completed = 0_u64;
                     let result = canonical_app
                         .lock()
                         .expect("canonical app runtime mutex poisoned")
-                        .publish_staged_import_with_progress(
+                        .publish_staged_import_with_progress_and_cancel(
                             &staged,
                             &command_id,
                             &mut |progress| {
@@ -2213,15 +2387,12 @@ async fn handle_registration_rpc(
                                     emit_canonical_import_progress(&progress_key, progress);
                                 }
                             },
+                            &|| cancellation.is_cancel_requested(),
                         )
                         .map_err(anyhow::Error::from);
                     registrations.finish_commit(&params.session_id, result.is_ok());
                     if result.is_ok() {
-                        emit_progress(
-                            Some(&progress_key),
-                            1.0,
-                            "Import committed and ready to load",
-                        );
+                        emit_progress(Some(&progress_key), 0.99, "First frame");
                     }
                     result
                 },
@@ -2230,14 +2401,18 @@ async fn handle_registration_rpc(
         }
         "registration.session.cancel" => {
             match serde_json::from_value::<RegistrationSessionParams>(req.params) {
-                Ok(params) => rpc_result(
-                    req.id,
-                    Ok::<_, anyhow::Error>(serde_json::json!({
-                        "schemaVersion": 1,
-                        "sessionId": params.session_id,
-                        "cancellationRequested": registrations.cancel(&params.session_id),
-                    })),
-                ),
+                Ok(params) => {
+                    let outcome = registrations.cancel_with_outcome(&params.session_id);
+                    rpc_result(
+                        req.id,
+                        Ok::<_, anyhow::Error>(serde_json::json!({
+                            "schemaVersion": 1,
+                            "sessionId": params.session_id,
+                            "cancellationRequested": outcome.cancellation_requested,
+                            "cancelledImmediately": outcome.cancelled_immediately,
+                        })),
+                    )
+                }
                 Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
             }
         }
@@ -9429,15 +9604,19 @@ fn emit_canonical_import_progress(progress_key: &str, progress: CanonicalImportP
     }
     .clamp(0.0, 1.0);
     let (overall_fraction, phase) = match progress.phase {
-        CanonicalImportProgressPhase::Staging => (0.70 + local_fraction * 0.10, "Staging"),
-        CanonicalImportProgressPhase::Publishing => (0.80 + local_fraction * 0.19, "Publishing"),
+        CanonicalImportProgressPhase::Staging => {
+            (0.70 + local_fraction * 0.24, "Registering dataset")
+        }
+        CanonicalImportProgressPhase::Publishing => {
+            (0.94 + local_fraction * 0.05, "Registering journal head")
+        }
     };
     let completed_gib = progress.completed_bytes as f64 / 1_073_741_824.0;
     let total_gib = progress.total_bytes as f64 / 1_073_741_824.0;
     emit_progress(
         Some(progress_key),
         overall_fraction,
-        &format!("{phase} project data · {completed_gib:.2}/{total_gib:.2} GiB"),
+        &format!("{phase} · {completed_gib:.2}/{total_gib:.2} GiB"),
     );
 }
 

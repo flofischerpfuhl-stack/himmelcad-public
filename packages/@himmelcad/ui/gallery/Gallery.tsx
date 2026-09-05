@@ -1,5 +1,6 @@
 import type { EntityId, ObjectHash, ProjectSnapshot } from '@himmelcad/data';
 import {
+  ViewportHud,
   Button,
   Checkbox,
   ContextMenu,
@@ -23,6 +24,7 @@ import {
   OverlayChip,
   OverlayKind,
   PanelToggles,
+  PointCloudDisplayProperties,
   ProgressBar,
   QuickCommandSurface,
   Radio,
@@ -72,6 +74,24 @@ interface GalleryRow {
 }
 
 const noop = (): void => undefined;
+const galleryPointCloudDisplay = {
+  schemaId: 'hcad.resource.point-cloud-display@1',
+  pointSizePixels: 2,
+  colorMode: 'classification',
+  classes: [
+    { code: 0, name: 'Created, never classified', visible: true },
+    { code: 2, name: 'Ground', visible: true },
+    { code: 5, name: 'High vegetation', visible: false },
+    { code: 6, name: 'Building', visible: true },
+    { code: 9, name: 'Water', visible: true },
+  ],
+} as const;
+const galleryPointCloudDisplayMixed = {
+  ...galleryPointCloudDisplay,
+  classes: galleryPointCloudDisplay.classes.map((item) =>
+    item.code === 5 ? { ...item, visible: true } : item,
+  ),
+};
 const id = (value: string): EntityId => value as EntityId;
 const hash = (value: string): ObjectHash => value as ObjectHash;
 
@@ -159,14 +179,19 @@ const specs: readonly ComponentSpec[] = [
     name: 'Command surfaces',
     states: [
       row('entity-menu', 'entity menu · polyline selected', 'default', 'entity'),
+      row('photolab-image-menu', 'PhotoLab image node menu', 'default', 'photolab-image'),
       row('quick-surface', 'void quick surface', 'default', 'quick'),
       row('candidate-submenu', 'Select under cursor · open', 'default', 'submenu'),
     ],
     render: (_state, galleryRow) => {
+      const isPhotolabImage = galleryRow?.value === 'photolab-image';
       const commandContext = {
         hasProject: true,
-        selectedEntityIds: ['boundary'],
-        selectedEntityKinds: ['polyline'] as const,
+        productId: isPhotolabImage ? 'photolab' : 'builder',
+        selectedEntityIds: [isPhotolabImage ? 'image-01' : 'boundary'],
+        selectedEntityKinds: [isPhotolabImage ? 'other' : 'polyline'] as const,
+        selectedCanonicalEntityKinds: [isPhotolabImage ? 'CameraImage' : 'Polyline3D'],
+        entityKind: isPhotolabImage ? 'CameraImage' : 'Polyline3D',
         selectionVisibility: 'visible' as const,
         selectionEditable: true,
         selectionExportable: true,
@@ -178,12 +203,22 @@ const specs: readonly ComponentSpec[] = [
         ],
       };
       return galleryRow?.value === 'quick' ? (
-        <QuickCommandSurface x={24} y={48} context={commandContext} onExecute={noop} onClose={noop} />
+        <QuickCommandSurface
+          x={24}
+          y={48}
+          context={commandContext}
+          onExecute={noop}
+          onClose={noop}
+        />
       ) : (
         <EntityCommandMenu
           x={24}
           y={48}
           context={commandContext}
+          target={{
+            entityIds: commandContext.selectedEntityIds,
+            kind: commandContext.entityKind,
+          }}
           currentCandidateId="boundary"
           candidateSubmenuOpen={galleryRow?.value === 'submenu'}
           onExecute={noop}
@@ -191,6 +226,55 @@ const specs: readonly ComponentSpec[] = [
         />
       );
     },
+  },
+  {
+    name: 'File surfaces',
+    states: ['default'],
+    render: () => (
+      <div style={{ display: 'grid', gap: 16, minWidth: 520 }}>
+        <Menu ariaLabel="Recent projects" autoFocus={false} onClose={noop}>
+          <MenuItem onSelect={noop}>
+            <span style={{ display: 'grid', gap: 3, textAlign: 'left' }}>
+              <span>Site survey</span>
+              <span
+                style={{
+                  color: 'var(--hc-fg-muted)',
+                  fontFamily: 'var(--hc-font-mono)',
+                  fontSize: 10,
+                }}
+              >
+                /projects/munich/site-survey.hcad
+              </span>
+            </span>
+          </MenuItem>
+          <MenuItem onSelect={noop}>
+            <span style={{ display: 'grid', gap: 3, textAlign: 'left' }}>
+              <span>Bridge scan</span>
+              <span
+                style={{
+                  color: 'var(--hc-fg-muted)',
+                  fontFamily: 'var(--hc-font-mono)',
+                  fontSize: 10,
+                }}
+              >
+                /projects/inn/bridge-scan.hcad
+              </span>
+            </span>
+          </MenuItem>
+        </Menu>
+        <Toast
+          tone="warning"
+          autoDismiss={false}
+          action={
+            <Button size="small" variant="quiet" onClick={noop}>
+              Show in console
+            </Button>
+          }
+        >
+          Recovered 14 unsaved changes from 09:42:18
+        </Toast>
+      </div>
+    ),
   },
   {
     name: 'Selection surfaces',
@@ -275,6 +359,39 @@ const specs: readonly ComponentSpec[] = [
         />
       );
     },
+  },
+  {
+    name: 'Import surfaces',
+    states: ['default'],
+    render: () => (
+      <div className="importSurfacesFixture">
+        <div className="importJobsFixture">
+          <JobsIsland
+            jobs={[
+              galleryJob('scan_01', 'running', 'Reading header', 0.03),
+              galleryJob('scan_02', 'running', 'Preparing hierarchy', 0.42),
+              galleryJob('scan_03', 'running', 'Registering dataset', 0.82),
+              galleryJob('scan_04', 'running', 'First frame', 0.99),
+            ]}
+            now={1_000}
+            onCancel={noop}
+            onRespond={noop}
+          />
+          <div className="importPlacementFixture">
+            <span>CRS: EPSG:25832 · offset 0 0 0 · source units m</span>
+            <Button variant="secondary" size="small">
+              Change…
+            </Button>
+          </div>
+        </div>
+        <div className="importPropertiesFixture">
+          <PointCloudDisplayProperties
+            styles={[galleryPointCloudDisplay, galleryPointCloudDisplayMixed]}
+            onChange={noop}
+          />
+        </div>
+      </div>
+    ),
   },
   {
     name: 'Menu',
@@ -430,6 +547,49 @@ const specs: readonly ComponentSpec[] = [
       />
     ),
   },
+  {
+    name: 'Viewport HUD',
+    render: () => (
+      <div style={{ display: 'grid', gap: 8 }}>
+        {[24.1, 30, 55].map((p95) => (
+          <div key={p95} style={{ position: 'relative', height: 58, width: 490 }}>
+            <ViewportHud
+              p95={p95}
+              p50={16.4}
+              points={41_200_000}
+              targetMs={25}
+              quality="W-2"
+              budget="gpu"
+              backlog={3}
+            />
+          </div>
+        ))}
+      </div>
+    ),
+  },
+  {
+    name: 'View presets',
+    render: () => (
+      <Ribbon
+        tabs={[
+          {
+            id: 'view',
+            label: 'View',
+            groups: [
+              {
+                id: 'view.camera',
+                label: 'Camera',
+                actions: ['top', 'front', 'right', 'perspective'].map((preset) => ({
+                  id: `view.preset.${preset}`,
+                  label: preset[0]!.toUpperCase() + preset.slice(1),
+                })),
+              },
+            ],
+          },
+        ]}
+      />
+    ),
+  },
   { name: 'Ribbon', render: () => <Ribbon tabs={ribbonTabs} /> },
   {
     name: 'Select',
@@ -511,7 +671,7 @@ const specs: readonly ComponentSpec[] = [
     ),
   },
   {
-    name: 'Durability indicator',
+    name: 'DurabilityIndicator',
     states: [
       row('stored', 'stored', 'default', 'stored'),
       row('storing', 'storing', 'loading', 'storing'),

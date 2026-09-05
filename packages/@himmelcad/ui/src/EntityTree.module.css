@@ -191,6 +191,14 @@
   color: var(--hc-fg-default);
 }
 
+.secondaryLabel {
+  flex: 0 0 auto;
+  color: var(--hc-fg-subtle);
+  font-family: var(--hc-font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
 .renameInput {
   min-width: 0;
   flex: 1;

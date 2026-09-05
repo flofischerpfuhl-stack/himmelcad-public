@@ -119,10 +119,10 @@ void test('kernel public API surface is exact and runtime internals stay private
       return `${symbol.name}:${marker}`;
     })
     .sort();
-  assert.equal(surface.length, 287);
+  assert.equal(surface.length, 289);
   assert.equal(
     createHash('sha256').update(surface.join('\n')).digest('hex'),
-    'd8257b938e66c3bf4b34bf6929290b1c11dab08c82bda356ef62b32ebb9146e9',
+    'f6ced6f81d6a83571ef66604050e39cd28c882e0b5f05458903c4956f36c3280',
     `kernel API changed; review the stable contract before updating this gate:\n${surface.join('\n')}`,
   );
 

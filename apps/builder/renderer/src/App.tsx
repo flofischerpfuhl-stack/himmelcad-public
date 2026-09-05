@@ -9,6 +9,8 @@ import type {
   ScopedClip,
   ScreenshotRequestV1,
   ViewStateV1,
+  CanonicalPointCloudMetadata,
+  PointCloudDisplayStyle,
 } from '@himmelcad/app';
 import {
   JOB_CHIP_DEBOUNCE_MS,
@@ -39,6 +41,7 @@ import {
   JobsIsland,
   JobsStatusChip,
   PanelToggles,
+  PointCloudDisplayProperties,
   QuickCommandSurface,
   Ribbon,
   MixedPropertyMarker,
@@ -89,7 +92,7 @@ import {
   startDurabilityPolling,
   type BuilderDurabilityStatus,
 } from './project.js';
-import { ribbonTabs } from './ribbon.js';
+import { createRibbonTabs } from './ribbon.js';
 import { parseSidecarProgress } from './sidecarProgress.js';
 
 const DEFAULT_POINT_SIZE = 1;
@@ -103,6 +106,7 @@ interface BuilderResidencyBootstrap {
       readonly formatId: string;
       readonly metadataUrl: string;
     } | null;
+    readonly pointCloud?: CanonicalPointCloudMetadata;
   }[];
 }
 
@@ -126,6 +130,10 @@ export function App(): JSX.Element {
   const [navigationMode, setNavigationMode] = useState<'3d' | '2d' | '2.5d'>('3d');
   const [snap, setSnap] = useState<SnapResult | null>(null);
   const [pointSize, setPointSize] = useState(DEFAULT_POINT_SIZE);
+  const [pointCloudMetadata, setPointCloudMetadata] = useState<
+    ReadonlyMap<EntityId, CanonicalPointCloudMetadata>
+  >(new Map());
+  const [hudVisible, setHudVisible] = useState(false);
   const [viewingBox, setViewingBox] = useState<KernelViewingBoxState | null>(null);
   const [placingViewingBoxCenter, setPlacingViewingBoxCenter] = useState(false);
   const [propertyQuery, setPropertyQuery] = useState<PropertyQueryResult | null>(null);
@@ -141,6 +149,13 @@ export function App(): JSX.Element {
   const [jobClock, setJobClock] = useState(() => Date.now());
   const [durability, setDurability] = useState<BuilderDurabilityStatus | null>(null);
   const [durabilityFailureToast, setDurabilityFailureToast] = useState(false);
+  const [recoveryToast, setRecoveryToast] = useState<string | null>(null);
+  const [recentProjects, setRecentProjects] = useState<
+    readonly { readonly path: string; readonly name: string; readonly openedAtUnixMs: number }[]
+  >([]);
+  const [currentProjectPath, setCurrentProjectPath] = useState<string | null>(null);
+  const [viewportEpoch, setViewportEpoch] = useState(0);
+  const [closeMode, setCloseMode] = useState<'project' | 'window' | null>(null);
   const [registrationItems, setRegistrationItems] = useState<
     readonly { readonly jobId: string; readonly sourcePath: string }[]
   >([]);
@@ -173,11 +188,25 @@ export function App(): JSX.Element {
   const initialMixedSceneStartedRef = useRef(false);
   const canonicalSessionRef = useRef<BuilderCanonicalProjectSession | null>(null);
   const canonicalReadyRef = useRef<Promise<BuilderCanonicalProjectSession> | null>(null);
+  const ensureCanonicalProjectRef = useRef<() => Promise<BuilderCanonicalProjectSession>>(
+    async () => {
+      throw new Error('canonical project opener is not ready');
+    },
+  );
+  const currentProjectPathRef = useRef<string | null>(null);
+  const startupProjectRef = useRef<Promise<string> | null>(null);
+  const closeCancelledRef = useRef(false);
   const durabilityRecoveryReportedRef = useRef(false);
   const jobMirrorRef = useRef<JobMirror | null>(null);
-  const executeRegistryCommandRef = useRef<
-    (invocation: CommandInvocation) => void | Promise<void>
-  >(() => undefined);
+  const executeRegistryCommandRef = useRef<(invocation: CommandInvocation) => void | Promise<void>>(
+    () => undefined,
+  );
+  const projectActionsRef = useRef({
+    create: async (): Promise<void> => undefined,
+    open: async (): Promise<void> => undefined,
+    saveAs: async (): Promise<void> => undefined,
+    close: async (): Promise<void> => undefined,
+  });
   if (!jobMirrorRef.current && window.himmelcad) {
     jobMirrorRef.current = new JobMirror(window.himmelcad.jobs);
   }
@@ -199,6 +228,7 @@ export function App(): JSX.Element {
   const automationClipsRef = useRef<readonly ScopedClip[]>([]);
   selectedRef.current = selected;
   projectRef.current = project;
+  currentProjectPathRef.current = currentProjectPath;
   navigationModeRef.current = navigationMode;
   const selectedEntityKey = useMemo(() => [...selected].sort().join('\u0000'), [selected]);
 
@@ -396,6 +426,88 @@ export function App(): JSX.Element {
     }
   }, [selectionStore]);
 
+  const closeCurrentProject = useCallback(
+    async (mode: 'project' | 'window'): Promise<boolean> => {
+      const api = window.himmelcad;
+      const session = canonicalSessionRef.current;
+      if (!api || closeMode) return false;
+      if (!session) {
+        if (mode === 'window') await api.window.closeReady();
+        return true;
+      }
+      closeCancelledRef.current = false;
+      setCloseMode(mode);
+      setDurability((current) =>
+        current
+          ? { ...current, state: 'storing', pendingCount: Math.max(1, current.pendingCount) }
+          : current,
+      );
+      try {
+        for (const job of jobs) {
+          if (
+            (job.owner === 'builder.import' || job.owner === 'builder.archive') &&
+            !['completed', 'failed', 'cancelled'].includes(job.state)
+          ) {
+            await api.jobs.cancel(job.id).catch(() => undefined);
+          }
+        }
+        await selectionStore.closeProject();
+        const closed = await session.close();
+        if (!closed) throw new Error('the journal flush did not complete');
+        if (closeCancelledRef.current) {
+          canonicalSessionRef.current = null;
+          canonicalReadyRef.current = null;
+          await ensureCanonicalProjectRef.current();
+          return false;
+        }
+        canonicalSessionRef.current = null;
+        canonicalReadyRef.current = null;
+        setProject(null);
+        setCurrentProjectPath(null);
+        currentProjectPathRef.current = null;
+        setDurability(null);
+        entityGroupsRef.current = { cloud: [], ifc: [], orthophoto: [], mesh: [] };
+        setViewportEpoch((epoch) => epoch + 1);
+        if (mode === 'window') await api.window.closeReady();
+        return true;
+      } catch (error) {
+        logEvent('error', 'renderer', `Project close failed: ${String(error)}`);
+        const snapshot = session.projectSnapshot();
+        await selectionStore.openProject(
+          currentProjectPathRef.current ?? snapshot.projectId,
+          new Set(Object.keys(snapshot.entities)),
+          (entityId) => snapshot.entities[entityId]?.kind,
+        );
+        return false;
+      } finally {
+        setCloseMode(null);
+      }
+    },
+    [closeMode, jobs, selectionStore],
+  );
+
+  const replaceProject = useCallback(
+    async (projectRoot: string): Promise<void> => {
+      if (projectRoot === currentProjectPathRef.current && canonicalSessionRef.current) return;
+      if (canonicalSessionRef.current && !(await closeCurrentProject('project'))) return;
+      durabilityRecoveryReportedRef.current = false;
+      setRecoveryToast(null);
+      currentProjectPathRef.current = projectRoot;
+      setCurrentProjectPath(projectRoot);
+      canonicalReadyRef.current = null;
+      canonicalSessionRef.current = null;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await ensureCanonicalProjectRef.current();
+    },
+    [closeCurrentProject],
+  );
+
+  useEffect(() => {
+    const api = window.himmelcad;
+    if (!api) return;
+    return api.canonicalProject.onCloseRequested(() => void closeCurrentProject('window'));
+  }, [closeCurrentProject]);
+
   const ensureCanonicalProject = useCallback(async (): Promise<BuilderCanonicalProjectSession> => {
     if (canonicalSessionRef.current) return canonicalSessionRef.current;
     if (canonicalReadyRef.current) return canonicalReadyRef.current;
@@ -403,12 +515,36 @@ export function App(): JSX.Element {
     if (!api) throw new Error('Electron bridge missing — cannot open canonical project');
     const opening = (async () => {
       if (!(await api.sidecar.status())) throw new Error('sidecar offline');
-      const projectRoot = await api.canonicalProject.defaultRoot();
-      const session = await BuilderCanonicalProjectSession.open(projectRoot, api.sidecar.call);
+      if (!startupProjectRef.current) {
+        startupProjectRef.current = api.canonicalProject.startup().then((startup) => {
+          setRecentProjects(startup.recent);
+          if (startup.fallbackNotice) logEvent('warn', 'renderer', startup.fallbackNotice);
+          return startup.projectRoot;
+        });
+      }
+      const startupSelected = currentProjectPathRef.current === null;
+      let projectRoot = currentProjectPathRef.current ?? (await startupProjectRef.current);
+      let session: BuilderCanonicalProjectSession;
+      try {
+        session = await BuilderCanonicalProjectSession.open(projectRoot, api.sidecar.call);
+      } catch (error) {
+        if (!startupSelected) throw error;
+        const fallback = await api.canonicalProject.defaultRoot();
+        if (fallback === projectRoot) throw error;
+        logEvent(
+          'warn',
+          'renderer',
+          `Last project could not be opened; using the default project: ${String(error)}`,
+        );
+        projectRoot = fallback;
+        session = await BuilderCanonicalProjectSession.open(projectRoot, api.sidecar.call);
+      }
       canonicalSessionRef.current = session;
+      currentProjectPathRef.current = projectRoot;
+      setCurrentProjectPath(projectRoot);
       const snapshot = session.projectSnapshot();
       await selectionStore.openProject(
-        snapshot.projectId,
+        projectRoot,
         new Set(Object.keys(snapshot.entities)),
         (entityId) => snapshot.entities[entityId]?.kind,
         Object.values(snapshot.entities)
@@ -416,6 +552,7 @@ export function App(): JSX.Element {
           .map((entity) => entity.id),
       );
       setProject(snapshot);
+      setRecentProjects(await api.canonicalProject.opened(projectRoot));
       logEvent('info', 'renderer', `Canonical project opened: ${projectRoot}`);
       const viewport = viewportRef.current;
       if (!viewport) throw new Error('viewer bridge is not ready for canonical residency');
@@ -423,6 +560,7 @@ export function App(): JSX.Element {
       const restored = await restoreCanonicalResidency(viewport, residency);
       entityGroupsRef.current.cloud = restored.clouds;
       entityGroupsRef.current.ifc = restored.inlineMeshes;
+      setPointCloudMetadata(restored.pointCloudMetadata);
       if (restored.clouds.length > 0 || restored.inlineMeshes.length > 0) {
         logEvent(
           'info',
@@ -440,6 +578,7 @@ export function App(): JSX.Element {
       throw error;
     }
   }, [selectionStore]);
+  ensureCanonicalProjectRef.current = ensureCanonicalProject;
 
   const reloadCanonicalResidency = useCallback(async (): Promise<void> => {
     const session = canonicalSessionRef.current;
@@ -455,6 +594,7 @@ export function App(): JSX.Element {
     );
     entityGroupsRef.current.cloud = restored.clouds;
     entityGroupsRef.current.ifc = restored.inlineMeshes;
+    setPointCloudMetadata(restored.pointCloudMetadata);
   }, [selectionStore]);
 
   useEffect(() => {
@@ -530,7 +670,7 @@ export function App(): JSX.Element {
   useEffect(() => {
     return startDurabilityPolling(
       async () => {
-      const session = canonicalSessionRef.current;
+        const session = canonicalSessionRef.current;
         if (!session) throw new Error('canonical project is opening');
         return session.durabilityStatus();
       },
@@ -539,11 +679,11 @@ export function App(): JSX.Element {
         if (status.state === 'failed') setDurabilityFailureToast(true);
         if (status.recoveredTailCount > 0 && !durabilityRecoveryReportedRef.current) {
           durabilityRecoveryReportedRef.current = true;
-          logEvent(
-            'warn',
-            'renderer',
-            `Recovered ${status.recoveredTailCount} journal append(s) from an interrupted flush`,
-          );
+          const recoveredMessage = `Recovered ${status.recoveredTailCount} unsaved changes from ${new Date(
+            status.acknowledgedAtMs,
+          ).toLocaleTimeString()}`;
+          setRecoveryToast(recoveredMessage);
+          logEvent('warn', 'renderer', recoveredMessage);
         }
       },
       () => undefined,
@@ -556,9 +696,11 @@ export function App(): JSX.Element {
     let reportedError = false;
     const timer = window.setInterval(() => {
       if (syncing) return;
+      const session = canonicalSessionRef.current;
+      if (!session) return;
       syncing = true;
-      void ensureCanonicalProject()
-        .then((session) => session.catchUp())
+      void session
+        .catchUp()
         .then((nextProject) => {
           if (nextProject) {
             pruneRemovedSelection(selectionStore, projectRef.current, nextProject);
@@ -577,7 +719,7 @@ export function App(): JSX.Element {
         });
     }, 1_500);
     return () => window.clearInterval(timer);
-  }, [ensureCanonicalProject, selectionStore]);
+  }, [selectionStore]);
 
   useEffect(() => {
     if (initialImportStartedRef.current) return;
@@ -681,7 +823,7 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (!activeFunctionId) return;
     const id = activeFunctionId;
-    if (id === 'import.file') {
+    if (id === 'file.import') {
       void (async () => {
         try {
           const api = window.himmelcad;
@@ -797,6 +939,42 @@ export function App(): JSX.Element {
     [propertyEditing, propertyQuery],
   );
 
+  const selectedPointClouds = [...selected].flatMap((entityId) => {
+    const metadata = pointCloudMetadata.get(entityId);
+    return metadata ? [{ entityId, metadata }] : [];
+  });
+  const setSelectedPointCloudDisplay = useCallback(
+    async (display: PointCloudDisplayStyle, targetEntityIds?: readonly string[]): Promise<void> => {
+      const session = canonicalSessionRef.current;
+      const entityIds = (
+        targetEntityIds ?? selectedPointClouds.map(({ entityId }) => entityId)
+      ).map((entityId) => entityId as EntityId);
+      if (!session || entityIds.length === 0 || propertyEditing) return;
+      setPropertyEditing(true);
+      setPropertyQueryError(null);
+      try {
+        setProject(await session.setPointCloudDisplay(entityIds, display));
+        setPointCloudMetadata((current) => {
+          const next = new Map(current);
+          for (const entityId of entityIds) {
+            const metadata = next.get(entityId);
+            if (metadata) next.set(entityId, { ...metadata, display });
+          }
+          return next;
+        });
+        viewportRef.current?.setPointCloudDisplay(entityIds, display);
+        setPropertyRefresh((revision) => revision + 1);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setPropertyQueryError(message);
+        logEvent('error', 'renderer', `Point-cloud display edit failed: ${message}`);
+      } finally {
+        setPropertyEditing(false);
+      }
+    },
+    [propertyEditing, selectedPointClouds],
+  );
+
   const onSelect = (id: EntityId, mode: 'replace' | 'add' | 'toggle') => {
     if (mode === 'replace') selectionStore.replace([id]);
     else if (mode === 'toggle') selectionStore.toggle(id);
@@ -842,7 +1020,10 @@ export function App(): JSX.Element {
         : 'mixed';
     return {
       hasProject: project !== null,
+      productId: 'builder',
       selectedEntityIds: [...selected],
+      selectedCanonicalEntityKinds: entities.map((entity) => entity.kind),
+      ...(entities[0] ? { entityKind: entities[0].kind } : {}),
       selectedEntityKinds: entities.map((entity) => commandEntityKind(entity.kind)),
       selectionVisibility: visibility,
       selectionEditable: entities.every((entity) => !entity.visibility.locked),
@@ -859,7 +1040,10 @@ export function App(): JSX.Element {
       switch (invocation.id) {
         case 'select.set': {
           const envelope = invocation.payload as
-            | { readonly entityIds?: readonly string[]; readonly payload?: { readonly entityIds?: readonly string[] } }
+            | {
+                readonly entityIds?: readonly string[];
+                readonly payload?: { readonly entityIds?: readonly string[] };
+              }
             | undefined;
           const next = envelope?.entityIds ?? envelope?.payload?.entityIds ?? invocation.args;
           selectionStore.replace(next);
@@ -872,15 +1056,28 @@ export function App(): JSX.Element {
         case 'entity.zoom_to':
           viewportRef.current?.frameAll();
           return;
-        case 'view.preset.top':
-          setNavigationMode('2d');
-          await viewportRef.current?.setViewMode('2d');
+        case 'view.camera.undo':
+        case 'view.camera.redo':
+          await viewportRef.current?.cameraHistory(
+            invocation.id === 'view.camera.undo' ? 'undo' : 'redo',
+          );
           return;
+        case 'view.hud.toggle':
+          setHudVisible((visible) => !visible);
+          return;
+        case 'view.preset.top':
         case 'view.preset.front':
         case 'view.preset.right':
         case 'view.preset.isometric':
-          setNavigationMode('3d');
-          await viewportRef.current?.setViewMode('3d');
+        case 'view.preset.perspective':
+          viewportRef.current?.setPreset(
+            invocation.id.slice('view.preset.'.length) as
+              | 'top'
+              | 'front'
+              | 'right'
+              | 'isometric'
+              | 'perspective',
+          );
           return;
         case 'entity.hide':
           for (const id of ids) onVisibilityChange(id, false);
@@ -899,8 +1096,61 @@ export function App(): JSX.Element {
         case 'entity.properties':
           setRightPanelTab('properties');
           return;
-        case 'project.flush':
+        case 'pointcloud.display.set': {
+          setRightPanelTab('properties');
+          const envelope = invocation.payload as
+            | {
+                readonly payload?: {
+                  readonly entityIds?: readonly string[];
+                  readonly display?: PointCloudDisplayStyle;
+                };
+              }
+            | undefined;
+          if (envelope?.payload?.entityIds) {
+            selectionStore.replace(envelope.payload.entityIds);
+          }
+          if (envelope?.payload?.display) {
+            await setSelectedPointCloudDisplay(
+              envelope.payload.display,
+              envelope.payload.entityIds,
+            );
+          }
+          return;
+        }
+        case 'file.import': {
+          const envelope = invocation.payload as
+            | { readonly payload?: { readonly paths?: readonly string[] } }
+            | undefined;
+          const paths = envelope?.payload?.paths;
+          if (paths && paths.length > 0) {
+            const api = window.himmelcad;
+            if (!api) return;
+            const items = await registerImportJobs(api, paths);
+            setRegistrationItems((current) => [...current, ...items]);
+          } else {
+            activate('file.import');
+          }
+          return;
+        }
+        case 'project.save':
           await flushProject();
+          return;
+        case 'project.new':
+          await projectActionsRef.current.create();
+          return;
+        case 'project.open':
+          await projectActionsRef.current.open();
+          return;
+        case 'project.recent':
+          for (const entry of recentProjects) {
+            logEvent('info', 'renderer', `${entry.name} · ${entry.path}`);
+          }
+          return;
+        case 'project.save_as':
+          await projectActionsRef.current.saveAs();
+          return;
+        case 'project.close':
+          await projectActionsRef.current.close();
           return;
         case 'entity.rename':
         case 'entity.export':
@@ -909,7 +1159,14 @@ export function App(): JSX.Element {
           return;
       }
     },
-    [activate, flushProject, onVisibilityChange, selectionStore],
+    [
+      activate,
+      flushProject,
+      onVisibilityChange,
+      recentProjects,
+      selectionStore,
+      setSelectedPointCloudDisplay,
+    ],
   );
   executeRegistryCommandRef.current = executeRegistryCommand;
 
@@ -1092,12 +1349,115 @@ export function App(): JSX.Element {
     [activate, ensureCanonicalProject],
   );
 
-  const registerImports = useCallback(async (paths: readonly string[]): Promise<void> => {
+  const registerImports = useCallback(
+    async (paths: readonly string[]): Promise<void> => {
+      const api = window.himmelcad;
+      if (!api) return;
+      const projectPaths = paths.filter((path) => /\.hcadx?$/i.test(path));
+      if (projectPaths.length > 0) {
+        if (paths.length !== 1) {
+          logEvent(
+            'warn',
+            'renderer',
+            'Open one project or archive at a time. Other dropped files were ignored.',
+          );
+        }
+        const projectRoot = await api.canonicalProject.openPath(projectPaths[0]!);
+        if (projectRoot) await replaceProject(projectRoot);
+        return;
+      }
+      const items = await registerImportJobs(api, paths);
+      setRegistrationItems((current) => [...current, ...items]);
+    },
+    [replaceProject],
+  );
+
+  const createProject = useCallback(async (): Promise<void> => {
     const api = window.himmelcad;
     if (!api) return;
-    const items = await registerImportJobs(api, paths);
-    setRegistrationItems((current) => [...current, ...items]);
+    try {
+      const path = await api.canonicalProject.create();
+      if (path) await replaceProject(path);
+    } catch (error) {
+      logEvent('error', 'renderer', `Project creation failed: ${String(error)}`);
+    }
+  }, [replaceProject]);
+
+  const openProject = useCallback(async (): Promise<void> => {
+    const api = window.himmelcad;
+    if (!api) return;
+    try {
+      const path = await api.canonicalProject.open();
+      if (path) await replaceProject(path);
+    } catch (error) {
+      logEvent('error', 'renderer', `Project open failed: ${String(error)}`);
+    }
+  }, [replaceProject]);
+
+  const saveProjectAs = useCallback(async (): Promise<void> => {
+    const api = window.himmelcad;
+    const projectRoot = currentProjectPathRef.current;
+    if (!api || !projectRoot) return;
+    try {
+      const summary = await api.canonicalProject.saveAs(projectRoot);
+      if (summary) {
+        logEvent(
+          'info',
+          'renderer',
+          `Archive stored: ${summary.path} · ${summary.bytes.toLocaleString()} bytes`,
+        );
+      }
+    } catch (error) {
+      logEvent('error', 'renderer', `Save As failed: ${String(error)}`);
+    }
   }, []);
+  projectActionsRef.current = {
+    create: createProject,
+    open: openProject,
+    saveAs: saveProjectAs,
+    close: async () => {
+      await closeCurrentProject('project');
+    },
+  };
+
+  const fileRibbonTabs = useMemo(
+    () =>
+      createRibbonTabs({
+        recent: recentProjects,
+        onNew: () => void createProject(),
+        onOpen: () => void openProject(),
+        onOpenArchive: () => {
+          void window.himmelcad?.canonicalProject
+            .openArchive()
+            .then((path) => (path ? replaceProject(path) : undefined))
+            .catch((error: unknown) =>
+              logEvent('error', 'renderer', `Archive open failed: ${String(error)}`),
+            );
+        },
+        onOpenRecent: (path) => {
+          void window.himmelcad?.canonicalProject
+            .openRecent(path)
+            .then(replaceProject)
+            .catch(async (error: unknown) => {
+              logEvent('error', 'renderer', String(error));
+              const recent = await window.himmelcad?.canonicalProject.recent();
+              if (recent) setRecentProjects(recent);
+            });
+        },
+        onSave: () => void flushProject(),
+        onSaveAs: () => void saveProjectAs(),
+        onClose: () => void closeCurrentProject('project'),
+      }),
+    [
+      closeCurrentProject,
+      createProject,
+      flushProject,
+      openProject,
+      recentProjects,
+      replaceProject,
+      saveProjectAs,
+    ],
+  );
 
   const statusItems = useMemo(
     () => [
@@ -1214,12 +1574,12 @@ export function App(): JSX.Element {
           <TitleBar
             appName="HimmelCAD"
             productLabel="Builder"
-            projectLabel={project?.name ?? 'Opening project…'}
+            projectLabel={project?.name ?? 'No project'}
             brandMark={<img className={styles.brandLogo} src={builderLogoUrl} alt="" />}
             controls={windowControls}
           />
         }
-        ribbon={<Ribbon tabs={ribbonTabs} />}
+        ribbon={<Ribbon tabs={fileRibbonTabs} />}
         leftPanel={
           project ? (
             <EntityTree
@@ -1227,9 +1587,13 @@ export function App(): JSX.Element {
               selectedIds={selected}
               onSelect={onSelect}
               onVisibilityChange={onVisibilityChange}
+              secondaryLabel={(entity) => {
+                const count = pointCloudMetadata.get(entity.id)?.pointCount;
+                return count === undefined ? null : formatPointCount(count);
+              }}
             />
           ) : (
-            <div className={styles.properties}>Opening canonical project…</div>
+            <div className={styles.properties}>No project open</div>
           )
         }
         rightPanel={
@@ -1256,6 +1620,12 @@ export function App(): JSX.Element {
                 editing={propertyEditing}
                 error={propertyQueryError}
                 onAssign={(assignment) => void assignSelectionProperty(assignment)}
+                pointCloudStyles={
+                  selectedPointClouds.length === selected.size
+                    ? selectedPointClouds.map(({ metadata }) => metadata.display)
+                    : []
+                }
+                onPointCloudDisplayChange={(display) => void setSelectedPointCloudDisplay(display)}
               />
             }
           >
@@ -1271,10 +1641,15 @@ export function App(): JSX.Element {
           </FunctionPanel>
         }
         bottomPanel={
-          <Console defaultLevel="info" onCommand={registryConsoleCommand} onCollapse={toggleBottom} />
+          <Console
+            defaultLevel="info"
+            onCommand={registryConsoleCommand}
+            onCollapse={toggleBottom}
+          />
         }
         viewport={
           <BuilderKernelViewport
+            key={viewportEpoch}
             ref={viewportRef}
             pointSize={pointSize}
             onCursorSnap={setSnap}
@@ -1315,6 +1690,8 @@ export function App(): JSX.Element {
             onRegistryShortcut={(event) =>
               void dispatchRegistryShortcut(event, commandContext, executeRegistryCommand)
             }
+            {...(project ? { projectId: project.projectId } : {})}
+            hudVisible={hudVisible}
             viewingBox={viewingBox}
             placingViewingBoxCenter={placingViewingBoxCenter}
             onViewportPoint={(position) => {
@@ -1391,7 +1768,6 @@ export function App(): JSX.Element {
       ) : null}
       {registrationSourcePath && canonicalSessionRef.current ? (
         <FloatingTaskIsland
-          modal
           hidden={
             backgroundedRegistrationJobId === registrationItem!.jobId ||
             jobs.find((job) => job.id === registrationItem!.jobId)?.state === 'running' ||
@@ -1415,6 +1791,7 @@ export function App(): JSX.Element {
             }}
             onCommitted={async () => {
               await reloadCanonicalResidency();
+              await viewportRef.current?.waitForNextPresentedFrame();
               logEvent('info', 'renderer', 'Registered import committed and loaded');
             }}
             onClose={() => {
@@ -1430,6 +1807,39 @@ export function App(): JSX.Element {
         </FloatingTaskIsland>
       ) : null}
       <ToastRegion>
+        {closeMode ? (
+          <Toast
+            tone="info"
+            autoDismiss={false}
+            action={
+              <Button
+                size="small"
+                variant="quiet"
+                onClick={() => {
+                  closeCancelledRef.current = true;
+                }}
+              >
+                Cancel
+              </Button>
+            }
+          >
+            Storing changes before closing…
+          </Toast>
+        ) : null}
+        {recoveryToast ? (
+          <Toast
+            tone="warning"
+            autoDismiss={false}
+            action={
+              <Button size="small" variant="quiet" onClick={toggleBottom}>
+                Show in console
+              </Button>
+            }
+            onDismiss={() => setRecoveryToast(null)}
+          >
+            {recoveryToast}
+          </Toast>
+        ) : null}
         {durabilityFailureToast && durability?.state === 'failed' ? (
           <Toast
             tone="error"
@@ -1479,10 +1889,24 @@ export function App(): JSX.Element {
           x={commandSurface.x}
           y={commandSurface.y}
           context={commandContext}
+          target={{
+            entityIds: commandContext.selectedEntityIds,
+            kind: commandContext.entityKind ?? 'Object',
+          }}
           {...(selection.candidates?.items[selection.candidates.index]?.entityId
-            ? { currentCandidateId: selection.candidates.items[selection.candidates.index]!.entityId }
+            ? {
+                currentCandidateId:
+                  selection.candidates.items[selection.candidates.index]!.entityId,
+              }
             : {})}
-          onExecute={executeRegistryCommand}
+          onExecute={(commandId, target) =>
+            executeRegistryCommand({
+              id: commandId,
+              args: [],
+              source: 'contextMenu',
+              payload: target,
+            })
+          }
           onClose={() => setCommandSurface(null)}
         />
       ) : commandSurface?.kind === 'void' ? (
@@ -1564,6 +1988,8 @@ interface BuilderPropertiesPanelProps {
   readonly editing: boolean;
   readonly error: string | null;
   readonly onAssign: (assignment: PropertyAssignment) => void;
+  readonly pointCloudStyles: readonly PointCloudDisplayStyle[];
+  readonly onPointCloudDisplayChange: (display: PointCloudDisplayStyle) => void;
 }
 
 function BuilderPropertiesPanel({
@@ -1574,6 +2000,8 @@ function BuilderPropertiesPanel({
   editing,
   error,
   onAssign,
+  pointCloudStyles,
+  onPointCloudDisplayChange,
 }: BuilderPropertiesPanelProps): JSX.Element {
   if (selectedCount === 0) {
     return (
@@ -1602,6 +2030,13 @@ function BuilderPropertiesPanel({
           onAssign={onAssign}
         />
       ))}
+      {pointCloudStyles.length > 0 ? (
+        <PointCloudDisplayProperties
+          styles={pointCloudStyles}
+          disabled={editing}
+          onChange={onPointCloudDisplayChange}
+        />
+      ) : null}
     </div>
   );
 }
@@ -2027,11 +2462,16 @@ async function registerImportJobs(
 async function restoreCanonicalResidency(
   viewport: BuilderKernelViewportHandle,
   bootstrap: BuilderResidencyBootstrap,
-): Promise<{ readonly clouds: EntityId[]; readonly inlineMeshes: EntityId[] }> {
+): Promise<{
+  readonly clouds: EntityId[];
+  readonly inlineMeshes: EntityId[];
+  readonly pointCloudMetadata: ReadonlyMap<EntityId, CanonicalPointCloudMetadata>;
+}> {
   if (bootstrap.schemaVersion !== 1) {
     throw new Error('Electron returned an invalid canonical residency bootstrap');
   }
   const clouds = new Set<EntityId>();
+  const pointCloudMetadata = new Map<EntityId, CanonicalPointCloudMetadata>();
   const inlineAdmissions: CanonicalRepresentationAdmission[] = [];
   for (const entry of bootstrap.entries) {
     try {
@@ -2045,8 +2485,11 @@ async function restoreCanonicalResidency(
           datasetId: entry.dataset.datasetId,
           admission,
           bounds,
+          ...(entry.pointCloud ? { display: entry.pointCloud.display } : {}),
         });
-        clouds.add(admission.entity.id as EntityId);
+        const entityId = admission.entity.id as EntityId;
+        clouds.add(entityId);
+        if (entry.pointCloud) pointCloudMetadata.set(entityId, entry.pointCloud);
       } else if (entry.dataset === null) {
         inlineAdmissions.push(admission);
       } else {
@@ -2073,7 +2516,13 @@ async function restoreCanonicalResidency(
     }
   }
   viewport.frameAll();
-  return { clouds: [...clouds], inlineMeshes: [...inlineMeshes] };
+  return { clouds: [...clouds], inlineMeshes: [...inlineMeshes], pointCloudMetadata };
+}
+
+function formatPointCount(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)} k`;
+  return value.toLocaleString();
 }
 
 async function readPotreeBounds(metadataUrl: string): Promise<{

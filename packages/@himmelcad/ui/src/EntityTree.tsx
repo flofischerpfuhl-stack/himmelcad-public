@@ -21,7 +21,7 @@ import {
 } from 'react';
 
 import styles from './EntityTree.module.css';
-import { EntityCommandMenu } from './CommandSurfaces.js';
+import { EntityCommandMenu, type EntityCommandTarget } from './CommandSurfaces.js';
 import {
   consumeEscapeBlurCommitSuppression,
   registerEscapeRung,
@@ -35,6 +35,8 @@ export type LeftNavTabId = 'tree' | 'layers' | 'imported';
 
 export interface EntityTreeProps {
   project: ProjectSnapshot | null;
+  /** Product id used to admit product-owned generated command rows. Defaults to Builder. */
+  productId?: string;
   selectedIds: ReadonlySet<EntityId>;
   onSelect: (id: EntityId, mode: 'replace' | 'add' | 'toggle') => void;
   onSelectMany?: (ids: readonly EntityId[]) => void;
@@ -42,19 +44,26 @@ export interface EntityTreeProps {
   onMove?: (id: EntityId, newParentId: EntityId) => void;
   onVisibilityChange?: (id: EntityId, visible: boolean) => void;
   canExport?: (entity: EntitySnapshot) => boolean;
-  onContextAction?: (
-    id: EntityId,
-    action: 'showGcpImages' | 'open' | 'properties' | 'export' | 'remove',
-  ) => void;
+  onContextAction?: EntityTreeContextAction | LegacyEntityTreeContextAction;
   /** Left island navigation tab (Tree / Layers / Imported from). */
   leftNavTab?: LeftNavTabId;
   onLeftNavTabChange?: (tab: LeftNavTabId) => void;
   /** Optional product-owned sibling ordering. The canonical project order is unchanged. */
   sortChildren?: (left: EntitySnapshot, right: EntitySnapshot) => number;
+  /** Compact metadata rendered at the trailing edge of each tree row. */
+  secondaryLabel?: (entity: EntitySnapshot) => ReactNode;
 }
+
+export type EntityTreeContextAction = (commandId: string, entityIds: readonly EntityId[]) => void;
+
+type LegacyEntityTreeContextAction = (
+  id: EntityId,
+  action: 'showGcpImages' | 'open' | 'properties' | 'export' | 'remove',
+) => void;
 
 export function EntityTree({
   project,
+  productId,
   selectedIds,
   onSelect,
   onSelectMany,
@@ -66,6 +75,7 @@ export function EntityTree({
   leftNavTab = 'tree',
   onLeftNavTabChange,
   sortChildren,
+  secondaryLabel,
 }: EntityTreeProps): JSX.Element {
   const collapseLeft = useLayoutStore((s) => s.toggleLeftPanel);
   const [context, setContext] = useState<{ id: EntityId; x: number; y: number } | null>(null);
@@ -90,6 +100,13 @@ export function EntityTree({
       <PanelLeftClose size={14} />
     </button>
   );
+
+  const contextEntity = context ? project?.entities[context.id] : undefined;
+  const contextEntityIds = contextEntity
+    ? selectedIds.has(contextEntity.id)
+      ? [...selectedIds].filter((id) => project?.entities[id])
+      : [contextEntity.id]
+    : [];
 
   const nav = (
     <div className={styles.navRow}>
@@ -234,24 +251,31 @@ export function EntityTree({
               });
             }}
             sortChildren={sortChildren}
+            secondaryLabel={secondaryLabel}
           />
         </div>
       </div>
-      {context && project.entities[context.id] ? (
+      {context && contextEntity ? (
         <EntityCommandMenu
           x={context.x}
           y={context.y}
-          context={treeCommandContext(project, selectedIds, canExport)}
+          context={treeCommandContext(
+            project,
+            new Set(contextEntityIds),
+            canExport,
+            productId ?? 'builder',
+            contextEntity.kind,
+          )}
+          target={{ entityIds: contextEntityIds, kind: contextEntity.kind }}
           onClose={() => setContext(null)}
-          onExecute={(invocation) => {
-            const ids = selectedIds.has(context.id) ? [...selectedIds] : [context.id];
-            if (invocation.id === 'entity.rename') setEditingId(context.id);
-            else if (invocation.id === 'entity.hide' || invocation.id === 'entity.show') {
-              for (const id of ids) onVisibilityChange?.(id, invocation.id === 'entity.show');
-            } else if (invocation.id === 'entity.export') onContextAction?.(context.id, 'export');
-            else if (invocation.id === 'entity.properties') onContextAction?.(context.id, 'properties');
-            else if (invocation.id === 'entity.zoom_to') onContextAction?.(context.id, 'open');
-          }}
+          onExecute={(commandId, target) =>
+            dispatchEntityTreeCommand(commandId, target, context.id, {
+              onRename: setEditingId,
+              ...(productId !== undefined ? { productId } : {}),
+              ...(onVisibilityChange ? { onVisibilityChange } : {}),
+              ...(onContextAction ? { onContextAction } : {}),
+            })
+          }
         />
       ) : null}
     </div>
@@ -262,6 +286,8 @@ function treeCommandContext(
   project: ProjectSnapshot,
   selectedIds: ReadonlySet<EntityId>,
   canExport: EntityTreeProps['canExport'],
+  productId: string,
+  entityKind: EntityKind,
 ) {
   const entities = [...selectedIds].flatMap((id) => {
     const entity = project.entities[id];
@@ -269,12 +295,18 @@ function treeCommandContext(
   });
   return {
     hasProject: true,
+    productId,
     selectedEntityIds: entities.map((entity) => entity.id),
+    selectedCanonicalEntityKinds: entities.map((entity) => entity.kind),
+    entityKind,
     selectedEntityKinds: entities.map((entity) => {
-      if (entity.kind === 'SinglePoint' || entity.kind === 'GroundControlPoint') return 'point' as const;
+      if (entity.kind === 'SinglePoint' || entity.kind === 'GroundControlPoint')
+        return 'point' as const;
       if (entity.kind === 'Polyline3D') return 'polyline' as const;
-      if (entity.kind === 'Mesh' || entity.kind === 'TexturedMesh' || entity.kind === 'Surface') return 'mesh' as const;
-      if (entity.kind === 'PointCloud' || entity.kind === 'GaussianSplatCloud') return 'cloud' as const;
+      if (entity.kind === 'Mesh' || entity.kind === 'TexturedMesh' || entity.kind === 'Surface')
+        return 'mesh' as const;
+      if (entity.kind === 'PointCloud' || entity.kind === 'GaussianSplatCloud')
+        return 'cloud' as const;
       return 'other' as const;
     }),
     selectionVisibility: entities.every((entity) => entity.visibility.visible)
@@ -287,6 +319,45 @@ function treeCommandContext(
       entities.length > 0 &&
       entities.every((entity) => canExport?.(entity) ?? isExportableProduct(entity.kind)),
   };
+}
+
+export function dispatchEntityTreeCommand(
+  commandId: string,
+  target: EntityCommandTarget,
+  contextId: EntityId,
+  handlers: Pick<EntityTreeProps, 'productId' | 'onVisibilityChange' | 'onContextAction'> & {
+    readonly onRename: (id: EntityId) => void;
+  },
+): void {
+  if (commandId === 'entity.rename') {
+    handlers.onRename(contextId);
+    return;
+  }
+  if (commandId === 'entity.hide' || commandId === 'entity.show') {
+    for (const id of target.entityIds) {
+      handlers.onVisibilityChange?.(id as EntityId, commandId === 'entity.show');
+    }
+    return;
+  }
+  if (!handlers.onContextAction) return;
+  const legacyAction =
+    commandId === 'entity.export'
+      ? 'export'
+      : commandId === 'entity.properties'
+        ? 'properties'
+        : commandId === 'entity.zoom_to'
+          ? 'open'
+          : null;
+  if (legacyAction) {
+    (handlers.onContextAction as LegacyEntityTreeContextAction)(contextId, legacyAction);
+    return;
+  }
+  if (handlers.productId !== undefined) {
+    (handlers.onContextAction as EntityTreeContextAction)(
+      commandId,
+      target.entityIds as readonly EntityId[],
+    );
+  }
 }
 
 function isExportableProduct(kind: EntityKind | undefined): boolean {
@@ -314,6 +385,7 @@ interface NodeProps {
   onVisibilityChange: EntityTreeProps['onVisibilityChange'];
   onContextMenu: (id: EntityId, x: number, y: number) => void;
   sortChildren?: EntityTreeProps['sortChildren'];
+  secondaryLabel?: EntityTreeProps['secondaryLabel'];
 }
 
 function TreeNode({
@@ -329,6 +401,7 @@ function TreeNode({
   onVisibilityChange,
   onContextMenu,
   sortChildren,
+  secondaryLabel,
 }: NodeProps): ReactNode {
   const node: EntitySnapshot | undefined = entities[id];
   const [open, setOpen] = useState(true);
@@ -424,6 +497,9 @@ function TreeNode({
         ) : (
           <span className={styles.label}>{node.name || node.id}</span>
         )}
+        {editingId !== node.id && secondaryLabel ? (
+          <span className={styles.secondaryLabel}>{secondaryLabel(node)}</span>
+        ) : null}
         <button
           type="button"
           className={`${styles.eye} ${node.visibility.visible ? '' : styles.eyeHidden}`}
@@ -454,6 +530,7 @@ function TreeNode({
               onVisibilityChange={onVisibilityChange}
               onContextMenu={onContextMenu}
               sortChildren={sortChildren}
+              secondaryLabel={secondaryLabel}
             />
           ))}
         </div>

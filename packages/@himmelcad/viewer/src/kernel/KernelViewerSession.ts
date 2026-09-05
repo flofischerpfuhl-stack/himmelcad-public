@@ -52,6 +52,7 @@ import {
   type KernelEntityCommandMutation,
   type KernelEntityInteractionState,
   type KernelFrameOutcome,
+  type KernelFrontierBudget,
   type KernelGpuFrameTimingDiagnostics,
   type KernelGpuModelCacheStats,
   type KernelGpuTextureCacheStats,
@@ -157,6 +158,7 @@ export interface KernelViewerLoadOptions extends KernelLoadOperationOptions {
 export interface KernelViewerSessionDiagnostics {
   readonly capabilities: KernelDeviceCapabilities;
   readonly hardwarePolicy: KernelResolvedHardwarePolicy;
+  readonly frontierBudget: KernelFrontierBudget;
   readonly runtimeQuality: KernelRuntimeQualityState;
   readonly streaming: KernelStreamingRuntimeState;
   readonly transport: KernelStreamingDriverDiagnostics;
@@ -302,6 +304,12 @@ export class KernelViewerSession {
     return this.frameDiagnosticsState.snapshot(lastFrames);
   }
 
+  diagnosticsWindow(durationMs = 2_000): KernelDiagnosticsSnapshot {
+    this.assertAlive();
+    const now = performance.now();
+    return this.frameDiagnosticsState.snapshotWindow(Math.max(0, now - durationMs), now);
+  }
+
   /** Private-window implementation of the `view.diagnostics.sample` query. */
   sampleDiagnostics(request: KernelDiagnosticsSampleRequest): Promise<KernelDiagnosticsSampleResult> {
     this.assertAlive();
@@ -339,6 +347,7 @@ export class KernelViewerSession {
       this.camera,
       {
         ...(callbacks.onActivePick ? { onActivePick: callbacks.onActivePick } : {}),
+        ...(callbacks.onCameraGestureEnd ? { onCameraGestureEnd: callbacks.onCameraGestureEnd } : {}),
         ...(callbacks.onCameraChanged ? { onCameraChanged: callbacks.onCameraChanged } : {}),
         ...(callbacks.onViewModeChanged ? { onViewModeChanged: callbacks.onViewModeChanged } : {}),
         ...(callbacks.onCursorCoordinate
@@ -795,6 +804,7 @@ export class KernelViewerSession {
       const plan = this.viewerState.planStreamingFrame({
         resourceBudget: this.policyState.resources,
         frameBudget: work.frame,
+        frontierBudget: this.policyState.frontier,
         // Camera motion may reduce *new* I/O/decode/upload work, but it must
         // never select a coarser render frontier. Otherwise resident ADD tiles
         // disappear on pointer-down and reappear on settle as visible flicker.
@@ -838,10 +848,12 @@ export class KernelViewerSession {
         const transport = this.streamingState.diagnostics();
         const streaming = this.viewerState.streamingRuntime();
         const reasonCodes = frameReasonCodes(
-          plan.admission,
+          plan,
           observation.reasonCode,
           protectedLanes1To3Ms,
           this.policyState.frame.targetFrameMs,
+          transport.queuedDecodes + transport.activeDecodes,
+          streaming.residencyStageCounts.queuedUpload + streaming.residencyStageCounts.uploading,
         );
         this.frameDiagnosticsState.recordFrame({
           rafTimestampMs: animationFrameTimestampMs ?? presentTimestampMs,
@@ -873,6 +885,18 @@ export class KernelViewerSession {
           uploadBacklog: streaming.residencyStageCounts.queuedUpload + streaming.residencyStageCounts.uploading,
           residencyBytes:
             streaming.residencyCost.gpuBufferBytes + streaming.residencyCost.gpuTextureBytes,
+          frontier: {
+            hardwareClass: plan.frontier.budget.hardwareClass,
+            budgetPoints: plan.frontier.budget.points,
+            budgetBytes: plan.frontier.budget.bytes,
+            budgetDrawCalls: plan.frontier.budget.drawCalls,
+            selectedPoints: plan.frontier.selected.points,
+            selectedBytes:
+              plan.frontier.selected.gpuBufferBytes + plan.frontier.selected.gpuTextureBytes,
+            selectedDrawCalls: plan.frontier.selected.drawCalls,
+            coarsenedTiles: plan.frontier.coarsenedTiles,
+            budgetSatisfied: plan.frontier.budgetSatisfied,
+          },
           freshness: 'fresh',
         });
         this.previousPresentedTimestampMs = presentTimestampMs;
@@ -916,6 +940,7 @@ export class KernelViewerSession {
     return {
       capabilities: this.viewerState.capabilities,
       hardwarePolicy: this.policyState,
+      frontierBudget: this.policyState.frontier,
       runtimeQuality: this.qualityState,
       streaming: this.viewerState.streamingRuntime(),
       transport: this.streamingState.diagnostics(),
@@ -1156,12 +1181,15 @@ export class KernelViewerSession {
 }
 
 function frameReasonCodes(
-  admission: Readonly<Record<string, unknown>>,
+  plan: ReturnType<WgpuKernelViewer['planStreamingFrame']>,
   governorReason: KernelDeadlineReasonCode,
   protectedMs: number,
   targetMs: number,
+  decodeBacklog: number,
+  uploadBacklog: number,
 ): readonly KernelDeadlineReasonCode[] {
   const reasons = new Set<KernelDeadlineReasonCode>([governorReason]);
+  const admission = plan.admission;
   const rejected = Array.isArray(admission.rejected) ? admission.rejected : [];
   for (const item of rejected) {
     if (typeof item !== 'object' || item === null || !('reason' in item)) continue;
@@ -1169,7 +1197,14 @@ function frameReasonCodes(
     if (reason === 'resourceBudget') reasons.add('resource_budget');
     if (reason === 'frameBudget') reasons.add('frame_budget');
     if (reason === 'invalidBenefit') reasons.add('invalid_benefit');
+    if (reason === 'pointBudget') reasons.add('budget:points');
+    if (reason === 'byteBudget') reasons.add('budget:bytes');
   }
+  for (const reason of plan.frontier.reasonCodes) {
+    if (reason === 'budget:points' || reason === 'budget:bytes') reasons.add(reason);
+  }
+  if (decodeBacklog > 0) reasons.add('decode:backlog');
+  if (uploadBacklog > 0) reasons.add('upload:backlog');
   if (protectedMs > targetMs) reasons.add('protected_work_over_budget');
   return Object.freeze([...reasons]);
 }

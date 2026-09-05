@@ -42,8 +42,17 @@ void test('canonical Potree bootstrap verifies metadata before registry publicat
       metadataUri: string,
       metadataJson: Uint8Array,
       hierarchy: Uint8Array,
+      preparedMetadata: Uint8Array,
     ): void {
-      calls.push(['register', datasetId, formatId, metadataUri, metadataJson, hierarchy]);
+      calls.push([
+        'register',
+        datasetId,
+        formatId,
+        metadataUri,
+        metadataJson,
+        hierarchy,
+        preparedMetadata,
+      ]);
     },
     publishCanonicalRepresentations(
       admissions: readonly KernelCanonicalRenderAdmission[],
@@ -76,6 +85,7 @@ void test('canonical Potree bootstrap verifies metadata before registry publicat
     ['hcad-cache://local/dataset/hierarchy.bin', 0, 22],
   ]);
   assert.equal(calls[0]?.[0], 'register');
+  assert.equal((calls[0]?.[6] as Uint8Array).byteLength, 0);
   assert.equal(calls[1]?.[0], 'publish');
   const published = calls[1]?.[1] as readonly KernelCanonicalRenderAdmission[];
   assert.equal(published[0]?.datasetId, 'dataset');
@@ -87,6 +97,56 @@ void test('canonical Potree bootstrap verifies metadata before registry publicat
     ['publishing', 3, 4],
     ['complete', 4, 4],
   ]);
+});
+
+void test('prepared Potree admission preserves explicit station ids without rewriting metadata', async () => {
+  const metadata = new TextEncoder().encode(
+    JSON.stringify({ hierarchy: { firstChunkSize: 22 }, version: '2.0' }),
+  );
+  const input = await admission(metadata);
+  const prepared = {
+    schemaVersion: 1 as const,
+    rawSourceContentHash: '11'.repeat(32),
+    nodes: {
+      r: {
+        screenSpaceError: { geometricError: 2, pointSpacing: 1 },
+        sampleStatistics: { sampledPoints: 3, sourcePoints: 5, method: 'poisson-disk' },
+        stationIds: ['station-17'],
+        contentHash: null,
+        origin: 'baked' as const,
+      },
+    },
+  };
+  let preparedBytes: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
+  const viewer = {
+    geometryObjectContentHash: () => input.admission.selected.geometryRef,
+    canonicalEntityVersionHash: () => input.admission.entity.versionHash,
+    registerPotreeDataset(
+      _datasetId: string,
+      _formatId: string,
+      _metadataUri: string,
+      registeredMetadata: Uint8Array,
+      _hierarchy: Uint8Array,
+      registeredPrepared: Uint8Array,
+    ): void {
+      assert.deepEqual(registeredMetadata, metadata);
+      preparedBytes = registeredPrepared;
+    },
+    publishCanonicalRepresentations: () => ({
+      entities: 1,
+      slots: 1,
+      proxies: 0,
+      generation: 1,
+      bindings: [],
+    }),
+  };
+  const streaming = {
+    fetchImmutableResource: (reference: { readonly byteOffset: number | null }) =>
+      Promise.resolve(reference.byteOffset === null ? metadata : new Uint8Array(22)),
+  };
+
+  await admitCanonicalPotreeDatasetWith(viewer, streaming, { ...input, preparedMetadata: prepared });
+  assert.deepEqual(JSON.parse(new TextDecoder().decode(preparedBytes)), prepared);
 });
 
 void test('Potree abort after immutable fetch cannot publish a half-loaded dataset', async () => {

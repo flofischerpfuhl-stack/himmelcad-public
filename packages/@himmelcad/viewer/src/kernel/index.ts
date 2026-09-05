@@ -74,7 +74,11 @@ export type {
   KernelLoadPhase,
   KernelLoadProgress,
 } from './KernelLoadOperation.js';
-export type { KernelPotreeDatasetAdmission } from './KernelPotreeDatasetAdmission.js';
+export type {
+  KernelPotreeDatasetAdmission,
+  KernelPreparedPointDatasetMetadata,
+  KernelPreparedPointNodeMetadata,
+} from './KernelPotreeDatasetAdmission.js';
 export type {
   KernelPreparedMeshDatasetAdmission,
   KernelPreparedMeshDatasetResult,

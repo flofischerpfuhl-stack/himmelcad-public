@@ -217,6 +217,7 @@ pub use section_topology::{
     SectionTopologyStoreError,
 };
 pub use streaming::{
+    FrontierBudget, FrontierHardwareClass, FrontierLimitReason, FrontierStatistics,
     StreamingAction, StreamingCoordinator, StreamingFramePlan, StreamingRuntimeLimits,
 };
 pub use streaming_decode_artifact::{
@@ -678,6 +679,75 @@ pub struct ContentReference {
     pub decoder_parameters: Option<serde_json::Value>,
 }
 
+/// Camera-independent inputs used to compute one prepared node's projected error.
+///
+/// The selector remains the authority for the per-frame physical-pixel SSE. This
+/// record makes the baked basis inspectable without baking a viewport or camera
+/// assumption into the dataset.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreparedPointScreenSpaceError {
+    /// Conservative world-space error represented by this node.
+    pub geometric_error: f64,
+    /// Representative sample spacing in source project units.
+    pub point_spacing: f64,
+}
+
+/// Auditable sampling counts for one immutable prepared point node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreparedPointSampleStatistics {
+    /// Exact number of representative points stored in the node payload.
+    pub sampled_points: u64,
+    /// Exact number of source points considered for the sample when the bake
+    /// records it. `None` is unknown and must never be replaced by an estimate.
+    pub source_points: Option<u64>,
+    /// Stable bake-method identifier when emitted by the preparer.
+    pub method: Option<String>,
+}
+
+/// Origin of prepared-node metadata used by compatibility diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PreparedPointMetadataOrigin {
+    /// Emitted and validated by the dataset preparation pipeline.
+    Baked,
+    /// Derived exactly from Potree 2 spacing/hierarchy records as pages arrive.
+    Potree2Compatibility,
+}
+
+/// Generalized bake metadata shared by prepared point providers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreparedPointNodeMetadata {
+    /// Inputs from which the selector computes the current physical-pixel SSE.
+    pub screen_space_error: PreparedPointScreenSpaceError,
+    /// Exact sampling statistics available at hierarchy-parse time.
+    pub sample_statistics: PreparedPointSampleStatistics,
+    /// Station identities preserved by a station-aware bake. `None` means the
+    /// source did not declare station partitioning; identities are never inferred.
+    pub station_ids: Option<Vec<String>>,
+    /// SHA-256 of the exact node payload, or `None` until a compatibility node
+    /// is fetched and the host has computed and cached it.
+    pub content_hash: Option<String>,
+    /// Whether the fields were baked or exactly derived on the compatibility path.
+    pub origin: PreparedPointMetadataOrigin,
+}
+
+/// Optional versioned extension emitted beside or injected into a prepared
+/// point dataset's native metadata after its own content hash is verified.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreparedPointDatasetMetadata {
+    /// Contract version. Version 1 is the only currently accepted value.
+    pub schema_version: u16,
+    /// SHA-256 of the authoritative raw source bytes when the importer has it.
+    /// Compatibility datasets may leave this absent rather than inventing it.
+    pub raw_source_content_hash: Option<String>,
+    /// Exact per-node bake records keyed by provider-local node id.
+    pub nodes: std::collections::BTreeMap<String, PreparedPointNodeMetadata>,
+}
+
 /// Lazily loaded hierarchy page referenced by a tile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -718,6 +788,9 @@ pub struct TileDescriptor {
     pub contents: Vec<ContentReference>,
     /// Optional child hierarchy page that must be loaded before traversal continues.
     pub child_page: Option<HierarchyPageReference>,
+    /// Validated provider-neutral preparation metadata for point content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepared_point_metadata: Option<PreparedPointNodeMetadata>,
     /// Provider-specific immutable metadata retained for inspection and styling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_metadata: Option<serde_json::Value>,

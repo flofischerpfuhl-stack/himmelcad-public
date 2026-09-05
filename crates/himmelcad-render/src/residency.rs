@@ -681,7 +681,7 @@ pub fn admission_candidate_with_residency(
     };
     Some(AdmissionCandidate {
         key: tile.key.clone(),
-        benefit: tile.screen_space_error.max(0.0),
+        benefit: tile.visibility_priority.max(0.0),
         cost,
         decode_ms,
         upload_bytes,
@@ -834,6 +834,8 @@ mod tests {
         let tile = SelectedTile {
             key: key.clone(),
             screen_space_error: 1.0,
+            visibility_priority: 1.0,
+            camera_depth: 1.0,
             residency: TileResidency::Unloaded,
             descriptor: std::sync::Arc::new(TileDescriptor {
                 id: key.tile_id,
@@ -866,6 +868,7 @@ mod tests {
                     decoder_parameters: None,
                 }],
                 child_page: None,
+                prepared_point_metadata: None,
                 provider_metadata: None,
             }),
         };

@@ -14,10 +14,11 @@ use himmelcad_core::app_protocol::{
     AppProtocolEnvelopeError, AppProtocolError, AppProtocolRequest, AppProtocolRequestEnvelope,
     AppProtocolResponse, AppProtocolResponseEnvelope, APP_PROTOCOL_SCHEMA_ID,
 };
-use himmelcad_core::canonical_document::CanonicalDocumentError;
 use himmelcad_core::canonical_document::{
-    CanonicalCommandTransaction, CanonicalEntityEdit, CanonicalEntityMutation,
+    CanonicalCommandTransaction, CanonicalDocumentError, CanonicalEntityEdit,
+    CanonicalEntityMutation, CanonicalJournalEntry, EntityVersionRef,
 };
+use himmelcad_core::canonical_resources::PointCloudDisplayStyle;
 use himmelcad_core::entity::EntityId;
 use himmelcad_core::entity_model::{built_in_type, CanonicalEntity, EntityTypeId, GeometryObject};
 use himmelcad_core::entity_validation::{
@@ -95,6 +96,19 @@ pub struct CanonicalResidencyEntry {
     pub provider_version: String,
     pub admission: CanonicalRepresentationAdmission,
     pub dataset: Option<CanonicalPreparedDataset>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub point_cloud: Option<CanonicalPointCloudMetadata>,
+}
+
+/// Canonical point-cloud metadata needed by the tree, Properties and renderer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalPointCloudMetadata {
+    pub point_count: u64,
+    pub source_crs: Option<String>,
+    pub source_units: Option<String>,
+    pub placement_offset: [f64; 3],
+    pub display: PointCloudDisplayStyle,
 }
 
 /// Failure of an explicit project lifecycle or staged import operation.
@@ -181,6 +195,16 @@ impl CanonicalAppRuntime {
             .as_ref()
             .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?
             .durability_status())
+    }
+
+    /// Exact root owned by the currently locked Builder project.
+    pub fn project_root(&self) -> Result<PathBuf, CanonicalAppRuntimeError> {
+        Ok(self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?
+            .root()
+            .to_path_buf())
     }
 
     pub fn flush(&mut self) -> Result<CanonicalDurabilityStatus, CanonicalAppRuntimeError> {
@@ -345,6 +369,86 @@ impl CanonicalAppRuntime {
             .map_err(Into::into)
     }
 
+    /// Publishes a staged import while observing cancellation until the store's
+    /// durable ready-marker boundary. Publication after that marker is atomic.
+    pub fn publish_staged_import_with_progress_and_cancel(
+        &mut self,
+        staged: &CanonicalStagedImport,
+        command_id: &str,
+        progress: &mut dyn FnMut(CanonicalImportProgress),
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<CanonicalImportCommit, CanonicalAppRuntimeError> {
+        staged.validate()?;
+        let source_roots = CanonicalImportSourceRoots {
+            datasets: staged.roots.dataset_roots.clone(),
+            resource_sets: staged.roots.resource_set_roots.clone(),
+        };
+        self.store_mut()?
+            .publish_import_package_with_progress_and_cancel(
+                &staged.package,
+                &source_roots,
+                command_id,
+                progress,
+                is_cancelled,
+            )
+            .map_err(Into::into)
+    }
+
+    /// Persists one canonical display resource and assigns it to exact live clouds.
+    pub fn set_point_cloud_display(
+        &mut self,
+        command_id: String,
+        entities: Vec<EntityVersionRef>,
+        display: PointCloudDisplayStyle,
+    ) -> Result<CanonicalJournalEntry, CanonicalAppRuntimeError> {
+        display
+            .validate()
+            .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?;
+        if entities.is_empty() {
+            return Err(CanonicalAppRuntimeError::InvalidResidency(
+                "point-cloud display edit requires at least one entity".to_owned(),
+            ));
+        }
+        let value = serde_json::to_value(&display)?;
+        let bytes = serde_json::to_vec(&value)?;
+        let style_ref = ObjectHash::of_bytes(&bytes);
+        let object = CanonicalJsonObject {
+            object_hash: style_ref.clone(),
+            media_type: "application/vnd.himmelcad.point-cloud-display+json".to_owned(),
+            value,
+        };
+        let store = self.store_mut()?;
+        for expected in &entities {
+            let entity = store.document().entity(&expected.id).ok_or_else(|| {
+                CanonicalAppRuntimeError::InvalidResidency(format!(
+                    "point-cloud entity {:?} is no longer live",
+                    expected.id.0
+                ))
+            })?;
+            if entity.type_id.0 != built_in_type::POINT_CLOUD {
+                return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+                    "entity {:?} is not a point cloud",
+                    expected.id.0
+                )));
+            }
+        }
+        store.put_json_object(&object)?;
+        store
+            .queue_transaction(CanonicalCommandTransaction {
+                command_id,
+                mutations: entities
+                    .into_iter()
+                    .map(|expected| CanonicalEntityMutation::Update {
+                        expected,
+                        edits: vec![CanonicalEntityEdit::SetStyleRef {
+                            style_ref: Some(style_ref.clone()),
+                        }],
+                    })
+                    .collect(),
+            })
+            .map_err(Into::into)
+    }
+
     /// Reconstructs exact admissions for live entities without exposing host
     /// paths. Deleted entities and superseded representation bindings are
     /// intentionally omitted.
@@ -413,6 +517,7 @@ impl CanonicalAppRuntime {
                 if let Some(dataset) = &dataset {
                     validate_residency_dataset(store, dataset)?;
                 }
+                let point_cloud = point_cloud_metadata(store, entity, &geometry)?;
                 entries.push(CanonicalResidencyEntry {
                     provider_id: inventory.provider_id.clone(),
                     provider_version: inventory.provider_version.clone(),
@@ -424,6 +529,7 @@ impl CanonicalAppRuntime {
                         resolved_geometry: geometry,
                     },
                     dataset,
+                    point_cloud,
                 });
             }
         }
@@ -781,6 +887,65 @@ fn register_materialized_destination(
         ));
     }
     Ok(())
+}
+
+fn point_cloud_metadata(
+    store: &CanonicalProjectStore,
+    entity: &CanonicalEntity,
+    geometry: &GeometryObject,
+) -> Result<Option<CanonicalPointCloudMetadata>, CanonicalAppRuntimeError> {
+    let GeometryObject::PointCloud { dataset } = geometry else {
+        return Ok(None);
+    };
+    let attributes: serde_json::Value =
+        serde_json::from_slice(&store.read_object(&entity.attributes_ref)?)?;
+    let imported = attributes
+        .get("hcad.point-cloud-import@1")
+        .and_then(serde_json::Value::as_object);
+    let source = imported
+        .and_then(|value| value.get("source"))
+        .and_then(serde_json::Value::as_object);
+    let point_count = dataset.element_count.or_else(|| {
+        imported
+            .and_then(|value| value.get("pointCount"))
+            .and_then(serde_json::Value::as_u64)
+    });
+    let Some(point_count) = point_count else {
+        return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+            "point-cloud entity {:?} has no exact point count",
+            entity.id.0
+        )));
+    };
+    let display = match &entity.style_ref {
+        Some(style_ref) => {
+            let value: PointCloudDisplayStyle =
+                serde_json::from_slice(&store.read_object(style_ref)?)?;
+            value.validate().map_err(|error| {
+                CanonicalAppRuntimeError::InvalidResidency(format!(
+                    "point-cloud display for {:?}: {error}",
+                    entity.id.0
+                ))
+            })?;
+            value
+        }
+        None => PointCloudDisplayStyle::release_05_default(),
+    };
+    let placement = entity
+        .placement
+        .unwrap_or(himmelcad_core::entity_model::Transform3d::IDENTITY);
+    Ok(Some(CanonicalPointCloudMetadata {
+        point_count,
+        source_crs: source
+            .and_then(|value| value.get("declaredCrs"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        source_units: source
+            .and_then(|value| value.get("declaredUnits"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        placement_offset: [placement.0[12], placement.0[13], placement.0[14]],
+        display,
+    }))
 }
 
 fn validate_residency_dataset(
@@ -1622,7 +1787,7 @@ mod tests {
     }
 
     #[test]
-    fn residency_reopens_exact_staged_point_cloud_and_filters_deleted_entity() {
+    fn import_residency_reopens_exact_point_cloud_display_and_filters_deleted_entity() {
         let root = temp_project("residency-point-cloud");
         let staged = staged_point_cloud(&root);
         let mut runtime = CanonicalAppRuntime::default();
@@ -1636,6 +1801,12 @@ mod tests {
         let bootstrap = runtime.residency_bootstrap().expect("bootstrap");
         assert_eq!(bootstrap.entries.len(), 1);
         assert_eq!(bootstrap.entries[0].admission.entity.id.0, "cloud-a");
+        let metadata = bootstrap.entries[0]
+            .point_cloud
+            .as_ref()
+            .expect("point-cloud metadata");
+        assert_eq!(metadata.point_count, 1);
+        assert_eq!(metadata.display.point_size_pixels, 2.0);
         assert_eq!(
             bootstrap.entries[0]
                 .dataset
@@ -1646,6 +1817,33 @@ mod tests {
         );
         let encoded = serde_json::to_string(&bootstrap).expect("encode bootstrap");
         assert!(!encoded.contains(root.to_string_lossy().as_ref()));
+
+        let mut display = metadata.display.clone();
+        display.point_size_pixels = 4.5;
+        display.color_mode = himmelcad_core::canonical_resources::PointCloudColorMode::Elevation;
+        runtime
+            .set_point_cloud_display(
+                "point-cloud-display".to_owned(),
+                vec![EntityVersionRef::from_entity(
+                    &bootstrap.entries[0].admission.entity,
+                )],
+                display,
+            )
+            .expect("set display");
+        runtime.flush().expect("flush display");
+        runtime.close();
+        runtime.open(&root).expect("reopen display edit");
+        let updated = runtime.residency_bootstrap().expect("updated bootstrap");
+        let updated_display = &updated.entries[0]
+            .point_cloud
+            .as_ref()
+            .expect("updated metadata")
+            .display;
+        assert_eq!(updated_display.point_size_pixels, 4.5);
+        assert_eq!(
+            updated_display.color_mode,
+            himmelcad_core::canonical_resources::PointCloudColorMode::Elevation
+        );
 
         let points = staged.package.datasets[0]
             .artifacts
@@ -1685,7 +1883,10 @@ mod tests {
             reconstructed.provider_version,
             staged.package.provider_version
         );
-        assert_eq!(reconstructed.admissions, staged.package.admissions);
+        assert_eq!(
+            reconstructed.admissions,
+            vec![updated.entries[0].admission.clone()]
+        );
         assert_eq!(reconstructed.datasets, staged.package.datasets);
         assert_eq!(
             reconstructed.presentation_resources,
@@ -1701,7 +1902,7 @@ mod tests {
                 .expect("source metadata")
         );
 
-        let cloud = bootstrap.entries[0].admission.entity.clone();
+        let cloud = updated.entries[0].admission.entity.clone();
         let deleted = runtime.dispatch(request(AppProtocolRequest::ExecuteCanonicalTransaction(
             CanonicalCommandTransaction {
                 command_id: "delete-cloud".to_owned(),

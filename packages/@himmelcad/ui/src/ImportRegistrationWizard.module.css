@@ -226,3 +226,16 @@
     grid-template-columns: 1fr;
   }
 }
+.placementRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--hc-fg-muted);
+  font-family: var(--hc-font-mono);
+  font-size: 11px;
+}
+
+.placementRow > span {
+  min-width: 0;
+}

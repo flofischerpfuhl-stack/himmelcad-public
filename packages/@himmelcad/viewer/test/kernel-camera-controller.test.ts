@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { KernelCameraController } from '../src/kernel/KernelCameraController.js';
+import { kernelCameraPreset, KernelCameraController } from '../src/kernel/KernelCameraController.js';
 import type { KernelWorldCamera, KernelWorldPoint } from '../src/kernel/WgpuKernelViewer.js';
 
 void test('kernel CAD orbit and zoom preserve the authored cursor pivot', () => {
@@ -377,3 +377,18 @@ void test('every cursor resolves a finite fallback coordinate on the orbit targe
 function distance(left: KernelWorldPoint, right: KernelWorldPoint): number {
   return Math.hypot(left.x - right.x, left.y - right.y, left.z - right.z);
 }
+
+void test('view presets preserve target/distance and use Z up, -Y front, +X right', () => {
+  const controller = new KernelCameraController(1600, 900);
+  const camera = controller.worldCamera();
+  const distance = Math.hypot(camera.eye.x, camera.eye.y, camera.eye.z);
+  assert.deepEqual(kernelCameraPreset(camera, 'top').up, { x: 0, y: 1, z: 0 });
+  assert.deepEqual(kernelCameraPreset(camera, 'front').eye, { x: 0, y: -distance, z: 0 });
+  assert.deepEqual(kernelCameraPreset(camera, 'right').eye, { x: distance, y: 0, z: 0 });
+  for (const preset of ['top', 'front', 'right', 'perspective', 'isometric'] as const) {
+    const next = kernelCameraPreset(camera, preset);
+    assert.deepEqual(next.target, camera.target);
+    assert.ok(Math.abs(Math.hypot(next.eye.x, next.eye.y, next.eye.z) - distance) < 1e-10);
+    controller.adoptWorldCamera(next);
+  }
+});

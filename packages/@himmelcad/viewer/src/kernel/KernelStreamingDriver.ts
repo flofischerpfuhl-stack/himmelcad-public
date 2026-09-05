@@ -378,6 +378,7 @@ export class KernelStreamingDriver {
   private readonly staged = new Map<string, readonly ResidentPayload[]>();
   private readonly resident = new Map<string, readonly ResidentPayload[]>();
   private readonly residentMetadata = new Map<string, KernelResidentMetadata>();
+  private readonly derivedContentHashes = new Map<string, string>();
   private readonly controllers = new Map<string, AbortController>();
   private readonly bootstrapControllers = new Set<AbortController>();
   private readonly decodeControllers = new Map<string, AbortController>();
@@ -609,6 +610,9 @@ export class KernelStreamingDriver {
     for (const key of [...this.fetched.keys()]) {
       if (tileKeyBelongsToDataset(key, datasetId)) this.fetched.delete(key);
     }
+    for (const key of [...this.derivedContentHashes.keys()]) {
+      if (tileKeyBelongsToDataset(key, datasetId)) this.derivedContentHashes.delete(key);
+    }
     for (const [key, payloads] of this.staged) {
       if (!tileKeyBelongsToDataset(key, datasetId)) continue;
       for (const payload of payloads) {
@@ -654,6 +658,7 @@ export class KernelStreamingDriver {
     this.fetched.clear();
     this.staged.clear();
     this.residentMetadata.clear();
+    this.derivedContentHashes.clear();
   }
 
   private async fetchTile(
@@ -711,9 +716,22 @@ export class KernelStreamingDriver {
             controller.signal,
             contentClass,
           );
+          const hashKey = `${key}\0${String(index)}`;
+          const derivesPreparedPointHash =
+            reference.kind === 'potreePoints' && descriptor.preparedPointMetadata !== undefined;
+          const contentHash = derivesPreparedPointHash
+            ? (reference.contentHash ??
+              this.derivedContentHashes.get(hashKey) ??
+              (await sha256Hex(bytes)))
+            : reference.contentHash;
+          if (derivesPreparedPointHash && reference.contentHash === null) {
+            this.derivedContentHashes.set(hashKey, contentHash!);
+          }
+          const verifiedReference =
+            reference.contentHash === contentHash ? reference : { ...reference, contentHash };
           const assetBundle =
-            reference.kind === 'gltf' || reference.kind === 'threeDTilesContainer'
-              ? await this.fetchAssetBundle(reference, bytes, controller.signal)
+            verifiedReference.kind === 'gltf' || verifiedReference.kind === 'threeDTilesContainer'
+              ? await this.fetchAssetBundle(verifiedReference, bytes, controller.signal)
               : EMPTY_ASSET_BUNDLE;
           let elevationBytes: Uint8Array = new Uint8Array(0);
           let validityBytes: Uint8Array = new Uint8Array(0);
@@ -767,7 +785,7 @@ export class KernelStreamingDriver {
             }
           }
           return {
-            reference,
+            reference: verifiedReference,
             bytes,
             assetBundle,
             elevationBytes,
@@ -1035,8 +1053,8 @@ export class KernelStreamingDriver {
             proxyIds: [],
             kind: payload.reference.kind,
             metadata: {
-              tile: fetched.descriptor.providerMetadata ?? null,
-              content: payload.reference.decoderParameters ?? null,
+              tile: preparedResidentTileMetadata(fetched.descriptor, payload.reference),
+              content: preparedResidentContentMetadata(fetched.descriptor, payload.reference),
             },
           });
           cachePayloads.push({
@@ -1051,8 +1069,8 @@ export class KernelStreamingDriver {
             decodeParametersJson,
             expectedInputHash,
             residentMetadata: {
-              tile: fetched.descriptor.providerMetadata ?? null,
-              content: payload.reference.decoderParameters ?? null,
+              tile: preparedResidentTileMetadata(fetched.descriptor, payload.reference),
+              content: preparedResidentContentMetadata(fetched.descriptor, payload.reference),
             },
           });
         }
@@ -1642,6 +1660,36 @@ function contentClassesForPayloads(
   payloads: readonly ResidentPayload[],
 ): readonly KernelStreamingContentClass[] {
   return uniqueContentClasses(payloads.map((payload) => contentClassForKind(payload.kind)));
+}
+
+function preparedResidentTileMetadata(
+  descriptor: KernelTileDescriptor,
+  reference: KernelContentReference,
+): Readonly<Record<string, unknown>> | null {
+  const base = descriptor.providerMetadata ?? {};
+  if (reference.kind !== 'potreePoints' || descriptor.preparedPointMetadata === undefined) {
+    return Object.keys(base).length === 0 ? null : base;
+  }
+  return {
+    ...base,
+    preparedPoint: {
+      ...descriptor.preparedPointMetadata,
+      contentHash: reference.contentHash,
+    },
+  };
+}
+
+function preparedResidentContentMetadata(
+  descriptor: KernelTileDescriptor,
+  reference: KernelContentReference,
+): Readonly<Record<string, unknown>> | null {
+  if (reference.kind !== 'potreePoints' || descriptor.preparedPointMetadata === undefined) {
+    return reference.decoderParameters ?? null;
+  }
+  return {
+    ...(reference.decoderParameters ?? {}),
+    contentHash: reference.contentHash,
+  };
 }
 
 function decodedArtifactCacheKey(

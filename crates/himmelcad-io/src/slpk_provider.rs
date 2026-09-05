@@ -892,6 +892,7 @@ fn convert_node<R: Read + Seek>(
         refinement: RefinementMode::Replace,
         contents,
         child_page: None,
+        prepared_point_metadata: None,
         provider_metadata: Some(serde_json::json!({
             "schemaId": "hcad.provider.slpk-i3s-node@1",
             "sourceNodeIndex": node.index,

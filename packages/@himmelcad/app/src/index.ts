@@ -7,3 +7,4 @@ export * from './jobs.js';
 export * from './protocol.js';
 export * from './selection.js';
 export * from './view.js';
+export * from './viewHistory.js';

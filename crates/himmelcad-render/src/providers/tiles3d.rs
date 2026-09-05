@@ -319,6 +319,7 @@ impl ThreeDTilesHierarchySource {
                 refinement,
                 contents,
                 child_page,
+                prepared_point_metadata: None,
                 provider_metadata,
             },
         );

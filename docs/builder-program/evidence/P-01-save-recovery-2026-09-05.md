@@ -88,3 +88,7 @@ Covered by the sidecar canonical-runtime/store reopen suites, notably `protocol_
 - The G-FP-3 pieces are covered by real canonical import/residency, three-job rehydration, replacement-state, and persistent-MRU tests, but not by one end-to-end packaged-Electron script importing three external source files and killing/relaunching the process.
 - POSIX sibling rename replacement was exercised on this Linux runner. Windows rename-over-existing behavior is not relied upon by the UI because Save As rejects an existing destination, but was not run on Windows.
 - S-08 owns camera/display ViewState, HUD, and viewport code. P-01 intentionally uses its project boundary and keyed disposal seam and did not alter those protected implementations.
+
+## Architect review (G17, 2026-09-05)
+
+`gallery/shots/dark/file-surfaces.png`: Recent menu (name + muted mono path) and the warning-kind recovery toast with "Show in console" match the brief — accepted. Fixture nit for the next ui-fixes pass: the toast overflows the section column so its close button is clipped; widen the fixture container, not the toast. Final typecheck/sidecar test verification deferred to V-02's landing (its in-flight `KernelStreamingFramePlan.frontier`/`prepared_point_metadata` changes blocked P-01's last gates); commit follows that verification.

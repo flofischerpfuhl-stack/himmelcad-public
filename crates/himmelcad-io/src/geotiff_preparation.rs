@@ -561,6 +561,7 @@ fn hierarchy_manifest(
                         })),
                     }],
                     child_page: None,
+                    prepared_point_metadata: None,
                     provider_metadata: Some(serde_json::json!({
                         "schemaId": "hcad.provider.geotiff-elevation-tile@1",
                         "level": level.index,

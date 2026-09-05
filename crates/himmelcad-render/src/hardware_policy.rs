@@ -201,6 +201,8 @@ pub struct ResolvedHardwarePolicy {
     pub interaction: InteractionStreamingPolicy,
     /// Per-frame primitive workload derived independently for each content class.
     pub workload: FrameWorkloadBudget,
+    /// Hard visible prepared-frontier point/byte/draw limits for the resolved class.
+    pub frontier: crate::FrontierBudget,
     /// Maximum render resolution scale this device may use.
     pub maximum_render_scale: f32,
     /// Maximum scene-detail multiplier relative to the baseline SSE target.
@@ -296,6 +298,22 @@ impl HardwarePolicyResolver {
             |measurement| calibrated_workload(measurement, target_frame_ms),
         );
         let transparency = TransparencyStrategy::for_capabilities(capabilities);
+        let frontier_class = if capabilities.device_kind == DeviceKind::DiscreteGpu
+            && gpu_memory >= 8 * GIBIBYTE
+            && calibration.is_some_and(|value| value.point_millions_per_second >= 1_000.0)
+        {
+            crate::FrontierHardwareClass::D
+        } else if capabilities.device_kind == DeviceKind::DiscreteGpu {
+            crate::FrontierHardwareClass::W
+        } else {
+            crate::FrontierHardwareClass::I
+        };
+        let mut frontier = crate::FrontierBudget::for_hardware_class(frontier_class);
+        frontier.points = frontier.points.min(workload.points).min(points_from_memory);
+        frontier.bytes = frontier.bytes.min(gpu_buffers.saturating_add(gpu_textures));
+        frontier.draw_calls = frontier
+            .draw_calls
+            .min(finite_u32(2_000.0 * f64::from(detail_class)).clamp(500, 20_000));
         let frame = FrameBudget {
             target_frame_ms,
             traversal_ms: (target_frame_ms * 0.08).clamp(0.75, 2.0),
@@ -339,6 +357,7 @@ impl HardwarePolicyResolver {
                 maximum_traversed_nodes: (maximum_traversed_nodes / 4).clamp(8_000, 250_000),
             },
             workload,
+            frontier,
             maximum_render_scale: detail_class.sqrt().clamp(0.75, 2.0),
             maximum_detail_scale: detail_class.clamp(0.5, 8.0),
             maximum_msaa_samples: max_msaa,
@@ -364,6 +383,14 @@ fn mobile_webview_policy(mut policy: ResolvedHardwarePolicy) -> ResolvedHardware
         .resources
         .points
         .min(policy.resources.gpu_buffer_bytes / GPU_POINT_VERTEX_STRIDE_BYTES);
+    policy.frontier.points = policy.frontier.points.min(policy.resources.points);
+    policy.frontier.bytes = policy.frontier.bytes.min(
+        policy
+            .resources
+            .gpu_buffer_bytes
+            .saturating_add(policy.resources.gpu_texture_bytes),
+    );
+    policy.frontier.draw_calls = policy.frontier.draw_calls.min(policy.resources.draw_calls);
     policy.resources.triangles = policy
         .resources
         .triangles

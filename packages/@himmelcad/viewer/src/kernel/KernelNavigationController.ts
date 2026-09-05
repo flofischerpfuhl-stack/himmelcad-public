@@ -49,6 +49,7 @@ export interface KernelNavigationCallbacks {
   ) => void;
   readonly onCameraChanged?: (camera: ReturnType<KernelCameraController['worldCamera']>) => void;
   readonly onViewModeChanged?: (mode: KernelViewMode) => void;
+  readonly onCameraGestureEnd?: (cancelled: boolean) => void;
   readonly onInteractionChanged?: (interactive: boolean) => void;
   readonly onCursorCoordinate?: (
     coordinate: KernelPickCandidate['worldPosition'],
@@ -502,6 +503,7 @@ export class KernelNavigationController {
 
   private readonly onPointerUp = (event: PointerEvent): void => {
     if (this.disposed || this.enabled === false) return;
+    const wasCameraGesture = this.dragMode !== null && this.dragThresholdCrossed;
     const wasClick = event.type !== 'pointercancel' && !this.dragThresholdCrossed;
     const claimedDragRow = this.claimedDragRow;
     if (claimedDragRow) {
@@ -519,6 +521,7 @@ export class KernelNavigationController {
     if (this.pointerMotionTimer !== null) clearTimeout(this.pointerMotionTimer);
     this.pointerMotionTimer = null;
     this.reportInteraction();
+    if (wasCameraGesture && !this.wheelInteracting) this.callbacks.onCameraGestureEnd?.(event.type === 'pointercancel');
     if (wasClick) {
       void this.executeClickGesture(event, Math.max(0, event.timeStamp - this.pressTimeStamp));
     }
@@ -547,6 +550,7 @@ export class KernelNavigationController {
       if (this.disposed) return;
       this.wheelInteracting = false;
       this.reportInteraction();
+      if (!this.dragMode) this.callbacks.onCameraGestureEnd?.(false);
       this.queuePick(this.lastClientX, this.lastClientY);
     }, 120);
     const factor = Math.pow(1.0015, clamp(event.deltaY, -2_000, 2_000));

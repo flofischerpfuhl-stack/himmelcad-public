@@ -5,7 +5,7 @@ export type { TitleBarProps, WindowControls } from './TitleBar.js';
 export { Ribbon } from './Ribbon.js';
 export type { RibbonProps, RibbonTab, RibbonGroup, RibbonAction } from './Ribbon.js';
 export { EntityTree } from './EntityTree.js';
-export type { EntityTreeProps, LeftNavTabId } from './EntityTree.js';
+export type { EntityTreeContextAction, EntityTreeProps, LeftNavTabId } from './EntityTree.js';
 export { FunctionPanel } from './FunctionPanel.js';
 export type { FunctionPanelProps } from './FunctionPanel.js';
 export { StatusBar } from './StatusBar.js';
@@ -25,6 +25,8 @@ export { ExpandChevron } from './ExpandChevron.js';
 export type { ExpandChevronProps } from './ExpandChevron.js';
 export { Checkbox } from './Checkbox.js';
 export type { CheckboxProps } from './Checkbox.js';
+export { PointCloudDisplayProperties } from './PointCloudDisplayProperties.js';
+export type { PointCloudDisplayPropertiesProps } from './PointCloudDisplayProperties.js';
 export { Radio } from './Radio.js';
 export type { RadioProps } from './Radio.js';
 export { Select } from './Select.js';
@@ -43,7 +45,9 @@ export type { MenuProps, ContextMenuProps, MenuItemProps, MenuSubmenuProps } fro
 export { EntityCommandMenu, QuickCommandSurface, clampMenuPosition } from './CommandSurfaces.js';
 export type {
   CommandSurfacePosition,
+  EntityCommandExecutor,
   EntityCommandMenuProps,
+  EntityCommandTarget,
   QuickCommandSurfaceProps,
 } from './CommandSurfaces.js';
 export { NumberInput, parseDraft } from './NumberInput.js';
@@ -98,3 +102,4 @@ export {
   revertEscapeField,
 } from './escapeLadder.js';
 export type { EscapeRungHandler, EscapeRungKind } from './escapeLadder.js';
+export { ViewportHud, type ViewportHudProps } from './ViewportHud.js';

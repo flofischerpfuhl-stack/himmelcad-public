@@ -243,6 +243,13 @@ function frame(
     admission: {},
     eviction: {},
     claimedDecodeMs: 0,
+    frontier: {
+      budget: { hardwareClass: 'W', points: 8_000_000, bytes: 192 * 1024 * 1024, drawCalls: 2_000 },
+      selected: zeroCost(),
+      coarsenedTiles: 0,
+      reasonCodes: [],
+      budgetSatisfied: true,
+    },
   };
 }
 

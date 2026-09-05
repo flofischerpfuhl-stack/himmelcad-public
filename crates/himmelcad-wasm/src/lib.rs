@@ -1411,6 +1411,8 @@ struct WasmMaterialResourceRegistry {
 struct WasmStreamingFrameOptions {
     resource_budget: ResourceBudget,
     frame_budget: himmelcad_render::FrameBudget,
+    #[serde(default)]
+    frontier_budget: Option<himmelcad_render::FrontierBudget>,
     #[serde(default = "default_maximum_sse")]
     maximum_screen_space_error: f64,
     #[serde(default = "default_detail_scale")]
@@ -1433,6 +1435,7 @@ struct WasmStreamingFramePlanResponse<'a> {
     admission: &'a himmelcad_render::AdmissionPlan,
     eviction: &'a himmelcad_render::EvictionPlan,
     claimed_decode_ms: f32,
+    frontier: &'a himmelcad_render::FrontierStatistics,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -3184,16 +3187,18 @@ impl WasmViewer {
         metadata_uri: &str,
         metadata_json: &[u8],
         first_hierarchy_chunk: &[u8],
+        prepared_metadata_json: &[u8],
     ) -> Result<(), JsValue> {
         self.ensure_new_dataset(dataset_id)?;
         if format_id.is_empty() {
             return Err(JsValue::from_str("formatId must be non-empty"));
         }
-        let source = PotreeHierarchySource::from_bytes(
+        let source = PotreeHierarchySource::from_bytes_with_prepared_metadata(
             DatasetId(dataset_id.to_owned()),
             metadata_uri,
             metadata_json,
             first_hierarchy_chunk,
+            (!prepared_metadata_json.is_empty()).then_some(prepared_metadata_json),
         )
         .map_err(js_error)?;
         self.potree_datasets.insert(dataset_id.to_owned(), source);
@@ -4269,11 +4274,14 @@ impl WasmViewer {
             .map_err(js_error)?;
         let plan = self
             .streaming
-            .plan_frame_with_auxiliary(
+            .plan_frame_with_auxiliary_and_frontier(
                 &selections,
                 &auxiliary,
                 options.resource_budget,
                 options.frame_budget,
+                options.frontier_budget.unwrap_or_else(|| {
+                    himmelcad_render::FrontierBudget::from_resource_budget(options.resource_budget)
+                }),
             )
             .map_err(js_error)?;
         self.apply_streaming_visibility(&plan.render)
@@ -4290,6 +4298,7 @@ impl WasmViewer {
             admission: &plan.admission,
             eviction: &plan.eviction,
             claimed_decode_ms: plan.claimed_decode_ms,
+            frontier: &plan.frontier,
         })
         .map_err(js_error)
     }

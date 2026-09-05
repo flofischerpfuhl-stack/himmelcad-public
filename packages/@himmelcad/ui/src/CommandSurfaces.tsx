@@ -3,6 +3,7 @@ import {
   type CommandContext,
   type CommandExecutor,
   type CommandGroup,
+  type RuntimeCommandId,
   type RuntimeCommandEntry,
 } from '../../app/src/commands.js';
 import { ContextMenu, MenuItem, MenuSeparator, MenuSubmenu } from './Menu.js';
@@ -15,16 +16,28 @@ export interface CommandSurfacePosition {
 
 export interface EntityCommandMenuProps extends CommandSurfacePosition {
   readonly context: CommandContext;
-  readonly onExecute: CommandExecutor;
+  readonly target: EntityCommandTarget;
+  readonly onExecute: EntityCommandExecutor;
   readonly onClose: () => void;
   readonly currentCandidateId?: string;
   readonly candidateSubmenuOpen?: boolean;
 }
 
+export interface EntityCommandTarget {
+  readonly entityIds: readonly string[];
+  readonly kind: string;
+}
+
+export type EntityCommandExecutor = (
+  commandId: RuntimeCommandId,
+  target: EntityCommandTarget,
+) => void | Promise<void>;
+
 export function EntityCommandMenu({
   x,
   y,
   context,
+  target,
   onExecute,
   onClose,
   currentCandidateId,
@@ -41,7 +54,7 @@ export function EntityCommandMenu({
     >
       <CommandRows
         entries={entries}
-        onExecute={onExecute}
+        onExecute={(entry, targetOverride) => onExecute(entry.id, targetOverride ?? target)}
         {...(context.candidates ? { candidates: context.candidates } : {})}
         {...(currentCandidateId ? { currentCandidateId } : {})}
         candidateSubmenuOpen={candidateSubmenuOpen}
@@ -73,7 +86,17 @@ export function QuickCommandSurface({
       className={styles.menu!}
     >
       <div className={styles.header}>Viewport</div>
-      <CommandRows entries={commandsForSurface('quickSurface', context)} onExecute={onExecute} />
+      <CommandRows
+        entries={commandsForSurface('quickSurface', context)}
+        onExecute={(entry, targetOverride) =>
+          onExecute({
+            id: entry.id,
+            args: targetOverride?.entityIds ?? [],
+            source: 'quickSurface',
+            ...(targetOverride ? { payload: targetOverride } : {}),
+          })
+        }
+      />
     </ContextMenu>
   );
 }
@@ -87,7 +110,10 @@ function CommandRows({
   onClose,
 }: {
   readonly entries: readonly RuntimeCommandEntry[];
-  readonly onExecute: CommandExecutor;
+  readonly onExecute: (
+    entry: RuntimeCommandEntry,
+    targetOverride?: EntityCommandTarget,
+  ) => void | Promise<void>;
   readonly candidates?: CommandContext['candidates'];
   readonly currentCandidateId?: string;
   readonly candidateSubmenuOpen?: boolean;
@@ -122,12 +148,13 @@ function CommandRows({
                     key={candidate.entityId}
                     aria-current={candidate.entityId === currentCandidateId ? 'true' : undefined}
                     onSelect={() => {
-                      void onExecute({
-                        id: 'select.set',
-                        args: [candidate.entityId],
-                        source: 'contextMenu',
-                        payload: { entityIds: [candidate.entityId] },
-                      });
+                      const selectEntry = entries.find((entry) => entry.id === 'select.set');
+                      if (selectEntry) {
+                        void onExecute(selectEntry, {
+                          entityIds: [candidate.entityId],
+                          kind: candidate.kind,
+                        });
+                      }
                       onClose?.();
                     }}
                   >
@@ -144,7 +171,7 @@ function CommandRows({
               </MenuSubmenu>
             ) : (
               <MenuItem
-                onSelect={() => void onExecute({ id: entry.id, args: [], source: 'contextMenu' })}
+                onSelect={() => void onExecute(entry)}
               >
                 {content}
               </MenuItem>

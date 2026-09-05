@@ -1,6 +1,6 @@
 //! Potree 2.0 metadata and paged hierarchy provider.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::io::Cursor;
@@ -11,7 +11,9 @@ use thiserror::Error;
 
 use crate::{
     BoundingVolume, ContentKind, ContentReference, DatasetId, HierarchyPageReference,
-    HierarchySource, RefinementMode, TileDescriptor, TileId, WorldAabb, WorldTransform, WorldVec3,
+    HierarchySource, PreparedPointDatasetMetadata, PreparedPointMetadataOrigin,
+    PreparedPointNodeMetadata, PreparedPointSampleStatistics, PreparedPointScreenSpaceError,
+    RefinementMode, TileDescriptor, TileId, WorldAabb, WorldTransform, WorldVec3,
 };
 
 const BYTES_PER_NODE: usize = 22;
@@ -46,6 +48,8 @@ struct Metadata {
     scale: [f64; 3],
     encoding: String,
     attributes: Vec<MetadataAttribute>,
+    #[serde(default)]
+    himmelcad_prepared_point_dataset: Option<PreparedPointDatasetMetadata>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -356,6 +360,8 @@ pub struct PotreeHierarchySource {
     octree_uri: String,
     spacing: f64,
     point_layout: PotreePointLayout,
+    raw_source_content_hash: Option<String>,
+    prepared_nodes: BTreeMap<String, PreparedPointNodeMetadata>,
     tiles: HashMap<TileId, Arc<TileDescriptor>>,
 }
 
@@ -367,6 +373,25 @@ impl PotreeHierarchySource {
         metadata_json: &[u8],
         first_hierarchy_chunk: &[u8],
     ) -> Result<Self, PotreeHierarchyError> {
+        Self::from_bytes_with_prepared_metadata(
+            dataset_id,
+            metadata_uri,
+            metadata_json,
+            first_hierarchy_chunk,
+            None,
+        )
+    }
+
+    /// Parses Potree metadata with an independently verified Himmel:CAD bake
+    /// contract. Keeping the extension separate preserves ADR 0003 byte-for-byte
+    /// compatibility and the canonical hash of `metadata.json`.
+    pub fn from_bytes_with_prepared_metadata(
+        dataset_id: DatasetId,
+        metadata_uri: &str,
+        metadata_json: &[u8],
+        first_hierarchy_chunk: &[u8],
+        prepared_metadata_json: Option<&[u8]>,
+    ) -> Result<Self, PotreeHierarchyError> {
         let metadata: Metadata = serde_json::from_slice(metadata_json)?;
         if !metadata.version.starts_with('2') {
             return Err(PotreeHierarchyError::InvalidMetadata("version"));
@@ -375,6 +400,14 @@ impl PotreeHierarchySource {
             return Err(PotreeHierarchyError::InvalidMetadata("spacing"));
         }
         let point_layout = parse_point_layout(&metadata)?;
+        let external_prepared = prepared_metadata_json
+            .filter(|bytes| !bytes.is_empty())
+            .map(serde_json::from_slice::<PreparedPointDatasetMetadata>)
+            .transpose()?;
+        let prepared = external_prepared
+            .as_ref()
+            .or(metadata.himmelcad_prepared_point_dataset.as_ref());
+        let prepared_nodes = validate_prepared_metadata(prepared)?;
         if metadata.hierarchy.first_chunk_size
             != u64::try_from(first_hierarchy_chunk.len()).unwrap_or(u64::MAX)
         {
@@ -391,6 +424,9 @@ impl PotreeHierarchySource {
             octree_uri: format!("{base}octree.bin"),
             spacing: metadata.spacing,
             point_layout,
+            raw_source_content_hash: prepared
+                .and_then(|value| value.raw_source_content_hash.clone()),
+            prepared_nodes,
             tiles: HashMap::new(),
         };
         source.parse_page(
@@ -409,6 +445,12 @@ impl PotreeHierarchySource {
     #[must_use]
     pub fn point_layout(&self) -> &PotreePointLayout {
         &self.point_layout
+    }
+
+    /// Hash of the raw authoritative source when the bake contract supplied it.
+    #[must_use]
+    pub fn raw_source_content_hash(&self) -> Option<&str> {
+        self.raw_source_content_hash.as_deref()
     }
 
     /// Adds a range-loaded hierarchy page for a previously discovered proxy.
@@ -478,6 +520,31 @@ impl PotreeHierarchySource {
             // (zero points, zero-byte range). They are valid hierarchy nodes,
             // but they are not stream content: emitting `bytes=0--1` for such
             // a node turns the harmless leaf into a permanent HTTP 416.
+            let compatibility_error =
+                self.spacing / 2_f64.powi(i32::try_from(current.level).unwrap_or(i32::MAX));
+            let prepared_point_metadata =
+                self.prepared_nodes.get(&current.id.0).cloned().map_or_else(
+                    || PreparedPointNodeMetadata {
+                        screen_space_error: PreparedPointScreenSpaceError {
+                            geometric_error: compatibility_error,
+                            point_spacing: compatibility_error,
+                        },
+                        sample_statistics: PreparedPointSampleStatistics {
+                            sampled_points: point_count,
+                            source_points: None,
+                            method: None,
+                        },
+                        station_ids: None,
+                        content_hash: None,
+                        origin: PreparedPointMetadataOrigin::Potree2Compatibility,
+                    },
+                    |value| value,
+                );
+            if prepared_point_metadata.sample_statistics.sampled_points != point_count {
+                return Err(PotreeHierarchyError::InvalidMetadata(
+                    "himmelcadPreparedPointDataset.nodes.sampleStatistics.sampledPoints",
+                ));
+            }
             let contents = if is_proxy || point_count == 0 || byte_length == 0 {
                 Vec::new()
             } else {
@@ -487,7 +554,7 @@ impl PotreeHierarchySource {
                     byte_offset: Some(byte_offset),
                     byte_length: Some(byte_length),
                     primitive_count: Some(point_count),
-                    content_hash: None,
+                    content_hash: prepared_point_metadata.content_hash.clone(),
                     decoder_parameters: Some(serde_json::json!({
                         "streamingPage": {
                             "schemaVersion": 1,
@@ -504,7 +571,6 @@ impl PotreeHierarchySource {
                 decoder_parameters: None,
             });
             let parent = parent_id(&current.id);
-            let level_exponent = i32::try_from(current.level).unwrap_or(i32::MAX);
             self.tiles.insert(
                 current.id.clone(),
                 Arc::new(TileDescriptor {
@@ -515,11 +581,14 @@ impl PotreeHierarchySource {
                         bounds: current.bounds,
                     },
                     content_transform: WorldTransform::IDENTITY,
-                    geometric_error: self.spacing / 2_f64.powi(level_exponent),
+                    geometric_error: prepared_point_metadata.screen_space_error.geometric_error,
                     refinement: RefinementMode::Add,
                     contents,
                     child_page,
-                    provider_metadata: None,
+                    provider_metadata: Some(serde_json::json!({
+                        "preparedPoint": prepared_point_metadata
+                    })),
+                    prepared_point_metadata: Some(prepared_point_metadata),
                 }),
             );
         }
@@ -530,6 +599,67 @@ impl PotreeHierarchySource {
         }
         Ok(())
     }
+}
+
+fn validate_prepared_metadata(
+    metadata: Option<&PreparedPointDatasetMetadata>,
+) -> Result<BTreeMap<String, PreparedPointNodeMetadata>, PotreeHierarchyError> {
+    let Some(metadata) = metadata else {
+        return Ok(BTreeMap::new());
+    };
+    if metadata.schema_version != 1 {
+        return Err(PotreeHierarchyError::InvalidMetadata(
+            "himmelcadPreparedPointDataset.schemaVersion",
+        ));
+    }
+    if metadata
+        .raw_source_content_hash
+        .as_deref()
+        .is_some_and(|hash| !canonical_sha256(hash))
+    {
+        return Err(PotreeHierarchyError::InvalidMetadata(
+            "himmelcadPreparedPointDataset.rawSourceContentHash",
+        ));
+    }
+    for (node_id, node) in &metadata.nodes {
+        let error = node.screen_space_error.geometric_error;
+        let spacing = node.screen_space_error.point_spacing;
+        if node_id.is_empty()
+            || !error.is_finite()
+            || error <= 0.0
+            || !spacing.is_finite()
+            || spacing <= 0.0
+            || node
+                .sample_statistics
+                .source_points
+                .is_some_and(|source| source < node.sample_statistics.sampled_points)
+            || node
+                .content_hash
+                .as_deref()
+                .is_some_and(|hash| !canonical_sha256(hash))
+            || node.origin != PreparedPointMetadataOrigin::Baked
+        {
+            return Err(PotreeHierarchyError::InvalidMetadata(
+                "himmelcadPreparedPointDataset.nodes",
+            ));
+        }
+        if let Some(stations) = &node.station_ids {
+            let unique = stations.iter().collect::<BTreeSet<_>>();
+            if stations.iter().any(String::is_empty) || unique.len() != stations.len() {
+                return Err(PotreeHierarchyError::InvalidMetadata(
+                    "himmelcadPreparedPointDataset.nodes.stationIds",
+                ));
+            }
+        }
+    }
+    Ok(metadata.nodes.clone())
+}
+
+fn canonical_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 impl PotreePointLayout {
@@ -1110,15 +1240,18 @@ fn base_uri(uri: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::{
         PotreeAttributeLayout, PotreeAttributeType, PotreeDecodeError, PotreeHierarchySource,
         PotreePointLayout,
     };
-    use crate::{BoundingVolume, DatasetId, HierarchySource, TileId, WorldVec3};
+    use crate::{
+        BoundingVolume, DatasetId, HierarchySource, PreparedPointMetadataOrigin, TileId, WorldVec3,
+    };
 
-    #[test]
-    fn parses_first_chunk_into_range_addressed_additive_tiles() {
-        let metadata = br#"{
+    fn two_node_metadata() -> &'static [u8] {
+        br#"{
           "version":"2.0",
           "hierarchy":{"firstChunkSize":44,"stepSize":5,"depth":2},
           "spacing":4.0,
@@ -1130,7 +1263,12 @@ mod tests {
             {"name":"position","size":12,"numElements":3,"type":"int32"},
             {"name":"rgba","size":6,"numElements":3,"type":"uint16"}
           ]
-        }"#;
+        }"#
+    }
+
+    #[test]
+    fn parses_first_chunk_into_range_addressed_additive_tiles() {
+        let metadata = two_node_metadata();
         let mut hierarchy = Vec::new();
         hierarchy.extend(record(0, 1, 100, 0, 1_200));
         hierarchy.extend(record(1, 0, 50, 1_200, 600));
@@ -1166,6 +1304,85 @@ mod tests {
         assert_close(bounds.max.x, 104.0);
         assert_close(bounds.max.y, 204.0);
         assert_close(bounds.max.z, 304.0);
+    }
+
+    #[test]
+    fn potree_compatibility_keeps_node_set_and_derives_only_exact_fields() {
+        let mut hierarchy = Vec::new();
+        hierarchy.extend(record(0, 1, 100, 0, 1_200));
+        hierarchy.extend(record(1, 0, 50, 1_200, 600));
+        let legacy = PotreeHierarchySource::from_bytes(
+            DatasetId("legacy".to_owned()),
+            "hcad://cloud/metadata.json",
+            two_node_metadata(),
+            &hierarchy,
+        )
+        .expect("legacy Potree hierarchy");
+        let prepared = serde_json::json!({
+            "schemaVersion": 1,
+            "rawSourceContentHash": "11".repeat(32),
+            "nodes": {
+                "r": {
+                    "screenSpaceError": { "geometricError": 4.0, "pointSpacing": 4.0 },
+                    "sampleStatistics": { "sampledPoints": 100, "sourcePoints": 120, "method": "poisson-disk" },
+                    "stationIds": ["station-a"],
+                    "contentHash": "22".repeat(32),
+                    "origin": "baked"
+                },
+                "r0": {
+                    "screenSpaceError": { "geometricError": 2.0, "pointSpacing": 2.0 },
+                    "sampleStatistics": { "sampledPoints": 50, "sourcePoints": 80, "method": "poisson-disk" },
+                    "stationIds": ["station-a"],
+                    "contentHash": "33".repeat(32),
+                    "origin": "baked"
+                }
+            }
+        });
+        let prepared_bytes = serde_json::to_vec(&prepared).expect("prepared metadata json");
+        let mut enriched = PotreeHierarchySource::from_bytes_with_prepared_metadata(
+            DatasetId("prepared".to_owned()),
+            "hcad://cloud/metadata.json",
+            two_node_metadata(),
+            &hierarchy,
+            Some(&prepared_bytes),
+        )
+        .expect("prepared Potree hierarchy");
+
+        assert_eq!(
+            legacy.tiles.keys().map(|id| &id.0).collect::<BTreeSet<_>>(),
+            enriched
+                .tiles
+                .keys()
+                .map(|id| &id.0)
+                .collect::<BTreeSet<_>>()
+        );
+        let root = enriched
+            .tile(&TileId("r".to_owned()))
+            .expect("root lookup")
+            .expect("root");
+        let metadata = root
+            .prepared_point_metadata
+            .expect("prepared point metadata");
+        assert_eq!(metadata.station_ids, Some(vec!["station-a".to_owned()]));
+        assert_eq!(metadata.origin, PreparedPointMetadataOrigin::Baked);
+        assert_eq!(root.contents[0].content_hash, Some("22".repeat(32)));
+
+        let compatibility_root = legacy
+            .tiles
+            .get(&TileId("r".to_owned()))
+            .expect("legacy root");
+        let compatibility = compatibility_root
+            .prepared_point_metadata
+            .as_ref()
+            .expect("lazy compatibility metadata");
+        assert_eq!(compatibility.sample_statistics.sampled_points, 100);
+        assert_eq!(compatibility.sample_statistics.source_points, None);
+        assert_eq!(compatibility.station_ids, None);
+        assert_eq!(compatibility.content_hash, None);
+        assert_eq!(
+            compatibility.origin,
+            PreparedPointMetadataOrigin::Potree2Compatibility
+        );
     }
 
     #[test]

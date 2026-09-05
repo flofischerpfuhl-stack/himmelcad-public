@@ -18,9 +18,13 @@ const DEFAULT_DATASET = resolve(
 const POTREE_CONVERTER = resolve(REPO, 'vendor/potreeconverter/linux-x64/PotreeConverter');
 const args = parseArguments(process.argv.slice(2));
 const date = args.date ?? new Intl.DateTimeFormat('en-CA').format(new Date());
-const outputStem = resolve(OUTPUT_DIRECTORY, `viewer-baseline-${date}`);
+const outputStem = resolve(
+  OUTPUT_DIRECTORY,
+  `${args.frontierOnly ? 'viewer-frontier-orbit' : 'viewer-baseline'}-${date}`,
+);
 const report = {
-  schemaVersion: 2,
+  schemaVersion: 3,
+  mode: args.frontierOnly ? 'frontier-only' : 'timed-baseline',
   generatedAt: new Date().toISOString(),
   status: 'running',
   measurement: {
@@ -35,6 +39,7 @@ const report = {
   dataset: null,
   browser: null,
   paths: [],
+  frontierOrbit: null,
   aggregate: null,
   blocker: null,
 };
@@ -66,12 +71,16 @@ try {
 
   const metadataUrl = `/@fs/${prepared.metadataPath}`;
   report.browser = await loadDataset(page, metadataUrl, prepared);
-  report.paths = await page.evaluate(runCameraPaths, {
-    width: args.width,
-    height: args.height,
-    frames: args.frames,
-  });
-  report.aggregate = aggregatePaths(report.paths);
+  if (args.frontierOnly) {
+    report.frontierOrbit = await page.evaluate(runFrontierOrbit, { frames: args.frames });
+  } else {
+    report.paths = await page.evaluate(runCameraPaths, {
+      width: args.width,
+      height: args.height,
+      frames: args.frames,
+    });
+    report.aggregate = aggregatePaths(report.paths);
+  }
   report.status = 'complete';
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
@@ -102,10 +111,12 @@ function parseArguments(values) {
     height: 900,
     frames: 180,
     noLaunch: false,
+    frontierOnly: false,
   };
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (value === '--no-launch') parsed.noLaunch = true;
+    else if (value === '--frontier-only') parsed.frontierOnly = true;
     else if (value === '--cdp') parsed.cdp = requiredValue(values, ++index, value);
     else if (value === '--dataset') parsed.dataset = requiredValue(values, ++index, value);
     else if (value === '--metadata') parsed.metadata = requiredValue(values, ++index, value);
@@ -120,6 +131,7 @@ function parseArguments(values) {
   --metadata <metadata.json>                   Reuse an already converted Potree 2 dataset
   --cdp <url>                                  Builder CDP endpoint (default: http://127.0.0.1:9223)
   --no-launch                                  Require an already running Builder
+  --frontier-only                              Record one orbit's frontier counters, not timings
   --width <px> --height <px>                   Viewport (default: 1440x900)
   --frames <count>                             Samples per motion path (default: 180)
   --date <YYYY-MM-DD>                          Output suffix (default: local date)`);
@@ -190,6 +202,7 @@ async function prepareDataset(datasetPath, explicitMetadata) {
     bounds: metadata.boundingBox,
     projection: metadata.projection ?? null,
     identity: source.identity,
+    sourceContentHash: source.contentHash,
   };
 }
 
@@ -205,6 +218,25 @@ async function lasIdentity(path) {
   const hash = createHash('sha256');
   hash.update(bytes);
   hash.update(String(sourceStat.size));
+  const contentHash = createHash('sha256');
+  const contentBuffer = Buffer.alloc(16 * 1024 * 1024);
+  let contentOffset = 0;
+  const contentFile = await open(path, 'r');
+  try {
+    while (contentOffset < sourceStat.size) {
+      const { bytesRead } = await contentFile.read(
+        contentBuffer,
+        0,
+        Math.min(contentBuffer.length, sourceStat.size - contentOffset),
+        contentOffset,
+      );
+      if (bytesRead === 0) break;
+      contentHash.update(contentBuffer.subarray(0, bytesRead));
+      contentOffset += bytesRead;
+    }
+  } finally {
+    await contentFile.close();
+  }
   if (bytes.subarray(0, 4).toString('ascii') !== 'LASF') {
     return {
       bytes: sourceStat.size,
@@ -212,6 +244,7 @@ async function lasIdentity(path) {
       version: null,
       pointFormat: null,
       identity: hash.digest('hex'),
+      contentHash: contentHash.digest('hex'),
     };
   }
   const major = bytes.readUInt8(24);
@@ -224,6 +257,7 @@ async function lasIdentity(path) {
     version: `${major}.${minor}`,
     pointFormat: bytes.readUInt8(104) & 0x3f,
     identity: hash.digest('hex'),
+    contentHash: contentHash.digest('hex'),
   };
 }
 
@@ -281,7 +315,7 @@ async function waitForBuilderPage(connectedBrowser) {
 
 async function loadDataset(page, metadataUrl, prepared) {
   return await page.evaluate(
-    async ({ uri, expectedPoints, bounds, sourceName }) => {
+    async ({ uri, expectedPoints, bounds, sourceName, rawSourceContentHash }) => {
       const handle = globalThis.__hcadBuilderKernel;
       const session = handle.session;
       const viewer = session.viewerState;
@@ -353,6 +387,11 @@ async function loadDataset(page, metadataUrl, prepared) {
             expectedGeneration: null,
             resolvedGeometry: geometry,
           },
+          preparedMetadata: {
+            schemaVersion: 1,
+            rawSourceContentHash,
+            nodes: {},
+          },
           style: {
             baseColor: [0.82, 0.88, 0.95, 1],
             opacity: 1,
@@ -409,6 +448,7 @@ async function loadDataset(page, metadataUrl, prepared) {
       expectedPoints: prepared.preparedPointCount,
       bounds: prepared.bounds,
       sourceName: basename(prepared.sourcePath),
+      rawSourceContentHash: prepared.sourceContentHash,
     },
   );
 }
@@ -445,6 +485,22 @@ async function runCameraPaths({ frames }) {
       sharedEncode: summarizeValues(sampledFrames.map((frame) => frame.phases.sharedEncodeMs)),
     },
     decodeBacklog: summarizeValues(sampledFrames.map((frame) => frame.decodeBacklog)),
+    frontier: {
+      hardwareClass: sampledFrames.find((frame) => frame.frontier)?.frontier?.hardwareClass ?? null,
+      pointBudget: sampledFrames.find((frame) => frame.frontier)?.frontier?.budgetPoints ?? null,
+      byteBudget: sampledFrames.find((frame) => frame.frontier)?.frontier?.budgetBytes ?? null,
+      drawBudget: sampledFrames.find((frame) => frame.frontier)?.frontier?.budgetDrawCalls ?? null,
+      maximumSelectedPoints: Math.max(0, ...sampledFrames.map((frame) => frame.frontier?.selectedPoints ?? 0)),
+      maximumSelectedBytes: Math.max(0, ...sampledFrames.map((frame) => frame.frontier?.selectedBytes ?? 0)),
+      maximumSelectedDrawCalls: Math.max(0, ...sampledFrames.map((frame) => frame.frontier?.selectedDrawCalls ?? 0)),
+      coarsenedTiles: sampledFrames.reduce((total, frame) => total + (frame.frontier?.coarsenedTiles ?? 0), 0),
+      framesOverBudget: sampledFrames.filter((frame) => frame.frontier?.budgetSatisfied === false).length,
+      framesOverPointBudget: sampledFrames.filter((frame) =>
+        frame.frontier !== undefined && frame.frontier.selectedPoints > frame.frontier.budgetPoints
+      ).length,
+      framesMissingAccounting: sampledFrames.filter((frame) => frame.frontier === undefined).length,
+      framesMissingReasonCodes: sampledFrames.filter((frame) => frame.deadlineReasonCodes.length === 0).length,
+    },
     reasonCounts: sampledFrames.flatMap((frame) => frame.deadlineReasonCodes).reduce((counts, reason) => ({ ...counts, [reason]: (counts[reason] ?? 0) + 1 }), {}),
   });
 
@@ -468,6 +524,15 @@ async function runCameraPaths({ frames }) {
     const sampledFrames = session.diagnosticsSnapshot(frames + 8).lastFrames
       .filter((frame) => frame.frameId > startFrameId)
       .slice(5);
+    const frontierViolations = sampledFrames.filter(
+      (frame) => frame.frontier === undefined || frame.frontier.budgetSatisfied === false,
+    );
+    if (frontierViolations.length > 0) {
+      throw new Error(`${name} produced ${frontierViolations.length} frames without valid frontier budget accounting`);
+    }
+    if (sampledFrames.some((frame) => frame.deadlineReasonCodes.length === 0)) {
+      throw new Error(`${name} produced frames without density reason codes`);
+    }
     paths.push({
       name,
       presentSource: sampledFrames[0]?.presentSource ?? 'raf-render-complete',
@@ -545,6 +610,70 @@ async function runCameraPaths({ frames }) {
   return paths;
 }
 
+async function runFrontierOrbit({ frames }) {
+  const handle = globalThis.__hcadBuilderKernel;
+  const session = handle.session;
+  const camera = handle.camera;
+  await session.setViewMode('3d', 0);
+  const startFrameId = session.diagnosticsSnapshot(1).lastFrames.at(-1)?.frameId ?? 0;
+  handle.setInteracting(true);
+  for (let index = 0; index < frames; index += 1) {
+    camera.orbit((Math.PI * 2) / frames, Math.sin((index / frames) * Math.PI * 2) * 0.0015);
+    session.setWorldCamera(camera.worldCamera(), camera.recommendedFloatingOrigin());
+    await session.waitForNextPresentedFrame();
+  }
+  handle.setInteracting(false);
+  await new Promise((resolvePromise) => requestAnimationFrame(resolvePromise));
+  const sampledFrames = session.diagnosticsSnapshot(frames + 4).lastFrames
+    .filter((frame) => frame.frameId > startFrameId)
+    .slice(2);
+  const accounted = sampledFrames.filter((frame) => frame.frontier !== undefined);
+  const violations = accounted.filter(
+    (frame) =>
+      frame.frontier.budgetSatisfied === false ||
+      frame.frontier.selectedPoints > frame.frontier.budgetPoints ||
+      frame.frontier.selectedBytes > frame.frontier.budgetBytes ||
+      frame.frontier.selectedDrawCalls > frame.frontier.budgetDrawCalls,
+  );
+  if (accounted.length !== sampledFrames.length || violations.length > 0) {
+    throw new Error(
+      `orbit frontier accounting failed: ${sampledFrames.length - accounted.length} missing, ${violations.length} over budget`,
+    );
+  }
+  const first = accounted[0]?.frontier;
+  return {
+    status: 'non-timed-functional-orbit',
+    sampledFrames: sampledFrames.length,
+    hardwareClass: first?.hardwareClass ?? null,
+    budget: {
+      points: first?.budgetPoints ?? null,
+      bytes: first?.budgetBytes ?? null,
+      drawCalls: first?.budgetDrawCalls ?? null,
+    },
+    maximumSelected: {
+      points: Math.max(0, ...accounted.map((frame) => frame.frontier.selectedPoints)),
+      bytes: Math.max(0, ...accounted.map((frame) => frame.frontier.selectedBytes)),
+      drawCalls: Math.max(0, ...accounted.map((frame) => frame.frontier.selectedDrawCalls)),
+    },
+    framesOverPointBudget: accounted.filter(
+      (frame) => frame.frontier.selectedPoints > frame.frontier.budgetPoints,
+    ).length,
+    framesOverAnyBudget: violations.length,
+    blankTileFrames: accounted.filter((frame) => frame.frontier.selectedPoints === 0).length,
+    coarsenedTiles: accounted.reduce(
+      (total, frame) => total + frame.frontier.coarsenedTiles,
+      0,
+    ),
+    reasonCounts: sampledFrames
+      .flatMap((frame) => frame.deadlineReasonCodes)
+      .reduce(
+        (counts, reason) => ({ ...counts, [reason]: (counts[reason] ?? 0) + 1 }),
+        {},
+      ),
+    residency: session.diagnostics().streaming.residencyStageCounts,
+  };
+}
+
 function aggregatePaths(paths) {
   const complete = paths.filter((path) => path.presentedFrameIntervalMs !== null);
   return {
@@ -586,13 +715,31 @@ async function writeOutputs(value, stem) {
     `Dataset: ${value.dataset ? `${value.dataset.preparedPointCount.toLocaleString('en-US')} points (${value.dataset.sourcePath})` : 'not prepared'}`,
     '',
   ];
-  if (value.status === 'complete') {
+  if (value.status === 'complete' && value.mode === 'frontier-only') {
+    const orbit = value.frontierOrbit;
+    lines.push(
+      'This is a non-timed functional orbit. It makes no frame-latency claim.',
+      '',
+      '| Frames | Class | Point budget | Selected points max | Selected bytes max | Selected draws max | Point overruns | Any overruns | Blank-tile frames |',
+      '| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+      `| ${orbit.sampledFrames} | ${orbit.hardwareClass ?? 'n/a'} | ${orbit.budget.points ?? 'n/a'} | ${orbit.maximumSelected.points} | ${orbit.maximumSelected.bytes} | ${orbit.maximumSelected.drawCalls} | ${orbit.framesOverPointBudget} | ${orbit.framesOverAnyBudget} | ${orbit.blankTileFrames} |`,
+      '',
+      `Reason codes: \`${JSON.stringify(orbit.reasonCounts)}\`.`,
+    );
+  } else if (value.status === 'complete') {
     lines.push(
       '| Path | Presented p50 | p95 | p99 | Exact points p95 | Input→present p95 | Decode backlog max |',
       '| --- | ---: | ---: | ---: | ---: | ---: | ---: |',
       ...value.paths.map(
         (path) =>
           `| ${path.name} | ${formatMs(path.presentedFrameIntervalMs?.p50)} | ${formatMs(path.presentedFrameIntervalMs?.p95)} | ${formatMs(path.presentedFrameIntervalMs?.p99)} | ${path.exactPrimitivesPerFrame.points?.p95 ?? 'n/a'} | ${formatMs(path.inputToPresentMs?.p95)} | ${path.decodeBacklog?.maximum ?? 'n/a'} |`,
+      ),
+      '',
+      '| Path | Class | Point budget | Selected points max | Selected bytes max | Selected draws max | Frames over budget |',
+      '| --- | --- | ---: | ---: | ---: | ---: | ---: |',
+      ...value.paths.map(
+        (path) =>
+          `| ${path.name} | ${path.frontier.hardwareClass ?? 'n/a'} | ${path.frontier.pointBudget ?? 'n/a'} | ${path.frontier.maximumSelectedPoints} | ${path.frontier.maximumSelectedBytes} | ${path.frontier.maximumSelectedDrawCalls} | ${path.frontier.framesOverBudget} |`,
       ),
       '',
       `Worst path p95: **${formatMs(value.aggregate.worstPresentedP95Ms)}**.`,
@@ -604,11 +751,13 @@ async function writeOutputs(value, stem) {
       `Needed: ${value.blocker?.needed ?? 'see JSON'}`,
     );
   }
-  lines.push(
-    '',
-    '_Present source: `raf-render-complete` (successful kernel surface present paired to its scheduling rAF; not OS display timing). GPU durations are correlated asynchronous timestamp-query samples when supported._',
-    '',
-  );
+  if (value.mode !== 'frontier-only') {
+    lines.push(
+      '',
+      '_Present source: `raf-render-complete` (successful kernel surface present paired to its scheduling rAF; not OS display timing). GPU durations are correlated asynchronous timestamp-query samples when supported._',
+      '',
+    );
+  }
   await writeFile(markdownPath, lines.join('\n'));
   console.log(`Wrote ${jsonPath}`);
   console.log(`Wrote ${markdownPath}`);

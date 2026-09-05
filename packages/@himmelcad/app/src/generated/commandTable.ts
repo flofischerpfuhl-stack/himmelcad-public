@@ -69,7 +69,97 @@ export const GENERATED_COMMAND_TABLE = [
     "host": "renderer"
   },
   {
-    "id": "project.flush",
+    "id": "photolab.images.remove",
+    "label": "Remove from project…",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasSelection",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": false,
+      "automation": false
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab P11 command rows",
+    "host": "renderer",
+    "owner": "photolab",
+    "entityKinds": [
+      "CameraImage"
+    ],
+    "allowMultiSelect": true
+  },
+  {
+    "id": "file.import",
+    "label": "Import…",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "Import/Export IF-D1–IF-D14",
+    "host": "renderer"
+  },
+  {
+    "id": "project.new",
+    "label": "New",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "always",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "File/project FP-D1",
+    "host": "renderer"
+  },
+  {
+    "id": "project.open",
+    "label": "Open",
+    "kind": "command",
+    "shortcut": "Ctrl+O",
+    "enablement": "always",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "File/project FP-D1",
+    "host": "renderer"
+  },
+  {
+    "id": "project.recent",
+    "label": "Recent",
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "always",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "File/project FP-D1",
+    "host": "renderer"
+  },
+  {
+    "id": "project.save",
     "label": "Save",
     "kind": "command",
     "shortcut": "Ctrl+S",
@@ -82,7 +172,41 @@ export const GENERATED_COMMAND_TABLE = [
       "automation": true
     },
     "group": "edit",
-    "ownerSpec": "File/project FP-D19",
+    "ownerSpec": "File/project FP-D2/FP-D19",
+    "host": "renderer"
+  },
+  {
+    "id": "project.save_as",
+    "label": "Save As…",
+    "kind": "command",
+    "shortcut": "Ctrl+Shift+S",
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "File/project FP-D3/FP-D20",
+    "host": "renderer"
+  },
+  {
+    "id": "project.close",
+    "label": "Close",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "File/project FP-D1/FP-D21",
     "host": "renderer"
   },
   {
@@ -100,6 +224,74 @@ export const GENERATED_COMMAND_TABLE = [
     },
     "group": "view",
     "ownerSpec": "View VD-D1",
+    "host": "renderer"
+  },
+  {
+    "id": "view.camera.undo",
+    "label": "Undo camera",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "View VD-D14",
+    "host": "renderer"
+  },
+  {
+    "id": "view.camera.redo",
+    "label": "Redo camera",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "View VD-D14",
+    "host": "renderer"
+  },
+  {
+    "id": "view.preset.perspective",
+    "label": "Perspective",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "View VD-D9",
+    "host": "renderer"
+  },
+  {
+    "id": "view.hud.toggle",
+    "label": "Viewport HUD",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "View VD-D10",
     "host": "renderer"
   },
   {
@@ -271,5 +463,48 @@ export const GENERATED_COMMAND_TABLE = [
     "group": "entity-specific",
     "ownerSpec": "Import/Export IF-D20",
     "host": "renderer"
+  },
+  {
+    "id": "photolab.gcp.images",
+    "label": "Images containing this GCP",
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasSelection",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": false,
+      "automation": false
+    },
+    "group": "entity-specific",
+    "ownerSpec": "PhotoLab P11 command rows",
+    "host": "renderer",
+    "owner": "photolab",
+    "entityKinds": [
+      "GroundControlPoint"
+    ],
+    "allowMultiSelect": false
+  },
+  {
+    "id": "pointcloud.display.set",
+    "label": "Display properties",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "cloudSelection",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Point cloud PC-D11",
+    "host": "renderer",
+    "entityKinds": [
+      "PointCloud"
+    ],
+    "allowMultiSelect": true
   }
 ] as const;

@@ -146,9 +146,9 @@
   gap: 3px;
 }
 .progress [role='progressbar'] {
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr) auto;
 }
-.progress [role='progressbar'] code {
+.progress [role='progressbar']:not([aria-valuenow]) code {
   display: none;
 }
 .progress [role='progressbar'] > div {

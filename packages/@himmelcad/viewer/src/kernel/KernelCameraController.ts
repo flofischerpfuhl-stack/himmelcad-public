@@ -81,6 +81,7 @@ export function assertValidKernelLocalOrthographicViewFrame(
  * Z is permanently up; orbit and zoom can preserve an arbitrary cursor pivot.
  */
 export class KernelCameraController {
+  static readonly preset = kernelCameraPreset;
   private target: Vec3 = [0, 0, 0];
   private yaw = 0;
   private pitch = Math.PI / 4;
@@ -806,4 +807,16 @@ function rotateAroundAxis(value: Vec3, axis: Vec3, angle: number): Vec3 {
     add(scale(value, cosine), scale(cross(unit, value), sine)),
     scale(unit, dot(unit, value) * (1 - cosine)),
   );
+}
+
+/** Presets use this controller's Z-up world and yaw-zero (-Y) front convention. */
+export function kernelCameraPreset(camera: KernelWorldCamera, preset: 'top' | 'front' | 'right' | 'isometric' | 'perspective'): KernelWorldCamera {
+  validateWorldCameraAdoption(camera);
+  const distance = Math.hypot(camera.eye.x - camera.target.x, camera.eye.y - camera.target.y, camera.eye.z - camera.target.z);
+  const axis = preset === 'top' ? [0, 0, 1] : preset === 'front' ? [0, -1, 0] : preset === 'right' ? [1, 0, 0] : preset === 'isometric' ? [1 / Math.sqrt(3), -1 / Math.sqrt(3), 1 / Math.sqrt(3)] : [0, -Math.SQRT1_2, Math.SQRT1_2];
+  return { ...camera,
+    ...(preset === 'perspective' ? { projection: { kind: 'perspective' as const, verticalFovRadians: camera.projection.kind === 'perspective' ? camera.projection.verticalFovRadians : DEFAULT_FOV, aspect: camera.projection.aspect, near: camera.projection.near, far: camera.projection.far } } : {}),
+    eye: { x: camera.target.x + axis[0]! * distance, y: camera.target.y + axis[1]! * distance, z: camera.target.z + axis[2]! * distance },
+    up: preset === 'top' ? { x: 0, y: 1, z: 0 } : { x: 0, y: 0, z: 1 },
+  };
 }
