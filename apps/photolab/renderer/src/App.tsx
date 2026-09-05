@@ -3672,7 +3672,34 @@ export function App(): JSX.Element {
   );
 
   const handleTreeContextAction = useCallback(
-    (id: EntityId, action: 'showGcpImages' | 'open' | 'properties' | 'export' | 'remove') => {
+    (
+      idOrCommand: EntityId | string,
+      actionOrIds:
+        | 'showGcpImages'
+        | 'open'
+        | 'properties'
+        | 'export'
+        | 'remove'
+        | readonly EntityId[],
+    ): void => {
+      // Command-table rows (S-06c, product id "photolab") arrive as
+      // (commandId, entityIds); the shared tree still sends its generic
+      // actions as (entityId, action). Both end in the same product flows.
+      if (Array.isArray(actionOrIds)) {
+        const ids = actionOrIds as readonly EntityId[];
+        const first = ids[0];
+        if (!first) return;
+        const mapped =
+          idOrCommand === 'photolab.images.remove'
+            ? 'remove'
+            : idOrCommand === 'photolab.gcp.images'
+              ? 'showGcpImages'
+              : null;
+        if (mapped) handleTreeContextAction(first, mapped);
+        return;
+      }
+      const id = idOrCommand as EntityId;
+      const action = actionOrIds;
       const entity = project.entities[id];
       if (!entity) return;
       if (action === 'remove' && entity.kind === 'CameraImage') {
@@ -4116,6 +4143,7 @@ export function App(): JSX.Element {
                 entity.kind === 'MergedAlignmentRun' ||
                 productDatasets.some((dataset) => dataset.entityId === entity.id)
               }
+              productId="photolab"
               onContextAction={handleTreeContextAction}
             />
           }

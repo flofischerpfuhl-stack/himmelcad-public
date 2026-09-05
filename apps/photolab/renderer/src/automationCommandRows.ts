@@ -34,6 +34,7 @@ export const AUTOMATION_COMMAND_ROW_IDS = [
   'photolab.entities.visibility.set',
   'photolab.gcp.aligned_cameras',
   'photolab.gcp.calibration_report',
+  'photolab.gcp.images',
   'photolab.gcp.import.commit',
   'photolab.gcp.import.preview',
   'photolab.gcp.list',
@@ -98,6 +99,9 @@ export const PHOTOLAB_RPC_TO_COMMAND_ROW: Readonly<Record<string, AutomationComm
   'photolab.crs.freeze': 'photolab.crs.freeze',
   'photolab.gcp.alignedCameras': 'photolab.gcp.aligned_cameras',
   'photolab.gcp.calibrationReport': 'photolab.gcp.calibration_report',
+  // S-06c product rows in the shared tree context menu (surface contextMenu).
+  'photolab.gcp.images': 'photolab.gcp.images',
+  'photolab.images.remove': 'photolab.images.remove',
   'photolab.gcp.cancel': 'photolab.gcp.import.commit',
   'photolab.gcp.commit': 'photolab.gcp.import.commit',
   'photolab.gcp.list': 'photolab.gcp.list',
