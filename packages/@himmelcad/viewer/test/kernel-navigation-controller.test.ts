@@ -7,9 +7,10 @@ import {
   nearestCandidateIndex,
   projectPickCandidateForViewMode,
 } from '../src/kernel/KernelNavigationController.js';
+import { SHARED_3D_TARGET_DEVIATIONS } from '../src/kernel/PlatformGestureArbiter.js';
 import type { KernelPickCandidate, KernelWorldPoint } from '../src/kernel/WgpuKernelViewer.js';
 
-void test('nearest cursor hit becomes the active Tab origin regardless of provider order', () => {
+void test('nearest cursor hit becomes the active candidate regardless of provider order', () => {
   const candidates = [
     candidate('far-pixel', { x: 1, y: 0, z: 0 }, 3, 0.1),
     candidate('deep', { x: 2, y: 0, z: 0 }, 1, 0.8),
@@ -134,7 +135,7 @@ void test('navigation camera adoption publishes the controller-normalized camera
   assert.deepEqual(published, [adopted]);
 });
 
-void test('Tab cycling updates both active hit and the cursor/orbit coordinate', () => {
+void test('explicit candidate cycling updates both active hit and the cursor/orbit coordinate', () => {
   const candidates = [
     candidate('first', { x: 1, y: 2, z: 3 }, 0, 0.1),
     candidate('second', { x: 4, y: 5, z: 6 }, 1, 0.2),
@@ -314,6 +315,58 @@ void test('navigation enters and leaves kernel raster analysis without moving pa
   assert.deepEqual(published.at(-1), returnCamera);
 });
 
+void test('camera orbit, pan and wheel remain platform-owned while a tool is armed', () => {
+  const camera = new KernelCameraController(1_280, 720);
+  const canvas = new NavigationCanvas();
+  const published: ReturnType<KernelCameraController['worldCamera']>[] = [];
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = () => 1;
+  try {
+    const controller = new KernelNavigationController(
+      canvas as unknown as HTMLCanvasElement,
+      {
+        setScopedClipVolume() {},
+        setRasterAnalysisView: () => {
+          throw new Error('not used');
+        },
+        clearRasterAnalysisView: () => false,
+        setWorldCamera: (value) => published.push(value),
+        setCameraTransition() {},
+        pick: async () => ({ candidates: [], stale: false, generation: 1 }),
+      },
+      camera,
+    );
+    controller.gestures.registerGestureClaims('draw.point', [
+      { row: 'lmbClick', handle: () => undefined },
+      {
+        row: 'lmbDrag',
+        deviationReason: SHARED_3D_TARGET_DEVIATIONS.lmbDrag,
+        admit: () => false,
+        handle: () => assert.fail('off-handle drag must remain camera navigation'),
+      },
+    ]);
+    const beforeOrbit = camera.worldCamera();
+    canvas.dispatchEvent(pointerInput('pointerdown', 0, 100, 100, 1));
+    canvas.dispatchEvent(pointerInput('pointermove', 0, 112, 106, 1));
+    canvas.dispatchEvent(pointerInput('pointerup', 0, 112, 106, 1));
+    assert.notDeepEqual(camera.worldCamera().eye, beforeOrbit.eye);
+
+    const beforePan = camera.worldCamera();
+    canvas.dispatchEvent(pointerInput('pointerdown', 2, 200, 200, 2));
+    canvas.dispatchEvent(pointerInput('pointermove', 2, 215, 210, 2));
+    canvas.dispatchEvent(pointerInput('pointerup', 2, 215, 210, 2));
+    assert.notDeepEqual(camera.worldCamera().target, beforePan.target);
+
+    const beforeWheel = camera.worldCamera();
+    canvas.dispatchEvent(wheelInput(120, 300, 300));
+    assert.notDeepEqual(camera.worldCamera().eye, beforeWheel.eye);
+    assert.ok(published.length >= 4);
+    controller.dispose();
+  } finally {
+    globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+  }
+});
+
 interface NavigationHarness {
   disposed: boolean;
   candidates: readonly KernelPickCandidate[];
@@ -396,4 +449,48 @@ function candidate(
     pixelDistance,
     depth,
   };
+}
+
+class NavigationCanvas extends EventTarget {
+  tabIndex = -1;
+  private readonly captured = new Set<number>();
+
+  focus(): void {}
+  setPointerCapture(pointerId: number): void {
+    this.captured.add(pointerId);
+  }
+  hasPointerCapture(pointerId: number): boolean {
+    return this.captured.has(pointerId);
+  }
+  releasePointerCapture(pointerId: number): void {
+    this.captured.delete(pointerId);
+  }
+  getBoundingClientRect(): DOMRect {
+    return { left: 0, top: 0, width: 1_280, height: 720 } as DOMRect;
+  }
+}
+
+function pointerInput(
+  type: string,
+  button: number,
+  clientX: number,
+  clientY: number,
+  pointerId: number,
+): Event {
+  const event = new Event(type, { cancelable: true });
+  Object.assign(event, {
+    button,
+    clientX,
+    clientY,
+    pointerId,
+    pointerType: 'mouse',
+    ctrlKey: false,
+  });
+  return event;
+}
+
+function wheelInput(deltaY: number, clientX: number, clientY: number): Event {
+  const event = new Event('wheel', { cancelable: true });
+  Object.assign(event, { deltaY, clientX, clientY });
+  return event;
 }

@@ -6,6 +6,7 @@ import type {
   KernelNavigationCallbacks,
   KernelNavigationController,
 } from './KernelNavigationController.js';
+import type { EscapeRungRegistrar, PlatformGestureCallbacks } from './PlatformGestureArbiter.js';
 import type { KernelViewerScene } from './KernelViewerScene.js';
 import { KernelViewerSession, type KernelViewerSessionEvent } from './KernelViewerSession.js';
 import type {
@@ -51,6 +52,8 @@ export interface KernelViewportProps {
     count: number,
   ) => void;
   readonly onCursorCoordinate?: KernelNavigationCallbacks['onCursorCoordinate'];
+  readonly gestures?: PlatformGestureCallbacks<KernelPickCandidate>;
+  readonly registerEscapeRung?: EscapeRungRegistrar;
   readonly onFrame?: (outcome: KernelFrameOutcome) => void;
   readonly onHardwarePolicy?: (policy: KernelResolvedHardwarePolicy) => void;
   readonly onRuntimeQuality?: (
@@ -71,6 +74,8 @@ export function KernelViewport({
   onReady,
   onActivePick,
   onCursorCoordinate,
+  gestures,
+  registerEscapeRung,
   onFrame,
   onHardwarePolicy,
   onRuntimeQuality,
@@ -83,6 +88,8 @@ export function KernelViewport({
     onReady,
     onActivePick,
     onCursorCoordinate,
+    gestures,
+    registerEscapeRung,
     onFrame,
     onHardwarePolicy,
     onRuntimeQuality,
@@ -92,6 +99,8 @@ export function KernelViewport({
     onReady,
     onActivePick,
     onCursorCoordinate,
+    gestures,
+    registerEscapeRung,
     onFrame,
     onHardwarePolicy,
     onRuntimeQuality,
@@ -126,9 +135,7 @@ export function KernelViewport({
 
     const fail = (error: unknown): void => {
       if (!alive || abort.signal.aborted) return;
-      callbacksRef.current.onError?.(
-        error instanceof Error ? error : new Error(String(error)),
-      );
+      callbacksRef.current.onError?.(error instanceof Error ? error : new Error(String(error)));
     };
 
     const requestFrame = (): void => {
@@ -136,11 +143,11 @@ export function KernelViewport({
       animationFrame = requestAnimationFrame(renderFrame);
     };
 
-    const renderFrame = (): void => {
+    const renderFrame = (timestampMs: number): void => {
       animationFrame = null;
       if (!alive || session === null) return;
       try {
-        session.frame(hostInteracting);
+        session.frame(hostInteracting, timestampMs);
       } catch (error) {
         fail(error);
       }
@@ -192,6 +199,23 @@ export function KernelViewport({
           return;
         }
         session = created;
+        const recordInput = (event: Event): void => {
+          created.recordInput(undefined, event.timeStamp);
+        };
+        canvas.addEventListener('pointerdown', recordInput, { capture: true });
+        canvas.addEventListener('pointermove', recordInput, { capture: true });
+        canvas.addEventListener('pointerup', recordInput, { capture: true });
+        canvas.addEventListener('wheel', recordInput, { capture: true, passive: true });
+        abort.signal.addEventListener(
+          'abort',
+          () => {
+            canvas.removeEventListener('pointerdown', recordInput, { capture: true });
+            canvas.removeEventListener('pointermove', recordInput, { capture: true });
+            canvas.removeEventListener('pointerup', recordInput, { capture: true });
+            canvas.removeEventListener('wheel', recordInput, { capture: true });
+          },
+          { once: true },
+        );
         created.subscribe(observeSession);
         created.camera.frame({ x: -25, y: -25, z: -1 }, { x: 25, y: 25, z: 1 });
         const navigation = created.attachNavigation({
@@ -199,6 +223,10 @@ export function KernelViewport({
             callbacksRef.current.onActivePick?.(candidate, index, count),
           onCursorCoordinate: (coordinate, source) =>
             callbacksRef.current.onCursorCoordinate?.(coordinate, source),
+          ...(callbacksRef.current.gestures ? { gestures: callbacksRef.current.gestures } : {}),
+          ...(callbacksRef.current.registerEscapeRung
+            ? { registerEscapeRung: callbacksRef.current.registerEscapeRung }
+            : {}),
         });
         const resize = (): void => {
           if (!alive || session === null) return;
@@ -253,13 +281,7 @@ export function KernelViewport({
       if (windowMasked && resizeViewport) globalThis.removeEventListener('resize', resizeViewport);
       session?.dispose();
     };
-  }, [
-    authoritativeSectionTolerance,
-    backend,
-    decodeWasmModuleUrl,
-    presentationMode,
-    wasmLoader,
-  ]);
+  }, [authoritativeSectionTolerance, backend, decodeWasmModuleUrl, presentationMode, wasmLoader]);
 
   return (
     <div

@@ -11,6 +11,7 @@ const { access, chmod, mkdtemp, realpath, rm, stat, writeFile } = require('node:
 const { tmpdir } = require('node:os');
 const { delimiter, isAbsolute, relative, resolve, sep } = require('node:path');
 const { constants } = require('node:fs');
+const GENERATED_COMMAND_TABLE = require('./generated-command-table.cjs');
 
 // One maximum 8 MiB bulk range expands to ~10.7 MiB as base64 JSON.
 const MAX_RPC_MESSAGE_BYTES = 12 * 1024 * 1024;
@@ -88,8 +89,27 @@ const ALLOWED_METHODS = new Set([
   'automation.bulk.release',
   'view.state.get',
   'view.state.set',
+  'view.diagnostics.get',
+  'view.diagnostics.sample',
   'view.screenshot',
+  'select.get',
+  'select.list',
+  'select.set',
+  'select.add',
+  'select.remove',
+  'select.toggle',
+  'select.clear',
+  'select.undo',
+  'select.redo',
+  'select.candidates',
+  'selection.history.get',
+  'selection.history.undo',
+  'selection.history.redo',
+  'selection.history.clear',
 ]);
+for (const row of GENERATED_COMMAND_TABLE) {
+  if (row.surfaces.automation) ALLOWED_METHODS.add(row.id);
+}
 const ALLOWED_APP_METHODS = new Set([
   'readDocumentSnapshot',
   'readJournal',
@@ -98,7 +118,30 @@ const ALLOWED_APP_METHODS = new Set([
   'compilePropertyEdit',
   'executeCanonicalTransaction',
 ]);
-const VIEW_METHODS = new Set(['view.state.get', 'view.state.set', 'view.screenshot']);
+const VIEW_METHODS = new Set([
+  'view.state.get',
+  'view.state.set',
+  'view.diagnostics.get',
+  'view.diagnostics.sample',
+  'view.screenshot',
+  'select.get',
+  'select.list',
+  'select.set',
+  'select.add',
+  'select.remove',
+  'select.toggle',
+  'select.clear',
+  'select.undo',
+  'select.redo',
+  'select.candidates',
+  'selection.history.get',
+  'selection.history.undo',
+  'selection.history.redo',
+  'selection.history.clear',
+]);
+for (const row of GENERATED_COMMAND_TABLE) {
+  if (row.surfaces.automation && row.host === 'renderer') VIEW_METHODS.add(row.id);
+}
 
 class AutomationRpcRouter {
   #sidecarCall;

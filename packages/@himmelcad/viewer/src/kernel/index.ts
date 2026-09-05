@@ -49,6 +49,21 @@ export type {
   KernelViewMode,
 } from './KernelNavigationController.js';
 export {
+  GestureClaimError,
+  PLATFORM_GESTURE_TUNABLES,
+  PlatformGestureArbiter,
+  SHARED_3D_TARGET_DEVIATIONS,
+} from './PlatformGestureArbiter.js';
+export type {
+  EscapeRungRegistrar,
+  GestureClaimErrorCode,
+  GestureToolReleaseReason,
+  PlatformGestureCallbacks,
+  PlatformGestureClaim,
+  PlatformGestureEvent,
+  PlatformGestureRow,
+} from './PlatformGestureArbiter.js';
+export {
   isPlanViewMode,
   projectPickCandidateForViewMode,
   projectTargetPlaneCoordinate,
@@ -82,6 +97,21 @@ export type {
   KernelPreparedHierarchyAdmission,
 } from './KernelViewerScene.js';
 export { KernelViewerSession, KernelViewerSessionError } from './KernelViewerSession.js';
+export {
+  KERNEL_FRAME_DIAGNOSTICS_CAPACITY,
+  KernelFrameDiagnostics,
+} from './KernelFrameDiagnostics.js';
+export type {
+  KernelDeadlineReasonCode,
+  KernelDiagnosticsSampleRequest,
+  KernelDiagnosticsSampleResult,
+  KernelDiagnosticsSnapshot,
+  KernelDistribution,
+  KernelFramePhaseTimers,
+  KernelFramePrimitiveCounts,
+  KernelPresentedFrameSample,
+  KernelPresentSource,
+} from './KernelFrameDiagnostics.js';
 export type {
   KernelPresentedFrameOptions,
   KernelPresentedFrameOutcome,

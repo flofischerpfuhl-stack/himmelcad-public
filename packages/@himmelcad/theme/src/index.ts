@@ -55,4 +55,20 @@ export const themeTokens = {
     fast: 'var(--hc-motion-fast)',
     base: 'var(--hc-motion-base)',
   },
+  z: {
+    content: 'var(--hc-z-content)',
+    sticky: 'var(--hc-z-sticky)',
+    floating: 'var(--hc-z-floating)',
+    popover: 'var(--hc-z-popover)',
+    modal: 'var(--hc-z-modal)',
+    toast: 'var(--hc-z-toast)',
+    tooltip: 'var(--hc-z-tooltip)',
+  },
+  axis: {
+    x: 'var(--hc-axis-x)',
+    y: 'var(--hc-axis-y)',
+    z: 'var(--hc-axis-z)',
+    hoverOutline: 'var(--hc-axis-hover-outline)',
+    activeOutline: 'var(--hc-axis-active-outline)',
+  },
 } as const;

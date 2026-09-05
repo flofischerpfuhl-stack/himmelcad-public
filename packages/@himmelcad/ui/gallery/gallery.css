@@ -1,0 +1,322 @@
+:root {
+  font-family: var(--hc-font-ui);
+  background: var(--hc-bg-void);
+  color: var(--hc-fg-default);
+}
+
+html,
+body,
+#hc-root {
+  min-width: 0;
+  min-height: 100%;
+  height: auto;
+  margin: 0;
+  overflow: visible;
+}
+
+body {
+  background: var(--hc-bg-void);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.galleryRoot {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 28px;
+  background: var(--hc-bg-void);
+}
+
+.galleryHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  max-width: 1224px;
+  margin: 0 auto 18px;
+}
+
+.galleryHeader h1 {
+  margin: 2px 0 0;
+  color: var(--hc-fg-strong);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.galleryEyebrow {
+  margin: 0;
+  color: var(--hc-fg-muted);
+  font-family: var(--hc-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.themeBadge {
+  padding: 5px 8px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-chip);
+  background: var(--hc-bg-chip);
+  color: var(--hc-fg-muted);
+  font-size: 11px;
+  text-transform: capitalize;
+}
+
+.gallerySections {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 12px;
+  max-width: 1224px;
+  margin: 0 auto;
+}
+
+.gallerySection {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-island);
+  background: var(--hc-bg-island);
+  box-shadow: var(--hc-shadow-island);
+}
+
+.gallerySection h2 {
+  margin: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--hc-border-subtle);
+  color: var(--hc-fg-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.stateList {
+  display: flex;
+  flex-direction: column;
+}
+
+.stateRow {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  min-height: 54px;
+  border-bottom: 1px solid var(--hc-border-subtle);
+}
+
+.stateRow:last-child {
+  border-bottom: 0;
+}
+
+.gallerySection[data-gallery-section='button'] .stateRow {
+  grid-template-columns: 132px minmax(0, 1fr);
+}
+
+.stateLabel {
+  padding: 18px 10px;
+  border-right: 1px solid var(--hc-border-subtle);
+  color: var(--hc-fg-subtle);
+  font-family: var(--hc-font-mono);
+  font-size: 10px;
+  text-align: right;
+}
+
+.gallerySample {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  padding: 12px;
+  overflow: visible;
+  background: var(--hc-bg-island-hi);
+}
+
+.gallerySample > div {
+  max-width: 100%;
+}
+
+.galleryPanel {
+  width: 100%;
+  height: 250px;
+  overflow: hidden;
+  border-radius: var(--hc-radius-md);
+}
+
+.splitterDemo {
+  display: grid;
+  grid-template-columns: 1fr 8px 1fr;
+  width: 100%;
+  height: 70px;
+  overflow: hidden;
+  border-radius: var(--hc-radius-md);
+  background: var(--hc-bg-island-lo);
+  color: var(--hc-fg-muted);
+  font-size: 11px;
+}
+
+.splitterDemo > span {
+  display: grid;
+  place-items: center;
+}
+
+.edgeStripDemo {
+  display: flex;
+  width: 130px;
+  height: 96px;
+}
+
+.selectionSurfacesFixture {
+  display: grid;
+  width: 100%;
+  gap: 12px;
+}
+
+.selectionPropertiesFixture {
+  display: grid;
+  gap: 9px;
+  width: 240px;
+  padding: 12px;
+  background: var(--hc-bg-island-lo);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-md);
+}
+
+.selectionPropertiesFixture label {
+  display: grid;
+  gap: 4px;
+  color: var(--hc-fg-default);
+  font-size: 11px;
+}
+
+.viewportChromeFixture,
+.viewportModeFixture {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.viewportChromeFixture {
+  flex-wrap: wrap;
+}
+
+/* Fixed application overlays are kept in-flow inside their gallery samples. */
+.gallerySample [role='menu'] {
+  position: static !important;
+}
+
+.gallerySample [role='menu'] [role='menu'] {
+  position: fixed !important;
+}
+
+.gallerySample > div:has(> [role='dialog']),
+.gallerySample > div:not([class]) > div:has(> [role='dialog']),
+.gallerySample:has([aria-label='Notifications']) > div,
+.gallerySample:has([aria-label='Notifications']) > div > section,
+.gallerySample [aria-label='Notifications'] {
+  position: static !important;
+  inset: auto !important;
+}
+
+.gallerySample:has([role='dialog']) {
+  min-height: 190px;
+}
+
+.gallerySample [role='dialog'] {
+  width: min(420px, calc(100% - 24px));
+}
+
+.gallerySection[data-gallery-section='dialog'] [role='dialog'] button:focus-visible {
+  outline: 0;
+}
+
+.gallerySample > div:has(> [role='dialog']),
+.gallerySample > div:not([class]) > div:has(> [role='dialog']) {
+  display: grid;
+  width: 100%;
+  height: auto;
+  min-height: 190px;
+  place-items: center;
+}
+
+/* CSS-module selectors cannot be named from the gallery. These scoped hooks
+   make deterministic hover/focus rows while preserving the product tokens. */
+.data-force-hover [data-gallery-active],
+.gallerySection:not(
+    :is(
+      [data-gallery-section='button'],
+      [data-gallery-section='dialog'],
+      [data-gallery-section='menu'],
+      [data-gallery-section='context-menu']
+    )
+  )
+  .data-force-hover
+  :is(
+    button:not(:disabled),
+    [role='tab']:not(:disabled),
+    [role='menuitem']:not(:disabled),
+    [role='separator']
+  ) {
+  background-color: var(--hc-hover-bg) !important;
+  color: var(--hc-fg-strong) !important;
+}
+
+.data-force-hover [data-gallery-active][data-gallery-variant='primary'] {
+  background-color: var(--hc-accent-hover) !important;
+  border-color: var(--hc-accent-hover) !important;
+  color: var(--hc-fg-on-accent) !important;
+}
+
+.data-force-hover [data-gallery-active][data-gallery-variant='danger'] {
+  background-color: color-mix(in srgb, var(--hc-error) 86%, var(--hc-error-fg)) !important;
+  border-color: color-mix(in srgb, var(--hc-error) 86%, var(--hc-error-fg)) !important;
+  color: var(--hc-fg-on-accent) !important;
+}
+
+.stateRow[data-gallery-row='close-hover'] .data-force-hover [aria-label='Close dialog'] {
+  background-color: var(--hc-hover-bg) !important;
+  color: var(--hc-fg-strong) !important;
+}
+
+.data-force-hover label:not(:has(input:disabled)) span:nth-of-type(1) {
+  border-color: var(--hc-border-strong) !important;
+  background-color: var(--hc-hover-bg) !important;
+}
+
+.data-force-hover [role='separator']::before {
+  background: var(--hc-accent-base) !important;
+}
+
+.data-force-focus-visible [data-gallery-active],
+.gallerySection:not(
+    :is(
+      [data-gallery-section='button'],
+      [data-gallery-section='dialog'],
+      [data-gallery-section='menu'],
+      [data-gallery-section='context-menu']
+    )
+  )
+  .data-force-focus-visible
+  :is(
+    button:not(:disabled),
+    input:not(:disabled),
+    [tabindex]:not([tabindex='-1']),
+    [role='separator']
+  ) {
+  outline: 2px solid var(--hc-focus-ring) !important;
+  outline-offset: 2px !important;
+}
+
+.gallerySection:is([data-gallery-section='menu'], [data-gallery-section='context-menu'])
+  .data-force-focus-visible
+  [data-gallery-active] {
+  outline-offset: -2px !important;
+}
+
+@media (max-width: 800px) {
+  .gallerySections {
+    grid-template-columns: 1fr;
+  }
+}

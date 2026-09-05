@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 
 import styles from './Ribbon.module.css';
+import { nextLinearIndex } from './controlInteractions.js';
+import { registerEscapeRung } from './escapeLadder.js';
 import { useLayoutStore } from './useLayoutStore.js';
 
 export interface RibbonAction {
@@ -30,6 +32,7 @@ export interface RibbonProps {
 }
 
 export function Ribbon({ tabs }: RibbonProps): JSX.Element {
+  const idPrefix = useId();
   const collapsed = useLayoutStore((s) => s.ribbonCollapsed);
   const setCollapsed = useLayoutStore((s) => s.setRibbonCollapsed);
   const activeFunctionId = useLayoutStore((s) => s.activeFunctionId);
@@ -55,14 +58,11 @@ export function Ribbon({ tabs }: RibbonProps): JSX.Element {
       if (tabEl?.contains(target)) return;
       setDropdownTabId(null);
     };
-    const onEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setDropdownTabId(null);
-    };
+    const unregisterEscape = registerEscapeRung('menu', () => (setDropdownTabId(null), true));
     document.addEventListener('mousedown', onDocClick);
-    document.addEventListener('keydown', onEsc);
     return () => {
       document.removeEventListener('mousedown', onDocClick);
-      document.removeEventListener('keydown', onEsc);
+      unregisterEscape();
     };
   }, [dropdownTabId]);
 
@@ -84,10 +84,37 @@ export function Ribbon({ tabs }: RibbonProps): JSX.Element {
     };
   })();
 
+  const activateTab = (id: string): void => {
+    setActiveTabId(id);
+    if (collapsed) setDropdownTabId(id);
+    queueMicrotask(() => tabRefs.current.get(id)?.focus());
+  };
+
   return (
     <div className={`${styles.root} ${collapsed ? styles.collapsed : ''}`}>
       <div className={styles.tabRow}>
-        <div className={styles.tabs} role="tablist">
+        <div
+          className={styles.tabs}
+          role="tablist"
+          aria-label="Ribbon"
+          onKeyDown={(event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+            const current = Math.max(
+              0,
+              tabs.findIndex((tab) => tab.id === activeTabId),
+            );
+            const next = nextLinearIndex(
+              current,
+              tabs.length,
+              event.key as 'ArrowLeft' | 'ArrowRight' | 'Home' | 'End',
+              'horizontal',
+            );
+            const nextTab = tabs[next];
+            if (!nextTab) return;
+            event.preventDefault();
+            activateTab(nextTab.id);
+          }}
+        >
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId;
             const isDropdown = collapsed && dropdownTabId === tab.id;
@@ -99,7 +126,10 @@ export function Ribbon({ tabs }: RibbonProps): JSX.Element {
                   else tabRefs.current.delete(tab.id);
                 }}
                 role="tab"
+                id={`${idPrefix}-tab-${tab.id}`}
                 aria-selected={isActive}
+                aria-controls={`${idPrefix}-panel-${tab.id}`}
+                tabIndex={isActive ? 0 : -1}
                 aria-haspopup={collapsed ? 'menu' : undefined}
                 aria-expanded={collapsed ? isDropdown : undefined}
                 className={`${styles.tab} ${
@@ -133,28 +163,38 @@ export function Ribbon({ tabs }: RibbonProps): JSX.Element {
           {collapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
         </button>
       </div>
-      {!collapsed && activeTab && (
-        <div className={styles.body} role="tabpanel" aria-labelledby={activeTab.id}>
-          {activeTab.groups.map((group) => (
-            <div key={group.id} className={styles.group}>
-              <div className={styles.groupBody}>
-                {group.actions.map((action) => (
-                  <RibbonActionButton
-                    key={action.id}
-                    action={action}
-                    isActive={activeFunctionId === action.id}
-                    onSelect={() => {
-                      if (action.onActivate) action.onActivate();
-                      else activate(action.id);
-                    }}
-                  />
-                ))}
+      {tabs.map((tab) => {
+        const selected = tab.id === activeTab?.id;
+        return (
+          <div
+            key={tab.id}
+            id={`${idPrefix}-panel-${tab.id}`}
+            className={styles.body}
+            role="tabpanel"
+            aria-labelledby={`${idPrefix}-tab-${tab.id}`}
+            hidden={collapsed || !selected}
+          >
+            {tab.groups.map((group) => (
+              <div key={group.id} className={styles.group}>
+                <div className={styles.groupBody}>
+                  {group.actions.map((action) => (
+                    <RibbonActionButton
+                      key={action.id}
+                      action={action}
+                      isActive={activeFunctionId === action.id}
+                      onSelect={() => {
+                        if (action.onActivate) action.onActivate();
+                        else activate(action.id);
+                      }}
+                    />
+                  ))}
+                </div>
+                <div className={styles.groupLabel}>{group.label}</div>
               </div>
-              <div className={styles.groupLabel}>{group.label}</div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        );
+      })}
       {collapsed && dropdownTab && dropdownStyle && (
         <div ref={dropdownRef} className={styles.dropdown} style={dropdownStyle} role="menu">
           {dropdownTab.groups.map((group) => (

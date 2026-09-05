@@ -92,6 +92,33 @@ export interface ViewStateV1 {
   readonly presentation: ViewPresentation;
 }
 
+export interface ViewClipRefV2 {
+  readonly entityId: string;
+  readonly expectedRevision: number;
+  readonly active: boolean;
+  readonly locked: boolean;
+}
+
+export type ViewColorModeOverrideV2 =
+  | { readonly kind: 'follow' }
+  | { readonly kind: 'mode'; readonly mode: string; readonly params: unknown };
+
+export interface ViewStateV2 {
+  readonly schema: 'himmelcad.view-state';
+  readonly version: 2;
+  readonly camera: WorldCamera;
+  readonly navigationMode: NavigationMode;
+  readonly hiddenEntityIds: readonly string[];
+  readonly sessionHiddenEntityIds: readonly string[];
+  readonly selectedEntityIds: readonly string[];
+  readonly clipRefs: readonly ViewClipRefV2[];
+  readonly presentation: Omit<ViewPresentation, 'background'> & {
+    readonly background: Exclude<ViewPresentation['background'], 'transparent'>;
+    readonly colorModeOverride: ViewColorModeOverrideV2;
+    readonly pointSizeMultiplier: number;
+  };
+}
+
 export interface ScreenshotRequestV1 {
   readonly schema: 'himmelcad.screenshot-request';
   readonly version: 1;
@@ -254,6 +281,46 @@ export function parseViewState(input: unknown): ViewStateV1 {
   }
   validatePresentation(root.presentation, 'viewState.presentation');
   return value as ViewStateV1;
+}
+
+/** Parses the Plan-free Release 0.5 ViewState v2 profile. */
+export function parseViewStateV2(input: unknown): ViewStateV2 {
+  const value: unknown = typeof input === 'string' ? parseJson(input, 'viewState') : input;
+  const root = record(value, 'viewState');
+  literal(root.schema, 'himmelcad.view-state', 'viewState.schema');
+  literal(root.version, 2, 'viewState.version');
+  validateWorldCamera(root.camera, 'viewState.camera');
+  oneOf(root.navigationMode, ['3d', '2d', '2.5d'], 'viewState.navigationMode');
+  stringArray(root.hiddenEntityIds, 'viewState.hiddenEntityIds');
+  stringArray(root.sessionHiddenEntityIds, 'viewState.sessionHiddenEntityIds');
+  stringArray(root.selectedEntityIds, 'viewState.selectedEntityIds');
+  const clipRefs = array(root.clipRefs, 'viewState.clipRefs');
+  const ids = new Set<string>();
+  for (const [index, candidate] of clipRefs.entries()) {
+    const path = `viewState.clipRefs[${index}]`;
+    const clip = record(candidate, path);
+    const id = nonEmptyString(clip.entityId, `${path}.entityId`);
+    if (ids.has(id)) invalid('must be unique', `${path}.entityId`);
+    ids.add(id);
+    integerInRange(clip.expectedRevision, 0, Number.MAX_SAFE_INTEGER, `${path}.expectedRevision`);
+    boolean(clip.active, `${path}.active`);
+    boolean(clip.locked, `${path}.locked`);
+  }
+  const presentation = record(root.presentation, 'viewState.presentation');
+  oneOf(presentation.background, ['theme', 'black', 'white'], 'viewState.presentation.background');
+  oneOf(presentation.renderStyle, ['source', 'monochrome', 'xray'], 'viewState.presentation.renderStyle');
+  boolean(presentation.showGrid, 'viewState.presentation.showGrid');
+  boolean(presentation.showAxes, 'viewState.presentation.showAxes');
+  boolean(presentation.showSelectionOutline, 'viewState.presentation.showSelectionOutline');
+  const override = record(presentation.colorModeOverride, 'viewState.presentation.colorModeOverride');
+  const overrideKind = oneOf(override.kind, ['follow', 'mode'], 'viewState.presentation.colorModeOverride.kind');
+  if (overrideKind === 'mode') nonEmptyString(override.mode, 'viewState.presentation.colorModeOverride.mode');
+  const multiplier = finite(presentation.pointSizeMultiplier, 'viewState.presentation.pointSizeMultiplier');
+  if (multiplier <= 0) invalid('must be positive', 'viewState.presentation.pointSizeMultiplier');
+  for (const forbidden of ['scopedClips', 'pinnedViewport', 'planFilters', 'updatePolicy', 'capturedPlanRevision']) {
+    if (root[forbidden] !== undefined) invalid('is not admitted in the Release 0.5 profile', `viewState.${forbidden}`);
+  }
+  return value as ViewStateV2;
 }
 
 export function validateScreenshotRequest(request: ScreenshotRequestV1): void {

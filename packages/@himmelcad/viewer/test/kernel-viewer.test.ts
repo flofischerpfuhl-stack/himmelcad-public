@@ -421,6 +421,16 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
       return JSON.stringify({
         adjustment: 'reduced',
         quality: { renderScale: 0.9, detailScale: 0.6375 },
+        reasonCode: 'gpu_deadline',
+        gpuSample: { sequence: 11, gpuMs: 18 },
+        primitives: {
+          points: 100,
+          triangles: 20,
+          lines: 4,
+          textQuads: 3,
+          splats: 2,
+          drawCalls: 8,
+        },
       });
     },
     frame_telemetry_json: () =>
@@ -512,6 +522,16 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
     {
       adjustment: 'reduced',
       quality: { renderScale: 0.9, detailScale: 0.6375 },
+      reasonCode: 'gpu_deadline',
+      gpuSample: { sequence: 11, gpuMs: 18 },
+      primitives: {
+        points: 100,
+        triangles: 20,
+        lines: 4,
+        textQuads: 3,
+        splats: 2,
+        drawCalls: 8,
+      },
     },
   );
   assert.deepEqual(calls.at(-1), [

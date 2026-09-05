@@ -4,7 +4,7 @@ import styles from './OverlayChip.module.css';
 
 export interface OverlayChipBaseProps {
   children: ReactNode;
-  /** Neutral pressed look */
+  /** Accent-outline active viewport-chrome state */
   active?: boolean | undefined;
   /** Solid accent border only */
   accent?: boolean | undefined;

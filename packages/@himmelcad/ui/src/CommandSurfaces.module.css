@@ -1,0 +1,48 @@
+.menu {
+  min-width: 180px;
+}
+
+.menu button {
+  display: block;
+  width: 100%;
+}
+
+.itemContent {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+}
+
+.label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shortcut,
+.header,
+.mark {
+  color: var(--hc-fg-muted);
+  font-family: var(--hc-font-mono);
+  font-size: 10px;
+}
+
+.header {
+  height: 24px;
+  padding: 0 8px;
+  line-height: 24px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.submenu {
+  min-width: 220px;
+}
+
+.mark {
+  width: 12px;
+  color: var(--hc-accent-base);
+  text-align: right;
+}

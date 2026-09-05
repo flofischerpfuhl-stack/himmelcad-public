@@ -53,6 +53,7 @@
   /* Single accent blue — use sparingly */
   --hc-accent-base: #1597f2;
   --hc-accent-hover: #2ea6f7;
+  --hc-accent-aa-fill: #0876bd;
   --hc-accent-on: #ffffff;
   /* Deprecated soft wash — keep alias mapped to transparent so old callers break visibly less hard */
   --hc-accent-soft: transparent;
@@ -94,6 +95,22 @@
   --hc-size-tab: 26px;
   --hc-size-chip-h: 28px;
   --hc-size-control-h: 28px;
+
+  /* Shared stacking order. Keep feature CSS on these semantic layers. */
+  --hc-z-content: 0;
+  --hc-z-sticky: 10;
+  --hc-z-floating: 1000;
+  --hc-z-popover: 1100;
+  --hc-z-modal: 2000;
+  --hc-z-toast: 3000;
+  --hc-z-tooltip: 4000;
+
+  /* Spatial axes: color plus glyph/shape cues are required by SE-D18. */
+  --hc-axis-x: #ff6670;
+  --hc-axis-y: #88d04f;
+  --hc-axis-z: #55a7ff;
+  --hc-axis-hover-outline: #ffffff;
+  --hc-axis-active-outline: #ffd166;
 
   /* Island geometry */
   --hc-radius-sm: 4px;
@@ -148,6 +165,7 @@
 
   --hc-accent-base: #1597f2;
   --hc-accent-hover: #0d7fd1;
+  --hc-accent-aa-fill: #0876bd;
   --hc-accent-on: #ffffff;
   --hc-accent-soft: transparent;
 
@@ -167,6 +185,12 @@
   --hc-error-fg: #5c1018;
   --hc-info: var(--hc-accent-base);
   --hc-debug: #6b7280;
+
+  --hc-axis-x: #a91f2e;
+  --hc-axis-y: #3d741d;
+  --hc-axis-z: #1769aa;
+  --hc-axis-hover-outline: #0f1115;
+  --hc-axis-active-outline: #6f4b00;
 
   --hc-shadow-island: 0 1px 2px rgba(15, 17, 22, 0.06);
   --hc-shadow-popover: 0 12px 32px rgba(15, 17, 22, 0.12);

@@ -1,0 +1,196 @@
+.chip {
+  display: inline-flex;
+  box-sizing: border-box;
+  height: 20px;
+  max-width: 440px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 7px;
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-chip);
+  border: 1px solid var(--hc-accent-base);
+  border-radius: 999px;
+  font: 11px var(--hc-font-ui);
+}
+.chip[data-tone='warning'] {
+  border-color: var(--hc-warning);
+}
+.chip[data-tone='error'] {
+  color: var(--hc-error-fg);
+  border-color: var(--hc-error);
+}
+.chip[data-tone='success'] {
+  border-color: var(--hc-success);
+}
+.chip:hover {
+  background: var(--hc-hover-bg);
+}
+.chip > [role='status'] {
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+}
+.chip:focus-visible,
+.cancel:focus-visible,
+.finished button:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+.chipProgress {
+  display: block;
+  width: 48px;
+}
+.chipProgress [role='progressbar'] {
+  display: block;
+}
+.chipProgress [role='progressbar'] code {
+  display: none;
+}
+.chipProgress [role='progressbar'] > div {
+  box-sizing: border-box;
+  height: 3px;
+}
+.chipLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.island {
+  width: 360px;
+  overflow: hidden;
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-island);
+  box-shadow: var(--hc-shadow-island);
+  font: 12px var(--hc-font-ui);
+}
+.header {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--hc-border-subtle);
+}
+.header h2 {
+  margin: 0;
+  color: var(--hc-fg-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+.rows {
+  display: flex;
+  flex-direction: column;
+}
+.row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 120px 24px;
+  align-items: center;
+  gap: 8px;
+  min-height: 62px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--hc-border-subtle);
+}
+.row[data-state='failed'] .glyph {
+  color: var(--hc-error-fg);
+}
+.row[data-state='needs-input'] .glyph {
+  color: var(--hc-warning);
+}
+.row[data-state='completed'] .glyph {
+  color: var(--hc-success);
+}
+.glyph {
+  display: grid;
+  place-items: center;
+  color: var(--hc-accent-base);
+}
+.glyph [role='status'] {
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+}
+.copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+.copy strong,
+.phase {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.copy strong {
+  color: var(--hc-fg-strong);
+  font-weight: 600;
+}
+.phase,
+.progress {
+  color: var(--hc-fg-muted);
+  font-size: 11px;
+}
+.row[data-state='needs-input'] .copy button {
+  background: var(--hc-accent-aa-fill);
+  border-color: var(--hc-accent-aa-fill);
+}
+.progress {
+  width: 120px;
+  text-align: right;
+}
+.progressValue {
+  display: grid;
+  gap: 3px;
+}
+.progress [role='progressbar'] {
+  grid-template-columns: 1fr;
+}
+.progress [role='progressbar'] code {
+  display: none;
+}
+.progress [role='progressbar'] > div {
+  box-sizing: border-box;
+  height: 4px;
+}
+.cancel,
+.cancelSpacer {
+  width: 24px;
+  height: 24px;
+}
+.cancel {
+  display: grid;
+  place-items: center;
+  color: var(--hc-fg-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--hc-radius-sm);
+}
+.cancel:hover:not(:disabled) {
+  color: var(--hc-fg-strong);
+  background: var(--hc-hover-bg);
+}
+.cancel:disabled {
+  opacity: 0.42;
+}
+.finished {
+  display: flex;
+  height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  color: var(--hc-fg-muted);
+  background: var(--hc-bg-island-lo);
+}
+.finished button {
+  color: var(--hc-fg-default);
+  background: transparent;
+  border: 0;
+}
+.empty {
+  margin: 0;
+  padding: 18px 12px;
+  color: var(--hc-fg-muted);
+}

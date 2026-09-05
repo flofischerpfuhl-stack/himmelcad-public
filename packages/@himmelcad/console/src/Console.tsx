@@ -3,6 +3,7 @@ import { Check, Copy, Eraser, PanelBottomClose, Search, Terminal } from 'lucide-
 
 import type { LogEvent, LogLevel } from '@himmelcad/data';
 import { Select } from '@himmelcad/ui';
+import { completeConsoleInput } from './commands.js';
 
 import {
   AVE_MARIA,
@@ -200,7 +201,14 @@ export function Console({
           className={styles.promptInput}
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Type a command…  (e.g. import.las)"
+          onKeyDown={(event) => {
+            if (event.key !== 'Tab') return;
+            const matches = completeConsoleInput(input);
+            if (matches.length !== 1 || !matches[0]) return;
+            event.preventDefault();
+            setInput(matches[0]);
+          }}
+          placeholder="Type a command…  (help lists commands)"
           aria-label="Console command"
           spellCheck={false}
           autoComplete="off"

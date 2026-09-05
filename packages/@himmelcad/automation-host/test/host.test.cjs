@@ -318,6 +318,36 @@ test('view methods fail closed until a renderer host is registered', async () =>
   assert.equal(response.error.code, 'missingCapability');
 });
 
+test('S-04 automation parity routes every canonical selection row through the renderer owner', async () => {
+  const calls = [];
+  const router = new AutomationRpcRouter({
+    sidecarCall: async (method) => {
+      if (method === 'app.negotiate') return negotiationResult([]);
+      assert.fail(`selection reached sidecar: ${method}`);
+    },
+    viewCall: async (method, params) => {
+      calls.push({ method, params });
+      return { schemaId: 'hcad.selection-command-result@1', payload: { method } };
+    },
+  });
+  await negotiate(router);
+  const rows = [
+    'select.get',
+    'select.set',
+    'select.toggle',
+    'select.clear',
+    'select.undo',
+    'select.redo',
+    'select.candidates',
+  ];
+  for (const [index, method] of rows.entries()) {
+    const params = { schemaId: 'hcad.selection-command@1', payload: {} };
+    const response = await router.handle({ id: index + 1, method, params });
+    assert.equal(response.result.payload.method, method);
+  }
+  assert.deepEqual(calls.map((call) => call.method), rows);
+});
+
 test('negotiation and grants are bound to one live RPC connection', async () => {
   const router = new AutomationRpcRouter({
     sidecarCall: async () => negotiationResult(['automation.entities.page']),
@@ -900,6 +930,32 @@ async function negotiate(router) {
   assert.equal(response.result.selectedVersion, 1);
   return response.result;
 }
+
+test('X3 generated registry routes three command surfaces through the renderer host', async () => {
+  const calls = [];
+  const router = new AutomationRpcRouter({
+    sidecarCall: async (method) =>
+      method === 'app.negotiate' ? negotiationResult([]) : { unexpected: method },
+    viewCall: async (method, params) => {
+      calls.push({ method, params });
+      return { schemaId: 'hcad.command-result@1', payload: { ok: true } };
+    },
+  });
+  await negotiate(router);
+  for (const [index, method] of ['view.frame', 'view.preset.top', 'select.clear'].entries()) {
+    const response = await router.handle({
+      id: 100 + index,
+      method,
+      params: { schemaId: 'hcad.command@1', payload: {} },
+    });
+    assert.equal(response.result.payload.ok, true);
+  }
+  assert.deepEqual(calls.map((call) => call.method), [
+    'view.frame',
+    'view.preset.top',
+    'select.clear',
+  ]);
+});
 
 function negotiationResult(capabilities) {
   return {

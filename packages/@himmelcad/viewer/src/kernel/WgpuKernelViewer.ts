@@ -909,6 +909,21 @@ export interface KernelFrameTelemetryObservation {
 export interface KernelRuntimeQualityObservation {
   readonly adjustment: KernelRuntimeQualityAdjustment;
   readonly quality: KernelRuntimeQualityState;
+  readonly reasonCode:
+    | 'within_target'
+    | 'cpu_deadline'
+    | 'gpu_deadline'
+    | 'recovery_headroom'
+    | 'invalid_timing';
+  readonly gpuSample: { readonly sequence: number; readonly gpuMs: number } | null;
+  readonly primitives: {
+    readonly points: number;
+    readonly triangles: number;
+    readonly lines: number;
+    readonly textQuads: number;
+    readonly splats: number;
+    readonly drawCalls: number;
+  };
 }
 
 export interface KernelFrameTimeDistribution {
@@ -1399,7 +1414,11 @@ export interface KernelStreamingPublish extends KernelEntityMutation {
 
 /** Result of one present attempt. */
 export type KernelFrameOutcome =
-  | { readonly status: 'presented'; readonly reconfigured: boolean }
+  | {
+      readonly status: 'presented';
+      readonly reconfigured: boolean;
+      readonly gpuTimingSequence?: number | null;
+    }
   | { readonly status: 'skipped'; readonly reason: string }
   | { readonly status: 'recreateSurface' }
   | {
@@ -3253,13 +3272,35 @@ export class WgpuKernelViewer {
       !isRecord(value) ||
       (value.adjustment !== 'unchanged' &&
         value.adjustment !== 'reduced' &&
-        value.adjustment !== 'increased')
+        value.adjustment !== 'increased') ||
+      (value.reasonCode !== undefined &&
+        ![
+          'within_target',
+          'cpu_deadline',
+          'gpu_deadline',
+          'recovery_headroom',
+          'invalid_timing',
+        ].includes(String(value.reasonCode))) ||
+      (value.gpuSample !== undefined && value.gpuSample !== null &&
+        (!isRecord(value.gpuSample) ||
+          !Number.isSafeInteger(value.gpuSample.sequence) ||
+          Number(value.gpuSample.sequence) < 1 ||
+          !validDuration(value.gpuSample.gpuMs))) ||
+      (value.primitives !== undefined && !validFramePrimitiveCounts(value.primitives))
     ) {
       throw new TypeError('kernel runtime quality observation is malformed');
     }
     return {
       adjustment: value.adjustment,
       quality: parseRuntimeQuality(value.quality),
+      reasonCode:
+        (value.reasonCode as KernelRuntimeQualityObservation['reasonCode'] | undefined) ??
+        'within_target',
+      gpuSample:
+        (value.gpuSample as KernelRuntimeQualityObservation['gpuSample'] | undefined) ?? null,
+      primitives: validFramePrimitiveCounts(value.primitives)
+        ? value.primitives
+        : { points: 0, triangles: 0, lines: 0, textQuads: 0, splats: 0, drawCalls: 0 },
     };
   }
 
@@ -3416,6 +3457,17 @@ function validDistribution(value: unknown): value is KernelFrameTimeDistribution
   );
 }
 
+function validFramePrimitiveCounts(
+  value: unknown,
+): value is KernelRuntimeQualityObservation['primitives'] {
+  return (
+    isRecord(value) &&
+    ['points', 'triangles', 'lines', 'textQuads', 'splats', 'drawCalls'].every(
+      (key) => Number.isSafeInteger(value[key]) && Number(value[key]) >= 0,
+    )
+  );
+}
+
 function validDuration(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
@@ -3516,8 +3568,19 @@ function parseFrameOutcome(json: string): KernelFrameOutcome {
   if (!isRecord(value) || typeof value.status !== 'string') {
     throw new TypeError('kernel frame outcome is malformed');
   }
-  if (value.status === 'presented' && typeof value.reconfigured === 'boolean') {
-    return { status: 'presented', reconfigured: value.reconfigured };
+  if (
+    value.status === 'presented' &&
+    typeof value.reconfigured === 'boolean' &&
+    (value.gpuTimingSequence === undefined || value.gpuTimingSequence === null ||
+      (Number.isSafeInteger(value.gpuTimingSequence) && Number(value.gpuTimingSequence) > 0))
+  ) {
+    return value.gpuTimingSequence === undefined
+      ? { status: 'presented', reconfigured: value.reconfigured }
+      : {
+          status: 'presented',
+          reconfigured: value.reconfigured,
+          gpuTimingSequence: value.gpuTimingSequence as number | null,
+        };
   }
   if (value.status === 'skipped' && typeof value.reason === 'string') {
     return { status: 'skipped', reason: value.reason };

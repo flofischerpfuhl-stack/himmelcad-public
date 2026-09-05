@@ -8,8 +8,8 @@
   padding: 0 12px;
   border: 1px solid var(--hc-border-default);
   border-radius: var(--hc-radius-chip);
-  color: var(--hc-fg-strong);
-  background: var(--hc-bg-chip);
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island-hi);
   box-shadow: var(--hc-shadow-chip);
   font-family: var(--hc-font-mono);
   font-size: 11px;
@@ -38,17 +38,17 @@
   outline-offset: 1px;
 }
 
-/* Neutral pressed (aria-pressed / data-active) */
+/* Active viewport chrome uses the design-system accent-outline pattern. */
 .chipActive {
-  background: var(--hc-press-bg);
-  border-color: var(--hc-border-strong);
+  background: var(--hc-bg-island-hi);
+  border-color: var(--hc-selection-accent-border);
   color: var(--hc-fg-strong);
 }
 
 /* Accent outline selection */
 .chipAccent {
   border-color: var(--hc-selection-accent-border);
-  background: var(--hc-bg-chip);
+  background: var(--hc-bg-island-hi);
 }
 
 .chipMuted {
@@ -61,7 +61,7 @@
 }
 
 .axis {
-  color: var(--hc-accent-base);
+  color: var(--hc-fg-default);
   font-weight: 600;
   margin-right: 2px;
 }

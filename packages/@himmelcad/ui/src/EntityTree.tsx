@@ -21,6 +21,7 @@ import {
 } from 'react';
 
 import styles from './EntityTree.module.css';
+import { EntityCommandMenu } from './CommandSurfaces.js';
 import {
   consumeEscapeBlurCommitSuppression,
   registerEscapeRung,
@@ -78,23 +79,6 @@ export function EntityTree({
     if (onLeftNavTabChange) onLeftNavTabChange(tab);
     else setLocalNavTab(tab);
   };
-  useEffect(() => {
-    if (!context) return;
-    const close = (): void => setContext(null);
-    window.addEventListener('pointerdown', close);
-    window.addEventListener('blur', close);
-    return () => {
-      window.removeEventListener('pointerdown', close);
-      window.removeEventListener('blur', close);
-    };
-  }, [context]);
-  useEffect(() => {
-    if (!context) return;
-    return registerEscapeRung('menu', () => {
-      setContext(null);
-      return true;
-    });
-  }, [context]);
   const headerCollapse = (
     <button
       type="button"
@@ -253,96 +237,56 @@ export function EntityTree({
           />
         </div>
       </div>
-      {context && project.entities[context.id] && (
-        <div
-          className={styles.contextMenu}
-          style={{ left: context.x, top: context.y }}
-          onPointerDown={(event) => event.stopPropagation()}
-          role="menu"
-        >
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              onContextAction?.(context.id, 'open');
-              setContext(null);
-            }}
-          >
-            Open / View
-          </button>
-          {project.entities[context.id]?.kind === 'GroundControlPoint' && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                onContextAction?.(context.id, 'showGcpImages');
-                setContext(null);
-              }}
-            >
-              Images containing this GCP
-            </button>
-          )}
-          {project.entities[context.id] &&
-            (canExport?.(project.entities[context.id]!) ??
-              isExportableProduct(project.entities[context.id]?.kind)) && (
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  onContextAction?.(context.id, 'export');
-                  setContext(null);
-                }}
-              >
-                Export…
-              </button>
-            )}
-          {project.entities[context.id]?.kind === 'CameraImage' && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                onContextAction?.(context.id, 'remove');
-                setContext(null);
-              }}
-            >
-              Remove from project…
-            </button>
-          )}
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setEditingId(context.id);
-              setContext(null);
-            }}
-          >
-            Rename
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              const entity = project.entities[context.id];
-              if (entity) onVisibilityChange?.(context.id, !entity.visibility.visible);
-              setContext(null);
-            }}
-          >
-            {project.entities[context.id]?.visibility.visible ? 'Hide' : 'Show'}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              onContextAction?.(context.id, 'properties');
-              setContext(null);
-            }}
-          >
-            Properties
-          </button>
-        </div>
-      )}
+      {context && project.entities[context.id] ? (
+        <EntityCommandMenu
+          x={context.x}
+          y={context.y}
+          context={treeCommandContext(project, selectedIds, canExport)}
+          onClose={() => setContext(null)}
+          onExecute={(invocation) => {
+            const ids = selectedIds.has(context.id) ? [...selectedIds] : [context.id];
+            if (invocation.id === 'entity.rename') setEditingId(context.id);
+            else if (invocation.id === 'entity.hide' || invocation.id === 'entity.show') {
+              for (const id of ids) onVisibilityChange?.(id, invocation.id === 'entity.show');
+            } else if (invocation.id === 'entity.export') onContextAction?.(context.id, 'export');
+            else if (invocation.id === 'entity.properties') onContextAction?.(context.id, 'properties');
+            else if (invocation.id === 'entity.zoom_to') onContextAction?.(context.id, 'open');
+          }}
+        />
+      ) : null}
     </div>
   );
+}
+
+function treeCommandContext(
+  project: ProjectSnapshot,
+  selectedIds: ReadonlySet<EntityId>,
+  canExport: EntityTreeProps['canExport'],
+) {
+  const entities = [...selectedIds].flatMap((id) => {
+    const entity = project.entities[id];
+    return entity ? [entity] : [];
+  });
+  return {
+    hasProject: true,
+    selectedEntityIds: entities.map((entity) => entity.id),
+    selectedEntityKinds: entities.map((entity) => {
+      if (entity.kind === 'SinglePoint' || entity.kind === 'GroundControlPoint') return 'point' as const;
+      if (entity.kind === 'Polyline3D') return 'polyline' as const;
+      if (entity.kind === 'Mesh' || entity.kind === 'TexturedMesh' || entity.kind === 'Surface') return 'mesh' as const;
+      if (entity.kind === 'PointCloud' || entity.kind === 'GaussianSplatCloud') return 'cloud' as const;
+      return 'other' as const;
+    }),
+    selectionVisibility: entities.every((entity) => entity.visibility.visible)
+      ? ('visible' as const)
+      : entities.every((entity) => !entity.visibility.visible)
+        ? ('hidden' as const)
+        : ('mixed' as const),
+    selectionEditable: entities.every((entity) => !entity.visibility.locked),
+    selectionExportable:
+      entities.length > 0 &&
+      entities.every((entity) => canExport?.(entity) ?? isExportableProduct(entity.kind)),
+  };
 }
 
 function isExportableProduct(kind: EntityKind | undefined): boolean {

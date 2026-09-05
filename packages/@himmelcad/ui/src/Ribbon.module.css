@@ -137,6 +137,10 @@
   margin-bottom: 12px;
 }
 
+.body[hidden] {
+  display: none;
+}
+
 .collapsed .body {
   display: none;
 }

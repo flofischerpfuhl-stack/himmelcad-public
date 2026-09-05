@@ -1,5 +1,12 @@
 import { KernelCameraController } from './KernelCameraController.js';
 import { KernelDecodeWorkerPool } from './KernelDecodeWorkerPool.js';
+import {
+  KernelFrameDiagnostics,
+  type KernelDeadlineReasonCode,
+  type KernelDiagnosticsSampleRequest,
+  type KernelDiagnosticsSampleResult,
+  type KernelDiagnosticsSnapshot,
+} from './KernelFrameDiagnostics.js';
 import type { KernelLoadOperationOptions, KernelLoadProgress } from './KernelLoadOperation.js';
 import {
   KernelNavigationController,
@@ -252,6 +259,8 @@ export class KernelViewerSession {
   private pendingPickMappings = 0;
   private readonly pickMappingWaiters = new Set<() => void>();
   private readonly presentedFrameWaiters = new Set<KernelPresentedFrameWaiter>();
+  private readonly frameDiagnosticsState = new KernelFrameDiagnostics();
+  private previousPresentedTimestampMs: number | null = null;
 
   private constructor(
     private readonly options: KernelViewerSessionOptions,
@@ -279,6 +288,24 @@ export class KernelViewerSession {
   get runtimeQuality(): KernelRuntimeQualityState {
     this.assertAlive();
     return this.qualityState;
+  }
+
+  /** Marks one input for correlation with the next successfully presented frame. */
+  recordInput(inputId?: string, timestampMs?: number): string {
+    this.assertAlive();
+    return this.frameDiagnosticsState.recordInput(inputId, timestampMs);
+  }
+
+  /** Immutable typed seam consumed by the diagnostics HUD. */
+  diagnosticsSnapshot(lastFrames = 120): KernelDiagnosticsSnapshot {
+    this.assertAlive();
+    return this.frameDiagnosticsState.snapshot(lastFrames);
+  }
+
+  /** Private-window implementation of the `view.diagnostics.sample` query. */
+  sampleDiagnostics(request: KernelDiagnosticsSampleRequest): Promise<KernelDiagnosticsSampleResult> {
+    this.assertAlive();
+    return this.frameDiagnosticsState.sample(request);
   }
 
   subscribe(listener: (event: KernelViewerSessionEvent) => void): () => void {
@@ -316,6 +343,10 @@ export class KernelViewerSession {
         ...(callbacks.onViewModeChanged ? { onViewModeChanged: callbacks.onViewModeChanged } : {}),
         ...(callbacks.onCursorCoordinate
           ? { onCursorCoordinate: callbacks.onCursorCoordinate }
+          : {}),
+        ...(callbacks.gestures ? { gestures: callbacks.gestures } : {}),
+        ...(callbacks.registerEscapeRung
+          ? { registerEscapeRung: callbacks.registerEscapeRung }
           : {}),
         onInteractionChanged: (interacting) => {
           this.navigationInteracting = interacting;
@@ -743,7 +774,7 @@ export class KernelViewerSession {
     });
   }
 
-  frame(interacting = false): KernelFrameOutcome {
+  frame(interacting = false, animationFrameTimestampMs?: number): KernelFrameOutcome {
     this.assertAlive();
     if (this.recoveryReason !== null) {
       this.startDeviceRecovery();
@@ -752,12 +783,15 @@ export class KernelViewerSession {
     const started = performance.now();
     try {
       this.advanceCalibration();
+      const protectedStarted = performance.now();
       const interactionActive = interacting || this.navigationInteracting;
       const work = kernelStreamingWorkPolicy(this.policyState, interactionActive);
       const prefetchCamera = interactionActive
         ? predictedPrefetchCamera(this.previousStreamingCamera, this.currentStreamingCamera)
         : null;
       this.previousStreamingCamera = this.currentStreamingCamera;
+      const protectedLanes1To3Ms = performance.now() - protectedStarted;
+      const planStarted = performance.now();
       const plan = this.viewerState.planStreamingFrame({
         resourceBudget: this.policyState.resources,
         frameBudget: work.frame,
@@ -772,8 +806,13 @@ export class KernelViewerSession {
         maximumTraversedNodes: work.maximumTraversedNodes,
         ...(prefetchCamera === null ? {} : { prefetchCamera }),
       });
+      const cpuPlanMs = performance.now() - planStarted;
+      const hostStarted = performance.now();
       const uploadedBytes = this.streamingState.execute(plan);
+      const cpuHostMs = performance.now() - hostStarted;
+      const encodeStarted = performance.now();
       const outcome = this.viewerState.render();
+      const cpuEncodeMs = performance.now() - encodeStarted;
       if (outcome.status === 'presented') this.resolvePresentedFrameWaiters(outcome);
       this.emit({ type: 'frame', outcome });
       if (outcome.status === 'recreateSurface') this.viewerState.recoverSurface();
@@ -787,7 +826,57 @@ export class KernelViewerSession {
         interacting: interactionActive,
         uploadedBytes,
       });
+      if (observation.gpuSample) {
+        this.frameDiagnosticsState.attachGpuSample(
+          observation.gpuSample.sequence,
+          observation.gpuSample.gpuMs,
+        );
+      }
       this.qualityState = observation.quality;
+      if (outcome.status === 'presented') {
+        const presentTimestampMs = performance.now();
+        const transport = this.streamingState.diagnostics();
+        const streaming = this.viewerState.streamingRuntime();
+        const reasonCodes = frameReasonCodes(
+          plan.admission,
+          observation.reasonCode,
+          protectedLanes1To3Ms,
+          this.policyState.frame.targetFrameMs,
+        );
+        this.frameDiagnosticsState.recordFrame({
+          rafTimestampMs: animationFrameTimestampMs ?? presentTimestampMs,
+          presentTimestampMs,
+          presentIntervalMs:
+            this.previousPresentedTimestampMs === null
+              ? null
+              : Math.max(0, presentTimestampMs - this.previousPresentedTimestampMs),
+          presentSource: 'raf-render-complete',
+          cpuMs: performance.now() - started,
+          gpuMs: null,
+          gpuTimingSequence: outcome.gpuTimingSequence ?? null,
+          gpuTimestampSupported: this.viewerState.gpuFrameTiming().supported,
+          primitives: observation.primitives,
+          phases: {
+            protectedLanes1To3Ms,
+            cloudMeshRefinementMs: cpuPlanMs + cpuHostMs,
+            sharedEncodeMs: cpuEncodeMs,
+            cpuPlanMs,
+            cpuHostMs,
+            cpuEncodeMs,
+          },
+          deadlineReasonCodes: reasonCodes,
+          renderScale: observation.quality.renderScale,
+          detailScale: observation.quality.detailScale,
+          uploadedBytes,
+          requestBacklog: transport.activeRequests + transport.queuedRequests,
+          decodeBacklog: transport.queuedDecodes + transport.activeDecodes,
+          uploadBacklog: streaming.residencyStageCounts.queuedUpload + streaming.residencyStageCounts.uploading,
+          residencyBytes:
+            streaming.residencyCost.gpuBufferBytes + streaming.residencyCost.gpuTextureBytes,
+          freshness: 'fresh',
+        });
+        this.previousPresentedTimestampMs = presentTimestampMs;
+      }
       if (observation.adjustment !== 'unchanged') {
         this.emit({
           type: 'runtimeQuality',
@@ -1064,6 +1153,25 @@ export class KernelViewerSession {
       );
     }
   }
+}
+
+function frameReasonCodes(
+  admission: Readonly<Record<string, unknown>>,
+  governorReason: KernelDeadlineReasonCode,
+  protectedMs: number,
+  targetMs: number,
+): readonly KernelDeadlineReasonCode[] {
+  const reasons = new Set<KernelDeadlineReasonCode>([governorReason]);
+  const rejected = Array.isArray(admission.rejected) ? admission.rejected : [];
+  for (const item of rejected) {
+    if (typeof item !== 'object' || item === null || !('reason' in item)) continue;
+    const reason = (item as { readonly reason?: unknown }).reason;
+    if (reason === 'resourceBudget') reasons.add('resource_budget');
+    if (reason === 'frameBudget') reasons.add('frame_budget');
+    if (reason === 'invalidBenefit') reasons.add('invalid_benefit');
+  }
+  if (protectedMs > targetMs) reasons.add('protected_work_over_budget');
+  return Object.freeze([...reasons]);
 }
 
 function createDecodeExecutor(

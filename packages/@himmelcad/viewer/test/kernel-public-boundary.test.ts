@@ -119,23 +119,29 @@ void test('kernel public API surface is exact and runtime internals stay private
       return `${symbol.name}:${marker}`;
     })
     .sort();
-  assert.equal(surface.length, 228);
+  assert.equal(surface.length, 287);
   assert.equal(
     createHash('sha256').update(surface.join('\n')).digest('hex'),
-    '7e77523b579443a516dffc1f2645eb69b639e9852858ecd467a88cfa0469466a',
+    'd8257b938e66c3bf4b34bf6929290b1c11dab08c82bda356ef62b32ebb9146e9',
     `kernel API changed; review the stable contract before updating this gate:\n${surface.join('\n')}`,
   );
 
   const runtime = await import('../src/kernel/index.js');
   assert.deepEqual(Object.keys(runtime).sort(), [
+    'GestureClaimError',
+    'KERNEL_FRAME_DIAGNOSTICS_CAPACITY',
     'KernelCameraController',
     'KernelCanonicalDocument',
     'KernelDecodeWorkerError',
+    'KernelFrameDiagnostics',
     'KernelNavigationController',
     'KernelViewerEntityHandle',
     'KernelViewerScene',
     'KernelViewerSession',
     'KernelViewerSessionError',
+    'PLATFORM_GESTURE_TUNABLES',
+    'PlatformGestureArbiter',
+    'SHARED_3D_TARGET_DEVIATIONS',
     'assertValidKernelLocalOrthographicViewFrame',
     'assertViewingBox',
     'isPlanViewMode',

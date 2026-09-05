@@ -107,7 +107,7 @@ export function Select({
       left: rect.left,
       minWidth: Math.max(rect.width, 140),
       maxHeight: Math.max(120, maxHeight),
-      zIndex: 10050,
+      zIndex: 'var(--hc-z-popover)',
     });
   }, [open]);
 

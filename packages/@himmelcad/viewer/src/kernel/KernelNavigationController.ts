@@ -15,6 +15,12 @@ import type {
   KernelWorldCamera,
   KernelWorldPoint,
 } from './WgpuKernelViewer.js';
+import {
+  PLATFORM_GESTURE_TUNABLES,
+  PlatformGestureArbiter,
+  type EscapeRungRegistrar,
+  type PlatformGestureCallbacks,
+} from './PlatformGestureArbiter.js';
 
 /** Narrow navigation-only target; it exposes no render or residency owner. */
 export interface KernelNavigationTarget {
@@ -49,12 +55,15 @@ export interface KernelNavigationCallbacks {
     source: 'geometry' | 'targetPlane',
   ) => void;
   readonly requestFrame?: () => void;
+  readonly gestures?: PlatformGestureCallbacks<KernelPickCandidate>;
+  readonly registerEscapeRung?: EscapeRungRegistrar;
 }
 
 /** Shared scene/acquisition mode. Both plan modes use one camera and winner. */
 export type KernelViewMode = '3d' | '2d' | '2.5d';
 
 type DragMode = 'orbit' | 'pan';
+type ClaimedDragRow = 'lmbDrag' | 'rmbDrag' | 'mmbDrag';
 const LOCAL_SECTION_CLIP_SCOPE = 'kernel-local-section-view';
 const LOCAL_SECTION_CLIP_ID = 'kernel-local-section-depth';
 
@@ -73,6 +82,7 @@ export class KernelNavigationController {
   private disposed = false;
   private pickPending = false;
   private pickAgain = false;
+  private clickGeneration = 0;
   private latestPickPosition: readonly [number, number] | null = null;
   private candidates: readonly KernelPickCandidate[] = [];
   private activeCandidateIndex = 0;
@@ -92,6 +102,13 @@ export class KernelNavigationController {
   private reportedInteracting = false;
   private wheelInteractionTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly previousTabIndex: number;
+  private pressClientX = 0;
+  private pressClientY = 0;
+  private pressTimeStamp = 0;
+  private pressButton = 0;
+  private dragThresholdCrossed = false;
+  private claimedDragRow: ClaimedDragRow | null = null;
+  readonly gestures: PlatformGestureArbiter<KernelPickCandidate>;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -99,6 +116,27 @@ export class KernelNavigationController {
     readonly camera: KernelCameraController,
     private readonly callbacks: KernelNavigationCallbacks = {},
   ) {
+    this.gestures = new PlatformGestureArbiter(
+      {
+        ...callbacks.gestures,
+        candidateKey: (candidate) =>
+          [
+            candidate.address.entityId,
+            candidate.address.renderProxyId,
+            candidate.address.datasetId,
+            candidate.address.tileId,
+            candidate.address.primitiveId,
+          ].join('\u0000'),
+        cycleCandidate: (direction) => {
+          const candidate = this.cycleCandidate(direction);
+          if (candidate && (callbacks.gestures?.isPickable?.(candidate) ?? true)) {
+            callbacks.gestures?.select?.(candidate);
+          }
+          callbacks.gestures?.cycleCandidate?.(direction);
+        },
+      },
+      callbacks.registerEscapeRung,
+    );
     this.previousTabIndex = canvas.tabIndex;
     if (canvas.tabIndex < 0) canvas.tabIndex = 0;
     canvas.addEventListener('pointerdown', this.onPointerDown);
@@ -109,6 +147,7 @@ export class KernelNavigationController {
     canvas.addEventListener('contextmenu', this.preventDefault);
     canvas.addEventListener('auxclick', this.preventMiddleDefault);
     canvas.addEventListener('keydown', this.onKeyDown);
+    canvas.addEventListener('blur', this.onBlur);
     this.uploadCamera();
   }
 
@@ -116,8 +155,11 @@ export class KernelNavigationController {
   setEnabled(enabled: boolean): void {
     if (this.disposed || this.enabled === enabled) return;
     this.enabled = enabled;
+    this.clickGeneration += 1;
+    this.gestures.clearCandidateIndicator();
     this.cancelCameraTransition();
     this.dragMode = null;
+    this.cancelClaimedDrag();
     this.dragPivot = null;
     this.pointerInteracting = false;
     if (this.pointerMotionTimer !== null) clearTimeout(this.pointerMotionTimer);
@@ -135,13 +177,15 @@ export class KernelNavigationController {
     this.uploadCamera();
   }
 
-  /** Cycles the last stable GPU neighborhood in the same order as Tab picking. */
+  /** Cycles the last stable GPU neighborhood in its kernel-provided order. */
   cycleCandidate(direction: 1 | -1 = 1): KernelPickCandidate | null {
     this.assertAlive();
     if (this.candidates.length === 0) return null;
     const index =
       (this.activeCandidateIndex + direction + this.candidates.length) % this.candidates.length;
-    return this.activateCandidate(index);
+    const candidate = this.activateCandidate(index);
+    if (this.candidates.length > 1) this.gestures?.setCandidateSet(this.candidates, index + 1);
+    return candidate;
   }
 
   activeCandidate(): KernelPickCandidate | null {
@@ -362,6 +406,7 @@ export class KernelNavigationController {
     this.rasterAnalysisKind = null;
     this.disposed = true;
     this.cancelCameraTransition();
+    this.cancelClaimedDrag();
     if (this.wheelInteractionTimer !== null) clearTimeout(this.wheelInteractionTimer);
     if (this.pointerMotionTimer !== null) clearTimeout(this.pointerMotionTimer);
     this.canvas.removeEventListener('pointerdown', this.onPointerDown);
@@ -372,11 +417,14 @@ export class KernelNavigationController {
     this.canvas.removeEventListener('contextmenu', this.preventDefault);
     this.canvas.removeEventListener('auxclick', this.preventMiddleDefault);
     this.canvas.removeEventListener('keydown', this.onKeyDown);
+    this.canvas.removeEventListener('blur', this.onBlur);
+    this.gestures.dispose();
     this.canvas.tabIndex = this.previousTabIndex;
   }
 
   private readonly onPointerDown = (event: PointerEvent): void => {
     if (this.disposed || this.enabled === false) return;
+    this.clickGeneration += 1;
     this.canvas.focus({ preventScroll: true });
     this.dragMode = event.button === 0 && !this.camera.isOrthographicView() ? 'orbit' : 'pan';
     if (event.button !== 0 && event.button !== 1 && event.button !== 2) {
@@ -385,6 +433,12 @@ export class KernelNavigationController {
     }
     if (event.button === 1) event.preventDefault();
     this.dragPivot = this.cursorPresentationPosition;
+    this.pressClientX = event.clientX;
+    this.pressClientY = event.clientY;
+    this.pressTimeStamp = event.timeStamp;
+    this.pressButton = event.button;
+    this.dragThresholdCrossed = false;
+    this.claimedDragRow = null;
     this.lastClientX = event.clientX;
     this.lastClientY = event.clientY;
     this.canvas.setPointerCapture(event.pointerId);
@@ -395,12 +449,39 @@ export class KernelNavigationController {
 
   private readonly onPointerMove = (event: PointerEvent): void => {
     if (this.disposed || this.enabled === false) return;
+    if (this.claimedDragRow) {
+      this.gestures.continueContinuousClaim(
+        this.claimedDragRow,
+        'move',
+        event,
+        this.activeCandidate(),
+      );
+      return;
+    }
     if (!this.dragMode) {
       this.queuePick(event.clientX, event.clientY);
       return;
     }
     const deltaX = clamp(event.clientX - this.lastClientX, -480, 480);
     const deltaY = clamp(event.clientY - this.lastClientY, -480, 480);
+    if (!this.dragThresholdCrossed) {
+      const travel = Math.hypot(
+        event.clientX - this.pressClientX,
+        event.clientY - this.pressClientY,
+      );
+      if (travel < PLATFORM_GESTURE_TUNABLES.clickDragThresholdPx) return;
+      this.dragThresholdCrossed = true;
+      this.gestures.clearCandidateIndicator();
+      const claimedRow = dragRowForButton(this.pressButton);
+      if (
+        claimedRow &&
+        this.gestures.beginContinuousClaim(claimedRow, event, this.activeCandidate())
+      ) {
+        this.claimedDragRow = claimedRow;
+        this.dragMode = null;
+        return;
+      }
+    }
     this.lastClientX = event.clientX;
     this.lastClientY = event.clientY;
     if (deltaX === 0 && deltaY === 0) return;
@@ -421,15 +502,30 @@ export class KernelNavigationController {
 
   private readonly onPointerUp = (event: PointerEvent): void => {
     if (this.disposed || this.enabled === false) return;
+    const wasClick = event.type !== 'pointercancel' && !this.dragThresholdCrossed;
+    const claimedDragRow = this.claimedDragRow;
+    if (claimedDragRow) {
+      this.gestures.continueContinuousClaim(
+        claimedDragRow,
+        event.type === 'pointercancel' ? 'cancel' : 'end',
+        event,
+        this.activeCandidate(),
+      );
+    }
+    this.claimedDragRow = null;
     this.dragMode = null;
     this.dragPivot = null;
     this.pointerInteracting = false;
     if (this.pointerMotionTimer !== null) clearTimeout(this.pointerMotionTimer);
     this.pointerMotionTimer = null;
     this.reportInteraction();
+    if (wasClick) {
+      void this.executeClickGesture(event, Math.max(0, event.timeStamp - this.pressTimeStamp));
+    }
     // One fresh pick after the camera settles is enough. Rendering a complete
     // ID/depth pass for every drag frame needlessly competes with navigation.
-    this.queuePick(event.clientX, event.clientY);
+    if (!wasClick && event.type !== 'pointercancel') this.queuePick(event.clientX, event.clientY);
+    if (event.type === 'pointercancel') this.gestures.clearCandidateIndicator();
     if (this.canvas.hasPointerCapture(event.pointerId)) {
       this.canvas.releasePointerCapture(event.pointerId);
     }
@@ -437,7 +533,10 @@ export class KernelNavigationController {
 
   private readonly onWheel = (event: WheelEvent): void => {
     if (this.disposed || this.enabled === false) return;
+    this.clickGeneration += 1;
     event.preventDefault();
+    this.gestures.clearCandidateIndicator();
+    if (this.gestures.beginContinuousClaim('wheel', event, this.activeCandidate())) return;
     this.wheelInteracting = true;
     this.reportInteraction();
     if (this.wheelInteractionTimer !== null) clearTimeout(this.wheelInteractionTimer);
@@ -459,10 +558,21 @@ export class KernelNavigationController {
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (this.disposed || this.enabled === false) return;
-    if (event.key !== 'Tab' || this.candidates.length === 0) return;
-    event.preventDefault();
-    this.cycleCandidate(event.shiftKey ? -1 : 1);
+    this.gestures.handleKeyDown(event, this.activeCandidate());
   };
+
+  private readonly onBlur = (): void => this.gestures.clearCandidateIndicator();
+
+  private cancelClaimedDrag(): void {
+    if (!this.claimedDragRow) return;
+    this.gestures.continueContinuousClaim(
+      this.claimedDragRow,
+      'cancel',
+      new Event('pointercancel'),
+      this.activeCandidate(),
+    );
+    this.claimedDragRow = null;
+  }
 
   private readonly preventDefault = (event: Event): void => event.preventDefault();
   private readonly preventMiddleDefault = (event: MouseEvent): void => {
@@ -478,6 +588,36 @@ export class KernelNavigationController {
     }
     this.pickPending = true;
     requestAnimationFrame(() => void this.executePick());
+  }
+
+  private async executeClickGesture(event: PointerEvent, heldMilliseconds: number): Promise<void> {
+    const generation = ++this.clickGeneration;
+    const position = this.physicalPointer(event.clientX, event.clientY);
+    let result: KernelPickResult;
+    try {
+      result = await this.viewer.pick(position[0], position[1], 4);
+    } catch {
+      return;
+    }
+    if (
+      this.disposed ||
+      !this.navigationEnabled() ||
+      result.stale ||
+      generation !== this.clickGeneration
+    ) {
+      return;
+    }
+    this.candidates = result.candidates.filter(
+      (candidate) => this.callbacks.gestures?.isPickable?.(candidate) ?? true,
+    );
+    const nearestIndex = nearestCandidateIndex(this.candidates);
+    const candidate = nearestIndex >= 0 ? this.activateCandidate(nearestIndex) : null;
+    if (this.candidates.length > 1 && nearestIndex >= 0) {
+      this.gestures.setCandidateSet(this.candidates, nearestIndex + 1);
+    } else {
+      this.gestures.clearCandidateIndicator();
+    }
+    this.gestures.handleClick(event, candidate, heldMilliseconds);
   }
 
   private async executePick(): Promise<void> {
@@ -513,6 +653,7 @@ export class KernelNavigationController {
   private publishTargetPlaneCursor(position: readonly [number, number]): void {
     this.activeCandidateIndex = 0;
     this.candidates = [];
+    this.gestures.clearCandidateIndicator();
     const ndc = this.physicalPointerNdc(position[0], position[1]);
     const targetPlaneCoordinate = this.camera.worldPointOnTargetPlane(ndc[0], ndc[1]);
     this.cursorCoordinate = projectTargetPlaneCoordinate(targetPlaneCoordinate, this.viewMode);
@@ -522,6 +663,7 @@ export class KernelNavigationController {
   }
 
   private uploadCamera(): void {
+    this.gestures.clearCandidateIndicator();
     const camera = this.camera.worldCamera();
     this.viewer.setWorldCamera(camera, this.camera.recommendedFloatingOrigin());
     this.callbacks.onCameraChanged?.(camera);
@@ -663,6 +805,13 @@ export function nearestCandidateIndex(candidates: readonly KernelPickCandidate[]
     }
   }
   return nearest;
+}
+
+function dragRowForButton(button: number): ClaimedDragRow | null {
+  if (button === 0) return 'lmbDrag';
+  if (button === 1) return 'mmbDrag';
+  if (button === 2) return 'rmbDrag';
+  return null;
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

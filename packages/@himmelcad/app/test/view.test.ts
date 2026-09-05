@@ -5,6 +5,7 @@ import {
   ContractValidationError,
   parseScreenshotResult,
   parseViewState,
+  parseViewStateV2,
   serializeViewState,
   validateScreenshotRequest,
   type ScreenshotRequestV1,
@@ -64,6 +65,34 @@ void test('ViewState rejects unknown schema versions', () => {
     () => parseViewState({ ...viewState, version: 2 }),
     (error: unknown) =>
       error instanceof ContractValidationError && error.path === 'viewState.version',
+  );
+});
+
+void test('G-S01-3 ViewState v2 accepts clip references and rejects Plan fields', () => {
+  const v2 = {
+    schema: 'himmelcad.view-state',
+    version: 2,
+    camera: viewState.camera,
+    navigationMode: '3d',
+    hiddenEntityIds: [],
+    sessionHiddenEntityIds: ['temporary-hide'],
+    selectedEntityIds: [],
+    clipRefs: [{ entityId: 'viewing-box', expectedRevision: 3, active: true, locked: true }],
+    presentation: {
+      background: 'theme',
+      renderStyle: 'source',
+      showGrid: true,
+      showAxes: false,
+      showSelectionOutline: true,
+      colorModeOverride: { kind: 'follow' },
+      pointSizeMultiplier: 1,
+    },
+  } as const;
+  assert.deepEqual(parseViewStateV2(v2), v2);
+  assert.throws(
+    () => parseViewStateV2({ ...v2, pinnedViewport: {} }),
+    (error: unknown) =>
+      error instanceof ContractValidationError && error.path === 'viewState.pinnedViewport',
   );
 });
 
