@@ -7,20 +7,20 @@ landing by the PhotoLab session. Plan of record:
 `.claude/codex/prompts/photolab/`, the token ledger under
 `.claude/codex/logs/photolab/ledger.json`.
 
-Last update: 2026-09-05 09:15 (table repaired — earlier row updates had silently missed prettier-padded cells).
+Last update: 2026-09-05 09:35 (A3 landed; golden relaunch pending the Builder GPU baseline).
 
 ## Current work packages
 
-| WP                                        | State                                                                                                                           |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| A4 SMRF ground classification (DTM)       | landed 2026-09-04 (3e05da1, 6b87d00) with DTM-vs-DSM evidence (median DSM−DTM 1.32 m, 25 % of cells > 3 m); G17 reviewed        |
-| H2 jobs chip + side-operation drain       | landed 2026-09-04 (2ef29d5); adopt the shared `JobsStatusChip` (S-05) once the Builder lane commits it — brief `h2b.md` ready   |
-| B5 journal/manifest order + orphan GC     | landed 2026-09-04 (b66a66b): manifest-first commit with write-ahead intent, open-time repair, orphan quarantine                 |
-| B4 same-target admission + disk preflight | landed 2026-09-04 (fcf75c8): frozen publication targets, ConflictingTarget, InsufficientDisk, inline errors                     |
-| H1b cancellable archive Save              | landed 2026-09-04 (e0da2a8): params on `photolab.project.save`, phases, cancellation, Jobs-tab Cancel via H2                    |
-| A3 mesh from dense cloud, stage 1         | code + fixes landed (108e20f, 1148ffd, 601efde/ea66991); dense-mesh 24-image smoke green 2026-09-04 18:5x; landing note pending |
-| A5 golden-gate accuracy levers            | evidence-gated; golden run relaunched 2026-09-04 12:12 (`.build/logs/golden-qh-135.log`)                                        |
-| G1a-2 / G1b / G1c                         | after the Builder-lane command table; ADR 0030 rev 6 conformant, no open contract item                                          |
+| WP                                        | State                                                                                                                                                      |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A4 SMRF ground classification (DTM)       | landed 2026-09-04 (3e05da1, 6b87d00) with DTM-vs-DSM evidence (median DSM−DTM 1.32 m, 25 % of cells > 3 m); G17 reviewed                                   |
+| H2 jobs chip + side-operation drain       | landed 2026-09-04 (2ef29d5); adopt the shared `JobsStatusChip` (S-05) once the Builder lane commits it — brief `h2b.md` ready                              |
+| B5 journal/manifest order + orphan GC     | landed 2026-09-04 (b66a66b): manifest-first commit with write-ahead intent, open-time repair, orphan quarantine                                            |
+| B4 same-target admission + disk preflight | landed 2026-09-04 (fcf75c8): frozen publication targets, ConflictingTarget, InsufficientDisk, inline errors                                                |
+| H1b cancellable archive Save              | landed 2026-09-04 (e0da2a8): params on `photolab.project.save`, phases, cancellation, Jobs-tab Cancel via H2                                               |
+| A3 mesh from dense cloud, stage 1         | landed 2026-09-04/05 (108e20f, 1148ffd, 601efde/ea66991): dense-mesh smoke green, 4.19 M triangles / 99 tiles, provenance with degenerateFacesDropped 2582 |
+| A5 golden-gate accuracy levers            | evidence-gated; golden run relaunched 2026-09-04 12:12 (`.build/logs/golden-qh-135.log`)                                                                   |
+| G1a-2 / G1b / G1c                         | after the Builder-lane command table; ADR 0030 rev 6 conformant, no open contract item                                                                     |
 
 Landed since 2026-09-02 evening: H3 Escape ladder (be8bc6e, UIP-D14
 conformant; UIP-D7 deviation accepted), E1 calibration report (171791b), F3
@@ -30,22 +30,22 @@ close/durability (03bd235), ADR 0030 rev 6 (9d4d398), pixel baselines
 
 ## Open R1 gates (executed evidence only)
 
-| Gate                                   | Status                                                                                                                            |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| 1 complete workflows import → products | 24-image smokes green: waves 1–4 (LAZ validated), DTM + DSM (A4), dense mesh (A3)                                                 |
-| 2 real-dataset accuracy                | 135-image Quality Hybrid golden run relaunched 2026-09-04 12:12 (see "Golden run"); Fast diagnostic 0.9657 px vs 0.8299 reference |
-| 3 lineage/recovery                     | H1 close drain, B5 journal/manifest reconciliation, B4 same-target admission, H1b cancellable save landed                         |
-| 4 cancellation/reload                  | H2 landed: side operations drain, list, cancel; chip rehydrates from the sidecar after reload                                     |
-| 5 project format/journal               | B5 landed (crash-injection tests for both orders + dataset quarantine)                                                            |
-| 6 automation parity (P11)              | 72 rows documented + G-1 test; command table generation is Builder-lane (G2)                                                      |
-| 7 accessibility / visual               | executed: audit 22 clean (88 captures × 2 viewports, roving-tabindex ribbon walk), baselines refreshed 311c848                    |
-| 8 products open in Builder/WeltView    | G1a-2 pending; ADR 0030 rev 6 conformant                                                                                          |
+| Gate                                   | Status                                                                                                                                             |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 complete workflows import → products | 24-image smokes green: waves 1–4 (LAZ validated), DTM + DSM (A4), dense mesh (A3)                                                                  |
+| 2 real-dataset accuracy                | golden run died 2026-09-04 21:53 (lane binary relinked under it); relaunch on `.build/photolab-runtime/golden-bin/` after the Builder GPU baseline |
+| 3 lineage/recovery                     | H1 close drain, B5 journal/manifest reconciliation, B4 same-target admission, H1b cancellable save landed                                          |
+| 4 cancellation/reload                  | H2 landed: side operations drain, list, cancel; chip rehydrates from the sidecar after reload                                                      |
+| 5 project format/journal               | B5 landed (crash-injection tests for both orders + dataset quarantine)                                                                             |
+| 6 automation parity (P11)              | 72 rows documented + G-1 test; command table generation is Builder-lane (G2)                                                                       |
+| 7 accessibility / visual               | executed: audit 22 clean (88 captures × 2 viewports, roving-tabindex ribbon walk), baselines refreshed 311c848                                     |
+| 8 products open in Builder/WeltView    | G1a-2 pending; ADR 0030 rev 6 conformant                                                                                                           |
 
 ## Next three steps
 
-1. Land A3 (plan note + evidence copy) and send the pending incident/landing
-   message to the Builder session; check the golden run (it looked idle on
-   2026-09-05 morning — relaunch if dead, it is gate-2 evidence).
+1. Relaunch the golden run on `.build/photolab-runtime/golden-bin/` after the
+   Builder's "baseline done" (never rebuild into a lane an e2e uses); message
+   the Builder when started/finished.
 2. Dispatch H2b (adopt the shared JobsStatusChip, brief `h2b.md`) once the
    Builder lane commits S-05; then A5 levers once the golden result is in.
 3. G1a-2 after the Builder-lane command table; hands-on re-test of the
