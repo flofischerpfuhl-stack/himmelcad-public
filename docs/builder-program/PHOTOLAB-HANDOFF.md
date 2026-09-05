@@ -7,7 +7,7 @@ landing by the PhotoLab session. Plan of record:
 `.claude/codex/prompts/photolab/`, the token ledger under
 `.claude/codex/logs/photolab/ledger.json`.
 
-Last update: 2026-09-05 11:15 (40-image Quality Hybrid diagnostic started on golden-bin; GPU baseline was idle).
+Last update: 2026-09-06 01:40 (laptop reboot killed the 2026-09-05 diagnostic at ALIKED 16/40; relaunched).
 
 ## Current work packages
 
@@ -92,3 +92,4 @@ lease and are unaffected. Result: `result.json` in the output directory.
 - Regression reported 2026-09-05 10:45 (Builder-lane a540935): the shared EntityTree now renders the command-table `EntityCommandMenu`; PhotoLab's tree actions 'remove' ("Remove from project…", confirmation flow, audited surface `confirmation-remove-image`) and 'showGcpImages' are no longer reachable from the tree. Proposal sent: command-table rows `photolab.images.remove` / `photolab.gcp.images` with surface contextMenu, EntityTree forwarding `photolab.*` invocations to `onContextAction`, or an `additionalCommands` prop. PhotoLab adapts `handleTreeContextAction` once the extension point lands; the visual harness stops at that step until then.
 - Pending message to the Builder session (offline at 11:10): H2b landed 6cc334b — PhotoLab renders the shared JobsStatusChip; G17 shots `.build/photolab-ui/h2b-{dark,light}/00-main-view.png`, `h2b-dark/bottom-jobs.png` (same family as the gallery in both themes; S-05b light-theme fixes visible in PhotoLab). Waiting for the S-06c id → label ping (F15) to adapt `handleTreeContextAction`; baselines after that.
 - 2026-09-05 11:15: started the 40-image Quality Hybrid diagnostic (`run-qh-diagnostic.sh`, log `.build/logs/qh-40-diagnostic.log`, output `.build/photolab-e2e/qh-40-diagnostic`, lease `/tmp/himmelcad-compute-diag.lock`); the Builder's GPU baseline showed 0 % GPU and its session was offline, three Builder Codex runs were active (they do not use the golden-bin copy). Expected end ~14:15; not gate evidence.
+- 2026-09-06 01:35: the 40-image diagnostic died with the laptop reboot on 2026-09-05 11:48 (ALIKED 16/40); relaunched on golden-bin (same log/output paths). Builder session at `10-himmelcad-aa` since 01:31; S-06c (F15 fix) had not reached origin before the reboot.
