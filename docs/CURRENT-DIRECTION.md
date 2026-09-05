@@ -55,3 +55,18 @@ A feature is not complete because a code path or UI exists. Its relevant user
 flow, conflicting-operation behavior, cancellation, failure recovery,
 persistence, automation surface, sibling-app impact, and proportional tests must
 be resolved or explicitly reported as remaining work.
+
+## Owner decision 2026-09-02 — Builder implementation runs in parallel (Q1 → Branch A)
+
+The owner answered `docs/builder-program/OWNER-DECISIONS.md` Q1: Builder
+implementation starts now, in parallel to PhotoLab release work, targeting a
+"Trimble RealWorks starter" outcome (point-cloud workflows, measurement,
+orthophoto import, viewer performance, line/point drafting with editing,
+surfaces/DGM with editing, volumes, the start of specification management)
+while PhotoLab is driven to production readiness by a separate session.
+Sequencing follows `docs/builder-program/MASTER-PLAN.md` §1 Branch A: the
+iteration-speed package first (it serves PhotoLab too), then the shared
+substrate, then domain slices. Non-interference between the two sessions is
+governed by `docs/builder-program/COORDINATION.md`. PhotoLab release gates
+keep priority on shared resources; a failing PhotoLab gate is never starved
+by Builder work.

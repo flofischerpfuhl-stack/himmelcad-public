@@ -81,6 +81,21 @@ canonical resources.
 Point-cloud editing and segmentation use masks, filters, and derived entities
 instead of duplicating complete point payloads.
 
+PhotoLab products are published as `hcad.product-import-package-manifest@1`
+packages (package id + version; per-dataset prepared format) carrying a
+frozen `hcad.photolab-product-lineage@1` payload (alignment id + hash, GCP
+revision + snapshot hash, frozen CRS). Builder registration stores it as the
+read-only `hcad.photolab-product-provenance@1` component (exact lineage
+bytes, `lineage_object_sha256`, source `package_sha256`, destination
+registration audit). Records carry `provenanceStatus: complete | partial |
+unknown`; legacy publications may only be `partial` or `unknown`, and
+registration behavior per status follows import-formats IF-D19 (missing
+provenance is surfaced, never silently downgraded). The chain is
+PhotoLab publishes → Builder registers → WeltView reads the registered
+product read-only from the project or its `.hcadx` archive. Shapes, hash
+canonicalization, and states are defined by ADR 0030 (Proposed, owner
+acceptance pending) and import-formats IF-D19/IF-D22.
+
 ## Commands and document authority
 
 Commands are the only canonical write path. A command declares its actor,
@@ -125,3 +140,60 @@ typed bulk-data leases rather than unbounded JSON copies.
 The generated contract and current Rust implementation are the schema source of
 truth. Examples in documentation are explanatory and must not be copied as
 independent type definitions.
+
+## Pending data-model admissions
+
+ADR 0031 (Proposed) proposes the Release 0.5 subset of these admissions (items 1 basic profile, 3 0.5 profile, 5, 6, 7 without offset/parallel, 11, 12) and defers the rest; see `docs/adr/0031-release-0-5-data-model-admissions.md`.
+
+Status: admitted as pending decisions by the Builder completion program
+(registry 2026-09-02). These are not ADRs and do not authorize
+implementation. Until their ADRs define schema versions, invariants,
+migrations, persistence, undo/redo, cancellation/restart, and compatibility
+bounds, specifications may define command/query contracts, but
+implementation must not invent or persist substitute domain truth.
+
+1. `hcad.measurement@1` — canonical saved measurement geometry with exact
+   anchors, measurement plane, verification/provenance state, and role
+   migration (measure-inspect spec).
+2. Edit-lock component — canonical entity edit lock, distinct from layer
+   lock, with effective-editability resolution and command rejection
+   semantics (select-edit spec).
+3. ViewState v2 — entity-referenced clips, pinned Plan-viewport state,
+   independent visibility/filter predicates, update policy, exact captured
+   revisions (view-domain and plan-editor specs).
+4. Plan root — canonical project-root sheets, elements, viewports, bindings,
+   schedules, libraries, and revision/CAS rules (plan-editor spec).
+5. Snapshot markers — named project snapshot markers over journal
+   generations, including restore linkage and retention semantics
+   (file-project spec).
+6. `hcad.derived-recipe@1` — the recipe component of derived entities
+   (sources by id + revision + parameters, linked/detached state, last
+   regeneration, DAG constraints) per doctrine P10 and mesh-terrain
+   MT-D25; and `hcad.mesh-source-roles@1` — boundary / breakline / form-line
+   / exclusion roles of surface sources (mesh-terrain spec).
+7. Point-acquisition provenance (how a point was acquired: pick, typed,
+   3D-target estimate, field code — draw DR-D21), a support-role component
+   (defining points/lines of higher-order entities, draw/select-edit), and
+   the offset/parallel recipe schema (a `hcad.derived-recipe@1` profile,
+   draw).
+8. (Promoted 2026-09-02 to ADR 0030, Proposed — see "Immutable
+   resources".)
+9. Journal actor metadata and Agent batch/root records — so an agent turn
+   groups child commands, preserves per-command author/audit identity,
+   resumes after restart, and retains heavy-undo inputs, while preserving
+   human/SDK/agent command equivalence; transcript state never becomes
+   project authority (agent spec).
+
+## Release 0.5 admitted substrate
+
+ADR 0031 authorizes the producer-narrow Release 0.5 contracts implemented by
+`himmelcad-core::release_05_admissions`: basic Measurement and snapshot-marker
+built-ins; ViewState v2 clip references and presentation; the shared derived
+recipe and Mesh source-role resource; point-acquisition and support-role
+components; curve-subentity references; and three independently stored local
+history streams. Unknown future versions are retained only for read-only
+forwarding or rejected for writable open. Absence remains absence.
+
+The deferred profiles listed by ADR 0031 remain outside the built-in admission
+and automation tables even where a shared envelope could technically carry
+their bytes.

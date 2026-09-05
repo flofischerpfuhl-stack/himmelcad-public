@@ -31,8 +31,18 @@ unmodified browser borders or generic component-library defaults.
   and display-3D. Display faces are not body fonts.
 - Use one accent blue sparingly for primary actions, focus, and important links.
   Status colors communicate success, warning, and error only.
-- Active and selected states use shared neutral or accent-outline patterns. Do
-  not invent translucent accent washes or gradients.
+- Toast accent bars map `info` to the accent token and `success`, `warning`, and
+  `error` only to their matching status tokens.
+- Active and selected states of UI chrome use shared neutral or
+  accent-outline patterns. Selected or actively constructed _geometry_ in
+  the viewport uses the dedicated selection token family (orange; line
+  direction indicated; anchor-only highlight for symbol-bearing points),
+  and support geometry (defining points/lines of higher-order entities,
+  helper points) uses the support token (blue). Do not invent translucent
+  accent washes or gradients. (Owner statement S2 2026-09-02; the owner's
+  attribution of orange to Trimble Access is not supported by the dossier —
+  Access selects in blue — so the choice is recorded as owner taste, not
+  reference behavior.)
 - Animations are subtle, non-blocking, and normally complete within 200 ms.
 
 ## Shared controls
@@ -65,9 +75,11 @@ Desktop products use the shared shell language:
 - bottom console/results area;
 - persistent viewport coordinate display where spatial interaction applies.
 
-Panels remain collapsible. Tool parameters stay docked when the user must
-interact with the viewport. Focused multi-step, destructive, or spatially dense
-work may use a custom modal or full task surface.
+Panels remain collapsible. Tool parameter surfaces default to docked when the
+user must interact with the viewport; user-initiated detach is permitted and
+remembered, and a function's viewport interactions behave identically in
+either host. Focused multi-step, destructive, or spatially dense work may use
+a custom modal or full task surface.
 
 ## Discoverability and contextual access
 
@@ -133,6 +145,11 @@ Shared spatial controls remain consistent across Builder, PhotoLab, and
 WeltView unless a product has a documented reason to differ. Selection,
 navigation, snapping, command completion, cancellation, and context-menu
 behavior must not change accidentally between workspaces.
+
+Escape in a text input reverts the field to its last committed value and
+keeps its surface open; the revert must not be committed by the resulting
+blur, and closing a surface mid-edit discards, never commits, an uncommitted
+field edit.
 
 Detailed camera, picking, and snapping behavior belongs to the viewer and input
 contracts rather than being duplicated here.

@@ -1,0 +1,24 @@
+// Cloudflare Workers — static-assets deployment config.
+//
+// The site is plain HTML/CSS/JS in this directory (website/).
+// `assets.directory` is "." because this config lives *inside* website/;
+// the deployed asset root is therefore website/ of the Himmel:CAD repo.
+//
+// Deploy from this directory:
+//   npx wrangler pages deploy
+// or from the repo root:
+//   npx wrangler pages deploy website --project-name himmelcad
+//
+// Bumping `compatibility_date` is safe; do it whenever you want
+// to opt into newer Workers runtime defaults.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "himmelcad",
+  "compatibility_date": "2026-04-19",
+  "assets": {
+    "directory": "."
+    // Leave Cloudflare's default `html_handling` ("auto-trailing-slash")
+    // alone. Setting it to "none" also disables the implicit
+    // `/` → `/index.html` mapping.
+  }
+}

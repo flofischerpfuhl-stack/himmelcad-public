@@ -35,6 +35,17 @@ conflict must be removed rather than documented twice.
 
 ## Product and subsystem documents
 
+- Function design contract (draft pending owner acceptance):
+  `docs/FUNCTION-CONTRACT.md`, applied adversarially by the
+  `demanding-user` review agent in `.claude/agents/demanding-user.md`.
+- Decision doctrine and precedent register (draft pending owner acceptance):
+  `docs/DECISION-DOCTRINE.md` — how design questions are answered without
+  owner escalation.
+- Builder completion program (plan class, never evidence of implemented
+  work): `docs/builder-program/README.md`, with `OWNER-DECISIONS.md`,
+  reference `dossiers/`, domain `specs/`, the function `REGISTRY.md`, and
+  `MASTER-PLAN.md`.
+
 - PhotoLab: `photolab/PHOTOLAB-CONCEPT.md` and the focused `docs/photolab-*`
   specifications.
 - Cap: `docs/himmelcap/README.md`.

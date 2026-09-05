@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Himmel:CAD — CAD für die Ingenieurvermessung</title>
+    <meta
+      name="description"
+      content="Himmel:CAD ist source-available Civil-CAD für Vermessungsbüros. PhotoLab, Builder und eine öffentliche Roadmap."
+    />
+    <meta name="theme-color" content="#0b2545" />
+    <meta name="color-scheme" content="light" />
+    <link rel="icon" type="image/svg+xml" href="assets/logos/himmelcad-builder-primary.svg" />
+    <link rel="stylesheet" href="assets/css/site.css" />
+  </head>
+  <body>
+    <a class="skip" href="#inhalt">Zum Inhalt</a>
+
+    <header class="site-header hero-nav">
+      <nav aria-label="Hauptnavigation">
+        <a href="#roadmap">Roadmap</a>
+        <a href="#preise">Preise</a>
+        <a href="#lizenz">Lizenz</a>
+        <a class="nav-box" href="impressum.html">Impressum</a>
+      </nav>
+    </header>
+
+    <main id="inhalt">
+      <section class="hero" id="top" aria-labelledby="hero-title">
+        <h1 id="hero-title" class="wordmark">Himmel:CAD</h1>
+
+        <div class="hero-claims" role="group" aria-label="Himmel:CAD in Kürze">
+          <p class="sticker sticker-claim">CAD für die Ingenieurvermessung.</p>
+          <p class="sticker sticker-free">
+            KOSTENLOS FÜR PRIVAT, TESTS UND BÜROS UNTER 3 PERSONEN
+          </p>
+        </div>
+
+        <div class="hero-offer">
+          <a class="box-cta hero-cta" href="#download"
+            >KOSTENLOS LADEN <span aria-hidden="true">→</span></a
+          >
+        </div>
+      </section>
+
+      <section class="facts" aria-label="Vier Grundsätze">
+        <article>
+          <p class="index">/01</p>
+          <h2>Quellcode einsehbar</h2>
+          <p>Source-available. Lesen, prüfen, selbst bauen. Keine Blackbox.</p>
+        </article>
+        <article>
+          <p class="index">/02</p>
+          <h2>Was heute schon steht</h2>
+          <p>Renderer, kanonisches Modell, Journal, Undo und Importbasis stehen gemeinsam.</p>
+        </article>
+        <article>
+          <p class="index">/03</p>
+          <h2>Pro Büro, nicht pro Sitz</h2>
+          <p>Ein Preis fürs ganze Büro. Keine Named-User, kein Lizenzserver.</p>
+        </article>
+        <article>
+          <p class="index">/04</p>
+          <h2>Frei unter drei</h2>
+          <p>Privat, Tests und Büros unter drei Personen: 0 €, auf Vertrauensbasis.</p>
+        </article>
+      </section>
+
+      <section class="roadmap-section" id="roadmap" aria-labelledby="roadmap-title">
+        <div class="section-title-wrap">
+          <h2 class="display-title" id="roadmap-title">Roadmap.</h2>
+          <p class="roadmap-intro">
+            Vom ersten Scan bis zum fertigen Plan. Alles, was fehlt, steht hier — mit Stand.
+          </p>
+        </div>
+
+        <ol class="timeline">
+          <li class="timeline-item" data-step="0.5">
+            <article class="timeline-card">
+              <p class="status status-active">In Arbeit</p>
+              <h3>0.5 · DGM aus Scan</h3>
+              <p class="timeline-promise">
+                Scan rein, Geländemodell raus. Der Alltag von 90 % der Vermesser.
+              </p>
+              <ul class="capability-list">
+                <li>PhotoLab 1.0 (Bilder → Punktwolke, Orthofoto, Georeferenz)</li>
+                <li>Import aller gängigen Punktwolken- und CAD-Formate</li>
+                <li>Flüssige Ansicht auch bei Milliarden Punkten</li>
+                <li>Clipping Box mit Sperre</li>
+                <li>Bodenextraktion</li>
+                <li>Ausdünnen und Rasterisieren</li>
+                <li>Linien mit Fang (Bruchkanten, Umring)</li>
+                <li>DGM erstellen mit Fehlerliste und Korrektur</li>
+                <li>DGM bearbeiten (Glätten, Ausschneiden und Füllen)</li>
+                <li>Messen</li>
+                <li>Export DXF/LandXML</li>
+              </ul>
+            </article>
+          </li>
+          <li class="timeline-item" data-step="1.0">
+            <article class="timeline-card">
+              <p class="status status-next">Als Nächstes</p>
+              <h3>1.0 · Punktwolken-Starter</h3>
+              <p class="timeline-promise">
+                Alles, was eine Scan-Suite im Alltag können muss. Schneller.
+              </p>
+              <ul class="capability-list">
+                <li>Segmentieren</li>
+                <li>Klassifizieren</li>
+                <li>Fußbodenextraktion</li>
+                <li>Ansichten und Lesezeichen</li>
+                <li>Cloud-to-Cloud-Registrierung</li>
+                <li>Stationsansicht über Panorama-Tiefenbild</li>
+                <li>Spatial Sampling</li>
+                <li>Orthofotos in Echtzeit</li>
+                <li>Linien und Punkte mit Split, Trim, Parallele</li>
+                <li>Volumen</li>
+                <li>Spezifikationen (Anfang)</li>
+                <li>Gaussian Splats</li>
+              </ul>
+            </article>
+          </li>
+          <li class="timeline-item" data-step="1.x">
+            <article class="timeline-card">
+              <p class="status status-later">Danach</p>
+              <h3>1.x · Projekt und Werkstatt</h3>
+              <p class="timeline-promise">
+                Ein Projekt öffnet genau dort, wo die Arbeit aufgehört hat.
+              </p>
+              <ul class="capability-list">
+                <li>Journal statt Speichern-Angst, echter Save-Button</li>
+                <li>Undo getrennt für Kamera, Anzeige, Auswahl, Objekte</li>
+                <li>Snapshots, Archive, Wiederherstellung</li>
+                <li>Fremdprojekte als Block anhängen</li>
+                <li>Layer mit Dreizustand</li>
+                <li>Entkoppelbare Panels</li>
+                <li>Konsole und Auftragsliste</li>
+              </ul>
+            </article>
+          </li>
+          <li class="timeline-item" data-step="2.0">
+            <article class="timeline-card">
+              <p class="status status-later">Danach</p>
+              <h3>2.0 · Raster und Mengen</h3>
+              <p class="timeline-promise">Aus Realität werden prüfbare Zahlen.</p>
+              <ul class="capability-list">
+                <li>Georeferenzieren und Drapieren von Bildern</li>
+                <li>Differenzraster mit Legende</li>
+                <li>Hüllflächen, Körper zwischen Oberflächen</li>
+                <li>Auf- und Abtrag nach Spezifikation</li>
+                <li>Höhenschichten</li>
+                <li>Mengenreports, reproduzierbar</li>
+              </ul>
+            </article>
+          </li>
+          <li class="timeline-item" data-step="2.5">
+            <article class="timeline-card">
+              <p class="status status-later">Danach</p>
+              <h3>2.5 · Trassen und Baugruben</h3>
+              <p class="timeline-promise">Straße oder Grube, direkt aus dem Aufmaß.</p>
+              <ul class="capability-list">
+                <li>Achsen aus gemessenen Kanten (Geraden, Bögen, Klothoiden)</li>
+                <li>Gradienten und Längsprofile</li>
+                <li>Querprofile mit Abgleich</li>
+                <li>Breitenbänder → Oberfläche</li>
+                <li>Böschungen</li>
+                <li>Baugrube aus BIM-Flächen</li>
+                <li>Tabelleneingabe gleichwertig</li>
+              </ul>
+            </article>
+          </li>
+          <li class="timeline-item" data-step="3.0">
+            <article class="timeline-card">
+              <p class="status status-later">Danach</p>
+              <h3>3.0 · BIM und Spezifikationen</h3>
+              <p class="timeline-promise">Feldcodes werden zu Bauteilen.</p>
+              <ul class="capability-list">
+                <li>Spezifikationskatalog, editierbar je Büro</li>
+                <li>Codes und Shortcuts</li>
+                <li>Feldcode-CSV → Objekte</li>
+                <li>Linien → Wände, Flächen → Räume</li>
+                <li>Kanalplanung (ISYBAU, DWA-M 150)</li>
+                <li>IFC-Update ohne Verlust lokaler Änderungen</li>
+              </ul>
+            </article>
+          </li>
+          <li class="timeline-item" data-step="3.5">
+            <article class="timeline-card">
+              <p class="status status-later">Danach</p>
+              <h3>3.5 · Planeditor</h3>
+              <p class="timeline-promise">
+                Der Plan ist ein eigenes Fenster, nicht ein Nachgedanke.
+              </p>
+              <ul class="capability-list">
+                <li>Unendliche Leinwand, eigenes Programmfenster</li>
+                <li>Exakte Modellansichten und Schnitte</li>
+                <li>Tabellen und Legenden</li>
+                <li>Sichtbare Veraltet-Markierung</li>
+                <li>Ausgegebene Inhalte fixieren</li>
+                <li>PDF/SVG deterministisch</li>
+              </ul>
+            </article>
+          </li>
+          <li class="timeline-item" data-step="4.0">
+            <article class="timeline-card">
+              <p class="status status-later">Danach</p>
+              <h3>4.0 · Agent und Python</h3>
+              <p class="timeline-promise">
+                Sag es, oder schreib es. Beides landet im selben Journal.
+              </p>
+              <ul class="capability-list">
+                <li>Eingebetteter Agent</li>
+                <li>Python-SDK</li>
+                <li>Eine Kommandotabelle für Mensch, Konsole, Agent</li>
+                <li>Jede Agent-Aktion ein Undo-Schritt</li>
+                <li>Freigaben bleiben beim Menschen</li>
+                <li>Weitergabe über WeltView im Browser</li>
+              </ul>
+            </article>
+          </li>
+        </ol>
+
+        <div class="roadmap-footer">
+          <p>Finanziert durch Gründerbüros und offene Entwicklung.</p>
+          <a href="#" data-todo="registry-url"
+            >Vollständiges Funktionsregister <span aria-hidden="true">→</span></a
+          >
+        </div>
+      </section>
+
+      <section class="workflow" aria-labelledby="workflow-title">
+        <h2 class="display-title" id="workflow-title">So geht's.</h2>
+        <ol class="workflow-grid">
+          <li>
+            <strong>1</strong>
+            <p>Punktwolke laden</p>
+            <span>LAS/E57/PhotoLab-Produkt</span>
+          </li>
+          <li>
+            <strong>2</strong>
+            <p>Boden extrahieren, Bruchkanten zeichnen</p>
+          </li>
+          <li>
+            <strong>3</strong>
+            <p>DGM erstellen, prüfen, exportieren</p>
+            <span>DXF/LandXML</span>
+          </li>
+        </ol>
+      </section>
+
+      <section class="comparison" aria-labelledby="comparison-title">
+        <h2 class="visually-hidden" id="comparison-title">Himmel:CAD im Vergleich</h2>
+        <table class="comparison-grid">
+          <thead>
+            <tr>
+              <th class="comparison-heading usual" scope="col">Das Übliche</th>
+              <th class="comparison-heading ours" scope="col">Himmel:CAD</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Lizenz pro Sitz</td><td>Lizenz pro Büro</td></tr>
+            <tr><td>Lizenzserver</td><td>Keiner</td></tr>
+            <tr><td>Das übliche Abo</td><td>Kostenlos unter drei</td></tr>
+            <tr><td>Quellcode geschlossen</td><td>Quellcode einsehbar</td></tr>
+            <tr><td>Roadmap geheim</td><td>Roadmap öffentlich</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="founder" aria-label="Aussage des Gründers">
+        <figure class="sticker founder-sticker">
+          <blockquote>
+            „Ich baue das Werkzeug, das ich selbst jeden Tag brauche — und verkaufe es zu einem
+            Preis, den ich selbst zahlen würde.“
+          </blockquote>
+          <figcaption>Florian Fischer · Vermessungsingenieur</figcaption>
+        </figure>
+      </section>
+
+      <section class="pricing" id="preise" aria-labelledby="preise-title">
+        <h2 class="display-title" id="preise-title">Preise.</h2>
+        <div class="pricing-grid">
+          <article class="price-card price-free" id="download">
+            <p class="sticker price-popular">Meistgewählt</p>
+            <p class="price-label">Frei</p>
+            <p class="price-value">0 €</p>
+            <p>Privatnutzung, Tests und Büros unter drei Personen. Auf Vertrauensbasis.</p>
+            <p class="release-note">
+              Kein Installer bis Release 0.5 — Downloads folgen; die Freigabe erhalten Sie
+              schriftlich per E-Mail; die Lizenz im Repository gilt.
+            </p>
+          </article>
+
+          <article class="price-card price-founders">
+            <p class="price-label">Founders</p>
+            <p class="founder-price">
+              79 € im Monat pro Büro · 790 € im Jahr · Preis für immer festgeschrieben
+            </p>
+            <a
+              class="box-cta box-cta-light"
+              href="mailto:fernwork.absolute836@passmail.net?subject=Himmel%3ACAD%20Gr%C3%BCnderprogramm&amp;body=Guten%20Tag%2C%0A%0AIch%20interessiere%20mich%20f%C3%BCr%20das%20Himmel%3ACAD%20Gr%C3%BCnderprogramm.%0A%0AB%C3%BCro%3A%0APersonen%3A%0AHeutige%20Werkzeuge%3A%0AWindows%20oder%20Linux%3A%0A"
+              >Gründerprogramm anfragen <span aria-hidden="true">→</span></a
+            >
+          </article>
+
+          <article class="price-card price-supporter">
+            <p class="price-label">Supporter</p>
+            <p class="price-value">20 €/Monat</p>
+            <p>Für Einzelne, die frei wären und trotzdem beitragen wollen.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="license" id="lizenz" aria-labelledby="lizenz-title">
+        <p class="index">/ Lizenz</p>
+        <h2 id="lizenz-title">Source-available, nicht Open Source.</h2>
+        <p>Es gilt die Business Source License 1.1 in der Datei LICENSE.</p>
+        <p>Der Quellcode ist auf Anfrage einsehbar, bis die Downloads bereitstehen.</p>
+        <p>Downloads folgen mit Release 0.5.</p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>
+        Himmel:CAD · Florian Fischer · <a href="impressum.html">Impressum</a> ·
+        <a href="datenschutz.html">Datenschutz</a>
+      </p>
+    </footer>
+  </body>
+</html>

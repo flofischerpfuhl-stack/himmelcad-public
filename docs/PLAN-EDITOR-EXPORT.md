@@ -23,3 +23,22 @@ Current boundaries:
 
 The `.hcplan` file remains the editable authority. SVG, PDF and PNG are delivery artifacts and must not be
 used as round-trip document formats.
+
+## Planned change: Plan authority and exchange (not implemented)
+
+Status: planned by the Builder completion program (plan-editor PE-D7 and
+PE-D13, registry 2026-09-02). Until code and verification change together,
+the current contract above remains in force: `.hcplan` is the editable
+authority today.
+
+Planned contract: the canonical Plan root, sheets, elements, viewports,
+templates, bindings, and schedules live in the project journal; `.hcplan`
+becomes a versioned exchange package only and is never project authority.
+Import validates and previews identifier/version collisions, then commits one
+transaction or none. Export reads a captured exact Plan revision. PDF/SVG/PNG
+and print outputs consume frozen capture artifacts, including exact
+entity/resource revisions, fonts, view state, and raster/mesh preparation;
+preflight and publication use platform jobs, bounded restart, cancellation,
+atomic target publication, and retained heavy-undo inputs. Preview labels are
+not publication guarantees, and stale captures require an explicit refresh
+before export.

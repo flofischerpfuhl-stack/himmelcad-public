@@ -3,7 +3,14 @@ Business Source License 1.1
 Licensor: HimmelCAD project owner
 Licensed Work: HimmelCAD and all source code in this repository
 Additional Use Grant: You may read, study, modify, compile, and run the
-Licensed Work for private, non-commercial use.
+Licensed Work (a) for private, non-commercial use; (b) for evaluation and
+testing, including in a commercial or professional setting, for as long as
+the evaluation lasts; and (c) in production, for any purpose, by an
+organization with fewer than three people in total (owners, partners, and
+employees counted together), including freelancers and one- or two-person
+offices. This grant is given on trust: no licence server, no registration,
+and no proof is required, but the Licensor may ask an organization to confirm
+in writing that it meets condition (c).
 Change Date: 2030-01-01
 Change License: Apache License, Version 2.0
 
@@ -24,8 +31,10 @@ allowed under the Additional Use Grant above.
 Production Use:
 
 Production use by companies, public institutions, freelancers, or any other
-commercial or professional entity requires a separate commercial license unless
-explicitly permitted by the Licensor in writing.
+commercial or professional entity with three or more people in total requires
+a separate commercial license unless explicitly permitted by the Licensor in
+writing. Organizations with fewer than three people are covered by the
+Additional Use Grant above.
 
 Text of Business Source License 1.1:
 

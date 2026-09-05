@@ -106,6 +106,16 @@ objects rather than mutating the entity store indirectly.
 Interrupted work is recorded as interrupted or recoverable, never completed.
 Cancellation leaves previously committed product state intact.
 
+PhotoLab product publication additionally writes a candidate import package
+(`hcad.product-import-package-manifest@1`, ADR 0030 — Proposed, owner
+acceptance pending) whose manifest and declared artifacts are synchronized
+before a small ready record is written with `package_sha256` last; the
+product publication record mirrors that summary and the two become visible
+atomically. The package binds every object, resource, and artifact hash
+inside its canonical manifest payload, so listing reads only the ready
+summary and never a directory walk. Packages are immutable: migration emits a
+new package and provenance revision and preserves the source package.
+
 ## Temporary data
 
 Temporary and scratch paths are never referenced by a committed manifest.
@@ -124,6 +134,28 @@ Archive creation and opening are streaming, cancellable, and transactional.
 
 WeltView may consume a complete archive, HTTP ranges, or an unpacked static
 object layout according to the product delivery decision.
+
+## `.hcadx` fragment profile (planned)
+
+Status: planned by the Builder completion program (select-edit SE-D7,
+cross-spec reconciliation and registry 2026-09-02); not implemented; its manifest schema requires an ADR
+before implementation.
+
+A fragment is a versioned transactional subset package, not a whole project.
+Its manifest uses `hcad.fragment-manifest@1` and records `version`,
+`sourceProjectId`, `sourceGeneration`, `sourceCrs`, `sourceUnits`, exact
+source entity and dependency references with revisions/hashes, and an object
+inventory with hashes and sizes. Paths are relative, normalized,
+traversal-safe, and validated under bounded entry/size/count budgets. Objects
+are staged into an operation-owned spool and the ready marker is written
+last. Cancellation, crash, validation failure, or quota failure before that
+marker publishes no fragment and creates no project entities. Same-project
+clipboard operations may use a pinned internal token; cross-project copy uses
+this fragment profile. Paste in place is allowed only for identical CRS and
+units or after an explicit registered-transform preview and approval; numeric
+coordinate identity without matching provenance is not sufficient. Attach
+remains the separate linked-reference operation. Import collision/dependency
+review and commit are one canonical transaction with no partial roots.
 
 ## Compatibility and migration
 
@@ -145,3 +177,15 @@ product schemas evolve independently where needed.
 - Never keep the only copy of persistent user-visible state in a renderer.
 - Never let two concurrent writers publish to the same project or external
   target without explicit coordination.
+
+## Release 0.5 additive records
+
+ADR 0031 records are additive to the existing logical project/archive payload.
+Canonical Measurement, snapshot-marker, derived-recipe, point-acquisition, and
+support-role changes enter through ordinary expected-revision journal
+transactions. Mesh source-role objects are immutable and hash-validated before
+their linking transaction. ViewState v1 is projected in memory; only an
+explicit v2 mutation persists v2. Selection, Display, and Camera local-history
+streams publish independently and an absent stream is an unwritten in-memory
+baseline. Passive open never rewrites a journal, resource, manifest, archive,
+or capture input merely because an admitted record is absent.
