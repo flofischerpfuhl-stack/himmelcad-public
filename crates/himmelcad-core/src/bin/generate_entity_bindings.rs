@@ -20,6 +20,10 @@ use himmelcad_core::geometry_representation_registry::{
     CanonicalRepresentationAdmission, GeometryRepresentationBindingRef, GeometryRepresentationKey,
     GeometryRepresentationSlotKey, SectionTopologyPartitionManifest,
 };
+use himmelcad_core::release_05_admissions::{
+    CurveSubentityRefV1, DerivedRecipeV1, LocalHistoryV1, MeasurementV1, MeshSourceRolesV1,
+    PointAcquisitionV1, SnapshotMarkerV1, SupportRoleV1, ViewStateV2,
+};
 use ts_rs::TS;
 
 const GENERATED_RELATIVE_PATH: &str = "packages/@himmelcad/data/src/generated";
@@ -126,6 +130,15 @@ fn generate(staging: &Path) -> Result<(), Box<dyn Error>> {
     AnnotationStyleResource::export_all_to(staging)?;
     BimClassificationComponent::export_all_to(staging)?;
     NetworkTopology::export_all_to(staging)?;
+    MeasurementV1::export_all_to(staging)?;
+    SnapshotMarkerV1::export_all_to(staging)?;
+    DerivedRecipeV1::export_all_to(staging)?;
+    MeshSourceRolesV1::export_all_to(staging)?;
+    PointAcquisitionV1::export_all_to(staging)?;
+    SupportRoleV1::export_all_to(staging)?;
+    CurveSubentityRefV1::export_all_to(staging)?;
+    LocalHistoryV1::export_all_to(staging)?;
+    ViewStateV2::export_all_to(staging)?;
     normalize_typescript(staging)?;
 
     let mut modules = Vec::new();

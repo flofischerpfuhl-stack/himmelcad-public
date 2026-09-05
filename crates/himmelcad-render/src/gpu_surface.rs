@@ -97,6 +97,8 @@ pub enum SurfaceFrameOutcome {
     Presented {
         /// The acquired texture was suboptimal and the surface was reconfigured.
         reconfigured: bool,
+        /// Timed-frame sequence when timestamp queries were available for this submission.
+        gpu_timing_sequence: Option<u64>,
     },
     /// An offscreen pick pass was submitted without acquiring a platform surface.
     Picked {
@@ -446,11 +448,11 @@ impl<'window> GpuSurfaceHost<'window> {
 
     /// Takes the newest completed GPU duration once for runtime telemetry.
     /// Pending maps and unsupported devices return `None`.
-    pub fn take_completed_gpu_frame_ms(&mut self) -> Option<f32> {
+    pub fn take_completed_gpu_frame_sample(&mut self) -> Option<crate::GpuFrameTimestampSample> {
         self.poll_frame_timing();
         self.frame_timing
             .as_mut()
-            .and_then(GpuFrameTimestampRecorder::take_completed_gpu_ms)
+            .and_then(GpuFrameTimestampRecorder::take_completed_sample)
     }
 
     /// Creates a bounded, incremental benchmark suite for the selected device.
@@ -708,6 +710,7 @@ impl<'window> GpuSurfaceHost<'window> {
         }
         Ok(SurfaceFrameOutcome::Presented {
             reconfigured: suboptimal,
+            gpu_timing_sequence: timing_token.map(GpuFrameTimestampRecorder::sequence),
         })
     }
 

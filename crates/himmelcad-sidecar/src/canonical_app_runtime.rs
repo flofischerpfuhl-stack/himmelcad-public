@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use himmelcad_core::app_protocol::{
     read_journal_page, validate_request_envelope, AppDocumentSnapshot, AppJournalReadError,
@@ -28,6 +29,10 @@ use himmelcad_core::property_schema::{
     canonical_entity_property_schema, compile_multi_entity_property_edit, query_properties,
     PropertySchemaError,
 };
+use himmelcad_core::release_05_admissions::{
+    validate_snapshot_marker, SnapshotMarkerKindV1, SnapshotMarkerV1, SnapshotOriginV1,
+    SnapshotRetentionV1, RELEASE_05_SCHEMA_VERSION, SNAPSHOT_MARKER_SCHEMA_ID,
+};
 use himmelcad_core::typed_artifact::{TypedArtifactDescriptor, TypedArtifactManifest};
 use himmelcad_io::{
     CanonicalImportPackage, CanonicalJsonObject, CanonicalPreparedDataset, CanonicalStagedImport,
@@ -37,9 +42,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::canonical_project_store::{
-    CanonicalImportCommit, CanonicalImportInventory, CanonicalImportProgress,
-    CanonicalImportSourceRoots, CanonicalProjectStore, CanonicalProjectStoreError,
-    CanonicalStoredObject,
+    CanonicalDurabilityStatus, CanonicalImportCommit, CanonicalImportInventory,
+    CanonicalImportProgress, CanonicalImportSourceRoots, CanonicalProjectStore,
+    CanonicalProjectStoreError, CanonicalStoredObject,
 };
 use crate::import_registration_runtime::{
     sample_potree_open_files, ImportRegistrationRuntimeError, PotreeOpenFiles,
@@ -62,6 +67,14 @@ pub struct AutomationObjectSource {
 #[derive(Default)]
 pub struct CanonicalAppRuntime {
     store: Option<CanonicalProjectStore>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalSnapshotSummary {
+    pub entity_id: String,
+    pub name: String,
+    pub marker: SnapshotMarkerV1,
 }
 
 /// Versioned, path-free description of every live representation that can be
@@ -111,6 +124,12 @@ pub enum CanonicalAppRuntimeError {
     /// A live prepared point cloud could not provide bounded registration samples.
     #[error("canonical point-cloud registration samples are invalid: {0}")]
     RegistrationSamples(String),
+    #[error("snapshot name is empty")]
+    InvalidSnapshotName,
+    #[error("snapshot marker is invalid")]
+    InvalidSnapshotMarker,
+    #[error("snapshot marker JSON is invalid: {0}")]
+    SnapshotJson(#[from] serde_json::Error),
 }
 
 impl CanonicalAppRuntime {
@@ -133,6 +152,13 @@ impl CanonicalAppRuntime {
         {
             seed_project_root(&mut store, project_root)?;
         }
+        create_snapshot_marker(
+            &mut store,
+            "Session start",
+            SnapshotMarkerKindV1::SessionStart,
+            SnapshotOriginV1::System,
+        )?;
+        store.flush_group_commits()?;
         let snapshot = AppDocumentSnapshot::from_document(store.document());
         self.store = Some(store);
         Ok(snapshot)
@@ -140,7 +166,71 @@ impl CanonicalAppRuntime {
 
     /// Releases the exclusive canonical project lock.
     pub fn close(&mut self) -> bool {
+        let Some(store) = self.store.as_mut() else {
+            return false;
+        };
+        if store.flush_group_commits().is_err() {
+            return false;
+        }
         self.store.take().is_some()
+    }
+
+    pub fn durability_status(&self) -> Result<CanonicalDurabilityStatus, CanonicalAppRuntimeError> {
+        Ok(self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?
+            .durability_status())
+    }
+
+    pub fn flush(&mut self) -> Result<CanonicalDurabilityStatus, CanonicalAppRuntimeError> {
+        Ok(self.store_mut()?.flush_group_commits()?)
+    }
+
+    pub fn create_snapshot(
+        &mut self,
+        name: &str,
+        origin: SnapshotOriginV1,
+    ) -> Result<CanonicalSnapshotSummary, CanonicalAppRuntimeError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(CanonicalAppRuntimeError::InvalidSnapshotName);
+        }
+        Ok(create_snapshot_marker(
+            self.store_mut()?,
+            name,
+            SnapshotMarkerKindV1::Manual,
+            origin,
+        )?)
+    }
+
+    pub fn list_snapshots(
+        &self,
+    ) -> Result<Vec<CanonicalSnapshotSummary>, CanonicalAppRuntimeError> {
+        let store = self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?;
+        let mut result = Vec::new();
+        for entity in store.document().entities() {
+            if entity.type_id.0 != SNAPSHOT_MARKER_SCHEMA_ID {
+                continue;
+            }
+            let marker: SnapshotMarkerV1 =
+                serde_json::from_slice(&store.read_object(&entity.components_ref)?)?;
+            validate_snapshot_marker(&marker)
+                .map_err(|_| CanonicalAppRuntimeError::InvalidSnapshotMarker)?;
+            result.push(CanonicalSnapshotSummary {
+                entity_id: entity.id.0.clone(),
+                name: entity.name.clone(),
+                marker,
+            });
+        }
+        result.sort_by(|left, right| {
+            (left.marker.marked_generation, &left.entity_id)
+                .cmp(&(right.marker.marked_generation, &right.entity_id))
+        });
+        Ok(result)
     }
 
     /// Returns whether a canonical project currently owns this runtime.
@@ -643,7 +733,7 @@ impl CanonicalAppRuntime {
                 self.dispatch_store_mut().and_then(|store| {
                     validate_transaction_object_refs(store, &transaction)?;
                     store
-                        .commit_transaction(transaction)
+                        .queue_transaction(transaction)
                         .map(AppProtocolResponse::TransactionAccepted)
                         .map_err(CanonicalAppDispatchError::from)
                 })
@@ -941,6 +1031,81 @@ fn seed_project_root(
     Ok(())
 }
 
+fn create_snapshot_marker(
+    store: &mut CanonicalProjectStore,
+    name: &str,
+    marker_kind: SnapshotMarkerKindV1,
+    origin: SnapshotOriginV1,
+) -> Result<CanonicalSnapshotSummary, CanonicalAppRuntimeError> {
+    let marked_generation = store.document().generation();
+    let now_ms = unix_timestamp_millis();
+    let marker = SnapshotMarkerV1 {
+        schema_id: SNAPSHOT_MARKER_SCHEMA_ID.to_owned(),
+        schema_version: RELEASE_05_SCHEMA_VERSION,
+        marked_generation,
+        marker_kind,
+        created_at: format!("unix-ms:{now_ms}"),
+        origin,
+        restore_of: None,
+        retention: if marker_kind == SnapshotMarkerKindV1::Manual {
+            SnapshotRetentionV1::Manual
+        } else {
+            SnapshotRetentionV1::Automatic
+        },
+    };
+    validate_snapshot_marker(&marker)
+        .map_err(|_| CanonicalAppRuntimeError::InvalidSnapshotMarker)?;
+    let components = CanonicalJsonObject::new(
+        "application/vnd.himmelcad.snapshot-marker+json",
+        serde_json::to_value(&marker)?,
+    )?;
+    let attributes = CanonicalJsonObject::new(
+        "application/vnd.himmelcad.attributes+json",
+        serde_json::json!({ "schemaId": "hcad.attributes@1" }),
+    )?;
+    let relations = CanonicalJsonObject::new(
+        "application/vnd.himmelcad.relations+json",
+        serde_json::json!({ "schemaId": "hcad.relations@1", "relations": [] }),
+    )?;
+    store.put_json_object(&components)?;
+    store.put_json_object(&attributes)?;
+    store.put_json_object(&relations)?;
+    let entity_id = format!("snapshot-{marked_generation}-{now_ms}");
+    let mut entity = CanonicalEntity {
+        id: EntityId(entity_id.clone()),
+        revision: 0,
+        type_id: EntityTypeId(SNAPSHOT_MARKER_SCHEMA_ID.to_owned()),
+        name: name.to_owned(),
+        owner: Some(EntityId("project-root".to_owned())),
+        layer_ids: Vec::new(),
+        placement: None,
+        representations: Vec::new(),
+        components_ref: components.object_hash,
+        attributes_ref: attributes.object_hash,
+        relations_ref: relations.object_hash,
+        style_ref: None,
+        schema_version: 1,
+        version_hash: ObjectHash::of_bytes(b"pending"),
+    };
+    entity.version_hash = canonical_entity_version_hash(&entity)
+        .map_err(|_| CanonicalProjectStoreError::CommitInvariant)?;
+    store.queue_transaction(CanonicalCommandTransaction {
+        command_id: format!("snapshot.create/{entity_id}"),
+        mutations: vec![CanonicalEntityMutation::Create { entity }],
+    })?;
+    Ok(CanonicalSnapshotSummary {
+        entity_id,
+        name: name.to_owned(),
+        marker,
+    })
+}
+
+fn unix_timestamp_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis())
+}
+
 #[derive(Debug, Error)]
 enum CanonicalAppDispatchError {
     #[error("no canonical project is open")]
@@ -1119,6 +1284,36 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&path);
         path
+    }
+
+    #[test]
+    fn snapshot_markers_round_trip_with_session_and_manual_origins() {
+        let root = temp_project("snapshot-round-trip");
+        let mut runtime = CanonicalAppRuntime::default();
+        runtime.open(&root).expect("open with session marker");
+        let session = runtime.list_snapshots().expect("session snapshot");
+        assert_eq!(session.len(), 1);
+        assert_eq!(session[0].name, "Session start");
+        assert_eq!(
+            session[0].marker.marker_kind,
+            SnapshotMarkerKindV1::SessionStart
+        );
+        let manual = runtime
+            .create_snapshot("Before grading", SnapshotOriginV1::Ui)
+            .expect("manual marker");
+        assert_eq!(manual.marker.schema_id, SNAPSHOT_MARKER_SCHEMA_ID);
+        runtime.flush().expect("snapshot durability");
+        assert!(runtime.close());
+
+        runtime.open(&root).expect("reopen");
+        let snapshots = runtime.list_snapshots().expect("round-trip snapshots");
+        assert!(snapshots.iter().any(|snapshot| {
+            snapshot.name == "Before grading"
+                && snapshot.marker.marker_kind == SnapshotMarkerKindV1::Manual
+                && snapshot.marker.origin == SnapshotOriginV1::Ui
+        }));
+        runtime.close();
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     fn entity(id: &str, name: &str) -> CanonicalEntity {
@@ -1317,7 +1512,15 @@ mod tests {
         assert!(runtime.close());
 
         let snapshot = runtime.open(&root).expect("reopen project");
-        assert_eq!(snapshot.entities, vec![renamed]);
+        assert!(snapshot.entities.contains(&renamed));
+        assert_eq!(
+            snapshot
+                .entities
+                .iter()
+                .filter(|entity| entity.type_id.0 == SNAPSHOT_MARKER_SCHEMA_ID)
+                .count(),
+            2
+        );
         let page = runtime.dispatch(request(AppProtocolRequest::ReadJournal(
             AppJournalReadRequest {
                 after_sequence: 0,
@@ -1327,8 +1530,8 @@ mod tests {
         let AppProtocolResponse::JournalPage(page) = page.response else {
             panic!("journal response expected");
         };
-        assert_eq!(page.entries.len(), 2);
-        assert_eq!(page.journal_head_sequence, 2);
+        assert_eq!(page.entries.len(), 4);
+        assert_eq!(page.journal_head_sequence, 4);
         assert!(!page.has_more);
 
         runtime.close();

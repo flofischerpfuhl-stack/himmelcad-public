@@ -15,11 +15,11 @@ from .models import (
     CanonicalEntityEdit, CanonicalEntityMutation,
     CasDescription, CommandCancelResult, CommandStatus, CommandValidationPlan, EntityPage,
     EntityVersionRef, JournalPage, PropertyId, PropertyQueryResult, ProtocolNegotiationResponse, ScreenshotResultV1,
-    ViewStateV1, WireModel, to_wire,
+    ViewStateV2, WireModel, to_wire,
 )
 
 LIMITS = MappingProxyType({'maxPageItems': 1000, 'maxPageBytes': 1048576, 'maxJournalPageItems': 4096, 'maxPropertySelectionItems': 1000, 'maxBulkRangeBytes': 8388608, 'maxInlineBytes': 262144, 'maxShapeRank': 8, 'maxShapeElements': 2000000000})
-METHOD_CAPABILITIES = MappingProxyType({'view.state.get': 'view.read', 'view.state.set': 'view.write', 'view.screenshot': 'view.screenshot', 'automation.entities.page': 'automation.entities.page', 'automation.cas.describe': 'automation.cas.describe', 'automation.commands.validate': 'automation.commands.validate', 'automation.commands.status': 'automation.commands.status', 'automation.commands.cancel': 'automation.commands.cancel', 'automation.bulk.read': 'automation.bulk.read', 'automation.bulk.release': 'automation.bulk.release'})
+METHOD_CAPABILITIES = MappingProxyType({'view.state.get': 'view.read', 'view.state.set': 'view.write', 'view.diagnostics.get': 'view.read', 'view.diagnostics.sample': 'view.read', 'view.frame': 'view.write', 'view.preset.top': 'view.write', 'view.preset.front': 'view.write', 'view.preset.right': 'view.write', 'view.preset.isometric': 'view.write', 'edit.clipboard.paste_in_place': 'document.write', 'entity.rename': 'document.write', 'entity.zoom_to': 'view.write', 'entity.hide': 'view.write', 'entity.show': 'view.write', 'entity.isolate': 'view.write', 'entity.properties': 'document.read', 'entity.export': 'document.read', 'measurement.create': 'document.write', 'measurement.list': 'document.read', 'measurement.get': 'document.read', 'measurement.update_anchor': 'document.write', 'measurement.detach_anchor': 'document.write', 'measurement.rebind_anchor': 'document.write', 'measurement.rename': 'document.write', 'measurement.set_layer': 'document.write', 'measurement.set_visibility': 'document.write', 'measurement.remove': 'document.write', 'inspect.point_info': 'document.read', 'viewing_box.place': 'document.write', 'viewing_box.update': 'document.write', 'viewing_box.set_operation': 'document.write', 'viewing_box.lock': 'document.write', 'viewing_box.unlock': 'document.write', 'viewing_box.rename': 'document.write', 'viewing_box.activate': 'view.write', 'viewing_box.deactivate': 'view.write', 'viewing_box.remove': 'document.write', 'viewing_box.list': 'document.read', 'view.presentation.set': 'view.write', 'view.point_size.set': 'view.write', 'project.flush': 'document.write', 'snapshot.create': 'document.write', 'snapshot.list': 'document.read', 'snapshot.rename': 'document.write', 'snapshot.restore': 'document.write', 'snapshot.delete': 'document.write', 'derived.recipe.get': 'document.read', 'derived.recipe.list': 'document.read', 'derived.recipe.status': 'document.read', 'derived.recipe.regenerate': 'document.write', 'derived.recipe.regenerate_batch': 'document.write', 'derived.recipe.detach': 'document.write', 'derived.recipe.relink': 'document.write', 'mesh.surface.draft.list': 'document.read', 'mesh.surface.draft.get': 'document.read', 'mesh.surface.draft.create': 'document.write', 'mesh.surface.draft.set': 'document.write', 'mesh.surface.draft.apply_fix': 'document.write', 'mesh.surface.draft.history': 'document.read', 'mesh.surface.draft.undo': 'document.write', 'mesh.surface.draft.redo': 'document.write', 'mesh.surface.draft.suspend': 'document.write', 'mesh.surface.draft.resume': 'document.write', 'mesh.surface.draft.discard': 'document.write', 'mesh.surface.check': 'document.read', 'mesh.surface.create': 'document.write', 'mesh.surface.edit.add_breakline': 'document.write', 'mesh.surface.edit.remove_breakline': 'document.write', 'mesh.surface.edit.add_form_line': 'document.write', 'mesh.surface.edit.remove_form_line': 'document.write', 'mesh.surface.edit.set_source_role': 'document.write', 'mesh.simplify.preview': 'document.read', 'mesh.simplify.check': 'document.read', 'mesh.simplify.bake': 'document.write', 'draw.point.create': 'document.write', 'draw.curve.create': 'document.write', 'draw.support_role.get': 'document.read', 'draw.support_role.set': 'document.write', 'draw.support_role.clear': 'document.write', 'view.support_overlay.get': 'view.read', 'view.support_overlay.set': 'view.write', 'select.get': 'view.read', 'select.list': 'view.read', 'select.set': 'view.write', 'select.add': 'view.write', 'select.remove': 'view.write', 'select.toggle': 'view.write', 'select.clear': 'view.write', 'select.undo': 'view.write', 'select.redo': 'view.write', 'select.candidates': 'view.read', 'selection.granularity.get': 'view.read', 'selection.granularity.set': 'view.write', 'selection.kind_filter.get': 'view.read', 'selection.kind_filter.set': 'view.write', 'interaction.state.explain': 'document.read', 'interaction.state.preview': 'document.read', 'interaction.state.apply': 'document.write', 'view.labels.global.get': 'view.read', 'view.labels.global.set': 'view.write', 'view.labels.entity.get': 'document.read', 'view.labels.entity.set': 'document.write', 'selection.history.get': 'view.read', 'selection.history.undo': 'view.write', 'selection.history.redo': 'view.write', 'selection.history.clear': 'view.write', 'display.history.get': 'view.read', 'display.history.undo': 'view.write', 'display.history.redo': 'view.write', 'display.history.clear': 'view.write', 'camera.history.get': 'view.read', 'camera.history.undo': 'view.write', 'camera.history.redo': 'view.write', 'camera.history.clear': 'view.write', 'jobs.list': 'jobs.read', 'jobs.get': 'jobs.read', 'jobs.cancel': 'jobs.write', 'jobs.respond': 'jobs.write', 'view.screenshot': 'view.screenshot', 'automation.entities.page': 'automation.entities.page', 'automation.cas.describe': 'automation.cas.describe', 'automation.commands.validate': 'automation.commands.validate', 'automation.commands.status': 'automation.commands.status', 'automation.commands.cancel': 'automation.commands.cancel', 'automation.bulk.read': 'automation.bulk.read', 'automation.bulk.release': 'automation.bulk.release'})
 APP_METHOD_CAPABILITIES = MappingProxyType({'readDocumentSnapshot': 'document.read', 'readJournal': 'journal.read', 'readPropertySchemas': 'document.read', 'queryProperties': 'document.read', 'compilePropertyEdit': 'document.write', 'executeCanonicalTransaction': 'document.write'})
 
 
@@ -184,11 +184,11 @@ class HimmelcadClient:
     def cas_describe(self, content_hash: str) -> CasDescription:
         return CasDescription.from_dict(self._call("automation.cas.describe", {"contentHash": content_hash}))
 
-    def get_view(self) -> ViewStateV1:
-        return ViewStateV1.from_dict(self._call("view.state.get", {}))
+    def get_view(self) -> ViewStateV2:
+        return ViewStateV2.from_dict(self._call("view.state.get", {}))
 
-    def set_view(self, state: ViewStateV1) -> ViewStateV1:
-        return ViewStateV1.from_dict(self._call("view.state.set", to_wire(state)))
+    def set_view(self, state: ViewStateV2) -> ViewStateV2:
+        return ViewStateV2.from_dict(self._call("view.state.set", to_wire(state)))
 
     def screenshot(self, request: WireModel | Mapping[str, Any]) -> bytes | BulkLease:
         request_wire = _params(request)
@@ -329,11 +329,11 @@ class AsyncHimmelcadClient:
     async def cas_describe(self, content_hash: str) -> CasDescription:
         return CasDescription.from_dict(await self._call("automation.cas.describe", {"contentHash": content_hash}))
 
-    async def get_view(self) -> ViewStateV1:
-        return ViewStateV1.from_dict(await self._call("view.state.get", {}))
+    async def get_view(self) -> ViewStateV2:
+        return ViewStateV2.from_dict(await self._call("view.state.get", {}))
 
-    async def set_view(self, state: ViewStateV1) -> ViewStateV1:
-        return ViewStateV1.from_dict(await self._call("view.state.set", to_wire(state)))
+    async def set_view(self, state: ViewStateV2) -> ViewStateV2:
+        return ViewStateV2.from_dict(await self._call("view.state.set", to_wire(state)))
 
     async def screenshot(self, request: WireModel | Mapping[str, Any]) -> bytes | AsyncBulkLease:
         request_wire = _params(request)

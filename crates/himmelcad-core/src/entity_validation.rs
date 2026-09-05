@@ -214,7 +214,14 @@ fn validate_representation_set(entity: &CanonicalEntity) -> Result<(), EntityVal
     let Some(entity_type) = BuiltInEntityType::from_type_id(&entity.type_id) else {
         return Ok(());
     };
-    if entity_type.is_organizational() {
+    if entity_type == BuiltInEntityType::Measurement
+        && (entity.layer_ids.len() != 1
+            || entity.placement.is_some()
+            || entity.name.trim().is_empty())
+    {
+        return Err(EntityValidationError::IncompatibleRepresentation);
+    }
+    if entity_type.is_non_renderable() {
         return if entity.representations.is_empty() {
             Ok(())
         } else {
@@ -348,6 +355,8 @@ fn is_canonical_geometry(entity_type: BuiltInEntityType, geometry: &GeometryObje
         EntityType::Text => matches!(geometry, Geometry::Text { .. }),
         EntityType::Label => matches!(geometry, Geometry::Label { .. }),
         EntityType::Dimension => matches!(geometry, Geometry::Dimension { .. }),
+        EntityType::Measurement => matches!(geometry, Geometry::Measurement { .. }),
+        EntityType::SnapshotMarker => false,
     }
 }
 
@@ -382,6 +391,10 @@ pub fn validate_geometry_object(geometry: &GeometryObject) -> Result<(), EntityV
         GeometryObject::Text { text } => validate_text(text),
         GeometryObject::Label { label } => validate_label(label),
         GeometryObject::Dimension { dimension } => validate_dimension(dimension),
+        GeometryObject::Measurement { measurement } => {
+            crate::release_05_admissions::validate_measurement(measurement)
+                .map_err(|_| EntityValidationError::InvalidAnnotation)
+        }
         GeometryObject::Extension { type_id, payload } => {
             if valid_type_id(type_id) && valid_hash(payload.as_str()) {
                 Ok(())

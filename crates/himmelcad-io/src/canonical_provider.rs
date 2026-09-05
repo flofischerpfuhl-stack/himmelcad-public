@@ -1342,6 +1342,9 @@ fn collect_geometry_resources(
         | GeometryObject::Plane { .. }
         | GeometryObject::Alignment { .. }
         | GeometryObject::Block { .. }
+        // ADR 0031 item 1: saved measurements carry exact anchors and
+        // provenance only, no content-addressed resources.
+        | GeometryObject::Measurement { .. }
         | GeometryObject::Extension { .. } => {}
     }
     Ok(())

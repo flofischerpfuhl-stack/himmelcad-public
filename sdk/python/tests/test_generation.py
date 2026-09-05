@@ -12,6 +12,7 @@ REPOSITORY_ROOT = SDK_ROOT.parents[1]
 GENERATOR = REPOSITORY_ROOT / "scripts/generate-automation-sdk.py"
 SCHEMA = REPOSITORY_ROOT / "schemas/automation/himmelcad-automation-v1.schema.json"
 FIXTURE = REPOSITORY_ROOT / "schemas/automation/fixtures/automation-wire-v1.json"
+VIEW_V2_FIXTURE = REPOSITORY_ROOT / "schemas/automation/fixtures/view-state-v2.json"
 
 sys.path.insert(0, str(SDK_ROOT / "src"))
 
@@ -21,6 +22,7 @@ from himmelcad.models import (  # noqa: E402
     ScreenshotRequestV1,
     ScreenshotResultV1,
     ViewStateV1,
+    ViewStateV2,
 )
 
 
@@ -53,40 +55,26 @@ class GenerationTests(unittest.TestCase):
             with self.subTest(model=model.__name__):
                 self.assertEqual(model.from_dict(fixture[key]).to_dict(), fixture[key])
 
+        view_v2 = json.loads(VIEW_V2_FIXTURE.read_text())
+        self.assertEqual(ViewStateV2.from_dict(view_v2).to_dict(), view_v2)
+
     def test_view_clips_and_screenshot_storage_variants_fail_closed(self) -> None:
         fixture = json.loads(FIXTURE.read_text())
-        view = fixture["viewState"]
-        view["scopedClips"] = [
-            {
-                "id": "section",
-                "enabled": True,
-                "scope": {"kind": "entities", "entityIds": ["mesh-1"]},
-                "primitive": {
-                    "kind": "plane",
-                    "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
-                    "constant": 12.5,
-                    "keep": "positive",
-                },
-            }
+        view = json.loads(VIEW_V2_FIXTURE.read_text())
+        view["clipRefs"] = [
+            {"entityId": "section", "expectedRevision": 3, "active": True, "locked": False}
         ]
-        self.assertEqual(ViewStateV1.from_dict(view).to_dict(), view)
+        self.assertEqual(ViewStateV2.from_dict(view).to_dict(), view)
 
         invalid_scope = json.loads(json.dumps(view))
-        invalid_scope["scopedClips"][0]["scope"] = {
-            "kind": "all",
-            "entityIds": ["mesh-1"],
-        }
-        with self.assertRaisesRegex(ValueError, "invalid ClipScope variant"):
-            ViewStateV1.from_dict(invalid_scope)
+        invalid_scope["clipRefs"][0]["unexpected"] = True
+        with self.assertRaisesRegex(ValueError, "unknown ViewClipRefV2 fields"):
+            ViewStateV2.from_dict(invalid_scope)
 
         invalid_primitive = json.loads(json.dumps(view))
-        invalid_primitive["scopedClips"][0]["primitive"]["center"] = {
-            "x": 0.0,
-            "y": 0.0,
-            "z": 0.0,
-        }
-        with self.assertRaisesRegex(ValueError, "invalid ClipPrimitive variant"):
-            ViewStateV1.from_dict(invalid_primitive)
+        invalid_primitive["presentation"]["colorModeOverride"] = {"kind": "follow", "unexpected": True}
+        with self.assertRaisesRegex(ValueError, "unknown ViewColorModeOverrideV2 fields"):
+            ViewStateV2.from_dict(invalid_primitive)
 
         screenshot = fixture["screenshotResult"]
         screenshot["lease"] = {

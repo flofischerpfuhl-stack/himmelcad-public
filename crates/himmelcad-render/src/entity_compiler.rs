@@ -180,6 +180,12 @@ pub fn required_entity_proxy_slots(
         // The shared host resolves associative anchors and immutable annotation
         // styles before submitting the two ordinary text/stroke parts.
         GeometryObject::Dimension { .. } => Ok(2),
+        // Saved measurements (ADR 0031 item 1) render through the
+        // measure-inspect slice's resolver; the substrate admits the record
+        // without a presentation path yet.
+        GeometryObject::Measurement { .. } => Err(EntityCompilationError::Unsupported(
+            "measurement resolver",
+        )),
     }
 }
 

@@ -37,6 +37,8 @@
     "view.read",
     "view.write",
     "view.screenshot",
+    "jobs.read",
+    "jobs.write",
     "automation.entities.page",
     "automation.cas.describe",
     "automation.commands.validate",
@@ -57,6 +59,7 @@
   },
   "contractSources": [
     "schemas/automation/fixtures/automation-wire-v1.json",
+    "schemas/automation/fixtures/view-state-v2.json",
     "crates/himmelcad-core/src/canonical_document.rs",
     "crates/himmelcad-core/src/app_protocol.rs",
     "packages/@himmelcad/app/src/canonicalProtocol.ts",
@@ -72,7 +75,7 @@
     "packages/@himmelcad/data/src/generated/CanonicalEntityEdit.ts": "6dee4ee7c0011222c10b90c1b88b74bbf52e28e125e6b87fd2707b59311cf52d",
     "packages/@himmelcad/app/src/canonicalProtocol.ts": "976a73b1c0a1be7b22e37986800579b21ae5f472e27816b1729b751b4906644a",
     "packages/@himmelcad/app/src/protocol.ts": "fdb7bbc6460ec599472b707c9c14ac31983021ba87888a5dddf6170124241ba7",
-    "packages/@himmelcad/app/src/view.ts": "d4cac6e0f5d4ddd6971c3a41e7b7e8390dbb4b375a83b80fb9f6dedf78385137"
+    "packages/@himmelcad/app/src/view.ts": "7da0eb7b58b6c2f7e5116796589b4f8f4442cbf8efd8787fdcb1072f86c33083"
   },
   "methods": {
     "app.negotiate": {
@@ -96,13 +99,137 @@
     "view.state.get": {
       "capability": "view.read",
       "request": "EmptyRequest",
-      "response": "ViewStateV1"
+      "response": "ViewStateV2"
     },
     "view.state.set": {
       "capability": "view.write",
-      "request": "ViewStateV1",
-      "response": "ViewStateV1"
+      "request": "ViewStateV2",
+      "response": "ViewStateV2"
     },
+    "view.diagnostics.get": {
+      "capability": "view.read",
+      "request": "EmptyRequest",
+      "response": "ViewDiagnosticsSnapshot"
+    },
+    "view.diagnostics.sample": {
+      "capability": "view.read",
+      "request": "ViewDiagnosticsSampleRequest",
+      "response": "ViewDiagnosticsSampleResult"
+    },
+    "view.frame": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Frame all", "kind": "command", "shortcut": "F", "enablement": "hasProject", "surfaces": { "ribbon": true, "contextMenu": false, "quickSurface": true, "console": true, "automation": true }, "group": "view", "ownerSpec": "View VD-D1", "host": "renderer" } },
+    "view.preset.top": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Top", "kind": "command", "shortcut": "7", "enablement": "hasProject", "surfaces": { "ribbon": true, "contextMenu": false, "quickSurface": true, "console": true, "automation": true }, "group": "view", "ownerSpec": "View VD-D1", "host": "renderer" } },
+    "view.preset.front": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Front", "kind": "command", "shortcut": "1", "enablement": "hasProject", "surfaces": { "ribbon": true, "contextMenu": false, "quickSurface": true, "console": true, "automation": true }, "group": "view", "ownerSpec": "View VD-D1", "host": "renderer" } },
+    "view.preset.right": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Right", "kind": "command", "shortcut": "3", "enablement": "hasProject", "surfaces": { "ribbon": true, "contextMenu": false, "quickSurface": true, "console": true, "automation": true }, "group": "view", "ownerSpec": "View VD-D1", "host": "renderer" } },
+    "view.preset.isometric": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Perspective", "kind": "command", "shortcut": "5", "enablement": "hasProject", "surfaces": { "ribbon": true, "contextMenu": false, "quickSurface": true, "console": true, "automation": true }, "group": "view", "ownerSpec": "View VD-D1", "host": "renderer" } },
+    "edit.clipboard.paste_in_place": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Paste in place", "kind": "command", "shortcut": "Ctrl+Shift+V", "enablement": "clipboardAdmissible", "surfaces": { "ribbon": true, "contextMenu": false, "quickSurface": true, "console": true, "automation": true }, "group": "edit", "ownerSpec": "Select/Edit SE-D7", "host": "renderer" } },
+    "entity.rename": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Rename", "kind": "command", "shortcut": "F2", "enablement": "singleEditableNonCloud", "surfaces": { "ribbon": false, "contextMenu": true, "quickSurface": false, "console": true, "automation": true }, "group": "edit", "ownerSpec": "UI Platform UIP-D5", "host": "renderer" } },
+    "entity.zoom_to": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Zoom to", "kind": "command", "shortcut": "Z", "enablement": "hasSelection", "surfaces": { "ribbon": false, "contextMenu": true, "quickSurface": false, "console": true, "automation": true }, "group": "view", "ownerSpec": "UI Platform UIP-D5", "host": "renderer" } },
+    "entity.hide": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Hide", "kind": "command", "shortcut": "H", "enablement": "visibleSelection", "surfaces": { "ribbon": false, "contextMenu": true, "quickSurface": false, "console": true, "automation": true }, "group": "view", "ownerSpec": "UI Platform UIP-D5", "host": "renderer" } },
+    "entity.show": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Show", "kind": "command", "shortcut": "Shift+H", "enablement": "hiddenSelection", "surfaces": { "ribbon": false, "contextMenu": true, "quickSurface": false, "console": true, "automation": true }, "group": "view", "ownerSpec": "UI Platform UIP-D5", "host": "renderer" } },
+    "entity.isolate": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Isolate", "kind": "command", "shortcut": "I", "enablement": "hasSelection", "surfaces": { "ribbon": false, "contextMenu": true, "quickSurface": false, "console": true, "automation": true }, "group": "view", "ownerSpec": "UI Platform UIP-D5", "host": "renderer" } },
+    "entity.properties": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Properties", "kind": "query", "shortcut": "Alt+Enter", "enablement": "hasSelection", "surfaces": { "ribbon": false, "contextMenu": true, "quickSurface": false, "console": true, "automation": true }, "group": "entity-specific", "ownerSpec": "UI Platform UIP-D5", "host": "renderer" } },
+    "entity.export": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Export…", "kind": "command", "shortcut": null, "enablement": "exportableSelection", "surfaces": { "ribbon": true, "contextMenu": true, "quickSurface": false, "console": true, "automation": true }, "group": "entity-specific", "ownerSpec": "Import/Export IF-D20", "host": "renderer" } },
+    "measurement.create": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "measurement.list": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "measurement.get": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "measurement.update_anchor": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "measurement.detach_anchor": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "measurement.rebind_anchor": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "measurement.rename": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "measurement.set_layer": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "measurement.set_visibility": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "measurement.remove": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "inspect.point_info": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "viewing_box.place": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "viewing_box.update": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "viewing_box.set_operation": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "viewing_box.lock": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "viewing_box.unlock": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "viewing_box.rename": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "viewing_box.activate": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "viewing_box.deactivate": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "viewing_box.remove": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "viewing_box.list": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "view.presentation.set": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "view.point_size.set": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "project.flush": { "capability": "document.write", "request": "EmptyRequest", "response": "AdmissionOperationResult", "command": { "label": "Save", "kind": "command", "shortcut": "Ctrl+S", "enablement": "hasProject", "surfaces": { "ribbon": true, "contextMenu": false, "quickSurface": false, "console": true, "automation": true }, "group": "edit", "ownerSpec": "File/project FP-D19", "host": "renderer" } },
+    "snapshot.create": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "snapshot.list": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "snapshot.rename": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "snapshot.restore": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "snapshot.delete": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "derived.recipe.get": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "derived.recipe.list": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "derived.recipe.status": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "derived.recipe.regenerate": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "derived.recipe.regenerate_batch": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "derived.recipe.detach": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "derived.recipe.relink": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.surface.draft.list": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.surface.draft.get": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.surface.draft.create": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.surface.draft.set": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.surface.draft.apply_fix": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.surface.draft.history": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.surface.draft.undo": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.surface.draft.redo": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.surface.draft.suspend": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.surface.draft.resume": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.surface.draft.discard": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.surface.check": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.surface.create": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.surface.edit.add_breakline": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.surface.edit.remove_breakline": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.surface.edit.add_form_line": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.surface.edit.remove_form_line": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.surface.edit.set_source_role": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.simplify.preview": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.simplify.check": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "mesh.simplify.bake": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "draw.point.create": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "draw.curve.create": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "draw.support_role.get": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "draw.support_role.set": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "draw.support_role.clear": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "view.support_overlay.get": { "capability": "view.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "view.support_overlay.set": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "select.get": { "capability": "view.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "select.list": { "capability": "view.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "select.set": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Select under cursor ▸", "kind": "command", "shortcut": null, "enablement": "pickCandidates", "surfaces": { "ribbon": false, "contextMenu": true, "quickSurface": false, "console": true, "automation": true }, "group": "selection", "ownerSpec": "UI Platform UIP-D16", "host": "renderer" } },
+    "select.add": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "select.remove": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "select.toggle": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "select.clear": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult", "command": { "label": "Clear selection", "kind": "command", "shortcut": null, "enablement": "hasSelection", "surfaces": { "ribbon": false, "contextMenu": false, "quickSurface": true, "console": true, "automation": true }, "group": "selection", "ownerSpec": "UI Platform UIP-D13", "host": "renderer" } },
+    "select.undo": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "select.redo": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "select.candidates": { "capability": "view.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "selection.granularity.get": { "capability": "view.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "selection.granularity.set": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "selection.kind_filter.get": { "capability": "view.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "selection.kind_filter.set": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "interaction.state.explain": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "interaction.state.preview": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "interaction.state.apply": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "view.labels.global.get": { "capability": "view.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "view.labels.global.set": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "view.labels.entity.get": { "capability": "document.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "view.labels.entity.set": { "capability": "document.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "selection.history.get": { "capability": "view.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "selection.history.undo": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "selection.history.redo": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "selection.history.clear": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "display.history.get": { "capability": "view.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "display.history.undo": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "display.history.redo": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "display.history.clear": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "camera.history.get": { "capability": "view.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "camera.history.undo": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "camera.history.redo": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "camera.history.clear": { "capability": "view.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "jobs.list": { "capability": "jobs.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "jobs.get": { "capability": "jobs.read", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "jobs.cancel": { "capability": "jobs.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
+    "jobs.respond": { "capability": "jobs.write", "request": "AdmissionOperationRequest", "response": "AdmissionOperationResult" },
     "view.screenshot": {
       "capability": "view.screenshot",
       "request": "ScreenshotRequestV1",
@@ -194,6 +321,61 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {}
+    },
+    "ViewDiagnosticsSampleRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaId", "payload"],
+      "properties": {
+        "schemaId": { "const": "hcad.view-diagnostics-sample-request@1" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["durationMs"],
+          "properties": {
+            "durationMs": { "type": "number", "minimum": 0, "maximum": 3600000 },
+            "lastFrames": { "type": "integer", "minimum": 0, "maximum": 2048 }
+          }
+        }
+      }
+    },
+    "ViewDiagnosticsSnapshot": {
+      "type": "object",
+      "required": ["schemaId", "capacity", "frames", "presentSource", "lastFrames"],
+      "properties": {
+        "schemaId": { "const": "hcad.view-diagnostics-snapshot@1" },
+        "capacity": { "const": 2048 },
+        "frames": { "type": "integer", "minimum": 0, "maximum": 2048 },
+        "presentSource": { "const": "raf-render-complete" },
+        "lastFrames": { "type": "array", "maxItems": 2048 }
+      }
+    },
+    "ViewDiagnosticsSampleResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaId", "payload"],
+      "properties": {
+        "schemaId": { "const": "hcad.view-diagnostics-sample-result@1" },
+        "payload": { "type": "object" }
+      }
+    },
+    "AdmissionOperationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaId", "payload"],
+      "properties": {
+        "schemaId": { "type": "string", "minLength": 1 },
+        "payload": {}
+      }
+    },
+    "AdmissionOperationResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaId", "payload"],
+      "properties": {
+        "schemaId": { "type": "string", "minLength": 1 },
+        "payload": {}
+      }
     },
     "ProtocolNegotiationRequest": {
       "type": "object",
@@ -823,6 +1005,57 @@
         },
         "scopedClips": { "type": "array", "items": { "$ref": "#/$defs/ScopedClip" } },
         "presentation": { "$ref": "#/$defs/ViewPresentation" }
+      }
+    },
+    "ViewClipRefV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entityId", "expectedRevision", "active", "locked"],
+      "properties": {
+        "entityId": { "type": "string", "minLength": 1 },
+        "expectedRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "active": { "type": "boolean" },
+        "locked": { "type": "boolean" }
+      }
+    },
+    "ViewColorModeOverrideV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["follow", "mode"] },
+        "mode": { "type": "string", "minLength": 1 },
+        "params": {}
+      }
+    },
+    "ViewPresentationV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["background", "renderStyle", "showGrid", "showAxes", "showSelectionOutline", "colorModeOverride", "pointSizeMultiplier"],
+      "properties": {
+        "background": { "type": "string", "enum": ["theme", "black", "white"] },
+        "renderStyle": { "type": "string", "enum": ["source", "monochrome", "xray"] },
+        "showGrid": { "type": "boolean" },
+        "showAxes": { "type": "boolean" },
+        "showSelectionOutline": { "type": "boolean" },
+        "colorModeOverride": { "$ref": "#/$defs/ViewColorModeOverrideV2" },
+        "pointSizeMultiplier": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "ViewStateV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "version", "camera", "navigationMode", "hiddenEntityIds", "sessionHiddenEntityIds", "selectedEntityIds", "clipRefs", "presentation"],
+      "properties": {
+        "schema": { "const": "himmelcad.view-state" },
+        "version": { "const": 2 },
+        "camera": { "$ref": "#/$defs/WorldCamera" },
+        "navigationMode": { "type": "string", "enum": ["3d", "2d", "2.5d"] },
+        "hiddenEntityIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "sessionHiddenEntityIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "selectedEntityIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "clipRefs": { "type": "array", "items": { "$ref": "#/$defs/ViewClipRefV2" } },
+        "presentation": { "$ref": "#/$defs/ViewPresentationV2" }
       }
     },
     "ScreenshotRequestV1": {

@@ -602,6 +602,22 @@ pub enum QualityAdjustment {
     Increased(RuntimeQualityState),
 }
 
+/// Explainable reason attached to the governor's most recent observation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeQualityReason {
+    /// The observation was within the neutral hysteresis band.
+    WithinTarget,
+    /// CPU work was the dominant deadline pressure.
+    CpuDeadline,
+    /// A completed GPU timestamp was the dominant deadline pressure.
+    GpuDeadline,
+    /// Sustained headroom is recovering presentation quality.
+    RecoveryHeadroom,
+    /// The observation was invalid and was ignored.
+    InvalidTiming,
+}
+
 /// Hysteretic governor that adapts presentation but never geometry truth.
 #[derive(Debug)]
 pub struct RuntimeQualityGovernor {
@@ -611,6 +627,7 @@ pub struct RuntimeQualityGovernor {
     smoothed_ms: f32,
     overloaded_frames: u16,
     headroom_frames: u16,
+    last_reason: RuntimeQualityReason,
 }
 
 impl RuntimeQualityGovernor {
@@ -633,6 +650,7 @@ impl RuntimeQualityGovernor {
             smoothed_ms: policy.frame.target_frame_ms,
             overloaded_frames: 0,
             headroom_frames: 0,
+            last_reason: RuntimeQualityReason::WithinTarget,
         }
     }
 
@@ -640,6 +658,12 @@ impl RuntimeQualityGovernor {
     #[must_use]
     pub fn state(&self) -> RuntimeQualityState {
         self.state
+    }
+
+    /// Reason associated with the latest policy/telemetry observation.
+    #[must_use]
+    pub fn last_reason(&self) -> RuntimeQualityReason {
+        self.last_reason
     }
 
     /// Applies a newly calibrated device policy without an upward quality jump.
@@ -658,6 +682,7 @@ impl RuntimeQualityGovernor {
         self.smoothed_ms = self.target_ms;
         self.overloaded_frames = 0;
         self.headroom_frames = 0;
+        self.last_reason = RuntimeQualityReason::WithinTarget;
         if self.state.render_scale < previous.render_scale
             || self.state.detail_scale < previous.detail_scale
         {
@@ -674,17 +699,25 @@ impl RuntimeQualityGovernor {
             .filter(|value| value.is_finite() && *value >= 0.0)
             .map_or(sample.cpu_ms, |gpu| gpu.max(sample.cpu_ms));
         if !frame_ms.is_finite() || frame_ms < 0.0 {
+            self.last_reason = RuntimeQualityReason::InvalidTiming;
             return QualityAdjustment::Unchanged;
         }
         self.smoothed_ms = self.smoothed_ms.mul_add(0.9, frame_ms * 0.1);
         let overload_threshold = if sample.interacting { 1.05 } else { 1.15 };
         if self.smoothed_ms > self.target_ms * overload_threshold {
+            self.last_reason = if sample.gpu_ms.is_some_and(|gpu| gpu >= sample.cpu_ms) {
+                RuntimeQualityReason::GpuDeadline
+            } else {
+                RuntimeQualityReason::CpuDeadline
+            };
             self.overloaded_frames = self.overloaded_frames.saturating_add(1);
             self.headroom_frames = 0;
         } else if self.smoothed_ms < self.target_ms * 0.72 {
+            self.last_reason = RuntimeQualityReason::RecoveryHeadroom;
             self.headroom_frames = self.headroom_frames.saturating_add(1);
             self.overloaded_frames = 0;
         } else {
+            self.last_reason = RuntimeQualityReason::WithinTarget;
             self.overloaded_frames = 0;
             self.headroom_frames = 0;
         }

@@ -56,6 +56,10 @@ pub mod built_in_type {
     pub const LABEL: &str = "hcad.label@1";
     /// Associative dimension.
     pub const DIMENSION: &str = "hcad.dimension@1";
+    /// Persistent inspection measurement.
+    pub const MEASUREMENT: &str = "hcad.measurement@1";
+    /// Non-renderable journal-generation marker.
+    pub const SNAPSHOT_MARKER: &str = "hcad.snapshot-marker@1";
 }
 
 /// Built-in semantic entity types understood by this core schema version.
@@ -104,6 +108,10 @@ pub enum BuiltInEntityType {
     Label,
     #[serde(rename = "hcad.dimension@1")]
     Dimension,
+    #[serde(rename = "hcad.measurement@1")]
+    Measurement,
+    #[serde(rename = "hcad.snapshot-marker@1")]
+    SnapshotMarker,
 }
 
 impl BuiltInEntityType {
@@ -130,6 +138,8 @@ impl BuiltInEntityType {
             built_in_type::TEXT => Self::Text,
             built_in_type::LABEL => Self::Label,
             built_in_type::DIMENSION => Self::Dimension,
+            built_in_type::MEASUREMENT => Self::Measurement,
+            built_in_type::SNAPSHOT_MARKER => Self::SnapshotMarker,
             _ => return None,
         })
     }
@@ -157,6 +167,8 @@ impl BuiltInEntityType {
             Self::Text => built_in_type::TEXT,
             Self::Label => built_in_type::LABEL,
             Self::Dimension => built_in_type::DIMENSION,
+            Self::Measurement => built_in_type::MEASUREMENT,
+            Self::SnapshotMarker => built_in_type::SNAPSHOT_MARKER,
         }
     }
 
@@ -164,6 +176,12 @@ impl BuiltInEntityType {
     #[must_use]
     pub const fn is_organizational(self) -> bool {
         matches!(self, Self::Group | Self::Layer)
+    }
+
+    /// Whether this built-in has no geometry representation.
+    #[must_use]
+    pub const fn is_non_renderable(self) -> bool {
+        matches!(self, Self::Group | Self::Layer | Self::SnapshotMarker)
     }
 }
 
@@ -1114,6 +1132,10 @@ pub enum GeometryObject {
     Label { label: Box<LabelGeometry> },
     /// Associative dimension.
     Dimension { dimension: Box<DimensionGeometry> },
+    /// Persistent inspection measurement.
+    Measurement {
+        measurement: Box<crate::release_05_admissions::MeasurementV1>,
+    },
     /// Preserved namespaced geometry not understood by this core version.
     Extension {
         type_id: String,

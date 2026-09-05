@@ -1,5 +1,6 @@
 //! Asynchronous whole-frame GPU timestamp readback.
 
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -23,6 +24,16 @@ pub struct GpuFrameTimingDiagnostics {
     pub saturated_frames: u64,
     /// Map failures, stale callbacks or invalid timestamp payloads.
     pub failed_readbacks: u64,
+}
+
+/// One completed asynchronous GPU timestamp result correlated to submission order.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuFrameTimestampSample {
+    /// Monotonic timed-frame submission sequence.
+    pub sequence: u64,
+    /// Whole-frame GPU duration.
+    pub gpu_ms: f32,
 }
 
 impl GpuFrameTimingDiagnostics {
@@ -88,7 +99,7 @@ pub(crate) struct GpuFrameTimestampRecorder {
     timestamp_period_ns: f32,
     diagnostics: GpuFrameTimingDiagnostics,
     newest_completed_generation: u64,
-    unconsumed_gpu_ms: Option<f32>,
+    completed_samples: VecDeque<GpuFrameTimestampSample>,
 }
 
 impl GpuFrameTimestampRecorder {
@@ -128,12 +139,16 @@ impl GpuFrameTimestampRecorder {
                 ..GpuFrameTimingDiagnostics::UNSUPPORTED
             },
             newest_completed_generation: 0,
-            unconsumed_gpu_ms: None,
+            completed_samples: VecDeque::with_capacity(READBACK_SLOTS),
         }
     }
 
     pub(crate) fn query_set(&self) -> &wgpu::QuerySet {
         &self.query_set
+    }
+
+    pub(crate) fn sequence(token: GpuFrameTimingToken) -> u64 {
+        token.generation
     }
 
     pub(crate) fn begin_frame(&mut self) -> Option<GpuFrameTimingToken> {
@@ -216,13 +231,19 @@ impl GpuFrameTimestampRecorder {
             if completion.generation >= self.newest_completed_generation {
                 self.newest_completed_generation = completion.generation;
                 self.diagnostics.latest_gpu_ms = Some(gpu_ms);
-                self.unconsumed_gpu_ms = Some(gpu_ms);
             }
+            if self.completed_samples.len() == READBACK_SLOTS {
+                self.completed_samples.pop_front();
+            }
+            self.completed_samples.push_back(GpuFrameTimestampSample {
+                sequence: completion.generation,
+                gpu_ms,
+            });
         }
     }
 
-    pub(crate) fn take_completed_gpu_ms(&mut self) -> Option<f32> {
-        self.unconsumed_gpu_ms.take()
+    pub(crate) fn take_completed_sample(&mut self) -> Option<GpuFrameTimestampSample> {
+        self.completed_samples.pop_front()
     }
 
     pub(crate) fn diagnostics(&self) -> GpuFrameTimingDiagnostics {

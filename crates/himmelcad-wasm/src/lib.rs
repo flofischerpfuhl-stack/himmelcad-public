@@ -98,30 +98,30 @@ use himmelcad_render::{
     FloatingOrigin, FrameTelemetrySample, FrameTelemetryWindow, GaussianSplatPickRefiner,
     GeometryRepresentationRegistry, GlyphAtlas, GlyphMetrics, GpuAlphaMode, GpuCalibrationProgress,
     GpuCalibrationSession, GpuCanonicalMaterial, GpuCanonicalTextureBinding, GpuDrawBatch,
-    GpuHatchPattern, GpuHatchPatternData, GpuHatchResource, GpuIndexedMeshGeometry,
-    GpuLineTypePattern, GpuLineTypeResource, GpuModelResourceIdentity, GpuPresentationStyle,
-    GpuRecoveryReason, GpuSurfaceHost, GpuTextureAddressMode, GpuTextureColorSpace, GpuTextureData,
-    GpuTextureFilterMode, GpuTextureMipChainData, GpuTextureResource, GpuTextureResourceCache,
-    GpuTextureResourceIdentity, GpuTextureResourceStage, GpuTextureSamplerIdentity,
-    GpuTextureTransform, HardwareDeploymentProfile, HardwareInventory, HardwarePolicyResolver,
-    HierarchySource, ImplicitThreeDTilesHierarchySource, InstancedTriangleMeshPickRefiner,
-    MeshPickRefiner, PickCandidate, PickCycle, PickRefinementRequest, PickToken,
-    PotreeHierarchySource, PotreePointLayout, PreparedAssetBundle, PreparedGpuTextureResources,
-    PreparedHierarchySource, PreparedRasterTileContract, PresentationTransform, QualityAdjustment,
-    RasterAnalysisView, RenderProxy, RenderProxyId, RenderProxyKind, RenderStyle, RenderWorld,
-    ResidencyTicket, ResolvedAssetEntry, ResolvedGeometryRepresentationAdmission, ResourceBudget,
-    ResourceCost, RuntimeQualityGovernor, RuntimeQualityState, SectionBatchOptions,
-    SectionHatchStyle, SectionMaterialRegionBinding, SectionPlane, SectionProduct, SectionRegion,
-    SectionTopologyPart, SectionTopologyPartitionData, SectionTopologySnapshotKey,
-    SharedAssetBlobCache, SnapKind, StreamingCoordinator, StreamingRuntimeLimits, StrokeMode,
-    SurfaceCaptureRequest, SurfaceFrame, SurfaceFrameOutcome, SurfacePickRequest, TessellatedCurve,
-    TessellatedCurvePath, TessellatedCurveSegment, TextAlignment, TextBatchOptions,
-    TextLayoutOptions, TextLayoutSpace, ThreeDTilesContentKind, ThreeDTilesHierarchySource, TileId,
-    TileKey, TileSelection, TileSelectionView, TileSelector, TimingSample,
-    TriangleMeshPickInstance, TriangleMeshPickRefiner, TriangleMeshPickSource,
-    UnresolvedHeightDisplay, WorldAabb, WorldCamera, WorldTransform, WorldVec3,
-    GPU_POINT_VERTEX_STRIDE_BYTES, MAX_CAPTURE_DIMENSION, MAX_CAPTURE_PIXELS,
-    MAX_CAPTURE_RGBA_BYTES, SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
+    GpuFramePrimitiveCounts, GpuHatchPattern, GpuHatchPatternData, GpuHatchResource,
+    GpuIndexedMeshGeometry, GpuLineTypePattern, GpuLineTypeResource, GpuModelResourceIdentity,
+    GpuPresentationStyle, GpuRecoveryReason, GpuSurfaceHost, GpuTextureAddressMode,
+    GpuTextureColorSpace, GpuTextureData, GpuTextureFilterMode, GpuTextureMipChainData,
+    GpuTextureResource, GpuTextureResourceCache, GpuTextureResourceIdentity,
+    GpuTextureResourceStage, GpuTextureSamplerIdentity, GpuTextureTransform,
+    HardwareDeploymentProfile, HardwareInventory, HardwarePolicyResolver, HierarchySource,
+    ImplicitThreeDTilesHierarchySource, InstancedTriangleMeshPickRefiner, MeshPickRefiner,
+    PickCandidate, PickCycle, PickRefinementRequest, PickToken, PotreeHierarchySource,
+    PotreePointLayout, PreparedAssetBundle, PreparedGpuTextureResources, PreparedHierarchySource,
+    PreparedRasterTileContract, PresentationTransform, QualityAdjustment, RasterAnalysisView,
+    RenderProxy, RenderProxyId, RenderProxyKind, RenderStyle, RenderWorld, ResidencyTicket,
+    ResolvedAssetEntry, ResolvedGeometryRepresentationAdmission, ResourceBudget, ResourceCost,
+    RuntimeQualityGovernor, RuntimeQualityState, SectionBatchOptions, SectionHatchStyle,
+    SectionMaterialRegionBinding, SectionPlane, SectionProduct, SectionRegion, SectionTopologyPart,
+    SectionTopologyPartitionData, SectionTopologySnapshotKey, SharedAssetBlobCache, SnapKind,
+    StreamingCoordinator, StreamingRuntimeLimits, StrokeMode, SurfaceCaptureRequest, SurfaceFrame,
+    SurfaceFrameOutcome, SurfacePickRequest, TessellatedCurve, TessellatedCurvePath,
+    TessellatedCurveSegment, TextAlignment, TextBatchOptions, TextLayoutOptions, TextLayoutSpace,
+    ThreeDTilesContentKind, ThreeDTilesHierarchySource, TileId, TileKey, TileSelection,
+    TileSelectionView, TileSelector, TimingSample, TriangleMeshPickInstance,
+    TriangleMeshPickRefiner, TriangleMeshPickSource, UnresolvedHeightDisplay, WorldAabb,
+    WorldCamera, WorldTransform, WorldVec3, GPU_POINT_VERTEX_STRIDE_BYTES, MAX_CAPTURE_DIMENSION,
+    MAX_CAPTURE_PIXELS, MAX_CAPTURE_RGBA_BYTES, SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
 };
 #[cfg(target_arch = "wasm32")]
 use web_sys::HtmlCanvasElement;
@@ -457,6 +457,7 @@ pub struct WasmViewer {
     clip_preview_cost: ResourceCost,
     frame_origin_queue_write_count: u64,
     last_frame_origin_queue_writes: u64,
+    last_frame_primitive_counts: GpuFramePrimitiveCounts,
     last_transaction_diagnostics: WasmTransactionDiagnostics,
     calibration_session: Option<GpuCalibrationSession>,
     runtime_quality: Option<RuntimeQualityGovernor>,
@@ -1606,6 +1607,7 @@ async fn create_wasm_viewer(
         clip_preview_cost: ResourceCost::default(),
         frame_origin_queue_write_count: 0,
         last_frame_origin_queue_writes: 0,
+        last_frame_primitive_counts: GpuFramePrimitiveCounts::default(),
         last_transaction_diagnostics: WasmTransactionDiagnostics::default(),
         calibration_session: None,
         runtime_quality: None,
@@ -5613,11 +5615,12 @@ impl WasmViewer {
                 "hardware_policy_json must initialize runtime quality first",
             ));
         }
-        let gpu_ms = if self.host.gpu_frame_timing_diagnostics().supported {
-            self.host.take_completed_gpu_frame_ms()
+        let gpu_sample = if self.host.gpu_frame_timing_diagnostics().supported {
+            self.host.take_completed_gpu_frame_sample()
         } else {
             None
         };
+        let gpu_ms = gpu_sample.map(|sample| sample.gpu_ms);
         let timing = TimingSample {
             cpu_ms: observation.cpu_ms,
             gpu_ms,
@@ -5706,7 +5709,14 @@ impl WasmViewer {
             .as_mut()
             .expect("runtime quality presence checked before telemetry mutation");
         let adjustment = governor.observe(timing);
-        Ok(runtime_quality_observation_json(adjustment, governor.state()).to_string())
+        Ok(runtime_quality_observation_json(
+            adjustment,
+            governor.state(),
+            governor.last_reason(),
+            gpu_sample,
+            self.last_frame_primitive_counts,
+        )
+        .to_string())
     }
 
     /// Fixed-shape percentile and workload diagnostics for the bounded frame window.
@@ -7440,7 +7450,13 @@ impl WasmViewer {
             || self.render_world.active_clip_volumes().collect::<Vec<_>>(),
             |_| Vec::new(),
         );
-        self.host
+        let primitive_counts = batches
+            .iter()
+            .fold(GpuFramePrimitiveCounts::default(), |total, batch| {
+                total.saturating_add(batch.frame_primitive_counts())
+            });
+        let outcome = self
+            .host
             .render(SurfaceFrame {
                 view_projection: view_projection.unwrap_or(self.view_projection),
                 floating_origin: self.floating_origin,
@@ -7451,7 +7467,11 @@ impl WasmViewer {
                 pick,
                 capture,
             })
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        if matches!(outcome, SurfaceFrameOutcome::Presented { .. }) {
+            self.last_frame_primitive_counts = primitive_counts;
+        }
+        Ok(outcome)
     }
 
     /// Rebuilds small canonical inline caps only at a state mutation boundary.
@@ -8333,8 +8353,15 @@ fn capture_gpu_view_projection(
 #[cfg(target_arch = "wasm32")]
 fn frame_outcome_json(outcome: &SurfaceFrameOutcome) -> serde_json::Value {
     match outcome {
-        SurfaceFrameOutcome::Presented { reconfigured, .. } => {
-            serde_json::json!({ "status": "presented", "reconfigured": reconfigured })
+        SurfaceFrameOutcome::Presented {
+            reconfigured,
+            gpu_timing_sequence,
+        } => {
+            serde_json::json!({
+                "status": "presented",
+                "reconfigured": reconfigured,
+                "gpuTimingSequence": gpu_timing_sequence,
+            })
         }
         SurfaceFrameOutcome::Picked { .. } => serde_json::json!({ "status": "picked" }),
         SurfaceFrameOutcome::Captured { .. } => serde_json::json!({ "status": "captured" }),
@@ -8359,6 +8386,9 @@ fn frame_outcome_json(outcome: &SurfaceFrameOutcome) -> serde_json::Value {
 fn runtime_quality_observation_json(
     adjustment: QualityAdjustment,
     state: RuntimeQualityState,
+    reason: himmelcad_render::RuntimeQualityReason,
+    gpu_sample: Option<himmelcad_render::GpuFrameTimestampSample>,
+    primitives: GpuFramePrimitiveCounts,
 ) -> serde_json::Value {
     let adjustment = match adjustment {
         QualityAdjustment::Unchanged => "unchanged",
@@ -8368,6 +8398,9 @@ fn runtime_quality_observation_json(
     serde_json::json!({
         "adjustment": adjustment,
         "quality": state,
+        "reasonCode": reason,
+        "gpuSample": gpu_sample,
+        "primitives": primitives,
     })
 }
 
@@ -14103,6 +14136,9 @@ fn geometry_has_unresolved_height(geometry: &GeometryObject) -> bool {
                 || label.text.anchor.z.is_none()
                 || label.leader.iter().any(|position| position.z.is_none())
         }
+        // ADR 0031 item 1: saved measurements carry exact, fully resolved
+        // anchors; they never hold a plan-only (unresolved) height.
+        GeometryObject::Measurement { .. } => false,
         GeometryObject::Dimension { dimension } => {
             dimension.placement.z.is_none()
                 || dimension

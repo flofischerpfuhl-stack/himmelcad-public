@@ -11,6 +11,7 @@ use glam::{DMat3, DMat4, Mat4};
 use himmelcad_core::canonical_resources::{
     HatchPatternKind, HatchPatternLine, LineTypeElement, LineTypePattern,
 };
+use serde::{Deserialize, Serialize};
 use wgpu::util::DeviceExt;
 
 // BUFFER_UPLOAD_GATE: every initialized buffer goes through
@@ -1792,6 +1793,43 @@ pub enum GpuPrimitive {
     ScreenText,
 }
 
+/// Exact logical primitives represented by one or more submitted draw batches.
+///
+/// These are presentation counts, not source-geometry estimates. Expanded point
+/// sprites and line/text triangles are attributed to their logical primitive so
+/// diagnostics cannot accidentally report shader expansion as scene geometry.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuFramePrimitiveCounts {
+    /// Logical points, including points expanded to screen-facing quads.
+    pub points: u64,
+    /// Logical mesh, area and raster triangles.
+    pub triangles: u64,
+    /// Logical line segments.
+    pub lines: u64,
+    /// Logical screen-text quads.
+    pub text_quads: u64,
+    /// Logical Gaussian splats.
+    pub splats: u64,
+    /// Submitted resident batches.
+    pub draw_calls: u64,
+}
+
+impl GpuFramePrimitiveCounts {
+    /// Saturating aggregation keeps diagnostics total even at malformed-scale inputs.
+    #[must_use]
+    pub fn saturating_add(self, other: Self) -> Self {
+        Self {
+            points: self.points.saturating_add(other.points),
+            triangles: self.triangles.saturating_add(other.triangles),
+            lines: self.lines.saturating_add(other.lines),
+            text_quads: self.text_quads.saturating_add(other.text_quads),
+            splats: self.splats.saturating_add(other.splats),
+            draw_calls: self.draw_calls.saturating_add(other.draw_calls),
+        }
+    }
+}
+
 /// Resident vertex batch submitted through the shared color and pick passes.
 #[derive(Debug)]
 pub struct GpuDrawBatch {
@@ -2088,6 +2126,18 @@ fn float_order_key(value: f32) -> u32 {
 }
 
 impl GpuDrawBatch {
+    /// Exact logical workload emitted when this resident batch is submitted once.
+    #[must_use]
+    pub fn frame_primitive_counts(&self) -> GpuFramePrimitiveCounts {
+        frame_primitive_counts(
+            self.primitive,
+            self.vertex_count,
+            self.instance_count,
+            self.index_count,
+            self.native_point_count,
+        )
+    }
+
     /// GPU bytes allocated exclusively by [`Self::fork_with_style`]. Shared
     /// geometry, textures and ordinary instance buffers are intentionally not
     /// charged again.
@@ -3581,6 +3631,43 @@ impl GpuDrawBatch {
             double_sided: self.double_sided,
         })
     }
+}
+
+fn frame_primitive_counts(
+    primitive: GpuPrimitive,
+    vertex_count: u32,
+    instance_count: u32,
+    index_count: u32,
+    native_point_count: Option<u32>,
+) -> GpuFramePrimitiveCounts {
+    let vertices = u64::from(vertex_count);
+    let instances = u64::from(instance_count);
+    let indices = u64::from(index_count);
+    let mut counts = GpuFramePrimitiveCounts {
+        draw_calls: 1,
+        ..GpuFramePrimitiveCounts::default()
+    };
+    match primitive {
+        GpuPrimitive::Points => counts.points = vertices.saturating_mul(instances),
+        GpuPrimitive::PointSprites => {
+            counts.points = u64::from(native_point_count.unwrap_or(instance_count));
+        }
+        GpuPrimitive::Lines => counts.lines = instances,
+        GpuPrimitive::Triangles => {
+            counts.triangles = if index_count == 0 {
+                vertices / 3
+            } else {
+                indices / 3
+            };
+            counts.triangles = counts.triangles.saturating_mul(instances);
+        }
+        GpuPrimitive::InstancedTriangles => {
+            counts.triangles = (indices / 3).saturating_mul(instances);
+        }
+        GpuPrimitive::GaussianSplats => counts.splats = instances,
+        GpuPrimitive::ScreenText => counts.text_quads = vertices / 6,
+    }
+    counts
 }
 
 /// Shared depth plus exact 64-bit ID and reverse-Z hit targets for one viewport.
@@ -6404,13 +6491,14 @@ fn sample_gradient(colors: &[[f32; 4]], index: usize, output_count: usize) -> [f
 #[cfg(test)]
 mod tests {
     use super::{
-        affine_rows, batch_origin_delta, decode_hit_neighborhood, hit_neighborhood_buffer_layout,
-        resolve_batch_geometry, srgb_point_color_to_linear, FrameUniform, GpuAlphaMode,
-        GpuDrawBatch, GpuFrameError, GpuIndexedMeshGeometry, GpuMeshInstanceInput,
-        GpuMeshVertexInput, GpuPointVertex, GpuPrimitive, GpuScreenTextVertex, GpuSharedRenderer,
-        GpuSplatVertex, GpuTextureData, GpuVertex, MeshInstanceSortState, SplatSortState,
-        GPU_POINT_VERTEX_STRIDE_BYTES, SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
-        SORTED_ALPHA_SPLAT_BLOCK_SIZE, SORTED_ALPHA_UPLOAD_BYTES_PER_FRAME,
+        affine_rows, batch_origin_delta, decode_hit_neighborhood, frame_primitive_counts,
+        hit_neighborhood_buffer_layout, resolve_batch_geometry, srgb_point_color_to_linear,
+        FrameUniform, GpuAlphaMode, GpuDrawBatch, GpuFrameError, GpuIndexedMeshGeometry,
+        GpuMeshInstanceInput, GpuMeshVertexInput, GpuPointVertex, GpuPrimitive,
+        GpuScreenTextVertex, GpuSharedRenderer, GpuSplatVertex, GpuTextureData, GpuVertex,
+        MeshInstanceSortState, SplatSortState, GPU_POINT_VERTEX_STRIDE_BYTES,
+        SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE, SORTED_ALPHA_SPLAT_BLOCK_SIZE,
+        SORTED_ALPHA_UPLOAD_BYTES_PER_FRAME,
     };
     use crate::{
         build_cad_curve_batch_with_width, tessellate_curve, ClipOperation, ClipPlane, ClipVolume,
@@ -6444,6 +6532,18 @@ mod tests {
             GPU_POINT_VERTEX_STRIDE_BYTES,
             u64::try_from(std::mem::size_of::<GpuPointVertex>()).expect("point stride fits u64")
         );
+    }
+
+    #[test]
+    fn frame_primitive_counts_report_logical_geometry_without_shader_expansion() {
+        let points = frame_primitive_counts(GpuPrimitive::PointSprites, 6, 123, 0, Some(123));
+        let lines = frame_primitive_counts(GpuPrimitive::Lines, 18, 7, 0, None);
+        let text = frame_primitive_counts(GpuPrimitive::ScreenText, 30, 1, 0, None);
+        let mesh = frame_primitive_counts(GpuPrimitive::InstancedTriangles, 8, 4, 36, None);
+        assert_eq!(points.points, 123);
+        assert_eq!(lines.lines, 7);
+        assert_eq!(text.text_quads, 5);
+        assert_eq!(mesh.triangles, 48);
     }
 
     #[test]

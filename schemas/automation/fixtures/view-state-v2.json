@@ -1,0 +1,29 @@
+{
+  "schema": "himmelcad.view-state",
+  "version": 2,
+  "camera": {
+    "position": { "x": 10.0, "y": 20.0, "z": 30.0 },
+    "target": { "x": 1.0, "y": 2.0, "z": 3.0 },
+    "up": { "x": 0.0, "y": 0.0, "z": 1.0 },
+    "projection": {
+      "kind": "perspective",
+      "verticalFieldOfViewRadians": 0.9,
+      "near": 0.1,
+      "far": 10000.0
+    }
+  },
+  "navigationMode": "2.5d",
+  "hiddenEntityIds": ["hidden"],
+  "sessionHiddenEntityIds": [],
+  "selectedEntityIds": ["selected"],
+  "clipRefs": [],
+  "presentation": {
+    "background": "theme",
+    "renderStyle": "source",
+    "showGrid": true,
+    "showAxes": true,
+    "showSelectionOutline": true,
+    "colorModeOverride": { "kind": "follow" },
+    "pointSizeMultiplier": 1.0
+  }
+}

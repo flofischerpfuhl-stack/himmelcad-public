@@ -78,7 +78,7 @@ def canonical_entity() -> CanonicalEntity:
 def view_state() -> dict[str, Any]:
     return {
         "schema": "himmelcad.view-state",
-        "version": 1,
+        "version": 2,
         "camera": {
             "position": {"x": 1.0, "y": 2.0, "z": 3.0},
             "target": {"x": 0.0, "y": 0.0, "z": 0.0},
@@ -87,9 +87,10 @@ def view_state() -> dict[str, Any]:
         },
         "navigationMode": "3d",
         "hiddenEntityIds": [],
+        "sessionHiddenEntityIds": [],
         "selectedEntityIds": [],
-        "scopedClips": [],
-        "presentation": {"background": "theme", "renderStyle": "source", "showGrid": True, "showAxes": True, "showSelectionOutline": True},
+        "clipRefs": [],
+        "presentation": {"background": "theme", "renderStyle": "source", "showGrid": True, "showAxes": True, "showSelectionOutline": True, "colorModeOverride": {"kind": "follow"}, "pointSizeMultiplier": 1.0},
     }
 
 

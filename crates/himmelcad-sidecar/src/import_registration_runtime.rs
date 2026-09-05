@@ -1394,6 +1394,17 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_import_cannot_reach_atomic_canonical_publication() {
+        let (runtime, root) = resource_runtime("cancel-before-publish");
+        assert!(runtime.cancel("session-cancel-before-publish"));
+        assert!(matches!(
+            runtime.take_ready("session-cancel-before-publish"),
+            Err(ImportRegistrationRuntimeError::UnknownSession)
+        ));
+        assert!(!root.exists());
+    }
+
+    #[test]
     fn staged_resource_capability_revokes_on_commit_finish_and_runtime_drop() {
         let (runtime, commit_root) = resource_runtime("commit");
         runtime

@@ -36,6 +36,7 @@ pub mod product_import_package;
 pub mod project;
 pub mod property_schema;
 pub mod registration;
+pub mod release_05_admissions;
 pub mod transform;
 pub mod transform_geometry;
 pub mod typed_artifact;

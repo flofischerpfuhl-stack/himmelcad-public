@@ -11,6 +11,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(windows)]
 use std::os::windows::fs::OpenOptionsExt;
@@ -265,6 +266,32 @@ pub struct CanonicalProjectStore {
     dataset_ids: BTreeSet<String>,
     resource_set_ids: BTreeSet<String>,
     lock: File,
+    pending_group_commits: Vec<PathBuf>,
+    durable_generation: u64,
+    acknowledged_at_ms: u128,
+    durability_failure: Option<String>,
+    recovered_tail_count: u64,
+}
+
+/// Truthful state of the ordinary-command durability boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalDurabilityStatus {
+    pub state: CanonicalDurabilityState,
+    pub visible_generation: u64,
+    pub durable_generation: u64,
+    pub acknowledged_at_ms: u128,
+    pub pending_count: u64,
+    pub reason: Option<String>,
+    pub recovered_tail_count: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CanonicalDurabilityState {
+    Stored,
+    Storing,
+    Failed,
 }
 
 /// Persistence or recovery rejection from the canonical project store.
@@ -350,6 +377,9 @@ pub enum CanonicalProjectStoreError {
     /// A supposedly infallible in-memory commit diverged from its durable record.
     #[error("canonical durable/in-memory commit invariant failed")]
     CommitInvariant,
+    /// A previous group flush failed; new edits are rejected until retry succeeds.
+    #[error("canonical journal is not storing changes: {0}")]
+    DurabilityFailed(String),
 }
 
 impl CanonicalProjectStore {
@@ -376,11 +406,18 @@ impl CanonicalProjectStore {
             dataset_ids: BTreeSet::new(),
             resource_set_ids: BTreeSet::new(),
             lock,
+            pending_group_commits: Vec::new(),
+            durable_generation: 0,
+            acknowledged_at_ms: 0,
+            durability_failure: None,
+            recovered_tail_count: 0,
         };
         store.document = store.load_document()?;
         (store.dataset_ids, store.resource_set_ids) = store.load_inventory_ids()?;
-        store.recover_pending_transactions()?;
+        store.recovered_tail_count = store.recover_pending_transactions()?;
         store.document = store.load_document()?;
+        store.durable_generation = store.document.generation();
+        store.acknowledged_at_ms = unix_timestamp_millis();
         (store.dataset_ids, store.resource_set_ids) = store.load_inventory_ids()?;
         Ok(store)
     }
@@ -402,8 +439,118 @@ impl CanonicalProjectStore {
         &mut self,
         transaction: CanonicalCommandTransaction,
     ) -> Result<CanonicalJournalEntry, CanonicalProjectStoreError> {
+        self.prepare_synchronous_publication()?;
         let prepared = self.document.prepare_transaction(transaction)?;
         self.publish_prepared(prepared, Vec::new(), Vec::new(), None)
+    }
+
+    /// Stages one small ordinary command without waiting for fsync.
+    ///
+    /// The caller may expose the accepted state immediately, but must not claim
+    /// durability until [`Self::flush_group_commits`] succeeds.
+    pub fn queue_transaction(
+        &mut self,
+        transaction: CanonicalCommandTransaction,
+    ) -> Result<CanonicalJournalEntry, CanonicalProjectStoreError> {
+        if let Some(reason) = &self.durability_failure {
+            return Err(CanonicalProjectStoreError::DurabilityFailed(reason.clone()));
+        }
+        let prepared = self.document.prepare_transaction(transaction)?;
+        let entry = prepared.journal_entry().clone();
+        let transaction_dir =
+            transactions_root(&self.root).join(ObjectHash::of_bytes(entry.command_id.as_bytes()).0);
+        fs::create_dir(&transaction_dir)?;
+        let pending = PendingCanonicalCommit {
+            schema_version: STORE_SCHEMA_VERSION,
+            command_hash: ObjectHash::of_bytes(entry.command_id.as_bytes()),
+            journal: StoredJournalRecord::new(entry.clone())?,
+            object_hashes: Vec::new(),
+            dataset_files: Vec::new(),
+            import_inventory_hash: None,
+        };
+        write_new_unflushed(
+            &transaction_dir.join("journal.json"),
+            &serde_json::to_vec(&pending.journal)?,
+        )?;
+        write_new_unflushed(
+            &transaction_dir.join("ready.json"),
+            &serde_json::to_vec(&pending)?,
+        )?;
+        publish_link_unflushed(
+            &transaction_dir.join("journal.json"),
+            &journal_path(&self.root, entry.sequence),
+        )?;
+        self.commit_prepared_in_memory(prepared)?;
+        self.pending_group_commits.push(transaction_dir);
+        Ok(entry)
+    }
+
+    /// Crosses the durability boundary for every queued ordinary command as one group.
+    pub fn flush_group_commits(
+        &mut self,
+    ) -> Result<CanonicalDurabilityStatus, CanonicalProjectStoreError> {
+        if self.pending_group_commits.is_empty() {
+            self.durability_failure = None;
+            self.acknowledged_at_ms = unix_timestamp_millis();
+            return Ok(self.durability_status());
+        }
+        let flush_result = self.flush_group_commit_files();
+        match flush_result {
+            Ok(()) => {
+                self.pending_group_commits.clear();
+                self.durable_generation = self.document.generation();
+                self.acknowledged_at_ms = unix_timestamp_millis();
+                self.durability_failure = None;
+                Ok(self.durability_status())
+            }
+            Err(error) => {
+                self.durability_failure = Some(error.to_string());
+                Err(error)
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn durability_status(&self) -> CanonicalDurabilityStatus {
+        let state = if self.durability_failure.is_some() {
+            CanonicalDurabilityState::Failed
+        } else if self.pending_group_commits.is_empty() {
+            CanonicalDurabilityState::Stored
+        } else {
+            CanonicalDurabilityState::Storing
+        };
+        CanonicalDurabilityStatus {
+            state,
+            visible_generation: self.document.generation(),
+            durable_generation: self.durable_generation,
+            acknowledged_at_ms: self.acknowledged_at_ms,
+            pending_count: u64::try_from(self.pending_group_commits.len()).unwrap_or(u64::MAX),
+            reason: self.durability_failure.clone(),
+            recovered_tail_count: self.recovered_tail_count,
+        }
+    }
+
+    fn flush_group_commit_files(&mut self) -> Result<(), CanonicalProjectStoreError> {
+        for transaction_dir in &self.pending_group_commits {
+            File::open(transaction_dir.join("ready.json"))?.sync_all()?;
+            sync_dir(transaction_dir)?;
+        }
+        sync_dir(&transactions_root(&self.root))?;
+        for transaction_dir in &self.pending_group_commits {
+            let pending: PendingCanonicalCommit =
+                serde_json::from_slice(&fs::read(transaction_dir.join("ready.json"))?)?;
+            publish_link_unflushed(
+                &transaction_dir.join("journal.json"),
+                &journal_path(&self.root, pending.journal.entry.sequence),
+            )?;
+            File::open(transaction_dir.join("journal.json"))?.sync_all()?;
+        }
+        sync_dir(&canonical_root(&self.root).join("journal"))?;
+        for transaction_dir in &self.pending_group_commits {
+            fs::remove_dir_all(transaction_dir)?;
+        }
+        sync_dir(&transactions_root(&self.root))?;
+        Ok(())
     }
 
     /// Persists one compensating undo as a new forward journal entry.
@@ -412,6 +559,7 @@ impl CanonicalProjectStore {
         command_id: String,
         target_command_id: &str,
     ) -> Result<CanonicalJournalEntry, CanonicalProjectStoreError> {
+        self.prepare_synchronous_publication()?;
         let prepared = self.document.prepare_undo(command_id, target_command_id)?;
         self.publish_prepared(prepared, Vec::new(), Vec::new(), None)
     }
@@ -422,6 +570,7 @@ impl CanonicalProjectStore {
         command_id: String,
         target_command_id: &str,
     ) -> Result<CanonicalJournalEntry, CanonicalProjectStoreError> {
+        self.prepare_synchronous_publication()?;
         let prepared = self.document.prepare_redo(command_id, target_command_id)?;
         self.publish_prepared(prepared, Vec::new(), Vec::new(), None)
     }
@@ -724,6 +873,7 @@ impl CanonicalProjectStore {
         command_id: &str,
         progress: &mut dyn FnMut(CanonicalImportProgress),
     ) -> Result<CanonicalImportCommit, CanonicalProjectStoreError> {
+        self.prepare_synchronous_publication()?;
         package.validate()?;
         self.validate_source_roots(package, source_roots)?;
         let transaction = package.entity_create_transaction(command_id.to_owned())?;
@@ -952,6 +1102,8 @@ impl CanonicalProjectStore {
         }
         fs::remove_dir_all(&transaction_dir)?;
         sync_dir(&transactions_root(&self.root))?;
+        self.durable_generation = self.document.generation();
+        self.acknowledged_at_ms = unix_timestamp_millis();
         Ok(CanonicalImportCommit {
             journal_entry: entry,
             inventory,
@@ -1016,6 +1168,16 @@ impl CanonicalProjectStore {
                     resource_set_id: resource_set_id.clone(),
                 });
             }
+        }
+        Ok(())
+    }
+
+    fn prepare_synchronous_publication(&mut self) -> Result<(), CanonicalProjectStoreError> {
+        if let Some(reason) = &self.durability_failure {
+            return Err(CanonicalProjectStoreError::DurabilityFailed(reason.clone()));
+        }
+        if !self.pending_group_commits.is_empty() {
+            self.flush_group_commits()?;
         }
         Ok(())
     }
@@ -1132,6 +1294,8 @@ impl CanonicalProjectStore {
         self.commit_prepared_in_memory(prepared)?;
         fs::remove_dir_all(&transaction_dir)?;
         sync_dir(&transactions_root(&self.root))?;
+        self.durable_generation = self.document.generation();
+        self.acknowledged_at_ms = unix_timestamp_millis();
         Ok(entry)
     }
 
@@ -1250,7 +1414,7 @@ impl CanonicalProjectStore {
         Ok(total)
     }
 
-    fn recover_pending_transactions(&mut self) -> Result<(), CanonicalProjectStoreError> {
+    fn recover_pending_transactions(&mut self) -> Result<u64, CanonicalProjectStoreError> {
         let mut pending = Vec::new();
         for entry in fs::read_dir(transactions_root(&self.root))? {
             let entry = entry?;
@@ -1269,6 +1433,7 @@ impl CanonicalProjectStore {
         }
         pending.sort_by_key(|(sequence, _, _)| *sequence);
 
+        let recovered_count = u64::try_from(pending.len()).unwrap_or(u64::MAX);
         for (_, path, transaction) in pending {
             let journal_destination = journal_path(&self.root, transaction.journal.entry.sequence);
             if journal_destination.exists() {
@@ -1295,7 +1460,7 @@ impl CanonicalProjectStore {
             fs::remove_dir_all(&path)?;
             sync_dir(&transactions_root(&self.root))?;
         }
-        Ok(())
+        Ok(recovered_count)
     }
 
     fn load_document(&self) -> Result<CanonicalDocument, CanonicalProjectStoreError> {
@@ -1599,6 +1764,17 @@ fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<(), CanonicalProjectSto
     Ok(())
 }
 
+fn write_new_unflushed(path: &Path, bytes: &[u8]) -> Result<(), CanonicalProjectStoreError> {
+    let parent = path
+        .parent()
+        .ok_or(CanonicalProjectStoreError::InvalidPendingTransaction)?;
+    fs::create_dir_all(parent)?;
+    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    file.write_all(bytes)?;
+    file.flush()?;
+    Ok(())
+}
+
 fn copy_new_verified_with_progress(
     source: &Path,
     destination: &Path,
@@ -1797,6 +1973,27 @@ fn publish_link(staged: &Path, destination: &Path) -> Result<(), CanonicalProjec
     }
     sync_dir(parent)?;
     Ok(())
+}
+
+fn publish_link_unflushed(
+    staged: &Path,
+    destination: &Path,
+) -> Result<(), CanonicalProjectStoreError> {
+    let parent = destination
+        .parent()
+        .ok_or(CanonicalProjectStoreError::InvalidPendingTransaction)?;
+    fs::create_dir_all(parent)?;
+    match fs::hard_link(staged, destination) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn unix_timestamp_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis())
 }
 
 #[cfg(unix)]
@@ -2572,6 +2769,159 @@ mod tests {
         assert!(reopened.document().entity(&entity.id).is_none());
         assert!(reopened.document().tombstone(&entity.id).is_some());
         drop(reopened);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn unflushed_group_tail_is_recovered_and_reported_on_reopen() {
+        let root = temp_project("group-tail-recovery");
+        let entity = package("queued", "dataset").admissions[0].entity.clone();
+        let mut store = CanonicalProjectStore::open(&root).expect("open");
+        store
+            .queue_transaction(CanonicalCommandTransaction {
+                command_id: "gesture-end".to_owned(),
+                mutations: vec![CanonicalEntityMutation::Create {
+                    entity: entity.clone(),
+                }],
+            })
+            .expect("queue gesture-end append");
+        let status = store.durability_status();
+        assert_eq!(status.state, CanonicalDurabilityState::Storing);
+        assert_eq!(status.pending_count, 1);
+        assert_eq!(status.durable_generation, 0);
+        drop(store); // Simulates a sidecar killed before the group fsync.
+
+        let reopened = CanonicalProjectStore::open(&root).expect("recover queued tail");
+        assert!(reopened.document().entity(&entity.id).is_some());
+        let status = reopened.durability_status();
+        assert_eq!(status.state, CanonicalDurabilityState::Stored);
+        assert_eq!(status.recovered_tail_count, 1);
+        assert_eq!(status.durable_generation, 1);
+        drop(reopened);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn group_flush_acknowledges_every_queued_append_together() {
+        let root = temp_project("group-flush");
+        let entity = package("queued", "dataset").admissions[0].entity.clone();
+        let mut store = CanonicalProjectStore::open(&root).expect("open");
+        store
+            .queue_transaction(CanonicalCommandTransaction {
+                command_id: "drag-complete".to_owned(),
+                mutations: vec![CanonicalEntityMutation::Create { entity }],
+            })
+            .expect("one gesture-end append");
+        assert_eq!(store.pending_group_commits.len(), 1);
+        let status = store.flush_group_commits().expect("durable group ack");
+        assert_eq!(status.state, CanonicalDurabilityState::Stored);
+        assert_eq!(status.pending_count, 0);
+        assert_eq!(status.durable_generation, status.visible_generation);
+        drop(store);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn flush_failure_is_explicit_rejects_edits_and_retry_recovers() {
+        let root = temp_project("flush-retry");
+        let entity = package("queued", "dataset").admissions[0].entity.clone();
+        let mut store = CanonicalProjectStore::open(&root).expect("open");
+        store
+            .queue_transaction(CanonicalCommandTransaction {
+                command_id: "queued-before-failure".to_owned(),
+                mutations: vec![CanonicalEntityMutation::Create { entity }],
+            })
+            .expect("queue");
+        let journal_root = canonical_root(&root).join("journal");
+        fs::remove_dir_all(&journal_root).expect("remove journal dir");
+        fs::write(&journal_root, b"injected failure").expect("inject failure");
+        assert!(store.flush_group_commits().is_err());
+        assert_eq!(
+            store.durability_status().state,
+            CanonicalDurabilityState::Failed
+        );
+        let rejected = package("rejected", "dataset").admissions[0].entity.clone();
+        assert!(matches!(
+            store.queue_transaction(CanonicalCommandTransaction {
+                command_id: "must-not-run".to_owned(),
+                mutations: vec![CanonicalEntityMutation::Create { entity: rejected }],
+            }),
+            Err(CanonicalProjectStoreError::DurabilityFailed(_))
+        ));
+        fs::remove_file(&journal_root).expect("remove injected failure");
+        fs::create_dir_all(&journal_root).expect("repair target");
+        let status = store.flush_group_commits().expect("retry flush");
+        assert_eq!(status.state, CanonicalDurabilityState::Stored);
+        assert_eq!(status.durable_generation, 1);
+        drop(store);
+        let reopened = CanonicalProjectStore::open(&root).expect("reopen durable retry");
+        assert_eq!(reopened.document().generation(), 1);
+        drop(reopened);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn simulated_two_second_drag_journals_only_at_gesture_end() {
+        let root = temp_project("gesture-boundary");
+        let entity = package("dragged", "dataset").admissions[0].entity.clone();
+        let mut store = CanonicalProjectStore::open(&root).expect("open");
+        for _frame in 0..120 {
+            // Preview frames are renderer-local and never enter the store.
+            assert_eq!(store.document().journal().len(), 0);
+            assert_eq!(store.pending_group_commits.len(), 0);
+        }
+        store
+            .queue_transaction(CanonicalCommandTransaction {
+                command_id: "drag-pointer-up".to_owned(),
+                mutations: vec![CanonicalEntityMutation::Create { entity }],
+            })
+            .expect("gesture-end append");
+        assert_eq!(store.document().journal().len(), 1);
+        assert_eq!(store.pending_group_commits.len(), 1);
+        drop(store);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn group_commit_machine_gate_reports_p95_latency() {
+        use std::time::{Duration, Instant};
+
+        let root = temp_project("group-commit-p95");
+        let mut store = CanonicalProjectStore::open(&root).expect("open");
+        let mut commit_latencies = Vec::new();
+        let mut indicator_latencies = Vec::new();
+        for index in 0..20 {
+            let entity = package(&format!("gesture-{index}"), "dataset").admissions[0]
+                .entity
+                .clone();
+            let gesture_end = Instant::now();
+            store
+                .queue_transaction(CanonicalCommandTransaction {
+                    command_id: format!("gesture-end-{index}"),
+                    mutations: vec![CanonicalEntityMutation::Create { entity }],
+                })
+                .expect("one append at gesture end");
+            std::thread::sleep(Duration::from_millis(50));
+            store.flush_group_commits().expect("durability ack");
+            commit_latencies.push(gesture_end.elapsed());
+            let acknowledgement = Instant::now();
+            assert_eq!(
+                store.durability_status().state,
+                CanonicalDurabilityState::Stored
+            );
+            indicator_latencies.push(acknowledgement.elapsed());
+        }
+        commit_latencies.sort_unstable();
+        indicator_latencies.sort_unstable();
+        let p95_index = (commit_latencies.len() * 95).div_ceil(100) - 1;
+        let commit_p95 = commit_latencies[p95_index];
+        let indicator_p95 = indicator_latencies[p95_index];
+        eprintln!(
+            "G-FP-P5 gesture-end->ack p95={commit_p95:?}; ack->indicator-state p95={indicator_p95:?}"
+        );
+        assert!(commit_p95 <= Duration::from_millis(100));
+        assert!(indicator_p95 <= Duration::from_millis(50));
+        drop(store);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
