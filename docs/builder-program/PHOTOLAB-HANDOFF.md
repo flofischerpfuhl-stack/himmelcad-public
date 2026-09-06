@@ -7,7 +7,7 @@ landing by the PhotoLab session. Plan of record:
 `.claude/codex/prompts/photolab/`, the token ledger under
 `.claude/codex/logs/photolab/ledger.json`.
 
-Last update: 2026-09-06 01:55 (F15 adapted to S-06c; diagnostic paused for the Builder GPU baseline).
+Last update: 2026-09-06 02:10 (diagnostic resumed; F15 baselines running; G1a-2 dispatched).
 
 ## Current work packages
 
@@ -43,13 +43,14 @@ close/durability (03bd235), ADR 0030 rev 6 (9d4d398), pixel baselines
 
 ## Next three steps
 
-1. After the Builder's "baseline done": run the 40-image Quality Hybrid
-   diagnostic (`run-qh-diagnostic.sh`, ~3 h, all six products); the full golden
-   is deferred to the end on another machine (owner, 2026-09-05).
-2. Dispatch H2b (adopt the shared JobsStatusChip, brief `h2b.md`) once the
-   Builder lane commits S-05; then A5 levers once the golden result is in.
-3. G1a-2 after the Builder-lane command table; hands-on re-test of the
-   changed surfaces; F13/F14 polish.
+1. Land the F15 baselines/audit (running), review the G1a-2 Codex result
+   (product import package publication, ADR 0030 rev 6) with cargo gates and
+   G17 shots of the product-list dispositions, commit + push.
+2. Read the 40-image Quality Hybrid diagnostic (running; product stages under
+   the golden profile) and fix whatever it exposes; then G1c gate test once the
+   Builder's G1b registration exists.
+3. Hands-on re-test of the changed surfaces (gate 1 evidence); A5 levers and
+   the full golden move to another machine at the end (owner 2026-09-05).
 
 ## Shared-substrate state (as known to this lane)
 
