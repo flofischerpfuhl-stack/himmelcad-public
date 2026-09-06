@@ -7,7 +7,7 @@ landing by the PhotoLab session. Plan of record:
 `.claude/codex/prompts/photolab/`, the token ledger under
 `.claude/codex/logs/photolab/ledger.json`.
 
-Last update: 2026-09-06 02:25 (F15b blocker reported: product export unreachable from the shared tree menu).
+Last update: 2026-09-06 02:45 (F15c: Builder-only rows leak into the PhotoLab tree menu; capture attached).
 
 ## Current work packages
 
@@ -96,3 +96,4 @@ lease and are unaffected. Result: `result.json` in the output directory.
 - 2026-09-06 01:35: the 40-image diagnostic died with the laptop reboot on 2026-09-05 11:48 (ALIKED 16/40); relaunched on golden-bin (same log/output paths). Builder session at `10-himmelcad-aa` since 01:31; S-06c (F15 fix) had not reached origin before the reboot.
 - 2026-09-06 01:55: F15 closed on the PhotoLab side — `productId="photolab"` on EntityTree, `handleTreeContextAction` maps `photolab.images.remove`/`photolab.gcp.images` (S-06c, 5c78e69) onto the existing flows; P11 rows added (G-1 green, renderer 84). Baselines + audit rerun after "baseline done"; the diagnostic is SIGSTOPped meanwhile (`/tmp/diag-paused-pids.txt`, resume with `kill -CONT`).
 - Blocker F15b reported 2026-09-06 02:20: shared `exportableSelection` excludes cloud kinds → PhotoLab product export (LAZ etc.) unreachable from the tree (its only UI entry point). Proposal sent: product row `photolab.products.export` via the command table (S-06c pattern); PhotoLab maps it onto `exportProduct` when it lands. Baselines/audit stay at the F15 state until then (harness records the missing entry as an issue).
+- F15c reported 2026-09-06 (capture `.build/visual-regression/1440x900/context-menu-product.png`): PhotoLab's product context menu shows Builder-only rows (Restore bookmark, Isolate, Display properties) and no Export…; the generic command rows need a product filter like the S-06c photolab rows. Builder session offline at report time — pending message.

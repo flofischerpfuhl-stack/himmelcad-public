@@ -1902,6 +1902,8 @@ F15 (2026-09-05, Builder-lane a540935): the shared EntityTree's context menu bec
 
 F15b (2026-09-06): the generated `entity.export` row's enablement `exportableSelection` hardcodes `!selectedEntityKinds.includes('cloud')` (`packages/@himmelcad/app/src/commands.ts:77`); PhotoLab's tree context menu was the only entry point to `exportProduct`, so point-cloud products (the main deliverable) can no longer be exported from the UI. Disposition: **fix before release** — product row `photolab.products.export` (label "Export…", surface contextMenu, product photolab, product entity kinds, enablement from the host's `selectionExportable`) in the generated table with EntityTree forwarding, mapped onto `exportProduct`; reported to the Builder lane 2026-09-06 02:20. Harness tolerates the missing entry and records it as an issue until then.
 
+F15c (2026-09-06, capture `context-menu-product.png`): the same menu on a PhotoLab product shows Builder-only rows — "Restore bookmark", "Isolate", "Display properties" — that have no PhotoLab behaviour (viewing boxes and bookmarks are Builder features); the generic rows need the same product filter S-06c applied to PhotoLab rows (or a `product` allow-list per row). Disposition: **fix before release** (Builder lane; cross-product consistency, G17).
+
 ### WP-H1 (Size S, gates 1/3)
 
 F01 archive Save route + F05 close refusal with Retry / Cancel close / Force
