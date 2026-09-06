@@ -551,7 +551,19 @@ async function auditViewport(browserInstance, viewport) {
 
   const productTreeItem = page.getByText('Sparse Point Cloud', { exact: true });
   await productTreeItem.click({ button: 'right' });
-  await page.getByRole('menuitem', { name: 'Export…', exact: true }).click();
+  await page.getByRole('menu', { name: 'Entity commands' }).waitFor();
+  await capture('context-menu-product');
+  const exportItem = page.getByRole('menuitem', { name: 'Export…', exact: true });
+  if ((await exportItem.count()) === 0) {
+    const offered = await page
+      .getByRole('menu', { name: 'Entity commands' })
+      .getByRole('menuitem')
+      .allInnerTexts();
+    issues.push(`product context menu offers no Export… (has: ${offered.join(' | ')})`);
+    await page.keyboard.press('Escape');
+    return;
+  }
+  await exportItem.click();
   const exportDialog = page.getByRole('dialog', { name: 'Replace “Sparse Point Cloud”?' });
   await exportDialog.waitFor();
   await page.keyboard.press('Tab');
