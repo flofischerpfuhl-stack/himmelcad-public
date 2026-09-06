@@ -1726,6 +1726,25 @@ deterministic configuration-identity fallback. Not exercised: real
 COLMAP/DeDoDe/GDAL/Brush publications (the 40-image diagnostic covers those
 next); G17 does not apply (no UI change).
 
+**WP-G1a-3 — DEM facts (IF-D30), Size M, dispatched 2026-09-06 04:03 (Codex
+high).** Closes the only open G1a-2 gap: the prepared elevation hierarchy
+derives one `bitsetLsb0` validity resource over the base-level grid (cell valid
+iff finite and not the NoData sentinel; streaming over the 512×512 Float32
+tiles, cancellable), writes it as `view/validity.bin`, references it from the
+raster root manifest's `validityReference`, and lists it in the package
+`resources`; `publish_raster_product` builds `PhotoLabDemFactsV1` (semantics
+`elevationZ`, interpolation `bilinear` bound in the root as well, connectivity
+`continuous` with the root's diagonal and `maximumHeightJump` as Decimal64,
+`source_no_data` numeric/nan, validity resource) and switches DEMs from the
+lineage-only path to `write_product_import_package` (canonical Grid,
+`himmelcad-prepared-hierarchy@1`, reason `Available`, `complete`). Core
+validation requires `dem_facts` for `dem` and checks the resource binding; older
+DEM records stay `partial` with `dem_facts` missing. Orthomosaic unchanged.
+Shared-file note: `viewer_raster_manifest.rs` (Builder 0e61b02) is edited only
+for the validity plumbing — announced in the handoff. Evidence after landing:
+core/sidecar counts, then the DSM + DTM smokes (`--dem-surface`) must list the
+DEM product as `complete`.
+
 **WP-G1b — Builder registration + WeltView (Size L, after WP-G2).** The two
 P11 rows `io.import.product_dataset.list/register` with the exact
 `ProductDatasetList/RegisterRequest/ResultV1` schemas (IF-D20) in the
