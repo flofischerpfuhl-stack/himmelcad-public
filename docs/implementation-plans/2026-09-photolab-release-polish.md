@@ -1696,6 +1696,36 @@ Footer
 - Status: in flight
 ```
 
+Landed 2026-09-06 (3c6f4d0, Codex gpt-5.6-sol high, 527 k tokens; reviewed
+against ADR 0030 rev 6 by the PhotoLab session): every PhotoLab publication
+freezes `ProductLineageV1` and writes a complete import package for sparse and
+dense clouds (`potree@2`) and for complete tiled meshes
+(`himmelcad-prepared-hierarchy@1`) — artifacts hashed and fsynced, manifest
+fsynced with its directory, `ready.json` (`hcad.product-import-package-ready@1`)
+written last; `package_sha256` is the canonical-JSON hash over the manifest
+minus itself (`Decimal64` strings, no floats). Splats, PLY, MVS depth and
+orthomosaics keep a resident lineage with `package: null` and the closed reason
+codes; merged alignments carry the merge entity plus ordered, version-bound
+inputs. Publication and manifest ids are
+`"product-" + sha256(canonical_json([project, entity, version, generation]))`.
+Tool identities (IF-D26): MVS carries tool id, version and executable hash;
+the reviewer closed the DeDoDe gap — `DedodeToolIdentity` (tool id, version,
+tool-manifest hash) travels from the DeDoDe run through the alignment summary
+into the alignment record, and lineage lists `colmap@<version>` then
+`dedode@<version>` (unit test in project_runtime). Verification: core 225 +
+1, sidecar lib 283 (the two failures are Builder-lane: automation destructive
+approval, group-commit p95 under load), sidecar bin 93, MVS 13, renderer 17,
+root typecheck clean; pre-commit hook bypassed because its failures were the
+Builder-lane app test and a stashed-tree typecheck. Shared file
+`packages/@himmelcad/data/src/index.ts` gained the publication/ready/lineage
+types (announced). Open: IF-D30 DEM facts — raster summaries still lack the
+authoritative validity/connectivity resources, so DEM publications stay
+`partial` with `dem_facts` missing (follow-up WP-G1a-3, blocks DEM rows of the
+G1c matrix only); direct publication calls without a durable job record use a
+deterministic configuration-identity fallback. Not exercised: real
+COLMAP/DeDoDe/GDAL/Brush publications (the 40-image diagnostic covers those
+next); G17 does not apply (no UI change).
+
 **WP-G1b — Builder registration + WeltView (Size L, after WP-G2).** The two
 P11 rows `io.import.product_dataset.list/register` with the exact
 `ProductDatasetList/RegisterRequest/ResultV1` schemas (IF-D20) in the

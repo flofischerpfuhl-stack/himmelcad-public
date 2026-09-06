@@ -7,20 +7,20 @@ landing by the PhotoLab session. Plan of record:
 `.claude/codex/prompts/photolab/`, the token ledger under
 `.claude/codex/logs/photolab/ledger.json`.
 
-Last update: 2026-09-06 02:45 (F15c: Builder-only rows leak into the PhotoLab tree menu; capture attached).
+Last update: 2026-09-06 04:15 (G1a-2 landed 3c6f4d0; DeDoDe tool identity added; F15 audit rerunning).
 
 ## Current work packages
 
-| WP                                        | State                                                                                                                                                      |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A4 SMRF ground classification (DTM)       | landed 2026-09-04 (3e05da1, 6b87d00) with DTM-vs-DSM evidence (median DSM−DTM 1.32 m, 25 % of cells > 3 m); G17 reviewed                                   |
-| H2 jobs chip + side-operation drain       | landed (2ef29d5); H2b adopted the shared `JobsStatusChip` (6cc334b, pushed, G17 accepted); baselines wait for the F15 fix                                  |
-| B5 journal/manifest order + orphan GC     | landed 2026-09-04 (b66a66b): manifest-first commit with write-ahead intent, open-time repair, orphan quarantine                                            |
-| B4 same-target admission + disk preflight | landed 2026-09-04 (fcf75c8): frozen publication targets, ConflictingTarget, InsufficientDisk, inline errors                                                |
-| H1b cancellable archive Save              | landed 2026-09-04 (e0da2a8): params on `photolab.project.save`, phases, cancellation, Jobs-tab Cancel via H2                                               |
-| A3 mesh from dense cloud, stage 1         | landed 2026-09-04/05 (108e20f, 1148ffd, 601efde/ea66991): dense-mesh smoke green, 4.19 M triangles / 99 tiles, provenance with degenerateFacesDropped 2582 |
-| A5 golden-gate accuracy levers            | evidence-gated; golden run relaunched 2026-09-04 12:12 (`.build/logs/golden-qh-135.log`)                                                                   |
-| G1a-2 / G1b / G1c                         | after the Builder-lane command table; ADR 0030 rev 6 conformant, no open contract item                                                                     |
+| WP                                        | State                                                                                                                                                                                                                                   |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A4 SMRF ground classification (DTM)       | landed 2026-09-04 (3e05da1, 6b87d00) with DTM-vs-DSM evidence (median DSM−DTM 1.32 m, 25 % of cells > 3 m); G17 reviewed                                                                                                                |
+| H2 jobs chip + side-operation drain       | landed (2ef29d5); H2b adopted the shared `JobsStatusChip` (6cc334b, pushed, G17 accepted); baselines wait for the F15 fix                                                                                                               |
+| B5 journal/manifest order + orphan GC     | landed 2026-09-04 (b66a66b): manifest-first commit with write-ahead intent, open-time repair, orphan quarantine                                                                                                                         |
+| B4 same-target admission + disk preflight | landed 2026-09-04 (fcf75c8): frozen publication targets, ConflictingTarget, InsufficientDisk, inline errors                                                                                                                             |
+| H1b cancellable archive Save              | landed 2026-09-04 (e0da2a8): params on `photolab.project.save`, phases, cancellation, Jobs-tab Cancel via H2                                                                                                                            |
+| A3 mesh from dense cloud, stage 1         | landed 2026-09-04/05 (108e20f, 1148ffd, 601efde/ea66991): dense-mesh smoke green, 4.19 M triangles / 99 tiles, provenance with degenerateFacesDropped 2582                                                                              |
+| A5 golden-gate accuracy levers            | evidence-gated; golden run relaunched 2026-09-04 12:12 (`.build/logs/golden-qh-135.log`)                                                                                                                                                |
+| G1a-2 / G1b / G1c                         | G1a-2 landed 2026-09-06 (3c6f4d0): import packages for clouds + complete meshes, frozen lineage, ready-last; DeDoDe tool identity (IF-D26) added by review; open IF-D30 DEM facts (WP-G1a-3). G1b/G1c wait for the Builder registration |
 
 Landed since 2026-09-02 evening: H3 Escape ladder (be8bc6e, UIP-D14
 conformant; UIP-D7 deviation accepted), E1 calibration report (171791b), F3
@@ -39,13 +39,13 @@ close/durability (03bd235), ADR 0030 rev 6 (9d4d398), pixel baselines
 | 5 project format/journal               | B5 landed (crash-injection tests for both orders + dataset quarantine)                                                                                                                     |
 | 6 automation parity (P11)              | 72 rows documented + G-1 test; command table generation is Builder-lane (G2)                                                                                                               |
 | 7 accessibility / visual               | executed: audit 22 clean (88 captures × 2 viewports, roving-tabindex ribbon walk), baselines refreshed 311c848                                                                             |
-| 8 products open in Builder/WeltView    | G1a-2 pending; ADR 0030 rev 6 conformant                                                                                                                                                   |
+| 8 products open in Builder/WeltView    | G1a-2 landed (publication side, gates in code); DEM rows partial until WP-G1a-3; downstream open needs Builder G1b, then the G1c matrix                                                    |
 
 ## Next three steps
 
-1. Land the F15 baselines/audit (running), review the G1a-2 Codex result
-   (product import package publication, ADR 0030 rev 6) with cargo gates and
-   G17 shots of the product-list dispositions, commit + push.
+1. Land the F15 baselines/audit (rerunning after a hung run, log
+   `.build/logs/f15-audit-2.log`); then WP-G1a-3 (DEM facts, IF-D30) so DEM
+   publications become complete.
 2. Read the 40-image Quality Hybrid diagnostic (running; product stages under
    the golden profile) and fix whatever it exposes; then G1c gate test once the
    Builder's G1b registration exists.
@@ -97,3 +97,4 @@ lease and are unaffected. Result: `result.json` in the output directory.
 - 2026-09-06 01:55: F15 closed on the PhotoLab side — `productId="photolab"` on EntityTree, `handleTreeContextAction` maps `photolab.images.remove`/`photolab.gcp.images` (S-06c, 5c78e69) onto the existing flows; P11 rows added (G-1 green, renderer 84). Baselines + audit rerun after "baseline done"; the diagnostic is SIGSTOPped meanwhile (`/tmp/diag-paused-pids.txt`, resume with `kill -CONT`).
 - Blocker F15b reported 2026-09-06 02:20: shared `exportableSelection` excludes cloud kinds → PhotoLab product export (LAZ etc.) unreachable from the tree (its only UI entry point). Proposal sent: product row `photolab.products.export` via the command table (S-06c pattern); PhotoLab maps it onto `exportProduct` when it lands. Baselines/audit stay at the F15 state until then (harness records the missing entry as an issue).
 - F15c reported 2026-09-06 (capture `.build/visual-regression/1440x900/context-menu-product.png`): PhotoLab's product context menu shows Builder-only rows (Restore bookmark, Isolate, Display properties) and no Export…; the generic command rows need a product filter like the S-06c photolab rows. Builder session offline at report time — pending message.
+- Pending message to the Builder session (offline 2026-09-06 04:15): G1a-2 landed 3c6f4d0 — shared `packages/@himmelcad/data/src/index.ts` gained `ProductPublicationReasonCode`, `ProductLineageIdentityV1`, `PhotoLabDemFactsV1`, `ProductLineageResourceIdentityV1`, `ProductImportPackageReadyRecordV1`, `PhotoLabProductPublicationRecordV1` and narrowed package kinds/slots (additive, typecheck clean). Ready records are `hcad.product-import-package-ready@1` with `package_sha256` last; publication ids `product-<sha256>`. Your G1b registration can read `manifest.json` + `ready.json` from the package root. Note: your uncommitted `parseViewState`→`parseViewStateV1` hunk in `apps/photolab/renderer/src/App.tsx` was left unstaged (Builder WIP in a PhotoLab file).
