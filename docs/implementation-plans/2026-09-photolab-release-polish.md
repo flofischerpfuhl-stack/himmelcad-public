@@ -1969,9 +1969,10 @@ F15c (2026-09-06, capture `context-menu-product.png`): the same menu on a PhotoL
 F16 (observed 2026-09-06 in the audit-23 capture `context-menu-product`, 1440×900):
 with three right-panel function tabs open (Properties, Alignment Run, Images
 Metadata) the tab strip overflows and clips the first label to "erties" without a
-scroll affordance. PhotoLab renderer (right panel tab strip); Size S; fix after
-F15b/F15c — either wrap to a second row or show overflow chevrons per
-DESIGN-SYSTEM; baseline capture to update afterwards.
+scroll affordance. The tab strip is the shared `FunctionPanel.tsx` closeable tablist in
+`@himmelcad/ui` (Builder lane), so F16 is reported to the Builder session like
+F15b/F15c — proposal: overflow chevrons or a second row per DESIGN-SYSTEM;
+PhotoLab updates the baseline capture afterwards.
 
 ### WP-H1 (Size S, gates 1/3)
 
