@@ -43,7 +43,7 @@ use crate::image_mask_runtime::materialize_colmap_masks;
 use crate::job_runtime::{JobWorkerContext, JobWorkerError, JobWorkerResult};
 use crate::{
     dedode_colmap_bridge::{prepare_dedode_colmap_import, DedodeColmapBridgeError},
-    dedode_runtime::DedodeRunOutcome,
+    dedode_runtime::{DedodeRunOutcome, DedodeToolIdentity},
     dense_raster_prep::PreparedPotreeCloud,
 };
 
@@ -839,6 +839,9 @@ pub struct ColmapOutputSummary {
     pub calibration_group_intrinsics: Vec<CalibrationGroupIntrinsicsDelta>,
     pub selected_mapper: SelectedMapper,
     pub selected_feature_store: SelectedFeatureStore,
+    /// Identity of the DeDoDe toolchain when the selected feature store came from it (IF-D26).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dedode_tool: Option<DedodeToolIdentity>,
     pub mapping_candidates: Vec<MappingCandidateSummary>,
     pub commands: Vec<ColmapCommandReport>,
     pub artifacts: Vec<ColmapArtifactSummary>,
@@ -1436,6 +1439,7 @@ impl ColmapRuntime {
             calibration_group_intrinsics,
             selected_mapper,
             selected_feature_store,
+            dedode_tool: dedode.map(|dedode| dedode.tool.clone()),
             mapping_candidates,
             commands: state.command_reports,
             artifacts,
@@ -6349,6 +6353,11 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
             }],
         }];
         let dedode = DedodeRunOutcome {
+            tool: DedodeToolIdentity {
+                tool_id: "dedode".into(),
+                version: "test".into(),
+                manifest_sha256: ObjectHash::of_bytes(b"dedode-manifest"),
+            },
             scratch_path: "/dedode".into(),
             result_path: "/dedode/result.json".into(),
             result_sha256: ObjectHash::of_bytes(b"result"),

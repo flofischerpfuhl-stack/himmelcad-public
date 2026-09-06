@@ -6,12 +6,16 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::canonical_json;
+use crate::canonical_json::Decimal64;
 use crate::hash::ObjectHash;
 use crate::photolab_capture::PhotolabSpatialReference;
+use crate::photolab_crs::{CrsDefinition, HeightReference};
 use crate::photolab_project::ProjectReferenceFrame;
 
 pub const PRODUCT_IMPORT_PACKAGE_SCHEMA_ID: &str = "hcad.product-import-package-manifest@1";
+pub const PRODUCT_IMPORT_PACKAGE_READY_SCHEMA_ID: &str = "hcad.product-import-package-ready@1";
 pub const PRODUCT_LINEAGE_SCHEMA_ID: &str = "hcad.photolab-product-lineage@1";
+pub const PRODUCT_PUBLICATION_SCHEMA_ID: &str = "hcad.photolab-product-publication@1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -172,7 +176,7 @@ pub enum ProductLineageGcpChoiceV1 {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProductLineageReferenceFrameV1 {
     Frozen {
-        project_reference_frame: ProjectReferenceFrame,
+        project_reference_frame: ProductLineageProjectReferenceFrameV1,
     },
     LocalFrame,
 }
@@ -181,15 +185,122 @@ pub enum ProductLineageReferenceFrameV1 {
 #[serde(rename_all = "snake_case")]
 pub struct ProductLineageIdentityV1 {
     pub id: String,
-    pub version: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub configuration_sha256: Option<ObjectHash>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub binary_sha256: Option<ObjectHash>,
+    pub sha256: ObjectHash,
 }
 
-/// Frozen publication lineage. Optional members are permitted only with `partial` status and an
-/// exact entry in the ready record's `missing_field_ids` array.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProductLineageAlignmentKindV1 {
+    Single,
+    MergedOverlap,
+    MergedSharedControl,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductLineageCrsWithEpochV1 {
+    pub crs: CrsDefinition,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinate_epoch: Option<ProductLineageCoordinateEpochV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductLineageCoordinateEpochV1 {
+    pub decimal_year: Decimal64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductLineageFrozenCrsEndpointV1 {
+    pub horizontal: ProductLineageCrsWithEpochV1,
+    pub vertical: HeightReference,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductLineageProjectReferenceFrameV1 {
+    pub target: ProductLineageFrozenCrsEndpointV1,
+    pub established_by_transformation_sha256: ObjectHash,
+}
+
+impl ProductLineageProjectReferenceFrameV1 {
+    pub fn from_project(
+        value: &ProjectReferenceFrame,
+    ) -> Result<Self, canonical_json::CanonicalJsonError> {
+        Ok(Self {
+            target: ProductLineageFrozenCrsEndpointV1 {
+                horizontal: ProductLineageCrsWithEpochV1 {
+                    crs: value.target.horizontal.crs.clone(),
+                    coordinate_epoch: value
+                        .target
+                        .horizontal
+                        .coordinate_epoch
+                        .map(|epoch| Decimal64::from_f64(epoch.decimal_year))
+                        .transpose()?
+                        .map(|decimal_year| ProductLineageCoordinateEpochV1 { decimal_year }),
+                },
+                vertical: value.target.vertical.clone(),
+            },
+            established_by_transformation_sha256: value
+                .established_by_transformation_sha256
+                .clone(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ProductLineageResourceIdentityV1 {
+    pub resource_id: ObjectHash,
+    pub sha256: ObjectHash,
+    pub byte_length: u64,
+    pub media_type: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ProductLineageDemConnectivityV1 {
+    PixelSteps,
+    Continuous {
+        diagonal: String,
+        #[serde(rename = "maximumHeightJump")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        maximum_height_jump: Option<Decimal64>,
+    },
+    Mask {
+        resource: ProductLineageResourceIdentityV1,
+        encoding: String,
+        diagonal: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ProductLineageDemSourceNoDataV1 {
+    Numeric { value: Decimal64 },
+    Nan,
+    AlphaMask,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ProductLineageDemValidityV1 {
+    pub resource: ProductLineageResourceIdentityV1,
+    pub encoding: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PhotoLabDemFactsV1 {
+    pub semantics: String,
+    pub interpolation: String,
+    pub connectivity: ProductLineageDemConnectivityV1,
+    pub source_no_data: ProductLineageDemSourceNoDataV1,
+    pub validity: ProductLineageDemValidityV1,
+}
+
+/// Exact IF-D26 frozen publication lineage.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ProductLineageV1 {
@@ -202,27 +313,29 @@ pub struct ProductLineageV1 {
     pub product_kind: String,
     pub product_label: String,
     pub dataset_label: String,
-    pub normalized_format_id: String,
+    pub source_format: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normalized_format_id: Option<String>,
+    pub source_alignment_kind: ProductLineageAlignmentKindV1,
     pub source_alignment_entity_id: String,
     pub source_alignment_entity_version_hash: ObjectHash,
+    pub source_alignment_content_hash: ObjectHash,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_alignment_content_hash: Option<ObjectHash>,
+    pub source_alignment_inputs: Option<Vec<ProductLineageIdentityV1>>,
     pub processing_set_choice: ProductLineageProcessingSetChoiceV1,
     pub camera_selection_sha256: ObjectHash,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image_mask_scope: Option<ProductLineageMaskScopeV1>,
+    pub image_mask_scope: ProductLineageMaskScopeV1,
     pub gcp_choice: ProductLineageGcpChoiceV1,
     #[serde(rename = "spatialReference")]
     pub spatial_reference: PhotolabSpatialReference,
     pub reference_frame: ProductLineageReferenceFrameV1,
+    pub algorithms: Vec<ProductLineageIdentityV1>,
+    pub configurations: Vec<ProductLineageIdentityV1>,
+    pub tools: Vec<ProductLineageIdentityV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub algorithms: Option<Vec<ProductLineageIdentityV1>>,
+    pub registration_audit: Option<ProductLineageIdentityV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub configurations: Option<Vec<ProductLineageIdentityV1>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<ProductLineageIdentityV1>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registration_audit: Option<serde_json::Value>,
+    pub dem_facts: Option<PhotoLabDemFactsV1>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,6 +364,141 @@ pub struct ProductImportPackageReadyRecordV1 {
     pub total_bytes: u64,
     /// Must remain the final member of this struct and the final member written on the wire.
     pub package_sha256: ObjectHash,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProductDatasetDispositionV1 {
+    Available,
+    NeedsPreparation,
+    NeedsRepublishRecompute,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProductPublicationReasonCodeV1 {
+    Available,
+    NeedsRepublishRecompute,
+    NeedsPreparation,
+    NoPackage,
+    UnsupportedFormat,
+    InvalidPackage,
+    UnsupportedPackageSchema,
+}
+
+impl ProductPublicationReasonCodeV1 {
+    #[must_use]
+    pub const fn disposition(self) -> ProductDatasetDispositionV1 {
+        match self {
+            Self::Available => ProductDatasetDispositionV1::Available,
+            Self::NeedsPreparation | Self::NoPackage => {
+                ProductDatasetDispositionV1::NeedsPreparation
+            }
+            Self::NeedsRepublishRecompute | Self::InvalidPackage => {
+                ProductDatasetDispositionV1::NeedsRepublishRecompute
+            }
+            Self::UnsupportedFormat | Self::UnsupportedPackageSchema => {
+                ProductDatasetDispositionV1::Unsupported
+            }
+        }
+    }
+
+    #[must_use]
+    pub const fn base_copy(self) -> &'static str {
+        match self {
+            Self::Available => "Ready to import.",
+            Self::NeedsRepublishRecompute => {
+                "Republish or recompute this product in PhotoLab to capture complete provenance."
+            }
+            Self::NeedsPreparation => "Prepare this product in PhotoLab before importing.",
+            Self::NoPackage => {
+                "No import package is available. Republish this product in PhotoLab."
+            }
+            Self::UnsupportedFormat => "This product format is not supported by Builder.",
+            Self::InvalidPackage => {
+                "The import package is invalid. Republish or recompute this product in PhotoLab."
+            }
+            Self::UnsupportedPackageSchema => {
+                "This product package version is not supported by this version of Builder."
+            }
+        }
+    }
+}
+
+/// Applies the IF-D28 listing precedence to already-validated bounded summary facts.
+#[must_use]
+pub const fn select_product_publication_reason_code(
+    unsupported_format: bool,
+    unsupported_package_schema: bool,
+    invalid_known_package: bool,
+    complete_lineage: bool,
+    has_prepared_binding: bool,
+    has_package: bool,
+) -> ProductPublicationReasonCodeV1 {
+    if unsupported_format {
+        ProductPublicationReasonCodeV1::UnsupportedFormat
+    } else if unsupported_package_schema {
+        ProductPublicationReasonCodeV1::UnsupportedPackageSchema
+    } else if invalid_known_package {
+        ProductPublicationReasonCodeV1::InvalidPackage
+    } else if !complete_lineage {
+        ProductPublicationReasonCodeV1::NeedsRepublishRecompute
+    } else if !has_prepared_binding {
+        ProductPublicationReasonCodeV1::NeedsPreparation
+    } else if !has_package {
+        ProductPublicationReasonCodeV1::NoPackage
+    } else {
+        ProductPublicationReasonCodeV1::Available
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PhotoLabProductPublicationPackageV1 {
+    pub schema_id: String,
+    pub manifest_id: String,
+    pub package_relative_path: String,
+    pub normalized_format_id: String,
+    pub manifest_sha256: ObjectHash,
+    pub artifact_count: u64,
+    pub object_count: u64,
+    pub total_bytes: u64,
+    pub package_sha256: ObjectHash,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PhotoLabProductPublicationRecordV1 {
+    pub schema_id: String,
+    pub publication_id: String,
+    pub product_id: String,
+    pub product_version_hash: ObjectHash,
+    pub product_content_hash: ObjectHash,
+    pub publication_generation: u64,
+    pub lineage: ProductImportPackageLineageV1,
+    pub provenance_status: ProvenanceStatus,
+    pub missing_field_ids: Vec<String>,
+    pub disposition: ProductDatasetDispositionV1,
+    pub reason_code: ProductPublicationReasonCodeV1,
+    pub package: Option<PhotoLabProductPublicationPackageV1>,
+}
+
+/// Derives the one IF-D29 identity shared by publication and package manifest.
+pub fn product_publication_id(
+    source_project_id: &str,
+    product_entity_id: &str,
+    product_entity_version_hash: &ObjectHash,
+    publication_generation: u64,
+) -> Result<String, canonical_json::CanonicalJsonError> {
+    let preimage = serde_json::json!([
+        source_project_id,
+        product_entity_id,
+        product_entity_version_hash,
+        publication_generation
+    ]);
+    let bytes = canonical_json::to_vec(&preimage)?;
+    Ok(format!("product-{}", ObjectHash::of_bytes(&bytes).as_str()))
 }
 
 /// Lossless recognized-manifest read: semantic fields plus the exact source bytes.
@@ -312,6 +560,35 @@ pub fn read_product_import_package_manifest(
     {
         return Err(ProductImportPackageError::UnsupportedPackageSchema);
     }
+    let lineage_bytes = canonical_json::to_vec(&manifest.lineage.payload)
+        .map_err(|error| ProductImportPackageError::InvalidManifest(error.to_string()))?;
+    if manifest.lineage.lineage_object_sha256 != ObjectHash::of_bytes(&lineage_bytes)
+        || manifest.source.project_id != manifest.lineage.payload.source_project_id
+        || manifest.source.project_fingerprint
+            != manifest.lineage.payload.source_project_fingerprint
+        || manifest.source.publication_generation != manifest.lineage.payload.publication_generation
+        || manifest.product.entity_id != manifest.lineage.payload.product_entity_id
+        || manifest.product.entity_version_hash
+            != manifest.lineage.payload.product_entity_version_hash
+        || manifest.product.content_hash != manifest.lineage.payload.product_content_hash
+        || manifest.product.kind != manifest.lineage.payload.product_kind
+        || manifest.product.label != manifest.lineage.payload.product_label
+        || manifest.product.dataset_label != manifest.lineage.payload.dataset_label
+    {
+        return Err(ProductImportPackageError::InvalidManifest(
+            "manifest source/product summary disagrees with lineage".to_owned(),
+        ));
+    }
+    let missing = product_lineage_missing_field_ids(
+        &serde_json::to_value(&manifest.lineage.payload)
+            .map_err(|error| ProductImportPackageError::InvalidManifest(error.to_string()))?,
+    )?;
+    if !missing.is_empty() {
+        return Err(ProductImportPackageError::InvalidManifest(format!(
+            "package lineage is incomplete: {}",
+            missing.join(", ")
+        )));
+    }
     validate_product_import_package_paths(&manifest)?;
     Ok(RetainedProductImportPackageManifestV1 {
         manifest,
@@ -322,6 +599,36 @@ pub fn read_product_import_package_manifest(
 pub fn validate_product_import_package_paths(
     manifest: &ProductImportPackageManifestV1,
 ) -> Result<(), ProductImportPackageError> {
+    const RESOURCE_ROLES: &[&str] = &[
+        "lineage",
+        "admission_entity",
+        "representation_object",
+        "canonical_object",
+        "registration_audit",
+        "dem_validity",
+        "dem_connectivity",
+    ];
+    const ARTIFACT_ROLES: &[&str] = &[
+        "lineage",
+        "admission_entity",
+        "representation_object",
+        "canonical_object",
+        "registration_audit",
+        "dem_validity",
+        "dem_connectivity",
+        "dataset",
+    ];
+    if !matches!(
+        manifest.product.kind.as_str(),
+        "sparse" | "dense" | "dem" | "orthomosaic" | "mesh" | "gaussianSplat"
+    ) || !matches!(
+        manifest.lineage.payload.normalized_format_id.as_deref(),
+        Some("potree@2" | "himmelcad-prepared-hierarchy@1")
+    ) {
+        return Err(ProductImportPackageError::InvalidManifest(
+            "product kind or normalized format is not admitted".to_owned(),
+        ));
+    }
     let mut exact = BTreeSet::new();
     let mut folded = BTreeMap::<String, String>::new();
     for path in manifest
@@ -344,7 +651,11 @@ pub fn validate_product_import_package_paths(
     }
     let mut resource_paths = BTreeSet::new();
     for resource in &manifest.resources {
-        if resource.media_type.trim().is_empty() || !resource_paths.insert(&resource.object_path) {
+        if resource.media_type.trim().is_empty()
+            || resource.resource_id != resource.sha256.as_str()
+            || !RESOURCE_ROLES.contains(&resource.role.as_str())
+            || !resource_paths.insert(&resource.object_path)
+        {
             return Err(ProductImportPackageError::InvalidManifest(format!(
                 "invalid or duplicate resource path: {}",
                 resource.object_path
@@ -354,6 +665,22 @@ pub fn validate_product_import_package_paths(
     }
     let mut dataset_paths = BTreeSet::new();
     for dataset in &manifest.datasets {
+        if dataset.dataset_id.is_empty()
+            || !matches!(
+                dataset.format_id.as_str(),
+                "potree@2" | "himmelcad-prepared-hierarchy@1"
+            )
+            || Some(dataset.format_id.as_str())
+                != manifest.lineage.payload.normalized_format_id.as_deref()
+            || !matches!(
+                dataset.content_kind.as_str(),
+                "potreePoints" | "raster" | "gltf" | "gaussianSplats"
+            )
+        {
+            return Err(ProductImportPackageError::InvalidManifest(
+                "dataset identity, format, or content kind is invalid".to_owned(),
+            ));
+        }
         if !dataset
             .artifact_paths
             .iter()
@@ -375,11 +702,23 @@ pub fn validate_product_import_package_paths(
     }
     for admission in &manifest.admissions {
         validate_declared_reference(&exact, &admission.entity_object_path)?;
+        if admission.representation_slots.iter().any(|slot| {
+            !matches!(
+                slot.kind.as_str(),
+                "canonical" | "body" | "axis" | "footprint" | "boundary" | "alternate"
+            )
+        }) {
+            return Err(ProductImportPackageError::InvalidManifest(
+                "representation slot kind is invalid".to_owned(),
+            ));
+        }
     }
     for artifact in &manifest.artifacts {
-        if artifact.media_type.trim().is_empty() {
+        if artifact.media_type.trim().is_empty()
+            || !ARTIFACT_ROLES.contains(&artifact.role.as_str())
+        {
             return Err(ProductImportPackageError::InvalidManifest(format!(
-                "artifact media_type is empty: {}",
+                "artifact media type or role is invalid: {}",
                 artifact.path
             )));
         }
@@ -438,6 +777,177 @@ pub fn validate_relative_posix_path(path: &str) -> Result<(), ProductImportPacka
     Ok(())
 }
 
+/// Computes IF-D27 member paths for a structurally partial legacy lineage object.
+pub fn product_lineage_missing_field_ids(
+    value: &serde_json::Value,
+) -> Result<Vec<String>, ProductImportPackageError> {
+    const REQUIRED: &[&str] = &[
+        "source_project_id",
+        "source_project_fingerprint",
+        "product_entity_id",
+        "product_entity_version_hash",
+        "product_content_hash",
+        "publication_generation",
+        "product_kind",
+        "product_label",
+        "dataset_label",
+        "source_format",
+        "source_alignment_kind",
+        "source_alignment_entity_id",
+        "source_alignment_entity_version_hash",
+        "source_alignment_content_hash",
+        "processing_set_choice",
+        "camera_selection_sha256",
+        "image_mask_scope",
+        "gcp_choice",
+        "spatialReference",
+        "reference_frame",
+        "algorithms",
+        "configurations",
+        "tools",
+    ];
+    let object = value.as_object().ok_or_else(|| {
+        ProductImportPackageError::InvalidManifest("lineage payload is not an object".to_owned())
+    })?;
+    let mut missing = REQUIRED
+        .iter()
+        .filter(|member| !object.contains_key(**member))
+        .map(|member| (*member).to_owned())
+        .collect::<Vec<_>>();
+    for member in [
+        "algorithms",
+        "configurations",
+        "tools",
+        "source_alignment_inputs",
+    ] {
+        let Some(value) = object.get(member) else {
+            continue;
+        };
+        let items = value.as_array().ok_or_else(|| {
+            ProductImportPackageError::InvalidManifest(format!("{member} is not an array"))
+        })?;
+        for (index, item) in items.iter().enumerate() {
+            let item = item.as_object().ok_or_else(|| {
+                ProductImportPackageError::InvalidManifest(format!(
+                    "{member}[{index}] is not an object"
+                ))
+            })?;
+            for field in ["id", "sha256"] {
+                if !item.contains_key(field) {
+                    missing.push(format!("{member}[{index}].{field}"));
+                }
+            }
+            if item
+                .get("id")
+                .is_some_and(|value| value.as_str().is_none_or(str::is_empty))
+                || item.get("sha256").is_some_and(|value| {
+                    value.as_str().is_none_or(|value| {
+                        value.len() != 64
+                            || !value
+                                .bytes()
+                                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                    })
+                })
+            {
+                return Err(ProductImportPackageError::InvalidManifest(format!(
+                    "{member}[{index}] has an invalid identity"
+                )));
+            }
+        }
+    }
+    for (member, selected_fields) in [
+        (
+            "processing_set_choice",
+            &["id", "version_hash", "membership_sha256"][..],
+        ),
+        ("image_mask_scope", &["scope_sha256"][..]),
+        (
+            "gcp_choice",
+            &["entity_id", "entity_version_hash", "snapshot_sha256"][..],
+        ),
+    ] {
+        let Some(choice) = object.get(member) else {
+            continue;
+        };
+        let choice = choice.as_object().ok_or_else(|| {
+            ProductImportPackageError::InvalidManifest(format!("{member} is not an object"))
+        })?;
+        match choice.get("kind") {
+            None => missing.push(format!("{member}.kind")),
+            Some(serde_json::Value::String(kind)) if kind == "selected" => {
+                for field in selected_fields {
+                    if !choice.contains_key(*field) {
+                        missing.push(format!("{member}.{field}"));
+                    }
+                }
+            }
+            Some(serde_json::Value::String(kind))
+                if match member {
+                    "processing_set_choice" => {
+                        matches!(kind.as_str(), "none" | "all_imported_cameras")
+                    }
+                    "image_mask_scope" | "gcp_choice" => kind == "none",
+                    _ => false,
+                } => {}
+            Some(serde_json::Value::String(kind)) => {
+                return Err(ProductImportPackageError::InvalidManifest(format!(
+                    "{member}.kind has an invalid tag: {kind}"
+                )))
+            }
+            Some(_) => {
+                return Err(ProductImportPackageError::InvalidManifest(format!(
+                    "{member}.kind has an invalid type"
+                )))
+            }
+        }
+    }
+    if matches!(
+        object
+            .get("source_alignment_kind")
+            .and_then(serde_json::Value::as_str),
+        Some("merged_overlap" | "merged_shared_control")
+    ) {
+        match object.get("source_alignment_inputs") {
+            None => missing.push("source_alignment_inputs".to_owned()),
+            Some(serde_json::Value::Array(inputs)) if inputs.len() >= 2 => {}
+            Some(_) => {
+                return Err(ProductImportPackageError::InvalidManifest(
+                    "source_alignment_inputs needs at least two identities".to_owned(),
+                ))
+            }
+        }
+    } else if object
+        .get("source_alignment_kind")
+        .and_then(serde_json::Value::as_str)
+        == Some("single")
+        && object.contains_key("source_alignment_inputs")
+    {
+        return Err(ProductImportPackageError::InvalidManifest(
+            "source_alignment_inputs is inapplicable to a single alignment".to_owned(),
+        ));
+    }
+    if object
+        .get("product_kind")
+        .and_then(serde_json::Value::as_str)
+        == Some("dem")
+        && !object.contains_key("dem_facts")
+    {
+        missing.push("dem_facts".to_owned());
+    } else if object
+        .get("product_kind")
+        .and_then(serde_json::Value::as_str)
+        != Some("dem")
+        && object.contains_key("dem_facts")
+    {
+        return Err(ProductImportPackageError::InvalidManifest(
+            "dem_facts is inapplicable to this product kind".to_owned(),
+        ));
+    }
+    missing.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+    missing.dedup();
+    Ok(missing)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -457,20 +967,24 @@ mod tests {
             product_kind: "sparse".into(),
             product_label: "Sparse point cloud".into(),
             dataset_label: "Sparse point cloud".into(),
-            normalized_format_id: "potree@2".into(),
+            source_format: "potreeV2".into(),
+            normalized_format_id: Some("potree@2".into()),
+            source_alignment_kind: ProductLineageAlignmentKindV1::Single,
             source_alignment_entity_id: "alignment-a".into(),
             source_alignment_entity_version_hash: ObjectHash::of_bytes(b"alignment"),
-            source_alignment_content_hash: Some(ObjectHash::of_bytes(b"alignment")),
+            source_alignment_content_hash: ObjectHash::of_bytes(b"alignment"),
+            source_alignment_inputs: None,
             processing_set_choice: ProductLineageProcessingSetChoiceV1::None,
             camera_selection_sha256: ObjectHash::of_bytes(b"cameras"),
-            image_mask_scope: Some(ProductLineageMaskScopeV1::None),
+            image_mask_scope: ProductLineageMaskScopeV1::None,
             gcp_choice: ProductLineageGcpChoiceV1::None,
             spatial_reference: PhotolabSpatialReference::default(),
             reference_frame: ProductLineageReferenceFrameV1::LocalFrame,
-            algorithms: Some(vec![]),
-            configurations: Some(vec![]),
-            tools: Some(vec![]),
+            algorithms: vec![],
+            configurations: vec![],
+            tools: vec![],
             registration_audit: None,
+            dem_facts: None,
         };
         let lineage_bytes = canonical_json::to_vec(&lineage).unwrap();
         let mut manifest = ProductImportPackageManifestV1 {
@@ -508,7 +1022,7 @@ mod tests {
                 sha256: ObjectHash::of_bytes(b"{}"),
                 byte_length: 2,
                 media_type: "application/json".into(),
-                role: "dataset_root".into(),
+                role: "dataset".into(),
             }],
             required_features: vec![],
             counts: ProductImportPackageCountsV1 {
@@ -531,8 +1045,113 @@ mod tests {
             .starts_with(r#"{"admissions":[]"#));
         assert_eq!(
             manifest.package_sha256.as_str(),
-            "5312b8a94c1aaffeb505acbc8046a3dc14b60c4b4af5369c6f5c807e0a001320"
+            "9e76dc8473f10b9aa57a3e40d2407ace7982e7811bc2b18faa79d56dff75b49d"
         );
+    }
+
+    #[test]
+    fn publication_identity_derivation_golden() {
+        assert_eq!(
+            product_publication_id(
+                "project-a",
+                "entity-a",
+                &ObjectHash::of_bytes(b"version"),
+                7,
+            )
+            .unwrap(),
+            "product-2d23d41f2de5b361ffca34d6557d08b3a49eced57ae465287561155f0c798669"
+        );
+    }
+
+    #[test]
+    fn frozen_epoch_projects_to_decimal64_without_mutating_model() {
+        let model = ProjectReferenceFrame {
+            target: crate::photolab_crs::FrozenCrsEndpoint {
+                horizontal: crate::photolab_crs::CrsWithEpoch {
+                    crs: CrsDefinition::Epsg(7912),
+                    coordinate_epoch: Some(crate::photolab_crs::CoordinateEpoch {
+                        decimal_year: 2025.25,
+                    }),
+                },
+                vertical: HeightReference::Ellipsoidal,
+            },
+            established_by_transformation_sha256: ObjectHash::of_bytes(b"transform"),
+        };
+        let original_bits = model
+            .target
+            .horizontal
+            .coordinate_epoch
+            .unwrap()
+            .decimal_year
+            .to_bits();
+        let projected = ProductLineageProjectReferenceFrameV1::from_project(&model).unwrap();
+        let bytes = canonical_json::to_vec(&projected).unwrap();
+        assert!(String::from_utf8(bytes)
+            .unwrap()
+            .contains(r#""decimalYear":"2025.25""#));
+        assert_eq!(
+            model
+                .target
+                .horizontal
+                .coordinate_epoch
+                .unwrap()
+                .decimal_year
+                .to_bits(),
+            original_bits
+        );
+    }
+
+    #[test]
+    fn reason_code_precedence_is_closed() {
+        assert_eq!(
+            select_product_publication_reason_code(true, true, true, false, false, false),
+            ProductPublicationReasonCodeV1::UnsupportedFormat
+        );
+        assert_eq!(
+            select_product_publication_reason_code(false, true, true, false, false, false),
+            ProductPublicationReasonCodeV1::UnsupportedPackageSchema
+        );
+        assert_eq!(
+            select_product_publication_reason_code(false, false, true, false, false, false),
+            ProductPublicationReasonCodeV1::InvalidPackage
+        );
+        assert_eq!(
+            select_product_publication_reason_code(false, false, false, false, false, false),
+            ProductPublicationReasonCodeV1::NeedsRepublishRecompute
+        );
+        assert_eq!(
+            select_product_publication_reason_code(false, false, false, true, false, false),
+            ProductPublicationReasonCodeV1::NeedsPreparation
+        );
+        assert_eq!(
+            select_product_publication_reason_code(false, false, false, true, true, false),
+            ProductPublicationReasonCodeV1::NoPackage
+        );
+        assert_eq!(
+            select_product_publication_reason_code(false, false, false, true, true, true),
+            ProductPublicationReasonCodeV1::Available
+        );
+    }
+
+    #[test]
+    fn missing_lineage_ids_use_sorted_dot_and_bracket_paths() {
+        let missing = product_lineage_missing_field_ids(&json!({
+            "algorithms": [],
+            "configurations": [],
+            "tools": [{"id": "colmap@4.0"}, {"sha256": ObjectHash::of_bytes(b"tool")}],
+            "processing_set_choice": {"kind": "selected", "id": "set"},
+            "image_mask_scope": {"kind": "none"},
+            "gcp_choice": {"kind": "none"}
+        }))
+        .unwrap();
+        assert!(missing
+            .windows(2)
+            .all(|pair| pair[0].as_bytes() < pair[1].as_bytes()));
+        assert!(missing.contains(&"processing_set_choice.membership_sha256".to_owned()));
+        assert!(missing.contains(&"processing_set_choice.version_hash".to_owned()));
+        assert!(missing.contains(&"tools[0].sha256".to_owned()));
+        assert!(missing.contains(&"tools[1].id".to_owned()));
+        assert!(!missing.contains(&"normalized_format_id".to_owned()));
     }
 
     #[test]
@@ -613,7 +1232,7 @@ mod tests {
     #[test]
     fn ready_record_writes_package_hash_last() {
         let ready = ProductImportPackageReadyRecordV1 {
-            schema_id: PRODUCT_IMPORT_PACKAGE_SCHEMA_ID.into(),
+            schema_id: PRODUCT_IMPORT_PACKAGE_READY_SCHEMA_ID.into(),
             manifest_id: "manifest-a".into(),
             product_id: "entity-a".into(),
             product_version_hash: ObjectHash::of_bytes(b"version"),
@@ -653,5 +1272,36 @@ mod tests {
             serde_json::to_value(ProductLineageReferenceFrameV1::LocalFrame).unwrap(),
             json!({"kind": "local_frame"})
         );
+    }
+
+    #[test]
+    fn dem_facts_use_the_exact_mixed_case_wire_shape() {
+        let resource = ProductLineageResourceIdentityV1 {
+            resource_id: ObjectHash::of_bytes(b"validity"),
+            sha256: ObjectHash::of_bytes(b"validity"),
+            byte_length: 1,
+            media_type: "application/octet-stream".into(),
+        };
+        let value = serde_json::to_value(PhotoLabDemFactsV1 {
+            semantics: "elevationZ".into(),
+            interpolation: "bilinear".into(),
+            connectivity: ProductLineageDemConnectivityV1::Continuous {
+                diagonal: "topLeftToBottomRight".into(),
+                maximum_height_jump: Some(Decimal64::parse("0.125").unwrap()),
+            },
+            source_no_data: ProductLineageDemSourceNoDataV1::Numeric {
+                value: Decimal64::parse("-9999").unwrap(),
+            },
+            validity: ProductLineageDemValidityV1 {
+                resource,
+                encoding: "bitsetLsb0".into(),
+            },
+        })
+        .unwrap();
+        assert_eq!(value["connectivity"]["kind"], "continuous");
+        assert_eq!(value["connectivity"]["maximumHeightJump"], "0.125");
+        assert!(value["connectivity"].get("maximum_height_jump").is_none());
+        assert!(value["validity"]["resource"].get("resource_id").is_some());
+        assert!(value["validity"]["resource"].get("resourceId").is_none());
     }
 }

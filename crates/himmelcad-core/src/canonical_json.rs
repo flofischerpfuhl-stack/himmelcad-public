@@ -5,6 +5,69 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+/// Canonical, plain-decimal wire spelling of one finite IEEE-754 binary64 value.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Decimal64(String);
+
+impl Decimal64 {
+    /// Projects an authoritative binary64 value without changing its bits.
+    pub fn from_f64(value: f64) -> Result<Self, CanonicalJsonError> {
+        if !value.is_finite() {
+            return Err(CanonicalJsonError::NonFiniteDecimal64);
+        }
+        if value == 0.0 {
+            return Ok(Self("0".to_owned()));
+        }
+        Ok(Self(expand_decimal_exponent(&value.to_string())))
+    }
+
+    /// Parses and verifies the one canonical spelling for a binary64 value.
+    pub fn parse(value: &str) -> Result<Self, CanonicalJsonError> {
+        if !is_plain_normalized_decimal(value) {
+            return Err(CanonicalJsonError::InvalidDecimal64(value.to_owned()));
+        }
+        let parsed = value
+            .parse::<f64>()
+            .map_err(|_| CanonicalJsonError::InvalidDecimal64(value.to_owned()))?;
+        let canonical = Self::from_f64(parsed)?;
+        if canonical.0 != value {
+            return Err(CanonicalJsonError::InvalidDecimal64(value.to_owned()));
+        }
+        Ok(canonical)
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Returns the identical binary64 value represented by this checked spelling.
+    pub fn to_f64(&self) -> f64 {
+        self.0
+            .parse()
+            .expect("Decimal64 construction guarantees a finite binary64")
+    }
+}
+
+impl Serialize for Decimal64 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Decimal64 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(&value).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Canonical JSON serialization failures.
 #[derive(Debug, Error)]
 pub enum CanonicalJsonError {
@@ -14,6 +77,71 @@ pub enum CanonicalJsonError {
     FloatingPoint { path: String },
     #[error("the omitted member requires a top-level JSON object")]
     TopLevelObjectRequired,
+    #[error("Decimal64 requires a finite binary64 value")]
+    NonFiniteDecimal64,
+    #[error("invalid canonical Decimal64 spelling: {0}")]
+    InvalidDecimal64(String),
+}
+
+fn expand_decimal_exponent(value: &str) -> String {
+    let Some(exponent_index) = value.find(['e', 'E']) else {
+        return value.to_owned();
+    };
+    let (mantissa, exponent) = value.split_at(exponent_index);
+    let exponent = exponent[1..]
+        .parse::<i32>()
+        .expect("f64 Display always emits a valid decimal exponent");
+    let negative = mantissa.starts_with('-');
+    let unsigned = mantissa.strip_prefix('-').unwrap_or(mantissa);
+    let decimal_index = unsigned.find('.').unwrap_or(unsigned.len());
+    let digits = unsigned.replace('.', "");
+    let shifted = i32::try_from(decimal_index).expect("binary64 decimal is bounded") + exponent;
+    let mut output = String::new();
+    if negative {
+        output.push('-');
+    }
+    if shifted <= 0 {
+        output.push_str("0.");
+        output.extend(std::iter::repeat_n(
+            '0',
+            usize::try_from(-shifted).expect("binary64 decimal is bounded"),
+        ));
+        output.push_str(&digits);
+    } else if usize::try_from(shifted).expect("binary64 decimal is bounded") >= digits.len() {
+        output.push_str(&digits);
+        output.extend(std::iter::repeat_n(
+            '0',
+            usize::try_from(shifted).expect("binary64 decimal is bounded") - digits.len(),
+        ));
+    } else {
+        let shifted = usize::try_from(shifted).expect("binary64 decimal is bounded");
+        output.push_str(&digits[..shifted]);
+        output.push('.');
+        output.push_str(&digits[shifted..]);
+    }
+    output
+}
+
+fn is_plain_normalized_decimal(value: &str) -> bool {
+    if value.is_empty() || value == "-0" || value.starts_with('+') {
+        return false;
+    }
+    let unsigned = value.strip_prefix('-').unwrap_or(value);
+    let mut parts = unsigned.split('.');
+    let integer = parts.next().unwrap_or_default();
+    let fraction = parts.next();
+    if parts.next().is_some()
+        || integer.is_empty()
+        || !integer.bytes().all(|byte| byte.is_ascii_digit())
+        || (integer.len() > 1 && integer.starts_with('0'))
+    {
+        return false;
+    }
+    fraction.is_none_or(|fraction| {
+        !fraction.is_empty()
+            && fraction.bytes().all(|byte| byte.is_ascii_digit())
+            && !fraction.ends_with('0')
+    })
 }
 
 /// Serializes as UTF-8 JSON with byte-sorted object keys, stable arrays and no whitespace.
@@ -86,7 +214,7 @@ fn write_value(
 mod tests {
     use serde_json::{json, Map, Value};
 
-    use super::{sha256_omitting_member, to_vec, CanonicalJsonError};
+    use super::{sha256_omitting_member, to_vec, CanonicalJsonError, Decimal64};
 
     #[test]
     fn sorts_object_keys_by_utf8_bytes() {
@@ -128,5 +256,40 @@ mod tests {
             sha256_omitting_member(&Value::Object(left), "package_sha256").unwrap(),
             sha256_omitting_member(&Value::Object(right), "package_sha256").unwrap()
         );
+    }
+
+    #[test]
+    fn decimal64_uses_shortest_plain_round_trip_spelling() {
+        for (value, expected) in [
+            (0.0, "0"),
+            (-0.0, "0"),
+            (1.5, "1.5"),
+            (1.0e-7, "0.0000001"),
+            (1.0e21, "1000000000000000000000"),
+        ] {
+            let decimal = Decimal64::from_f64(value).unwrap();
+            assert_eq!(decimal.as_str(), expected);
+            let expected_bits = if value == 0.0 {
+                0.0_f64.to_bits()
+            } else {
+                value.to_bits()
+            };
+            assert_eq!(decimal.to_f64().to_bits(), expected_bits);
+        }
+
+        let smallest_normal = Decimal64::from_f64(f64::MIN_POSITIVE).unwrap();
+        assert!(!smallest_normal.as_str().contains(['e', 'E']));
+        assert_eq!(
+            smallest_normal.to_f64().to_bits(),
+            f64::MIN_POSITIVE.to_bits()
+        );
+    }
+
+    #[test]
+    fn decimal64_rejects_equivalent_noncanonical_spellings() {
+        for value in ["-0", "+1", "01", "1.0", "1e3", "0.10", "NaN", "inf"] {
+            assert!(Decimal64::parse(value).is_err(), "{value}");
+        }
+        assert_eq!(Decimal64::parse("0.0000001").unwrap().to_f64(), 1.0e-7);
     }
 }

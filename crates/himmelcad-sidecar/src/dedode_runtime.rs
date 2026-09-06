@@ -360,9 +360,20 @@ pub struct DedodeWorkerResult {
     pub checkpoint_path: PathBuf,
 }
 
+/// Versioned identity of the DeDoDe toolchain that produced a run (IF-D26). The manifest hash
+/// covers the pinned executable, worker, source tree, and model resources.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DedodeToolIdentity {
+    pub tool_id: String,
+    pub version: String,
+    pub manifest_sha256: ObjectHash,
+}
+
 /// Durable result returned to product publication and geometric verification.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DedodeRunOutcome {
+    pub tool: DedodeToolIdentity,
     pub scratch_path: PathBuf,
     pub result_path: PathBuf,
     pub result_sha256: ObjectHash,
@@ -769,6 +780,11 @@ impl DedodeRuntime {
         )?;
         let _duration = started.elapsed();
         Ok(DedodeRunOutcome {
+            tool: DedodeToolIdentity {
+                tool_id: self.toolchain.manifest.tool_id.clone(),
+                version: self.toolchain.manifest.version.clone(),
+                manifest_sha256: self.toolchain.manifest_sha256.clone(),
+            },
             scratch_path: scratch,
             result_path,
             result_sha256,

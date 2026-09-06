@@ -1434,6 +1434,14 @@ export type ProductDatasetDisposition =
   | 'needs_preparation'
   | 'needs_republish_recompute'
   | 'unsupported';
+export type ProductPublicationReasonCode =
+  | 'available'
+  | 'needs_republish_recompute'
+  | 'needs_preparation'
+  | 'no_package'
+  | 'unsupported_format'
+  | 'invalid_package'
+  | 'unsupported_package_schema';
 
 export interface ProductImportPackageSummary {
   packageSchemaId?: 'hcad.product-import-package-manifest@1';
@@ -1445,7 +1453,8 @@ export interface ProductImportPackageSummary {
   provenanceStatus: ProductProvenanceStatus;
   missingFieldIds: string[];
   disposition: ProductDatasetDisposition;
-  reasonCode: string;
+  reasonCode: ProductPublicationReasonCode;
+  reasonMessage: string;
 }
 
 /** Exact snake_case wire envelope for `hcad.product-import-package-manifest@1`. */
@@ -1467,7 +1476,7 @@ export interface ProductImportPackageManifestV1 {
     entity_id: string;
     entity_version_hash: ObjectHash;
     content_hash: ObjectHash;
-    kind: string;
+    kind: 'sparse' | 'dense' | 'dem' | 'orthomosaic' | 'mesh' | 'gaussianSplat';
     label: string;
     dataset_label: string;
   };
@@ -1482,14 +1491,18 @@ export interface ProductImportPackageManifestV1 {
     schema_version: number;
     entity_object_path: string;
     entity_object_sha256: ObjectHash;
-    representation_slots: Array<{ slot: string; kind: string; object_sha256: ObjectHash }>;
+    representation_slots: Array<{
+      slot: string;
+      kind: 'canonical' | 'body' | 'axis' | 'footprint' | 'boundary' | 'alternate';
+      object_sha256: ObjectHash;
+    }>;
   }>;
   datasets: Array<{
     dataset_id: string;
     entity_id: string;
     slot: string;
-    format_id: string;
-    content_kind: string;
+    format_id: 'potree@2' | 'himmelcad-prepared-hierarchy@1';
+    content_kind: 'potreePoints' | 'raster' | 'gltf' | 'gaussianSplats';
     root_path: string;
     root_sha256: ObjectHash;
     artifact_paths: string[];
@@ -1497,7 +1510,14 @@ export interface ProductImportPackageManifestV1 {
   resources: Array<{
     resource_id: string;
     owner_entity_id: string;
-    role: string;
+    role:
+      | 'lineage'
+      | 'admission_entity'
+      | 'representation_object'
+      | 'canonical_object'
+      | 'registration_audit'
+      | 'dem_validity'
+      | 'dem_connectivity';
     object_path: string;
     sha256: ObjectHash;
     byte_length: number;
@@ -1508,7 +1528,15 @@ export interface ProductImportPackageManifestV1 {
     sha256: ObjectHash;
     byte_length: number;
     media_type: string;
-    role: string;
+    role:
+      | 'lineage'
+      | 'admission_entity'
+      | 'representation_object'
+      | 'canonical_object'
+      | 'registration_audit'
+      | 'dem_validity'
+      | 'dem_connectivity'
+      | 'dataset';
   }>;
   required_features: string[];
   counts: { object_count: number; artifact_count: number; total_bytes: number };
@@ -1538,36 +1566,103 @@ export interface ProductLineageV1 {
   product_entity_version_hash: ObjectHash;
   product_content_hash: ObjectHash;
   publication_generation: number;
-  product_kind: string;
+  product_kind: 'sparse' | 'dense' | 'dem' | 'orthomosaic' | 'mesh' | 'gaussianSplat';
   product_label: string;
   dataset_label: string;
-  normalized_format_id: string;
+  source_format: string;
+  normalized_format_id?: 'potree@2' | 'himmelcad-prepared-hierarchy@1';
+  source_alignment_kind: 'single' | 'merged_overlap' | 'merged_shared_control';
   source_alignment_entity_id: string;
   source_alignment_entity_version_hash: ObjectHash;
-  source_alignment_content_hash?: ObjectHash;
+  source_alignment_content_hash: ObjectHash;
+  source_alignment_inputs?: ProductLineageIdentityV1[];
   processing_set_choice: ProductLineageProcessingSetChoiceV1;
   camera_selection_sha256: ObjectHash;
-  image_mask_scope?: ProductLineageMaskScopeV1;
+  image_mask_scope: ProductLineageMaskScopeV1;
   gcp_choice: ProductLineageGcpChoiceV1;
   spatialReference: unknown;
   reference_frame: { kind: 'frozen'; project_reference_frame: unknown } | { kind: 'local_frame' };
-  algorithms?: Array<{
-    id: string;
-    version: string;
-    configuration_sha256?: ObjectHash;
-    binary_sha256?: ObjectHash;
-  }>;
-  configurations?: Array<{
-    id: string;
-    version: string;
-    configuration_sha256?: ObjectHash;
-    binary_sha256?: ObjectHash;
-  }>;
-  tools?: Array<{
-    id: string;
-    version: string;
-    configuration_sha256?: ObjectHash;
-    binary_sha256?: ObjectHash;
-  }>;
-  registration_audit?: unknown;
+  algorithms: ProductLineageIdentityV1[];
+  configurations: ProductLineageIdentityV1[];
+  tools: ProductLineageIdentityV1[];
+  registration_audit?: ProductLineageIdentityV1;
+  dem_facts?: PhotoLabDemFactsV1;
+}
+
+export interface ProductLineageIdentityV1 {
+  id: string;
+  sha256: ObjectHash;
+}
+
+export interface PhotoLabDemFactsV1 {
+  semantics: 'elevationZ';
+  interpolation: 'nearest' | 'bilinear' | 'discontinuityAware';
+  connectivity:
+    | { kind: 'pixelSteps' }
+    | {
+        kind: 'continuous';
+        diagonal: 'topLeftToBottomRight' | 'topRightToBottomLeft';
+        maximumHeightJump?: string;
+      }
+    | {
+        kind: 'mask';
+        resource: ProductLineageResourceIdentityV1;
+        encoding: 'twoBitsPerCellLsb0';
+        diagonal: 'topLeftToBottomRight' | 'topRightToBottomLeft';
+      };
+  source_no_data: { kind: 'numeric'; value: string } | { kind: 'nan' } | { kind: 'alphaMask' };
+  validity: { resource: ProductLineageResourceIdentityV1; encoding: 'bitsetLsb0' };
+}
+
+export interface ProductLineageResourceIdentityV1 {
+  resource_id: ObjectHash;
+  sha256: ObjectHash;
+  byte_length: number;
+  media_type: string;
+}
+
+export interface ProductImportPackageReadyRecordV1 {
+  schema_id: 'hcad.product-import-package-ready@1';
+  manifest_id: string;
+  product_id: string;
+  product_version_hash: ObjectHash;
+  publication_generation: number;
+  normalized_format_id: 'potree@2' | 'himmelcad-prepared-hierarchy@1';
+  manifest_sha256: ObjectHash;
+  lineage_object_sha256: ObjectHash;
+  provenance_status: ProductProvenanceStatus;
+  missing_field_ids: string[];
+  artifact_count: number;
+  object_count: number;
+  total_bytes: number;
+  package_sha256: ObjectHash;
+}
+
+export interface PhotoLabProductPublicationRecordV1 {
+  schema_id: 'hcad.photolab-product-publication@1';
+  publication_id: string;
+  product_id: string;
+  product_version_hash: ObjectHash;
+  product_content_hash: ObjectHash;
+  publication_generation: number;
+  lineage: {
+    schema_id: 'hcad.photolab-product-lineage@1';
+    lineage_object_sha256: ObjectHash;
+    payload: ProductLineageV1;
+  };
+  provenance_status: ProductProvenanceStatus;
+  missing_field_ids: string[];
+  disposition: ProductDatasetDisposition;
+  reason_code: ProductPublicationReasonCode;
+  package: null | {
+    schema_id: 'hcad.product-import-package-ready@1';
+    manifest_id: string;
+    package_relative_path: string;
+    normalized_format_id: 'potree@2' | 'himmelcad-prepared-hierarchy@1';
+    manifest_sha256: ObjectHash;
+    artifact_count: number;
+    object_count: number;
+    total_bytes: number;
+    package_sha256: ObjectHash;
+  };
 }

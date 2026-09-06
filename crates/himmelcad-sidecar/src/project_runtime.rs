@@ -48,14 +48,18 @@ use himmelcad_core::photolab_project::{
     PHOTOLAB_PROJECT_FORMAT_VERSION,
 };
 use himmelcad_core::product_import_package::{
+    product_publication_id, PhotoLabProductPublicationPackageV1,
+    PhotoLabProductPublicationRecordV1, ProductDatasetDispositionV1,
     ProductImportPackageAdmissionV1, ProductImportPackageArtifactV1, ProductImportPackageCountsV1,
     ProductImportPackageDatasetV1, ProductImportPackageLineageV1, ProductImportPackageManifestV1,
     ProductImportPackageProducerV1, ProductImportPackageProductV1,
     ProductImportPackageReadyRecordV1, ProductImportPackageRepresentationSlotV1,
-    ProductImportPackageResourceV1, ProductImportPackageSourceV1, ProductLineageGcpChoiceV1,
-    ProductLineageMaskScopeV1, ProductLineageProcessingSetChoiceV1, ProductLineageReferenceFrameV1,
-    ProductLineageV1, ProvenanceStatus, PRODUCT_IMPORT_PACKAGE_SCHEMA_ID,
-    PRODUCT_LINEAGE_SCHEMA_ID,
+    ProductImportPackageResourceV1, ProductImportPackageSourceV1, ProductLineageAlignmentKindV1,
+    ProductLineageGcpChoiceV1, ProductLineageIdentityV1, ProductLineageMaskScopeV1,
+    ProductLineageProcessingSetChoiceV1, ProductLineageProjectReferenceFrameV1,
+    ProductLineageReferenceFrameV1, ProductLineageV1, ProductPublicationReasonCodeV1,
+    ProvenanceStatus, PRODUCT_IMPORT_PACKAGE_READY_SCHEMA_ID, PRODUCT_IMPORT_PACKAGE_SCHEMA_ID,
+    PRODUCT_LINEAGE_SCHEMA_ID, PRODUCT_PUBLICATION_SCHEMA_ID,
 };
 use himmelcad_core::typed_artifact::{TypedArtifactManifest, TYPED_ARTIFACT_MANIFEST_NAME};
 use serde::{Deserialize, Serialize};
@@ -73,6 +77,7 @@ use himmelcad_sidecar::colmap_runtime::{
     ColmapCalibrationGroup, ColmapCalibrationSeed, ColmapIntrinsicsRefinement,
     ColmapIntrinsicsStrategy, ColmapRunOutcome, PinnedIntrinsicsReadjustment, SelectedMapper,
 };
+use himmelcad_sidecar::dedode_runtime::DedodeToolIdentity;
 use himmelcad_sidecar::dense_raster_prep::PreparedPotreeCloud;
 use himmelcad_sidecar::gcp_local_estimate_runtime::{
     compute_gcp_local_estimate, read_gcp_local_estimate, ComputeGcpLocalEstimateParams,
@@ -770,6 +775,13 @@ pub struct ComputeArtifactRecord {
     pub selected_mapper: SelectedMapper,
     pub tool_manifest_sha256: ObjectHash,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colmap_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colmap_executable_sha256: Option<ObjectHash>,
+    /// DeDoDe toolchain identity when the alignment's features came from it (IF-D26).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dedode_tool: Option<DedodeToolIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_alignment_entity_id: Option<EntityId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub potree: Option<PreparedPotreeCloud>,
@@ -843,6 +855,12 @@ pub struct MvsArtifactRecord {
     pub job_id: String,
     pub dataset_relative_path: String,
     pub output_index_sha256: ObjectHash,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executable_sha256: Option<ObjectHash>,
     pub output: MvsOutputIndex,
     pub command: MvsCommandReport,
     #[serde(default)]
@@ -980,14 +998,7 @@ pub struct ProjectProductDatasetRecord {
     pub contract: ProductDatasetContractProjection,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProductDatasetDisposition {
-    Available,
-    NeedsPreparation,
-    NeedsRepublishRecompute,
-    Unsupported,
-}
+pub type ProductDatasetDisposition = ProductDatasetDispositionV1;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1007,12 +1018,13 @@ pub struct ProductDatasetContractProjection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_bytes: Option<u64>,
     pub disposition: ProductDatasetDisposition,
-    pub reason_code: String,
+    pub reason_code: ProductPublicationReasonCodeV1,
+    pub reason_message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-struct ProductImportPublicationRecordV1 {
+struct LegacyProductImportPublicationRecordV1 {
     schema_id: String,
     manifest_id: String,
     product_id: String,
@@ -1032,20 +1044,22 @@ struct ProductImportPublicationRecordV1 {
     package_sha256: ObjectHash,
 }
 
-impl ProductImportPublicationRecordV1 {
-    fn projection(&self) -> ProductDatasetContractProjection {
-        ProductDatasetContractProjection {
-            provenance_status: self.provenance_status,
-            missing_field_ids: self.missing_field_ids.clone(),
-            package_schema_id: Some(self.schema_id.clone()),
-            package_sha256: Some(self.package_sha256.clone()),
-            normalized_format_id: Some(self.normalized_format_id.clone()),
-            artifact_count: Some(self.artifact_count),
-            object_count: Some(self.object_count),
-            total_bytes: Some(self.total_bytes),
-            disposition: self.disposition,
-            reason_code: self.reason_code.clone(),
-        }
+fn product_publication_projection(
+    record: &PhotoLabProductPublicationRecordV1,
+) -> ProductDatasetContractProjection {
+    let package = record.package.as_ref();
+    ProductDatasetContractProjection {
+        provenance_status: record.provenance_status,
+        missing_field_ids: record.missing_field_ids.clone(),
+        package_schema_id: package.map(|_| PRODUCT_IMPORT_PACKAGE_SCHEMA_ID.to_owned()),
+        package_sha256: package.map(|value| value.package_sha256.clone()),
+        normalized_format_id: package.map(|value| value.normalized_format_id.clone()),
+        artifact_count: package.map(|value| value.artifact_count),
+        object_count: package.map(|value| value.object_count),
+        total_bytes: package.map(|value| value.total_bytes),
+        disposition: record.disposition,
+        reason_code: record.reason_code,
+        reason_message: record.reason_code.base_copy().to_owned(),
     }
 }
 
@@ -1071,11 +1085,15 @@ fn legacy_product_contract(
     let mut missing = [
         "source_project_id",
         "source_project_fingerprint",
+        "product_entity_id",
+        "product_entity_version_hash",
         "product_content_hash",
         "publication_generation",
+        "product_kind",
         "product_label",
         "dataset_label",
-        "normalized_format_id",
+        "source_format",
+        "source_alignment_kind",
         "source_alignment_entity_id",
         "source_alignment_entity_version_hash",
         "source_alignment_content_hash",
@@ -1088,7 +1106,6 @@ fn legacy_product_contract(
         "algorithms",
         "configurations",
         "tools",
-        "package_sha256",
     ]
     .into_iter()
     .filter(|field| {
@@ -1098,27 +1115,16 @@ fn legacy_product_contract(
     .map(str::to_owned)
     .collect::<Vec<_>>();
     missing.sort();
-    let unsupported = matches!(format, "mvsDepth")
-        || kind == "orthomosaic"
-        || (kind == "gaussianSplat" && format == "prepared");
+    let unsupported = matches!(format, "mvsDepth") || kind == "orthomosaic";
     let (disposition, reason_code) = if unsupported {
         (
             ProductDatasetDisposition::Unsupported,
-            match (kind, format) {
-                (_, "mvsDepth") => "standalone_mvs_depth_not_admitted",
-                ("orthomosaic", _) => "plan_grid_2d_admission_required",
-                ("gaussianSplat", "prepared") => "pointcloud_ownership_deferred",
-                _ => "canonical_owner_mapping_unavailable",
-            },
+            ProductPublicationReasonCodeV1::UnsupportedFormat,
         )
     } else {
         (
             ProductDatasetDisposition::NeedsRepublishRecompute,
-            match provenance_status {
-                ProvenanceStatus::Partial => "partial_legacy_provenance",
-                ProvenanceStatus::Unknown => "unknown_legacy_provenance",
-                ProvenanceStatus::Complete => unreachable!(),
-            },
+            ProductPublicationReasonCodeV1::NeedsRepublishRecompute,
         )
     };
     ProductDatasetContractProjection {
@@ -1131,7 +1137,8 @@ fn legacy_product_contract(
         object_count: None,
         total_bytes: None,
         disposition,
-        reason_code: reason_code.to_owned(),
+        reason_code,
+        reason_message: reason_code.base_copy().to_owned(),
     }
 }
 
@@ -1149,24 +1156,80 @@ fn published_product_contract(
     if !path.is_file() {
         return Ok(None);
     }
-    let record: ProductImportPublicationRecordV1 = serde_json::from_slice(&fs::read(&path)?)
-        .with_context(|| {
+    let value: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path)?).with_context(|| {
+            format!(
+                "invalid product import publication record {}",
+                path.display()
+            )
+        })?;
+    if value.get("schema_id").and_then(serde_json::Value::as_str)
+        != Some(PRODUCT_PUBLICATION_SCHEMA_ID)
+    {
+        // The WP-G1a summary is retained as legacy evidence. The caller projects only the
+        // publication-time fields available in the product's original five-field relation.
+        serde_json::from_value::<LegacyProductImportPublicationRecordV1>(value).with_context(
+            || {
+                format!(
+                    "invalid legacy product import publication record {}",
+                    path.display()
+                )
+            },
+        )?;
+        return Ok(None);
+    }
+    let record: PhotoLabProductPublicationRecordV1 =
+        serde_json::from_value(value).with_context(|| {
             format!(
                 "invalid product import publication record {}",
                 path.display()
             )
         })?;
     anyhow::ensure!(
-        record.schema_id == PRODUCT_IMPORT_PACKAGE_SCHEMA_ID && record.product_id == entity_id.0,
+        record.schema_id == PRODUCT_PUBLICATION_SCHEMA_ID && record.product_id == entity_id.0,
         "product import publication summary belongs to another schema or entity"
     );
+    let lineage_bytes = canonical_json::to_vec(&record.lineage.payload)?;
+    anyhow::ensure!(
+        record.lineage.schema_id == PRODUCT_LINEAGE_SCHEMA_ID
+            && record.lineage.lineage_object_sha256 == ObjectHash::of_bytes(&lineage_bytes)
+            && record.publication_generation == record.lineage.payload.publication_generation
+            && record.product_id == record.lineage.payload.product_entity_id
+            && record.product_version_hash == record.lineage.payload.product_entity_version_hash
+            && record.product_content_hash == record.lineage.payload.product_content_hash,
+        "product publication record and resident lineage disagree"
+    );
+    anyhow::ensure!(
+        record.publication_id
+            == product_publication_id(
+                &record.lineage.payload.source_project_id,
+                &record.product_id,
+                &record.product_version_hash,
+                record.publication_generation,
+            )?,
+        "product publication identity is invalid"
+    );
+    anyhow::ensure!(
+        (record.provenance_status == ProvenanceStatus::Complete
+            && record.missing_field_ids.is_empty())
+            || (record.provenance_status != ProvenanceStatus::Complete
+                && !record.missing_field_ids.is_empty()),
+        "product publication provenance status disagrees with missing fields"
+    );
+    anyhow::ensure!(
+        record.disposition == record.reason_code.disposition(),
+        "product publication reason code disagrees with its disposition"
+    );
+    let Some(package) = record.package.as_ref() else {
+        return Ok(Some(product_publication_projection(&record)));
+    };
     himmelcad_core::product_import_package::validate_relative_posix_path(
-        &record.package_relative_path,
+        &package.package_relative_path,
     )
     .map_err(anyhow::Error::msg)?;
     let ready_path = session
         .working_path
-        .join(&record.package_relative_path)
+        .join(&package.package_relative_path)
         .join("ready.json");
     let canonical_root = session.working_path.canonicalize()?;
     let canonical_ready_path = ready_path.canonicalize()?;
@@ -1182,23 +1245,24 @@ fn published_product_contract(
             )
         })?;
     anyhow::ensure!(
-        record.schema_id == ready.schema_id
-            && record.manifest_id == ready.manifest_id
+        package.schema_id == ready.schema_id
+            && package.manifest_id == ready.manifest_id
+            && record.publication_id == ready.manifest_id
             && record.product_id == ready.product_id
             && record.product_version_hash == ready.product_version_hash
             && record.publication_generation == ready.publication_generation
-            && record.normalized_format_id == ready.normalized_format_id
-            && record.manifest_sha256 == ready.manifest_sha256
-            && record.lineage_object_sha256 == ready.lineage_object_sha256
+            && package.normalized_format_id == ready.normalized_format_id
+            && package.manifest_sha256 == ready.manifest_sha256
+            && record.lineage.lineage_object_sha256 == ready.lineage_object_sha256
             && record.provenance_status == ready.provenance_status
             && record.missing_field_ids == ready.missing_field_ids
-            && record.artifact_count == ready.artifact_count
-            && record.object_count == ready.object_count
-            && record.total_bytes == ready.total_bytes
-            && record.package_sha256 == ready.package_sha256,
+            && package.artifact_count == ready.artifact_count
+            && package.object_count == ready.object_count
+            && package.total_bytes == ready.total_bytes
+            && package.package_sha256 == ready.package_sha256,
         "product publication record and ready record disagree"
     );
-    Ok(Some(record.projection()))
+    Ok(Some(product_publication_projection(&record)))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1497,12 +1561,364 @@ struct ProductPackageCanonicalContract {
     dataset: CanonicalPreparedDataset,
 }
 
+fn versioned_job_identity(kind: PhotolabJobKind) -> (&'static str, &'static str) {
+    match kind {
+        PhotolabJobKind::AlignPhotos => (
+            "hcad.photolab-align-photos@1",
+            "hcad.photolab-alignment-configuration@1",
+        ),
+        PhotolabJobKind::BuildDensePointCloud => (
+            "hcad.photolab-build-dense-point-cloud@1",
+            "hcad.photolab-dense-configuration@1",
+        ),
+        PhotolabJobKind::BuildDepthMaps => (
+            "hcad.photolab-build-depth-maps@1",
+            "hcad.photolab-depth-configuration@1",
+        ),
+        PhotolabJobKind::BuildDem => (
+            "hcad.photolab-build-dem@1",
+            "hcad.photolab-dem-configuration@1",
+        ),
+        PhotolabJobKind::BuildOrthomosaic => (
+            "hcad.photolab-build-orthomosaic@1",
+            "hcad.photolab-orthomosaic-configuration@1",
+        ),
+        PhotolabJobKind::BuildMesh => (
+            "hcad.photolab-build-mesh@1",
+            "hcad.photolab-mesh-configuration@1",
+        ),
+        PhotolabJobKind::BuildGaussianSplat => (
+            "hcad.photolab-build-gaussian-splat@1",
+            "hcad.photolab-splat-configuration@1",
+        ),
+        _ => (
+            "hcad.photolab-product-pipeline@1",
+            "hcad.photolab-product-configuration@1",
+        ),
+    }
+}
+
+fn product_job_identities(
+    session: &ProjectSession,
+    job_id: &str,
+    fallback_kind: PhotolabJobKind,
+) -> Result<(Vec<ProductLineageIdentityV1>, Vec<ProductLineageIdentityV1>)> {
+    let job = session.job_history.get(job_id);
+    let kind = job.map_or(fallback_kind, |job| job.kind);
+    let config_hash = job
+        .map(|job| job.config_hash.clone())
+        .unwrap_or_else(|| ObjectHash::of_bytes(job_id.as_bytes()));
+    let (algorithm_id, default_configuration_id) = versioned_job_identity(kind);
+    let frozen_path = job_history_record_path(&session.working_path, job_id);
+    let frozen = frozen_path
+        .is_file()
+        .then(|| fs::read(&frozen_path))
+        .transpose()?
+        .map(|bytes| serde_json::from_slice::<ProjectJobHistoryRecord>(&bytes))
+        .transpose()?
+        .and_then(|record| record.frozen_request);
+    let configuration_id = frozen
+        .as_ref()
+        .and_then(|request| {
+            find_json_string(
+                &request.params,
+                &[
+                    "profileId",
+                    "presetId",
+                    "resolvedPresetId",
+                    "profile",
+                    "kind",
+                ],
+            )
+        })
+        .filter(|value| !value.trim().is_empty())
+        .map_or_else(
+            || default_configuration_id.to_owned(),
+            |value| format!("hcad.photolab-{}@1", value.trim().to_ascii_lowercase()),
+        );
+    let algorithm_descriptor = canonical_json::to_vec(&serde_json::json!({
+        "id": algorithm_id,
+        "implementation": env!("CARGO_PKG_VERSION"),
+    }))?;
+    Ok((
+        vec![ProductLineageIdentityV1 {
+            id: algorithm_id.to_owned(),
+            sha256: ObjectHash::of_bytes(&algorithm_descriptor),
+        }],
+        vec![ProductLineageIdentityV1 {
+            id: configuration_id,
+            sha256: config_hash,
+        }],
+    ))
+}
+
+struct FrozenProductLineage {
+    envelope: ProductImportPackageLineageV1,
+    provenance_status: ProvenanceStatus,
+    missing_field_ids: Vec<String>,
+}
+
+/// Tool identities of one COLMAP alignment in lineage order: the COLMAP solver first, then the
+/// DeDoDe toolchain when its feature store was selected (IF-D26). Records published before the
+/// executable hash was persisted fall back to the tool-manifest hash.
+fn alignment_tool_identities(
+    colmap_version: Option<&String>,
+    colmap_executable_sha256: Option<&ObjectHash>,
+    tool_manifest_sha256: &ObjectHash,
+    dedode_tool: Option<&DedodeToolIdentity>,
+) -> Vec<ProductLineageIdentityV1> {
+    let mut tools = vec![ProductLineageIdentityV1 {
+        id: colmap_version.map_or_else(
+            || "colmap-tool-manifest@1".to_owned(),
+            |version| format!("colmap@{version}"),
+        ),
+        sha256: colmap_executable_sha256
+            .cloned()
+            .unwrap_or_else(|| tool_manifest_sha256.clone()),
+    }];
+    if let Some(dedode) = dedode_tool {
+        tools.push(ProductLineageIdentityV1 {
+            id: format!("{}@{}", dedode.tool_id, dedode.version),
+            sha256: dedode.manifest_sha256.clone(),
+        });
+    }
+    tools
+}
+
+#[allow(clippy::too_many_arguments)]
+fn freeze_product_lineage(
+    session: &ProjectSession,
+    candidate_manifest: &PhotolabProjectManifest,
+    snapshot: &EntitySnapshot,
+    product_content_hash: ObjectHash,
+    publication_generation: u64,
+    kind: &str,
+    source_format: &str,
+    normalized_format_id: Option<&str>,
+    dataset_label: &str,
+    job_id: &str,
+    job_kind: PhotolabJobKind,
+    lineage: &ProductLineage,
+    camera_entity_ids: &[String],
+    mut product_tools: Vec<ProductLineageIdentityV1>,
+    missing_field_ids: Vec<String>,
+) -> Result<FrozenProductLineage> {
+    let source_fingerprint = source_fingerprint(&session.source_path)?.sha256;
+    let source_alignment = candidate_manifest
+        .entities
+        .get(&lineage.source_alignment_entity_id.0)
+        .context("product lineage source alignment disappeared")?;
+    let (source_alignment_kind, source_alignment_content_hash, source_alignment_inputs) =
+        match source_alignment.kind {
+            EntityKind::AlignmentRun => {
+                let record: ComputeArtifactRecord = serde_json::from_slice(&read_verified_object(
+                    &session.working_path,
+                    &source_alignment.version_hash,
+                )?)?;
+                let mut alignment_tools = alignment_tool_identities(
+                    record.colmap_version.as_ref(),
+                    record.colmap_executable_sha256.as_ref(),
+                    &record.tool_manifest_sha256,
+                    record.dedode_tool.as_ref(),
+                );
+                alignment_tools.append(&mut product_tools);
+                product_tools = alignment_tools;
+                (
+                    ProductLineageAlignmentKindV1::Single,
+                    record.artifact.sha256,
+                    None,
+                )
+            }
+            EntityKind::MergedAlignmentRun => {
+                let record: MergedAlignmentRunRecord = serde_json::from_slice(
+                    &read_verified_object(&session.working_path, &source_alignment.version_hash)?,
+                )?;
+                anyhow::ensure!(
+                    record.state == MergedAlignmentState::Published,
+                    "product source merge is not published"
+                );
+                let all_overlap = record.connections.iter().all(|connection| {
+                    matches!(connection, AlignmentMergeConnection::Overlap { .. })
+                });
+                let all_shared = record.connections.iter().all(|connection| {
+                    matches!(connection, AlignmentMergeConnection::SharedControls { .. })
+                });
+                anyhow::ensure!(
+                    all_overlap || all_shared,
+                    "mixed overlap/shared-control merge lineage is not representable in v1"
+                );
+                anyhow::ensure!(
+                    record.input_alignment_entity_ids.len() >= 2,
+                    "merged alignment lineage needs at least two ordered inputs"
+                );
+                let mut inputs = Vec::with_capacity(record.input_alignment_entity_ids.len());
+                let mut source_tools = Vec::new();
+                for input_id in &record.input_alignment_entity_ids {
+                    let input =
+                        candidate_manifest
+                            .entities
+                            .get(&input_id.0)
+                            .with_context(|| {
+                                format!("merged alignment input disappeared: {}", input_id.0)
+                            })?;
+                    inputs.push(ProductLineageIdentityV1 {
+                        id: input_id.0.clone(),
+                        sha256: input.version_hash.clone(),
+                    });
+                    if input.kind == EntityKind::AlignmentRun {
+                        let input_record: ComputeArtifactRecord = serde_json::from_slice(
+                            &read_verified_object(&session.working_path, &input.version_hash)?,
+                        )?;
+                        source_tools.extend(alignment_tool_identities(
+                            input_record.colmap_version.as_ref(),
+                            input_record.colmap_executable_sha256.as_ref(),
+                            &input_record.tool_manifest_sha256,
+                            input_record.dedode_tool.as_ref(),
+                        ));
+                    }
+                }
+                source_tools.append(&mut product_tools);
+                product_tools = source_tools;
+                (
+                    if all_overlap {
+                        ProductLineageAlignmentKindV1::MergedOverlap
+                    } else {
+                        ProductLineageAlignmentKindV1::MergedSharedControl
+                    },
+                    record.lineage_sha256,
+                    Some(inputs),
+                )
+            }
+            _ => anyhow::bail!("product source lineage references a non-alignment entity"),
+        };
+    let processing_set_choice = if let Some(processing_set_id) = &lineage.processing_set_id {
+        let processing_set = read_processing_set(session, processing_set_id)?;
+        let processing_set_entity = candidate_manifest
+            .entities
+            .get(&processing_set_id.0)
+            .context("product processing set disappeared")?;
+        ProductLineageProcessingSetChoiceV1::Selected {
+            id: processing_set_id.0.clone(),
+            version_hash: processing_set_entity.version_hash.clone(),
+            membership_sha256: processing_set.membership_sha256,
+        }
+    } else {
+        let all_camera_ids = candidate_manifest
+            .entities
+            .values()
+            .filter(|entity| entity.kind == EntityKind::CameraImage)
+            .map(|entity| entity.id.0.clone())
+            .collect::<BTreeSet<_>>();
+        if camera_entity_ids.iter().cloned().collect::<BTreeSet<_>>() == all_camera_ids {
+            ProductLineageProcessingSetChoiceV1::AllImportedCameras
+        } else {
+            ProductLineageProcessingSetChoiceV1::None
+        }
+    };
+    let camera_selection_sha256 =
+        ObjectHash::of_bytes(&canonical_json::to_vec(&camera_entity_ids)?);
+    let mask_scope = build_image_mask_compute_scope(session, camera_entity_ids, None)?;
+    anyhow::ensure!(
+        mask_scope.scope_sha256 == lineage.image_mask_scope_sha256,
+        "product image-mask scope changed before publication"
+    );
+    let image_mask_scope = if mask_scope.masks.is_empty() {
+        ProductLineageMaskScopeV1::None
+    } else {
+        ProductLineageMaskScopeV1::Selected {
+            scope_sha256: mask_scope.scope_sha256,
+        }
+    };
+    let gcp_choice = match (
+        &lineage.gcp_optimization_entity_id,
+        &lineage.gcp_optimization_snapshot_sha256,
+    ) {
+        (Some(entity_id), Some(snapshot_sha256)) => {
+            let entity = candidate_manifest
+                .entities
+                .get(&entity_id.0)
+                .context("product GCP optimization disappeared")?;
+            ProductLineageGcpChoiceV1::Selected {
+                entity_id: entity_id.0.clone(),
+                entity_version_hash: entity.version_hash.clone(),
+                snapshot_sha256: snapshot_sha256.clone(),
+            }
+        }
+        (None, None) => ProductLineageGcpChoiceV1::None,
+        _ => anyhow::bail!("product GCP lineage is incomplete"),
+    };
+    let reference_frame = match &candidate_manifest.spatial_reference {
+        himmelcad_core::photolab_capture::PhotolabSpatialReference::LocalMetric { .. } => {
+            ProductLineageReferenceFrameV1::LocalFrame
+        }
+        himmelcad_core::photolab_capture::PhotolabSpatialReference::CrsBacked => {
+            ProductLineageReferenceFrameV1::Frozen {
+                project_reference_frame: ProductLineageProjectReferenceFrameV1::from_project(
+                    candidate_manifest
+                        .reference_frame
+                        .as_ref()
+                        .context("CRS-backed product has no frozen project reference frame")?,
+                )?,
+            }
+        }
+    };
+    let (algorithms, configurations) = product_job_identities(session, job_id, job_kind)?;
+    let payload = ProductLineageV1 {
+        source_project_id: candidate_manifest.project_id.clone(),
+        source_project_fingerprint: source_fingerprint,
+        product_entity_id: snapshot.id.0.clone(),
+        product_entity_version_hash: snapshot.version_hash.clone(),
+        product_content_hash,
+        publication_generation,
+        product_kind: kind.to_owned(),
+        product_label: snapshot.name.clone(),
+        dataset_label: dataset_label.to_owned(),
+        source_format: source_format.to_owned(),
+        normalized_format_id: normalized_format_id.map(str::to_owned),
+        source_alignment_kind,
+        source_alignment_entity_id: lineage.source_alignment_entity_id.0.clone(),
+        source_alignment_entity_version_hash: source_alignment.version_hash.clone(),
+        source_alignment_content_hash,
+        source_alignment_inputs,
+        processing_set_choice,
+        camera_selection_sha256,
+        image_mask_scope,
+        gcp_choice,
+        spatial_reference: candidate_manifest.spatial_reference.clone(),
+        reference_frame,
+        algorithms,
+        configurations,
+        tools: product_tools,
+        registration_audit: None,
+        dem_facts: None,
+    };
+    let lineage_bytes = canonical_json::to_vec(&payload)?;
+    let envelope = ProductImportPackageLineageV1 {
+        schema_id: PRODUCT_LINEAGE_SCHEMA_ID.to_owned(),
+        lineage_object_sha256: ObjectHash::of_bytes(&lineage_bytes),
+        payload,
+    };
+    let mut missing_field_ids = missing_field_ids;
+    missing_field_ids.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+    missing_field_ids.dedup();
+    Ok(FrozenProductLineage {
+        envelope,
+        provenance_status: if missing_field_ids.is_empty() {
+            ProvenanceStatus::Complete
+        } else {
+            ProvenanceStatus::Partial
+        },
+        missing_field_ids,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn write_product_import_package(
     session: &ProjectSession,
     candidate_manifest: &PhotolabProjectManifest,
     snapshot: &EntitySnapshot,
     kind: &str,
+    source_format: &str,
     content_kind: &str,
     dataset_label: &str,
     normalized_format_id: &str,
@@ -1510,22 +1926,22 @@ fn write_product_import_package(
     dataset_root_relative_path: &Path,
     lineage: &ProductLineage,
     camera_entity_ids: &[String],
+    job_id: &str,
+    job_kind: PhotolabJobKind,
+    product_tools: Vec<ProductLineageIdentityV1>,
     canonical: ProductPackageCanonicalContract,
-    disposition: ProductDatasetDisposition,
-    reason_code: &str,
     cancellation: &CancellationToken,
-) -> Result<ProductImportPublicationRecordV1> {
+) -> Result<PhotoLabProductPublicationRecordV1> {
     cancellation.check()?;
     let publication_generation = candidate_manifest.command_sequence;
-    let product_version_hash = canonical.admission.entity.version_hash.clone();
+    let product_version_hash = snapshot.version_hash.clone();
     let product_content_hash = canonical.admission.selected.geometry_ref.clone();
-    let manifest_seed = serde_json::to_vec(&(
+    let manifest_id = product_publication_id(
         &candidate_manifest.project_id,
-        &snapshot.id,
+        &snapshot.id.0,
         &product_version_hash,
         publication_generation,
-    ))?;
-    let manifest_id = format!("product-{}", ObjectHash::of_bytes(&manifest_seed).as_str());
+    )?;
     let package_relative_path = format!(".photolab/product-import-packages/{manifest_id}");
     let package_root = session.working_path.join(&package_relative_path);
     anyhow::ensure!(
@@ -1533,131 +1949,34 @@ fn write_product_import_package(
         "product import package already exists"
     );
 
-    let result = (|| -> Result<ProductImportPublicationRecordV1> {
+    let result = (|| -> Result<PhotoLabProductPublicationRecordV1> {
         fs::create_dir_all(&package_root)?;
         cancellation.check()?;
-        let source_fingerprint = source_fingerprint(&session.source_path)?.sha256;
-        let source_alignment = candidate_manifest
-            .entities
-            .get(&lineage.source_alignment_entity_id.0)
-            .context("product lineage source alignment disappeared")?;
-        let source_alignment_content_hash = match source_alignment.kind {
-            EntityKind::AlignmentRun => {
-                let bytes =
-                    read_verified_object(&session.working_path, &source_alignment.version_hash)?;
-                serde_json::from_slice::<ComputeArtifactRecord>(&bytes)
-                    .ok()
-                    .map(|record| record.artifact.sha256)
-            }
-            EntityKind::MergedAlignmentRun => None,
-            _ => None,
-        };
-        let mut missing_field_ids = Vec::new();
-        if source_alignment_content_hash.is_none() {
-            missing_field_ids.push("source_alignment_content_hash".to_owned());
-        }
-        let processing_set_choice = if let Some(processing_set_id) = &lineage.processing_set_id {
-            let processing_set = read_processing_set(session, processing_set_id)?;
-            let processing_set_entity = candidate_manifest
-                .entities
-                .get(&processing_set_id.0)
-                .context("product processing set disappeared")?;
-            ProductLineageProcessingSetChoiceV1::Selected {
-                id: processing_set_id.0.clone(),
-                version_hash: processing_set_entity.version_hash.clone(),
-                membership_sha256: processing_set.membership_sha256,
-            }
-        } else {
-            let all_camera_ids = candidate_manifest
-                .entities
-                .values()
-                .filter(|entity| entity.kind == EntityKind::CameraImage)
-                .map(|entity| entity.id.0.clone())
-                .collect::<BTreeSet<_>>();
-            if camera_entity_ids.iter().cloned().collect::<BTreeSet<_>>() == all_camera_ids {
-                ProductLineageProcessingSetChoiceV1::AllImportedCameras
-            } else {
-                ProductLineageProcessingSetChoiceV1::None
-            }
-        };
-        let camera_selection_sha256 =
-            ObjectHash::of_bytes(&canonical_json::to_vec(&camera_entity_ids)?);
-        let mask_scope = build_image_mask_compute_scope(session, camera_entity_ids, None)?;
-        let image_mask_scope = if mask_scope.scope_sha256 != lineage.image_mask_scope_sha256 {
-            missing_field_ids.push("image_mask_scope".to_owned());
-            None
-        } else if mask_scope.masks.is_empty() {
-            Some(ProductLineageMaskScopeV1::None)
-        } else {
-            Some(ProductLineageMaskScopeV1::Selected {
-                scope_sha256: mask_scope.scope_sha256,
-            })
-        };
-        let gcp_choice = match (
-            &lineage.gcp_optimization_entity_id,
-            &lineage.gcp_optimization_snapshot_sha256,
-        ) {
-            (Some(entity_id), Some(snapshot_sha256)) => {
-                let entity = candidate_manifest
-                    .entities
-                    .get(&entity_id.0)
-                    .context("product GCP optimization disappeared")?;
-                ProductLineageGcpChoiceV1::Selected {
-                    entity_id: entity_id.0.clone(),
-                    entity_version_hash: entity.version_hash.clone(),
-                    snapshot_sha256: snapshot_sha256.clone(),
-                }
-            }
-            (None, None) => ProductLineageGcpChoiceV1::None,
-            _ => anyhow::bail!("product GCP lineage is incomplete"),
-        };
-        let reference_frame = match &candidate_manifest.spatial_reference {
-            himmelcad_core::photolab_capture::PhotolabSpatialReference::LocalMetric { .. } => {
-                ProductLineageReferenceFrameV1::LocalFrame
-            }
-            himmelcad_core::photolab_capture::PhotolabSpatialReference::CrsBacked => {
-                ProductLineageReferenceFrameV1::Frozen {
-                    project_reference_frame: candidate_manifest
-                        .reference_frame
-                        .clone()
-                        .context("CRS-backed product has no frozen project reference frame")?,
-                }
-            }
-        };
-        missing_field_ids.extend([
-            "algorithms".to_owned(),
-            "configurations".to_owned(),
-            "tools".to_owned(),
-        ]);
         let executable = std::env::current_exe()?;
         let executable_sha256 = hash_regular_file(&executable)?.0;
-        let payload = ProductLineageV1 {
-            source_project_id: candidate_manifest.project_id.clone(),
-            source_project_fingerprint: source_fingerprint.clone(),
-            product_entity_id: snapshot.id.0.clone(),
-            product_entity_version_hash: product_version_hash.clone(),
-            product_content_hash: product_content_hash.clone(),
+        let frozen = freeze_product_lineage(
+            session,
+            candidate_manifest,
+            snapshot,
+            product_content_hash.clone(),
             publication_generation,
-            product_kind: kind.to_owned(),
-            product_label: snapshot.name.clone(),
-            dataset_label: dataset_label.to_owned(),
-            normalized_format_id: normalized_format_id.to_owned(),
-            source_alignment_entity_id: lineage.source_alignment_entity_id.0.clone(),
-            source_alignment_entity_version_hash: source_alignment.version_hash.clone(),
-            source_alignment_content_hash,
-            processing_set_choice,
-            camera_selection_sha256,
-            image_mask_scope,
-            gcp_choice,
-            spatial_reference: candidate_manifest.spatial_reference.clone(),
-            reference_frame,
-            algorithms: None,
-            configurations: None,
-            tools: None,
-            registration_audit: None,
-        };
-        let lineage_bytes = canonical_json::to_vec(&payload)?;
-        let lineage_object_sha256 = ObjectHash::of_bytes(&lineage_bytes);
+            kind,
+            source_format,
+            Some(normalized_format_id),
+            dataset_label,
+            job_id,
+            job_kind,
+            lineage,
+            camera_entity_ids,
+            product_tools,
+            Vec::new(),
+        )?;
+        anyhow::ensure!(
+            frozen.provenance_status == ProvenanceStatus::Complete,
+            "an import package requires complete publication lineage"
+        );
+        let lineage_bytes = canonical_json::to_vec(&frozen.envelope.payload)?;
+        let lineage_object_sha256 = frozen.envelope.lineage_object_sha256.clone();
 
         let mut artifacts = Vec::new();
         let mut resources = Vec::new();
@@ -1862,7 +2181,7 @@ fn write_product_import_package(
             },
             source: ProductImportPackageSourceV1 {
                 project_id: candidate_manifest.project_id.clone(),
-                project_fingerprint: source_fingerprint,
+                project_fingerprint: frozen.envelope.payload.source_project_fingerprint.clone(),
                 publication_generation,
             },
             product: ProductImportPackageProductV1 {
@@ -1873,11 +2192,7 @@ fn write_product_import_package(
                 label: snapshot.name.clone(),
                 dataset_label: dataset_label.to_owned(),
             },
-            lineage: ProductImportPackageLineageV1 {
-                schema_id: PRODUCT_LINEAGE_SCHEMA_ID.to_owned(),
-                lineage_object_sha256: lineage_object_sha256.clone(),
-                payload,
-            },
+            lineage: frozen.envelope.clone(),
             admissions,
             datasets,
             resources,
@@ -1894,25 +2209,8 @@ fn write_product_import_package(
         atomic_write_bytes(&package_root.join("manifest.json"), &manifest_bytes)?;
         sync_package_artifacts(&package_root, &manifest, cancellation)?;
 
-        let provenance_status = if missing_field_ids.is_empty() {
-            ProvenanceStatus::Complete
-        } else {
-            missing_field_ids.sort();
-            missing_field_ids.dedup();
-            ProvenanceStatus::Partial
-        };
-        let (disposition, reason_code) = if disposition == ProductDatasetDisposition::Unsupported {
-            (disposition, reason_code)
-        } else if provenance_status != ProvenanceStatus::Complete {
-            (
-                ProductDatasetDisposition::NeedsRepublishRecompute,
-                "partial_publication_provenance",
-            )
-        } else {
-            (disposition, reason_code)
-        };
         let ready = ProductImportPackageReadyRecordV1 {
-            schema_id: PRODUCT_IMPORT_PACKAGE_SCHEMA_ID.to_owned(),
+            schema_id: PRODUCT_IMPORT_PACKAGE_READY_SCHEMA_ID.to_owned(),
             manifest_id: manifest_id.clone(),
             product_id: snapshot.id.0.clone(),
             product_version_hash: product_version_hash.clone(),
@@ -1920,8 +2218,8 @@ fn write_product_import_package(
             normalized_format_id: normalized_format_id.to_owned(),
             manifest_sha256: manifest_sha256.clone(),
             lineage_object_sha256: lineage_object_sha256.clone(),
-            provenance_status,
-            missing_field_ids: missing_field_ids.clone(),
+            provenance_status: ProvenanceStatus::Complete,
+            missing_field_ids: Vec::new(),
             artifact_count: manifest.counts.artifact_count,
             object_count: manifest.counts.object_count,
             total_bytes: manifest.counts.total_bytes,
@@ -1932,24 +2230,29 @@ fn write_product_import_package(
             &package_root.join("ready.json"),
             &serde_json::to_vec(&ready)?,
         )?;
-        let publication = ProductImportPublicationRecordV1 {
-            schema_id: ready.schema_id,
-            manifest_id: ready.manifest_id,
+        let publication = PhotoLabProductPublicationRecordV1 {
+            schema_id: PRODUCT_PUBLICATION_SCHEMA_ID.to_owned(),
+            publication_id: manifest_id,
             product_id: ready.product_id,
             product_version_hash: ready.product_version_hash,
+            product_content_hash: manifest.product.content_hash.clone(),
             publication_generation: ready.publication_generation,
-            normalized_format_id: ready.normalized_format_id,
-            manifest_sha256: ready.manifest_sha256,
-            lineage_object_sha256: ready.lineage_object_sha256,
+            lineage: frozen.envelope,
             provenance_status: ready.provenance_status,
             missing_field_ids: ready.missing_field_ids,
-            artifact_count: ready.artifact_count,
-            object_count: ready.object_count,
-            total_bytes: ready.total_bytes,
-            package_relative_path,
-            disposition,
-            reason_code: reason_code.to_owned(),
-            package_sha256: ready.package_sha256,
+            disposition: ProductDatasetDisposition::Available,
+            reason_code: ProductPublicationReasonCodeV1::Available,
+            package: Some(PhotoLabProductPublicationPackageV1 {
+                schema_id: ready.schema_id,
+                manifest_id: ready.manifest_id,
+                package_relative_path,
+                normalized_format_id: ready.normalized_format_id,
+                manifest_sha256: ready.manifest_sha256,
+                artifact_count: ready.artifact_count,
+                object_count: ready.object_count,
+                total_bytes: ready.total_bytes,
+                package_sha256: ready.package_sha256,
+            }),
         };
         atomic_write_json(
             &product_import_publication_path(&session.working_path, &snapshot.id),
@@ -1965,6 +2268,72 @@ fn write_product_import_package(
         ));
     }
     result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_lineage_only_product_publication(
+    session: &ProjectSession,
+    candidate_manifest: &PhotolabProjectManifest,
+    snapshot: &EntitySnapshot,
+    kind: &str,
+    source_format: &str,
+    normalized_format_id: Option<&str>,
+    dataset_label: &str,
+    job_id: &str,
+    job_kind: PhotolabJobKind,
+    lineage: &ProductLineage,
+    camera_entity_ids: &[String],
+    product_tools: Vec<ProductLineageIdentityV1>,
+    missing_field_ids: Vec<String>,
+    reason_code: ProductPublicationReasonCodeV1,
+) -> Result<PhotoLabProductPublicationRecordV1> {
+    let publication_generation = candidate_manifest.command_sequence;
+    let frozen = freeze_product_lineage(
+        session,
+        candidate_manifest,
+        snapshot,
+        snapshot.version_hash.clone(),
+        publication_generation,
+        kind,
+        source_format,
+        normalized_format_id,
+        dataset_label,
+        job_id,
+        job_kind,
+        lineage,
+        camera_entity_ids,
+        product_tools,
+        missing_field_ids,
+    )?;
+    let reason_code = if frozen.provenance_status == ProvenanceStatus::Complete {
+        reason_code
+    } else {
+        ProductPublicationReasonCodeV1::NeedsRepublishRecompute
+    };
+    let record = PhotoLabProductPublicationRecordV1 {
+        schema_id: PRODUCT_PUBLICATION_SCHEMA_ID.to_owned(),
+        publication_id: product_publication_id(
+            &candidate_manifest.project_id,
+            &snapshot.id.0,
+            &snapshot.version_hash,
+            publication_generation,
+        )?,
+        product_id: snapshot.id.0.clone(),
+        product_version_hash: snapshot.version_hash.clone(),
+        product_content_hash: frozen.envelope.payload.product_content_hash.clone(),
+        publication_generation,
+        lineage: frozen.envelope,
+        provenance_status: frozen.provenance_status,
+        missing_field_ids: frozen.missing_field_ids,
+        disposition: reason_code.disposition(),
+        reason_code,
+        package: None,
+    };
+    atomic_write_json(
+        &product_import_publication_path(&session.working_path, &snapshot.id),
+        &record,
+    )?;
+    Ok(record)
 }
 
 fn frozen_product_camera_scope(
@@ -6356,6 +6725,7 @@ impl ProjectRuntime {
             .map(|frame| frame.target.horizontal.crs.clone()))
     }
 
+    #[cfg(test)]
     pub fn product_export_source(&self, entity_id: &EntityId) -> Result<ProductExportSource> {
         self.product_export_source_with_format(entity_id, None, None)
     }
@@ -7058,6 +7428,9 @@ impl ProjectRuntime {
                 publication_sequence: session.manifest.command_sequence.saturating_add(1),
                 selected_mapper: outcome.summary.selected_mapper,
                 tool_manifest_sha256: outcome.summary.tool_manifest_sha256.clone(),
+                colmap_version: Some(outcome.summary.colmap_version.clone()),
+                colmap_executable_sha256: Some(outcome.summary.executable_sha256.clone()),
+                dedode_tool: outcome.summary.dedode_tool.clone(),
                 parent_alignment_entity_id: (artifact.kind == ColmapArtifactKind::SparsePointCloud)
                     .then_some(alignment_entity_id.clone()),
                 potree: (artifact.kind == ColmapArtifactKind::SparsePointCloud)
@@ -7164,7 +7537,10 @@ impl ProjectRuntime {
         group.version_hash = ObjectHash::of_bytes(&serde_json::to_vec(&group.children)?);
         after_refs.push(group.version_hash.clone());
 
-        candidate.command_sequence = candidate.command_sequence.saturating_add(1);
+        candidate.command_sequence = candidate
+            .command_sequence
+            .checked_add(1)
+            .context("PhotoLab journal command sequence overflow")?;
         candidate.autosave_generation = candidate.autosave_generation.saturating_add(1);
         candidate.modified_unix_ms = unix_ms()?;
         candidate.clean_shutdown = false;
@@ -7199,6 +7575,7 @@ impl ProjectRuntime {
                     &candidate,
                     snapshot,
                     "sparse",
+                    "potreeV2",
                     "potreePoints",
                     "Sparse point cloud",
                     "potree@2",
@@ -7206,9 +7583,10 @@ impl ProjectRuntime {
                     &potree.relative_metadata_path,
                     &product_lineage,
                     &camera_scope,
+                    &outcome.summary.job_id,
+                    PhotolabJobKind::AlignPhotos,
+                    Vec::new(),
                     canonical,
-                    ProductDatasetDisposition::Available,
-                    "available",
                     cancellation,
                 )?;
             } else if matches!(snapshot.kind, EntityKind::Mesh | EntityKind::TexturedMesh) {
@@ -7252,6 +7630,7 @@ impl ProjectRuntime {
                     &candidate,
                     snapshot,
                     "mesh",
+                    "tiledMesh",
                     "gltf",
                     "Prepared mesh",
                     "himmelcad-prepared-hierarchy@1",
@@ -7263,13 +7642,14 @@ impl ProjectRuntime {
                         .context("prepared mesh has no kernel manifest path")?,
                     &product_lineage,
                     &camera_scope,
+                    &outcome.summary.job_id,
+                    PhotolabJobKind::AlignPhotos,
+                    Vec::new(),
                     ProductPackageCanonicalContract {
                         admission,
                         objects,
                         dataset: canonical_dataset,
                     },
-                    ProductDatasetDisposition::Available,
-                    "available",
                     cancellation,
                 )?;
             }
@@ -7383,10 +7763,42 @@ impl ProjectRuntime {
         group.children.dedup();
         group.version_hash = ObjectHash::of_bytes(&serde_json::to_vec(&group.children)?);
         let group_hash = group.version_hash.clone();
-        candidate.command_sequence = candidate.command_sequence.saturating_add(1);
+        candidate.command_sequence = candidate
+            .command_sequence
+            .checked_add(1)
+            .context("PhotoLab journal command sequence overflow")?;
         candidate.autosave_generation = candidate.autosave_generation.saturating_add(1);
         candidate.modified_unix_ms = unix_ms()?;
         candidate.clean_shutdown = false;
+        let snapshot = candidate
+            .entities
+            .get(&entity_id.0)
+            .context("Gaussian splat disappeared before lineage publication")?;
+        let camera_scope = frozen_product_camera_scope(session, lineage)?;
+        let prepared = record.prepared_splats.is_some();
+        write_lineage_only_product_publication(
+            session,
+            &candidate,
+            snapshot,
+            "gaussianSplat",
+            if prepared { "prepared" } else { "brushPly" },
+            prepared.then_some("himmelcad-prepared-hierarchy@1"),
+            "Gaussian splat",
+            &record.job_id,
+            PhotolabJobKind::BuildGaussianSplat,
+            lineage,
+            &camera_scope,
+            vec![ProductLineageIdentityV1 {
+                id: format!("brush@{}", record.summary.brush_version),
+                sha256: record.summary.executable_sha256.clone(),
+            }],
+            Vec::new(),
+            if prepared {
+                ProductPublicationReasonCodeV1::NoPackage
+            } else {
+                ProductPublicationReasonCodeV1::NeedsPreparation
+            },
+        )?;
         let journal = PhotolabJournalEntry {
             recovered: false,
             orphaned: false,
@@ -7463,6 +7875,9 @@ impl ProjectRuntime {
             job_id: outcome.output.job_id.clone(),
             dataset_relative_path: dataset_relative_path.clone(),
             output_index_sha256: outcome.output_index_sha256,
+            tool_id: Some(outcome.tool_id),
+            tool_version: Some(outcome.tool_version),
+            executable_sha256: Some(outcome.executable_sha256),
             output: outcome.output.clone(),
             command: outcome.command,
             camera_entity_ids: camera_scope,
@@ -7528,10 +7943,75 @@ impl ProjectRuntime {
         group.version_hash = ObjectHash::of_bytes(&serde_json::to_vec(&group.children)?);
         let group_hash = group.version_hash.clone();
         after_refs.push(group_hash);
-        candidate.command_sequence = candidate.command_sequence.saturating_add(1);
+        candidate.command_sequence = candidate
+            .command_sequence
+            .checked_add(1)
+            .context("PhotoLab journal command sequence overflow")?;
         candidate.autosave_generation = candidate.autosave_generation.saturating_add(1);
         candidate.modified_unix_ms = unix_ms()?;
         candidate.clean_shutdown = false;
+        let mvs_tool = ProductLineageIdentityV1 {
+            id: format!(
+                "{}@{}",
+                record
+                    .tool_id
+                    .as_deref()
+                    .unwrap_or("himmelcad-portable-mvs"),
+                record.tool_version.as_deref().unwrap_or("unknown")
+            ),
+            sha256: record
+                .executable_sha256
+                .clone()
+                .unwrap_or_else(|| record.output_index_sha256.clone()),
+        };
+        let depth_snapshot = candidate
+            .entities
+            .get(&entity_ids[0].0)
+            .context("MVS depth maps disappeared before lineage publication")?;
+        write_lineage_only_product_publication(
+            session,
+            &candidate,
+            depth_snapshot,
+            "dense",
+            "mvsDepth",
+            None,
+            "MVS depth maps",
+            &record.job_id,
+            if record.output.dense_point_cloud.is_some() {
+                PhotolabJobKind::BuildDensePointCloud
+            } else {
+                PhotolabJobKind::BuildDepthMaps
+            },
+            lineage,
+            &record.camera_entity_ids,
+            vec![mvs_tool.clone()],
+            Vec::new(),
+            ProductPublicationReasonCodeV1::UnsupportedFormat,
+        )?;
+        if record.potree.is_none() {
+            if let Some(dense_id) = entity_ids.get(1) {
+                let dense_snapshot = candidate
+                    .entities
+                    .get(&dense_id.0)
+                    .context("dense point cloud disappeared before lineage publication")?;
+                write_lineage_only_product_publication(
+                    session,
+                    &candidate,
+                    dense_snapshot,
+                    "dense",
+                    "binaryPly",
+                    None,
+                    "Dense point cloud",
+                    &record.job_id,
+                    PhotolabJobKind::BuildDensePointCloud,
+                    lineage,
+                    &record.camera_entity_ids,
+                    vec![mvs_tool.clone()],
+                    Vec::new(),
+                    ProductPublicationReasonCodeV1::NeedsPreparation,
+                )?;
+            }
+        }
         if let (Some(potree), Some(dense_id)) = (record.potree.as_ref(), entity_ids.get(1)) {
             let snapshot = candidate
                 .entities
@@ -7556,6 +8036,7 @@ impl ProjectRuntime {
                 &candidate,
                 snapshot,
                 "dense",
+                "potreeV2",
                 "potreePoints",
                 "Dense point cloud",
                 "potree@2",
@@ -7563,9 +8044,10 @@ impl ProjectRuntime {
                 &potree.relative_metadata_path,
                 &product_lineage,
                 &record.camera_entity_ids,
+                &record.job_id,
+                PhotolabJobKind::BuildDensePointCloud,
+                vec![mvs_tool],
                 canonical,
-                ProductDatasetDisposition::Available,
-                "available",
                 cancellation,
             )?;
         }
@@ -7766,10 +8248,57 @@ impl ProjectRuntime {
         group.children.dedup();
         group.version_hash = ObjectHash::of_bytes(&serde_json::to_vec(&group.children)?);
         let group_hash = group.version_hash.clone();
-        candidate.command_sequence = candidate.command_sequence.saturating_add(1);
+        candidate.command_sequence = candidate
+            .command_sequence
+            .checked_add(1)
+            .context("PhotoLab journal command sequence overflow")?;
         candidate.autosave_generation = candidate.autosave_generation.saturating_add(1);
         candidate.modified_unix_ms = unix_ms()?;
         candidate.clean_shutdown = false;
+        let snapshot = candidate
+            .entities
+            .get(&entity_id.0)
+            .context("raster product disappeared before lineage publication")?;
+        let camera_scope = frozen_product_camera_scope(session, lineage)?;
+        let gdal_tools = record
+            .summary
+            .audit
+            .executable_sha256
+            .iter()
+            .map(|(id, sha256)| ProductLineageIdentityV1 {
+                id: format!("{id}@{}", record.summary.audit.version),
+                sha256: sha256.clone(),
+            })
+            .collect();
+        let is_dem = kind == PublishedRasterKind::Dem;
+        write_lineage_only_product_publication(
+            session,
+            &candidate,
+            snapshot,
+            if is_dem { "dem" } else { "orthomosaic" },
+            "rasterPyramid",
+            is_dem.then_some("himmelcad-prepared-hierarchy@1"),
+            if is_dem { "DEM" } else { "Orthomosaic" },
+            job_id,
+            if is_dem {
+                PhotolabJobKind::BuildDem
+            } else {
+                PhotolabJobKind::BuildOrthomosaic
+            },
+            lineage,
+            &camera_scope,
+            gdal_tools,
+            if is_dem {
+                vec!["dem_facts".to_owned()]
+            } else {
+                Vec::new()
+            },
+            if is_dem {
+                ProductPublicationReasonCodeV1::NoPackage
+            } else {
+                ProductPublicationReasonCodeV1::UnsupportedFormat
+            },
+        )?;
         let journal = PhotolabJournalEntry {
             recovered: false,
             orphaned: false,
@@ -7885,7 +8414,10 @@ impl ProjectRuntime {
         group.children.dedup();
         group.version_hash = ObjectHash::of_bytes(&serde_json::to_vec(&group.children)?);
         let group_hash = group.version_hash.clone();
-        candidate.command_sequence = candidate.command_sequence.saturating_add(1);
+        candidate.command_sequence = candidate
+            .command_sequence
+            .checked_add(1)
+            .context("PhotoLab journal command sequence overflow")?;
         candidate.autosave_generation = candidate.autosave_generation.saturating_add(1);
         candidate.modified_unix_ms = unix_ms()?;
         candidate.clean_shutdown = false;
@@ -7925,6 +8457,7 @@ impl ProjectRuntime {
             &candidate,
             snapshot,
             "mesh",
+            "tiledMesh",
             "gltf",
             "Prepared mesh",
             "himmelcad-prepared-hierarchy@1",
@@ -7936,13 +8469,14 @@ impl ProjectRuntime {
                 .context("prepared mesh has no kernel manifest path")?,
             lineage,
             &camera_scope,
+            job_id,
+            PhotolabJobKind::BuildMesh,
+            Vec::new(),
             ProductPackageCanonicalContract {
                 admission,
                 objects,
                 dataset: canonical_dataset,
             },
-            ProductDatasetDisposition::Available,
-            "available",
             cancellation,
         )?;
         let journal = PhotolabJournalEntry {
@@ -8802,21 +9336,40 @@ fn cleanup_unpublished_product_import_packages(
                 continue;
             }
             let bytes = fs::read(entry.path())?;
-            let record: ProductImportPublicationRecordV1 = serde_json::from_slice(&bytes)
-                .with_context(|| {
-                    format!(
-                        "published product import record is corrupt: {}",
-                        entry.path().display()
+            let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+            let (product_id, manifest_id) =
+                if value.get("schema_id").and_then(serde_json::Value::as_str)
+                    == Some(PRODUCT_PUBLICATION_SCHEMA_ID)
+                {
+                    let record: PhotoLabProductPublicationRecordV1 = serde_json::from_value(value)
+                        .with_context(|| {
+                            format!(
+                                "published product import record is corrupt: {}",
+                                entry.path().display()
+                            )
+                        })?;
+                    (
+                        record.product_id,
+                        record.package.map(|package| package.manifest_id),
                     )
-                })?;
-            let entity_id = EntityId(record.product_id.clone());
+                } else {
+                    let record: LegacyProductImportPublicationRecordV1 =
+                        serde_json::from_value(value).with_context(|| {
+                            format!(
+                                "legacy product import record is corrupt: {}",
+                                entry.path().display()
+                            )
+                        })?;
+                    (record.product_id, Some(record.manifest_id))
+                };
+            let entity_id = EntityId(product_id);
             if !manifest.entities.contains_key(&entity_id.0)
                 || entry.path() != product_import_publication_path(project_root, &entity_id)
             {
                 remove_path_if_exists(&entry.path())?;
                 continue;
             }
-            retained_packages.insert(record.manifest_id);
+            retained_packages.extend(manifest_id);
         }
     }
     if package_root.is_dir() {
@@ -13051,9 +13604,33 @@ mod tests {
             ProductDatasetDisposition::NeedsRepublishRecompute
         );
         assert!(partial.package_sha256.is_none());
-        assert!(partial
-            .missing_field_ids
-            .contains(&"package_sha256".to_owned()));
+        assert_eq!(
+            partial.missing_field_ids,
+            [
+                "algorithms",
+                "camera_selection_sha256",
+                "configurations",
+                "dataset_label",
+                "gcp_choice",
+                "processing_set_choice",
+                "product_content_hash",
+                "product_entity_id",
+                "product_entity_version_hash",
+                "product_kind",
+                "product_label",
+                "publication_generation",
+                "reference_frame",
+                "source_alignment_content_hash",
+                "source_alignment_entity_version_hash",
+                "source_alignment_kind",
+                "source_format",
+                "source_project_fingerprint",
+                "source_project_id",
+                "spatialReference",
+                "tools",
+            ]
+            .map(str::to_owned)
+        );
 
         let unknown =
             legacy_product_contract("dense", "potreeV2", false, false, false, false, false);
@@ -13062,6 +13639,12 @@ mod tests {
             unknown.disposition,
             ProductDatasetDisposition::NeedsRepublishRecompute
         );
+        assert!(unknown
+            .missing_field_ids
+            .contains(&"source_alignment_entity_id".to_owned()));
+        assert!(unknown
+            .missing_field_ids
+            .contains(&"image_mask_scope".to_owned()));
     }
 
     #[test]
@@ -14153,6 +14736,9 @@ mod tests {
             publication_sequence: 1,
             selected_mapper: SelectedMapper::Global,
             tool_manifest_sha256: ObjectHash::of_bytes(b"tools"),
+            colmap_version: None,
+            colmap_executable_sha256: None,
+            dedode_tool: None,
             parent_alignment_entity_id: None,
             potree: None,
         };
@@ -14704,6 +15290,9 @@ mod tests {
             publication_sequence,
             selected_mapper: SelectedMapper::Global,
             tool_manifest_sha256: ObjectHash::of_bytes(b"test-tools"),
+            colmap_version: None,
+            colmap_executable_sha256: None,
+            dedode_tool: None,
             parent_alignment_entity_id: None,
             potree: None,
         };
@@ -14815,6 +15404,9 @@ mod tests {
             job_id: suffix.into(),
             dataset_relative_path: relative,
             output_index_sha256: ObjectHash::of_bytes(suffix.as_bytes()),
+            tool_id: None,
+            tool_version: None,
+            executable_sha256: None,
             output: MvsOutputIndex {
                 schema_version: 1,
                 job_id: suffix.into(),
@@ -14907,6 +15499,9 @@ mod tests {
             job_id: suffix.into(),
             dataset_relative_path: relative,
             output_index_sha256: ObjectHash::of_bytes(b"{}"),
+            tool_id: None,
+            tool_version: None,
+            executable_sha256: None,
             output: MvsOutputIndex {
                 schema_version: 1,
                 job_id: suffix.into(),
@@ -15811,7 +16406,7 @@ mod tests {
                 entity_id: merge_id.clone(),
                 name: "Published overlap merge".into(),
                 state: MergedAlignmentState::Published,
-                input_alignment_entity_ids: vec![alignment_a.clone(), alignment_b],
+                input_alignment_entity_ids: vec![alignment_a.clone(), alignment_b.clone()],
                 input_gcp_optimization_entity_ids: Vec::new(),
                 connections: vec![AlignmentMergeConnection::Overlap {
                     alignment_a: alignment_a.clone(),
@@ -15835,7 +16430,7 @@ mod tests {
                         seed: None,
                     })
                     .collect(),
-                image_mask_scope_sha256: Some(mask_scope.scope_sha256),
+                image_mask_scope_sha256: Some(mask_scope.scope_sha256.clone()),
                 lineage_sha256: ObjectHash::of_bytes(b"merged-lineage"),
                 publication_sequence: 3,
                 dataset_relative_path: Some(dataset_relative_path.into()),
@@ -15857,6 +16452,66 @@ mod tests {
                     version_hash,
                     bounds: None,
                 },
+            );
+            let product = EntitySnapshot {
+                id: EntityId(format!("{}:dense:merged-test", session.manifest.project_id)),
+                kind: EntityKind::PointCloud,
+                name: "Merged dense cloud".into(),
+                parent: None,
+                children: Vec::new(),
+                visibility: VisibilityState::default(),
+                version_hash: ObjectHash::of_bytes(b"merged-product"),
+                bounds: None,
+            };
+            let candidate = session.manifest.clone();
+            let frozen = freeze_product_lineage(
+                session,
+                &candidate,
+                &product,
+                ObjectHash::of_bytes(b"merged-content"),
+                candidate.command_sequence.checked_add(1).expect("sequence"),
+                "dense",
+                "potreeV2",
+                Some("potree@2"),
+                "Merged dense cloud",
+                "merged-lineage-test",
+                PhotolabJobKind::BuildDensePointCloud,
+                &ProductLineage {
+                    source_alignment_entity_id: merge_id.clone(),
+                    processing_set_id: None,
+                    gcp_optimization_entity_id: None,
+                    gcp_optimization_snapshot_sha256: None,
+                    image_mask_scope_sha256: mask_scope.scope_sha256,
+                },
+                &camera_ids,
+                Vec::new(),
+                Vec::new(),
+            )
+            .expect("merged product lineage");
+            assert_eq!(
+                frozen.envelope.payload.source_alignment_kind,
+                ProductLineageAlignmentKindV1::MergedOverlap
+            );
+            assert_eq!(
+                frozen
+                    .envelope
+                    .payload
+                    .source_alignment_inputs
+                    .expect("ordered merge inputs"),
+                vec![
+                    ProductLineageIdentityV1 {
+                        id: alignment_a.0.clone(),
+                        sha256: session.manifest.entities[&alignment_a.0]
+                            .version_hash
+                            .clone(),
+                    },
+                    ProductLineageIdentityV1 {
+                        id: alignment_b.0.clone(),
+                        sha256: session.manifest.entities[&alignment_b.0]
+                            .version_hash
+                            .clone(),
+                    },
+                ]
             );
             (merge_id, alignment_a)
         };
@@ -16237,6 +16892,7 @@ mod tests {
             calibration_group_intrinsics: Vec::new(),
             selected_mapper: SelectedMapper::Global,
             selected_feature_store: SelectedFeatureStore::Aliked,
+            dedode_tool: None,
             mapping_candidates: Vec::new(),
             commands: Vec::new(),
             artifacts: vec![
@@ -16446,6 +17102,16 @@ mod tests {
             .iter()
             .map(|camera| camera.0.clone())
             .collect::<Vec<_>>();
+        let frozen_mask_scope_sha256 = {
+            let guard = runtime.session.lock().expect("session");
+            build_image_mask_compute_scope(
+                guard.as_ref().expect("open project"),
+                &frozen_camera_ids,
+                None,
+            )
+            .expect("mask scope")
+            .scope_sha256
+        };
         let summary = ColmapOutputSummary {
             schema_version: 2,
             job_id: "alignment-sparse-test".into(),
@@ -16453,7 +17119,7 @@ mod tests {
             executable_sha256: ObjectHash::of_bytes(b"colmap"),
             colmap_version: "test".into(),
             camera_entity_ids: frozen_camera_ids.clone(),
-            image_mask_scope_sha256: Some(ObjectHash::of_bytes(b"report-mask-scope")),
+            image_mask_scope_sha256: Some(frozen_mask_scope_sha256.clone()),
             calibration_groups: vec![ColmapCalibrationGroup {
                 group_id: "mission-a-autofocus-1".into(),
                 camera_entity_ids: frozen_camera_ids.clone(),
@@ -16466,6 +17132,7 @@ mod tests {
             calibration_group_intrinsics: Vec::new(),
             selected_mapper: SelectedMapper::Global,
             selected_feature_store: SelectedFeatureStore::Aliked,
+            dedode_tool: None,
             mapping_candidates: Vec::new(),
             commands: Vec::new(),
             artifacts: vec![
@@ -16553,7 +17220,7 @@ mod tests {
         );
         assert_eq!(
             sparse.image_mask_scope_sha256,
-            Some(ObjectHash::of_bytes(b"report-mask-scope"))
+            Some(frozen_mask_scope_sha256.clone())
         );
         assert_eq!(
             sparse.tool_versions.get("colmapToolManifestSha256"),
@@ -16562,7 +17229,7 @@ mod tests {
         let serialized = serde_json::to_value(sparse).expect("dataset JSON");
         assert_eq!(
             serialized["imageMaskScopeSha256"],
-            ObjectHash::of_bytes(b"report-mask-scope").0
+            frozen_mask_scope_sha256.0
         );
         assert_eq!(
             serialized["toolVersions"]["colmapToolManifestSha256"],
@@ -16571,30 +17238,31 @@ mod tests {
         assert!(sparse
             .relative_path
             .ends_with("sparse-potree/octree/metadata.json"));
-        assert_eq!(sparse.contract.provenance_status, ProvenanceStatus::Partial);
+        assert_eq!(
+            sparse.contract.provenance_status,
+            ProvenanceStatus::Complete
+        );
         assert_eq!(
             sparse.contract.disposition,
-            ProductDatasetDisposition::NeedsRepublishRecompute
+            ProductDatasetDisposition::Available
         );
         assert!(sparse.contract.package_sha256.is_some());
-        assert!(sparse
-            .contract
-            .missing_field_ids
-            .contains(&"image_mask_scope".to_owned()));
+        assert!(sparse.contract.missing_field_ids.is_empty());
         let publication_path =
             product_import_publication_path(&root.join("project.hcad"), sparse_id);
-        let publication: ProductImportPublicationRecordV1 =
+        let publication: PhotoLabProductPublicationRecordV1 =
             serde_json::from_slice(&fs::read(publication_path).expect("publication summary"))
                 .expect("valid publication summary");
+        let package = publication.package.as_ref().expect("package summary");
         let package_root = root
             .join("project.hcad")
-            .join(&publication.package_relative_path);
+            .join(&package.package_relative_path);
         let ready_bytes = fs::read(package_root.join("ready.json")).expect("ready record");
         assert!(String::from_utf8(ready_bytes)
             .expect("UTF-8 ready record")
             .ends_with(&format!(
                 r#""package_sha256":"{}"}}"#,
-                publication.package_sha256.as_str()
+                package.package_sha256.as_str()
             )));
         let manifest_bytes = fs::read(package_root.join("manifest.json")).expect("manifest");
         let retained =
@@ -16604,7 +17272,7 @@ mod tests {
                 &BTreeSet::from([built_in_type::POINT_CLOUD.to_owned()]),
             )
             .expect("compatible package manifest");
-        assert_eq!(retained.manifest.package_sha256, publication.package_sha256);
+        assert_eq!(retained.manifest.package_sha256, package.package_sha256);
         assert!(retained
             .manifest
             .artifacts
@@ -16948,6 +17616,9 @@ mod tests {
                     publication_sequence: 1,
                     selected_mapper: SelectedMapper::Global,
                     tool_manifest_sha256: ObjectHash::of_bytes(b"tools"),
+                    colmap_version: None,
+                    colmap_executable_sha256: None,
+                    dedode_tool: None,
                     parent_alignment_entity_id: None,
                     potree: None,
                 },
@@ -17779,5 +18450,36 @@ mod tests {
             assert!(values.windows(2).all(|pair| pair[0] <= pair[1]));
             assert_eq!(values.last().copied(), Some(1.0));
         }
+    }
+
+    #[test]
+    fn alignment_tool_identities_list_colmap_then_dedode_with_manifest_hash() {
+        let dedode = DedodeToolIdentity {
+            tool_id: "dedode".into(),
+            version: "2.1.0".into(),
+            manifest_sha256: ObjectHash::of_bytes(b"dedode-manifest"),
+        };
+        let tools = alignment_tool_identities(
+            Some(&"3.11".to_owned()),
+            Some(&ObjectHash::of_bytes(b"colmap-exe")),
+            &ObjectHash::of_bytes(b"colmap-manifest"),
+            Some(&dedode),
+        );
+        assert_eq!(
+            tools
+                .iter()
+                .map(|tool| (tool.id.as_str(), tool.sha256.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("colmap@3.11", ObjectHash::of_bytes(b"colmap-exe")),
+                ("dedode@2.1.0", ObjectHash::of_bytes(b"dedode-manifest")),
+            ]
+        );
+
+        let legacy =
+            alignment_tool_identities(None, None, &ObjectHash::of_bytes(b"colmap-manifest"), None);
+        assert_eq!(legacy.len(), 1);
+        assert_eq!(legacy[0].id, "colmap-tool-manifest@1");
+        assert_eq!(legacy[0].sha256, ObjectHash::of_bytes(b"colmap-manifest"));
     }
 }

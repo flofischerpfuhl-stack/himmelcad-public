@@ -359,7 +359,9 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), io::Error> {
 mod tests {
     use super::*;
     use crate::{
-        dedode_runtime::{DedodeImagePair, DedodePairMatches, DedodeWorkerResult},
+        dedode_runtime::{
+            DedodeImagePair, DedodePairMatches, DedodeToolIdentity, DedodeWorkerResult,
+        },
         image_commit::{CameraImageMetadataRecord, ProjectCameraImageRecord},
     };
     use himmelcad_core::{
@@ -397,6 +399,11 @@ mod tests {
 
     fn outcome(pairs: Vec<DedodePairMatches>) -> DedodeRunOutcome {
         DedodeRunOutcome {
+            tool: DedodeToolIdentity {
+                tool_id: "dedode".into(),
+                version: "test".into(),
+                manifest_sha256: ObjectHash::of_bytes(b"dedode-manifest"),
+            },
             scratch_path: "/scratch".into(),
             result_path: "/scratch/result.json".into(),
             result_sha256: ObjectHash::of_bytes(b"result"),
