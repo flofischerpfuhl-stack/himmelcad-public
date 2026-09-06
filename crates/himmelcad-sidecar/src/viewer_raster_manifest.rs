@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -18,7 +18,8 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::raster_runtime::{
-    RasterBuildSummary, RasterByteOrder, RasterNoDataValue, RasterViewTileFormat,
+    RasterBuildSummary, RasterByteOrder, RasterNoDataValue, RasterValidityResource,
+    RasterViewTileFormat,
 };
 
 const TILE_SIZE: u32 = 512;
@@ -51,6 +52,8 @@ pub struct PreparedElevationHierarchyArtifact {
     pub relative_path: PathBuf,
     /// Exact bytes, media type and SHA-256 of the manifest.
     pub resource: GeometryResource,
+    /// Base-grid validity resource referenced by the prepared Raster root.
+    pub validity_resource: RasterValidityResource,
 }
 
 /// Invalid pyramid, missing/tampered tile or failed atomic publication.
@@ -92,6 +95,8 @@ pub fn publish_prepared_elevation_hierarchy(
 ) -> Result<PreparedElevationHierarchyArtifact, PreparedElevationHierarchyError> {
     validate_summary(summary, options)?;
     check_cancelled(cancellation)?;
+
+    let validity_resource = publish_base_grid_validity(product_root, summary, cancellation)?;
 
     let mut levels = summary.levels.iter().collect::<Vec<_>>();
     levels.sort_by_key(|level| level.level);
@@ -203,6 +208,7 @@ pub fn publish_prepared_elevation_hierarchy(
                                 "maximumHeightJump": options.maximum_height_jump,
                                 "diagonal": diagonal,
                             },
+                            "interpolation": "bilinear",
                             "colorEncoding": "encodedImage",
                             "elevationEncoding": elevation_encoding,
                             "noData": no_data,
@@ -212,7 +218,12 @@ pub fn publish_prepared_elevation_hierarchy(
                                 "byteLength": files.elevation_length,
                                 "contentHash": files.elevation_hash,
                             },
-                            "validityReference": null,
+                            "validityReference": {
+                                "uri": "../../../../validity.bin",
+                                "byteOffset": null,
+                                "byteLength": validity_resource.byte_length,
+                                "contentHash": validity_resource.sha256,
+                            },
                             "confidenceReference": null,
                             "triangleMaskReference": null,
                         })),
@@ -252,13 +263,206 @@ pub fn publish_prepared_elevation_hierarchy(
             media_type: HIERARCHY_MEDIA_TYPE.to_owned(),
             byte_length: u64::try_from(bytes.len()).ok(),
         },
+        validity_resource,
     })
+}
+
+fn publish_base_grid_validity(
+    product_root: &Path,
+    summary: &RasterBuildSummary,
+    cancellation: &CancellationToken,
+) -> Result<RasterValidityResource, PreparedElevationHierarchyError> {
+    let base = summary.levels.iter().find(|level| level.level == 0).ok_or(
+        PreparedElevationHierarchyError::InvalidInput("base pyramid level is missing"),
+    )?;
+    let expected_columns = summary.grid.width_pixels.div_ceil(TILE_SIZE);
+    let expected_rows = summary.grid.height_pixels.div_ceil(TILE_SIZE);
+    if base.columns != expected_columns || base.rows != expected_rows {
+        return Err(PreparedElevationHierarchyError::InvalidInput(
+            "base pyramid tiles do not cover the exact grid",
+        ));
+    }
+    let byte_order = match base
+        .view_layers
+        .iter()
+        .find(|layer| layer.name == "height")
+        .map(|layer| &layer.format)
+    {
+        Some(RasterViewTileFormat::Float32Raw {
+            byte_order,
+            width: 512,
+            height: 512,
+        }) => *byte_order,
+        _ => {
+            return Err(PreparedElevationHierarchyError::InvalidInput(
+                "base height layer must be a 512x512 Float32 tile",
+            ));
+        }
+    };
+    let cell_count = u64::from(summary.grid.width_pixels)
+        .checked_mul(u64::from(summary.grid.height_pixels))
+        .ok_or(PreparedElevationHierarchyError::InvalidInput(
+            "validity cell count overflow",
+        ))?;
+    let byte_length = cell_count.div_ceil(8);
+    let relative_path = PathBuf::from("view/validity.bin");
+    let destination = product_root.join(&relative_path);
+    let parent = destination
+        .parent()
+        .ok_or_else(|| std::io::Error::other("validity resource has no parent directory"))?;
+    fs::create_dir_all(parent)?;
+    let staging = parent.join(format!(
+        ".validity-{}-{}.tmp",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let result = (|| -> Result<(String, u64), PreparedElevationHierarchyError> {
+        let mut output = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&staging)?;
+        output.set_len(byte_length)?;
+        let mut sample_bytes = [0_u8; 4];
+        for tile_row in 0..base.rows {
+            for tile_column in 0..base.columns {
+                check_cancelled(cancellation)?;
+                let tile_path =
+                    product_root.join(format!("view/height/L00/{tile_column}/{tile_row}.f32"));
+                let mut tile = BufReader::with_capacity(COPY_BUFFER_BYTES, File::open(tile_path)?);
+                let tile_x = tile_column * TILE_SIZE;
+                let tile_y = tile_row * TILE_SIZE;
+                let valid_width = TILE_SIZE.min(summary.grid.width_pixels - tile_x);
+                let valid_height = TILE_SIZE.min(summary.grid.height_pixels - tile_y);
+                for local_y in 0..TILE_SIZE {
+                    check_cancelled(cancellation)?;
+                    if local_y >= valid_height {
+                        break;
+                    }
+                    let global_y = tile_y + local_y;
+                    let start_bit = u64::from(global_y)
+                        .checked_mul(u64::from(summary.grid.width_pixels))
+                        .and_then(|value| value.checked_add(u64::from(tile_x)))
+                        .ok_or(PreparedElevationHierarchyError::InvalidInput(
+                            "validity bit offset overflow",
+                        ))?;
+                    let leading_bits = usize::try_from(start_bit % 8).map_err(|_| {
+                        PreparedElevationHierarchyError::InvalidInput(
+                            "validity bit offset exceeds usize",
+                        )
+                    })?;
+                    let segment_length = (leading_bits
+                        + usize::try_from(valid_width).map_err(|_| {
+                            PreparedElevationHierarchyError::InvalidInput(
+                                "validity row width exceeds usize",
+                            )
+                        })?)
+                    .div_ceil(8);
+                    let byte_offset = start_bit / 8;
+                    let mut segment = vec![0_u8; segment_length];
+                    output.seek(SeekFrom::Start(byte_offset))?;
+                    output.read_exact(&mut segment)?;
+                    for local_x in 0..TILE_SIZE {
+                        tile.read_exact(&mut sample_bytes)?;
+                        if local_x >= valid_width {
+                            continue;
+                        }
+                        let value = match byte_order {
+                            RasterByteOrder::LittleEndian => f32::from_le_bytes(sample_bytes),
+                            RasterByteOrder::BigEndian => f32::from_be_bytes(sample_bytes),
+                        };
+                        let valid = value.is_finite()
+                            && match summary.grid.no_data {
+                                // Numeric sentinels such as -9999.0 compare exactly after the
+                                // source value is represented in the tile's Float32 encoding.
+                                RasterNoDataValue::Numeric(no_data) => {
+                                    value.to_bits() != (no_data as f32).to_bits()
+                                }
+                                RasterNoDataValue::Nan => true,
+                                RasterNoDataValue::AlphaMask => false,
+                            };
+                        if valid {
+                            let bit = leading_bits
+                                + usize::try_from(local_x).map_err(|_| {
+                                    PreparedElevationHierarchyError::InvalidInput(
+                                        "validity column exceeds usize",
+                                    )
+                                })?;
+                            segment[bit / 8] |= 1 << (bit % 8);
+                        }
+                    }
+                    output.seek(SeekFrom::Start(byte_offset))?;
+                    output.write_all(&segment)?;
+                }
+            }
+        }
+        output.flush()?;
+        output.sync_all()?;
+        drop(output);
+        hash_file(&staging, cancellation)
+    })();
+    let (sha256, actual_length) = match result {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = fs::remove_file(&staging);
+            return Err(error);
+        }
+    };
+    if actual_length != byte_length {
+        let _ = fs::remove_file(&staging);
+        return Err(PreparedElevationHierarchyError::InvalidInput(
+            "validity byte length does not match the grid",
+        ));
+    }
+    if destination.exists() {
+        let existing = match hash_file(&destination, cancellation) {
+            Ok(existing) => existing,
+            Err(error) => {
+                let _ = fs::remove_file(&staging);
+                return Err(error);
+            }
+        };
+        let _ = fs::remove_file(&staging);
+        if existing != (sha256.clone(), byte_length) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "validity resource already exists with different bytes",
+            )
+            .into());
+        }
+    } else if let Err(error) = fs::rename(&staging, &destination) {
+        let _ = fs::remove_file(&staging);
+        return Err(error.into());
+    }
+    Ok(RasterValidityResource {
+        path: normalized_relative_path(&relative_path)?,
+        sha256: ObjectHash(sha256),
+        byte_length,
+    })
+}
+
+fn normalized_relative_path(path: &Path) -> Result<String, PreparedElevationHierarchyError> {
+    path.to_str().map(|value| value.replace('\\', "/")).ok_or(
+        PreparedElevationHierarchyError::InvalidInput("validity path is not valid UTF-8"),
+    )
 }
 
 fn validate_summary(
     summary: &RasterBuildSummary,
     options: PreparedElevationHierarchyOptions,
 ) -> Result<(), PreparedElevationHierarchyError> {
+    no_data_json(summary.grid.no_data)?;
+    if matches!(
+        summary.grid.no_data,
+        RasterNoDataValue::Numeric(value) if !(value as f32).is_finite()
+    ) {
+        return Err(PreparedElevationHierarchyError::InvalidInput(
+            "numeric NoData is not representable as finite Float32",
+        ));
+    }
     if summary.levels.is_empty()
         || summary.grid.width_pixels == 0
         || summary.grid.height_pixels == 0
@@ -593,6 +797,24 @@ mod tests {
         }
     }
 
+    fn write_small_height_tile(root: &std::path::Path, byte_order: RasterByteOrder) {
+        let mut values = vec![0.0_f32; 512 * 512];
+        values[0] = 1.0;
+        values[1] = f32::NAN;
+        values[2] = -9999.0;
+        values[512] = 2.0;
+        values[513] = 3.0;
+        values[514] = 4.0;
+        let bytes = values
+            .into_iter()
+            .flat_map(|value| match byte_order {
+                RasterByteOrder::LittleEndian => value.to_le_bytes(),
+                RasterByteOrder::BigEndian => value.to_be_bytes(),
+            })
+            .collect::<Vec<_>>();
+        fs::write(root.join("view/height/L00/0/0.f32"), bytes).expect("height");
+    }
+
     #[test]
     fn publishes_hash_bound_viewer_hierarchy_accepted_by_render_core() {
         let root = fixture_root();
@@ -631,6 +853,63 @@ mod tests {
             512 * 512 * 4
         );
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn base_grid_validity_is_lsb_first_and_byte_order_independent() {
+        for byte_order in [RasterByteOrder::LittleEndian, RasterByteOrder::BigEndian] {
+            let root = fixture_root();
+            write_small_height_tile(&root, byte_order);
+            let mut summary = summary(&root);
+            summary.grid.width_pixels = 3;
+            summary.grid.height_pixels = 2;
+            summary.grid.bounds.maximum_east = summary.grid.bounds.minimum_east + 3.0;
+            summary.grid.bounds.maximum_north = summary.grid.bounds.minimum_north + 2.0;
+            summary.levels[0].bounds = summary.grid.bounds;
+            let RasterViewTileFormat::Float32Raw {
+                byte_order: format_byte_order,
+                ..
+            } = &mut summary.levels[0].view_layers[0].format
+            else {
+                panic!("height fixture must be Float32");
+            };
+            *format_byte_order = byte_order;
+
+            let artifact = publish_prepared_elevation_hierarchy(
+                &root,
+                &summary,
+                PreparedElevationHierarchyOptions::default(),
+                &CancellationToken::new(),
+            )
+            .expect("prepared hierarchy");
+            let validity = fs::read(root.join("view/validity.bin")).expect("validity bitset");
+            assert_eq!(validity, [0b0011_1001]);
+            assert_eq!(artifact.validity_resource.path, "view/validity.bin");
+            assert_eq!(artifact.validity_resource.byte_length, 1);
+            assert_eq!(
+                artifact.validity_resource.sha256,
+                ObjectHash::of_bytes(&validity)
+            );
+
+            let manifest: serde_json::Value = serde_json::from_slice(
+                &fs::read(root.join(&artifact.relative_path)).expect("viewer manifest"),
+            )
+            .expect("viewer manifest JSON");
+            let reference =
+                &manifest["tiles"][0]["contents"][0]["decoderParameters"]["validityReference"];
+            assert_eq!(reference["uri"], "../../../../validity.bin");
+            assert!(reference["byteOffset"].is_null());
+            assert_eq!(reference["byteLength"], 1);
+            assert_eq!(
+                reference["contentHash"],
+                artifact.validity_resource.sha256.as_str()
+            );
+            assert_eq!(
+                manifest["tiles"][0]["contents"][0]["decoderParameters"]["interpolation"],
+                "bilinear"
+            );
+            fs::remove_dir_all(root).expect("cleanup");
+        }
     }
 
     #[test]

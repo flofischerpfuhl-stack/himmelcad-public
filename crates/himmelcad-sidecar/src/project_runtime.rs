@@ -16,9 +16,11 @@ use fs2::FileExt;
 use himmelcad_core::canonical_json;
 use himmelcad_core::entity::{EntityId, EntityKind, EntitySnapshot, VisibilityState};
 use himmelcad_core::entity_model::{
-    built_in_type, CanonicalEntity, EntityTypeId, GeometryObject, GeometryResource, Representation,
-    RepresentationAuthority, RepresentationRole, SolidGeometry, StreamedGeometry,
-    TriangleMeshGeometry, TriangleMeshStorage,
+    built_in_type, CanonicalEntity, DepthSampling, DepthSemantics, ElevationSurfaceGeometry,
+    EntityTypeId, GeometryObject, GeometryResource, OrthoGridMapping, RasterCellDiagonal,
+    RasterConnectivity, RasterInterpolation, Representation, RepresentationAuthority,
+    RepresentationRole, SolidGeometry, StreamedGeometry, TriangleMeshGeometry, TriangleMeshStorage,
+    Vector3,
 };
 use himmelcad_core::entity_validation::{
     canonical_entity_version_hash, geometry_object_content_hash, validate_resolved_representation,
@@ -48,18 +50,19 @@ use himmelcad_core::photolab_project::{
     PHOTOLAB_PROJECT_FORMAT_VERSION,
 };
 use himmelcad_core::product_import_package::{
-    product_publication_id, PhotoLabProductPublicationPackageV1,
+    product_publication_id, PhotoLabDemFactsV1, PhotoLabProductPublicationPackageV1,
     PhotoLabProductPublicationRecordV1, ProductDatasetDispositionV1,
     ProductImportPackageAdmissionV1, ProductImportPackageArtifactV1, ProductImportPackageCountsV1,
     ProductImportPackageDatasetV1, ProductImportPackageLineageV1, ProductImportPackageManifestV1,
     ProductImportPackageProducerV1, ProductImportPackageProductV1,
     ProductImportPackageReadyRecordV1, ProductImportPackageRepresentationSlotV1,
     ProductImportPackageResourceV1, ProductImportPackageSourceV1, ProductLineageAlignmentKindV1,
+    ProductLineageDemConnectivityV1, ProductLineageDemSourceNoDataV1, ProductLineageDemValidityV1,
     ProductLineageGcpChoiceV1, ProductLineageIdentityV1, ProductLineageMaskScopeV1,
     ProductLineageProcessingSetChoiceV1, ProductLineageProjectReferenceFrameV1,
-    ProductLineageReferenceFrameV1, ProductLineageV1, ProductPublicationReasonCodeV1,
-    ProvenanceStatus, PRODUCT_IMPORT_PACKAGE_READY_SCHEMA_ID, PRODUCT_IMPORT_PACKAGE_SCHEMA_ID,
-    PRODUCT_LINEAGE_SCHEMA_ID, PRODUCT_PUBLICATION_SCHEMA_ID,
+    ProductLineageReferenceFrameV1, ProductLineageResourceIdentityV1, ProductLineageV1,
+    ProductPublicationReasonCodeV1, ProvenanceStatus, PRODUCT_IMPORT_PACKAGE_READY_SCHEMA_ID,
+    PRODUCT_IMPORT_PACKAGE_SCHEMA_ID, PRODUCT_LINEAGE_SCHEMA_ID, PRODUCT_PUBLICATION_SCHEMA_ID,
 };
 use himmelcad_core::typed_artifact::{TypedArtifactManifest, TYPED_ARTIFACT_MANIFEST_NAME};
 use serde::{Deserialize, Serialize};
@@ -122,7 +125,8 @@ use himmelcad_sidecar::project_archive::{
     UnpackArchiveLimits,
 };
 use himmelcad_sidecar::raster_runtime::{
-    raster_checkpoint_content_key, GdalAudit, RasterBuildSummary,
+    raster_checkpoint_content_key, GdalAudit, RasterBuildSummary, RasterNoDataValue,
+    RasterValidityResource,
 };
 use himmelcad_sidecar::splat_tiler::PreparedSplatProduct;
 
@@ -832,6 +836,8 @@ pub struct RasterArtifactRecord {
     pub kind: PublishedRasterKind,
     pub dataset_relative_path: String,
     pub summary: RasterBuildSummary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validity_resource: Option<RasterValidityResource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_alignment_entity_id: Option<EntityId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1701,6 +1707,7 @@ fn freeze_product_lineage(
     lineage: &ProductLineage,
     camera_entity_ids: &[String],
     mut product_tools: Vec<ProductLineageIdentityV1>,
+    dem_facts: Option<PhotoLabDemFactsV1>,
     missing_field_ids: Vec<String>,
 ) -> Result<FrozenProductLineage> {
     let source_fingerprint = source_fingerprint(&session.source_path)?.sha256;
@@ -1890,7 +1897,7 @@ fn freeze_product_lineage(
         configurations,
         tools: product_tools,
         registration_audit: None,
-        dem_facts: None,
+        dem_facts,
     };
     let lineage_bytes = canonical_json::to_vec(&payload)?;
     let envelope = ProductImportPackageLineageV1 {
@@ -1929,6 +1936,7 @@ fn write_product_import_package(
     job_id: &str,
     job_kind: PhotolabJobKind,
     product_tools: Vec<ProductLineageIdentityV1>,
+    dem_facts: Option<PhotoLabDemFactsV1>,
     canonical: ProductPackageCanonicalContract,
     cancellation: &CancellationToken,
 ) -> Result<PhotoLabProductPublicationRecordV1> {
@@ -1969,6 +1977,7 @@ fn write_product_import_package(
             lineage,
             camera_entity_ids,
             product_tools,
+            dem_facts,
             Vec::new(),
         )?;
         anyhow::ensure!(
@@ -2106,14 +2115,32 @@ fn write_product_import_package(
                     object_sha256: canonical.admission.selected.geometry_ref.clone(),
                 }],
             });
-            let artifact_paths = copy_dataset_inventory(
-                &inventory_root,
-                &package_root,
-                &mut artifacts,
-                "dataset",
-                cancellation,
-            )?;
-            let root_path = format!("dataset/{root_file_name}");
+            let artifact_paths = if kind == "dem" {
+                copy_declared_dataset_inventory(
+                    dataset_root,
+                    &canonical.dataset.artifacts,
+                    &package_root,
+                    &mut artifacts,
+                    "dataset",
+                    cancellation,
+                )?
+            } else {
+                copy_dataset_inventory(
+                    &inventory_root,
+                    &package_root,
+                    &mut artifacts,
+                    "dataset",
+                    cancellation,
+                )?
+            };
+            let root_path = if kind == "dem" {
+                format!(
+                    "dataset/{}",
+                    normalized_relative_posix_path(dataset_root_relative)?
+                )
+            } else {
+                format!("dataset/{root_file_name}")
+            };
             let root_artifact = artifacts
                 .iter()
                 .find(|artifact| artifact.path == root_path)
@@ -2125,10 +2152,14 @@ fn write_product_import_package(
                 "canonical dataset root disagrees with its immutable resource"
             );
             for declared in &canonical.dataset.artifacts {
-                let scoped = declared
-                    .relative_path
-                    .strip_prefix(inventory_parent)
-                    .unwrap_or(&declared.relative_path);
+                let scoped = if kind == "dem" {
+                    &declared.relative_path
+                } else {
+                    declared
+                        .relative_path
+                        .strip_prefix(inventory_parent)
+                        .unwrap_or(&declared.relative_path)
+                };
                 let path = format!("dataset/{}", normalized_relative_posix_path(scoped)?);
                 let artifact = artifacts
                     .iter()
@@ -2149,6 +2180,26 @@ fn write_product_import_package(
                 root_path,
                 root_sha256: root_artifact.sha256.clone(),
                 artifact_paths,
+            });
+        }
+        if let Some(dem_facts) = frozen.envelope.payload.dem_facts.as_ref() {
+            let identity = &dem_facts.validity.resource;
+            let artifact = artifacts
+                .iter()
+                .find(|artifact| {
+                    artifact.path.ends_with("/view/validity.bin")
+                        && artifact.sha256 == identity.sha256
+                        && artifact.byte_length == identity.byte_length
+                })
+                .context("DEM validity resource is absent from the package artifacts")?;
+            resources.push(ProductImportPackageResourceV1 {
+                resource_id: identity.resource_id.0.clone(),
+                owner_entity_id: snapshot.id.0.clone(),
+                role: "dem_validity".to_owned(),
+                object_path: artifact.path.clone(),
+                sha256: identity.sha256.clone(),
+                byte_length: identity.byte_length,
+                media_type: identity.media_type.clone(),
             });
         }
         artifacts.sort_by(|left, right| left.path.as_bytes().cmp(right.path.as_bytes()));
@@ -2303,6 +2354,7 @@ fn write_lineage_only_product_publication(
         lineage,
         camera_entity_ids,
         product_tools,
+        None,
         missing_field_ids,
     )?;
     let reason_code = if frozen.provenance_status == ProvenanceStatus::Complete {
@@ -2450,6 +2502,54 @@ fn copy_dataset_inventory(
             sha256,
             byte_length,
             media_type: product_artifact_media_type(&relative),
+            role: "dataset".to_owned(),
+        });
+        paths.push(relative_path);
+    }
+    Ok(paths)
+}
+
+fn copy_declared_dataset_inventory(
+    source_root: &Path,
+    declared: &[PreparedDatasetArtifact],
+    package_root: &Path,
+    artifacts: &mut Vec<ProductImportPackageArtifactV1>,
+    prefix: &str,
+    cancellation: &CancellationToken,
+) -> Result<Vec<String>> {
+    cancellation.check()?;
+    let canonical_root = source_root.canonicalize()?;
+    let mut declared = declared.iter().collect::<Vec<_>>();
+    declared.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    let mut paths = Vec::with_capacity(declared.len());
+    let mut folded_paths = BTreeMap::new();
+    for artifact in declared {
+        cancellation.check()?;
+        let normalized = normalized_relative_posix_path(&artifact.relative_path)?;
+        if let Some(existing) = folded_paths.insert(normalized.to_lowercase(), normalized.clone()) {
+            anyhow::bail!("platform case-fold collision: {existing} and {normalized}");
+        }
+        let source = source_root.join(&artifact.relative_path).canonicalize()?;
+        anyhow::ensure!(
+            source.starts_with(&canonical_root),
+            "dataset artifact escaped its root"
+        );
+        let relative_path = format!("{prefix}/{normalized}");
+        let target = package_root.join(&relative_path);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let (sha256, byte_length) = copy_regular_file_cancellable(&source, &target, cancellation)?;
+        anyhow::ensure!(
+            sha256 == artifact.resource.object_hash
+                && artifact.resource.byte_length == Some(byte_length),
+            "canonical dataset artifact changed before package publication: {normalized}"
+        );
+        artifacts.push(ProductImportPackageArtifactV1 {
+            path: relative_path.clone(),
+            sha256,
+            byte_length,
+            media_type: artifact.resource.media_type.clone(),
             role: "dataset".to_owned(),
         });
         paths.push(relative_path);
@@ -2688,6 +2788,335 @@ fn canonical_potree_product_contract(
             artifacts,
         },
     })
+}
+
+fn canonical_dem_product_contract(
+    snapshot: &EntitySnapshot,
+    dataset_root: &Path,
+    summary: &RasterBuildSummary,
+    validity: &RasterValidityResource,
+) -> Result<(ProductPackageCanonicalContract, PhotoLabDemFactsV1)> {
+    let validity_path = dataset_root.join(&validity.path);
+    let (validity_sha256, validity_byte_length) = hash_regular_file(&validity_path)?;
+    anyhow::ensure!(
+        validity.sha256 == validity_sha256 && validity.byte_length == validity_byte_length,
+        "prepared DEM validity resource changed before publication"
+    );
+    let viewer_relative_path = PathBuf::from("viewer/manifest.json");
+    let viewer_path = dataset_root.join(&viewer_relative_path);
+    let viewer_bytes = fs::read(&viewer_path)?;
+    let viewer_sha256 = ObjectHash::of_bytes(&viewer_bytes);
+    let viewer_resource = GeometryResource {
+        object_hash: viewer_sha256.clone(),
+        media_type: "himmelcad-prepared-hierarchy@1".to_owned(),
+        byte_length: Some(u64::try_from(viewer_bytes.len())?),
+    };
+    let viewer: serde_json::Value = serde_json::from_slice(&viewer_bytes)?;
+    let tiles = viewer
+        .get("tiles")
+        .and_then(serde_json::Value::as_array)
+        .context("prepared DEM root has no tile array")?;
+    anyhow::ensure!(!tiles.is_empty(), "prepared DEM root has no tiles");
+
+    let mut frozen_parameters: Option<(String, String, Option<f64>)> = None;
+    for tile in tiles {
+        let contents = tile
+            .get("contents")
+            .and_then(serde_json::Value::as_array)
+            .context("prepared DEM tile has no content array")?;
+        for content in contents {
+            if content.get("kind").and_then(serde_json::Value::as_str) != Some("raster") {
+                continue;
+            }
+            let parameters = content
+                .get("decoderParameters")
+                .and_then(serde_json::Value::as_object)
+                .context("prepared DEM Raster content has no decoder parameters")?;
+            let interpolation = parameters
+                .get("interpolation")
+                .and_then(serde_json::Value::as_str)
+                .context("prepared DEM Raster content has no interpolation")?;
+            let topology = parameters
+                .get("topology")
+                .and_then(serde_json::Value::as_object)
+                .context("prepared DEM Raster content has no topology")?;
+            anyhow::ensure!(
+                topology.get("kind").and_then(serde_json::Value::as_str) == Some("continuous"),
+                "prepared DEM Raster topology is not continuous"
+            );
+            let diagonal = topology
+                .get("diagonal")
+                .and_then(serde_json::Value::as_str)
+                .context("prepared DEM Raster topology has no diagonal")?;
+            let maximum_height_jump = match topology.get("maximumHeightJump") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(value) => Some(
+                    value
+                        .as_f64()
+                        .filter(|value| value.is_finite() && *value >= 0.0)
+                        .context("prepared DEM maximumHeightJump is invalid")?,
+                ),
+            };
+            let current = (
+                interpolation.to_owned(),
+                diagonal.to_owned(),
+                maximum_height_jump,
+            );
+            if let Some(expected) = &frozen_parameters {
+                anyhow::ensure!(
+                    expected == &current,
+                    "prepared DEM Raster facts differ between tiles"
+                );
+            } else {
+                frozen_parameters = Some(current);
+            }
+            validate_prepared_dem_no_data(parameters.get("noData"), summary.grid.no_data)?;
+            let reference = parameters
+                .get("validityReference")
+                .and_then(serde_json::Value::as_object)
+                .context("prepared DEM Raster content has no validityReference")?;
+            anyhow::ensure!(
+                reference.get("uri").and_then(serde_json::Value::as_str)
+                    == Some("../../../../validity.bin")
+                    && reference
+                        .get("byteOffset")
+                        .is_some_and(serde_json::Value::is_null)
+                    && reference
+                        .get("byteLength")
+                        .and_then(serde_json::Value::as_u64)
+                        == Some(validity.byte_length)
+                    && reference
+                        .get("contentHash")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(validity.sha256.as_str()),
+                "prepared DEM validityReference disagrees with the immutable resource"
+            );
+        }
+    }
+    let (interpolation, diagonal, maximum_height_jump) =
+        frozen_parameters.context("prepared DEM root has no Raster decoder parameters")?;
+    let canonical_interpolation = match interpolation.as_str() {
+        "bilinear" => RasterInterpolation::Bilinear,
+        "nearest" => RasterInterpolation::Nearest,
+        "discontinuityAware" => RasterInterpolation::DiscontinuityAware,
+        _ => anyhow::bail!("prepared DEM Raster interpolation is invalid"),
+    };
+    let canonical_diagonal = match diagonal.as_str() {
+        "topLeftToBottomRight" => RasterCellDiagonal::TopLeftToBottomRight,
+        "topRightToBottomLeft" => RasterCellDiagonal::TopRightToBottomLeft,
+        _ => anyhow::bail!("prepared DEM Raster diagonal is invalid"),
+    };
+    let validity_identity = ProductLineageResourceIdentityV1 {
+        resource_id: validity.sha256.clone(),
+        sha256: validity.sha256.clone(),
+        byte_length: validity.byte_length,
+        media_type: "application/octet-stream".to_owned(),
+    };
+    let source_no_data = match summary.grid.no_data {
+        RasterNoDataValue::Numeric(value) if value.is_finite() => {
+            ProductLineageDemSourceNoDataV1::Numeric {
+                value: canonical_json::Decimal64::from_f64(value)?,
+            }
+        }
+        RasterNoDataValue::Nan => ProductLineageDemSourceNoDataV1::Nan,
+        RasterNoDataValue::Numeric(_) | RasterNoDataValue::AlphaMask => {
+            anyhow::bail!("prepared DEM source NoData semantics are invalid")
+        }
+    };
+    let dem_facts = PhotoLabDemFactsV1 {
+        semantics: "elevationZ".to_owned(),
+        interpolation,
+        connectivity: ProductLineageDemConnectivityV1::Continuous {
+            diagonal,
+            maximum_height_jump: maximum_height_jump
+                .map(canonical_json::Decimal64::from_f64)
+                .transpose()?,
+        },
+        source_no_data,
+        validity: ProductLineageDemValidityV1 {
+            resource: validity_identity,
+            encoding: "bitsetLsb0".to_owned(),
+        },
+    };
+    let geometry = GeometryObject::ElevationSurface {
+        surface: Box::new(ElevationSurfaceGeometry::Grid {
+            raster: viewer_resource.clone(),
+            mapping: OrthoGridMapping {
+                origin: Vector3 {
+                    x: summary.grid.bounds.minimum_east + summary.grid.gsd * 0.5,
+                    y: summary.grid.bounds.maximum_north - summary.grid.gsd * 0.5,
+                    z: 0.0,
+                },
+                column_step: Vector3 {
+                    x: summary.grid.gsd,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                row_step: Vector3 {
+                    x: 0.0,
+                    y: -summary.grid.gsd,
+                    z: 0.0,
+                },
+            },
+            sampling: DepthSampling {
+                semantics: DepthSemantics::ElevationZ,
+                interpolation: canonical_interpolation,
+                connectivity: RasterConnectivity::Continuous {
+                    maximum_height_jump,
+                    diagonal: canonical_diagonal,
+                },
+            },
+        }),
+    };
+    let canonical_objects = [
+        (
+            "application/vnd.himmelcad.components+json",
+            serde_json::json!({
+                "hcad.prepared-dataset@1": {
+                    "formatId": "himmelcad-prepared-hierarchy@1",
+                    "manifestRef": viewer_sha256,
+                }
+            }),
+        ),
+        (
+            "application/vnd.himmelcad.attributes+json",
+            serde_json::json!({}),
+        ),
+        (
+            "application/vnd.himmelcad.relations+json",
+            serde_json::json!([]),
+        ),
+    ]
+    .into_iter()
+    .map(|(media_type, value)| {
+        let bytes = serde_json::to_vec(&value)?;
+        Ok(CanonicalImportJsonObject {
+            object_hash: ObjectHash::of_bytes(&bytes),
+            media_type: media_type.to_owned(),
+            value,
+        })
+    })
+    .collect::<Result<Vec<_>>>()?;
+    let selected = Representation {
+        role: RepresentationRole::Canonical,
+        geometry_ref: geometry_object_content_hash(&geometry)?,
+        authority: RepresentationAuthority::Authoritative,
+        dependency_hash: None,
+    };
+    let mut entity = CanonicalEntity {
+        id: snapshot.id.clone(),
+        revision: 0,
+        type_id: EntityTypeId(built_in_type::ELEVATION_SURFACE.to_owned()),
+        name: snapshot.name.clone(),
+        owner: None,
+        layer_ids: Vec::new(),
+        placement: None,
+        representations: vec![selected.clone()],
+        components_ref: canonical_objects[0].object_hash.clone(),
+        attributes_ref: canonical_objects[1].object_hash.clone(),
+        relations_ref: canonical_objects[2].object_hash.clone(),
+        style_ref: None,
+        schema_version: 1,
+        version_hash: ObjectHash::of_bytes(b"pending"),
+    };
+    entity.version_hash = canonical_entity_version_hash(&entity)?;
+    validate_resolved_representation(&entity, &selected, &geometry)?;
+
+    let canonical_root = dataset_root.canonicalize()?;
+    let mut relative_files = Vec::new();
+    collect_regular_dataset_files(
+        &canonical_root,
+        &canonical_root.join("viewer"),
+        &mut relative_files,
+    )?;
+    collect_regular_dataset_files(
+        &canonical_root,
+        &canonical_root.join("view"),
+        &mut relative_files,
+    )?;
+    relative_files.sort();
+    relative_files.dedup();
+    let artifacts = relative_files
+        .into_iter()
+        .map(|relative_path| {
+            let (object_hash, byte_length) =
+                hash_regular_file(&canonical_root.join(&relative_path))?;
+            Ok(PreparedDatasetArtifact {
+                relative_path: relative_path.clone(),
+                resource: GeometryResource {
+                    object_hash,
+                    media_type: product_artifact_media_type(&relative_path),
+                    byte_length: Some(byte_length),
+                },
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok((
+        ProductPackageCanonicalContract {
+            admission: CanonicalRepresentationAdmission {
+                entity,
+                selected,
+                representation_slot: "source".to_owned(),
+                expected_generation: None,
+                resolved_geometry: geometry,
+            },
+            objects: canonical_objects,
+            dataset: CanonicalPreparedDataset {
+                dataset_id: format!("prepared-dem-{}", viewer_resource.object_hash.as_str()),
+                format_id: "himmelcad-prepared-hierarchy@1".to_owned(),
+                entity_id: snapshot.id.0.clone(),
+                representation_slot: "source".to_owned(),
+                root_metadata: viewer_resource,
+                artifacts,
+            },
+        },
+        dem_facts,
+    ))
+}
+
+fn read_prepared_dem_validity_resource(
+    dataset_root: &Path,
+    summary: &RasterBuildSummary,
+) -> Result<RasterValidityResource> {
+    let path = "view/validity.bin";
+    let (sha256, byte_length) = hash_regular_file(&dataset_root.join(path))?;
+    let cell_count = u64::from(summary.grid.width_pixels)
+        .checked_mul(u64::from(summary.grid.height_pixels))
+        .context("prepared DEM validity cell count overflow")?;
+    anyhow::ensure!(
+        byte_length == cell_count.div_ceil(8),
+        "prepared DEM validity byte length does not match the base grid"
+    );
+    Ok(RasterValidityResource {
+        path: path.to_owned(),
+        sha256,
+        byte_length,
+    })
+}
+
+fn validate_prepared_dem_no_data(
+    value: Option<&serde_json::Value>,
+    expected: RasterNoDataValue,
+) -> Result<()> {
+    let object = value
+        .and_then(serde_json::Value::as_object)
+        .context("prepared DEM Raster content has no NoData semantics")?;
+    match expected {
+        RasterNoDataValue::Numeric(expected) if expected.is_finite() => anyhow::ensure!(
+            object.get("kind").and_then(serde_json::Value::as_str) == Some("numeric")
+                && object.get("value").and_then(serde_json::Value::as_f64) == Some(expected),
+            "prepared DEM numeric NoData disagrees with the raster summary"
+        ),
+        RasterNoDataValue::Nan => anyhow::ensure!(
+            object.get("kind").and_then(serde_json::Value::as_str) == Some("nan")
+                && !object.contains_key("value"),
+            "prepared DEM NaN NoData disagrees with the raster summary"
+        ),
+        RasterNoDataValue::Numeric(_) | RasterNoDataValue::AlphaMask => {
+            anyhow::bail!("prepared DEM source NoData semantics are invalid")
+        }
+    }
+    Ok(())
 }
 
 fn canonical_prepared_mesh_contract(
@@ -7586,6 +8015,7 @@ impl ProjectRuntime {
                     &outcome.summary.job_id,
                     PhotolabJobKind::AlignPhotos,
                     Vec::new(),
+                    None,
                     canonical,
                     cancellation,
                 )?;
@@ -7645,6 +8075,7 @@ impl ProjectRuntime {
                     &outcome.summary.job_id,
                     PhotolabJobKind::AlignPhotos,
                     Vec::new(),
+                    None,
                     ProductPackageCanonicalContract {
                         admission,
                         objects,
@@ -8047,6 +8478,7 @@ impl ProjectRuntime {
                 &record.job_id,
                 PhotolabJobKind::BuildDensePointCloud,
                 vec![mvs_tool],
+                None,
                 canonical,
                 cancellation,
             )?;
@@ -8205,12 +8637,18 @@ impl ProjectRuntime {
         let dataset_relative_path = path_string(output.strip_prefix(&project_root)?);
         let products_group =
             unique_entity_of_kind(&session.manifest, EntityKind::Group, "products")?;
+        let validity_resource = if kind == PublishedRasterKind::Dem {
+            Some(read_prepared_dem_validity_resource(&output, &summary)?)
+        } else {
+            None
+        };
         let record = RasterArtifactRecord {
             schema_version: 3,
             job_id: job_id.to_owned(),
             kind,
             dataset_relative_path: dataset_relative_path.clone(),
             summary,
+            validity_resource,
             source_alignment_entity_id: Some(lineage.source_alignment_entity_id.clone()),
             processing_set_id: lineage.processing_set_id.clone(),
             gcp_optimization_entity_id: lineage.gcp_optimization_entity_id.clone(),
@@ -8271,34 +8709,51 @@ impl ProjectRuntime {
             })
             .collect();
         let is_dem = kind == PublishedRasterKind::Dem;
-        write_lineage_only_product_publication(
-            session,
-            &candidate,
-            snapshot,
-            if is_dem { "dem" } else { "orthomosaic" },
-            "rasterPyramid",
-            is_dem.then_some("himmelcad-prepared-hierarchy@1"),
-            if is_dem { "DEM" } else { "Orthomosaic" },
-            job_id,
-            if is_dem {
-                PhotolabJobKind::BuildDem
-            } else {
-                PhotolabJobKind::BuildOrthomosaic
-            },
-            lineage,
-            &camera_scope,
-            gdal_tools,
-            if is_dem {
-                vec!["dem_facts".to_owned()]
-            } else {
-                Vec::new()
-            },
-            if is_dem {
-                ProductPublicationReasonCodeV1::NoPackage
-            } else {
-                ProductPublicationReasonCodeV1::UnsupportedFormat
-            },
-        )?;
+        if is_dem {
+            let validity = record
+                .validity_resource
+                .as_ref()
+                .context("prepared DEM has no validity resource")?;
+            let (canonical, dem_facts) =
+                canonical_dem_product_contract(snapshot, &output, &record.summary, validity)?;
+            write_product_import_package(
+                session,
+                &candidate,
+                snapshot,
+                "dem",
+                "rasterPyramid",
+                "raster",
+                "DEM",
+                "himmelcad-prepared-hierarchy@1",
+                &output,
+                Path::new("viewer/manifest.json"),
+                lineage,
+                &camera_scope,
+                job_id,
+                PhotolabJobKind::BuildDem,
+                gdal_tools,
+                Some(dem_facts),
+                canonical,
+                &CancellationToken::new(),
+            )?;
+        } else {
+            write_lineage_only_product_publication(
+                session,
+                &candidate,
+                snapshot,
+                "orthomosaic",
+                "rasterPyramid",
+                None,
+                "Orthomosaic",
+                job_id,
+                PhotolabJobKind::BuildOrthomosaic,
+                lineage,
+                &camera_scope,
+                gdal_tools,
+                Vec::new(),
+                ProductPublicationReasonCodeV1::UnsupportedFormat,
+            )?;
+        }
         let journal = PhotolabJournalEntry {
             recovered: false,
             orphaned: false,
@@ -8472,6 +8927,7 @@ impl ProjectRuntime {
             job_id,
             PhotolabJobKind::BuildMesh,
             Vec::new(),
+            None,
             ProductPackageCanonicalContract {
                 admission,
                 objects,
@@ -13594,6 +14050,13 @@ mod tests {
         build_prepared_textured_triangle_mesh, build_prepared_triangle_mesh,
         PreparedTriangleMeshOptions, TriangleRecord,
     };
+    use himmelcad_sidecar::raster_runtime::{
+        RasterBounds, RasterByteOrder, RasterCrs, RasterGrid, RasterLevelSummary, RasterViewLayer,
+        RasterViewTileFormat,
+    };
+    use himmelcad_sidecar::viewer_raster_manifest::{
+        publish_prepared_elevation_hierarchy, PreparedElevationHierarchyOptions,
+    };
 
     #[test]
     fn legacy_product_provenance_is_never_complete() {
@@ -15169,6 +15632,97 @@ mod tests {
         std::env::temp_dir().join(unique_id(name, unix_ms().expect("clock must work")))
     }
 
+    fn prepared_dem_summary(dataset_root: &Path, no_data: RasterNoDataValue) -> RasterBuildSummary {
+        fs::create_dir_all(dataset_root.join("view/preview/L00/0")).expect("preview directory");
+        fs::create_dir_all(dataset_root.join("view/height/L00/0")).expect("height directory");
+        image::RgbaImage::from_pixel(512, 512, image::Rgba([30, 90, 170, 255]))
+            .save(dataset_root.join("view/preview/L00/0/0.png"))
+            .expect("preview tile");
+        let mut values = vec![0.0_f32; 512 * 512];
+        values[0] = 1.0;
+        values[1] = f32::NAN;
+        values[2] = -9999.0;
+        values[512] = 2.0;
+        values[513] = 3.0;
+        values[514] = 4.0;
+        fs::write(
+            dataset_root.join("view/height/L00/0/0.f32"),
+            values
+                .into_iter()
+                .flat_map(f32::to_le_bytes)
+                .collect::<Vec<_>>(),
+        )
+        .expect("height tile");
+        let bounds = RasterBounds {
+            minimum_east: 1_000.0,
+            minimum_north: 2_000.0,
+            maximum_east: 1_003.0,
+            maximum_north: 2_002.0,
+        };
+        let summary = RasterBuildSummary {
+            output_directory: path_string(dataset_root),
+            cog_path: "product.cog.tif".into(),
+            pyramid_manifest_path: "pyramid/manifest.json".into(),
+            levels: vec![RasterLevelSummary {
+                level: 0,
+                columns: 1,
+                rows: 1,
+                tile_count: 1,
+                bounds,
+                gsd: 1.0,
+                relative_directory: "pyramid/L00".into(),
+                metric_tile_url_template: "pyramid/L00/{x}/{y}.tif".into(),
+                view_layers: vec![
+                    RasterViewLayer {
+                        name: "height".into(),
+                        format: RasterViewTileFormat::Float32Raw {
+                            byte_order: RasterByteOrder::LittleEndian,
+                            width: 512,
+                            height: 512,
+                        },
+                        url_template: "view/height/L00/{x}/{y}.f32".into(),
+                    },
+                    RasterViewLayer {
+                        name: "preview".into(),
+                        format: RasterViewTileFormat::GrayscalePng {
+                            minimum_elevation: 0.0,
+                            maximum_elevation: 5.0,
+                        },
+                        url_template: "view/preview/L00/{x}/{y}.png".into(),
+                    },
+                ],
+            }],
+            crs: RasterCrs {
+                horizontal: "EPSG:25832".into(),
+                vertical: None,
+                gdal_srs: "EPSG:25832".into(),
+                canonical_wkt_sha256: ObjectHash::of_bytes(b"wkt"),
+            },
+            grid: RasterGrid {
+                bounds,
+                width_pixels: 3,
+                height_pixels: 2,
+                gsd: 1.0,
+                no_data,
+            },
+            audit: GdalAudit {
+                version: "fixture".into(),
+                executable_sha256: BTreeMap::new(),
+                raster_drivers: Vec::new(),
+                vector_drivers: Vec::new(),
+                network_enabled: false,
+            },
+        };
+        publish_prepared_elevation_hierarchy(
+            dataset_root,
+            &summary,
+            PreparedElevationHierarchyOptions::default(),
+            &CancellationToken::new(),
+        )
+        .expect("prepared DEM hierarchy");
+        summary
+    }
+
     fn insert_test_camera(
         session: &mut ProjectSession,
         images: &EntityId,
@@ -16485,6 +17039,7 @@ mod tests {
                 },
                 &camera_ids,
                 Vec::new(),
+                None,
                 Vec::new(),
             )
             .expect("merged product lineage");
@@ -17304,6 +17859,118 @@ mod tests {
             calibration_groups[0].intrinsics_refinement,
             ColmapIntrinsicsRefinement::Refine
         );
+        runtime.close().expect("close");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn dem_publications_freeze_facts_and_publish_complete_packages() {
+        let root = temp_test_dir("dem-product-package");
+        let project_root = root.join("project.hcad");
+        let runtime = ProjectRuntime::default();
+        runtime
+            .create(CreateProjectParams {
+                path: path_string(&project_root),
+                name: "DEM product package".into(),
+            })
+            .expect("project");
+        let (alignment_id, image_mask_scope_sha256) = {
+            let mut guard = runtime.session.lock().expect("session");
+            let session = guard.as_mut().expect("open project");
+            let images =
+                unique_entity_of_kind(&session.manifest, EntityKind::ImageCollection, "images")
+                    .expect("images");
+            let camera = insert_test_camera(session, &images, "dem-source", []);
+            let alignment =
+                insert_test_alignment(session, "dem-source", 1, std::slice::from_ref(&camera));
+            let scope =
+                build_image_mask_compute_scope(session, std::slice::from_ref(&camera.0), None)
+                    .expect("image mask scope");
+            (alignment, scope.scope_sha256)
+        };
+        let lineage = ProductLineage {
+            source_alignment_entity_id: alignment_id,
+            processing_set_id: None,
+            gcp_optimization_entity_id: None,
+            gcp_optimization_snapshot_sha256: None,
+            image_mask_scope_sha256,
+        };
+
+        for (suffix, no_data) in [
+            ("numeric", RasterNoDataValue::Numeric(-9999.0)),
+            ("nan", RasterNoDataValue::Nan),
+        ] {
+            let dataset_root = project_root.join(format!("datasets/raster/{suffix}"));
+            let summary = prepared_dem_summary(&dataset_root, no_data);
+            let published = runtime
+                .publish_raster_summary(
+                    &format!("dem-{suffix}"),
+                    PublishedRasterKind::Dem,
+                    summary,
+                    &lineage,
+                    None,
+                )
+                .expect("publish DEM");
+            let entity_id = published.entity_ids.first().expect("DEM entity");
+            let publication: PhotoLabProductPublicationRecordV1 = serde_json::from_slice(
+                &fs::read(product_import_publication_path(&project_root, entity_id))
+                    .expect("publication record"),
+            )
+            .expect("valid publication record");
+            assert_eq!(publication.provenance_status, ProvenanceStatus::Complete);
+            assert_eq!(
+                publication.reason_code,
+                ProductPublicationReasonCodeV1::Available
+            );
+            assert!(publication.missing_field_ids.is_empty());
+            let facts = publication
+                .lineage
+                .payload
+                .dem_facts
+                .as_ref()
+                .expect("DEM facts");
+            assert_eq!(facts.semantics, "elevationZ");
+            assert_eq!(facts.interpolation, "bilinear");
+            assert_eq!(facts.validity.encoding, "bitsetLsb0");
+            assert!(matches!(
+                &facts.connectivity,
+                ProductLineageDemConnectivityV1::Continuous {
+                    diagonal,
+                    maximum_height_jump: None,
+                } if diagonal == "topLeftToBottomRight"
+            ));
+            match (suffix, &facts.source_no_data) {
+                ("numeric", ProductLineageDemSourceNoDataV1::Numeric { value }) => {
+                    assert_eq!(value.as_str(), "-9999");
+                }
+                ("nan", ProductLineageDemSourceNoDataV1::Nan) => {}
+                _ => panic!("unexpected source NoData facts"),
+            }
+            let package = publication.package.as_ref().expect("DEM package");
+            let package_root = project_root.join(&package.package_relative_path);
+            let manifest_bytes = fs::read(package_root.join("manifest.json")).expect("manifest");
+            let retained =
+                himmelcad_core::product_import_package::read_product_import_package_manifest(
+                    &manifest_bytes,
+                    &BTreeSet::new(),
+                    &BTreeSet::from([built_in_type::ELEVATION_SURFACE.to_owned()]),
+                )
+                .expect("compatible DEM package");
+            assert_eq!(
+                retained.manifest.package_sha256,
+                retained
+                    .manifest
+                    .computed_package_sha256()
+                    .expect("recomputed package hash")
+            );
+            assert_eq!(retained.manifest.package_sha256, package.package_sha256);
+            assert!(retained.manifest.resources.iter().any(|resource| {
+                resource.resource_id == facts.validity.resource.resource_id.as_str()
+                    && resource.sha256 == facts.validity.resource.sha256
+                    && resource.byte_length == facts.validity.resource.byte_length
+                    && resource.media_type == "application/octet-stream"
+            }));
+        }
         runtime.close().expect("close");
         fs::remove_dir_all(root).expect("cleanup");
     }

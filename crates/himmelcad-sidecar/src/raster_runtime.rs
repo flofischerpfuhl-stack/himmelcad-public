@@ -347,6 +347,16 @@ pub struct RasterBuildSummary {
     pub audit: GdalAudit,
 }
 
+/// Immutable base-grid validity bitset published with a prepared elevation hierarchy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RasterValidityResource {
+    /// Path relative to the raster dataset root.
+    pub path: String,
+    pub sha256: ObjectHash,
+    pub byte_length: u64,
+}
+
 #[derive(Debug, Error)]
 pub enum RasterRuntimeError {
     #[error("invalid raster request: {0}")]

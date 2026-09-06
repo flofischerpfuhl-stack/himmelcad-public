@@ -663,6 +663,22 @@ pub fn validate_product_import_package_paths(
         }
         validate_declared_reference(&exact, &resource.object_path)?;
     }
+    if manifest.lineage.payload.product_kind == "dem" {
+        let dem_facts = manifest.lineage.payload.dem_facts.as_ref().ok_or_else(|| {
+            ProductImportPackageError::InvalidManifest(
+                "dem_facts is required for a DEM package".to_owned(),
+            )
+        })?;
+        validate_dem_facts(dem_facts)?;
+        validate_dem_resource_binding(
+            &manifest.resources,
+            &dem_facts.validity.resource,
+            "DEM validity",
+        )?;
+        if let ProductLineageDemConnectivityV1::Mask { resource, .. } = &dem_facts.connectivity {
+            validate_dem_resource_binding(&manifest.resources, resource, "DEM mask connectivity")?;
+        }
+    }
     let mut dataset_paths = BTreeSet::new();
     for dataset in &manifest.datasets {
         if dataset.dataset_id.is_empty()
@@ -743,6 +759,52 @@ pub fn validate_product_import_package_paths(
     {
         return Err(ProductImportPackageError::InvalidManifest(
             "declared counts do not equal the complete inventory".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_dem_resource_binding(
+    resources: &[ProductImportPackageResourceV1],
+    identity: &ProductLineageResourceIdentityV1,
+    label: &str,
+) -> Result<(), ProductImportPackageError> {
+    let resource = resources
+        .iter()
+        .find(|resource| resource.resource_id == identity.resource_id.as_str())
+        .ok_or_else(|| {
+            ProductImportPackageError::InvalidManifest(format!(
+                "{label} resource is absent from the manifest resources"
+            ))
+        })?;
+    if resource.sha256 != identity.sha256 || resource.byte_length != identity.byte_length {
+        return Err(ProductImportPackageError::InvalidManifest(format!(
+            "{label} resource binding disagrees with the manifest resources"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_dem_facts(facts: &PhotoLabDemFactsV1) -> Result<(), ProductImportPackageError> {
+    let valid_diagonal =
+        |value: &str| matches!(value, "topLeftToBottomRight" | "topRightToBottomLeft");
+    let valid_connectivity = match &facts.connectivity {
+        ProductLineageDemConnectivityV1::PixelSteps => true,
+        ProductLineageDemConnectivityV1::Continuous { diagonal, .. } => valid_diagonal(diagonal),
+        ProductLineageDemConnectivityV1::Mask {
+            encoding, diagonal, ..
+        } => encoding == "twoBitsPerCellLsb0" && valid_diagonal(diagonal),
+    };
+    if facts.semantics != "elevationZ"
+        || !matches!(
+            facts.interpolation.as_str(),
+            "nearest" | "bilinear" | "discontinuityAware"
+        )
+        || !valid_connectivity
+        || facts.validity.encoding != "bitsetLsb0"
+    {
+        return Err(ProductImportPackageError::InvalidManifest(
+            "DEM facts contain invalid sampling or encoding values".to_owned(),
         ));
     }
     Ok(())
@@ -1036,6 +1098,55 @@ mod tests {
         manifest
     }
 
+    fn dem_fixture() -> ProductImportPackageManifestV1 {
+        let mut manifest = fixture();
+        let validity = ProductLineageResourceIdentityV1 {
+            resource_id: ObjectHash::of_bytes(b"validity"),
+            sha256: ObjectHash::of_bytes(b"validity"),
+            byte_length: 1,
+            media_type: "application/octet-stream".into(),
+        };
+        manifest.product.kind = "dem".into();
+        manifest.lineage.payload.product_kind = "dem".into();
+        manifest.lineage.payload.normalized_format_id =
+            Some("himmelcad-prepared-hierarchy@1".into());
+        manifest.lineage.payload.dem_facts = Some(PhotoLabDemFactsV1 {
+            semantics: "elevationZ".into(),
+            interpolation: "bilinear".into(),
+            connectivity: ProductLineageDemConnectivityV1::Continuous {
+                diagonal: "topLeftToBottomRight".into(),
+                maximum_height_jump: None,
+            },
+            source_no_data: ProductLineageDemSourceNoDataV1::Numeric {
+                value: Decimal64::parse("-9999").unwrap(),
+            },
+            validity: ProductLineageDemValidityV1 {
+                resource: validity.clone(),
+                encoding: "bitsetLsb0".into(),
+            },
+        });
+        manifest.artifacts.push(ProductImportPackageArtifactV1 {
+            path: "dataset/view/validity.bin".into(),
+            sha256: validity.sha256.clone(),
+            byte_length: validity.byte_length,
+            media_type: validity.media_type.clone(),
+            role: "dataset".into(),
+        });
+        manifest.resources.push(ProductImportPackageResourceV1 {
+            resource_id: validity.resource_id.0,
+            owner_entity_id: "entity-a".into(),
+            role: "dem_validity".into(),
+            object_path: "dataset/view/validity.bin".into(),
+            sha256: validity.sha256,
+            byte_length: validity.byte_length,
+            media_type: validity.media_type,
+        });
+        manifest.counts.object_count = 1;
+        manifest.counts.artifact_count = 2;
+        manifest.counts.total_bytes = 3;
+        manifest
+    }
+
     #[test]
     fn manifest_and_package_hash_golden() {
         let manifest = fixture();
@@ -1272,6 +1383,60 @@ mod tests {
             serde_json::to_value(ProductLineageReferenceFrameV1::LocalFrame).unwrap(),
             json!({"kind": "local_frame"})
         );
+    }
+
+    #[test]
+    fn dem_facts_are_required_for_dem_packages_and_legacy_lineage_stays_partial() {
+        let mut manifest = dem_fixture();
+        manifest.lineage.payload.dem_facts = None;
+        assert!(matches!(
+            validate_product_import_package_paths(&manifest),
+            Err(ProductImportPackageError::InvalidManifest(message))
+                if message.contains("dem_facts is required")
+        ));
+        let value = serde_json::to_value(&manifest.lineage.payload).unwrap();
+        assert_eq!(
+            product_lineage_missing_field_ids(&value).unwrap(),
+            vec!["dem_facts".to_owned()]
+        );
+        let publication = PhotoLabProductPublicationRecordV1 {
+            schema_id: PRODUCT_PUBLICATION_SCHEMA_ID.into(),
+            publication_id: "legacy-dem-publication".into(),
+            product_id: manifest.product.entity_id.clone(),
+            product_version_hash: manifest.product.entity_version_hash.clone(),
+            product_content_hash: manifest.product.content_hash.clone(),
+            publication_generation: manifest.source.publication_generation,
+            lineage: manifest.lineage,
+            provenance_status: ProvenanceStatus::Partial,
+            missing_field_ids: vec!["dem_facts".into()],
+            disposition: ProductDatasetDispositionV1::NeedsRepublishRecompute,
+            reason_code: ProductPublicationReasonCodeV1::NeedsRepublishRecompute,
+            package: None,
+        };
+        let older: PhotoLabProductPublicationRecordV1 =
+            serde_json::from_value(serde_json::to_value(publication).unwrap()).unwrap();
+        assert_eq!(older.provenance_status, ProvenanceStatus::Partial);
+        assert_eq!(older.missing_field_ids, ["dem_facts"]);
+        assert!(older.lineage.payload.dem_facts.is_none());
+    }
+
+    #[test]
+    fn dem_resource_binding_mismatch_is_rejected() {
+        let mut manifest = dem_fixture();
+        manifest
+            .lineage
+            .payload
+            .dem_facts
+            .as_mut()
+            .unwrap()
+            .validity
+            .resource
+            .byte_length = 2;
+        assert!(matches!(
+            validate_product_import_package_paths(&manifest),
+            Err(ProductImportPackageError::InvalidManifest(message))
+                if message.contains("DEM validity resource binding disagrees")
+        ));
     }
 
     #[test]
