@@ -1953,6 +1953,13 @@ F15b (2026-09-06): the generated `entity.export` row's enablement `exportableSel
 
 F15c (2026-09-06, capture `context-menu-product.png`): the same menu on a PhotoLab product shows Builder-only rows — "Restore bookmark", "Isolate", "Display properties" — that have no PhotoLab behaviour (viewing boxes and bookmarks are Builder features); the generic rows need the same product filter S-06c applied to PhotoLab rows (or a `product` allow-list per row). Disposition: **fix before release** (Builder lane; cross-product consistency, G17).
 
+F16 (observed 2026-09-06 in the audit-23 capture `context-menu-product`, 1440×900):
+with three right-panel function tabs open (Properties, Alignment Run, Images
+Metadata) the tab strip overflows and clips the first label to "erties" without a
+scroll affordance. PhotoLab renderer (right panel tab strip); Size S; fix after
+F15b/F15c — either wrap to a second row or show overflow chevrons per
+DESIGN-SYSTEM; baseline capture to update afterwards.
+
 ### WP-H1 (Size S, gates 1/3)
 
 F01 archive Save route + F05 close refusal with Retry / Cancel close / Force

@@ -30,16 +30,16 @@ close/durability (03bd235), ADR 0030 rev 6 (9d4d398), pixel baselines
 
 ## Open R1 gates (executed evidence only)
 
-| Gate                                   | Status                                                                                                                                                                                     |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1 complete workflows import → products | 24-image smokes green: waves 1–4 (LAZ validated), DTM + DSM (A4), dense mesh (A3)                                                                                                          |
-| 2 real-dataset accuracy                | owner 2026-09-05: full 135-image golden deferred to the end, on another machine (`run-golden.sh`); meanwhile 24-image smokes + 40-image Quality Hybrid diagnostic (`run-qh-diagnostic.sh`) |
-| 3 lineage/recovery                     | H1 close drain, B5 journal/manifest reconciliation, B4 same-target admission, H1b cancellable save landed                                                                                  |
-| 4 cancellation/reload                  | H2 landed: side operations drain, list, cancel; chip rehydrates from the sidecar after reload                                                                                              |
-| 5 project format/journal               | B5 landed (crash-injection tests for both orders + dataset quarantine)                                                                                                                     |
-| 6 automation parity (P11)              | 72 rows documented + G-1 test; command table generation is Builder-lane (G2)                                                                                                               |
-| 7 accessibility / visual               | executed: audit 22 clean (88 captures × 2 viewports, roving-tabindex ribbon walk), baselines refreshed 311c848                                                                             |
-| 8 products open in Builder/WeltView    | G1a-2 landed (publication side, gates in code); DEM rows partial until WP-G1a-3; downstream open needs Builder G1b, then the G1c matrix                                                    |
+| Gate                                   | Status                                                                                                                                                                                                                |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 complete workflows import → products | 24-image smokes green: waves 1–4 (LAZ validated), DTM + DSM (A4), dense mesh (A3)                                                                                                                                     |
+| 2 real-dataset accuracy                | owner 2026-09-05: full 135-image golden deferred to the end, on another machine (`run-golden.sh`); meanwhile 24-image smokes + 40-image Quality Hybrid diagnostic (`run-qh-diagnostic.sh`)                            |
+| 3 lineage/recovery                     | H1 close drain, B5 journal/manifest reconciliation, B4 same-target admission, H1b cancellable save landed                                                                                                             |
+| 4 cancellation/reload                  | H2 landed: side operations drain, list, cancel; chip rehydrates from the sidecar after reload                                                                                                                         |
+| 5 project format/journal               | B5 landed (crash-injection tests for both orders + dataset quarantine)                                                                                                                                                |
+| 6 automation parity (P11)              | 72 rows documented + G-1 test; command table generation is Builder-lane (G2)                                                                                                                                          |
+| 7 accessibility / visual               | executed 2026-09-06 04:21: audit 23 — 88 captures × 2 viewports, a11y 0 findings (88 surfaces, 88 keyboard walks); the single issue is F15b (product context menu without Export, Builder-lane); baselines refreshing |
+| 8 products open in Builder/WeltView    | G1a-2 landed (publication side, gates in code); DEM rows partial until WP-G1a-3; downstream open needs Builder G1b, then the G1c matrix                                                                               |
 
 ## Next three steps
 
