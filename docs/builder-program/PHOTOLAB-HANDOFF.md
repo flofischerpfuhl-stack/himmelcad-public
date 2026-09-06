@@ -80,6 +80,16 @@ CARGO_TARGET_DIR=target/photolab setsid nohup node scripts/photolab-e2e.mjs \
 The run holds the machine-wide compute lease; unit tests use a per-process
 lease and are unaffected. Result: `result.json` in the output directory.
 
+Hardware finding from the 40-image diagnostic (2026-09-06 04:50): the vendored
+COLMAP is a CPU-only build (no CUDA linkage; `use_gpu 0`), and Quality Hybrid
+runs ALIKED_N32 at `max_image_size 8192` on the 20 MP DJI frames with ONE
+extraction thread because a single worker already holds 15.7 GB RSS on this
+32 GB laptop (the 160 B/pixel budget in `colmap_feature_worker_threads` is
+confirmed, not too conservative). Observed ≈ 3 min per image → ~2 h ALIKED for
+40 images, ~7 h for the 135-image golden before matching. Requirement for the
+owner's other machine: a CUDA-enabled COLMAP build or ≥ 64 GB RAM (two
+workers) — otherwise plan a full day for the golden.
+
 ## Messages to the Builder session (sent 2026-09-04 17:45 to `10-himmelcad-a2`; kept for the record)
 
 - H2 landed 2ef29d5 — G17 screenshots: `.build/photolab-ui/h2-{dark,light}/00-main-view.png` (chip "2 jobs running") and `bottom-jobs.png` (Jobs tab badge, side operation with Cancel). Chip spec for S-05 convergence: one button at the right end of the status bar, 18 px, 10 px UI font, 1 px tone border (progress = accent, warning, danger with error text, success), labels "n jobs running" / "1 job running · label pct%" / "Cancelling…" / "Job failed — label" / "Job completed — label" (4 s linger), aria-label "Jobs: label", click toggles the Jobs tab. Obligation: PhotoLab adopts the shared chip + jobs island when S-05 lands. Findings for the shared side: light theme viewport toolbar contrast (active "3D" segment, axis chip); jobs list shows "overall 0%" for unknown units — render "in progress".

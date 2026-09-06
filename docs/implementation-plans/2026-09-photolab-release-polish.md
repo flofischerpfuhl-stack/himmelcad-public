@@ -1752,6 +1752,12 @@ artifacts. Open evidence: the DSM + DTM smokes (`--dem-surface`) must list the
 DEM product as `complete` — queued behind the 40-image diagnostic's compute
 lease.
 
+Diagnostic finding 2026-09-06 (40-image Quality Hybrid, golden-bin): COLMAP is
+CPU-only here and ALIKED_N32 at 8192 px runs with one extraction thread (15.7 GB
+RSS measured for one worker; the memory model in `colmap_feature_worker_threads`
+is accurate), ≈ 3 min/image. Not a code lever — a hardware precondition for the
+golden machine (CUDA COLMAP or ≥ 64 GB RAM); recorded in the handoff.
+
 **WP-G1b — Builder registration + WeltView (Size L, after WP-G2).** The two
 P11 rows `io.import.product_dataset.list/register` with the exact
 `ProductDatasetList/RegisterRequest/ResultV1` schemas (IF-D20) in the
