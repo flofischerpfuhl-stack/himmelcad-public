@@ -1726,8 +1726,8 @@ deterministic configuration-identity fallback. Not exercised: real
 COLMAP/DeDoDe/GDAL/Brush publications (the 40-image diagnostic covers those
 next); G17 does not apply (no UI change).
 
-**WP-G1a-3 — DEM facts (IF-D30), Size M, dispatched 2026-09-06 04:03 (Codex
-high).** Closes the only open G1a-2 gap: the prepared elevation hierarchy
+**WP-G1a-3 — DEM facts (IF-D30), Size M. Landed 2026-09-06 (c7bb505; Codex
+high, 505 k tokens; reviewed by the PhotoLab session).** Closes the only open G1a-2 gap: the prepared elevation hierarchy
 derives one `bitsetLsb0` validity resource over the base-level grid (cell valid
 iff finite and not the NoData sentinel; streaming over the 512×512 Float32
 tiles, cancellable), writes it as `view/validity.bin`, references it from the
@@ -1741,9 +1741,16 @@ lineage-only path to `write_product_import_package` (canonical Grid,
 validation requires `dem_facts` for `dem` and checks the resource binding; older
 DEM records stay `partial` with `dem_facts` missing. Orthomosaic unchanged.
 Shared-file note: `viewer_raster_manifest.rs` (Builder 0e61b02) is edited only
-for the validity plumbing — announced in the handoff. Evidence after landing:
-core/sidecar counts, then the DSM + DTM smokes (`--dem-surface`) must list the
-DEM product as `complete`.
+for the validity plumbing — announced in the handoff. Verification at landing: core 227 (+2 tests), sidecar lib 285 (+2; the two
+Builder-lane failures unchanged), bins 94 (+1: DEM publication freezes facts and
+publishes complete packages for -9999 and NaN NoData), MVS 13; validity layout
+test covers both byte orders; fmt clean. As implemented: facts are read back
+from the prepared raster root (diagonal, `maximumHeightJump`, `interpolation`)
+so Grid and root bind identical values; the validity resource is listed under
+role `dem_validity`; DEM packages copy only the declared prepared-hierarchy
+artifacts. Open evidence: the DSM + DTM smokes (`--dem-surface`) must list the
+DEM product as `complete` — queued behind the 40-image diagnostic's compute
+lease.
 
 **WP-G1b — Builder registration + WeltView (Size L, after WP-G2).** The two
 P11 rows `io.import.product_dataset.list/register` with the exact
