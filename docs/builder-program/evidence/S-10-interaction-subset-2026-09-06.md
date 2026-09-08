@@ -140,3 +140,7 @@ selected.
   render/scheduler changes visible in the shared worktree were preserved.
 - Unrelated PhotoLab baseline changes and other pre-existing/shared-worktree
   changes were preserved.
+
+## Architect acceptance (G17, 2026-09-08)
+
+`gallery/shots/dark/construction-bar.png` (X/Y/Z and Dir/Dist/Δz fields with unit suffixes, active-field ring, live polar readout, "1 of 3" indicator) and `selection-visuals.png` (orange polyline with direction arrow, orange point square, dashed support-blue defining lines, anchor-only highlight on the symbol point) match the brief — accepted as the visual policy. Renderer payloads for these glyphs stay queued under V-05 as the evidence states.
