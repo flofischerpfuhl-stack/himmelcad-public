@@ -302,3 +302,19 @@ S-06e did not edit the concurrent measurement implementation or its tests.
 ## Architect acceptance of S-06e (G17, 2026-09-08)
 
 `gallery/shots/dark/command-surfaces.png` void quick surface: Frame all, Top, Front, Right, Perspective · Clear selection · Paste in place — UIP-D13 order restored, bookmarks and viewing-box rows excluded, cap after ordering, asserted by table lint. S-06e accepted. Commit of S-02d/S-06d/S-06e waits for the Builder typecheck (0.5-01 and 0.5-08 mid-edit).
+
+## S-06f — product-exact console expectation (2026-09-08)
+
+The console test now derives its expected vocabulary from the generated table
+after applying the console product (`builder`) instead of comparing with rows
+from every product. It retains exact ordered equality for both the vocabulary
+helper and `help` output. The symmetric PhotoLab product fixture asserts that
+its filtered vocabulary retains `photolab.images.remove` and
+`photolab.gcp.images`.
+
+- `pnpm --filter @himmelcad/console test`: PASS — 2/2.
+- `pnpm --filter @himmelcad/app test`: PASS — 69/69.
+- Builder and PhotoLab typechecks: PASS; PhotoLab English UI check passed.
+- `pnpm --filter @himmelcad/theme lint:tokens`: blocked only by the excluded,
+  concurrently edited sampling/segmentation panels, which use `--hc-error` as
+  text color. S-06f did not edit either file.

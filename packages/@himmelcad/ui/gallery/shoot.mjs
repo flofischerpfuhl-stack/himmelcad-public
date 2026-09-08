@@ -72,6 +72,7 @@ try {
     await verifyViewportChromeContrast(theme);
     await verifyStatusTextContrast(theme);
     await verifyFunctionPanelTabPixelsStayInsidePanel(theme);
+    await verifyGalleryFixturePixelsStayInsideBounds(theme);
   }
   process.stdout.write(
     `Captured ${2 + uniqueSections.length * 2} screenshots for ${uniqueSections.length} sections in ${shotsDir}\n`,
@@ -342,6 +343,40 @@ async function verifyFunctionPanelTabPixelsStayInsidePanel(theme) {
     await overflowButton.press('Enter');
     if ((await overflowRow.getByRole('menu', { name: 'More function tabs' }).count()) !== 1) {
       throw new Error(`FunctionPanel Enter did not open overflow in ${theme}.`);
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
+async function verifyGalleryFixturePixelsStayInsideBounds(theme) {
+  const browser = await chromium.launch({
+    executablePath: chrome,
+    headless: true,
+    args: ['--no-sandbox', '--disable-gpu', '--force-device-scale-factor=1'],
+  });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await page.goto(`${baseUrl}/?theme=${theme}&section=file-surfaces`);
+    await page.evaluate(() => document.fonts.ready);
+    const row = page.locator('[data-gallery-section="file-surfaces"] [data-gallery-row]');
+    const sampleBox = await row.locator('.gallerySample').boundingBox();
+    if (!sampleBox) throw new Error(`Could not locate File surfaces sample in ${theme}.`);
+
+    const boundedElements = row.locator(
+      '[data-gallery-bounds], [data-gallery-bounds] [role="menu"], [data-gallery-bounds] [role="status"], [data-gallery-bounds] button',
+    );
+    for (let index = 0; index < (await boundedElements.count()); index += 1) {
+      const elementBox = await boundedElements.nth(index).boundingBox();
+      if (
+        !elementBox ||
+        elementBox.x < sampleBox.x ||
+        elementBox.y < sampleBox.y ||
+        elementBox.x + elementBox.width > sampleBox.x + sampleBox.width ||
+        elementBox.y + elementBox.height > sampleBox.y + sampleBox.height
+      ) {
+        throw new Error(`File surfaces emitted pixels outside its sample bounds in ${theme}.`);
+      }
     }
   } finally {
     await browser.close();

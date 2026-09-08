@@ -92,3 +92,13 @@ Covered by the sidecar canonical-runtime/store reopen suites, notably `protocol_
 ## Architect review (G17, 2026-09-05)
 
 `gallery/shots/dark/file-surfaces.png`: Recent menu (name + muted mono path) and the warning-kind recovery toast with "Show in console" match the brief — accepted. Fixture nit for the next ui-fixes pass: the toast overflows the section column so its close button is clipped; widen the fixture container, not the toast. Final typecheck/sidecar test verification deferred to V-02's landing (its in-flight `KernelStreamingFramePlan.frontier`/`prepared_point_metadata` changes blocked P-01's last gates); commit follows that verification.
+
+## S-06f gallery closure (2026-09-08)
+
+The **File surfaces** fixture now spans the full gallery grid and mirrors the
+real recovery toast's dismiss control; the Toast component itself is unchanged.
+The serial gallery run added this fixture to its capture-time bounds check and
+passed in both themes (90 screenshots for 44 sections). The regenerated dark
+and light `file-surfaces.png` rows were visually inspected: the recovery copy,
+**Show in console**, and the close button are all fully visible. Shared UI tests
+passed 46/46; app tests passed 69/69; Builder and PhotoLab typechecks passed.

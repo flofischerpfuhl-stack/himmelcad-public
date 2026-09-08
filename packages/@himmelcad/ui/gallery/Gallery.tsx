@@ -245,7 +245,7 @@ const specs: readonly ComponentSpec[] = [
     name: 'File surfaces',
     states: ['default'],
     render: () => (
-      <div style={{ display: 'grid', gap: 16, minWidth: 520 }}>
+      <div className="fileSurfacesFixture" data-gallery-bounds>
         <Menu ariaLabel="Recent projects" autoFocus={false} onClose={noop}>
           <MenuItem onSelect={noop}>
             <span style={{ display: 'grid', gap: 3, textAlign: 'left' }}>
@@ -284,6 +284,7 @@ const specs: readonly ComponentSpec[] = [
               Show in console
             </Button>
           }
+          onDismiss={noop}
         >
           Recovered 14 unsaved changes from 09:42:18
         </Toast>
@@ -995,7 +996,7 @@ const specs: readonly ComponentSpec[] = [
             ) : (
               <div className="galleryGroundActions">
                 <Button variant="quiet">Preview</Button>
-                <Button>Extract ground</Button>
+                <Button variant="primary">Extract ground</Button>
               </div>
             )}
           </div>

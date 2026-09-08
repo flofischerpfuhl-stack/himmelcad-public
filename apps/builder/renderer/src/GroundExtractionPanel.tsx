@@ -202,7 +202,7 @@ export function GroundExtractionPanel({
             >
               Preview
             </Button>
-            <Button disabled={!sourceName} onClick={() => onExtract(parameters)}>
+            <Button variant="primary" disabled={!sourceName} onClick={() => onExtract(parameters)}>
               Extract ground
             </Button>
           </>
