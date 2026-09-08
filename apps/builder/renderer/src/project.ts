@@ -24,8 +24,10 @@ import {
   type RegistrationSimilarity3d,
   type RegistrationIcpOptions,
   type PointCloudDisplayStyle,
+  type CanonicalEntity,
 } from '@himmelcad/app';
-import type { ProjectSnapshot } from '@himmelcad/data';
+import type { PhotoLabProductProvenanceV1, ProjectSnapshot } from '@himmelcad/data';
+import type { MeasurementV1 } from '@himmelcad/data/canonical';
 
 import { projectSnapshotFromJournalMirror } from './projectProjection.js';
 import type { BuilderDurabilityStatus } from './durabilityPolling.js';
@@ -46,6 +48,7 @@ export interface BuilderSnapshotSummary {
     readonly markerKind: 'manual' | 'session_start' | 'pre_restore';
     readonly createdAt: string;
     readonly origin: 'ui' | 'sdk' | 'agent' | 'system';
+    readonly restoreOf?: string | null;
   };
 }
 
@@ -61,6 +64,91 @@ export interface BuilderViewingBoxSummary {
   readonly revision: number;
   readonly name: string;
   readonly state: unknown;
+}
+
+export interface BuilderPhotoLabProvenanceSummary {
+  readonly entityId: string;
+  readonly componentSha256: string;
+  readonly provenance: PhotoLabProductProvenanceV1;
+}
+
+export interface BuilderMeasurementSummary {
+  readonly entityId: string;
+  readonly revision: number;
+  readonly name: string;
+  readonly measurement: MeasurementV1;
+}
+
+export const GROUND_ALGORITHM_ID = 'hcad.pointcloud.ground-progressive@1' as const;
+
+export interface GroundExtractionParameters {
+  readonly cellSizeM: number;
+  readonly slope: number;
+  readonly maxWindowM: number;
+  readonly initialDistanceM: number;
+}
+
+export interface GroundExtractionScope {
+  readonly viewingBox?: {
+    readonly center: readonly [number, number, number];
+    readonly halfExtents: readonly [number, number, number];
+    readonly rotation: readonly [number, number, number, number];
+    readonly keepInside: boolean;
+  } | null;
+  readonly visibleClasses: readonly number[];
+}
+
+export interface GroundResidualSummary {
+  readonly count: number;
+  readonly meanM: number;
+  readonly standardDeviationM: number;
+  readonly minimumM: number;
+  readonly maximumM: number;
+}
+
+export interface GroundExtractionSummary {
+  readonly sourcePoints: number;
+  readonly scopedPoints: number;
+  readonly groundPoints: number;
+  readonly ratio: number;
+  readonly residuals: GroundResidualSummary;
+  readonly membershipSha256: string;
+}
+
+export interface GroundPreviewResult {
+  readonly schemaId: 'hcad.pointcloud.ground-preview-result@1';
+  readonly algorithmId: typeof GROUND_ALGORITHM_ID;
+  readonly preview: {
+    readonly sampledPoints: number;
+    readonly groundPoints: number;
+    readonly ratio: number;
+    readonly residuals: GroundResidualSummary;
+    readonly points: readonly {
+      readonly position: readonly [number, number, number];
+      readonly classification: 'ground' | 'non_ground';
+    }[];
+  };
+}
+
+export interface GroundExtractionResult {
+  readonly schemaId: 'hcad.pointcloud.ground-result@1';
+  readonly algorithmId: typeof GROUND_ALGORITHM_ID;
+  readonly summary: GroundExtractionSummary;
+  readonly source: {
+    readonly entityId: string;
+    readonly revision: number;
+    readonly datasetId: string;
+    readonly classification: 2;
+  };
+  readonly groundCloud: {
+    readonly entityId: string;
+    readonly revision: number;
+    readonly datasetId: string;
+    readonly entityType: 'PointCloud';
+    readonly isDgm: false;
+    readonly meshSourceRole: 'ground_cloud';
+  };
+  readonly journalEntry: CanonicalJournalEntry;
 }
 
 /** Typed renderer adapter over the single Electron/sidecar RPC boundary. */
@@ -141,6 +229,14 @@ export class BuilderCanonicalProjectSession {
     return this.call('snapshot.list', {});
   }
 
+  async restoreSnapshot(entityId: string): Promise<ProjectSnapshot> {
+    const result = await this.call<{
+      readonly snapshot: BuilderSnapshotSummary;
+      readonly journalEntry: CanonicalJournalEntry;
+    }>('snapshot.restore', { entityId });
+    return this.acceptCommittedEntry(result.journalEntry);
+  }
+
   async createViewBookmark(name: string, state: unknown): Promise<BuilderViewBookmarkSummary> {
     const result = await this.call<{
       readonly bookmark: BuilderViewBookmarkSummary;
@@ -199,6 +295,48 @@ export class BuilderCanonicalProjectSession {
     return this.call('canonical.viewing_box.list', {});
   }
 
+  canonicalEntity(entityId: string): CanonicalEntity | null {
+    return this.mirror.entities[entityId] ?? null;
+  }
+
+  async createMeasurement(
+    entityId: string,
+    name: string,
+    measurement: MeasurementV1,
+  ): Promise<BuilderMeasurementSummary> {
+    const result = await this.call<{
+      readonly measurement: BuilderMeasurementSummary;
+      readonly journalEntry: CanonicalJournalEntry;
+    }>('measurement.create', {
+      commandId: `builder/measurement-create/${crypto.randomUUID()}`,
+      entityId,
+      name,
+      measurement,
+    });
+    await this.acceptCommittedEntry(result.journalEntry);
+    return result.measurement;
+  }
+
+  listMeasurements(): Promise<readonly BuilderMeasurementSummary[]> {
+    return this.call('measurement.list', {});
+  }
+
+  getMeasurement(entityId: string): Promise<BuilderMeasurementSummary> {
+    return this.call('measurement.get', { entityId });
+  }
+
+  async deleteMeasurement(entityId: string, expectedRevision: number): Promise<void> {
+    const result = await this.call<{ readonly journalEntry: CanonicalJournalEntry }>(
+      'measurement.remove',
+      {
+        commandId: `builder/measurement-delete/${crypto.randomUUID()}`,
+        entityId,
+        expectedRevision,
+      },
+    );
+    await this.acceptCommittedEntry(result.journalEntry);
+  }
+
   async deleteViewingBox(entityId: string, expectedRevision: number): Promise<void> {
     const result = await this.call<{ readonly journalEntry: CanonicalJournalEntry }>(
       'canonical.viewing_box.delete',
@@ -247,6 +385,12 @@ export class BuilderCanonicalProjectSession {
       entities,
       properties: [],
     });
+  }
+
+  productProvenance(
+    entityIds: readonly string[],
+  ): Promise<readonly BuilderPhotoLabProvenanceSummary[]> {
+    return this.call('product.import.provenance', { entityIds });
   }
 
   async listIoFormats() {
@@ -322,6 +466,56 @@ export class BuilderCanonicalProjectSession {
       display,
     });
     return this.acceptCommittedEntry(entry);
+  }
+
+  previewGround(input: {
+    readonly operationId: string;
+    readonly progressKey: string;
+    readonly sourceEntityId: string;
+    readonly parameters: GroundExtractionParameters;
+    readonly scope: GroundExtractionScope;
+    readonly sampleLimit?: number;
+  }): Promise<GroundPreviewResult> {
+    return this.call('pointcloud.ground.preview', {
+      operationId: input.operationId,
+      progressKey: input.progressKey,
+      algorithmId: GROUND_ALGORITHM_ID,
+      source: this.exactEntityVersions([input.sourceEntityId])[0],
+      parameters: input.parameters,
+      scope: input.scope,
+      sampleLimit: input.sampleLimit ?? 20_000,
+    });
+  }
+
+  async extractGround(input: {
+    readonly operationId: string;
+    readonly progressKey: string;
+    readonly sourceEntityId: string;
+    readonly groundEntityId: string;
+    readonly outputName: string;
+    readonly parameters: GroundExtractionParameters;
+    readonly scope: GroundExtractionScope;
+  }): Promise<GroundExtractionResult> {
+    const result = await this.call<GroundExtractionResult>('pointcloud.ground.extract', {
+      operationId: input.operationId,
+      progressKey: input.progressKey,
+      commandId: `builder/pointcloud-ground-extract/${crypto.randomUUID()}`,
+      algorithmId: GROUND_ALGORITHM_ID,
+      source: this.exactEntityVersions([input.sourceEntityId])[0],
+      groundEntityId: input.groundEntityId,
+      outputName: input.outputName,
+      parameters: input.parameters,
+      scope: input.scope,
+    });
+    await this.acceptCommittedEntry(result.journalEntry);
+    return result;
+  }
+
+  cancelGround(operationId: string): Promise<{
+    readonly operationId: string;
+    readonly cancellationRequested: boolean;
+  }> {
+    return this.call('pointcloud.ground.cancel', { operationId });
   }
 
   async planExport(request: Parameters<IoClient['planExport']>[0]) {

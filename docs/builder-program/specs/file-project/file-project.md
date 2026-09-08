@@ -816,11 +816,13 @@ violated — the pair of Save As is Open-archive, and both exist.
 new location mid-session; contradicts the archive's purpose).
 **Tunable:** no.
 
-**FP-D4 — Snapshots are canonical entities; restore is one compensating
-journaled command, snapshot-exempt, with automatic safety and session-start
-markers** (revised per review finding 1 and owner correction 2026-09-02).
-**Decision:** §1.4; every successful open creates a "Session start" marker
-before accepting commands; restore's
+**FP-D4 — Snapshots are canonical bookkeeping; restore is one compensating
+journaled command, snapshot-exempt, with automatic safety and retained
+session-start markers** (revised per review finding 1, owner correction
+2026-09-02, and architect decision P1/X6 on 2026-09-08).
+**Decision:** §1.4; an open following a session that changed the journal creates
+a "Session start" marker before accepting commands; an unchanged session creates
+none. Snapshot markers never enter the scene/entity-tree projection. Restore's
 affected-state set is all canonical state at the marked generation
 **except snapshot entities**, which are markers about the history line
 (VCS-tag semantics) and survive every restore — including the safety
@@ -835,13 +837,14 @@ reference. Measurement entities likewise restore as ordinary canonical state
 restore generalizes the same mechanism); X5 (snapshot/restore is a
 pair; restore/undo-restore is a pair); contract C4 restore-scope rule
 (this spec's review is its motivating case). **Rejected:**
-checkpoint-by-copying-the-store (duplicates gigabytes and falls
-outside the journal); restore including snapshots (erases its own
-safety net — the finding-1 blocker); confirmation dialog on restore
-(undo plus safety snapshot make it needless — viewing-box §1.7
-precedent). **Tunable:** yes — automatic safety/session-marker retention
-(30 days / 20 newest) and auto-cadence beyond those markers (off), per D1's
-tunable clause.
+checkpoint-by-copying-the-store (duplicates gigabytes and falls outside the
+journal); restore including snapshots (erases its own safety net — the
+finding-1 blocker); exposing bookkeeping markers as tree entities (G17 clutter
+and a false scene affordance). Restore uses the S-02 destructive confirmation
+layout even though undo and the safety snapshot remain available. **Tunable:**
+yes — retain the five newest session-start markers by default through
+`HCAD_SESSION_START_SNAPSHOT_RETENTION`; user-named markers remain unlimited;
+auto-cadence beyond safety and session-start markers stays off.
 
 **FP-D5 — Export always shows its plan; losses are disclosed before a
 byte is written.** **Decision:** two-step island; lossy plans list every

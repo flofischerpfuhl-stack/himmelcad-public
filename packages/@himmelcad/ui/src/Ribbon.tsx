@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode 
 import { ChevronDown, ChevronUp } from 'lucide-react';
 
 import styles from './Ribbon.module.css';
+import { Button } from './Button.js';
 import { nextLinearIndex } from './controlInteractions.js';
 import { registerEscapeRung } from './escapeLadder.js';
 import { Menu, MenuItem, MenuSubmenu } from './Menu.js';
@@ -23,8 +24,11 @@ export interface RibbonActionMenuItem {
   readonly label: string;
   readonly description?: string;
   readonly descriptionMono?: boolean;
+  readonly metadata?: string;
   readonly disabled?: boolean;
   readonly onSelect: () => void;
+  readonly secondaryActionLabel?: string;
+  readonly onSecondaryAction?: () => void;
 }
 
 export interface RibbonGroup {
@@ -213,11 +217,11 @@ export function Ribbon({ tabs }: RibbonProps): JSX.Element {
             <div key={group.id} className={styles.dropdownGroup}>
               <div className={styles.dropdownGroupLabel}>{group.label}</div>
               <div className={styles.dropdownItems}>
-                {group.actions.map((action) => (
+                {group.actions.map((action) =>
                   action.menuItems ? (
                     <MenuSubmenu
                       key={action.id}
-                      ariaLabel={`${action.label} projects`}
+                      ariaLabel={`${action.label} options`}
                       label={action.label}
                       className={styles.dropdownItem ?? ''}
                     >
@@ -226,22 +230,19 @@ export function Ribbon({ tabs }: RibbonProps): JSX.Element {
                           <span className={styles.actionMenuCopy}>
                             <span>{action.label}</span>
                             {action.shortcut ? (
-                              <span className={styles.actionMenuDescription}>{action.shortcut}</span>
+                              <span className={styles.actionMenuDescription}>
+                                {action.shortcut}
+                              </span>
                             ) : null}
                           </span>
                         </MenuItem>
                       ) : null}
                       {action.menuItems.map((item) => (
-                        <MenuItem key={item.id} disabled={item.disabled} onSelect={item.onSelect}>
-                          <span className={styles.actionMenuCopy}>
-                            <span>{item.label}</span>
-                            {item.description ? (
-                              <span className={item.descriptionMono ? styles.actionMenuPath : styles.actionMenuDescription}>
-                                {item.description}
-                              </span>
-                            ) : null}
-                          </span>
-                        </MenuItem>
+                        <RibbonMenuRow
+                          key={item.id}
+                          item={item}
+                          onDismiss={() => setDropdownTabId(null)}
+                        />
                       ))}
                     </MenuSubmenu>
                   ) : (
@@ -260,14 +261,16 @@ export function Ribbon({ tabs }: RibbonProps): JSX.Element {
                         setDropdownTabId(null);
                       }}
                     >
-                      {action.icon && <span className={styles.dropdownItemIcon}>{action.icon}</span>}
+                      {action.icon && (
+                        <span className={styles.dropdownItemIcon}>{action.icon}</span>
+                      )}
                       <span className={styles.dropdownItemLabel}>{action.label}</span>
                       {action.shortcut && (
                         <span className={styles.dropdownItemShortcut}>{action.shortcut}</span>
                       )}
                     </button>
-                  )
-                ))}
+                  ),
+                )}
               </div>
             </div>
           ))}
@@ -308,7 +311,10 @@ function RibbonActionButton({
         }}
       >
         {action.icon && <span className={styles.actionIcon}>{action.icon}</span>}
-        <span className={styles.actionLabel}>{action.label}</span>
+        <span className={styles.actionLabel}>
+          {action.label}
+          {action.menuItems && !action.onActivate ? <ChevronDown size={11} /> : null}
+        </span>
       </button>
       {action.menuItems && action.onActivate ? (
         <button
@@ -324,24 +330,61 @@ function RibbonActionButton({
       ) : null}
       {menuOpen && rect ? (
         <Menu
-          ariaLabel={`${action.label} projects`}
+          ariaLabel={`${action.label} options`}
           onClose={() => setMenuOpen(false)}
           className={styles.actionMenu!}
           style={{ position: 'fixed', left: rect.left, top: rect.bottom + 4 }}
         >
           {action.menuItems!.map((item) => (
-            <MenuItem key={item.id} disabled={item.disabled} onSelect={item.onSelect}>
-              <span className={styles.actionMenuCopy}>
-                <span>{item.label}</span>
-                {item.description ? (
-                  <span className={item.descriptionMono ? styles.actionMenuPath : styles.actionMenuDescription}>
-                    {item.description}
-                  </span>
-                ) : null}
-              </span>
-            </MenuItem>
+            <RibbonMenuRow key={item.id} item={item} onDismiss={() => setMenuOpen(false)} />
           ))}
         </Menu>
+      ) : null}
+    </div>
+  );
+}
+
+function RibbonMenuRow({
+  item,
+  onDismiss,
+}: {
+  readonly item: RibbonActionMenuItem;
+  readonly onDismiss: () => void;
+}): JSX.Element {
+  return (
+    <div className={styles.actionMenuRow}>
+      <MenuItem
+        className={item.metadata ? styles.actionMenuCompactItem : undefined}
+        disabled={item.disabled}
+        onSelect={item.onSelect}
+      >
+        <span className={styles.actionMenuCopy}>
+          <span>{item.label}</span>
+          {item.description ? (
+            <span
+              className={
+                item.descriptionMono ? styles.actionMenuPath : styles.actionMenuDescription
+              }
+            >
+              {item.description}
+            </span>
+          ) : null}
+        </span>
+        {item.metadata ? <span className={styles.actionMenuMetadata}>{item.metadata}</span> : null}
+      </MenuItem>
+      {item.secondaryActionLabel && item.onSecondaryAction ? (
+        <Button
+          className={styles.actionMenuSecondary}
+          variant="secondary"
+          size="small"
+          disabled={item.disabled}
+          onClick={() => {
+            item.onSecondaryAction?.();
+            onDismiss();
+          }}
+        >
+          {item.secondaryActionLabel}
+        </Button>
       ) : null}
     </div>
   );

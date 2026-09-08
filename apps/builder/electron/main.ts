@@ -280,6 +280,16 @@ interface SidecarStagedResourceRead {
   readonly bytesBase64: string;
 }
 
+interface SidecarCanonicalResourceRead {
+  readonly schemaVersion: number;
+  readonly objectHash: string;
+  readonly mediaType: string;
+  readonly offset: number;
+  readonly byteLength: number;
+  readonly totalByteLength: number;
+  readonly bytesBase64: string;
+}
+
 const canonicalResidencyArtifacts = new Map<string, CanonicalResidencyArtifactBinding>();
 const stagedArtifacts = new Map<string, StagedArtifactBinding>();
 
@@ -552,10 +562,61 @@ void app.whenReady().then(async () => {
           'accept-ranges': 'bytes',
         },
       });
-    } catch (error) {
-      return new Response(`canonical artifact unavailable: ${(error as Error).message}`, {
-        status: 404,
-      });
+    } catch {
+      const requested = request.headers.get('range');
+      const range = requested ? parseRange(requested, binding.byteLength) : null;
+      if (requested && !range) {
+        return new Response('invalid range', {
+          status: 416,
+          headers: {
+            ...CACHE_CORS_HEADERS,
+            'content-range': `bytes */${binding.byteLength}`,
+          },
+        });
+      }
+      const offset = range?.start ?? 0;
+      const byteLength = range ? range.end - range.start + 1 : binding.byteLength;
+      if (byteLength > 4 * 1024 * 1024) {
+        return new Response('canonical request exceeds range bound', { status: 413 });
+      }
+      try {
+        const result = await callSidecar<SidecarCanonicalResourceRead>({
+          method: 'canonical.residency.resource.read',
+          params: { objectHash: binding.objectHash, offset, byteLength },
+        });
+        if (
+          result.schemaVersion !== 1 ||
+          result.objectHash !== binding.objectHash ||
+          result.mediaType !== binding.mediaType ||
+          result.offset !== offset ||
+          result.byteLength !== byteLength ||
+          result.totalByteLength !== binding.byteLength
+        ) {
+          return new Response('canonical read descriptor mismatch', { status: 409 });
+        }
+        const bytes = Buffer.from(result.bytesBase64, 'base64');
+        if (bytes.byteLength !== byteLength) {
+          return new Response('canonical read byte length mismatch', { status: 409 });
+        }
+        return new Response(new Uint8Array(bytes), {
+          status: range ? 206 : 200,
+          headers: {
+            ...CACHE_CORS_HEADERS,
+            'content-type': binding.mediaType,
+            'content-length': String(byteLength),
+            ...(range
+              ? {
+                  'content-range': `bytes ${offset}-${offset + byteLength - 1}/${binding.byteLength}`,
+                }
+              : {}),
+            'accept-ranges': 'bytes',
+          },
+        });
+      } catch (error) {
+        return new Response(`canonical artifact unavailable: ${(error as Error).message}`, {
+          status: 404,
+        });
+      }
     }
   });
 
@@ -714,7 +775,7 @@ function registerIpc(): void {
     const registration = assertJobRegistration(input);
     return jobRegistry.register(registration, {
       cancel: async (job) => {
-        await cancelSidecarRegistration(job);
+        await cancelSidecarJob(job);
       },
     });
   });
@@ -861,6 +922,38 @@ function registerIpc(): void {
     if (typeof sessionId !== 'string') return false;
     return revokeStagedSession(sessionId);
   });
+  ipcMain.handle('product-import:inspect', async (_event, sourcePath: unknown) => {
+    if (typeof sourcePath !== 'string' || !sourcePath.trim()) return null;
+    const source = resolve(sourcePath);
+    const stat = await fs.stat(source);
+    const root = stat.isDirectory() ? source : resolve(source, '..');
+    const readyPath = resolve(root, 'ready.json');
+    const manifestPath = resolve(root, 'manifest.json');
+    if (!(await pathExists(readyPath)) || !(await pathExists(manifestPath))) return null;
+    const [readyStat, manifestStat] = await Promise.all([fs.stat(readyPath), fs.stat(manifestPath)]);
+    if (readyStat.size > 64 * 1024 || manifestStat.size > 16 * 1024 * 1024) return null;
+    const [readyBytes, manifestBytes] = await Promise.all([
+      fs.readFile(readyPath, 'utf8'),
+      fs.readFile(manifestPath, 'utf8'),
+    ]);
+    const ready = JSON.parse(readyBytes) as Record<string, unknown>;
+    const manifest = JSON.parse(manifestBytes) as Record<string, unknown>;
+    const product = manifest.product as Record<string, unknown> | undefined;
+    if (
+      ready.schema_id !== 'hcad.product-import-package-ready@1' ||
+      manifest.schema_id !== 'hcad.product-import-package-manifest@1' ||
+      typeof product?.label !== 'string' ||
+      typeof product.kind !== 'string' ||
+      typeof ready.package_sha256 !== 'string'
+    ) {
+      return null;
+    }
+    return {
+      product: product.label,
+      productKind: product.kind,
+      packageSha256: ready.package_sha256,
+    };
+  });
   ipcMain.handle('viewing-box-bake:publish', async (_event, input: unknown) => {
     const value = input as {
       readonly cacheKey?: unknown;
@@ -998,7 +1091,7 @@ function registerIpc(): void {
         ...(extensions.length > 0 ? [{ name: 'Supported formats', extensions }] : []),
         { name: 'All files', extensions: ['*'] },
       ],
-      properties: ['openFile', 'multiSelections'],
+      properties: ['openFile', 'openDirectory', 'multiSelections'],
     });
     return result.canceled ? [] : result.filePaths;
   });
@@ -1302,6 +1395,35 @@ async function cancelSidecarRegistration(job: AppJob): Promise<void> {
       cancellation: {
         cancellable: false,
         reason: 'The current import unit must finish safely',
+        atNextSafeBoundary: true,
+      },
+    });
+  }
+}
+
+async function cancelSidecarJob(job: AppJob): Promise<void> {
+  if (!job.progressKey) return;
+  if (job.owner !== 'builder.ground-extraction') {
+    await cancelSidecarRegistration(job);
+    return;
+  }
+  const acknowledgement = await callSidecar<{ readonly cancellationRequested: boolean }>({
+    method: 'pointcloud.ground.cancel',
+    params: { operationId: job.progressKey },
+  });
+  const previewOperationId = job.context?.previewOperationId;
+  if (typeof previewOperationId === 'string') {
+    await callSidecar({
+      method: 'pointcloud.ground.cancel',
+      params: { operationId: previewOperationId },
+    });
+  }
+  if (acknowledgement.cancellationRequested && jobRegistry.get(job.id).state === 'cancelling') {
+    jobRegistry.update(job.id, {
+      phase: 'Cancelling ground extraction',
+      cancellation: {
+        cancellable: false,
+        reason: 'Stopping at the next bounded point-cloud chunk',
         atNextSafeBoundary: true,
       },
     });

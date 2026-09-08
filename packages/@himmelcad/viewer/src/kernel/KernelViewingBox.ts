@@ -10,9 +10,9 @@ export type KernelViewingBoxOperation = 'keepInside' | 'removeInside';
 export type KernelViewingBoxLockMode = 'unlocked' | 'baked' | 'editFreeze';
 
 /**
- * View-local, non-canonical clipping tool state. Rotation is expressed as a
- * unit quaternion in `[x, y, z, w]` order so repeated handle drags do not
- * accumulate Euler singularities.
+ * Renderer projection of the canonical viewing-box entity state. Rotation is
+ * expressed as a unit quaternion in `[x, y, z, w]` order so repeated handle
+ * drags do not accumulate Euler singularities.
  */
 export interface KernelViewingBoxState {
   readonly id: string;

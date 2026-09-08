@@ -113,3 +113,10 @@ export {
 export type { ConstructionBarProps, ViewportBottomBarProps } from './InteractionBars.js';
 export { SelectionVisuals } from './SelectionVisuals.js';
 export type { SelectionVisualsProps } from './SelectionVisuals.js';
+export { MeasurementGraphics, MeasurementLiveReadout } from './MeasurementVisuals.js';
+export type {
+  MeasurementGraphicItem,
+  MeasurementGraphicsProps,
+  MeasurementLiveReadoutProps,
+  MeasurementScreenPoint,
+} from './MeasurementVisuals.js';

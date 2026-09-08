@@ -155,6 +155,47 @@
   font-family: var(--hc-font-ui);
 }
 
+.provenanceGroup {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  background: var(--hc-bg-island-lo);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+}
+
+.provenanceGroup dl {
+  display: grid;
+  grid-template-columns: minmax(92px, auto) minmax(0, 1fr);
+  gap: 4px 8px;
+  margin: 0;
+  font: 500 12px/1.4 var(--hc-font-mono);
+}
+
+.provenanceGroup dt {
+  color: var(--hc-fg-subtle);
+}
+
+.provenanceGroup dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--hc-fg-muted);
+}
+
+.provenanceBadge {
+  display: inline-grid;
+  width: 15px;
+  height: 15px;
+  margin-left: 5px;
+  place-items: center;
+  color: var(--hc-accent-fg, var(--hc-fg-strong));
+  font: 600 11px/1 var(--hc-font-ui);
+  background: var(--hc-selection-bg, var(--hc-press-bg));
+  border: 1px solid var(--hc-selection-border);
+  border-radius: 50%;
+}
+
 .toolPanel {
   display: grid;
   gap: 12px;
@@ -168,6 +209,10 @@
   background: var(--hc-bg-island-lo);
   border: 1px solid var(--hc-border-subtle);
   border-radius: var(--hc-radius-sm);
+}
+
+.segmentedPair {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .segment,
@@ -271,6 +316,21 @@
   border-radius: var(--hc-radius-sm);
 }
 
+.viewingBoxLockCopy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.viewingBoxLockDetail {
+  overflow: hidden;
+  color: var(--hc-fg-muted);
+  font-size: 10px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .vectorEditor {
   display: grid;
   gap: 6px;
@@ -293,6 +353,18 @@
   gap: 7px;
   color: var(--hc-fg-subtle);
   font-size: 10px;
+}
+
+.extentsEditor {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.extentsEditor legend {
+  grid-column: 1 / -1;
+}
+
+.extentsEditor label {
+  grid-template-columns: 34px minmax(0, 1fr);
 }
 
 .vectorEditor input {

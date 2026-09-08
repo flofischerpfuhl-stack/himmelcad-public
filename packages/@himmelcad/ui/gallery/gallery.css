@@ -142,11 +142,56 @@ textarea {
   max-width: 100%;
 }
 
+.snapshotsMenuFixture {
+  display: grid;
+  width: min(520px, 100%);
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-md);
+  background: var(--hc-bg-island);
+  box-shadow: var(--hc-shadow-popover);
+}
+
+.snapshotMenuRowFixture {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto 64px;
+  align-items: center;
+  gap: 14px;
+  height: 28px;
+  padding: 0 4px 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-default);
+  font-size: 13px;
+}
+
+.snapshotMenuRowFixtureActive {
+  color: var(--hc-fg-strong);
+  background: var(--hc-hover-bg);
+  border-color: var(--hc-border-subtle);
+}
+
+.snapshotMenuRowFixture:not(.snapshotMenuRowFixtureActive) > button {
+  visibility: hidden;
+}
+
+.snapshotMenuMetaFixture {
+  color: var(--hc-fg-muted);
+  font-family: var(--hc-font-mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 .galleryPanel {
   width: 100%;
   height: 250px;
   overflow: hidden;
   border-radius: var(--hc-radius-md);
+}
+
+.galleryFunctionPanel {
+  width: 320px;
 }
 
 .splitterDemo {
@@ -266,6 +311,10 @@ textarea {
   position: static !important;
 }
 
+.gallerySample .galleryFunctionPanel [role='menu'] {
+  position: absolute !important;
+}
+
 .gallerySample [role='menu'] [role='menu'] {
   position: fixed !important;
 }
@@ -372,6 +421,34 @@ textarea {
   color: var(--hc-fg-strong);
 }
 
+.viewingBoxFixturePanel > label,
+.viewingBoxFixtureExtents label {
+  display: grid;
+  gap: 3px;
+}
+
+.viewingBoxFixturePanel input {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.viewingBoxFixtureSegment {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 4px;
+  text-align: center;
+  background: var(--hc-bg-island-hi);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+}
+
+.viewingBoxFixtureExtents {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
 .viewingBoxFixtureBanner {
   min-height: 24px;
   padding: 5px 7px;
@@ -379,6 +456,51 @@ textarea {
   background: var(--hc-bg-island-hi);
   border: 1px solid var(--hc-selection-border);
   border-radius: var(--hc-radius-sm);
+}
+
+.galleryGroundPanel {
+  width: 320px;
+  height: 650px;
+}
+
+.galleryGroundBody {
+  display: grid;
+  gap: 10px;
+}
+
+.galleryGroundBody > label {
+  display: grid;
+  gap: 4px;
+  color: var(--hc-fg-muted);
+  font-size: 12px;
+}
+
+.galleryGroundSource,
+.galleryGroundResult {
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island-hi);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-md);
+}
+
+.galleryGroundResult {
+  font-family: var(--hc-font-mono);
+  font-size: 12px;
+}
+
+.galleryGroundStatus,
+.galleryGroundResult span {
+  color: var(--hc-fg-muted);
+  font-size: 12px;
+}
+
+.galleryGroundActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .data-force-hover [data-gallery-active],

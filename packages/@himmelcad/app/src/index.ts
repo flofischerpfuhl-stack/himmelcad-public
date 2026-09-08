@@ -7,6 +7,7 @@ export * from './journalMirror.js';
 export * from './jobs.js';
 export * from './interaction.js';
 export * from './localHistoryPersistence.js';
+export * from './measurement.js';
 export * from './protocol.js';
 export * from './selection.js';
 export * from './view.js';

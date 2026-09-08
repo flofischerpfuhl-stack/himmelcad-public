@@ -1,0 +1,147 @@
+.root {
+  display: grid;
+  gap: 12px;
+}
+
+.metric {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-md);
+}
+
+.metric legend,
+.listHeader,
+.binding {
+  color: var(--hc-fg-muted);
+  font: 400 11px/1.4 var(--hc-font-ui);
+}
+
+.metric legend {
+  padding: 0 4px;
+}
+
+.metric label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--hc-fg);
+  font-size: 12px;
+}
+
+.binding,
+.listHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.binding strong {
+  color: var(--hc-fg);
+  font-weight: 500;
+}
+
+.list {
+  display: grid;
+  gap: 4px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: var(--hc-radius-sm);
+}
+
+.row:hover,
+.selected {
+  border-color: var(--hc-border-subtle);
+  background: var(--hc-bg-island-hi);
+}
+
+.rowMain {
+  display: grid;
+  min-width: 0;
+  padding: 5px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.name {
+  overflow: hidden;
+  color: var(--hc-fg);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowValue,
+.mono {
+  color: var(--hc-fg-muted);
+  font: 400 11px/1.4 var(--hc-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.eye {
+  color: var(--hc-geometry-support);
+  font-size: 8px;
+}
+
+.empty {
+  padding: 18px 8px;
+  color: var(--hc-fg-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.properties {
+  display: grid;
+  gap: 8px;
+}
+
+.properties h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.property {
+  display: grid;
+  grid-template-columns: minmax(80px, auto) minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  font-size: 11px;
+}
+
+.property > span {
+  color: var(--hc-fg-muted);
+}
+
+.property output {
+  overflow-wrap: anywhere;
+  color: var(--hc-fg);
+  text-align: right;
+}
+
+.anchorBlock {
+  display: grid;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 9px;
+  border-top: 1px solid var(--hc-border-subtle);
+}
+
+.anchorBlock strong {
+  color: var(--hc-fg);
+  font-size: 11px;
+  font-weight: 600;
+}

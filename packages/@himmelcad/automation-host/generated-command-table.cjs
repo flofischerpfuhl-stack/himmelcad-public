@@ -4,6 +4,10 @@ module.exports = Object.freeze([
   {
     "id": "select.set",
     "label": "Select under cursor ▸",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "pickCandidates",
@@ -21,6 +25,10 @@ module.exports = Object.freeze([
   {
     "id": "select.clear",
     "label": "Clear selection",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasSelection",
@@ -38,6 +46,10 @@ module.exports = Object.freeze([
   {
     "id": "edit.clipboard.paste_in_place",
     "label": "Paste in place",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": "Ctrl+Shift+V",
     "enablement": "clipboardAdmissible",
@@ -55,6 +67,10 @@ module.exports = Object.freeze([
   {
     "id": "entity.rename",
     "label": "Rename",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": "F2",
     "enablement": "singleEditableNonCloud",
@@ -72,6 +88,9 @@ module.exports = Object.freeze([
   {
     "id": "photolab.images.remove",
     "label": "Remove from project…",
+    "products": [
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasSelection",
@@ -85,7 +104,6 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab P11 command rows",
     "host": "renderer",
-    "owner": "photolab",
     "entityKinds": [
       "CameraImage"
     ],
@@ -94,6 +112,10 @@ module.exports = Object.freeze([
   {
     "id": "file.import",
     "label": "Import…",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasProject",
@@ -111,6 +133,10 @@ module.exports = Object.freeze([
   {
     "id": "project.new",
     "label": "New",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "always",
@@ -128,6 +154,10 @@ module.exports = Object.freeze([
   {
     "id": "project.open",
     "label": "Open",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": "Ctrl+O",
     "enablement": "always",
@@ -145,6 +175,10 @@ module.exports = Object.freeze([
   {
     "id": "project.recent",
     "label": "Recent",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "query",
     "shortcut": null,
     "enablement": "always",
@@ -162,6 +196,10 @@ module.exports = Object.freeze([
   {
     "id": "project.save",
     "label": "Save",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": "Ctrl+S",
     "enablement": "hasProject",
@@ -179,6 +217,10 @@ module.exports = Object.freeze([
   {
     "id": "project.save_as",
     "label": "Save As…",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": "Ctrl+Shift+S",
     "enablement": "hasProject",
@@ -196,6 +238,10 @@ module.exports = Object.freeze([
   {
     "id": "project.close",
     "label": "Close",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasProject",
@@ -213,6 +259,10 @@ module.exports = Object.freeze([
   {
     "id": "view.frame",
     "label": "Frame all",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": "F",
     "enablement": "hasProject",
@@ -230,6 +280,10 @@ module.exports = Object.freeze([
   {
     "id": "view.camera.undo",
     "label": "Undo camera",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasProject",
@@ -247,6 +301,10 @@ module.exports = Object.freeze([
   {
     "id": "view.camera.redo",
     "label": "Redo camera",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasProject",
@@ -264,13 +322,17 @@ module.exports = Object.freeze([
   {
     "id": "view.preset.perspective",
     "label": "Perspective",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasProject",
     "surfaces": {
       "ribbon": true,
       "contextMenu": false,
-      "quickSurface": true,
+      "quickSurface": false,
       "console": true,
       "automation": true
     },
@@ -281,6 +343,10 @@ module.exports = Object.freeze([
   {
     "id": "view.hud.toggle",
     "label": "Viewport HUD",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasProject",
@@ -298,6 +364,10 @@ module.exports = Object.freeze([
   {
     "id": "view.display.undo",
     "label": "Undo display",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasProject",
@@ -315,6 +385,10 @@ module.exports = Object.freeze([
   {
     "id": "view.display.redo",
     "label": "Redo display",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasProject",
@@ -332,13 +406,17 @@ module.exports = Object.freeze([
   {
     "id": "view.bookmark.create",
     "label": "Capture view",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasProject",
     "surfaces": {
       "ribbon": true,
       "contextMenu": false,
-      "quickSurface": true,
+      "quickSurface": false,
       "console": true,
       "automation": true
     },
@@ -349,23 +427,34 @@ module.exports = Object.freeze([
   {
     "id": "view.bookmark.restore",
     "label": "Restore bookmark",
+    "products": [
+      "builder"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasProject",
     "surfaces": {
       "ribbon": true,
-      "contextMenu": false,
-      "quickSurface": true,
+      "contextMenu": true,
+      "quickSurface": false,
       "console": true,
       "automation": true
     },
     "group": "view",
     "ownerSpec": "View VD-D4",
-    "host": "renderer"
+    "host": "renderer",
+    "entityKinds": [
+      "ViewBookmark"
+    ],
+    "allowMultiSelect": false
   },
   {
     "id": "view.preset.top",
     "label": "Top",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": "7",
     "enablement": "hasProject",
@@ -383,6 +472,10 @@ module.exports = Object.freeze([
   {
     "id": "view.preset.front",
     "label": "Front",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": "1",
     "enablement": "hasProject",
@@ -400,6 +493,10 @@ module.exports = Object.freeze([
   {
     "id": "view.preset.right",
     "label": "Right",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": "3",
     "enablement": "hasProject",
@@ -417,6 +514,10 @@ module.exports = Object.freeze([
   {
     "id": "view.preset.isometric",
     "label": "Perspective",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": "5",
     "enablement": "hasProject",
@@ -434,6 +535,10 @@ module.exports = Object.freeze([
   {
     "id": "entity.zoom_to",
     "label": "Zoom to",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": "Z",
     "enablement": "hasSelection",
@@ -451,6 +556,10 @@ module.exports = Object.freeze([
   {
     "id": "entity.hide",
     "label": "Hide",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": "H",
     "enablement": "visibleSelection",
@@ -468,6 +577,10 @@ module.exports = Object.freeze([
   {
     "id": "entity.show",
     "label": "Show",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": "Shift+H",
     "enablement": "hiddenSelection",
@@ -485,6 +598,9 @@ module.exports = Object.freeze([
   {
     "id": "entity.isolate",
     "label": "Isolate",
+    "products": [
+      "builder"
+    ],
     "kind": "command",
     "shortcut": "I",
     "enablement": "hasSelection",
@@ -500,98 +616,191 @@ module.exports = Object.freeze([
     "host": "renderer"
   },
   {
+    "id": "measure.point",
+    "label": "Measure point",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "Measurement/Inspect MI-D1–MI-D14; owner: measure-inspect",
+    "host": "renderer"
+  },
+  {
+    "id": "measure.distance",
+    "label": "Measure distance",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "Measurement/Inspect MI-D1–MI-D14; owner: measure-inspect",
+    "host": "renderer"
+  },
+  {
+    "id": "measure.dz",
+    "label": "Measure height difference",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "Measurement/Inspect MI-D1–MI-D14; owner: measure-inspect",
+    "host": "renderer"
+  },
+  {
+    "id": "measurement.list",
+    "label": "Measurements",
+    "products": [
+      "builder"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "Measurement/Inspect MI-D3–MI-D5; owner: measure-inspect",
+    "host": "renderer"
+  },
+  {
     "id": "view.box.place",
     "label": "Create viewing box",
+    "products": [
+      "builder"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasProject",
     "surfaces": {
       "ribbon": true,
       "contextMenu": false,
-      "quickSurface": true,
+      "quickSurface": false,
       "console": true,
       "automation": true
     },
     "group": "view",
     "ownerSpec": "Viewing Box VB-D1/VB-D3",
-    "host": "renderer",
-    "owner": "builder"
+    "host": "renderer"
   },
   {
     "id": "view.box.update",
     "label": "Update viewing box",
+    "products": [
+      "builder"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasProject",
     "surfaces": {
       "ribbon": false,
       "contextMenu": false,
-      "quickSurface": true,
+      "quickSurface": false,
       "console": true,
       "automation": true
     },
     "group": "view",
     "ownerSpec": "Viewing Box VB-D2/VB-D5",
-    "host": "renderer",
-    "owner": "builder"
+    "host": "renderer"
   },
   {
     "id": "view.box.set_operation",
     "label": "Set viewing box operation",
+    "products": [
+      "builder"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasProject",
     "surfaces": {
       "ribbon": false,
       "contextMenu": false,
-      "quickSurface": true,
+      "quickSurface": false,
       "console": true,
       "automation": true
     },
     "group": "view",
     "ownerSpec": "Viewing Box VB-D5",
-    "host": "renderer",
-    "owner": "builder"
+    "host": "renderer"
   },
   {
     "id": "view.box.lock",
     "label": "Lock viewing box",
+    "products": [
+      "builder"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasProject",
     "surfaces": {
       "ribbon": false,
       "contextMenu": false,
-      "quickSurface": true,
+      "quickSurface": false,
       "console": true,
       "automation": true
     },
     "group": "view",
     "ownerSpec": "Viewing Box VB-D6–VB-D8",
-    "host": "renderer",
-    "owner": "builder"
+    "host": "renderer"
   },
   {
     "id": "view.box.unlock",
     "label": "Unlock viewing box",
+    "products": [
+      "builder"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasProject",
     "surfaces": {
       "ribbon": false,
       "contextMenu": false,
-      "quickSurface": true,
+      "quickSurface": false,
       "console": true,
       "automation": true
     },
     "group": "view",
     "ownerSpec": "Viewing Box VB-D6",
-    "host": "renderer",
-    "owner": "builder"
+    "host": "renderer"
   },
   {
     "id": "view.box.rename",
     "label": "Rename viewing box",
+    "products": [
+      "builder"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasProject",
@@ -605,7 +814,6 @@ module.exports = Object.freeze([
     "group": "view",
     "ownerSpec": "Viewing Box VB-D4",
     "host": "renderer",
-    "owner": "builder",
     "entityKinds": [
       "Object"
     ],
@@ -614,6 +822,9 @@ module.exports = Object.freeze([
   {
     "id": "view.box.activate",
     "label": "Activate viewing box",
+    "products": [
+      "builder"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasProject",
@@ -627,7 +838,30 @@ module.exports = Object.freeze([
     "group": "view",
     "ownerSpec": "Viewing Box VB-D4",
     "host": "renderer",
-    "owner": "builder",
+    "entityKinds": [
+      "Object"
+    ],
+    "allowMultiSelect": false
+  },
+  {
+    "id": "view.box.deactivate",
+    "label": "Deactivate viewing box",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "Viewing Box VB-D4",
+    "host": "renderer",
     "entityKinds": [
       "Object"
     ],
@@ -636,6 +870,9 @@ module.exports = Object.freeze([
   {
     "id": "view.box.remove",
     "label": "Remove viewing box",
+    "products": [
+      "builder"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "hasProject",
@@ -649,7 +886,6 @@ module.exports = Object.freeze([
     "group": "view",
     "ownerSpec": "Viewing Box VB-D4",
     "host": "renderer",
-    "owner": "builder",
     "entityKinds": [
       "Object"
     ],
@@ -658,24 +894,30 @@ module.exports = Object.freeze([
   {
     "id": "view.box.list",
     "label": "List viewing boxes",
+    "products": [
+      "builder"
+    ],
     "kind": "query",
     "shortcut": null,
     "enablement": "hasProject",
     "surfaces": {
       "ribbon": false,
       "contextMenu": false,
-      "quickSurface": true,
+      "quickSurface": false,
       "console": true,
       "automation": true
     },
     "group": "view",
     "ownerSpec": "Viewing Box VB-D4",
-    "host": "renderer",
-    "owner": "builder"
+    "host": "renderer"
   },
   {
     "id": "entity.properties",
     "label": "Properties",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "query",
     "shortcut": "Alt+Enter",
     "enablement": "hasSelection",
@@ -693,9 +935,28 @@ module.exports = Object.freeze([
   {
     "id": "entity.export",
     "label": "Export…",
+    "products": [
+      "builder",
+      "photolab"
+    ],
     "kind": "command",
     "shortcut": null,
-    "enablement": "exportableSelection",
+    "enablement": "hasSelection",
+    "productPredicates": {
+      "builder": {
+        "selectionExportable": true
+      },
+      "photolab": {
+        "selectionExportable": true,
+        "entityKinds": [
+          "PointCloud",
+          "GaussianSplatCloud",
+          "DigitalElevationModel",
+          "Mesh",
+          "TexturedMesh"
+        ]
+      }
+    },
     "surfaces": {
       "ribbon": true,
       "contextMenu": true,
@@ -710,6 +971,9 @@ module.exports = Object.freeze([
   {
     "id": "photolab.gcp.images",
     "label": "Images containing this GCP",
+    "products": [
+      "photolab"
+    ],
     "kind": "query",
     "shortcut": null,
     "enablement": "hasSelection",
@@ -723,15 +987,41 @@ module.exports = Object.freeze([
     "group": "entity-specific",
     "ownerSpec": "PhotoLab P11 command rows",
     "host": "renderer",
-    "owner": "photolab",
     "entityKinds": [
       "GroundControlPoint"
     ],
     "allowMultiSelect": false
   },
   {
+    "id": "measurement.delete",
+    "label": "Delete measurement",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasSelection",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Measurement/Inspect MI-D3; owner: measure-inspect",
+    "host": "renderer",
+    "entityKinds": [
+      "Object"
+    ],
+    "allowMultiSelect": false
+  },
+  {
     "id": "pointcloud.display.set",
     "label": "Display properties",
+    "products": [
+      "builder"
+    ],
     "kind": "command",
     "shortcut": null,
     "enablement": "cloudSelection",
@@ -749,5 +1039,70 @@ module.exports = Object.freeze([
       "PointCloud"
     ],
     "allowMultiSelect": true
+  },
+  {
+    "id": "pointcloud.ground.extract",
+    "label": "Extract ground…",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "cloudSelection",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Point cloud PC-D19; MASTER-PLAN row 17; owner: pointcloud",
+    "host": "renderer",
+    "entityKinds": [
+      "PointCloud"
+    ],
+    "allowMultiSelect": false
+  },
+  {
+    "id": "pointcloud.ground.preview",
+    "label": "Preview ground",
+    "products": [
+      "builder"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "cloudSelection",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Point cloud PC-D19; MASTER-PLAN row 17; owner: pointcloud",
+    "host": "renderer",
+    "allowMultiSelect": false
+  },
+  {
+    "id": "pointcloud.ground.cancel",
+    "label": "Cancel ground extraction",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Point cloud PC-D19; S-05 jobs; MASTER-PLAN row 17; owner: pointcloud",
+    "host": "renderer"
   }
 ]);

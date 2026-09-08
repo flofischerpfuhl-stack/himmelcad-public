@@ -304,6 +304,15 @@ canonical state, including admitted measurements and recipes, restores
 atomically; manual retention is never collected automatically; cancellation of
 a large restore publishes nothing.
 
+Architect refinement P1/X6 (2026-09-08): the canonical marker is project
+bookkeeping, never a scene/entity-tree node. A changed session receives its
+marker on the next open; an unchanged session receives none. The five newest
+session-start markers are retained by default with FIFO compaction in one
+journaled bookkeeping command; user-named markers remain unlimited. Restore now
+uses the S-02 destructive confirmation dialog. These refinements narrow the UI,
+cadence, and tunable retention policy without changing this ADR's admitted
+schema or snapshot-exempt forward-restore semantics.
+
 ### Item 6 — derived recipes and Mesh source roles
 
 This ADR adopts `DerivedRecipeV1` from Mesh/Terrain §10.1 as
@@ -314,7 +323,10 @@ exclusion, and content hashes required by MT-D26. Release 0.5 producers are
 limited to checked DGM creation/regeneration, region repair's temporary use of
 the same lifecycle, and the `hcad.mesh.simplify-terrain@1` downsampling payload.
 No Civil, Raster, BIM, contour, volume, hull, solid, strata, or Draw-offset
-producer is authorized here.
+producer is authorized here. Work package 0.5-02 additionally admits
+`hcad.pointcloud.ground-progressive@1`: its extracted `PointCloud` is a baked
+derived output with source role `outdoor_ground_source` and output role
+`ground_cloud`; it is not a DGM.
 
 Owning specification:
 `docs/builder-program/specs/mesh-terrain/mesh-terrain.md`, MT-D25 and MT-D26.
@@ -352,8 +364,9 @@ retention, linked/stale/regenerating/detached/error transitions, atomic
 multi-output restore, reverse-index rebuild, archive/journal replay, immutable
 resource reachability, and generated SDK parity pass. It incorporates
 `G-B2-MESH-DRAFT-RULES`, `G-B2-MESH-RECOVERY`, `G-RW-DGM-SMOOTH`, and
-`G-RW-DGM-DOWNSAMPLE` at their owning tiers and fails if any deferred recipe
-producer can publish.
+`G-RW-DGM-DOWNSAMPLE` at their owning tiers, plus the 0.5-02 ground-cloud
+recipe assertions within `G-RW-EXTRACT-GROUND-FLOOR`, and fails if any deferred
+recipe producer can publish.
 
 ### Item 7 — point acquisition and support role; offset deferred
 

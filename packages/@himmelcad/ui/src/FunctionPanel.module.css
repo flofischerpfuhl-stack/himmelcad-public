@@ -11,6 +11,17 @@
   background: transparent;
 }
 
+.detached {
+  position: fixed;
+  z-index: 40;
+  top: 92px;
+  right: 24px;
+  width: min(360px, calc(100vw - 48px));
+  height: min(680px, calc(100vh - 132px));
+  padding: 34px 0 0;
+  filter: drop-shadow(0 14px 30px rgb(0 0 0 / 48%));
+}
+
 .header {
   position: absolute;
   z-index: 4;
@@ -19,7 +30,7 @@
   left: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   height: 30px;
   padding: 0;
   background: transparent;
@@ -27,8 +38,12 @@
   overflow: visible;
 }
 
-.header > :first-child {
+.tabControls {
+  position: relative;
+  display: flex;
   flex: 1 1 auto;
+  align-items: stretch;
+  gap: 3px;
   min-width: 0;
 }
 
@@ -36,20 +51,18 @@
   display: flex;
   flex: 1 1 auto;
   align-items: stretch;
-  gap: 5px;
+  gap: 3px;
   min-width: 0;
-  overflow-x: auto;
-  padding: 1px 1px 1px 0;
-  scrollbar-width: none;
-}
-
-.closeableTabs::-webkit-scrollbar {
-  display: none;
+  overflow: hidden;
+  padding: 1px 0;
 }
 
 .closeableTab,
 .closeableTabGroup {
-  flex: 0 0 auto;
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-width: 96px;
+  max-width: 100%;
   min-height: var(--hc-size-tab);
   height: var(--hc-size-tab);
   border: 1px solid var(--hc-border-default);
@@ -64,7 +77,11 @@
 }
 
 .closeableTab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 0 12px;
+  overflow: hidden;
 }
 
 .closeableTabGroup {
@@ -75,11 +92,22 @@
 }
 
 .closeableTabLabel {
-  display: inline-flex;
+  display: flex;
+  min-width: 0;
+  flex: 1;
   align-items: center;
   gap: 6px;
   padding: 0 6px 0 12px;
+  overflow: hidden;
   color: inherit;
+}
+
+.tabLabelText {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tabClose {
@@ -87,6 +115,7 @@
   align-items: center;
   justify-content: center;
   width: 24px;
+  flex: 0 0 24px;
   color: inherit;
 }
 
@@ -111,10 +140,69 @@
 }
 
 .tabDot {
+  flex: 0 0 auto;
   width: 5px;
   height: 5px;
   border-radius: 50%;
   background: var(--hc-fg-muted);
+}
+
+.overflowButton {
+  display: inline-flex;
+  width: 24px;
+  height: var(--hc-size-tab);
+  min-height: var(--hc-size-tab);
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  color: var(--hc-fg-muted);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-island);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  font-size: 14px;
+}
+
+.overflowButton:hover,
+.overflowButton[aria-expanded='true'] {
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-island-hi);
+  border-color: var(--hc-border-strong);
+}
+
+.overflowButton:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: -2px;
+}
+
+.overflowMenu {
+  position: absolute;
+  top: 29px;
+  right: 0;
+  min-width: 180px;
+}
+
+.overflowMenuRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+}
+
+.overflowMenuTab {
+  min-width: 0;
+  border-radius: var(--hc-radius-sm) 0 0 var(--hc-radius-sm);
+}
+
+.overflowMenuClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 0 var(--hc-radius-sm) var(--hc-radius-sm) 0;
+}
+
+.overflowMenuClose:hover,
+.overflowMenuClose:focus-visible {
+  color: var(--hc-error);
 }
 
 .islandBody {
@@ -172,6 +260,29 @@
   transition:
     background var(--hc-motion-fast),
     color var(--hc-motion-fast);
+}
+
+.detachButton {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  align-items: center;
+  justify-content: center;
+  color: var(--hc-fg-muted);
+  border-radius: var(--hc-radius-sm);
+  font: 600 14px/1 var(--hc-font-ui);
+}
+
+.detachButton:hover,
+.detachButton[aria-pressed='true'] {
+  color: var(--hc-fg-strong);
+  background: var(--hc-hover-bg);
+}
+
+.detachButton:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: -2px;
 }
 
 .headerCollapse:hover {

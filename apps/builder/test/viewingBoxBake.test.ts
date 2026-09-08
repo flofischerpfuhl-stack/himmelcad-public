@@ -33,6 +33,23 @@ void test('bake cache identity invalidates on placement and entity revision', ()
   assert.notEqual(initial, viewingBoxBakeCacheKey(box, [{ ...source, placement: [1, 0, 0, 0] }]));
 });
 
+void test('bake evaluates source points at the exact canonical placement', async () => {
+  const fixture = potreeFixture([-8, 0, 8]);
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = fixture.fetch;
+  try {
+    const result = await bakePotreeViewingBox({
+      metadataUrl: fixture.metadataUrl,
+      box: { ...viewingBox('box-a', 2), center: { x: 18, y: 0, z: 0 } },
+      placement: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 10, 0, 0, 1],
+    });
+    assert.equal(result.pointCount, 1);
+    assert.deepEqual([...new Int32Array(result.octree.buffer)], [8, 0, 0]);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 void test('bake observes cancellation before publishing any output', async () => {
   const controller = new AbortController();
   controller.abort();
@@ -45,6 +62,30 @@ void test('bake observes cancellation before publishing any output', async () =>
     }),
     (error: unknown) => error instanceof DOMException && error.name === 'AbortError',
   );
+});
+
+void test('bake cancelled after filtering still returns no publishable result', async () => {
+  const fixture = potreeFixture([-8, 0, 8]);
+  const previousFetch = globalThis.fetch;
+  const controller = new AbortController();
+  globalThis.fetch = fixture.fetch;
+  try {
+    let result: unknown;
+    await assert.rejects(
+      bakePotreeViewingBox({
+        metadataUrl: fixture.metadataUrl,
+        box: viewingBox('box-a', 6),
+        signal: controller.signal,
+        onProgress: () => controller.abort(),
+      }).then((value) => {
+        result = value;
+      }),
+      (error: unknown) => error instanceof DOMException && error.name === 'AbortError',
+    );
+    assert.equal(result, undefined);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 });
 
 function potreeFixture(xCoordinates: readonly number[]): {

@@ -486,6 +486,37 @@ export interface PhotolabJobProgress {
   };
 }
 
+export type PhotolabMemoryDegradation =
+  | {
+      kind: 'extractionEdgeReduced';
+      from: number;
+      to: number;
+      budgetBytes: number;
+    }
+  | {
+      kind: 'matchingKeypointsCapped';
+      from: number;
+      to: number;
+    };
+
+export interface PhotolabStageMemory {
+  stage: string;
+  peakRssBytes: number;
+  workers: number;
+  parameters: unknown;
+}
+
+export interface PhotolabJobMemory {
+  envelopeBytes: number;
+  stages: PhotolabStageMemory[];
+  degradations: PhotolabMemoryDegradation[];
+  observations: Array<{
+    kind: 'unboundedStage';
+    stage: string;
+    budgetBytes: number;
+  }>;
+}
+
 export interface PhotolabJob {
   schemaVersion: number;
   id: string;
@@ -501,6 +532,7 @@ export interface PhotolabJob {
   finishedAtUnixMs?: number;
   lastCheckpointSequence?: number;
   terminalDiagnostic?: string;
+  memory?: PhotolabJobMemory;
 }
 
 export interface HardwareCapabilities {
@@ -1619,6 +1651,23 @@ export interface ProductLineageResourceIdentityV1 {
   sha256: ObjectHash;
   byte_length: number;
   media_type: string;
+}
+
+/** Builder's immutable, read-only registration component from ADR 0030. */
+export interface PhotoLabProductProvenanceV1 {
+  schemaId: 'hcad.photolab-product-provenance@1';
+  product: string;
+  productKind: 'sparse' | 'dense' | 'dem' | 'orthomosaic' | 'mesh' | 'gaussianSplat';
+  sourceProjectId: string;
+  sourceProductId: string;
+  sourceProductVersionHash: ObjectHash;
+  publicationGeneration: number;
+  manifestId: string;
+  lineageObjectSha256: ObjectHash;
+  /** Exact UTF-8 lineage bytes retained without deserialize/reserialize loss. */
+  lineagePayloadUtf8: string;
+  packageSha256: ObjectHash;
+  provenanceStatus: 'complete';
 }
 
 export interface ProductImportPackageReadyRecordV1 {

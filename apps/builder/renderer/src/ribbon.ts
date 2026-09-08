@@ -10,6 +10,8 @@ import {
   Gauge,
   Grid3x3,
   HardDriveDownload,
+  History,
+  Mountain,
   Minus,
   PaintBucket,
   Pipette,
@@ -21,7 +23,6 @@ import {
   SquareDashed,
   SwatchBook,
   Tag,
-  Triangle,
   Undo2,
   ZoomIn,
 } from 'lucide-react';
@@ -34,16 +35,26 @@ interface RecentProjectAction {
   readonly name: string;
 }
 
+interface SnapshotAction {
+  readonly entityId: string;
+  readonly name: string;
+  readonly createdAt: string;
+  readonly markedGeneration: number;
+}
+
 interface FileRibbonHandlers {
   readonly recent: readonly RecentProjectAction[];
+  readonly snapshots: readonly SnapshotAction[];
   readonly onNew: () => void;
   readonly onOpen: () => void;
   readonly onOpenArchive: () => void;
   readonly onOpenRecent: (path: string) => void;
   readonly onSave: () => void;
   readonly onSaveAs: () => void;
+  readonly onRestoreSnapshot: (entityId: string) => void;
   readonly onClose: () => void;
   readonly navigationMode?: '3d' | '2.5d' | '2d';
+  readonly groundExtractionAvailable?: boolean;
 }
 
 const i = (Comp: typeof Box, size = 18): ReactElement =>
@@ -110,6 +121,29 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
                   onSelect: handlers.onSaveAs,
                 },
               ],
+            },
+            {
+              id: 'project.snapshots',
+              label: 'Snapshots',
+              icon: i(History),
+              menuItems:
+                handlers.snapshots.length > 0
+                  ? [...handlers.snapshots].reverse().map((snapshot) => ({
+                      id: snapshot.entityId,
+                      label: snapshot.name,
+                      metadata: `${formatSnapshotTime(snapshot.createdAt)} · g${snapshot.markedGeneration}`,
+                      onSelect: () => handlers.onRestoreSnapshot(snapshot.entityId),
+                      secondaryActionLabel: 'Restore',
+                      onSecondaryAction: () => handlers.onRestoreSnapshot(snapshot.entityId),
+                    }))
+                  : [
+                      {
+                        id: 'empty',
+                        label: 'No snapshots',
+                        disabled: true,
+                        onSelect: () => undefined,
+                      },
+                    ],
             },
             {
               id: 'project.save_as',
@@ -214,6 +248,28 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
       ],
     },
     {
+      id: 'pointcloud',
+      label: 'Pointcloud',
+      groups: [
+        {
+          id: 'pointcloud.ground',
+          label: 'Terrain',
+          actions: [
+            {
+              id: 'pointcloud.ground.extract',
+              label: 'Extract ground',
+              icon: i(Mountain),
+              disabled: handlers.groundExtractionAvailable === false,
+              title:
+                handlers.groundExtractionAvailable === false
+                  ? 'Select exactly one point cloud.'
+                  : 'Classify ground and create a prepared ground-only cloud.',
+            },
+          ],
+        },
+      ],
+    },
+    {
       id: 'inspect',
       label: 'Inspect',
       groups: [
@@ -221,8 +277,10 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
           id: 'inspect.measure',
           label: 'Measure',
           actions: [
-            { id: 'inspect.distance', label: 'Distance', icon: i(Ruler) },
-            { id: 'inspect.angle', label: 'Angle', icon: i(Triangle) },
+            { id: 'measure.point', label: 'Point', icon: i(CircleDot) },
+            { id: 'measure.distance', label: 'Distance', icon: i(Ruler) },
+            { id: 'measure.dz', label: 'Height difference', icon: i(Ruler) },
+            { id: 'measurement.list', label: 'Measurements', icon: i(Ruler) },
           ],
         },
       ],
@@ -242,4 +300,17 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
       ],
     },
   ];
+}
+
+function formatSnapshotTime(createdAt: string): string {
+  const match = /^unix-ms:(\d+)$/u.exec(createdAt);
+  const timestamp = match ? Number(match[1]) : Date.parse(createdAt);
+  return Number.isFinite(timestamp)
+    ? new Date(timestamp).toLocaleString([], {
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : createdAt;
 }

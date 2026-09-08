@@ -107,6 +107,13 @@ export interface HimmelCADApi {
     materialize: (sessionId: string) => Promise<StagedResidencyMaterialization>;
     revoke: (sessionId: string) => Promise<boolean>;
   };
+  readonly productImport: {
+    inspect: (sourcePath: string) => Promise<{
+      readonly product: string;
+      readonly productKind: string;
+      readonly packageSha256: string;
+    } | null>;
+  };
   readonly viewingBoxBake: {
     publish: (input: {
       readonly cacheKey: string;
@@ -294,6 +301,9 @@ const api: HimmelCADApi = {
   stagedRegistration: {
     materialize: (sessionId) => ipcRenderer.invoke('registration-staged:materialize', sessionId),
     revoke: (sessionId) => ipcRenderer.invoke('registration-staged:revoke', sessionId),
+  },
+  productImport: {
+    inspect: (sourcePath) => ipcRenderer.invoke('product-import:inspect', sourcePath),
   },
   viewingBoxBake: {
     publish: (input) => ipcRenderer.invoke('viewing-box-bake:publish', input),

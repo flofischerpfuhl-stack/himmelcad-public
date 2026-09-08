@@ -24,6 +24,9 @@ import {
   SelectionStore,
   StaleViewReferenceError,
   ViewDisplayStore,
+  MeasurementToolController,
+  attachedMeasurementAnchor,
+  measurementAnchorPosition,
   bookmarkCaptureState,
   validateViewStateReferences,
   commandById,
@@ -34,14 +37,17 @@ import {
   validateScreenshotRequest,
   type CommandContext,
   type CommandInvocation,
+  type MeasurementToolKind,
 } from '@himmelcad/app';
 import { Console, consoleStore, logEvent, runConsoleCommand } from '@himmelcad/console';
 import { ManagedAgentChat, ManagedAutomationApproval } from '@himmelcad/agent';
 import type { EntityId, EntityKind, ProjectSnapshot, SnapResult } from '@himmelcad/data';
+import type { MeasurementV1 } from '@himmelcad/data/canonical';
 import {
   AppShell,
   Button,
   ConstructionBar,
+  Dialog,
   DurabilityIndicator,
   EntityTree,
   EntityCommandMenu,
@@ -97,16 +103,32 @@ import {
   type BuilderKernelViewportHandle,
 } from './BuilderKernelViewport.js';
 import { FloatingTaskIsland } from './FloatingTaskIsland.js';
+import { MeasurementPanel, MeasurementProperties } from './MeasurementPanel.js';
+import { MeasurementViewportOverlay } from './MeasurementViewportOverlay.js';
+import { GroundExtractionPanel } from './GroundExtractionPanel.js';
+import { GroundPreviewOverlay } from './GroundPreviewOverlay.js';
 import { PlanIsland } from './PlanIsland.js';
 import { SpecsIsland } from './SpecsIsland.js';
 import {
   BuilderCanonicalProjectSession,
   startDurabilityPolling,
   type BuilderDurabilityStatus,
+  type BuilderMeasurementSummary,
+  type BuilderPhotoLabProvenanceSummary,
+  type BuilderSnapshotSummary,
   type BuilderViewingBoxSummary,
+  type GroundExtractionParameters,
+  type GroundExtractionResult,
+  type GroundPreviewResult,
 } from './project.js';
 import { createRibbonTabs } from './ribbon.js';
 import { parseSidecarProgress } from './sidecarProgress.js';
+import { executeBuilderSnapshotCommand } from './snapshotCommands.js';
+import {
+  canonicalViewingBoxCommandId,
+  setViewingBoxExtent,
+  viewingBoxExtents,
+} from './viewingBoxWorkflow.js';
 
 const DEFAULT_POINT_SIZE = 1;
 
@@ -175,6 +197,9 @@ export function App(): JSX.Element {
   const viewingBoxRevisionByIdRef = useRef(new Map<string, number>());
   const viewingBoxPersistTailRef = useRef(Promise.resolve());
   const [viewingBoxes, setViewingBoxes] = useState<readonly BuilderViewingBoxSummary[]>([]);
+  const [measurements, setMeasurements] = useState<readonly BuilderMeasurementSummary[]>([]);
+  const measurementsRef = useRef(measurements);
+  measurementsRef.current = measurements;
   const [viewingBoxName, setViewingBoxName] = useState('Viewing Box');
   const viewingBoxNameRef = useRef(viewingBoxName);
   viewingBoxNameRef.current = viewingBoxName;
@@ -189,7 +214,14 @@ export function App(): JSX.Element {
     readonly phase: string;
   } | null>(null);
   const [constructionDetached, setConstructionDetached] = useState(false);
+  const [viewingBoxDetached, setViewingBoxDetached] = useState(false);
   const [propertyQuery, setPropertyQuery] = useState<PropertyQueryResult | null>(null);
+  const [productProvenance, setProductProvenance] = useState<
+    readonly BuilderPhotoLabProvenanceSummary[]
+  >([]);
+  const [treeProductProvenance, setTreeProductProvenance] = useState<
+    readonly BuilderPhotoLabProvenanceSummary[]
+  >([]);
   const [propertyQueryError, setPropertyQueryError] = useState<string | null>(null);
   const [propertyQueryLoading, setPropertyQueryLoading] = useState(false);
   const [propertyEditing, setPropertyEditing] = useState(false);
@@ -200,8 +232,14 @@ export function App(): JSX.Element {
   const [jobsOpen, setJobsOpen] = useState(false);
   const [jobToasts, setJobToasts] = useState<readonly AppJob[]>([]);
   const [jobClock, setJobClock] = useState(() => Date.now());
+  const [groundPreview, setGroundPreview] = useState<GroundPreviewResult | null>(null);
+  const [groundResult, setGroundResult] = useState<GroundExtractionResult | null>(null);
+  const [groundError, setGroundError] = useState<string | null>(null);
   const [durability, setDurability] = useState<BuilderDurabilityStatus | null>(null);
   const [durabilityFailureToast, setDurabilityFailureToast] = useState(false);
+  const [snapshots, setSnapshots] = useState<readonly BuilderSnapshotSummary[]>([]);
+  const [snapshotToRestore, setSnapshotToRestore] = useState<BuilderSnapshotSummary | null>(null);
+  const [snapshotRestorePending, setSnapshotRestorePending] = useState(false);
   const interactionState = useMemo(() => {
     if (!project) return null;
     return interactionResolver(project, display.state);
@@ -250,6 +288,37 @@ export function App(): JSX.Element {
       throw new Error('canonical project opener is not ready');
     },
   );
+  const measurementToolRef = useRef<MeasurementToolController<BuilderMeasurementSummary> | null>(
+    null,
+  );
+  if (!measurementToolRef.current) {
+    measurementToolRef.current = new MeasurementToolController({
+      layerId: 'default-layer',
+      nextName: (kind) => `${measurementKindLabel(kind)} ${measurementsRef.current.length + 1}`,
+      sink: {
+        create: async ({ name, measurement }) => {
+          const session = await ensureCanonicalProjectRef.current();
+          const created = await session.createMeasurement(
+            `measurement-${crypto.randomUUID()}`,
+            name,
+            measurement,
+          );
+          setProject(session.projectSnapshot());
+          setMeasurements(await session.listMeasurements());
+          selectionStore.replace([created.entityId]);
+          setRightPanelTab('properties');
+          activate('measurement.list');
+          return created;
+        },
+      },
+    });
+  }
+  const measurementToolStore = measurementToolRef.current;
+  const measurementTool = useSyncExternalStore(
+    measurementToolStore.subscribe,
+    measurementToolStore.snapshot,
+    measurementToolStore.snapshot,
+  );
   const currentProjectPathRef = useRef<string | null>(null);
   const startupProjectRef = useRef<Promise<string> | null>(null);
   const closeCancelledRef = useRef(false);
@@ -258,6 +327,14 @@ export function App(): JSX.Element {
   const executeRegistryCommandRef = useRef<(invocation: CommandInvocation) => void | Promise<void>>(
     () => undefined,
   );
+  const groundAutomationRef = useRef<
+    (
+      method: string,
+      params: unknown,
+    ) => Promise<{ readonly schemaId: string; readonly payload: unknown }>
+  >(async () => {
+    throw new Error('Ground extraction automation is not ready.');
+  });
   const currentViewStateRef = useRef<() => ViewStateV2>(() => {
     throw new Error('Builder view state is not ready.');
   });
@@ -295,9 +372,9 @@ export function App(): JSX.Element {
   const selectedEntityKey = useMemo(() => [...selected].sort().join('\u0000'), [selected]);
 
   useEffect(() => {
-    if (!import.meta.env.DEV) return undefined;
+    if (!import.meta.env.DEV && import.meta.env.VITE_HCAD_PERF_DEBUG !== '1') return undefined;
     const target = window as Window & { __hcadS08Debug?: unknown };
-    target.__hcadS08Debug = Object.freeze({
+    const debug = Object.freeze({
       getState: () => currentViewStateRef.current(),
       setState: (state: unknown) => applyViewStateRef.current(state),
       displaySnapshot: () => displayStore.getSnapshot(),
@@ -319,8 +396,9 @@ export function App(): JSX.Element {
       lockViewingBox: (locked: boolean) => debugViewingBoxLockRef.current(locked),
       viewingBoxFlush: () => viewingBoxPersistTailRef.current,
     });
+    target.__hcadS08Debug = debug;
     return () => {
-      delete target.__hcadS08Debug;
+      if (target.__hcadS08Debug === debug) delete target.__hcadS08Debug;
     };
   }, [displayStore]);
 
@@ -430,6 +508,86 @@ export function App(): JSX.Element {
         if (!captureRect) throw new Error('Builder viewport has no capture rectangle.');
         return { captureRect };
       }
+      if (method === 'measurement.list') {
+        return admissionResult(
+          await (await ensureCanonicalProjectRef.current()).listMeasurements(),
+        );
+      }
+      if (
+        method === 'snapshot.create' ||
+        method === 'snapshot.list' ||
+        method === 'snapshot.restore'
+      ) {
+        const session = await ensureCanonicalProjectRef.current();
+        const command = await executeBuilderSnapshotCommand(
+          session,
+          method,
+          automationPayload(params),
+        );
+        setSnapshots(command.snapshots);
+        if (command.method === 'snapshot.restore') {
+          pruneRemovedSelection(selectionStore, projectRef.current, command.project);
+          setProject(command.project);
+          await reloadCanonicalResidencyRef.current();
+        } else if (command.method === 'snapshot.create') {
+          setProject(session.projectSnapshot());
+        }
+        return admissionResult(command.result);
+      }
+      if (method === 'measurement.get') {
+        const payload = automationPayload(params);
+        if (typeof payload.entityId !== 'string') {
+          throw new TypeError('measurement.get requires payload.entityId');
+        }
+        return admissionResult(
+          await (await ensureCanonicalProjectRef.current()).getMeasurement(payload.entityId),
+        );
+      }
+      if (
+        method === 'measurement.create' ||
+        method === 'measure.point' ||
+        method === 'measure.distance' ||
+        method === 'measure.dz'
+      ) {
+        const payload = automationPayload(params);
+        if (!isMeasurementPayload(payload.measurement)) {
+          throw new TypeError(`${method} requires payload.measurement using hcad.measurement@1`);
+        }
+        const expectedKind = measurementKindForMethod(method);
+        if (expectedKind && payload.measurement.measurementKind !== expectedKind) {
+          throw new TypeError(`${method} does not match payload.measurement.measurementKind`);
+        }
+        const session = await ensureCanonicalProjectRef.current();
+        const created = await session.createMeasurement(
+          typeof payload.entityId === 'string'
+            ? payload.entityId
+            : `measurement-${crypto.randomUUID()}`,
+          typeof payload.name === 'string'
+            ? payload.name
+            : `${measurementKindLabel(payload.measurement.measurementKind)} ${measurementsRef.current.length + 1}`,
+          payload.measurement,
+        );
+        setProject(session.projectSnapshot());
+        setMeasurements(await session.listMeasurements());
+        return admissionResult(created);
+      }
+      if (method === 'measurement.remove' || method === 'measurement.delete') {
+        const payload = automationPayload(params);
+        if (typeof payload.entityId !== 'string') {
+          throw new TypeError(`${method} requires payload.entityId`);
+        }
+        const session = await ensureCanonicalProjectRef.current();
+        const current = await session.getMeasurement(payload.entityId);
+        const expectedRevision =
+          typeof payload.expectedRevision === 'number'
+            ? payload.expectedRevision
+            : current.revision;
+        await session.deleteMeasurement(payload.entityId, expectedRevision);
+        selectionStore.pruneDeleted([payload.entityId]);
+        setProject(session.projectSnapshot());
+        setMeasurements(await session.listMeasurements());
+        return admissionResult({ entityId: payload.entityId, deleted: true });
+      }
       if (method === 'view.bookmark.list') {
         return await (await ensureCanonicalProjectRef.current()).listViewBookmarks();
       }
@@ -486,9 +644,16 @@ export function App(): JSX.Element {
           presentation: { ...live.presentation, pointSizeMultiplier: multiplier },
         });
       }
-      const registryEntry = commandById(method);
+      if (
+        method === 'pointcloud.ground.extract' ||
+        method === 'pointcloud.ground.preview' ||
+        method === 'pointcloud.ground.cancel'
+      ) {
+        return await groundAutomationRef.current(method, params);
+      }
+      const registryEntry = commandById(canonicalViewingBoxCommandId(method));
       if (registryEntry?.surfaces.automation) {
-        if (method.startsWith('view.box.') && method !== 'view.box.list') {
+        if (registryEntry.id.startsWith('view.box.') && registryEntry.id !== 'view.box.list') {
           viewport.cancelViewingBoxDrag();
         }
         await executeRegistryCommandRef.current({
@@ -688,7 +853,9 @@ export function App(): JSX.Element {
       try {
         for (const job of jobs) {
           if (
-            (job.owner === 'builder.import' || job.owner === 'builder.archive') &&
+            (job.owner === 'builder.import' ||
+              job.owner === 'builder.archive' ||
+              job.owner === 'builder.ground-extraction') &&
             !['completed', 'failed', 'cancelled'].includes(job.state)
           ) {
             await api.jobs.cancel(job.id).catch(() => undefined);
@@ -708,6 +875,8 @@ export function App(): JSX.Element {
         canonicalSessionRef.current = null;
         canonicalReadyRef.current = null;
         setProject(null);
+        setSnapshots([]);
+        setMeasurements([]);
         setViewingBox(null);
         setViewingBoxes([]);
         viewingBoxRevisionByIdRef.current.clear();
@@ -803,8 +972,13 @@ export function App(): JSX.Element {
       );
       await displayStore.openProject(projectRoot);
       setProject(snapshot);
+      setSnapshots(await session.listSnapshots());
+      setMeasurements(await session.listMeasurements());
       const storedViewingBoxes = await session.listViewingBoxes();
-      const storedViewingBox = storedViewingBoxes[0];
+      const activeViewingBoxId = displayStore.getSnapshot().state.activeClipEntityIds[0];
+      const storedViewingBox =
+        storedViewingBoxes.find((box) => box.entityId === activeViewingBoxId) ??
+        storedViewingBoxes[0];
       let restoredViewingBox: KernelViewingBoxState | null = null;
       setViewingBoxes(storedViewingBoxes);
       viewingBoxRevisionByIdRef.current = new Map(
@@ -885,6 +1059,8 @@ export function App(): JSX.Element {
     entityGroupsRef.current.ifc = restored.inlineMeshes;
     setPointCloudMetadata(restored.pointCloudMetadata);
   }, [selectionStore]);
+  const reloadCanonicalResidencyRef = useRef(reloadCanonicalResidency);
+  reloadCanonicalResidencyRef.current = reloadCanonicalResidency;
 
   useEffect(() => {
     logEvent('info', 'renderer', 'Builder renderer mounted');
@@ -934,6 +1110,8 @@ export function App(): JSX.Element {
       }));
       const status = await (await ensureCanonicalProject()).flushAndSnapshot();
       setDurability(status);
+      const session = canonicalSessionRef.current;
+      if (session) setSnapshots(await session.listSnapshots());
       setDurabilityFailureToast(false);
       logEvent(
         'info',
@@ -990,10 +1168,11 @@ export function App(): JSX.Element {
       syncing = true;
       void session
         .catchUp()
-        .then((nextProject) => {
+        .then(async (nextProject) => {
           if (nextProject) {
             pruneRemovedSelection(selectionStore, projectRef.current, nextProject);
             setProject(nextProject);
+            setMeasurements(await session.listMeasurements());
           }
           reportedError = false;
         })
@@ -1112,7 +1291,21 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (!activeFunctionId) return;
     const id = activeFunctionId;
-    if (id === 'file.import') {
+    const measurementKind = measurementKindForFunction(id);
+    if (measurementKind) {
+      const metric = measurementKind === 'distance' ? 'spatial' : null;
+      if (
+        !measurementToolStore.snapshot().armed ||
+        measurementToolStore.snapshot().kind !== measurementKind
+      ) {
+        measurementToolStore.arm(measurementKind, metric);
+      }
+      logEvent(
+        'info',
+        'renderer',
+        `${measurementKindLabel(measurementKind)}: pick or type an exact anchor.`,
+      );
+    } else if (id === 'file.import') {
       void (async () => {
         try {
           const api = window.himmelcad;
@@ -1176,28 +1369,76 @@ export function App(): JSX.Element {
       void flushProject().finally(() => closeFunction(id));
     }
     // Other ribbon actions only highlight + show their function panel for now.
-  }, [activeFunctionId, closeFunction, ensureCanonicalProject, flushProject, viewingBox]);
+  }, [
+    activeFunctionId,
+    closeFunction,
+    ensureCanonicalProject,
+    flushProject,
+    measurementToolStore,
+    viewingBox,
+  ]);
 
   useEffect(() => {
     if (activeFunctionId !== 'view.viewing-box') setPlacingViewingBoxCenter(false);
   }, [activeFunctionId]);
 
   useEffect(() => {
-    if (!placingViewingBoxCenter) {
-      constructionInputStore.disarm();
+    if (!measurementKindForFunction(activeFunctionId) && measurementToolStore.snapshot().armed) {
+      measurementToolStore.cancel();
+    }
+  }, [activeFunctionId, measurementToolStore]);
+
+  useEffect(() => {
+    if (measurementTool.armed && measurementTool.kind) {
+      const first = measurementTool.anchors[0];
+      const firstPoint = first ? measurementAnchorConstructionPoint(first) : undefined;
+      const seed =
+        snap?.position.z == null
+          ? (firstPoint ?? { x: 0, y: 0, z: 0 })
+          : { x: snap.position.x, y: snap.position.y, z: snap.position.z };
+      const toolId = `measurement:${measurementTool.kind}:${measurementTool.anchors.length}`;
+      if (constructionInputStore.snapshot().declaration?.toolId !== toolId) {
+        constructionInputStore.arm(
+          {
+            toolId,
+            prompt:
+              measurementTool.anchors.length === 0
+                ? 'Measurement — pick or type start point'
+                : 'Measurement — pick or type next point',
+            fields: ['x', 'y', 'z'],
+            ...(firstPoint ? { firstPoint } : {}),
+          },
+          seed,
+        );
+      }
       return;
     }
-    if (constructionInputStore.snapshot().armed) return;
-    const seed = viewingBox?.center ?? { x: 0, y: 0, z: 0 };
-    constructionInputStore.arm(
-      {
-        toolId: 'view.viewing-box.place',
-        prompt: 'Viewing box center — pick or type coordinates',
-        fields: ['x', 'y', 'z'],
-      },
-      seed,
-    );
-  }, [constructionInputStore, placingViewingBoxCenter, viewingBox?.center]);
+    if (placingViewingBoxCenter) {
+      if (constructionInputStore.snapshot().armed) return;
+      const seed = viewingBox?.center ?? { x: 0, y: 0, z: 0 };
+      constructionInputStore.arm(
+        {
+          toolId: 'view.viewing-box.place',
+          prompt: 'Viewing box center — pick or type coordinates',
+          fields: ['x', 'y', 'z'],
+        },
+        seed,
+      );
+      return;
+    }
+    constructionInputStore.disarm();
+  }, [
+    constructionInputStore,
+    measurementTool.anchors,
+    measurementTool.anchors.length,
+    measurementTool.armed,
+    measurementTool.kind,
+    placingViewingBoxCenter,
+    snap?.position.x,
+    snap?.position.y,
+    snap?.position.z,
+    viewingBox?.center,
+  ]);
 
   useEffect(() => {
     viewportRef.current?.setViewingBox(
@@ -1258,6 +1499,9 @@ export function App(): JSX.Element {
       setViewingBoxName(summary.name);
       setViewingBox(state);
       displayStore.setActiveClipEntityIds([state.id]);
+      if ((state.lockMode ?? 'unlocked') !== 'unlocked') {
+        void debugViewingBoxLockRef.current(true);
+      }
     },
     [displayStore, viewingBoxes],
   );
@@ -1300,11 +1544,25 @@ export function App(): JSX.Element {
     [commitCanonicalViewingBox, viewingBoxes.length],
   );
 
+  const createViewingBoxFromViewportDrag = useCallback(
+    (preview: KernelViewingBoxState): void => {
+      const id = pendingViewingBoxIdRef.current ?? `viewing-box-${crypto.randomUUID()}`;
+      pendingViewingBoxIdRef.current = null;
+      const name = `Viewing Box ${viewingBoxes.length + 1}`;
+      viewingBoxNameRef.current = name;
+      setViewingBoxName(name);
+      setPlacingViewingBoxCenter(false);
+      commitCanonicalViewingBox({ ...preview, id });
+    },
+    [commitCanonicalViewingBox, viewingBoxes.length],
+  );
+
   const renameViewingBox = useCallback(
     (name: string): void => {
       const trimmed = name.trim();
       const box = viewingBoxRef.current;
       if (!box || !trimmed) return;
+      if (trimmed === viewingBoxNameRef.current) return;
       viewingBoxNameRef.current = trimmed;
       setViewingBoxName(trimmed);
       commitCanonicalViewingBox(box);
@@ -1453,15 +1711,20 @@ export function App(): JSX.Element {
     if (!session) return undefined;
     setPropertyQueryLoading(true);
     setPropertyQueryError(null);
-    void session.queryProperties(selectedEntityIds).then(
-      (result) => {
+    void Promise.all([
+      session.queryProperties(selectedEntityIds),
+      session.productProvenance(selectedEntityIds),
+    ]).then(
+      ([result, provenance]) => {
         if (!active) return;
         setPropertyQuery(result);
+        setProductProvenance(provenance);
         setPropertyQueryLoading(false);
       },
       (error: unknown) => {
         if (!active) return;
         setPropertyQuery(null);
+        setProductProvenance([]);
         setPropertyQueryError(error instanceof Error ? error.message : String(error));
         setPropertyQueryLoading(false);
       },
@@ -1470,6 +1733,31 @@ export function App(): JSX.Element {
       active = false;
     };
   }, [project, propertyRefresh, selectedEntityKey]);
+
+  useEffect(() => {
+    let active = true;
+    const session = canonicalSessionRef.current;
+    const entityIds = Object.keys(project?.entities ?? {});
+    if (!session || entityIds.length === 0) {
+      setTreeProductProvenance([]);
+      return undefined;
+    }
+    void Promise.all(
+      Array.from({ length: Math.ceil(entityIds.length / 200) }, (_, index) =>
+        session.productProvenance(entityIds.slice(index * 200, (index + 1) * 200)),
+      ),
+    ).then(
+      (pages) => {
+        if (active) setTreeProductProvenance(pages.flat());
+      },
+      () => {
+        if (active) setTreeProductProvenance([]);
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [project, propertyRefresh]);
 
   const assignSelectionProperty = useCallback(
     async (assignment: PropertyAssignment): Promise<void> => {
@@ -1500,6 +1788,198 @@ export function App(): JSX.Element {
     const metadata = pointCloudMetadata.get(entityId);
     return metadata ? [{ entityId, metadata }] : [];
   });
+  const selectedGroundCloud =
+    selectedPointClouds.length === 1 &&
+    selected.size === 1 &&
+    project?.entities[selectedPointClouds[0]!.entityId]?.visibility.visible
+      ? selectedPointClouds[0]
+      : null;
+  const activeGroundJob =
+    jobs.find(
+      (job) =>
+        job.owner === 'builder.ground-extraction' &&
+        !['completed', 'failed', 'cancelled'].includes(job.state),
+    ) ?? null;
+  const runGroundOperation = useCallback(
+    async (
+      mode: 'preview' | 'extract',
+      parameters: GroundExtractionParameters,
+      propagateError = false,
+      requestedSourceId?: string,
+      requestedOperationId?: string,
+    ): Promise<GroundPreviewResult | GroundExtractionResult | undefined> => {
+      const api = window.himmelcad;
+      const current = projectRef.current;
+      const ids = requestedSourceId ? [requestedSourceId as EntityId] : [...selectedRef.current];
+      const sourceId = ids.length === 1 ? ids[0] : undefined;
+      const source = sourceId ? current?.entities[sourceId] : undefined;
+      const metadata = sourceId ? pointCloudMetadata.get(sourceId) : undefined;
+      if (
+        !api ||
+        !sourceId ||
+        source?.kind !== 'PointCloud' ||
+        !source.visibility.visible ||
+        !metadata
+      ) {
+        setGroundError('Select exactly one visible point cloud.');
+        return;
+      }
+      const visibleClasses = metadata.display.classes
+        .filter((classification) => classification.visible)
+        .map((classification) => classification.code);
+      if (visibleClasses.length === 0) {
+        setGroundError('At least one source classification must be visible.');
+        return;
+      }
+      const capturedBox = viewingBoxRef.current;
+      const activeBox =
+        capturedBox?.enabled &&
+        displayStore.getSnapshot().state.activeClipEntityIds.includes(capturedBox.id)
+          ? capturedBox
+          : null;
+      const scope = {
+        viewingBox: activeBox
+          ? {
+              center: [activeBox.center.x, activeBox.center.y, activeBox.center.z] as const,
+              halfExtents: [
+                activeBox.halfExtents.x,
+                activeBox.halfExtents.y,
+                activeBox.halfExtents.z,
+              ] as const,
+              rotation: activeBox.rotation,
+              keepInside: (activeBox.operation ?? 'keepInside') === 'keepInside',
+            }
+          : null,
+        visibleClasses,
+      };
+      const operationId = requestedOperationId ?? `ground-${mode}-${crypto.randomUUID()}`;
+      const previewOperationId = `${operationId}-preview`;
+      setGroundError(null);
+      if (mode === 'preview') setGroundPreview(null);
+      else setGroundResult(null);
+      await api.jobs.register({
+        id: operationId,
+        label:
+          mode === 'preview'
+            ? `Preview ground · ${source.name}`
+            : `Extract ground · ${source.name}`,
+        owner: 'builder.ground-extraction',
+        phase:
+          mode === 'preview' ? 'Preparing ground preview' : 'Capturing visible point-cloud state',
+        expectedDurationMs: mode === 'preview' ? 2_000 : 60_000,
+        progressKey: operationId,
+        cancellable: true,
+        context: { sourceEntityId: sourceId, mode, previewOperationId },
+      });
+      try {
+        const session = await ensureCanonicalProject();
+        if (mode === 'preview') {
+          const preview = await session.previewGround({
+            operationId,
+            progressKey: operationId,
+            sourceEntityId: sourceId,
+            parameters,
+            scope,
+          });
+          setGroundPreview(preview);
+          logEvent(
+            'info',
+            'renderer',
+            `pointcloud.ground.preview · ${preview.preview.groundPoints.toLocaleString()} / ${preview.preview.sampledPoints.toLocaleString()} sampled · residual σ ${preview.preview.residuals.standardDeviationM.toFixed(3)} m`,
+          );
+          await api.jobs.complete(
+            operationId,
+            `${preview.preview.groundPoints.toLocaleString()} preview ground points`,
+          );
+          return preview;
+        } else {
+          const extraction = session.extractGround({
+            operationId,
+            progressKey: operationId,
+            sourceEntityId: sourceId,
+            groundEntityId: `pointcloud-ground-${crypto.randomUUID()}`,
+            outputName: `${source.name} — Ground`,
+            parameters,
+            scope,
+          });
+          try {
+            const preview = await session.previewGround({
+              operationId: previewOperationId,
+              progressKey: `${operationId}-coarse-preview`,
+              sourceEntityId: sourceId,
+              parameters,
+              scope,
+            });
+            setGroundPreview(preview);
+          } catch (previewError) {
+            logEvent(
+              'warn',
+              'renderer',
+              `Ground preview unavailable: ${previewError instanceof Error ? previewError.message : String(previewError)}`,
+            );
+          }
+          const result = await extraction;
+          setGroundResult(result);
+          logEvent(
+            'info',
+            'renderer',
+            `pointcloud.ground.extract · Ground points ${result.summary.groundPoints.toLocaleString()} (${(result.summary.ratio * 100).toFixed(1)} %) · residual σ ${result.summary.residuals.standardDeviationM.toFixed(3)} m · sha256 ${result.summary.membershipSha256}`,
+          );
+          await reloadCanonicalResidency();
+          selectionStore.replace([result.groundCloud.entityId as EntityId]);
+          await api.jobs.complete(
+            operationId,
+            `${result.summary.groundPoints.toLocaleString()} ground points`,
+          );
+          return result;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const job = await api.jobs.get(operationId).catch(() => null);
+        if (job?.state === 'cancelling' || /cancelled|canceled/i.test(message)) {
+          await api.jobs.cancelled(operationId);
+        } else {
+          setGroundError(message);
+          await api.jobs.fail(operationId, message);
+        }
+        if (propagateError) throw error;
+        return undefined;
+      }
+    },
+    [
+      displayStore,
+      ensureCanonicalProject,
+      pointCloudMetadata,
+      reloadCanonicalResidency,
+      selectionStore,
+    ],
+  );
+  groundAutomationRef.current = async (method, input) => {
+    const payload = automationPayload(input);
+    if (method === 'pointcloud.ground.cancel') {
+      if (typeof payload.operationId !== 'string') {
+        throw new TypeError('pointcloud.ground.cancel requires payload.operationId.');
+      }
+      const job = await window.himmelcad?.jobs.cancel(payload.operationId);
+      return admissionResult({
+        operationId: payload.operationId,
+        state: job?.state ?? 'cancelling',
+      });
+    }
+    if (typeof payload.sourceEntityId !== 'string') {
+      throw new TypeError(`${method} requires payload.sourceEntityId.`);
+    }
+    selectionStore.replace([payload.sourceEntityId]);
+    const result = await runGroundOperation(
+      method === 'pointcloud.ground.preview' ? 'preview' : 'extract',
+      groundParametersFromPayload(payload.parameters),
+      true,
+      payload.sourceEntityId,
+      typeof payload.operationId === 'string' ? payload.operationId : undefined,
+    );
+    if (!result) throw new Error(`${method} did not return a typed result.`);
+    return groundResultEnvelope(result);
+  };
   const setSelectedPointCloudDisplay = useCallback(
     async (display: PointCloudDisplayStyle, targetEntityIds?: readonly string[]): Promise<void> => {
       const session = canonicalSessionRef.current;
@@ -1608,6 +2088,24 @@ export function App(): JSX.Element {
     async (invocation: CommandInvocation): Promise<void> => {
       const ids = selectedRef.current;
       switch (invocation.id) {
+        case 'measure.point':
+        case 'measure.distance':
+        case 'measure.dz':
+        case 'measurement.list':
+          activate(invocation.id);
+          return;
+        case 'measurement.delete': {
+          const id = [...ids][0];
+          if (!id) return;
+          const item = measurementsRef.current.find((candidate) => candidate.entityId === id);
+          if (!item) throw new Error('Select one saved measurement to delete.');
+          const session = await ensureCanonicalProject();
+          await session.deleteMeasurement(item.entityId, item.revision);
+          selectionStore.pruneDeleted([item.entityId]);
+          setProject(session.projectSnapshot());
+          setMeasurements(await session.listMeasurements());
+          return;
+        }
         case 'select.set': {
           const envelope = invocation.payload as
             | {
@@ -1696,6 +2194,7 @@ export function App(): JSX.Element {
             ...state,
             ...(isViewingBoxPoint(payload.center) ? { center: payload.center } : {}),
             ...(isViewingBoxPoint(payload.halfExtents) ? { halfExtents: payload.halfExtents } : {}),
+            ...(isViewingBoxRotation(payload.rotation) ? { rotation: payload.rotation } : {}),
             ...(typeof payload.enabled === 'boolean' ? { enabled: payload.enabled } : {}),
           };
           commitCanonicalViewingBox(next);
@@ -1740,6 +2239,10 @@ export function App(): JSX.Element {
           selectViewingBox(payload.entityId);
           return;
         }
+        case 'view.box.deactivate':
+          displayStore.setActiveClipEntityIds([]);
+          viewportRef.current?.setViewingBox(null);
+          return;
         case 'view.box.remove':
           await deleteViewingBox();
           return;
@@ -1797,6 +2300,49 @@ export function App(): JSX.Element {
           }
           return;
         }
+        case 'pointcloud.ground.extract': {
+          const payload = automationPayload(invocation.payload);
+          if (typeof payload.sourceEntityId === 'string') {
+            selectionStore.replace([payload.sourceEntityId]);
+          }
+          if (
+            (invocation.source === 'ribbon' || invocation.source === 'contextMenu') &&
+            payload.parameters === undefined
+          ) {
+            activate('pointcloud.ground.extract');
+            return;
+          }
+          await runGroundOperation(
+            'extract',
+            groundParametersFromPayload(payload.parameters),
+            false,
+            typeof payload.sourceEntityId === 'string' ? payload.sourceEntityId : undefined,
+            typeof payload.operationId === 'string' ? payload.operationId : undefined,
+          );
+          return;
+        }
+        case 'pointcloud.ground.preview': {
+          const payload = automationPayload(invocation.payload);
+          if (typeof payload.sourceEntityId === 'string') {
+            selectionStore.replace([payload.sourceEntityId]);
+          }
+          await runGroundOperation(
+            'preview',
+            groundParametersFromPayload(payload.parameters),
+            false,
+            typeof payload.sourceEntityId === 'string' ? payload.sourceEntityId : undefined,
+            typeof payload.operationId === 'string' ? payload.operationId : undefined,
+          );
+          return;
+        }
+        case 'pointcloud.ground.cancel': {
+          const payload = automationPayload(invocation.payload);
+          const jobId =
+            typeof payload.operationId === 'string' ? payload.operationId : activeGroundJob?.id;
+          if (!jobId) throw new TypeError('pointcloud.ground.cancel requires operationId.');
+          await window.himmelcad?.jobs.cancel(jobId);
+          return;
+        }
         case 'file.import': {
           const envelope = invocation.payload as
             | { readonly payload?: { readonly paths?: readonly string[] } }
@@ -1841,6 +2387,7 @@ export function App(): JSX.Element {
     },
     [
       activate,
+      activeGroundJob,
       commitCanonicalViewingBox,
       createViewingBoxFromSelection,
       createViewingBoxFromTypedExtents,
@@ -1851,6 +2398,7 @@ export function App(): JSX.Element {
       onVisibilityChange,
       recentProjects,
       renameViewingBox,
+      runGroundOperation,
       selectionStore,
       selectViewingBox,
       setSelectedPointCloudDisplay,
@@ -2101,6 +2649,28 @@ export function App(): JSX.Element {
     }
   }, []);
 
+  const restoreSnapshot = useCallback(async (): Promise<void> => {
+    const target = snapshotToRestore;
+    const session = canonicalSessionRef.current;
+    if (!target || !session || snapshotRestorePending) return;
+    setSnapshotRestorePending(true);
+    try {
+      const command = await executeBuilderSnapshotCommand(session, 'snapshot.restore', {
+        entityId: target.entityId,
+      });
+      pruneRemovedSelection(selectionStore, projectRef.current, command.project);
+      setProject(command.project);
+      await reloadCanonicalResidency();
+      setSnapshots(command.snapshots);
+      logEvent('info', 'renderer', `Restored snapshot '${target.name}'`);
+      setSnapshotToRestore(null);
+    } catch (error) {
+      logEvent('error', 'renderer', `Snapshot restore failed: ${String(error)}`);
+    } finally {
+      setSnapshotRestorePending(false);
+    }
+  }, [reloadCanonicalResidency, selectionStore, snapshotRestorePending, snapshotToRestore]);
+
   const placeViewingBoxAt = useCallback(
     (position: { readonly x: number; readonly y: number; readonly z: number | null }): void => {
       const created = viewingBox
@@ -2143,6 +2713,12 @@ export function App(): JSX.Element {
     () =>
       createRibbonTabs({
         recent: recentProjects,
+        snapshots: snapshots.map((snapshot) => ({
+          entityId: snapshot.entityId,
+          name: snapshot.name,
+          createdAt: snapshot.marker.createdAt,
+          markedGeneration: snapshot.marker.markedGeneration,
+        })),
         onNew: () => void createProject(),
         onOpen: () => void openProject(),
         onOpenArchive: () => {
@@ -2165,8 +2741,13 @@ export function App(): JSX.Element {
         },
         onSave: () => void flushProject(),
         onSaveAs: () => void saveProjectAs(),
+        onRestoreSnapshot: (entityId) => {
+          const target = snapshots.find((snapshot) => snapshot.entityId === entityId);
+          if (target) setSnapshotToRestore(target);
+        },
         onClose: () => void closeCurrentProject('project'),
         navigationMode,
+        groundExtractionAvailable: selectedGroundCloud !== null,
       }),
     [
       closeCurrentProject,
@@ -2177,6 +2758,8 @@ export function App(): JSX.Element {
       recentProjects,
       replaceProject,
       saveProjectAs,
+      selectedGroundCloud,
+      snapshots,
     ],
   );
 
@@ -2300,7 +2883,7 @@ export function App(): JSX.Element {
     fields[next]?.select();
   }, []);
   const routeConstructionTyping = useCallback((key: string): void => {
-    if (!/^[0-9.,+\-]$/u.test(key)) return;
+    if (!/^[0-9.,+-]$/u.test(key)) return;
     const field = constructionBarFields()[0];
     if (!field) return;
     field.focus();
@@ -2309,6 +2892,58 @@ export function App(): JSX.Element {
     field.dispatchEvent(new Event('input', { bubbles: true }));
     field.setSelectionRange(key.length, key.length);
   }, []);
+  const commitConstructionInput = useCallback((): void => {
+    const point = constructionInputStore.commit();
+    if (measurementToolStore.snapshot().armed) {
+      void measurementToolStore
+        .acceptTyped(point)
+        .catch((error: unknown) =>
+          logEvent('error', 'renderer', `Measurement failed: ${String(error)}`),
+        );
+      return;
+    }
+    placeViewingBoxAt(point);
+  }, [constructionInputStore, measurementToolStore, placeViewingBoxAt]);
+  const acceptMeasurementPreview = useCallback((): void => {
+    if (!measurementToolStore.snapshot().armed) return;
+    void measurementToolStore
+      .acceptPreview()
+      .catch((error: unknown) =>
+        logEvent('error', 'renderer', `Measurement failed: ${String(error)}`),
+      );
+  }, [measurementToolStore]);
+  const cancelConstructionTool = useCallback((): void => {
+    if (measurementToolStore.cancel()) {
+      constructionInputStore.disarm();
+      if (activeFunctionId) closeFunction(activeFunctionId);
+      return;
+    }
+    setPlacingViewingBoxCenter(false);
+  }, [activeFunctionId, closeFunction, constructionInputStore, measurementToolStore]);
+  const selectMeasurement = useCallback(
+    (entityId: string): void => {
+      selectionStore.replace([entityId]);
+      setRightPanelTab('properties');
+    },
+    [selectionStore],
+  );
+  const deleteMeasurement = useCallback(
+    async (entityId: string): Promise<void> => {
+      const item = measurementsRef.current.find((candidate) => candidate.entityId === entityId);
+      if (!item) return;
+      const session = await ensureCanonicalProjectRef.current();
+      await session.deleteMeasurement(item.entityId, item.revision);
+      selectionStore.pruneDeleted([item.entityId]);
+      setProject(session.projectSnapshot());
+      setMeasurements(await session.listMeasurements());
+      logEvent('info', 'renderer', `Deleted measurement “${item.name}”.`);
+    },
+    [selectionStore],
+  );
+  const selectedMeasurement = useMemo(
+    () => measurements.find((item) => selected.has(item.entityId as EntityId)) ?? null,
+    [measurements, selected],
+  );
   void legacyCommand;
 
   return (
@@ -2334,9 +2969,18 @@ export function App(): JSX.Element {
                   activate('view.viewing-box');
                   return;
                 }
+                if (id === ('builder:measurements' as EntityId)) {
+                  activate('measurement.list');
+                  return;
+                }
                 if (viewingBoxes.some((box) => box.entityId === id)) {
                   selectViewingBox(id);
                   activate('view.viewing-box');
+                }
+                if (measurements.some((item) => item.entityId === id)) {
+                  selectMeasurement(id);
+                  activate('measurement.list');
+                  return;
                 }
                 onSelect(id, mode);
               }}
@@ -2358,7 +3002,23 @@ export function App(): JSX.Element {
               onInteractionStateChange={onInteractionStateChange}
               secondaryLabel={(entity) => {
                 const count = pointCloudMetadata.get(entity.id)?.pointCount;
-                return count === undefined ? null : formatPointCount(count);
+                const published = treeProductProvenance.find(
+                  (candidate) => candidate.entityId === entity.id,
+                );
+                return (
+                  <>
+                    {count === undefined ? null : formatPointCount(count)}
+                    {published ? (
+                      <span
+                        className={styles.provenanceBadge}
+                        title={`Published by PhotoLab · generation ${published.provenance.publicationGeneration} · sha ${published.provenance.packageSha256.slice(0, 5)}…`}
+                        aria-label="Published by PhotoLab"
+                      >
+                        {productGlyph(published.provenance.productKind)}
+                      </span>
+                    ) : null}
+                  </>
+                );
               }}
             />
           ) : (
@@ -2373,6 +3033,18 @@ export function App(): JSX.Element {
             title={functionTitle(activeFunctionId)}
             activeTab={rightPanelTab}
             onActiveTabChange={setRightPanelTab}
+            detachable={
+              (activeFunctionId === 'view.viewing-box' ||
+                activeFunctionId === 'pointcloud.ground.extract') &&
+              rightPanelTab === 'function'
+            }
+            detached={
+              viewingBoxDetached &&
+              (activeFunctionId === 'view.viewing-box' ||
+                activeFunctionId === 'pointcloud.ground.extract') &&
+              rightPanelTab === 'function'
+            }
+            onDetachedChange={setViewingBoxDetached}
             propertiesTitle={
               selected.size > 1
                 ? `${selected.size} selected`
@@ -2381,41 +3053,88 @@ export function App(): JSX.Element {
                   : undefined
             }
             properties={
-              <BuilderPropertiesPanel
-                selectedCount={selected.size}
-                perKind={selectionKindCounts(selected, project)}
-                query={propertyQuery}
-                loading={propertyQueryLoading}
-                editing={propertyEditing}
-                error={propertyQueryError}
-                onAssign={(assignment) => void assignSelectionProperty(assignment)}
-                pointCloudStyles={
-                  selectedPointClouds.length === selected.size
-                    ? selectedPointClouds.map(({ metadata }) => metadata.display)
-                    : []
-                }
-                onPointCloudDisplayChange={(display) => void setSelectedPointCloudDisplay(display)}
-              />
+              selectedMeasurement ? (
+                <MeasurementProperties
+                  measurement={selectedMeasurement}
+                  pixelsPerMetre={measurementPixelsPerMetre(
+                    viewportRef.current?.worldCamera() ?? null,
+                    viewportRef.current?.captureRectangle()?.height ?? window.innerHeight,
+                  )}
+                />
+              ) : (
+                <BuilderPropertiesPanel
+                  selectedCount={selected.size}
+                  perKind={selectionKindCounts(selected, project)}
+                  query={propertyQuery}
+                  loading={propertyQueryLoading}
+                  editing={propertyEditing}
+                  error={propertyQueryError}
+                  onAssign={(assignment) => void assignSelectionProperty(assignment)}
+                  pointCloudStyles={
+                    selectedPointClouds.length === selected.size
+                      ? selectedPointClouds.map(({ metadata }) => metadata.display)
+                      : []
+                  }
+                  productProvenance={productProvenance}
+                  onPointCloudDisplayChange={(display) =>
+                    void setSelectedPointCloudDisplay(display)
+                  }
+                />
+              )
             }
           >
-            {functionBody(
-              activeFunctionId,
-              pointSize,
-              setPointSize,
-              viewingBox,
-              commitCanonicalViewingBox,
-              placingViewingBoxCenter,
-              setPlacingViewingBoxCenter,
-              viewingBoxes,
-              viewingBoxName,
-              selected.size,
-              selectViewingBox,
-              createViewingBoxFromSelection,
-              createViewingBoxFromTypedExtents,
-              renameViewingBox,
-              (locked) => void setViewingBoxLocked(locked),
-              () => void deleteViewingBox(),
-              viewingBoxBakeProgress,
+            {isMeasurementFunction(activeFunctionId) ? (
+              <MeasurementPanel
+                tool={measurementTool}
+                measurements={measurements}
+                selectedId={selectedMeasurement?.entityId ?? null}
+                pixelsPerMetre={measurementPixelsPerMetre(
+                  viewportRef.current?.worldCamera() ?? null,
+                  viewportRef.current?.captureRectangle()?.height ?? window.innerHeight,
+                )}
+                onMetricChange={(metric) => measurementToolStore.setDistanceMetric(metric)}
+                onSelect={selectMeasurement}
+                onDelete={(entityId) => void deleteMeasurement(entityId)}
+              />
+            ) : activeFunctionId === 'pointcloud.ground.extract' ? (
+              <GroundExtractionPanel
+                sourceName={
+                  selectedGroundCloud
+                    ? (project?.entities[selectedGroundCloud.entityId]?.name ?? null)
+                    : null
+                }
+                activeJob={activeGroundJob}
+                preview={groundPreview}
+                result={groundResult}
+                error={groundError}
+                onPreview={(parameters) => void runGroundOperation('preview', parameters)}
+                onExtract={(parameters) => void runGroundOperation('extract', parameters)}
+                onCancel={(jobId) => void window.himmelcad?.jobs.cancel(jobId)}
+                onCreateSurface={(entityId) => {
+                  selectionStore.replace([entityId]);
+                  activate('mesh.surface.create');
+                }}
+              />
+            ) : (
+              functionBody(
+                activeFunctionId,
+                pointSize,
+                setPointSize,
+                viewingBox,
+                commitCanonicalViewingBox,
+                placingViewingBoxCenter,
+                setPlacingViewingBoxCenter,
+                viewingBoxes,
+                viewingBoxName,
+                selected.size,
+                selectViewingBox,
+                createViewingBoxFromSelection,
+                createViewingBoxFromTypedExtents,
+                renameViewingBox,
+                (locked) => void setViewingBoxLocked(locked),
+                () => void deleteViewingBox(),
+                viewingBoxBakeProgress,
+              )
             )}
           </FunctionPanel>
         }
@@ -2444,7 +3163,7 @@ export function App(): JSX.Element {
                   onDetachedChange={setConstructionDetached}
                   onFieldFocus={(field) => constructionInputStore.focus(field)}
                   onFieldCommit={(field, value) => constructionInputStore.setField(field, value)}
-                  onCommit={() => placeViewingBoxAt(constructionInputStore.commit())}
+                  onCommit={commitConstructionInput}
                   onCycleCandidate={(direction) => viewportRef.current?.cycleCandidate(direction)}
                 />
               ) : undefined
@@ -2473,84 +3192,124 @@ export function App(): JSX.Element {
               />
             }
           >
-            <BuilderKernelViewport
-              key={viewportEpoch}
-              ref={viewportRef}
-              pointSize={pointSize}
-              onCursorSnap={(nextSnap) => {
-                setSnap(nextSnap);
-                if (
-                  constructionInputStore.snapshot().armed &&
-                  nextSnap?.position.z !== null &&
-                  nextSnap?.position.z !== undefined
-                ) {
-                  constructionInputStore.pointer({
-                    x: nextSnap.position.x,
-                    y: nextSnap.position.y,
-                    z: nextSnap.position.z,
-                  });
+            <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+              <BuilderKernelViewport
+                key={viewportEpoch}
+                ref={viewportRef}
+                pointSize={pointSize}
+                onCursorSnap={(nextSnap) => {
+                  setSnap(nextSnap);
+                  if (
+                    constructionInputStore.snapshot().armed &&
+                    nextSnap?.position.z !== null &&
+                    nextSnap?.position.z !== undefined
+                  ) {
+                    constructionInputStore.pointer({
+                      x: nextSnap.position.x,
+                      y: nextSnap.position.y,
+                      z: nextSnap.position.z,
+                    });
+                  }
+                  if (measurementToolStore.snapshot().armed) {
+                    let anchor = null;
+                    if (nextSnap?.target?.exact && nextSnap.entity) {
+                      const source = canonicalSessionRef.current?.canonicalEntity(nextSnap.entity);
+                      if (source) {
+                        try {
+                          anchor = attachedMeasurementAnchor(nextSnap, source);
+                        } catch (error) {
+                          logEvent(
+                            'warn',
+                            'renderer',
+                            `Snap cannot anchor a measurement: ${String(error)}`,
+                          );
+                        }
+                      }
+                    }
+                    measurementToolStore.pointer(anchor);
+                  }
+                }}
+                selectedEntityIds={selected}
+                onSelectEntity={(id, mode) => {
+                  const kind = projectRef.current?.entities[id]?.kind;
+                  if (kind === 'PointCloud' || kind === 'GaussianSplatCloud') return;
+                  onSelect(id, mode);
+                }}
+                onClearSelection={() => selectionStore.clear()}
+                isEntityClickPickable={(id) => {
+                  const entity = projectRef.current?.entities[id];
+                  return Boolean(
+                    entity &&
+                    interactionState?.effective(id).selectable &&
+                    selectionStore.isKindSelectable(entity.kind),
+                  );
+                }}
+                isEntitySnappable={(id) => interactionState?.effective(id).snappable ?? false}
+                isEntitySelectionHighlightable={(id) => {
+                  const kind = projectRef.current?.entities[id]?.kind;
+                  return kind !== 'PointCloud' && kind !== 'GaussianSplatCloud';
+                }}
+                onCandidateSet={(candidates, index) =>
+                  selectionStore.setCandidates(
+                    candidates.map((candidate) => {
+                      const entityId = candidate.address.entityId as EntityId;
+                      const entity = projectRef.current?.entities[entityId];
+                      return {
+                        entityId,
+                        name: entity?.name ?? entityId,
+                        kind: entity?.kind ?? 'Object',
+                      };
+                    }),
+                    index,
+                  )
                 }
-              }}
-              selectedEntityIds={selected}
-              onSelectEntity={(id, mode) => {
-                const kind = projectRef.current?.entities[id]?.kind;
-                if (kind === 'PointCloud' || kind === 'GaussianSplatCloud') return;
-                onSelect(id, mode);
-              }}
-              onClearSelection={() => selectionStore.clear()}
-              isEntityClickPickable={(id) => {
-                const entity = projectRef.current?.entities[id];
-                return Boolean(
-                  entity &&
-                  interactionState?.effective(id).selectable &&
-                  selectionStore.isKindSelectable(entity.kind),
-                );
-              }}
-              isEntitySnappable={(id) => interactionState?.effective(id).snappable ?? false}
-              isEntitySelectionHighlightable={(id) => {
-                const kind = projectRef.current?.entities[id]?.kind;
-                return kind !== 'PointCloud' && kind !== 'GaussianSplatCloud';
-              }}
-              onCandidateSet={(candidates, index) =>
-                selectionStore.setCandidates(
-                  candidates.map((candidate) => {
-                    const entityId = candidate.address.entityId as EntityId;
-                    const entity = projectRef.current?.entities[entityId];
-                    return {
-                      entityId,
-                      name: entity?.name ?? entityId,
-                      kind: entity?.kind ?? 'Object',
-                    };
-                  }),
-                  index,
-                )
-              }
-              onCandidateSetClear={() => selectionStore.invalidateCandidates('viewportBlur')}
-              onContextSurface={(candidate, position) => {
-                if (candidate) selectionStore.replace([candidate.address.entityId as EntityId]);
-                setCommandSurface({ kind: candidate ? 'entity' : 'void', ...position });
-              }}
-              onRegistryShortcut={(event) =>
-                void dispatchRegistryShortcut(event, commandContext, executeRegistryCommand)
-              }
-              {...(project ? { projectId: currentProjectPath ?? project.projectId } : {})}
-              hudVisible={hudVisible}
-              viewingBox={viewingBox}
-              viewingBoxEditing={
-                activeFunctionId === 'view.viewing-box' &&
-                !placingViewingBoxCenter &&
-                (viewingBox?.lockMode ?? 'unlocked') === 'unlocked'
-              }
-              placingViewingBoxCenter={placingViewingBoxCenter}
-              constructionToolId={constructionInput.declaration?.toolId ?? null}
-              onConstructionTab={traverseConstructionBar}
-              onConstructionTyping={routeConstructionTyping}
-              onConstructionCancel={() => setPlacingViewingBoxCenter(false)}
-              onViewportPoint={placeViewingBoxAt}
-              onViewingBoxChange={commitCanonicalViewingBox}
-              onDropFiles={(paths) => void registerImports(paths)}
-              onLog={(level, message) => logEvent(level, 'renderer', message)}
-            />
+                onCandidateSetClear={() => selectionStore.invalidateCandidates('viewportBlur')}
+                onContextSurface={(candidate, position) => {
+                  if (candidate) selectionStore.replace([candidate.address.entityId as EntityId]);
+                  setCommandSurface({ kind: candidate ? 'entity' : 'void', ...position });
+                }}
+                onRegistryShortcut={(event) =>
+                  void dispatchRegistryShortcut(event, commandContext, executeRegistryCommand)
+                }
+                {...(project ? { projectId: currentProjectPath ?? project.projectId } : {})}
+                hudVisible={hudVisible}
+                viewingBox={viewingBox}
+                viewingBoxName={viewingBoxName}
+                viewingBoxPanelOpen={
+                  activeFunctionId === 'view.viewing-box' && rightPanelTab === 'function'
+                }
+                onOpenViewingBox={() => {
+                  activate('view.viewing-box');
+                  setRightPanelTab('function');
+                }}
+                viewingBoxEditing={
+                  activeFunctionId === 'view.viewing-box' &&
+                  !placingViewingBoxCenter &&
+                  (viewingBox?.lockMode ?? 'unlocked') === 'unlocked'
+                }
+                placingViewingBoxCenter={placingViewingBoxCenter}
+                constructionToolId={constructionInput.declaration?.toolId ?? null}
+                onConstructionTab={traverseConstructionBar}
+                onConstructionTyping={routeConstructionTyping}
+                onConstructionCancel={cancelConstructionTool}
+                onConstructionClick={acceptMeasurementPreview}
+                onViewportPoint={placeViewingBoxAt}
+                onViewportBox={createViewingBoxFromViewportDrag}
+                onViewingBoxChange={commitCanonicalViewingBox}
+                onDropFiles={(paths) => void registerImports(paths)}
+                onLog={(level, message) => logEvent(level, 'renderer', message)}
+              />
+              <MeasurementViewportOverlay
+                viewport={viewportRef.current}
+                measurements={measurements.filter(
+                  (item) => project?.entities[item.entityId]?.visibility.visible !== false,
+                )}
+                tool={measurementTool}
+                selected={selected}
+                onSelect={selectMeasurement}
+              />
+              <GroundPreviewOverlay viewport={viewportRef.current} result={groundPreview} />
+            </div>
           </ViewportInteractionChrome>
         }
         floatingLeftTabs
@@ -2581,7 +3340,11 @@ export function App(): JSX.Element {
       {jobsOpen && window.himmelcad ? (
         <FloatingTaskIsland onRequestClose={() => setJobsOpen(false)}>
           <JobsIsland
-            jobs={jobs}
+            jobs={jobs.map((job) =>
+              typeof job.context?.productGlyph === 'string'
+                ? { ...job, label: `${job.context.productGlyph} ${job.label}` }
+                : job,
+            )}
             now={jobClock}
             completedRetentionMs={JOB_COMPLETED_RETENTION_MS}
             onCancel={(id) => void window.himmelcad?.jobs.cancel(id)}
@@ -2641,6 +3404,36 @@ export function App(): JSX.Element {
           />
         </FloatingTaskIsland>
       ) : null}
+      <Dialog
+        open={snapshotToRestore !== null}
+        onClose={() => {
+          if (!snapshotRestorePending) setSnapshotToRestore(null);
+        }}
+        title="Restore snapshot?"
+        actions={
+          <>
+            <Button
+              variant="secondary"
+              disabled={snapshotRestorePending}
+              onClick={() => setSnapshotToRestore(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              loading={snapshotRestorePending}
+              onClick={() => void restoreSnapshot()}
+            >
+              Restore
+            </Button>
+          </>
+        }
+      >
+        <span>
+          Restore snapshot '{snapshotToRestore?.name}'? Later changes stay in the journal and can be
+          redone.
+        </span>
+      </Dialog>
       <ToastRegion>
         {closeMode ? (
           <Toast
@@ -2759,10 +3552,90 @@ export function App(): JSX.Element {
 
 function functionTitle(id: string | null): string | undefined {
   if (!id) return undefined;
+  if (id === 'measure.point') return 'Measure point';
+  if (id === 'measure.distance') return 'Measure distance';
+  if (id === 'measure.dz') return 'Measure height difference';
+  if (id === 'measurement.list' || id === 'measurements.panel') return 'Measurements';
   if (id === 'view.performance') return 'point cloud performance';
   if (id === 'view.point-size') return 'point size';
   if (id === 'view.viewing-box') return 'Viewing Box';
+  if (id === 'pointcloud.ground.extract') return 'Extract ground';
   return id.replace(/[._:-]/g, ' ');
+}
+
+function measurementKindForFunction(id: string | null): MeasurementToolKind | null {
+  if (id === 'measure.point') return 'point';
+  if (id === 'measure.distance') return 'distance';
+  if (id === 'measure.dz') return 'heightDifference';
+  return null;
+}
+
+function isMeasurementFunction(id: string | null): boolean {
+  return (
+    measurementKindForFunction(id) !== null ||
+    id === 'measurement.list' ||
+    id === 'measurements.panel'
+  );
+}
+
+function measurementKindLabel(kind: MeasurementToolKind): string {
+  if (kind === 'heightDifference') return 'Height difference';
+  return kind === 'point' ? 'Point' : 'Distance';
+}
+
+function measurementKindForMethod(method: string): MeasurementToolKind | null {
+  if (method === 'measure.point') return 'point';
+  if (method === 'measure.distance') return 'distance';
+  if (method === 'measure.dz') return 'heightDifference';
+  return null;
+}
+
+function isMeasurementPayload(value: unknown): value is MeasurementV1 {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<MeasurementV1>;
+  return (
+    candidate.schemaId === 'hcad.measurement@1' &&
+    candidate.schemaVersion === 1 &&
+    Array.isArray(candidate.anchors) &&
+    ['point', 'distance', 'heightDifference'].includes(String(candidate.measurementKind))
+  );
+}
+
+function admissionResult(payload: unknown): {
+  readonly schemaId: string;
+  readonly payload: unknown;
+} {
+  return { schemaId: 'hcad.admission-operation-result@1', payload };
+}
+
+function groundResultEnvelope(result: GroundPreviewResult | GroundExtractionResult): {
+  readonly schemaId: string;
+  readonly payload: unknown;
+} {
+  const { schemaId, ...payload } = result;
+  return { schemaId, payload };
+}
+
+function measurementAnchorConstructionPoint(
+  anchor: Parameters<typeof measurementAnchorPosition>[0],
+): { readonly x: number; readonly y: number; readonly z: number } | undefined {
+  const point = measurementAnchorPosition(anchor);
+  return point.z === null ? undefined : { x: point.x, y: point.y, z: point.z };
+}
+
+function measurementPixelsPerMetre(
+  camera: KernelWorldCamera | null,
+  viewportHeight: number,
+): number {
+  if (!camera || !(viewportHeight > 0)) return 1;
+  if (camera.projection.kind === 'orthographic') {
+    return viewportHeight / camera.projection.verticalSpan;
+  }
+  const dx = camera.target.x - camera.eye.x;
+  const dy = camera.target.y - camera.eye.y;
+  const dz = camera.target.z - camera.eye.z;
+  const distance = Math.hypot(dx, dy, dz);
+  return viewportHeight / (2 * distance * Math.tan(camera.projection.verticalFovRadians / 2));
 }
 
 function functionBody(
@@ -2845,6 +3718,7 @@ interface BuilderPropertiesPanelProps {
   readonly error: string | null;
   readonly onAssign: (assignment: PropertyAssignment) => void;
   readonly pointCloudStyles: readonly PointCloudDisplayStyle[];
+  readonly productProvenance: readonly BuilderPhotoLabProvenanceSummary[];
   readonly onPointCloudDisplayChange: (display: PointCloudDisplayStyle) => void;
 }
 
@@ -2857,6 +3731,7 @@ function BuilderPropertiesPanel({
   error,
   onAssign,
   pointCloudStyles,
+  productProvenance,
   onPointCloudDisplayChange,
 }: BuilderPropertiesPanelProps): JSX.Element {
   if (selectedCount === 0) {
@@ -2893,6 +3768,26 @@ function BuilderPropertiesPanel({
           onChange={onPointCloudDisplayChange}
         />
       ) : null}
+      {productProvenance.map(({ entityId, componentSha256, provenance }) => (
+        <section className={styles.provenanceGroup} key={entityId} aria-label="Provenance">
+          <div className={styles.propertyHeading}>
+            <span>Provenance</span>
+            <small>PhotoLab</small>
+          </div>
+          <dl>
+            <dt>Product</dt>
+            <dd>{provenance.product}</dd>
+            <dt>PhotoLab project</dt>
+            <dd>{provenance.sourceProjectId}</dd>
+            <dt>Publication</dt>
+            <dd>Generation {provenance.publicationGeneration}</dd>
+            <dt>Package</dt>
+            <dd title={provenance.packageSha256}>{provenance.packageSha256}</dd>
+            <dt>Component</dt>
+            <dd title={componentSha256}>{componentSha256}</dd>
+          </dl>
+        </section>
+      ))}
     </div>
   );
 }
@@ -3049,8 +3944,8 @@ function ViewingBoxPanel({
   onPlacingCenterChange,
 }: ViewingBoxPanelProps): JSX.Element {
   const [nameDraft, setNameDraft] = useState(name);
-  const [typedCenter, setTypedCenter] = useState({ x: 0, y: 0, z: 0 });
-  const [typedSize, setTypedSize] = useState({ x: 10, y: 10, z: 10 });
+  const [typedMin, setTypedMin] = useState({ x: -5, y: -5, z: -5 });
+  const [typedMax, setTypedMax] = useState({ x: 5, y: 5, z: 5 });
   useEffect(() => setNameDraft(name), [name]);
   const modes: readonly { readonly id: KernelViewingBoxMode; readonly label: string }[] = [
     { id: 'resize', label: 'Resize' },
@@ -3098,26 +3993,37 @@ function ViewingBoxPanel({
 
       {!state ? (
         <>
-          <VectorEditor
-            label="Center"
-            values={typedCenter}
-            onValue={(axis, value) => setTypedCenter((current) => ({ ...current, [axis]: value }))}
-          />
-          <VectorEditor
-            label="Full extents"
-            values={typedSize}
-            minimum={0.000_002}
-            onValue={(axis, value) => setTypedSize((current) => ({ ...current, [axis]: value }))}
+          <ExtentsEditor
+            min={typedMin}
+            max={typedMax}
+            onValue={(bound, axis, value) => {
+              if (bound === 'min') setTypedMin((current) => ({ ...current, [axis]: value }));
+              else setTypedMax((current) => ({ ...current, [axis]: value }));
+            }}
           />
           <Button
             variant="primary"
             size="small"
-            onClick={() => onCreateFromTypedExtents(typedCenter, typedSize)}
+            disabled={(['x', 'y', 'z'] as const).some((axis) => typedMin[axis] >= typedMax[axis])}
+            onClick={() =>
+              onCreateFromTypedExtents(
+                {
+                  x: (typedMin.x + typedMax.x) * 0.5,
+                  y: (typedMin.y + typedMax.y) * 0.5,
+                  z: (typedMin.z + typedMax.z) * 0.5,
+                },
+                {
+                  x: typedMax.x - typedMin.x,
+                  y: typedMax.y - typedMin.y,
+                  z: typedMax.z - typedMin.z,
+                },
+              )
+            }
           >
             Create from extents
           </Button>
           <p className={styles.toolHint}>
-            Create from resident selection bounds, type exact extents, or draw a 60%-of-view box.
+            Create from resident selection bounds, type exact extents, or drag a box in the view.
           </p>
         </>
       ) : (
@@ -3133,11 +4039,21 @@ function ViewingBoxPanel({
                 if (event.key === 'Enter') onRename(nameDraft);
                 if (event.key === 'Escape') setNameDraft(name);
               }}
-              onBlur={() => onRename(nameDraft)}
             />
           </label>
+          <Button
+            variant="secondary"
+            size="small"
+            disabled={!nameDraft.trim() || bakeProgress !== null}
+            onClick={() => onRename(nameDraft)}
+          >
+            Save as entity
+          </Button>
 
-          <div className={styles.segmented} aria-label="Viewing box operation">
+          <div
+            className={`${styles.segmented} ${styles.segmentedPair}`}
+            aria-label="Viewing box operation"
+          >
             {(
               [
                 ['keepInside', 'Keep inside'],
@@ -3178,32 +4094,13 @@ function ViewingBoxPanel({
             ))}
           </div>
 
-          {!locked ? (
-            <VectorEditor
-              label="Center"
-              values={state.center}
-              onValue={(axis, value) =>
-                onChange({ ...state, center: { ...state.center, [axis]: value } })
-              }
-            />
-          ) : null}
-          {!locked ? (
-            <VectorEditor
-              label="Size"
-              values={{
-                x: state.halfExtents.x * 2,
-                y: state.halfExtents.y * 2,
-                z: state.halfExtents.z * 2,
-              }}
-              minimum={0.000_002}
-              onValue={(axis, value) =>
-                onChange({
-                  ...state,
-                  halfExtents: { ...state.halfExtents, [axis]: Math.max(0.000_001, value * 0.5) },
-                })
-              }
-            />
-          ) : null}
+          <ExtentsEditor
+            {...viewingBoxExtents(state)}
+            disabled={locked || bakeProgress !== null}
+            onValue={(bound, axis, value) =>
+              onChange(setViewingBoxExtent(state, bound, axis, value))
+            }
+          />
           {state.mode === 'rotate' && !locked ? (
             <div className={styles.toolGroup}>
               <span className={styles.toolLabel}>Rotate 15° around local axis</span>
@@ -3241,18 +4138,21 @@ function ViewingBoxPanel({
           ) : locked ? (
             <div className={styles.viewingBoxLockBanner}>
               <span aria-hidden>🔒</span>
-              <strong>
-                {state.lockMode === 'baked'
-                  ? 'Locked · prepared data'
-                  : 'Locked · edit-frozen copy scope'}
+              <strong className={styles.viewingBoxLockCopy}>
+                <span>Locked — unlock to edit</span>
+                <span className={styles.viewingBoxLockDetail}>
+                  {state.lockMode === 'baked'
+                    ? 'Prepared dataset'
+                    : 'Kept region is most of the cloud; clip planes remain active'}
+                </span>
               </strong>
-              <Button variant="secondary" size="small" onClick={() => onLockChange(false)}>
+              <Button variant="primary" size="small" onClick={() => onLockChange(false)}>
                 Unlock
               </Button>
             </div>
           ) : (
             <Button variant="primary" size="small" onClick={() => onLockChange(true)}>
-              Lock and bake
+              Lock
             </Button>
           )}
 
@@ -3288,30 +4188,34 @@ function ViewingBoxPanel({
   );
 }
 
-interface VectorEditorProps {
-  readonly label: string;
-  readonly values: { readonly x: number; readonly y: number; readonly z: number };
-  readonly minimum?: number;
-  readonly onValue: (axis: KernelViewingBoxAxis, value: number) => void;
+interface ExtentsEditorProps {
+  readonly min: { readonly x: number; readonly y: number; readonly z: number };
+  readonly max: { readonly x: number; readonly y: number; readonly z: number };
+  readonly disabled?: boolean;
+  readonly onValue: (bound: 'min' | 'max', axis: KernelViewingBoxAxis, value: number) => void;
 }
 
-function VectorEditor({ label, values, minimum, onValue }: VectorEditorProps): JSX.Element {
+function ExtentsEditor({ min, max, disabled = false, onValue }: ExtentsEditorProps): JSX.Element {
   return (
-    <fieldset className={styles.vectorEditor}>
-      <legend>{label}</legend>
-      {(['x', 'y', 'z'] as const).map((axis) => (
-        <label key={axis}>
-          <span>{axis.toUpperCase()}</span>
-          <NumberInput
-            min={minimum}
-            step={0.001}
-            value={Number(values[axis].toPrecision(12))}
-            precision={6}
-            unit="m"
-            onCommit={(value) => onValue(axis, value)}
-          />
-        </label>
-      ))}
+    <fieldset className={`${styles.vectorEditor} ${styles.extentsEditor}`} disabled={disabled}>
+      <legend>Extents</legend>
+      {(['x', 'y', 'z'] as const).flatMap((axis) =>
+        (['min', 'max'] as const).map((bound) => (
+          <label key={`${bound}-${axis}`}>
+            <span>
+              {bound === 'min' ? 'Min' : 'Max'} {axis.toUpperCase()}
+            </span>
+            <NumberInput
+              step={0.001}
+              value={Number((bound === 'min' ? min[axis] : max[axis]).toPrecision(12))}
+              precision={6}
+              unit="m"
+              aria-label={`${bound === 'min' ? 'Minimum' : 'Maximum'} ${axis.toUpperCase()}`}
+              onCommit={(value) => onValue(bound, axis, value)}
+            />
+          </label>
+        )),
+      )}
     </fieldset>
   );
 }
@@ -3405,6 +4309,33 @@ function automationPayload(value: unknown): Record<string, unknown> {
     : record;
 }
 
+function groundParametersFromPayload(value: unknown): GroundExtractionParameters {
+  const defaults: GroundExtractionParameters = {
+    cellSizeM: 1,
+    slope: 0.15,
+    maxWindowM: 18,
+    initialDistanceM: 0.5,
+  };
+  if (value === undefined) return defaults;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('ground parameters must be an object.');
+  }
+  const input = value as Record<string, unknown>;
+  const number = (key: keyof GroundExtractionParameters): number => {
+    const candidate = input[key];
+    if (typeof candidate !== 'number' || !Number.isFinite(candidate)) {
+      throw new TypeError(`ground parameters.${key} must be finite.`);
+    }
+    return candidate;
+  };
+  return {
+    cellSizeM: number('cellSizeM'),
+    slope: number('slope'),
+    maxWindowM: number('maxWindowM'),
+    initialDistanceM: number('initialDistanceM'),
+  };
+}
+
 function nextBookmarkName(count: number): string {
   return `View ${String(count + 1)}`;
 }
@@ -3458,6 +4389,15 @@ function isViewingBoxPoint(
   );
 }
 
+function isViewingBoxRotation(value: unknown): value is readonly [number, number, number, number] {
+  return (
+    Array.isArray(value) &&
+    value.length === 4 &&
+    value.every((component) => typeof component === 'number' && Number.isFinite(component)) &&
+    Math.hypot(...value) > 1e-9
+  );
+}
+
 async function registerImportJobs(
   api: NonNullable<Window['himmelcad']>,
   paths: readonly string[],
@@ -3465,7 +4405,10 @@ async function registerImportJobs(
   const items: { jobId: string; sourcePath: string }[] = [];
   for (const sourcePath of paths) {
     const jobId = `registration-${crypto.randomUUID()}`;
-    const label = `Import ${sourcePath.split(/[\\/]/).pop() ?? sourcePath}`;
+    const product = await api.productImport.inspect(sourcePath).catch(() => null);
+    const label = product
+      ? `PhotoLab product · ${product.product}`
+      : `Import ${sourcePath.split(/[\\/]/).pop() ?? sourcePath}`;
     await api.jobs.register({
       id: jobId,
       label,
@@ -3474,7 +4417,18 @@ async function registerImportJobs(
       needsInput: true,
       progressKey: jobId,
       cancellable: true,
-      context: { sourcePath },
+      context: {
+        sourcePath,
+        ...(product
+          ? {
+              productKind: product.productKind,
+              productGlyph: productGlyph(
+                product.productKind as BuilderPhotoLabProvenanceSummary['provenance']['productKind'],
+              ),
+              packageSha256: product.packageSha256,
+            }
+          : {}),
+      },
     });
     logEvent('info', 'renderer', `${label} started`);
     items.push({ jobId, sourcePath });
@@ -3546,6 +4500,22 @@ function formatPointCount(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)} k`;
   return value.toLocaleString();
+}
+
+function productGlyph(kind: BuilderPhotoLabProvenanceSummary['provenance']['productKind']): string {
+  switch (kind) {
+    case 'dem':
+      return '⌁';
+    case 'mesh':
+      return '◇';
+    case 'gaussianSplat':
+      return '✣';
+    case 'orthomosaic':
+      return '▧';
+    case 'sparse':
+    case 'dense':
+      return '✦';
+  }
 }
 
 async function readPotreeBounds(metadataUrl: string): Promise<{

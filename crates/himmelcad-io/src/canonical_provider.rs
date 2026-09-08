@@ -1176,6 +1176,12 @@ pub enum ProviderContractError {
     /// Operation was cancelled before publication.
     #[error("provider operation was cancelled")]
     Cancelled,
+    /// A PhotoLab product package was refused with one closed IF-D28 reason code.
+    #[error("product import refused ({reason_code}): {message}")]
+    ProductImportRefused {
+        reason_code: &'static str,
+        message: String,
+    },
     /// Provider did not return one exact local root per staged artifact inventory.
     #[error("invalid or incomplete provider artifact roots")]
     InvalidArtifactRoots,

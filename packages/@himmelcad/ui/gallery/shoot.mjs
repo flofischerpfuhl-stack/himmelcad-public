@@ -70,6 +70,7 @@ try {
     await verifyDialogCancelContrast(theme);
     await verifyJobsRespondContrast(theme);
     await verifyViewportChromeContrast(theme);
+    await verifyFunctionPanelTabPixelsStayInsidePanel(theme);
   }
   process.stdout.write(
     `Captured ${2 + uniqueSections.length * 2} screenshots for ${uniqueSections.length} sections in ${shotsDir}\n`,
@@ -248,6 +249,73 @@ async function verifyViewportChromeContrast(theme) {
   }
 }
 
+async function verifyFunctionPanelTabPixelsStayInsidePanel(theme) {
+  const browser = await chromium.launch({
+    executablePath: chrome,
+    headless: true,
+    args: ['--no-sandbox', '--disable-gpu', '--force-device-scale-factor=1'],
+  });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await page.goto(`${baseUrl}/?theme=${theme}&section=function-panel`);
+    await page.evaluate(() => document.fonts.ready);
+    const rows = page.locator('[data-gallery-section="function-panel"] [data-gallery-row]');
+    for (let index = 0; index < (await rows.count()); index += 1) {
+      const row = rows.nth(index);
+      const rowName = await row.getAttribute('data-gallery-row');
+      const sample = row.locator('.gallerySample');
+      const panel = row.locator('.galleryFunctionPanel');
+      const sampleBox = await sample.boundingBox();
+      const panelBox = await panel.boundingBox();
+      if (!sampleBox || !panelBox) throw new Error(`Could not locate FunctionPanel ${rowName}.`);
+
+      const labels = row.locator('[role="tab"] [data-function-tab-label]');
+      for (let labelIndex = 0; labelIndex < (await labels.count()); labelIndex += 1) {
+        const labelBox = await labels.nth(labelIndex).boundingBox();
+        if (
+          !labelBox ||
+          labelBox.x < panelBox.x ||
+          labelBox.x + labelBox.width > panelBox.x + panelBox.width
+        ) {
+          throw new Error(`FunctionPanel tab text escapes the panel in ${theme}/${rowName}.`);
+        }
+      }
+
+      const bitmap = await decodePng(page, await sample.screenshot());
+      const panelLeft = Math.floor(panelBox.x - sampleBox.x);
+      const panelRight = Math.ceil(panelBox.x + panelBox.width - sampleBox.x);
+      const headerTop = Math.max(0, Math.floor(panelBox.y - sampleBox.y));
+      const headerBottom = Math.min(bitmap.height, headerTop + 30);
+      const fill = pixelAt(bitmap, 1, 1);
+      for (let y = headerTop; y < headerBottom; y += 1) {
+        for (let x = 0; x < bitmap.width; x += 1) {
+          if (x >= panelLeft && x < panelRight) continue;
+          if (pixelDistance(pixelAt(bitmap, x, y), fill) > 6) {
+            throw new Error(
+              `FunctionPanel emitted header pixels outside its bounds in ${theme}/${rowName}.`,
+            );
+          }
+        }
+      }
+    }
+
+    const overflowRow = page.locator('[data-gallery-row="five-tabs-320"]');
+    const lastVisibleTab = overflowRow.getByRole('tab').last();
+    const overflowButton = overflowRow.getByRole('button', { name: 'More function tabs' });
+    await lastVisibleTab.focus();
+    await lastVisibleTab.press('ArrowRight');
+    if (!(await overflowButton.evaluate((button) => button === document.activeElement))) {
+      throw new Error(`FunctionPanel ArrowRight did not reach overflow in ${theme}.`);
+    }
+    await overflowButton.press('Enter');
+    if ((await overflowRow.getByRole('menu', { name: 'More function tabs' }).count()) !== 1) {
+      throw new Error(`FunctionPanel Enter did not open overflow in ${theme}.`);
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
 async function verifyElementTextContrast(element, textElement, minimum, description) {
   const elementBox = await element.boundingBox();
   const textBox = await textElement.boundingBox();
@@ -330,6 +398,10 @@ function sampleText(bitmap, textBox, fill) {
 function pixelAt(bitmap, x, y) {
   const offset = (y * bitmap.width + x) * 4;
   return bitmap.pixels.slice(offset, offset + 3);
+}
+
+function pixelDistance(left, right) {
+  return Math.max(...left.map((channel, index) => Math.abs(channel - right[index])));
 }
 
 function contrastRatio(left, right) {

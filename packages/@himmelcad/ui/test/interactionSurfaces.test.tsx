@@ -5,6 +5,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import {
   ConstructionBar,
   InteractionStateCheckbox,
+  MeasurementGraphics,
+  MeasurementLiveReadout,
   SelectionVisuals,
   ViewportBottomBar,
 } from '../src/index.js';
@@ -75,4 +77,41 @@ void test('G-B2-SELECTION-VISUAL fixture carries direction, square, anchor-only,
   assert.match(shown, /data-hover-pickable-only="true"/);
   const hidden = renderToStaticMarkup(<SelectionVisuals supportVisible={false} />);
   assert.doesNotMatch(hidden, /data-support-geometry/);
+});
+
+void test('G-MI-VISUAL measurement overlay exposes V-05 DOM geometry and live readout', () => {
+  const html = renderToStaticMarkup(
+    <>
+      <MeasurementGraphics
+        items={[
+          {
+            id: 'distance-1',
+            anchors: [
+              { x: 20, y: 30 },
+              { x: 180, y: 90 },
+            ],
+            label: '12.345 m',
+            selected: true,
+          },
+          {
+            id: 'dz-preview',
+            anchors: [
+              { x: 210, y: 70 },
+              { x: 330, y: 45 },
+            ],
+            label: 'Δz 0.412 m',
+            preview: true,
+          },
+        ]}
+      />
+      <MeasurementLiveReadout
+        prompt="Pick or type next point"
+        value="Δz 0.412 m"
+      />
+    </>,
+  );
+  assert.match(html, /data-render-dependency="V-05"/);
+  assert.match(html, /width="6"|12\.345 m/);
+  assert.match(html, /Δz 0\.412 m/);
+  assert.match(html, />Exact</);
 });

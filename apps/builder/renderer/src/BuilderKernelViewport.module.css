@@ -60,6 +60,24 @@
   transform: translateX(-50%);
 }
 
+.viewingBoxStatus {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: inline-flex;
+  max-width: min(240px, 42%);
+  align-items: center;
+  gap: 6px;
+}
+
+.viewingBoxStatusName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .dropOverlay {
   position: absolute;
   inset: 12px;

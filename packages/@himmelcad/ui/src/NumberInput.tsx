@@ -64,7 +64,6 @@ export function NumberInput({
       const input = inputRef.current;
       if (!input || document.activeElement !== input) return false;
       const restored = formatNumber(committed, precision);
-      if (!invalid && draft === restored) return false;
       revertEscapeField(input, restored);
       setDraft(restored);
       setInvalid(false);
@@ -84,7 +83,7 @@ export function NumberInput({
     else setCommitted(value);
     setDraft(formatNumber(next, precision));
     onValueChange?.(next);
-    onCommit?.(next);
+    if (next !== committed) onCommit?.(next);
     return true;
   };
 

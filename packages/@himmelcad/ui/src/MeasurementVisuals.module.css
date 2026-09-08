@@ -1,0 +1,91 @@
+.graphics {
+  position: absolute;
+  inset: 0;
+  z-index: var(--hc-z-sticky);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.line {
+  stroke: var(--hc-geometry-support);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+
+.selectedLine {
+  stroke: var(--hc-geometry-selection);
+}
+
+.previewLine {
+  stroke: var(--hc-geometry-active-preview);
+  stroke-dasharray: 5 3;
+}
+
+.anchor {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  box-sizing: border-box;
+  background: var(--hc-geometry-support);
+  border: 1px solid var(--hc-geometry-support-halo);
+  transform: translate(-3px, -3px);
+}
+
+.selectedAnchor {
+  background: var(--hc-geometry-selection);
+  border-color: var(--hc-geometry-selection-halo);
+}
+
+.label {
+  position: absolute;
+  min-height: 22px;
+  padding: 2px 6px;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-island-hi);
+  color: var(--hc-fg-strong);
+  font: 400 12px/16px var(--hc-font-mono);
+  white-space: nowrap;
+  transform: translate(-50%, 0);
+  pointer-events: auto;
+}
+
+.label:hover,
+.label:focus-visible,
+.selectedLabel {
+  border-color: var(--hc-geometry-selection);
+  outline: none;
+}
+
+.readout {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-md);
+  background: var(--hc-bg-island-hi);
+}
+
+.prompt,
+.exactness {
+  color: var(--hc-fg-muted);
+  font: 400 11px/1.3 var(--hc-font-ui);
+}
+
+.value {
+  color: var(--hc-fg-strong);
+  font: 500 14px/1.4 var(--hc-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.exactness {
+  color: var(--hc-geometry-support);
+}

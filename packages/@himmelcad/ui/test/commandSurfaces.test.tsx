@@ -70,6 +70,62 @@ void test('PhotoLab image command is visible only for the PhotoLab CameraImage m
   assert.doesNotMatch(render('builder'), /Remove from project…/);
 });
 
+void test('S-06d snapshots the PhotoLab product and Builder polyline menus', () => {
+  const labels = (commandContext: CommandContext, kind: string) => {
+    const html = renderToStaticMarkup(
+      <EntityCommandMenu
+        x={24}
+        y={32}
+        context={commandContext}
+        target={{ entityIds: commandContext.selectedEntityIds, kind }}
+        onExecute={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+    return [...html.matchAll(/<span class="label">([^<]+)<\/span>/g)].map((match) => match[1]);
+  };
+
+  assert.deepEqual(
+    labels(
+      {
+        ...context,
+        productId: 'photolab',
+        selectedEntityIds: ['dense-cloud'],
+        selectedEntityKinds: ['cloud'],
+        selectedCanonicalEntityKinds: ['PointCloud'],
+        entityKind: 'PointCloud',
+        candidates: [],
+      },
+      'PointCloud',
+    ),
+    ['Zoom to', 'Hide', 'Properties', 'Export…'],
+    'PhotoLab product node menu snapshot',
+  );
+  assert.deepEqual(
+    labels(
+      {
+        ...context,
+        productId: 'builder',
+        selectedCanonicalEntityKinds: ['Polyline3D'],
+        candidates: [],
+      },
+      'Polyline3D',
+    ),
+    [
+      'Rename',
+      'Zoom to',
+      'Hide',
+      'Isolate',
+      'Measure point',
+      'Measure distance',
+      'Measure height difference',
+      'Properties',
+      'Export…',
+    ],
+    'Builder polyline node menu snapshot',
+  );
+});
+
 void test('tree-unhandled command ids are forwarded unchanged with the selected ids', () => {
   const calls: Array<{ commandId: string; entityIds: readonly EntityId[] }> = [];
   dispatchEntityTreeCommand(
@@ -88,7 +144,7 @@ void test('tree-unhandled command ids are forwarded unchanged with the selected 
   ]);
 });
 
-void test('quick surface has the exact header and registry cap', () => {
+void test('S-06e quick surface snapshots the UIP-D13 row order and registry cap', () => {
   const html = renderToStaticMarkup(
     <QuickCommandSurface
       x={24}
@@ -99,10 +155,12 @@ void test('quick surface has the exact header and registry cap', () => {
     />,
   );
   assert.match(html, />Viewport</);
-  assert.ok((html.match(/role="menuitem"/g) ?? []).length <= 7);
-  assert.match(html, /Frame all/);
-  assert.match(html, /Clear selection/);
-  assert.match(html, /Paste in place/);
+  assert.equal((html.match(/role="menuitem"/g) ?? []).length, 7);
+  assert.deepEqual(
+    [...html.matchAll(/<span class="label">([^<]+)<\/span>/g)].map((match) => match[1]),
+    ['Frame all', 'Top', 'Front', 'Right', 'Perspective', 'Clear selection', 'Paste in place'],
+  );
+  assert.doesNotMatch(html, /Capture view|Restore bookmark/);
 });
 
 void test('context surfaces clamp to the viewport', () => {

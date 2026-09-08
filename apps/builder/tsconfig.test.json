@@ -13,7 +13,9 @@
     "renderer/src/importDialogPolicy.ts",
     "renderer/src/projectProjection.ts",
     "renderer/src/sidecarProgress.ts",
+    "renderer/src/snapshotCommands.ts",
     "renderer/src/viewingBoxBake.ts",
+    "renderer/src/viewingBoxWorkflow.ts",
     "test"
   ]
 }

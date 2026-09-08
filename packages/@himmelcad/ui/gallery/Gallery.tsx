@@ -21,6 +21,8 @@ import {
   Menu,
   MenuItem,
   MenuSeparator,
+  MeasurementGraphics,
+  MeasurementLiveReadout,
   MixedPropertyMarker,
   NumberInput,
   OverlayAxis,
@@ -187,28 +189,31 @@ const specs: readonly ComponentSpec[] = [
     name: 'Command surfaces',
     states: [
       row('entity-menu', 'entity menu · polyline selected', 'default', 'entity'),
-      row('photolab-image-menu', 'PhotoLab image node menu', 'default', 'photolab-image'),
+      row('photolab-product-menu', 'PhotoLab product node menu', 'default', 'photolab-product'),
       row('quick-surface', 'void quick surface', 'default', 'quick'),
       row('candidate-submenu', 'Select under cursor · open', 'default', 'submenu'),
     ],
     render: (_state, galleryRow) => {
-      const isPhotolabImage = galleryRow?.value === 'photolab-image';
+      const isPhotolabProduct = galleryRow?.value === 'photolab-product';
       const commandContext = {
         hasProject: true,
-        productId: isPhotolabImage ? 'photolab' : 'builder',
-        selectedEntityIds: [isPhotolabImage ? 'image-01' : 'boundary'],
-        selectedEntityKinds: [isPhotolabImage ? 'other' : 'polyline'] as const,
-        selectedCanonicalEntityKinds: [isPhotolabImage ? 'CameraImage' : 'Polyline3D'],
-        entityKind: isPhotolabImage ? 'CameraImage' : 'Polyline3D',
+        productId: isPhotolabProduct ? 'photolab' : 'builder',
+        selectedEntityIds: [isPhotolabProduct ? 'dense-cloud' : 'boundary'],
+        selectedEntityKinds: [isPhotolabProduct ? 'cloud' : 'polyline'] as const,
+        selectedCanonicalEntityKinds: [isPhotolabProduct ? 'PointCloud' : 'Polyline3D'],
+        entityKind: isPhotolabProduct ? 'PointCloud' : 'Polyline3D',
         selectionVisibility: 'visible' as const,
         selectionEditable: true,
         selectionExportable: true,
         clipboardAdmissible: true,
-        candidates: [
-          { entityId: 'boundary', kind: 'Polyline', name: 'North boundary' },
-          { entityId: 'ground', kind: 'Mesh', name: 'Existing ground' },
-          { entityId: 'station', kind: 'Point', name: 'Station 104' },
-        ],
+        candidates:
+          galleryRow?.value === 'quick'
+            ? []
+            : [
+                { entityId: 'boundary', kind: 'Polyline', name: 'North boundary' },
+                { entityId: 'ground', kind: 'Mesh', name: 'Existing ground' },
+                { entityId: 'station', kind: 'Point', name: 'Station 104' },
+              ],
       };
       return galleryRow?.value === 'quick' ? (
         <QuickCommandSurface
@@ -389,6 +394,63 @@ const specs: readonly ComponentSpec[] = [
     render: () => <SelectionVisuals supportVisible directionArrowSize={10} />,
   },
   {
+    name: 'Measurement tool',
+    states: [
+      row('live', 'live readout + idle chip', 'default', 'live'),
+      row('selected', 'selected chip', 'single', 'selected'),
+    ],
+    render: (_state, galleryRow) => (
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 1fr) 220px',
+          gap: 12,
+          width: 760,
+        }}
+      >
+        <div
+          style={{
+            position: 'relative',
+            height: 190,
+            overflow: 'hidden',
+            border: '1px solid var(--hc-border-subtle)',
+            borderRadius: 'var(--hc-radius-md)',
+            background:
+              'linear-gradient(150deg, var(--hc-bg-panel), color-mix(in srgb, var(--hc-bg-panel) 70%, var(--hc-geometry-support)))',
+          }}
+        >
+          <MeasurementGraphics
+            items={[
+              {
+                id: 'distance-1',
+                anchors: [
+                  { x: 72, y: 126 },
+                  { x: 230, y: 78 },
+                ],
+                label: '12.345 m',
+                selected: galleryRow?.value === 'selected',
+              },
+              {
+                id: 'dz-preview',
+                anchors: [
+                  { x: 164, y: 142 },
+                  { x: 236, y: 126 },
+                ],
+                label: 'Δz 0.412 m',
+                preview: true,
+              },
+            ]}
+            onSelect={noop}
+          />
+        </div>
+        <MeasurementLiveReadout
+          prompt="Pick or type next point"
+          value={galleryRow?.value === 'selected' ? '12.345 m' : 'Δz 0.412 m'}
+        />
+      </div>
+    ),
+  },
+  {
     name: 'Viewing box panel',
     states: ['idle', 'baking', 'locked'],
     render: (state) => (
@@ -424,8 +486,27 @@ const specs: readonly ComponentSpec[] = [
           {state === 'locked' ? <span className="viewingBoxFixtureLock">🔒 Locked</span> : null}
         </div>
         <div className="viewingBoxFixturePanel">
-          <strong>Viewing Box 1</strong>
-          <span>Keep inside · 6 faces · 8 corners</span>
+          <label>
+            <span>Name</span>
+            <input value="Viewing Box 1" readOnly />
+          </label>
+          <div className="viewingBoxFixtureSegment">
+            <strong>Keep inside</strong>
+            <span>Remove inside</span>
+          </div>
+          <div className="viewingBoxFixtureExtents">
+            {['Min X', 'Max X', 'Min Y', 'Max Y', 'Min Z', 'Max Z'].map((label, index) => (
+              <label key={label}>
+                <span>{label}</span>
+                <NumberInput
+                  aria-label={label}
+                  value={index % 2 === 0 ? -5 : 5}
+                  unit="m"
+                  disabled={state !== 'idle'}
+                />
+              </label>
+            ))}
+          </div>
           {state === 'baking' ? (
             <>
               <ProgressBar value={0.58} ariaLabel="Viewing box bake progress" />
@@ -434,10 +515,12 @@ const specs: readonly ComponentSpec[] = [
               </Button>
             </>
           ) : state === 'locked' ? (
-            <div className="viewingBoxFixtureBanner">🔒 Locked · prepared data</div>
+            <Button size="small" variant="primary">
+              Unlock
+            </Button>
           ) : (
             <Button size="small" variant="primary">
-              Lock and bake
+              Lock
             </Button>
           )}
         </div>
@@ -680,6 +763,48 @@ const specs: readonly ComponentSpec[] = [
     ),
   },
   {
+    name: 'Snapshots menu',
+    states: [
+      row('list', 'list', 'default', 'list'),
+      row('dialog', 'restore dialog', 'default', 'dialog'),
+    ],
+    render: (_state, galleryRow) =>
+      galleryRow?.value === 'dialog' ? (
+        <Dialog
+          open
+          onClose={noop}
+          title="Restore snapshot?"
+          actions={
+            <>
+              <Button variant="secondary">Cancel</Button>
+              <Button variant="danger">Restore</Button>
+            </>
+          }
+        >
+          Restore snapshot 'Before grading'? Later changes stay in the journal and can be redone.
+        </Dialog>
+      ) : (
+        <div className="snapshotsMenuFixture" role="menu" aria-label="Snapshots">
+          {[
+            ['Before grading', 'Sep 06, 14:32 · g184'],
+            ['Session start', 'Sep 06, 09:08 · g167'],
+            ['Survey import', 'Sep 05, 17:46 · g119'],
+          ].map(([name, detail], index) => (
+            <div
+              className={`snapshotMenuRowFixture ${index === 0 ? 'snapshotMenuRowFixtureActive' : ''}`}
+              key={name}
+            >
+              <span>{name}</span>
+              <span className="snapshotMenuMetaFixture">{detail}</span>
+              <Button variant="secondary" size="small">
+                Restore
+              </Button>
+            </div>
+          ))}
+        </div>
+      ),
+  },
+  {
     name: 'ProgressBar',
     states: [...baseStates, 'loading'],
     render: (state) => (
@@ -782,16 +907,81 @@ const specs: readonly ComponentSpec[] = [
   },
   {
     name: 'FunctionPanel',
-    render: () => (
-      <div className="galleryPanel">
+    states: [
+      row('three-tabs-320', '3 tabs at 320 px', 'default', '3'),
+      row('five-tabs-320', '5 tabs at 320 px (overflow)', 'default', '5'),
+      row('overflow-open', 'overflow menu open', 'default', 'open'),
+    ],
+    render: (_state, galleryRow) => (
+      <FunctionPanelGalleryFixture
+        tabCount={galleryRow?.value === '3' ? 3 : 5}
+        overflowOpen={galleryRow?.value === 'open'}
+      />
+    ),
+  },
+  {
+    name: 'Extract ground panel',
+    states: [
+      row('idle', 'idle', 'idle'),
+      row('running', 'running', 'baking'),
+      row('done', 'done', 'completed'),
+    ],
+    render: (state) => (
+      <div className="galleryPanel galleryGroundPanel">
         <FunctionPanel
-          activeFunctionId="measure.distance"
-          title="Measure distance"
+          activeFunctionId="pointcloud.ground.extract"
+          title="Extract ground"
           activeTab="function"
-          properties={<p>Selection properties</p>}
+          onActiveTabChange={noop}
+          onCloseFunction={noop}
+          properties={<span>Point-cloud properties</span>}
         >
-          <p>Pick the first point in the viewport.</p>
-          <NumberInput aria-label="Offset" defaultValue={0} unit="m" />
+          <div className="galleryGroundBody" aria-busy={state === 'baking'}>
+            <div className="galleryGroundSource">Registered point cloud</div>
+            <label>
+              <span>Terrain type</span>
+              <Select
+                value="rolling"
+                disabled={state === 'baking'}
+                options={[{ value: 'rolling', label: 'Rolling' }]}
+              />
+            </label>
+            {[
+              ['Cell size', 1, 'm'],
+              ['Slope', 15, '%'],
+              ['Maximum window', 18, 'm'],
+              ['Initial threshold', 0.5, 'm'],
+            ].map(([label, value, unit]) => (
+              <label key={String(label)}>
+                <span>{label}</span>
+                <NumberInput
+                  aria-label={String(label)}
+                  value={Number(value)}
+                  unit={String(unit)}
+                  disabled={state === 'baking'}
+                />
+              </label>
+            ))}
+            {state === 'baking' ? (
+              <>
+                <span className="galleryGroundStatus">Classifying points</span>
+                <ProgressBar value={0.62} ariaLabel="Ground extraction progress" />
+                <Button variant="secondary">Cancel</Button>
+              </>
+            ) : state === 'completed' ? (
+              <div className="galleryGroundResult">
+                <strong>Ground cloud created</strong>
+                <span>Ground points 61.2 M (59 %) · residual σ 0.04 m</span>
+                <span>This result is a point cloud, not an inferred DGM.</span>
+                <Button variant="secondary">Create surface…</Button>
+              </div>
+            ) : (
+              <div className="galleryGroundActions">
+                <Button variant="quiet">Preview</Button>
+                <Button>Extract ground</Button>
+              </div>
+            )}
+          </div>
         </FunctionPanel>
       </div>
     ),
@@ -1034,6 +1224,55 @@ function InvalidNumberInput(): JSX.Element {
         unit="m"
         invalidMessage="Enter a valid length."
       />
+    </div>
+  );
+}
+
+function FunctionPanelGalleryFixture({
+  tabCount,
+  overflowOpen,
+}: {
+  tabCount: 3 | 5;
+  overflowOpen: boolean;
+}): JSX.Element {
+  const root = useRef<HTMLDivElement>(null);
+  const functionIds = [
+    'measure.distance',
+    'view.point-size',
+    'view.performance',
+    'view.viewing-box',
+  ].slice(0, tabCount - 1);
+  const activeFunctionId = functionIds.at(-1)!;
+
+  useEffect(() => {
+    if (!overflowOpen) return;
+    let frame = 0;
+    const openWhenReady = (): void => {
+      const trigger = root.current?.querySelector<HTMLButtonElement>(
+        '[aria-label="More function tabs"]',
+      );
+      if (trigger) trigger.click();
+      else frame = requestAnimationFrame(openWhenReady);
+    };
+    frame = requestAnimationFrame(openWhenReady);
+    return () => cancelAnimationFrame(frame);
+  }, [overflowOpen]);
+
+  return (
+    <div ref={root} className="galleryPanel galleryFunctionPanel">
+      <FunctionPanel
+        activeFunctionId={activeFunctionId}
+        functionIds={functionIds}
+        closeFunctionTabs
+        title={activeFunctionId === 'view.viewing-box' ? 'Viewing Box' : undefined}
+        activeTab="function"
+        onActiveTabChange={noop}
+        onCloseFunction={noop}
+        properties={<p>Selection properties</p>}
+      >
+        <p>Pick the first point in the viewport.</p>
+        <NumberInput aria-label="Offset" defaultValue={0} unit="m" />
+      </FunctionPanel>
     </div>
   );
 }

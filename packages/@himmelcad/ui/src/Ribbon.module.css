@@ -231,6 +231,44 @@
   text-align: left;
 }
 
+.actionMenuRow {
+  position: relative;
+  display: grid;
+  min-width: 0;
+}
+
+.actionMenuCompactItem {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding-right: 74px;
+  font-size: 13px;
+}
+
+.actionMenuMetadata {
+  color: var(--hc-fg-muted);
+  font-family: var(--hc-font-mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.actionMenuSecondary {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  height: 22px;
+  min-height: 22px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.actionMenuRow:hover .actionMenuSecondary,
+.actionMenuRow:focus-within .actionMenuSecondary {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .actionMenuDescription,
 .actionMenuPath {
   overflow: hidden;
@@ -266,7 +304,9 @@
 }
 
 .actionLabel {
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   white-space: nowrap;
 }
 

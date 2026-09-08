@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { Button } from '../src/Button.js';
 import { Dialog } from '../src/Dialog.js';
 import { DurabilityIndicator } from '../src/DurabilityIndicator.js';
+import { FunctionPanel } from '../src/FunctionPanel.js';
 import { ContextMenu, Menu, MenuItem, MenuSeparator } from '../src/Menu.js';
 import { NumberInput } from '../src/NumberInput.js';
 import { ProgressBar } from '../src/ProgressBar.js';
@@ -26,6 +27,17 @@ export function accessibilityFixtures(): Record<string, string> {
       <ContextMenu x={0} y={0} onClose={() => undefined}>
         <MenuItem>Inspect</MenuItem>
       </ContextMenu>,
+    ),
+    FunctionPanel: renderToStaticMarkup(
+      <FunctionPanel
+        activeFunctionId="measure.distance"
+        functionIds={['measure.distance', 'view.point-size']}
+        closeFunctionTabs
+        title="Measure distance"
+        activeTab="function"
+      >
+        Measure two points.
+      </FunctionPanel>,
     ),
     Button: renderToStaticMarkup(<Button variant="primary">Save project</Button>),
     DurabilityIndicator: renderToStaticMarkup(

@@ -45,6 +45,26 @@ void test('canonical projection rejects an empty live document instead of fabric
   );
 });
 
+void test('snapshot markers never become entity-tree nodes', () => {
+  const root = entity('project-root', 'hcad.group@1', null, 'root-version');
+  const marker = entity(
+    'snapshot-session-start',
+    'hcad.snapshot-marker@1',
+    root.id,
+    'snapshot-version',
+  );
+  const project = projectSnapshotFromJournalMirror({
+    status: 'ready',
+    generation: 2,
+    appliedThroughSequence: 2,
+    entities: { [root.id]: root, [marker.id]: marker },
+    tombstones: {},
+  });
+
+  assert.equal(project.entities[marker.id], undefined);
+  assert.deepEqual(project.entities[root.id]?.children, []);
+});
+
 void test('canonical viewing-box entities are visibly grouped without changing their identity', () => {
   const root = entity('project-root', 'hcad.group@1', null, 'root-version');
   const first = entity('box-1', 'hcad.viewing-box@1', root.id, 'box-one-version');
@@ -60,6 +80,22 @@ void test('canonical viewing-box entities are visibly grouped without changing t
   assert.equal(project.entities[first.id]?.parent, 'builder:viewing-boxes');
   assert.equal(project.entities[first.id]?.versionHash, first.versionHash);
   assert.ok(project.entities[root.id]?.children.some((id) => id === 'builder:viewing-boxes'));
+});
+
+void test('saved measurements appear below the canonical Measurements tree group', () => {
+  const root = entity('project-root', 'hcad.group@1', null, 'root-version');
+  const point = entity('measurement-1', 'hcad.measurement@1', root.id, 'point-version');
+  const distance = entity('measurement-2', 'hcad.measurement@1', root.id, 'distance-version');
+  const project = projectSnapshotFromJournalMirror({
+    status: 'ready',
+    generation: 2,
+    appliedThroughSequence: 2,
+    entities: { [root.id]: root, [point.id]: point, [distance.id]: distance },
+    tombstones: {},
+  });
+  assert.equal(project.entities['builder:measurements']?.name, 'Measurements');
+  assert.deepEqual(project.entities['builder:measurements']?.children, [point.id, distance.id]);
+  assert.equal(project.entities[point.id]?.parent, 'builder:measurements');
 });
 
 function entity(

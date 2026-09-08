@@ -1,4 +1,7 @@
-import { GENERATED_COMMAND_TABLE } from './generated/commandTable.js';
+import {
+  GENERATED_COMMAND_TABLE,
+  GENERATED_QUICK_SURFACE_ORDER,
+} from './generated/commandTable.js';
 import type { SelectionCandidate } from './selection.js';
 
 export const QUICK_SURFACE_ENTRY_CAP = 7;
@@ -39,10 +42,16 @@ export interface RuntimeCommandEntry {
   readonly surfaces: Readonly<Record<CommandSurface, boolean>>;
   readonly group: CommandGroup;
   readonly ownerSpec: string;
-  readonly owner: string | null;
+  readonly products: readonly string[];
   readonly entityKinds: readonly string[] | null;
   readonly allowMultiSelect: boolean;
+  readonly productPredicates: Readonly<Record<string, ProductCommandPredicate>> | null;
   readonly isEnabled: (context: CommandContext) => boolean;
+}
+
+export interface ProductCommandPredicate {
+  readonly selectionExportable: true;
+  readonly entityKinds?: readonly string[];
 }
 
 const CLOUD = new Set<CommandEntityKind>(['cloud']);
@@ -74,11 +83,6 @@ function predicate(name: string): (context: CommandContext) => boolean {
     case 'hiddenSelection':
       return (context) =>
         context.selectedEntityIds.length > 0 && context.selectionVisibility !== 'visible';
-    case 'exportableSelection':
-      return (context) =>
-        context.selectedEntityIds.length > 0 &&
-        context.selectionExportable === true &&
-        !context.selectedEntityKinds.includes('cloud');
     default:
       throw new Error(`Unknown generated command enablement predicate: ${name}`);
   }
@@ -94,9 +98,13 @@ export const COMMAND_REGISTRY: readonly RuntimeCommandEntry[] = Object.freeze(
       surfaces: row.surfaces,
       group: row.group,
       ownerSpec: row.ownerSpec,
-      owner: 'owner' in row ? row.owner : null,
+      products: row.products,
       entityKinds: 'entityKinds' in row ? row.entityKinds : null,
       allowMultiSelect: 'allowMultiSelect' in row ? row.allowMultiSelect : true,
+      productPredicates:
+        'productPredicates' in row
+          ? (row.productPredicates as Readonly<Record<string, ProductCommandPredicate>>)
+          : null,
       isEnabled: predicate(row.enablement),
     }),
   ),
@@ -115,26 +123,42 @@ export function commandsForSurface(
   const entries = COMMAND_REGISTRY.filter(
     (entry) =>
       entry.surfaces[surface] &&
-      (entry.owner === null || entry.owner === context.productId) &&
+      commandIsEnabled(entry, context) &&
       (entry.entityKinds === null ||
         (context.selectedCanonicalEntityKinds !== undefined &&
           context.selectedCanonicalEntityKinds.length === context.selectedEntityIds.length &&
           context.selectedCanonicalEntityKinds.every((kind) =>
             entry.entityKinds!.includes(kind),
           ))) &&
-      (entry.allowMultiSelect || context.selectedEntityIds.length === 1) &&
-      entry.isEnabled(context),
+      (entry.allowMultiSelect || context.selectedEntityIds.length === 1),
   );
   if (surface !== 'quickSurface') return entries;
-  const quickOrder: Readonly<Record<CommandGroup, number>> = {
-    view: context.selectedEntityIds.length === 0 ? 0 : 2,
-    selection: context.selectedEntityIds.length === 0 ? 1 : 0,
-    edit: context.selectedEntityIds.length === 0 ? 2 : 1,
-    'entity-specific': 3,
-  };
+  const quickOrder = new Map<string, number>(
+    GENERATED_QUICK_SURFACE_ORDER.map((id, index) => [id, index]),
+  );
   return entries
-    .toSorted((left, right) => quickOrder[left.group] - quickOrder[right.group])
+    .toSorted(
+      (left, right) =>
+        (quickOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+        (quickOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+    )
     .slice(0, QUICK_SURFACE_ENTRY_CAP);
+}
+
+function commandIsEnabled(entry: RuntimeCommandEntry, context: CommandContext): boolean {
+  const productId = context.productId ?? 'builder';
+  if (!entry.products.includes(productId) || !entry.isEnabled(context)) return false;
+  const productPredicate = entry.productPredicates?.[productId];
+  if (!productPredicate) return true;
+  if (productPredicate.selectionExportable && context.selectionExportable !== true) return false;
+  if (!productPredicate.entityKinds) return true;
+  return (
+    context.selectedCanonicalEntityKinds !== undefined &&
+    context.selectedCanonicalEntityKinds.length === context.selectedEntityIds.length &&
+    context.selectedCanonicalEntityKinds.every((kind) =>
+      productPredicate.entityKinds!.includes(kind),
+    )
+  );
 }
 
 export function assertRuntimeCommandRegistry(): void {
@@ -143,7 +167,15 @@ export function assertRuntimeCommandRegistry(): void {
   for (const entry of COMMAND_REGISTRY) {
     if (ids.has(entry.id)) throw new Error(`Duplicate runtime command id: ${entry.id}`);
     ids.add(entry.id);
-    if (!(entry.surfaces.ribbon || entry.surfaces.contextMenu || entry.surfaces.quickSurface)) {
+    if (entry.products.length === 0) throw new Error(`Command has no product: ${entry.id}`);
+    if (
+      !(
+        entry.surfaces.ribbon ||
+        entry.surfaces.contextMenu ||
+        entry.surfaces.quickSurface ||
+        entry.surfaces.console
+      )
+    ) {
       throw new Error(`Command has no visible surface: ${entry.id}`);
     }
     if (!entry.shortcut) continue;
@@ -185,14 +217,16 @@ export function dispatchRegistryShortcut(
   const entry = COMMAND_REGISTRY.find(
     (candidate) => candidate.shortcut?.toLowerCase() === shortcut,
   );
-  if (!entry || !entry.isEnabled(context)) return false;
+  if (!entry || !commandIsEnabled(entry, context)) return false;
   event.preventDefault();
   void execute({ id: entry.id, args: [], source: 'ribbon' });
   return true;
 }
 
-export function consoleHelpEntries(): readonly RuntimeCommandEntry[] {
-  return COMMAND_REGISTRY.filter((entry) => entry.surfaces.console);
+export function consoleHelpEntries(context?: CommandContext): readonly RuntimeCommandEntry[] {
+  return COMMAND_REGISTRY.filter(
+    (entry) => entry.surfaces.console && entry.products.includes(context?.productId ?? 'builder'),
+  );
 }
 
 export function completeConsoleCommand(prefix: string): readonly string[] {
@@ -214,14 +248,14 @@ export async function executeConsoleLine(
   if (head.toLowerCase() === 'help') {
     return {
       kind: 'help',
-      lines: consoleHelpEntries().map(
+      lines: consoleHelpEntries(context).map(
         (entry) => `${entry.id}${entry.shortcut ? `  ${entry.shortcut}` : ''} — ${entry.label}`,
       ),
     };
   }
   const entry = commandById(head.toLowerCase());
   if (!entry?.surfaces.console) throw new Error(`Unknown command: ${head}`);
-  if (!entry.isEnabled(context)) throw new Error(`Command is not available: ${entry.id}`);
+  if (!commandIsEnabled(entry, context)) throw new Error(`Command is not available: ${entry.id}`);
   await execute({ id: entry.id, args, source: 'console' });
   return { kind: 'executed', id: entry.id };
 }
@@ -234,6 +268,6 @@ export async function executeAutomationCommand(
 ): Promise<void> {
   const entry = commandById(id);
   if (!entry?.surfaces.automation) throw new Error(`Automation command is not registered: ${id}`);
-  if (!entry.isEnabled(context)) throw new Error(`Automation command is not available: ${id}`);
+  if (!commandIsEnabled(entry, context)) throw new Error(`Automation command is not available: ${id}`);
   await execute({ id: entry.id, args: [], source: 'automation', payload });
 }

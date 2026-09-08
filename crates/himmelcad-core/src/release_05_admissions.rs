@@ -731,10 +731,11 @@ pub fn validate_recipe(
     {
         return Err(AdmissionError::Invalid);
     }
-    const ADMITTED_KINDS: [&str; 3] = [
+    const ADMITTED_KINDS: [&str; 4] = [
         "hcad.mesh.surface@1",
         "hcad.mesh.region-repair@1",
         "hcad.mesh.simplify-terrain@1",
+        "hcad.pointcloud.ground-progressive@1",
     ];
     if !ADMITTED_KINDS.contains(&recipe.recipe_kind.as_str()) {
         return Err(AdmissionError::UnsupportedSchema);
@@ -1080,6 +1081,13 @@ mod tests {
     #[test]
     fn g_s01_6() {
         assert!(validate_recipe(&recipe(), &BTreeMap::new()).is_ok());
+        let mut ground = recipe();
+        ground.recipe_kind = "hcad.pointcloud.ground-progressive@1".into();
+        ground.parameter_type_id = ground.recipe_kind.clone();
+        ground.algorithm_id = ground.recipe_kind.clone();
+        ground.outputs[0].role = "ground_cloud".into();
+        ground.sources[0].role = "outdoor_ground_source".into();
+        assert!(validate_recipe(&ground, &BTreeMap::new()).is_ok());
         let graph = BTreeMap::from([
             ("r1".into(), vec!["r2".into()]),
             ("r2".into(), vec!["r1".into()]),

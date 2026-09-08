@@ -26,6 +26,7 @@ pub mod landxml;
 mod landxml_dom;
 pub mod las_import;
 pub mod photolab_image_import;
+pub mod product_import_package;
 pub mod slpk_provider;
 
 #[derive(Debug, Error)]
@@ -104,6 +105,10 @@ pub use photolab_image_import::{
     discover_photo_files, import_photo_files, import_photo_files_with_capabilities_and_progress,
     import_photo_files_with_progress, PhotoDiscovery, PhotoImportCandidate,
 };
+pub use product_import_package::{
+    PhotoLabProductPackageProvider, ProductImportPackageRefusal, PRODUCT_IMPORT_PACKAGE_FORMAT_ID,
+    PRODUCT_IMPORT_PACKAGE_PROVIDER_ID,
+};
 pub use slpk_provider::{SlpkCanonicalProvider, SLPK_FORMAT_ID, SLPK_PROVIDER_ID};
 
 /// Builds the production canonical import registry shared by desktop hosts.
@@ -120,6 +125,7 @@ pub fn canonical_builtin_import_registry(
     registry.register_importer(Arc::new(E57CanonicalProvider::new(
         prepared_data_root.clone(),
     )))?;
+    registry.register_importer(Arc::new(PhotoLabProductPackageProvider::new()))?;
     let dxf = Arc::new(DxfCanonicalProvider::new(prepared_data_root.clone()));
     registry.register_importer(dxf.clone())?;
     registry.register_exporter(dxf)?;

@@ -8,7 +8,12 @@ import type {
 } from '@himmelcad/data';
 
 export function projectSnapshotFromJournalMirror(mirror: JournalMirror): ProjectSnapshot {
-  const canonicalEntities = Object.values(mirror.entities);
+  // Snapshot markers are durable project bookkeeping, not scene entities.
+  // They remain in the canonical mirror for snapshot.list/restore but never
+  // enter the EntityTree projection or any of its parent/child relationships.
+  const canonicalEntities = Object.values(mirror.entities).filter(
+    (entity) => entity.typeId !== 'hcad.snapshot-marker@1',
+  );
   const root =
     canonicalEntities.find((entity) => entity.id === 'project-root') ??
     canonicalEntities.find((entity) => entity.owner === null && entity.typeId === 'hcad.group@1') ??
@@ -69,6 +74,29 @@ export function projectSnapshotFromJournalMirror(mirror: JournalMirror): Project
       name: 'Viewing boxes',
       parent: root.id as EntityId,
       children: viewingBoxIds,
+      visibility: { visible: true, locked: false },
+      versionHash: rootSnapshot.versionHash,
+      bounds: null,
+    };
+  }
+
+  const measurementIds = canonicalEntities
+    .filter((entity) => entity.typeId === 'hcad.measurement@1')
+    .map((entity) => entity.id as EntityId);
+  if (measurementIds.length > 0) {
+    const groupId = 'builder:measurements' as EntityId;
+    const rootSnapshot = entities[root.id]!;
+    rootSnapshot.children = [
+      ...rootSnapshot.children.filter((id) => !measurementIds.includes(id)),
+      groupId,
+    ];
+    for (const id of measurementIds) entities[id]!.parent = groupId;
+    entities[groupId] = {
+      id: groupId,
+      kind: 'Group',
+      name: 'Measurements',
+      parent: root.id as EntityId,
+      children: measurementIds,
       visibility: { visible: true, locked: false },
       versionHash: rootSnapshot.versionHash,
       bounds: null,
