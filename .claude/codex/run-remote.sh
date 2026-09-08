@@ -5,7 +5,7 @@
 set -u
 NAME="$1"; BRIEF="$2"
 REMOTE="${REMOTE:-win-himmelcad}"; MODEL="${MODEL:-gpt-5.6-sol}"; EFFORT="${EFFORT:-high}"
-RWORKDIR="${RWORKDIR:-C:\\himmelcad}"
+RWORKDIR="${RWORKDIR:-C:\\Users\\flori}"
 OUT="$(git rev-parse --show-toplevel)/.claude/codex/out"; mkdir -p "$OUT"
 : > "$OUT/remote-$NAME.log"; rm -f "$OUT/remote-$NAME.exit"
 ssh -o BatchMode=yes -o ServerAliveInterval=30 "$REMOTE" \

@@ -9,3 +9,5 @@ Your package's owning records, gates, and files are listed below this brief. Rea
 - Adding a variant to a core enum (`GeometryObject`, `EntityKind`, job kinds…) obliges `cargo check --workspace --all-targets` before reporting: downstream crates (render, io, sidecar) match exhaustively and break otherwise (evidence: S-01 2026-09-03 left two E0004 sites that blocked the PhotoLab lane's sidecar tests).
 
 - Never run a bare `tsc`/`tsc -p` that emits next to sources; use the package scripts (`pnpm --filter <pkg> typecheck` = `tsc -b` to `.tsbuild/`). Emitted `.js/.d.ts/.map` siblings under `src/` break Vite resolution for every consumer (evidence: a540935, 2026-09-05).
+
+- Windows host available: for Windows verification, discrete-GPU measurements, > 8 GB compute or long e2e runs, do not do it on this laptop — write a remote brief under `.claude/codex/prompts/remote/` and say so in your report so the architect dispatches it via `.claude/codex/run-remote.sh` (see AGENTS.md "Windows host"). Never assume the laptop is the only machine.

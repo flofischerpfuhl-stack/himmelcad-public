@@ -48,3 +48,29 @@ Accepted ADRs override older plans and reports.
   and was not verified.
 - Apply active owner corrections from `docs/AGENT-FEEDBACK.md`. Keep this file
   short; detailed rules belong in their authoritative documents.
+
+## Windows host (DESKTOP-BNB2PBA) — available to every agent
+
+A Windows PC on the owner's Tailscale network is the project's Windows
+build/test/measurement lane (owner decision 2026-09-08). Any agent on the Linux
+laptop — Claude sessions, Codex runs, subagents — may and should use it when a
+task needs one of: Windows-specific verification (packaging, installer, signing
+paths, MSVC builds, path/CRLF/long-path behavior), GPU measurements of viewer
+class W/D on a discrete GPU, compute above ~8 GB RAM or long end-to-end runs
+(PhotoLab golden datasets), or anything that would contend with the laptop's
+CPU/GPU/disk while other lanes run.
+
+How: write a brief under `.claude/codex/prompts/remote/<name>.md` (same
+discipline as any Codex brief: scope, gates, evidence file) and run
+`.claude/codex/run-remote.sh <name> .claude/codex/prompts/remote/<name>.md`
+(env `MODEL`, `EFFORT`, `RWORKDIR`; default `gpt-5.6-sol` high, working dir
+`C:\Users\flori`; the repo clone lives at `C:\himmelcad` once bootstrapped).
+This prompts the Codex CLI installed and authenticated on the Windows PC over
+SSH (`ssh win-himmelcad`, key-only). Logs land in
+`.claude/codex/out/remote-<name>.log/.exit`. Rules: agents do not run ad-hoc
+commands on the host — they prompt the Windows Codex with a brief (owner
+rule); the Windows clone is synced only through git (push here, pull there;
+evidence comes back as committed files, on a branch if main is busy); GUI
+tests need the PC unlocked (ask the owner); state the host's load honestly in
+any measurement. Details and the lane protocol: `docs/builder-program/COORDINATION.md`
+"Windows host".
