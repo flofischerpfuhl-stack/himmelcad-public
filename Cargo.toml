@@ -50,6 +50,7 @@ bytes = "1"
 bytemuck = { version = "1", features = ["derive"] }
 bevy_basisu_loader_sys = "0.4.4"
 earcut = "0.4.10"
+spade = "=2.15.0"
 draco-gltf = { version = "0.1.0", default-features = false }
 meshopt-rs = { version = "0.1.2", features = ["experimental"] }
 nom-exif = { version = "3.6.1", default-features = false }

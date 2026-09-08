@@ -4,26 +4,26 @@
     "crates/himmelcad-core/src/canonical_document.rs": "cb80db19b4ff45355c82c5b7bb823df727bd96955a8b8a92720a3421bf316fd7",
     "packages/@himmelcad/app/src/canonicalProtocol.ts": "976a73b1c0a1be7b22e37986800579b21ae5f472e27816b1729b751b4906644a",
     "packages/@himmelcad/app/src/protocol.ts": "fdb7bbc6460ec599472b707c9c14ac31983021ba87888a5dddf6170124241ba7",
-    "packages/@himmelcad/app/src/view.ts": "e1fdca6a08aaaa2e5978540fa6e3ff5bc224a5be3fb0390c49c78147e970a4af",
+    "packages/@himmelcad/app/src/view.ts": "1b0dbb42e73b70c144a54ac67e843f9d3d076414c5ce49dfd6e2d192135e305a",
     "packages/@himmelcad/data/src/generated/CanonicalEntity.ts": "162c7d0dbc5809ced08cc631310ef4ba0615d7429159fe8ee32635c63a21eb62",
     "packages/@himmelcad/data/src/generated/CanonicalEntityEdit.ts": "6dee4ee7c0011222c10b90c1b88b74bbf52e28e125e6b87fd2707b59311cf52d",
     "packages/@himmelcad/data/src/generated/CanonicalEntityMutation.ts": "749a5dab2a578ab99a655d9426ac10246f6cb08d7ec97d087f5e7310f214b77f",
     "schemas/automation/fixtures/automation-wire-v1.json": "0861944bfcfd302e1345c5ff3b1c8537de3fdefd9cc23fabca913bb984701f02",
     "schemas/automation/fixtures/view-state-v2.json": "1aa9a7b4f77856007f7c674972cb7a9f1a676fbd81bdff2471884c7b0f2c6b52"
   },
-  "generatorSha256": "f380c64e4aaa0b03b2da2d1ba29248ed60e8d4ba7ac63760eb283a7f81105ea3",
+  "generatorSha256": "260279c82e1dd1f0ec23f312d48bd3e4b632cf954429de9d6cfd2377ae2f8db0",
   "generatorVersion": "1.0.0",
   "minimumPython": "3.12",
   "outputs": {
     "README.md": "bd9aeb35d1f5b8d2c0e1c76303ac10c0877619e718034ddf3ab57b3ce92cb9dc",
     "pyproject.toml": "75fd998505ffacbf590e30efbca67d7d24dd73a96ecadcd9a05fdfa65aa473bc",
     "src/himmelcad/__init__.py": "968a2d64774ce4c30171897c9f7e1c9d2fe4bc2ef82b6658850ce49dc11361e1",
-    "src/himmelcad/client.py": "fffcceaae8e0cfd972f39f1b4ef583596df549efdb99a8b6319f3749c5ce727f",
+    "src/himmelcad/client.py": "462c7ec3815dcaae04824ecb23e22944705ea99fb9a8689b936727de4bcb5a22",
     "src/himmelcad/errors.py": "36c56157ef4bedb312d2280d5d465cd3f011a2876dbe70d9c862920084ad117a",
     "src/himmelcad/leases.py": "4ba4f4a0371236b1fa9b213ced5c8955fffaf70e8341d94dd247ffd7b9cc6069",
-    "src/himmelcad/models.py": "9d7b096ea734c13cb8e368348a7630bc6bae56595d1986e56ce6d2fa1beb5f4c",
+    "src/himmelcad/models.py": "23020e259e97996e8d45e4da3a633cf12e0a8641940c7a9143c7ee0cfae31563",
     "src/himmelcad/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "schemaId": "hcad.automation-schema@1",
-  "schemaSha256": "7aa0c537819a0c0d584a86264ffa1a64eafc3cefabf06480976be7eb3ebbf403"
+  "schemaSha256": "98812110075db5cfc461b5165985229cab96770fa8fcf6086cbcaba6a68ca00c"
 }

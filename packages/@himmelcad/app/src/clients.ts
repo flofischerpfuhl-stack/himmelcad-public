@@ -231,6 +231,10 @@ export interface IoCanonicalExportPlan {
 
 export interface IoExportPlanRequest {
   readonly commandId: string;
+  /** User-level scope captured by Builder when the plan is requested. */
+  readonly scope?: 'selection' | 'visible' | 'project';
+  /** Exact live canonical entities captured for selection/visible/project scope. */
+  readonly entityIds?: readonly string[];
   readonly providerId: string;
   readonly providerVersion: string;
   /** Host-owned destination capability. */
@@ -899,6 +903,20 @@ function validateExportPlanEnvelope(envelope: IoExportPlanEnvelope): void {
     throw new ContractValidationError('unsupported schema version', 'acceptedPlan.schemaVersion');
   }
   validatePortableIdentity(envelope.commandId, 'acceptedPlan.commandId');
+  if (envelope.scope !== undefined && !['selection', 'visible', 'project'].includes(envelope.scope)) {
+    throw new ContractValidationError('unsupported export scope', 'acceptedPlan.scope');
+  }
+  if (
+    envelope.entityIds !== undefined &&
+    (envelope.entityIds.length === 0 ||
+      new Set(envelope.entityIds).size !== envelope.entityIds.length ||
+      envelope.entityIds.some((id) => id.length === 0 || id.length > 160))
+  ) {
+    throw new ContractValidationError(
+      'must contain unique bounded canonical entity identities',
+      'acceptedPlan.entityIds',
+    );
+  }
   validateRegistryId(envelope.providerId, 'acceptedPlan.providerId');
   validateHostPath(envelope.targetPath, 'acceptedPlan.targetPath');
   validateRegistryId(envelope.formatId, 'acceptedPlan.formatId');

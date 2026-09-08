@@ -930,11 +930,10 @@ impl CanonicalProjectStore {
             .flat_map(|inventory| inventory.external_objects)
             .filter(|reference| reference.object_hash == *object_hash)
         {
-            if resolved
-                .as_ref()
-                .is_some_and(|existing| existing.byte_length != reference.byte_length
-                    || existing.media_type != reference.media_type)
-            {
+            if resolved.as_ref().is_some_and(|existing| {
+                existing.byte_length != reference.byte_length
+                    || existing.media_type != reference.media_type
+            }) {
                 return Err(CanonicalProjectStoreError::ObjectMetadataConflict);
             }
             if resolved.is_none() {
@@ -1203,14 +1202,14 @@ impl CanonicalProjectStore {
                     return Err(CanonicalProjectStoreError::UnsafeArtifactSource);
                 }
                 let mut observe = |bytes| {
-                        staging_completed = staging_completed.saturating_add(bytes);
-                        progress(CanonicalImportProgress {
-                            phase: CanonicalImportProgressPhase::Staging,
-                            completed_bytes: staging_completed.min(staging_total),
-                            total_bytes: staging_total,
-                        });
-                        !is_cancelled()
-                    };
+                    staging_completed = staging_completed.saturating_add(bytes);
+                    progress(CanonicalImportProgress {
+                        phase: CanonicalImportProgressPhase::Staging,
+                        completed_bytes: staging_completed.min(staging_total),
+                        total_bytes: staging_total,
+                    });
+                    !is_cancelled()
+                };
                 if references_product_package {
                     verify_file_with_progress(
                         &source,
@@ -1218,11 +1217,7 @@ impl CanonicalProjectStore {
                         artifact.resource.byte_length,
                         &mut observe,
                     )?;
-                    insert_external_object(
-                        &mut external_objects,
-                        &source,
-                        &artifact.resource,
-                    )?;
+                    insert_external_object(&mut external_objects, &source, &artifact.resource)?;
                 } else {
                     self.stage_file_with_progress(
                         &staged_objects,
@@ -1259,14 +1254,14 @@ impl CanonicalProjectStore {
                     return Err(CanonicalProjectStoreError::UnsafeArtifactSource);
                 }
                 let mut observe = |bytes| {
-                        staging_completed = staging_completed.saturating_add(bytes);
-                        progress(CanonicalImportProgress {
-                            phase: CanonicalImportProgressPhase::Staging,
-                            completed_bytes: staging_completed.min(staging_total),
-                            total_bytes: staging_total,
-                        });
-                        !is_cancelled()
-                    };
+                    staging_completed = staging_completed.saturating_add(bytes);
+                    progress(CanonicalImportProgress {
+                        phase: CanonicalImportProgressPhase::Staging,
+                        completed_bytes: staging_completed.min(staging_total),
+                        total_bytes: staging_total,
+                    });
+                    !is_cancelled()
+                };
                 if references_product_package {
                     verify_file_with_progress(
                         &source,
@@ -1274,11 +1269,7 @@ impl CanonicalProjectStore {
                         artifact.resource.byte_length,
                         &mut observe,
                     )?;
-                    insert_external_object(
-                        &mut external_objects,
-                        &source,
-                        &artifact.resource,
-                    )?;
+                    insert_external_object(&mut external_objects, &source, &artifact.resource)?;
                 } else {
                     self.stage_file_with_progress(
                         &staged_objects,

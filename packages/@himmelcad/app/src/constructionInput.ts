@@ -12,12 +12,22 @@ export interface PolarConstructionValues {
 
 export type ConstructionInputMode = 'click' | 'constrain' | 'type';
 
-export type ConstructionInputFieldId = 'x' | 'y' | 'z' | 'direction' | 'distance' | 'deltaZ';
+export type ConstructionInputFieldId =
+  | 'x'
+  | 'y'
+  | 'z'
+  | 'direction'
+  | 'distance'
+  | 'deltaZ'
+  | 'slope';
+
+export type ConstructionHorizontalMode = 'cartesian' | 'polar';
+export type ConstructionVerticalMode = 'absoluteZ' | 'deltaZ' | 'slope';
 
 export interface ConstructionInputField {
   readonly id: ConstructionInputFieldId;
   readonly label: string;
-  readonly unit?: '°' | 'm';
+  readonly unit?: '°' | 'm' | '%';
   readonly value: number;
 }
 
@@ -39,6 +49,8 @@ export interface ConstructionInputSnapshot {
   readonly preview: ConstructionPoint | null;
   readonly polar: PolarConstructionValues | null;
   readonly activeField: ConstructionInputFieldId | null;
+  readonly horizontalMode: ConstructionHorizontalMode;
+  readonly verticalMode: ConstructionVerticalMode;
 }
 
 const ZERO_VALUES: Readonly<Record<ConstructionInputFieldId, number>> = Object.freeze({
@@ -48,6 +60,7 @@ const ZERO_VALUES: Readonly<Record<ConstructionInputFieldId, number>> = Object.f
   direction: 0,
   distance: 0,
   deltaZ: 0,
+  slope: 0,
 });
 
 export function polarFromPoints(
@@ -83,6 +96,8 @@ export class ConstructionInputController {
   private committedValues = { ...ZERO_VALUES };
   private preview: ConstructionPoint | null = null;
   private activeField: ConstructionInputFieldId | null = null;
+  private horizontalMode: ConstructionHorizontalMode = 'cartesian';
+  private verticalMode: ConstructionVerticalMode = 'absoluteZ';
   private cachedSnapshot: ConstructionInputSnapshot | null = null;
   private readonly listeners = new Set<() => void>();
 
@@ -106,6 +121,8 @@ export class ConstructionInputController {
       preview: this.preview,
       polar,
       activeField: this.activeField,
+      horizontalMode: this.horizontalMode,
+      verticalMode: this.verticalMode,
     });
     return this.cachedSnapshot;
   };
@@ -123,6 +140,8 @@ export class ConstructionInputController {
     this.committedValues = { ...this.values };
     this.preview = initial;
     this.mode = 'click';
+    this.horizontalMode = declaration.firstPoint ? 'polar' : 'cartesian';
+    this.verticalMode = 'absoluteZ';
     this.activeField = declaration.fields[0] ?? null;
     this.changed();
   }
@@ -172,18 +191,33 @@ export class ConstructionInputController {
       throw new RangeError(`undeclared construction field: ${field}`);
     if (!Number.isFinite(value)) throw new TypeError('construction value must be finite');
     this.activeField = field;
-    this.values = { ...this.values, [field]: value };
-    if (field === 'direction' || field === 'distance' || field === 'deltaZ') {
+    this.values = {
+      ...this.values,
+      [field]: field === 'direction' ? snapDirectionDegrees(value) : value,
+    };
+    if (field === 'direction' || field === 'distance' || field === 'deltaZ' || field === 'slope') {
       if (!declaration.firstPoint) throw new Error('polar constraints require a first point');
+      if (field === 'direction' || field === 'distance') this.horizontalMode = 'polar';
+      if (field === 'deltaZ') this.verticalMode = 'deltaZ';
+      if (field === 'slope') this.verticalMode = 'slope';
+      const deltaZ =
+        this.verticalMode === 'slope'
+          ? slopeDeltaZ(this.values.distance, this.values.slope)
+          : this.values.deltaZ;
       this.mode = 'constrain';
       this.preview = pointFromPolar(declaration.firstPoint, {
         directionDegrees: this.values.direction,
         distance: this.values.distance,
-        deltaZ: this.values.deltaZ,
+        deltaZ,
       });
+      this.values = valuesFromPoint(declaration.firstPoint, this.preview);
+      if (this.verticalMode === 'slope') this.values.slope = value;
     } else {
+      this.horizontalMode = 'cartesian';
+      if (field === 'z') this.verticalMode = 'absoluteZ';
       this.mode = 'type';
       this.preview = { x: this.values.x, y: this.values.y, z: this.values.z };
+      this.values = valuesFromPoint(declaration.firstPoint, this.preview);
     }
     this.changed();
     return this.preview;
@@ -211,12 +245,15 @@ export class ConstructionInputController {
     const field = this.activeField;
     if (Object.is(this.values[field], this.committedValues[field])) return false;
     this.values = { ...this.values, [field]: this.committedValues[field] };
-    if (field === 'direction' || field === 'distance' || field === 'deltaZ') {
+    if (field === 'direction' || field === 'distance' || field === 'deltaZ' || field === 'slope') {
       if (!this.declaration.firstPoint) return false;
       this.preview = pointFromPolar(this.declaration.firstPoint, {
         directionDegrees: this.values.direction,
         distance: this.values.distance,
-        deltaZ: this.values.deltaZ,
+        deltaZ:
+          this.verticalMode === 'slope'
+            ? slopeDeltaZ(this.values.distance, this.values.slope)
+            : this.values.deltaZ,
       });
     } else {
       this.preview = { x: this.values.x, y: this.values.y, z: this.values.z };
@@ -230,7 +267,11 @@ export class ConstructionInputController {
     return declaration.fields.map((id) => ({
       id,
       label: declaration.fieldLabels?.[id] ?? fieldLabel(id),
-      ...(id === 'direction' ? { unit: '°' as const } : { unit: 'm' as const }),
+      ...(id === 'direction'
+        ? { unit: '°' as const }
+        : id === 'slope'
+          ? { unit: '%' as const }
+          : { unit: 'm' as const }),
       value: this.values[id],
     }));
   }
@@ -260,6 +301,7 @@ function valuesFromPoint(
     direction: polar.directionDegrees,
     distance: polar.distance,
     deltaZ: polar.deltaZ,
+    slope: polar.distance === 0 ? 0 : (polar.deltaZ / polar.distance) * 100,
   };
 }
 
@@ -272,8 +314,24 @@ function fieldLabel(id: ConstructionInputFieldId): ConstructionInputField['label
       direction: 'Dir °',
       distance: 'Dist m',
       deltaZ: 'Δz m',
+      slope: 'Slope %',
     } as const
   )[id];
+}
+
+export function snapDirectionDegrees(value: number, incrementDegrees = 45): number {
+  if (!Number.isFinite(value) || !Number.isFinite(incrementDegrees) || incrementDegrees <= 0) {
+    throw new TypeError('angle snap requires finite values and a positive increment');
+  }
+  return normalizeDegrees(Math.round(value / incrementDegrees) * incrementDegrees);
+}
+
+function slopeDeltaZ(distance: number, slopePercent: number): number {
+  if (!Number.isFinite(distance) || !Number.isFinite(slopePercent)) {
+    throw new TypeError('slope constraint must be finite');
+  }
+  if (distance === 0 && slopePercent !== 0) throw new RangeError('ZeroRunForSlope');
+  return (distance * slopePercent) / 100;
 }
 
 function normalizeDegrees(value: number): number {

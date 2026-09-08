@@ -988,7 +988,9 @@ pub(crate) fn hash_file(path: &Path) -> Result<(ObjectHash, u64), PointcloudGrou
     Ok((ObjectHash(hex::encode(digest.finalize())), length))
 }
 
-pub(crate) fn check_cancelled(cancellation: &CancellationToken) -> Result<(), PointcloudGroundError> {
+pub(crate) fn check_cancelled(
+    cancellation: &CancellationToken,
+) -> Result<(), PointcloudGroundError> {
     if cancellation.is_cancel_requested() {
         Err(PointcloudGroundError::Cancelled)
     } else {

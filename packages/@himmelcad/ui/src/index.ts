@@ -68,6 +68,14 @@ export { JOBS_CHIP_LINGER_MS, JobsIsland, JobsStatusChip } from './JobsSurfaces.
 export type { JobSurfaceItem } from './JobsSurfaces.js';
 export { EmptyState } from './EmptyState.js';
 export type { EmptyStateProps } from './EmptyState.js';
+export { ExportIsland } from './ExportIsland.js';
+export type {
+  ExportFormatChoice,
+  ExportIslandProps,
+  ExportPlanRow,
+  ExportRunningState,
+  ExportScope,
+} from './ExportIsland.js';
 export { CrsTransformPair } from './CrsTransformPair.js';
 export type { CrsTransformPairProps } from './CrsTransformPair.js';
 export {

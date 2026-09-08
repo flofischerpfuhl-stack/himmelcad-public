@@ -1,6 +1,7 @@
 export * from './clients.js';
 export * from './commands.js';
 export * from './constructionInput.js';
+export * from './drawing.js';
 export * from './canonicalProtocol.js';
 export * from './errors.js';
 export * from './journalMirror.js';

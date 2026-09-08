@@ -28,10 +28,10 @@ use himmelcad_core::canonical_resources::{
 };
 use himmelcad_core::entity::EntityId;
 use himmelcad_core::entity_model::{
-    built_in_type, BlockInstanceGeometry, CanonicalEntity, CurveGeometry, EntityTypeId,
-    GeometryObject, GeometryResource, Position, Representation, RepresentationAuthority,
-    RepresentationRole, TextGeometry, TextSpace, Transform3d, TriangleMeshGeometry,
-    TriangleMeshStorage, Vector3,
+    built_in_type, BlockInstanceGeometry, CanonicalEntity, CurveGeometry,
+    ElevationSurfaceGeometry, EntityTypeId, GeometryObject, GeometryResource, Position,
+    Representation, RepresentationAuthority, RepresentationRole, TextGeometry, TextSpace,
+    Transform3d, TriangleMeshGeometry, TriangleMeshStorage, Vector3,
 };
 use himmelcad_core::entity_validation::{
     canonical_entity_version_hash, geometry_object_content_hash, validate_resolved_representation,
@@ -1532,6 +1532,16 @@ fn canonical_geometry_to_entities(
         ))]),
         GeometryObject::Curve { curve } => curve_to_entities(curve),
         GeometryObject::Surface3d { mesh } => mesh_to_faces(mesh),
+        GeometryObject::ElevationSurface { surface } => match surface.as_ref() {
+            ElevationSurfaceGeometry::Tin { mesh, breaklines } => {
+                let mut entities = mesh_to_faces(mesh)?;
+                for breakline in breaklines {
+                    entities.extend(curve_to_entities(breakline)?);
+                }
+                Ok(entities)
+            }
+            ElevationSurfaceGeometry::Grid { .. } => Ok(Vec::new()),
+        },
         GeometryObject::Block { instance } => {
             let (location, scale, rotation) = decompose_insert_transform(instance.placement)?;
             Ok(vec![Entity::new(EntityType::Insert(Insert {
@@ -1777,6 +1787,26 @@ fn export_loss_codes(
                     losses.insert(LOSS_ENTITY_OMITTED.to_owned());
                 }
             },
+            GeometryObject::ElevationSurface { surface } => match surface.as_ref() {
+                ElevationSurfaceGeometry::Tin { mesh, breaklines } => {
+                    match &mesh.storage {
+                        TriangleMeshStorage::Inline { indices, .. } if !indices.is_empty() => {
+                            if indices.len() > 3 {
+                                losses.insert(LOSS_MESH_PARTITION.to_owned());
+                            }
+                        }
+                        _ => {
+                            losses.insert(LOSS_ENTITY_OMITTED.to_owned());
+                        }
+                    }
+                    for breakline in breaklines {
+                        collect_curve_losses(breakline, &mut losses);
+                    }
+                }
+                ElevationSurfaceGeometry::Grid { .. } => {
+                    losses.insert(LOSS_ENTITY_OMITTED.to_owned());
+                }
+            },
             _ => {
                 losses.insert(LOSS_ENTITY_OMITTED.to_owned());
             }
@@ -1856,6 +1886,26 @@ fn collect_geometry_losses(geometry: &GeometryObject, losses: &mut BTreeSet<Stri
                 }
             }
             _ => {
+                losses.insert(LOSS_ENTITY_OMITTED.to_owned());
+            }
+        },
+        GeometryObject::ElevationSurface { surface } => match surface.as_ref() {
+            ElevationSurfaceGeometry::Tin { mesh, breaklines } => {
+                match &mesh.storage {
+                    TriangleMeshStorage::Inline { indices, .. } if !indices.is_empty() => {
+                        if indices.len() > 3 {
+                            losses.insert(LOSS_MESH_PARTITION.to_owned());
+                        }
+                    }
+                    _ => {
+                        losses.insert(LOSS_ENTITY_OMITTED.to_owned());
+                    }
+                }
+                for breakline in breaklines {
+                    collect_curve_losses(breakline, losses);
+                }
+            }
+            ElevationSurfaceGeometry::Grid { .. } => {
                 losses.insert(LOSS_ENTITY_OMITTED.to_owned());
             }
         },

@@ -3,8 +3,12 @@ import test from 'node:test';
 
 import {
   ConstructionInputController,
+  DrawSnapLatencyRing,
+  DrawToolController,
   InteractionStateStore,
+  pointAcquisition,
   pointFromPolar,
+  snapDirectionDegrees,
 } from '../src/index.js';
 
 void test('G-B2-P9-TREE propagates, reports mixed, supports node-only changes, and preserves overrides across global defaults', () => {
@@ -114,4 +118,108 @@ void test('G-B2-INPUT first Escape reverts a field and leaves the armed tool for
     'no field edit remains; Escape can continue through the ladder',
   );
   assert.equal(input.snapshot().armed, true);
+});
+
+void test('G-DR-INPUT click, 45-degree constraint and typed XYZ converge to 1e-6 m', async () => {
+  const writes: unknown[] = [];
+  const controller = new DrawToolController(
+    {
+      write: async (input) => {
+        writes.push(input);
+        return {
+          entityId: input.entityId,
+          revision: writes.length - 1,
+          commandId: `c${writes.length}`,
+        };
+      },
+      undo: async () => ({ entityId: 'curve-1', revision: null }),
+    },
+    () => ({ entityId: 'curve-1', name: 'Breakline 1' }),
+  );
+  const origin = { x: 100, y: 200, z: 10 };
+  const target = pointFromPolar(origin, { directionDegrees: 45, distance: 10, deltaZ: 2 });
+  controller.arm('polyline', 'breakline');
+  controller.pointer({
+    kind: 'pick',
+    point: origin,
+    sourceEntityId: 'cloud-1',
+    sourceRevision: 4,
+    providerId: 'point-cloud',
+    primitiveAddress: 'point:42',
+  });
+  await controller.acceptPreview();
+  await controller.acceptConstraint(44.6, 10, { kind: 'deltaZ', value: 2 });
+  const constrained = controller.snapshot().vertices[1]!.point;
+  for (const axis of ['x', 'y', 'z'] as const) {
+    assert.ok(Math.abs(constrained[axis] - target[axis]) <= 1e-6);
+  }
+  assert.equal(controller.snapshot().journalWrites, 1);
+  assert.equal(
+    (writes[0] as { acquisitions: { inputMode: string }[] }).acquisitions[1]!.inputMode,
+    'constrained',
+  );
+});
+
+void test('G-DR-INPUT rejects non-zero slope over zero horizontal run', async () => {
+  const controller = new DrawToolController(
+    {
+      write: async (input) => ({ entityId: input.entityId, revision: 0, commandId: 'c1' }),
+      undo: async () => ({ entityId: 'curve-1', revision: null }),
+    },
+    () => ({ entityId: 'curve-1', name: 'Line 1' }),
+  );
+  controller.arm('line');
+  await controller.acceptTyped({ x: 1, y: 2, z: 3 });
+  await assert.rejects(
+    controller.acceptConstraint(0, 0, { kind: 'slope', value: 1 }),
+    /ZeroRunForSlope/,
+  );
+});
+
+void test('G-DR-INPUT vertex undo compensates the latest journal root before the entity', async () => {
+  const targets: string[] = [];
+  let revision = -1;
+  const controller = new DrawToolController(
+    {
+      write: async (input) => ({
+        entityId: input.entityId,
+        revision: ++revision,
+        commandId: `write-${revision}`,
+      }),
+      undo: async (commandId) => {
+        targets.push(commandId);
+        return { entityId: 'curve-1', revision: commandId === 'write-0' ? null : ++revision };
+      },
+    },
+    () => ({ entityId: 'curve-1', name: 'Polyline 1' }),
+  );
+  controller.arm('polyline');
+  await controller.acceptTyped({ x: 0, y: 0, z: 0 });
+  await controller.acceptTyped({ x: 1, y: 0, z: 0 });
+  await controller.acceptTyped({ x: 2, y: 0, z: 0 });
+  await controller.undoVertex();
+  await controller.undoVertex();
+  assert.deepEqual(targets, ['write-1', 'write-0']);
+  assert.equal(controller.snapshot().entityId, null);
+  assert.equal(controller.snapshot().vertices.length, 1);
+});
+
+void test('G-DR-INPUT provenance distinguishes exact picks, typed and constrained vertices', () => {
+  assert.equal(snapDirectionDegrees(89, 45), 90);
+  assert.equal(pointAcquisition({ kind: 'typed', point: { x: 1, y: 2, z: 3 } }).truth, 'typed');
+  const pick = pointAcquisition({
+    kind: 'pick',
+    point: { x: 1, y: 2, z: 3 },
+    sourceEntityId: 'cloud',
+    sourceRevision: 2,
+    providerId: 'point-cloud',
+  });
+  assert.equal(pick.truth, 'exact');
+  assert.equal(pick.sourceEntityId, 'cloud');
+});
+
+void test('draw snap latency ring is bounded and reports the V-01 p95 shape', () => {
+  const ring = new DrawSnapLatencyRing(4);
+  for (const value of [8, 1, 3, 2, 4]) ring.record(value);
+  assert.deepEqual(ring.snapshot(), { samples: 4, p95Ms: 4, maximumMs: 4 });
 });

@@ -119,15 +119,16 @@ void test('kernel public API surface is exact and runtime internals stay private
       return `${symbol.name}:${marker}`;
     })
     .sort();
-  assert.equal(surface.length, 323);
+  assert.equal(surface.length, 327);
   assert.equal(
     createHash('sha256').update(surface.join('\n')).digest('hex'),
-    'e825dd17ff490b8fd15ed061f04e8397ad20f0a54b90b8d8eb0a1f4bdc171c96',
+    'c739f2c1607479ceb8f8b38acaf4589e2366abfc76a51718eb394e00b90e7d8f',
     `kernel API changed; review the stable contract before updating this gate:\n${surface.join('\n')}`,
   );
 
   const runtime = await import('../src/kernel/index.js');
   assert.deepEqual(Object.keys(runtime).sort(), [
+    'DEFAULT_CAMERA_CONTINUUM_DURATION_MS',
     'EMPTY_RENDERER_OVERLAY',
     'GestureClaimError',
     'KERNEL_FRAME_DIAGNOSTICS_CAPACITY',
@@ -153,6 +154,7 @@ void test('kernel public API surface is exact and runtime internals stay private
     'fencePrismFromPolygon',
     'fenceVolumeContains',
     'fenceVolumeFromCamera',
+    'interpolateKernelWorldCamera',
     'isPlanViewMode',
     'kernelSelectionVisualPolicy',
     'localSectionClipVolume',

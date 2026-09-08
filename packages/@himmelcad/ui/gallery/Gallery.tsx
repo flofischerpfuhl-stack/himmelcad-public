@@ -68,6 +68,8 @@ type State =
   | 'unknown-units'
   | 'island'
   | 'idle'
+  | 'drawing'
+  | 'closed'
   | 'baking'
   | 'locked';
 
@@ -85,6 +87,58 @@ interface GalleryRow {
 }
 
 const noop = (): void => undefined;
+
+function DrawPanelFixture({ state }: { state: 'idle' | 'drawing' | 'closed' }): JSX.Element {
+  const vertices =
+    state === 'idle'
+      ? []
+      : state === 'drawing'
+        ? [
+            [691224.125, 5338120.5, 482.75, '⌖'],
+            [691233.964, 5338128.77, 482.91, '∟'],
+          ]
+        : [
+            [691224.125, 5338120.5, 482.75, '⌖'],
+            [691233.964, 5338128.77, 482.91, '∟'],
+            [691229.004, 5338138.12, 483.02, '⌨'],
+          ];
+  return (
+    <div className="drawPanelFixture" data-draw-state={state}>
+      <label>
+        Role
+        <Select
+          aria-label="Draw role"
+          value={state === 'closed' ? 'boundary' : 'breakline'}
+          options={[
+            { value: 'plain', label: 'Plain' },
+            { value: 'breakline', label: 'Breakline' },
+            { value: 'boundary', label: 'Boundary' },
+          ]}
+        />
+      </label>
+      <div className="drawSnapFixture" aria-label="Snap kinds">
+        {['Point', 'Cloud point', 'Line end', 'Midpoint', 'Intersection', 'Perpendicular'].map(
+          (label) => (
+            <button key={label} type="button" aria-label={label} aria-pressed="true">
+              {label[0]}
+            </button>
+          ),
+        )}
+      </div>
+      <output className="drawPolarFixture">
+        {state === 'drawing' ? 'Dir 40.000° · Dist 12.854 m · Δz 0.160 m' : 'Dir — · Dist — · Δz —'}
+      </output>
+      <ol className="drawVerticesFixture">
+        {vertices.map(([x, y, z, glyph], index) => (
+          <li
+            key={index}
+          >{`${index + 1} · ${Number(x).toFixed(3)} ${Number(y).toFixed(3)} ${Number(z).toFixed(3)} · ${glyph}`}</li>
+        ))}
+      </ol>
+      {state === 'closed' ? <span className="drawClosedFixture">Closed boundary</span> : null}
+    </div>
+  );
+}
 const galleryPointCloudDisplay = {
   schemaId: 'hcad.resource.point-cloud-display@1',
   pointSizePixels: 2,
@@ -371,6 +425,11 @@ const specs: readonly ComponentSpec[] = [
         />
       </div>
     ),
+  },
+  {
+    name: 'Draw panel',
+    states: ['idle', 'drawing', 'closed'],
+    render: (state) => <DrawPanelFixture state={state as 'idle' | 'drawing' | 'closed'} />,
   },
   {
     name: 'Tree states',
@@ -1003,6 +1062,29 @@ const specs: readonly ComponentSpec[] = [
         </FunctionPanel>
       </div>
     ),
+  },
+  {
+    name: 'DGM window',
+    states: [
+      row('sources', 'sources', 'default', 'sources'),
+      row('errors-fix-open', 'errors · fix menu open', 'invalid', 'errors'),
+      row('creating', 'creating', 'loading', 'creating'),
+    ],
+    render: (_state, galleryRow) => {
+      const value = galleryRow?.value ?? 'sources';
+      return (
+        <div className="galleryDgmWindow" aria-label="DGM creation window">
+          <header><div><strong>Create surface</strong><small>DGM · checked TIN</small></div><Button variant="quiet">×</Button></header>
+          <div className="galleryDgmColumns">
+            <section><h3>Sources</h3>{[['●','Road ground','3.1 M','Points'],['／','Kerb line','142','Breakline'],['◇','Site boundary','18','Boundary']].map(([glyph,name,count,role]) => <div className="galleryDgmSource" key={name}><b>{glyph}</b><span>{name}<small>{count} items</small></span><Select value={role} options={[{value:role!,label:role!}]} /></div>)}</section>
+            <section><h3>Rules</h3><label><span>Maximum edge</span><NumberInput value={25} unit="m" disabled={value === 'creating'} /></label><label><span>Thin cloud</span><NumberInput value={0.25} unit="m" disabled={value === 'creating'} /></label><Checkbox label="Automatic boundary" checked readOnly /><Checkbox label="Exclude outside boundary" checked readOnly /><Checkbox label="Use 2D crop polyline" checked={false} readOnly /></section>
+            <section><h3>Check results</h3><code>{value === 'sources' ? '0 errors · 0 fixable' : '12 errors · 9 fixable'}</code>{value !== 'sources' ? <><div className="galleryDgmError"><b>!</b><span>Breaklines cross with conflicting heights</span><Button variant="quiet">Fix ▾</Button>{value === 'errors' ? <Menu className="galleryDgmFix" autoFocus={false} onClose={noop}><MenuItem>Split lines</MenuItem><MenuItem>Exclude source</MenuItem></Menu> : null}</div><div className="galleryDgmError"><b>!</b><span>Vertex lies outside the boundary</span><Button variant="quiet">Fix ▾</Button></div></> : <p>Run Check before publishing.</p>}</section>
+          </div>
+          {value === 'creating' ? <div className="galleryDgmProgress"><span>Triangulate · constrain · validate · bake</span><ProgressBar value={0.63} ariaLabel="Surface creation progress" /></div> : null}
+          <footer><Button variant="secondary" disabled={value === 'creating'}>Check</Button><Button variant="primary" disabled={value !== 'errors'}>Create surface</Button><Button variant="quiet">{value === 'creating' ? 'Cancel creation' : 'Cancel'}</Button></footer>
+        </div>
+      );
+    },
   },
   {
     name: 'Segment panel',

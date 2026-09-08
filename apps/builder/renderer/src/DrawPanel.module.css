@@ -1,0 +1,99 @@
+.panel,
+.section {
+  display: grid;
+  min-width: 0;
+  gap: var(--hc-space-2);
+}
+
+.section {
+  padding-bottom: var(--hc-space-3);
+  border-bottom: 1px solid var(--hc-border-subtle);
+}
+
+.role {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
+  color: var(--hc-fg-muted);
+  font-size: 12px;
+}
+
+.heading,
+.listHeader {
+  color: var(--hc-fg-muted);
+  font-size: 12px;
+}
+
+.snapRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.snapButton {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-muted);
+  background: var(--hc-bg-island);
+}
+
+.snapButton[aria-pressed='true'] {
+  color: var(--hc-fg-strong);
+  border-color: var(--hc-selection-border);
+  background: var(--hc-active-bg);
+}
+
+.snapButton:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.polar {
+  overflow: hidden;
+  color: var(--hc-fg-strong);
+  font: 14px var(--hc-font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listHeader {
+  display: flex;
+  justify-content: space-between;
+}
+
+.vertices {
+  display: grid;
+  max-height: 220px;
+  gap: 2px;
+  padding: 0;
+  margin: 0;
+  overflow: auto;
+  list-style: none;
+  font: 11px var(--hc-font-mono);
+}
+
+.vertices li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 18px;
+  gap: 4px;
+  padding: 4px 5px;
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-elevated);
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--hc-space-2);
+}
+
+.error {
+  color: var(--hc-error-fg);
+  font-size: 12px;
+}

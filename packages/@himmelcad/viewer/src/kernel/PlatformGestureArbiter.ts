@@ -63,11 +63,13 @@ export interface PlatformGestureCallbacks<Candidate> {
   readonly candidateSetChanged?: (candidates: readonly Candidate[], index: number) => void;
   readonly candidateSetCleared?: () => void;
   readonly routeRegistryShortcut?: (event: KeyboardEvent) => void;
+  readonly claimBlocked?: (message: string) => void;
 }
 
 export type EscapeRungRegistrar = (
   kind: 'tool' | 'selection',
   handler: (event: KeyboardEvent) => boolean,
+  options?: { readonly order?: number },
 ) => () => void;
 
 export type GestureClaimErrorCode =
@@ -129,6 +131,7 @@ export class PlatformGestureArbiter<Candidate> {
   private indicatorToken = 0;
   private lastActivation: { pointerType: string; timeStamp: number; candidateKey: unknown } | null =
     null;
+  private claimBlockReason: string | null = null;
 
   constructor(
     private readonly callbacks: PlatformGestureCallbacks<Candidate> = {},
@@ -214,6 +217,11 @@ export class PlatformGestureArbiter<Candidate> {
 
   activeTool(): string | null {
     return this.armedToolId;
+  }
+
+  /** Pauses armed tool claims while leaving platform-owned selection/inspection live. */
+  setClaimsBlocked(reason: string | null): void {
+    this.claimBlockReason = reason;
   }
 
   setCandidateIndicator(count: number, index: number): () => void {
@@ -304,6 +312,10 @@ export class PlatformGestureArbiter<Candidate> {
   ): boolean {
     const claim = this.armedTool()?.claims.get(row);
     if (!claim) return false;
+    if (this.claimBlockReason) {
+      this.callbacks.claimBlocked?.(this.claimBlockReason);
+      return false;
+    }
     const event: PlatformGestureEvent<Candidate> = {
       row,
       candidate,
@@ -321,7 +333,16 @@ export class PlatformGestureArbiter<Candidate> {
     originalEvent: Event,
     candidate: Candidate | null,
   ): void {
-    this.armedTool()?.claims.get(row)?.handle({ row, candidate, originalEvent, phase });
+    const claim = this.armedTool()?.claims.get(row);
+    if (!claim) return;
+    if (this.claimBlockReason) {
+      if (phase !== 'move') {
+        claim.handle({ row, candidate, originalEvent, phase: 'cancel' });
+        this.callbacks.claimBlocked?.(this.claimBlockReason);
+      }
+      return;
+    }
+    claim.handle({ row, candidate, originalEvent, phase });
   }
 
   handleClick(event: PointerEvent, candidate: Candidate | null, heldMilliseconds = 0): void {
@@ -429,6 +450,11 @@ export class PlatformGestureArbiter<Candidate> {
   ): void {
     const claim = this.armedTool()?.claims.get(row);
     if (claim) {
+      if (this.claimBlockReason) {
+        consume(event);
+        this.callbacks.claimBlocked?.(this.claimBlockReason);
+        return;
+      }
       claim.handle({ row, candidate, originalEvent: event });
       return;
     }
@@ -445,7 +471,7 @@ export class PlatformGestureArbiter<Candidate> {
   }
 }
 
-function consume(event: KeyboardEvent): void {
+function consume(event: Event): void {
   event.preventDefault();
   event.stopPropagation();
 }

@@ -6,6 +6,7 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use himmelcad_core::hash::ObjectHash;
+use himmelcad_core::mesh_surface::SurfacePoint;
 use himmelcad_core::photolab_jobs::CancellationToken;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -198,6 +199,156 @@ pub struct PreparedHeightGrid {
     pub root: PathBuf,
     pub artifact: PreparedGroundArtifact,
     pub summary: RasterSummary,
+}
+
+/// Streams one Potree source into the MT-D17 bounded XY-grid working set.
+/// The representative is the existing point nearest the cell mean Z, then the
+/// cell centre, then stable logical point id. No coordinate or height is
+/// synthesized by this adapter.
+pub fn read_surface_points(
+    metadata_path: &Path,
+    hierarchy_path: &Path,
+    octree_path: &Path,
+    source_id: &str,
+    spacing: f64,
+    scope: &GroundScope,
+    cancellation: &CancellationToken,
+    mut progress: impl FnMut(SamplingProgress),
+) -> Result<Vec<SurfacePoint>, PointcloudSamplingError> {
+    validate_scope(scope)?;
+    if !spacing.is_finite() || spacing <= 0.0 {
+        return Err(PointcloudSamplingError::Invalid(
+            "surface sampling spacing must be finite and positive",
+        ));
+    }
+    let source = OpenPotree::open(metadata_path, hierarchy_path)?;
+    let total = source.metadata.points.max(1);
+    let origin = [0.0, 0.0];
+    let mut cells = BTreeMap::<(i64, i64), GridAccumulator>::new();
+    let mut reader = BufReader::with_capacity(IO_CHUNK_BYTES, File::open(octree_path)?);
+    let mut visited = 0_u64;
+    for node in &source.nodes {
+        check_sampling_cancelled(cancellation)?;
+        ensure_bounded_node(node)?;
+        let bytes = read_node(&mut reader, node)?;
+        for record in bytes.chunks_exact(source.stride) {
+            let local = decode_point(record, source.position_offset, &source.metadata)?;
+            let class = source
+                .classification_offset
+                .map_or(0, |offset| record[offset]);
+            if scope.visible_classes.contains(&class) && scope_contains(scope, local) {
+                let world = transform_point(&scope.placement, local);
+                cells
+                    .entry(cell2(world, origin, spacing)?)
+                    .and_modify(|entry| entry.add(world[2]))
+                    .or_insert_with(|| GridAccumulator::new(world[2]));
+                if cells.len() > MAX_SAMPLE_INDEX_ENTRIES {
+                    return Err(PointcloudSamplingError::Invalid(
+                        "surface working set exceeds the bounded 10 M-cell ceiling; increase thin-cloud spacing",
+                    ));
+                }
+            }
+        }
+        visited = visited.saturating_add(node.point_count);
+        progress(SamplingProgress {
+            phase: SamplingPhase::Scan,
+            completed: visited.min(total),
+            total,
+        });
+    }
+    if cells.is_empty() {
+        return Err(PointcloudSamplingError::Invalid(
+            "the captured P4 visible set is empty",
+        ));
+    }
+    let mut candidates = cells
+        .into_iter()
+        .map(|(cell, accumulator)| {
+            (
+                cell,
+                GridCandidate {
+                    mean_z: accumulator.mean(),
+                    point_id: u64::MAX,
+                    dz: f64::INFINITY,
+                    center_distance_squared: f64::INFINITY,
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    reader = BufReader::with_capacity(IO_CHUNK_BYTES, File::open(octree_path)?);
+    visited = 0;
+    let mut logical_id = 0_u64;
+    for node in &source.nodes {
+        check_sampling_cancelled(cancellation)?;
+        let bytes = read_node(&mut reader, node)?;
+        for record in bytes.chunks_exact(source.stride) {
+            let local = decode_point(record, source.position_offset, &source.metadata)?;
+            let class = source
+                .classification_offset
+                .map_or(0, |offset| record[offset]);
+            if scope.visible_classes.contains(&class) && scope_contains(scope, local) {
+                let world = transform_point(&scope.placement, local);
+                let cell = cell2(world, origin, spacing)?;
+                let candidate = candidates
+                    .get_mut(&cell)
+                    .ok_or(PointcloudSamplingError::Invalid("surface cell disappeared"))?;
+                let dz = (world[2] - candidate.mean_z).abs();
+                let center = cell_center(cell, origin, spacing);
+                let center_distance_squared =
+                    (world[0] - center[0]).powi(2) + (world[1] - center[1]).powi(2);
+                if (dz, center_distance_squared, logical_id)
+                    < (
+                        candidate.dz,
+                        candidate.center_distance_squared,
+                        candidate.point_id,
+                    )
+                {
+                    candidate.point_id = logical_id;
+                    candidate.dz = dz;
+                    candidate.center_distance_squared = center_distance_squared;
+                }
+            }
+            logical_id = logical_id.saturating_add(1);
+        }
+        visited = visited.saturating_add(node.point_count);
+        progress(SamplingProgress {
+            phase: SamplingPhase::Select,
+            completed: visited.min(total),
+            total,
+        });
+    }
+    let selected = candidates
+        .into_values()
+        .map(|candidate| candidate.point_id)
+        .collect::<BTreeSet<_>>();
+    let mut result = Vec::with_capacity(selected.len());
+    reader = BufReader::with_capacity(IO_CHUNK_BYTES, File::open(octree_path)?);
+    visited = 0;
+    logical_id = 0;
+    for node in &source.nodes {
+        check_sampling_cancelled(cancellation)?;
+        let bytes = read_node(&mut reader, node)?;
+        for record in bytes.chunks_exact(source.stride) {
+            if selected.contains(&logical_id) {
+                let local = decode_point(record, source.position_offset, &source.metadata)?;
+                let world = transform_point(&scope.placement, local);
+                result.push(SurfacePoint {
+                    point_id: format!("{source_id}:{logical_id}"),
+                    source_id: source_id.to_owned(),
+                    position: [world[0], world[1]],
+                    z: Some(world[2]),
+                });
+            }
+            logical_id = logical_id.saturating_add(1);
+        }
+        visited = visited.saturating_add(node.point_count);
+        progress(SamplingProgress {
+            phase: SamplingPhase::Bake,
+            completed: visited.min(total),
+            total,
+        });
+    }
+    Ok(result)
 }
 
 #[derive(Debug, Error)]

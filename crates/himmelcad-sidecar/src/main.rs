@@ -29,6 +29,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
 use himmelcad_core::hash::ObjectHash;
+use himmelcad_core::mesh_surface::{SurfaceFixKind, SurfaceFixRequest};
 use himmelcad_core::photolab::{
     resolve_alignment_profile, AlignmentQualityProfile, ResolveAlignmentProfileRequest,
     ResolvedAlignmentConfig,
@@ -139,6 +140,10 @@ use himmelcad_sidecar::job_runtime::{
     DrainReport, FrozenJobRequest, JobIdParams, JobManager, JobManagerConfig, JobWorkerContext,
     JobWorkerError, ListJobsParams, MemoryPreflight, StartJobResult,
     SIFT_MATCHING_BYTES_PER_WORKER,
+};
+use himmelcad_sidecar::mesh_surface_runtime::{
+    check_persisted_surface, create_surface_draft, fix_persisted_surface,
+    publish_persisted_surface, CreateSurfaceDraftRequest,
 };
 use himmelcad_sidecar::mesh_tiler::{build_tiled_dem_mesh, MeshTilerError};
 use himmelcad_sidecar::mvs_runtime::{
@@ -378,11 +383,23 @@ struct RegistrationIcpParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct IoExportRequestParams {
     command_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scope: Option<IoExportScope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    entity_ids: Option<Vec<String>>,
     provider_id: String,
     provider_version: String,
     target_path: String,
     format_id: String,
     options: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum IoExportScope {
+    Selection,
+    Visible,
+    Project,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -612,6 +629,41 @@ fn default_ground_preview_limit() -> usize {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CancelGroundOperationParams {
     operation_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SurfaceDraftCreateParams {
+    operation_id: String,
+    progress_key: String,
+    #[serde(flatten)]
+    request: CreateSurfaceDraftRequest,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SurfaceDraftParams {
+    draft_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SurfaceFixParams {
+    draft_id: String,
+    error_id: String,
+    fix: SurfaceFixKind,
+    #[serde(default)]
+    authority_source_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SurfacePublishParams {
+    operation_id: String,
+    progress_key: String,
+    draft_id: String,
+    output_entity_id: String,
+    command_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1616,6 +1668,9 @@ async fn handle(
     ) {
         return handle_pointcloud_sampling_rpc(req, ground_operations, canonical_app).await;
     }
+    if req.method.starts_with("mesh.surface.") {
+        return handle_mesh_surface_rpc(req, ground_operations, canonical_app).await;
+    }
     if req.method == "app.negotiate"
         || req.method == "app.protocol"
         || req.method == "project.flush"
@@ -1626,6 +1681,8 @@ async fn handle(
         || req.method.starts_with("pointcloud.")
         || req.method.starts_with("view.bookmark.")
         || req.method.starts_with("canonical.viewing_box.")
+        || req.method.starts_with("measurement.")
+        || req.method.starts_with("draw.curve.")
     {
         return handle_canonical_app_rpc(req, canonical_app, automation).await;
     }
@@ -2056,6 +2113,112 @@ async fn handle_pointcloud_ground_rpc(
                     },
                     "journalEntry": commit.journal_entry,
                 }))
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(std::convert::identity);
+            rpc_result(id, result)
+        }
+        other => rpc_err(req.id, -32601, &format!("method not found: {other}")),
+    }
+}
+
+async fn handle_mesh_surface_rpc(
+    req: RpcRequest,
+    operations: Arc<GroundOperations>,
+    runtime: Arc<Mutex<CanonicalAppRuntime>>,
+) -> RpcResponse {
+    match req.method.as_str() {
+        "mesh.surface.cancel" => {
+            match serde_json::from_value::<CancelGroundOperationParams>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    Ok::<_, anyhow::Error>(serde_json::json!({
+                        "operationId": params.operation_id,
+                        "cancellationRequested": operations.cancel(&params.operation_id),
+                    })),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        "mesh.surface.draft.create" => {
+            let id = req.id;
+            let params = match serde_json::from_value::<SurfaceDraftCreateParams>(req.params) {
+                Ok(params) => params,
+                Err(error) => return rpc_err(id, -32602, &format!("invalid params: {error}")),
+            };
+            let active = match operations.begin(params.operation_id.clone()) {
+                Ok(active) => active,
+                Err(error) => return rpc_err(id, -32602, &error.to_string()),
+            };
+            let result = tokio::task::spawn_blocking(move || {
+                create_surface_draft(
+                    &runtime
+                        .lock()
+                        .expect("canonical app runtime mutex poisoned"),
+                    params.request,
+                    &active.cancellation,
+                    |fraction, phase| {
+                        emit_progress(Some(&params.progress_key), fraction * 0.98, phase)
+                    },
+                )
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(std::convert::identity);
+            rpc_result(id, result)
+        }
+        "mesh.surface.check" => {
+            let id = req.id;
+            rpc_blocking_with_params::<SurfaceDraftParams, _, _>(id, req.params, move |params| {
+                check_persisted_surface(
+                    &runtime
+                        .lock()
+                        .expect("canonical app runtime mutex poisoned"),
+                    &params.draft_id,
+                )
+            })
+            .await
+        }
+        "mesh.surface.draft.apply_fix" => {
+            let id = req.id;
+            rpc_blocking_with_params::<SurfaceFixParams, _, _>(id, req.params, move |params| {
+                fix_persisted_surface(
+                    &runtime
+                        .lock()
+                        .expect("canonical app runtime mutex poisoned"),
+                    &params.draft_id,
+                    &SurfaceFixRequest {
+                        error_id: params.error_id,
+                        fix: params.fix,
+                        authority_source_id: params.authority_source_id,
+                    },
+                )
+            })
+            .await
+        }
+        "mesh.surface.create" => {
+            let id = req.id;
+            let params = match serde_json::from_value::<SurfacePublishParams>(req.params) {
+                Ok(params) => params,
+                Err(error) => return rpc_err(id, -32602, &format!("invalid params: {error}")),
+            };
+            let active = match operations.begin(params.operation_id.clone()) {
+                Ok(active) => active,
+                Err(error) => return rpc_err(id, -32602, &error.to_string()),
+            };
+            let result = tokio::task::spawn_blocking(move || {
+                publish_persisted_surface(
+                    &mut runtime
+                        .lock()
+                        .expect("canonical app runtime mutex poisoned"),
+                    &params.draft_id,
+                    params.output_entity_id,
+                    params.command_id,
+                    current_rfc3339(),
+                    &active.cancellation,
+                    |fraction, phase| emit_progress(Some(&params.progress_key), fraction, phase),
+                )
             })
             .await
             .map_err(anyhow::Error::from)
@@ -2735,6 +2898,9 @@ async fn handle_canonical_app_rpc(
         || req.method == "canonical.viewing_box.delete"
         || req.method == "measurement.create"
         || req.method == "measurement.remove"
+        || req.method == "draw.curve.put"
+        || req.method == "draw.curve.undo"
+        || req.method == "draw.curve.redo"
         || (req.method == "app.protocol"
             && serde_json::from_value::<AppProtocolRequestEnvelope>(req.params.clone()).is_ok_and(
                 |envelope| {
@@ -3035,6 +3201,61 @@ async fn handle_canonical_app_rpc(
                             params.entity_id,
                             params.expected_revision,
                         )
+                        .map_err(anyhow::Error::from),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        "draw.curve.put" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Params {
+                command_id: String,
+                input: himmelcad_sidecar::canonical_app_runtime::DrawCurveInput,
+            }
+            match serde_json::from_value::<Params>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    runtime
+                        .put_draw_curve(params.command_id, params.input)
+                        .map_err(anyhow::Error::from),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        "draw.curve.list" => rpc_result(
+            req.id,
+            runtime.list_draw_curves().map_err(anyhow::Error::from),
+        ),
+        "draw.curve.undo" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Params {
+                command_id: String,
+                target_command_id: String,
+            }
+            match serde_json::from_value::<Params>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    runtime
+                        .undo_draw_curve(params.command_id, params.target_command_id)
+                        .map_err(anyhow::Error::from),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        "draw.curve.redo" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Params {
+                command_id: String,
+                target_command_id: String,
+            }
+            match serde_json::from_value::<Params>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    runtime
+                        .redo_draw_curve(params.command_id, params.target_command_id)
                         .map_err(anyhow::Error::from),
                 ),
                 Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
@@ -3673,10 +3894,23 @@ async fn handle_io_rpc(
                 req.params,
                 move |params| {
                     validate_io_identity(&params.command_id, "commandId")?;
-                    let package = canonical_app
-                        .lock()
-                        .expect("canonical app runtime mutex poisoned")
-                        .reconstruct_import_package(&params.command_id)?;
+                    let package = {
+                        let runtime = canonical_app
+                            .lock()
+                            .expect("canonical app runtime mutex poisoned");
+                        match &params.entity_ids {
+                            Some(entity_ids) => {
+                                if params.scope.is_none() {
+                                    anyhow::bail!("entityIds require a user-level export scope");
+                                }
+                                for entity_id in entity_ids {
+                                    validate_io_identity(entity_id, "entityIds")?;
+                                }
+                                runtime.reconstruct_export_package(entity_ids)?
+                            }
+                            None => runtime.reconstruct_import_package(&params.command_id)?,
+                        }
+                    };
                     let registry = canonical_builtin_import_registry(io_probe_registry_root())?;
                     require_provider_version(
                         &registry,
@@ -3721,12 +3955,22 @@ async fn handle_io_rpc(
                         let runtime = canonical_app
                             .lock()
                             .expect("canonical app runtime mutex poisoned");
-                        let package =
-                            runtime.reconstruct_import_package(&accepted.request.command_id)?;
-                        runtime.materialize_import_artifacts(
-                            &accepted.request.command_id,
-                            &scratch.root,
-                        )?;
+                        let package = match &accepted.request.entity_ids {
+                            Some(entity_ids) => {
+                                let package = runtime.reconstruct_export_package(entity_ids)?;
+                                runtime.materialize_export_artifacts(entity_ids, &scratch.root)?;
+                                package
+                            }
+                            None => {
+                                let package = runtime
+                                    .reconstruct_import_package(&accepted.request.command_id)?;
+                                runtime.materialize_import_artifacts(
+                                    &accepted.request.command_id,
+                                    &scratch.root,
+                                )?;
+                                package
+                            }
+                        };
                         package
                     };
                     let registry = canonical_builtin_import_registry(scratch.root.clone())?;

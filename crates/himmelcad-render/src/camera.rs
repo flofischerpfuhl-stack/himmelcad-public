@@ -45,6 +45,11 @@ pub struct CameraFrame {
     pub view_projection: DMat4,
     /// Inverse used for cursor rays and depth reconstruction.
     pub inverse_view_projection: DMat4,
+    /// Continuous perspective-to-orthographic projection coordinate.
+    ///
+    /// Zero is perspective and one is orthographic. Intermediate values are
+    /// authoritative while a camera continuum transition is active.
+    pub projection_blend: f64,
 }
 
 impl CameraFrame {
@@ -171,6 +176,12 @@ pub struct CameraTransition {
     pub from: WorldCamera,
     /// Destination camera.
     pub to: WorldCamera,
+    /// Optional world point whose viewport position must remain fixed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_anchor: Option<WorldVec3>,
+    /// Anchor position in normalized device coordinates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_ndc: Option<[f64; 2]>,
 }
 
 impl CameraTransition {
@@ -184,7 +195,7 @@ impl CameraTransition {
             return Err(CameraFrameError::InvalidProjection);
         }
         let progress = smoothstep(progress.clamp(0.0, 1.0));
-        let camera = WorldCamera {
+        let mut camera = WorldCamera {
             eye: lerp_world(self.from.eye, self.to.eye, progress),
             target: lerp_world(self.from.target, self.to.target, progress),
             up: world(
@@ -200,11 +211,37 @@ impl CameraTransition {
             },
         };
         validate_basis(camera)?;
-        let view = view_matrix(camera, floating_origin)?;
         let from_projection = projection_matrix(self.from.projection)?;
         let to_projection = projection_matrix(self.to.projection)?;
         let projection = matrix_lerp(from_projection, to_projection, progress);
-        finish_frame(camera, floating_origin, projection * view)
+        let mut view_projection = projection * view_matrix(camera, floating_origin)?;
+        if let (Some(anchor), Some(cursor_ndc)) = (self.cursor_anchor, self.cursor_ndc) {
+            if cursor_ndc.iter().any(|value| !value.is_finite()) {
+                return Err(CameraFrameError::InvalidProjection);
+            }
+            let anchor_relative = vector(anchor) - vector(floating_origin);
+            let clip = view_projection * anchor_relative.extend(1.0);
+            if !clip.is_finite() || clip.w.abs() <= f64::EPSILON {
+                return Err(CameraFrameError::NonInvertible);
+            }
+            let desired_clip = DVec4::new(
+                cursor_ndc[0] * clip.w,
+                cursor_ndc[1] * clip.w,
+                clip.z,
+                clip.w,
+            );
+            let inverse = view_projection.inverse();
+            let desired = inverse * desired_clip;
+            if !desired.is_finite() || desired.w.abs() <= f64::EPSILON {
+                return Err(CameraFrameError::NonInvertible);
+            }
+            let desired_relative = desired.truncate() / desired.w;
+            let correction = anchor_relative - desired_relative;
+            camera.eye = world(vector(camera.eye) + correction);
+            camera.target = world(vector(camera.target) + correction);
+            view_projection = projection * view_matrix(camera, floating_origin)?;
+        }
+        finish_frame(camera, floating_origin, view_projection, progress)
     }
 }
 
@@ -251,13 +288,15 @@ fn camera_frame(
 ) -> Result<CameraFrame, CameraFrameError> {
     validate_basis(camera)?;
     let matrix = projection_matrix(projection)? * view_matrix(camera, floating_origin)?;
-    finish_frame(camera, floating_origin, matrix)
+    let projection_blend = f64::from(matches!(projection, CameraProjection::Orthographic { .. }));
+    finish_frame(camera, floating_origin, matrix, projection_blend)
 }
 
 fn finish_frame(
     camera: WorldCamera,
     floating_origin: WorldVec3,
     view_projection: DMat4,
+    projection_blend: f64,
 ) -> Result<CameraFrame, CameraFrameError> {
     let determinant = view_projection.determinant();
     if !determinant.is_finite() || determinant.abs() <= f64::EPSILON {
@@ -268,6 +307,7 @@ fn finish_frame(
         floating_origin,
         view_projection,
         inverse_view_projection: view_projection.inverse(),
+        projection_blend,
     })
 }
 
@@ -379,7 +419,7 @@ fn world(value: DVec3) -> WorldVec3 {
 
 #[cfg(test)]
 mod tests {
-    use super::{matched_top_down, CameraFrame, CameraTransition};
+    use super::{matched_top_down, smoothstep, vector, world, CameraFrame, CameraTransition};
     use crate::{CameraProjection, WorldCamera, WorldVec3};
 
     fn perspective() -> WorldCamera {
@@ -473,7 +513,12 @@ mod tests {
     fn projection_transition_keeps_every_intermediate_matrix_invertible() {
         let from = perspective();
         let to = matched_top_down(from).expect("top down");
-        let transition = CameraTransition { from, to };
+        let transition = CameraTransition {
+            from,
+            to,
+            cursor_anchor: None,
+            cursor_ndc: None,
+        };
         for step in 0_u8..=20 {
             transition
                 .sample(
@@ -486,5 +531,96 @@ mod tests {
                 )
                 .expect("invertible transition frame");
         }
+    }
+
+    #[test]
+    fn cursor_anchor_stays_fixed_through_projection_continuum() {
+        let from = perspective();
+        let mut to = matched_top_down(from).expect("top down");
+        let viewport = [1_920, 1_080];
+        let anchor = WorldVec3 {
+            x: 3.25,
+            y: -1.75,
+            z: 0.0,
+        };
+        let origin = WorldVec3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        let source_pixel = CameraFrame::new(from, origin)
+            .expect("source frame")
+            .project_world(anchor, viewport)
+            .expect("source projection")
+            .pixel;
+        let cursor_ndc = [
+            source_pixel[0] / f64::from(viewport[0]) * 2.0 - 1.0,
+            1.0 - source_pixel[1] / f64::from(viewport[1]) * 2.0,
+        ];
+        // Match the endpoint too; the transition correction then removes the
+        // curved drift introduced by simultaneous view/projection blending.
+        let top = CameraFrame::new(to, origin).expect("top frame");
+        let projected = top.project_world(anchor, viewport).expect("top projection");
+        let desired = top
+            .unproject_pixel(source_pixel, projected.reverse_z_depth, viewport)
+            .expect("desired endpoint position");
+        let correction = vector(anchor) - vector(desired);
+        to.eye = world(vector(to.eye) + correction);
+        to.target = world(vector(to.target) + correction);
+        let transition = CameraTransition {
+            from,
+            to,
+            cursor_anchor: Some(anchor),
+            cursor_ndc: Some(cursor_ndc),
+        };
+
+        for step in 0_u8..=20 {
+            let frame = transition
+                .sample(f64::from(step) / 20.0, origin)
+                .expect("anchored frame");
+            let pixel = frame
+                .project_world(anchor, viewport)
+                .expect("anchored projection")
+                .pixel;
+            assert!((pixel[0] - source_pixel[0]).abs() <= 1.0e-7);
+            assert!((pixel[1] - source_pixel[1]).abs() <= 1.0e-7);
+            assert!((frame.projection_blend - smoothstep(f64::from(step) / 20.0)).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn interpolated_pick_uses_the_same_camera_frame_as_presentation() {
+        let from = perspective();
+        let to = matched_top_down(from).expect("top down");
+        let origin = WorldVec3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        let frame = CameraTransition {
+            from,
+            to,
+            cursor_anchor: None,
+            cursor_ndc: None,
+        }
+        .sample(0.37, origin)
+        .expect("interpolated frame");
+        let viewport = [1_280, 720];
+        let source = WorldVec3 {
+            x: 1.5,
+            y: -2.25,
+            z: 0.75,
+        };
+        let projected = frame
+            .project_world(source, viewport)
+            .expect("presentation projection");
+        let picked = frame
+            .unproject_pixel(projected.pixel, projected.reverse_z_depth, viewport)
+            .expect("pick reconstruction");
+
+        assert!((picked.x - source.x).abs() < 1.0e-8);
+        assert!((picked.y - source.y).abs() < 1.0e-8);
+        assert!((picked.z - source.z).abs() < 1.0e-8);
+        assert!(frame.projection_blend > 0.0 && frame.projection_blend < 1.0);
     }
 }

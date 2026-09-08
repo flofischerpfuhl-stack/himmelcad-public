@@ -20,6 +20,8 @@ export interface SelectOption {
   value: string;
   label: string;
   disabled?: boolean;
+  /** Plain-language explanation rendered as a tooltip for disabled options. */
+  description?: string;
 }
 
 export interface SelectProps extends Omit<SelectHTMLAttributes<HTMLSelectElement>, 'children'> {
@@ -179,6 +181,7 @@ export function Select({
                   role="option"
                   aria-selected={active}
                   disabled={opt.disabled}
+                  title={opt.disabled ? opt.description : undefined}
                   className={active ? `${styles.option} ${styles.optionActive}` : styles.option}
                   onClick={() => {
                     if (!opt.disabled) pick(opt.value);

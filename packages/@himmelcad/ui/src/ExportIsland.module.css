@@ -1,0 +1,235 @@
+.island {
+  display: grid;
+  width: min(480px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: hidden;
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-island);
+  box-shadow: var(--hc-shadow-island);
+}
+
+.header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 12px 11px 14px;
+  cursor: grab;
+  border-bottom: 1px solid var(--hc-border-subtle);
+}
+
+.header h2,
+.planHeading h3 {
+  margin: 0;
+  color: var(--hc-fg-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.header p {
+  margin: 3px 0 0;
+  color: var(--hc-fg-muted);
+  font-size: 11px;
+}
+
+.close {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  place-items: center;
+  color: var(--hc-fg-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--hc-radius-sm);
+  cursor: pointer;
+}
+
+.close:hover {
+  color: var(--hc-fg-strong);
+  background: var(--hc-hover-bg);
+}
+
+.body {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  overflow: auto;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field > span,
+.scope legend {
+  color: var(--hc-fg-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.scope {
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
+.scope legend {
+  margin-bottom: 6px;
+}
+
+.segments {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 2px;
+  background: var(--hc-bg-island-lo);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-md);
+}
+
+.segments button {
+  min-height: 28px;
+  padding: 4px 8px;
+  color: var(--hc-fg-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--hc-radius-sm);
+  cursor: pointer;
+}
+
+.segments button[aria-pressed='true'] {
+  color: var(--hc-fg-strong);
+  background: var(--hc-active-bg);
+  box-shadow: inset 0 0 0 1px var(--hc-border-default);
+}
+
+.segments button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.pathRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.pathRow output {
+  min-width: 0;
+  padding: 7px 8px;
+  overflow: hidden;
+  color: var(--hc-fg-default);
+  font: 11px/1.3 var(--hc-font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--hc-bg-input, var(--hc-bg-island-lo));
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+}
+
+.plan {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--hc-border-subtle);
+  padding-top: 12px;
+}
+
+.planHeading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.planHeading span {
+  color: var(--hc-warning-fg);
+  font-size: 10px;
+}
+
+.planHeading span[data-lossless='true'] {
+  color: var(--hc-success-fg);
+}
+
+.outputs,
+.empty,
+.error {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.outputs,
+.empty {
+  color: var(--hc-fg-muted);
+}
+
+.tableWrap {
+  overflow: auto;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+}
+
+.tableWrap table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.tableWrap th,
+.tableWrap td {
+  padding: 7px 8px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--hc-border-subtle);
+}
+
+.tableWrap th {
+  color: var(--hc-fg-subtle);
+  font-weight: 600;
+  background: var(--hc-bg-island-lo);
+}
+
+.tableWrap tr:last-child td {
+  border-bottom: 0;
+}
+
+.loss,
+.error {
+  color: var(--hc-warning-fg);
+}
+
+.running {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  background: var(--hc-bg-island-lo);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+}
+
+.running > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+}
+
+.running span {
+  color: var(--hc-fg-muted);
+  font-family: var(--hc-font-mono);
+}
+
+.footer {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--hc-border-subtle);
+}
+
+.footerSpacer {
+  flex: 1;
+}

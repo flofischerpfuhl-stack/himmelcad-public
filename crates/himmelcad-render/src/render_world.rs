@@ -42,6 +42,24 @@ pub enum RenderProxyKind {
     Text,
 }
 
+/// Stable painter rank for coincident content in settled 2D plan mode.
+///
+/// Three-dimensional visibility still comes from the depth buffer. This rank
+/// only makes equal-depth plan content deterministic, with annotation text
+/// deliberately submitted last so it remains legible and pickable.
+#[must_use]
+pub const fn plan_draw_order(kind: RenderProxyKind) -> u8 {
+    match kind {
+        RenderProxyKind::Raster => 0,
+        RenderProxyKind::Triangles | RenderProxyKind::CadFill | RenderProxyKind::GaussianSplats => {
+            1
+        }
+        RenderProxyKind::CadStroke => 2,
+        RenderProxyKind::Points => 3,
+        RenderProxyKind::Text => 4,
+    }
+}
+
 /// Color mapping applied without rebuilding source geometry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
@@ -1172,10 +1190,24 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        ClipOperation, ClipVolume, ClipVolumeId, ColorMode, EntityInteractionState, RenderProxy,
-        RenderProxyId, RenderProxyKind, RenderStyle, RenderWorld, RenderWorldError, StrokeCap,
-        StrokeColor, StrokeJoin, StrokeMode, StrokeStyle, StrokeWidth,
+        plan_draw_order, ClipOperation, ClipVolume, ClipVolumeId, ColorMode,
+        EntityInteractionState, RenderProxy, RenderProxyId, RenderProxyKind, RenderStyle,
+        RenderWorld, RenderWorldError, StrokeCap, StrokeColor, StrokeJoin, StrokeMode, StrokeStyle,
+        StrokeWidth,
     };
+
+    #[test]
+    fn camera_2d_plan_draw_order_is_deterministic_and_text_is_topmost() {
+        let ordered = [
+            RenderProxyKind::Raster,
+            RenderProxyKind::CadFill,
+            RenderProxyKind::CadStroke,
+            RenderProxyKind::Points,
+            RenderProxyKind::Text,
+        ];
+        assert!(ordered.is_sorted_by_key(|kind| plan_draw_order(*kind)));
+        assert_eq!(plan_draw_order(RenderProxyKind::Text), 4);
+    }
     use crate::{
         BoundingVolume, DatasetId, PickToken, ResourceCost, TileId, TileKey, WorldAabb, WorldVec3,
     };

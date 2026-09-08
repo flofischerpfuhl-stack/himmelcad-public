@@ -302,6 +302,9 @@ export class KernelViewerScene {
     if (mode === this.viewMode) return;
     const sceneAvailabilityChanged = isPlanViewMode(mode) !== isPlanViewMode(this.viewMode);
     this.viewMode = mode;
+    // Structural test doubles from older hosts may omit this presentation-only
+    // hook; the production kernel always supplies it.
+    this.viewerState.setViewMode?.(mode);
     if (!sceneAvailabilityChanged) return;
     const entityIds = new Set([...this.visibility.keys(), ...this.viewPolicies.keys()]);
     for (const entityId of entityIds) {

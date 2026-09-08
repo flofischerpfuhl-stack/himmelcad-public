@@ -28,7 +28,10 @@ import {
 } from '@himmelcad/app';
 import type { PhotoLabProductProvenanceV1, ProjectSnapshot } from '@himmelcad/data';
 import type { MeasurementV1 } from '@himmelcad/data/canonical';
+import type { PointAcquisitionV1, Position } from '@himmelcad/data/canonical';
+import type { DrawCurveWrite, DrawCurveWriteResult, DrawRole } from '@himmelcad/app';
 import type { KernelFenceVolume } from '@himmelcad/viewer/kernel';
+import type { CanonicalRepresentationAdmission } from '@himmelcad/viewer/kernel';
 
 import { projectSnapshotFromJournalMirror } from './projectProjection.js';
 import type { BuilderDurabilityStatus } from './durabilityPolling.js';
@@ -78,6 +81,17 @@ export interface BuilderMeasurementSummary {
   readonly revision: number;
   readonly name: string;
   readonly measurement: MeasurementV1;
+}
+
+export interface BuilderDrawCurveSummary {
+  readonly entityId: string;
+  readonly revision: number;
+  readonly name: string;
+  readonly role: DrawRole;
+  readonly closed: boolean;
+  readonly vertices: readonly Position[];
+  readonly acquisitions: readonly PointAcquisitionV1[];
+  readonly admission: CanonicalRepresentationAdmission;
 }
 
 export const GROUND_ALGORITHM_ID = 'hcad.pointcloud.ground-progressive@1' as const;
@@ -240,6 +254,74 @@ export interface PointcloudRasterizeResult {
     readonly emptyRatio: number;
     readonly cellSha256: string;
     readonly meshEligible: boolean;
+  };
+  readonly journalEntry: CanonicalJournalEntry;
+}
+
+export type SurfaceSourceRole = 'points' | 'breakline' | 'form_line' | 'outer_boundary' | 'hole';
+
+export interface SurfaceRules {
+  readonly maximumEdgeLength: number;
+  readonly thinCloudSpacing: number;
+  readonly xyTolerance: number;
+  readonly zTolerance: number;
+  readonly excludeOutsideBoundary: boolean;
+  readonly breaklineExclusionDistance: number | null;
+  readonly autoBoundary: boolean;
+  readonly cropPolyline: readonly (readonly [number, number])[];
+}
+
+export interface SurfaceSourceInput {
+  readonly entityId: string;
+  readonly role: SurfaceSourceRole;
+  readonly visibleClasses?: readonly number[];
+}
+
+export interface SurfaceCheckError {
+  readonly errorId: string;
+  readonly code: string;
+  readonly severity: 'error' | 'warning' | 'notice';
+  readonly message: string;
+  readonly sourceIds: readonly string[];
+  readonly location: readonly [number, number, number] | null;
+  readonly fixes: readonly ('drop' | 'snap' | 'split' | 'exclude')[];
+  readonly blocksPublish: boolean;
+}
+
+export interface SurfaceCheckResult {
+  readonly errors: readonly SurfaceCheckError[];
+  readonly fixable: number;
+  readonly blocking: number;
+  readonly sourcePoints: number;
+  readonly admittedPoints: number;
+}
+
+export interface SurfaceDraftResult {
+  readonly schemaId: 'hcad.mesh.surface-draft-result@1';
+  readonly draftId: string;
+  readonly sources: readonly {
+    readonly entityId: string;
+    readonly name: string;
+    readonly role: SurfaceSourceRole;
+    readonly count: number;
+  }[];
+  readonly checkpoint: 'captured';
+}
+
+export interface SurfacePublishResult {
+  readonly schemaId: 'hcad.mesh.surface-result@1';
+  readonly algorithmId: 'hcad.mesh.surface-cdt@1';
+  readonly draftId: string;
+  readonly entityId: string;
+  readonly revision: number;
+  readonly datasetId: string;
+  readonly triangles: number;
+  readonly area: number;
+  readonly zRange: readonly [number, number];
+  readonly residual: {
+    readonly count: number;
+    readonly meanAbsolute: number;
+    readonly maximumAbsolute: number;
   };
   readonly journalEntry: CanonicalJournalEntry;
 }
@@ -430,6 +512,43 @@ export class BuilderCanonicalProjectSession {
     await this.acceptCommittedEntry(result.journalEntry);
   }
 
+  async putDrawCurve(input: DrawCurveWrite): Promise<{
+    readonly summary: BuilderDrawCurveSummary;
+    readonly result: DrawCurveWriteResult;
+  }> {
+    const commandId = `builder/draw-curve/${crypto.randomUUID()}`;
+    const response = await this.call<{
+      readonly curve: BuilderDrawCurveSummary;
+      readonly journalEntry: CanonicalJournalEntry;
+    }>('draw.curve.put', { commandId, input });
+    await this.acceptCommittedEntry(response.journalEntry);
+    return {
+      summary: response.curve,
+      result: {
+        entityId: response.curve.entityId,
+        revision: response.curve.revision,
+        commandId,
+      },
+    };
+  }
+
+  listDrawCurves(): Promise<readonly BuilderDrawCurveSummary[]> {
+    return this.call('draw.curve.list', {});
+  }
+
+  async undoDrawCurve(
+    targetCommandId: string,
+  ): Promise<{ readonly entityId: string; readonly revision: number | null }> {
+    const entry = await this.call<CanonicalJournalEntry>('draw.curve.undo', {
+      commandId: `builder/draw-curve-undo/${crypto.randomUUID()}`,
+      targetCommandId,
+    });
+    await this.acceptCommittedEntry(entry);
+    const effect = entry.effects.find((candidate) => candidate.entityId !== 'default-layer');
+    if (!effect) throw new Error('Draw undo returned no entity effect.');
+    return { entityId: effect.entityId, revision: effect.after?.revision ?? null };
+  }
+
   async deleteViewingBox(entityId: string, expectedRevision: number): Promise<void> {
     const result = await this.call<{ readonly journalEntry: CanonicalJournalEntry }>(
       'canonical.viewing_box.delete',
@@ -611,6 +730,66 @@ export class BuilderCanonicalProjectSession {
     return this.call('pointcloud.ground.cancel', { operationId });
   }
 
+  createSurfaceDraft(input: {
+    readonly operationId: string;
+    readonly progressKey: string;
+    readonly draftId: string;
+    readonly name: string;
+    readonly sources: readonly SurfaceSourceInput[];
+    readonly rules: SurfaceRules;
+  }): Promise<SurfaceDraftResult> {
+    return this.call('mesh.surface.draft.create', {
+      operationId: input.operationId,
+      progressKey: input.progressKey,
+      draftId: input.draftId,
+      name: input.name,
+      sources: input.sources.map((item) => ({
+        source: this.exactEntityVersions([item.entityId])[0],
+        role: item.role,
+        visibleClasses: item.visibleClasses ?? [],
+      })),
+      rules: input.rules,
+    });
+  }
+
+  checkSurface(draftId: string): Promise<SurfaceCheckResult> {
+    return this.call('mesh.surface.check', { draftId });
+  }
+
+  fixSurface(
+    draftId: string,
+    errorId: string,
+    fix: 'drop' | 'snap' | 'split' | 'exclude',
+    authoritySourceId?: string,
+  ): Promise<{ readonly check: SurfaceCheckResult }> {
+    return this.call('mesh.surface.draft.apply_fix', {
+      draftId,
+      errorId,
+      fix,
+      authoritySourceId,
+    });
+  }
+
+  async publishSurface(input: {
+    readonly operationId: string;
+    readonly progressKey: string;
+    readonly draftId: string;
+    readonly outputEntityId: string;
+  }): Promise<SurfacePublishResult> {
+    const result = await this.call<SurfacePublishResult>('mesh.surface.create', {
+      ...input,
+      commandId: `builder/mesh-surface-create/${crypto.randomUUID()}`,
+    });
+    await this.acceptCommittedEntry(result.journalEntry);
+    return result;
+  }
+
+  cancelSurface(
+    operationId: string,
+  ): Promise<{ readonly operationId: string; readonly cancellationRequested: boolean }> {
+    return this.call('mesh.surface.cancel', { operationId });
+  }
+
   async segmentPointClouds(input: {
     readonly operationId: string;
     readonly progressKey: string;
@@ -706,6 +885,14 @@ export class BuilderCanonicalProjectSession {
     acceptedPlan: Awaited<ReturnType<IoClient['planExport']>>,
   ) {
     return this.io.executeExport(operationId, acceptedPlan);
+  }
+
+  exportStatus(operationId: string) {
+    return this.io.operationStatus(operationId);
+  }
+
+  cancelExport(operationId: string) {
+    return this.io.cancelOperation(operationId);
   }
 
   /** Compiles and executes one atomic, undoable edit over the exact queried revisions. */

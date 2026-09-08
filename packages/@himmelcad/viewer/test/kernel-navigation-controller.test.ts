@@ -4,6 +4,7 @@ import test from 'node:test';
 import { KernelCameraController } from '../src/kernel/KernelCameraController.js';
 import {
   KernelNavigationController,
+  interpolateKernelWorldCamera,
   nearestCandidateIndex,
   projectPickCandidateForViewMode,
 } from '../src/kernel/KernelNavigationController.js';
@@ -114,6 +115,132 @@ void test('view-mode promise settles only after the camera morph endpoint is pub
   }
 });
 
+void test('G-VC-TRANSITION retargets from the interpolated pose and commits only the final mode', async () => {
+  const camera = new KernelCameraController(1_280, 720);
+  const canvas = new NavigationCanvas();
+  const queued: FrameRequestCallback[] = [];
+  const modeChanges: string[] = [];
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (callback: FrameRequestCallback): number => {
+    queued.push(callback);
+    return queued.length;
+  };
+  try {
+    const controller = new KernelNavigationController(
+      canvas as unknown as HTMLCanvasElement,
+      navigationTarget(),
+      camera,
+      { onViewModeChanged: (mode) => modeChanges.push(mode) },
+    );
+    const first = controller.setViewMode('2d', 250);
+    const initial = controller.cameraContinuumState();
+    assert(initial);
+    assert.equal(controller.currentViewMode(), '3d');
+    const midTimestamp = performance.now() + 100;
+    queued.shift()?.(midTimestamp);
+    const beforeRetarget = controller.cameraContinuumState();
+    assert(beforeRetarget);
+    const expectedFrom = interpolateKernelWorldCamera(
+      { from: beforeRetarget.fromCamera, to: beforeRetarget.toCamera },
+      beforeRetarget.progress,
+    );
+
+    const second = controller.setViewMode('2.5d', 250);
+    const retargeted = controller.cameraContinuumState();
+    assert(retargeted);
+    assert.deepEqual(retargeted.fromCamera, expectedFrom);
+    assert.equal(controller.currentViewMode(), '3d', 'semantic mode is settled state only');
+    while (queued.length > 0) queued.shift()?.(performance.now() + 1_000);
+    await Promise.all([first, second]);
+
+    assert.equal(controller.currentViewMode(), '2.5d');
+    assert.deepEqual(modeChanges, ['2.5d']);
+    controller.dispose();
+  } finally {
+    globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+  }
+});
+
+void test('G-VC-TRANSITION Escape rung returns to the start pose without committing destination semantics', async () => {
+  const camera = new KernelCameraController(1_280, 720);
+  const startCamera = camera.worldCamera();
+  const canvas = new NavigationCanvas();
+  const queued: FrameRequestCallback[] = [];
+  const modeChanges: string[] = [];
+  let escape: ((event: KeyboardEvent) => boolean) | null = null;
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (callback: FrameRequestCallback): number => {
+    queued.push(callback);
+    return queued.length;
+  };
+  try {
+    const controller = new KernelNavigationController(
+      canvas as unknown as HTMLCanvasElement,
+      navigationTarget(),
+      camera,
+      {
+        onViewModeChanged: (mode) => modeChanges.push(mode),
+        registerEscapeRung: (kind, handler) => {
+          if (kind === 'tool') escape = handler;
+          return () => undefined;
+        },
+      },
+    );
+    const pending = controller.setViewMode('2d', 250);
+    queued.shift()?.(performance.now() + 100);
+    assert(escape);
+    assert.equal((escape as (event: KeyboardEvent) => boolean)(new Event('keydown') as KeyboardEvent), true);
+    assert.equal(await pending, '3d');
+    while (queued.length > 0) queued.shift()?.(performance.now() + 1_000);
+
+    assert.equal(controller.currentViewMode(), '3d');
+    assertCameraNear(camera.worldCamera(), startCamera);
+    assert.deepEqual(modeChanges, []);
+    assert.equal(controller.cameraContinuumState(), null);
+    controller.dispose();
+  } finally {
+    globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+  }
+});
+
+void test('G-VC-TRANSITION forwards the cursor anchor on every interpolated pick frame', async () => {
+  const camera = new KernelCameraController(800, 600);
+  const canvas = new NavigationCanvas();
+  const queued: FrameRequestCallback[] = [];
+  const anchors: unknown[] = [];
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (callback: FrameRequestCallback): number => {
+    queued.push(callback);
+    return queued.length;
+  };
+  try {
+    const target = navigationTarget();
+    target.setCameraTransition = (_from, _to, _progress, _origin, anchor): void => {
+      anchors.push(anchor);
+    };
+    const controller = new KernelNavigationController(
+      canvas as unknown as HTMLCanvasElement,
+      target,
+      camera,
+    );
+    const anchor = { x: 12, y: -4, z: 2 };
+    const pending = controller.setViewMode('2d', {
+      durationMilliseconds: 250,
+      cursorAnchor: anchor,
+      cursorNdc: [0.35, -0.2],
+    });
+    queued.shift()?.(performance.now() + 125);
+    while (queued.length > 0) queued.shift()?.(performance.now() + 1_000);
+    await pending;
+
+    assert.ok(anchors.length >= 1);
+    assert.deepEqual(anchors[0], { world: anchor, ndc: [0.35, -0.2] });
+    controller.dispose();
+  } finally {
+    globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+  }
+});
+
 void test('navigation camera adoption publishes the controller-normalized camera once', () => {
   const camera = new KernelCameraController(1_280, 720);
   const published: ReturnType<KernelCameraController['worldCamera']>[] = [];
@@ -193,6 +320,7 @@ void test('navigation publishes local profile endpoints and the exact captured 3
       },
     },
     callbacks: {},
+    gestures: { setClaimsBlocked: () => undefined },
     transitionGeneration: 0,
     transitionInteracting: false,
     reportedInteracting: false,
@@ -431,6 +559,31 @@ function navigationHarnessState(
     activeCandidateIndex: 0,
     cursorCoordinate: null,
     cursorPresentationPosition: null,
+  };
+}
+
+function assertCameraNear(
+  actual: ReturnType<KernelCameraController['worldCamera']>,
+  expected: ReturnType<KernelCameraController['worldCamera']>,
+): void {
+  for (const key of ['x', 'y', 'z'] as const) {
+    assert.ok(Math.abs(actual.eye[key] - expected.eye[key]) <= 1e-12);
+    assert.ok(Math.abs(actual.target[key] - expected.target[key]) <= 1e-12);
+    assert.ok(Math.abs(actual.up[key] - expected.up[key]) <= 1e-12);
+  }
+  assert.deepEqual(actual.projection, expected.projection);
+}
+
+function navigationTarget(): ConstructorParameters<typeof KernelNavigationController>[1] {
+  return {
+    setScopedClipVolume() {},
+    setRasterAnalysisView: () => {
+      throw new Error('not used');
+    },
+    clearRasterAnalysisView: () => false,
+    setWorldCamera() {},
+    setCameraTransition() {},
+    pick: async () => ({ candidates: [], stale: false, generation: 1 }),
   };
 }
 

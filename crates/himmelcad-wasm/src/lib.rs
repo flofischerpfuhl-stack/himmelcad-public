@@ -79,7 +79,7 @@ use himmelcad_render::{
     build_three_d_tiles_batches_with_resources, compile_entity_geometry,
     compile_entity_geometry_with_associations, decode_artifact, glb_texture_source_keys,
     gpu_indexed_geometry_identity, gpu_uploaded_texture_identity, inspect_gltf_dependencies,
-    instanced_model_chunks, layout_text, potree_point_world_position,
+    instanced_model_chunks, layout_text, plan_draw_order, potree_point_world_position,
     prepare_glb_texture_uploads_for_sources, project_raster_sample, raster_analysis_view,
     reconstruct_coarse_pick_candidates, refine_decoded_potree_point_pick, refine_exact_point_pick,
     refine_potree_point_pick, refine_tessellated_curve_pick, required_entity_proxy_slots,
@@ -420,6 +420,7 @@ pub struct WasmViewer {
     stream_datasets: BTreeMap<String, String>,
     clip_volumes: Vec<ClipVolume>,
     camera_frame: Option<CameraFrame>,
+    plan_draw_order_active: bool,
     streaming: StreamingCoordinator,
     explicit_tilesets: BTreeMap<String, ThreeDTilesHierarchySource>,
     implicit_tilesets: BTreeMap<String, ImplicitThreeDTilesHierarchySource>,
@@ -483,6 +484,7 @@ struct WasmPickReadbackPayload {
     floating_origin: WorldVec3,
     view_projection: [[f64; 4]; 4],
     inverse_view_projection: [[f64; 4]; 4],
+    projection_blend: f64,
     viewport: [u32; 2],
     cursor_pixel: [u32; 2],
     radius: u32,
@@ -1602,6 +1604,7 @@ async fn create_wasm_viewer(
         stream_datasets: BTreeMap::new(),
         clip_volumes: Vec::new(),
         camera_frame: None,
+        plan_draw_order_active: false,
         streaming: StreamingCoordinator::default(),
         explicit_tilesets: BTreeMap::new(),
         implicit_tilesets: BTreeMap::new(),
@@ -1808,6 +1811,17 @@ impl WasmViewer {
             .map_err(js_error)?;
         self.view_projection = frame.gpu_view_projection();
         self.camera_frame = Some(frame);
+        Ok(())
+    }
+
+    /// Commits settled view semantics without changing the shared camera.
+    /// Only 2D activates deterministic painter ordering for coincident plan content.
+    pub fn set_view_mode(&mut self, mode: &str) -> Result<(), JsValue> {
+        self.plan_draw_order_active = match mode {
+            "3d" | "2.5d" => false,
+            "2d" => true,
+            _ => return Err(JsValue::from_str("view mode must be 3d, 2.5d, or 2d")),
+        };
         Ok(())
     }
 
@@ -5598,6 +5612,7 @@ impl WasmViewer {
                 floating_origin: camera_frame.floating_origin,
                 view_projection: camera_frame.view_projection.to_cols_array_2d(),
                 inverse_view_projection: camera_frame.inverse_view_projection.to_cols_array_2d(),
+                projection_blend: camera_frame.projection_blend,
                 viewport,
                 cursor_pixel: [x, y],
                 radius,
@@ -5636,6 +5651,7 @@ impl WasmViewer {
             floating_origin: payload.floating_origin,
             view_projection: DMat4::from_cols_array_2d(&payload.view_projection),
             inverse_view_projection: DMat4::from_cols_array_2d(&payload.inverse_view_projection),
+            projection_blend: payload.projection_blend,
         };
         let pixels = payload
             .hits
@@ -7499,7 +7515,7 @@ impl WasmViewer {
         view_projection: Option<[[f32; 4]; 4]>,
         clear_color: Option<wgpu::Color>,
     ) -> Result<SurfaceFrameOutcome, String> {
-        let visible_proxy_ids = self.raster_analysis_view.as_ref().map_or_else(
+        let mut visible_proxy_ids = self.raster_analysis_view.as_ref().map_or_else(
             || {
                 self.render_world
                     .visible_proxy_ids()
@@ -7508,6 +7524,13 @@ impl WasmViewer {
             },
             |analysis| vec![analysis.proxy_id.clone()],
         );
+        if self.plan_draw_order_active && self.raster_analysis_view.is_none() {
+            visible_proxy_ids.sort_by(|left, right| {
+                let left_rank = self.render_world.proxy_kind(left).map(plan_draw_order);
+                let right_rank = self.render_world.proxy_kind(right).map(plan_draw_order);
+                left_rank.cmp(&right_rank).then_with(|| left.cmp(right))
+            });
+        }
         let queue = self.host.queue();
         let mut frame_origin_queue_writes = 0_u64;
         for id in &visible_proxy_ids {

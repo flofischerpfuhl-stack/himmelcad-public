@@ -9,10 +9,12 @@ import {
 } from './KernelFrameDiagnostics.js';
 import type { KernelLoadOperationOptions, KernelLoadProgress } from './KernelLoadOperation.js';
 import {
+  DEFAULT_CAMERA_CONTINUUM_DURATION_MS,
   KernelNavigationController,
   type KernelNavigationCallbacks,
   type KernelNavigationTarget,
   type KernelViewMode,
+  type KernelViewModeTransitionOptions,
 } from './KernelNavigationController.js';
 import type { KernelPotreeDatasetAdmission } from './KernelPotreeDatasetAdmission.js';
 import type {
@@ -406,8 +408,8 @@ export class KernelViewerSession {
       setRasterAnalysisView: (entityId) => this.viewerState.setRasterAnalysisView(entityId),
       clearRasterAnalysisView: () => this.viewerState.clearRasterAnalysisView(),
       setWorldCamera: (camera, origin) => this.setNavigationCamera(camera, origin),
-      setCameraTransition: (from, to, progress, origin) =>
-        this.viewerState.setCameraTransition(from, to, progress, origin),
+      setCameraTransition: (from, to, progress, origin, cursorAnchor) =>
+        this.viewerState.setCameraTransition(from, to, progress, origin, cursorAnchor),
       pick: (x, y, radius) => this.pick(x, y, radius),
       entityHasKnownSourceHeight: (entityId) => this.scene.entityHasKnownSourceHeight(entityId),
     };
@@ -577,15 +579,18 @@ export class KernelViewerSession {
   }
 
   /** Prewarms plan-only content before changing the shared camera/scene mode. */
-  async setViewMode(mode: KernelViewMode, durationMilliseconds = 180): Promise<void> {
+  async setViewMode(
+    mode: KernelViewMode,
+    options: number | KernelViewModeTransitionOptions = DEFAULT_CAMERA_CONTINUUM_DURATION_MS,
+  ): Promise<void> {
     this.assertReady();
     const requestGeneration = ++this.viewModeRequestGeneration;
     await this.scene.prepareViewMode(mode);
     this.assertReady();
     if (requestGeneration !== this.viewModeRequestGeneration) return;
-    let transitionSettled: Promise<void> | null = null;
+    let settledMode = mode;
     if (this.navigationState) {
-      transitionSettled = this.navigationState.setViewMode(mode, durationMilliseconds);
+      settledMode = await this.navigationState.setViewMode(mode, options);
     } else {
       const transition = this.camera.setLockedTopDown(mode !== '3d');
       if (transition) {
@@ -593,11 +598,29 @@ export class KernelViewerSession {
         this.currentStreamingCamera = replayWorldCamera(transition.to);
       }
     }
-    this.scene.commitViewMode(mode);
-    this.options.requestFrame?.();
-    await transitionSettled;
     this.assertReady();
     if (requestGeneration !== this.viewModeRequestGeneration) return;
+    if (settledMode !== mode) return;
+    this.scene.commitViewMode(mode);
+    this.options.requestFrame?.();
+  }
+
+  /** Settled semantic mode; an in-flight camera continuum does not change it. */
+  currentViewMode(): KernelViewMode {
+    return this.scene.currentViewMode();
+  }
+
+  /** Presets and other pose-only commands share the cancellable continuum. */
+  transitionToWorldCamera(
+    camera: KernelWorldCamera,
+    durationMilliseconds = DEFAULT_CAMERA_CONTINUUM_DURATION_MS,
+  ): Promise<boolean> {
+    this.assertReady();
+    if (this.navigationState) {
+      return this.navigationState.transitionToWorldCamera(camera, durationMilliseconds);
+    }
+    this.adoptWorldCamera(camera);
+    return Promise.resolve(true);
   }
 
   registerGlyphAtlas(

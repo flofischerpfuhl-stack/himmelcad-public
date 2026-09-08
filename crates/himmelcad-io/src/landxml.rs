@@ -154,9 +154,10 @@ impl LandXmlProvider {
                 export_options: Some(ProviderOptionContract::object(
                     serde_json::json!({
                         "units": {"type": ["object", "null"]},
-                        "coordinateSystem": {"type": ["object", "null"]}
+                        "coordinateSystem": {"type": ["object", "null"]},
+                        "acceptedLossCodes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
                     }),
-                    serde_json::json!({"units": null, "coordinateSystem": null}),
+                    serde_json::json!({"units": null, "coordinateSystem": null, "acceptedLossCodes": []}),
                 )),
             },
         }
@@ -277,6 +278,8 @@ struct LandXmlImportOptions {
 struct LandXmlExportOptions {
     units: Option<LandXmlUnits>,
     coordinate_system: Option<LandXmlCoordinateSystem>,
+    #[serde(default)]
+    accepted_loss_codes: BTreeSet<String>,
 }
 
 struct ParsedDocument {
@@ -1793,6 +1796,15 @@ fn execute_export(
     }
     let options: LandXmlExportOptions = serde_json::from_value(request.options.clone())
         .map_err(|error| ProviderContractError::Provider(error.to_string()))?;
+    if plan
+        .semantic_losses
+        .iter()
+        .any(|loss| !options.accepted_loss_codes.contains(loss))
+    {
+        return Err(ProviderContractError::Provider(
+            "LandXML export requires every reviewed loss code to be accepted".to_owned(),
+        ));
+    }
     let metadata = resolve_export_metadata(request.package, &options)?;
     let parent = request.target.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent)

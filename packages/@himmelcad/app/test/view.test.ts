@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   ContractValidationError,
   parseScreenshotResult,
+  parseViewModeTransitionRequest,
   parseViewStateV1,
   parseViewStateV2,
   serializeViewStateV1,
@@ -11,6 +12,22 @@ import {
   type ScreenshotRequestV1,
   type ViewStateV1,
 } from '../src/index.js';
+
+void test('G-VC-TRANSITION validates mode, duration, and cursor anchor parameters', () => {
+  const request = {
+    mode: '2.5d',
+    durationMilliseconds: 250,
+    cursorAnchor: { x: 4_000_001.25, y: 500_003.5, z: 112.75 },
+    cursorNdc: [0.25, -0.5],
+  } as const;
+  assert.deepEqual(parseViewModeTransitionRequest(request), request);
+  assert.throws(
+    () => parseViewModeTransitionRequest({ ...request, cursorNdc: [1.01, 0] }),
+    (error: unknown) =>
+      error instanceof ContractValidationError &&
+      error.path === 'viewModeTransition.cursorNdc[0]',
+  );
+});
 
 const viewState: ViewStateV1 = {
   schema: 'himmelcad.view-state',

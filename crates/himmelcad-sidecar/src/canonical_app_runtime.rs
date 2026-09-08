@@ -18,33 +18,40 @@ use himmelcad_core::canonical_document::{
     CanonicalCommandTransaction, CanonicalDocumentError, CanonicalEntityEdit,
     CanonicalEntityMutation, CanonicalJournalEntry, EntityVersionRef,
 };
+use himmelcad_core::canonical_resource_catalog::CanonicalPresentationResourceSet;
 use himmelcad_core::canonical_resources::PointCloudDisplayStyle;
 use himmelcad_core::entity::EntityId;
 use himmelcad_core::entity_model::{
-    built_in_type, CanonicalEntity, DepthSampling, DepthSemantics, ElevationSurfaceGeometry,
-    EntityTypeId, GeometryObject, GeometryResource, OrthoGridMapping, RasterConnectivity,
-    RasterImageGeometry, RasterInterpolation, RasterMapping, Representation,
-    RepresentationAuthority, RepresentationRole, StreamedGeometry, Vector3,
+    built_in_type, CanonicalEntity, CurveGeometry, DepthSampling, DepthSemantics,
+    ElevationSurfaceGeometry, EntityTypeId, GeometryObject, GeometryResource, OrthoGridMapping,
+    Position, RasterConnectivity, RasterImageGeometry, RasterInterpolation, RasterMapping,
+    Representation, RepresentationAuthority, RepresentationRole, StreamedGeometry,
+    TriangleMeshGeometry, TriangleMeshStorage, Vector3,
 };
 use himmelcad_core::entity_validation::{
     canonical_entity_version_hash, geometry_object_content_hash, validate_resolved_representation,
 };
-use himmelcad_core::geometry_representation_registry::CanonicalRepresentationAdmission;
+use himmelcad_core::geometry_representation_registry::{
+    CanonicalRepresentationAdmission, SectionIndexComponentType, SectionPositionComponentType,
+    SectionTopologyPartitionManifest,
+};
 use himmelcad_core::hash::ObjectHash;
 use himmelcad_core::property_schema::{
     canonical_entity_property_schema, compile_multi_entity_property_edit, query_properties,
     PropertySchemaError,
 };
 use himmelcad_core::release_05_admissions::{
-    validate_measurement, validate_snapshot_marker, DerivedSourceV1, MeasurementAnchorV1,
-    MeasurementV1, MeshSourceRoleKindV1, MeshSourceRoleV1, MeshSourceRolesV1, SnapshotMarkerKindV1,
-    SnapshotMarkerV1, SnapshotOriginV1, SnapshotRetentionV1, MEASUREMENT_SCHEMA_ID,
-    MESH_SOURCE_ROLES_SCHEMA_ID, RELEASE_05_SCHEMA_VERSION, SNAPSHOT_MARKER_SCHEMA_ID,
+    validate_measurement, validate_point_acquisition, validate_snapshot_marker,
+    validate_support_role, DerivedSourceV1, MeasurementAnchorV1, MeasurementV1,
+    MeshSourceRoleKindV1, MeshSourceRoleV1, MeshSourceRolesV1, PointAcquisitionV1,
+    SnapshotMarkerKindV1, SnapshotMarkerV1, SnapshotOriginV1, SnapshotRetentionV1,
+    SupportRoleKindV1, SupportRoleV1, MEASUREMENT_SCHEMA_ID, MESH_SOURCE_ROLES_SCHEMA_ID,
+    RELEASE_05_SCHEMA_VERSION, SNAPSHOT_MARKER_SCHEMA_ID, SUPPORT_ROLE_SCHEMA_ID,
 };
 use himmelcad_core::typed_artifact::{TypedArtifactDescriptor, TypedArtifactManifest};
 use himmelcad_io::{
-    CanonicalImportPackage, CanonicalJsonObject, CanonicalPreparedDataset, CanonicalStagedImport,
-    PreparedDatasetArtifact, CANONICAL_IO_SCHEMA_VERSION,
+    CanonicalImportPackage, CanonicalJsonObject, CanonicalPreparedDataset, CanonicalResourceSet,
+    CanonicalStagedImport, PreparedDatasetArtifact, CANONICAL_IO_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -171,6 +178,69 @@ pub struct CanonicalMeasurementCommit {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CanonicalMeasurementDelete {
+    pub journal_entry: CanonicalJournalEntry,
+}
+
+const DRAW_CURVE_COMPONENT_SCHEMA_ID: &str = "hcad.draw-curve@1";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DrawCurveRole {
+    Plain,
+    Breakline,
+    Boundary,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DrawCurveTool {
+    Line,
+    Polyline,
+    Boundary,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DrawCurveInput {
+    pub entity_id: String,
+    pub expected_revision: Option<u64>,
+    pub name: String,
+    pub tool: DrawCurveTool,
+    pub role: DrawCurveRole,
+    pub closed: bool,
+    pub vertices: Vec<Position>,
+    pub acquisitions: Vec<PointAcquisitionV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DrawCurveComponents {
+    schema_id: String,
+    schema_version: u32,
+    tool: DrawCurveTool,
+    role: DrawCurveRole,
+    mesh_source_role: Option<String>,
+    point_acquisitions: Vec<PointAcquisitionV1>,
+    support_role: SupportRoleV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalDrawCurveSummary {
+    pub entity_id: String,
+    pub revision: u64,
+    pub name: String,
+    pub role: DrawCurveRole,
+    pub closed: bool,
+    pub vertices: Vec<Position>,
+    pub acquisitions: Vec<PointAcquisitionV1>,
+    pub admission: CanonicalRepresentationAdmission,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalDrawCurveCommit {
+    pub curve: CanonicalDrawCurveSummary,
     pub journal_entry: CanonicalJournalEntry,
 }
 
@@ -1040,6 +1110,240 @@ impl CanonicalAppRuntime {
             }],
         })?;
         Ok(CanonicalMeasurementDelete { journal_entry })
+    }
+
+    /// Creates or extends one authored linework entity. Every accepted vertex
+    /// is one forward journal transaction; immutable geometry and provenance
+    /// are published before the document root becomes visible.
+    pub fn put_draw_curve(
+        &mut self,
+        command_id: String,
+        input: DrawCurveInput,
+    ) -> Result<CanonicalDrawCurveCommit, CanonicalAppRuntimeError> {
+        validate_draw_curve_input(&command_id, &input)?;
+        let geometry = GeometryObject::Curve {
+            curve: Box::new(if input.tool == DrawCurveTool::Line {
+                CurveGeometry::LineSegment {
+                    start: input.vertices[0],
+                    end: input.vertices[1],
+                }
+            } else {
+                CurveGeometry::Polyline {
+                    positions: input.vertices.clone(),
+                    closed: input.closed,
+                }
+            }),
+        };
+        let support_role = SupportRoleV1 {
+            schema_id: SUPPORT_ROLE_SCHEMA_ID.to_owned(),
+            schema_version: RELEASE_05_SCHEMA_VERSION,
+            role_kind: SupportRoleKindV1::DefiningCurve,
+            defines: Vec::new(),
+            provenance: "draw.vertex".to_owned(),
+        };
+        validate_support_role(&support_role).map_err(|error| {
+            CanonicalAppRuntimeError::InvalidResidency(format!(
+                "invalid draw support role: {error}"
+            ))
+        })?;
+        let components_value = DrawCurveComponents {
+            schema_id: DRAW_CURVE_COMPONENT_SCHEMA_ID.to_owned(),
+            schema_version: 1,
+            tool: input.tool,
+            role: input.role,
+            mesh_source_role: match input.role {
+                DrawCurveRole::Plain => None,
+                DrawCurveRole::Breakline => Some("breakline".to_owned()),
+                DrawCurveRole::Boundary if input.closed => Some("outer_boundary".to_owned()),
+                DrawCurveRole::Boundary => None,
+            },
+            point_acquisitions: input.acquisitions.clone(),
+            support_role,
+        };
+        let components = empty_json_object(
+            "application/vnd.himmelcad.components+json",
+            serde_json::to_value(&components_value)
+                .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?,
+        )?;
+        let attributes = empty_json_object(
+            "application/vnd.himmelcad.attributes+json",
+            serde_json::json!({ "schemaId": "hcad.attributes@1" }),
+        )?;
+        let relations = empty_json_object(
+            "application/vnd.himmelcad.relations+json",
+            serde_json::json!({ "schemaId": "hcad.relations@1", "relations": [] }),
+        )?;
+        let layer_components = empty_json_object(
+            "application/vnd.himmelcad.components+json",
+            serde_json::json!({ "schemaId": "hcad.components@1" }),
+        )?;
+        let store = self.store_mut()?;
+        let geometry_ref = store.put_geometry_object(&geometry)?;
+        store.put_json_object(&components)?;
+        store.put_json_object(&attributes)?;
+        store.put_json_object(&relations)?;
+        store.put_json_object(&layer_components)?;
+        let selected = Representation {
+            role: RepresentationRole::Canonical,
+            geometry_ref,
+            authority: RepresentationAuthority::Authoritative,
+            dependency_hash: None,
+        };
+        let existing = store
+            .document()
+            .entity(&EntityId(input.entity_id.clone()))
+            .cloned();
+        let mut mutations = Vec::with_capacity(2);
+        let mutation = match (existing, input.expected_revision) {
+            (None, None) => {
+                let owner = store
+                    .document()
+                    .entities()
+                    .find(|entity| {
+                        entity.owner.is_none() && entity.type_id.0 == built_in_type::GROUP
+                    })
+                    .map(|entity| entity.id.clone());
+                let mut entity = CanonicalEntity {
+                    id: EntityId(input.entity_id.clone()),
+                    revision: 0,
+                    type_id: EntityTypeId(built_in_type::CURVE.to_owned()),
+                    name: input.name.trim().to_owned(),
+                    owner,
+                    layer_ids: vec![EntityId("default-layer".to_owned())],
+                    placement: None,
+                    representations: vec![selected.clone()],
+                    components_ref: components.object_hash.clone(),
+                    attributes_ref: attributes.object_hash.clone(),
+                    relations_ref: relations.object_hash.clone(),
+                    style_ref: None,
+                    schema_version: 1,
+                    version_hash: ObjectHash::of_bytes(b"pending draw curve"),
+                };
+                entity.version_hash = canonical_entity_version_hash(&entity).map_err(|error| {
+                    CanonicalAppRuntimeError::InvalidResidency(error.to_string())
+                })?;
+                validate_resolved_representation(&entity, &selected, &geometry).map_err(
+                    |error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()),
+                )?;
+                if store
+                    .document()
+                    .entity(&EntityId("default-layer".to_owned()))
+                    .is_none()
+                {
+                    let mut layer = CanonicalEntity {
+                        id: EntityId("default-layer".to_owned()),
+                        revision: 0,
+                        type_id: EntityTypeId(built_in_type::LAYER.to_owned()),
+                        name: "Default".to_owned(),
+                        owner: entity.owner.clone(),
+                        layer_ids: Vec::new(),
+                        placement: None,
+                        representations: Vec::new(),
+                        components_ref: layer_components.object_hash.clone(),
+                        attributes_ref: attributes.object_hash.clone(),
+                        relations_ref: relations.object_hash.clone(),
+                        style_ref: None,
+                        schema_version: 1,
+                        version_hash: ObjectHash::of_bytes(b"pending default layer"),
+                    };
+                    layer.version_hash =
+                        canonical_entity_version_hash(&layer).map_err(|error| {
+                            CanonicalAppRuntimeError::InvalidResidency(error.to_string())
+                        })?;
+                    mutations.push(CanonicalEntityMutation::Create { entity: layer });
+                }
+                CanonicalEntityMutation::Create { entity }
+            }
+            (Some(entity), Some(expected_revision))
+                if entity.type_id.0 == built_in_type::CURVE
+                    && entity.revision == expected_revision =>
+            {
+                CanonicalEntityMutation::Update {
+                    expected: EntityVersionRef::from_entity(&entity),
+                    edits: vec![
+                        CanonicalEntityEdit::SetRepresentations {
+                            representations: vec![selected],
+                        },
+                        CanonicalEntityEdit::SetComponentsRef {
+                            components_ref: components.object_hash,
+                        },
+                    ],
+                }
+            }
+            _ => {
+                return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+                    "draw curve {:?} is stale, missing, or has the wrong type",
+                    input.entity_id
+                )))
+            }
+        };
+        mutations.push(mutation);
+        let journal_entry = store.queue_transaction(CanonicalCommandTransaction {
+            command_id,
+            mutations,
+        })?;
+        let entity = journal_entry
+            .effects
+            .iter()
+            .find(|effect| effect.entity_id.0 == input.entity_id)
+            .and_then(|effect| effect.after.as_ref())
+            .ok_or_else(|| {
+                CanonicalAppRuntimeError::InvalidResidency(
+                    "draw curve mutation produced no live entity".to_owned(),
+                )
+            })?;
+        let curve = read_draw_curve(store, entity)?;
+        Ok(CanonicalDrawCurveCommit {
+            curve,
+            journal_entry,
+        })
+    }
+
+    pub fn list_draw_curves(
+        &self,
+    ) -> Result<Vec<CanonicalDrawCurveSummary>, CanonicalAppRuntimeError> {
+        let store = self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?;
+        let mut curves = store
+            .document()
+            .entities()
+            .filter(|entity| entity.type_id.0 == built_in_type::CURVE)
+            .filter_map(|entity| match read_draw_curve(store, entity) {
+                Ok(curve) => Some(Ok(curve)),
+                Err(CanonicalAppRuntimeError::InvalidResidency(message))
+                    if message.contains("is not authored draw linework") =>
+                {
+                    None
+                }
+                Err(error) => Some(Err(error)),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        curves.sort_by(|left, right| {
+            (&left.name, &left.entity_id).cmp(&(&right.name, &right.entity_id))
+        });
+        Ok(curves)
+    }
+
+    pub fn undo_draw_curve(
+        &mut self,
+        command_id: String,
+        target_command_id: String,
+    ) -> Result<CanonicalJournalEntry, CanonicalAppRuntimeError> {
+        Ok(self
+            .store_mut()?
+            .commit_undo(command_id, &target_command_id)?)
+    }
+
+    pub fn redo_draw_curve(
+        &mut self,
+        command_id: String,
+        target_command_id: String,
+    ) -> Result<CanonicalJournalEntry, CanonicalAppRuntimeError> {
+        Ok(self
+            .store_mut()?
+            .commit_redo(command_id, &target_command_id)?)
     }
 
     /// Returns whether a canonical project currently owns this runtime.
@@ -2646,6 +2950,197 @@ impl CanonicalAppRuntime {
         Ok(package)
     }
 
+    /// Captures exact live canonical entities into one provider-neutral export package.
+    ///
+    /// The UI supplies user-facing Selection/Visible/Project scope as entity IDs; import
+    /// command identities remain an internal persistence seam. A resource-backed TIN is
+    /// resolved from its authoritative section topology so the existing DXF/LandXML writers
+    /// receive the same exact triangles as inline geometry.
+    pub fn reconstruct_export_package(
+        &self,
+        entity_ids: &[String],
+    ) -> Result<CanonicalImportPackage, CanonicalAppRuntimeError> {
+        if entity_ids.is_empty() {
+            return Err(CanonicalAppRuntimeError::InvalidImportInventory(
+                "export scope contains no canonical entities".to_owned(),
+            ));
+        }
+        let requested = entity_ids.iter().cloned().collect::<BTreeSet<_>>();
+        if requested.len() != entity_ids.len() {
+            return Err(CanonicalAppRuntimeError::InvalidImportInventory(
+                "export scope contains duplicate canonical entities".to_owned(),
+            ));
+        }
+        let inventories = self
+            .store()
+            .map_err(|_| CanonicalAppRuntimeError::ProjectNotOpen)?
+            .import_inventories()?;
+        let mut remaining = requested.clone();
+        let mut contributors = Vec::new();
+        for inventory in inventories.iter().rev() {
+            if !inventory
+                .admissions
+                .iter()
+                .any(|admission| remaining.contains(&admission.entity_id))
+            {
+                continue;
+            }
+            let Ok(package) = self.reconstruct_import_package(&inventory.command_id) else {
+                continue;
+            };
+            let captured = package
+                .admissions
+                .iter()
+                .filter(|admission| remaining.contains(&admission.entity.id.0))
+                .map(|admission| admission.entity.id.0.clone())
+                .collect::<BTreeSet<_>>();
+            if captured.is_empty() {
+                continue;
+            }
+            remaining.retain(|id| !captured.contains(id));
+            contributors.push((package, captured));
+            if remaining.is_empty() {
+                break;
+            }
+        }
+        if !remaining.is_empty() {
+            return Err(CanonicalAppRuntimeError::InvalidImportInventory(format!(
+                "export scope contains entities without a live canonical representation: {}",
+                remaining.into_iter().collect::<Vec<_>>().join(", ")
+            )));
+        }
+        if contributors.len() == 1 {
+            let (mut package, captured) = contributors.pop().expect("one contributor");
+            if captured.len() == package.admissions.len() {
+                self.inline_resource_tins(&mut package)?;
+                return Ok(package);
+            }
+            contributors.push((package, captured));
+        }
+
+        let mut package = CanonicalImportPackage {
+            schema_version: CANONICAL_IO_SCHEMA_VERSION,
+            provider_id: "hcad.export.scope@1".to_owned(),
+            provider_version: env!("CARGO_PKG_VERSION").to_owned(),
+            admissions: Vec::new(),
+            objects: Vec::new(),
+            datasets: Vec::new(),
+            resource_sets: Vec::new(),
+            presentation_resources: CanonicalPresentationResourceSet::default(),
+        };
+        let mut object_hashes = BTreeSet::new();
+        let mut dataset_ids = BTreeSet::new();
+        let mut resource_set_ids = BTreeSet::new();
+        for (source, captured) in contributors {
+            package.admissions.extend(
+                source
+                    .admissions
+                    .into_iter()
+                    .filter(|admission| captured.contains(&admission.entity.id.0)),
+            );
+            package.objects.extend(
+                source
+                    .objects
+                    .into_iter()
+                    .filter(|object| object_hashes.insert(object.object_hash.0.clone())),
+            );
+            package
+                .datasets
+                .extend(source.datasets.into_iter().filter(|dataset| {
+                    captured.contains(&dataset.entity_id)
+                        && dataset_ids.insert(dataset.dataset_id.clone())
+                }));
+            package.resource_sets.extend(
+                source
+                    .resource_sets
+                    .into_iter()
+                    .filter(|set| resource_set_ids.insert(set.resource_set_id.clone())),
+            );
+            merge_presentation_resources(
+                &mut package.presentation_resources,
+                source.presentation_resources,
+            );
+        }
+        package
+            .admissions
+            .sort_by(|left, right| left.entity.id.0.cmp(&right.entity.id.0));
+        self.inline_resource_tins(&mut package)?;
+        package
+            .validate()
+            .map_err(|error| CanonicalAppRuntimeError::InvalidImportInventory(error.to_string()))?;
+        Ok(package)
+    }
+
+    fn inline_resource_tins(
+        &self,
+        package: &mut CanonicalImportPackage,
+    ) -> Result<(), CanonicalAppRuntimeError> {
+        let store = self
+            .store()
+            .map_err(|_| CanonicalAppRuntimeError::ProjectNotOpen)?;
+        let mut converted_entities = BTreeSet::new();
+        for admission in &mut package.admissions {
+            let GeometryObject::ElevationSurface { surface } = &mut admission.resolved_geometry
+            else {
+                continue;
+            };
+            let ElevationSurfaceGeometry::Tin { mesh, .. } = surface.as_mut() else {
+                continue;
+            };
+            let TriangleMeshStorage::Resource { resource } = &mesh.storage else {
+                continue;
+            };
+            let dataset = package
+                .datasets
+                .iter()
+                .find(|dataset| {
+                    dataset.entity_id == admission.entity.id.0
+                        && dataset.representation_slot == admission.representation_slot
+                        && dataset.root_metadata == *resource
+                })
+                .ok_or_else(|| {
+                    CanonicalAppRuntimeError::InvalidImportInventory(format!(
+                        "surface {:?} has no authoritative export topology",
+                        admission.entity.id.0
+                    ))
+                })?;
+            let (positions, indices) = read_export_topology(store, dataset)?;
+            mesh.storage = TriangleMeshStorage::Inline {
+                positions,
+                indices,
+                normals: None,
+                texture_coordinates: None,
+            };
+            mesh.triangle_material_slots = None;
+            mesh.materials = None;
+            let geometry_hash = geometry_object_content_hash(&admission.resolved_geometry)
+                .map_err(|error| {
+                    CanonicalAppRuntimeError::InvalidImportInventory(error.to_string())
+                })?;
+            admission.selected.geometry_ref = geometry_hash.clone();
+            let representation = admission
+                .entity
+                .representations
+                .iter_mut()
+                .find(|representation| representation.role == admission.selected.role)
+                .ok_or_else(|| {
+                    CanonicalAppRuntimeError::InvalidImportInventory(
+                        "selected export representation disappeared".to_owned(),
+                    )
+                })?;
+            *representation = admission.selected.clone();
+            admission.entity.version_hash = canonical_entity_version_hash(&admission.entity)
+                .map_err(|error| {
+                    CanonicalAppRuntimeError::InvalidImportInventory(error.to_string())
+                })?;
+            converted_entities.insert(admission.entity.id.0.clone());
+        }
+        package
+            .datasets
+            .retain(|dataset| !converted_entities.contains(&dataset.entity_id));
+        Ok(())
+    }
+
     /// Recreates provider-relative immutable artifact layouts below a
     /// sidecar-owned execution root for exact passthrough exporters.
     pub fn materialize_import_artifacts(
@@ -2684,6 +3179,43 @@ impl CanonicalAppRuntime {
                 register_materialized_destination(
                     &mut destinations,
                     destination,
+                    artifact.resource.object_hash.clone(),
+                )?;
+            }
+        }
+        for (destination, object_hash) in destinations {
+            store.materialize_object(&object_hash, destination)?;
+        }
+        Ok(())
+    }
+
+    /// Materializes only immutable artifacts retained by the captured export package.
+    pub fn materialize_export_artifacts(
+        &self,
+        entity_ids: &[String],
+        prepared_root: &Path,
+    ) -> Result<(), CanonicalAppRuntimeError> {
+        let store = self
+            .store()
+            .map_err(|_| CanonicalAppRuntimeError::ProjectNotOpen)?;
+        let package = self.reconstruct_export_package(entity_ids)?;
+        let mut destinations = BTreeMap::<PathBuf, ObjectHash>::new();
+        for dataset in &package.datasets {
+            for artifact in &dataset.artifacts {
+                register_materialized_destination(
+                    &mut destinations,
+                    prepared_root
+                        .join(&dataset.dataset_id)
+                        .join(&artifact.relative_path),
+                    artifact.resource.object_hash.clone(),
+                )?;
+            }
+        }
+        for resource_set in &package.resource_sets {
+            for artifact in &resource_set.resources {
+                register_materialized_destination(
+                    &mut destinations,
+                    prepared_root.join(&artifact.relative_path),
                     artifact.resource.object_hash.clone(),
                 )?;
             }
@@ -3840,6 +4372,129 @@ fn read_measurement(
     })
 }
 
+fn validate_draw_curve_input(
+    command_id: &str,
+    input: &DrawCurveInput,
+) -> Result<(), CanonicalAppRuntimeError> {
+    if command_id.trim().is_empty()
+        || input.entity_id.trim().is_empty()
+        || input.name.trim().is_empty()
+        || input.vertices.len() < 2
+        || input.vertices.len() != input.acquisitions.len()
+        || (input.tool == DrawCurveTool::Line && (input.vertices.len() != 2 || input.closed))
+        || (input.closed && (input.tool == DrawCurveTool::Line || input.vertices.len() < 3))
+        || (input.role == DrawCurveRole::Boundary && input.tool != DrawCurveTool::Boundary)
+        || (input.tool == DrawCurveTool::Boundary && input.role != DrawCurveRole::Boundary)
+    {
+        return Err(CanonicalAppRuntimeError::InvalidResidency(
+            "draw curve input has invalid identity, topology, role, or vertex counts".to_owned(),
+        ));
+    }
+    for (position, acquisition) in input.vertices.iter().zip(&input.acquisitions) {
+        validate_point_acquisition(acquisition).map_err(|error| {
+            CanonicalAppRuntimeError::InvalidResidency(format!(
+                "draw vertex acquisition is invalid: {error}"
+            ))
+        })?;
+        if acquisition.final_coordinate != *position {
+            return Err(CanonicalAppRuntimeError::InvalidResidency(
+                "draw vertex differs from its acquisition coordinate".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn read_draw_curve(
+    store: &CanonicalProjectStore,
+    entity: &CanonicalEntity,
+) -> Result<CanonicalDrawCurveSummary, CanonicalAppRuntimeError> {
+    let components: DrawCurveComponents =
+        serde_json::from_slice(&store.read_object(&entity.components_ref)?).map_err(|_| {
+            CanonicalAppRuntimeError::InvalidResidency(format!(
+                "curve {:?} is not authored draw linework",
+                entity.id.0
+            ))
+        })?;
+    if components.schema_id != DRAW_CURVE_COMPONENT_SCHEMA_ID || components.schema_version != 1 {
+        return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+            "curve {:?} is not authored draw linework",
+            entity.id.0
+        )));
+    }
+    validate_support_role(&components.support_role).map_err(|error| {
+        CanonicalAppRuntimeError::InvalidResidency(format!(
+            "draw curve {:?} support role is invalid: {error}",
+            entity.id.0
+        ))
+    })?;
+    let selected = entity
+        .representations
+        .iter()
+        .find(|representation| {
+            representation.role == RepresentationRole::Canonical
+                && representation.authority == RepresentationAuthority::Authoritative
+        })
+        .cloned()
+        .ok_or_else(|| {
+            CanonicalAppRuntimeError::InvalidResidency(format!(
+                "draw curve {:?} has no authoritative geometry",
+                entity.id.0
+            ))
+        })?;
+    let resolved_geometry: GeometryObject =
+        serde_json::from_slice(&store.read_object(&selected.geometry_ref)?)?;
+    validate_resolved_representation(entity, &selected, &resolved_geometry).map_err(|error| {
+        CanonicalAppRuntimeError::InvalidResidency(format!(
+            "draw curve {:?} failed representation validation: {error}",
+            entity.id.0
+        ))
+    })?;
+    let GeometryObject::Curve { curve } = &resolved_geometry else {
+        return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+            "draw curve {:?} has the wrong geometry kind",
+            entity.id.0
+        )));
+    };
+    let (vertices, closed) = match curve.as_ref() {
+        CurveGeometry::LineSegment { start, end } => (vec![*start, *end], false),
+        CurveGeometry::Polyline { positions, closed } => (positions.clone(), *closed),
+        _ => {
+            return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+                "draw curve {:?} has an unsupported curve kind",
+                entity.id.0
+            )))
+        }
+    };
+    let input = DrawCurveInput {
+        entity_id: entity.id.0.clone(),
+        expected_revision: Some(entity.revision),
+        name: entity.name.clone(),
+        tool: components.tool,
+        role: components.role,
+        closed,
+        vertices: vertices.clone(),
+        acquisitions: components.point_acquisitions.clone(),
+    };
+    validate_draw_curve_input("read", &input)?;
+    Ok(CanonicalDrawCurveSummary {
+        entity_id: entity.id.0.clone(),
+        revision: entity.revision,
+        name: entity.name.clone(),
+        role: components.role,
+        closed,
+        vertices,
+        acquisitions: components.point_acquisitions,
+        admission: CanonicalRepresentationAdmission {
+            entity: entity.clone(),
+            selected,
+            representation_slot: "primary".to_owned(),
+            expected_generation: None,
+            resolved_geometry,
+        },
+    })
+}
+
 fn collect_entity_object_refs<'a>(
     entity: &'a CanonicalEntity,
     references: &mut Vec<&'a ObjectHash>,
@@ -3882,6 +4537,201 @@ fn map_envelope_error(error: AppProtocolEnvelopeError) -> AppProtocolError {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ExportSectionTopologyIndex {
+    schema_version: u32,
+    closed_manifold: bool,
+    #[serde(default)]
+    material_keys: BTreeMap<u32, String>,
+    parts: Vec<ExportSectionTopologyPart>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ExportSectionTopologyPart {
+    part_id: String,
+    topology_hash: String,
+    manifest_url: String,
+}
+
+fn read_export_topology(
+    store: &CanonicalProjectStore,
+    dataset: &CanonicalPreparedDataset,
+) -> Result<(Vec<Vector3>, Vec<u32>), CanonicalAppRuntimeError> {
+    let index_artifact = dataset
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.resource.media_type == "hcad.section-topology-index@2")
+        .ok_or_else(|| {
+            CanonicalAppRuntimeError::InvalidImportInventory(format!(
+                "dataset {:?} has no section-topology index",
+                dataset.dataset_id
+            ))
+        })?;
+    let index_bytes = store.read_object(&index_artifact.resource.object_hash)?;
+    let index: ExportSectionTopologyIndex = serde_json::from_slice(&index_bytes)?;
+    if index.schema_version != 2 || index.parts.is_empty() {
+        return Err(CanonicalAppRuntimeError::InvalidImportInventory(format!(
+            "dataset {:?} has an invalid section-topology index",
+            dataset.dataset_id
+        )));
+    }
+    let _ = (index.closed_manifold, &index.material_keys);
+    let artifacts = dataset
+        .artifacts
+        .iter()
+        .map(|artifact| {
+            (
+                artifact.relative_path.to_string_lossy().replace('\\', "/"),
+                artifact,
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut positions = Vec::new();
+    let mut indices = Vec::new();
+    for part in index.parts {
+        let artifact = artifacts.get(&part.manifest_url).ok_or_else(|| {
+            CanonicalAppRuntimeError::InvalidImportInventory(format!(
+                "section part {:?} is absent from dataset {:?}",
+                part.part_id, dataset.dataset_id
+            ))
+        })?;
+        let bytes = store.read_object(&artifact.resource.object_hash)?;
+        let manifest: SectionTopologyPartitionManifest = serde_json::from_slice(&bytes)?;
+        if manifest.schema_version != SectionTopologyPartitionManifest::SCHEMA_VERSION
+            || manifest.content_hash()?.as_str() != part.topology_hash
+        {
+            return Err(CanonicalAppRuntimeError::InvalidImportInventory(format!(
+                "section part {:?} changed before export",
+                part.part_id
+            )));
+        }
+        let position_bytes = store.read_object(&manifest.positions.object_hash)?;
+        let part_positions = decode_export_positions(&manifest, &position_bytes)?;
+        let index_bytes = store.read_object(&manifest.indices.object_hash)?;
+        let part_indices = decode_export_indices(&manifest, &index_bytes)?;
+        let offset = u32::try_from(positions.len()).map_err(|_| {
+            CanonicalAppRuntimeError::InvalidImportInventory(
+                "export topology exceeds the canonical inline address space".to_owned(),
+            )
+        })?;
+        positions.extend(part_positions);
+        for index in part_indices {
+            indices.push(index.checked_add(offset).ok_or_else(|| {
+                CanonicalAppRuntimeError::InvalidImportInventory(
+                    "export topology index overflow".to_owned(),
+                )
+            })?);
+        }
+    }
+    Ok((positions, indices))
+}
+
+fn decode_export_positions(
+    manifest: &SectionTopologyPartitionManifest,
+    bytes: &[u8],
+) -> Result<Vec<Vector3>, CanonicalAppRuntimeError> {
+    let component_bytes = match manifest.position_component_type {
+        SectionPositionComponentType::Float32 => 4,
+        SectionPositionComponentType::Float64 => 8,
+    };
+    let expected = usize::try_from(manifest.vertex_count)
+        .ok()
+        .and_then(|count| count.checked_mul(3))
+        .and_then(|count| count.checked_mul(component_bytes))
+        .ok_or_else(|| {
+            CanonicalAppRuntimeError::InvalidImportInventory(
+                "section position byte length overflow".to_owned(),
+            )
+        })?;
+    if bytes.len() != expected {
+        return Err(CanonicalAppRuntimeError::InvalidImportInventory(
+            "section position buffer length changed before export".to_owned(),
+        ));
+    }
+    let mut values = Vec::with_capacity(manifest.vertex_count as usize);
+    for vertex in 0..manifest.vertex_count as usize {
+        let coordinate = |axis: usize| -> f64 {
+            let start = (vertex * 3 + axis) * component_bytes;
+            match manifest.position_component_type {
+                SectionPositionComponentType::Float32 => {
+                    f32::from_le_bytes(bytes[start..start + 4].try_into().expect("fixed slice"))
+                        as f64
+                }
+                SectionPositionComponentType::Float64 => {
+                    f64::from_le_bytes(bytes[start..start + 8].try_into().expect("fixed slice"))
+                }
+            }
+        };
+        values.push(Vector3 {
+            x: manifest.origin[0] + coordinate(0),
+            y: manifest.origin[1] + coordinate(1),
+            z: manifest.origin[2] + coordinate(2),
+        });
+    }
+    Ok(values)
+}
+
+fn decode_export_indices(
+    manifest: &SectionTopologyPartitionManifest,
+    bytes: &[u8],
+) -> Result<Vec<u32>, CanonicalAppRuntimeError> {
+    let component_bytes = match manifest.index_component_type {
+        SectionIndexComponentType::Uint16 => 2,
+        SectionIndexComponentType::Uint32 => 4,
+    };
+    let count = usize::try_from(manifest.index_count).map_err(|_| {
+        CanonicalAppRuntimeError::InvalidImportInventory(
+            "section index count exceeds the platform address space".to_owned(),
+        )
+    })?;
+    if count % 3 != 0 || bytes.len() != count.saturating_mul(component_bytes) {
+        return Err(CanonicalAppRuntimeError::InvalidImportInventory(
+            "section index buffer length changed before export".to_owned(),
+        ));
+    }
+    let mut values = Vec::with_capacity(count);
+    for index in 0..count {
+        let start = index * component_bytes;
+        let value = match manifest.index_component_type {
+            SectionIndexComponentType::Uint16 => {
+                u16::from_le_bytes(bytes[start..start + 2].try_into().expect("fixed slice")) as u32
+            }
+            SectionIndexComponentType::Uint32 => {
+                u32::from_le_bytes(bytes[start..start + 4].try_into().expect("fixed slice"))
+            }
+        };
+        if value >= manifest.vertex_count {
+            return Err(CanonicalAppRuntimeError::InvalidImportInventory(
+                "section topology contains an out-of-range index".to_owned(),
+            ));
+        }
+        values.push(value);
+    }
+    Ok(values)
+}
+
+fn merge_presentation_resources(
+    target: &mut CanonicalPresentationResourceSet,
+    source: CanonicalPresentationResourceSet,
+) {
+    extend_unique(&mut target.textures, source.textures);
+    extend_unique(&mut target.materials, source.materials);
+    extend_unique(&mut target.material_tables, source.material_tables);
+    extend_unique(&mut target.hatch_patterns, source.hatch_patterns);
+    extend_unique(&mut target.line_types, source.line_types);
+    extend_unique(&mut target.annotation_styles, source.annotation_styles);
+}
+
+fn extend_unique<T: PartialEq>(target: &mut Vec<T>, source: Vec<T>) {
+    for item in source {
+        if !target.contains(&item) {
+            target.push(item);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -3906,6 +4756,9 @@ mod tests {
     };
     use himmelcad_core::geometry_representation_registry::CanonicalRepresentationAdmission;
     use himmelcad_core::hash::ObjectHash;
+    use himmelcad_core::release_05_admissions::{
+        AcquisitionTruthV1, PointAcquisitionKindV1, POINT_ACQUISITION_SCHEMA_ID,
+    };
     use himmelcad_core::typed_artifact::{
         ArtifactElementType, ArtifactEndianness, TypedArtifactDescriptor, TypedArtifactLayout,
         TypedArtifactManifest, TYPED_ARTIFACT_MANIFEST_NAME,
@@ -4229,6 +5082,143 @@ mod tests {
         let boxes = runtime.list_viewing_boxes().expect("list viewing boxes");
         assert_eq!(boxes.len(), 1);
         assert_eq!(boxes[0], created.viewing_box);
+        runtime.close();
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn draw_breakline_and_boundary_round_trip_with_vertex_undo_redo() {
+        fn position(x: f64, y: f64, z: f64) -> Position {
+            Position { x, y, z: Some(z) }
+        }
+        fn typed(point: Position) -> PointAcquisitionV1 {
+            PointAcquisitionV1 {
+                schema_id: POINT_ACQUISITION_SCHEMA_ID.to_owned(),
+                schema_version: RELEASE_05_SCHEMA_VERSION,
+                acquisition: PointAcquisitionKindV1::Typed,
+                final_coordinate: point,
+                input_mode: "typed".to_owned(),
+                truth: AcquisitionTruthV1::Typed,
+                source_entity_id: None,
+                source_revision: None,
+                provider_id: None,
+                primitive_address: None,
+                constraint: None,
+                estimate_confirmed: false,
+            }
+        }
+        fn input(
+            entity_id: &str,
+            expected_revision: Option<u64>,
+            tool: DrawCurveTool,
+            role: DrawCurveRole,
+            closed: bool,
+            vertices: Vec<Position>,
+        ) -> DrawCurveInput {
+            let acquisitions = vertices.iter().cloned().map(typed).collect();
+            DrawCurveInput {
+                entity_id: entity_id.to_owned(),
+                expected_revision,
+                name: entity_id.to_owned(),
+                tool,
+                role,
+                closed,
+                vertices,
+                acquisitions,
+            }
+        }
+
+        let root = temp_project("draw-round-trip");
+        let mut runtime = CanonicalAppRuntime::default();
+        runtime.open(&root).expect("open project");
+        let curb = vec![
+            position(397_842.125, 5_486_213.75, 312.48),
+            position(397_846.125, 5_486_213.75, 312.56),
+        ];
+        let created = runtime
+            .put_draw_curve(
+                "draw-curb-create".to_owned(),
+                input(
+                    "curb-breakline",
+                    None,
+                    DrawCurveTool::Polyline,
+                    DrawCurveRole::Breakline,
+                    false,
+                    curb.clone(),
+                ),
+            )
+            .expect("create curb breakline");
+        assert_eq!(created.curve.vertices, curb);
+        let mut extended_curb = created.curve.vertices.clone();
+        extended_curb.push(position(397_850.125, 5_486_213.75, 312.64));
+        let extended = runtime
+            .put_draw_curve(
+                "draw-curb-vertex-3".to_owned(),
+                input(
+                    "curb-breakline",
+                    Some(created.curve.revision),
+                    DrawCurveTool::Polyline,
+                    DrawCurveRole::Breakline,
+                    false,
+                    extended_curb.clone(),
+                ),
+            )
+            .expect("extend curb breakline");
+        assert_eq!(extended.curve.vertices, extended_curb);
+        runtime
+            .undo_draw_curve(
+                "undo-curb-vertex-3".to_owned(),
+                "draw-curb-vertex-3".to_owned(),
+            )
+            .expect("undo last curb vertex");
+        assert_eq!(
+            runtime.list_draw_curves().expect("curves")[0].vertices,
+            curb
+        );
+        runtime
+            .redo_draw_curve(
+                "redo-curb-vertex-3".to_owned(),
+                "draw-curb-vertex-3".to_owned(),
+            )
+            .expect("redo last curb vertex");
+
+        let boundary = vec![
+            position(397_840.0, 5_486_210.0, 312.4),
+            position(397_855.0, 5_486_210.0, 312.5),
+            position(397_855.0, 5_486_220.0, 312.7),
+            position(397_840.0, 5_486_220.0, 312.6),
+        ];
+        runtime
+            .put_draw_curve(
+                "draw-boundary-create".to_owned(),
+                input(
+                    "fixture-boundary",
+                    None,
+                    DrawCurveTool::Boundary,
+                    DrawCurveRole::Boundary,
+                    true,
+                    boundary.clone(),
+                ),
+            )
+            .expect("create closed boundary");
+        runtime.flush().expect("draw durability");
+        assert!(runtime.close());
+
+        runtime.open(&root).expect("reopen project");
+        let curves = runtime.list_draw_curves().expect("reopen draw curves");
+        assert_eq!(curves.len(), 2);
+        let reopened_curb = curves
+            .iter()
+            .find(|curve| curve.entity_id == "curb-breakline")
+            .expect("reopened curb");
+        assert_eq!(reopened_curb.vertices, extended_curb);
+        assert_eq!(reopened_curb.role, DrawCurveRole::Breakline);
+        let reopened_boundary = curves
+            .iter()
+            .find(|curve| curve.entity_id == "fixture-boundary")
+            .expect("reopened boundary");
+        assert!(reopened_boundary.closed);
+        assert_eq!(reopened_boundary.vertices, boundary);
         runtime.close();
         fs::remove_dir_all(root).expect("cleanup");
     }

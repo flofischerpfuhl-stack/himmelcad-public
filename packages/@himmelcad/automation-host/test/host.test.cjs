@@ -362,7 +362,7 @@ test('S-08 view state, history, presentation, quality and bookmarks share the re
   });
   await negotiate(router);
   const methods = [
-    'view.state.get', 'view.state.set', 'view.quality.get',
+    'view.state.get', 'view.state.set', 'view.mode.set', 'view.quality.get',
     'view.bookmark.create', 'view.bookmark.list', 'view.bookmark.restore',
     'view.presentation.set', 'view.point_size.set', 'viewing_box.list',
     'display.history.get', 'display.history.clear',

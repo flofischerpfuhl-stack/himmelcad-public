@@ -10,6 +10,7 @@ import {
 } from 'react';
 
 import {
+  DrawSnapLatencyRing,
   LocalStorageViewHistoryPersistence,
   ViewLocalHistory,
   type PointCloudDisplayStyle,
@@ -44,6 +45,7 @@ import {
   type KernelViewingBoxState,
   type KernelViewerEntityHandle,
   type KernelViewMode,
+  type KernelViewModeTransitionOptions,
   type KernelWorldCamera,
   type KernelWorldPoint,
   fenceVolumeFromCamera,
@@ -189,10 +191,10 @@ export interface BuilderKernelViewportHandle {
   ): Promise<void>;
   cameraHistory(action: 'get' | 'undo' | 'redo' | 'clear'): Promise<unknown>;
   frameAll(): void;
-  setPreset(preset: 'top' | 'front' | 'right' | 'isometric' | 'perspective'): void;
+  setPreset(preset: 'top' | 'front' | 'right' | 'isometric' | 'perspective'): Promise<void>;
   setPointSize(pointSize: number): void;
   setRendererOverlayPayload(layerId: string, payload: KernelRendererOverlayPayload): void;
-  setViewMode(mode: KernelViewMode): Promise<void>;
+  setViewMode(mode: KernelViewMode, options?: KernelViewModeTransitionOptions): Promise<boolean>;
   worldCamera(): KernelWorldCamera | null;
   adoptWorldCamera(camera: KernelWorldCamera): KernelWorldCamera;
   waitForNextPresentedFrame(): Promise<void>;
@@ -245,6 +247,7 @@ interface BuilderKernelViewportProps {
   readonly onCursorSnap: (snap: SnapResult | null) => void;
   readonly onDropFiles: (paths: string[]) => void | Promise<void>;
   readonly onLog: (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void;
+  readonly onViewModeSettled?: (mode: KernelViewMode) => void;
   readonly viewingBox?: KernelViewingBoxState | null;
   readonly viewingBoxEditing?: boolean;
   readonly placingViewingBoxCenter?: boolean;
@@ -261,10 +264,13 @@ interface BuilderKernelViewportProps {
   readonly isEntitySnappable?: (id: EntityId) => boolean;
   readonly isEntitySelectionHighlightable?: (id: EntityId) => boolean;
   readonly constructionToolId?: string | null;
+  readonly constructionOrigin?: KernelWorldPoint | null;
   readonly onConstructionTab?: (direction: 1 | -1) => void;
   readonly onConstructionTyping?: (key: string) => void;
   readonly onConstructionCancel?: () => void;
   readonly onConstructionClick?: () => void;
+  readonly onConstructionFinish?: () => void;
+  readonly onConstructionUndo?: () => void;
   readonly onCandidateSet?: (candidates: readonly KernelPickCandidate[], index: number) => void;
   readonly onCandidateSetClear?: () => void;
   readonly onContextSurface?: (
@@ -379,6 +385,7 @@ export const BuilderKernelViewport = forwardRef<
     onCursorSnap,
     onDropFiles,
     onLog,
+    onViewModeSettled,
     viewingBox = null,
     viewingBoxEditing = false,
     placingViewingBoxCenter = false,
@@ -395,10 +402,13 @@ export const BuilderKernelViewport = forwardRef<
     isEntitySnappable,
     isEntitySelectionHighlightable,
     constructionToolId = null,
+    constructionOrigin = null,
     onConstructionTab,
     onConstructionTyping,
     onConstructionCancel,
     onConstructionClick,
+    onConstructionFinish,
+    onConstructionUndo,
     onCandidateSet,
     onCandidateSetClear,
     onContextSurface,
@@ -535,6 +545,8 @@ export const BuilderKernelViewport = forwardRef<
     onConstructionTyping,
     onConstructionCancel,
     onConstructionClick,
+    onConstructionFinish,
+    onConstructionUndo,
     onCandidateSet,
     onCandidateSetClear,
     onContextSurface,
@@ -545,6 +557,7 @@ export const BuilderKernelViewport = forwardRef<
     onFenceCancel,
     onFenceKey,
     onFenceNavigationRejected,
+    constructionOrigin,
   });
   const pointerPositionRef = useRef({ x: 0, y: 0 });
   const activeSourcePositionRef = useRef<SourcePosition3 | null>(null);
@@ -557,6 +570,7 @@ export const BuilderKernelViewport = forwardRef<
   const viewModeRef = useRef<KernelViewMode>('3d');
   const automationClipIdsRef = useRef(new Set<string>());
   const highlightedSelectionRef = useRef(new Set<EntityId>());
+  const drawSnapLatencyRef = useRef(new DrawSnapLatencyRing());
   callbacksRef.current = {
     onCursorSnap,
     onDropFiles,
@@ -574,6 +588,8 @@ export const BuilderKernelViewport = forwardRef<
     onConstructionTyping,
     onConstructionCancel,
     onConstructionClick,
+    onConstructionFinish,
+    onConstructionUndo,
     onCandidateSet,
     onCandidateSetClear,
     onContextSurface,
@@ -584,6 +600,7 @@ export const BuilderKernelViewport = forwardRef<
     onFenceCancel,
     onFenceKey,
     onFenceNavigationRejected,
+    constructionOrigin,
   };
   // A grip gesture owns its local preview until pointer-up/cancel. React state
   // updates (cursor/hover/job chrome) must not replace it with the last
@@ -784,8 +801,45 @@ export const BuilderKernelViewport = forwardRef<
             handle: ({ direction }) => kernel.navigation.cycleCandidate(direction),
           },
           { row: 'lmbClick', handle: () => callbacksRef.current.onConstructionClick?.() },
+          {
+            row: 'lmbDoubleClickEntity',
+            handle: () => callbacksRef.current.onConstructionFinish?.(),
+          },
+          {
+            row: 'lmbDoubleClickVoid',
+            deviationReason:
+              'Double-click finishes the active polyline without changing selection.',
+            handle: () => callbacksRef.current.onConstructionFinish?.(),
+          },
           { row: 'escape', handle: () => callbacksRef.current.onConstructionCancel?.() },
         ]);
+        const host = hostRef.current;
+        const onKeyDown = (event: KeyboardEvent): void => {
+          if (
+            event.target instanceof HTMLInputElement ||
+            event.target instanceof HTMLTextAreaElement
+          )
+            return;
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            if (kernel.navigation.cameraContinuumState()) {
+              callbacksRef.current.onLog('info', 'Finish or cancel view transition');
+              return;
+            }
+            callbacksRef.current.onConstructionFinish?.();
+          } else if (event.key === 'Backspace') {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            callbacksRef.current.onConstructionUndo?.();
+          }
+        };
+        host?.addEventListener('keydown', onKeyDown, true);
+        const releaseClaims = release;
+        release = () => {
+          host?.removeEventListener('keydown', onKeyDown, true);
+          releaseClaims?.();
+        };
       })
       .catch((error: unknown) => callbacksRef.current.onLog('error', String(error)));
     return () => {
@@ -885,16 +939,20 @@ export const BuilderKernelViewport = forwardRef<
   }, [recordCamera]);
 
   const changeViewMode = useCallback(
-    async (mode: KernelViewMode): Promise<void> => {
-      viewModeRef.current = mode;
-      setViewModeState(mode);
-      await kernelRef.current?.session.setViewMode(mode).catch((error: unknown) => {
+    async (mode: KernelViewMode, options?: KernelViewModeTransitionOptions): Promise<boolean> => {
+      const kernel = kernelRef.current;
+      await kernel?.session.setViewMode(mode, options).catch((error: unknown) => {
         callbacksRef.current.onLog('error', `View mode change failed: ${String(error)}`);
         throw error;
       });
+      if (!kernel || kernel.session.currentViewMode() !== mode) return false;
+      viewModeRef.current = mode;
+      setViewModeState(mode);
+      onViewModeSettled?.(mode);
       recordCamera();
+      return true;
     },
-    [recordCamera],
+    [onViewModeSettled, recordCamera],
   );
 
   useImperativeHandle(
@@ -1053,14 +1111,16 @@ export const BuilderKernelViewport = forwardRef<
         return history.snapshot;
       },
       frameAll,
-      setPreset(preset) {
+      async setPreset(preset) {
         const kernel = kernelRef.current;
         if (!kernel) throw new Error('viewer is not ready');
         const camera = kernel.camera.worldCamera();
         if (viewModeRef.current === '2d' && preset !== 'top')
           throw new Error('This preset requires 3D or 2.5D navigation.');
-        kernel.session.adoptWorldCamera(KernelCameraController.preset(camera, preset));
-        recordCamera();
+        const settled = await kernel.session.transitionToWorldCamera(
+          KernelCameraController.preset(camera, preset),
+        );
+        if (settled) recordCamera();
       },
       setPointSize(pointSize) {
         kernelRef.current?.session.setPointSize(pointSize);
@@ -1070,8 +1130,8 @@ export const BuilderKernelViewport = forwardRef<
         if (!kernel) return;
         kernel.session.setRendererOverlayPayload(layerId, 'hcad.renderer-overlay-mono@1', payload);
       },
-      setViewMode(mode) {
-        return changeViewMode(mode);
+      setViewMode(mode, options) {
+        return changeViewMode(mode, options);
       },
       worldCamera() {
         return kernelRef.current?.camera.worldCamera() ?? null;
@@ -1295,10 +1355,7 @@ export const BuilderKernelViewport = forwardRef<
           })),
         );
         const bakeKey = await sha256Hex(new TextEncoder().encode(rawKey));
-        const activatePreparedCache = (
-          key: string,
-          entry: ViewingBoxBakeCacheEntry,
-        ): void => {
+        const activatePreparedCache = (key: string, entry: ViewingBoxBakeCacheEntry): void => {
           const previousKey = activeViewingBoxBakeKeyRef.current;
           if (previousKey && previousKey !== key) {
             const previous = viewingBoxBakeCacheRef.current.get(previousKey);
@@ -1547,7 +1604,20 @@ export const BuilderKernelViewport = forwardRef<
   const handleReady = useCallback((handle: KernelViewportHandle) => {
     kernelRef.current = handle;
     if (import.meta.env.DEV || import.meta.env.VITE_HCAD_PERF_DEBUG === '1') {
-      Object.assign(window, { __hcadBuilderKernel: handle });
+      const performanceHandle = Object.assign(handle, {
+        setViewMode: changeViewMode,
+        cameraHistory: async (action: 'get' | 'clear'): Promise<unknown> => {
+          const history = cameraHistoryRef.current;
+          if (!history) throw new Error('Camera history is not ready.');
+          if (action === 'clear') history.clear();
+          else await history.flushPersistence();
+          return history.snapshot;
+        },
+      });
+      Object.assign(window, {
+        __hcadBuilderKernel: performanceHandle,
+        __hcadDrawSnapLatency: () => drawSnapLatencyRef.current.snapshot(),
+      });
     }
     handle.session.setClearColor([0.008, 0.011, 0.016, 1]);
     const overlayAtlas = createKernelOverlayGlyphAtlas(document);
@@ -1570,15 +1640,26 @@ export const BuilderKernelViewport = forwardRef<
       'info',
       `Shared viewer ready (${handle.hardwarePolicy.deploymentProfile}, ${handle.session.diagnostics().capabilities.backend})`,
     );
-  }, []);
+  }, [changeViewMode]);
 
   const handlePick = useCallback((candidate: KernelPickCandidate | null) => {
-    const resolved = remapViewingBoxCandidate(candidate, bakeProxySourcesRef.current);
+    const startedAt = performance.now();
+    const remapped = remapViewingBoxCandidate(candidate, bakeProxySourcesRef.current);
+    const resolved = remapped
+      ? augmentDraftingCandidate(
+          remapped,
+          callbacksRef.current.constructionOrigin,
+          entityOverlayGeometryRef.current,
+          kernelRef.current,
+          hostRef.current,
+        )
+      : null;
     const snappable = resolved
       ? (callbacksRef.current.isEntitySnappable?.(resolved.address.entityId as EntityId) ?? true)
       : false;
     activeSourcePositionRef.current = snappable ? resolved!.worldPosition : null;
     callbacksRef.current.onCursorSnap(snappable ? snapFromCandidate(resolved!) : null);
+    drawSnapLatencyRef.current.record(performance.now() - startedAt);
   }, []);
 
   const handleCursor = useCallback((coordinate: KernelPickCandidate['worldPosition']) => {
@@ -2241,6 +2322,7 @@ export const BuilderKernelViewport = forwardRef<
             callbacksRef.current.onSelectEntity?.(resolved.address.entityId as EntityId, 'toggle');
           },
           clearSelection: () => callbacksRef.current.onClearSelection?.(),
+          claimBlocked: (message) => callbacksRef.current.onLog('info', message),
           candidateSetChanged: (candidates, index) =>
             callbacksRef.current.onCandidateSet?.(
               candidates.map((candidate) =>
@@ -3279,6 +3361,141 @@ function developmentRasterPreviewAdmission(
   };
 }
 
+function augmentDraftingCandidate(
+  candidate: KernelPickCandidate,
+  origin: KernelWorldPoint | null | undefined,
+  geometryByEntity: ReadonlyMap<
+    EntityId,
+    Pick<CanonicalRepresentationAdmission, 'entity' | 'resolvedGeometry'>
+  >,
+  kernel: KernelViewportHandle | null,
+  host: HTMLDivElement | null,
+): KernelPickCandidate {
+  if (candidate.snapKind !== 'edge' || !kernel || !host) return candidate;
+  if (candidate.worldPosition.z === null) return candidate;
+  const cursorWorld: KernelWorldPoint = {
+    x: candidate.worldPosition.x,
+    y: candidate.worldPosition.y,
+    z: candidate.worldPosition.z,
+  };
+  const source = geometryByEntity.get(candidate.address.entityId as EntityId);
+  const sourceSegments = source ? curveLineSegments(source.resolvedGeometry) : [];
+  if (sourceSegments.length === 0) return candidate;
+  const rect = host.getBoundingClientRect();
+  const camera = kernel.camera.worldCamera();
+  const cursorScreen = projectViewingBoxPoint(cursorWorld, camera, rect);
+  if (!cursorScreen) return candidate;
+  let bestIntersection: KernelWorldPoint | null = null;
+  let bestIntersectionPixels = 9;
+  for (const [entityId, admission] of geometryByEntity) {
+    if (entityId === candidate.address.entityId) continue;
+    for (const left of sourceSegments) {
+      for (const right of curveLineSegments(admission.resolvedGeometry)) {
+        const intersection = lineIntersectionXY(left, right);
+        if (!intersection) continue;
+        const screen = projectViewingBoxPoint(intersection, camera, rect);
+        if (!screen) continue;
+        const pixels = Math.hypot(screen.x - cursorScreen.x, screen.y - cursorScreen.y);
+        if (pixels <= bestIntersectionPixels) {
+          bestIntersectionPixels = pixels;
+          bestIntersection = intersection;
+        }
+      }
+    }
+  }
+  if (bestIntersection) {
+    return {
+      ...candidate,
+      worldPosition: bestIntersection,
+      presentationPosition: bestIntersection,
+      snapKind: 'intersection',
+      pixelDistance: bestIntersectionPixels,
+    };
+  }
+  if (!origin) return candidate;
+  let bestFoot: KernelWorldPoint | null = null;
+  let bestFootPixels = 9;
+  for (const segment of sourceSegments) {
+    const foot = perpendicularFoot(origin, segment);
+    const screen = projectViewingBoxPoint(foot, camera, rect);
+    if (!screen) continue;
+    const pixels = Math.hypot(screen.x - cursorScreen.x, screen.y - cursorScreen.y);
+    if (pixels <= bestFootPixels) {
+      bestFootPixels = pixels;
+      bestFoot = foot;
+    }
+  }
+  return bestFoot
+    ? {
+        ...candidate,
+        worldPosition: bestFoot,
+        presentationPosition: bestFoot,
+        snapKind: 'perpendicular',
+        pixelDistance: bestFootPixels,
+      }
+    : candidate;
+}
+
+function curveLineSegments(
+  geometry: GeometryObject,
+): readonly (readonly [KernelWorldPoint, KernelWorldPoint])[] {
+  if (geometry.kind !== 'curve') return [];
+  const curve = geometry.curve;
+  const positions =
+    curve.kind === 'lineSegment'
+      ? [curve.start, curve.end]
+      : curve.kind === 'polyline'
+        ? curve.positions
+        : [];
+  const points = positions.flatMap((point) =>
+    point.z === null ? [] : [{ x: point.x, y: point.y, z: point.z }],
+  );
+  const segments: (readonly [KernelWorldPoint, KernelWorldPoint])[] = [];
+  for (let index = 1; index < points.length; index += 1) {
+    segments.push([points[index - 1]!, points[index]!]);
+  }
+  if (curve.kind === 'polyline' && curve.closed && points.length > 2) {
+    segments.push([points.at(-1)!, points[0]!]);
+  }
+  return segments;
+}
+
+function lineIntersectionXY(
+  left: readonly [KernelWorldPoint, KernelWorldPoint],
+  right: readonly [KernelWorldPoint, KernelWorldPoint],
+): KernelWorldPoint | null {
+  const [a, b] = left;
+  const [c, d] = right;
+  const denominator = (b.x - a.x) * (d.y - c.y) - (b.y - a.y) * (d.x - c.x);
+  if (Math.abs(denominator) <= 1e-12) return null;
+  const t = ((c.x - a.x) * (d.y - c.y) - (c.y - a.y) * (d.x - c.x)) / denominator;
+  const u = ((c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x)) / denominator;
+  if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+  return {
+    x: a.x + (b.x - a.x) * t,
+    y: a.y + (b.y - a.y) * t,
+    z: a.z + (b.z - a.z) * t,
+  };
+}
+
+function perpendicularFoot(
+  point: KernelWorldPoint,
+  [start, end]: readonly [KernelWorldPoint, KernelWorldPoint],
+): KernelWorldPoint {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const run = dx * dx + dy * dy;
+  const t =
+    run === 0
+      ? 0
+      : Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / run));
+  return {
+    x: start.x + dx * t,
+    y: start.y + dy * t,
+    z: start.z + (end.z - start.z) * t,
+  };
+}
+
 function snapFromCandidate(candidate: KernelPickCandidate): SnapResult {
   const primitiveId = candidate.address.primitiveId;
   const datasetKind =
@@ -3296,7 +3513,9 @@ function snapFromCandidate(candidate: KernelPickCandidate): SnapResult {
         ? ({ kind: 'point', pointIndex: primitiveId } as const)
         : candidate.snapKind === 'vertex' || candidate.snapKind === 'midpoint'
           ? ({ kind: 'vertex', vertexIndex: primitiveId } as const)
-          : candidate.snapKind === 'edge' || candidate.snapKind === 'intersection'
+          : candidate.snapKind === 'edge' ||
+              candidate.snapKind === 'intersection' ||
+              candidate.snapKind === 'perpendicular'
             ? ({ kind: 'edge', edgeIndex: primitiveId } as const)
             : candidate.snapKind === 'rasterSample'
               ? ({ kind: 'grid' } as const)
@@ -3306,10 +3525,10 @@ function snapFromCandidate(candidate: KernelPickCandidate): SnapResult {
     kind: snapKind(candidate.snapKind),
     entity: candidate.address.entityId as EntityId,
     confidence: 1 / (1 + Math.max(0, candidate.pixelDistance)),
-    source: 'point-cloud',
+    source: datasetKind,
     distancePx: candidate.pixelDistance,
     stable: true,
-    candidateId: `${candidate.address.renderProxyId}:${candidate.address.tileId ?? ''}:${String(candidate.address.primitiveId ?? '')}`,
+    candidateId: `${candidate.snapKind}:${candidate.address.renderProxyId}:${candidate.address.tileId ?? ''}:${String(candidate.address.primitiveId ?? '')}`,
     target: {
       datasetKind,
       entityId: candidate.address.entityId as EntityId,
@@ -3399,6 +3618,7 @@ function snapKind(kind: KernelPickCandidate['snapKind']): SnapKind {
       return 'Vertex';
     case 'edge':
     case 'intersection':
+    case 'perpendicular':
       return 'Edge';
     case 'surface':
       return 'Face';

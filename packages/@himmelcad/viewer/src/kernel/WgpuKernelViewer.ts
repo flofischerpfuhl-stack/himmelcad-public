@@ -34,6 +34,7 @@ export interface WasmViewerBinding {
   set_view_projection(values: Float32Array): void;
   set_world_camera_json(cameraJson: string): void;
   set_camera_transition_json(transitionJson: string, progress: number): void;
+  set_view_mode?(mode: '3d' | '2.5d' | '2d'): void;
   set_floating_origin(x: number, y: number, z: number): void;
   set_clear_color(r: number, g: number, b: number, a: number): void;
   set_point_size(pointSize: number): void;
@@ -1183,11 +1184,12 @@ export type KernelSnapKind =
   | 'vertex'
   | 'midpoint'
   | 'intersection'
+  | 'perpendicular'
   | 'edge'
   | 'surface'
   | 'rasterSample';
 
-/** Ranked kernel-owned point-picking candidate used for Tab traversal. */
+/** Ranked kernel-owned point-picking candidate used for Up/Down traversal. */
 export interface KernelPickCandidate {
   readonly address: KernelPickAddress;
   /** Exact canonical Source coordinate. Never contains a synthetic plan height. */
@@ -1587,6 +1589,7 @@ export class WgpuKernelViewer {
   private readonly entityInteractionReplay = new Map<string, KernelEntityInteractionState>();
   private readonly sectionReplay = new Map<string, KernelSectionRequest>();
   private cameraReplay: ((target: WgpuKernelViewer) => void) | null = null;
+  private viewModeReplay: '3d' | '2.5d' | '2d' = '3d';
   private clearColorReplay: readonly [number, number, number, number] | null = null;
   private pointSizeReplay = 1;
   private rasterAnalysisReplay: string | null = null;
@@ -1706,18 +1709,44 @@ export class WgpuKernelViewer {
     to: KernelWorldCamera,
     progress: number,
     floatingOrigin: readonly [number, number, number],
+    cursorAnchor?: {
+      readonly world: KernelWorldPoint;
+      readonly ndc: readonly [number, number];
+    },
   ): void {
     this.assertAlive();
     if (!Number.isFinite(progress) || !floatingOrigin.every(Number.isFinite)) {
       throw new RangeError('camera transition progress and floatingOrigin must be finite');
     }
     this.binding.set_floating_origin(...floatingOrigin);
-    this.binding.set_camera_transition_json(JSON.stringify({ from, to }), progress);
+    this.binding.set_camera_transition_json(
+      JSON.stringify({
+        from,
+        to,
+        ...(cursorAnchor
+          ? { cursorAnchor: cursorAnchor.world, cursorNdc: cursorAnchor.ndc }
+          : {}),
+      }),
+      progress,
+    );
     const replayFrom = replayClone(from);
     const replayTo = replayClone(to);
     const replayOrigin = replayClone(floatingOrigin);
     this.cameraReplay = (target) =>
-      target.setCameraTransition(replayFrom, replayTo, progress, replayOrigin);
+      target.setCameraTransition(
+        replayFrom,
+        replayTo,
+        progress,
+        replayOrigin,
+        cursorAnchor ? replayClone(cursorAnchor) : undefined,
+      );
+  }
+
+  /** Commits settled navigation semantics independently from camera presentation. */
+  setViewMode(mode: '3d' | '2.5d' | '2d'): void {
+    this.assertAlive();
+    this.binding.set_view_mode?.(mode);
+    this.viewModeReplay = mode;
   }
 
   /** Sets a linear clear color without silently clamping invalid channels. */
@@ -1813,6 +1842,7 @@ export class WgpuKernelViewer {
   replayViewStateInto(target: WgpuKernelViewer): void {
     this.assertAlive();
     this.cameraReplay?.(target);
+    target.setViewMode(this.viewModeReplay);
     if (this.clearColorReplay !== null) target.setClearColor(this.clearColorReplay);
     target.setPointSize(this.pointSizeReplay);
     target.setClipVolumes(this.baseClipVolumes);
@@ -3367,7 +3397,7 @@ export class WgpuKernelViewer {
   }
 
   /**
-   * Presents an ID/depth frame and returns world-space candidates in stable Tab
+   * Presents an ID/depth frame and returns world-space candidates in stable Up/Down
    * order. A result is marked stale if the render world changed during mapping.
    */
   async pick(x: number, y: number, radius = 4): Promise<KernelPickResult> {

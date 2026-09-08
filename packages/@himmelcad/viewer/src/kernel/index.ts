@@ -53,11 +53,17 @@ export type {
   KernelViewingBoxState,
   KernelViewingBoxViewportSeed,
 } from './KernelViewingBox.js';
-export { KernelNavigationController } from './KernelNavigationController.js';
+export {
+  DEFAULT_CAMERA_CONTINUUM_DURATION_MS,
+  KernelNavigationController,
+  interpolateKernelWorldCamera,
+} from './KernelNavigationController.js';
 export type {
+  KernelCameraContinuumState,
   KernelNavigationCallbacks,
   KernelNavigationTarget,
   KernelViewMode,
+  KernelViewModeTransitionOptions,
 } from './KernelNavigationController.js';
 export {
   GestureClaimError,

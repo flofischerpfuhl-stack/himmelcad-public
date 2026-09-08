@@ -111,6 +111,28 @@ void test('G-B2-GESTURE-C1 armed LMB void is claimed while idle void is inert', 
   assert.deepEqual(calls, ['vertex:void', 'select:wall']);
 });
 
+void test('G-VC-TRANSITION blocks tool commits during a blend but keeps selection live', () => {
+  const calls: string[] = [];
+  const arbiter = new PlatformGestureArbiter<Pick>({
+    claimBlocked: (message) => calls.push(`blocked:${message}`),
+    toggleSelection: (pick) => calls.push(`toggle:${pick.id}`),
+  });
+  arbiter.registerGestureClaims('draw.point', [
+    { row: 'lmbClick', handle: () => calls.push('commit') },
+  ]);
+  arbiter.setClaimsBlocked('Finish or cancel view transition');
+  const wall = { id: 'wall', pickable: true };
+  arbiter.handleClick(pointerEvent(0, 10), wall);
+  arbiter.handleClick({ ...pointerEvent(0, 1_000), ctrlKey: true } as PointerEvent, wall);
+  arbiter.setClaimsBlocked(null);
+  arbiter.handleClick(pointerEvent(0, 2_000), wall);
+  assert.deepEqual(calls, [
+    'blocked:Finish or cancel view transition',
+    'toggle:wall',
+    'commit',
+  ]);
+});
+
 void test('gesture registry rejects unreasoned platform ownership and same-state collisions', () => {
   const arbiter = new PlatformGestureArbiter<Pick>();
   assert.throws(
@@ -237,6 +259,8 @@ function pointerEvent(button: number, timeStamp: number): PointerEvent {
     timeStamp,
     pointerType: 'mouse',
     ctrlKey: false,
+    preventDefault() {},
+    stopPropagation() {},
   } as PointerEvent;
 }
 

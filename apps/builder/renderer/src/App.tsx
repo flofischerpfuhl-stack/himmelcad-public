@@ -16,6 +16,8 @@ import {
   JOB_CHIP_DEBOUNCE_MS,
   JOB_COMPLETED_RETENTION_MS,
   ConstructionInputController,
+  DrawToolController,
+  pointAcquisition,
   InteractionStateStore,
   JobMirror,
   LocalStorageSelectionPersistence,
@@ -34,10 +36,13 @@ import {
   encodeRgbaScreenshot,
   executeSelectionCommand,
   parseViewState,
+  parseViewModeTransitionRequest,
   validateScreenshotRequest,
   type CommandContext,
   type CommandInvocation,
   type MeasurementToolKind,
+  type DrawRole,
+  type DrawToolKind,
 } from '@himmelcad/app';
 import { Console, consoleStore, logEvent, runConsoleCommand } from '@himmelcad/console';
 import { ManagedAgentChat, ManagedAutomationApproval } from '@himmelcad/agent';
@@ -112,6 +117,9 @@ import {
 import { FloatingTaskIsland } from './FloatingTaskIsland.js';
 import { MeasurementPanel, MeasurementProperties } from './MeasurementPanel.js';
 import { MeasurementViewportOverlay } from './MeasurementViewportOverlay.js';
+import { DrawPanel, type DrawSnapKind } from './DrawPanel.js';
+import { DrawViewportOverlay } from './DrawViewportOverlay.js';
+import { DgmCreationWindow, type DgmSourceCandidate } from './DgmCreationWindow.js';
 import { GroundExtractionPanel } from './GroundExtractionPanel.js';
 import { GroundPreviewOverlay } from './GroundPreviewOverlay.js';
 import { PointcloudSamplingPanel } from './PointcloudSamplingPanel.js';
@@ -122,6 +130,7 @@ import {
   BuilderCanonicalProjectSession,
   startDurabilityPolling,
   type BuilderDurabilityStatus,
+  type BuilderDrawCurveSummary,
   type BuilderMeasurementSummary,
   type BuilderPhotoLabProvenanceSummary,
   type BuilderSnapshotSummary,
@@ -135,6 +144,7 @@ import {
   type PointcloudRasterizeResult,
   type PointcloudSampleParameters,
   type PointcloudSampleResult,
+  type SurfaceRules,
 } from './project.js';
 import { createRibbonTabs } from './ribbon.js';
 import { parseSidecarProgress } from './sidecarProgress.js';
@@ -233,6 +243,9 @@ export function App(): JSX.Element {
   const [measurements, setMeasurements] = useState<readonly BuilderMeasurementSummary[]>([]);
   const measurementsRef = useRef(measurements);
   measurementsRef.current = measurements;
+  const [drawCurves, setDrawCurves] = useState<readonly BuilderDrawCurveSummary[]>([]);
+  const drawCurvesRef = useRef(drawCurves);
+  drawCurvesRef.current = drawCurves;
   const [viewingBoxName, setViewingBoxName] = useState('Viewing Box');
   const viewingBoxNameRef = useRef(viewingBoxName);
   viewingBoxNameRef.current = viewingBoxName;
@@ -271,6 +284,7 @@ export function App(): JSX.Element {
   const [propertyRefresh, setPropertyRefresh] = useState(0);
   const [specsOpen, setSpecsOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
+  const [dgmOpen, setDgmOpen] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
   const [jobsOpen, setJobsOpen] = useState(false);
   const [jobToasts, setJobToasts] = useState<readonly AppJob[]>([]);
@@ -369,6 +383,65 @@ export function App(): JSX.Element {
     measurementToolStore.snapshot,
     measurementToolStore.snapshot,
   );
+  const drawToolRef = useRef<DrawToolController | null>(null);
+  if (!drawToolRef.current) {
+    drawToolRef.current = new DrawToolController(
+      {
+        write: async (input) => {
+          const session = await ensureCanonicalProjectRef.current();
+          const { summary, result } = await session.putDrawCurve(input);
+          const next = await session.listDrawCurves();
+          setProject(session.projectSnapshot());
+          setDrawCurves(next);
+          await viewportRef.current?.loadCanonicalPackage({
+            providerId: 'hcad.draw@1',
+            providerVersion: '1',
+            admissions: [summary.admission],
+          });
+          selectionStore.replace([summary.entityId]);
+          return result;
+        },
+        undo: async (commandId) => {
+          const session = await ensureCanonicalProjectRef.current();
+          const entityId = drawToolRef.current?.snapshot().entityId;
+          const result = await session.undoDrawCurve(commandId);
+          const next = await session.listDrawCurves();
+          setProject(session.projectSnapshot());
+          setDrawCurves(next);
+          const live = entityId ? next.find((curve) => curve.entityId === entityId) : null;
+          if (live) {
+            await viewportRef.current?.loadCanonicalPackage({
+              providerId: 'hcad.draw@1',
+              providerVersion: '1',
+              admissions: [live.admission],
+            });
+          } else if (entityId) {
+            viewportRef.current?.setEntityVisibility([entityId as EntityId], false);
+          }
+          return result;
+        },
+      },
+      (kind) => ({
+        entityId: `draw-${kind}-${crypto.randomUUID()}`,
+        name: `${drawKindLabel(kind)} ${drawCurvesRef.current.length + 1}`,
+      }),
+    );
+  }
+  const drawToolStore = drawToolRef.current;
+  const drawTool = useSyncExternalStore(
+    drawToolStore.subscribe,
+    drawToolStore.snapshot,
+    drawToolStore.snapshot,
+  );
+  const [drawSnapKinds, setDrawSnapKinds] = useState<Readonly<Record<DrawSnapKind, boolean>>>({
+    point: true,
+    cloudPoint: true,
+    end: true,
+    mid: true,
+    intersection: true,
+    perpendicular: true,
+  });
+  const [constructionClaimGeneration, setConstructionClaimGeneration] = useState(0);
   const currentProjectPathRef = useRef<string | null>(null);
   const startupProjectRef = useRef<Promise<string> | null>(null);
   const closeCancelledRef = useRef(false);
@@ -799,6 +872,19 @@ export function App(): JSX.Element {
         return await viewport.cameraHistory(action as 'get' | 'undo' | 'redo' | 'clear');
       }
       if (method === 'view.state.get') return currentBuilderViewState();
+      if (method === 'view.mode.set') {
+        const request = parseViewModeTransitionRequest(params);
+        const settled = await viewport.setViewMode(request.mode, {
+          ...(request.durationMilliseconds === undefined
+            ? {}
+            : { durationMilliseconds: request.durationMilliseconds }),
+          ...(request.cursorAnchor === undefined ? {} : { cursorAnchor: request.cursorAnchor }),
+          ...(request.cursorNdc === undefined ? {} : { cursorNdc: request.cursorNdc }),
+        });
+        if (!settled) throw new Error('View mode transition was cancelled.');
+        await viewport.waitForNextPresentedFrame();
+        return currentBuilderViewState();
+      }
       if (method !== 'view.state.set') throw new Error(`Unsupported view host method: ${method}`);
       return await applyBuilderViewState(params);
     });
@@ -818,7 +904,9 @@ export function App(): JSX.Element {
           throw new StaleViewReferenceError(ref.entityId, ref.expectedRevision, revision);
         }
       }
-      await viewport.setViewMode(state.navigationMode);
+      if (!(await viewport.setViewMode(state.navigationMode))) {
+        throw new Error('View mode transition was cancelled.');
+      }
       setNavigationMode(state.navigationMode);
       viewport.adoptWorldCamera(toKernelCamera(state));
 
@@ -1035,6 +1123,8 @@ export function App(): JSX.Element {
       setProject(snapshot);
       setSnapshots(await session.listSnapshots());
       setMeasurements(await session.listMeasurements());
+      const storedDrawCurves = await session.listDrawCurves();
+      setDrawCurves(storedDrawCurves);
       const storedViewingBoxes = await session.listViewingBoxes();
       const activeViewingBoxId = displayStore.getSnapshot().state.activeClipEntityIds[0];
       const storedViewingBox =
@@ -1062,6 +1152,13 @@ export function App(): JSX.Element {
       if (!viewport) throw new Error('viewer bridge is not ready for canonical residency');
       const residency = await api.canonicalProject.residencyBootstrap();
       const restored = await restoreCanonicalResidency(viewport, residency);
+      if (storedDrawCurves.length > 0) {
+        await viewport.loadCanonicalPackage({
+          providerId: 'hcad.draw@1',
+          providerVersion: '1',
+          admissions: storedDrawCurves.map((curve) => curve.admission),
+        });
+      }
       entityGroupsRef.current.cloud = restored.clouds;
       entityGroupsRef.current.ifc = restored.inlineMeshes;
       setPointCloudMetadata(restored.pointCloudMetadata);
@@ -1352,8 +1449,15 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (!activeFunctionId) return;
     const id = activeFunctionId;
+    const drawKind = drawKindForFunction(id);
     const measurementKind = measurementKindForFunction(id);
-    if (measurementKind) {
+    if (drawKind) {
+      if (!drawToolStore.snapshot().armed || drawToolStore.snapshot().kind !== drawKind) {
+        drawToolStore.arm(drawKind, drawKind === 'boundary' ? 'boundary' : 'plain');
+      }
+      setRightPanelTab('function');
+      logEvent('info', 'renderer', `${drawKindLabel(drawKind)}: pick or type the first vertex.`);
+    } else if (measurementKind) {
       const metric = measurementKind === 'distance' ? 'spatial' : null;
       if (
         !measurementToolStore.snapshot().armed ||
@@ -1395,7 +1499,6 @@ export function App(): JSX.Element {
       closeFunction(id);
     } else if (id === 'view.3d' || id === 'view.2.5d' || id === 'view.2d') {
       const mode = id.slice('view.'.length) as '3d' | '2.5d' | '2d';
-      setNavigationMode(mode);
       void viewportRef.current?.setViewMode(mode);
       closeFunction(id);
     } else if (
@@ -1427,6 +1530,9 @@ export function App(): JSX.Element {
     } else if (id === 'output.plan') {
       setPlanOpen(true);
       closeFunction(id);
+    } else if (id === 'mesh.surface.create') {
+      void ensureCanonicalProject().then(() => setDgmOpen(true));
+      closeFunction(id);
     } else if (id === 'automation.agent') {
       setAgentOpen(true);
       closeFunction(id);
@@ -1439,6 +1545,7 @@ export function App(): JSX.Element {
     closeFunction,
     ensureCanonicalProject,
     flushProject,
+    drawToolStore,
     measurementToolStore,
     viewingBox,
   ]);
@@ -1463,6 +1570,37 @@ export function App(): JSX.Element {
   }, [activeFunctionId, measurementToolStore]);
 
   useEffect(() => {
+    if (!drawKindForFunction(activeFunctionId) && drawToolStore.snapshot().armed) {
+      drawToolStore.cancel();
+    }
+  }, [activeFunctionId, drawToolStore]);
+
+  useEffect(() => {
+    if (drawTool.armed && drawTool.kind) {
+      const firstPoint = drawTool.vertices.at(-1)?.point;
+      const seed =
+        snap?.position.z == null
+          ? (firstPoint ?? { x: 0, y: 0, z: 0 })
+          : { x: snap.position.x, y: snap.position.y, z: snap.position.z };
+      const toolId = `draw:${drawTool.kind}:${drawTool.vertices.length}:${constructionClaimGeneration}`;
+      if (constructionInputStore.snapshot().declaration?.toolId !== toolId) {
+        constructionInputStore.arm(
+          {
+            toolId,
+            prompt:
+              drawTool.vertices.length === 0
+                ? `${drawKindLabel(drawTool.kind)} — pick or type first vertex`
+                : `${drawKindLabel(drawTool.kind)} — pick, constrain, or type next vertex`,
+            fields: firstPoint
+              ? ['direction', 'distance', 'deltaZ', 'slope', 'x', 'y', 'z']
+              : ['x', 'y', 'z'],
+            ...(firstPoint ? { firstPoint } : {}),
+          },
+          seed,
+        );
+      }
+      return;
+    }
     if (measurementTool.armed && measurementTool.kind) {
       const first = measurementTool.anchors[0];
       const firstPoint = first ? measurementAnchorConstructionPoint(first) : undefined;
@@ -1525,6 +1663,10 @@ export function App(): JSX.Element {
   }, [
     activeFunctionId,
     constructionInputStore,
+    constructionClaimGeneration,
+    drawTool.armed,
+    drawTool.kind,
+    drawTool.vertices,
     measurementTool.anchors,
     measurementTool.anchors.length,
     measurementTool.armed,
@@ -1924,6 +2066,61 @@ export function App(): JSX.Element {
     const effective = interactionState?.effective(entityId);
     return effective?.renderable === true && effective.editable;
   });
+  const dgmCandidates = useMemo<readonly DgmSourceCandidate[]>(() => {
+    if (!project) return [];
+    const candidates: DgmSourceCandidate[] = [];
+    for (const entityId of selected) {
+      const entity = project.entities[entityId];
+      if (!entity) continue;
+      const cloud = pointCloudMetadata.get(entityId);
+      if (entity.kind === 'PointCloud') {
+        const visibleClasses = cloud?.display.classes
+          .filter((classification) => classification.visible)
+          .map((classification) => classification.code);
+        if (cloud && visibleClasses?.length === 0) continue;
+        candidates.push({
+          entityId,
+          name: entity.name,
+          kind: 'PointCloud',
+          count: cloud?.pointCount ?? null,
+          role: 'points',
+          ...(visibleClasses ? { visibleClasses } : {}),
+        });
+      } else if (entity.kind === 'SinglePoint') {
+        candidates.push({
+          entityId,
+          name: entity.name,
+          kind: 'SinglePoint',
+          count: 1,
+          role: 'points',
+        });
+      } else if (entity.kind === 'Polyline3D') {
+        const curve = drawCurves.find((item) => item.entityId === entityId);
+        const role =
+          curve?.role === 'boundary'
+            ? 'outer_boundary'
+            : curve?.role === 'breakline'
+              ? 'breakline'
+              : 'form_line';
+        candidates.push({
+          entityId,
+          name: entity.name,
+          kind: 'Polyline3D',
+          count: curve?.vertices.length ?? null,
+          role,
+        });
+      } else if (entity.kind === 'Surface' || entity.kind === 'DigitalElevationModel') {
+        candidates.push({
+          entityId,
+          name: entity.name,
+          kind: 'Surface',
+          count: null,
+          role: 'points',
+        });
+      }
+    }
+    return candidates;
+  }, [drawCurves, pointCloudMetadata, project, selected]);
   const activeGroundJob =
     jobs.find(
       (job) =>
@@ -2261,6 +2458,7 @@ export function App(): JSX.Element {
     },
     [
       displayStore,
+      drawToolStore,
       ensureCanonicalProject,
       pointCloudMetadata,
       reloadCanonicalResidency,
@@ -2326,7 +2524,9 @@ export function App(): JSX.Element {
         !['reference', 'editable'].includes(sourceInteraction.effective) ||
         !metadata
       ) {
-        setPointcloudProcessingError('Select exactly one visible Reference or Editable point cloud.');
+        setPointcloudProcessingError(
+          'Select exactly one visible Reference or Editable point cloud.',
+        );
         return;
       }
       const visibleClasses = metadata.display.classes
@@ -2571,6 +2771,82 @@ export function App(): JSX.Element {
     async (invocation: CommandInvocation): Promise<void> => {
       const ids = selectedRef.current;
       switch (invocation.id) {
+        case 'draw.line':
+        case 'draw.polyline':
+        case 'draw.boundary': {
+          const payload = automationPayload(invocation.payload);
+          const kind = drawKindForFunction(invocation.id)!;
+          const vertices = drawVerticesFromPayload(payload.vertices);
+          if (vertices.length === 0) {
+            activate(invocation.id);
+            return;
+          }
+          if (vertices.length < 2 || (kind === 'line' && vertices.length !== 2)) {
+            throw new TypeError(
+              `${invocation.id} requires ${kind === 'line' ? 'exactly two' : 'at least two'} typed vertices.`,
+            );
+          }
+          if (kind === 'boundary' && vertices.length < 3) {
+            throw new TypeError('draw.boundary requires at least three typed vertices.');
+          }
+          const role = drawRoleFromPayload(payload.role, kind);
+          const entityId =
+            typeof payload.entityId === 'string'
+              ? payload.entityId
+              : `draw-${kind}-${crypto.randomUUID()}`;
+          const session = await ensureCanonicalProject();
+          const { summary } = await session.putDrawCurve({
+            entityId,
+            expectedRevision: null,
+            name:
+              typeof payload.name === 'string'
+                ? payload.name
+                : `${drawKindLabel(kind)} ${drawCurvesRef.current.length + 1}`,
+            tool: kind,
+            role,
+            closed: kind === 'boundary' ? payload.closed !== false : false,
+            vertices,
+            acquisitions: vertices.map((point) => pointAcquisition({ kind: 'typed', point })),
+          });
+          setProject(session.projectSnapshot());
+          setDrawCurves(await session.listDrawCurves());
+          await viewportRef.current?.loadCanonicalPackage({
+            providerId: 'hcad.draw@1',
+            providerVersion: '1',
+            admissions: [summary.admission],
+          });
+          selectionStore.replace([summary.entityId]);
+          return;
+        }
+        case 'draw.vertex.add':
+        case 'draw.vertex.type': {
+          const point = drawPointFromPayload(automationPayload(invocation.payload));
+          if (!drawToolStore.snapshot().armed) throw new Error('Arm a Draw tool first.');
+          await drawToolStore.acceptTyped(point);
+          return;
+        }
+        case 'draw.vertex.constrain': {
+          const payload = automationPayload(invocation.payload);
+          if (!drawToolStore.snapshot().armed) throw new Error('Arm a Draw tool first.');
+          const direction = finiteNumber(payload.direction, 'direction');
+          const distance = finiteNumber(payload.length, 'length');
+          if (typeof payload.slope === 'number') {
+            await drawToolStore.acceptConstraint(direction, distance, {
+              kind: 'slope',
+              value: finiteNumber(payload.slope, 'slope'),
+            });
+          } else {
+            await drawToolStore.acceptConstraint(direction, distance, {
+              kind: 'deltaZ',
+              value:
+                typeof payload.deltaZ === 'number' ? finiteNumber(payload.deltaZ, 'deltaZ') : 0,
+            });
+          }
+          return;
+        }
+        case 'draw.vertex.undo':
+          await drawToolStore.undoVertex();
+          return;
         case 'measure.point':
         case 'measure.distance':
         case 'measure.dz':
@@ -2658,10 +2934,7 @@ export function App(): JSX.Element {
           if (payload.fromSelection === true) {
             createViewingBoxFromSelection();
           } else if ('center' in payload || 'extents' in payload) {
-            if (
-              !isViewingBoxPoint(payload.center) ||
-              !isPositiveViewingBoxPoint(payload.extents)
-            ) {
+            if (!isViewingBoxPoint(payload.center) || !isPositiveViewingBoxPoint(payload.extents)) {
               throw new TypeError(
                 'view.box.place requires finite center coordinates and positive extents.',
               );
@@ -2926,6 +3199,96 @@ export function App(): JSX.Element {
           await window.himmelcad?.jobs.cancel(jobId);
           return;
         }
+        case 'mesh.surface.draft.create': {
+          const payload = automationPayload(invocation.payload);
+          const session = await ensureCanonicalProject();
+          const entityIds = stringArray(payload.entityIds) ?? [];
+          if (entityIds.length > 0) selectionStore.replace(entityIds);
+          await session.createSurfaceDraft({
+            operationId:
+              typeof payload.operationId === 'string'
+                ? payload.operationId
+                : `surface-draft-${crypto.randomUUID()}`,
+            progressKey:
+              typeof payload.progressKey === 'string'
+                ? payload.progressKey
+                : 'mesh.surface.draft.create',
+            draftId:
+              typeof payload.draftId === 'string'
+                ? payload.draftId
+                : `surface-draft-${crypto.randomUUID()}`,
+            name: typeof payload.name === 'string' ? payload.name : 'DGM surface',
+            sources: entityIds.map((entityId) => ({
+              entityId,
+              role:
+                projectRef.current?.entities[entityId]?.kind === 'Polyline3D'
+                  ? 'breakline'
+                  : 'points',
+            })),
+            rules: surfaceRulesFromPayload(payload.rules),
+          });
+          return;
+        }
+        case 'mesh.surface.check': {
+          const payload = automationPayload(invocation.payload);
+          if (typeof payload.draftId !== 'string')
+            throw new TypeError('mesh.surface.check requires draftId.');
+          await (await ensureCanonicalProject()).checkSurface(payload.draftId);
+          return;
+        }
+        case 'mesh.surface.draft.apply_fix': {
+          const payload = automationPayload(invocation.payload);
+          if (
+            typeof payload.draftId !== 'string' ||
+            typeof payload.errorId !== 'string' ||
+            !['drop', 'snap', 'split', 'exclude'].includes(String(payload.fix))
+          ) {
+            throw new TypeError('mesh.surface.draft.apply_fix requires draftId, errorId, and fix.');
+          }
+          await (
+            await ensureCanonicalProject()
+          ).fixSurface(
+            payload.draftId,
+            payload.errorId,
+            payload.fix as 'drop' | 'snap' | 'split' | 'exclude',
+            typeof payload.authoritySourceId === 'string' ? payload.authoritySourceId : undefined,
+          );
+          return;
+        }
+        case 'mesh.surface.create': {
+          const payload = automationPayload(invocation.payload);
+          if (
+            (invocation.source === 'ribbon' || invocation.source === 'contextMenu') &&
+            typeof payload.draftId !== 'string'
+          ) {
+            setDgmOpen(true);
+            return;
+          }
+          if (typeof payload.draftId !== 'string')
+            throw new TypeError('mesh.surface.create requires draftId.');
+          const session = await ensureCanonicalProject();
+          const result = await session.publishSurface({
+            operationId:
+              typeof payload.operationId === 'string'
+                ? payload.operationId
+                : `surface-create-${crypto.randomUUID()}`,
+            progressKey:
+              typeof payload.progressKey === 'string' ? payload.progressKey : 'mesh.surface.create',
+            draftId: payload.draftId,
+            outputEntityId:
+              typeof payload.outputEntityId === 'string'
+                ? payload.outputEntityId
+                : `surface-${crypto.randomUUID()}`,
+          });
+          setProject(session.projectSnapshot());
+          await reloadCanonicalResidency();
+          logEvent(
+            'info',
+            'renderer',
+            `mesh.surface.create · ${result.triangles.toLocaleString()} triangles`,
+          );
+          return;
+        }
         case 'file.import': {
           const envelope = invocation.payload as
             | { readonly payload?: { readonly paths?: readonly string[] } }
@@ -3105,16 +3468,13 @@ export function App(): JSX.Element {
         }
         case 'view.top':
         case 'view.2d':
-          setNavigationMode('2d');
           void viewportRef.current?.setViewMode('2d');
           return;
         case 'view.orbit':
         case 'view.3d':
-          setNavigationMode('3d');
           void viewportRef.current?.setViewMode('3d');
           return;
         case 'view.2.5d':
-          setNavigationMode('2.5d');
           void viewportRef.current?.setViewMode('2.5d');
           return;
         case 'view.clip.clear':
@@ -3474,18 +3834,43 @@ export function App(): JSX.Element {
     fields[next]?.focus();
     fields[next]?.select();
   }, []);
-  const routeConstructionTyping = useCallback((key: string): void => {
-    if (!/^[0-9.,+-]$/u.test(key)) return;
-    const field = constructionBarFields()[0];
-    if (!field) return;
-    field.focus();
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    setter?.call(field, key);
-    field.dispatchEvent(new Event('input', { bubbles: true }));
-    field.setSelectionRange(key.length, key.length);
-  }, []);
+  const routeConstructionTyping = useCallback(
+    (key: string): void => {
+      if (!/^[0-9.,+-]$/u.test(key)) return;
+      const field =
+        (drawToolStore.snapshot().vertices.length > 0
+          ? document.querySelector<HTMLInputElement>(
+              '[data-construction-input="armed"] input[aria-label="Dist m"]',
+            )
+          : null) ?? constructionBarFields()[0];
+      if (!field) return;
+      field.focus();
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(field, key);
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      field.setSelectionRange(key.length, key.length);
+    },
+    [drawToolStore],
+  );
   const commitConstructionInput = useCallback((): void => {
     const point = constructionInputStore.commit();
+    if (drawToolStore.snapshot().armed) {
+      const input = constructionInputStore.snapshot();
+      const operation =
+        input.mode === 'constrain'
+          ? drawToolStore.acceptConstraint(
+              input.values.direction,
+              input.values.distance,
+              input.verticalMode === 'slope'
+                ? { kind: 'slope', value: input.values.slope }
+                : { kind: 'deltaZ', value: input.values.deltaZ },
+            )
+          : drawToolStore.acceptTyped(point);
+      void operation.catch((error: unknown) =>
+        logEvent('error', 'renderer', `Draw vertex failed: ${String(error)}`),
+      );
+      return;
+    }
     if (measurementToolStore.snapshot().armed) {
       void measurementToolStore
         .acceptTyped(point)
@@ -3520,18 +3905,71 @@ export function App(): JSX.Element {
     activeFunctionId,
     closeSegmentFence,
     constructionInputStore,
+    drawToolStore,
     measurementToolStore,
     placeViewingBoxAt,
   ]);
-  const acceptMeasurementPreview = useCallback((): void => {
+  const acceptConstructionPreview = useCallback((): void => {
+    if (drawToolStore.snapshot().armed) {
+      void drawToolStore
+        .acceptPreview()
+        .catch((error: unknown) => logEvent('error', 'renderer', `Draw failed: ${String(error)}`));
+      return;
+    }
     if (!measurementToolStore.snapshot().armed) return;
     void measurementToolStore
       .acceptPreview()
       .catch((error: unknown) =>
         logEvent('error', 'renderer', `Measurement failed: ${String(error)}`),
       );
-  }, [measurementToolStore]);
+  }, [drawToolStore, measurementToolStore]);
+  const finishDraw = useCallback(
+    async (close: boolean): Promise<void> => {
+      const draw = drawToolStore.snapshot();
+      if (!draw.armed) return;
+      try {
+        if (await drawToolStore.finish(close || draw.kind === 'boundary')) {
+          constructionInputStore.disarm();
+          setConstructionClaimGeneration((generation) => generation + 1);
+        }
+      } catch (error) {
+        logEvent('error', 'renderer', `Draw finish failed: ${String(error)}`);
+      }
+    },
+    [constructionInputStore, drawToolStore],
+  );
+  const undoDrawVertex = useCallback(async (): Promise<void> => {
+    try {
+      await drawToolStore.undoVertex();
+      setConstructionClaimGeneration((generation) => generation + 1);
+    } catch (error) {
+      logEvent('error', 'renderer', `Undo vertex failed: ${String(error)}`);
+    }
+  }, [drawToolStore]);
+  const cancelDrawAll = useCallback(async (): Promise<void> => {
+    try {
+      if (await drawToolStore.cancelAll()) {
+        constructionInputStore.disarm();
+        if (activeFunctionId) closeFunction(activeFunctionId);
+      }
+    } catch (error) {
+      logEvent('error', 'renderer', `Cancel draw failed: ${String(error)}`);
+    }
+  }, [activeFunctionId, closeFunction, constructionInputStore, drawToolStore]);
   const cancelConstructionTool = useCallback((): void => {
+    if (constructionInputStore.revertField()) {
+      setConstructionClaimGeneration((generation) => generation + 1);
+      return;
+    }
+    if (drawToolStore.revertPending()) {
+      setConstructionClaimGeneration((generation) => generation + 1);
+      return;
+    }
+    if (drawToolStore.cancel()) {
+      constructionInputStore.disarm();
+      if (activeFunctionId) closeFunction(activeFunctionId);
+      return;
+    }
     if (measurementToolStore.cancel()) {
       constructionInputStore.disarm();
       if (activeFunctionId) closeFunction(activeFunctionId);
@@ -3548,7 +3986,13 @@ export function App(): JSX.Element {
       return;
     }
     setPlacingViewingBoxCenter(false);
-  }, [activeFunctionId, closeFunction, constructionInputStore, measurementToolStore]);
+  }, [
+    activeFunctionId,
+    closeFunction,
+    constructionInputStore,
+    drawToolStore,
+    measurementToolStore,
+  ]);
   useEffect(() => {
     if (activeFunctionId !== 'pointcloud.fence.begin') return;
     const handle = (event: KeyboardEvent): void => {
@@ -3760,6 +4204,20 @@ export function App(): JSX.Element {
                 onSelect={selectMeasurement}
                 onDelete={(entityId) => void deleteMeasurement(entityId)}
               />
+            ) : isDrawFunction(activeFunctionId) ? (
+              <DrawPanel
+                tool={drawTool}
+                constructionPreview={constructionInput.preview}
+                snapKinds={drawSnapKinds}
+                onRoleChange={(role) => drawToolStore.setRole(role)}
+                onSnapKindChange={(kind, enabled) =>
+                  setDrawSnapKinds((current) => ({ ...current, [kind]: enabled }))
+                }
+                onFinish={() => void finishDraw(false)}
+                onClose={() => void finishDraw(true)}
+                onUndoVertex={() => void undoDrawVertex()}
+                onCancel={() => void cancelDrawAll()}
+              />
             ) : activeFunctionId === 'pointcloud.fence.begin' ? (
               <PointcloudSegmentPanel
                 fenceKind={segmentFence.kind}
@@ -3862,8 +4320,14 @@ export function App(): JSX.Element {
                   detached={constructionDetached}
                   onDetachedChange={setConstructionDetached}
                   onFieldFocus={(field) => constructionInputStore.focus(field)}
+                  onFieldChange={(field, value) => constructionInputStore.setField(field, value)}
                   onFieldCommit={(field, value) => constructionInputStore.setField(field, value)}
-                  onCommit={commitConstructionInput}
+                  onCommit={(field) => {
+                    // Direction Enter locks the snapped heading. Length (or an
+                    // absolute coordinate/vertical field) completes the point.
+                    if (drawToolStore.snapshot().armed && field === 'direction') return;
+                    commitConstructionInput();
+                  }}
                   onCycleCandidate={(direction) => viewportRef.current?.cycleCandidate(direction)}
                 />
               ) : undefined
@@ -3882,7 +4346,6 @@ export function App(): JSX.Element {
                   selectionStore.setGranularity(value ? 'segments' : 'whole')
                 }
                 onViewModeChange={(mode) => {
-                  setNavigationMode(mode);
                   void viewportRef.current?.setViewMode(mode);
                 }}
                 onSelectableKindChange={(kind, value) =>
@@ -3897,12 +4360,38 @@ export function App(): JSX.Element {
                 key={viewportEpoch}
                 ref={viewportRef}
                 pointSize={pointSize}
+                onViewModeSettled={setNavigationMode}
                 onCursorSnap={(nextSnap) => {
                   setSnap(nextSnap);
+                  if (drawToolStore.snapshot().armed) {
+                    const source = nextSnap?.entity
+                      ? canonicalSessionRef.current?.canonicalEntity(nextSnap.entity)
+                      : null;
+                    const enabled = nextSnap ? drawSnapEnabled(nextSnap, drawSnapKinds) : false;
+                    drawToolStore.pointer(
+                      nextSnap?.position.z != null && nextSnap.target?.exact && source && enabled
+                        ? {
+                            kind: 'pick',
+                            point: {
+                              x: nextSnap.position.x,
+                              y: nextSnap.position.y,
+                              z: nextSnap.position.z,
+                            },
+                            snapKind: drawSnapLabel(nextSnap),
+                            sourceEntityId: source.id,
+                            sourceRevision: source.revision,
+                            providerId: nextSnap.target.datasetKind,
+                            primitiveAddress: JSON.stringify(nextSnap.target.primitive),
+                          }
+                        : null,
+                    );
+                  }
                   if (
                     constructionInputStore.snapshot().armed &&
                     constructionInputStore.snapshot().declaration?.toolId !==
                       'pointcloud.fence.rectangle.extents' &&
+                    (!drawToolStore.snapshot().armed ||
+                      (nextSnap !== null && drawSnapEnabled(nextSnap, drawSnapKinds))) &&
                     nextSnap?.position.z !== null &&
                     nextSnap?.position.z !== undefined
                   ) {
@@ -3995,10 +4484,13 @@ export function App(): JSX.Element {
                     ? null
                     : (constructionInput.declaration?.toolId ?? null)
                 }
+                constructionOrigin={drawTool.vertices.at(-1)?.point ?? null}
                 onConstructionTab={traverseConstructionBar}
                 onConstructionTyping={routeConstructionTyping}
                 onConstructionCancel={cancelConstructionTool}
-                onConstructionClick={acceptMeasurementPreview}
+                onConstructionClick={acceptConstructionPreview}
+                onConstructionFinish={() => void finishDraw(false)}
+                onConstructionUndo={() => void undoDrawVertex()}
                 onViewportPoint={placeViewingBoxAt}
                 onViewportBox={createViewingBoxFromViewportDrag}
                 onViewingBoxChange={commitCanonicalViewingBox}
@@ -4057,6 +4549,13 @@ export function App(): JSX.Element {
                 selected={selected}
                 onSelect={selectMeasurement}
               />
+              <DrawViewportOverlay
+                viewport={viewportRef.current}
+                tool={drawTool}
+                curves={drawCurves}
+                supportVisible={display.state.supportOverlay}
+                constructionPreview={constructionInput.preview}
+              />
               <GroundPreviewOverlay viewport={viewportRef.current} result={groundPreview} />
             </div>
           </ViewportInteractionChrome>
@@ -4076,6 +4575,24 @@ export function App(): JSX.Element {
       {planOpen ? (
         <FloatingTaskIsland onRequestClose={() => setPlanOpen(false)}>
           <PlanIsland onClose={() => setPlanOpen(false)} />
+        </FloatingTaskIsland>
+      ) : null}
+      {dgmOpen && canonicalSessionRef.current ? (
+        <FloatingTaskIsland onRequestClose={() => setDgmOpen(false)}>
+          <DgmCreationWindow
+            session={canonicalSessionRef.current}
+            candidates={dgmCandidates}
+            onClose={() => setDgmOpen(false)}
+            onPublished={(surface) => {
+              setPropertyRefresh((revision) => revision + 1);
+              void reloadCanonicalResidency();
+              logEvent(
+                'info',
+                'renderer',
+                `mesh.surface.create · ${surface.triangles.toLocaleString()} triangles · ${surface.area.toFixed(2)} m² · Z ${surface.zRange[0].toFixed(2)}–${surface.zRange[1].toFixed(2)} m`,
+              );
+            }}
+          />
         </FloatingTaskIsland>
       ) : null}
       {agentOpen && window.himmelcad ? (
@@ -4320,6 +4837,79 @@ function measurementKindForFunction(id: string | null): MeasurementToolKind | nu
   if (id === 'measure.distance') return 'distance';
   if (id === 'measure.dz') return 'heightDifference';
   return null;
+}
+
+function drawKindForFunction(id: string | null): DrawToolKind | null {
+  if (id === 'draw.line') return 'line';
+  if (id === 'draw.polyline') return 'polyline';
+  if (id === 'draw.boundary') return 'boundary';
+  return null;
+}
+
+function isDrawFunction(id: string | null): boolean {
+  return drawKindForFunction(id) !== null;
+}
+
+function drawKindLabel(kind: DrawToolKind): string {
+  return kind === 'line' ? 'Line' : kind === 'polyline' ? 'Polyline' : 'Boundary polygon';
+}
+
+function drawSnapLabel(snap: SnapResult): DrawSnapKind | null {
+  if (snap.source === 'point-cloud') return 'cloudPoint';
+  const semantic = snap.candidateId?.split(':', 1)[0];
+  if (semantic === 'midpoint') return 'mid';
+  if (semantic === 'intersection') return 'intersection';
+  if (semantic === 'perpendicular') return 'perpendicular';
+  if (snap.kind === 'Point') return 'point';
+  if (snap.kind === 'Vertex') return 'end';
+  return null;
+}
+
+function drawSnapEnabled(
+  snap: SnapResult,
+  enabled: Readonly<Record<DrawSnapKind, boolean>>,
+): boolean {
+  const kind = drawSnapLabel(snap);
+  return kind !== null && enabled[kind];
+}
+
+function drawVerticesFromPayload(value: unknown): readonly {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new TypeError('vertices must be an array of XYZ coordinates.');
+  return value.map((item) => drawPointFromPayload(item));
+}
+
+function drawPointFromPayload(value: unknown): {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+} {
+  if (!value || typeof value !== 'object')
+    throw new TypeError('Draw vertex must be an XYZ object.');
+  const point = value as Record<string, unknown>;
+  return {
+    x: finiteNumber(point.x, 'x'),
+    y: finiteNumber(point.y, 'y'),
+    z: finiteNumber(point.z, 'z'),
+  };
+}
+
+function drawRoleFromPayload(value: unknown, kind: DrawToolKind): DrawRole {
+  if (kind === 'boundary') return 'boundary';
+  if (value === undefined) return 'plain';
+  if (value === 'plain' || value === 'breakline') return value;
+  throw new TypeError('Draw role must be plain or breakline for this tool.');
+}
+
+function finiteNumber(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new TypeError(`${label} must be finite.`);
+  }
+  return value;
 }
 
 function isMeasurementFunction(id: string | null): boolean {
@@ -5177,6 +5767,37 @@ function groundParametersFromPayload(value: unknown): GroundExtractionParameters
   };
 }
 
+function surfaceRulesFromPayload(value: unknown): SurfaceRules {
+  const input = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  const positive = (key: string, fallback: number): number => {
+    const candidate = Number(input[key] ?? fallback);
+    if (!Number.isFinite(candidate) || candidate <= 0)
+      throw new TypeError(`${key} must be positive.`);
+    return candidate;
+  };
+  return {
+    maximumEdgeLength: positive('maximumEdgeLength', 25),
+    thinCloudSpacing: positive('thinCloudSpacing', 0.25),
+    xyTolerance: positive('xyTolerance', 0.001),
+    zTolerance: Math.max(0, Number(input.zTolerance ?? 0.001)),
+    excludeOutsideBoundary: input.excludeOutsideBoundary !== false,
+    breaklineExclusionDistance:
+      input.breaklineExclusionDistance == null
+        ? null
+        : positive('breaklineExclusionDistance', 0.25),
+    autoBoundary: input.autoBoundary !== false,
+    cropPolyline: Array.isArray(input.cropPolyline)
+      ? input.cropPolyline.flatMap((item) =>
+          Array.isArray(item) &&
+          item.length === 2 &&
+          item.every((coordinate) => Number.isFinite(Number(coordinate)))
+            ? [[Number(item[0]), Number(item[1])] as const]
+            : [],
+        )
+      : [],
+  };
+}
+
 function sampleParametersFromPayload(value: unknown): PointcloudSampleParameters {
   const defaults: PointcloudSampleParameters = {
     method: 'distance',
@@ -5310,12 +5931,7 @@ function isViewingBoxPoint(
 function isPositiveViewingBoxPoint(
   value: unknown,
 ): value is { readonly x: number; readonly y: number; readonly z: number } {
-  return (
-    isViewingBoxPoint(value) &&
-    value.x > 0 &&
-    value.y > 0 &&
-    value.z > 0
-  );
+  return isViewingBoxPoint(value) && value.x > 0 && value.y > 0 && value.z > 0;
 }
 
 function isViewingBoxRotation(value: unknown): value is readonly [number, number, number, number] {

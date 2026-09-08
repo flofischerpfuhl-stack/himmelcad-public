@@ -212,6 +212,34 @@ void test('G-B2-PC-MEAN-SAMPLE P11 rows share the generated UI and automation ta
   assert.match(rows.get('pointcloud.rasterize')!.ownerSpec, /owner: mesh-terrain/u);
 });
 
+void test('G-B2-MESH-DRAFT-RULES P11 draft, check, fix, and publish share one table', () => {
+  const rows = new Map(COMMAND_REGISTRY.map((entry) => [entry.id, entry]));
+  for (const id of [
+    'mesh.surface.draft.create',
+    'mesh.surface.check',
+    'mesh.surface.draft.apply_fix',
+    'mesh.surface.create',
+  ] as const) {
+    const row = rows.get(id);
+    assert.ok(row, id);
+    assert.deepEqual(row.products, ['builder'], id);
+    assert.equal(row.surfaces.console, true, id);
+    assert.equal(row.surfaces.automation, true, id);
+    assert.match(row.ownerSpec, /owner: mesh-terrain/u, id);
+  }
+  const publish = rows.get('mesh.surface.create')!;
+  assert.equal(publish.surfaces.ribbon, true);
+  assert.equal(publish.surfaces.contextMenu, true);
+  assert.equal(publish.allowMultiSelect, true);
+  assert.deepEqual(publish.entityKinds, [
+    'PointCloud',
+    'SinglePoint',
+    'Polyline3D',
+    'Surface',
+    'DigitalElevationModel',
+  ]);
+});
+
 void test('G-B2-PC-MEAN-SAMPLE automation preserves typed methods, origin and empty policy', async () => {
   const calls: CommandInvocation[] = [];
   const context = base({

@@ -665,7 +665,7 @@ async function runCameraPaths({ frames }) {
     });
   };
 
-  await session.setViewMode('3d', 0);
+  await handle.setViewMode('3d', { durationMilliseconds: 0 });
   await sample('orbit', (index, count) => {
     camera.orbit((Math.PI * 2) / count, Math.sin((index / count) * Math.PI * 2) * 0.0015);
   });
@@ -704,10 +704,31 @@ async function runCameraPaths({ frames }) {
 
   const transitionStartFrameId = session.diagnosticsSnapshot(1).lastFrames.at(-1)?.frameId ?? 0;
   const transitionInputAt = performance.now();
+  const historyBefore = await handle.cameraHistory('clear');
   session.recordInput('transition-3d-to-2d', transitionInputAt);
-  await session.setViewMode('2d', 180);
+  const to2d = handle.setViewMode('2d');
+  await new Promise((resolvePromise) => requestAnimationFrame(resolvePromise));
+  const firstMidBlend = {
+    semanticMode: session.currentViewMode(),
+    history: await handle.cameraHistory('get'),
+  };
+  await to2d;
+  const after2d = {
+    semanticMode: session.currentViewMode(),
+    history: await handle.cameraHistory('get'),
+  };
   session.recordInput('transition-2d-to-3d', performance.now());
-  await session.setViewMode('3d', 180);
+  const to3d = handle.setViewMode('3d');
+  await new Promise((resolvePromise) => requestAnimationFrame(resolvePromise));
+  const secondMidBlend = {
+    semanticMode: session.currentViewMode(),
+    history: await handle.cameraHistory('get'),
+  };
+  await to3d;
+  const after3d = {
+    semanticMode: session.currentViewMode(),
+    history: await handle.cameraHistory('get'),
+  };
   const transitionDiagnostics = session.diagnostics();
   const transitionFrames = session
     .diagnosticsSnapshot(120)
@@ -723,6 +744,13 @@ async function runCameraPaths({ frames }) {
       gpuTimingSaturatedFrames: transitionDiagnostics.gpuFrameTiming.saturatedFrames,
     },
     transitionElapsedMs: performance.now() - transitionInputAt,
+    transitionStateMachine: {
+      historyBefore,
+      firstMidBlend,
+      after2d,
+      secondMidBlend,
+      after3d,
+    },
     runtimeQuality: transitionDiagnostics.runtimeQuality,
     residency: transitionDiagnostics.streaming.residencyStageCounts,
   });

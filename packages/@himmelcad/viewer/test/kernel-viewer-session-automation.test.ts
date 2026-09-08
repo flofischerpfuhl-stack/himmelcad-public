@@ -83,9 +83,9 @@ void test('session view-mode promise waits for the navigation transition to sett
   const session = sessionHarness({
     viewModeRequestGeneration: 0,
     navigationState: {
-      setViewMode: (): Promise<void> =>
-        new Promise<void>((resolve) => {
-          releaseTransition = resolve;
+      setViewMode: (): Promise<KernelViewMode> =>
+        new Promise<KernelViewMode>((resolve) => {
+          releaseTransition = () => resolve('2d');
         }),
     },
     scene: {
@@ -102,11 +102,12 @@ void test('session view-mode promise waits for the navigation transition to sett
   });
   await Promise.resolve();
   await Promise.resolve();
-  assert.deepEqual(committed, ['2d']);
+  assert.deepEqual(committed, [], 'semantic scene mode must not commit mid-blend');
   assert.equal(settled, false);
 
   releaseTransition();
   await changed;
+  assert.deepEqual(committed, ['2d']);
   assert.equal(settled, true);
 });
 

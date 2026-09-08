@@ -89,6 +89,7 @@ const ALLOWED_METHODS = new Set([
   'automation.bulk.release',
   'view.state.get',
   'view.state.set',
+  'view.mode.set',
   'view.diagnostics.get',
   'view.diagnostics.sample',
   'view.quality.get',
@@ -134,6 +135,7 @@ const ALLOWED_APP_METHODS = new Set([
 const VIEW_METHODS = new Set([
   'view.state.get',
   'view.state.set',
+  'view.mode.set',
   'view.diagnostics.get',
   'view.diagnostics.sample',
   'view.quality.get',

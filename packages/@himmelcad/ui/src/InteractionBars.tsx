@@ -150,8 +150,9 @@ export interface ConstructionBarProps {
   readonly detached?: boolean;
   readonly onDetachedChange?: (detached: boolean) => void;
   readonly onFieldFocus?: (field: ConstructionInputField['id']) => void;
+  readonly onFieldChange?: (field: ConstructionInputField['id'], value: number) => void;
   readonly onFieldCommit?: (field: ConstructionInputField['id'], value: number) => void;
-  readonly onCommit?: () => void;
+  readonly onCommit?: (field: ConstructionInputField['id']) => void;
   readonly onCycleCandidate?: (direction: 1 | -1) => void;
 }
 
@@ -165,6 +166,7 @@ export function ConstructionBar({
   detached = false,
   onDetachedChange,
   onFieldFocus,
+  onFieldChange,
   onFieldCommit,
   onCommit,
   onCycleCandidate,
@@ -215,9 +217,12 @@ export function ConstructionBar({
               {...(field.unit ? { unit: field.unit } : {})}
               precision={field.id === 'direction' ? 4 : 3}
               onFocus={() => onFieldFocus?.(field.id)}
+              onValueChange={(value) => {
+                if (value !== null) onFieldChange?.(field.id, value);
+              }}
               onCommit={(value) => {
                 onFieldCommit?.(field.id, value);
-                onCommit?.();
+                onCommit?.(field.id);
               }}
             />
           </label>

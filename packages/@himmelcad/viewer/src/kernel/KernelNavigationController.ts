@@ -36,6 +36,10 @@ export interface KernelNavigationTarget {
     to: KernelWorldCamera,
     progress: number,
     floatingOrigin: readonly [number, number, number],
+    cursorAnchor?: {
+      readonly world: KernelWorldPoint;
+      readonly ndc: readonly [number, number];
+    },
   ): void;
   pick(x: number, y: number, radius?: number): Promise<KernelPickResult>;
   entityHasKnownSourceHeight?(entityId: string): boolean;
@@ -63,10 +67,54 @@ export interface KernelNavigationCallbacks {
 /** Shared scene/acquisition mode. Both plan modes use one camera and winner. */
 export type KernelViewMode = '3d' | '2d' | '2.5d';
 
+export interface KernelCameraContinuumState {
+  readonly fromMode: KernelViewMode;
+  readonly toMode: KernelViewMode;
+  readonly progress: number;
+  readonly fromCamera: KernelWorldCamera;
+  readonly toCamera: KernelWorldCamera;
+  readonly cursorAnchor: KernelWorldPoint;
+  readonly cursorNdc: readonly [number, number];
+}
+
+export interface KernelViewModeTransitionOptions {
+  readonly durationMilliseconds?: number;
+  readonly cursorAnchor?: KernelWorldPoint;
+  readonly cursorNdc?: readonly [number, number];
+}
+
 type DragMode = 'orbit' | 'pan';
 type ClaimedDragRow = 'lmbDrag' | 'rmbDrag' | 'mmbDrag';
 const LOCAL_SECTION_CLIP_SCOPE = 'kernel-local-section-view';
 const LOCAL_SECTION_CLIP_ID = 'kernel-local-section-depth';
+export const DEFAULT_CAMERA_CONTINUUM_DURATION_MS = 250;
+const ESCAPE_CAMERA_CONTINUUM_DURATION_MS = 100;
+const TRANSITION_COMMIT_BLOCK_REASON = 'Finish or cancel view transition';
+
+interface TransitionCompletion {
+  readonly promise: Promise<boolean>;
+  readonly resolve: (settled: boolean) => void;
+  readonly reject: (reason: unknown) => void;
+}
+
+interface ActiveCameraTransition {
+  readonly pair: KernelCameraTransitionPair;
+  readonly origin: readonly [number, number, number];
+  readonly durationMilliseconds: number;
+  readonly startedAt: number;
+  readonly completion: TransitionCompletion;
+  readonly anchor: {
+    readonly world: KernelWorldPoint;
+    readonly ndc: readonly [number, number];
+  } | null;
+  readonly mode: {
+    readonly rootFromMode: KernelViewMode;
+    readonly rootFromCamera: KernelWorldCamera;
+    readonly toMode: KernelViewMode;
+    readonly publishSettlement: boolean;
+  } | null;
+  progress: number;
+}
 
 /**
  * DOM input adapter for the shared kernel camera. It owns no geometry or view
@@ -91,10 +139,8 @@ export class KernelNavigationController {
   private cursorPresentationPosition: KernelWorldPoint | null = null;
   private viewMode: KernelViewMode = '3d';
   private transitionGeneration = 0;
-  private pendingTransition: {
-    readonly resolve: () => void;
-    readonly reject: (reason: unknown) => void;
-  } | null = null;
+  private activeTransition: ActiveCameraTransition | null = null;
+  private readonly removeTransitionEscapeRung: (() => void) | null;
   private enabled = true;
   private pointerInteracting = false;
   private pointerMotionTimer: ReturnType<typeof setTimeout> | null = null;
@@ -139,6 +185,9 @@ export class KernelNavigationController {
       callbacks.registerEscapeRung,
     );
     this.previousTabIndex = canvas.tabIndex;
+    this.removeTransitionEscapeRung =
+      callbacks.registerEscapeRung?.('tool', () => this.escapeCameraTransition(), { order: 1 }) ??
+      null;
     if (canvas.tabIndex < 0) canvas.tabIndex = 0;
     canvas.addEventListener('pointerdown', this.onPointerDown);
     canvas.addEventListener('pointermove', this.onPointerMove);
@@ -203,34 +252,105 @@ export class KernelNavigationController {
     return this.viewMode;
   }
 
+  cameraContinuumState(): KernelCameraContinuumState | null {
+    const transition = this.activeTransition;
+    if (!transition?.mode) return null;
+    return Object.freeze({
+      fromMode: transition.mode.rootFromMode,
+      toMode: transition.mode.toMode,
+      progress: transition.progress,
+      fromCamera: transition.pair.from,
+      toCamera: transition.pair.to,
+      cursorAnchor: transition.anchor?.world ?? transition.pair.from.target,
+      cursorNdc: transition.anchor?.ndc ?? ([0, 0] as const),
+    });
+  }
+
   /**
    * Changes shared view semantics. 2D and 2.5D never move the camera; only a
    * 3D/plan boundary runs the perspective/orthographic morph.
    */
-  async setViewMode(mode: KernelViewMode, durationMilliseconds = 180): Promise<void> {
+  async setViewMode(
+    mode: KernelViewMode,
+    options: number | KernelViewModeTransitionOptions = DEFAULT_CAMERA_CONTINUUM_DURATION_MS,
+  ): Promise<KernelViewMode> {
     this.assertAlive();
-    if (mode === this.viewMode) return;
-    const wasPlan = isPlanViewMode(this.viewMode);
-    const becomesPlan = isPlanViewMode(mode);
-    this.viewMode = mode;
-    if (wasPlan !== becomesPlan) {
-      if (becomesPlan) this.clearLocalSectionDepth();
-      const transition = this.camera.setLockedTopDown(becomesPlan);
-      const settled = this.applyCameraTransition(transition, durationMilliseconds);
+    const active = this.activeTransition?.mode ? this.activeTransition : null;
+    if (mode === this.viewMode && active === null) return this.viewMode;
+    if (active === null && isPlanViewMode(mode) && isPlanViewMode(this.viewMode)) {
+      this.viewMode = mode;
       this.republishCurrentAcquisition();
       this.callbacks.onViewModeChanged?.(mode);
       this.callbacks.requestFrame?.();
-      await settled;
-      return;
+      return this.viewMode;
     }
-    this.republishCurrentAcquisition();
-    this.callbacks.onViewModeChanged?.(mode);
-    this.callbacks.requestFrame?.();
+    if (active?.mode?.toMode === mode) {
+      await active.completion.promise;
+      return this.viewMode;
+    }
+    const durationMilliseconds =
+      typeof options === 'number'
+        ? options
+        : (options.durationMilliseconds ?? DEFAULT_CAMERA_CONTINUUM_DURATION_MS);
+    const rootFromMode = active?.mode?.rootFromMode ?? this.viewMode;
+    const rootFromCamera = active?.mode?.rootFromCamera ?? this.camera.worldCamera();
+    const fromCamera = active
+      ? interpolateKernelWorldCamera(active.pair, active.progress)
+      : this.camera.worldCamera();
+    this.cancelCameraTransition();
+    this.camera.adoptWorldCamera(fromCamera);
+    if (isPlanViewMode(mode)) this.clearLocalSectionDepth();
+    let transition: KernelCameraTransitionPair;
+    if (mode === rootFromMode) {
+      this.camera.adoptWorldCamera(rootFromCamera);
+      transition = { from: fromCamera, to: this.camera.worldCamera() };
+    } else {
+      this.camera.setLockedTopDown(isPlanViewMode(mode));
+      transition = { from: fromCamera, to: this.camera.worldCamera() };
+    }
+    const anchor = this.resolveTransitionAnchor(
+      typeof options === 'number' ? undefined : options.cursorAnchor,
+      typeof options === 'number' ? undefined : options.cursorNdc,
+    );
+    if (anchor) {
+      this.camera.panAnchorToPointer(anchor.world, anchor.ndc[0], anchor.ndc[1]);
+      transition = { ...transition, to: this.camera.worldCamera() };
+    }
+    const settled = await this.applyCameraTransition(transition, durationMilliseconds, anchor, {
+      rootFromMode,
+      rootFromCamera,
+      toMode: mode,
+      publishSettlement: true,
+    });
+    if (!settled || this.disposed) return this.viewMode;
+    return this.viewMode;
   }
 
   /** Runs the Rust perspective/orthographic morph and commits its endpoint. */
-  setLockedTopDown(enabled: boolean, durationMilliseconds = 180): Promise<void> {
+  setLockedTopDown(
+    enabled: boolean,
+    durationMilliseconds = DEFAULT_CAMERA_CONTINUUM_DURATION_MS,
+  ): Promise<KernelViewMode> {
     return this.setViewMode(enabled ? '2d' : '3d', durationMilliseconds);
+  }
+
+  /** Retargets a preset or restored pose through the same cancellable camera continuum. */
+  async transitionToWorldCamera(
+    destination: KernelWorldCamera,
+    durationMilliseconds = DEFAULT_CAMERA_CONTINUUM_DURATION_MS,
+  ): Promise<boolean> {
+    this.assertAlive();
+    const active = this.activeTransition;
+    const from = active
+      ? interpolateKernelWorldCamera(active.pair, active.progress)
+      : this.camera.worldCamera();
+    this.cancelCameraTransition();
+    this.camera.adoptWorldCamera(destination);
+    return await this.applyCameraTransition(
+      { from, to: this.camera.worldCamera() },
+      durationMilliseconds,
+      this.resolveTransitionAnchor(),
+    );
   }
 
   /** Cancels an in-flight morph and publishes one controller-owned camera endpoint. */
@@ -259,7 +379,7 @@ export class KernelNavigationController {
   /** Enters or replaces an arbitrary local section/profile view frame. */
   setLocalOrthographicFrame(
     frame: KernelLocalOrthographicViewFrame,
-    durationMilliseconds = 180,
+    durationMilliseconds = DEFAULT_CAMERA_CONTINUUM_DURATION_MS,
   ): void {
     this.assertAlive();
     this.clearLocalSectionDepth();
@@ -268,7 +388,10 @@ export class KernelNavigationController {
   }
 
   /** Enters a local profile/section frame and composes its optional depth slab. */
-  setLocalSectionView(view: KernelLocalSectionView, durationMilliseconds = 180): void {
+  setLocalSectionView(
+    view: KernelLocalSectionView,
+    durationMilliseconds = DEFAULT_CAMERA_CONTINUUM_DURATION_MS,
+  ): void {
     this.assertAlive();
     const volume =
       view.sectionDepth === undefined || view.sectionDepth === null
@@ -285,7 +408,10 @@ export class KernelNavigationController {
   }
 
   /** Morphs to an exact user-authored world-space perspective standpoint. */
-  setPerspectiveViewpoint(viewpoint: KernelPerspectiveViewpoint, durationMilliseconds = 180): void {
+  setPerspectiveViewpoint(
+    viewpoint: KernelPerspectiveViewpoint,
+    durationMilliseconds = DEFAULT_CAMERA_CONTINUUM_DURATION_MS,
+  ): void {
     this.assertAlive();
     this.clearLocalSectionDepth();
     const transition = this.camera.setPerspectiveViewpoint(viewpoint);
@@ -293,7 +419,10 @@ export class KernelNavigationController {
   }
 
   /** Opens one isolated kernel-owned panorama or oriented-image view. */
-  setRasterAnalysisView(entityId: string, durationMilliseconds = 180): KernelRasterAnalysisView {
+  setRasterAnalysisView(
+    entityId: string,
+    durationMilliseconds = DEFAULT_CAMERA_CONTINUUM_DURATION_MS,
+  ): KernelRasterAnalysisView {
     this.assertAlive();
     this.clearLocalSectionDepth();
     const view = this.viewer.setRasterAnalysisView(entityId);
@@ -317,7 +446,7 @@ export class KernelNavigationController {
   }
 
   /** Leaves the active image view and restores its captured mixed-scene camera. */
-  clearRasterAnalysisView(durationMilliseconds = 180): void {
+  clearRasterAnalysisView(durationMilliseconds = DEFAULT_CAMERA_CONTINUUM_DURATION_MS): void {
     this.assertAlive();
     const kind = this.rasterAnalysisKind;
     if (!kind) return;
@@ -331,7 +460,7 @@ export class KernelNavigationController {
   }
 
   /** Leaves a local section/profile frame and restores its captured 3D camera. */
-  clearLocalOrthographicFrame(durationMilliseconds = 180): void {
+  clearLocalOrthographicFrame(durationMilliseconds = DEFAULT_CAMERA_CONTINUUM_DURATION_MS): void {
     this.assertAlive();
     this.clearLocalSectionDepth();
     const transition = this.camera.clearLocalOrthographicFrame();
@@ -347,58 +476,167 @@ export class KernelNavigationController {
   private applyCameraTransition(
     transition: KernelCameraTransitionPair | null,
     durationMilliseconds: number,
-  ): Promise<void> {
-    this.cancelCameraTransition();
-    if (!transition) return Promise.resolve();
+    anchor: ActiveCameraTransition['anchor'] = null,
+    mode: ActiveCameraTransition['mode'] = null,
+    completion = createTransitionCompletion(),
+    replacing = false,
+  ): Promise<boolean> {
+    if (!replacing) this.cancelCameraTransition();
+    if (!transition) return Promise.resolve(true);
     const generation = this.transitionGeneration;
     const origin = this.camera.recommendedFloatingOrigin();
     if (!Number.isFinite(durationMilliseconds) || durationMilliseconds <= 0) {
       this.viewer.setWorldCamera(transition.to, origin);
       this.callbacks.onCameraChanged?.(transition.to);
+      if (mode) this.settleSemanticMode(mode);
       this.callbacks.requestFrame?.();
-      return Promise.resolve();
+      return Promise.resolve(true);
     }
     this.transitionInteracting = true;
     this.reportInteraction();
+    this.gestures?.setClaimsBlocked(TRANSITION_COMMIT_BLOCK_REASON);
     const start = performance.now();
-    return new Promise<void>((resolve, reject) => {
-      this.pendingTransition = { resolve, reject };
-      const frame = (timestamp: number): void => {
-        if (this.disposed || generation !== this.transitionGeneration) return;
-        try {
-          const progress = Math.min(1, Math.max(0, (timestamp - start) / durationMilliseconds));
-          this.viewer.setCameraTransition(transition.from, transition.to, progress, origin);
-          this.callbacks.requestFrame?.();
-          if (progress < 1) {
-            requestAnimationFrame(frame);
-            return;
-          }
-          this.viewer.setWorldCamera(transition.to, origin);
-          this.callbacks.onCameraChanged?.(transition.to);
-          this.pendingTransition = null;
-          this.transitionInteracting = false;
-          this.reportInteraction();
-          resolve();
-        } catch (error) {
-          this.pendingTransition = null;
-          this.transitionInteracting = false;
-          this.reportInteraction();
-          reject(error instanceof Error ? error : new Error(String(error)));
+    this.activeTransition = {
+      pair: transition,
+      origin,
+      durationMilliseconds,
+      startedAt: start,
+      completion,
+      anchor,
+      mode,
+      progress: 0,
+    };
+    const frame = (timestamp: number): void => {
+      if (this.disposed || generation !== this.transitionGeneration) return;
+      try {
+        const progress = Math.min(1, Math.max(0, (timestamp - start) / durationMilliseconds));
+        if (this.activeTransition) this.activeTransition.progress = progress;
+        this.viewer.setCameraTransition(
+          transition.from,
+          transition.to,
+          progress,
+          origin,
+          anchor ?? undefined,
+        );
+        this.callbacks.requestFrame?.();
+        if (progress < 1) {
+          requestAnimationFrame(frame);
+          return;
         }
-      };
-      requestAnimationFrame(frame);
-    });
+        this.viewer.setWorldCamera(transition.to, origin);
+        this.callbacks.onCameraChanged?.(transition.to);
+        this.activeTransition = null;
+        this.transitionInteracting = false;
+        this.gestures?.setClaimsBlocked(null);
+        this.reportInteraction();
+        if (mode) this.settleSemanticMode(mode);
+        completion.resolve(true);
+      } catch (error) {
+        this.activeTransition = null;
+        this.transitionInteracting = false;
+        this.gestures?.setClaimsBlocked(null);
+        this.reportInteraction();
+        completion.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    };
+    requestAnimationFrame(frame);
+    return completion.promise;
   }
 
   private cancelCameraTransition(): void {
     this.transitionGeneration += 1;
-    const pending = this.pendingTransition;
-    this.pendingTransition = null;
+    const pending = this.activeTransition;
+    this.activeTransition = null;
+    this.gestures?.setClaimsBlocked(null);
     if (this.transitionInteracting) {
       this.transitionInteracting = false;
       this.reportInteraction();
     }
-    pending?.resolve();
+    pending?.completion.resolve(false);
+  }
+
+  private escapeCameraTransition(): boolean {
+    const active = this.activeTransition;
+    if (!active?.mode) return false;
+    const current = interpolateKernelWorldCamera(active.pair, active.progress);
+    const { rootFromCamera, rootFromMode } = active.mode;
+    const anchor = active.anchor;
+    this.cancelCameraTransition();
+    this.camera.adoptWorldCamera(rootFromCamera);
+    void this.applyCameraTransition(
+      { from: current, to: this.camera.worldCamera() },
+      ESCAPE_CAMERA_CONTINUUM_DURATION_MS,
+      anchor,
+      { rootFromMode, rootFromCamera, toMode: rootFromMode, publishSettlement: false },
+    );
+    return true;
+  }
+
+  private resolveTransitionAnchor(
+    requestedWorld?: KernelWorldPoint,
+    requestedNdc?: readonly [number, number],
+  ): ActiveCameraTransition['anchor'] {
+    const world = requestedWorld ?? this.cursorPresentationPosition ?? this.camera.targetPoint();
+    const ndc = requestedNdc ??
+      (this.latestPickPosition
+        ? this.physicalPointerNdc(this.latestPickPosition[0], this.latestPickPosition[1])
+        : ([0, 0] as const));
+    if (
+      ![world.x, world.y, world.z, ndc[0], ndc[1]].every(Number.isFinite)
+    ) {
+      return null;
+    }
+    return { world, ndc: [clamp(ndc[0], -1, 1), clamp(ndc[1], -1, 1)] };
+  }
+
+  private settleSemanticMode(mode: NonNullable<ActiveCameraTransition['mode']>): void {
+    this.viewMode = mode.toMode;
+    this.republishCurrentAcquisition();
+    if (mode.publishSettlement) this.callbacks.onViewModeChanged?.(mode.toMode);
+  }
+
+  private retargetTransitionAfterEndpointMutation(
+    active: ActiveCameraTransition | null,
+    anchor = this.resolveTransitionAnchor(),
+  ): boolean {
+    if (!active || this.activeTransition !== active) return false;
+    const from = interpolateKernelWorldCamera(active.pair, active.progress);
+    const to = this.camera.worldCamera();
+    this.transitionGeneration += 1;
+    this.activeTransition = null;
+    void this.applyCameraTransition(
+      { from, to },
+      DEFAULT_CAMERA_CONTINUUM_DURATION_MS,
+      anchor,
+      active.mode,
+      active.completion,
+      true,
+    );
+    return true;
+  }
+
+  private orbitRetargetDuringTransition(
+    active: ActiveCameraTransition,
+    deltaYaw: number,
+    deltaPitch: number,
+  ): void {
+    const from = interpolateKernelWorldCamera(active.pair, active.progress);
+    this.transitionGeneration += 1;
+    this.activeTransition = null;
+    this.camera.adoptWorldCamera(from);
+    this.camera.setLockedTopDown(false);
+    if (this.dragPivot) this.camera.orbitAround(deltaYaw, deltaPitch, this.dragPivot);
+    else this.camera.orbit(deltaYaw, deltaPitch);
+    void this.applyCameraTransition(
+      { from, to: this.camera.worldCamera() },
+      DEFAULT_CAMERA_CONTINUUM_DURATION_MS,
+      this.resolveTransitionAnchor(),
+      active.mode
+        ? { ...active.mode, toMode: '3d', publishSettlement: true }
+        : null,
+      active.completion,
+      true,
+    );
   }
 
   dispose(preserveViewerState = false): void {
@@ -407,6 +645,7 @@ export class KernelNavigationController {
     this.rasterAnalysisKind = null;
     this.disposed = true;
     this.cancelCameraTransition();
+    this.removeTransitionEscapeRung?.();
     this.cancelClaimedDrag();
     if (this.wheelInteractionTimer !== null) clearTimeout(this.wheelInteractionTimer);
     if (this.pointerMotionTimer !== null) clearTimeout(this.pointerMotionTimer);
@@ -427,7 +666,10 @@ export class KernelNavigationController {
     if (this.disposed || this.enabled === false) return;
     this.clickGeneration += 1;
     this.canvas.focus({ preventScroll: true });
-    this.dragMode = event.button === 0 && !this.camera.isOrthographicView() ? 'orbit' : 'pan';
+    this.dragMode =
+      event.button === 0 && (!this.camera.isOrthographicView() || this.activeTransition?.mode)
+        ? 'orbit'
+        : 'pan';
     if (event.button !== 0 && event.button !== 1 && event.button !== 2) {
       this.dragMode = null;
       return;
@@ -487,7 +729,16 @@ export class KernelNavigationController {
     this.lastClientY = event.clientY;
     if (deltaX === 0 && deltaY === 0) return;
     this.reportPointerMotion();
-    if (this.dragMode === 'orbit') {
+    const activeTransition = this.activeTransition;
+    let transitionRetargeted = false;
+    if (this.dragMode === 'orbit' && activeTransition) {
+      this.orbitRetargetDuringTransition(
+        activeTransition,
+        -deltaX * 0.005,
+        deltaY * 0.005,
+      );
+      transitionRetargeted = true;
+    } else if (this.dragMode === 'orbit') {
       if (this.dragPivot) this.camera.orbitAround(-deltaX * 0.005, deltaY * 0.005, this.dragPivot);
       else this.camera.orbit(-deltaX * 0.005, deltaY * 0.005);
     } else if (this.dragPivot) {
@@ -498,7 +749,12 @@ export class KernelNavigationController {
     } else {
       this.camera.panPixels(deltaX, deltaY);
     }
-    this.uploadCamera();
+    if (
+      !transitionRetargeted &&
+      !this.retargetTransitionAfterEndpointMutation(activeTransition)
+    ) {
+      this.uploadCamera();
+    }
   };
 
   private readonly onPointerUp = (event: PointerEvent): void => {
@@ -521,7 +777,11 @@ export class KernelNavigationController {
     if (this.pointerMotionTimer !== null) clearTimeout(this.pointerMotionTimer);
     this.pointerMotionTimer = null;
     this.reportInteraction();
-    if (wasCameraGesture && !this.wheelInteracting) this.callbacks.onCameraGestureEnd?.(event.type === 'pointercancel');
+    if (wasCameraGesture && !this.wheelInteracting) {
+      // The owning mode/preset transition publishes the single settled camera
+      // history event. A retargeting gesture must not add a second entry.
+      if (!this.activeTransition) this.callbacks.onCameraGestureEnd?.(event.type === 'pointercancel');
+    }
     if (wasClick) {
       void this.executeClickGesture(event, Math.max(0, event.timeStamp - this.pressTimeStamp));
     }
@@ -550,14 +810,17 @@ export class KernelNavigationController {
       if (this.disposed) return;
       this.wheelInteracting = false;
       this.reportInteraction();
-      if (!this.dragMode) this.callbacks.onCameraGestureEnd?.(false);
+      if (!this.dragMode) {
+        if (!this.activeTransition) this.callbacks.onCameraGestureEnd?.(false);
+      }
       this.queuePick(this.lastClientX, this.lastClientY);
     }, 120);
+    const activeTransition = this.activeTransition;
     const factor = Math.pow(1.0015, clamp(event.deltaY, -2_000, 2_000));
     const anchor = this.cursorPresentationPosition;
     if (anchor) this.camera.zoomAt(factor, anchor);
     else this.camera.zoom(factor);
-    this.uploadCamera();
+    if (!this.retargetTransitionAfterEndpointMutation(activeTransition)) this.uploadCamera();
   };
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
@@ -809,6 +1072,55 @@ export function nearestCandidateIndex(candidates: readonly KernelPickCandidate[]
     }
   }
   return nearest;
+}
+
+/** Samples the camera pose paired with the Rust-owned continuous projection matrix. */
+export function interpolateKernelWorldCamera(
+  transition: KernelCameraTransitionPair,
+  progress: number,
+): KernelWorldCamera {
+  const amount = smoothstep(clamp(progress, 0, 1));
+  const up = normalizeCameraVector(
+    lerpPoint(transition.from.up, transition.to.up, amount),
+  );
+  return {
+    eye: lerpPoint(transition.from.eye, transition.to.eye, amount),
+    target: lerpPoint(transition.from.target, transition.to.target, amount),
+    up,
+    projection: amount < 0.5 ? transition.from.projection : transition.to.projection,
+  };
+}
+
+function createTransitionCompletion(): TransitionCompletion {
+  let resolve = (_settled: boolean): void => undefined;
+  let reject = (_reason: unknown): void => undefined;
+  const promise = new Promise<boolean>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function lerpPoint(
+  from: KernelWorldPoint,
+  to: KernelWorldPoint,
+  amount: number,
+): KernelWorldPoint {
+  return {
+    x: from.x * (1 - amount) + to.x * amount,
+    y: from.y * (1 - amount) + to.y * amount,
+    z: from.z * (1 - amount) + to.z * amount,
+  };
+}
+
+function normalizeCameraVector(value: KernelWorldPoint): KernelWorldPoint {
+  const length = Math.hypot(value.x, value.y, value.z);
+  if (!Number.isFinite(length) || length <= Number.EPSILON) return { x: 0, y: 0, z: 1 };
+  return { x: value.x / length, y: value.y / length, z: value.z / length };
+}
+
+function smoothstep(value: number): number {
+  return value * value * (3 - 2 * value);
 }
 
 function dragRowForButton(button: number): ClaimedDragRow | null {

@@ -54,8 +54,13 @@ export function NumberInput({
 
   useEffect(() => {
     if (!controlled || value === committed) return;
-    setCommitted(value);
-    if (!focused) setDraft(formatNumber(value, precision));
+    // While editing, a controlled owner may echo each valid draft back for a
+    // live geometry preview. Keep the focus-entry value as the commit/revert
+    // baseline until blur/Enter instead of treating every echo as committed.
+    if (!focused) {
+      setCommitted(value);
+      setDraft(formatNumber(value, precision));
+    }
   }, [committed, controlled, focused, precision, value]);
 
   useEffect(() => {
@@ -67,9 +72,10 @@ export function NumberInput({
       revertEscapeField(input, restored);
       setDraft(restored);
       setInvalid(false);
+      onValueChange?.(committed);
       return true;
     });
-  }, [committed, draft, focused, invalid, precision]);
+  }, [committed, draft, focused, invalid, onValueChange, precision]);
 
   const commit = (): boolean => {
     const parsed = parseDraft(draft, min, max);

@@ -14,6 +14,8 @@ import {
   Mountain,
   Minus,
   PaintBucket,
+  PenLine,
+  Pentagon,
   Pipette,
   Redo2,
   Ruler,
@@ -23,6 +25,7 @@ import {
   SquareDashed,
   SwatchBook,
   Undo2,
+  Waypoints,
   ZoomIn,
 } from 'lucide-react';
 import { createElement, type ReactElement } from 'react';
@@ -285,6 +288,39 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
                 handlers.groundExtractionAvailable === false
                   ? 'Select exactly one point cloud.'
                   : 'Create a deterministic prepared sampled cloud.',
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'draw',
+      label: 'Draw',
+      groups: [
+        {
+          id: 'draw.linework',
+          label: 'Linework',
+          actions: [
+            { id: 'draw.line', label: 'Line', icon: i(PenLine) },
+            { id: 'draw.polyline', label: 'Polyline', icon: i(Waypoints) },
+            { id: 'draw.boundary', label: 'Boundary polygon', icon: i(Pentagon) },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'mesh',
+      label: 'Mesh',
+      groups: [
+        {
+          id: 'mesh.surface',
+          label: 'Terrain',
+          actions: [
+            {
+              id: 'mesh.surface.create',
+              label: 'Create surface',
+              icon: i(Mountain),
+              title: 'Create a checked TIN surface from selected points, clouds, grids, and linework.',
             },
           ],
         },

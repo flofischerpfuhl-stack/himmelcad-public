@@ -44,6 +44,13 @@ export interface WorldCamera {
 
 export type NavigationMode = '3d' | '2d' | '2.5d';
 
+export interface ViewModeTransitionRequest {
+  readonly mode: NavigationMode;
+  readonly durationMilliseconds?: number;
+  readonly cursorAnchor?: Vec3;
+  readonly cursorNdc?: readonly [number, number];
+}
+
 export type ClipScope =
   | { readonly kind: 'all' }
   | { readonly kind: 'entities'; readonly entityIds: readonly string[] };
@@ -200,6 +207,10 @@ export interface AppViewMethods extends AppProtocolMethods {
     readonly request: ViewStateV2;
     readonly response: unknown;
   };
+  readonly 'view.mode.set': {
+    readonly request: ViewModeTransitionRequest;
+    readonly response: unknown;
+  };
   readonly 'view.screenshot': {
     readonly request: ScreenshotRequestV1;
     readonly response: unknown;
@@ -209,6 +220,10 @@ export interface AppViewMethods extends AppProtocolMethods {
 export interface ViewController {
   getState(options?: RpcRequestOptions): Promise<ViewStateV2>;
   setState(state: ViewStateV2, options?: RpcRequestOptions): Promise<ViewStateV2>;
+  setMode(
+    request: ViewModeTransitionRequest,
+    options?: RpcRequestOptions,
+  ): Promise<ViewStateV2>;
   requestScreenshot(
     request: ScreenshotRequestV1,
     options?: RpcRequestOptions,
@@ -234,6 +249,15 @@ export class RpcViewController implements ViewController {
     requireCapability(this.session, 'view.write');
     const validated = parseViewState(state);
     return parseViewState(await this.transport.request('view.state.set', validated, options));
+  }
+
+  async setMode(
+    request: ViewModeTransitionRequest,
+    options?: RpcRequestOptions,
+  ): Promise<ViewStateV2> {
+    requireCapability(this.session, 'view.write');
+    const validated = parseViewModeTransitionRequest(request);
+    return parseViewState(await this.transport.request('view.mode.set', validated, options));
   }
 
   async requestScreenshot(
@@ -330,6 +354,29 @@ export function parseViewStateV2(input: unknown): ViewStateV2 {
 
 /** The canonical live ViewState parser. */
 export const parseViewState = parseViewStateV2;
+
+export function parseViewModeTransitionRequest(input: unknown): ViewModeTransitionRequest {
+  const root = record(input, 'viewModeTransition');
+  oneOf(root.mode, ['3d', '2d', '2.5d'], 'viewModeTransition.mode');
+  if (root.durationMilliseconds !== undefined) {
+    const duration = finite(root.durationMilliseconds, 'viewModeTransition.durationMilliseconds');
+    if (duration < 0 || duration > 2_000) {
+      invalid('must be from 0 through 2000', 'viewModeTransition.durationMilliseconds');
+    }
+  }
+  if (root.cursorAnchor !== undefined) vec3(root.cursorAnchor, 'viewModeTransition.cursorAnchor');
+  if (root.cursorNdc !== undefined) {
+    const ndc = array(root.cursorNdc, 'viewModeTransition.cursorNdc');
+    if (ndc.length !== 2) invalid('must contain exactly two values', 'viewModeTransition.cursorNdc');
+    for (const [index, component] of ndc.entries()) {
+      const value = finite(component, `viewModeTransition.cursorNdc[${index}]`);
+      if (value < -1 || value > 1) {
+        invalid('must be from -1 through 1', `viewModeTransition.cursorNdc[${index}]`);
+      }
+    }
+  }
+  return input as ViewModeTransitionRequest;
+}
 
 export function validateScreenshotRequest(request: ScreenshotRequestV1): void {
   const root = record(request, 'request');

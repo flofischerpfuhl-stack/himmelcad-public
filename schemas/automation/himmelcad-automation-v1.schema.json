@@ -75,7 +75,7 @@
     "packages/@himmelcad/data/src/generated/CanonicalEntityEdit.ts": "6dee4ee7c0011222c10b90c1b88b74bbf52e28e125e6b87fd2707b59311cf52d",
     "packages/@himmelcad/app/src/canonicalProtocol.ts": "976a73b1c0a1be7b22e37986800579b21ae5f472e27816b1729b751b4906644a",
     "packages/@himmelcad/app/src/protocol.ts": "fdb7bbc6460ec599472b707c9c14ac31983021ba87888a5dddf6170124241ba7",
-    "packages/@himmelcad/app/src/view.ts": "e1fdca6a08aaaa2e5978540fa6e3ff5bc224a5be3fb0390c49c78147e970a4af"
+    "packages/@himmelcad/app/src/view.ts": "1b0dbb42e73b70c144a54ac67e843f9d3d076414c5ce49dfd6e2d192135e305a"
   },
   "methods": {
     "app.negotiate": {
@@ -104,6 +104,11 @@
     "view.state.set": {
       "capability": "view.write",
       "request": "ViewStateV2",
+      "response": "ViewStateV2"
+    },
+    "view.mode.set": {
+      "capability": "view.write",
+      "request": "ViewModeTransitionRequest",
       "response": "ViewStateV2"
     },
     "view.diagnostics.get": {
@@ -1592,7 +1597,19 @@
     "mesh.surface.draft.create": {
       "capability": "document.write",
       "request": "AdmissionOperationRequest",
-      "response": "AdmissionOperationResult"
+      "response": "AdmissionOperationResult",
+      "command": {
+        "label": "Create surface draft",
+        "products": ["builder"],
+        "kind": "command",
+        "shortcut": null,
+        "enablement": "hasSelection",
+        "surfaces": { "ribbon": false, "contextMenu": false, "quickSurface": false, "console": true, "automation": true },
+        "group": "entity-specific",
+        "ownerSpec": "Mesh/Terrain MT-D1–MT-D12; S-01; owner: mesh-terrain",
+        "host": "renderer",
+        "allowMultiSelect": true
+      }
     },
     "mesh.surface.draft.set": {
       "capability": "document.write",
@@ -1602,7 +1619,18 @@
     "mesh.surface.draft.apply_fix": {
       "capability": "document.write",
       "request": "AdmissionOperationRequest",
-      "response": "AdmissionOperationResult"
+      "response": "AdmissionOperationResult",
+      "command": {
+        "label": "Fix surface draft error",
+        "products": ["builder"],
+        "kind": "command",
+        "shortcut": null,
+        "enablement": "hasProject",
+        "surfaces": { "ribbon": false, "contextMenu": false, "quickSurface": false, "console": true, "automation": true },
+        "group": "entity-specific",
+        "ownerSpec": "Mesh/Terrain MT-D7–MT-D9; S-01; owner: mesh-terrain",
+        "host": "renderer"
+      }
     },
     "mesh.surface.draft.history": {
       "capability": "document.read",
@@ -1637,12 +1665,36 @@
     "mesh.surface.check": {
       "capability": "document.read",
       "request": "AdmissionOperationRequest",
-      "response": "AdmissionOperationResult"
+      "response": "AdmissionOperationResult",
+      "command": {
+        "label": "Check surface draft",
+        "products": ["builder"],
+        "kind": "query",
+        "shortcut": null,
+        "enablement": "hasProject",
+        "surfaces": { "ribbon": false, "contextMenu": false, "quickSurface": false, "console": true, "automation": true },
+        "group": "entity-specific",
+        "ownerSpec": "Mesh/Terrain MT-D7–MT-D9; S-01; owner: mesh-terrain",
+        "host": "renderer"
+      }
     },
     "mesh.surface.create": {
       "capability": "document.write",
       "request": "AdmissionOperationRequest",
-      "response": "AdmissionOperationResult"
+      "response": "AdmissionOperationResult",
+      "command": {
+        "label": "Create surface…",
+        "products": ["builder"],
+        "kind": "command",
+        "shortcut": null,
+        "enablement": "hasSelection",
+        "surfaces": { "ribbon": true, "contextMenu": true, "quickSurface": false, "console": true, "automation": true },
+        "group": "entity-specific",
+        "ownerSpec": "Mesh/Terrain MT-D1–MT-D12, MT-D17, MT-D25–MT-D26; MASTER-PLAN row 20; S-01; owner: mesh-terrain",
+        "host": "renderer",
+        "entityKinds": ["PointCloud", "SinglePoint", "Polyline3D", "Surface", "DigitalElevationModel"],
+        "allowMultiSelect": true
+      }
     },
     "mesh.surface.edit.add_breakline": {
       "capability": "document.write",
@@ -1683,6 +1735,160 @@
       "capability": "document.write",
       "request": "AdmissionOperationRequest",
       "response": "AdmissionOperationResult"
+    },
+    "draw.line": {
+      "capability": "document.write",
+      "request": "AdmissionOperationRequest",
+      "response": "AdmissionOperationResult",
+      "command": {
+        "label": "Line",
+        "products": ["builder"],
+        "kind": "command",
+        "shortcut": null,
+        "enablement": "hasProject",
+        "surfaces": {
+          "ribbon": true,
+          "contextMenu": false,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
+        "group": "entity-specific",
+        "ownerSpec": "Draw DR-D1/DR-D17/DR-D21",
+        "host": "renderer"
+      }
+    },
+    "draw.polyline": {
+      "capability": "document.write",
+      "request": "AdmissionOperationRequest",
+      "response": "AdmissionOperationResult",
+      "command": {
+        "label": "Polyline",
+        "products": ["builder"],
+        "kind": "command",
+        "shortcut": null,
+        "enablement": "hasProject",
+        "surfaces": {
+          "ribbon": true,
+          "contextMenu": false,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
+        "group": "entity-specific",
+        "ownerSpec": "Draw DR-D1/DR-D5/DR-D17",
+        "host": "renderer"
+      }
+    },
+    "draw.boundary": {
+      "capability": "document.write",
+      "request": "AdmissionOperationRequest",
+      "response": "AdmissionOperationResult",
+      "command": {
+        "label": "Boundary polygon",
+        "products": ["builder"],
+        "kind": "command",
+        "shortcut": null,
+        "enablement": "hasProject",
+        "surfaces": {
+          "ribbon": true,
+          "contextMenu": false,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
+        "group": "entity-specific",
+        "ownerSpec": "Draw DR-D5/DR-D18",
+        "host": "renderer"
+      }
+    },
+    "draw.vertex.add": {
+      "capability": "document.write",
+      "request": "AdmissionOperationRequest",
+      "response": "AdmissionOperationResult",
+      "command": {
+        "label": "Add draw vertex",
+        "products": ["builder"],
+        "kind": "command",
+        "shortcut": null,
+        "enablement": "hasProject",
+        "surfaces": {
+          "ribbon": false,
+          "contextMenu": false,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
+        "group": "entity-specific",
+        "ownerSpec": "Draw DR-D5/DR-D21",
+        "host": "renderer"
+      }
+    },
+    "draw.vertex.constrain": {
+      "capability": "document.write",
+      "request": "AdmissionOperationRequest",
+      "response": "AdmissionOperationResult",
+      "command": {
+        "label": "Constrain draw vertex",
+        "products": ["builder"],
+        "kind": "command",
+        "shortcut": null,
+        "enablement": "hasProject",
+        "surfaces": {
+          "ribbon": false,
+          "contextMenu": false,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
+        "group": "entity-specific",
+        "ownerSpec": "Draw DR-D1/DR-D17",
+        "host": "renderer"
+      }
+    },
+    "draw.vertex.type": {
+      "capability": "document.write",
+      "request": "AdmissionOperationRequest",
+      "response": "AdmissionOperationResult",
+      "command": {
+        "label": "Type draw vertex",
+        "products": ["builder"],
+        "kind": "command",
+        "shortcut": null,
+        "enablement": "hasProject",
+        "surfaces": {
+          "ribbon": false,
+          "contextMenu": false,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
+        "group": "entity-specific",
+        "ownerSpec": "Draw DR-D1/DR-D17/DR-D21",
+        "host": "renderer"
+      }
+    },
+    "draw.vertex.undo": {
+      "capability": "document.write",
+      "request": "AdmissionOperationRequest",
+      "response": "AdmissionOperationResult",
+      "command": {
+        "label": "Undo draw vertex",
+        "products": ["builder"],
+        "kind": "command",
+        "shortcut": null,
+        "enablement": "hasProject",
+        "surfaces": {
+          "ribbon": false,
+          "contextMenu": false,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
+        "group": "entity-specific",
+        "ownerSpec": "Draw DR-D5",
+        "host": "renderer"
+      }
     },
     "draw.point.create": {
       "capability": "document.write",
@@ -3414,6 +3620,22 @@
         },
         "clipRefs": { "type": "array", "items": { "$ref": "#/$defs/ViewClipRefV2" } },
         "presentation": { "$ref": "#/$defs/ViewPresentationV2" }
+      }
+    },
+    "ViewModeTransitionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["3d", "2d", "2.5d"] },
+        "durationMilliseconds": { "type": "number", "minimum": 0, "maximum": 2000 },
+        "cursorAnchor": { "$ref": "#/$defs/Vec3" },
+        "cursorNdc": {
+          "type": "array",
+          "items": { "type": "number", "minimum": -1, "maximum": 1 },
+          "minItems": 2,
+          "maxItems": 2
+        }
       }
     },
     "ScreenshotRequestV1": {

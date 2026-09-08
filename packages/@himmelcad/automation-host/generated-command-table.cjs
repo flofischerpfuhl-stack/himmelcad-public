@@ -1264,5 +1264,234 @@ module.exports = Object.freeze([
       "PointCloud"
     ],
     "allowMultiSelect": true
+  },
+  {
+    "id": "mesh.surface.draft.create",
+    "label": "Create surface draft",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasSelection",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Mesh/Terrain MT-D1–MT-D12; S-01; owner: mesh-terrain",
+    "host": "renderer",
+    "allowMultiSelect": true
+  },
+  {
+    "id": "mesh.surface.draft.apply_fix",
+    "label": "Fix surface draft error",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Mesh/Terrain MT-D7–MT-D9; S-01; owner: mesh-terrain",
+    "host": "renderer"
+  },
+  {
+    "id": "mesh.surface.check",
+    "label": "Check surface draft",
+    "products": [
+      "builder"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Mesh/Terrain MT-D7–MT-D9; S-01; owner: mesh-terrain",
+    "host": "renderer"
+  },
+  {
+    "id": "mesh.surface.create",
+    "label": "Create surface…",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasSelection",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Mesh/Terrain MT-D1–MT-D12, MT-D17, MT-D25–MT-D26; MASTER-PLAN row 20; S-01; owner: mesh-terrain",
+    "host": "renderer",
+    "entityKinds": [
+      "PointCloud",
+      "SinglePoint",
+      "Polyline3D",
+      "Surface",
+      "DigitalElevationModel"
+    ],
+    "allowMultiSelect": true
+  },
+  {
+    "id": "draw.line",
+    "label": "Line",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Draw DR-D1/DR-D17/DR-D21",
+    "host": "renderer"
+  },
+  {
+    "id": "draw.polyline",
+    "label": "Polyline",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Draw DR-D1/DR-D5/DR-D17",
+    "host": "renderer"
+  },
+  {
+    "id": "draw.boundary",
+    "label": "Boundary polygon",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Draw DR-D5/DR-D18",
+    "host": "renderer"
+  },
+  {
+    "id": "draw.vertex.add",
+    "label": "Add draw vertex",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Draw DR-D5/DR-D21",
+    "host": "renderer"
+  },
+  {
+    "id": "draw.vertex.constrain",
+    "label": "Constrain draw vertex",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Draw DR-D1/DR-D17",
+    "host": "renderer"
+  },
+  {
+    "id": "draw.vertex.type",
+    "label": "Type draw vertex",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Draw DR-D1/DR-D17/DR-D21",
+    "host": "renderer"
+  },
+  {
+    "id": "draw.vertex.undo",
+    "label": "Undo draw vertex",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Draw DR-D5",
+    "host": "renderer"
   }
 ]);

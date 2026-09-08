@@ -17,6 +17,7 @@ pub mod entity_model;
 pub mod entity_validation;
 pub mod geometry_representation_registry;
 pub mod hash;
+pub mod mesh_surface;
 pub mod photolab;
 pub mod photolab_batch;
 pub mod photolab_capture;

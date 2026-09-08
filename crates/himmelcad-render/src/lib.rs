@@ -183,9 +183,9 @@ pub use providers::{
 };
 pub use providers::{project_raster_sample, raster_analysis_view};
 pub use render_world::{
-    ClipOperation, ClipVolume, ClipVolumeId, ColorMode, EntityInteractionState, FillMode,
-    HeightGradient, PreparedRenderWorldOverlay, RenderProxy, RenderProxyId, RenderProxyKind,
-    RenderStyle, RenderWorld, RenderWorldError, RenderWorldOverlayDiagnostics,
+    plan_draw_order, ClipOperation, ClipVolume, ClipVolumeId, ColorMode, EntityInteractionState,
+    FillMode, HeightGradient, PreparedRenderWorldOverlay, RenderProxy, RenderProxyId,
+    RenderProxyKind, RenderStyle, RenderWorld, RenderWorldError, RenderWorldOverlayDiagnostics,
     RenderWorldVisibilityDelta, SectionHatchStyle, StrokeCap, StrokeColor, StrokeJoin, StrokeMode,
     StrokeStyle, StrokeWidth,
 };
