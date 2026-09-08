@@ -37,6 +37,18 @@ Product entry points include `pnpm dev:builder`, `pnpm dev:photolab`, and
 `pnpm dev:weltview`. See [`docs/TEST-TIERS.md`](docs/TEST-TIERS.md) for the
 verification tiers.
 
+On Linux NVIDIA PRIME laptops, Builder can opt into the tested discrete-GPU
+graphics path without changing the default for other users:
+
+```bash
+HIMMELCAD_GPU=nvidia pnpm dev:builder
+```
+
+The opt-in selects Electron's Vulkan ANGLE path on X11; the viewer still
+negotiates WebGPU or WebGL2 according to browser/driver support. If the machine
+or driver cannot provide it, unset `HIMMELCAD_GPU` to retain Electron's normal
+adapter selection.
+
 ## License
 
 Himmel:CAD is source-available under the repository license. Commercial use or

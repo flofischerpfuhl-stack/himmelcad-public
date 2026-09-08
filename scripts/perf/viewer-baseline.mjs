@@ -18,6 +18,7 @@ const DEFAULT_DATASET = resolve(
 const POTREE_CONVERTER = resolve(REPO, 'vendor/potreeconverter/linux-x64/PotreeConverter');
 const args = parseArguments(process.argv.slice(2));
 const date = args.date ?? new Intl.DateTimeFormat('en-CA').format(new Date());
+const builderGpuPreference = process.env.HIMMELCAD_GPU?.trim() || 'nvidia';
 const outputStem = resolve(
   OUTPUT_DIRECTORY,
   `${args.frontierOnly ? 'viewer-frontier-orbit' : 'viewer-baseline'}-${date}`,
@@ -31,7 +32,8 @@ const report = {
     path: 'Builder Electron browser-gpu over Chrome DevTools Protocol',
     presentedInterval: 'VC-D1 rAF-render-complete presented-frame pairing',
     presentSource: 'raf-render-complete',
-    gpuTiming: 'asynchronous WebGPU timestamp query correlated by submission sequence when supported',
+    gpuTiming:
+      'asynchronous WebGPU timestamp query correlated by submission sequence when supported',
     caveat:
       'The present source proves a successful kernel surface present paired to its scheduling rAF; it does not claim OS compositor/display timing.',
   },
@@ -65,9 +67,19 @@ try {
   browser = await chromium.connectOverCDP(cdpUrl);
   const page = await waitForBuilderPage(browser, developmentProcess);
   await page.setViewportSize({ width: args.width, height: args.height }).catch(() => {});
-  await page.waitForFunction(() => globalThis.__hcadBuilderKernel?.session !== undefined, null, {
-    timeout: 120_000,
-  });
+  await page.waitForFunction(
+    () => {
+      try {
+        return globalThis.__hcadBuilderKernel?.session.diagnostics().capabilities !== undefined;
+      } catch {
+        // React StrictMode can briefly leave the first, disposed development
+        // session on the diagnostic global while its replacement mounts.
+        return false;
+      }
+    },
+    null,
+    { timeout: 120_000 },
+  );
 
   const metadataUrl = `/@fs/${prepared.metadataPath}`;
   report.browser = await loadDataset(page, metadataUrl, prepared);
@@ -90,7 +102,7 @@ try {
     stack: error instanceof Error ? (error.stack ?? null) : null,
     needed: message.includes('GeometryObject::Measurement')
       ? 'Make the GeometryObject match in crates/himmelcad-wasm/src/lib.rs exhaustive for Measurement (or use a known-good core/WASM schema pair), stage the viewer WASM, then rerun this command. The subsequent session must expose window.__hcadBuilderKernel on a hardware WebGPU adapter.'
-      : 'A hardware-backed Chromium/Electron WebGPU session exposing window.__hcadBuilderKernel, the staged viewer WASM, and readable prepared Potree files. Software adapters are rejected.',
+      : 'A hardware-backed Chromium/Electron WebGPU or WebGL2 session exposing window.__hcadBuilderKernel, the staged viewer WASM, and readable prepared Potree files. Software adapters are rejected.',
   };
   process.exitCode = 1;
 } finally {
@@ -270,6 +282,8 @@ async function launchBuilder() {
     cwd: REPO,
     env: {
       ...process.env,
+      HIMMELCAD_GPU: builderGpuPreference,
+      HIMMELCAD_VITE_HMR: '0',
       HIMMELCAD_REMOTE_DEBUGGING_PORT: '9223',
       HIMMELCAD_ELECTRON_USER_DATA_DIR: userDataDirectory,
     },
@@ -520,13 +534,30 @@ async function runCameraPaths({ frames }) {
   const summarizeValues = (values) => {
     if (values.length === 0) return null;
     const sorted = [...values].sort((left, right) => left - right);
-    const at = (fraction) => sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)];
-    return { samples: sorted.length, p50: at(0.5), p95: at(0.95), p99: at(0.99), maximum: sorted.at(-1) };
+    const at = (fraction) =>
+      sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)];
+    return {
+      samples: sorted.length,
+      p50: at(0.5),
+      p95: at(0.95),
+      p99: at(0.99),
+      maximum: sorted.at(-1),
+    };
   };
   const summarizeFrames = (sampledFrames) => ({
-    presentedFrameIntervalMs: summarizeValues(sampledFrames.flatMap((frame) => frame.presentIntervalMs === null ? [] : [frame.presentIntervalMs])),
-    inputToPresentMs: summarizeValues(sampledFrames.flatMap((frame) => frame.inputToPresentMs === null ? [] : [frame.inputToPresentMs])),
-    gpuMs: summarizeValues(sampledFrames.flatMap((frame) => frame.gpuMs === null ? [] : [frame.gpuMs])),
+    presentedFrameIntervalMs: summarizeValues(
+      sampledFrames.flatMap((frame) =>
+        frame.presentIntervalMs === null ? [] : [frame.presentIntervalMs],
+      ),
+    ),
+    inputToPresentMs: summarizeValues(
+      sampledFrames.flatMap((frame) =>
+        frame.inputToPresentMs === null ? [] : [frame.inputToPresentMs],
+      ),
+    ),
+    gpuMs: summarizeValues(
+      sampledFrames.flatMap((frame) => (frame.gpuMs === null ? [] : [frame.gpuMs])),
+    ),
     cpuMs: summarizeValues(sampledFrames.map((frame) => frame.cpuMs)),
     exactPrimitivesPerFrame: {
       status: 'exact-submitted-batch-counts',
@@ -538,8 +569,12 @@ async function runCameraPaths({ frames }) {
       drawCalls: summarizeValues(sampledFrames.map((frame) => frame.primitives.drawCalls)),
     },
     phaseMs: {
-      protectedLanes1To3: summarizeValues(sampledFrames.map((frame) => frame.phases.protectedLanes1To3Ms)),
-      cloudMeshRefinement: summarizeValues(sampledFrames.map((frame) => frame.phases.cloudMeshRefinementMs)),
+      protectedLanes1To3: summarizeValues(
+        sampledFrames.map((frame) => frame.phases.protectedLanes1To3Ms),
+      ),
+      cloudMeshRefinement: summarizeValues(
+        sampledFrames.map((frame) => frame.phases.cloudMeshRefinementMs),
+      ),
       sharedEncode: summarizeValues(sampledFrames.map((frame) => frame.phases.sharedEncodeMs)),
     },
     decodeBacklog: summarizeValues(sampledFrames.map((frame) => frame.decodeBacklog)),
@@ -548,18 +583,37 @@ async function runCameraPaths({ frames }) {
       pointBudget: sampledFrames.find((frame) => frame.frontier)?.frontier?.budgetPoints ?? null,
       byteBudget: sampledFrames.find((frame) => frame.frontier)?.frontier?.budgetBytes ?? null,
       drawBudget: sampledFrames.find((frame) => frame.frontier)?.frontier?.budgetDrawCalls ?? null,
-      maximumSelectedPoints: Math.max(0, ...sampledFrames.map((frame) => frame.frontier?.selectedPoints ?? 0)),
-      maximumSelectedBytes: Math.max(0, ...sampledFrames.map((frame) => frame.frontier?.selectedBytes ?? 0)),
-      maximumSelectedDrawCalls: Math.max(0, ...sampledFrames.map((frame) => frame.frontier?.selectedDrawCalls ?? 0)),
-      coarsenedTiles: sampledFrames.reduce((total, frame) => total + (frame.frontier?.coarsenedTiles ?? 0), 0),
-      framesOverBudget: sampledFrames.filter((frame) => frame.frontier?.budgetSatisfied === false).length,
-      framesOverPointBudget: sampledFrames.filter((frame) =>
-        frame.frontier !== undefined && frame.frontier.selectedPoints > frame.frontier.budgetPoints
+      maximumSelectedPoints: Math.max(
+        0,
+        ...sampledFrames.map((frame) => frame.frontier?.selectedPoints ?? 0),
+      ),
+      maximumSelectedBytes: Math.max(
+        0,
+        ...sampledFrames.map((frame) => frame.frontier?.selectedBytes ?? 0),
+      ),
+      maximumSelectedDrawCalls: Math.max(
+        0,
+        ...sampledFrames.map((frame) => frame.frontier?.selectedDrawCalls ?? 0),
+      ),
+      coarsenedTiles: sampledFrames.reduce(
+        (total, frame) => total + (frame.frontier?.coarsenedTiles ?? 0),
+        0,
+      ),
+      framesOverBudget: sampledFrames.filter((frame) => frame.frontier?.budgetSatisfied === false)
+        .length,
+      framesOverPointBudget: sampledFrames.filter(
+        (frame) =>
+          frame.frontier !== undefined &&
+          frame.frontier.selectedPoints > frame.frontier.budgetPoints,
       ).length,
       framesMissingAccounting: sampledFrames.filter((frame) => frame.frontier === undefined).length,
-      framesMissingReasonCodes: sampledFrames.filter((frame) => frame.deadlineReasonCodes.length === 0).length,
+      framesMissingReasonCodes: sampledFrames.filter(
+        (frame) => frame.deadlineReasonCodes.length === 0,
+      ).length,
     },
-    reasonCounts: sampledFrames.flatMap((frame) => frame.deadlineReasonCodes).reduce((counts, reason) => ({ ...counts, [reason]: (counts[reason] ?? 0) + 1 }), {}),
+    reasonCounts: sampledFrames
+      .flatMap((frame) => frame.deadlineReasonCodes)
+      .reduce((counts, reason) => ({ ...counts, [reason]: (counts[reason] ?? 0) + 1 }), {}),
   });
 
   const sample = async (name, update) => {
@@ -579,14 +633,17 @@ async function runCameraPaths({ frames }) {
     await new Promise((resolvePromise) => requestAnimationFrame(resolvePromise));
     unsubscribe();
     const diagnostics = session.diagnostics();
-    const sampledFrames = session.diagnosticsSnapshot(frames + 8).lastFrames
-      .filter((frame) => frame.frameId > startFrameId)
+    const sampledFrames = session
+      .diagnosticsSnapshot(frames + 8)
+      .lastFrames.filter((frame) => frame.frameId > startFrameId)
       .slice(5);
     const frontierViolations = sampledFrames.filter(
       (frame) => frame.frontier === undefined || frame.frontier.budgetSatisfied === false,
     );
     if (frontierViolations.length > 0) {
-      throw new Error(`${name} produced ${frontierViolations.length} frames without valid frontier budget accounting`);
+      throw new Error(
+        `${name} produced ${frontierViolations.length} frames without valid frontier budget accounting`,
+      );
     }
     if (sampledFrames.some((frame) => frame.deadlineReasonCodes.length === 0)) {
       throw new Error(`${name} produced frames without density reason codes`);
@@ -649,8 +706,9 @@ async function runCameraPaths({ frames }) {
   session.recordInput('transition-2d-to-3d', performance.now());
   await session.setViewMode('3d', 180);
   const transitionDiagnostics = session.diagnostics();
-  const transitionFrames = session.diagnosticsSnapshot(120).lastFrames
-    .filter((frame) => frame.frameId > transitionStartFrameId)
+  const transitionFrames = session
+    .diagnosticsSnapshot(120)
+    .lastFrames.filter((frame) => frame.frameId > transitionStartFrameId)
     .slice(5);
   paths.push({
     name: '3d-to-2d-to-3d',
@@ -682,8 +740,9 @@ async function runFrontierOrbit({ frames }) {
   }
   handle.setInteracting(false);
   await new Promise((resolvePromise) => requestAnimationFrame(resolvePromise));
-  const sampledFrames = session.diagnosticsSnapshot(frames + 4).lastFrames
-    .filter((frame) => frame.frameId > startFrameId)
+  const sampledFrames = session
+    .diagnosticsSnapshot(frames + 4)
+    .lastFrames.filter((frame) => frame.frameId > startFrameId)
     .slice(2);
   const accounted = sampledFrames.filter((frame) => frame.frontier !== undefined);
   const violations = accounted.filter(
@@ -718,16 +777,10 @@ async function runFrontierOrbit({ frames }) {
     ).length,
     framesOverAnyBudget: violations.length,
     blankTileFrames: accounted.filter((frame) => frame.frontier.selectedPoints === 0).length,
-    coarsenedTiles: accounted.reduce(
-      (total, frame) => total + frame.frontier.coarsenedTiles,
-      0,
-    ),
+    coarsenedTiles: accounted.reduce((total, frame) => total + frame.frontier.coarsenedTiles, 0),
     reasonCounts: sampledFrames
       .flatMap((frame) => frame.deadlineReasonCodes)
-      .reduce(
-        (counts, reason) => ({ ...counts, [reason]: (counts[reason] ?? 0) + 1 }),
-        {},
-      ),
+      .reduce((counts, reason) => ({ ...counts, [reason]: (counts[reason] ?? 0) + 1 }), {}),
     residency: session.diagnostics().streaming.residencyStageCounts,
   };
 }
@@ -757,6 +810,7 @@ function hostInventory() {
     node: process.version,
     cpu: cpus()[0]?.model ?? null,
     logicalCores: availableParallelism(),
+    builderGpuPreference,
     nvidiaSmi: nvidia.status === 0 ? nvidia.stdout.trim() : null,
   };
 }

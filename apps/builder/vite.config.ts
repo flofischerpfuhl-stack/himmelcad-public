@@ -69,6 +69,7 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    hmr: process.env.HIMMELCAD_VITE_HMR === '0' ? false : undefined,
   },
   build: {
     outDir: '../dist/renderer',
