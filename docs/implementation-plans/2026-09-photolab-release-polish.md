@@ -370,6 +370,84 @@ Footer
 
 ---
 
+### WP-A7 — Memory envelope as a product contract (Size L, before the golden; R1 gate)
+
+Owner statement S22/G18 (2026-09-08, via the Builder digest): "Why 64 GB? If
+Agisoft runs on weaker hardware, that is not acceptable for PhotoLab." Owner
+decision D12 derived from it: the memory envelope is a product contract, not a
+host requirement. Reference class = a 32 GB machine (this laptop: i7-7820HQ,
+4 cores / 8 threads, 32 GB, CPU-only COLMAP); degraded class = 16 GB. The
+golden's host produces evidence; it never hides the envelope.
+
+Measured today (2026-09-06/08, Quality Hybrid unless noted, 21 MP DJI frames
+5280×3956): ALIKED_N32 extraction at `max_image_size 8192` (image below the
+cap, so full resolution) = 15.7 GB RSS for ONE worker — ≈ 750 B per actual
+pixel of fp32 activations, not the 160 B/pixel the thread policy assumes
+against the cap; ALIKED + LightGlue matching = 29.1 GB anon RSS at the OOM
+kill (4 matcher workers from `colmap_aliked_matching_worker_threads`, budgeted
+at 3 GB each, actually ≈ 7 GB each: LightGlue attention scales with
+keypoints², and the Quality Hybrid feature budget allows up to 24,000
+keypoints per image → one 24k × 24k fp32 attention matrix is 2.3 GB per
+layer); fast profile (2400 px, 8 threads) = 1.9 GB total; portable MVS depth
+on 24 images = 0.2 GB; Poisson mesh (depth 11) and splat training: not yet
+measured per stage.
+
+Design (bounded by construction, typed degradation instead of exceeding):
+
+1. Instrumentation first: every job records per stage the peak RSS of its
+   process group (sampled from `/proc` by the existing process-group
+   supervisor), the worker count and the parameters that drove memory; the
+   numbers land in the job record, `photolab.jobs.status`, the report and the
+   evidence ledger (r1-2 gains an "envelope" column).
+2. Budget table per stage, derived from Agisoft's published memory-requirements
+   guidance for comparable projects (the brief quotes the page verbatim; 16–32
+   GB for projects of this size) and the X6 register: envelope 32 GB minus 4 GB
+   for OS + UI = 28 GB usable; extraction ≤ 12 GB, matching ≤ 16 GB, mapping /
+   BA ≤ 12 GB, dense ≤ 16 GB, mesh ≤ 12 GB, splat ≤ 16 GB (each with the 16 GB
+   class at half). Every value is a tunable with a rationale.
+3. Extraction: memory model by actual pixels after resize (≈ 750 B/px
+   measured, re-measured by the instrumentation and stored as a calibration
+   constant), workers = floor(budget / per-image bytes) ≥ 1; if one worker
+   does not fit, the extractor input edge is reduced until it does
+   (`extractionEdgeReduced { from, to }` typed degradation, visible in the
+   panel, report and lineage) — never an OOM.
+4. Matching: a keypoint cap for the neural matcher derived from the budget
+   (attention memory ∝ k²; top-k by score, e.g. 24,000 → 10,000 for 32 GB
+   with 2 workers), sequential pair batches, workers from the measured
+   per-worker figure, not from a constant; `matchingKeypointsCapped { from,
+to }` typed degradation; SIFT path unchanged (measured 256 MB/worker).
+5. Dense / mesh / splat: measure first (instrumentation), then bound: MVS
+   depth tiles already stream; Poisson depth and splat batch size become
+   budget-derived with typed degradation.
+6. Admission: B4's disk preflight gains a memory preflight — predicted peak
+   from the model versus the envelope minus what other jobs hold; over budget
+   is either degraded (typed) or refused with the number, never started.
+7. Accuracy guard: every degradation is checked against the golden metrics
+   (A5) so "fits in 32 GB" cannot silently cost accuracy beyond the X6
+   tolerance; the report states the degradations that were applied.
+
+Gate (R1 gate 2 amendment, owner D12): the 135-image Quality Hybrid run must
+complete on the 32 GB reference class within the envelope with measured peaks
+in the evidence — on this laptop. The Windows PC produces additional evidence
+(GPU, larger RAM) but does not satisfy the gate on its own.
+
+```text
+Footer
+- A1 outcome: PhotoLab completes a 135-image Quality Hybrid project on a 32 GB machine, says which bounded settings it applied, and never dies of memory.
+- A2 reference: Agisoft memory-requirements guidance (quoted in the brief); docs/photolab-metashape-reference-2026-09.md gains a "System requirements" row
+- A3 siblings: alignment/matching/dense/mesh/splat job family, B4 admission, report, evidence ledger, A5 golden
+- B1 reachability: no new UI entry; degradations appear in the function panel status, Jobs card, report; automation rows unchanged (fields added)
+- B2/B3: no new surfaces
+- C1 numeric parity / C2 selection / C3 freezability / C4 persistence+undo: budgets and caps are typed tunables; applied degradations frozen into the job record and lineage
+- D1 performance class: long-running jobs with stated peak-memory budgets per stage; D2 degradation: typed, visible, accuracy-guarded
+- E1 visual reference: none (status text only; G17 shots of the panel status)
+- E2 conflicts/failure/crash: memory preflight at admission; OOM impossible by construction, and if the kernel still kills a child the job fails with the measured peak in the diagnostic
+- E3 verification: instrumentation unit tests; per-stage peak assertions on the 24-image smokes; 135-image Quality Hybrid completes within 32 GB on the laptop (gate 2 amendment) with the golden accuracy tolerance held
+- Decision record: owner S22/G18 → D12; cited unchanged: B4, X6, A5
+- Evidence: open — not executed
+- Status: planned (2026-09-08), dispatch before the golden; Codex high (design-heavy sidecar)
+```
+
 ## Phase B — Resume, shutdown, and job-owner integrity
 
 ### WP-B1 — Wire the checkpoint sink; make `interruptedRecoverable` real (Size M)
