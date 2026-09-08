@@ -46,9 +46,10 @@ close/durability (03bd235), ADR 0030 rev 6 (9d4d398), pixel baselines
 1. DSM + DTM smokes (`--dem-surface dsm|dtm`) after the diagnostic frees the
    compute lease — the DEM product must list `provenanceStatus: complete`;
    attach to the evidence ledger.
-2. Read the 40-image Quality Hybrid diagnostic (running; product stages under
-   the golden profile) and fix whatever it exposes; then G1c gate test once the
-   Builder's G1b registration exists.
+2. After the Builder's S-06d lands (~19:00, table-declared enablement fixes
+   F15b/F15c): rerun the visual audit, confirm product Export is reachable,
+   refresh baselines. After G1b lands (Builder ETA 2026-09-08 22:00–24:00):
+   run the G1c matrix (identity/render/pick/snap per Available row).
 3. Hands-on re-test of the changed surfaces (gate 1 evidence); A5 levers and
    the full golden move to another machine at the end (owner 2026-09-05).
 
@@ -112,3 +113,4 @@ workers) — otherwise plan a full day for the golden.
 - Delivered 2026-09-08 17:55 (was pending since 2026-09-06 04:47): G1a-3 landed c7bb505 — `crates/himmelcad-sidecar/src/viewer_raster_manifest.rs` (your 0e61b02 shared prepared-hierarchy manifests) gained `publish_base_grid_validity` (writes `view/validity.bin`, bitsetLsb0 over the base grid), `validityReference` is now filled, the raster root carries `"interpolation": "bilinear"`, and `PreparedElevationHierarchyArtifact.validity_resource` is new; additive, no existing fields changed. Your G1b DEM registration can bind `dem_facts.validity.resource` (role `dem_validity` in the package resources) to the same bytes.
 - F16 reported 2026-09-06 04:52 (capture `apps/photolab/test/visual-baselines/1440x900/context-menu-product.png`, right panel): with three function tabs open the shared `FunctionPanel.tsx` closeable tablist overflows and clips the first label to "erties" with no scroll affordance. Proposal: overflow chevrons or wrap to a second row per DESIGN-SYSTEM; PhotoLab refreshes its baseline afterwards.
 - 2026-09-08 17:55: Builder session back (`10-himmelcad-1c`); it confirmed the 2026-09-06 05:47 OOM (colmap 29.1 GB anon RSS) also killed its Codex run. Machine rule agreed: no Quality Hybrid / ALIKED-8192 COLMAP on this laptop; `free -g` and a posted peak estimate before any launch > 8 GB; 24-image fast smokes stay allowed (COLMAP 1.9 GB RSS at 2400 px / 8 threads, measured). F15b, F15c, G1a-2 types, G1a-3 manifest change and the App.tsx hunk were delivered in one message; F16 is the Builder's S-02d; asked for the G1b ETA.
+- 2026-09-08 18:05 Builder answers: smokes at 1.9 GB fine (5 Builder lanes up, none > 4 GB). F15b/F15c confirmed shared-table defects → S-06d (running): every command row declares `products: [...]`, Builder-only rows declare `['builder']`, the export predicate becomes per-product (PhotoLab clouds/DEMs/meshes exportable), `exportableSelection` removed, snapshot tests; landing ~1 h with row→product table + shots. App.tsx hunk committed in 6cc44ea. G1b (register/open product packages incl. DEM facts + validity bitset, idempotent re-registration, provenance in Properties) dispatched after S-06d, high effort, ETA tonight 22:00–24:00; its evidence carries per-row identity/render/pick/snap behaviour for G1c.
