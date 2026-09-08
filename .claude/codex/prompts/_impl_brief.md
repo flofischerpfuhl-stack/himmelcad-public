@@ -11,3 +11,5 @@ Your package's owning records, gates, and files are listed below this brief. Rea
 - Never run a bare `tsc`/`tsc -p` that emits next to sources; use the package scripts (`pnpm --filter <pkg> typecheck` = `tsc -b` to `.tsbuild/`). Emitted `.js/.d.ts/.map` siblings under `src/` break Vite resolution for every consumer (evidence: a540935, 2026-09-05).
 
 - Windows host available: for Windows verification, discrete-GPU measurements, > 8 GB compute or long e2e runs, do not do it on this laptop — write a remote brief under `.claude/codex/prompts/remote/` and say so in your report so the architect dispatches it via `.claude/codex/run-remote.sh` (see AGENTS.md "Windows host"). Never assume the laptop is the only machine.
+
+- Never commit or push. Leave the tree for the architect, who verifies gates on the landed tree and commits in logical groups; a lane that commits while sibling lanes are mid-edit publishes an inconsistent HEAD (evidence: V-01c pushed 07ed1fd with the Builder typecheck red from concurrent lanes, 2026-09-08).
