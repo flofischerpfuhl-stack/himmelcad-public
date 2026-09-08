@@ -15,3 +15,5 @@ Your package's owning records, gates, and files are listed below this brief. Rea
 - Never commit or push. Leave the tree for the architect, who verifies gates on the landed tree and commits in logical groups; a lane that commits while sibling lanes are mid-edit publishes an inconsistent HEAD (evidence: V-01c pushed 07ed1fd with the Builder typecheck red from concurrent lanes, 2026-09-08).
 
 - Render-crate slices must keep the WebGL2/GLSL backend rendering: no WGSL features unsupported on GL in shared pipelines (e.g. `textureLoad` on depth textures); tier such effects off on GL and prove with the PhotoLab visual harness (Chrome headless, WebGL2) that the viewport is non-blank with zero GPU-device errors (evidence: V-05 2026-09-08).
+
+- Never copy the repository, datasets or build trees anywhere (no /tmp copies, no scratch clones): /tmp is on the root filesystem and a 47 GB copy filled the disk on 2026-09-08 and killed every running lane. Work in place; scratch files go under `.build/<lane>/` with a stated size cap.
