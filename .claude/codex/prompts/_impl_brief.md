@@ -13,3 +13,5 @@ Your package's owning records, gates, and files are listed below this brief. Rea
 - Windows host available: for Windows verification, discrete-GPU measurements, > 8 GB compute or long e2e runs, do not do it on this laptop — write a remote brief under `.claude/codex/prompts/remote/` and say so in your report so the architect dispatches it via `.claude/codex/run-remote.sh` (see AGENTS.md "Windows host"). Never assume the laptop is the only machine.
 
 - Never commit or push. Leave the tree for the architect, who verifies gates on the landed tree and commits in logical groups; a lane that commits while sibling lanes are mid-edit publishes an inconsistent HEAD (evidence: V-01c pushed 07ed1fd with the Builder typecheck red from concurrent lanes, 2026-09-08).
+
+- Render-crate slices must keep the WebGL2/GLSL backend rendering: no WGSL features unsupported on GL in shared pipelines (e.g. `textureLoad` on depth textures); tier such effects off on GL and prove with the PhotoLab visual harness (Chrome headless, WebGL2) that the viewport is non-blank with zero GPU-device errors (evidence: V-05 2026-09-08).
