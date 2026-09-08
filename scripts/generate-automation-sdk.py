@@ -557,7 +557,7 @@ from .models import (
     CanonicalEntityEdit, CanonicalEntityMutation,
     CasDescription, CommandCancelResult, CommandStatus, CommandValidationPlan, EntityPage,
     EntityVersionRef, JournalPage, PropertyId, PropertyQueryResult, ProtocolNegotiationResponse, ScreenshotResultV1,
-    ViewStateV2, WireModel, to_wire,
+    ViewModeTransitionRequest, ViewStateV2, WireModel, to_wire,
 )
 
 LIMITS = MappingProxyType({limits})
@@ -732,6 +732,9 @@ class HimmelcadClient:
     def set_view(self, state: ViewStateV2) -> ViewStateV2:
         return ViewStateV2.from_dict(self._call("view.state.set", to_wire(state)))
 
+    def set_view_mode(self, request: ViewModeTransitionRequest) -> ViewStateV2:
+        return ViewStateV2.from_dict(self._call("view.mode.set", to_wire(request)))
+
     def screenshot(self, request: WireModel | Mapping[str, Any]) -> bytes | BulkLease:
         request_wire = _params(request)
         result = ScreenshotResultV1.from_dict(self._call("view.screenshot", request_wire))
@@ -876,6 +879,9 @@ class AsyncHimmelcadClient:
 
     async def set_view(self, state: ViewStateV2) -> ViewStateV2:
         return ViewStateV2.from_dict(await self._call("view.state.set", to_wire(state)))
+
+    async def set_view_mode(self, request: ViewModeTransitionRequest) -> ViewStateV2:
+        return ViewStateV2.from_dict(await self._call("view.mode.set", to_wire(request)))
 
     async def screenshot(self, request: WireModel | Mapping[str, Any]) -> bytes | AsyncBulkLease:
         request_wire = _params(request)

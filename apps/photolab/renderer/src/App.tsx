@@ -1,6 +1,7 @@
 import { ManagedAgentChat, ManagedAutomationApproval } from '@himmelcad/agent';
 import {
   encodeRgbaScreenshot,
+  parseViewModeTransitionRequest,
   parseViewStateV1,
   validateScreenshotRequest,
   type Quaternion,
@@ -383,6 +384,14 @@ export function App(): JSX.Element {
   selectedRef.current = selected;
   projectRef.current = project;
   navigationModeRef.current = sceneNavigationMode;
+  const changeSceneNavigationMode = useCallback(
+    async (mode: '3d' | '2d' | '2.5d'): Promise<void> => {
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+      if (await viewport.setViewMode(mode)) setSceneNavigationMode(mode);
+    },
+    [],
+  );
   const initialBootstrapRequested = useRef(false);
   const jobPollErrorLogged = useRef(false);
   const activeImageCommitId = useRef<string | null>(null);
@@ -506,10 +515,26 @@ export function App(): JSX.Element {
         return { captureRect };
       }
       if (method === 'view.state.get') return currentPhotolabViewState();
+      if (method === 'view.mode.set') {
+        const request = parseViewModeTransitionRequest(params);
+        const settled = await viewport.setViewMode(request.mode, {
+          ...(request.durationMilliseconds === undefined
+            ? {}
+            : { durationMilliseconds: request.durationMilliseconds }),
+          ...(request.cursorAnchor === undefined ? {} : { cursorAnchor: request.cursorAnchor }),
+          ...(request.cursorNdc === undefined ? {} : { cursorNdc: request.cursorNdc }),
+        });
+        if (!settled) throw new Error('View mode transition was cancelled.');
+        setSceneNavigationMode(request.mode);
+        await viewport.waitForNextPresentedFrame();
+        return currentPhotolabViewState();
+      }
       if (method !== 'view.state.set') throw new Error(`Unsupported view host method: ${method}`);
       const state = parseViewStateV1(params);
       assertSupportedPhotolabPresentation(state);
-      await viewport.setViewMode(state.navigationMode);
+      if (!(await viewport.setViewMode(state.navigationMode))) {
+        throw new Error('View mode transition was cancelled.');
+      }
       setSceneNavigationMode(state.navigationMode);
       viewport.adoptWorldCamera(toPhotolabKernelCamera(state));
 
@@ -4581,7 +4606,7 @@ export function App(): JSX.Element {
                         as="button"
                         active={sceneNavigationMode === mode}
                         aria-pressed={sceneNavigationMode === mode}
-                        onClick={() => setSceneNavigationMode(mode)}
+                        onClick={() => void changeSceneNavigationMode(mode)}
                       >
                         {mode.toUpperCase()}
                       </OverlayChip>

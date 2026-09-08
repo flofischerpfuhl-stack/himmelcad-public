@@ -15,6 +15,7 @@ import type {
   KernelRgbaCaptureResult,
   KernelRenderStyle,
   KernelViewMode,
+  KernelViewModeTransitionOptions,
   KernelWorldCamera,
   KernelViewerEntityHandle,
   Representation,
@@ -101,7 +102,7 @@ export interface PhotolabKernelViewportHandle {
   removeLayer(entityId: EntityId): void;
   resetProjectScene(offset: readonly [number, number, number]): void;
   setSceneRenderOffset(offset: readonly [number, number, number]): void;
-  setViewMode(mode: KernelViewMode): Promise<void>;
+  setViewMode(mode: KernelViewMode, options?: KernelViewModeTransitionOptions): Promise<boolean>;
   worldCamera(): KernelWorldCamera | null;
   adoptWorldCamera(camera: KernelWorldCamera): KernelWorldCamera;
   waitForNextPresentedFrame(): Promise<void>;
@@ -410,15 +411,18 @@ export const PhotolabKernelViewport = forwardRef<
         // The kernel keeps authoritative f64 project coordinates and applies a
         // floating GPU origin itself; product-side render offsets are obsolete.
       },
-      async setViewMode(mode) {
-        viewModeRef.current = mode;
-        await kernelRef.current?.session.setViewMode(mode).catch((error: unknown) => {
+      async setViewMode(mode, options) {
+        const kernel = kernelRef.current;
+        await kernel?.session.setViewMode(mode, options).catch((error: unknown) => {
           callbacksRef.current.onLog(
             'error',
             `View mode could not be changed: ${errorMessage(error)}`,
           );
           throw error;
         });
+        if (!kernel || kernel.session.currentViewMode() !== mode) return false;
+        viewModeRef.current = mode;
+        return true;
       },
       worldCamera() {
         return kernelRef.current?.camera.worldCamera() ?? null;
