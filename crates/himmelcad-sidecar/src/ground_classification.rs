@@ -51,6 +51,23 @@ pub enum PointClass {
     Ground = 2,
 }
 
+/// Typed statistics over residuals of points accepted as ground.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GroundResidualSummary {
+    pub count: u64,
+    pub mean_m: f64,
+    pub standard_deviation_m: f64,
+    pub minimum_m: f64,
+    pub maximum_m: f64,
+}
+
+/// Deterministic classifier output shared by PhotoLab and Builder.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroundClassification {
+    pub classes: Vec<PointClass>,
+    pub residuals: GroundResidualSummary,
+}
+
 impl From<PointClass> for u8 {
     fn from(value: PointClass) -> Self {
         value as Self
@@ -90,14 +107,30 @@ pub fn classify_ground(
     points: &[Point3],
     params: &SmrfParams,
     cancellation: &CancellationToken,
-    mut progress: impl FnMut(u64, u64),
+    progress: impl FnMut(u64, u64),
 ) -> Result<Vec<PointClass>, GroundClassificationError> {
+    classify_ground_detailed(points, params, cancellation, progress).map(|result| result.classes)
+}
+
+/// Runs the same SMRF core as [`classify_ground`] and also reports residual statistics.
+///
+/// Keeping the legacy entry point as a thin wrapper guarantees that PhotoLab's DTM job retains
+/// its byte-identical class stream while Builder receives the typed result required by PC-D19.
+pub fn classify_ground_detailed(
+    points: &[Point3],
+    params: &SmrfParams,
+    cancellation: &CancellationToken,
+    mut progress: impl FnMut(u64, u64),
+) -> Result<GroundClassification, GroundClassificationError> {
     validate_params(params)?;
     let total = u64::try_from(points.len()).unwrap_or(u64::MAX);
     progress(0, total);
     check_cancelled(cancellation)?;
     if points.is_empty() {
-        return Ok(Vec::new());
+        return Ok(GroundClassification {
+            classes: Vec::new(),
+            residuals: empty_residual_summary(),
+        });
     }
 
     let mut grid = build_minimum_grid(points, params, cancellation, &mut progress)?;
@@ -143,6 +176,11 @@ pub fn classify_ground(
     )?;
     let point_threshold = params.initial_distance_m + params.slope * params.cell_size_m;
     let mut classes = Vec::with_capacity(points.len());
+    let mut residual_count = 0_u64;
+    let mut residual_mean = 0.0_f64;
+    let mut residual_m2 = 0.0_f64;
+    let mut residual_minimum = f64::INFINITY;
+    let mut residual_maximum = f64::NEG_INFINITY;
     let halfway = total / 2;
     for (index, point) in points.iter().enumerate() {
         if index.is_multiple_of(CLASSIFICATION_CHUNK_POINTS) {
@@ -158,19 +196,51 @@ pub fn classify_ground(
         let surface = interpolated_surface(point, &grid, &provisional, params.cell_size_m);
         let column = coordinate_index(point.x, grid.origin_x, params.cell_size_m, grid.width);
         let row = coordinate_index(point.y, grid.origin_y, params.cell_size_m, grid.height);
-        classes.push(
-            if !removed[row * grid.width + column]
-                && surface.is_some_and(|value| point.z - value <= point_threshold)
-            {
-                PointClass::Ground
-            } else {
-                PointClass::Unclassified
-            },
-        );
+        let residual = surface.map(|value| point.z - value);
+        let class = if !removed[row * grid.width + column]
+            && residual.is_some_and(|value| value <= point_threshold)
+        {
+            PointClass::Ground
+        } else {
+            PointClass::Unclassified
+        };
+        if class == PointClass::Ground {
+            let value = residual.expect("accepted ground has a finite candidate surface");
+            residual_count = residual_count.saturating_add(1);
+            let delta = value - residual_mean;
+            residual_mean += delta / residual_count as f64;
+            residual_m2 += delta * (value - residual_mean);
+            residual_minimum = residual_minimum.min(value);
+            residual_maximum = residual_maximum.max(value);
+        }
+        classes.push(class);
     }
     check_cancelled(cancellation)?;
     progress(total, total);
-    Ok(classes)
+    Ok(GroundClassification {
+        classes,
+        residuals: if residual_count == 0 {
+            empty_residual_summary()
+        } else {
+            GroundResidualSummary {
+                count: residual_count,
+                mean_m: residual_mean,
+                standard_deviation_m: (residual_m2 / residual_count as f64).sqrt(),
+                minimum_m: residual_minimum,
+                maximum_m: residual_maximum,
+            }
+        },
+    })
+}
+
+const fn empty_residual_summary() -> GroundResidualSummary {
+    GroundResidualSummary {
+        count: 0,
+        mean_m: 0.0,
+        standard_deviation_m: 0.0,
+        minimum_m: 0.0,
+        maximum_m: 0.0,
+    }
 }
 
 fn validate_params(params: &SmrfParams) -> Result<(), GroundClassificationError> {
@@ -617,6 +687,39 @@ mod tests {
         let second_hash = Sha256::digest(&second);
         eprintln!("classification SHA-256 {first_hash:x}");
         assert_eq!(first_hash, second_hash);
+    }
+
+    #[test]
+    fn detailed_result_keeps_photolab_classes_byte_identical_and_reports_residuals() {
+        let points = synthetic_scene()
+            .into_iter()
+            .map(|point| point.point)
+            .collect::<Vec<_>>();
+        let legacy = classify_ground(
+            &points,
+            &SmrfParams::default(),
+            &CancellationToken::new(),
+            |_, _| {},
+        )
+        .expect("legacy classification");
+        let detailed = classify_ground_detailed(
+            &points,
+            &SmrfParams::default(),
+            &CancellationToken::new(),
+            |_, _| {},
+        )
+        .expect("detailed classification");
+        assert_eq!(detailed.classes, legacy);
+        assert_eq!(
+            detailed.residuals.count,
+            detailed
+                .classes
+                .iter()
+                .filter(|class| **class == PointClass::Ground)
+                .count() as u64
+        );
+        assert!(detailed.residuals.standard_deviation_m.is_finite());
+        assert!(detailed.residuals.maximum_m >= detailed.residuals.minimum_m);
     }
 
     #[test]

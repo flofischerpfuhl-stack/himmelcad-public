@@ -13,6 +13,7 @@ use std::io::{BufRead, BufReader as StdBufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 use himmelcad_core::app_protocol::{
@@ -63,8 +64,8 @@ use himmelcad_io::{
     import_photo_files_with_progress, preview_gcp_csv_file, CanonicalExportPlan,
     CanonicalExportRequest, CanonicalImportProvider, CanonicalImportRequest, CanonicalStagedImport,
     ConverterProgress, IfcCanonicalProvider, ImportProbeRequest, ImportProviderSelection,
-    ProviderOperationContext, ProviderProgress, StagedArtifactRoots, IFC2X3_FORMAT_ID,
-    IFC4X3_FORMAT_ID, IFC4_FORMAT_ID,
+    ProviderContractError, ProviderOperationContext, ProviderProgress, StagedArtifactRoots,
+    IFC2X3_FORMAT_ID, IFC4X3_FORMAT_ID, IFC4_FORMAT_ID,
 };
 
 use crate::project_runtime::{
@@ -151,6 +152,10 @@ use himmelcad_sidecar::orthophoto_prep::{
     prepare_camera_orthophotos, CameraBlendMode, OrthophotoPreparation, OrthophotoPreparationError,
 };
 use himmelcad_sidecar::pointcloud_export::PointCloudExportFormat;
+use himmelcad_sidecar::pointcloud_ground::{
+    prepare_ground_datasets, preview_ground, GroundPhase, GroundPrepareRequest, GroundProgress,
+    GroundScope, GroundViewingBox, PreparedGroundResult, GROUND_ALGORITHM_ID,
+};
 use himmelcad_sidecar::prepared_triangle_mesh::PreparedTriangleMeshOptions;
 use himmelcad_sidecar::prepared_triangle_mesh_ply::{
     build_prepared_triangle_mesh_from_colmap_textured_directory,
@@ -534,6 +539,71 @@ struct CancelLasImportParams {
     operation_id: String,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GroundParameters {
+    cell_size_m: f64,
+    slope: f64,
+    max_window_m: f64,
+    initial_distance_m: f64,
+}
+
+impl From<GroundParameters> for SmrfParams {
+    fn from(value: GroundParameters) -> Self {
+        Self {
+            cell_size_m: value.cell_size_m,
+            slope: value.slope,
+            max_window_m: value.max_window_m,
+            initial_distance_m: value.initial_distance_m,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GroundScopeParams {
+    #[serde(default)]
+    viewing_box: Option<GroundViewingBox>,
+    visible_classes: BTreeSet<u8>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GroundExtractionParams {
+    operation_id: String,
+    progress_key: String,
+    command_id: String,
+    algorithm_id: String,
+    source: EntityVersionRef,
+    ground_entity_id: String,
+    output_name: String,
+    parameters: GroundParameters,
+    scope: GroundScopeParams,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GroundPreviewParams {
+    operation_id: String,
+    progress_key: String,
+    algorithm_id: String,
+    source: EntityVersionRef,
+    parameters: GroundParameters,
+    scope: GroundScopeParams,
+    #[serde(default = "default_ground_preview_limit")]
+    sample_limit: usize,
+}
+
+fn default_ground_preview_limit() -> usize {
+    20_000
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CancelGroundOperationParams {
+    operation_id: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct ImportIfcParams {
     path: String,
@@ -651,6 +721,65 @@ struct ActiveLasImport {
     operation_id: String,
     cancellation: Arc<AtomicBool>,
     operations: Arc<LasImportOperations>,
+}
+
+#[derive(Default)]
+struct GroundOperations {
+    active: Mutex<BTreeMap<String, CancellationToken>>,
+}
+
+impl GroundOperations {
+    fn begin(self: &Arc<Self>, operation_id: String) -> anyhow::Result<ActiveGroundOperation> {
+        validate_operation_id(&operation_id)?;
+        let cancellation = CancellationToken::new();
+        let mut active = self.active.lock().expect("ground operation mutex poisoned");
+        anyhow::ensure!(
+            !active.contains_key(&operation_id),
+            "ground operation is already active: {operation_id}"
+        );
+        active.insert(operation_id.clone(), cancellation.clone());
+        Ok(ActiveGroundOperation {
+            operation_id,
+            cancellation,
+            operations: Arc::clone(self),
+        })
+    }
+
+    fn cancel(&self, operation_id: &str) -> bool {
+        self.active
+            .lock()
+            .expect("ground operation mutex poisoned")
+            .get(operation_id)
+            .is_some_and(CancellationToken::request_cancel)
+    }
+}
+
+struct ActiveGroundOperation {
+    operation_id: String,
+    cancellation: CancellationToken,
+    operations: Arc<GroundOperations>,
+}
+
+impl Drop for ActiveGroundOperation {
+    fn drop(&mut self) {
+        self.operations
+            .active
+            .lock()
+            .expect("ground operation mutex poisoned")
+            .remove(&self.operation_id);
+    }
+}
+
+fn validate_operation_id(value: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !value.is_empty()
+            && value.len() <= 128
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
+        "operation_id must use 1–128 ASCII letters, digits, '-' or '_'"
+    );
+    Ok(())
 }
 
 impl Drop for ActiveLasImport {
@@ -1182,6 +1311,7 @@ async fn main() -> Result<()> {
     )?);
     let crs = Arc::new(default_crs_service()?);
     let las_imports = Arc::new(LasImportOperations::default());
+    let ground_operations = Arc::new(GroundOperations::default());
     let io_operations = Arc::new(IoOperations::default());
     let registrations = Arc::new(ImportRegistrationRuntime::default());
     let automation = Arc::new(AutomationRuntime::new()?);
@@ -1221,6 +1351,7 @@ async fn main() -> Result<()> {
         let jobs = Arc::clone(&jobs);
         let crs = Arc::clone(&crs);
         let las_imports = Arc::clone(&las_imports);
+        let ground_operations = Arc::clone(&ground_operations);
         let io_operations = Arc::clone(&io_operations);
         let registrations = Arc::clone(&registrations);
         let automation = Arc::clone(&automation);
@@ -1236,6 +1367,7 @@ async fn main() -> Result<()> {
                         jobs,
                         crs,
                         las_imports,
+                        ground_operations,
                         io_operations,
                         registrations,
                         automation,
@@ -1347,6 +1479,7 @@ async fn handle(
     jobs: Arc<JobManager>,
     crs: Arc<CrsService>,
     las_imports: Arc<LasImportOperations>,
+    ground_operations: Arc<GroundOperations>,
     io_operations: Arc<IoOperations>,
     registrations: Arc<ImportRegistrationRuntime>,
     automation: Arc<AutomationRuntime>,
@@ -1414,12 +1547,16 @@ async fn handle(
     if req.method.starts_with("automation.") {
         return handle_automation_rpc(req, automation, canonical_app);
     }
+    if req.method.starts_with("pointcloud.ground.") {
+        return handle_pointcloud_ground_rpc(req, ground_operations, canonical_app).await;
+    }
     if req.method == "app.negotiate"
         || req.method == "app.protocol"
         || req.method == "project.flush"
         || req.method.starts_with("snapshot.")
         || req.method.starts_with("canonical.project.")
         || req.method.starts_with("canonical.residency.")
+        || req.method.starts_with("product.import.")
         || req.method.starts_with("pointcloud.")
         || req.method.starts_with("view.bookmark.")
         || req.method.starts_with("canonical.viewing_box.")
@@ -1507,6 +1644,277 @@ async fn handle(
         }
         other => rpc_err(req.id, -32601, &format!("method not found: {other}")),
     }
+}
+
+async fn handle_pointcloud_ground_rpc(
+    req: RpcRequest,
+    operations: Arc<GroundOperations>,
+    runtime: Arc<Mutex<CanonicalAppRuntime>>,
+) -> RpcResponse {
+    match req.method.as_str() {
+        "pointcloud.ground.cancel" => {
+            match serde_json::from_value::<CancelGroundOperationParams>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    Ok::<_, anyhow::Error>(serde_json::json!({
+                        "operationId": params.operation_id,
+                        "cancellationRequested": operations.cancel(&params.operation_id),
+                    })),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        "pointcloud.ground.preview" => {
+            let id = req.id;
+            let params = match serde_json::from_value::<GroundPreviewParams>(req.params) {
+                Ok(params) => params,
+                Err(error) => return rpc_err(id, -32602, &format!("invalid params: {error}")),
+            };
+            let active = match operations.begin(params.operation_id.clone()) {
+                Ok(active) => active,
+                Err(error) => return rpc_err(id, -32602, &error.to_string()),
+            };
+            let result = tokio::task::spawn_blocking(move || {
+                anyhow::ensure!(
+                    params.algorithm_id == GROUND_ALGORITHM_ID,
+                    "unsupported ground algorithm: {}",
+                    params.algorithm_id
+                );
+                anyhow::ensure!(
+                    (1..=50_000).contains(&params.sample_limit),
+                    "sampleLimit must be between 1 and 50000"
+                );
+                let scratch = GroundScratch::new(&params.operation_id)?;
+                emit_progress(Some(&params.progress_key), 0.0, "Preparing ground preview");
+                let source = runtime
+                    .lock()
+                    .expect("canonical app runtime mutex poisoned")
+                    .prepare_ground_source(params.source, scratch.root.join("source"))?;
+                let scope = ground_scope(&source, params.scope);
+                let request = GroundPrepareRequest {
+                    metadata_path: source.input_root.join("metadata.json"),
+                    hierarchy_path: source.input_root.join("hierarchy.bin"),
+                    octree_path: source.input_root.join("octree.bin"),
+                    output_root: scratch.root.join("unused"),
+                    output_name: "Ground preview".to_owned(),
+                    params: params.parameters.into(),
+                    scope,
+                };
+                let preview = preview_ground(
+                    &request,
+                    params.sample_limit,
+                    &active.cancellation,
+                    |progress| emit_ground_progress(&params.progress_key, progress, 0.0, 0.98),
+                )?;
+                emit_progress(Some(&params.progress_key), 1.0, "Ground preview ready");
+                Ok::<_, anyhow::Error>(serde_json::json!({
+                    "schemaId": "hcad.pointcloud.ground-preview-result@1",
+                    "algorithmId": GROUND_ALGORITHM_ID,
+                    "source": source.expected,
+                    "preview": preview,
+                }))
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(std::convert::identity);
+            rpc_result(id, result)
+        }
+        "pointcloud.ground.extract" => {
+            let id = req.id;
+            let params = match serde_json::from_value::<GroundExtractionParams>(req.params) {
+                Ok(params) => params,
+                Err(error) => return rpc_err(id, -32602, &format!("invalid params: {error}")),
+            };
+            let active = match operations.begin(params.operation_id.clone()) {
+                Ok(active) => active,
+                Err(error) => return rpc_err(id, -32602, &error.to_string()),
+            };
+            let result = tokio::task::spawn_blocking(move || {
+                anyhow::ensure!(
+                    params.algorithm_id == GROUND_ALGORITHM_ID,
+                    "unsupported ground algorithm: {}",
+                    params.algorithm_id
+                );
+                anyhow::ensure!(!params.output_name.trim().is_empty(), "outputName is empty");
+                let scratch = GroundScratch::new(&params.operation_id)?;
+                emit_progress(
+                    Some(&params.progress_key),
+                    0.0,
+                    "Capturing visible point-cloud state",
+                );
+                let source = runtime
+                    .lock()
+                    .expect("canonical app runtime mutex poisoned")
+                    .prepare_ground_source(params.source, scratch.root.join("source"))?;
+                let scope = ground_scope(&source, params.scope);
+                let scope_value = serde_json::to_value(&scope)?;
+                let parameters_value = serde_json::to_value(params.parameters)?;
+                let request = GroundPrepareRequest {
+                    metadata_path: source.input_root.join("metadata.json"),
+                    hierarchy_path: source.input_root.join("hierarchy.bin"),
+                    octree_path: source.input_root.join("octree.bin"),
+                    output_root: scratch.root.join("prepared"),
+                    output_name: params.output_name.clone(),
+                    params: params.parameters.into(),
+                    scope,
+                };
+                let prepared: PreparedGroundResult =
+                    prepare_ground_datasets(&request, &active.cancellation, |progress| {
+                        emit_ground_progress(&params.progress_key, progress, 0.02, 0.88)
+                    })?;
+                active.cancellation.check()?;
+                emit_progress(
+                    Some(&params.progress_key),
+                    0.90,
+                    "Publishing ground datasets",
+                );
+                let commit = runtime
+                    .lock()
+                    .expect("canonical app runtime mutex poisoned")
+                    .publish_ground_extraction(
+                        source,
+                        &prepared,
+                        params.command_id,
+                        params.ground_entity_id,
+                        params.output_name,
+                        parameters_value,
+                        scope_value,
+                        current_rfc3339(),
+                        &mut |publication| {
+                            let local = if publication.total_bytes == 0 {
+                                0.0
+                            } else {
+                                publication.completed_bytes as f64 / publication.total_bytes as f64
+                            };
+                            let (start, span, message) = match publication.phase {
+                                CanonicalImportProgressPhase::Staging => {
+                                    (0.90, 0.07, "Storing prepared ground datasets")
+                                }
+                                CanonicalImportProgressPhase::Publishing => {
+                                    (0.97, 0.03, "Committing ground extraction")
+                                }
+                            };
+                            emit_progress(
+                                Some(&params.progress_key),
+                                start + span * local.clamp(0.0, 1.0),
+                                message,
+                            );
+                        },
+                        &|| active.cancellation.is_cancel_requested(),
+                    )?;
+                emit_progress(Some(&params.progress_key), 1.0, "Ground cloud ready");
+                Ok::<_, anyhow::Error>(serde_json::json!({
+                    "schemaId": "hcad.pointcloud.ground-result@1",
+                    "algorithmId": GROUND_ALGORITHM_ID,
+                    "summary": prepared.summary,
+                    "source": {
+                        "entityId": commit.source_entity_id,
+                        "revision": commit.source_revision,
+                        "datasetId": commit.source_dataset_id,
+                        "classification": 2
+                    },
+                    "groundCloud": {
+                        "entityId": commit.ground_entity_id,
+                        "revision": commit.ground_revision,
+                        "datasetId": commit.ground_dataset_id,
+                        "entityType": "PointCloud",
+                        "isDgm": false,
+                        "meshSourceRole": "ground_cloud"
+                    },
+                    "journalEntry": commit.journal_entry,
+                }))
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(std::convert::identity);
+            rpc_result(id, result)
+        }
+        other => rpc_err(req.id, -32601, &format!("method not found: {other}")),
+    }
+}
+
+fn ground_scope(
+    source: &himmelcad_sidecar::canonical_app_runtime::CanonicalGroundSource,
+    scope: GroundScopeParams,
+) -> GroundScope {
+    GroundScope {
+        placement: source.entity.placement.map_or(
+            himmelcad_core::entity_model::Transform3d::IDENTITY.0,
+            |value| value.0,
+        ),
+        viewing_box: scope.viewing_box,
+        visible_classes: scope.visible_classes,
+    }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn emit_ground_progress(progress_key: &str, progress: GroundProgress, start: f64, span: f64) {
+    let local = if progress.total == 0 {
+        0.0
+    } else {
+        progress.completed as f64 / progress.total as f64
+    };
+    let phase_start = match progress.phase {
+        GroundPhase::Grid => 0.0,
+        GroundPhase::Filter => 0.25,
+        GroundPhase::Classify => 0.50,
+        GroundPhase::Bake => 0.75,
+    };
+    emit_progress(
+        Some(progress_key),
+        start + span * (phase_start + local.clamp(0.0, 1.0) * 0.25),
+        progress.phase.label(),
+    );
+}
+
+struct GroundScratch {
+    root: PathBuf,
+}
+
+impl GroundScratch {
+    fn new(operation_id: &str) -> anyhow::Result<Self> {
+        validate_operation_id(operation_id)?;
+        let root =
+            std::env::temp_dir().join(format!("hcad-ground-{}-{operation_id}", std::process::id()));
+        if root.exists() {
+            std::fs::remove_dir_all(&root)?;
+        }
+        std::fs::create_dir(&root)?;
+        Ok(Self { root })
+    }
+}
+
+impl Drop for GroundScratch {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_dir_all(&self.root) {
+            tracing::warn!(path = %self.root.display(), %error, "failed to remove ground scratch directory");
+        }
+    }
+}
+
+// UTC formatter kept dependency-free at this persistence boundary.
+fn current_rfc3339() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0_i64, |value| {
+            i64::try_from(value.as_secs()).unwrap_or(i64::MAX)
+        });
+    let days = seconds.div_euclid(86_400);
+    let day_seconds = seconds.rem_euclid(86_400);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 }.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096).div_euclid(365);
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2).div_euclid(153);
+    let day = doy - (153 * mp + 2).div_euclid(5) + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    year += i64::from(month <= 2);
+    let hour = day_seconds / 3_600;
+    let minute = (day_seconds % 3_600) / 60;
+    let second = day_seconds % 60;
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
 async fn handle_builder_archive_rpc(
@@ -1814,11 +2222,14 @@ async fn handle_canonical_app_rpc(
     automation: Arc<AutomationRuntime>,
 ) -> RpcResponse {
     let queue_flush = req.method == "snapshot.create"
+        || req.method == "snapshot.restore"
         || req.method == "pointcloud.display.set"
         || req.method == "view.bookmark.create"
         || req.method == "view.bookmark.restore"
         || req.method == "canonical.viewing_box.put"
         || req.method == "canonical.viewing_box.delete"
+        || req.method == "measurement.create"
+        || req.method == "measurement.remove"
         || (req.method == "app.protocol"
             && serde_json::from_value::<AppProtocolRequestEnvelope>(req.params.clone()).is_ok_and(
                 |envelope| {
@@ -1862,6 +2273,56 @@ async fn handle_canonical_app_rpc(
             req.id,
             runtime.durability_status().map_err(anyhow::Error::from),
         ),
+        "canonical.residency.resource.read" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Params {
+                object_hash: ObjectHash,
+                offset: u64,
+                byte_length: u64,
+            }
+            match serde_json::from_value::<Params>(req.params) {
+                Ok(params) => {
+                    let result = runtime
+                        .read_residency_resource_range(
+                            &params.object_hash,
+                            params.offset,
+                            params.byte_length,
+                        )
+                        .map(|(metadata, bytes)| {
+                            serde_json::json!({
+                                "schemaVersion": 1,
+                                "objectHash": metadata.object_hash,
+                                "mediaType": metadata.media_type,
+                                "offset": params.offset,
+                                "byteLength": params.byte_length,
+                                "totalByteLength": metadata.byte_length,
+                                "bytesBase64": encode_rpc_base64(&bytes),
+                            })
+                        })
+                        .map_err(anyhow::Error::from);
+                    rpc_result(req.id, result)
+                }
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        "product.import.provenance" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Params {
+                entity_ids: Vec<String>,
+            }
+            match serde_json::from_value::<Params>(req.params) {
+                Ok(params) if (1..=200).contains(&params.entity_ids.len()) => rpc_result(
+                    req.id,
+                    runtime
+                        .photolab_product_provenance(&params.entity_ids)
+                        .map_err(anyhow::Error::from),
+                ),
+                Ok(_) => rpc_err(req.id, -32602, "entityIds must contain 1 through 200 ids"),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
         "project.flush" => {
             let result = runtime
                 .flush()
@@ -1890,6 +2351,22 @@ async fn handle_canonical_app_rpc(
             req.id,
             runtime.list_snapshots().map_err(anyhow::Error::from),
         ),
+        "snapshot.restore" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Params {
+                entity_id: String,
+            }
+            match serde_json::from_value::<Params>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    runtime
+                        .restore_snapshot(&params.entity_id)
+                        .map_err(anyhow::Error::from),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
         "view.bookmark.create" => {
             #[derive(Deserialize)]
             #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1983,6 +2460,72 @@ async fn handle_canonical_app_rpc(
                     req.id,
                     runtime
                         .delete_viewing_box(
+                            params.command_id,
+                            params.entity_id,
+                            params.expected_revision,
+                        )
+                        .map_err(anyhow::Error::from),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        "measurement.create" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Params {
+                command_id: String,
+                entity_id: String,
+                name: String,
+                measurement: himmelcad_core::release_05_admissions::MeasurementV1,
+            }
+            match serde_json::from_value::<Params>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    runtime
+                        .create_measurement(
+                            params.command_id,
+                            params.entity_id,
+                            params.name,
+                            params.measurement,
+                        )
+                        .map_err(anyhow::Error::from),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        "measurement.list" => rpc_result(
+            req.id,
+            runtime.list_measurements().map_err(anyhow::Error::from),
+        ),
+        "measurement.get" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Params {
+                entity_id: String,
+            }
+            match serde_json::from_value::<Params>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    runtime
+                        .get_measurement(&params.entity_id)
+                        .map_err(anyhow::Error::from),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        "measurement.remove" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Params {
+                command_id: String,
+                entity_id: String,
+                expected_revision: u64,
+            }
+            match serde_json::from_value::<Params>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    runtime
+                        .delete_measurement(
                             params.command_id,
                             params.entity_id,
                             params.expected_revision,
@@ -2295,7 +2838,7 @@ async fn handle_registration_rpc(
 ) -> RpcResponse {
     match req.method.as_str() {
         "registration.import.stage" => {
-            rpc_blocking_with_params::<RegistrationStageParams, _, _>(
+            rpc_blocking_product_with_params::<RegistrationStageParams, _, _>(
                 req.id,
                 req.params,
                 move |params| {
@@ -2304,7 +2847,10 @@ async fn handle_registration_rpc(
                     let progress_key = params.session_id.clone();
                     emit_progress(Some(&progress_key), 0.0, "Reading header");
                     let source = PathBuf::from(&params.source_path);
-                    anyhow::ensure!(source.is_file(), "registration source is not a file");
+                    anyhow::ensure!(
+                        source.is_file() || source.is_dir(),
+                        "registration source is not a file or package directory"
+                    );
                     let cancellation = registrations.begin_preparation(&params.session_id)?;
                     let scratch_root = match create_registration_scratch(&params.session_id) {
                         Ok(root) => root,
@@ -2504,7 +3050,7 @@ async fn handle_registration_rpc(
                     if result.is_ok() {
                         emit_progress(Some(&progress_key), 0.99, "First frame");
                     }
-                    result
+                    result.and_then(public_import_commit)
                 },
             )
             .await
@@ -2565,11 +3111,11 @@ async fn handle_io_rpc(
         "io.probe" => {
             rpc_blocking_with_params::<IoProbeParams, _, _>(req.id, req.params, |params| {
                 let source = PathBuf::from(params.source_path);
-                anyhow::ensure!(source.is_file(), "I/O probe source is not a file");
-                let mut prefix = Vec::new();
-                std::fs::File::open(&source)?
-                    .take(IO_PROBE_PREFIX_BYTES)
-                    .read_to_end(&mut prefix)?;
+                anyhow::ensure!(
+                    source.is_file() || source.is_dir(),
+                    "I/O probe source is not a file or package directory"
+                );
+                let prefix = io_probe_prefix(&source)?;
                 let registry = canonical_builtin_import_registry(io_probe_registry_root())?;
                 registry
                     .select_importer(ImportProbeRequest {
@@ -2593,7 +3139,10 @@ async fn handle_io_rpc(
                 run_tracked_io(operations, operation_id, |context| {
                     validate_io_identity(&params.command_id, "commandId")?;
                     let source = PathBuf::from(&params.source_path);
-                    anyhow::ensure!(source.is_file(), "I/O import source is not a file");
+                    anyhow::ensure!(
+                        source.is_file() || source.is_dir(),
+                        "I/O import source is not a file or package directory"
+                    );
                     let scratch = IoScratch::create(&context.operation_id)?;
                     let registry = canonical_builtin_import_registry(scratch.root.clone())?;
                     let staged =
@@ -2602,13 +3151,16 @@ async fn handle_io_rpc(
                         .lock()
                         .expect("canonical app runtime mutex poisoned")
                         .publish_staged_import(&staged, &params.command_id)?;
-                    serde_json::to_value(commit).map_err(anyhow::Error::from)
+                    public_import_commit(commit)
                 })
             })
             .await
             .map_err(anyhow::Error::from)
             .and_then(std::convert::identity);
-            rpc_result(req.id, result)
+            match result {
+                Ok(value) => rpc_result(req.id, Ok::<_, anyhow::Error>(value)),
+                Err(error) => product_rpc_err(req.id, &error),
+            }
         }
         "io.export.plan" => {
             rpc_blocking_with_params::<IoExportRequestParams, _, _>(
@@ -2751,6 +3303,20 @@ fn validate_io_identity(value: &str, field: &str) -> anyhow::Result<()> {
 
 fn io_probe_registry_root() -> PathBuf {
     std::env::temp_dir().join("himmelcad-io-registry")
+}
+
+fn io_probe_prefix(source: &Path) -> anyhow::Result<Vec<u8>> {
+    let probe_path = if source.is_dir() {
+        source.join("ready.json")
+    } else {
+        source.to_path_buf()
+    };
+    anyhow::ensure!(probe_path.is_file(), "I/O probe source has no ready.json");
+    let mut prefix = Vec::new();
+    std::fs::File::open(probe_path)?
+        .take(IO_PROBE_PREFIX_BYTES)
+        .read_to_end(&mut prefix)?;
+    Ok(prefix)
 }
 
 fn require_provider_version(
@@ -6592,6 +7158,14 @@ fn prepare_alignment_job(
         neural_matching: true,
         measured_extraction_bytes_per_pixel,
     });
+    if let Some(tiling) = memory_plan.extraction_tiling {
+        anyhow::bail!(
+            "alignment needs tiled ALIKED extraction ({}×{} tiles with {} px overlap), but the curated COLMAP worker does not expose the scored descriptors required for deterministic merge and feature_importer; refusing instead of reducing quality or risking an out-of-envelope full-image extraction",
+            tiling.columns,
+            tiling.rows,
+            tiling.overlap_px,
+        );
+    }
     let mut request = ColmapRunRequest {
         job_id: params.operation_id.clone(),
         project_root: context.working_path.clone(),
@@ -9567,6 +10141,44 @@ fn rpc_result<T: Serialize>(id: serde_json::Value, result: anyhow::Result<T>) ->
     }
 }
 
+fn public_import_commit<T: Serialize>(commit: T) -> anyhow::Result<serde_json::Value> {
+    let mut value = serde_json::to_value(commit)?;
+    if let Some(references) = value
+        .pointer_mut("/inventory/externalObjects")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for reference in references {
+            if let Some(reference) = reference.as_object_mut() {
+                reference.remove("sourcePath");
+            }
+        }
+    }
+    Ok(value)
+}
+
+fn encode_rpc_base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let a = chunk[0];
+        let b = chunk.get(1).copied().unwrap_or(0);
+        let c = chunk.get(2).copied().unwrap_or(0);
+        output.push(char::from(TABLE[usize::from(a >> 2)]));
+        output.push(char::from(TABLE[usize::from(((a & 0x03) << 4) | (b >> 4))]));
+        output.push(if chunk.len() > 1 {
+            char::from(TABLE[usize::from(((b & 0x0f) << 2) | (c >> 6))])
+        } else {
+            '='
+        });
+        output.push(if chunk.len() > 2 {
+            char::from(TABLE[usize::from(c & 0x3f)])
+        } else {
+            '='
+        });
+    }
+    output
+}
+
 fn handle_import_ifc(params: ImportIfcParams) -> anyhow::Result<(CanonicalStagedImport, String)> {
     let source = PathBuf::from(params.path);
     anyhow::ensure!(
@@ -9861,6 +10473,25 @@ fn rpc_err_with_data(
 }
 
 fn product_rpc_err(id: serde_json::Value, error: &anyhow::Error) -> RpcResponse {
+    if let Some(ProviderContractError::ProductImportRefused {
+        reason_code,
+        message,
+    }) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<ProviderContractError>())
+    {
+        return rpc_err_with_data(
+            id,
+            -32028,
+            message,
+            serde_json::json!({
+                "code": reason_code,
+                "reasonCode": reason_code,
+                "message": message,
+                "retryable": false,
+            }),
+        );
+    }
     if let Some(failure) = error
         .chain()
         .find_map(|cause| cause.downcast_ref::<ProductInputFailure>())
@@ -10096,6 +10727,50 @@ mod tests {
                 "message": "The checkpoint inputs changed.",
                 "retryable": false,
             }))
+        );
+    }
+
+    #[test]
+    fn product_import_refusal_is_a_typed_rpc_error() {
+        let error = anyhow::Error::new(ProviderContractError::ProductImportRefused {
+            reason_code: "invalid_package",
+            message: "The import package is invalid.".to_owned(),
+        });
+        let response = product_rpc_err(serde_json::json!(7), &error);
+        let error = response.error.expect("RPC error");
+        assert_eq!(error.code, -32028);
+        assert_eq!(
+            error.data,
+            Some(serde_json::json!({
+                "code": "invalid_package",
+                "reasonCode": "invalid_package",
+                "message": "The import package is invalid.",
+                "retryable": false,
+            }))
+        );
+    }
+
+    #[test]
+    fn product_import_commit_keeps_authority_paths_sidecar_private() {
+        let public = public_import_commit(serde_json::json!({
+            "journalEntry": { "commandId": "import-product" },
+            "inventory": {
+                "externalObjects": [{
+                    "objectHash": "abc",
+                    "mediaType": "application/octet-stream",
+                    "byteLength": 3,
+                    "sourcePath": "/private/package/dataset.bin",
+                    "authority": "hcad.product-import-package-manifest@1"
+                }]
+            }
+        }))
+        .expect("public import commit");
+        let reference = &public["inventory"]["externalObjects"][0];
+        assert!(reference.get("sourcePath").is_none());
+        assert_eq!(reference["objectHash"], "abc");
+        assert_eq!(
+            reference["authority"],
+            "hcad.product-import-package-manifest@1"
         );
     }
 

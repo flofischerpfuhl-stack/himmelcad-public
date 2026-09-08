@@ -81,7 +81,7 @@ try {
     { timeout: 120_000 },
   );
 
-  const metadataUrl = `/@fs/${prepared.metadataPath}`;
+  const metadataUrl = args.metadataUrl ?? `/@fs/${prepared.metadataPath}`;
   report.browser = await loadDataset(page, metadataUrl, prepared);
   if (args.frontierOnly) {
     report.frontierOrbit = await page.evaluate(runFrontierOrbit, { frames: args.frames });
@@ -121,6 +121,7 @@ function parseArguments(values) {
     cdp: null,
     dataset: null,
     metadata: null,
+    metadataUrl: null,
     date: null,
     width: 1_440,
     height: 900,
@@ -135,6 +136,7 @@ function parseArguments(values) {
     else if (value === '--cdp') parsed.cdp = requiredValue(values, ++index, value);
     else if (value === '--dataset') parsed.dataset = requiredValue(values, ++index, value);
     else if (value === '--metadata') parsed.metadata = requiredValue(values, ++index, value);
+    else if (value === '--metadata-url') parsed.metadataUrl = requiredValue(values, ++index, value);
     else if (value === '--date') parsed.date = requiredValue(values, ++index, value);
     else if (value === '--width') parsed.width = positiveInteger(values, ++index, value);
     else if (value === '--height') parsed.height = positiveInteger(values, ++index, value);
@@ -144,6 +146,7 @@ function parseArguments(values) {
 
   --dataset <file.las|file.laz|metadata.json>  Source (default: largest real repo LAS)
   --metadata <metadata.json>                   Reuse an already converted Potree 2 dataset
+  --metadata-url <url>                         Override the browser URL for staged metadata
   --cdp <url>                                  Builder CDP endpoint (default: http://127.0.0.1:9223)
   --no-launch                                  Require an already running Builder
   --frontier-only                              Record one orbit's frontier counters, not timings

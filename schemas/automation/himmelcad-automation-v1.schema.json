@@ -1931,26 +1931,40 @@
         "initialDistanceM": { "type": "number", "minimum": 0, "maximum": 100 }
       }
     },
+    "PointCloudGroundRequestPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceEntityId", "parameters"],
+      "properties": {
+        "operationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "sourceEntityId": { "type": "string", "minLength": 1 },
+        "parameters": { "$ref": "#/$defs/PointCloudGroundParameters" }
+      }
+    },
     "PointCloudGroundRequest": {
       "type": "object",
       "additionalProperties": false,
       "required": ["schemaId", "payload"],
       "properties": {
         "schemaId": { "const": "hcad.pointcloud.ground-request@1" },
-        "payload": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["sourceEntityId", "parameters"],
-          "properties": {
-            "operationId": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 128,
-              "pattern": "^[A-Za-z0-9_-]+$"
-            },
-            "sourceEntityId": { "type": "string", "minLength": 1 },
-            "parameters": { "$ref": "#/$defs/PointCloudGroundParameters" }
-          }
+        "payload": { "$ref": "#/$defs/PointCloudGroundRequestPayload" }
+      }
+    },
+    "PointCloudGroundCancelPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operationId"],
+      "properties": {
+        "operationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
         }
       }
     },
@@ -1960,19 +1974,75 @@
       "required": ["schemaId", "payload"],
       "properties": {
         "schemaId": { "const": "hcad.pointcloud.ground-cancel-request@1" },
-        "payload": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["operationId"],
-          "properties": {
-            "operationId": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 128,
-              "pattern": "^[A-Za-z0-9_-]+$"
-            }
-          }
-        }
+        "payload": { "$ref": "#/$defs/PointCloudGroundCancelPayload" }
+      }
+    },
+    "PointCloudGroundResidualSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "meanM", "standardDeviationM", "minimumM", "maximumM"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "meanM": { "type": "number" },
+        "standardDeviationM": { "type": "number", "minimum": 0 },
+        "minimumM": { "type": "number" },
+        "maximumM": { "type": "number" }
+      }
+    },
+    "PointCloudGroundSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourcePoints",
+        "scopedPoints",
+        "groundPoints",
+        "ratio",
+        "residuals",
+        "membershipSha256"
+      ],
+      "properties": {
+        "sourcePoints": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "scopedPoints": { "type": "integer", "minimum": 1, "format": "uint64" },
+        "groundPoints": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "residuals": { "$ref": "#/$defs/PointCloudGroundResidualSummary" },
+        "membershipSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "PointCloudGroundSourceResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entityId", "revision", "datasetId", "classification"],
+      "properties": {
+        "entityId": { "type": "string", "minLength": 1 },
+        "revision": { "type": "integer", "minimum": 1, "format": "uint64" },
+        "datasetId": { "type": "string", "minLength": 1 },
+        "classification": { "const": 2 }
+      }
+    },
+    "PointCloudGroundCloudResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entityId", "revision", "datasetId", "entityType", "isDgm", "meshSourceRole"],
+      "properties": {
+        "entityId": { "type": "string", "minLength": 1 },
+        "revision": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "datasetId": { "type": "string", "minLength": 1 },
+        "entityType": { "const": "PointCloud" },
+        "isDgm": { "const": false },
+        "meshSourceRole": { "const": "ground_cloud" }
+      }
+    },
+    "PointCloudGroundResultPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithmId", "source", "groundCloud", "summary", "journalEntry"],
+      "properties": {
+        "algorithmId": { "const": "hcad.pointcloud.ground-progressive@1" },
+        "source": { "$ref": "#/$defs/PointCloudGroundSourceResult" },
+        "groundCloud": { "$ref": "#/$defs/PointCloudGroundCloudResult" },
+        "summary": { "$ref": "#/$defs/PointCloudGroundSummary" },
+        "journalEntry": { "type": "object", "additionalProperties": true }
       }
     },
     "PointCloudGroundResult": {
@@ -1981,16 +2051,47 @@
       "required": ["schemaId", "payload"],
       "properties": {
         "schemaId": { "const": "hcad.pointcloud.ground-result@1" },
-        "payload": {
-          "type": "object",
-          "required": ["algorithmId", "source", "groundCloud", "summary"],
-          "properties": {
-            "algorithmId": { "const": "hcad.pointcloud.ground-progressive@1" },
-            "source": { "type": "object" },
-            "groundCloud": { "type": "object" },
-            "summary": { "type": "object" }
-          }
+        "payload": { "$ref": "#/$defs/PointCloudGroundResultPayload" }
+      }
+    },
+    "PointCloudGroundPreviewPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["position", "classification"],
+      "properties": {
+        "position": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "classification": { "type": "string", "enum": ["ground", "non_ground"] }
+      }
+    },
+    "PointCloudGroundPreview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sampledPoints", "groundPoints", "ratio", "residuals", "points"],
+      "properties": {
+        "sampledPoints": { "type": "integer", "minimum": 1, "format": "uint64" },
+        "groundPoints": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "residuals": { "$ref": "#/$defs/PointCloudGroundResidualSummary" },
+        "points": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": { "$ref": "#/$defs/PointCloudGroundPreviewPoint" }
         }
+      }
+    },
+    "PointCloudGroundPreviewResultPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithmId", "source", "preview"],
+      "properties": {
+        "algorithmId": { "const": "hcad.pointcloud.ground-progressive@1" },
+        "source": { "$ref": "#/$defs/EntityVersionRef" },
+        "preview": { "$ref": "#/$defs/PointCloudGroundPreview" }
       }
     },
     "PointCloudGroundPreviewResult": {
@@ -1999,14 +2100,7 @@
       "required": ["schemaId", "payload"],
       "properties": {
         "schemaId": { "const": "hcad.pointcloud.ground-preview-result@1" },
-        "payload": {
-          "type": "object",
-          "required": ["algorithmId", "preview"],
-          "properties": {
-            "algorithmId": { "const": "hcad.pointcloud.ground-progressive@1" },
-            "preview": { "type": "object" }
-          }
-        }
+        "payload": { "$ref": "#/$defs/PointCloudGroundPreviewResultPayload" }
       }
     },
     "PointCloudDisplayStyle": {

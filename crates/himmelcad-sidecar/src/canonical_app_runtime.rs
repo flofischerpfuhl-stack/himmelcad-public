@@ -20,7 +20,10 @@ use himmelcad_core::canonical_document::{
 };
 use himmelcad_core::canonical_resources::PointCloudDisplayStyle;
 use himmelcad_core::entity::EntityId;
-use himmelcad_core::entity_model::{built_in_type, CanonicalEntity, EntityTypeId, GeometryObject};
+use himmelcad_core::entity_model::{
+    built_in_type, CanonicalEntity, EntityTypeId, GeometryObject, GeometryResource, Representation,
+    RepresentationAuthority, RepresentationRole, StreamedGeometry,
+};
 use himmelcad_core::entity_validation::{
     canonical_entity_version_hash, geometry_object_content_hash, validate_resolved_representation,
 };
@@ -31,16 +34,20 @@ use himmelcad_core::property_schema::{
     PropertySchemaError,
 };
 use himmelcad_core::release_05_admissions::{
-    validate_snapshot_marker, SnapshotMarkerKindV1, SnapshotMarkerV1, SnapshotOriginV1,
-    SnapshotRetentionV1, RELEASE_05_SCHEMA_VERSION, SNAPSHOT_MARKER_SCHEMA_ID,
+    validate_measurement, validate_snapshot_marker, DerivedSourceV1, MeasurementAnchorV1,
+    MeasurementV1, MeshSourceRoleKindV1, MeshSourceRoleV1, MeshSourceRolesV1, SnapshotMarkerKindV1,
+    SnapshotMarkerV1, SnapshotOriginV1, SnapshotRetentionV1, MEASUREMENT_SCHEMA_ID,
+    MESH_SOURCE_ROLES_SCHEMA_ID, RELEASE_05_SCHEMA_VERSION, SNAPSHOT_MARKER_SCHEMA_ID,
 };
 use himmelcad_core::typed_artifact::{TypedArtifactDescriptor, TypedArtifactManifest};
 use himmelcad_io::{
     CanonicalImportPackage, CanonicalJsonObject, CanonicalPreparedDataset, CanonicalStagedImport,
-    CANONICAL_IO_SCHEMA_VERSION,
+    PreparedDatasetArtifact, CANONICAL_IO_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::pointcloud_ground::{PreparedGroundDataset, PreparedGroundResult};
 
 use crate::canonical_project_store::{
     CanonicalDurabilityStatus, CanonicalImportCommit, CanonicalImportInventory,
@@ -77,6 +84,16 @@ pub struct CanonicalSnapshotSummary {
     pub name: String,
     pub marker: SnapshotMarkerV1,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalSnapshotRestoreCommit {
+    pub snapshot: CanonicalSnapshotSummary,
+    pub journal_entry: CanonicalJournalEntry,
+}
+
+const DEFAULT_SESSION_START_SNAPSHOT_RETENTION: usize = 5;
+const SESSION_START_SNAPSHOT_RETENTION_ENV: &str = "HCAD_SESSION_START_SNAPSHOT_RETENTION";
 
 const VIEW_BOOKMARK_SCHEMA_ID: &str = "hcad.view-bookmark@1";
 const VIEWING_BOX_SCHEMA_ID: &str = "hcad.viewing-box@1";
@@ -128,6 +145,28 @@ pub struct CanonicalViewingBoxDelete {
     pub journal_entry: CanonicalJournalEntry,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalMeasurementSummary {
+    pub entity_id: String,
+    pub revision: u64,
+    pub name: String,
+    pub measurement: MeasurementV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalMeasurementCommit {
+    pub measurement: CanonicalMeasurementSummary,
+    pub journal_entry: CanonicalJournalEntry,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalMeasurementDelete {
+    pub journal_entry: CanonicalJournalEntry,
+}
+
 /// Versioned, path-free description of every live representation that can be
 /// reconstructed from the canonical store after process restart.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -159,6 +198,32 @@ pub struct CanonicalPointCloudMetadata {
     pub source_units: Option<String>,
     pub placement_offset: [f64; 3],
     pub display: PointCloudDisplayStyle,
+}
+
+/// Exact source capture prepared before a long-running ground job releases the project lock.
+#[derive(Debug, Clone)]
+pub struct CanonicalGroundSource {
+    pub expected: EntityVersionRef,
+    pub entity: CanonicalEntity,
+    pub representation_slot: String,
+    pub input_root: PathBuf,
+    pub source_components: serde_json::Value,
+    pub source_attributes: serde_json::Value,
+    pub source_relations: serde_json::Value,
+    pub source_style: Option<serde_json::Value>,
+}
+
+/// One atomic PC-D19 source-edit plus derived-cloud publication.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalGroundCommit {
+    pub journal_entry: CanonicalJournalEntry,
+    pub source_entity_id: String,
+    pub source_revision: u64,
+    pub ground_entity_id: String,
+    pub ground_revision: u64,
+    pub source_dataset_id: String,
+    pub ground_dataset_id: String,
 }
 
 /// Failure of an explicit project lifecycle or staged import operation.
@@ -194,6 +259,12 @@ pub enum CanonicalAppRuntimeError {
     InvalidSnapshotMarker,
     #[error("snapshot marker JSON is invalid: {0}")]
     SnapshotJson(#[from] serde_json::Error),
+    #[error("snapshot marker {0} was not found")]
+    SnapshotNotFound(String),
+    #[error("snapshot generation {0} is not available in the journal")]
+    SnapshotGenerationUnavailable(u64),
+    #[error("snapshot restore cannot change the schema identity of entity {0}")]
+    SnapshotSchemaConflict(String),
 }
 
 impl CanonicalAppRuntime {
@@ -216,13 +287,15 @@ impl CanonicalAppRuntime {
         {
             seed_project_root(&mut store, project_root)?;
         }
-        create_snapshot_marker(
-            &mut store,
-            "Session start",
-            SnapshotMarkerKindV1::SessionStart,
-            SnapshotOriginV1::System,
-        )?;
+        let compacted =
+            maintain_session_start_snapshots(&mut store, session_start_snapshot_retention())?;
         store.flush_group_commits()?;
+        if compacted > 0 {
+            eprintln!(
+                "Compacted {compacted} session-start snapshots to {}",
+                session_start_snapshot_retention()
+            );
+        }
         let snapshot = AppDocumentSnapshot::from_document(store.document());
         self.store = Some(store);
         Ok(snapshot)
@@ -305,6 +378,56 @@ impl CanonicalAppRuntime {
                 .cmp(&(right.marker.marked_generation, &right.entity_id))
         });
         Ok(result)
+    }
+
+    pub fn restore_snapshot(
+        &mut self,
+        entity_id: &str,
+    ) -> Result<CanonicalSnapshotRestoreCommit, CanonicalAppRuntimeError> {
+        let store = self.store_mut()?;
+        let snapshot = snapshot_summaries(store)?
+            .into_iter()
+            .find(|candidate| candidate.entity_id == entity_id)
+            .ok_or_else(|| CanonicalAppRuntimeError::SnapshotNotFound(entity_id.to_owned()))?;
+        let marked_generation =
+            usize::try_from(snapshot.marker.marked_generation).map_err(|_| {
+                CanonicalAppRuntimeError::SnapshotGenerationUnavailable(
+                    snapshot.marker.marked_generation,
+                )
+            })?;
+        if marked_generation > store.document().journal().len() {
+            return Err(CanonicalAppRuntimeError::SnapshotGenerationUnavailable(
+                snapshot.marker.marked_generation,
+            ));
+        }
+        let target = himmelcad_core::canonical_document::CanonicalDocument::from_journal(
+            &store.document().journal()[..marked_generation],
+        )
+        .map_err(CanonicalProjectStoreError::Document)?;
+        let mut mutations = restore_mutations(store.document(), &target)?;
+        let safety_name = format!("Before restoring '{}'", snapshot.name);
+        let (_, safety_entity) = build_snapshot_marker_entity(
+            store,
+            &safety_name,
+            SnapshotMarkerKindV1::PreRestore,
+            SnapshotOriginV1::System,
+            Some(EntityId(snapshot.entity_id.clone())),
+        )?;
+        mutations.push(CanonicalEntityMutation::Create {
+            entity: safety_entity,
+        });
+        let journal_entry = store.queue_transaction(CanonicalCommandTransaction {
+            command_id: format!(
+                "snapshot.restore/{}/{}",
+                snapshot.entity_id,
+                store.document().generation()
+            ),
+            mutations,
+        })?;
+        Ok(CanonicalSnapshotRestoreCommit {
+            snapshot,
+            journal_entry,
+        })
     }
 
     pub fn create_view_bookmark(
@@ -620,6 +743,258 @@ impl CanonicalAppRuntime {
         Ok(CanonicalViewingBoxDelete { journal_entry })
     }
 
+    /// Creates one admitted Release 0.5 measurement in one journal transaction.
+    /// Attached anchors are revalidated against the current canonical source
+    /// revision immediately before the immutable geometry is stored.
+    pub fn create_measurement(
+        &mut self,
+        command_id: String,
+        entity_id: String,
+        name: String,
+        measurement: MeasurementV1,
+    ) -> Result<CanonicalMeasurementCommit, CanonicalAppRuntimeError> {
+        if command_id.trim().is_empty() || entity_id.trim().is_empty() || name.trim().is_empty() {
+            return Err(CanonicalAppRuntimeError::InvalidResidency(
+                "measurement command, entity id and name are required".to_owned(),
+            ));
+        }
+        validate_measurement(&measurement).map_err(|error| {
+            CanonicalAppRuntimeError::InvalidResidency(format!(
+                "measurement payload is outside the admitted 0.5 profile: {error}"
+            ))
+        })?;
+
+        let store = self.store_mut()?;
+        if store
+            .document()
+            .entity(&EntityId(entity_id.clone()))
+            .is_some()
+            || store
+                .document()
+                .tombstone(&EntityId(entity_id.clone()))
+                .is_some()
+        {
+            return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+                "measurement {entity_id:?} already exists"
+            )));
+        }
+        for anchor in &measurement.anchors {
+            let MeasurementAnchorV1::Attached {
+                entity_id,
+                expected_revision,
+                expected_version_hash,
+                ..
+            } = anchor
+            else {
+                continue;
+            };
+            let source = store.document().entity(entity_id).ok_or_else(|| {
+                CanonicalAppRuntimeError::InvalidResidency(format!(
+                    "attached measurement source {:?} no longer exists",
+                    entity_id.0
+                ))
+            })?;
+            if source.revision != *expected_revision
+                || source.version_hash != *expected_version_hash
+            {
+                return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+                    "attached measurement source {:?} changed before commit",
+                    entity_id.0
+                )));
+            }
+        }
+
+        let geometry = GeometryObject::Measurement {
+            measurement: Box::new(measurement.clone()),
+        };
+        let geometry_ref = store.put_geometry_object(&geometry)?;
+        let components = empty_json_object(
+            "application/vnd.himmelcad.components+json",
+            serde_json::json!({ "schemaId": "hcad.components@1" }),
+        )?;
+        let attributes = empty_json_object(
+            "application/vnd.himmelcad.attributes+json",
+            serde_json::json!({ "schemaId": "hcad.attributes@1" }),
+        )?;
+        let relations = empty_json_object(
+            "application/vnd.himmelcad.relations+json",
+            serde_json::json!({ "schemaId": "hcad.relations@1", "relations": [] }),
+        )?;
+        store.put_json_object(&components)?;
+        store.put_json_object(&attributes)?;
+        store.put_json_object(&relations)?;
+
+        let owner = store
+            .document()
+            .entities()
+            .find(|entity| entity.owner.is_none() && entity.type_id.0 == built_in_type::GROUP)
+            .map(|entity| entity.id.clone());
+        let mut mutations = Vec::with_capacity(2);
+        match store.document().entity(&measurement.layer_id) {
+            Some(layer) if layer.type_id.0 == built_in_type::LAYER => {}
+            Some(_) => {
+                return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+                    "measurement layer {:?} has the wrong type",
+                    measurement.layer_id.0
+                )));
+            }
+            None if measurement.layer_id.0 == "default-layer" => {
+                let mut layer = CanonicalEntity {
+                    id: measurement.layer_id.clone(),
+                    revision: 0,
+                    type_id: EntityTypeId(built_in_type::LAYER.to_owned()),
+                    name: "Default".to_owned(),
+                    owner: owner.clone(),
+                    layer_ids: Vec::new(),
+                    placement: None,
+                    representations: Vec::new(),
+                    components_ref: components.object_hash.clone(),
+                    attributes_ref: attributes.object_hash.clone(),
+                    relations_ref: relations.object_hash.clone(),
+                    style_ref: None,
+                    schema_version: 1,
+                    version_hash: ObjectHash::of_bytes(b"pending default layer"),
+                };
+                layer.version_hash = canonical_entity_version_hash(&layer).map_err(|error| {
+                    CanonicalAppRuntimeError::InvalidResidency(error.to_string())
+                })?;
+                mutations.push(CanonicalEntityMutation::Create { entity: layer });
+            }
+            None => {
+                return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+                    "measurement layer {:?} no longer exists",
+                    measurement.layer_id.0
+                )));
+            }
+        }
+        let mut entity = CanonicalEntity {
+            id: EntityId(entity_id),
+            revision: 0,
+            type_id: EntityTypeId(MEASUREMENT_SCHEMA_ID.to_owned()),
+            name: name.trim().to_owned(),
+            owner,
+            layer_ids: vec![measurement.layer_id.clone()],
+            placement: None,
+            representations: vec![Representation {
+                role: RepresentationRole::Canonical,
+                geometry_ref,
+                authority: RepresentationAuthority::Authoritative,
+                dependency_hash: None,
+            }],
+            components_ref: components.object_hash,
+            attributes_ref: attributes.object_hash,
+            relations_ref: relations.object_hash,
+            style_ref: None,
+            schema_version: 1,
+            version_hash: ObjectHash::of_bytes(b"pending measurement"),
+        };
+        entity.version_hash = canonical_entity_version_hash(&entity)
+            .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?;
+        validate_resolved_representation(
+            &entity,
+            entity
+                .representations
+                .first()
+                .expect("measurement representation"),
+            &geometry,
+        )
+        .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?;
+        mutations.push(CanonicalEntityMutation::Create { entity });
+        let journal_entry = store.queue_transaction(CanonicalCommandTransaction {
+            command_id,
+            mutations,
+        })?;
+        let measurement = read_measurement(
+            store,
+            journal_entry
+                .effects
+                .last()
+                .and_then(|effect| effect.after.as_ref())
+                .ok_or_else(|| {
+                    CanonicalAppRuntimeError::InvalidResidency(
+                        "measurement create produced no live entity".to_owned(),
+                    )
+                })?,
+        )?;
+        Ok(CanonicalMeasurementCommit {
+            measurement,
+            journal_entry,
+        })
+    }
+
+    pub fn list_measurements(
+        &self,
+    ) -> Result<Vec<CanonicalMeasurementSummary>, CanonicalAppRuntimeError> {
+        let store = self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?;
+        let mut result = store
+            .document()
+            .entities()
+            .filter(|entity| entity.type_id.0 == MEASUREMENT_SCHEMA_ID)
+            .map(|entity| read_measurement(store, entity))
+            .collect::<Result<Vec<_>, _>>()?;
+        result.sort_by(|left, right| {
+            (&left.name, &left.entity_id).cmp(&(&right.name, &right.entity_id))
+        });
+        Ok(result)
+    }
+
+    pub fn get_measurement(
+        &self,
+        entity_id: &str,
+    ) -> Result<CanonicalMeasurementSummary, CanonicalAppRuntimeError> {
+        let store = self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?;
+        let entity = store
+            .document()
+            .entity(&EntityId(entity_id.to_owned()))
+            .ok_or_else(|| {
+                CanonicalAppRuntimeError::InvalidResidency(format!(
+                    "measurement {entity_id:?} no longer exists"
+                ))
+            })?;
+        read_measurement(store, entity)
+    }
+
+    pub fn delete_measurement(
+        &mut self,
+        command_id: String,
+        entity_id: String,
+        expected_revision: u64,
+    ) -> Result<CanonicalMeasurementDelete, CanonicalAppRuntimeError> {
+        if command_id.trim().is_empty() || entity_id.trim().is_empty() {
+            return Err(CanonicalAppRuntimeError::InvalidResidency(
+                "measurement delete command and entity id are required".to_owned(),
+            ));
+        }
+        let store = self.store_mut()?;
+        let entity = store
+            .document()
+            .entity(&EntityId(entity_id.clone()))
+            .cloned()
+            .ok_or_else(|| {
+                CanonicalAppRuntimeError::InvalidResidency(format!(
+                    "measurement {entity_id:?} no longer exists"
+                ))
+            })?;
+        if entity.type_id.0 != MEASUREMENT_SCHEMA_ID || entity.revision != expected_revision {
+            return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+                "measurement {entity_id:?} is stale or has the wrong type"
+            )));
+        }
+        let journal_entry = store.queue_transaction(CanonicalCommandTransaction {
+            command_id,
+            mutations: vec![CanonicalEntityMutation::Delete {
+                expected: EntityVersionRef::from_entity(&entity),
+            }],
+        })?;
+        Ok(CanonicalMeasurementDelete { journal_entry })
+    }
+
     /// Returns whether a canonical project currently owns this runtime.
     #[must_use]
     pub const fn is_open(&self) -> bool {
@@ -693,6 +1068,21 @@ impl CanonicalAppRuntime {
         })
     }
 
+    /// Reads one bounded committed-resource range for the trusted desktop
+    /// protocol bridge. The response is path-free for the renderer.
+    pub fn read_residency_resource_range(
+        &self,
+        object_hash: &ObjectHash,
+        offset: u64,
+        byte_length: u64,
+    ) -> Result<(CanonicalStoredObject, Vec<u8>), CanonicalAppRuntimeError> {
+        self.store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?
+            .read_object_range(object_hash, offset, byte_length)
+            .map_err(Into::into)
+    }
+
     /// Publishes a validated provider result through the same journal-last store
     /// used by all other canonical mutations.
     pub fn publish_staged_import(
@@ -701,6 +1091,9 @@ impl CanonicalAppRuntime {
         command_id: &str,
     ) -> Result<CanonicalImportCommit, CanonicalAppRuntimeError> {
         staged.validate()?;
+        if let Some(existing) = self.existing_product_import(staged)? {
+            return Ok(existing);
+        }
         let source_roots = CanonicalImportSourceRoots {
             datasets: staged.roots.dataset_roots.clone(),
             resource_sets: staged.roots.resource_set_roots.clone(),
@@ -718,6 +1111,9 @@ impl CanonicalAppRuntime {
         progress: &mut dyn FnMut(CanonicalImportProgress),
     ) -> Result<CanonicalImportCommit, CanonicalAppRuntimeError> {
         staged.validate()?;
+        if let Some(existing) = self.existing_product_import(staged)? {
+            return Ok(existing);
+        }
         let source_roots = CanonicalImportSourceRoots {
             datasets: staged.roots.dataset_roots.clone(),
             resource_sets: staged.roots.resource_set_roots.clone(),
@@ -742,6 +1138,9 @@ impl CanonicalAppRuntime {
         is_cancelled: &dyn Fn() -> bool,
     ) -> Result<CanonicalImportCommit, CanonicalAppRuntimeError> {
         staged.validate()?;
+        if let Some(existing) = self.existing_product_import(staged)? {
+            return Ok(existing);
+        }
         let source_roots = CanonicalImportSourceRoots {
             datasets: staged.roots.dataset_roots.clone(),
             resource_sets: staged.roots.resource_set_roots.clone(),
@@ -755,6 +1154,434 @@ impl CanonicalAppRuntime {
                 is_cancelled,
             )
             .map_err(Into::into)
+    }
+
+    /// Identity-strict IF-D23 replay: the deterministic package destination id
+    /// is checked again under the destination store lock and returns the
+    /// original commit without adding an entity or journal transaction.
+    fn existing_product_import(
+        &self,
+        staged: &CanonicalStagedImport,
+    ) -> Result<Option<CanonicalImportCommit>, CanonicalAppRuntimeError> {
+        if staged.package.provider_id != himmelcad_io::PRODUCT_IMPORT_PACKAGE_PROVIDER_ID {
+            return Ok(None);
+        }
+        let Some(admission) = staged.package.admissions.first() else {
+            return Ok(None);
+        };
+        let Some(store) = self.store.as_ref() else {
+            return Ok(None);
+        };
+        if store.document().entity(&admission.entity.id).is_none() {
+            return Ok(None);
+        }
+        let inventory = store
+            .import_inventories()?
+            .into_iter()
+            .find(|inventory| {
+                inventory.provider_id == himmelcad_io::PRODUCT_IMPORT_PACKAGE_PROVIDER_ID
+                    && inventory
+                        .admissions
+                        .iter()
+                        .any(|stored| stored.entity_id == admission.entity.id.0)
+            })
+            .ok_or_else(|| {
+                CanonicalAppRuntimeError::InvalidImportInventory(
+                    "a product destination exists without its immutable import inventory"
+                        .to_owned(),
+                )
+            })?;
+        let journal_entry = store
+            .document()
+            .journal()
+            .iter()
+            .find(|entry| entry.command_id == inventory.command_id)
+            .cloned()
+            .ok_or_else(|| {
+                CanonicalAppRuntimeError::InvalidImportInventory(
+                    "a product import inventory has no journal transaction".to_owned(),
+                )
+            })?;
+        Ok(Some(CanonicalImportCommit {
+            journal_entry,
+            inventory,
+        }))
+    }
+
+    /// Captures one live point cloud and materializes its three Potree files for bounded work.
+    pub fn prepare_ground_source(
+        &self,
+        expected: EntityVersionRef,
+        input_root: PathBuf,
+    ) -> Result<CanonicalGroundSource, CanonicalAppRuntimeError> {
+        let bootstrap = self.residency_bootstrap()?;
+        let entry = bootstrap
+            .entries
+            .into_iter()
+            .find(|entry| entry.admission.entity.id == expected.id)
+            .ok_or_else(|| {
+                CanonicalAppRuntimeError::InvalidResidency(
+                    "selected point cloud has no live prepared dataset".to_owned(),
+                )
+            })?;
+        if EntityVersionRef::from_entity(&entry.admission.entity) != expected {
+            return Err(CanonicalAppRuntimeError::InvalidResidency(
+                "selected point-cloud revision changed before ground extraction".to_owned(),
+            ));
+        }
+        let dataset = entry.dataset.ok_or_else(|| {
+            CanonicalAppRuntimeError::InvalidResidency(
+                "selected point cloud is not a prepared dataset".to_owned(),
+            )
+        })?;
+        if dataset.format_id != "potree@2" {
+            return Err(CanonicalAppRuntimeError::InvalidResidency(
+                "ground extraction requires an uncompressed Potree 2 dataset".to_owned(),
+            ));
+        }
+        std::fs::create_dir_all(&input_root).map_err(CanonicalProjectStoreError::from)?;
+        let store = self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?;
+        for artifact in &dataset.artifacts {
+            let Some(name) = artifact
+                .relative_path
+                .file_name()
+                .and_then(|value| value.to_str())
+            else {
+                continue;
+            };
+            if matches!(name, "metadata.json" | "hierarchy.bin" | "octree.bin") {
+                store.materialize_object(&artifact.resource.object_hash, input_root.join(name))?;
+            }
+        }
+        for name in ["metadata.json", "hierarchy.bin", "octree.bin"] {
+            if !input_root.join(name).is_file() {
+                return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+                    "prepared point cloud is missing {name}"
+                )));
+            }
+        }
+        let entity = entry.admission.entity;
+        Ok(CanonicalGroundSource {
+            expected,
+            source_components: serde_json::from_slice(&store.read_object(&entity.components_ref)?)?,
+            source_attributes: serde_json::from_slice(&store.read_object(&entity.attributes_ref)?)?,
+            source_relations: serde_json::from_slice(&store.read_object(&entity.relations_ref)?)?,
+            source_style: entity
+                .style_ref
+                .as_ref()
+                .map(|hash| store.read_object(hash))
+                .transpose()?
+                .map(|bytes| serde_json::from_slice(&bytes))
+                .transpose()?,
+            entity,
+            representation_slot: entry.admission.representation_slot,
+            input_root,
+        })
+    }
+
+    /// Publishes checked ground outputs and exact source class bytes as one undoable transaction.
+    #[allow(clippy::too_many_arguments)]
+    pub fn publish_ground_extraction(
+        &mut self,
+        source: CanonicalGroundSource,
+        prepared: &PreparedGroundResult,
+        command_id: String,
+        ground_entity_id: String,
+        output_name: String,
+        parameters: serde_json::Value,
+        scope: serde_json::Value,
+        completed_at: String,
+        progress: &mut dyn FnMut(CanonicalImportProgress),
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<CanonicalGroundCommit, CanonicalAppRuntimeError> {
+        let recipe_parameters = serde_json::json!({
+            "smrf": parameters.clone(),
+            "scope": scope.clone(),
+        });
+        let source_dataset_id = ground_dataset_id("classified", &prepared.source);
+        let ground_dataset_id = ground_dataset_id("ground", &prepared.extracted);
+        let (source_dataset, source_geometry, source_representation) = ground_dataset_contract(
+            &prepared.source,
+            &source_dataset_id,
+            &source.entity.id.0,
+            &source.representation_slot,
+        )?;
+        let (ground_dataset, ground_geometry, ground_representation) = ground_dataset_contract(
+            &prepared.extracted,
+            &ground_dataset_id,
+            &ground_entity_id,
+            "source",
+        )?;
+
+        let source_components = merge_object(
+            source.source_components,
+            "hcad.prepared-dataset@1",
+            serde_json::json!({ "formatId": "potree@2", "datasetId": source_dataset_id }),
+        )?;
+        let source_attributes = merge_object(
+            source.source_attributes,
+            "hcad.point-cloud-ground-classification@1",
+            serde_json::json!({
+                "algorithmId": crate::pointcloud_ground::GROUND_ALGORITHM_ID,
+                "parameters": parameters.clone(),
+                "scope": scope.clone(),
+                "membershipSha256": prepared.summary.membership_sha256,
+                "summary": prepared.summary,
+            }),
+        )?;
+        let source_components_object = canonical_json(
+            "application/vnd.himmelcad.components+json",
+            source_components,
+        )?;
+        let source_attributes_object = canonical_json(
+            "application/vnd.himmelcad.attributes+json",
+            source_attributes,
+        )?;
+        let source_relations_object = canonical_json(
+            "application/vnd.himmelcad.relations+json",
+            source.source_relations,
+        )?;
+
+        let ground_geometry_hash = ground_representation.geometry_ref.clone();
+        let source_fingerprint = ObjectHash::of_bytes(&serde_json::to_vec(&serde_json::json!({
+            "entityId": source.entity.id,
+            "revision": source.entity.revision,
+            "contentHash": source.entity.version_hash,
+            "parameters": recipe_parameters,
+        }))?);
+        let recipe_id = format!(
+            "ground-recipe-{}",
+            &prepared.summary.membership_sha256.0[..24]
+        );
+        let recipe = serde_json::json!({
+            "schemaId": "hcad.derived-recipe@1",
+            "schemaVersion": 1,
+            "recipeId": recipe_id,
+            "recipeKind": crate::pointcloud_ground::GROUND_ALGORITHM_ID,
+            "generation": 1,
+            "state": "linked-current",
+            "outputGroupId": ground_entity_id,
+            "outputs": [{
+                "slotId": "ground",
+                "role": "ground_cloud",
+                "outputId": ground_entity_id,
+                "typeId": built_in_type::POINT_CLOUD,
+                "locator": "source",
+                "currentRevision": 0,
+                "currentContentHash": ground_geometry_hash,
+                "status": "present"
+            }],
+            "sources": [{
+                "entityId": source.entity.id,
+                "revision": source.entity.revision,
+                "contentHash": source.entity.version_hash,
+                "placementRevision": source.entity.revision,
+                "role": "outdoor_ground_source"
+            }],
+            "parameterTypeId": crate::pointcloud_ground::GROUND_ALGORITHM_ID,
+            "parameters": recipe_parameters,
+            "algorithmId": crate::pointcloud_ground::GROUND_ALGORITHM_ID,
+            "algorithmVersion": "1",
+            "dependencyRecipeIds": [],
+            "staleCauses": [],
+            "lastSuccess": {
+                "generation": 1,
+                "sourceFingerprint": source_fingerprint,
+                "outputs": [{
+                    "slotId": "ground",
+                    "outputId": ground_entity_id,
+                    "revision": 0,
+                    "contentHash": ground_geometry_hash
+                }],
+                "completedAt": completed_at
+            },
+            "lastError": null,
+            "detach": null
+        });
+        let mut mesh_source_roles = MeshSourceRolesV1 {
+            schema_id: MESH_SOURCE_ROLES_SCHEMA_ID.to_owned(),
+            schema_version: 1,
+            resource_id: format!("mesh-source-{ground_entity_id}"),
+            content_hash: ObjectHash::of_bytes(b""),
+            roles: vec![MeshSourceRoleV1 {
+                source: DerivedSourceV1 {
+                    entity_id: EntityId(ground_entity_id.clone()),
+                    revision: 0,
+                    content_hash: ground_geometry_hash.clone(),
+                    placement_revision: 0,
+                    role: "ground_cloud".to_owned(),
+                },
+                placement: source
+                    .entity
+                    .placement
+                    .unwrap_or(himmelcad_core::entity_model::Transform3d::IDENTITY),
+                role: MeshSourceRoleKindV1::Points,
+                sampling_tolerance: None,
+                sampling_hash: None,
+                boundary_hash: None,
+                exclusion_hashes: Vec::new(),
+            }],
+        };
+        mesh_source_roles.content_hash =
+            ObjectHash::of_bytes(&serde_json::to_vec(&mesh_source_roles)?);
+        let ground_components_object = canonical_json(
+            "application/vnd.himmelcad.components+json",
+            serde_json::json!({
+                "hcad.prepared-dataset@1": {
+                    "formatId": "potree@2",
+                    "datasetId": ground_dataset_id
+                },
+                "hcad.mesh-source-roles@1": mesh_source_roles
+            }),
+        )?;
+        let ground_attributes_object = canonical_json(
+            "application/vnd.himmelcad.attributes+json",
+            serde_json::json!({
+                "hcad.point-cloud-ground@1": {
+                    "algorithmId": crate::pointcloud_ground::GROUND_ALGORITHM_ID,
+                    "membershipSha256": prepared.summary.membership_sha256,
+                    "summary": prepared.summary
+                },
+                "hcad.derived-recipe@1": recipe
+            }),
+        )?;
+        let ground_relations_object = canonical_json(
+            "application/vnd.himmelcad.relations+json",
+            serde_json::json!([{
+                "kind": "derivedFrom",
+                "entityId": source.entity.id,
+                "revision": source.entity.revision,
+                "role": "outdoor_ground_source"
+            }]),
+        )?;
+        let style_object = source
+            .source_style
+            .map(|value| {
+                canonical_json("application/vnd.himmelcad.point-cloud-display+json", value)
+            })
+            .transpose()?;
+
+        let mut source_after = source.entity.clone();
+        source_after.revision = source_after.revision.saturating_add(1);
+        source_after.representations = vec![source_representation.clone()];
+        source_after.components_ref = source_components_object.object_hash.clone();
+        source_after.attributes_ref = source_attributes_object.object_hash.clone();
+        source_after.version_hash = canonical_entity_version_hash(&source_after)
+            .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?;
+        let mut ground_entity = CanonicalEntity {
+            id: EntityId(ground_entity_id.clone()),
+            revision: 0,
+            type_id: EntityTypeId(built_in_type::POINT_CLOUD.to_owned()),
+            name: output_name,
+            owner: source.entity.owner.clone(),
+            layer_ids: source.entity.layer_ids.clone(),
+            placement: source.entity.placement,
+            representations: vec![ground_representation.clone()],
+            components_ref: ground_components_object.object_hash.clone(),
+            attributes_ref: ground_attributes_object.object_hash.clone(),
+            relations_ref: ground_relations_object.object_hash.clone(),
+            style_ref: style_object
+                .as_ref()
+                .map(|object| object.object_hash.clone()),
+            schema_version: 1,
+            version_hash: ObjectHash::of_bytes(b"uninitialized ground cloud"),
+        };
+        ground_entity.version_hash = canonical_entity_version_hash(&ground_entity)
+            .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?;
+
+        let mut objects = vec![
+            source_components_object,
+            source_attributes_object,
+            source_relations_object,
+            ground_components_object,
+            ground_attributes_object,
+            ground_relations_object,
+        ];
+        if let Some(style) = style_object {
+            if !objects
+                .iter()
+                .any(|object| object.object_hash == style.object_hash)
+            {
+                objects.push(style);
+            }
+        }
+        let package = CanonicalImportPackage {
+            schema_version: CANONICAL_IO_SCHEMA_VERSION,
+            provider_id: "hcad.pointcloud.ground-progressive@1".to_owned(),
+            provider_version: "1".to_owned(),
+            admissions: vec![
+                CanonicalRepresentationAdmission {
+                    entity: source_after.clone(),
+                    selected: source_representation.clone(),
+                    representation_slot: source.representation_slot,
+                    expected_generation: None,
+                    resolved_geometry: source_geometry,
+                },
+                CanonicalRepresentationAdmission {
+                    entity: ground_entity.clone(),
+                    selected: ground_representation,
+                    representation_slot: "source".to_owned(),
+                    expected_generation: None,
+                    resolved_geometry: ground_geometry,
+                },
+            ],
+            objects,
+            datasets: vec![source_dataset, ground_dataset],
+            resource_sets: Vec::new(),
+            presentation_resources: Default::default(),
+        };
+        let roots = CanonicalImportSourceRoots {
+            datasets: [
+                (source_dataset_id.clone(), prepared.source.root.clone()),
+                (ground_dataset_id.clone(), prepared.extracted.root.clone()),
+            ]
+            .into_iter()
+            .collect(),
+            resource_sets: Default::default(),
+        };
+        let transaction = CanonicalCommandTransaction {
+            command_id,
+            mutations: vec![
+                CanonicalEntityMutation::Update {
+                    expected: source.expected,
+                    edits: vec![
+                        CanonicalEntityEdit::SetRepresentations {
+                            representations: source_after.representations.clone(),
+                        },
+                        CanonicalEntityEdit::SetComponentsRef {
+                            components_ref: source_after.components_ref.clone(),
+                        },
+                        CanonicalEntityEdit::SetAttributesRef {
+                            attributes_ref: source_after.attributes_ref.clone(),
+                        },
+                    ],
+                },
+                CanonicalEntityMutation::Create {
+                    entity: ground_entity.clone(),
+                },
+            ],
+        };
+        let commit = self
+            .store_mut()?
+            .publish_package_transaction_with_progress_and_cancel(
+                &package,
+                &roots,
+                transaction,
+                progress,
+                is_cancelled,
+            )?;
+        Ok(CanonicalGroundCommit {
+            journal_entry: commit.journal_entry,
+            source_entity_id: source_after.id.0,
+            source_revision: source_after.revision,
+            ground_entity_id: ground_entity.id.0,
+            ground_revision: ground_entity.revision,
+            source_dataset_id,
+            ground_dataset_id,
+        })
     }
 
     /// Persists one canonical display resource and assigns it to exact live clouds.
@@ -911,6 +1738,35 @@ impl CanonicalAppRuntime {
             generation: store.document().generation(),
             entries,
         })
+    }
+
+    /// Returns the immutable PhotoLab provenance component for exact live
+    /// entities. Missing components are represented by omission, never by a
+    /// reconstructed source-project value.
+    pub fn photolab_product_provenance(
+        &self,
+        entity_ids: &[String],
+    ) -> Result<Vec<serde_json::Value>, CanonicalAppRuntimeError> {
+        let store = self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?;
+        let mut result = Vec::new();
+        for entity_id in entity_ids {
+            let Some(entity) = store.document().entity(&EntityId(entity_id.clone())) else {
+                continue;
+            };
+            let components: serde_json::Value =
+                serde_json::from_slice(&store.read_object(&entity.components_ref)?)?;
+            if let Some(provenance) = components.get("hcad.photolab-product-provenance@1") {
+                result.push(serde_json::json!({
+                    "entityId": entity_id,
+                    "componentSha256": entity.components_ref,
+                    "provenance": provenance,
+                }));
+            }
+        }
+        Ok(result)
     }
 
     /// Returns a deterministic bounded sample of one live committed Potree point cloud.
@@ -1234,6 +2090,96 @@ impl CanonicalAppRuntime {
 
 fn registration_sample_error(error: ImportRegistrationRuntimeError) -> CanonicalAppRuntimeError {
     CanonicalAppRuntimeError::RegistrationSamples(error.to_string())
+}
+
+fn canonical_json(
+    media_type: &str,
+    value: serde_json::Value,
+) -> Result<CanonicalJsonObject, CanonicalAppRuntimeError> {
+    CanonicalJsonObject::new(media_type, value)
+        .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))
+}
+
+fn merge_object(
+    mut value: serde_json::Value,
+    key: &str,
+    extension: serde_json::Value,
+) -> Result<serde_json::Value, CanonicalAppRuntimeError> {
+    value
+        .as_object_mut()
+        .ok_or_else(|| {
+            CanonicalAppRuntimeError::InvalidResidency(
+                "point-cloud canonical component is not an object".to_owned(),
+            )
+        })?
+        .insert(key.to_owned(), extension);
+    Ok(value)
+}
+
+fn ground_dataset_id(prefix: &str, dataset: &PreparedGroundDataset) -> String {
+    let mut digest = sha2::Sha256::new();
+    use sha2::Digest as _;
+    digest.update(crate::pointcloud_ground::GROUND_ALGORITHM_ID.as_bytes());
+    digest.update(prefix.as_bytes());
+    digest.update(dataset.point_count.to_le_bytes());
+    for artifact in &dataset.artifacts {
+        digest.update(artifact.relative_path.as_bytes());
+        digest.update(artifact.object_hash.as_str().as_bytes());
+        digest.update(artifact.byte_length.to_le_bytes());
+    }
+    format!("ground-{prefix}-{}", hex::encode(digest.finalize()))
+}
+
+fn ground_dataset_contract(
+    prepared: &PreparedGroundDataset,
+    dataset_id: &str,
+    entity_id: &str,
+    representation_slot: &str,
+) -> Result<(CanonicalPreparedDataset, GeometryObject, Representation), CanonicalAppRuntimeError> {
+    let artifacts = prepared
+        .artifacts
+        .iter()
+        .map(|artifact| PreparedDatasetArtifact {
+            relative_path: PathBuf::from(&artifact.relative_path),
+            resource: GeometryResource {
+                object_hash: artifact.object_hash.clone(),
+                media_type: artifact.media_type.clone(),
+                byte_length: Some(artifact.byte_length),
+            },
+        })
+        .collect::<Vec<_>>();
+    let root_metadata = artifacts
+        .iter()
+        .find(|artifact| artifact.relative_path == Path::new("metadata.json"))
+        .map(|artifact| artifact.resource.clone())
+        .ok_or_else(|| {
+            CanonicalAppRuntimeError::InvalidResidency(
+                "prepared ground dataset has no metadata".to_owned(),
+            )
+        })?;
+    let dataset = CanonicalPreparedDataset {
+        dataset_id: dataset_id.to_owned(),
+        format_id: "potree@2".to_owned(),
+        entity_id: entity_id.to_owned(),
+        representation_slot: representation_slot.to_owned(),
+        root_metadata: root_metadata.clone(),
+        artifacts,
+    };
+    let geometry = GeometryObject::PointCloud {
+        dataset: StreamedGeometry {
+            format_id: "potree@2".to_owned(),
+            metadata: root_metadata,
+            element_count: Some(prepared.point_count),
+        },
+    };
+    let representation = Representation {
+        role: RepresentationRole::Canonical,
+        geometry_ref: geometry_object_content_hash(&geometry)
+            .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?,
+        authority: RepresentationAuthority::Authoritative,
+        dependency_hash: None,
+    };
+    Ok((dataset, geometry, representation))
 }
 
 fn register_materialized_destination(
@@ -1565,6 +2511,21 @@ fn create_snapshot_marker(
     marker_kind: SnapshotMarkerKindV1,
     origin: SnapshotOriginV1,
 ) -> Result<CanonicalSnapshotSummary, CanonicalAppRuntimeError> {
+    let (summary, entity) = build_snapshot_marker_entity(store, name, marker_kind, origin, None)?;
+    store.queue_transaction(CanonicalCommandTransaction {
+        command_id: format!("snapshot.create/{}", summary.entity_id),
+        mutations: vec![CanonicalEntityMutation::Create { entity }],
+    })?;
+    Ok(summary)
+}
+
+fn build_snapshot_marker_entity(
+    store: &CanonicalProjectStore,
+    name: &str,
+    marker_kind: SnapshotMarkerKindV1,
+    origin: SnapshotOriginV1,
+    restore_of: Option<EntityId>,
+) -> Result<(CanonicalSnapshotSummary, CanonicalEntity), CanonicalAppRuntimeError> {
     let marked_generation = store.document().generation();
     let now_ms = unix_timestamp_millis();
     let marker = SnapshotMarkerV1 {
@@ -1574,7 +2535,7 @@ fn create_snapshot_marker(
         marker_kind,
         created_at: format!("unix-ms:{now_ms}"),
         origin,
-        restore_of: None,
+        restore_of,
         retention: if marker_kind == SnapshotMarkerKindV1::Manual {
             SnapshotRetentionV1::Manual
         } else {
@@ -1617,15 +2578,205 @@ fn create_snapshot_marker(
     };
     entity.version_hash = canonical_entity_version_hash(&entity)
         .map_err(|_| CanonicalProjectStoreError::CommitInvariant)?;
+    Ok((
+        CanonicalSnapshotSummary {
+            entity_id,
+            name: name.to_owned(),
+            marker,
+        },
+        entity,
+    ))
+}
+
+fn snapshot_summaries(
+    store: &CanonicalProjectStore,
+) -> Result<Vec<CanonicalSnapshotSummary>, CanonicalAppRuntimeError> {
+    let mut result = Vec::new();
+    for entity in store.document().entities() {
+        if entity.type_id.0 != SNAPSHOT_MARKER_SCHEMA_ID {
+            continue;
+        }
+        let marker: SnapshotMarkerV1 =
+            serde_json::from_slice(&store.read_object(&entity.components_ref)?)?;
+        validate_snapshot_marker(&marker)
+            .map_err(|_| CanonicalAppRuntimeError::InvalidSnapshotMarker)?;
+        result.push(CanonicalSnapshotSummary {
+            entity_id: entity.id.0.clone(),
+            name: entity.name.clone(),
+            marker,
+        });
+    }
+    result.sort_by(|left, right| {
+        (left.marker.marked_generation, &left.entity_id)
+            .cmp(&(right.marker.marked_generation, &right.entity_id))
+    });
+    Ok(result)
+}
+
+fn session_start_snapshot_retention() -> usize {
+    std::env::var(SESSION_START_SNAPSHOT_RETENTION_ENV)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_SESSION_START_SNAPSHOT_RETENTION)
+}
+
+fn maintain_session_start_snapshots(
+    store: &mut CanonicalProjectStore,
+    retention: usize,
+) -> Result<usize, CanonicalAppRuntimeError> {
+    let snapshots = snapshot_summaries(store)?;
+    let session_starts: Vec<_> = snapshots
+        .iter()
+        .filter(|snapshot| snapshot.marker.marker_kind == SnapshotMarkerKindV1::SessionStart)
+        .collect();
+    let create_new = session_starts.last().is_none_or(|latest| {
+        let marker_entry = latest.marker.marked_generation.saturating_add(1);
+        store.document().journal().iter().any(|entry| {
+            entry.sequence > marker_entry
+                && !entry
+                    .command_id
+                    .starts_with("snapshot.session-start-maintenance/")
+        })
+    });
+    let target_existing = retention.saturating_sub(usize::from(create_new));
+    let compacted = session_starts.len().saturating_sub(target_existing);
+    if compacted == 0 && !create_new {
+        return Ok(0);
+    }
+
+    let mut mutations = Vec::with_capacity(compacted + usize::from(create_new));
+    for snapshot in session_starts.iter().take(compacted) {
+        let entity = store
+            .document()
+            .entity(&EntityId(snapshot.entity_id.clone()))
+            .ok_or_else(|| {
+                CanonicalAppRuntimeError::SnapshotNotFound(snapshot.entity_id.clone())
+            })?;
+        mutations.push(CanonicalEntityMutation::Delete {
+            expected: EntityVersionRef::from_entity(entity),
+        });
+    }
+    if create_new {
+        let (_, entity) = build_snapshot_marker_entity(
+            store,
+            "Session start",
+            SnapshotMarkerKindV1::SessionStart,
+            SnapshotOriginV1::System,
+            None,
+        )?;
+        mutations.push(CanonicalEntityMutation::Create { entity });
+    }
     store.queue_transaction(CanonicalCommandTransaction {
-        command_id: format!("snapshot.create/{entity_id}"),
-        mutations: vec![CanonicalEntityMutation::Create { entity }],
+        command_id: format!(
+            "snapshot.session-start-maintenance/{}",
+            store.document().generation()
+        ),
+        mutations,
     })?;
-    Ok(CanonicalSnapshotSummary {
-        entity_id,
-        name: name.to_owned(),
-        marker,
-    })
+    Ok(compacted)
+}
+
+fn restore_mutations(
+    current: &himmelcad_core::canonical_document::CanonicalDocument,
+    target: &himmelcad_core::canonical_document::CanonicalDocument,
+) -> Result<Vec<CanonicalEntityMutation>, CanonicalAppRuntimeError> {
+    let current_entities: BTreeMap<_, _> = current
+        .entities()
+        .filter(|entity| entity.type_id.0 != SNAPSHOT_MARKER_SCHEMA_ID)
+        .map(|entity| (entity.id.0.clone(), entity))
+        .collect();
+    let target_entities: BTreeMap<_, _> = target
+        .entities()
+        .filter(|entity| entity.type_id.0 != SNAPSHOT_MARKER_SCHEMA_ID)
+        .map(|entity| (entity.id.0.clone(), entity))
+        .collect();
+    let mut mutations = Vec::new();
+
+    for (id, entity) in &current_entities {
+        if !target_entities.contains_key(id) {
+            mutations.push(CanonicalEntityMutation::Delete {
+                expected: EntityVersionRef::from_entity(entity),
+            });
+        }
+    }
+    for (id, target_entity) in target_entities {
+        if let Some(current_entity) = current_entities.get(&id) {
+            if current_entity.type_id != target_entity.type_id
+                || current_entity.schema_version != target_entity.schema_version
+            {
+                return Err(CanonicalAppRuntimeError::SnapshotSchemaConflict(id));
+            }
+            let edits = entity_restore_edits(current_entity, target_entity);
+            if !edits.is_empty() {
+                mutations.push(CanonicalEntityMutation::Update {
+                    expected: EntityVersionRef::from_entity(current_entity),
+                    edits,
+                });
+            }
+        } else if let Some(tombstone) = current.tombstone(&target_entity.id) {
+            mutations.push(CanonicalEntityMutation::Restore {
+                expected: EntityVersionRef::from_tombstone(tombstone),
+                snapshot: target_entity.clone(),
+            });
+        } else {
+            return Err(CanonicalAppRuntimeError::SnapshotSchemaConflict(id));
+        }
+    }
+    Ok(mutations)
+}
+
+fn entity_restore_edits(
+    current: &CanonicalEntity,
+    target: &CanonicalEntity,
+) -> Vec<CanonicalEntityEdit> {
+    let mut edits = Vec::new();
+    if current.name != target.name {
+        edits.push(CanonicalEntityEdit::SetName {
+            name: target.name.clone(),
+        });
+    }
+    if current.owner != target.owner {
+        edits.push(CanonicalEntityEdit::SetOwner {
+            owner: target.owner.clone(),
+        });
+    }
+    if current.layer_ids != target.layer_ids {
+        edits.push(CanonicalEntityEdit::SetLayerIds {
+            layer_ids: target.layer_ids.clone(),
+        });
+    }
+    if current.placement != target.placement {
+        edits.push(CanonicalEntityEdit::SetPlacement {
+            placement: target.placement,
+        });
+    }
+    if current.representations != target.representations {
+        edits.push(CanonicalEntityEdit::SetRepresentations {
+            representations: target.representations.clone(),
+        });
+    }
+    if current.components_ref != target.components_ref {
+        edits.push(CanonicalEntityEdit::SetComponentsRef {
+            components_ref: target.components_ref.clone(),
+        });
+    }
+    if current.attributes_ref != target.attributes_ref {
+        edits.push(CanonicalEntityEdit::SetAttributesRef {
+            attributes_ref: target.attributes_ref.clone(),
+        });
+    }
+    if current.relations_ref != target.relations_ref {
+        edits.push(CanonicalEntityEdit::SetRelationsRef {
+            relations_ref: target.relations_ref.clone(),
+        });
+    }
+    if current.style_ref != target.style_ref {
+        edits.push(CanonicalEntityEdit::SetStyleRef {
+            style_ref: target.style_ref.clone(),
+        });
+    }
+    edits
 }
 
 fn unix_timestamp_millis() -> u128 {
@@ -1822,6 +2973,60 @@ fn read_viewing_box(
     })
 }
 
+fn read_measurement(
+    store: &CanonicalProjectStore,
+    entity: &CanonicalEntity,
+) -> Result<CanonicalMeasurementSummary, CanonicalAppRuntimeError> {
+    if entity.type_id.0 != MEASUREMENT_SCHEMA_ID
+        || entity.placement.is_some()
+        || entity.layer_ids.len() != 1
+    {
+        return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+            "measurement {:?} has an incompatible entity envelope",
+            entity.id.0
+        )));
+    }
+    let representation = entity
+        .representations
+        .iter()
+        .find(|representation| {
+            representation.role == RepresentationRole::Canonical
+                && representation.authority == RepresentationAuthority::Authoritative
+        })
+        .ok_or_else(|| {
+            CanonicalAppRuntimeError::InvalidResidency(format!(
+                "measurement {:?} has no authoritative geometry",
+                entity.id.0
+            ))
+        })?;
+    let geometry: GeometryObject =
+        serde_json::from_slice(&store.read_object(&representation.geometry_ref)?)?;
+    let GeometryObject::Measurement { measurement } = geometry else {
+        return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+            "measurement {:?} has the wrong geometry kind",
+            entity.id.0
+        )));
+    };
+    validate_measurement(&measurement).map_err(|error| {
+        CanonicalAppRuntimeError::InvalidResidency(format!(
+            "measurement {:?} failed admission: {error}",
+            entity.id.0
+        ))
+    })?;
+    if measurement.layer_id != entity.layer_ids[0] {
+        return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+            "measurement {:?} layer payload differs from its entity envelope",
+            entity.id.0
+        )));
+    }
+    Ok(CanonicalMeasurementSummary {
+        entity_id: entity.id.0.clone(),
+        revision: entity.revision,
+        name: entity.name.clone(),
+        measurement: *measurement,
+    })
+}
+
 fn collect_entity_object_refs<'a>(
     entity: &'a CanonicalEntity,
     references: &mut Vec<&'a ObjectHash>,
@@ -1875,7 +3080,8 @@ mod tests {
         AppProtocolRequestEnvelope, AppProtocolResponse, APP_PROTOCOL_SCHEMA_ID,
     };
     use himmelcad_core::canonical_document::{
-        CanonicalCommandTransaction, CanonicalEntityMutation, EntityVersionRef,
+        CanonicalCommandTransaction, CanonicalEntityMutation, CanonicalJournalEntryKind,
+        EntityVersionRef,
     };
     use himmelcad_core::entity::EntityId;
     use himmelcad_core::entity_model::{
@@ -1892,8 +3098,10 @@ mod tests {
         TypedArtifactManifest, TYPED_ARTIFACT_MANIFEST_NAME,
     };
     use himmelcad_io::{
-        CanonicalImportPackage, PreparedDatasetArtifact, StagedArtifactRoots,
-        CANONICAL_IO_SCHEMA_VERSION,
+        CanonicalImportPackage, CanonicalImportProvider, CanonicalImportRequest,
+        PhotoLabProductPackageProvider, PreparedDatasetArtifact, ProviderOperationContext,
+        ProviderProgress, StagedArtifactRoots, CANONICAL_IO_SCHEMA_VERSION,
+        PRODUCT_IMPORT_PACKAGE_FORMAT_ID,
     };
     use serde_json::json;
 
@@ -1942,6 +3150,193 @@ mod tests {
     }
 
     #[test]
+    fn unchanged_session_does_not_create_another_session_start_snapshot_marker() {
+        let root = temp_project("snapshot-unchanged-session");
+        let mut runtime = CanonicalAppRuntime::default();
+        runtime.open(&root).expect("first open");
+        assert!(runtime.close());
+        runtime.open(&root).expect("unchanged reopen");
+        assert_eq!(
+            runtime
+                .list_snapshots()
+                .expect("snapshots")
+                .iter()
+                .filter(|item| item.marker.marker_kind == SnapshotMarkerKindV1::SessionStart)
+                .count(),
+            1
+        );
+        runtime.close();
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn sixth_session_start_snapshot_evicts_the_oldest_but_keeps_named_snapshots() {
+        let root = temp_project("snapshot-retention");
+        let mut runtime = CanonicalAppRuntime::default();
+        runtime.open(&root).expect("open project");
+        let oldest = runtime.list_snapshots().expect("initial marker")[0]
+            .entity_id
+            .clone();
+        for _ in 0..4 {
+            create_snapshot_marker(
+                runtime.store_mut().expect("store"),
+                "Session start",
+                SnapshotMarkerKindV1::SessionStart,
+                SnapshotOriginV1::System,
+            )
+            .expect("automatic snapshot");
+        }
+        runtime
+            .create_snapshot("Named checkpoint", SnapshotOriginV1::Ui)
+            .expect("session journal change");
+
+        let generation_before = runtime.store().expect("store").document().generation();
+        let compacted = maintain_session_start_snapshots(
+            runtime.store_mut().expect("store"),
+            DEFAULT_SESSION_START_SNAPSHOT_RETENTION,
+        )
+        .expect("retention command");
+        assert_eq!(compacted, 1);
+        let store = runtime.store().expect("store");
+        assert_eq!(store.document().generation(), generation_before + 1);
+        assert_eq!(
+            store
+                .document()
+                .journal()
+                .last()
+                .expect("command")
+                .effects
+                .len(),
+            2
+        );
+        let snapshots = runtime.list_snapshots().expect("retained snapshots");
+        assert_eq!(
+            snapshots
+                .iter()
+                .filter(|item| item.marker.marker_kind == SnapshotMarkerKindV1::SessionStart)
+                .count(),
+            5
+        );
+        assert!(!snapshots.iter().any(|item| item.entity_id == oldest));
+        assert!(snapshots.iter().any(|item| item.name == "Named checkpoint"));
+        runtime.close();
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn forty_legacy_session_snapshot_markers_compact_in_one_journaled_command() {
+        let root = temp_project("snapshot-compaction");
+        let mut runtime = CanonicalAppRuntime::default();
+        runtime.open(&root).expect("open project");
+        for _ in 1..40 {
+            create_snapshot_marker(
+                runtime.store_mut().expect("store"),
+                "Session start",
+                SnapshotMarkerKindV1::SessionStart,
+                SnapshotOriginV1::System,
+            )
+            .expect("legacy marker");
+        }
+        let generation_before = runtime.store().expect("store").document().generation();
+        runtime.flush().expect("durable fixture");
+        assert!(runtime.close());
+
+        runtime.open(&root).expect("open compacts fixture");
+        let store = runtime.store().expect("store");
+        assert_eq!(store.document().generation(), generation_before + 1);
+        assert_eq!(
+            store
+                .document()
+                .journal()
+                .last()
+                .expect("command")
+                .effects
+                .len(),
+            35
+        );
+        assert_eq!(
+            snapshot_summaries(store)
+                .expect("snapshots")
+                .iter()
+                .filter(|item| item.marker.marker_kind == SnapshotMarkerKindV1::SessionStart)
+                .count(),
+            5
+        );
+        runtime.close();
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn snapshot_restore_round_trips_as_one_forward_command() {
+        let root = temp_project("snapshot-restore");
+        let mut runtime = CanonicalAppRuntime::default();
+        runtime.open(&root).expect("open project");
+        let original_name = runtime
+            .store()
+            .expect("store")
+            .document()
+            .entity(&EntityId("project-root".to_owned()))
+            .expect("root")
+            .name
+            .clone();
+        let marker = runtime
+            .create_snapshot("Before grading", SnapshotOriginV1::Ui)
+            .expect("snapshot");
+        let root_entity = runtime
+            .store()
+            .expect("store")
+            .document()
+            .entity(&EntityId("project-root".to_owned()))
+            .expect("root")
+            .clone();
+        runtime
+            .store_mut()
+            .expect("store")
+            .queue_transaction(CanonicalCommandTransaction {
+                command_id: "test.rename-after-snapshot".to_owned(),
+                mutations: vec![CanonicalEntityMutation::Update {
+                    expected: EntityVersionRef::from_entity(&root_entity),
+                    edits: vec![CanonicalEntityEdit::SetName {
+                        name: "Changed later".to_owned(),
+                    }],
+                }],
+            })
+            .expect("rename");
+
+        let restored = runtime
+            .restore_snapshot(&marker.entity_id)
+            .expect("restore snapshot");
+        assert_eq!(restored.snapshot.entity_id, marker.entity_id);
+        assert_eq!(restored.journal_entry.effects.len(), 2);
+        assert_eq!(
+            runtime
+                .store()
+                .expect("store")
+                .document()
+                .entity(&EntityId("project-root".to_owned()))
+                .expect("root")
+                .name,
+            original_name
+        );
+        assert_eq!(runtime.list_snapshots().expect("snapshots").len(), 3);
+        runtime.flush().expect("durable restore");
+        assert!(runtime.close());
+        runtime.open(&root).expect("reopen");
+        assert_eq!(
+            runtime
+                .store()
+                .expect("store")
+                .document()
+                .entity(&EntityId("project-root".to_owned()))
+                .expect("root")
+                .name,
+            original_name
+        );
+        runtime.close();
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn view_bookmarks_round_trip_through_the_journal_and_reopen() {
         let root = temp_project("view-bookmark-round-trip");
         let mut runtime = CanonicalAppRuntime::default();
@@ -1979,6 +3374,127 @@ mod tests {
         let bookmarks = runtime.list_view_bookmarks().expect("list bookmarks");
         assert_eq!(bookmarks.len(), 1);
         assert_eq!(bookmarks[0], restored.bookmark);
+        runtime.close();
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn viewing_box_restores_exactly_through_the_journal_and_reopen() {
+        let root = temp_project("viewing-box-round-trip");
+        let mut runtime = CanonicalAppRuntime::default();
+        runtime.open(&root).expect("open project");
+        let state = json!({
+            "id": "viewing-box-a",
+            "center": { "x": 12.5, "y": -4.25, "z": 103.75 },
+            "halfExtents": { "x": 7.5, "y": 8.25, "z": 9.5 },
+            "rotation": [0.0, 0.0, 0.3826834323650898, 0.9238795325112867],
+            "mode": "resize",
+            "enabled": true,
+            "operation": "removeInside",
+            "lockMode": "unlocked",
+            "bakeKey": null
+        });
+        let created = runtime
+            .put_viewing_box(
+                "viewing-box-create".to_owned(),
+                "viewing-box-a".to_owned(),
+                "Excavation exclusion".to_owned(),
+                None,
+                state.clone(),
+            )
+            .expect("create viewing box");
+        assert_eq!(created.viewing_box.state, state);
+        assert_eq!(
+            created.journal_entry.kind,
+            CanonicalJournalEntryKind::Command
+        );
+        assert_eq!(created.journal_entry.effects.len(), 1);
+        runtime.flush().expect("viewing-box durability");
+        assert!(runtime.close());
+
+        runtime.open(&root).expect("reopen project");
+        let boxes = runtime.list_viewing_boxes().expect("list viewing boxes");
+        assert_eq!(boxes.len(), 1);
+        assert_eq!(boxes[0], created.viewing_box);
+        runtime.close();
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn g_mi_command_measurements_round_trip_and_delete_atomically() {
+        use himmelcad_core::entity_model::Position;
+        use himmelcad_core::release_05_admissions::{
+            MeasurementKindV1, MeasurementMetricV1, MeasurementVerificationV1,
+        };
+
+        let root = temp_project("measurement-round-trip");
+        let mut runtime = CanonicalAppRuntime::default();
+        runtime.open(&root).expect("open project");
+        let payload = MeasurementV1 {
+            schema_id: MEASUREMENT_SCHEMA_ID.to_owned(),
+            schema_version: 1,
+            measurement_kind: MeasurementKindV1::Distance,
+            metric: Some(MeasurementMetricV1::Spatial),
+            anchors: vec![
+                MeasurementAnchorV1::Fixed {
+                    position: Position {
+                        x: 1.0,
+                        y: 2.0,
+                        z: Some(3.0),
+                    },
+                },
+                MeasurementAnchorV1::Fixed {
+                    position: Position {
+                        x: 4.0,
+                        y: 6.0,
+                        z: Some(15.0),
+                    },
+                },
+            ],
+            layer_id: EntityId("default-layer".to_owned()),
+            visible: true,
+            creation_view_id: Some("view-1".to_owned()),
+            provenance: "ui".to_owned(),
+            verification: MeasurementVerificationV1::Verified,
+            result_cache: None,
+        };
+        let created = runtime
+            .create_measurement(
+                "measurement-create-1".to_owned(),
+                "measurement-1".to_owned(),
+                "Distance 1".to_owned(),
+                payload.clone(),
+            )
+            .expect("create measurement");
+        assert_eq!(created.measurement.measurement, payload);
+        assert_eq!(
+            created.journal_entry.kind,
+            CanonicalJournalEntryKind::Command
+        );
+        assert_eq!(
+            created.journal_entry.effects.len(),
+            2,
+            "the default layer and measurement share one transaction"
+        );
+        runtime.flush().expect("measurement durability");
+        runtime.close();
+
+        runtime.open(&root).expect("reopen project");
+        let listed = runtime.list_measurements().expect("list measurements");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].measurement, payload);
+        let deleted = runtime
+            .delete_measurement(
+                "measurement-delete-1".to_owned(),
+                listed[0].entity_id.clone(),
+                listed[0].revision,
+            )
+            .expect("delete measurement");
+        assert_eq!(deleted.journal_entry.effects.len(), 1);
+        assert!(runtime
+            .list_measurements()
+            .expect("list after delete")
+            .is_empty());
         runtime.close();
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -2131,6 +3647,94 @@ mod tests {
                 resource_set_roots: BTreeMap::new(),
             },
         }
+    }
+
+    fn staged_ground_point_cloud(root: &Path) -> CanonicalStagedImport {
+        let mut staged = staged_point_cloud(root);
+        let metadata_bytes = serde_json::to_vec(&json!({
+            "version": "2.0",
+            "name": "small-las-fixture",
+            "points": 20,
+            "hierarchy": { "firstChunkSize": 22, "stepSize": 4, "depth": 0 },
+            "offset": [0.0, 0.0, 0.0],
+            "scale": [0.01, 0.01, 0.01],
+            "spacing": 1.0,
+            "boundingBox": { "min": [0.0, 0.0, 0.0], "max": [10.0, 4.0, 5.0] },
+            "encoding": "UNCOMPRESSED",
+            "attributes": [
+                { "name": "position", "size": 12, "type": "int32" },
+                { "name": "classification", "size": 1, "type": "uint8", "histogram": [0, 20] }
+            ]
+        }))
+        .expect("metadata");
+        let mut octree_bytes = Vec::new();
+        for index in 0_i32..20 {
+            let x = if index < 15 { index % 5 } else { 10 };
+            let y = index / 5;
+            let z = if index == 4 { 300 } else { x * 5 };
+            octree_bytes.extend_from_slice(&(x * 100).to_le_bytes());
+            octree_bytes.extend_from_slice(&(y * 100).to_le_bytes());
+            octree_bytes.extend_from_slice(&z.to_le_bytes());
+            octree_bytes.push(1);
+        }
+        let mut hierarchy_bytes = vec![0, 0];
+        hierarchy_bytes.extend_from_slice(&20_u32.to_le_bytes());
+        hierarchy_bytes.extend_from_slice(&0_u64.to_le_bytes());
+        hierarchy_bytes.extend_from_slice(&(octree_bytes.len() as u64).to_le_bytes());
+
+        let dataset_root = staged.roots.dataset_roots["dataset-a"].clone();
+        fs::write(dataset_root.join("metadata.json"), &metadata_bytes).expect("metadata");
+        fs::write(dataset_root.join("hierarchy.bin"), &hierarchy_bytes).expect("hierarchy");
+        fs::write(dataset_root.join("octree.bin"), &octree_bytes).expect("octree");
+        let resource = |bytes: &[u8], media_type: &str| GeometryResource {
+            object_hash: ObjectHash::of_bytes(bytes),
+            media_type: media_type.to_owned(),
+            byte_length: Some(u64::try_from(bytes.len()).expect("artifact length")),
+        };
+        let metadata = resource(&metadata_bytes, "application/json");
+        let hierarchy = resource(&hierarchy_bytes, "application/vnd.potree.hierarchy");
+        let octree = resource(&octree_bytes, "application/vnd.potree.points");
+        let geometry = GeometryObject::PointCloud {
+            dataset: StreamedGeometry {
+                format_id: "potree@2".to_owned(),
+                metadata: metadata.clone(),
+                element_count: Some(20),
+            },
+        };
+        let selected = Representation {
+            role: RepresentationRole::Canonical,
+            geometry_ref: geometry_object_content_hash(&geometry).expect("geometry hash"),
+            authority: RepresentationAuthority::Authoritative,
+            dependency_hash: None,
+        };
+        let admission = &mut staged.package.admissions[0];
+        admission.selected = selected.clone();
+        admission.resolved_geometry = geometry;
+        admission.entity.representations = vec![selected];
+        admission.entity.version_hash =
+            canonical_entity_version_hash(&admission.entity).expect("entity hash");
+        staged.package.datasets[0] = CanonicalPreparedDataset {
+            dataset_id: "dataset-a".to_owned(),
+            format_id: "potree@2".to_owned(),
+            entity_id: "cloud-a".to_owned(),
+            representation_slot: "source".to_owned(),
+            root_metadata: metadata.clone(),
+            artifacts: vec![
+                PreparedDatasetArtifact {
+                    relative_path: PathBuf::from("metadata.json"),
+                    resource: metadata,
+                },
+                PreparedDatasetArtifact {
+                    relative_path: PathBuf::from("hierarchy.bin"),
+                    resource: hierarchy,
+                },
+                PreparedDatasetArtifact {
+                    relative_path: PathBuf::from("octree.bin"),
+                    resource: octree,
+                },
+            ],
+        };
+        staged
     }
 
     fn request(method: AppProtocolRequest) -> AppProtocolRequestEnvelope {
@@ -2425,5 +4029,224 @@ mod tests {
 
         runtime.close();
         fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn ground_extraction_publishes_one_undoable_source_and_derived_cloud_transaction() {
+        use crate::ground_classification::SmrfParams;
+        use crate::pointcloud_ground::{
+            prepare_ground_datasets, GroundPrepareRequest, GroundScope,
+        };
+        use himmelcad_core::photolab_jobs::CancellationToken;
+        use himmelcad_core::release_05_admissions::{
+            validate_mesh_source_roles, validate_recipe, DerivedRecipeV1, MeshSourceRolesV1,
+        };
+
+        let root = temp_project("ground-atomic-publication");
+        let staged = staged_ground_point_cloud(&root);
+        let scratch = root.join("ground-scratch");
+        let mut runtime = CanonicalAppRuntime::default();
+        runtime.open(&root).expect("open project");
+        runtime
+            .publish_staged_import(&staged, "import-ground-source")
+            .expect("publish source");
+        let source_before = runtime
+            .residency_bootstrap()
+            .expect("source residency")
+            .entries[0]
+            .admission
+            .entity
+            .clone();
+        let source = runtime
+            .prepare_ground_source(
+                EntityVersionRef::from_entity(&source_before),
+                scratch.join("input"),
+            )
+            .expect("capture exact source");
+        let prepared = prepare_ground_datasets(
+            &GroundPrepareRequest {
+                metadata_path: source.input_root.join("metadata.json"),
+                hierarchy_path: source.input_root.join("hierarchy.bin"),
+                octree_path: source.input_root.join("octree.bin"),
+                output_root: scratch.join("output"),
+                output_name: "Ground".to_owned(),
+                params: SmrfParams {
+                    max_window_m: 3.0,
+                    ..SmrfParams::default()
+                },
+                scope: GroundScope::default(),
+            },
+            &CancellationToken::new(),
+            |_| {},
+        )
+        .expect("prepare ground datasets");
+        let commit = runtime
+            .publish_ground_extraction(
+                source,
+                &prepared,
+                "ground-extract-test".to_owned(),
+                "ground-cloud-a".to_owned(),
+                "Cloud — Ground".to_owned(),
+                json!({
+                    "cellSizeM": 1.0,
+                    "slope": 0.15,
+                    "maxWindowM": 3.0,
+                    "initialDistanceM": 0.5
+                }),
+                serde_json::to_value(GroundScope::default()).expect("scope"),
+                "2026-09-08T00:00:00Z".to_owned(),
+                &mut |_| {},
+                &|| false,
+            )
+            .expect("publish atomic ground result");
+        assert_eq!(commit.journal_entry.effects.len(), 2);
+        let store = runtime.store().expect("store");
+        let source_after = store
+            .document()
+            .entity(&EntityId("cloud-a".to_owned()))
+            .expect("edited source");
+        assert_eq!(source_after.revision, source_before.revision + 1);
+        let ground = store
+            .document()
+            .entity(&EntityId("ground-cloud-a".to_owned()))
+            .expect("derived cloud");
+        assert_eq!(ground.type_id.0, built_in_type::POINT_CLOUD);
+        let components: serde_json::Value = serde_json::from_slice(
+            &store
+                .read_object(&ground.components_ref)
+                .expect("components"),
+        )
+        .expect("components JSON");
+        let roles: MeshSourceRolesV1 =
+            serde_json::from_value(components["hcad.mesh-source-roles@1"].clone())
+                .expect("mesh source roles");
+        validate_mesh_source_roles(&roles).expect("DGM point-source admission");
+        let attributes: serde_json::Value = serde_json::from_slice(
+            &store
+                .read_object(&ground.attributes_ref)
+                .expect("attributes"),
+        )
+        .expect("attributes JSON");
+        let recipe: DerivedRecipeV1 =
+            serde_json::from_value(attributes["hcad.derived-recipe@1"].clone())
+                .expect("derived recipe");
+        validate_recipe(&recipe, &std::collections::BTreeMap::new()).expect("ground recipe");
+        let native = runtime.residency_bootstrap().expect("native residency");
+        assert_eq!(native.entries.len(), 2);
+        assert!(native.entries.iter().all(|entry| {
+            entry.dataset.as_ref().is_some_and(|dataset| {
+                dataset.format_id == "potree@2" && dataset.artifacts.len() == 3
+            })
+        }));
+
+        runtime
+            .store_mut()
+            .expect("store")
+            .commit_undo("undo-ground-extract-test".to_owned(), "ground-extract-test")
+            .expect("undo ground extraction");
+        let store = runtime.store().expect("store after undo");
+        let restored = store
+            .document()
+            .entity(&EntityId("cloud-a".to_owned()))
+            .expect("restored source");
+        assert_eq!(restored.revision, source_before.revision + 2);
+        assert_eq!(restored.representations, source_before.representations);
+        assert_eq!(restored.components_ref, source_before.components_ref);
+        assert_eq!(restored.attributes_ref, source_before.attributes_ref);
+        assert_eq!(restored.relations_ref, source_before.relations_ref);
+        assert!(store
+            .document()
+            .entity(&EntityId("ground-cloud-a".to_owned()))
+            .is_none());
+        runtime.close();
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn photolab_product_import_is_idempotent_and_keeps_package_payload_external() {
+        #[derive(Default)]
+        struct Context;
+
+        impl ProviderOperationContext for Context {
+            fn is_cancelled(&self) -> bool {
+                false
+            }
+
+            fn report_progress(&mut self, _progress: ProviderProgress) {}
+        }
+
+        let package_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+            "../../.build/photolab-e2e/g1a3-dsm-smoke/photolab-e2e.hcad/.photolab/\
+             product-import-packages/product-e5cb1a6337969eeddf390cff7877137131d3c96b30874551aede4921756dd4ea",
+        );
+        if !package_root.join("ready.json").is_file() {
+            return;
+        }
+        let canonical_package_root = package_root.canonicalize().expect("canonical package root");
+        let provider = PhotoLabProductPackageProvider::new();
+        let package = provider
+            .import(
+                CanonicalImportRequest {
+                    source: &package_root,
+                    format_id: PRODUCT_IMPORT_PACKAGE_FORMAT_ID,
+                    options: &json!({}),
+                },
+                &mut Context,
+            )
+            .expect("validated PhotoLab package");
+        let roots = provider
+            .staged_artifact_roots(&package)
+            .expect("package authority roots");
+        let staged = CanonicalStagedImport { package, roots };
+        let project_root = temp_project("photolab-product-import");
+        let mut runtime = CanonicalAppRuntime::default();
+        runtime.open(&project_root).expect("open project");
+
+        let first = runtime
+            .publish_staged_import(&staged, "photolab-import-first")
+            .expect("register product");
+        let generation_after_first = runtime.store().expect("store").document().generation();
+        let repeated = runtime
+            .publish_staged_import(&staged, "photolab-import-repeat")
+            .expect("idempotent registration");
+        assert_eq!(repeated, first);
+        assert_eq!(
+            runtime.store().expect("store").document().generation(),
+            generation_after_first
+        );
+        assert!(!first.inventory.external_objects.is_empty());
+        let external = &first.inventory.external_objects[0];
+        assert!(external.source_path.starts_with(&canonical_package_root));
+        let (prefix, remainder) = external.object_hash.as_str().split_at(2);
+        assert!(!project_root
+            .join("objects")
+            .join(prefix)
+            .join(remainder)
+            .exists());
+        assert_eq!(
+            runtime
+                .store()
+                .expect("store")
+                .object_byte_length(&external.object_hash)
+                .expect("external package object"),
+            external.byte_length
+        );
+        let expected_prefix = fs::read(&external.source_path).expect("package object");
+        let range_length = u64::try_from(expected_prefix.len().min(32)).expect("range length");
+        let (metadata, prefix) = runtime
+            .read_residency_resource_range(&external.object_hash, 0, range_length)
+            .expect("bounded external range");
+        assert_eq!(metadata.object_hash, external.object_hash);
+        assert_eq!(prefix, expected_prefix[..prefix.len()]);
+        assert_eq!(
+            runtime
+                .photolab_product_provenance(&[first.inventory.admissions[0].entity_id.clone()])
+                .expect("provenance")
+                .len(),
+            1
+        );
+
+        runtime.close();
+        fs::remove_dir_all(project_root).expect("cleanup");
     }
 }

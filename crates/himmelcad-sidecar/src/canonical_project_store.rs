@@ -22,7 +22,7 @@ use himmelcad_core::canonical_document::{
     PreparedCanonicalTransaction,
 };
 use himmelcad_core::canonical_resource_catalog::CanonicalPresentationResourceSet;
-use himmelcad_core::entity_model::{GeometryResource, Representation};
+use himmelcad_core::entity_model::{GeometryObject, GeometryResource, Representation};
 use himmelcad_core::entity_validation::geometry_object_content_hash;
 use himmelcad_core::hash::ObjectHash;
 use himmelcad_io::{
@@ -78,6 +78,11 @@ pub struct CanonicalImportInventory {
     pub provider_version: String,
     /// Small JSON and resolved geometry objects.
     pub objects: Vec<CanonicalStoredObject>,
+    /// Hash-verified immutable payloads whose authoritative bytes remain in a
+    /// PhotoLab product package. The locator is sidecar-only; renderer and
+    /// automation consumers continue to address the bytes solely by hash.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub external_objects: Vec<CanonicalExternalObjectReference>,
     /// Representation slots required to reconstruct provider admissions later.
     pub admissions: Vec<CanonicalStoredAdmission>,
     /// Complete prepared-dataset artifact inventories.
@@ -95,6 +100,17 @@ pub struct CanonicalImportInventory {
     pub presentation_resources: CanonicalPresentationResourceSet,
 }
 
+/// Durable locator for one package-authoritative, content-addressed resource.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalExternalObjectReference {
+    pub object_hash: ObjectHash,
+    pub media_type: String,
+    pub byte_length: u64,
+    pub source_path: PathBuf,
+    pub authority: String,
+}
+
 fn presentation_resources_are_empty(resources: &CanonicalPresentationResourceSet) -> bool {
     resources.textures.is_empty()
         && resources.materials.is_empty()
@@ -102,6 +118,30 @@ fn presentation_resources_are_empty(resources: &CanonicalPresentationResourceSet
         && resources.hatch_patterns.is_empty()
         && resources.line_types.is_empty()
         && resources.annotation_styles.is_empty()
+}
+
+fn insert_external_object(
+    references: &mut BTreeMap<String, CanonicalExternalObjectReference>,
+    source: &Path,
+    resource: &himmelcad_core::entity_model::GeometryResource,
+) -> Result<(), CanonicalProjectStoreError> {
+    let byte_length = resource
+        .byte_length
+        .ok_or(CanonicalProjectStoreError::MissingResourceLength)?;
+    let reference = CanonicalExternalObjectReference {
+        object_hash: resource.object_hash.clone(),
+        media_type: resource.media_type.clone(),
+        byte_length,
+        source_path: source.to_path_buf(),
+        authority: "hcad.product-import-package-manifest@1".to_owned(),
+    };
+    if references
+        .insert(resource.object_hash.0.clone(), reference.clone())
+        .is_some_and(|existing| existing != reference)
+    {
+        return Err(CanonicalProjectStoreError::ObjectMetadataConflict);
+    }
+    Ok(())
 }
 
 /// Host-owned roots containing every provider-prepared package payload.
@@ -644,6 +684,26 @@ impl CanonicalProjectStore {
         Ok(object_hash)
     }
 
+    /// Stores a validated canonical geometry using the geometry contract's
+    /// field-order-sensitive compact encoding and records its ordinary object
+    /// metadata. Converting through `serde_json::Value` would reorder object
+    /// fields and therefore produce a different content address.
+    pub fn put_geometry_object(
+        &self,
+        geometry: &GeometryObject,
+    ) -> Result<ObjectHash, CanonicalProjectStoreError> {
+        let bytes = serde_json::to_vec(geometry)?;
+        let object_hash = geometry_object_content_hash(geometry)
+            .map_err(|error| ProviderContractError::Canonical(error.to_string()))?;
+        self.put_immutable_bytes(&object_hash, &bytes)?;
+        self.write_object_metadata(&CanonicalStoredObject {
+            object_hash: object_hash.clone(),
+            media_type: "application/vnd.himmelcad.geometry+json".to_owned(),
+            byte_length: usize_length(bytes.len())?,
+        })?;
+        Ok(object_hash)
+    }
+
     /// Stores immutable bytes without overwriting an existing content address.
     pub fn put_immutable_bytes(
         &self,
@@ -678,7 +738,7 @@ impl CanonicalProjectStore {
         &self,
         object_hash: &ObjectHash,
     ) -> Result<Vec<u8>, CanonicalProjectStoreError> {
-        let path = object_path(&self.root, object_hash)?;
+        let path = self.object_source_path(object_hash)?;
         let bytes = fs::read(&path)?;
         let observed = ObjectHash::of_bytes(&bytes);
         if observed != *object_hash {
@@ -697,7 +757,13 @@ impl CanonicalProjectStore {
         object_hash: &ObjectHash,
     ) -> Result<bool, CanonicalProjectStoreError> {
         validate_hash(object_hash)?;
-        Ok(object_path(&self.root, object_hash)?.is_file())
+        let local = object_path(&self.root, object_hash)?;
+        if local.is_file() {
+            return Ok(true);
+        }
+        Ok(self
+            .external_object_reference(object_hash)?
+            .is_some_and(|reference| reference.source_path.is_file()))
     }
 
     /// Returns the exact current byte length of one well-formed immutable
@@ -709,7 +775,53 @@ impl CanonicalProjectStore {
         object_hash: &ObjectHash,
     ) -> Result<u64, CanonicalProjectStoreError> {
         validate_hash(object_hash)?;
-        Ok(fs::metadata(object_path(&self.root, object_hash)?)?.len())
+        Ok(fs::metadata(self.object_source_path(object_hash)?)?.len())
+    }
+
+    /// Reads one bounded byte range from an already admitted immutable object.
+    /// Product-package references resolve through the same hash inventory as
+    /// project-owned CAS objects, without exposing the authority path.
+    pub fn read_object_range(
+        &self,
+        object_hash: &ObjectHash,
+        offset: u64,
+        byte_length: u64,
+    ) -> Result<(CanonicalStoredObject, Vec<u8>), CanonicalProjectStoreError> {
+        const MAX_RANGE_BYTES: u64 = 4 * 1024 * 1024;
+        if byte_length == 0 || byte_length > MAX_RANGE_BYTES {
+            return Err(CanonicalProjectStoreError::UnsafeArtifactSource);
+        }
+        let metadata = match self.read_object_metadata(object_hash) {
+            Ok(metadata) => metadata,
+            Err(CanonicalProjectStoreError::Io(error))
+                if error.kind() == io::ErrorKind::NotFound =>
+            {
+                self.imported_object_metadata(object_hash)?
+            }
+            Err(error) => return Err(error),
+        };
+        let end = offset
+            .checked_add(byte_length)
+            .ok_or(CanonicalProjectStoreError::UnsafeArtifactSource)?;
+        if end > metadata.byte_length {
+            return Err(CanonicalProjectStoreError::UnsafeArtifactSource);
+        }
+        let source_path = self.object_source_path(object_hash)?;
+        if fs::metadata(&source_path)?.len() != metadata.byte_length {
+            return Err(CanonicalProjectStoreError::ObjectLengthMismatch {
+                expected: metadata.byte_length,
+                observed: fs::metadata(&source_path)?.len(),
+            });
+        }
+        let mut source = File::open(source_path)?;
+        source.seek(SeekFrom::Start(offset))?;
+        let mut bytes = vec![
+            0_u8;
+            usize::try_from(byte_length)
+                .map_err(|_| CanonicalProjectStoreError::UnsafeArtifactSource)?
+        ];
+        source.read_exact(&mut bytes)?;
+        Ok((metadata, bytes))
     }
 
     /// Materializes one verified immutable object at a host-owned execution
@@ -721,7 +833,7 @@ impl CanonicalProjectStore {
         object_hash: &ObjectHash,
         destination: impl AsRef<Path>,
     ) -> Result<(), CanonicalProjectStoreError> {
-        let source = object_path(&self.root, object_hash)?;
+        let source = self.object_source_path(object_hash)?;
         verify_file(&source, object_hash, None)?;
         let destination = destination.as_ref();
         let parent = destination
@@ -782,11 +894,54 @@ impl CanonicalProjectStore {
             }
             Err(error) => return Err(error),
         };
-        let path = object_path(&self.root, object_hash)?;
+        let path = self.object_source_path(object_hash)?;
         let mut source = File::open(path)?;
         verify_open_file(&mut source, object_hash, Some(metadata.byte_length))?;
         source.seek(SeekFrom::Start(0))?;
         Ok((metadata, source))
+    }
+
+    fn object_source_path(
+        &self,
+        object_hash: &ObjectHash,
+    ) -> Result<PathBuf, CanonicalProjectStoreError> {
+        let local = object_path(&self.root, object_hash)?;
+        if local.is_file() {
+            return Ok(local);
+        }
+        self.external_object_reference(object_hash)?
+            .map(|reference| reference.source_path)
+            .ok_or_else(|| {
+                CanonicalProjectStoreError::Io(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("canonical object {} is unavailable", object_hash.as_str()),
+                ))
+            })
+    }
+
+    fn external_object_reference(
+        &self,
+        object_hash: &ObjectHash,
+    ) -> Result<Option<CanonicalExternalObjectReference>, CanonicalProjectStoreError> {
+        let mut resolved: Option<CanonicalExternalObjectReference> = None;
+        for reference in self
+            .import_inventories()?
+            .into_iter()
+            .flat_map(|inventory| inventory.external_objects)
+            .filter(|reference| reference.object_hash == *object_hash)
+        {
+            if resolved
+                .as_ref()
+                .is_some_and(|existing| existing.byte_length != reference.byte_length
+                    || existing.media_type != reference.media_type)
+            {
+                return Err(CanonicalProjectStoreError::ObjectMetadataConflict);
+            }
+            if resolved.is_none() {
+                resolved = Some(reference);
+            }
+        }
+        Ok(resolved)
     }
 
     fn imported_object_metadata(
@@ -943,22 +1098,48 @@ impl CanonicalProjectStore {
         progress: &mut dyn FnMut(CanonicalImportProgress),
         is_cancelled: &dyn Fn() -> bool,
     ) -> Result<CanonicalImportCommit, CanonicalProjectStoreError> {
+        let transaction = package.entity_create_transaction(command_id.to_owned())?;
+        self.publish_package_transaction_with_progress_and_cancel(
+            package,
+            source_roots,
+            transaction,
+            progress,
+            is_cancelled,
+        )
+    }
+
+    /// Publishes provider-shaped immutable data with a caller-supplied atomic transaction.
+    ///
+    /// Derived-data jobs use this seam when one checked publication must both update exact source
+    /// revisions and create outputs. The package still owns complete hash validation and durable
+    /// inventory; only the final journal mutation set differs from an ordinary import.
+    pub fn publish_package_transaction_with_progress_and_cancel(
+        &mut self,
+        package: &CanonicalImportPackage,
+        source_roots: &CanonicalImportSourceRoots,
+        transaction: CanonicalCommandTransaction,
+        progress: &mut dyn FnMut(CanonicalImportProgress),
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<CanonicalImportCommit, CanonicalProjectStoreError> {
+        let command_id = transaction.command_id.clone();
         if is_cancelled() {
             return Err(CanonicalProjectStoreError::ImportCancelled);
         }
         self.prepare_synchronous_publication()?;
         package.validate()?;
         self.validate_source_roots(package, source_roots)?;
-        let transaction = package.entity_create_transaction(command_id.to_owned())?;
         let prepared = self.document.prepare_transaction(transaction)?;
 
-        let transaction_dir = self.create_transaction_dir(command_id)?;
+        let transaction_dir = self.create_transaction_dir(&command_id)?;
         let mut cleanup = StagingGuard::new(transaction_dir.clone());
         let staged_objects = transaction_dir.join("objects");
         fs::create_dir_all(&staged_objects)?;
 
         let mut stored_objects = BTreeMap::<String, CanonicalStoredObject>::new();
+        let mut external_objects = BTreeMap::<String, CanonicalExternalObjectReference>::new();
         let mut object_hashes = BTreeSet::<String>::new();
+        let references_product_package =
+            package.provider_id == himmelcad_io::PRODUCT_IMPORT_PACKAGE_PROVIDER_ID;
         let staging_total = import_artifact_bytes(package, source_roots)?;
         let mut staging_completed = 0_u64;
         progress(CanonicalImportProgress {
@@ -1021,12 +1202,7 @@ impl CanonicalProjectStore {
                 if !source.starts_with(&canonical_root) || !source.is_file() {
                     return Err(CanonicalProjectStoreError::UnsafeArtifactSource);
                 }
-                self.stage_file_with_progress(
-                    &staged_objects,
-                    &source,
-                    &artifact.resource,
-                    &mut object_hashes,
-                    &mut |bytes| {
+                let mut observe = |bytes| {
                         staging_completed = staging_completed.saturating_add(bytes);
                         progress(CanonicalImportProgress {
                             phase: CanonicalImportProgressPhase::Staging,
@@ -1034,8 +1210,28 @@ impl CanonicalProjectStore {
                             total_bytes: staging_total,
                         });
                         !is_cancelled()
-                    },
-                )?;
+                    };
+                if references_product_package {
+                    verify_file_with_progress(
+                        &source,
+                        &artifact.resource.object_hash,
+                        artifact.resource.byte_length,
+                        &mut observe,
+                    )?;
+                    insert_external_object(
+                        &mut external_objects,
+                        &source,
+                        &artifact.resource,
+                    )?;
+                } else {
+                    self.stage_file_with_progress(
+                        &staged_objects,
+                        &source,
+                        &artifact.resource,
+                        &mut object_hashes,
+                        &mut observe,
+                    )?;
+                }
                 let byte_length = artifact
                     .resource
                     .byte_length
@@ -1062,12 +1258,7 @@ impl CanonicalProjectStore {
                 if !source.starts_with(&canonical_root) || !source.is_file() {
                     return Err(CanonicalProjectStoreError::UnsafeArtifactSource);
                 }
-                self.stage_file_with_progress(
-                    &staged_objects,
-                    &source,
-                    &artifact.resource,
-                    &mut object_hashes,
-                    &mut |bytes| {
+                let mut observe = |bytes| {
                         staging_completed = staging_completed.saturating_add(bytes);
                         progress(CanonicalImportProgress {
                             phase: CanonicalImportProgressPhase::Staging,
@@ -1075,8 +1266,28 @@ impl CanonicalProjectStore {
                             total_bytes: staging_total,
                         });
                         !is_cancelled()
-                    },
-                )?;
+                    };
+                if references_product_package {
+                    verify_file_with_progress(
+                        &source,
+                        &artifact.resource.object_hash,
+                        artifact.resource.byte_length,
+                        &mut observe,
+                    )?;
+                    insert_external_object(
+                        &mut external_objects,
+                        &source,
+                        &artifact.resource,
+                    )?;
+                } else {
+                    self.stage_file_with_progress(
+                        &staged_objects,
+                        &source,
+                        &artifact.resource,
+                        &mut object_hashes,
+                        &mut observe,
+                    )?;
+                }
                 let byte_length = artifact
                     .resource
                     .byte_length
@@ -1109,10 +1320,11 @@ impl CanonicalProjectStore {
 
         let inventory = CanonicalImportInventory {
             schema_version: STORE_SCHEMA_VERSION,
-            command_id: command_id.to_owned(),
+            command_id: command_id.clone(),
             provider_id: package.provider_id.clone(),
             provider_version: package.provider_version.clone(),
             objects: stored_objects.into_values().collect(),
+            external_objects: external_objects.into_values().collect(),
             admissions: package
                 .admissions
                 .iter()
@@ -2638,6 +2850,7 @@ mod tests {
                 media_type: artifact.resource.media_type.clone(),
                 byte_length: artifact.resource.byte_length.expect("exact length"),
             }],
+            external_objects: Vec::new(),
             admissions: Vec::new(),
             datasets: Vec::new(),
             resource_sets: package.resource_sets.clone(),

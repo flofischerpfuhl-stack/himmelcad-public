@@ -506,9 +506,16 @@ export interface PhotolabStageMemory {
   parameters: unknown;
 }
 
+export type PhotolabMemoryTimeFirstChoice = {
+  kind: 'extractionTiled';
+  tiles: number;
+  overlapPx: number;
+};
+
 export interface PhotolabJobMemory {
   envelopeBytes: number;
   stages: PhotolabStageMemory[];
+  timeFirstChoices?: PhotolabMemoryTimeFirstChoice[];
   degradations: PhotolabMemoryDegradation[];
   observations: Array<{
     kind: 'unboundedStage';

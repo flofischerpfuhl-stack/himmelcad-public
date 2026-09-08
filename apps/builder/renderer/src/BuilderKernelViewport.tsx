@@ -1488,7 +1488,9 @@ export const BuilderKernelViewport = forwardRef<
           y: (bounds.min[1] + bounds.max[1]) * 0.5,
           z: (bounds.min[2] + bounds.max[2]) * 0.5,
         };
-        const halfLine = Math.max(0.5, (bounds.max[0] - bounds.min[0]) * 0.05);
+        // The parity fixture deliberately crosses the later reduced box so a
+        // locked point proxy cannot accidentally disable clipping for CAD.
+        const halfLine = Math.max(0.5, (bounds.max[0] - bounds.min[0]) * 0.25);
         const cadGeometry: GeometryObject = {
           kind: 'curve',
           curve: {

@@ -28,6 +28,9 @@ from himmelcad.models import (  # noqa: E402
     CanonicalEntityEdit,
     CanonicalEntityMutation,
     EntityVersionRef,
+    PointCloudGroundPreviewResult,
+    PointCloudGroundRequest,
+    PointCloudGroundResult,
     PropertyId,
 )
 
@@ -216,6 +219,97 @@ class SdkTests(unittest.TestCase):
             CanonicalEntityMutation.from_dict({"operation": "delete", "entity": entity.to_dict()})
         with self.assertRaises(ValueError):
             EntityVersionRef(id=None, revision=1, version_hash=HASH_A)  # type: ignore[arg-type]
+
+    def test_ground_extraction_request_and_results_are_typed(self) -> None:
+        request = PointCloudGroundRequest.from_dict(
+            {
+                "schemaId": "hcad.pointcloud.ground-request@1",
+                "payload": {
+                    "operationId": "ground-1",
+                    "sourceEntityId": "cloud-source",
+                    "parameters": {
+                        "cellSizeM": 1.0,
+                        "slope": 0.15,
+                        "maxWindowM": 18.0,
+                        "initialDistanceM": 0.5,
+                    },
+                },
+            }
+        )
+        self.assertEqual(request.payload.parameters.max_window_m, 18.0)
+
+        result = PointCloudGroundResult.from_dict(
+            {
+                "schemaId": "hcad.pointcloud.ground-result@1",
+                "payload": {
+                    "algorithmId": "hcad.pointcloud.ground-progressive@1",
+                    "source": {
+                        "entityId": "cloud-source",
+                        "revision": 4,
+                        "datasetId": "source-dataset",
+                        "classification": 2,
+                    },
+                    "groundCloud": {
+                        "entityId": "cloud-ground",
+                        "revision": 0,
+                        "datasetId": "ground-dataset",
+                        "entityType": "PointCloud",
+                        "isDgm": False,
+                        "meshSourceRole": "ground_cloud",
+                    },
+                    "summary": {
+                        "sourcePoints": 100,
+                        "scopedPoints": 80,
+                        "groundPoints": 47,
+                        "ratio": 0.5875,
+                        "residuals": {
+                            "count": 47,
+                            "meanM": 0.01,
+                            "standardDeviationM": 0.04,
+                            "minimumM": -0.02,
+                            "maximumM": 0.09,
+                        },
+                        "membershipSha256": HASH_A,
+                    },
+                    "journalEntry": {"sequence": 9},
+                },
+            }
+        )
+        self.assertEqual(result.payload.summary.ground_points, 47)
+        self.assertEqual(result.payload.summary.residuals.standard_deviation_m, 0.04)
+        self.assertFalse(result.payload.ground_cloud.is_dgm)
+
+        preview = PointCloudGroundPreviewResult.from_dict(
+            {
+                "schemaId": "hcad.pointcloud.ground-preview-result@1",
+                "payload": {
+                    "algorithmId": "hcad.pointcloud.ground-progressive@1",
+                    "source": {
+                        "id": "cloud-source",
+                        "revision": 3,
+                        "versionHash": HASH_B,
+                    },
+                    "preview": {
+                        "sampledPoints": 2,
+                        "groundPoints": 1,
+                        "ratio": 0.5,
+                        "residuals": {
+                            "count": 1,
+                            "meanM": 0.0,
+                            "standardDeviationM": 0.0,
+                            "minimumM": 0.0,
+                            "maximumM": 0.0,
+                        },
+                        "points": [
+                            {"position": [1.0, 2.0, 3.0], "classification": "ground"},
+                            {"position": [2.0, 3.0, 4.0], "classification": "non_ground"},
+                        ],
+                    },
+                },
+            }
+        )
+        self.assertEqual(preview.payload.preview.points[0].classification, "ground")
+        self.assertEqual(preview.to_dict()["payload"]["source"]["versionHash"], HASH_B)
 
     def test_paging_and_canonical_app_methods(self) -> None:
         self.assertEqual([item.id for item in self.client.iter_entities()], ["one", "two"])

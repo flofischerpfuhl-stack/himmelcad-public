@@ -10,3 +10,6 @@ Constraints: no product-code changes; no GUI-dependent steps in this task (the s
 
 
 Also: your earlier report to the owner mentioned a "Codex configuration conflict" on this machine that remained unchanged — state exactly what it is and whether it affects non-interactive `codex exec` runs like this one. And note the Tailscale peer: the Linux laptop is thinkpad-flo (100.120.43.49); direct connection was not established at first contact (relayed) — report `tailscale ping thinkpad-flo` from your side.
+
+
+Resume notice (2026-09-08 20:35): a previous run of this brief installed Git, Node, pnpm, Python 3.12, 7-Zip, Chrome, Rust and the VS Build Tools + Windows SDK, then went silent for an hour (7 s CPU) and was killed. Do NOT reinstall anything; verify with `winget list`/version commands only. First check the reboot-pending registry keys: if the Build Tools require a reboot before `cl.exe`/`link.exe` work, run the Node-side steps (clone, pnpm install, typecheck, tests) anyway, skip cargo, and end the report with "REBOOT REQUIRED" as the first line. Do not spend more than one paragraph on the codex config conflict: this run passes --dangerously-bypass-approvals-and-sandbox explicitly, so the config is not consulted for permissions. Keep every command non-interactive (winget --accept-* flags, git with GIT_TERMINAL_PROMPT=0).

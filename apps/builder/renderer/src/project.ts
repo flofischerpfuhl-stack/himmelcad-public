@@ -118,6 +118,11 @@ export interface GroundExtractionSummary {
 export interface GroundPreviewResult {
   readonly schemaId: 'hcad.pointcloud.ground-preview-result@1';
   readonly algorithmId: typeof GROUND_ALGORITHM_ID;
+  readonly source: {
+    readonly id: string;
+    readonly revision: number;
+    readonly versionHash: string;
+  };
   readonly preview: {
     readonly sampledPoints: number;
     readonly groundPoints: number;
