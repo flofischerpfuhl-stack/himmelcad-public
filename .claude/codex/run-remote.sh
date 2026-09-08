@@ -9,9 +9,9 @@ RWORKDIR="${RWORKDIR:-C:\\Users\\flori}"
 OUT="$(git rev-parse --show-toplevel)/.claude/codex/out"; mkdir -p "$OUT"
 : > "$OUT/remote-$NAME.log"; rm -f "$OUT/remote-$NAME.exit"
 ssh -o BatchMode=yes -o ServerAliveInterval=30 "$REMOTE" \
-  "codex exec -C \"$RWORKDIR\" -m $MODEL -c model_reasoning_effort=$EFFORT --color never --skip-git-repo-check -o \"$RWORKDIR\\codex-last-$NAME.md\" -" \
+  "codex exec -C \"$RWORKDIR\" -m $MODEL -c model_reasoning_effort=$EFFORT --color never --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox -o \"$RWORKDIR\\codex-last-$NAME.md\" -" \
   < "$BRIEF" >> "$OUT/remote-$NAME.log" 2>&1
 code=$?
 # the final report comes back directly over the channel — no commit needed on the Windows side
-ssh -o BatchMode=yes "$REMOTE" "type \"$RWORKDIR\\codex-last-$NAME.md\"" > "$OUT/remote-$NAME.last.md" 2>/dev/null
+ssh -o BatchMode=yes "$REMOTE" "powershell -NoProfile -Command \"Get-Content -Raw -LiteralPath '$RWORKDIR\\codex-last-$NAME.md'\"" > "$OUT/remote-$NAME.last.md" 2>/dev/null
 echo $code > "$OUT/remote-$NAME.exit"
