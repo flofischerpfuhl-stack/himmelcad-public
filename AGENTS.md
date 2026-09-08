@@ -70,7 +70,7 @@ SSH (`ssh win-himmelcad`, key-only). Logs land in
 `.claude/codex/out/remote-<name>.log/.exit`. Rules: agents do not run ad-hoc
 commands on the host — they prompt the Windows Codex with a brief (owner
 rule); the Windows clone is synced only through git (push here, pull there;
-evidence comes back as committed files, on a branch if main is busy); GUI
+the final report comes back directly over the SSH channel into `.claude/codex/out/remote-<name>.last.md` — no commit on the Windows side is needed; only durable evidence files are committed, by the architect from the laptop); GUI
 tests need the PC unlocked (ask the owner); state the host's load honestly in
 any measurement. Details and the lane protocol: `docs/builder-program/COORDINATION.md`
 "Windows host".
