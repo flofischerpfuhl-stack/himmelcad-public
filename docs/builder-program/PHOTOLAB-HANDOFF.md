@@ -7,7 +7,7 @@ landing by the PhotoLab session. Plan of record:
 `.claude/codex/prompts/photolab/`, the token ledger under
 `.claude/codex/logs/photolab/ledger.json`.
 
-Last update: 2026-09-06 04:47 (G1a-3 landed c7bb505; audit 23 + baselines a78595b; G1a-2 3c6f4d0).
+Last update: 2026-09-08 17:50 (diagnostic OOM-killed 2026-09-06 05:47; DSM + DTM smokes for G1a-3 relaunched on a fresh runtime copy).
 
 ## Current work packages
 
@@ -30,16 +30,16 @@ close/durability (03bd235), ADR 0030 rev 6 (9d4d398), pixel baselines
 
 ## Open R1 gates (executed evidence only)
 
-| Gate                                   | Status                                                                                                                                                                                                                |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1 complete workflows import → products | 24-image smokes green: waves 1–4 (LAZ validated), DTM + DSM (A4), dense mesh (A3)                                                                                                                                     |
-| 2 real-dataset accuracy                | owner 2026-09-05: full 135-image golden deferred to the end, on another machine (`run-golden.sh`); meanwhile 24-image smokes + 40-image Quality Hybrid diagnostic (`run-qh-diagnostic.sh`)                            |
-| 3 lineage/recovery                     | H1 close drain, B5 journal/manifest reconciliation, B4 same-target admission, H1b cancellable save landed                                                                                                             |
-| 4 cancellation/reload                  | H2 landed: side operations drain, list, cancel; chip rehydrates from the sidecar after reload                                                                                                                         |
-| 5 project format/journal               | B5 landed (crash-injection tests for both orders + dataset quarantine)                                                                                                                                                |
-| 6 automation parity (P11)              | 72 rows documented + G-1 test; command table generation is Builder-lane (G2)                                                                                                                                          |
-| 7 accessibility / visual               | executed 2026-09-06 04:21: audit 23 — 88 captures × 2 viewports, a11y 0 findings (88 surfaces, 88 keyboard walks); the single issue is F15b (product context menu without Export, Builder-lane); baselines refreshing |
-| 8 products open in Builder/WeltView    | PhotoLab side complete for clouds, complete meshes and DEMs (G1a-2 + G1a-3); orthomosaic waits for RA-D11; downstream open needs Builder G1b, then the G1c matrix                                                     |
+| Gate                                   | Status                                                                                                                                                                                                                                                                                                                                                       |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1 complete workflows import → products | 24-image smokes green: waves 1–4 (LAZ validated), DTM + DSM (A4), dense mesh (A3)                                                                                                                                                                                                                                                                            |
+| 2 real-dataset accuracy                | owner 2026-09-05: full 135-image golden deferred to the end, on another machine (`run-golden.sh`). The 40-image Quality Hybrid diagnostic died twice on this laptop (reboot 2026-09-05; kernel OOM kill 2026-09-06 05:47 during LightGlue matching, after 2 h of single-worker ALIKED) — not relaunched here; 24-image fast smokes remain the local evidence |
+| 3 lineage/recovery                     | H1 close drain, B5 journal/manifest reconciliation, B4 same-target admission, H1b cancellable save landed                                                                                                                                                                                                                                                    |
+| 4 cancellation/reload                  | H2 landed: side operations drain, list, cancel; chip rehydrates from the sidecar after reload                                                                                                                                                                                                                                                                |
+| 5 project format/journal               | B5 landed (crash-injection tests for both orders + dataset quarantine)                                                                                                                                                                                                                                                                                       |
+| 6 automation parity (P11)              | 72 rows documented + G-1 test; command table generation is Builder-lane (G2)                                                                                                                                                                                                                                                                                 |
+| 7 accessibility / visual               | executed 2026-09-06 04:21: audit 23 — 88 captures × 2 viewports, a11y 0 findings (88 surfaces, 88 keyboard walks); the single issue is F15b (product context menu without Export, Builder-lane); baselines refreshing                                                                                                                                        |
+| 8 products open in Builder/WeltView    | PhotoLab side complete for clouds, complete meshes and DEMs (G1a-2 + G1a-3); orthomosaic waits for RA-D11; downstream open needs Builder G1b, then the G1c matrix                                                                                                                                                                                            |
 
 ## Next three steps
 
