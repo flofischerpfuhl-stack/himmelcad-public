@@ -82,7 +82,8 @@ pub struct PointCloudClassDisplay {
 pub struct PointCloudDisplayStyle {
     /// Exact versioned schema identifier.
     pub schema_id: String,
-    /// Explicit per-entity size in physical screen pixels for Release 0.5.
+    /// Per-entity adaptive point-diameter multiplier. The serialized
+    /// `pointSizePixels` name is retained for Release-0.5 project compatibility.
     pub point_size_pixels: f32,
     /// Entity-level color source.
     pub color_mode: PointCloudColorMode,
@@ -126,7 +127,7 @@ impl PointCloudDisplayStyle {
         if self.schema_id != POINT_CLOUD_DISPLAY_STYLE_SCHEMA_ID {
             return Err(CanonicalResourceValidationError::InvalidSchema);
         }
-        if !self.point_size_pixels.is_finite() || !(1.0..=8.0).contains(&self.point_size_pixels) {
+        if !self.point_size_pixels.is_finite() || !(0.25..=8.0).contains(&self.point_size_pixels) {
             return Err(CanonicalResourceValidationError::InvalidNumber);
         }
         if self.classes.len() > 256 {
@@ -2226,8 +2227,17 @@ mod tests {
             .iter()
             .any(|item| item.code == 2 && item.name == "Ground"));
 
+        let mut minimum = display.clone();
+        minimum.point_size_pixels = 0.25;
+        assert_eq!(minimum.validate(), Ok(()));
+
         let mut invalid = display.clone();
         invalid.point_size_pixels = 8.5;
+        assert_eq!(
+            invalid.validate(),
+            Err(CanonicalResourceValidationError::InvalidNumber)
+        );
+        invalid.point_size_pixels = 0.2;
         assert_eq!(
             invalid.validate(),
             Err(CanonicalResourceValidationError::InvalidNumber)
