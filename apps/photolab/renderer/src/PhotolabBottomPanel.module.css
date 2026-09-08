@@ -144,14 +144,15 @@
 }
 
 .state {
-  color: var(--hc-info);
+  /* Text-safe variants: the plain status tokens fail 4.5:1 on the light panel (F17). */
+  color: var(--hc-info-fg, var(--hc-fg-default));
   font-family: var(--hc-font-mono);
   font-size: 9px;
   text-transform: uppercase;
 }
 
 .state_completed {
-  color: var(--hc-success);
+  color: var(--hc-success-fg);
 }
 
 .state_cancelled {
@@ -159,11 +160,11 @@
 }
 
 .state_failed {
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
 }
 
 .state_cancelRequested {
-  color: var(--hc-warning);
+  color: var(--hc-warning-fg);
 }
 
 .jobMemory {
@@ -245,13 +246,13 @@
 
 .jobInlineError {
   margin-top: 6px;
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
   font-size: 10px;
   line-height: 1.35;
 }
 
 .cancel:hover:not(:disabled) {
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
   border-color: var(--hc-error);
   background: color-mix(in srgb, var(--hc-error) 10%, transparent);
 }

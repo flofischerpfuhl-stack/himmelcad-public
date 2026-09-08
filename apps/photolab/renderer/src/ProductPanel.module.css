@@ -89,7 +89,7 @@
 .prerequisite button {
   width: fit-content;
   padding: 0;
-  color: var(--hc-accent-base);
+  color: var(--hc-info-fg, var(--hc-fg-default));
   text-align: left;
   background: transparent;
   border: 0;
@@ -100,7 +100,7 @@
 }
 
 .error {
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
   border-left-color: var(--hc-error);
 }
 

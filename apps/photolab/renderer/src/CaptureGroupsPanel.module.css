@@ -216,7 +216,7 @@
 }
 
 .fieldError {
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
   font-size: 8px;
 }
 
@@ -273,7 +273,7 @@
 }
 
 .ungroupedList mark {
-  color: var(--hc-warning);
+  color: var(--hc-warning-fg);
   background: transparent;
   font-size: 8px;
 }
@@ -331,7 +331,7 @@
 }
 
 .reviewRow .needsReview {
-  color: var(--hc-warning);
+  color: var(--hc-warning-fg);
 }
 
 .groupActions {

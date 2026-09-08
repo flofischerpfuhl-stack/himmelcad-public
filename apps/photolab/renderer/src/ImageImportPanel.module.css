@@ -227,14 +227,14 @@
 }
 
 .photoRow em {
-  color: var(--hc-success);
+  color: var(--hc-success-fg);
   font: 8px var(--hc-font-mono);
   font-style: normal;
 }
 
 .warningRow {
   grid-template-columns: 16px 150px minmax(0, 1fr);
-  color: var(--hc-warning);
+  color: var(--hc-warning-fg);
 }
 
 .more {
@@ -265,7 +265,7 @@
 .notice,
 .blockingNotice {
   border-color: var(--hc-warning);
-  color: var(--hc-warning);
+  color: var(--hc-warning-fg);
 }
 
 .blockingNotice {
@@ -275,7 +275,7 @@
 .success {
   align-items: center;
   border-color: var(--hc-success);
-  color: var(--hc-success);
+  color: var(--hc-success-fg);
 }
 
 .twoColumns {
@@ -538,7 +538,7 @@
 }
 
 .errorIcon {
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
 }
 
 @keyframes spin {
@@ -615,7 +615,7 @@
   border: 1px solid var(--hc-error);
   border-radius: var(--hc-radius-sm);
   background: var(--hc-bg-island-lo);
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
 }
 
 .inlineError span {
@@ -667,7 +667,7 @@
 }
 
 .warningText {
-  color: var(--hc-warning) !important;
+  color: var(--hc-warning-fg) !important;
 }
 
 @media (max-width: 760px) {

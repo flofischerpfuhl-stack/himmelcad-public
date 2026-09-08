@@ -139,11 +139,11 @@
 }
 
 .available {
-  color: var(--hc-success);
+  color: var(--hc-success-fg);
 }
 
 .unavailable {
-  color: var(--hc-warning);
+  color: var(--hc-warning-fg);
 }
 
 .runtime span {
@@ -171,7 +171,7 @@
   justify-items: center;
   gap: 7px;
   padding: 22px 18px;
-  color: var(--hc-warning);
+  color: var(--hc-warning-fg);
   border: 1px solid var(--hc-border-default);
   border-radius: var(--hc-radius-sm);
   background: var(--hc-bg-island-lo);

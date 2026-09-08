@@ -225,7 +225,7 @@
 }
 .success {
   border-color: var(--hc-border-default);
-  color: var(--hc-success);
+  color: var(--hc-success-fg);
 }
 .validating {
   align-items: center;
@@ -357,7 +357,7 @@
   font: 8px var(--hc-font-mono);
 }
 .error {
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
   border-left-color: var(--hc-error);
 }
 .metrics {
@@ -384,7 +384,7 @@
   font-size: 13px;
 }
 .metricWarning strong {
-  color: var(--hc-warning);
+  color: var(--hc-warning-fg);
 }
 .tableWrap {
   overflow: auto;

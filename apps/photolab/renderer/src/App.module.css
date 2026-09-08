@@ -1,5 +1,5 @@
 .titleStatus {
-  color: var(--hc-success);
+  color: var(--hc-success-fg);
   font-family: var(--hc-font-mono);
   font-size: 9px;
   letter-spacing: 0.04em;
@@ -252,7 +252,7 @@
 }
 
 .productLayerStatusError > svg {
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
 }
 
 .productLayerStatus span {

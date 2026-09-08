@@ -2682,6 +2682,19 @@ scroll affordance. The tab strip is the shared `FunctionPanel.tsx` closeable tab
 F15b/F15c — proposal: overflow chevrons or a second row per DESIGN-SYSTEM;
 PhotoLab updates the baseline capture afterwards.
 
+F17 (found 2026-09-08 by the first light-theme axe pass after S-06d): the plain
+status tokens (`--hc-info` = accent #1597f2, `--hc-success`, `--hc-warning`,
+`--hc-error`) were used as small text across PhotoLab and the shared console;
+on the light panel (#eef0f3) they reach 2.7–4.0:1 instead of 4.5. PhotoLab
+side fixed 2026-09-08: 37 `color:` uses switched to the `*-fg` tokens (info
+with `var(--hc-info-fg, var(--hc-fg-default))` until the shared token exists),
+the prerequisite link button, accent hover text in the filmstrip, and the
+filmstrip badge (opaque `--hc-bg-panel`). Shared side = Builder S-02e
+(`--hc-info-fg` token, console levels, sweep, gallery contrast checks, token
+lint for shared CSS). Rule: every audit runs both themes; PhotoLab CSS is
+grepped for plain status tokens as text before landing UI. Dark audit after the
+fix: 90 captures, a11y clean; light rerun pending at the time of writing.
+
 ### WP-H1 (Size S, gates 1/3)
 
 F01 archive Save route + F05 close refusal with Retry / Cancel close / Force

@@ -43,7 +43,7 @@
 }
 .error {
   padding: 8px 10px;
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
   background: var(--hc-bg-island-lo);
   border-left: 2px solid var(--hc-error);
   border-radius: var(--hc-radius-sm);

@@ -48,7 +48,7 @@
 
 .filterChip button:hover,
 .filterChip button:focus-visible {
-  color: var(--hc-accent-base);
+  color: var(--hc-info-fg, var(--hc-fg-strong));
 }
 
 .shortcutHelp {
@@ -224,8 +224,9 @@
   padding: 0 4px;
   border: 1px solid var(--hc-border-strong);
   border-radius: var(--hc-radius-sm);
-  color: var(--hc-fg-muted);
-  background: var(--hc-bg-overlay);
+  /* Opaque panel background so the text tokens keep 4.5:1 in both themes (F17). */
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-panel);
   font-size: 8px;
   line-height: 1;
 }

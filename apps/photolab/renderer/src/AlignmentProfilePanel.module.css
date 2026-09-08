@@ -98,7 +98,7 @@
 }
 
 .error {
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
   font-family: var(--hc-font-ui);
   font-size: 11px;
   line-height: 1.4;

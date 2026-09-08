@@ -19,7 +19,7 @@
 
 .dialog header svg {
   flex: 0 0 auto;
-  color: var(--hc-warning);
+  color: var(--hc-warning-fg);
 }
 
 .dialog header span {

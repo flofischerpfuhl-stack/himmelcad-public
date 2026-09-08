@@ -59,7 +59,7 @@
   padding: 19px 17px;
 }
 .content svg {
-  color: var(--hc-warning);
+  color: var(--hc-warning-fg);
 }
 .content p {
   margin: 0;
