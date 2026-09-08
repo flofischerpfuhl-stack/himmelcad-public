@@ -119,15 +119,16 @@ void test('kernel public API surface is exact and runtime internals stay private
       return `${symbol.name}:${marker}`;
     })
     .sort();
-  assert.equal(surface.length, 303);
+  assert.equal(surface.length, 323);
   assert.equal(
     createHash('sha256').update(surface.join('\n')).digest('hex'),
-    'ff7feaf87a2b43d6f393f27bcebabd7294ea00a31a1d5c376cf57bdac56f699d',
+    'e825dd17ff490b8fd15ed061f04e8397ad20f0a54b90b8d8eb0a1f4bdc171c96',
     `kernel API changed; review the stable contract before updating this gate:\n${surface.join('\n')}`,
   );
 
   const runtime = await import('../src/kernel/index.js');
   assert.deepEqual(Object.keys(runtime).sort(), [
+    'EMPTY_RENDERER_OVERLAY',
     'GestureClaimError',
     'KERNEL_FRAME_DIAGNOSTICS_CAPACITY',
     'KernelCameraController',
@@ -143,12 +144,23 @@ void test('kernel public API surface is exact and runtime internals stay private
     'PLATFORM_GESTURE_TUNABLES',
     'PlatformGestureArbiter',
     'SHARED_3D_TARGET_DEVIATIONS',
+    'assertFenceVolume',
     'assertValidKernelLocalOrthographicViewFrame',
     'assertViewingBox',
+    'createKernelOverlayGlyphAtlas',
+    'cssColorToLinearRgba',
+    'fencePolygonArea',
+    'fencePrismFromPolygon',
+    'fenceVolumeContains',
+    'fenceVolumeFromCamera',
     'isPlanViewMode',
     'kernelSelectionVisualPolicy',
     'localSectionClipVolume',
     'moveViewingBox',
+    'overlayAnchorSquare',
+    'overlayDirectionArrow',
+    'overlayMidpointPixelOffset',
+    'overlaySupportRoleGeometry',
     'placeViewingBoxCenter',
     'projectPickCandidateForViewMode',
     'projectTargetPlaneCoordinate',

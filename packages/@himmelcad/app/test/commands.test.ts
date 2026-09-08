@@ -140,6 +140,126 @@ void test('G17 ground automation round-trip preserves typed SMRF parameters', as
   assert.deepEqual(calls[0]?.payload, payload);
 });
 
+void test('PC-D5/PC-D6 P11 fence and segmentation rows share UI and automation parity', async () => {
+  const rows = new Map(COMMAND_REGISTRY.map((entry) => [entry.id, entry]));
+  const ids = [
+    'pointcloud.fence.begin',
+    'pointcloud.fence.commit',
+    'pointcloud.fence.cancel',
+    'pointcloud.segment.keep_inside',
+    'pointcloud.segment.remove_inside',
+  ] as const;
+  for (const id of ids) {
+    const row = rows.get(id);
+    assert.ok(row, id);
+    assert.deepEqual(row.products, ['builder'], id);
+    assert.equal(row.surfaces.console, true, id);
+    assert.equal(row.surfaces.automation, true, id);
+    assert.match(row.ownerSpec, /owner: pointcloud/u, id);
+  }
+  assert.equal(rows.get('pointcloud.fence.begin')!.surfaces.ribbon, true);
+  assert.equal(rows.get('pointcloud.fence.begin')!.surfaces.contextMenu, true);
+  for (const id of ids.slice(3)) {
+    assert.equal(rows.get(id)!.allowMultiSelect, true, id);
+    assert.deepEqual(rows.get(id)!.entityKinds, ['PointCloud'], id);
+  }
+
+  const calls: CommandInvocation[] = [];
+  const request = {
+    schemaId: 'hcad.pointcloud.segment-request@1',
+    payload: {
+      operationId: 'segment-1',
+      entityIds: ['cloud-a'],
+      polygon: [
+        [0, 0, 0],
+        [10, 0, 0],
+        [10, 10, 0],
+        [0, 10, 0],
+      ],
+    },
+  };
+  await executeAutomationCommand(
+    'pointcloud.segment.keep_inside',
+    request,
+    base({
+      selectedEntityIds: ['cloud-a'],
+      selectedEntityKinds: ['cloud'],
+      selectedCanonicalEntityKinds: ['PointCloud'],
+    }),
+    (invocation) => {
+      calls.push(invocation);
+    },
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.id, 'pointcloud.segment.keep_inside');
+  assert.deepEqual(calls[0]?.payload, request);
+});
+
+void test('G-B2-PC-MEAN-SAMPLE P11 rows share the generated UI and automation table', () => {
+  const rows = new Map(COMMAND_REGISTRY.map((entry) => [entry.id, entry]));
+  for (const id of ['pointcloud.sample', 'pointcloud.rasterize'] as const) {
+    const row = rows.get(id);
+    assert.ok(row, id);
+    assert.deepEqual(row.products, ['builder'], id);
+    assert.equal(row.surfaces.ribbon, true, id);
+    assert.equal(row.surfaces.contextMenu, true, id);
+    assert.equal(row.surfaces.console, true, id);
+    assert.equal(row.surfaces.automation, true, id);
+    assert.equal(row.allowMultiSelect, false, id);
+    assert.deepEqual(row.entityKinds, ['PointCloud'], id);
+  }
+  assert.match(rows.get('pointcloud.sample')!.ownerSpec, /owner: pointcloud/u);
+  assert.match(rows.get('pointcloud.rasterize')!.ownerSpec, /owner: mesh-terrain/u);
+});
+
+void test('G-B2-PC-MEAN-SAMPLE automation preserves typed methods, origin and empty policy', async () => {
+  const calls: CommandInvocation[] = [];
+  const context = base({
+    selectedEntityIds: ['cloud-a'],
+    selectedEntityKinds: ['cloud'],
+    selectedCanonicalEntityKinds: ['PointCloud'],
+  });
+  const sample = {
+    schemaId: 'hcad.pointcloud.sample-request@1',
+    payload: {
+      operationId: 'sample-1',
+      sourceEntityId: 'cloud-a',
+      parameters: {
+        method: 'grid',
+        spacingM: 0.25,
+        percentage: 10,
+        originX: 440000,
+        originY: 5480000,
+      },
+    },
+  };
+  const rasterize = {
+    schemaId: 'hcad.pointcloud.rasterize-request@1',
+    payload: {
+      operationId: 'rasterize-1',
+      sourceEntityId: 'cloud-a',
+      parameters: {
+        cellSizeM: 1,
+        aggregation: 'mean',
+        emptyCellPolicy: 'no_data',
+      },
+    },
+  };
+  await executeAutomationCommand('pointcloud.sample', sample, context, (call) => {
+    calls.push(call);
+  });
+  await executeAutomationCommand('pointcloud.rasterize', rasterize, context, (call) => {
+    calls.push(call);
+  });
+  assert.deepEqual(
+    calls.map((call) => [call.id, call.payload]),
+    [
+      ['pointcloud.sample', sample],
+      ['pointcloud.rasterize', rasterize],
+    ],
+  );
+});
+
 void test('context menu content follows selection kind and cloud stays deliberate', () => {
   const ids = (kind: CommandContext['selectedEntityKinds'][number], exportable = false) =>
     commandsForSurface(

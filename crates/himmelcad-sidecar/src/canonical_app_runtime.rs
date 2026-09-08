@@ -21,8 +21,10 @@ use himmelcad_core::canonical_document::{
 use himmelcad_core::canonical_resources::PointCloudDisplayStyle;
 use himmelcad_core::entity::EntityId;
 use himmelcad_core::entity_model::{
-    built_in_type, CanonicalEntity, EntityTypeId, GeometryObject, GeometryResource, Representation,
-    RepresentationAuthority, RepresentationRole, StreamedGeometry,
+    built_in_type, CanonicalEntity, DepthSampling, DepthSemantics, ElevationSurfaceGeometry,
+    EntityTypeId, GeometryObject, GeometryResource, OrthoGridMapping, RasterConnectivity,
+    RasterImageGeometry, RasterInterpolation, RasterMapping, Representation,
+    RepresentationAuthority, RepresentationRole, StreamedGeometry, Vector3,
 };
 use himmelcad_core::entity_validation::{
     canonical_entity_version_hash, geometry_object_content_hash, validate_resolved_representation,
@@ -48,6 +50,11 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::pointcloud_ground::{PreparedGroundDataset, PreparedGroundResult};
+use crate::pointcloud_sampling::{
+    PreparedHeightGrid, PreparedSampleResult, RasterAggregation, HEIGHT_GRID_FORMAT_ID,
+    RASTERIZE_ALGORITHM_ID, SAMPLE_ALGORITHM_ID,
+};
+use crate::pointcloud_segment::{PreparedSegmentResult, SEGMENT_ALGORITHM_ID};
 
 use crate::canonical_project_store::{
     CanonicalDurabilityStatus, CanonicalImportCommit, CanonicalImportInventory,
@@ -224,6 +231,46 @@ pub struct CanonicalGroundCommit {
     pub ground_revision: u64,
     pub source_dataset_id: String,
     pub ground_dataset_id: String,
+}
+
+/// One atomic PC-D1 edited-revision publication over one or more selected clouds.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalSegmentCommit {
+    pub journal_entry: CanonicalJournalEntry,
+    pub revisions: Vec<CanonicalSegmentRevision>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalSegmentRevision {
+    pub entity_id: String,
+    pub revision: u64,
+    pub dataset_id: String,
+    pub retained_points: u64,
+    pub removed_points: u64,
+}
+
+/// One immutable PC-D8 sampled-cloud publication.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalSampleCommit {
+    pub journal_entry: CanonicalJournalEntry,
+    pub entity_id: String,
+    pub revision: u64,
+    pub dataset_id: String,
+}
+
+/// One immutable PC-D17 grid publication for the later Mesh workflow.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalRasterizeCommit {
+    pub journal_entry: CanonicalJournalEntry,
+    pub entity_id: String,
+    pub revision: u64,
+    pub dataset_id: String,
+    pub entity_type: String,
+    pub mesh_source_role: Option<String>,
 }
 
 /// Failure of an explicit project lifecycle or staged import operation.
@@ -1584,6 +1631,647 @@ impl CanonicalAppRuntime {
         })
     }
 
+    /// Publishes every fully baked source revision in one journal transaction.
+    #[allow(clippy::too_many_arguments)]
+    pub fn publish_pointcloud_segmentation(
+        &mut self,
+        sources: Vec<(
+            CanonicalGroundSource,
+            PreparedSegmentResult,
+            serde_json::Value,
+        )>,
+        command_id: String,
+        volume: serde_json::Value,
+        side: serde_json::Value,
+        completed_at: String,
+        progress: &mut dyn FnMut(CanonicalImportProgress),
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<CanonicalSegmentCommit, CanonicalAppRuntimeError> {
+        if sources.is_empty() {
+            return Err(CanonicalAppRuntimeError::InvalidResidency(
+                "segmentation requires at least one source".to_owned(),
+            ));
+        }
+        let mut admissions = Vec::with_capacity(sources.len());
+        let mut datasets = Vec::with_capacity(sources.len());
+        let mut objects = Vec::with_capacity(sources.len() * 3);
+        let mut roots = BTreeMap::new();
+        let mut mutations = Vec::with_capacity(sources.len());
+        let mut revisions = Vec::with_capacity(sources.len());
+
+        for (source, prepared, scope) in sources {
+            let dataset_id = segment_dataset_id(&prepared.dataset);
+            let (dataset, geometry, representation) = ground_dataset_contract(
+                &prepared.dataset,
+                &dataset_id,
+                &source.entity.id.0,
+                &source.representation_slot,
+            )?;
+            let next_revision = source.entity.revision.saturating_add(1);
+            let geometry_hash = representation.geometry_ref.clone();
+            let generation = source
+                .source_attributes
+                .get("hcad.point-cloud-edit-chain@1")
+                .and_then(|value| value.get("edits"))
+                .and_then(serde_json::Value::as_array)
+                .map_or(1_u64, |edits| edits.len() as u64 + 1);
+            let source_fingerprint =
+                ObjectHash::of_bytes(&serde_json::to_vec(&serde_json::json!({
+                    "entityId": source.entity.id,
+                    "revision": source.entity.revision,
+                    "contentHash": source.entity.version_hash,
+                    "volume": volume,
+                    "side": side,
+                    "scope": scope,
+                }))?);
+            let recipe_id = format!("segment-recipe-{}", &source_fingerprint.0[..24]);
+            let recipe = serde_json::json!({
+                "schemaId": "hcad.derived-recipe@1",
+                "schemaVersion": 1,
+                "recipeId": recipe_id,
+                "recipeKind": SEGMENT_ALGORITHM_ID,
+                "generation": generation,
+                "state": "linked-current",
+                "outputGroupId": source.entity.id,
+                "outputs": [{
+                    "slotId": source.representation_slot,
+                    "role": "edited_cloud",
+                    "outputId": source.entity.id,
+                    "typeId": built_in_type::POINT_CLOUD,
+                    "locator": source.representation_slot,
+                    "currentRevision": next_revision,
+                    "currentContentHash": geometry_hash,
+                    "status": "present"
+                }],
+                "sources": [{
+                    "entityId": source.entity.id,
+                    "revision": source.entity.revision,
+                    "contentHash": source.entity.version_hash,
+                    "placementRevision": source.entity.revision,
+                    "role": "source_revision"
+                }],
+                "parameterTypeId": SEGMENT_ALGORITHM_ID,
+                "parameters": { "volume": volume, "side": side, "scope": scope },
+                "algorithmId": SEGMENT_ALGORITHM_ID,
+                "algorithmVersion": "1",
+                "dependencyRecipeIds": [],
+                "staleCauses": [],
+                "lastSuccess": {
+                    "generation": generation,
+                    "sourceFingerprint": source_fingerprint,
+                    "outputs": [{
+                        "slotId": source.representation_slot,
+                        "outputId": source.entity.id,
+                        "revision": next_revision,
+                        "contentHash": geometry_hash
+                    }],
+                    "completedAt": completed_at
+                },
+                "lastError": null,
+                "detach": null
+            });
+            let mut edit_chain = source
+                .source_attributes
+                .get("hcad.point-cloud-edit-chain@1")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({ "schemaVersion": 1, "edits": [] }));
+            let edits = edit_chain
+                .get_mut("edits")
+                .and_then(serde_json::Value::as_array_mut)
+                .ok_or_else(|| {
+                    CanonicalAppRuntimeError::InvalidResidency(
+                        "point-cloud edit chain is malformed".to_owned(),
+                    )
+                })?;
+            edits.push(recipe.clone());
+            let components = merge_object(
+                source.source_components,
+                "hcad.prepared-dataset@1",
+                serde_json::json!({ "formatId": "potree@2", "datasetId": dataset_id }),
+            )?;
+            let attributes = merge_object(
+                merge_object(
+                    source.source_attributes,
+                    "hcad.point-cloud-edit-chain@1",
+                    edit_chain,
+                )?,
+                "hcad.derived-recipe@1",
+                recipe,
+            )?;
+            let components_object =
+                canonical_json("application/vnd.himmelcad.components+json", components)?;
+            let attributes_object =
+                canonical_json("application/vnd.himmelcad.attributes+json", attributes)?;
+            let relations_object = canonical_json(
+                "application/vnd.himmelcad.relations+json",
+                source.source_relations,
+            )?;
+            let mut entity_after = source.entity.clone();
+            entity_after.revision = next_revision;
+            entity_after.representations = vec![representation.clone()];
+            entity_after.components_ref = components_object.object_hash.clone();
+            entity_after.attributes_ref = attributes_object.object_hash.clone();
+            entity_after.relations_ref = relations_object.object_hash.clone();
+            entity_after.version_hash = canonical_entity_version_hash(&entity_after)
+                .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?;
+
+            mutations.push(CanonicalEntityMutation::Update {
+                expected: source.expected,
+                edits: vec![
+                    CanonicalEntityEdit::SetRepresentations {
+                        representations: entity_after.representations.clone(),
+                    },
+                    CanonicalEntityEdit::SetComponentsRef {
+                        components_ref: entity_after.components_ref.clone(),
+                    },
+                    CanonicalEntityEdit::SetAttributesRef {
+                        attributes_ref: entity_after.attributes_ref.clone(),
+                    },
+                    CanonicalEntityEdit::SetRelationsRef {
+                        relations_ref: entity_after.relations_ref.clone(),
+                    },
+                ],
+            });
+            roots.insert(dataset_id.clone(), prepared.dataset.root.clone());
+            datasets.push(dataset);
+            objects.extend([components_object, attributes_object, relations_object]);
+            admissions.push(CanonicalRepresentationAdmission {
+                entity: entity_after.clone(),
+                selected: representation,
+                representation_slot: source.representation_slot,
+                expected_generation: None,
+                resolved_geometry: geometry,
+            });
+            revisions.push(CanonicalSegmentRevision {
+                entity_id: entity_after.id.0,
+                revision: entity_after.revision,
+                dataset_id,
+                retained_points: prepared.summary.retained_points,
+                removed_points: prepared.summary.removed_points,
+            });
+        }
+
+        let package = CanonicalImportPackage {
+            schema_version: CANONICAL_IO_SCHEMA_VERSION,
+            provider_id: SEGMENT_ALGORITHM_ID.to_owned(),
+            provider_version: "1".to_owned(),
+            admissions,
+            objects,
+            datasets,
+            resource_sets: Vec::new(),
+            presentation_resources: Default::default(),
+        };
+        let source_roots = CanonicalImportSourceRoots {
+            datasets: roots,
+            resource_sets: Default::default(),
+        };
+        let commit = self
+            .store_mut()?
+            .publish_package_transaction_with_progress_and_cancel(
+                &package,
+                &source_roots,
+                CanonicalCommandTransaction {
+                    command_id,
+                    mutations,
+                },
+                progress,
+                is_cancelled,
+            )?;
+        Ok(CanonicalSegmentCommit {
+            journal_entry: commit.journal_entry,
+            revisions,
+        })
+    }
+
+    /// Publishes one PC-D8 sampled cloud without changing the captured source revision.
+    #[allow(clippy::too_many_arguments)]
+    pub fn publish_sampled_cloud(
+        &mut self,
+        source: CanonicalGroundSource,
+        prepared: &PreparedSampleResult,
+        command_id: String,
+        entity_id: String,
+        output_name: String,
+        parameters: serde_json::Value,
+        scope: serde_json::Value,
+        completed_at: String,
+        progress: &mut dyn FnMut(CanonicalImportProgress),
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<CanonicalSampleCommit, CanonicalAppRuntimeError> {
+        self.ensure_pointcloud_source_current(&source.expected)?;
+        let dataset_id = derived_point_dataset_id("sample", SAMPLE_ALGORITHM_ID, &prepared.sampled);
+        let (dataset, geometry, representation) =
+            ground_dataset_contract(&prepared.sampled, &dataset_id, &entity_id, "source")?;
+        let geometry_hash = representation.geometry_ref.clone();
+        let recipe_parameters = serde_json::json!({
+            "sampling": parameters,
+            "scope": scope,
+            "randomSeed": crate::pointcloud_sampling::RANDOM_SEED,
+            "stableTieRule": prepared.summary.stable_tie_rule,
+        });
+        let source_fingerprint = ObjectHash::of_bytes(&serde_json::to_vec(&serde_json::json!({
+            "entityId": source.entity.id,
+            "revision": source.entity.revision,
+            "contentHash": source.entity.version_hash,
+            "parameters": recipe_parameters,
+        }))?);
+        let recipe_id = format!(
+            "sample-recipe-{}",
+            &prepared.summary.selection_sha256.as_str()[..24]
+        );
+        let recipe = derived_recipe_value(
+            &recipe_id,
+            SAMPLE_ALGORITHM_ID,
+            &entity_id,
+            "sampled",
+            "sampled_cloud",
+            built_in_type::POINT_CLOUD,
+            &geometry_hash,
+            &source,
+            "point_cloud_source",
+            recipe_parameters,
+            source_fingerprint,
+            completed_at,
+        );
+        let mut mesh_source_roles = mesh_source_roles(
+            &entity_id,
+            &geometry_hash,
+            "sampled_cloud",
+            source
+                .entity
+                .placement
+                .unwrap_or(himmelcad_core::entity_model::Transform3d::IDENTITY),
+            Some(prepared.summary.selection_sha256.clone()),
+        )?;
+        mesh_source_roles.content_hash =
+            ObjectHash::of_bytes(&serde_json::to_vec(&mesh_source_roles)?);
+        let components = canonical_json(
+            "application/vnd.himmelcad.components+json",
+            serde_json::json!({
+                "hcad.prepared-dataset@1": {
+                    "formatId": "potree@2",
+                    "datasetId": dataset_id,
+                },
+                "hcad.mesh-source-roles@1": mesh_source_roles,
+            }),
+        )?;
+        let attributes = canonical_json(
+            "application/vnd.himmelcad.attributes+json",
+            serde_json::json!({
+                "hcad.pointcloud.sample@1": {
+                    "algorithmId": SAMPLE_ALGORITHM_ID,
+                    "summary": prepared.summary,
+                },
+                "hcad.derived-recipe@1": recipe,
+            }),
+        )?;
+        let relations = canonical_json(
+            "application/vnd.himmelcad.relations+json",
+            serde_json::json!([{
+                "kind": "derivedFrom",
+                "entityId": source.entity.id,
+                "revision": source.entity.revision,
+                "role": "point_cloud_source",
+            }]),
+        )?;
+        let style = source
+            .source_style
+            .map(|value| {
+                canonical_json("application/vnd.himmelcad.point-cloud-display+json", value)
+            })
+            .transpose()?;
+        let mut entity = CanonicalEntity {
+            id: EntityId(entity_id),
+            revision: 0,
+            type_id: EntityTypeId(built_in_type::POINT_CLOUD.to_owned()),
+            name: output_name,
+            owner: source.entity.owner.clone(),
+            layer_ids: source.entity.layer_ids.clone(),
+            placement: source.entity.placement,
+            representations: vec![representation.clone()],
+            components_ref: components.object_hash.clone(),
+            attributes_ref: attributes.object_hash.clone(),
+            relations_ref: relations.object_hash.clone(),
+            style_ref: style.as_ref().map(|value| value.object_hash.clone()),
+            schema_version: 1,
+            version_hash: ObjectHash::of_bytes(b"uninitialized sampled cloud"),
+        };
+        entity.version_hash = canonical_entity_version_hash(&entity)
+            .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?;
+        let mut objects = vec![components, attributes, relations];
+        if let Some(style) = style {
+            objects.push(style);
+        }
+        let package = CanonicalImportPackage {
+            schema_version: CANONICAL_IO_SCHEMA_VERSION,
+            provider_id: SAMPLE_ALGORITHM_ID.to_owned(),
+            provider_version: "1".to_owned(),
+            admissions: vec![CanonicalRepresentationAdmission {
+                entity: entity.clone(),
+                selected: representation,
+                representation_slot: "source".to_owned(),
+                expected_generation: None,
+                resolved_geometry: geometry,
+            }],
+            objects,
+            datasets: vec![dataset],
+            resource_sets: Vec::new(),
+            presentation_resources: Default::default(),
+        };
+        let roots = CanonicalImportSourceRoots {
+            datasets: [(dataset_id.clone(), prepared.sampled.root.clone())]
+                .into_iter()
+                .collect(),
+            resource_sets: Default::default(),
+        };
+        let transaction = CanonicalCommandTransaction {
+            command_id,
+            mutations: vec![CanonicalEntityMutation::Create {
+                entity: entity.clone(),
+            }],
+        };
+        let commit = self
+            .store_mut()?
+            .publish_package_transaction_with_progress_and_cancel(
+                &package,
+                &roots,
+                transaction,
+                progress,
+                is_cancelled,
+            )?;
+        Ok(CanonicalSampleCommit {
+            journal_entry: commit.journal_entry,
+            entity_id: entity.id.0,
+            revision: entity.revision,
+            dataset_id,
+        })
+    }
+
+    /// Publishes one PC-D17 prepared grid. Count rasters remain RasterImage and are not Mesh height sources.
+    #[allow(clippy::too_many_arguments)]
+    pub fn publish_height_grid(
+        &mut self,
+        source: CanonicalGroundSource,
+        prepared: &PreparedHeightGrid,
+        command_id: String,
+        entity_id: String,
+        output_name: String,
+        parameters: serde_json::Value,
+        scope: serde_json::Value,
+        completed_at: String,
+        progress: &mut dyn FnMut(CanonicalImportProgress),
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<CanonicalRasterizeCommit, CanonicalAppRuntimeError> {
+        self.ensure_pointcloud_source_current(&source.expected)?;
+        let resource = GeometryResource {
+            object_hash: prepared.artifact.object_hash.clone(),
+            media_type: prepared.artifact.media_type.clone(),
+            byte_length: Some(prepared.artifact.byte_length),
+        };
+        let mapping = OrthoGridMapping {
+            origin: Vector3 {
+                x: prepared.summary.origin[0],
+                y: prepared.summary.origin[1],
+                z: 0.0,
+            },
+            column_step: Vector3 {
+                x: prepared.summary.cell_size_m,
+                y: 0.0,
+                z: 0.0,
+            },
+            row_step: Vector3 {
+                x: 0.0,
+                y: prepared.summary.cell_size_m,
+                z: 0.0,
+            },
+        };
+        let (entity_type, geometry) = if prepared.summary.aggregation == RasterAggregation::Count {
+            (
+                built_in_type::RASTER_IMAGE,
+                GeometryObject::RasterImage {
+                    raster: Box::new(RasterImageGeometry {
+                        pixels: resource.clone(),
+                        width: prepared.summary.width,
+                        height: prepared.summary.height,
+                        mapping: RasterMapping::OrthoGrid(mapping),
+                        depth: None,
+                    }),
+                },
+            )
+        } else {
+            (
+                built_in_type::ELEVATION_SURFACE,
+                GeometryObject::ElevationSurface {
+                    surface: Box::new(ElevationSurfaceGeometry::Grid {
+                        raster: resource.clone(),
+                        mapping,
+                        sampling: DepthSampling {
+                            semantics: DepthSemantics::ElevationZ,
+                            interpolation: RasterInterpolation::Nearest,
+                            connectivity: RasterConnectivity::PixelSteps,
+                        },
+                    }),
+                },
+            )
+        };
+        let representation = Representation {
+            role: RepresentationRole::Canonical,
+            geometry_ref: geometry_object_content_hash(&geometry)
+                .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?,
+            authority: RepresentationAuthority::Authoritative,
+            dependency_hash: None,
+        };
+        let geometry_hash = representation.geometry_ref.clone();
+        let dataset_id = format!(
+            "height-grid-{}",
+            &prepared.summary.cell_sha256.as_str()[..32]
+        );
+        let dataset = CanonicalPreparedDataset {
+            dataset_id: dataset_id.clone(),
+            format_id: HEIGHT_GRID_FORMAT_ID.to_owned(),
+            entity_id: entity_id.clone(),
+            representation_slot: "source".to_owned(),
+            root_metadata: resource,
+            artifacts: vec![PreparedDatasetArtifact {
+                relative_path: PathBuf::from(&prepared.artifact.relative_path),
+                resource: GeometryResource {
+                    object_hash: prepared.artifact.object_hash.clone(),
+                    media_type: prepared.artifact.media_type.clone(),
+                    byte_length: Some(prepared.artifact.byte_length),
+                },
+            }],
+        };
+        let recipe_parameters = serde_json::json!({
+            "rasterize": parameters,
+            "scope": scope,
+            "cellRecord": "valid:u8,value:f64le,count:u64le,variance:f64le",
+        });
+        let source_fingerprint = ObjectHash::of_bytes(&serde_json::to_vec(&serde_json::json!({
+            "entityId": source.entity.id,
+            "revision": source.entity.revision,
+            "contentHash": source.entity.version_hash,
+            "parameters": recipe_parameters,
+        }))?);
+        let recipe_id = format!(
+            "height-grid-recipe-{}",
+            &prepared.summary.cell_sha256.as_str()[..24]
+        );
+        let output_role = if prepared.summary.mesh_eligible {
+            "grid_source"
+        } else {
+            "count_grid"
+        };
+        let recipe = derived_recipe_value(
+            &recipe_id,
+            RASTERIZE_ALGORITHM_ID,
+            &entity_id,
+            "grid",
+            output_role,
+            entity_type,
+            &geometry_hash,
+            &source,
+            "point_cloud_source",
+            recipe_parameters,
+            source_fingerprint,
+            completed_at,
+        );
+        let mesh_roles = if prepared.summary.mesh_eligible {
+            let mut value = mesh_source_roles(
+                &entity_id,
+                &geometry_hash,
+                "grid_source",
+                himmelcad_core::entity_model::Transform3d::IDENTITY,
+                Some(prepared.summary.cell_sha256.clone()),
+            )?;
+            value.content_hash = ObjectHash::of_bytes(&serde_json::to_vec(&value)?);
+            Some(value)
+        } else {
+            None
+        };
+        let mut component_value = serde_json::json!({
+            "hcad.prepared-dataset@1": {
+                "formatId": HEIGHT_GRID_FORMAT_ID,
+                "datasetId": dataset_id,
+            }
+        });
+        if let Some(mesh_roles) = mesh_roles {
+            component_value
+                .as_object_mut()
+                .expect("component object")
+                .insert(
+                    "hcad.mesh-source-roles@1".to_owned(),
+                    serde_json::to_value(mesh_roles)?,
+                );
+        }
+        let components =
+            canonical_json("application/vnd.himmelcad.components+json", component_value)?;
+        let attributes = canonical_json(
+            "application/vnd.himmelcad.attributes+json",
+            serde_json::json!({
+                "hcad.pointcloud.height-grid@1": {
+                    "algorithmId": RASTERIZE_ALGORITHM_ID,
+                    "summary": prepared.summary,
+                    "outputRole": output_role,
+                },
+                "hcad.derived-recipe@1": recipe,
+            }),
+        )?;
+        let relations = canonical_json(
+            "application/vnd.himmelcad.relations+json",
+            serde_json::json!([{
+                "kind": "derivedFrom",
+                "entityId": source.entity.id,
+                "revision": source.entity.revision,
+                "role": "point_cloud_source",
+            }]),
+        )?;
+        let mut entity = CanonicalEntity {
+            id: EntityId(entity_id),
+            revision: 0,
+            type_id: EntityTypeId(entity_type.to_owned()),
+            name: output_name,
+            owner: source.entity.owner.clone(),
+            layer_ids: source.entity.layer_ids.clone(),
+            // Rasterization is in project XY/Z after applying the captured source placement.
+            placement: None,
+            representations: vec![representation.clone()],
+            components_ref: components.object_hash.clone(),
+            attributes_ref: attributes.object_hash.clone(),
+            relations_ref: relations.object_hash.clone(),
+            style_ref: None,
+            schema_version: 1,
+            version_hash: ObjectHash::of_bytes(b"uninitialized height grid"),
+        };
+        entity.version_hash = canonical_entity_version_hash(&entity)
+            .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?;
+        let package = CanonicalImportPackage {
+            schema_version: CANONICAL_IO_SCHEMA_VERSION,
+            provider_id: RASTERIZE_ALGORITHM_ID.to_owned(),
+            provider_version: "1".to_owned(),
+            admissions: vec![CanonicalRepresentationAdmission {
+                entity: entity.clone(),
+                selected: representation,
+                representation_slot: "source".to_owned(),
+                expected_generation: None,
+                resolved_geometry: geometry,
+            }],
+            objects: vec![components, attributes, relations],
+            datasets: vec![dataset],
+            resource_sets: Vec::new(),
+            presentation_resources: Default::default(),
+        };
+        let roots = CanonicalImportSourceRoots {
+            datasets: [(dataset_id.clone(), prepared.root.clone())]
+                .into_iter()
+                .collect(),
+            resource_sets: Default::default(),
+        };
+        let transaction = CanonicalCommandTransaction {
+            command_id,
+            mutations: vec![CanonicalEntityMutation::Create {
+                entity: entity.clone(),
+            }],
+        };
+        let commit = self
+            .store_mut()?
+            .publish_package_transaction_with_progress_and_cancel(
+                &package,
+                &roots,
+                transaction,
+                progress,
+                is_cancelled,
+            )?;
+        Ok(CanonicalRasterizeCommit {
+            journal_entry: commit.journal_entry,
+            entity_id: entity.id.0,
+            revision: entity.revision,
+            dataset_id,
+            entity_type: entity_type.to_owned(),
+            mesh_source_role: prepared
+                .summary
+                .mesh_eligible
+                .then(|| "grid_source".to_owned()),
+        })
+    }
+
+    fn ensure_pointcloud_source_current(
+        &self,
+        expected: &EntityVersionRef,
+    ) -> Result<(), CanonicalAppRuntimeError> {
+        let current = self
+            .residency_bootstrap()?
+            .entries
+            .into_iter()
+            .find(|entry| entry.admission.entity.id == expected.id)
+            .map(|entry| EntityVersionRef::from_entity(&entry.admission.entity));
+        if current.as_ref() != Some(expected) {
+            return Err(CanonicalAppRuntimeError::InvalidResidency(
+                "source point-cloud revision changed before derived publication".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Persists one canonical display resource and assigns it to exact live clouds.
     pub fn set_point_cloud_display(
         &mut self,
@@ -2128,6 +2816,131 @@ fn ground_dataset_id(prefix: &str, dataset: &PreparedGroundDataset) -> String {
         digest.update(artifact.byte_length.to_le_bytes());
     }
     format!("ground-{prefix}-{}", hex::encode(digest.finalize()))
+}
+
+fn segment_dataset_id(dataset: &PreparedGroundDataset) -> String {
+    let mut digest = sha2::Sha256::new();
+    use sha2::Digest as _;
+    digest.update(SEGMENT_ALGORITHM_ID.as_bytes());
+    digest.update(dataset.point_count.to_le_bytes());
+    for artifact in &dataset.artifacts {
+        digest.update(artifact.relative_path.as_bytes());
+        digest.update(artifact.object_hash.as_str().as_bytes());
+        digest.update(artifact.byte_length.to_le_bytes());
+    }
+    format!("segment-{}", hex::encode(digest.finalize()))
+}
+
+fn derived_point_dataset_id(
+    prefix: &str,
+    algorithm_id: &str,
+    dataset: &PreparedGroundDataset,
+) -> String {
+    let mut digest = sha2::Sha256::new();
+    use sha2::Digest as _;
+    digest.update(algorithm_id.as_bytes());
+    digest.update(prefix.as_bytes());
+    digest.update(dataset.point_count.to_le_bytes());
+    for artifact in &dataset.artifacts {
+        digest.update(artifact.relative_path.as_bytes());
+        digest.update(artifact.object_hash.as_str().as_bytes());
+        digest.update(artifact.byte_length.to_le_bytes());
+    }
+    format!("{prefix}-{}", hex::encode(digest.finalize()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn derived_recipe_value(
+    recipe_id: &str,
+    algorithm_id: &str,
+    output_group_id: &str,
+    slot_id: &str,
+    output_role: &str,
+    output_type: &str,
+    output_hash: &ObjectHash,
+    source: &CanonicalGroundSource,
+    source_role: &str,
+    parameters: serde_json::Value,
+    source_fingerprint: ObjectHash,
+    completed_at: String,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schemaId": "hcad.derived-recipe@1",
+        "schemaVersion": 1,
+        "recipeId": recipe_id,
+        "recipeKind": algorithm_id,
+        "generation": 1,
+        "state": "linked-current",
+        "outputGroupId": output_group_id,
+        "outputs": [{
+            "slotId": slot_id,
+            "role": output_role,
+            "outputId": output_group_id,
+            "typeId": output_type,
+            "locator": "source",
+            "currentRevision": 0,
+            "currentContentHash": output_hash,
+            "status": "present",
+        }],
+        "sources": [{
+            "entityId": source.entity.id,
+            "revision": source.entity.revision,
+            "contentHash": source.entity.version_hash,
+            "placementRevision": source.entity.revision,
+            "role": source_role,
+        }],
+        "parameterTypeId": algorithm_id,
+        "parameters": parameters,
+        "algorithmId": algorithm_id,
+        "algorithmVersion": "1",
+        "dependencyRecipeIds": [],
+        "staleCauses": [],
+        "lastSuccess": {
+            "generation": 1,
+            "sourceFingerprint": source_fingerprint,
+            "outputs": [{
+                "slotId": slot_id,
+                "outputId": output_group_id,
+                "revision": 0,
+                "contentHash": output_hash,
+            }],
+            "completedAt": completed_at,
+        },
+        "lastError": null,
+        "detach": null,
+    })
+}
+
+fn mesh_source_roles(
+    entity_id: &str,
+    content_hash: &ObjectHash,
+    source_role: &str,
+    placement: himmelcad_core::entity_model::Transform3d,
+    sampling_hash: Option<ObjectHash>,
+) -> Result<MeshSourceRolesV1, CanonicalAppRuntimeError> {
+    Ok(MeshSourceRolesV1 {
+        schema_id: MESH_SOURCE_ROLES_SCHEMA_ID.to_owned(),
+        schema_version: 1,
+        resource_id: format!("mesh-source-{entity_id}"),
+        content_hash: ObjectHash::of_bytes(b""),
+        roles: vec![MeshSourceRoleV1 {
+            source: DerivedSourceV1 {
+                entity_id: EntityId(entity_id.to_owned()),
+                revision: 0,
+                content_hash: content_hash.clone(),
+                placement_revision: 0,
+                role: source_role.to_owned(),
+            },
+            placement,
+            // MT-D26's admitted enum has exactly five roles. A grid carries its exact
+            // source role above and enters the draft through the Points evaluator.
+            role: MeshSourceRoleKindV1::Points,
+            sampling_tolerance: None,
+            sampling_hash,
+            boundary_hash: None,
+            exclusion_hashes: Vec::new(),
+        }],
+    })
 }
 
 fn ground_dataset_contract(
@@ -4158,6 +4971,411 @@ mod tests {
             .document()
             .entity(&EntityId("ground-cloud-a".to_owned()))
             .is_none());
+        runtime.close();
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn segmentation_revisions_compose_and_each_undo_restores_its_source() {
+        use crate::pointcloud_ground::GroundScope;
+        use crate::pointcloud_segment::{
+            prepare_segment_dataset, FenceVolume, SegmentPrepareRequest, SegmentSide,
+        };
+        use himmelcad_core::photolab_jobs::CancellationToken;
+
+        let root = temp_project("segment-revision-chain");
+        let staged = staged_ground_point_cloud(&root);
+        let mut runtime = CanonicalAppRuntime::default();
+        runtime.open(&root).expect("open project");
+        runtime
+            .publish_staged_import(&staged, "import-segment-source")
+            .expect("publish source");
+        let source_before = runtime
+            .residency_bootstrap()
+            .expect("source residency")
+            .entries[0]
+            .admission
+            .entity
+            .clone();
+        let fence = FenceVolume::Prism {
+            polygon: vec![
+                [-1.0, -1.0, 0.0],
+                [6.0, -1.0, 0.0],
+                [6.0, 6.0, 0.0],
+                [-1.0, 6.0, 0.0],
+            ],
+            direction: [0.0, 0.0, 1.0],
+        };
+        let scope = GroundScope::default();
+        let captured = runtime
+            .prepare_ground_source(
+                EntityVersionRef::from_entity(&source_before),
+                root.join("segment-input-1"),
+            )
+            .expect("capture first source");
+        let prepared = prepare_segment_dataset(
+            &SegmentPrepareRequest {
+                metadata_path: captured.input_root.join("metadata.json"),
+                hierarchy_path: captured.input_root.join("hierarchy.bin"),
+                octree_path: captured.input_root.join("octree.bin"),
+                output_root: root.join("segment-output-1"),
+                output_name: "Segmented".to_owned(),
+                volume: fence.clone(),
+                side: SegmentSide::KeepInside,
+                scope: scope.clone(),
+            },
+            &CancellationToken::new(),
+            |_| {},
+        )
+        .expect("prepare first segment");
+        assert_eq!(prepared.summary.retained_points, 15);
+        let cancelled = runtime.publish_pointcloud_segmentation(
+            vec![(
+                captured.clone(),
+                prepared.clone(),
+                serde_json::to_value(&scope).expect("scope"),
+            )],
+            "segment-cancelled-publication".to_owned(),
+            serde_json::to_value(&fence).expect("fence"),
+            serde_json::to_value(SegmentSide::KeepInside).expect("side"),
+            "2026-09-08T00:00:00Z".to_owned(),
+            &mut |_| {},
+            &|| true,
+        );
+        assert!(cancelled.is_err());
+        let unchanged = runtime
+            .store()
+            .expect("store after cancelled publication")
+            .document()
+            .entity(&EntityId("cloud-a".to_owned()))
+            .expect("unchanged source");
+        assert_eq!(unchanged, &source_before);
+        let first = runtime
+            .publish_pointcloud_segmentation(
+                vec![(
+                    captured,
+                    prepared,
+                    serde_json::to_value(&scope).expect("scope"),
+                )],
+                "segment-first".to_owned(),
+                serde_json::to_value(&fence).expect("fence"),
+                serde_json::to_value(SegmentSide::KeepInside).expect("side"),
+                "2026-09-08T00:00:00Z".to_owned(),
+                &mut |_| {},
+                &|| false,
+            )
+            .expect("publish first segment");
+        assert_eq!(first.journal_entry.effects.len(), 1);
+
+        let first_entity = runtime
+            .store()
+            .expect("store")
+            .document()
+            .entity(&EntityId("cloud-a".to_owned()))
+            .expect("first revision")
+            .clone();
+        let captured_again = runtime
+            .prepare_ground_source(
+                EntityVersionRef::from_entity(&first_entity),
+                root.join("segment-input-2"),
+            )
+            .expect("capture edited source");
+        let second_fence = FenceVolume::Prism {
+            polygon: vec![
+                [-1.0, -1.0, 0.0],
+                [2.5, -1.0, 0.0],
+                [2.5, 6.0, 0.0],
+                [-1.0, 6.0, 0.0],
+            ],
+            direction: [0.0, 0.0, 1.0],
+        };
+        let prepared_again = prepare_segment_dataset(
+            &SegmentPrepareRequest {
+                metadata_path: captured_again.input_root.join("metadata.json"),
+                hierarchy_path: captured_again.input_root.join("hierarchy.bin"),
+                octree_path: captured_again.input_root.join("octree.bin"),
+                output_root: root.join("segment-output-2"),
+                output_name: "Segmented again".to_owned(),
+                volume: second_fence.clone(),
+                side: SegmentSide::RemoveInside,
+                scope: scope.clone(),
+            },
+            &CancellationToken::new(),
+            |_| {},
+        )
+        .expect("prepare repeated segment");
+        runtime
+            .publish_pointcloud_segmentation(
+                vec![(
+                    captured_again,
+                    prepared_again,
+                    serde_json::to_value(&scope).expect("scope"),
+                )],
+                "segment-second".to_owned(),
+                serde_json::to_value(&second_fence).expect("fence"),
+                serde_json::to_value(SegmentSide::RemoveInside).expect("side"),
+                "2026-09-08T00:01:00Z".to_owned(),
+                &mut |_| {},
+                &|| false,
+            )
+            .expect("publish repeated segment");
+        let second_entity = runtime
+            .store()
+            .expect("store")
+            .document()
+            .entity(&EntityId("cloud-a".to_owned()))
+            .expect("second revision")
+            .clone();
+        assert_eq!(second_entity.revision, first_entity.revision + 1);
+        let attributes: serde_json::Value = serde_json::from_slice(
+            &runtime
+                .store()
+                .expect("store")
+                .read_object(&second_entity.attributes_ref)
+                .expect("attributes"),
+        )
+        .expect("attributes json");
+        assert_eq!(
+            attributes["hcad.point-cloud-edit-chain@1"]["edits"]
+                .as_array()
+                .expect("edit chain")
+                .len(),
+            2
+        );
+
+        runtime
+            .store_mut()
+            .expect("store")
+            .commit_undo("undo-segment-second".to_owned(), "segment-second")
+            .expect("undo second segment");
+        let restored_first = runtime
+            .store()
+            .expect("store")
+            .document()
+            .entity(&EntityId("cloud-a".to_owned()))
+            .expect("restored first");
+        assert_eq!(restored_first.representations, first_entity.representations);
+        assert_eq!(restored_first.components_ref, first_entity.components_ref);
+        assert_eq!(restored_first.attributes_ref, first_entity.attributes_ref);
+        runtime
+            .store_mut()
+            .expect("store")
+            .commit_undo("undo-segment-first".to_owned(), "segment-first")
+            .expect("undo first segment");
+        let restored_source = runtime
+            .store()
+            .expect("store")
+            .document()
+            .entity(&EntityId("cloud-a".to_owned()))
+            .expect("restored source");
+        assert_eq!(
+            restored_source.representations,
+            source_before.representations
+        );
+        assert_eq!(restored_source.components_ref, source_before.components_ref);
+        assert_eq!(restored_source.attributes_ref, source_before.attributes_ref);
+        runtime.close();
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn sampling_and_height_grid_publish_immutable_undoable_prepared_entities() {
+        use crate::pointcloud_ground::GroundScope;
+        use crate::pointcloud_sampling::{
+            prepare_height_grid, prepare_sampled_cloud, EmptyCellPolicy, RasterAggregation,
+            RasterizeParameters, RasterizePrepareRequest, SamplePrepareRequest, SamplingMethod,
+            SamplingParameters,
+        };
+        use himmelcad_core::photolab_jobs::CancellationToken;
+        use himmelcad_core::release_05_admissions::{
+            validate_mesh_source_roles, validate_recipe, DerivedRecipeV1, MeshSourceRolesV1,
+        };
+
+        let root = temp_project("sampling-raster-publication");
+        let staged = staged_ground_point_cloud(&root);
+        let scratch = root.join("sampling-scratch");
+        let mut runtime = CanonicalAppRuntime::default();
+        runtime.open(&root).expect("open project");
+        runtime
+            .publish_staged_import(&staged, "import-sampling-source")
+            .expect("publish source");
+        let source_before = runtime
+            .residency_bootstrap()
+            .expect("source residency")
+            .entries[0]
+            .admission
+            .entity
+            .clone();
+
+        let source = runtime
+            .prepare_ground_source(
+                EntityVersionRef::from_entity(&source_before),
+                scratch.join("sample-input"),
+            )
+            .expect("capture sample source");
+        let prepared_sample = prepare_sampled_cloud(
+            &SamplePrepareRequest {
+                metadata_path: source.input_root.join("metadata.json"),
+                hierarchy_path: source.input_root.join("hierarchy.bin"),
+                octree_path: source.input_root.join("octree.bin"),
+                output_root: scratch.join("sample-output"),
+                output_name: "Sampled".to_owned(),
+                parameters: SamplingParameters {
+                    method: SamplingMethod::Grid,
+                    spacing_m: 2.0,
+                    percentage: 50.0,
+                    origin_x: Some(0.0),
+                    origin_y: Some(0.0),
+                },
+                scope: GroundScope::default(),
+            },
+            &CancellationToken::new(),
+            |_| {},
+        )
+        .expect("prepare sample");
+        let sample_commit = runtime
+            .publish_sampled_cloud(
+                source,
+                &prepared_sample,
+                "sample-test".to_owned(),
+                "sampled-cloud-a".to_owned(),
+                "Cloud — Sampled".to_owned(),
+                json!({ "method": "grid", "spacingM": 2.0 }),
+                serde_json::to_value(GroundScope::default()).expect("scope"),
+                "2026-09-08T00:00:00Z".to_owned(),
+                &mut |_| {},
+                &|| false,
+            )
+            .expect("publish sampled cloud");
+        assert_eq!(sample_commit.journal_entry.effects.len(), 1);
+        let store = runtime.store().expect("store after sample");
+        let source_after_sample = store
+            .document()
+            .entity(&EntityId("cloud-a".to_owned()))
+            .expect("immutable source");
+        assert_eq!(source_after_sample, &source_before);
+        let sampled = store
+            .document()
+            .entity(&EntityId("sampled-cloud-a".to_owned()))
+            .expect("sampled cloud");
+        let sampled_attributes: serde_json::Value = serde_json::from_slice(
+            &store
+                .read_object(&sampled.attributes_ref)
+                .expect("sample attributes"),
+        )
+        .expect("sample attributes JSON");
+        let sample_recipe: DerivedRecipeV1 =
+            serde_json::from_value(sampled_attributes["hcad.derived-recipe@1"].clone())
+                .expect("sample recipe");
+        assert_eq!(sample_recipe.recipe_kind, SAMPLE_ALGORITHM_ID);
+        validate_recipe(&sample_recipe, &std::collections::BTreeMap::new())
+            .expect("admitted sample recipe");
+        runtime
+            .store_mut()
+            .expect("store")
+            .commit_undo("undo-sample-test".to_owned(), "sample-test")
+            .expect("undo sample");
+        assert!(runtime
+            .store()
+            .expect("store after sample undo")
+            .document()
+            .entity(&EntityId("sampled-cloud-a".to_owned()))
+            .is_none());
+
+        let source = runtime
+            .prepare_ground_source(
+                EntityVersionRef::from_entity(&source_before),
+                scratch.join("raster-input"),
+            )
+            .expect("capture raster source");
+        let prepared_grid = prepare_height_grid(
+            &RasterizePrepareRequest {
+                metadata_path: source.input_root.join("metadata.json"),
+                hierarchy_path: source.input_root.join("hierarchy.bin"),
+                octree_path: source.input_root.join("octree.bin"),
+                output_root: scratch.join("raster-output"),
+                parameters: RasterizeParameters {
+                    cell_size_m: 2.0,
+                    origin_x: Some(0.0),
+                    origin_y: Some(0.0),
+                    aggregation: RasterAggregation::Mean,
+                    empty_cell_policy: EmptyCellPolicy::NoData,
+                },
+                scope: GroundScope::default(),
+            },
+            &CancellationToken::new(),
+            |_| {},
+        )
+        .expect("prepare mean grid");
+        let grid_commit = runtime
+            .publish_height_grid(
+                source,
+                &prepared_grid,
+                "rasterize-test".to_owned(),
+                "height-grid-a".to_owned(),
+                "Cloud — Mean height".to_owned(),
+                json!({ "aggregation": "mean", "cellSizeM": 2.0 }),
+                serde_json::to_value(GroundScope::default()).expect("scope"),
+                "2026-09-08T00:00:01Z".to_owned(),
+                &mut |_| {},
+                &|| false,
+            )
+            .expect("publish height grid");
+        assert_eq!(grid_commit.journal_entry.effects.len(), 1);
+        assert_eq!(grid_commit.mesh_source_role.as_deref(), Some("grid_source"));
+        let store = runtime.store().expect("store after rasterize");
+        assert_eq!(
+            store
+                .document()
+                .entity(&EntityId("cloud-a".to_owned()))
+                .expect("immutable source after rasterize"),
+            &source_before
+        );
+        let grid = store
+            .document()
+            .entity(&EntityId("height-grid-a".to_owned()))
+            .expect("height grid");
+        assert_eq!(grid.type_id.0, built_in_type::ELEVATION_SURFACE);
+        let grid_components: serde_json::Value = serde_json::from_slice(
+            &store
+                .read_object(&grid.components_ref)
+                .expect("grid components"),
+        )
+        .expect("grid components JSON");
+        let roles: MeshSourceRolesV1 =
+            serde_json::from_value(grid_components["hcad.mesh-source-roles@1"].clone())
+                .expect("grid source roles");
+        validate_mesh_source_roles(&roles).expect("sealed grid source roles");
+        assert_eq!(roles.roles[0].source.role, "grid_source");
+        let grid_attributes: serde_json::Value = serde_json::from_slice(
+            &store
+                .read_object(&grid.attributes_ref)
+                .expect("grid attributes"),
+        )
+        .expect("grid attributes JSON");
+        let grid_recipe: DerivedRecipeV1 =
+            serde_json::from_value(grid_attributes["hcad.derived-recipe@1"].clone())
+                .expect("grid recipe");
+        validate_recipe(&grid_recipe, &std::collections::BTreeMap::new())
+            .expect("admitted height-grid recipe");
+        runtime
+            .store_mut()
+            .expect("store")
+            .commit_undo("undo-rasterize-test".to_owned(), "rasterize-test")
+            .expect("undo rasterize");
+        let store = runtime.store().expect("store after rasterize undo");
+        assert!(store
+            .document()
+            .entity(&EntityId("height-grid-a".to_owned()))
+            .is_none());
+        assert_eq!(
+            store
+                .document()
+                .entity(&EntityId("cloud-a".to_owned()))
+                .expect("source remains after undo")
+                .representations,
+            source_before.representations
+        );
         runtime.close();
         fs::remove_dir_all(root).expect("cleanup");
     }

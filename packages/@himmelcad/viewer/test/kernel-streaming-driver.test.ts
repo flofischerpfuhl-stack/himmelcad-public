@@ -80,6 +80,7 @@ void test('streaming driver executes range fetch, decode, upload and eviction li
     ],
     childPage: null,
     providerMetadata: { class: 'surveyTile', properties: { epoch: 2025.5 } },
+    preparedPointMetadata: fixturePointMetadata(1),
   };
 
   driver.execute(plan({ kind: 'fetchTile', ticket, descriptor }));
@@ -100,9 +101,14 @@ void test('streaming driver executes range fetch, decode, upload and eviction li
   assert.equal(driver.execute(plan({ kind: 'uploadTile', ticket })), 4_096);
   assert.equal(target.uploaded[0]?.cost.cpuCompressedBytes, 12);
   assert.equal(target.uploaded[0]?.cost.gpuBufferBytes, 36);
+  const contentHash = '15ec7bf0b50732b49f8228e07d24365338f9e3ab994b00af08e5a3bffe55fd8b';
   assert.deepEqual(driver.metadataForRenderProxy('stream:scan/r/0'), {
-    tile: { class: 'surveyTile', properties: { epoch: 2025.5 } },
-    content: { threeDTiles: { group: 0 } },
+    tile: {
+      class: 'surveyTile',
+      properties: { epoch: 2025.5 },
+      preparedPoint: { ...fixturePointMetadata(1), contentHash },
+    },
+    content: { threeDTiles: { group: 0 }, contentHash },
   });
 
   driver.detachDataset('scan');
@@ -246,6 +252,7 @@ void test('heterogeneous tile upload crosses the kernel boundary as one atomic t
     })),
     childPage: null,
     providerMetadata: null,
+    preparedPointMetadata: fixturePointMetadata(1),
   };
 
   driver.execute(plan({ kind: 'fetchTile', ticket, descriptor }));
@@ -1715,6 +1722,7 @@ function potreeDescriptorWithContents(dataset: string, count: number) {
     geometricError: 0,
     refinement: 'replace' as const,
     childPage: null,
+    preparedPointMetadata: fixturePointMetadata(1),
     contents: Array.from({ length: count }, (_, index) => ({
       kind: 'potreePoints' as const,
       uri: `https://example.test/${dataset}/${index}.bin`,
@@ -1724,6 +1732,16 @@ function potreeDescriptorWithContents(dataset: string, count: number) {
       contentHash: null,
       decoderParameters: null,
     })),
+  };
+}
+
+function fixturePointMetadata(pointSpacing: number) {
+  return {
+    screenSpaceError: { geometricError: pointSpacing, pointSpacing },
+    sampleStatistics: { sampledPoints: 1, sourcePoints: null, method: null },
+    stationIds: null,
+    contentHash: null,
+    origin: 'baked' as const,
   };
 }
 

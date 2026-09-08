@@ -28,7 +28,9 @@ mod gpu_surface;
 mod gpu_texture_cache;
 mod hardware_policy;
 mod mesh_picking;
+mod overlay;
 mod picking;
+mod point_quality;
 mod precision;
 mod providers;
 mod render_world;
@@ -129,10 +131,18 @@ pub use mesh_picking::{
     TriangleMeshPickQueryLimits, TriangleMeshPickQueryStats, TriangleMeshPickRefiner,
     TriangleMeshPickSource, TriangleMeshRayHit, TriangleMeshRayQuery,
 };
+pub use overlay::{
+    build_renderer_overlay_batches, OverlayBuildError, OverlayLabelChip, OverlayLineStrip,
+    OverlayScreenQuad, RendererOverlayPayload,
+};
 pub use picking::{
     reconstruct_coarse_pick_candidates, refine_exact_point_pick, refine_pick_candidates,
     PickCandidate, PickCycle, PickCycleDirection, PickRefinementProvider, PickRefinementRequest,
     PickSample, PickToken, PresentationTransform, PresentationTransformError, SnapKind,
+};
+pub use point_quality::{
+    adaptive_point_diameter, eye_dome_lighting_settings, AdaptivePointTunables,
+    EyeDomeLightingSettings, EyeDomeLightingTier, PointQualityError,
 };
 pub use precision::{
     CameraProjection, FloatingOrigin, FloatingOriginError, OriginShift, TilePlacement, WorldCamera,

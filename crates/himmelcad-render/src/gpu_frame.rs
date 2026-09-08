@@ -108,6 +108,8 @@ pub struct GpuPresentationStyle {
     line_type_texture_width: u32,
     line_type_phase: f32,
     line_type_period: f32,
+    point_size_multiplier: f32,
+    adaptive_point_size: f32,
 }
 
 impl Default for GpuPresentationStyle {
@@ -143,11 +145,36 @@ impl Default for GpuPresentationStyle {
             line_type_texture_width: 1,
             line_type_phase: 0.0,
             line_type_period: 1.0,
+            point_size_multiplier: 1.0,
+            adaptive_point_size: 0.0,
         }
     }
 }
 
 impl GpuPresentationStyle {
+    /// Uses each point vertex's V-02 node spacing as the adaptive diameter basis.
+    #[must_use]
+    pub fn with_adaptive_point_size(mut self, multiplier: f32) -> Result<Self, GpuFrameError> {
+        if !multiplier.is_finite() || !(0.25..=8.0).contains(&multiplier) {
+            return Err(GpuFrameError::InvalidPrimitiveSize);
+        }
+        self.point_size_multiplier = multiplier;
+        self.adaptive_point_size = 1.0;
+        Ok(self)
+    }
+
+    /// Current per-entity multiplier over projected node spacing.
+    #[must_use]
+    pub const fn point_size_multiplier(self) -> f32 {
+        self.point_size_multiplier
+    }
+
+    /// Whether point vertices carry node spacing rather than a fixed diameter.
+    #[must_use]
+    pub const fn adaptive_point_size(self) -> bool {
+        self.adaptive_point_size >= 0.5
+    }
+
     /// Effective linear base color after view-local interaction overlays.
     #[must_use]
     pub const fn base_color(self) -> [f32; 4] {
@@ -2832,7 +2859,7 @@ impl GpuDrawBatch {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn new_points_with_civil_and_size_and_queue(
+    pub(crate) fn new_points_with_civil_and_size_and_queue(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         label: &str,
@@ -3452,9 +3479,31 @@ impl GpuDrawBatch {
         style: &GpuPresentationStyle,
     ) -> Result<(), GpuFrameError> {
         let material = self.material.as_mut().ok_or(GpuFrameError::InvalidStyle)?;
-        material.update_style(queue, style);
+        let mut resolved = *style;
+        if self.primitive == GpuPrimitive::PointSprites && material.style.adaptive_point_size() {
+            resolved = resolved.with_adaptive_point_size(material.style.point_size_multiplier())?;
+        }
+        material.update_style(queue, &resolved);
         self.transparent = material.transparent;
         Ok(())
+    }
+
+    /// Updates one cloud's adaptive diameter multiplier through its material uniform.
+    pub fn update_point_size_multiplier(
+        &mut self,
+        queue: &wgpu::Queue,
+        multiplier: f32,
+    ) -> Result<bool, GpuFrameError> {
+        if self.primitive != GpuPrimitive::PointSprites {
+            return Ok(false);
+        }
+        let material = self.material.as_mut().ok_or(GpuFrameError::InvalidStyle)?;
+        if !material.style.adaptive_point_size() {
+            return Ok(false);
+        }
+        let style = material.style.with_adaptive_point_size(multiplier)?;
+        material.update_style(queue, &style);
+        Ok(true)
     }
 
     /// Moves a resident batch in render coordinates without rewriting source
@@ -3725,7 +3774,7 @@ impl GpuFrameTargets {
             width,
             height,
             wgpu::TextureFormat::Depth32Float,
-            wgpu::TextureUsages::RENDER_ATTACHMENT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
         let proxy_texture = texture(
             device,
@@ -3826,6 +3875,10 @@ impl GpuFrameTargets {
     #[must_use]
     pub fn height(&self) -> u32 {
         self.height
+    }
+
+    pub(crate) fn depth_view(&self) -> &wgpu::TextureView {
+        &self.depth_view
     }
 
     /// Encodes a one-pixel copy from both ID attachments after the pick pass.
@@ -5464,8 +5517,8 @@ impl MaterialUniform {
             height_values: [
                 style.height_minimum_relative,
                 style.height_maximum_relative,
-                0.0,
-                0.0,
+                style.point_size_multiplier,
+                style.adaptive_point_size,
             ],
             gradient_colors: style.gradient_colors,
             hatch_origin_width: [
@@ -6503,9 +6556,9 @@ mod tests {
         affine_rows, batch_origin_delta, decode_hit_neighborhood, frame_primitive_counts,
         hit_neighborhood_buffer_layout, resolve_batch_geometry, srgb_point_color_to_linear,
         FrameUniform, GpuAlphaMode, GpuDrawBatch, GpuFrameError, GpuIndexedMeshGeometry,
-        GpuMeshInstanceInput, GpuMeshVertexInput, GpuPointVertex, GpuPrimitive,
-        GpuScreenTextVertex, GpuSharedRenderer, GpuSplatVertex, GpuTextureData, GpuVertex,
-        MeshInstanceSortState, SplatSortState, GPU_POINT_VERTEX_STRIDE_BYTES,
+        GpuMeshInstanceInput, GpuMeshVertexInput, GpuPointVertex, GpuPresentationStyle,
+        GpuPrimitive, GpuScreenTextVertex, GpuSharedRenderer, GpuSplatVertex, GpuTextureData,
+        GpuVertex, MeshInstanceSortState, SplatSortState, GPU_POINT_VERTEX_STRIDE_BYTES,
         SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE, SORTED_ALPHA_SPLAT_BLOCK_SIZE,
         SORTED_ALPHA_UPLOAD_BYTES_PER_FRAME,
     };
@@ -6541,6 +6594,28 @@ mod tests {
             GPU_POINT_VERTEX_STRIDE_BYTES,
             u64::try_from(std::mem::size_of::<GpuPointVertex>()).expect("point stride fits u64")
         );
+    }
+
+    #[test]
+    fn gaussian_splat_shader_bounds_three_sigma_footprint() {
+        let shader = include_str!("shaders/mixed.wgsl");
+        assert!(shader.contains("let maximum_sigma_pixels = 32.0 / 3.0"));
+        assert!(shader.contains("min(sqrt(eigenvalue_1), maximum_sigma_pixels)"));
+        assert!(shader.contains("min(sqrt(eigenvalue_2), maximum_sigma_pixels)"));
+    }
+
+    #[test]
+    fn simultaneous_cloud_styles_retain_independent_point_size_multipliers() {
+        let cloud_a = GpuPresentationStyle::default()
+            .with_adaptive_point_size(0.75)
+            .expect("first cloud multiplier is valid");
+        let cloud_b = GpuPresentationStyle::default()
+            .with_adaptive_point_size(1.5)
+            .expect("second cloud multiplier is valid");
+        assert!(cloud_a.adaptive_point_size());
+        assert!(cloud_b.adaptive_point_size());
+        assert_eq!(cloud_a.point_size_multiplier(), 0.75);
+        assert_eq!(cloud_b.point_size_multiplier(), 1.5);
     }
 
     #[test]

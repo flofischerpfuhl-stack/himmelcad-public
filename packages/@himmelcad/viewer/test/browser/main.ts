@@ -58,6 +58,8 @@ declare global {
     __HCAD_FOCUS_REAL_EXTERNAL_JSON__?: () => void;
     __HCAD_FOCUS_PREPARED_TEXTURED__?: () => void;
     __HCAD_FOCUS_ALIGNMENT_PREVIEW__?: () => void;
+    __HCAD_SHOW_V05_OVERLAY__?: () => void;
+    __HCAD_CLEAR_V05_OVERLAY__?: () => void;
     __HCAD_FOCUS_LOCAL_PROFILE__?: () => LocalProfileViewValidation;
     __HCAD_EXIT_LOCAL_PROFILE__?: () => LocalProfileViewValidation;
     __HCAD_APPLY_LOCAL_PROFILE_DEPTH__?: () => LocalProfileDepthValidation;
@@ -2500,6 +2502,7 @@ async function installProviderFixtures(viewer: WgpuKernelViewer) {
       },
     },
     pointCount: 1,
+    pointSpacing: 1,
     style: style([1, 1, 1, 1], 1, { kind: 'pointClassification', colors: [] }),
   };
   state.phase = 'provider-worker-fixtures:potree';
@@ -4055,6 +4058,75 @@ async function run(): Promise<void> {
     },
     new Uint8Array([255, 255, 255, 255]),
   );
+  const emptyOverlay = { lines: [], quads: [], labels: [] } as const;
+  window.__HCAD_SHOW_V05_OVERLAY__ = (): void => {
+    setFocusedTopCamera(viewer, { x: BASE[0], y: BASE[1], z: BASE[2] }, 24);
+    viewer.setRendererOverlayPayload('v05-evidence', FONT_HASH, {
+      lines: [
+        {
+          id: 'support-line',
+          points: [
+            { x: BASE[0] - 6, y: BASE[1] - 2, z: BASE[2] },
+            { x: BASE[0] + 6, y: BASE[1] + 2, z: BASE[2] },
+          ],
+          widthPixels: 2,
+          color: [0.056, 0.485, 1, 1],
+        },
+      ],
+      quads: [
+        {
+          id: 'anchor-square',
+          anchor: { x: BASE[0] - 6, y: BASE[1] - 2, z: BASE[2] },
+          offsets: [
+            [-3, -3],
+            [3, -3],
+            [3, 3],
+            [-3, 3],
+          ],
+          color: [1, 0.347, 0.012, 1],
+        },
+        {
+          id: 'direction-left',
+          anchor: { x: BASE[0] + 6, y: BASE[1] + 2, z: BASE[2] },
+          offsets: [
+            [-1, -1],
+            [-8, -5],
+            [-7, -7],
+            [1, 1],
+          ],
+          color: [1, 0.347, 0.012, 1],
+        },
+        {
+          id: 'direction-right',
+          anchor: { x: BASE[0] + 6, y: BASE[1] + 2, z: BASE[2] },
+          offsets: [
+            [-1, 1],
+            [-8, 5],
+            [-7, 7],
+            [1, -1],
+          ],
+          color: [1, 0.347, 0.012, 1],
+        },
+      ],
+      labels: [
+        {
+          id: 'measurement-chip',
+          anchor: { x: BASE[0], y: BASE[1], z: BASE[2] },
+          pixelOffset: [0, 14],
+          text: '???',
+          heightPixels: 12,
+          textColor: [1, 1, 1, 1],
+          backgroundColor: [0.014, 0.018, 0.025, 0.98],
+          borderColor: [0.056, 0.485, 1, 1],
+        },
+      ],
+    });
+    viewer.render();
+  };
+  window.__HCAD_CLEAR_V05_OVERLAY__ = (): void => {
+    viewer.setRendererOverlayPayload('v05-evidence', FONT_HASH, emptyOverlay);
+    viewer.render();
+  };
   viewer.registerAnnotationStyle(DIMENSION_STYLE_HASH, {
     glyphAtlasHash: FONT_HASH,
     textHeight: 1.25,

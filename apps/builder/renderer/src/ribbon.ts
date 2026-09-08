@@ -22,7 +22,6 @@ import {
   ScanLine,
   SquareDashed,
   SwatchBook,
-  Tag,
   Undo2,
   ZoomIn,
 } from 'lucide-react';
@@ -55,6 +54,7 @@ interface FileRibbonHandlers {
   readonly onClose: () => void;
   readonly navigationMode?: '3d' | '2.5d' | '2d';
   readonly groundExtractionAvailable?: boolean;
+  readonly segmentationAvailable?: boolean;
 }
 
 const i = (Comp: typeof Box, size = 18): ReactElement =>
@@ -233,21 +233,6 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
       ],
     },
     {
-      id: 'segment',
-      label: 'Segment',
-      groups: [
-        {
-          id: 'segment.tools',
-          label: 'Tools',
-          actions: [
-            { id: 'segment.extract', label: 'Extract', icon: i(Scissors) },
-            { id: 'segment.classify', label: 'Classify', icon: i(Tag) },
-            { id: 'segment.invert', label: 'Invert', icon: i(Minus) },
-          ],
-        },
-      ],
-    },
-    {
       id: 'pointcloud',
       label: 'Pointcloud',
       groups: [
@@ -264,6 +249,42 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
                 handlers.groundExtractionAvailable === false
                   ? 'Select exactly one point cloud.'
                   : 'Classify ground and create a prepared ground-only cloud.',
+            },
+            {
+              id: 'pointcloud.rasterize',
+              label: 'Rasterize mean height',
+              icon: i(Grid3x3),
+              disabled: handlers.groundExtractionAvailable === false,
+              title:
+                handlers.groundExtractionAvailable === false
+                  ? 'Select exactly one point cloud.'
+                  : 'Create a prepared height grid from the visible point set.',
+            },
+          ],
+        },
+        {
+          id: 'pointcloud.cloud',
+          label: 'Cloud',
+          actions: [
+            {
+              id: 'pointcloud.fence.begin',
+              label: 'Segment',
+              icon: i(Scissors),
+              disabled: handlers.segmentationAvailable === false,
+              title:
+                handlers.segmentationAvailable === false
+                  ? 'Select one or more editable, visible point clouds.'
+                  : 'Draw a projection-true fence and keep or remove its visible points.',
+            },
+            {
+              id: 'pointcloud.sample',
+              label: 'Sample',
+              icon: i(ScanLine),
+              disabled: handlers.groundExtractionAvailable === false,
+              title:
+                handlers.groundExtractionAvailable === false
+                  ? 'Select exactly one point cloud.'
+                  : 'Create a deterministic prepared sampled cloud.',
             },
           ],
         },

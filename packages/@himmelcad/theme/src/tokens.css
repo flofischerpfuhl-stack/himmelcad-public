@@ -133,6 +133,11 @@
   --hc-gap-island: 4px;
   --hc-pad-workspace: 4px;
 
+  /* Shared control and panel spacing scale. */
+  --hc-space-1: 4px;
+  --hc-space-2: 8px;
+  --hc-space-3: 12px;
+
   /* Shadows — elevation only; perimeter ring is a real border where needed */
   --hc-shadow-island: 0 1px 2px rgba(0, 0, 0, 0.55);
   --hc-shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.45);

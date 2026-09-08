@@ -569,6 +569,8 @@ fn build_three_d_tiles_node(
                     slot,
                     &points.points,
                     &leaf_style,
+                    None,
+                    1.0,
                 )?,
             });
         }
@@ -683,16 +685,39 @@ pub fn build_potree_batch(
     proxy_slot: u32,
     points: &DecodedPotreePoints,
     style: &GpuPresentationStyle,
+    point_spacing: Option<f32>,
+    point_size_multiplier: f32,
 ) -> Result<GpuDrawBatch, GpuFrameError> {
-    let batch = GpuDrawBatch::new_potree_points_with_queue(
-        device,
-        queue,
-        label,
-        proxy_slot,
-        &points.positions,
-        &points.colors,
-        points.civil_attributes.as_deref(),
-    )?;
+    let (batch, style) = if let Some(point_spacing) = point_spacing {
+        (
+            GpuDrawBatch::new_points_with_civil_and_size_and_queue(
+                device,
+                queue,
+                label,
+                proxy_slot,
+                &points.positions,
+                &points.colors,
+                points.civil_attributes.as_deref(),
+                point_spacing,
+                true,
+                true,
+            )?,
+            style.with_adaptive_point_size(point_size_multiplier)?,
+        )
+    } else {
+        (
+            GpuDrawBatch::new_potree_points_with_queue(
+                device,
+                queue,
+                label,
+                proxy_slot,
+                &points.positions,
+                &points.colors,
+                points.civil_attributes.as_deref(),
+            )?,
+            *style,
+        )
+    };
     let material = renderer.create_solid_styled_material(
         device,
         queue,
@@ -702,7 +727,7 @@ pub fn build_potree_batch(
         } else {
             GpuAlphaMode::Opaque
         },
-        *style,
+        style,
     )?;
     Ok(batch.with_material(material))
 }

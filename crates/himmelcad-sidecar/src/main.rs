@@ -156,6 +156,16 @@ use himmelcad_sidecar::pointcloud_ground::{
     prepare_ground_datasets, preview_ground, GroundPhase, GroundPrepareRequest, GroundProgress,
     GroundScope, GroundViewingBox, PreparedGroundResult, GROUND_ALGORITHM_ID,
 };
+use himmelcad_sidecar::pointcloud_sampling::{
+    prepare_height_grid, prepare_sampled_cloud, PreparedHeightGrid, PreparedSampleResult,
+    RasterizeParameters, RasterizePhase, RasterizePrepareRequest, RasterizeProgress,
+    SamplePrepareRequest, SamplingParameters, SamplingPhase, SamplingProgress,
+    RASTERIZE_ALGORITHM_ID, SAMPLE_ALGORITHM_ID,
+};
+use himmelcad_sidecar::pointcloud_segment::{
+    prepare_segment_dataset, FenceVolume, PreparedSegmentResult, SegmentPhase,
+    SegmentPrepareRequest, SegmentProgress, SegmentSide, SEGMENT_ALGORITHM_ID,
+};
 use himmelcad_sidecar::prepared_triangle_mesh::PreparedTriangleMeshOptions;
 use himmelcad_sidecar::prepared_triangle_mesh_ply::{
     build_prepared_triangle_mesh_from_colmap_textured_directory,
@@ -602,6 +612,53 @@ fn default_ground_preview_limit() -> usize {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CancelGroundOperationParams {
     operation_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SegmentSourceParams {
+    source: EntityVersionRef,
+    scope: GroundScopeParams,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SegmentParams {
+    operation_id: String,
+    progress_key: String,
+    command_id: String,
+    algorithm_id: String,
+    sources: Vec<SegmentSourceParams>,
+    volume: FenceVolume,
+    side: SegmentSide,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PointcloudSampleParams {
+    operation_id: String,
+    progress_key: String,
+    command_id: String,
+    algorithm_id: String,
+    source: EntityVersionRef,
+    output_entity_id: String,
+    output_name: String,
+    parameters: SamplingParameters,
+    scope: GroundScopeParams,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PointcloudRasterizeParams {
+    operation_id: String,
+    progress_key: String,
+    command_id: String,
+    algorithm_id: String,
+    source: EntityVersionRef,
+    output_entity_id: String,
+    output_name: String,
+    parameters: RasterizeParameters,
+    scope: GroundScopeParams,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1547,8 +1604,17 @@ async fn handle(
     if req.method.starts_with("automation.") {
         return handle_automation_rpc(req, automation, canonical_app);
     }
+    if req.method.starts_with("pointcloud.segment.") {
+        return handle_pointcloud_segment_rpc(req, ground_operations, canonical_app).await;
+    }
     if req.method.starts_with("pointcloud.ground.") {
         return handle_pointcloud_ground_rpc(req, ground_operations, canonical_app).await;
+    }
+    if matches!(
+        req.method.as_str(),
+        "pointcloud.sample" | "pointcloud.rasterize" | "pointcloud.processing.cancel"
+    ) {
+        return handle_pointcloud_sampling_rpc(req, ground_operations, canonical_app).await;
     }
     if req.method == "app.negotiate"
         || req.method == "app.protocol"
@@ -1644,6 +1710,173 @@ async fn handle(
         }
         other => rpc_err(req.id, -32601, &format!("method not found: {other}")),
     }
+}
+
+async fn handle_pointcloud_segment_rpc(
+    req: RpcRequest,
+    operations: Arc<GroundOperations>,
+    runtime: Arc<Mutex<CanonicalAppRuntime>>,
+) -> RpcResponse {
+    match req.method.as_str() {
+        "pointcloud.segment.cancel" => {
+            match serde_json::from_value::<CancelGroundOperationParams>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    Ok::<_, anyhow::Error>(serde_json::json!({
+                        "operationId": params.operation_id,
+                        "cancellationRequested": operations.cancel(&params.operation_id),
+                    })),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        "pointcloud.segment.keep_inside" | "pointcloud.segment.remove_inside" => {
+            let id = req.id;
+            let params = match serde_json::from_value::<SegmentParams>(req.params) {
+                Ok(params) => params,
+                Err(error) => return rpc_err(id, -32602, &format!("invalid params: {error}")),
+            };
+            let expected_side = if req.method.ends_with("keep_inside") {
+                SegmentSide::KeepInside
+            } else {
+                SegmentSide::RemoveInside
+            };
+            if params.side != expected_side {
+                return rpc_err(id, -32602, "method and segmentation side disagree");
+            }
+            let active = match operations.begin(params.operation_id.clone()) {
+                Ok(active) => active,
+                Err(error) => return rpc_err(id, -32602, &error.to_string()),
+            };
+            let result = tokio::task::spawn_blocking(move || {
+                anyhow::ensure!(
+                    params.algorithm_id == SEGMENT_ALGORITHM_ID,
+                    "unsupported segmentation algorithm: {}",
+                    params.algorithm_id
+                );
+                anyhow::ensure!(
+                    !params.sources.is_empty() && params.sources.len() <= 64,
+                    "segmentation requires 1..64 point-cloud sources"
+                );
+                let scratch = GroundScratch::new(&params.operation_id)?;
+                let total_sources = params.sources.len();
+                let mut prepared_sources = Vec::with_capacity(total_sources);
+                for (index, source_params) in params.sources.into_iter().enumerate() {
+                    active.cancellation.check()?;
+                    emit_progress(
+                        Some(&params.progress_key),
+                        index as f64 / total_sources as f64 * 0.88,
+                        "Capturing visible point-cloud state",
+                    );
+                    let source = runtime
+                        .lock()
+                        .expect("canonical app runtime mutex poisoned")
+                        .prepare_ground_source(
+                            source_params.source,
+                            scratch.root.join(format!("source-{index}")),
+                        )?;
+                    let scope = ground_scope(&source, source_params.scope);
+                    let scope_value = serde_json::to_value(&scope)?;
+                    let prepared: PreparedSegmentResult = prepare_segment_dataset(
+                        &SegmentPrepareRequest {
+                            metadata_path: source.input_root.join("metadata.json"),
+                            hierarchy_path: source.input_root.join("hierarchy.bin"),
+                            octree_path: source.input_root.join("octree.bin"),
+                            output_root: scratch.root.join(format!("prepared-{index}")),
+                            output_name: format!("{} — edited", source.entity.name),
+                            volume: params.volume.clone(),
+                            side: params.side,
+                            scope: scope.clone(),
+                        },
+                        &active.cancellation,
+                        |progress| {
+                            emit_segment_progress(
+                                &params.progress_key,
+                                progress,
+                                index,
+                                total_sources,
+                            )
+                        },
+                    )?;
+                    prepared_sources.push((source, prepared, scope_value));
+                }
+                active.cancellation.check()?;
+                emit_progress(
+                    Some(&params.progress_key),
+                    0.90,
+                    "Publishing edited point-cloud revisions",
+                );
+                let commit = runtime
+                    .lock()
+                    .expect("canonical app runtime mutex poisoned")
+                    .publish_pointcloud_segmentation(
+                        prepared_sources,
+                        params.command_id,
+                        serde_json::to_value(&params.volume)?,
+                        serde_json::to_value(params.side)?,
+                        current_rfc3339(),
+                        &mut |publication| {
+                            let local = if publication.total_bytes == 0 {
+                                0.0
+                            } else {
+                                publication.completed_bytes as f64 / publication.total_bytes as f64
+                            };
+                            emit_progress(
+                                Some(&params.progress_key),
+                                0.90 + local.clamp(0.0, 1.0) * 0.10,
+                                match publication.phase {
+                                    CanonicalImportProgressPhase::Staging => {
+                                        "Storing reduced point-cloud datasets"
+                                    }
+                                    CanonicalImportProgressPhase::Publishing => {
+                                        "Committing segmentation"
+                                    }
+                                },
+                            );
+                        },
+                        &|| active.cancellation.is_cancel_requested(),
+                    )?;
+                emit_progress(Some(&params.progress_key), 1.0, "Segmentation ready");
+                Ok::<_, anyhow::Error>(serde_json::json!({
+                    "schemaId": "hcad.pointcloud.segment-result@1",
+                    "algorithmId": SEGMENT_ALGORITHM_ID,
+                    "side": params.side,
+                    "volume": params.volume,
+                    "revisions": commit.revisions,
+                    "journalEntry": commit.journal_entry,
+                }))
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(std::convert::identity);
+            rpc_result(id, result)
+        }
+        other => rpc_err(req.id, -32601, &format!("method not found: {other}")),
+    }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn emit_segment_progress(
+    progress_key: &str,
+    progress: SegmentProgress,
+    source_index: usize,
+    source_count: usize,
+) {
+    let local = if progress.total == 0 {
+        0.0
+    } else {
+        progress.completed as f64 / progress.total as f64
+    };
+    let phase = match progress.phase {
+        SegmentPhase::Scan => local * 0.35,
+        SegmentPhase::Bake => 0.35 + local * 0.65,
+    };
+    let fraction = (source_index as f64 + phase) / source_count as f64;
+    emit_progress(
+        Some(progress_key),
+        0.02 + fraction.clamp(0.0, 1.0) * 0.86,
+        progress.phase.label(),
+    );
 }
 
 async fn handle_pointcloud_ground_rpc(
@@ -1833,6 +2066,272 @@ async fn handle_pointcloud_ground_rpc(
     }
 }
 
+async fn handle_pointcloud_sampling_rpc(
+    req: RpcRequest,
+    operations: Arc<GroundOperations>,
+    runtime: Arc<Mutex<CanonicalAppRuntime>>,
+) -> RpcResponse {
+    match req.method.as_str() {
+        "pointcloud.processing.cancel" => {
+            match serde_json::from_value::<CancelGroundOperationParams>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    Ok::<_, anyhow::Error>(serde_json::json!({
+                        "operationId": params.operation_id,
+                        "cancellationRequested": operations.cancel(&params.operation_id),
+                    })),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        "pointcloud.sample" => {
+            let id = req.id;
+            let params = match serde_json::from_value::<PointcloudSampleParams>(req.params) {
+                Ok(params) => params,
+                Err(error) => return rpc_err(id, -32602, &format!("invalid params: {error}")),
+            };
+            let active = match operations.begin(params.operation_id.clone()) {
+                Ok(active) => active,
+                Err(error) => return rpc_err(id, -32602, &error.to_string()),
+            };
+            let result = tokio::task::spawn_blocking(move || {
+                anyhow::ensure!(
+                    params.algorithm_id == SAMPLE_ALGORITHM_ID,
+                    "unsupported sampling algorithm: {}",
+                    params.algorithm_id
+                );
+                anyhow::ensure!(!params.output_name.trim().is_empty(), "outputName is empty");
+                let scratch = GroundScratch::new_with_prefix("sample", &params.operation_id)?;
+                emit_progress(
+                    Some(&params.progress_key),
+                    0.0,
+                    "Capturing visible point-cloud state",
+                );
+                let source = runtime
+                    .lock()
+                    .expect("canonical app runtime mutex poisoned")
+                    .prepare_ground_source(params.source, scratch.root.join("source"))?;
+                let source_result = serde_json::to_value(&source.expected)?;
+                let scope = ground_scope(&source, params.scope);
+                let scope_value = serde_json::to_value(&scope)?;
+                let parameters_value = serde_json::to_value(params.parameters)?;
+                let prepared: PreparedSampleResult = prepare_sampled_cloud(
+                    &SamplePrepareRequest {
+                        metadata_path: source.input_root.join("metadata.json"),
+                        hierarchy_path: source.input_root.join("hierarchy.bin"),
+                        octree_path: source.input_root.join("octree.bin"),
+                        output_root: scratch.root.join("prepared"),
+                        output_name: params.output_name.clone(),
+                        parameters: params.parameters,
+                        scope,
+                    },
+                    &active.cancellation,
+                    |progress| emit_sampling_progress(&params.progress_key, progress, 0.02, 0.86),
+                )?;
+                active.cancellation.check()?;
+                emit_progress(Some(&params.progress_key), 0.88, "Publishing sampled cloud");
+                let commit = runtime
+                    .lock()
+                    .expect("canonical app runtime mutex poisoned")
+                    .publish_sampled_cloud(
+                        source,
+                        &prepared,
+                        params.command_id,
+                        params.output_entity_id,
+                        params.output_name,
+                        parameters_value,
+                        scope_value,
+                        current_rfc3339(),
+                        &mut |publication| {
+                            emit_derived_publication_progress(
+                                &params.progress_key,
+                                publication,
+                                "sampled cloud",
+                            )
+                        },
+                        &|| active.cancellation.is_cancel_requested(),
+                    )?;
+                emit_progress(Some(&params.progress_key), 1.0, "Sampled cloud ready");
+                Ok::<_, anyhow::Error>(serde_json::json!({
+                    "schemaId": "hcad.pointcloud.sample-result@1",
+                    "algorithmId": SAMPLE_ALGORITHM_ID,
+                    "source": source_result,
+                    "sampledCloud": {
+                        "entityId": commit.entity_id,
+                        "revision": commit.revision,
+                        "datasetId": commit.dataset_id,
+                        "entityType": "PointCloud",
+                    },
+                    "summary": prepared.summary,
+                    "journalEntry": commit.journal_entry,
+                }))
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(std::convert::identity);
+            rpc_result(id, result)
+        }
+        "pointcloud.rasterize" => {
+            let id = req.id;
+            let params = match serde_json::from_value::<PointcloudRasterizeParams>(req.params) {
+                Ok(params) => params,
+                Err(error) => return rpc_err(id, -32602, &format!("invalid params: {error}")),
+            };
+            let active = match operations.begin(params.operation_id.clone()) {
+                Ok(active) => active,
+                Err(error) => return rpc_err(id, -32602, &error.to_string()),
+            };
+            let result = tokio::task::spawn_blocking(move || {
+                anyhow::ensure!(
+                    params.algorithm_id == RASTERIZE_ALGORITHM_ID,
+                    "unsupported rasterize algorithm: {}",
+                    params.algorithm_id
+                );
+                anyhow::ensure!(!params.output_name.trim().is_empty(), "outputName is empty");
+                let output_noun = if params.parameters.aggregation == RasterAggregation::Count {
+                    "count grid"
+                } else {
+                    "height grid"
+                };
+                let output_ready = if params.parameters.aggregation == RasterAggregation::Count {
+                    "Count grid ready"
+                } else {
+                    "Height grid ready"
+                };
+                let scratch = GroundScratch::new_with_prefix("rasterize", &params.operation_id)?;
+                emit_progress(
+                    Some(&params.progress_key),
+                    0.0,
+                    "Capturing visible point-cloud state",
+                );
+                let source = runtime
+                    .lock()
+                    .expect("canonical app runtime mutex poisoned")
+                    .prepare_ground_source(params.source, scratch.root.join("source"))?;
+                let source_result = serde_json::json!({
+                    "entityId": source.expected.id,
+                    "revision": source.expected.revision,
+                    "versionHash": source.expected.version_hash,
+                });
+                let scope = ground_scope(&source, params.scope);
+                let scope_value = serde_json::to_value(&scope)?;
+                let parameters_value = serde_json::to_value(params.parameters)?;
+                let prepared: PreparedHeightGrid = prepare_height_grid(
+                    &RasterizePrepareRequest {
+                        metadata_path: source.input_root.join("metadata.json"),
+                        hierarchy_path: source.input_root.join("hierarchy.bin"),
+                        octree_path: source.input_root.join("octree.bin"),
+                        output_root: scratch.root.join("prepared"),
+                        parameters: params.parameters,
+                        scope,
+                    },
+                    &active.cancellation,
+                    |progress| emit_rasterize_progress(&params.progress_key, progress, 0.02, 0.86),
+                )?;
+                active.cancellation.check()?;
+                emit_progress(
+                    Some(&params.progress_key),
+                    0.88,
+                    &format!("Publishing {output_noun}"),
+                );
+                let commit = runtime
+                    .lock()
+                    .expect("canonical app runtime mutex poisoned")
+                    .publish_height_grid(
+                        source,
+                        &prepared,
+                        params.command_id,
+                        params.output_entity_id,
+                        params.output_name,
+                        parameters_value,
+                        scope_value,
+                        current_rfc3339(),
+                        &mut |publication| {
+                            emit_derived_publication_progress(
+                                &params.progress_key,
+                                publication,
+                                output_noun,
+                            )
+                        },
+                        &|| active.cancellation.is_cancel_requested(),
+                    )?;
+                emit_progress(Some(&params.progress_key), 1.0, output_ready);
+                Ok::<_, anyhow::Error>(serde_json::json!({
+                    "schemaId": "hcad.pointcloud.rasterize-result@1",
+                    "algorithmId": RASTERIZE_ALGORITHM_ID,
+                    "source": source_result,
+                    "grid": {
+                        "entityId": commit.entity_id,
+                        "revision": commit.revision,
+                        "datasetId": commit.dataset_id,
+                        "entityType": commit.entity_type,
+                        "meshSourceRole": commit.mesh_source_role,
+                    },
+                    "summary": prepared.summary,
+                    "journalEntry": commit.journal_entry,
+                }))
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(std::convert::identity);
+            rpc_result(id, result)
+        }
+        other => rpc_err(req.id, -32601, &format!("method not found: {other}")),
+    }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn emit_sampling_progress(progress_key: &str, progress: SamplingProgress, start: f64, span: f64) {
+    let local = progress.completed as f64 / progress.total.max(1) as f64;
+    let phase_start = match progress.phase {
+        SamplingPhase::Scan => 0.0,
+        SamplingPhase::Select => 1.0 / 3.0,
+        SamplingPhase::Bake => 2.0 / 3.0,
+    };
+    emit_progress(
+        Some(progress_key),
+        start + span * (phase_start + local.clamp(0.0, 1.0) / 3.0),
+        progress.phase.label(),
+    );
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn emit_rasterize_progress(progress_key: &str, progress: RasterizeProgress, start: f64, span: f64) {
+    let local = progress.completed as f64 / progress.total.max(1) as f64;
+    let phase_start = match progress.phase {
+        RasterizePhase::Scan => 0.0,
+        RasterizePhase::Aggregate => 1.0 / 3.0,
+        RasterizePhase::Bake => 2.0 / 3.0,
+    };
+    emit_progress(
+        Some(progress_key),
+        start + span * (phase_start + local.clamp(0.0, 1.0) / 3.0),
+        progress.phase.label(),
+    );
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn emit_derived_publication_progress(
+    progress_key: &str,
+    publication: himmelcad_sidecar::canonical_project_store::CanonicalImportProgress,
+    noun: &str,
+) {
+    let local = if publication.total_bytes == 0 {
+        0.0
+    } else {
+        publication.completed_bytes as f64 / publication.total_bytes as f64
+    };
+    let (start, span, verb) = match publication.phase {
+        CanonicalImportProgressPhase::Staging => (0.88, 0.09, "Storing"),
+        CanonicalImportProgressPhase::Publishing => (0.97, 0.03, "Committing"),
+    };
+    emit_progress(
+        Some(progress_key),
+        start + span * local.clamp(0.0, 1.0),
+        &format!("{verb} prepared {noun}"),
+    );
+}
+
 fn ground_scope(
     source: &himmelcad_sidecar::canonical_app_runtime::CanonicalGroundSource,
     scope: GroundScopeParams,
@@ -1873,9 +2372,15 @@ struct GroundScratch {
 
 impl GroundScratch {
     fn new(operation_id: &str) -> anyhow::Result<Self> {
+        Self::new_with_prefix("ground", operation_id)
+    }
+
+    fn new_with_prefix(prefix: &str, operation_id: &str) -> anyhow::Result<Self> {
         validate_operation_id(operation_id)?;
-        let root =
-            std::env::temp_dir().join(format!("hcad-ground-{}-{operation_id}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "hcad-{prefix}-{}-{operation_id}",
+            std::process::id()
+        ));
         if root.exists() {
             std::fs::remove_dir_all(&root)?;
         }
@@ -7149,7 +7654,7 @@ fn prepare_alignment_job(
         u16::try_from(std::thread::available_parallelism().map_or(1, std::num::NonZero::get))
             .unwrap_or(u16::MAX)
             .max(1);
-    let memory_plan = plan_alignment_memory(&AlignmentMemoryRequest {
+    let mut memory_plan = plan_alignment_memory(&AlignmentMemoryRequest {
         usable_bytes: usable_memory_bytes,
         logical_cpus,
         image_dimensions,

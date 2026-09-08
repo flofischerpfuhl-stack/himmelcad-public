@@ -45,15 +45,15 @@ export function PointCloudDisplayProperties({
         <span>Point cloud</span>
       </div>
       <label className={styles.field}>
-        <span>Point size</span>
-        <output>{sharedPointSize ? `${first.pointSizePixels.toFixed(1)} px` : 'Mixed'}</output>
+        <span>Point size multiplier</span>
+        <output>{sharedPointSize ? `×${first.pointSizePixels.toFixed(1)}` : 'Mixed'}</output>
         <Slider
-          aria-label="Point size"
-          min={1}
+          aria-label="Point size multiplier"
+          min={0.25}
           max={8}
-          step={0.5}
+          step={0.25}
           value={first.pointSizePixels}
-          valueText={`${first.pointSizePixels.toFixed(1)} pixels`}
+          valueText={`${first.pointSizePixels.toFixed(2)} times adaptive size`}
           disabled={disabled}
           onValueChange={(pointSizePixels) => replace({ pointSizePixels })}
         />

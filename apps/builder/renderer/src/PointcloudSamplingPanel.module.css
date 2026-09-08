@@ -1,0 +1,95 @@
+.panel {
+  display: grid;
+  gap: var(--hc-space-3);
+  min-width: 0;
+}
+
+.section,
+.result {
+  display: grid;
+  gap: var(--hc-space-2);
+  padding-bottom: var(--hc-space-3);
+  border-bottom: 1px solid var(--hc-border-subtle);
+}
+
+.heading,
+.field > span,
+.parameter > span:first-child {
+  color: var(--hc-fg-muted);
+  font-size: 12px;
+}
+
+.source {
+  overflow: hidden;
+  color: var(--hc-fg-default);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notice,
+.help,
+.result span {
+  margin: 0;
+  color: var(--hc-fg-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.result span {
+  font-family: var(--hc-font-mono);
+}
+
+.field,
+.parameter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--hc-space-1) var(--hc-space-2);
+}
+
+.field > :last-child,
+.parameter > :last-child {
+  grid-column: 1 / -1;
+}
+
+.unit {
+  color: var(--hc-fg-subtle);
+  font-family: var(--hc-font-mono);
+  font-size: 12px;
+}
+
+.statusLine,
+.actions,
+.originControl {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hc-space-2);
+}
+
+.originControl {
+  align-items: stretch;
+}
+
+.statusLine {
+  color: var(--hc-fg-muted);
+  font-size: 12px;
+}
+
+.result {
+  padding: var(--hc-space-3);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-md);
+  background: var(--hc-bg-elevated);
+}
+
+.error {
+  color: var(--hc-error-fg);
+  font-size: 12px;
+}
+
+.actions {
+  justify-content: flex-end;
+  padding-top: var(--hc-space-1);
+}

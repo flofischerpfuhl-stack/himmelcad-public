@@ -213,6 +213,17 @@ function fixtureEntry(kind: 'point' | 'mesh', index: number): FixtureEntry {
       refinement: kind === 'point' ? 'add' : 'replace',
       contents: [reference],
       childPage: null,
+      ...(kind === 'point'
+        ? {
+            preparedPointMetadata: {
+              screenSpaceError: { geometricError: 1, pointSpacing: 1 },
+              sampleStatistics: { sampledPoints: 1, sourcePoints: null, method: null },
+              stationIds: null,
+              contentHash: null,
+              origin: 'baked' as const,
+            },
+          }
+        : {}),
     },
   };
 }

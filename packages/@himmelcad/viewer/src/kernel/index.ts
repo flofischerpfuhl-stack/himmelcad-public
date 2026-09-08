@@ -36,6 +36,14 @@ export {
   viewingBoxClipVolume,
   viewingBoxFromViewport,
 } from './KernelViewingBox.js';
+export {
+  assertFenceVolume,
+  fencePrismFromPolygon,
+  fencePolygonArea,
+  fenceVolumeContains,
+  fenceVolumeFromCamera,
+} from './KernelFenceVolume.js';
+export type { KernelFencePoint, KernelFenceVolume } from './KernelFenceVolume.js';
 export type {
   KernelViewingBoxAxis,
   KernelViewingBoxFace,
@@ -191,3 +199,4 @@ export type {
 } from './WgpuKernelViewer.js';
 export type * from './generated/index.js';
 export * from './KernelSelectionVisualPolicy.js';
+export * from './KernelRendererOverlay.js';

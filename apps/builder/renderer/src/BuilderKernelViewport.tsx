@@ -18,6 +18,11 @@ import type { EntityId, SnapKind, SnapResult, SourcePosition3, Vec3 } from '@him
 import { ViewportHud, OverlayChip, registerEscapeRung } from '@himmelcad/ui';
 import {
   KernelCameraController,
+  createKernelOverlayGlyphAtlas,
+  cssColorToLinearRgba,
+  EMPTY_RENDERER_OVERLAY,
+  overlayAnchorSquare,
+  overlayDirectionArrow,
   type CanonicalEntity,
   type CanonicalRepresentationAdmission,
   type GeometryObject,
@@ -33,6 +38,7 @@ import {
   type KernelRgbaCaptureRequest,
   type KernelRgbaCaptureResult,
   type KernelRenderStyle,
+  type KernelRendererOverlayPayload,
   type KernelViewingBoxAxis,
   type KernelViewingBoxFace,
   type KernelViewingBoxState,
@@ -40,6 +46,8 @@ import {
   type KernelViewMode,
   type KernelWorldCamera,
   type KernelWorldPoint,
+  fenceVolumeFromCamera,
+  type KernelFenceVolume,
   type Representation,
   SHARED_3D_TARGET_DEVIATIONS,
   resizeViewingBoxFace,
@@ -183,6 +191,7 @@ export interface BuilderKernelViewportHandle {
   frameAll(): void;
   setPreset(preset: 'top' | 'front' | 'right' | 'isometric' | 'perspective'): void;
   setPointSize(pointSize: number): void;
+  setRendererOverlayPayload(layerId: string, payload: KernelRendererOverlayPayload): void;
   setViewMode(mode: KernelViewMode): Promise<void>;
   worldCamera(): KernelWorldCamera | null;
   adoptWorldCamera(camera: KernelWorldCamera): KernelWorldCamera;
@@ -194,6 +203,11 @@ export interface BuilderKernelViewportHandle {
   ): Promise<KernelDiagnosticsSampleResult>;
   captureRgba(request: KernelRgbaCaptureRequest): Promise<KernelRgbaCaptureResult>;
   captureRectangle(): { x: number; y: number; width: number; height: number } | null;
+  typedFenceRectangle(
+    anchor: KernelWorldPoint,
+    width: number,
+    height: number,
+  ): readonly KernelWorldPoint[];
   setEntityAppearance(
     entityIds: readonly EntityId[],
     options: { readonly opacity?: number; readonly verticalExaggeration?: number },
@@ -216,6 +230,12 @@ export interface BuilderKernelViewportHandle {
   ): Promise<KernelViewingBoxState>;
   unlockViewingBox(state: KernelViewingBoxState): KernelViewingBoxState;
   cancelViewingBoxDrag(): boolean;
+}
+
+export interface BuilderFenceOverlayState {
+  readonly kind: 'polygon' | 'rectangle';
+  readonly vertices: readonly KernelWorldPoint[];
+  readonly closed: boolean;
 }
 
 interface BuilderKernelViewportProps {
@@ -252,6 +272,13 @@ interface BuilderKernelViewportProps {
     position: { readonly x: number; readonly y: number },
   ) => void;
   readonly onRegistryShortcut?: (event: KeyboardEvent) => void;
+  readonly fence?: BuilderFenceOverlayState | null;
+  readonly onFenceVertex?: (point: KernelWorldPoint) => void;
+  readonly onFenceRectangle?: (vertices: readonly KernelWorldPoint[], closed: boolean) => void;
+  readonly onFenceClose?: (volume: KernelFenceVolume) => void;
+  readonly onFenceCancel?: () => void;
+  readonly onFenceKey?: (key: string) => void;
+  readonly onFenceNavigationRejected?: () => void;
 }
 
 interface ScreenPoint {
@@ -376,6 +403,13 @@ export const BuilderKernelViewport = forwardRef<
     onCandidateSetClear,
     onContextSurface,
     onRegistryShortcut,
+    fence = null,
+    onFenceVertex,
+    onFenceRectangle,
+    onFenceClose,
+    onFenceCancel,
+    onFenceKey,
+    onFenceNavigationRejected,
   },
   ref,
 ): JSX.Element {
@@ -479,6 +513,10 @@ export const BuilderKernelViewport = forwardRef<
   const viewingBoxScopeRef = useRef<string | null>(null);
   const bakeProxySourcesRef = useRef(new Map<EntityId, EntityId>());
   const entityStylesRef = useRef(new Map<EntityId, KernelRenderStyle>());
+  const entityOverlayGeometryRef = useRef(
+    new Map<EntityId, Pick<CanonicalRepresentationAdmission, 'entity' | 'resolvedGeometry'>>(),
+  );
+  const selectionOverlayKeyRef = useRef('');
   const entityExaggerationDatumsRef = useRef(new Map<EntityId, number>());
   const callbacksRef = useRef({
     onCursorSnap,
@@ -501,6 +539,12 @@ export const BuilderKernelViewport = forwardRef<
     onCandidateSetClear,
     onContextSurface,
     onRegistryShortcut,
+    onFenceVertex,
+    onFenceRectangle,
+    onFenceClose,
+    onFenceCancel,
+    onFenceKey,
+    onFenceNavigationRejected,
   });
   const pointerPositionRef = useRef({ x: 0, y: 0 });
   const activeSourcePositionRef = useRef<SourcePosition3 | null>(null);
@@ -534,6 +578,12 @@ export const BuilderKernelViewport = forwardRef<
     onCandidateSetClear,
     onContextSurface,
     onRegistryShortcut,
+    onFenceVertex,
+    onFenceRectangle,
+    onFenceClose,
+    onFenceCancel,
+    onFenceKey,
+    onFenceNavigationRejected,
   };
   // A grip gesture owns its local preview until pointer-up/cancel. React state
   // updates (cursor/hover/job chrome) must not replace it with the last
@@ -548,6 +598,161 @@ export const BuilderKernelViewport = forwardRef<
   const [hoveredViewingBoxHandle, setHoveredViewingBoxHandle] = useState<ViewingBoxHandle | null>(
     null,
   );
+  const fenceDragStartRef = useRef<KernelWorldPoint | null>(null);
+  const fencePointerRef = useRef<KernelWorldPoint | null>(null);
+  const [fenceClaimGeneration, setFenceClaimGeneration] = useState(0);
+  const fenceRef = useRef(fence);
+  fenceRef.current = fence;
+  const fenceActive = fence !== null;
+
+  useEffect(() => {
+    if (!fenceActive) return;
+    let cancelled = false;
+    let release: (() => void) | undefined;
+    void readyRef.current.promise
+      .then((kernel) => {
+        if (cancelled) return;
+        const point = (event: Event): KernelWorldPoint | null => {
+          const pointer = event as PointerEvent;
+          const host = hostRef.current;
+          if (!host) return null;
+          const rect = host.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return null;
+          return kernel.camera.worldPointOnTargetPlane(
+            ((pointer.clientX - rect.left) / rect.width) * 2 - 1,
+            1 - ((pointer.clientY - rect.top) / rect.height) * 2,
+          );
+        };
+        const close = (): void => {
+          const currentFence = fenceRef.current;
+          if (!currentFence || currentFence.closed || currentFence.vertices.length < 3) return;
+          callbacksRef.current.onFenceClose?.(
+            fenceVolumeFromCamera(kernel.camera.worldCamera(), currentFence.vertices),
+          );
+        };
+        const claims = [
+          {
+            row: 'lmbClick' as const,
+            handle: ({ originalEvent }: { originalEvent: Event }) => {
+              const currentFence = fenceRef.current;
+              if (!currentFence || currentFence.closed) return;
+              const next = point(originalEvent);
+              if (!next) return;
+              if (currentFence.kind === 'polygon') {
+                const first = currentFence.vertices[0];
+                const host = hostRef.current;
+                const pointer = originalEvent as PointerEvent;
+                if (
+                  first &&
+                  currentFence.vertices.length >= 3 &&
+                  host &&
+                  (() => {
+                    const projected = projectViewingBoxPoint(
+                      first,
+                      kernel.camera.worldCamera(),
+                      host.getBoundingClientRect(),
+                    );
+                    return Boolean(
+                      projected &&
+                      Math.hypot(
+                        projected.x - (pointer.clientX - host.getBoundingClientRect().left),
+                        projected.y - (pointer.clientY - host.getBoundingClientRect().top),
+                      ) <= 9,
+                    );
+                  })()
+                ) {
+                  close();
+                } else {
+                  callbacksRef.current.onFenceVertex?.(next);
+                }
+              } else if (currentFence.vertices.length === 0) {
+                callbacksRef.current.onFenceVertex?.(next);
+              }
+            },
+          },
+          {
+            row: 'lmbDrag' as const,
+            deviationReason: 'An armed rectangle fence owns LMB drag until the fence closes.',
+            admit: () => {
+              const currentFence = fenceRef.current;
+              return currentFence?.kind === 'rectangle' && !currentFence.closed;
+            },
+            handle: ({ originalEvent, phase }: { originalEvent: Event; phase?: string }) => {
+              const next = point(originalEvent);
+              if (!next) return;
+              if (phase === 'start') {
+                fenceDragStartRef.current = next;
+                callbacksRef.current.onFenceRectangle?.([next], false);
+                kernel.setInteracting(true);
+                return;
+              }
+              const start = fenceDragStartRef.current;
+              if (!start) return;
+              const rectangle = rectangleOnCameraPlane(start, next, kernel.camera.worldCamera());
+              if (phase === 'move') {
+                callbacksRef.current.onFenceRectangle?.(rectangle, false);
+              } else {
+                fenceDragStartRef.current = null;
+                kernel.setInteracting(false);
+                if (phase === 'end') {
+                  callbacksRef.current.onFenceRectangle?.(rectangle, true);
+                  callbacksRef.current.onFenceClose?.(
+                    fenceVolumeFromCamera(kernel.camera.worldCamera(), rectangle),
+                  );
+                }
+              }
+            },
+          },
+          ...(['lmbDoubleClickEntity', 'lmbDoubleClickVoid'] as const).map((row) => ({
+            row,
+            deviationReason: 'Double-click closes the active point-cloud fence.',
+            handle: close,
+          })),
+          {
+            row: 'escape' as const,
+            handle: () => {
+              callbacksRef.current.onFenceCancel?.();
+              // The arbiter disarms a tool after consuming its Escape rung. An
+              // open/closed fence discards first, so re-arm if the function
+              // remains active for the next empty fence.
+              queueMicrotask(() => setFenceClaimGeneration((generation) => generation + 1));
+            },
+          },
+          {
+            row: 'typing' as const,
+            entryFocus: 'numeric' as const,
+            handle: ({ originalEvent }: { originalEvent: Event }) =>
+              callbacksRef.current.onFenceKey?.((originalEvent as KeyboardEvent).key),
+          },
+          {
+            row: 'tab' as const,
+            handle: ({ originalEvent }: { originalEvent: Event }) => {
+              const event = originalEvent as KeyboardEvent;
+              callbacksRef.current.onFenceKey?.(event.shiftKey ? 'Shift+Tab' : 'Tab');
+            },
+          },
+          ...(['mmbDrag', 'rmbDrag', 'wheel'] as const).map((row) => ({
+            row,
+            deviationReason: 'Open fence vertices remain fixed on the current view plane.',
+            admit: () => {
+              const currentFence = fenceRef.current;
+              return Boolean(
+                currentFence && currentFence.vertices.length > 0 && !currentFence.closed,
+              );
+            },
+            handle: () => callbacksRef.current.onFenceNavigationRejected?.(),
+          })),
+        ];
+        release = kernel.navigation.gestures.registerGestureClaims('pointcloud.fence', claims);
+      })
+      .catch((error: unknown) => callbacksRef.current.onLog('error', String(error)));
+    return () => {
+      cancelled = true;
+      release?.();
+      fenceDragStartRef.current = null;
+      kernelRef.current?.setInteracting(false);
+    };
+  }, [fenceActive, fenceClaimGeneration]);
 
   useEffect(() => {
     pointSizeRef.current = pointSize;
@@ -607,6 +812,7 @@ export const BuilderKernelViewport = forwardRef<
       }
     }
     highlightedSelectionRef.current = next;
+    selectionOverlayKeyRef.current = '';
   }, [selectedEntityIds]);
 
   useEffect(() => {
@@ -714,7 +920,9 @@ export const BuilderKernelViewport = forwardRef<
         entityBoundsRef.current.set(entityId, options.bounds);
         entityVisibilityRef.current.set(entityId, true);
         entityStylesRef.current.set(entityId, pointCloudStyle);
-        if (options.display) kernel.session.setPointSize(options.display.pointSizePixels);
+        if (options.display) {
+          kernel.session.setEntityPointSizeMultiplier(entityId, options.display.pointSizePixels);
+        }
         entityExaggerationDatumsRef.current.set(entityId, options.bounds.min[2]);
         loadedBoundsRef.current = unionBounds(loadedBoundsRef.current, options.bounds);
         frameAll();
@@ -730,6 +938,12 @@ export const BuilderKernelViewport = forwardRef<
         if (admissions.length === 0) return [];
         kernel.session.loadCanonical(admissions);
         const loaded = new Set(admissions.map(({ admission }) => admission.entity.id as EntityId));
+        for (const { admission } of admissions) {
+          entityOverlayGeometryRef.current.set(admission.entity.id as EntityId, {
+            entity: admission.entity,
+            resolvedGeometry: admission.resolvedGeometry,
+          });
+        }
         for (const id of loaded) {
           entityStylesRef.current.set(id, IFC_STYLE);
           entityExaggerationDatumsRef.current.set(id, 0);
@@ -851,6 +1065,11 @@ export const BuilderKernelViewport = forwardRef<
       setPointSize(pointSize) {
         kernelRef.current?.session.setPointSize(pointSize);
       },
+      setRendererOverlayPayload(layerId, payload) {
+        const kernel = kernelRef.current;
+        if (!kernel) return;
+        kernel.session.setRendererOverlayPayload(layerId, 'hcad.renderer-overlay-mono@1', payload);
+      },
       setViewMode(mode) {
         return changeViewMode(mode);
       },
@@ -900,6 +1119,25 @@ export const BuilderKernelViewport = forwardRef<
             }
           : null;
       },
+      typedFenceRectangle(anchor, width, height) {
+        if (![width, height].every(Number.isFinite) || width === 0 || height === 0) {
+          throw new RangeError('Fence rectangle width and height must be finite and non-zero.');
+        }
+        const camera = kernelRef.current?.camera.worldCamera();
+        if (!camera) throw new Error('Viewer camera is not ready.');
+        const forward = normalizeVector({
+          x: camera.target.x - camera.eye.x,
+          y: camera.target.y - camera.eye.y,
+          z: camera.target.z - camera.eye.z,
+        });
+        const right = normalizeVector(crossVector(forward, camera.up));
+        const up = crossVector(right, forward);
+        return rectangleOnCameraPlane(
+          anchor,
+          addScaledPoint(addScaledPoint(anchor, right, width), up, height),
+          camera,
+        );
+      },
       setEntityAppearance(entityIds, options) {
         const kernel = kernelRef.current;
         if (!kernel) return;
@@ -924,8 +1162,8 @@ export const BuilderKernelViewport = forwardRef<
       setPointCloudDisplay(entityIds, display) {
         const kernel = kernelRef.current;
         if (!kernel) return;
-        kernel.session.setPointSize(display.pointSizePixels);
         for (const entityId of entityIds) {
+          kernel.session.setEntityPointSizeMultiplier(entityId, display.pointSizePixels);
           const bounds = loadedBoundsRef.current;
           if (!bounds) continue;
           const current = entityStylesRef.current.get(entityId) ?? POINT_CLOUD_STYLE;
@@ -1057,6 +1295,21 @@ export const BuilderKernelViewport = forwardRef<
           })),
         );
         const bakeKey = await sha256Hex(new TextEncoder().encode(rawKey));
+        const activatePreparedCache = (
+          key: string,
+          entry: ViewingBoxBakeCacheEntry,
+        ): void => {
+          const previousKey = activeViewingBoxBakeKeyRef.current;
+          if (previousKey && previousKey !== key) {
+            const previous = viewingBoxBakeCacheRef.current.get(previousKey);
+            for (const proxy of previous?.proxies ?? []) proxy.handle.setVisible(false);
+          }
+          for (const proxy of entry.proxies) {
+            proxy.handle.setVisible(entry.originalVisibility.get(proxy.sourceEntityId) ?? true);
+            kernel.scene.setEntityVisibility(proxy.sourceEntityId, false);
+          }
+          activeViewingBoxBakeKeyRef.current = key;
+        };
         if (
           state.lockMode === 'baked' &&
           state.bakeKey === bakeKey &&
@@ -1093,9 +1346,11 @@ export const BuilderKernelViewport = forwardRef<
                 { signal, operationId: `builder/viewing-box-restore/${state.id}` },
               );
               const visible = entityVisibilityRef.current.get(sourceEntityId) ?? true;
-              handle.setVisible(visible);
+              // Keep every restored proxy dark until the complete set is ready.
+              // Otherwise a late cancellation can briefly publish a mixed
+              // source/proxy scene before the canonical lock is accepted.
+              handle.setVisible(false);
               originalVisibility.set(sourceEntityId, visible);
-              kernel.scene.setEntityVisibility(sourceEntityId, false);
               bakeProxySourcesRef.current.set(proxyEntityId, sourceEntityId);
               proxies.push({
                 sourceEntityId,
@@ -1104,14 +1359,16 @@ export const BuilderKernelViewport = forwardRef<
                 handle,
               });
             }
-            viewingBoxBakeCacheRef.current.set(state.bakeKey, {
+            await onProgress(1, 'Restored prepared viewing-box data');
+            throwIfViewingBoxBakeAborted(signal);
+            const entry: ViewingBoxBakeCacheEntry = {
               key: state.bakeKey,
               proxies,
               pointCount: state.bakedSources.reduce((sum, source) => sum + source.pointCount, 0),
               originalVisibility,
-            });
-            activeViewingBoxBakeKeyRef.current = state.bakeKey;
-            await onProgress(1, 'Restored prepared viewing-box data');
+            };
+            viewingBoxBakeCacheRef.current.set(state.bakeKey, entry);
+            activatePreparedCache(state.bakeKey, entry);
             return state;
           } catch (error) {
             for (const proxy of proxies) {
@@ -1126,14 +1383,9 @@ export const BuilderKernelViewport = forwardRef<
         }
         const cached = viewingBoxBakeCacheRef.current.get(bakeKey);
         if (cached) {
-          for (const proxy of cached.proxies) {
-            proxy.handle.setVisible(cached.originalVisibility.get(proxy.sourceEntityId) ?? true);
-          }
-          for (const [sourceEntityId] of cached.originalVisibility) {
-            kernel.scene.setEntityVisibility(sourceEntityId, false);
-          }
-          activeViewingBoxBakeKeyRef.current = bakeKey;
           await onProgress(1, `Restored ${cached.pointCount.toLocaleString()} baked points`);
+          throwIfViewingBoxBakeAborted(signal);
+          activatePreparedCache(bakeKey, cached);
           return { ...state, lockMode: 'baked', bakeKey };
         }
 
@@ -1162,12 +1414,14 @@ export const BuilderKernelViewport = forwardRef<
           pointCount > sourcePointCount * 0.5
         ) {
           await onProgress(1, 'Copy scope retained for a majority outside result');
+          throwIfViewingBoxBakeAborted(signal);
           return { ...state, lockMode: 'editFreeze', bakeKey: null };
         }
 
         const published: string[] = [];
         const bakedSources: NonNullable<KernelViewingBoxState['bakedSources']>[number][] = [];
         const proxies: ViewingBoxBakeCacheEntry['proxies'][number][] = [];
+        const previousActiveKey = activeViewingBoxBakeKeyRef.current;
         try {
           for (const item of baked) {
             throwIfViewingBoxBakeAborted(signal);
@@ -1201,7 +1455,10 @@ export const BuilderKernelViewport = forwardRef<
               },
               { signal, operationId: `builder/viewing-box-bake/${state.id}` },
             );
-            handle.setVisible(entityVisibilityRef.current.get(item.sourceEntityId) ?? true);
+            // Publication is atomic at the scene boundary: prepared proxies
+            // remain hidden until every source is loaded and the final
+            // cancellable progress callback has returned.
+            handle.setVisible(false);
             bakeProxySourcesRef.current.set(proxyEntityId, item.sourceEntityId);
             proxies.push({
               sourceEntityId: item.sourceEntityId,
@@ -1213,16 +1470,17 @@ export const BuilderKernelViewport = forwardRef<
           const originalVisibility = new Map<EntityId, boolean>();
           for (const { entityId } of sources) {
             originalVisibility.set(entityId, entityVisibilityRef.current.get(entityId) ?? true);
-            kernel.scene.setEntityVisibility(entityId, false);
           }
-          viewingBoxBakeCacheRef.current.set(bakeKey, {
+          await onProgress(1, `Locked ${pointCount.toLocaleString()} prepared points`);
+          throwIfViewingBoxBakeAborted(signal);
+          const entry: ViewingBoxBakeCacheEntry = {
             key: bakeKey,
             proxies,
             pointCount,
             originalVisibility,
-          });
-          activeViewingBoxBakeKeyRef.current = bakeKey;
-          await onProgress(1, `Locked ${pointCount.toLocaleString()} prepared points`);
+          };
+          viewingBoxBakeCacheRef.current.set(bakeKey, entry);
+          activatePreparedCache(bakeKey, entry);
           return { ...state, lockMode: 'baked', bakeKey, bakedSources };
         } catch (error) {
           for (const proxy of proxies) {
@@ -1233,7 +1491,7 @@ export const BuilderKernelViewport = forwardRef<
           for (const { entityId } of sources) {
             kernel.scene.setEntityVisibility(
               entityId,
-              entityVisibilityRef.current.get(entityId) ?? true,
+              previousActiveKey ? false : (entityVisibilityRef.current.get(entityId) ?? true),
             );
           }
           throw error;
@@ -1292,6 +1550,8 @@ export const BuilderKernelViewport = forwardRef<
       Object.assign(window, { __hcadBuilderKernel: handle });
     }
     handle.session.setClearColor([0.008, 0.011, 0.016, 1]);
+    const overlayAtlas = createKernelOverlayGlyphAtlas(document);
+    handle.session.registerGlyphAtlas(overlayAtlas.hash, overlayAtlas.metadata, overlayAtlas.rgba8);
     handle.session.setPointSize(pointSizeRef.current);
     const selected = new Set(
       [...callbacksRef.current.selectedEntityIds].filter(
@@ -1904,6 +2164,29 @@ export const BuilderKernelViewport = forwardRef<
       onPointerDownCapture={handleViewingBoxPointerDown}
       onPointerMoveCapture={(event) => {
         pointerPositionRef.current = { x: event.clientX, y: event.clientY };
+        if (fence && hostRef.current && kernelRef.current) {
+          const rect = hostRef.current.getBoundingClientRect();
+          fencePointerRef.current = kernelRef.current.camera.worldPointOnTargetPlane(
+            ((event.clientX - rect.left) / rect.width) * 2 - 1,
+            1 - ((event.clientY - rect.top) / rect.height) * 2,
+          );
+          drawViewingBoxOverlay(
+            viewingBoxOverlayRef.current,
+            hostRef.current,
+            kernelRef.current,
+            viewingBoxRef.current,
+            hoveredViewingBoxHandle,
+            viewingBoxEditing,
+          );
+          drawFenceOverlay(
+            viewingBoxOverlayRef.current,
+            hostRef.current,
+            kernelRef.current,
+            fence,
+            fencePointerRef.current,
+            true,
+          );
+        }
         handleViewingBoxPointerMove(event);
       }}
       onPointerUpCapture={finishViewingBoxInteraction}
@@ -1975,7 +2258,14 @@ export const BuilderKernelViewport = forwardRef<
             ),
           routeRegistryShortcut: (event) => callbacksRef.current.onRegistryShortcut?.(event),
         }}
-        onFrame={() =>
+        onFrame={() => {
+          updateSelectionRendererOverlay(
+            kernelRef.current,
+            hostRef.current,
+            callbacksRef.current.selectedEntityIds,
+            entityOverlayGeometryRef.current,
+            selectionOverlayKeyRef,
+          );
           drawViewingBoxOverlay(
             viewingBoxOverlayRef.current,
             hostRef.current,
@@ -1983,8 +2273,17 @@ export const BuilderKernelViewport = forwardRef<
             viewingBoxRef.current,
             hoveredViewingBoxHandle,
             viewingBoxEditing,
-          )
-        }
+          );
+          if (fence)
+            drawFenceOverlay(
+              viewingBoxOverlayRef.current,
+              hostRef.current,
+              kernelRef.current,
+              fence,
+              fencePointerRef.current,
+              true,
+            );
+        }}
         onError={handleError}
       />
       {hudVisible && <BuilderHud kernelRef={kernelRef} />}
@@ -2128,6 +2427,90 @@ function drawViewingBoxOverlay(
     }
   }
   context.restore();
+}
+
+function drawFenceOverlay(
+  canvas: HTMLCanvasElement | null,
+  host: HTMLDivElement | null,
+  kernel: KernelViewportHandle | null,
+  fence: BuilderFenceOverlayState,
+  pointer: KernelWorldPoint | null,
+  preserve = false,
+): void {
+  if (!canvas || !host || !kernel) return;
+  const rect = host.getBoundingClientRect();
+  const ratio = Math.max(1, globalThis.devicePixelRatio || 1);
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  if (!preserve) context.clearRect(0, 0, rect.width, rect.height);
+  const points = fence.vertices.flatMap((vertex) => {
+    const projected = projectViewingBoxPoint(vertex, kernel.camera.worldCamera(), rect);
+    return projected ? [projected] : [];
+  });
+  const projectedPointer = pointer
+    ? projectViewingBoxPoint(pointer, kernel.camera.worldCamera(), rect)
+    : null;
+  if (points.length === 0) return;
+  const computed = getComputedStyle(host);
+  const accent = computed.getPropertyValue('--hc-accent-base').trim() || '#5aa7ff';
+  const support = computed.getPropertyValue('--hc-geometry-support').trim() || accent;
+  context.save();
+  context.strokeStyle = accent;
+  context.fillStyle = accent;
+  context.lineWidth = 1.5;
+  context.setLineDash(fence.closed ? [] : [6, 4]);
+  context.beginPath();
+  context.moveTo(points[0]!.x, points[0]!.y);
+  for (const point of points.slice(1)) context.lineTo(point.x, point.y);
+  if (fence.closed) context.closePath();
+  else if (projectedPointer && fence.kind === 'polygon') {
+    context.lineTo(projectedPointer.x, projectedPointer.y);
+  }
+  if (fence.closed) {
+    context.save();
+    context.globalAlpha = 0.08;
+    context.fill();
+    context.restore();
+  }
+  context.stroke();
+  context.setLineDash([]);
+  for (const [index, point] of points.entries()) {
+    const closingHover =
+      index === 0 &&
+      !fence.closed &&
+      fence.vertices.length >= 3 &&
+      projectedPointer &&
+      Math.hypot(point.x - projectedPointer.x, point.y - projectedPointer.y) <= 9;
+    context.fillStyle = closingHover ? accent : support;
+    context.fillRect(point.x - 3, point.y - 3, 6, 6);
+    if (closingHover) {
+      context.lineWidth = 2.5;
+      context.strokeStyle = accent;
+      context.strokeRect(point.x - 5, point.y - 5, 10, 10);
+    }
+  }
+  context.restore();
+}
+
+function rectangleOnCameraPlane(
+  start: KernelWorldPoint,
+  end: KernelWorldPoint,
+  camera: KernelWorldCamera,
+): readonly KernelWorldPoint[] {
+  const forward = normalizeVector({
+    x: camera.target.x - camera.eye.x,
+    y: camera.target.y - camera.eye.y,
+    z: camera.target.z - camera.eye.z,
+  });
+  const right = normalizeVector(crossVector(forward, camera.up));
+  const up = crossVector(right, forward);
+  const delta = { x: end.x - start.x, y: end.y - start.y, z: end.z - start.z };
+  const width = dotVector(delta, right);
+  const height = dotVector(delta, up);
+  const alongWidth = addScaledPoint(start, right, width);
+  const alongHeight = addScaledPoint(start, up, height);
+  return [start, alongWidth, addScaledPoint(alongWidth, up, height), alongHeight];
 }
 
 interface ViewingBoxOverlayGeometry {
@@ -2298,6 +2681,99 @@ function projectViewingBoxPoint(
     x: ((ndcX + 1) * hostRect.width) / 2,
     y: ((1 - ndcY) * hostRect.height) / 2,
   };
+}
+
+function updateSelectionRendererOverlay(
+  kernel: KernelViewportHandle | null,
+  host: HTMLDivElement | null,
+  selectedEntityIds: ReadonlySet<EntityId>,
+  geometryByEntity: ReadonlyMap<
+    EntityId,
+    Pick<CanonicalRepresentationAdmission, 'entity' | 'resolvedGeometry'>
+  >,
+  previousKey: { current: string },
+): void {
+  if (!kernel || !host) return;
+  const camera = kernel.camera.worldCamera();
+  const rect = host.getBoundingClientRect();
+  const selected = [...selectedEntityIds].sort();
+  const key = JSON.stringify([
+    camera,
+    rect.width,
+    rect.height,
+    selected.map((id) => [id, geometryByEntity.get(id)?.entity.versionHash ?? null]),
+  ]);
+  if (key === previousKey.current) return;
+  previousKey.current = key;
+  if (selected.length === 0) {
+    kernel.session.setRendererOverlayPayload(
+      'selection',
+      'hcad.renderer-overlay-mono@1',
+      EMPTY_RENDERER_OVERLAY,
+    );
+    return;
+  }
+  const token = getComputedStyle(host).getPropertyValue('--hc-geometry-selection').trim();
+  const color = cssColorToLinearRgba(token || '#ff9f1c');
+  const quads: KernelRendererOverlayPayload['quads'][number][] = [];
+  for (const entityId of selected) {
+    const admission = geometryByEntity.get(entityId);
+    if (!admission) continue;
+    const points = selectionGeometryPoints(admission);
+    if (admission.resolvedGeometry.kind === 'point') {
+      const point = points[0];
+      if (point) quads.push(overlayAnchorSquare(`selection:${entityId}`, point, color, 6));
+      continue;
+    }
+    if (admission.resolvedGeometry.kind !== 'curve' || points.length < 2) continue;
+    const previous = points.at(-2)!;
+    const end = points.at(-1)!;
+    const previousScreen = projectViewingBoxPoint(previous, camera, rect);
+    const endScreen = projectViewingBoxPoint(end, camera, rect);
+    if (!previousScreen || !endScreen) continue;
+    quads.push(
+      ...overlayDirectionArrow(
+        `selection:${entityId}:direction`,
+        end,
+        [previousScreen.x, previousScreen.y],
+        [endScreen.x, endScreen.y],
+        color,
+        8,
+      ),
+    );
+  }
+  kernel.session.setRendererOverlayPayload('selection', 'hcad.renderer-overlay-mono@1', {
+    lines: [],
+    quads,
+    labels: [],
+  });
+}
+
+function selectionGeometryPoints(
+  admission: Pick<CanonicalRepresentationAdmission, 'entity' | 'resolvedGeometry'>,
+): KernelWorldPoint[] {
+  const geometry = admission.resolvedGeometry;
+  const positions =
+    geometry.kind === 'point'
+      ? [geometry.position]
+      : geometry.kind === 'curve' && geometry.curve.kind === 'lineSegment'
+        ? [geometry.curve.start, geometry.curve.end]
+        : geometry.kind === 'curve' && geometry.curve.kind === 'polyline'
+          ? geometry.curve.positions
+          : [];
+  return positions.flatMap((position) => {
+    if (position.z === null) return [];
+    const point = { x: position.x, y: position.y, z: position.z };
+    const matrix = admission.entity.placement;
+    if (!matrix) return [point];
+    return [
+      {
+        x: matrix[0] * point.x + matrix[4] * point.y + matrix[8] * point.z + matrix[12],
+        y: matrix[1] * point.x + matrix[5] * point.y + matrix[9] * point.z + matrix[13],
+        z: matrix[2] * point.x + matrix[6] * point.y + matrix[10] * point.z + matrix[14],
+      },
+    ];
+  });
 }
 
 function viewingBoxWorldPointOnTargetPlane(

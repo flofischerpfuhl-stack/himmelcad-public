@@ -1113,5 +1113,165 @@ export const GENERATED_COMMAND_TABLE = [
     "group": "entity-specific",
     "ownerSpec": "Point cloud PC-D19; S-05 jobs; MASTER-PLAN row 17; owner: pointcloud",
     "host": "renderer"
+  },
+  {
+    "id": "pointcloud.sample",
+    "label": "Sample…",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "cloudSelection",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Point cloud PC-D8; MASTER-PLAN row 18; owner: pointcloud",
+    "host": "renderer",
+    "entityKinds": [
+      "PointCloud"
+    ],
+    "allowMultiSelect": false
+  },
+  {
+    "id": "pointcloud.rasterize",
+    "label": "Rasterize mean height…",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "cloudSelection",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Point cloud PC-D17; Mesh MT-D26 grid-source role; MASTER-PLAN row 18; owner: mesh-terrain",
+    "host": "renderer",
+    "entityKinds": [
+      "PointCloud"
+    ],
+    "allowMultiSelect": false
+  },
+  {
+    "id": "pointcloud.fence.begin",
+    "label": "Segment",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "cloudSelection",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Point cloud PC-D1–PC-D6; S21; owner: pointcloud",
+    "host": "renderer",
+    "entityKinds": [
+      "PointCloud"
+    ],
+    "allowMultiSelect": true
+  },
+  {
+    "id": "pointcloud.fence.commit",
+    "label": "Close fence",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Point cloud PC-D5; owner: pointcloud",
+    "host": "renderer"
+  },
+  {
+    "id": "pointcloud.fence.cancel",
+    "label": "Clear fence",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Point cloud PC-D5; owner: pointcloud",
+    "host": "renderer"
+  },
+  {
+    "id": "pointcloud.segment.keep_inside",
+    "label": "Keep inside",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "cloudSelection",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Point cloud PC-D1–PC-D6; S21; owner: pointcloud",
+    "host": "renderer",
+    "entityKinds": [
+      "PointCloud"
+    ],
+    "allowMultiSelect": true
+  },
+  {
+    "id": "pointcloud.segment.remove_inside",
+    "label": "Remove inside",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "cloudSelection",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Point cloud PC-D1–PC-D6; S21; owner: pointcloud",
+    "host": "renderer",
+    "entityKinds": [
+      "PointCloud"
+    ],
+    "allowMultiSelect": true
   }
 ] as const;

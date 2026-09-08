@@ -74,6 +74,11 @@ import {
   type WindowControls,
 } from '@himmelcad/ui';
 import {
+  assertFenceVolume,
+  assertViewingBox,
+  fencePolygonArea,
+  fencePrismFromPolygon,
+  fenceVolumeFromCamera,
   placeViewingBoxCenter,
   rotateViewingBox,
   setViewingBoxMode,
@@ -82,7 +87,9 @@ import {
   type KernelViewingBoxMode,
   type KernelViewingBoxOperation,
   type KernelViewingBoxState,
+  type KernelFenceVolume,
   type KernelWorldCamera,
+  type KernelWorldPoint,
 } from '@himmelcad/viewer/kernel';
 import {
   useCallback,
@@ -107,6 +114,8 @@ import { MeasurementPanel, MeasurementProperties } from './MeasurementPanel.js';
 import { MeasurementViewportOverlay } from './MeasurementViewportOverlay.js';
 import { GroundExtractionPanel } from './GroundExtractionPanel.js';
 import { GroundPreviewOverlay } from './GroundPreviewOverlay.js';
+import { PointcloudSamplingPanel } from './PointcloudSamplingPanel.js';
+import { PointcloudSegmentPanel } from './PointcloudSegmentPanel.js';
 import { PlanIsland } from './PlanIsland.js';
 import { SpecsIsland } from './SpecsIsland.js';
 import {
@@ -119,7 +128,13 @@ import {
   type BuilderViewingBoxSummary,
   type GroundExtractionParameters,
   type GroundExtractionResult,
+  type GroundExtractionScope,
   type GroundPreviewResult,
+  type PointCloudSegmentResult,
+  type PointcloudRasterizeParameters,
+  type PointcloudRasterizeResult,
+  type PointcloudSampleParameters,
+  type PointcloudSampleResult,
 } from './project.js';
 import { createRibbonTabs } from './ribbon.js';
 import { parseSidecarProgress } from './sidecarProgress.js';
@@ -131,6 +146,24 @@ import {
 } from './viewingBoxWorkflow.js';
 
 const DEFAULT_POINT_SIZE = 1;
+
+interface SegmentFenceState {
+  readonly kind: 'polygon' | 'rectangle';
+  readonly vertices: readonly KernelWorldPoint[];
+  readonly closed: boolean;
+  readonly volume: KernelFenceVolume | null;
+  readonly entityIds: readonly EntityId[];
+  readonly scopes: ReadonlyMap<string, GroundExtractionScope>;
+}
+
+const EMPTY_SEGMENT_FENCE: SegmentFenceState = {
+  kind: 'polygon',
+  vertices: [],
+  closed: false,
+  volume: null,
+  entityIds: [],
+  scopes: new Map(),
+};
 
 interface BuilderResidencyBootstrap {
   readonly schemaVersion: 1;
@@ -208,11 +241,21 @@ export function App(): JSX.Element {
   const pendingViewingBoxIdRef = useRef<string | null>(null);
   const viewingBoxBakeAbortRef = useRef<AbortController | null>(null);
   const viewingBoxBakeJobIdRef = useRef<string | null>(null);
+  const lockedViewingBoxSourceRevisionKeyRef = useRef<string | null>(null);
   const debugViewingBoxLockRef = useRef<(locked: boolean) => Promise<void>>(async () => undefined);
   const [viewingBoxBakeProgress, setViewingBoxBakeProgress] = useState<{
     readonly fraction: number;
     readonly phase: string;
   } | null>(null);
+  const viewingBoxSourceRevisionKey = useMemo(
+    () =>
+      Object.values(project?.entities ?? {})
+        .filter((entity) => entity.kind === 'PointCloud')
+        .map((entity) => `${entity.id}:${entity.versionHash}`)
+        .sort()
+        .join('\u0000'),
+    [project],
+  );
   const [constructionDetached, setConstructionDetached] = useState(false);
   const [viewingBoxDetached, setViewingBoxDetached] = useState(false);
   const [propertyQuery, setPropertyQuery] = useState<PropertyQueryResult | null>(null);
@@ -235,6 +278,13 @@ export function App(): JSX.Element {
   const [groundPreview, setGroundPreview] = useState<GroundPreviewResult | null>(null);
   const [groundResult, setGroundResult] = useState<GroundExtractionResult | null>(null);
   const [groundError, setGroundError] = useState<string | null>(null);
+  const [segmentFence, setSegmentFence] = useState<SegmentFenceState>(EMPTY_SEGMENT_FENCE);
+  const segmentFenceRef = useRef(segmentFence);
+  segmentFenceRef.current = segmentFence;
+  const [segmentError, setSegmentError] = useState<string | null>(null);
+  const [sampleResult, setSampleResult] = useState<PointcloudSampleResult | null>(null);
+  const [rasterizeResult, setRasterizeResult] = useState<PointcloudRasterizeResult | null>(null);
+  const [pointcloudProcessingError, setPointcloudProcessingError] = useState<string | null>(null);
   const [durability, setDurability] = useState<BuilderDurabilityStatus | null>(null);
   const [durabilityFailureToast, setDurabilityFailureToast] = useState(false);
   const [snapshots, setSnapshots] = useState<readonly BuilderSnapshotSummary[]>([]);
@@ -334,6 +384,14 @@ export function App(): JSX.Element {
     ) => Promise<{ readonly schemaId: string; readonly payload: unknown }>
   >(async () => {
     throw new Error('Ground extraction automation is not ready.');
+  });
+  const pointcloudProcessingAutomationRef = useRef<
+    (
+      method: 'pointcloud.sample' | 'pointcloud.rasterize',
+      params: unknown,
+    ) => Promise<{ readonly schemaId: string; readonly payload: unknown }>
+  >(async () => {
+    throw new Error('Point-cloud processing automation is not ready.');
   });
   const currentViewStateRef = useRef<() => ViewStateV2>(() => {
     throw new Error('Builder view state is not ready.');
@@ -650,6 +708,9 @@ export function App(): JSX.Element {
         method === 'pointcloud.ground.cancel'
       ) {
         return await groundAutomationRef.current(method, params);
+      }
+      if (method === 'pointcloud.sample' || method === 'pointcloud.rasterize') {
+        return await pointcloudProcessingAutomationRef.current(method, params);
       }
       const registryEntry = commandById(canonicalViewingBoxCommandId(method));
       if (registryEntry?.surfaces.automation) {
@@ -1356,6 +1417,10 @@ export function App(): JSX.Element {
       pendingViewingBoxIdRef.current = `viewing-box-${crypto.randomUUID()}`;
       setPlacingViewingBoxCenter(true);
       logEvent('info', 'renderer', 'Viewing Box: click the model to place the box.');
+    } else if (id === 'pointcloud.fence.begin') {
+      setRightPanelTab('function');
+      setSegmentError(null);
+      logEvent('info', 'renderer', 'Segment: draw a rectangle or polygon fence in the viewport.');
     } else if (id === 'output.specs') {
       setSpecsOpen(true);
       closeFunction(id);
@@ -1380,6 +1445,15 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     if (activeFunctionId !== 'view.viewing-box') setPlacingViewingBoxCenter(false);
+  }, [activeFunctionId]);
+
+  useEffect(() => {
+    if (activeFunctionId === 'pointcloud.fence.begin') return;
+    setSegmentFence((current) =>
+      current.vertices.length === 0 && !current.closed
+        ? current
+        : { ...EMPTY_SEGMENT_FENCE, kind: current.kind },
+    );
   }, [activeFunctionId]);
 
   useEffect(() => {
@@ -1426,14 +1500,39 @@ export function App(): JSX.Element {
       );
       return;
     }
+    if (
+      activeFunctionId === 'pointcloud.fence.begin' &&
+      segmentFence.kind === 'rectangle' &&
+      segmentFence.vertices.length === 1 &&
+      !segmentFence.closed
+    ) {
+      const anchor = segmentFence.vertices[0]!;
+      const toolId = 'pointcloud.fence.rectangle.extents';
+      if (constructionInputStore.snapshot().declaration?.toolId !== toolId) {
+        constructionInputStore.arm(
+          {
+            toolId,
+            prompt: 'Rectangle fence — type Width and Height',
+            fields: ['x', 'y'],
+            fieldLabels: { x: 'Width', y: 'Height' },
+          },
+          { x: 0, y: 0, z: anchor.z },
+        );
+      }
+      return;
+    }
     constructionInputStore.disarm();
   }, [
+    activeFunctionId,
     constructionInputStore,
     measurementTool.anchors,
     measurementTool.anchors.length,
     measurementTool.armed,
     measurementTool.kind,
     placingViewingBoxCenter,
+    segmentFence.closed,
+    segmentFence.kind,
+    segmentFence.vertices,
     snap?.position.x,
     snap?.position.y,
     snap?.position.z,
@@ -1448,8 +1547,10 @@ export function App(): JSX.Element {
 
   const commitCanonicalViewingBox = useCallback(
     (next: KernelViewingBoxState | null): void => {
+      if (next) assertViewingBox(next);
       setViewingBox(next);
       if (!next) return;
+      const committedName = viewingBoxNameRef.current;
       displayStore.setActiveClipEntityIds([next.id]);
       const session = canonicalSessionRef.current;
       const projectPath = currentProjectPathRef.current;
@@ -1465,7 +1566,7 @@ export function App(): JSX.Element {
           const committed = await session.putViewingBox(
             next.id,
             viewingBoxRevisionByIdRef.current.get(next.id) ?? null,
-            viewingBoxNameRef.current,
+            committedName,
             next,
           );
           if (canonicalSessionRef.current !== session) return;
@@ -1571,7 +1672,7 @@ export function App(): JSX.Element {
   );
 
   const setViewingBoxLocked = useCallback(
-    async (locked: boolean): Promise<void> => {
+    async (locked: boolean, rebuilding = false): Promise<void> => {
       const state = viewingBoxRef.current;
       const viewport = viewportRef.current;
       const api = window.himmelcad;
@@ -1589,14 +1690,15 @@ export function App(): JSX.Element {
       }
       const controller = new AbortController();
       const jobId = `viewing-box-bake-${crypto.randomUUID()}`;
+      const initialPhase = rebuilding ? 'Rebuilding locked box' : 'Preparing resident dataset';
       viewingBoxBakeAbortRef.current = controller;
       viewingBoxBakeJobIdRef.current = jobId;
-      setViewingBoxBakeProgress({ fraction: 0, phase: 'Preparing resident dataset' });
+      setViewingBoxBakeProgress({ fraction: 0, phase: initialPhase });
       await api.jobs.register({
         id: jobId,
-        label: `Lock ${viewingBoxNameRef.current}`,
+        label: `${rebuilding ? 'Rebuild' : 'Lock'} ${viewingBoxNameRef.current}`,
         owner: 'builder.viewing-box-bake',
-        phase: 'Preparing resident dataset',
+        phase: initialPhase,
         expectedDurationMs: 2_000,
         progressKey: jobId,
         cancellable: true,
@@ -1614,6 +1716,7 @@ export function App(): JSX.Element {
         if (controller.signal.aborted)
           throw new DOMException('Viewing-box bake cancelled.', 'AbortError');
         commitCanonicalViewingBox(next);
+        lockedViewingBoxSourceRevisionKeyRef.current = viewingBoxSourceRevisionKey;
         await api.jobs.complete(
           jobId,
           next.lockMode === 'baked' ? 'Prepared dataset locked' : 'Edit-frozen copy scope',
@@ -1633,9 +1736,32 @@ export function App(): JSX.Element {
         setViewingBoxBakeProgress(null);
       }
     },
-    [commitCanonicalViewingBox],
+    [commitCanonicalViewingBox, viewingBoxSourceRevisionKey],
   );
   debugViewingBoxLockRef.current = setViewingBoxLocked;
+
+  useEffect(() => {
+    if ((viewingBox?.lockMode ?? 'unlocked') !== 'baked') {
+      lockedViewingBoxSourceRevisionKeyRef.current = null;
+      return;
+    }
+    const previous = lockedViewingBoxSourceRevisionKeyRef.current;
+    if (previous === null) {
+      lockedViewingBoxSourceRevisionKeyRef.current = viewingBoxSourceRevisionKey;
+      return;
+    }
+    if (previous === viewingBoxSourceRevisionKey || viewingBoxBakeProgress !== null) return;
+    // Coalesce settled project snapshots. If another source revision lands
+    // during this rebuild, the next progress transition schedules one more
+    // rebuild against the newest exact entity versions.
+    lockedViewingBoxSourceRevisionKeyRef.current = viewingBoxSourceRevisionKey;
+    void setViewingBoxLocked(true, true);
+  }, [
+    setViewingBoxLocked,
+    viewingBox?.lockMode,
+    viewingBoxBakeProgress,
+    viewingBoxSourceRevisionKey,
+  ]);
 
   const deleteViewingBox = useCallback(async (): Promise<void> => {
     const state = viewingBoxRef.current;
@@ -1794,12 +1920,199 @@ export function App(): JSX.Element {
     project?.entities[selectedPointClouds[0]!.entityId]?.visibility.visible
       ? selectedPointClouds[0]
       : null;
+  const segmentablePointClouds = selectedPointClouds.filter(({ entityId }) => {
+    const effective = interactionState?.effective(entityId);
+    return effective?.renderable === true && effective.editable;
+  });
   const activeGroundJob =
     jobs.find(
       (job) =>
         job.owner === 'builder.ground-extraction' &&
         !['completed', 'failed', 'cancelled'].includes(job.state),
     ) ?? null;
+  const activeSegmentJob =
+    jobs.find(
+      (job) =>
+        job.owner === 'builder.pointcloud-segment' &&
+        !['completed', 'failed', 'cancelled'].includes(job.state),
+    ) ?? null;
+  const captureSegmentTargets = useCallback(
+    (
+      requestedIds?: readonly string[],
+    ): {
+      readonly entityIds: readonly EntityId[];
+      readonly scopes: ReadonlyMap<string, GroundExtractionScope>;
+    } => {
+      const current = projectRef.current;
+      const ids = requestedIds
+        ? requestedIds.map((id) => id as EntityId)
+        : [...selectedRef.current];
+      const capturedBox = viewingBoxRef.current;
+      const activeBox =
+        capturedBox?.enabled &&
+        displayStore.getSnapshot().state.activeClipEntityIds.includes(capturedBox.id)
+          ? capturedBox
+          : null;
+      const entityIds: EntityId[] = [];
+      const scopes = new Map<string, GroundExtractionScope>();
+      for (const entityId of ids) {
+        const entity = current?.entities[entityId];
+        const metadata = pointCloudMetadata.get(entityId);
+        const effective = interactionState?.effective(entityId);
+        if (
+          entity?.kind !== 'PointCloud' ||
+          !metadata ||
+          effective?.renderable !== true ||
+          !effective.editable
+        ) {
+          continue;
+        }
+        const visibleClasses = metadata.display.classes
+          .filter((classification) => classification.visible)
+          .map((classification) => classification.code);
+        if (visibleClasses.length === 0) continue;
+        entityIds.push(entityId);
+        scopes.set(entityId, {
+          visibleClasses,
+          viewingBox: activeBox
+            ? {
+                center: [activeBox.center.x, activeBox.center.y, activeBox.center.z],
+                halfExtents: [
+                  activeBox.halfExtents.x,
+                  activeBox.halfExtents.y,
+                  activeBox.halfExtents.z,
+                ],
+                rotation: activeBox.rotation,
+                keepInside: (activeBox.operation ?? 'keepInside') === 'keepInside',
+              }
+            : null,
+        });
+      }
+      if (entityIds.length === 0) {
+        throw new Error('Select one or more editable, visible point clouds with a visible class.');
+      }
+      return { entityIds, scopes };
+    },
+    [displayStore, interactionState, pointCloudMetadata],
+  );
+  const closeSegmentFence = useCallback(
+    (volume?: KernelFenceVolume, requestedIds?: readonly string[]): SegmentFenceState | null => {
+      try {
+        const current = segmentFenceRef.current;
+        const camera = viewportRef.current?.worldCamera();
+        const nextVolume =
+          volume ??
+          (camera && current.vertices.length >= 3
+            ? fenceVolumeFromCamera(camera, current.vertices)
+            : null);
+        if (!nextVolume) throw new Error('A fence needs at least three vertices.');
+        assertFenceVolume(nextVolume);
+        const targets = captureSegmentTargets(requestedIds);
+        const volumeVertices = fenceVolumeVertices(nextVolume);
+        const next: SegmentFenceState = {
+          ...current,
+          vertices: current.vertices.length >= 3 ? current.vertices : volumeVertices,
+          closed: true,
+          volume: nextVolume,
+          entityIds: targets.entityIds,
+          scopes: targets.scopes,
+        };
+        setSegmentFence(next);
+        constructionInputStore.disarm();
+        setSegmentError(null);
+        logEvent(
+          'info',
+          'renderer',
+          `Fence closed · ${current.vertices.length >= 3 ? current.vertices.length : volumeVertices.length} vertices · ${targets.entityIds.length} cloud${targets.entityIds.length === 1 ? '' : 's'} captured`,
+        );
+        return next;
+      } catch (error) {
+        setSegmentError(error instanceof Error ? error.message : String(error));
+        return null;
+      }
+    },
+    [captureSegmentTargets, constructionInputStore],
+  );
+  const runSegmentation = useCallback(
+    async (
+      side: 'keep_inside' | 'remove_inside',
+      override?: SegmentFenceState,
+      requestedOperationId?: string,
+    ): Promise<PointCloudSegmentResult | undefined> => {
+      const api = window.himmelcad;
+      const captured = override ?? segmentFenceRef.current;
+      if (!api || !captured.closed || !captured.volume || captured.entityIds.length === 0) {
+        setSegmentError('Close a fence around one or more editable, visible point clouds first.');
+        return;
+      }
+      const operationId = requestedOperationId ?? `segment-${crypto.randomUUID()}`;
+      setSegmentError(null);
+      let registered = false;
+      try {
+        const overlapping = jobs.filter(
+          (job) =>
+            job.owner === 'builder.pointcloud-segment' &&
+            !['completed', 'failed', 'cancelled'].includes(job.state) &&
+            captured.entityIds.some((id) =>
+              typeof job.context?.sourceEntityIds === 'string'
+                ? job.context.sourceEntityIds.split(',').includes(id)
+                : false,
+            ),
+        );
+        for (const job of overlapping) {
+          await api.jobs.cancel(job.id);
+          await waitForJobTerminal(api.jobs, job.id);
+        }
+        await api.jobs.register({
+          id: operationId,
+          label: `${side === 'keep_inside' ? 'Keep inside' : 'Remove inside'} · ${captured.entityIds.length} cloud${captured.entityIds.length === 1 ? '' : 's'}`,
+          owner: 'builder.pointcloud-segment',
+          phase: 'Capturing visible point-cloud state',
+          expectedDurationMs: 60_000,
+          progressKey: operationId,
+          cancellable: true,
+          context: { sourceEntityIds: captured.entityIds.join(','), side },
+        });
+        registered = true;
+        const session = await ensureCanonicalProject();
+        const result = await session.segmentPointClouds({
+          operationId,
+          progressKey: operationId,
+          sourceEntityIds: captured.entityIds,
+          volume: captured.volume,
+          side,
+          scopes: captured.scopes,
+        });
+        await reloadCanonicalResidency();
+        selectionStore.replace(result.revisions.map((revision) => revision.entityId));
+        const retained = result.revisions.reduce(
+          (sum, revision) => sum + revision.retainedPoints,
+          0,
+        );
+        await api.jobs.complete(operationId, `${retained.toLocaleString()} points retained`);
+        setSegmentFence((current) => ({ ...EMPTY_SEGMENT_FENCE, kind: current.kind }));
+        logEvent(
+          'info',
+          'renderer',
+          `${side === 'keep_inside' ? 'Keep inside' : 'Remove inside'} committed as one undoable transaction · ${result.revisions.length} revision${result.revisions.length === 1 ? '' : 's'}`,
+        );
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const job = registered ? await api.jobs.get(operationId).catch(() => null) : null;
+        if (job?.state === 'cancelling' || /cancelled|canceled/i.test(message)) {
+          await api.jobs.cancelled(operationId);
+        } else if (registered) {
+          setSegmentError(message);
+          await api.jobs.fail(operationId, message);
+        } else {
+          setSegmentError(message);
+        }
+        return undefined;
+      }
+    },
+    [ensureCanonicalProject, jobs, reloadCanonicalResidency, selectionStore],
+  );
   const runGroundOperation = useCallback(
     async (
       mode: 'preview' | 'extract',
@@ -1979,6 +2292,176 @@ export function App(): JSX.Element {
     );
     if (!result) throw new Error(`${method} did not return a typed result.`);
     return groundResultEnvelope(result);
+  };
+  const activePointcloudProcessingJob =
+    jobs.find(
+      (job) =>
+        job.owner === 'builder.pointcloud-processing' &&
+        !['completed', 'failed', 'cancelled'].includes(job.state),
+    ) ?? null;
+  const runPointcloudProcessing = useCallback(
+    async (
+      mode: 'sample' | 'rasterize',
+      parameters: PointcloudSampleParameters | PointcloudRasterizeParameters,
+      propagateError = false,
+      requestedSourceId?: string,
+      requestedOperationId?: string,
+      requestedOutputName?: string,
+    ): Promise<PointcloudSampleResult | PointcloudRasterizeResult | undefined> => {
+      const api = window.himmelcad;
+      const current = projectRef.current;
+      const ids = requestedSourceId ? [requestedSourceId as EntityId] : [...selectedRef.current];
+      const sourceId = ids.length === 1 ? ids[0] : undefined;
+      const source = sourceId ? current?.entities[sourceId] : undefined;
+      const metadata = sourceId ? pointCloudMetadata.get(sourceId) : undefined;
+      const sourceInteraction =
+        sourceId && current
+          ? interactionResolver(current, displayStore.getSnapshot().state).effective(sourceId)
+          : null;
+      if (
+        !api ||
+        !sourceId ||
+        source?.kind !== 'PointCloud' ||
+        !sourceInteraction?.renderable ||
+        !['reference', 'editable'].includes(sourceInteraction.effective) ||
+        !metadata
+      ) {
+        setPointcloudProcessingError('Select exactly one visible Reference or Editable point cloud.');
+        return;
+      }
+      const visibleClasses = metadata.display.classes
+        .filter((classification) => classification.visible)
+        .map((classification) => classification.code);
+      if (visibleClasses.length === 0) {
+        setPointcloudProcessingError('At least one source classification must be visible.');
+        return;
+      }
+      const capturedBox = viewingBoxRef.current;
+      const activeBox =
+        capturedBox?.enabled &&
+        displayStore.getSnapshot().state.activeClipEntityIds.includes(capturedBox.id)
+          ? capturedBox
+          : null;
+      const scope = {
+        viewingBox: activeBox
+          ? {
+              center: [activeBox.center.x, activeBox.center.y, activeBox.center.z] as const,
+              halfExtents: [
+                activeBox.halfExtents.x,
+                activeBox.halfExtents.y,
+                activeBox.halfExtents.z,
+              ] as const,
+              rotation: activeBox.rotation,
+              keepInside: (activeBox.operation ?? 'keepInside') === 'keepInside',
+            }
+          : null,
+        visibleClasses,
+      };
+      const operationId = requestedOperationId ?? `${mode}-${crypto.randomUUID()}`;
+      const label = mode === 'sample' ? `Sample · ${source.name}` : `Rasterize · ${source.name}`;
+      setPointcloudProcessingError(null);
+      if (mode === 'sample') setSampleResult(null);
+      else setRasterizeResult(null);
+      await api.jobs.register({
+        id: operationId,
+        label,
+        owner: 'builder.pointcloud-processing',
+        phase: 'Capturing visible point-cloud state',
+        expectedDurationMs: 60_000,
+        progressKey: operationId,
+        cancellable: true,
+        context: { sourceEntityId: sourceId, mode },
+      });
+      try {
+        const session = await ensureCanonicalProject();
+        if (mode === 'sample') {
+          const result = await session.samplePointCloud({
+            operationId,
+            progressKey: operationId,
+            sourceEntityId: sourceId,
+            outputEntityId: `pointcloud-sample-${crypto.randomUUID()}`,
+            outputName: requestedOutputName ?? `${source.name} — Sampled`,
+            parameters: parameters as PointcloudSampleParameters,
+            scope,
+          });
+          setSampleResult(result);
+          logEvent(
+            'info',
+            'renderer',
+            `pointcloud.sample · ${result.summary.sampledPoints.toLocaleString()} of ${result.summary.scopedPoints.toLocaleString()} points · sha256 ${result.summary.selectionSha256}`,
+          );
+          await reloadCanonicalResidency();
+          selectionStore.replace([result.sampledCloud.entityId as EntityId]);
+          await api.jobs.complete(
+            operationId,
+            `${result.summary.sampledPoints.toLocaleString()} sampled points`,
+          );
+          return result;
+        }
+        const rasterizeParameters = parameters as PointcloudRasterizeParameters;
+        const result = await session.rasterizePointCloud({
+          operationId,
+          progressKey: operationId,
+          sourceEntityId: sourceId,
+          outputEntityId: `pointcloud-grid-${crypto.randomUUID()}`,
+          outputName:
+            requestedOutputName ??
+            `${source.name} — ${rasterizeParameters.aggregation === 'count' ? 'Count grid' : 'Height grid'}`,
+          parameters: rasterizeParameters,
+          scope,
+        });
+        setRasterizeResult(result);
+        logEvent(
+          'info',
+          'renderer',
+          `pointcloud.rasterize · ${result.summary.width.toLocaleString()} × ${result.summary.height.toLocaleString()} · ${result.summary.cellSizeM} m · ${(result.summary.emptyRatio * 100).toFixed(1)} % empty · sha256 ${result.summary.cellSha256}`,
+        );
+        await reloadCanonicalResidency();
+        selectionStore.replace([result.grid.entityId as EntityId]);
+        await api.jobs.complete(
+          operationId,
+          `${result.summary.width.toLocaleString()} × ${result.summary.height.toLocaleString()} grid`,
+        );
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const job = await api.jobs.get(operationId).catch(() => null);
+        if (job?.state === 'cancelling' || /cancelled|canceled/i.test(message)) {
+          await api.jobs.cancelled(operationId);
+        } else {
+          setPointcloudProcessingError(message);
+          await api.jobs.fail(operationId, message);
+        }
+        if (propagateError) throw error;
+        return undefined;
+      }
+    },
+    [
+      displayStore,
+      ensureCanonicalProject,
+      pointCloudMetadata,
+      reloadCanonicalResidency,
+      selectionStore,
+    ],
+  );
+  pointcloudProcessingAutomationRef.current = async (method, input) => {
+    const payload = automationPayload(input);
+    if (typeof payload.sourceEntityId !== 'string') {
+      throw new TypeError(`${method} requires payload.sourceEntityId.`);
+    }
+    selectionStore.replace([payload.sourceEntityId]);
+    const result = await runPointcloudProcessing(
+      method === 'pointcloud.sample' ? 'sample' : 'rasterize',
+      method === 'pointcloud.sample'
+        ? sampleParametersFromPayload(payload.parameters)
+        : rasterizeParametersFromPayload(payload.parameters),
+      true,
+      payload.sourceEntityId,
+      typeof payload.operationId === 'string' ? payload.operationId : undefined,
+      typeof payload.outputName === 'string' ? payload.outputName : undefined,
+    );
+    if (!result) throw new Error(`${method} did not return a typed result.`);
+    return pointcloudProcessingResultEnvelope(result);
   };
   const setSelectedPointCloudDisplay = useCallback(
     async (display: PointCloudDisplayStyle, targetEntityIds?: readonly string[]): Promise<void> => {
@@ -2174,7 +2657,15 @@ export function App(): JSX.Element {
           const payload = automationPayload(invocation.payload);
           if (payload.fromSelection === true) {
             createViewingBoxFromSelection();
-          } else if (isViewingBoxPoint(payload.center) && isViewingBoxPoint(payload.extents)) {
+          } else if ('center' in payload || 'extents' in payload) {
+            if (
+              !isViewingBoxPoint(payload.center) ||
+              !isPositiveViewingBoxPoint(payload.extents)
+            ) {
+              throw new TypeError(
+                'view.box.place requires finite center coordinates and positive extents.',
+              );
+            }
             createViewingBoxFromTypedExtents(payload.center, payload.extents);
           } else {
             pendingViewingBoxIdRef.current = `viewing-box-${crypto.randomUUID()}`;
@@ -2204,8 +2695,14 @@ export function App(): JSX.Element {
         case 'view.box.set_operation': {
           const state = viewingBoxRef.current;
           const payload = automationPayload(invocation.payload);
-          if (!state || !['keepInside', 'removeInside'].includes(String(payload.operation))) {
-            throw new TypeError('view.box.set_operation requires an active box and operation.');
+          if (
+            !state ||
+            (state.lockMode ?? 'unlocked') !== 'unlocked' ||
+            !['keepInside', 'removeInside'].includes(String(payload.operation))
+          ) {
+            throw new TypeError(
+              'view.box.set_operation requires an unlocked active box and operation.',
+            );
           }
           commitCanonicalViewingBox({
             ...state,
@@ -2300,6 +2797,92 @@ export function App(): JSX.Element {
           }
           return;
         }
+        case 'pointcloud.fence.begin': {
+          const payload = automationPayload(invocation.payload);
+          const kind = payload.kind === 'rectangle' ? 'rectangle' : 'polygon';
+          const volume = optionalFenceVolumeFromPayload(payload);
+          setSegmentFence({
+            ...EMPTY_SEGMENT_FENCE,
+            kind,
+            ...(volume
+              ? {
+                  vertices: fenceVolumeVertices(volume),
+                  closed: true,
+                  volume,
+                  ...captureSegmentTargets(stringArray(payload.entityIds)),
+                }
+              : {}),
+          });
+          setSegmentError(null);
+          activate('pointcloud.fence.begin');
+          setRightPanelTab('function');
+          return;
+        }
+        case 'pointcloud.fence.commit': {
+          const payload = automationPayload(invocation.payload);
+          const volume = optionalFenceVolumeFromPayload(payload);
+          if (!closeSegmentFence(volume ?? undefined, stringArray(payload.entityIds))) {
+            throw new Error('The active point-cloud fence could not be closed.');
+          }
+          return;
+        }
+        case 'pointcloud.fence.cancel':
+          setSegmentFence((current) => ({ ...EMPTY_SEGMENT_FENCE, kind: current.kind }));
+          constructionInputStore.disarm();
+          if (activeFunctionId === 'pointcloud.fence.begin') closeFunction(activeFunctionId);
+          return;
+        case 'pointcloud.segment.keep_inside':
+        case 'pointcloud.segment.remove_inside': {
+          const payload = automationPayload(invocation.payload);
+          const side = invocation.id.endsWith('keep_inside') ? 'keep_inside' : 'remove_inside';
+          const explicitVolume = optionalFenceVolumeFromPayload(payload);
+          let captured = segmentFenceRef.current;
+          if (explicitVolume) {
+            const targets = captureSegmentTargets(stringArray(payload.entityIds));
+            captured = {
+              kind: explicitVolume.kind === 'box' ? 'rectangle' : 'polygon',
+              vertices: fenceVolumeVertices(explicitVolume),
+              closed: true,
+              volume: explicitVolume,
+              ...targets,
+            };
+            setSegmentFence(captured);
+          }
+          const result = await runSegmentation(
+            side,
+            captured,
+            typeof payload.operationId === 'string' ? payload.operationId : undefined,
+          );
+          if (!result && invocation.source === 'automation') {
+            throw new Error('Point-cloud segmentation did not produce a revision.');
+          }
+          return;
+        }
+        case 'pointcloud.sample':
+        case 'pointcloud.rasterize': {
+          const payload = automationPayload(invocation.payload);
+          if (typeof payload.sourceEntityId === 'string') {
+            selectionStore.replace([payload.sourceEntityId]);
+          }
+          if (
+            (invocation.source === 'ribbon' || invocation.source === 'contextMenu') &&
+            payload.parameters === undefined
+          ) {
+            activate(invocation.id);
+            return;
+          }
+          await runPointcloudProcessing(
+            invocation.id === 'pointcloud.sample' ? 'sample' : 'rasterize',
+            invocation.id === 'pointcloud.sample'
+              ? sampleParametersFromPayload(payload.parameters)
+              : rasterizeParametersFromPayload(payload.parameters),
+            false,
+            typeof payload.sourceEntityId === 'string' ? payload.sourceEntityId : undefined,
+            typeof payload.operationId === 'string' ? payload.operationId : undefined,
+            typeof payload.outputName === 'string' ? payload.outputName : undefined,
+          );
+          return;
+        }
         case 'pointcloud.ground.extract': {
           const payload = automationPayload(invocation.payload);
           if (typeof payload.sourceEntityId === 'string') {
@@ -2388,7 +2971,12 @@ export function App(): JSX.Element {
     [
       activate,
       activeGroundJob,
+      activeFunctionId,
+      captureSegmentTargets,
+      closeFunction,
+      closeSegmentFence,
       commitCanonicalViewingBox,
+      constructionInputStore,
       createViewingBoxFromSelection,
       createViewingBoxFromTypedExtents,
       deleteViewingBox,
@@ -2399,6 +2987,8 @@ export function App(): JSX.Element {
       recentProjects,
       renameViewingBox,
       runGroundOperation,
+      runPointcloudProcessing,
+      runSegmentation,
       selectionStore,
       selectViewingBox,
       setSelectedPointCloudDisplay,
@@ -2748,6 +3338,7 @@ export function App(): JSX.Element {
         onClose: () => void closeCurrentProject('project'),
         navigationMode,
         groundExtractionAvailable: selectedGroundCloud !== null,
+        segmentationAvailable: segmentablePointClouds.length > 0,
       }),
     [
       closeCurrentProject,
@@ -2755,6 +3346,7 @@ export function App(): JSX.Element {
       flushProject,
       openProject,
       navigationMode,
+      segmentablePointClouds.length,
       recentProjects,
       replaceProject,
       saveProjectAs,
@@ -2811,7 +3403,7 @@ export function App(): JSX.Element {
       },
       {
         id: 'point-size',
-        content: `Point: ${pointSize.toFixed(1)}px`,
+        content: `Point: ×${pointSize.toFixed(1)}`,
         align: 'right' as const,
       },
       { id: 'quality', content: 'Quality: adaptive', align: 'right' as const },
@@ -2902,8 +3494,35 @@ export function App(): JSX.Element {
         );
       return;
     }
+    const fence = segmentFenceRef.current;
+    if (
+      activeFunctionId === 'pointcloud.fence.begin' &&
+      fence.kind === 'rectangle' &&
+      fence.vertices.length === 1 &&
+      !fence.closed
+    ) {
+      const rectangle = viewportRef.current?.typedFenceRectangle(
+        fence.vertices[0]!,
+        point.x,
+        point.y,
+      );
+      const camera = viewportRef.current?.worldCamera();
+      if (!rectangle || !camera) {
+        setSegmentError('The viewport camera is not ready for a typed rectangle.');
+        return;
+      }
+      setSegmentFence((current) => ({ ...current, vertices: rectangle }));
+      closeSegmentFence(fenceVolumeFromCamera(camera, rectangle));
+      return;
+    }
     placeViewingBoxAt(point);
-  }, [constructionInputStore, measurementToolStore, placeViewingBoxAt]);
+  }, [
+    activeFunctionId,
+    closeSegmentFence,
+    constructionInputStore,
+    measurementToolStore,
+    placeViewingBoxAt,
+  ]);
   const acceptMeasurementPreview = useCallback((): void => {
     if (!measurementToolStore.snapshot().armed) return;
     void measurementToolStore
@@ -2918,8 +3537,47 @@ export function App(): JSX.Element {
       if (activeFunctionId) closeFunction(activeFunctionId);
       return;
     }
+    if (activeFunctionId === 'pointcloud.fence.begin') {
+      const fence = segmentFenceRef.current;
+      if (fence.vertices.length > 0 || fence.closed) {
+        setSegmentFence({ ...EMPTY_SEGMENT_FENCE, kind: fence.kind });
+        constructionInputStore.disarm();
+      } else {
+        closeFunction(activeFunctionId);
+      }
+      return;
+    }
     setPlacingViewingBoxCenter(false);
   }, [activeFunctionId, closeFunction, constructionInputStore, measurementToolStore]);
+  useEffect(() => {
+    if (activeFunctionId !== 'pointcloud.fence.begin') return;
+    const handle = (event: KeyboardEvent): void => {
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+      if (event.key === 'Enter' && !segmentFenceRef.current.closed) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        closeSegmentFence();
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+        const fence = segmentFenceRef.current;
+        if (fence.vertices.length === 0) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setSegmentFence({
+          ...fence,
+          vertices: fence.closed ? fence.vertices : fence.vertices.slice(0, -1),
+          closed: false,
+          volume: null,
+          entityIds: [],
+          scopes: new Map(),
+        });
+      }
+    };
+    window.addEventListener('keydown', handle, true);
+    return () => window.removeEventListener('keydown', handle, true);
+  }, [activeFunctionId, closeSegmentFence]);
   const selectMeasurement = useCallback(
     (entityId: string): void => {
       selectionStore.replace([entityId]);
@@ -3035,13 +3693,19 @@ export function App(): JSX.Element {
             onActiveTabChange={setRightPanelTab}
             detachable={
               (activeFunctionId === 'view.viewing-box' ||
-                activeFunctionId === 'pointcloud.ground.extract') &&
+                activeFunctionId === 'pointcloud.fence.begin' ||
+                activeFunctionId === 'pointcloud.ground.extract' ||
+                activeFunctionId === 'pointcloud.sample' ||
+                activeFunctionId === 'pointcloud.rasterize') &&
               rightPanelTab === 'function'
             }
             detached={
               viewingBoxDetached &&
               (activeFunctionId === 'view.viewing-box' ||
-                activeFunctionId === 'pointcloud.ground.extract') &&
+                activeFunctionId === 'pointcloud.fence.begin' ||
+                activeFunctionId === 'pointcloud.ground.extract' ||
+                activeFunctionId === 'pointcloud.sample' ||
+                activeFunctionId === 'pointcloud.rasterize') &&
               rightPanelTab === 'function'
             }
             onDetachedChange={setViewingBoxDetached}
@@ -3096,6 +3760,24 @@ export function App(): JSX.Element {
                 onSelect={selectMeasurement}
                 onDelete={(entityId) => void deleteMeasurement(entityId)}
               />
+            ) : activeFunctionId === 'pointcloud.fence.begin' ? (
+              <PointcloudSegmentPanel
+                fenceKind={segmentFence.kind}
+                vertexCount={segmentFence.vertices.length}
+                area={segmentFenceArea(segmentFence)}
+                closed={segmentFence.closed}
+                appliesTo={segmentFence.entityIds.length}
+                activeJob={activeSegmentJob}
+                error={segmentError}
+                onFenceKindChange={(kind) => setSegmentFence({ ...EMPTY_SEGMENT_FENCE, kind })}
+                onKeepInside={() => void runSegmentation('keep_inside')}
+                onRemoveInside={() => void runSegmentation('remove_inside')}
+                onClearFence={() => {
+                  constructionInputStore.disarm();
+                  setSegmentFence((current) => ({ ...EMPTY_SEGMENT_FENCE, kind: current.kind }));
+                }}
+                onCancel={(jobId) => void window.himmelcad?.jobs.cancel(jobId)}
+              />
             ) : activeFunctionId === 'pointcloud.ground.extract' ? (
               <GroundExtractionPanel
                 sourceName={
@@ -3114,6 +3796,24 @@ export function App(): JSX.Element {
                   selectionStore.replace([entityId]);
                   activate('mesh.surface.create');
                 }}
+              />
+            ) : activeFunctionId === 'pointcloud.sample' ||
+              activeFunctionId === 'pointcloud.rasterize' ? (
+              <PointcloudSamplingPanel
+                mode={activeFunctionId === 'pointcloud.sample' ? 'sample' : 'rasterize'}
+                sourceName={
+                  selectedGroundCloud
+                    ? (project?.entities[selectedGroundCloud.entityId]?.name ?? null)
+                    : null
+                }
+                sourcePoints={selectedGroundCloud?.metadata.pointCount ?? null}
+                activeJob={activePointcloudProcessingJob}
+                sampleResult={sampleResult}
+                rasterizeResult={rasterizeResult}
+                error={pointcloudProcessingError}
+                onSample={(parameters) => void runPointcloudProcessing('sample', parameters)}
+                onRasterize={(parameters) => void runPointcloudProcessing('rasterize', parameters)}
+                onCancel={(jobId) => void window.himmelcad?.jobs.cancel(jobId)}
               />
             ) : (
               functionBody(
@@ -3201,6 +3901,8 @@ export function App(): JSX.Element {
                   setSnap(nextSnap);
                   if (
                     constructionInputStore.snapshot().armed &&
+                    constructionInputStore.snapshot().declaration?.toolId !==
+                      'pointcloud.fence.rectangle.extents' &&
                     nextSnap?.position.z !== null &&
                     nextSnap?.position.z !== undefined
                   ) {
@@ -3288,7 +3990,11 @@ export function App(): JSX.Element {
                   (viewingBox?.lockMode ?? 'unlocked') === 'unlocked'
                 }
                 placingViewingBoxCenter={placingViewingBoxCenter}
-                constructionToolId={constructionInput.declaration?.toolId ?? null}
+                constructionToolId={
+                  activeFunctionId === 'pointcloud.fence.begin'
+                    ? null
+                    : (constructionInput.declaration?.toolId ?? null)
+                }
                 onConstructionTab={traverseConstructionBar}
                 onConstructionTyping={routeConstructionTyping}
                 onConstructionCancel={cancelConstructionTool}
@@ -3296,6 +4002,49 @@ export function App(): JSX.Element {
                 onViewportPoint={placeViewingBoxAt}
                 onViewportBox={createViewingBoxFromViewportDrag}
                 onViewingBoxChange={commitCanonicalViewingBox}
+                fence={
+                  activeFunctionId === 'pointcloud.fence.begin'
+                    ? {
+                        kind: segmentFence.kind,
+                        vertices: segmentFence.vertices,
+                        closed: segmentFence.closed,
+                      }
+                    : null
+                }
+                onFenceVertex={(point) => {
+                  setSegmentFence((current) => ({
+                    ...current,
+                    vertices: current.closed ? current.vertices : [...current.vertices, point],
+                  }));
+                }}
+                onFenceRectangle={(vertices) => {
+                  setSegmentFence((current) => ({
+                    ...current,
+                    vertices,
+                    closed: false,
+                    volume: null,
+                    entityIds: [],
+                    scopes: new Map(),
+                  }));
+                }}
+                onFenceClose={(volume) => {
+                  closeSegmentFence(volume);
+                }}
+                onFenceCancel={cancelConstructionTool}
+                onFenceKey={(key) => {
+                  if (key === 'Tab' || key === 'Shift+Tab') {
+                    traverseConstructionBar(key === 'Tab' ? 1 : -1);
+                  } else {
+                    routeConstructionTyping(key);
+                  }
+                }}
+                onFenceNavigationRejected={() =>
+                  logEvent(
+                    'info',
+                    'renderer',
+                    'Finish or cancel the open fence before changing the camera.',
+                  )
+                }
                 onDropFiles={(paths) => void registerImports(paths)}
                 onLog={(level, message) => logEvent(level, 'renderer', message)}
               />
@@ -3560,6 +4309,9 @@ function functionTitle(id: string | null): string | undefined {
   if (id === 'view.point-size') return 'point size';
   if (id === 'view.viewing-box') return 'Viewing Box';
   if (id === 'pointcloud.ground.extract') return 'Extract ground';
+  if (id === 'pointcloud.fence.begin') return 'Segment';
+  if (id === 'pointcloud.sample') return 'Sample';
+  if (id === 'pointcloud.rasterize') return 'Rasterize mean height';
   return id.replace(/[._:-]/g, ' ');
 }
 
@@ -3616,6 +4368,13 @@ function groundResultEnvelope(result: GroundPreviewResult | GroundExtractionResu
   return { schemaId, payload };
 }
 
+function pointcloudProcessingResultEnvelope(
+  result: PointcloudSampleResult | PointcloudRasterizeResult,
+): { readonly schemaId: string; readonly payload: unknown } {
+  const { schemaId, ...payload } = result;
+  return { schemaId, payload };
+}
+
 function measurementAnchorConstructionPoint(
   anchor: Parameters<typeof measurementAnchorPosition>[0],
 ): { readonly x: number; readonly y: number; readonly z: number } | undefined {
@@ -3665,8 +4424,8 @@ function functionBody(
     return (
       <div style={{ display: 'grid', gap: 12 }}>
         <label style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
-          <span style={{ color: 'var(--hc-fg-muted)', fontSize: 12 }}>Point size</span>
-          <output style={{ color: 'var(--hc-fg)', fontSize: 12 }}>{pointSize.toFixed(1)} px</output>
+          <span style={{ color: 'var(--hc-fg-muted)', fontSize: 12 }}>Point size multiplier</span>
+          <output style={{ color: 'var(--hc-fg)', fontSize: 12 }}>×{pointSize.toFixed(1)}</output>
           <input
             type="range"
             min={0.25}
@@ -4231,6 +4990,88 @@ function constructionBarFields(): HTMLInputElement[] {
   ).filter((field) => !field.disabled);
 }
 
+async function waitForJobTerminal(
+  jobs: { readonly get: (id: string) => Promise<AppJob> },
+  jobId: string,
+): Promise<void> {
+  const deadline = Date.now() + 120_000;
+  for (;;) {
+    const job = await jobs.get(jobId);
+    if (['completed', 'failed', 'cancelled'].includes(job.state)) return;
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for segmentation ${jobId} to stop safely.`);
+    }
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
+  }
+}
+
+function stringArray(value: unknown): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) {
+    throw new TypeError('entityIds must be an array of strings.');
+  }
+  return value;
+}
+
+function optionalFenceVolumeFromPayload(
+  payload: Record<string, unknown>,
+): KernelFenceVolume | null {
+  if (payload.volume !== undefined) {
+    if (!payload.volume || typeof payload.volume !== 'object' || Array.isArray(payload.volume)) {
+      throw new TypeError('volume must be a projection-true fence volume.');
+    }
+    const volume = payload.volume as KernelFenceVolume;
+    assertFenceVolume(volume);
+    return volume;
+  }
+  if (payload.polygon === undefined) return null;
+  if (!Array.isArray(payload.polygon)) throw new TypeError('polygon must be an array.');
+  const polygon = payload.polygon.map((entry): KernelWorldPoint => {
+    if (
+      Array.isArray(entry) &&
+      entry.length === 3 &&
+      entry.every((coordinate) => typeof coordinate === 'number' && Number.isFinite(coordinate))
+    ) {
+      return { x: entry[0] as number, y: entry[1] as number, z: entry[2] as number };
+    }
+    if (
+      entry &&
+      typeof entry === 'object' &&
+      !Array.isArray(entry) &&
+      ['x', 'y', 'z'].every(
+        (axis) =>
+          typeof (entry as Record<string, unknown>)[axis] === 'number' &&
+          Number.isFinite((entry as Record<string, number>)[axis]),
+      )
+    ) {
+      const point = entry as Record<'x' | 'y' | 'z', number>;
+      return { x: point.x, y: point.y, z: point.z };
+    }
+    throw new TypeError('polygon vertices must contain three finite coordinates.');
+  });
+  return fencePrismFromPolygon(polygon);
+}
+
+function fenceVolumeVertices(volume: KernelFenceVolume): readonly KernelWorldPoint[] {
+  if (volume.kind === 'box') return [];
+  return volume.polygon.map(([x, y, z]) => ({ x, y, z }));
+}
+
+function segmentFenceArea(fence: SegmentFenceState): number | null {
+  if (fence.volume?.kind === 'box') {
+    return fence.volume.halfExtents[0] * fence.volume.halfExtents[1] * 4;
+  }
+  const polygon =
+    fence.volume?.polygon ??
+    (fence.vertices.length >= 3 ? fence.vertices.map(({ x, y, z }) => [x, y, z] as const) : null);
+  if (!polygon) return null;
+  try {
+    return fencePolygonArea(polygon);
+  } catch {
+    return null;
+  }
+}
+
 function interactionResolver(
   project: ProjectSnapshot,
   display: Pick<ViewDisplayStateV1, 'globalDefault' | 'overrides'>,
@@ -4336,6 +5177,83 @@ function groundParametersFromPayload(value: unknown): GroundExtractionParameters
   };
 }
 
+function sampleParametersFromPayload(value: unknown): PointcloudSampleParameters {
+  const defaults: PointcloudSampleParameters = {
+    method: 'distance',
+    spacingM: 0.25,
+    percentage: 10,
+  };
+  if (value === undefined) return defaults;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('sample parameters must be an object.');
+  }
+  const input = value as Record<string, unknown>;
+  const method = input.method;
+  if (!['distance', 'grid', 'random'].includes(String(method))) {
+    throw new TypeError('sample parameters.method must be distance, grid, or random.');
+  }
+  const finite = (key: string, fallback?: number): number => {
+    const candidate = input[key] ?? fallback;
+    if (typeof candidate !== 'number' || !Number.isFinite(candidate)) {
+      throw new TypeError(`sample parameters.${key} must be finite.`);
+    }
+    return candidate;
+  };
+  const optional = (key: string): number | undefined =>
+    input[key] === undefined ? undefined : finite(key);
+  const originX = optional('originX');
+  const originY = optional('originY');
+  return {
+    method: method as PointcloudSampleParameters['method'],
+    spacingM: finite('spacingM', defaults.spacingM),
+    percentage: finite('percentage', defaults.percentage),
+    ...(originX === undefined ? {} : { originX }),
+    ...(originY === undefined ? {} : { originY }),
+  };
+}
+
+function rasterizeParametersFromPayload(value: unknown): PointcloudRasterizeParameters {
+  const defaults: PointcloudRasterizeParameters = {
+    cellSizeM: 1,
+    aggregation: 'mean',
+    emptyCellPolicy: { kind: 'no_data' },
+  };
+  if (value === undefined) return defaults;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('rasterize parameters must be an object.');
+  }
+  const input = value as Record<string, unknown>;
+  const aggregation = input.aggregation;
+  if (!['mean', 'min', 'max', 'count'].includes(String(aggregation))) {
+    throw new TypeError('rasterize parameters.aggregation must be mean, min, max, or count.');
+  }
+  const finite = (key: string, fallback?: number): number => {
+    const candidate = input[key] ?? fallback;
+    if (typeof candidate !== 'number' || !Number.isFinite(candidate)) {
+      throw new TypeError(`rasterize parameters.${key} must be finite.`);
+    }
+    return candidate;
+  };
+  const optional = (key: string): number | undefined =>
+    input[key] === undefined ? undefined : finite(key);
+  const emptyCellPolicy = input.emptyCellPolicy;
+  if (!['no_data', 'fill'].includes(String(emptyCellPolicy))) {
+    throw new TypeError('rasterize parameters.emptyCellPolicy must be no_data or fill.');
+  }
+  const originX = optional('originX');
+  const originY = optional('originY');
+  return {
+    cellSizeM: finite('cellSizeM', defaults.cellSizeM),
+    aggregation: aggregation as PointcloudRasterizeParameters['aggregation'],
+    emptyCellPolicy:
+      emptyCellPolicy === 'fill'
+        ? { kind: 'fill', value: finite('emptyCellValue') }
+        : { kind: 'no_data' },
+    ...(originX === undefined ? {} : { originX }),
+    ...(originY === undefined ? {} : { originY }),
+  };
+}
+
 function nextBookmarkName(count: number): string {
   return `View ${String(count + 1)}`;
 }
@@ -4386,6 +5304,17 @@ function isViewingBoxPoint(
     Number.isFinite(point.y) &&
     typeof point.z === 'number' &&
     Number.isFinite(point.z)
+  );
+}
+
+function isPositiveViewingBoxPoint(
+  value: unknown,
+): value is { readonly x: number; readonly y: number; readonly z: number } {
+  return (
+    isViewingBoxPoint(value) &&
+    value.x > 0 &&
+    value.y > 0 &&
+    value.z > 0
   );
 }
 

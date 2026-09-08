@@ -31,7 +31,10 @@ void test('point-cloud display exposes bounded controls and P9 mixed class state
     />,
   );
 
-  assert.match(markup, /aria-label="Point size"[^>]*min="1"[^>]*max="8"/);
+  assert.match(
+    markup,
+    /aria-label="Point size multiplier"[^>]*min="0.25"[^>]*max="8"[^>]*aria-valuetext="2.00 times adaptive size"/,
+  );
   assert.match(markup, /aria-label="Point cloud color"/);
   assert.match(markup, />Classification<\/span>/);
   assert.match(markup, /aria-checked="mixed"/);

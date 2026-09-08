@@ -48,6 +48,19 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
     set_point_size(pointSize): void {
       calls.push(['pointSize', pointSize]);
     },
+    set_entity_point_size_multiplier(entityId, multiplier): number {
+      calls.push(['entityPointSize', entityId, multiplier]);
+      return 1;
+    },
+    set_quality_effects_json(stateJson): string {
+      calls.push(['qualityEffects', stateJson]);
+      const state = JSON.parse(stateJson) as { interacting: boolean };
+      return JSON.stringify({
+        tier: state.interacting ? 'off' : 'twoTap',
+        radiusPixels: 1,
+        strength: 80,
+      });
+    },
     canonical_entity_version_hash_json: () => '11'.repeat(32),
     geometry_object_content_hash_json: () => '22'.repeat(32),
     block_definition_content_hash_json: () => '33'.repeat(32),
@@ -471,6 +484,23 @@ void test('kernel canvas host preserves high-end device limits and f64 origin', 
     WasmViewer: { create: () => Promise.resolve(binding) },
   };
   const viewer = await WgpuKernelViewer.create(canvas, () => Promise.resolve(module));
+  viewer.setEntityPointSizeMultiplier('cloud-a', 0.75);
+  viewer.setEntityPointSizeMultiplier('cloud-b', 1.5);
+  assert.deepEqual(calls.slice(-2), [
+    ['entityPointSize', 'cloud-a', 0.75],
+    ['entityPointSize', 'cloud-b', 1.5],
+  ]);
+  assert.deepEqual(viewer.setQualityEffects('I', 'full', true, true), {
+    tier: 'off',
+    radiusPixels: 1,
+    strength: 80,
+  });
+  assert.deepEqual(JSON.parse(String(calls.at(-1)?.[1])), {
+    hardwareClass: 'I',
+    qualityTier: 'full',
+    interacting: true,
+    pointContentVisible: true,
+  });
   const extent = viewer.resize(10_000, 5_000, 2);
   assert.deepEqual(extent, { width: 20_000, height: 10_000, devicePixelRatio: 2 });
   viewer.setCamera({

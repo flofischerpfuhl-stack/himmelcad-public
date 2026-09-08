@@ -18,12 +18,12 @@
     "README.md": "bd9aeb35d1f5b8d2c0e1c76303ac10c0877619e718034ddf3ab57b3ce92cb9dc",
     "pyproject.toml": "75fd998505ffacbf590e30efbca67d7d24dd73a96ecadcd9a05fdfa65aa473bc",
     "src/himmelcad/__init__.py": "968a2d64774ce4c30171897c9f7e1c9d2fe4bc2ef82b6658850ce49dc11361e1",
-    "src/himmelcad/client.py": "36751fb89b31a655221f1c3ffcd127191d70ee0c22d5a5ac5fb53caa0c6fa4d5",
+    "src/himmelcad/client.py": "fffcceaae8e0cfd972f39f1b4ef583596df549efdb99a8b6319f3749c5ce727f",
     "src/himmelcad/errors.py": "36c56157ef4bedb312d2280d5d465cd3f011a2876dbe70d9c862920084ad117a",
     "src/himmelcad/leases.py": "4ba4f4a0371236b1fa9b213ced5c8955fffaf70e8341d94dd247ffd7b9cc6069",
-    "src/himmelcad/models.py": "0b19181900c3c385f0d57cf765b5921c8550be92919f5a16f7ae6b65e2fccac9",
+    "src/himmelcad/models.py": "9d7b096ea734c13cb8e368348a7630bc6bae56595d1986e56ce6d2fa1beb5f4c",
     "src/himmelcad/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "schemaId": "hcad.automation-schema@1",
-  "schemaSha256": "a2a24f7a212f28123dcaa2aa1dfdd8bf03dc2376c31c3165eecc2ce60a2a5c6b"
+  "schemaSha256": "7aa0c537819a0c0d584a86264ffa1a64eafc3cefabf06480976be7eb3ebbf403"
 }

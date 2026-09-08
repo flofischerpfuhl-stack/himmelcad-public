@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -7,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { deflateSync, inflateSync } from 'node:zlib';
 
 import { chromium } from 'playwright-core';
+import { resolveCargoExecutable } from '../../../../../scripts/verification/cargo-resolver.mjs';
 import {
   browserHeadless,
   resolveChromeExecutable,
@@ -17,13 +19,25 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const viewerRoot = path.resolve(here, '../..');
 const repoRoot = path.resolve(viewerRoot, '../../..');
-const outputRoot = path.join(repoRoot, 'target/viewer-kernel-e2e');
+const cargoTargetRoot = process.env.CARGO_TARGET_DIR
+  ? path.resolve(repoRoot, process.env.CARGO_TARGET_DIR)
+  : path.join(repoRoot, 'target');
+const outputRoot = process.env.HCAD_VIEWER_E2E_OUTPUT_ROOT
+  ? path.resolve(repoRoot, process.env.HCAD_VIEWER_E2E_OUTPUT_ROOT)
+  : path.join(repoRoot, 'target/viewer-kernel-e2e');
 const wasmRoot = path.join(outputRoot, 'wasm');
 const decodeWasmRoot = path.join(outputRoot, 'decode-wasm');
 const screenshots = path.join(outputRoot, 'screenshots');
 const preparedTexturedFixtureRoot = path.join(outputRoot, 'prepared-textured-fixture');
-const cargo = toolCommand('CARGO', 'cargo');
-const bindgen = toolCommand('WASM_BINDGEN', 'wasm-bindgen');
+const cargo = resolveCargoExecutable();
+const rustToolHome = process.env.HOME ?? process.env.USERPROFILE;
+const preferredBindgen = rustToolHome
+  ? path.join(rustToolHome, '.cargo/bin/wasm-bindgen')
+  : undefined;
+const bindgen = toolCommand(
+  'WASM_BINDGEN',
+  preferredBindgen && existsSync(preferredBindgen) ? preferredBindgen : 'wasm-bindgen',
+);
 const esbuild = resolveEsbuildExecutable(repoRoot);
 const forceWebGl2 = process.env.HCAD_WEBGL2 === '1' || process.argv.includes('--webgl2');
 const forceWebGpu = process.argv.includes('--webgpu');
@@ -257,7 +271,7 @@ await run(cargo, [
   '--release',
 ]);
 await run(bindgen, [
-  path.join(repoRoot, 'target/wasm32-unknown-unknown/release/himmelcad_wasm.wasm'),
+  path.join(cargoTargetRoot, 'wasm32-unknown-unknown/release/himmelcad_wasm.wasm'),
   '--out-dir',
   wasmRoot,
   '--target',
@@ -265,7 +279,7 @@ await run(bindgen, [
   '--no-typescript',
 ]);
 await run(bindgen, [
-  path.join(repoRoot, 'target/wasm32-unknown-unknown/release/himmelcad_decode_wasm.wasm'),
+  path.join(cargoTargetRoot, 'wasm32-unknown-unknown/release/himmelcad_decode_wasm.wasm'),
   '--out-dir',
   decodeWasmRoot,
   '--target',
@@ -1386,6 +1400,21 @@ try {
     );
     await page.evaluate(() => window.__HCAD_RESET_CAMERA__?.());
   }
+
+  await page.evaluate(() => window.__HCAD_SHOW_V05_OVERLAY__?.());
+  await page.evaluate(() => window.__HCAD_CLEAR_V05_OVERLAY__?.());
+  await page.waitForTimeout(100);
+  const v05Before = await page.screenshot({
+    path: path.join(screenshots, `v05-renderer-overlay-${backendLabel}-before.png`),
+  });
+  await page.evaluate(() => window.__HCAD_SHOW_V05_OVERLAY__?.());
+  await page.waitForTimeout(100);
+  const v05After = await page.screenshot({
+    path: path.join(screenshots, `v05-renderer-overlay-${backendLabel}-after.png`),
+  });
+  assert.notDeepEqual(v05After, v05Before, 'V-05 protected overlay payload must enter the frame');
+  await page.evaluate(() => window.__HCAD_CLEAR_V05_OVERLAY__?.());
+  await page.evaluate(() => window.__HCAD_RESET_CAMERA__?.());
 
   await page.evaluate(() => window.__HCAD_FOCUS_ALIGNMENT_PREVIEW__?.());
   await page.waitForTimeout(100);

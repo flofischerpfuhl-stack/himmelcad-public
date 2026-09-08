@@ -16,10 +16,10 @@ use crate::ground_classification::{
     SmrfParams,
 };
 
-const HIERARCHY_RECORD_BYTES: usize = 22;
+pub(crate) const HIERARCHY_RECORD_BYTES: usize = 22;
 const PROXY_NODE: u8 = 2;
-const IO_CHUNK_BYTES: usize = 8 * 1024 * 1024;
-const MAX_NODE_BYTES: u64 = 512 * 1024 * 1024;
+pub(crate) const IO_CHUNK_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_NODE_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Immutable algorithm contract recorded by every manifest and derived recipe.
 pub const GROUND_ALGORITHM_ID: &str = "hcad.pointcloud.ground-progressive@1";
@@ -198,51 +198,51 @@ pub enum PointcloudGroundError {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PotreeMetadata {
-    version: String,
-    name: Option<String>,
-    points: u64,
-    hierarchy: PotreeHierarchy,
-    offset: [f64; 3],
-    scale: [f64; 3],
-    spacing: f64,
-    bounding_box: PotreeBounds,
-    encoding: String,
-    attributes: Vec<PotreeAttribute>,
+pub(crate) struct PotreeMetadata {
+    pub(crate) version: String,
+    pub(crate) name: Option<String>,
+    pub(crate) points: u64,
+    pub(crate) hierarchy: PotreeHierarchy,
+    pub(crate) offset: [f64; 3],
+    pub(crate) scale: [f64; 3],
+    pub(crate) spacing: f64,
+    pub(crate) bounding_box: PotreeBounds,
+    pub(crate) encoding: String,
+    pub(crate) attributes: Vec<PotreeAttribute>,
     #[serde(flatten)]
     extensions: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PotreeHierarchy {
-    first_chunk_size: u64,
-    step_size: u32,
-    depth: u32,
+pub(crate) struct PotreeHierarchy {
+    pub(crate) first_chunk_size: u64,
+    pub(crate) step_size: u32,
+    pub(crate) depth: u32,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
-struct PotreeBounds {
-    min: [f64; 3],
-    max: [f64; 3],
+pub(crate) struct PotreeBounds {
+    pub(crate) min: [f64; 3],
+    pub(crate) max: [f64; 3],
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PotreeAttribute {
-    name: String,
-    size: usize,
+pub(crate) struct PotreeAttribute {
+    pub(crate) name: String,
+    pub(crate) size: usize,
     #[serde(flatten)]
     extensions: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
-struct SourceNode {
-    id: String,
-    children: Vec<String>,
-    point_count: u64,
-    byte_offset: u64,
-    byte_length: u64,
+pub(crate) struct SourceNode {
+    pub(crate) id: String,
+    pub(crate) children: Vec<String>,
+    pub(crate) point_count: u64,
+    pub(crate) byte_offset: u64,
+    pub(crate) byte_length: u64,
     child_page: Option<(u64, u64)>,
 }
 
@@ -568,7 +568,7 @@ pub fn preview_ground(
     })
 }
 
-fn validate_metadata(metadata: &PotreeMetadata) -> Result<(), PointcloudGroundError> {
+pub(crate) fn validate_metadata(metadata: &PotreeMetadata) -> Result<(), PointcloudGroundError> {
     if !metadata.version.starts_with('2')
         || !matches!(
             metadata.encoding.to_ascii_uppercase().as_str(),
@@ -590,7 +590,7 @@ fn validate_metadata(metadata: &PotreeMetadata) -> Result<(), PointcloudGroundEr
     Ok(())
 }
 
-fn validate_scope(scope: &GroundScope) -> Result<(), PointcloudGroundError> {
+pub(crate) fn validate_scope(scope: &GroundScope) -> Result<(), PointcloudGroundError> {
     if scope.visible_classes.is_empty()
         || scope.placement.iter().any(|value| !value.is_finite())
         || scope.viewing_box.as_ref().is_some_and(|box_| {
@@ -608,7 +608,7 @@ fn validate_scope(scope: &GroundScope) -> Result<(), PointcloudGroundError> {
     Ok(())
 }
 
-fn attribute_offset(
+pub(crate) fn attribute_offset(
     attributes: &[PotreeAttribute],
     requested: &str,
 ) -> Result<Option<usize>, PointcloudGroundError> {
@@ -640,7 +640,7 @@ fn attribute_offset(
     Ok(None)
 }
 
-fn decode_point(
+pub(crate) fn decode_point(
     record: &[u8],
     offset: usize,
     metadata: &PotreeMetadata,
@@ -669,7 +669,7 @@ fn decode_point(
     Ok(point)
 }
 
-fn scope_contains(scope: &GroundScope, point: Point3) -> bool {
+pub(crate) fn scope_contains(scope: &GroundScope, point: Point3) -> bool {
     let world = transform_point(&scope.placement, point);
     let Some(box_) = &scope.viewing_box else {
         return true;
@@ -703,7 +703,7 @@ fn scope_contains(scope: &GroundScope, point: Point3) -> bool {
     inside == box_.keep_inside
 }
 
-fn transform_point(matrix: &[f64; 16], point: Point3) -> [f64; 3] {
+pub(crate) fn transform_point(matrix: &[f64; 16], point: Point3) -> [f64; 3] {
     [
         matrix[0] * point.x + matrix[4] * point.y + matrix[8] * point.z + matrix[12],
         matrix[1] * point.x + matrix[5] * point.y + matrix[9] * point.z + matrix[13],
@@ -720,7 +720,7 @@ fn normalized_quaternion(rotation: [f64; 4]) -> [f64; 4] {
     rotation.map(|value| value / length)
 }
 
-fn read_node(
+pub(crate) fn read_node(
     reader: &mut (impl Read + Seek),
     node: &SourceNode,
 ) -> Result<Vec<u8>, PointcloudGroundError> {
@@ -732,7 +732,7 @@ fn read_node(
     Ok(bytes)
 }
 
-fn parse_hierarchy(
+pub(crate) fn parse_hierarchy(
     metadata: &PotreeMetadata,
     bytes: &[u8],
 ) -> Result<Vec<SourceNode>, PointcloudGroundError> {
@@ -871,7 +871,7 @@ fn child_bounds(parent: PotreeBounds, child: u8) -> PotreeBounds {
     }
 }
 
-fn encode_flat_hierarchy(
+pub(crate) fn encode_flat_hierarchy(
     nodes: &[SourceNode],
     counts: &BTreeMap<String, u64>,
     stride: usize,
@@ -901,7 +901,7 @@ fn encode_flat_hierarchy(
     Ok(output)
 }
 
-fn set_classification_histogram(
+pub(crate) fn set_classification_histogram(
     metadata: &mut PotreeMetadata,
     counts: &[u64; 256],
 ) -> Result<(), PointcloudGroundError> {
@@ -938,7 +938,7 @@ fn set_classification_histogram(
     Ok(())
 }
 
-fn write_json(path: &Path, value: &impl Serialize) -> Result<(), PointcloudGroundError> {
+pub(crate) fn write_json(path: &Path, value: &impl Serialize) -> Result<(), PointcloudGroundError> {
     let mut writer = BufWriter::new(File::create(path)?);
     serde_json::to_writer(&mut writer, value)?;
     writer.flush()?;
@@ -972,7 +972,7 @@ fn describe_dataset(
     })
 }
 
-fn hash_file(path: &Path) -> Result<(ObjectHash, u64), PointcloudGroundError> {
+pub(crate) fn hash_file(path: &Path) -> Result<(ObjectHash, u64), PointcloudGroundError> {
     let mut reader = BufReader::with_capacity(IO_CHUNK_BYTES, File::open(path)?);
     let mut digest = Sha256::new();
     let mut length = 0_u64;
@@ -988,7 +988,7 @@ fn hash_file(path: &Path) -> Result<(ObjectHash, u64), PointcloudGroundError> {
     Ok((ObjectHash(hex::encode(digest.finalize())), length))
 }
 
-fn check_cancelled(cancellation: &CancellationToken) -> Result<(), PointcloudGroundError> {
+pub(crate) fn check_cancelled(cancellation: &CancellationToken) -> Result<(), PointcloudGroundError> {
     if cancellation.is_cancel_requested() {
         Err(PointcloudGroundError::Cancelled)
     } else {

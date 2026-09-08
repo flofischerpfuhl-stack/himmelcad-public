@@ -1,27 +1,36 @@
 import process from 'node:process';
+import { spawn } from 'node:child_process';
 import { createReadStream } from 'node:fs';
-import { readFile, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { cpus, freemem, loadavg, totalmem } from 'node:os';
+import { cpus, freemem, loadavg, tmpdir, totalmem } from 'node:os';
 import { dirname, resolve } from 'node:path';
 
 import { chromium } from 'playwright-core';
 
-const cdpUrl = process.env.HCAD_BUILDER_CDP_URL ?? 'http://127.0.0.1:9223';
+const args = parseArguments(process.argv.slice(2));
+const cdpUrl = args.cdp ?? process.env.HCAD_BUILDER_CDP_URL ?? 'http://127.0.0.1:9223';
 const enforceBudget = process.argv.includes('--assert');
-const metadataPath = process.env.HCAD_VIEWING_BOX_METADATA
-  ? resolve(process.env.HCAD_VIEWING_BOX_METADATA)
+const metadataPath = args.metadata ?? process.env.HCAD_VIEWING_BOX_METADATA
+  ? resolve(args.metadata ?? process.env.HCAD_VIEWING_BOX_METADATA)
   : null;
 const machineAtStart = machineSnapshot();
 const datasetServer = metadataPath ? await servePreparedDataset(dirname(metadataPath)) : null;
-const browser = await chromium.connectOverCDP(cdpUrl);
+let developmentProcess = null;
+let browser = null;
 
 try {
-  const page = browser
-    .contexts()
-    .flatMap((context) => context.pages())
-    .find((candidate) => /(?:localhost|127\.0\.0\.1):5173/.test(candidate.url()));
-  if (!page) throw new Error(`Builder page is not attached at ${cdpUrl}`);
+  if (!(await cdpAvailable(cdpUrl))) {
+    if (args.noLaunch) {
+      throw new Error(
+        `Builder CDP endpoint ${cdpUrl} is not available; omit --no-launch to start it`,
+      );
+    }
+    developmentProcess = await launchBuilder();
+    await waitForCdp(cdpUrl, developmentProcess);
+  }
+  browser = await chromium.connectOverCDP(cdpUrl);
+  const page = await waitForBuilderPage(browser, developmentProcess);
 
   await page.waitForFunction(() => {
     const target = globalThis;
@@ -307,7 +316,9 @@ try {
   const report = {
     measuredAt: new Date().toISOString(),
     machine: {
-      state: 'idle dedicated measurement; no concurrent build or test command',
+      state:
+        process.env.HCAD_VIEWING_BOX_MACHINE_STATE ??
+        'not declared; load snapshots are authoritative and asserted runs require an idle host',
       logicalCpus: cpus().length,
       start: machineAtStart,
       end: machineSnapshot(),
@@ -399,9 +410,138 @@ try {
   }
 } finally {
   await datasetServer?.close();
-  // For connectOverCDP(), Playwright closes its transport and disconnects;
-  // the separately launched Electron process remains alive for inspection.
-  await browser.close();
+  if (developmentProcess !== null) await stopBuilder(developmentProcess);
+  // connectOverCDP() owns only its transport. Auto-launched Builder is stopped
+  // above; --no-launch deliberately leaves the caller-owned app running.
+  await browser?.close().catch(() => undefined);
+}
+
+function parseArguments(values) {
+  const parsed = { cdp: null, metadata: null, noLaunch: false };
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (value === '--assert') continue;
+    if (value === '--no-launch') parsed.noLaunch = true;
+    else if (value === '--cdp') parsed.cdp = requiredValue(values, ++index, value);
+    else if (value === '--metadata') parsed.metadata = requiredValue(values, ++index, value);
+    else if (value === '--help') {
+      console.log(`Usage: node scripts/benchmark-builder-viewing-box.mjs [options]
+
+  --metadata <metadata.json>  Prepared Potree 2 dataset; enables VB-D8
+  --cdp <url>                 Builder CDP endpoint (default: http://127.0.0.1:9223)
+  --no-launch                 Require an already running Builder
+  --assert                    Enforce VB-D7, VB-D8, grip-stability, and P5 gates`);
+      process.exit(0);
+    } else throw new Error(`Unknown argument: ${value}`);
+  }
+  return parsed;
+}
+
+function requiredValue(values, index, option) {
+  const value = values[index];
+  if (value === undefined || value.startsWith('--')) throw new Error(`${option} needs a value`);
+  return value;
+}
+
+async function launchBuilder() {
+  const userDataDirectory = await mkdtemp(resolve(tmpdir(), 'hcad-viewing-box-'));
+  const child = spawn('pnpm', ['--filter', '@himmelcad/builder', 'dev'], {
+    cwd: resolve(import.meta.dirname, '..'),
+    env: {
+      ...process.env,
+      HIMMELCAD_GPU: process.env.HIMMELCAD_GPU?.trim() || 'nvidia',
+      HIMMELCAD_VITE_HMR: '0',
+      HIMMELCAD_REMOTE_DEBUGGING_PORT: '9223',
+      HIMMELCAD_ELECTRON_USER_DATA_DIR: userDataDirectory,
+    },
+    detached: process.platform !== 'win32',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  child.userDataDirectory = userDataDirectory;
+  child.outputTail = '';
+  const remember = (chunk) => {
+    child.outputTail = `${child.outputTail}${String(chunk)}`.slice(-12_000);
+  };
+  child.stdout.on('data', remember);
+  child.stderr.on('data', remember);
+  return child;
+}
+
+async function cdpAvailable(url) {
+  try {
+    const response = await fetch(`${url}/json/version`, { signal: AbortSignal.timeout(1_000) });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForCdp(url, child) {
+  const deadline = Date.now() + 900_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(
+        `Builder exited before CDP became ready (code ${child.exitCode}, signal ${child.signalCode}): ${child.outputTail}`,
+      );
+    }
+    if (await cdpAvailable(url)) return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
+  }
+  throw new Error(`Builder did not expose ${url} within 900 seconds: ${child.outputTail}`);
+}
+
+async function waitForBuilderPage(connectedBrowser, child) {
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    if (child !== null && (child.exitCode !== null || child.signalCode !== null)) {
+      throw new Error(
+        `Builder exited before its renderer page attached (code ${child.exitCode}, signal ${child.signalCode}): ${child.outputTail}`,
+      );
+    }
+    const page = connectedBrowser
+      .contexts()
+      .flatMap((context) => context.pages())
+      .find((candidate) => /(?:localhost|127\.0\.0\.1):5173/.test(candidate.url()));
+    if (page) return page;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
+  }
+  const urls = connectedBrowser
+    .contexts()
+    .flatMap((context) => context.pages())
+    .map((candidate) => candidate.url());
+  const output = child?.outputTail ? ` Builder output: ${child.outputTail}` : '';
+  throw new Error(
+    `Builder renderer page was not attached within 120 seconds (pages: ${JSON.stringify(urls)}).${output}`,
+  );
+}
+
+async function stopBuilder(child) {
+  try {
+    if (process.platform === 'win32') {
+      if (child.exitCode === null) child.kill('SIGTERM');
+    } else if (child.pid !== undefined) {
+      process.kill(-child.pid, 'SIGTERM');
+    }
+  } catch (error) {
+    if (error?.code !== 'ESRCH') throw error;
+  }
+  if (child.exitCode === null) {
+    await Promise.race([
+      new Promise((resolvePromise) => child.once('exit', resolvePromise)),
+      new Promise((resolvePromise) => setTimeout(resolvePromise, 5_000)),
+    ]);
+  }
+  if (process.platform !== 'win32' && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, 0);
+      process.kill(-child.pid, 'SIGKILL');
+    } catch (error) {
+      if (error?.code !== 'ESRCH') throw error;
+    }
+  }
+  if (child.userDataDirectory) {
+    await rm(child.userDataDirectory, { recursive: true, force: true });
+  }
 }
 
 async function servePreparedDataset(root) {

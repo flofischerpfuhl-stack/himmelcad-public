@@ -115,8 +115,15 @@ textarea {
   grid-template-columns: 132px minmax(0, 1fr);
 }
 
-.gallerySection[data-gallery-section='import-surfaces'] {
+.gallerySection[data-gallery-section='import-surfaces'],
+.gallerySection[data-gallery-section='file-surfaces'] {
   grid-column: 1 / -1;
+}
+
+.fileSurfacesFixture {
+  display: grid;
+  width: 100%;
+  gap: 16px;
 }
 
 .stateLabel {
@@ -563,16 +570,25 @@ textarea {
 
 .gallerySegmentMetrics {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
   gap: var(--hc-space-2);
   color: var(--hc-text-secondary);
   font-size: 12px;
 }
 
 .gallerySegmentMetrics span {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--hc-space-2);
+  padding: var(--hc-space-2);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-elevated);
+}
+
+.gallerySegmentMetrics strong {
+  text-align: right;
+  white-space: nowrap;
 }
 
 .data-force-hover [data-gallery-active],

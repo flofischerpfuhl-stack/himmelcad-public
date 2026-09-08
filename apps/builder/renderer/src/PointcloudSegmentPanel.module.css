@@ -1,0 +1,72 @@
+.panel,
+.section {
+  display: grid;
+  gap: var(--hc-space-2);
+  min-width: 0;
+}
+
+.section {
+  padding-bottom: var(--hc-space-3);
+  border-bottom: 1px solid var(--hc-border-subtle);
+}
+
+.heading,
+.metrics dt {
+  color: var(--hc-fg-muted);
+  font-size: 12px;
+}
+
+.kindButtons,
+.actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--hc-space-2);
+}
+
+.actions button {
+  justify-content: center;
+}
+
+.help {
+  margin: 0;
+  color: var(--hc-fg-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: var(--hc-space-2);
+  margin: 0;
+}
+
+.metrics div {
+  display: grid;
+  gap: 2px;
+  padding: var(--hc-space-2);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-elevated);
+}
+
+.metrics dd {
+  margin: 0;
+  color: var(--hc-fg-strong);
+  font-family: var(--hc-font-mono);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.status {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--hc-space-2);
+  color: var(--hc-fg-muted);
+  font-size: 12px;
+}
+
+.error {
+  color: var(--hc-error-fg);
+  font-size: 12px;
+}

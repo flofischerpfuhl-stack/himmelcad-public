@@ -6,8 +6,15 @@ import {
   measurementValue,
   type MeasurementToolSnapshot,
 } from '@himmelcad/app';
-import { MeasurementGraphics, type MeasurementGraphicItem } from '@himmelcad/ui';
-import type { KernelWorldCamera, KernelWorldPoint } from '@himmelcad/viewer/kernel';
+import {
+  cssColorToLinearRgba,
+  EMPTY_RENDERER_OVERLAY,
+  overlayAnchorSquare,
+  overlayMidpointPixelOffset,
+  type KernelRendererOverlayPayload,
+  type KernelWorldCamera,
+  type KernelWorldPoint,
+} from '@himmelcad/viewer/kernel';
 
 import type { BuilderKernelViewportHandle } from './BuilderKernelViewport.js';
 import type { BuilderMeasurementSummary } from './project.js';
@@ -23,18 +30,17 @@ export interface MeasurementViewportOverlayProps {
 }
 
 /**
- * View-local DOM projection for V-05 glyphs. It samples the authoritative
- * world camera once per animation frame, so the labels cannot trail the
- * presented camera/cursor state by more than one frame.
+ * Renderer-native V-05 projection. The hidden host supplies extent/theme
+ * tokens; every visible line, square and chip is submitted in protected lanes.
  */
 export function MeasurementViewportOverlay({
   viewport,
   measurements,
   tool,
   selected,
-  onSelect,
 }: MeasurementViewportOverlayProps): JSX.Element {
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const cameraKeyRef = useRef('');
   const [camera, setCamera] = useState<KernelWorldCamera | null>(
     () => viewport?.worldCamera() ?? null,
   );
@@ -55,7 +61,12 @@ export function MeasurementViewportOverlay({
     let cancelled = false;
     const sample = (): void => {
       if (cancelled) return;
-      setCamera(viewport?.worldCamera() ?? null);
+      const next = viewport?.worldCamera() ?? null;
+      const nextKey = JSON.stringify(next);
+      if (cameraKeyRef.current !== nextKey) {
+        cameraKeyRef.current = nextKey;
+        setCamera(next);
+      }
       frame = window.requestAnimationFrame(sample);
     };
     frame = window.requestAnimationFrame(sample);
@@ -65,73 +76,113 @@ export function MeasurementViewportOverlay({
     };
   }, [viewport]);
 
-  const items = useMemo(() => {
-    if (!camera || size.width === 0 || size.height === 0) return [];
-    const committed = measurements.flatMap((item): MeasurementGraphicItem[] => {
-      if (!item.measurement.visible) return [];
-      const anchors = item.measurement.anchors.map(measurementAnchorPosition).flatMap((point) => {
-        if (point.z === null) return [];
-        const projected = projectWorldPoint(
-          camera,
-          { x: point.x, y: point.y, z: point.z },
-          size.width,
-          size.height,
-        );
-        return projected ? [projected] : [];
+  const payload = useMemo<KernelRendererOverlayPayload>(() => {
+    if (!camera || size.width === 0 || size.height === 0) return EMPTY_RENDERER_OVERLAY;
+    const computed = rootRef.current ? getComputedStyle(rootRef.current) : null;
+    const color = (token: string, fallback: string) =>
+      cssColorToLinearRgba(computed?.getPropertyValue(token).trim() || fallback);
+    const support = color('--hc-geometry-support', '#43b9ff');
+    const selection = color('--hc-geometry-selection', '#ff9f1c');
+    const foreground = color('--hc-fg-strong', '#f5f7fa');
+    const background = color('--hc-island-high', '#20242bfa');
+    const halo = color('--hc-geometry-support-halo', '#101114');
+    const lines: KernelRendererOverlayPayload['lines'][number][] = [];
+    const quads: KernelRendererOverlayPayload['quads'][number][] = [];
+    const labels: KernelRendererOverlayPayload['labels'][number][] = [];
+    const append = (
+      id: string,
+      anchors: readonly KernelWorldPoint[],
+      label: string,
+      selected: boolean,
+      preview = false,
+    ): void => {
+      const projected = anchors.map((point) =>
+        projectWorldPoint(camera, point, size.width, size.height),
+      );
+      if (projected.some((point) => point === null)) return;
+      const screen = projected as { readonly x: number; readonly y: number }[];
+      const active = selected ? selection : support;
+      if (anchors.length > 1) {
+        lines.push({ id: `${id}:line`, points: anchors, widthPixels: 1.5, color: active });
+      }
+      anchors.forEach((anchor, index) => {
+        quads.push(overlayAnchorSquare(`${id}:anchor:${index}`, anchor, active, 6));
       });
-      if (anchors.length !== item.measurement.anchors.length) return [];
-      return [
-        {
-          id: item.entityId,
-          anchors,
-          label: measurementLabel(
-            measurementValue(
-              item.measurement.measurementKind,
-              item.measurement.metric,
-              item.measurement.anchors,
-            ),
-            DISPLAY,
-            pixelsPerMetre(camera, size.height),
-            6,
+      const first = screen[0]!;
+      const last = screen.at(-1)!;
+      labels.push({
+        id: `${id}:label`,
+        anchor: anchors[0]!,
+        pixelOffset: overlayMidpointPixelOffset([first.x, first.y], [last.x, last.y]),
+        text: label,
+        heightPixels: 12,
+        textColor: preview ? support : foreground,
+        backgroundColor: background,
+        borderColor: selected ? selection : halo,
+      });
+    };
+    for (const item of measurements) {
+      if (!item.measurement.visible) continue;
+      const anchors = item.measurement.anchors.flatMap((anchor) => {
+        const point = measurementAnchorPosition(anchor);
+        return point.z === null ? [] : [{ x: point.x, y: point.y, z: point.z }];
+      });
+      if (anchors.length !== item.measurement.anchors.length) continue;
+      append(
+        item.entityId,
+        anchors,
+        measurementLabel(
+          measurementValue(
+            item.measurement.measurementKind,
+            item.measurement.metric,
+            item.measurement.anchors,
           ),
-          selected: selected.has(item.entityId),
-        },
-      ];
-    });
+          DISPLAY,
+          pixelsPerMetre(camera, size.height),
+          6,
+        ),
+        selected.has(item.entityId),
+      );
+    }
     const pendingAnchors = tool.preview ? [...tool.anchors, tool.preview] : [...tool.anchors];
-    const previewAnchors = pendingAnchors.flatMap((anchor) => {
+    const previewAnchors: KernelWorldPoint[] = pendingAnchors.flatMap((anchor) => {
       const point = measurementAnchorPosition(anchor);
       if (point.z === null) return [];
-      const projected = projectWorldPoint(
-        camera,
-        { x: point.x, y: point.y, z: point.z },
-        size.width,
-        size.height,
-      );
-      return projected ? [projected] : [];
+      return [{ x: point.x, y: point.y, z: point.z }];
     });
     if (
-      !tool.armed ||
-      previewAnchors.length !== pendingAnchors.length ||
-      previewAnchors.length === 0
+      tool.armed &&
+      previewAnchors.length === pendingAnchors.length &&
+      previewAnchors.length > 0
     ) {
-      return committed;
+      append(
+        'measurement-preview',
+        previewAnchors,
+        measurementLabel(tool.liveValue, DISPLAY, pixelsPerMetre(camera, size.height), 6),
+        false,
+        true,
+      );
     }
-    return [
-      ...committed,
-      {
-        id: 'measurement-preview',
-        anchors: previewAnchors,
-        label: measurementLabel(tool.liveValue, DISPLAY, pixelsPerMetre(camera, size.height), 6),
-        preview: true,
-      },
-    ];
+    return { lines, quads, labels };
   }, [camera, measurements, selected, size.height, size.width, tool]);
 
+  useEffect(() => {
+    viewport?.setRendererOverlayPayload('measurements', payload);
+  }, [payload, viewport]);
+
+  useEffect(
+    () => () => {
+      viewport?.setRendererOverlayPayload('measurements', EMPTY_RENDERER_OVERLAY);
+    },
+    [viewport],
+  );
+
   return (
-    <div ref={rootRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-      <MeasurementGraphics items={items} onSelect={onSelect} />
-    </div>
+    <div
+      ref={rootRef}
+      aria-label="Measurement graphics rendered in the viewport"
+      style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
+    />
   );
 }
 

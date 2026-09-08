@@ -28,7 +28,9 @@ export type KernelDeadlineReasonCode =
   | 'budget:lane-upload'
   | 'budget:lane-decode'
   | 'decode:backlog'
-  | 'upload:backlog';
+  | 'upload:backlog'
+  | 'effect:edl'
+  | 'quality:tier';
 
 export interface KernelFramePrimitiveCounts {
   readonly points: number;
@@ -262,7 +264,10 @@ export class KernelFrameDiagnostics {
   }
 
   /** Minimal passive-observer projection for the 4 Hz HUD. */
-  hudWindow(startedAtMs: number, endedAtMs: number): {
+  hudWindow(
+    startedAtMs: number,
+    endedAtMs: number,
+  ): {
     readonly presentedFrameIntervalMs: KernelDistribution | null;
     readonly lastFrame: KernelPresentedFrameSample | null;
   } {

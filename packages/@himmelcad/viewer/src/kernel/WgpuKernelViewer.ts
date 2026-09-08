@@ -25,6 +25,7 @@ import {
   type KernelClipCapFetcher,
   type KernelClipCapSource,
 } from './KernelClipCapCoordinator.js';
+import type { KernelRendererOverlayPayload } from './KernelRendererOverlay.js';
 import type { KernelSectionTopologyPartitionLocation } from './KernelSectionTopologyEvaluation.js';
 
 /** Typed boundary to the wasm-bindgen output of `himmelcad-wasm`. */
@@ -36,6 +37,13 @@ export interface WasmViewerBinding {
   set_floating_origin(x: number, y: number, z: number): void;
   set_clear_color(r: number, g: number, b: number, a: number): void;
   set_point_size(pointSize: number): void;
+  set_entity_point_size_multiplier?(entityId: string, multiplier: number): number;
+  set_quality_effects_json?(stateJson: string): string;
+  set_renderer_overlay_payload_json?(
+    layerId: string,
+    atlasHash: string,
+    payloadJson: string,
+  ): number;
   canonical_entity_version_hash_json(entityJson: string): string;
   geometry_object_content_hash_json(geometryJson: string): string;
   block_definition_content_hash_json(definitionJson: string): string;
@@ -672,6 +680,8 @@ export interface KernelPickMetadata {
 export interface KernelPotreeContentMetadata extends KernelCanonicalStreamMetadata {
   readonly bounds: KernelBoundingVolume;
   readonly pointCount: number;
+  /** V-02 representative spacing for this exact resident node. */
+  readonly pointSpacing: number;
 }
 
 export interface KernelGaussianSplatContentMetadata extends KernelCanonicalStreamMetadata {
@@ -940,6 +950,12 @@ export interface KernelRuntimeQualityState {
   /** Present on V-03 kernels; omitted only by legacy fixtures/bindings. */
   readonly tier?: 'full' | 'balanced' | 'coarse' | 'minimum';
   readonly budgetScale?: number;
+}
+
+export interface KernelQualityEffects {
+  readonly tier: 'off' | 'twoTap' | 'fourTap';
+  readonly radiusPixels: number;
+  readonly strength: number;
 }
 
 export type KernelRuntimeQualityAdjustment = 'unchanged' | 'reduced' | 'increased';
@@ -1563,6 +1579,11 @@ export class WgpuKernelViewer {
     { readonly style: KernelRenderStyle; readonly exaggerationDatum: number }
   >();
   private readonly entityVisibilityReplay = new Map<string, boolean>();
+  private readonly entityPointSizeReplay = new Map<string, number>();
+  private readonly rendererOverlayReplay = new Map<
+    string,
+    { readonly atlasHash: string; readonly payload: KernelRendererOverlayPayload }
+  >();
   private readonly entityInteractionReplay = new Map<string, KernelEntityInteractionState>();
   private readonly sectionReplay = new Map<string, KernelSectionRequest>();
   private cameraReplay: ((target: WgpuKernelViewer) => void) | null = null;
@@ -1719,6 +1740,69 @@ export class WgpuKernelViewer {
     this.pointSizeReplay = pointSize;
   }
 
+  /** Sets one cloud's multiplier over its spacing-derived adaptive diameter. */
+  setEntityPointSizeMultiplier(entityId: string, multiplier: number): number {
+    this.assertAlive();
+    if (
+      entityId.length === 0 ||
+      !Number.isFinite(multiplier) ||
+      multiplier < 0.25 ||
+      multiplier > 8
+    ) {
+      throw new RangeError('entity point-size multiplier must be between 0.25 and 8');
+    }
+    const setter = this.binding.set_entity_point_size_multiplier;
+    if (!setter) throw new Error('loaded viewer kernel does not expose per-entity point size');
+    const updated = setter.call(this.binding, entityId, multiplier);
+    this.entityPointSizeReplay.set(entityId, multiplier);
+    return updated;
+  }
+
+  /** Resolves tiered EDL in Rust from the V-03 class/tier and motion state. */
+  setQualityEffects(
+    hardwareClass: 'I' | 'W' | 'D',
+    qualityTier: 'full' | 'balanced' | 'coarse' | 'minimum',
+    interacting: boolean,
+    pointContentVisible: boolean,
+  ): KernelQualityEffects {
+    this.assertAlive();
+    const setter = this.binding.set_quality_effects_json;
+    if (!setter) return { tier: 'off', radiusPixels: 1, strength: 0 };
+    const value: unknown = JSON.parse(
+      setter.call(
+        this.binding,
+        JSON.stringify({ hardwareClass, qualityTier, interacting, pointContentVisible }),
+      ),
+    );
+    if (
+      !isRecord(value) ||
+      !['off', 'twoTap', 'fourTap'].includes(String(value.tier)) ||
+      typeof value.radiusPixels !== 'number' ||
+      typeof value.strength !== 'number'
+    ) {
+      throw new TypeError('quality effect state is malformed');
+    }
+    return value as unknown as KernelQualityEffects;
+  }
+
+  /** Atomically replaces fresh protected overlay draw payloads. */
+  setRendererOverlayPayload(
+    layerId: string,
+    atlasHash: string,
+    payload: KernelRendererOverlayPayload,
+  ): number {
+    this.assertAlive();
+    const setter = this.binding.set_renderer_overlay_payload_json;
+    if (!setter) throw new Error('loaded viewer kernel does not expose renderer overlays');
+    const count = setter.call(this.binding, layerId, atlasHash, JSON.stringify(payload));
+    if (payload.lines.length === 0 && payload.quads.length === 0 && payload.labels.length === 0) {
+      this.rendererOverlayReplay.delete(layerId);
+    } else {
+      this.rendererOverlayReplay.set(layerId, { atlasHash, payload });
+    }
+    return count;
+  }
+
   /** Recreates immutable non-streaming resources before canonical scene replay. */
   replayDefinitionsInto(target: WgpuKernelViewer): void {
     this.assertAlive();
@@ -1738,6 +1822,9 @@ export class WgpuKernelViewer {
     for (const [entityId, state] of this.entityStyleReplay) {
       target.setEntityStyle(entityId, state.style, state.exaggerationDatum);
     }
+    for (const [entityId, multiplier] of this.entityPointSizeReplay) {
+      target.setEntityPointSizeMultiplier(entityId, multiplier);
+    }
     for (const [entityId, visible] of this.entityVisibilityReplay) {
       target.setEntityVisibility(entityId, visible);
     }
@@ -1748,6 +1835,9 @@ export class WgpuKernelViewer {
       target.setRasterAnalysisView(this.rasterAnalysisReplay);
     }
     for (const request of this.sectionReplay.values()) target.upsertSection(request);
+    for (const [layerId, overlay] of this.rendererOverlayReplay) {
+      target.setRendererOverlayPayload(layerId, overlay.atlasHash, overlay.payload);
+    }
   }
 
   /** Atomically publishes complete canonical entity envelopes and selected representations. */
@@ -2785,6 +2875,7 @@ export class WgpuKernelViewer {
     for (const entityId of retiredEntities) {
       this.entityStyleReplay.delete(entityId);
       this.entityVisibilityReplay.delete(entityId);
+      this.entityPointSizeReplay.delete(entityId);
       this.entityInteractionReplay.delete(entityId);
     }
     const nextTopology = new Map(this.preparedTopologySources);

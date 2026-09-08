@@ -1218,6 +1218,170 @@
         "host": "renderer"
       }
     },
+    "pointcloud.sample": {
+      "capability": "document.write",
+      "request": "PointCloudSampleRequest",
+      "response": "PointCloudSampleResult",
+      "command": {
+        "label": "Sample…",
+        "products": ["builder"],
+        "kind": "command",
+        "shortcut": null,
+        "enablement": "cloudSelection",
+        "surfaces": {
+          "ribbon": true,
+          "contextMenu": true,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
+        "group": "entity-specific",
+        "ownerSpec": "Point cloud PC-D8; MASTER-PLAN row 18; owner: pointcloud",
+        "host": "renderer",
+        "entityKinds": ["PointCloud"],
+        "allowMultiSelect": false
+      }
+    },
+    "pointcloud.rasterize": {
+      "capability": "document.write",
+      "request": "PointCloudRasterizeRequest",
+      "response": "PointCloudRasterizeResult",
+      "command": {
+        "label": "Rasterize mean height…",
+        "products": ["builder"],
+        "kind": "command",
+        "shortcut": null,
+        "enablement": "cloudSelection",
+        "surfaces": {
+          "ribbon": true,
+          "contextMenu": true,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
+        "group": "entity-specific",
+        "ownerSpec": "Point cloud PC-D17; Mesh MT-D26 grid-source role; MASTER-PLAN row 18; owner: mesh-terrain",
+        "host": "renderer",
+        "entityKinds": ["PointCloud"],
+        "allowMultiSelect": false
+      }
+    },
+    "pointcloud.fence.begin": {
+      "capability": "view.write",
+      "request": "PointCloudFenceRequest",
+      "response": "AdmissionOperationResult",
+      "command": {
+        "label": "Segment",
+        "products": ["builder"],
+        "kind": "command",
+        "shortcut": null,
+        "enablement": "cloudSelection",
+        "surfaces": {
+          "ribbon": true,
+          "contextMenu": true,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
+        "group": "entity-specific",
+        "ownerSpec": "Point cloud PC-D1–PC-D6; S21; owner: pointcloud",
+        "host": "renderer",
+        "entityKinds": ["PointCloud"],
+        "allowMultiSelect": true
+      }
+    },
+    "pointcloud.fence.commit": {
+      "capability": "view.write",
+      "request": "PointCloudFenceCommitRequest",
+      "response": "AdmissionOperationResult",
+      "command": {
+        "label": "Close fence",
+        "products": ["builder"],
+        "kind": "command",
+        "shortcut": null,
+        "enablement": "hasProject",
+        "surfaces": {
+          "ribbon": false,
+          "contextMenu": false,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
+        "group": "entity-specific",
+        "ownerSpec": "Point cloud PC-D5; owner: pointcloud",
+        "host": "renderer"
+      }
+    },
+    "pointcloud.fence.cancel": {
+      "capability": "view.write",
+      "request": "AdmissionOperationRequest",
+      "response": "AdmissionOperationResult",
+      "command": {
+        "label": "Clear fence",
+        "products": ["builder"],
+        "kind": "command",
+        "shortcut": null,
+        "enablement": "hasProject",
+        "surfaces": {
+          "ribbon": false,
+          "contextMenu": false,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
+        "group": "entity-specific",
+        "ownerSpec": "Point cloud PC-D5; owner: pointcloud",
+        "host": "renderer"
+      }
+    },
+    "pointcloud.segment.keep_inside": {
+      "capability": "document.write",
+      "request": "PointCloudSegmentRequest",
+      "response": "AdmissionOperationResult",
+      "command": {
+        "label": "Keep inside",
+        "products": ["builder"],
+        "kind": "command",
+        "shortcut": null,
+        "enablement": "cloudSelection",
+        "surfaces": {
+          "ribbon": false,
+          "contextMenu": true,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
+        "group": "entity-specific",
+        "ownerSpec": "Point cloud PC-D1–PC-D6; S21; owner: pointcloud",
+        "host": "renderer",
+        "entityKinds": ["PointCloud"],
+        "allowMultiSelect": true
+      }
+    },
+    "pointcloud.segment.remove_inside": {
+      "capability": "document.write",
+      "request": "PointCloudSegmentRequest",
+      "response": "AdmissionOperationResult",
+      "command": {
+        "label": "Remove inside",
+        "products": ["builder"],
+        "kind": "command",
+        "shortcut": null,
+        "enablement": "cloudSelection",
+        "surfaces": {
+          "ribbon": false,
+          "contextMenu": true,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
+        "group": "entity-specific",
+        "ownerSpec": "Point cloud PC-D1–PC-D6; S21; owner: pointcloud",
+        "host": "renderer",
+        "entityKinds": ["PointCloud"],
+        "allowMultiSelect": true
+      }
+    },
     "project.flush": {
       "capability": "document.write",
       "request": "EmptyRequest",
@@ -2103,6 +2267,214 @@
         "payload": { "$ref": "#/$defs/PointCloudGroundPreviewResultPayload" }
       }
     },
+    "PointCloudSampleParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "spacingM", "percentage"],
+      "properties": {
+        "method": { "type": "string", "enum": ["distance", "grid", "random"] },
+        "spacingM": { "type": "number", "exclusiveMinimum": 0, "maximum": 10000 },
+        "percentage": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
+        "originX": { "type": "number" },
+        "originY": { "type": "number" }
+      }
+    },
+    "PointCloudSampleRequestPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceEntityId", "parameters"],
+      "properties": {
+        "operationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "sourceEntityId": { "type": "string", "minLength": 1 },
+        "outputName": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "parameters": { "$ref": "#/$defs/PointCloudSampleParameters" }
+      }
+    },
+    "PointCloudSampleRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaId", "payload"],
+      "properties": {
+        "schemaId": { "const": "hcad.pointcloud.sample-request@1" },
+        "payload": { "$ref": "#/$defs/PointCloudSampleRequestPayload" }
+      }
+    },
+    "PointCloudSampleSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourcePoints",
+        "scopedPoints",
+        "sampledPoints",
+        "method",
+        "stableTieRule",
+        "selectionSha256"
+      ],
+      "properties": {
+        "sourcePoints": { "type": "integer", "minimum": 1, "format": "uint64" },
+        "scopedPoints": { "type": "integer", "minimum": 1, "format": "uint64" },
+        "sampledPoints": { "type": "integer", "minimum": 1, "format": "uint64" },
+        "method": { "type": "string", "enum": ["distance", "grid", "random"] },
+        "spacingM": { "type": "number", "exclusiveMinimum": 0 },
+        "percentage": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
+        "stableTieRule": { "type": "string", "minLength": 1 },
+        "selectionSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "PointCloudDerivedEntityResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entityId", "revision", "datasetId", "entityType"],
+      "properties": {
+        "entityId": { "type": "string", "minLength": 1 },
+        "revision": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "datasetId": { "type": "string", "minLength": 1 },
+        "entityType": { "const": "PointCloud" }
+      }
+    },
+    "PointCloudSampleResultPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithmId", "source", "sampledCloud", "summary", "journalEntry"],
+      "properties": {
+        "algorithmId": { "const": "hcad.pointcloud.sample@1" },
+        "source": { "$ref": "#/$defs/EntityVersionRef" },
+        "sampledCloud": { "$ref": "#/$defs/PointCloudDerivedEntityResult" },
+        "summary": { "$ref": "#/$defs/PointCloudSampleSummary" },
+        "journalEntry": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "PointCloudSampleResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaId", "payload"],
+      "properties": {
+        "schemaId": { "const": "hcad.pointcloud.sample-result@1" },
+        "payload": { "$ref": "#/$defs/PointCloudSampleResultPayload" }
+      }
+    },
+    "PointCloudRasterizeParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cellSizeM", "aggregation", "emptyCellPolicy"],
+      "properties": {
+        "cellSizeM": { "type": "number", "exclusiveMinimum": 0, "maximum": 100000 },
+        "originX": { "type": "number" },
+        "originY": { "type": "number" },
+        "aggregation": { "type": "string", "enum": ["mean", "min", "max", "count"] },
+        "emptyCellPolicy": { "type": "string", "enum": ["no_data", "fill"] },
+        "emptyCellValue": { "type": "number" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "emptyCellPolicy": { "const": "fill" } } },
+          "then": { "required": ["emptyCellValue"] }
+        }
+      ]
+    },
+    "PointCloudRasterizeRequestPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceEntityId", "parameters"],
+      "properties": {
+        "operationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "sourceEntityId": { "type": "string", "minLength": 1 },
+        "outputName": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "parameters": { "$ref": "#/$defs/PointCloudRasterizeParameters" }
+      }
+    },
+    "PointCloudRasterizeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaId", "payload"],
+      "properties": {
+        "schemaId": { "const": "hcad.pointcloud.rasterize-request@1" },
+        "payload": { "$ref": "#/$defs/PointCloudRasterizeRequestPayload" }
+      }
+    },
+    "PointCloudRasterizeSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourcePoints",
+        "scopedPoints",
+        "width",
+        "height",
+        "cellSizeM",
+        "origin",
+        "aggregation",
+        "emptyCellPolicy",
+        "emptyCells",
+        "emptyRatio",
+        "cellSha256",
+        "meshEligible"
+      ],
+      "properties": {
+        "sourcePoints": { "type": "integer", "minimum": 1, "format": "uint64" },
+        "scopedPoints": { "type": "integer", "minimum": 1, "format": "uint64" },
+        "width": { "type": "integer", "minimum": 1, "format": "uint32" },
+        "height": { "type": "integer", "minimum": 1, "format": "uint32" },
+        "cellSizeM": { "type": "number", "exclusiveMinimum": 0 },
+        "origin": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "aggregation": { "type": "string", "enum": ["mean", "min", "max", "count"] },
+        "emptyCellPolicy": { "type": "object", "additionalProperties": true },
+        "emptyCells": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "emptyRatio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "cellSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "meshEligible": { "type": "boolean" }
+      }
+    },
+    "PointCloudGridEntityResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entityId", "revision", "datasetId", "entityType"],
+      "properties": {
+        "entityId": { "type": "string", "minLength": 1 },
+        "revision": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "datasetId": { "type": "string", "minLength": 1 },
+        "entityType": {
+          "type": "string",
+          "enum": ["hcad.elevation-surface@1", "hcad.raster-image@1"]
+        },
+        "meshSourceRole": { "type": "string", "enum": ["grid_source"] }
+      }
+    },
+    "PointCloudRasterizeResultPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithmId", "source", "grid", "summary", "journalEntry"],
+      "properties": {
+        "algorithmId": { "const": "hcad.pointcloud.rasterize-height@1" },
+        "source": { "$ref": "#/$defs/EntityVersionRef" },
+        "grid": { "$ref": "#/$defs/PointCloudGridEntityResult" },
+        "summary": { "$ref": "#/$defs/PointCloudRasterizeSummary" },
+        "journalEntry": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "PointCloudRasterizeResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaId", "payload"],
+      "properties": {
+        "schemaId": { "const": "hcad.pointcloud.rasterize-result@1" },
+        "payload": { "$ref": "#/$defs/PointCloudRasterizeResultPayload" }
+      }
+    },
     "PointCloudDisplayStyle": {
       "type": "object",
       "additionalProperties": false,
@@ -2203,6 +2575,120 @@
         "effectiveBudgets": { "type": "object" },
         "currentReasons": { "type": "array", "items": { "type": "string" } },
         "lastAdjustment": { "type": "string", "enum": ["unchanged", "reduced", "increased"] }
+      }
+    },
+    "PointCloudFencePoint": {
+      "type": "array",
+      "prefixItems": [{ "type": "number" }, { "type": "number" }, { "type": "number" }],
+      "items": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "PointCloudFencePolygon": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/PointCloudFencePoint" },
+      "minItems": 3,
+      "maxItems": 4096
+    },
+    "PointCloudFenceVolume": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "polygon", "direction"],
+          "properties": {
+            "kind": { "const": "prism" },
+            "polygon": { "$ref": "#/$defs/PointCloudFencePolygon" },
+            "direction": { "$ref": "#/$defs/PointCloudFencePoint" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "apex", "polygon"],
+          "properties": {
+            "kind": { "const": "frustum" },
+            "apex": { "$ref": "#/$defs/PointCloudFencePoint" },
+            "polygon": { "$ref": "#/$defs/PointCloudFencePolygon" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "center", "halfExtents", "rotation"],
+          "properties": {
+            "kind": { "const": "box" },
+            "center": { "$ref": "#/$defs/PointCloudFencePoint" },
+            "halfExtents": { "$ref": "#/$defs/PointCloudFencePoint" },
+            "rotation": {
+              "type": "array",
+              "items": { "type": "number" },
+              "minItems": 4,
+              "maxItems": 4
+            }
+          }
+        }
+      ]
+    },
+    "PointCloudFencePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string", "enum": ["polygon", "rectangle"] },
+        "operationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "entityIds": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "polygon": { "$ref": "#/$defs/PointCloudFencePolygon" },
+        "volume": { "$ref": "#/$defs/PointCloudFenceVolume" }
+      }
+    },
+    "PointCloudFenceRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaId", "payload"],
+      "properties": {
+        "schemaId": { "const": "hcad.pointcloud.fence-request@1" },
+        "payload": { "$ref": "#/$defs/PointCloudFencePayload" }
+      }
+    },
+    "PointCloudFenceCommitRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaId", "payload"],
+      "properties": {
+        "schemaId": { "const": "hcad.pointcloud.fence-commit-request@1" },
+        "payload": {
+          "allOf": [
+            { "$ref": "#/$defs/PointCloudFencePayload" },
+            { "anyOf": [{ "required": ["polygon"] }, { "required": ["volume"] }] }
+          ]
+        }
+      }
+    },
+    "PointCloudSegmentRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaId", "payload"],
+      "properties": {
+        "schemaId": { "const": "hcad.pointcloud.segment-request@1" },
+        "payload": {
+          "allOf": [
+            { "$ref": "#/$defs/PointCloudFencePayload" },
+            {
+              "anyOf": [{ "required": ["polygon"] }, { "required": ["volume"] }]
+            }
+          ]
+        }
       }
     },
     "AdmissionOperationRequest": {

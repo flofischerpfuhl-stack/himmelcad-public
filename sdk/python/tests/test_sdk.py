@@ -31,6 +31,10 @@ from himmelcad.models import (  # noqa: E402
     PointCloudGroundPreviewResult,
     PointCloudGroundRequest,
     PointCloudGroundResult,
+    PointCloudRasterizeRequest,
+    PointCloudRasterizeResult,
+    PointCloudSampleRequest,
+    PointCloudSampleResult,
     PropertyId,
 )
 
@@ -310,6 +314,104 @@ class SdkTests(unittest.TestCase):
         )
         self.assertEqual(preview.payload.preview.points[0].classification, "ground")
         self.assertEqual(preview.to_dict()["payload"]["source"]["versionHash"], HASH_B)
+
+    def test_sampling_and_rasterize_requests_and_results_are_typed(self) -> None:
+        sample_request = PointCloudSampleRequest.from_dict(
+            {
+                "schemaId": "hcad.pointcloud.sample-request@1",
+                "payload": {
+                    "operationId": "sample-1",
+                    "sourceEntityId": "cloud-source",
+                    "outputName": "Cloud — Sampled",
+                    "parameters": {
+                        "method": "grid",
+                        "spacingM": 0.25,
+                        "percentage": 10.0,
+                        "originX": 1000.0,
+                        "originY": 2000.0,
+                    },
+                },
+            }
+        )
+        self.assertEqual(sample_request.payload.parameters.method, "grid")
+        self.assertEqual(sample_request.payload.parameters.origin_y, 2000.0)
+        sample_result = PointCloudSampleResult.from_dict(
+            {
+                "schemaId": "hcad.pointcloud.sample-result@1",
+                "payload": {
+                    "algorithmId": "hcad.pointcloud.sample@1",
+                    "source": entity_ref().to_dict(),
+                    "sampledCloud": {
+                        "entityId": "cloud-sampled",
+                        "revision": 0,
+                        "datasetId": "sample-dataset",
+                        "entityType": "PointCloud",
+                    },
+                    "summary": {
+                        "sourcePoints": 100,
+                        "scopedPoints": 80,
+                        "sampledPoints": 20,
+                        "method": "grid",
+                        "spacingM": 0.25,
+                        "stableTieRule": "mean-z, cell-center XY, stable source id",
+                        "selectionSha256": HASH_A,
+                    },
+                    "journalEntry": {"sequence": 10},
+                },
+            }
+        )
+        self.assertEqual(sample_result.payload.summary.sampled_points, 20)
+        self.assertEqual(sample_result.to_dict()["payload"]["summary"]["selectionSha256"], HASH_A)
+
+        raster_request = PointCloudRasterizeRequest.from_dict(
+            {
+                "schemaId": "hcad.pointcloud.rasterize-request@1",
+                "payload": {
+                    "operationId": "raster-1",
+                    "sourceEntityId": "cloud-source",
+                    "parameters": {
+                        "cellSizeM": 1.0,
+                        "aggregation": "mean",
+                        "emptyCellPolicy": "fill",
+                        "emptyCellValue": -9999.0,
+                    },
+                },
+            }
+        )
+        self.assertEqual(raster_request.payload.parameters.empty_cell_value, -9999.0)
+        raster_result = PointCloudRasterizeResult.from_dict(
+            {
+                "schemaId": "hcad.pointcloud.rasterize-result@1",
+                "payload": {
+                    "algorithmId": "hcad.pointcloud.rasterize-height@1",
+                    "source": entity_ref().to_dict(),
+                    "grid": {
+                        "entityId": "grid-mean",
+                        "revision": 0,
+                        "datasetId": "grid-dataset",
+                        "entityType": "hcad.elevation-surface@1",
+                        "meshSourceRole": "grid_source",
+                    },
+                    "summary": {
+                        "sourcePoints": 100,
+                        "scopedPoints": 80,
+                        "width": 8,
+                        "height": 4,
+                        "cellSizeM": 1.0,
+                        "origin": [1000.5, 2000.5],
+                        "aggregation": "mean",
+                        "emptyCellPolicy": {"kind": "fill", "value": -9999.0},
+                        "emptyCells": 3,
+                        "emptyRatio": 0.09375,
+                        "cellSha256": HASH_B,
+                        "meshEligible": True,
+                    },
+                    "journalEntry": {"sequence": 11},
+                },
+            }
+        )
+        self.assertEqual(raster_result.payload.grid.mesh_source_role, "grid_source")
+        self.assertEqual(raster_result.payload.summary.origin, (1000.5, 2000.5))
 
     def test_paging_and_canonical_app_methods(self) -> None:
         self.assertEqual([item.id for item in self.client.iter_entities()], ["one", "two"])

@@ -297,6 +297,7 @@ export interface PointCloudClassDisplay {
 
 export interface PointCloudDisplayStyle {
   readonly schemaId: 'hcad.resource.point-cloud-display@1';
+  /** Adaptive diameter multiplier; the field name remains wire-compatible with D-02 projects. */
   readonly pointSizePixels: number;
   readonly colorMode: PointCloudColorMode;
   readonly classes: readonly PointCloudClassDisplay[];

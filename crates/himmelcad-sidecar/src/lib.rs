@@ -24,6 +24,8 @@ pub mod gcp_runtime;
 pub mod grid_codecs;
 pub mod ground_classification;
 pub mod pointcloud_ground;
+pub mod pointcloud_sampling;
+pub mod pointcloud_segment;
 pub mod hardware_runtime;
 pub mod image_commit;
 pub mod image_mask_runtime;

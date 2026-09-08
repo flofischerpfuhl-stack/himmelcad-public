@@ -675,7 +675,22 @@ fn point_vertex_main(input: PointInstanceInput, @builtin(vertex_index) vertex_in
     let style_position = styled_position(input.position);
     let position = frame_position(style_position);
     let center = frame.view_projection * vec4<f32>(position, 1.0);
-    let ndc_offset = corner * input.point_size * frame.point_size_scale / frame.viewport_size;
+    var diameter = input.point_size;
+    if (material.height_values.w >= 0.5) {
+        let source_spacing = max(input.point_size, 1.0e-6);
+        let axis_x = frame.view_projection * vec4<f32>(frame_position(styled_position(input.position + vec3<f32>(source_spacing, 0.0, 0.0))), 1.0);
+        let axis_y = frame.view_projection * vec4<f32>(frame_position(styled_position(input.position + vec3<f32>(0.0, source_spacing, 0.0))), 1.0);
+        let axis_z = frame.view_projection * vec4<f32>(frame_position(styled_position(input.position + vec3<f32>(0.0, 0.0, source_spacing))), 1.0);
+        let center_ndc = center.xy / center.w;
+        let to_pixels = frame.viewport_size * 0.5;
+        let projected_x = length((axis_x.xy / axis_x.w - center_ndc) * to_pixels);
+        let projected_y = length((axis_y.xy / axis_y.w - center_ndc) * to_pixels);
+        let projected_z = length((axis_z.xy / axis_z.w - center_ndc) * to_pixels);
+        let pixels_per_spacing = max(projected_x, max(projected_y, projected_z));
+        diameter = pixels_per_spacing * material.height_values.z;
+    }
+    diameter = clamp(diameter * frame.point_size_scale, 1.0, 8.0);
+    let ndc_offset = corner * diameter / frame.viewport_size;
     var output: VertexOutput;
     output.clip_position = center + vec4<f32>(ndc_offset * center.w, 0.0, 0.0);
     output.render_position = position;
@@ -889,8 +904,13 @@ fn splat_vertex_main(input: SplatInstanceInput, @builtin(vertex_index) vertex_in
     }
     let eigenvector_2 = vec2<f32>(-eigenvector_1.y, eigenvector_1.x);
     let corner = QUAD_CORNERS[vertex_index] * 3.0;
-    let pixel_offset = eigenvector_1 * sqrt(eigenvalue_1) * corner.x
-        + eigenvector_2 * sqrt(eigenvalue_2) * corner.y;
+    // Bound the three-sigma footprint to 32 physical pixels per axis. Provider
+    // covariance remains authoritative; only presentation overdraw is capped.
+    let maximum_sigma_pixels = 32.0 / 3.0;
+    let sigma_1 = min(sqrt(eigenvalue_1), maximum_sigma_pixels);
+    let sigma_2 = min(sqrt(eigenvalue_2), maximum_sigma_pixels);
+    let pixel_offset = eigenvector_1 * sigma_1 * corner.x
+        + eigenvector_2 * sigma_2 * corner.y;
     let ndc_offset = pixel_offset * 2.0 / frame.viewport_size;
     var output: VertexOutput;
     output.clip_position = center + vec4<f32>(ndc_offset * center.w, 0.0, 0.0);

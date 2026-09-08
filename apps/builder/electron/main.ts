@@ -930,7 +930,10 @@ function registerIpc(): void {
     const readyPath = resolve(root, 'ready.json');
     const manifestPath = resolve(root, 'manifest.json');
     if (!(await pathExists(readyPath)) || !(await pathExists(manifestPath))) return null;
-    const [readyStat, manifestStat] = await Promise.all([fs.stat(readyPath), fs.stat(manifestPath)]);
+    const [readyStat, manifestStat] = await Promise.all([
+      fs.stat(readyPath),
+      fs.stat(manifestPath),
+    ]);
     if (readyStat.size > 64 * 1024 || manifestStat.size > 16 * 1024 * 1024) return null;
     const [readyBytes, manifestBytes] = await Promise.all([
       fs.readFile(readyPath, 'utf8'),
@@ -1403,15 +1406,25 @@ async function cancelSidecarRegistration(job: AppJob): Promise<void> {
 
 async function cancelSidecarJob(job: AppJob): Promise<void> {
   if (!job.progressKey) return;
-  if (job.owner !== 'builder.ground-extraction') {
+  if (
+    job.owner !== 'builder.ground-extraction' &&
+    job.owner !== 'builder.pointcloud-processing' &&
+    job.owner !== 'builder.pointcloud-segment'
+  ) {
     await cancelSidecarRegistration(job);
     return;
   }
   const acknowledgement = await callSidecar<{ readonly cancellationRequested: boolean }>({
-    method: 'pointcloud.ground.cancel',
+    method:
+      job.owner === 'builder.ground-extraction'
+        ? 'pointcloud.ground.cancel'
+        : job.owner === 'builder.pointcloud-segment'
+          ? 'pointcloud.segment.cancel'
+          : 'pointcloud.processing.cancel',
     params: { operationId: job.progressKey },
   });
-  const previewOperationId = job.context?.previewOperationId;
+  const previewOperationId =
+    job.owner === 'builder.ground-extraction' ? job.context?.previewOperationId : undefined;
   if (typeof previewOperationId === 'string') {
     await callSidecar({
       method: 'pointcloud.ground.cancel',
@@ -1420,7 +1433,12 @@ async function cancelSidecarJob(job: AppJob): Promise<void> {
   }
   if (acknowledgement.cancellationRequested && jobRegistry.get(job.id).state === 'cancelling') {
     jobRegistry.update(job.id, {
-      phase: 'Cancelling ground extraction',
+      phase:
+        job.owner === 'builder.ground-extraction'
+          ? 'Cancelling ground extraction'
+          : job.owner === 'builder.pointcloud-segment'
+            ? 'Cancelling point-cloud segmentation'
+            : 'Cancelling point-cloud processing',
       cancellation: {
         cancellable: false,
         reason: 'Stopping at the next bounded point-cloud chunk',

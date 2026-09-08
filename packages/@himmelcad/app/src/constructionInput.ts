@@ -16,7 +16,7 @@ export type ConstructionInputFieldId = 'x' | 'y' | 'z' | 'direction' | 'distance
 
 export interface ConstructionInputField {
   readonly id: ConstructionInputFieldId;
-  readonly label: 'X' | 'Y' | 'Z' | 'Dir °' | 'Dist m' | 'Δz m';
+  readonly label: string;
   readonly unit?: '°' | 'm';
   readonly value: number;
 }
@@ -26,6 +26,8 @@ export interface ConstructionInputDeclaration {
   readonly prompt: string;
   readonly firstPoint?: ConstructionPoint;
   readonly fields: readonly ConstructionInputFieldId[];
+  /** Tool-specific semantic labels while preserving one numeric bar implementation. */
+  readonly fieldLabels?: Partial<Readonly<Record<ConstructionInputFieldId, string>>>;
 }
 
 export interface ConstructionInputSnapshot {
@@ -227,7 +229,7 @@ export class ConstructionInputController {
     const declaration = this.requireArmed();
     return declaration.fields.map((id) => ({
       id,
-      label: fieldLabel(id),
+      label: declaration.fieldLabels?.[id] ?? fieldLabel(id),
       ...(id === 'direction' ? { unit: '°' as const } : { unit: 'm' as const }),
       value: this.values[id],
     }));

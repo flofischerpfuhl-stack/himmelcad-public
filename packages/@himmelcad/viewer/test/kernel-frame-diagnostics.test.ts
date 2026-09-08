@@ -79,6 +79,19 @@ void test('G-VC-MEASURE correlates the newest input and asynchronous GPU query s
   assert.equal(recorded.gpuMs, 4.5);
 });
 
+void test('V-05 effect and quality-tier telemetry remain in the V-01 frame ring', () => {
+  const diagnostics = new KernelFrameDiagnostics();
+  diagnostics.recordFrame({
+    ...frame(120, 16),
+    deadlineReasonCodes: ['within_target', 'effect:edl', 'quality:tier'],
+  });
+  assert.deepEqual(diagnostics.snapshot(1).lastFrames[0]?.deadlineReasonCodes, [
+    'within_target',
+    'effect:edl',
+    'quality:tier',
+  ]);
+});
+
 void test('G-VC-MEASURE puts synthetic present pauses and GPU load in tail fields, not CPU render time', () => {
   const diagnostics = new KernelFrameDiagnostics();
   for (let index = 1; index <= 100; index += 1) {

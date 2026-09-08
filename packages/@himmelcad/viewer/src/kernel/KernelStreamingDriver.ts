@@ -958,6 +958,7 @@ export class KernelStreamingDriver {
               ? ({
                   ...common,
                   pointCount: validatedPrimitiveCount!,
+                  pointSpacing: preparedPointSpacing(fetched.descriptor),
                 } satisfies KernelPotreeContentMetadata)
               : payload.reference.kind === 'gltf' ||
                   payload.reference.kind === 'threeDTilesContainer'
@@ -1574,6 +1575,14 @@ export class KernelStreamingDriver {
   private assertAlive(): void {
     if (this.disposed) throw new Error('KernelStreamingDriver has been disposed');
   }
+}
+
+function preparedPointSpacing(descriptor: KernelTileDescriptor): number {
+  const spacing = descriptor.preparedPointMetadata?.screenSpaceError.pointSpacing;
+  if (typeof spacing !== 'number' || !Number.isFinite(spacing) || spacing <= 0) {
+    throw new Error('Potree node did not provide positive V-02 point spacing');
+  }
+  return spacing;
 }
 
 async function fetchReferenceUnbounded(

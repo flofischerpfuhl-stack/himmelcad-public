@@ -77,6 +77,7 @@ import {
   type KernelWorldCamera,
   type KernelWorldPoint,
 } from './WgpuKernelViewer.js';
+import type { KernelRendererOverlayPayload } from './KernelRendererOverlay.js';
 import type {
   CanonicalEntity,
   CanonicalEntityEffect,
@@ -739,6 +740,23 @@ export class KernelViewerSession {
     return generation;
   }
 
+  /** Updates one cloud's view presentation without touching sibling entities. */
+  setEntityPointSizeMultiplier(entityId: string, multiplier: number): number {
+    const updated = this.viewerState.setEntityPointSizeMultiplier(entityId, multiplier);
+    this.options.requestFrame?.();
+    return updated;
+  }
+
+  setRendererOverlayPayload(
+    layerId: string,
+    atlasHash: string,
+    payload: KernelRendererOverlayPayload,
+  ): number {
+    const updated = this.viewerState.setRendererOverlayPayload(layerId, atlasHash, payload);
+    this.options.requestFrame?.();
+    return updated;
+  }
+
   setEntityInteractionState(entityId: string, state: KernelEntityInteractionState): number {
     this.assertReady();
     const generation = this.viewerState.setEntityInteractionState(entityId, state);
@@ -902,6 +920,13 @@ export class KernelViewerSession {
       const uploadedBytes = this.streamingState.execute(plan);
       const cpuHostMs = performance.now() - hostStarted;
       const encodeStarted = performance.now();
+      const qualityTier = extendedQuality(this.qualityState).tier;
+      const effects = this.viewerState.setQualityEffects(
+        plan.frontier.budget.hardwareClass,
+        qualityTier,
+        motionActive,
+        plan.frontier.selected.points > 0 || plan.frontier.selected.splats > 0,
+      );
       const outcome = this.viewerState.render();
       const cpuEncodeMs = performance.now() - encodeStarted;
       if (outcome.status === 'presented') this.resolvePresentedFrameWaiters(outcome);
@@ -951,6 +976,7 @@ export class KernelViewerSession {
           work.frame.targetFrameMs,
           decodeBacklog,
           uploadBacklog,
+          effects.tier !== 'off',
         );
         this.frameDiagnosticsState.recordFrame({
           rafTimestampMs: animationFrameTimestampMs ?? completedAtMs,
@@ -1415,6 +1441,7 @@ function frameReasonCodes(
   targetMs: number,
   decodeBacklog: number,
   uploadBacklog: number,
+  edlEnabled: boolean,
 ): readonly KernelDeadlineReasonCode[] {
   const reasons = new Set<KernelDeadlineReasonCode>([governorReason]);
   const admission = plan.admission;
@@ -1452,6 +1479,8 @@ function frameReasonCodes(
   if (decodeBacklog > 0) reasons.add('decode:backlog');
   if (uploadBacklog > 0) reasons.add('upload:backlog');
   if (protectedMs > targetMs) reasons.add('protected_work_over_budget');
+  if (edlEnabled) reasons.add('effect:edl');
+  reasons.add('quality:tier');
   return Object.freeze([...reasons]);
 }
 

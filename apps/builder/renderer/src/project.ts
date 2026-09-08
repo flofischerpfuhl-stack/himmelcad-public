@@ -28,6 +28,7 @@ import {
 } from '@himmelcad/app';
 import type { PhotoLabProductProvenanceV1, ProjectSnapshot } from '@himmelcad/data';
 import type { MeasurementV1 } from '@himmelcad/data/canonical';
+import type { KernelFenceVolume } from '@himmelcad/viewer/kernel';
 
 import { projectSnapshotFromJournalMirror } from './projectProjection.js';
 import type { BuilderDurabilityStatus } from './durabilityPolling.js';
@@ -152,6 +153,93 @@ export interface GroundExtractionResult {
     readonly entityType: 'PointCloud';
     readonly isDgm: false;
     readonly meshSourceRole: 'ground_cloud';
+  };
+  readonly journalEntry: CanonicalJournalEntry;
+}
+
+export interface PointCloudSegmentResult {
+  readonly schemaId: 'hcad.pointcloud.segment-result@1';
+  readonly algorithmId: 'hcad.pointcloud.segment@1';
+  readonly side: 'keep_inside' | 'remove_inside';
+  readonly volume: KernelFenceVolume;
+  readonly revisions: readonly {
+    readonly entityId: string;
+    readonly revision: number;
+    readonly datasetId: string;
+    readonly retainedPoints: number;
+    readonly removedPoints: number;
+  }[];
+  readonly journalEntry: CanonicalJournalEntry;
+}
+
+export const SAMPLE_ALGORITHM_ID = 'hcad.pointcloud.sample@1' as const;
+export const RASTERIZE_ALGORITHM_ID = 'hcad.pointcloud.rasterize-height@1' as const;
+
+export interface PointcloudSampleParameters {
+  readonly method: 'distance' | 'grid' | 'random';
+  readonly spacingM: number;
+  readonly percentage: number;
+  readonly originX?: number;
+  readonly originY?: number;
+}
+
+export interface PointcloudRasterizeParameters {
+  readonly cellSizeM: number;
+  readonly originX?: number;
+  readonly originY?: number;
+  readonly aggregation: 'mean' | 'min' | 'max' | 'count';
+  readonly emptyCellPolicy:
+    | { readonly kind: 'no_data' }
+    | { readonly kind: 'fill'; readonly value: number };
+}
+
+export interface PointcloudSampleResult {
+  readonly schemaId: 'hcad.pointcloud.sample-result@1';
+  readonly algorithmId: typeof SAMPLE_ALGORITHM_ID;
+  readonly source: { readonly id: string; readonly revision: number; readonly versionHash: string };
+  readonly sampledCloud: {
+    readonly entityId: string;
+    readonly revision: number;
+    readonly datasetId: string;
+    readonly entityType: 'PointCloud';
+  };
+  readonly summary: {
+    readonly sourcePoints: number;
+    readonly scopedPoints: number;
+    readonly sampledPoints: number;
+    readonly method: PointcloudSampleParameters['method'];
+    readonly spacingM?: number;
+    readonly percentage?: number;
+    readonly stableTieRule: string;
+    readonly selectionSha256: string;
+  };
+  readonly journalEntry: CanonicalJournalEntry;
+}
+
+export interface PointcloudRasterizeResult {
+  readonly schemaId: 'hcad.pointcloud.rasterize-result@1';
+  readonly algorithmId: typeof RASTERIZE_ALGORITHM_ID;
+  readonly source: { readonly id: string; readonly revision: number; readonly versionHash: string };
+  readonly grid: {
+    readonly entityId: string;
+    readonly revision: number;
+    readonly datasetId: string;
+    readonly entityType: 'hcad.elevation-surface@1' | 'hcad.raster-image@1';
+    readonly meshSourceRole?: 'grid_source' | null;
+  };
+  readonly summary: {
+    readonly sourcePoints: number;
+    readonly scopedPoints: number;
+    readonly width: number;
+    readonly height: number;
+    readonly cellSizeM: number;
+    readonly origin: readonly [number, number];
+    readonly aggregation: PointcloudRasterizeParameters['aggregation'];
+    readonly emptyCellPolicy: PointcloudRasterizeParameters['emptyCellPolicy'];
+    readonly emptyCells: number;
+    readonly emptyRatio: number;
+    readonly cellSha256: string;
+    readonly meshEligible: boolean;
   };
   readonly journalEntry: CanonicalJournalEntry;
 }
@@ -521,6 +609,92 @@ export class BuilderCanonicalProjectSession {
     readonly cancellationRequested: boolean;
   }> {
     return this.call('pointcloud.ground.cancel', { operationId });
+  }
+
+  async segmentPointClouds(input: {
+    readonly operationId: string;
+    readonly progressKey: string;
+    readonly sourceEntityIds: readonly string[];
+    readonly volume: KernelFenceVolume;
+    readonly side: 'keep_inside' | 'remove_inside';
+    readonly scopes: ReadonlyMap<string, GroundExtractionScope>;
+  }): Promise<PointCloudSegmentResult> {
+    const result = await this.call<PointCloudSegmentResult>(`pointcloud.segment.${input.side}`, {
+      operationId: input.operationId,
+      progressKey: input.progressKey,
+      commandId: `builder/pointcloud-segment/${crypto.randomUUID()}`,
+      algorithmId: 'hcad.pointcloud.segment@1',
+      sources: this.exactEntityVersions(input.sourceEntityIds).map((source) => ({
+        source,
+        scope: input.scopes.get(source.id),
+      })),
+      volume: input.volume,
+      side: input.side,
+    });
+    await this.acceptCommittedEntry(result.journalEntry);
+    return result;
+  }
+
+  cancelSegmentation(operationId: string): Promise<{
+    readonly operationId: string;
+    readonly cancellationRequested: boolean;
+  }> {
+    return this.call('pointcloud.segment.cancel', { operationId });
+  }
+
+  async samplePointCloud(input: {
+    readonly operationId: string;
+    readonly progressKey: string;
+    readonly sourceEntityId: string;
+    readonly outputEntityId: string;
+    readonly outputName: string;
+    readonly parameters: PointcloudSampleParameters;
+    readonly scope: GroundExtractionScope;
+  }): Promise<PointcloudSampleResult> {
+    const result = await this.call<PointcloudSampleResult>('pointcloud.sample', {
+      operationId: input.operationId,
+      progressKey: input.progressKey,
+      commandId: `builder/pointcloud-sample/${crypto.randomUUID()}`,
+      algorithmId: SAMPLE_ALGORITHM_ID,
+      source: this.exactEntityVersions([input.sourceEntityId])[0],
+      outputEntityId: input.outputEntityId,
+      outputName: input.outputName,
+      parameters: input.parameters,
+      scope: input.scope,
+    });
+    await this.acceptCommittedEntry(result.journalEntry);
+    return result;
+  }
+
+  async rasterizePointCloud(input: {
+    readonly operationId: string;
+    readonly progressKey: string;
+    readonly sourceEntityId: string;
+    readonly outputEntityId: string;
+    readonly outputName: string;
+    readonly parameters: PointcloudRasterizeParameters;
+    readonly scope: GroundExtractionScope;
+  }): Promise<PointcloudRasterizeResult> {
+    const result = await this.call<PointcloudRasterizeResult>('pointcloud.rasterize', {
+      operationId: input.operationId,
+      progressKey: input.progressKey,
+      commandId: `builder/pointcloud-rasterize/${crypto.randomUUID()}`,
+      algorithmId: RASTERIZE_ALGORITHM_ID,
+      source: this.exactEntityVersions([input.sourceEntityId])[0],
+      outputEntityId: input.outputEntityId,
+      outputName: input.outputName,
+      parameters: input.parameters,
+      scope: input.scope,
+    });
+    await this.acceptCommittedEntry(result.journalEntry);
+    return result;
+  }
+
+  cancelPointcloudProcessing(operationId: string): Promise<{
+    readonly operationId: string;
+    readonly cancellationRequested: boolean;
+  }> {
+    return this.call('pointcloud.processing.cancel', { operationId });
   }
 
   async planExport(request: Parameters<IoClient['planExport']>[0]) {

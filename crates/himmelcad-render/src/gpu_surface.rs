@@ -4,11 +4,14 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::sync::{Arc, Mutex};
 
+use bytemuck::{Pod, Zeroable};
+
 use crate::gpu_frame_timing::GpuFrameTimestampRecorder;
 use crate::{
-    adapter_capabilities, ClipVolume, DeviceCapabilities, GpuCalibrationSession, GpuDrawBatch,
-    GpuFrameError, GpuFrameTargets, GpuHitNeighborhoodReadback, GpuPickReadbackError,
-    GpuSharedRenderer, TransparencyStrategy, WorldVec3, SORTED_ALPHA_UPLOAD_BYTES_PER_FRAME,
+    adapter_capabilities, ClipVolume, DeviceCapabilities, EyeDomeLightingSettings,
+    GpuCalibrationSession, GpuDrawBatch, GpuFrameError, GpuFrameTargets,
+    GpuHitNeighborhoodReadback, GpuPickReadbackError, GpuSharedRenderer, TransparencyStrategy,
+    WorldVec3, SORTED_ALPHA_UPLOAD_BYTES_PER_FRAME,
 };
 
 /// Linear working target used before the explicit presentation transfer.
@@ -51,6 +54,8 @@ pub struct SurfaceFrame<'a> {
     pub batches: &'a [&'a GpuDrawBatch],
     /// View-local point diameter multiplier; does not mutate resident geometry.
     pub point_size_scale: f32,
+    /// Governor-tiered presentation effect; exact ID/depth passes ignore it.
+    pub eye_dome_lighting: EyeDomeLightingSettings,
     /// Linear clear color. The final presentation pass applies exactly one sRGB transfer.
     pub clear_color: wgpu::Color,
     /// Optional cursor neighborhood to copy from the ID/depth attachments.
@@ -355,15 +360,15 @@ impl<'window> GpuSurfaceHost<'window> {
         };
         surface.configure(&device, &configuration);
         let linear_frame_format = choose_linear_frame_format(&adapter);
-        let presentation_renderer = GpuPresentationRenderer::new(&device, format, false);
+        // Naga's GLSL/WebGL2 backend cannot translate textureLoad on a depth
+        // texture. Keep its shader module entirely free of the EDL bindings;
+        // merely selecting zero taps is too late because pipeline creation
+        // validates every declaration and instruction.
+        let supports_eye_dome_lighting = adapter.get_info().backend != wgpu::Backend::Gl;
+        let presentation_renderer =
+            GpuPresentationRenderer::new(&device, format, false, supports_eye_dome_lighting);
         let capture_presentation_renderer =
-            GpuPresentationRenderer::new(&device, CAPTURE_FORMAT, true);
-        let presentation_target = presentation_renderer.create_target(
-            &device,
-            physical_width,
-            physical_height,
-            linear_frame_format,
-        );
+            GpuPresentationRenderer::new(&device, CAPTURE_FORMAT, true, supports_eye_dome_lighting);
         let mut capabilities = adapter_capabilities(&adapter);
         if !required_features.contains(wgpu::Features::TIMESTAMP_QUERY) {
             capabilities
@@ -378,6 +383,13 @@ impl<'window> GpuSurfaceHost<'window> {
             transparency,
         );
         let targets = renderer.create_frame_targets(&device, physical_width, physical_height);
+        let presentation_target = presentation_renderer.create_target(
+            &device,
+            physical_width,
+            physical_height,
+            linear_frame_format,
+            targets.depth_view(),
+        );
         let frame_timing = required_features
             .contains(wgpu::Features::TIMESTAMP_QUERY)
             .then(|| GpuFrameTimestampRecorder::new(&device, &queue));
@@ -405,6 +417,12 @@ impl<'window> GpuSurfaceHost<'window> {
     #[must_use]
     pub fn capabilities(&self) -> &DeviceCapabilities {
         &self.capabilities
+    }
+
+    /// Whether this backend can compile and execute the depth-sampling EDL pass.
+    #[must_use]
+    pub fn supports_eye_dome_lighting(&self) -> bool {
+        self.presentation_renderer.supports_eye_dome_lighting()
     }
 
     /// Physical width and height of the allocated viewport targets.
@@ -490,6 +508,7 @@ impl<'window> GpuSurfaceHost<'window> {
             width,
             height,
             self.linear_frame_format,
+            self.targets.depth_view(),
         );
     }
 
@@ -515,12 +534,18 @@ impl<'window> GpuSurfaceHost<'window> {
         self.configuration.alpha_mode = choose_alpha_mode(&capabilities.alpha_modes);
         if format != self.configuration.format {
             self.configuration.format = format;
-            self.presentation_renderer = GpuPresentationRenderer::new(&self.device, format, false);
+            self.presentation_renderer = GpuPresentationRenderer::new(
+                &self.device,
+                format,
+                false,
+                self.adapter.get_info().backend != wgpu::Backend::Gl,
+            );
             self.presentation_target = self.presentation_renderer.create_target(
                 &self.device,
                 self.configuration.width,
                 self.configuration.height,
                 self.linear_frame_format,
+                self.targets.depth_view(),
             );
         }
         self.surface = Some(surface);
@@ -691,9 +716,11 @@ impl<'window> GpuSurfaceHost<'window> {
             timestamp_begin,
         );
         self.presentation_renderer.encode(
+            &self.queue,
             &mut encoder,
             &color_view,
             &self.presentation_target.bind_group,
+            frame.eye_dome_lighting,
             timing_token.and_then(|_| {
                 self.frame_timing
                     .as_ref()
@@ -729,12 +756,18 @@ impl<'window> GpuSurfaceHost<'window> {
         self.configuration.alpha_mode = choose_alpha_mode(&surface_capabilities.alpha_modes);
         if format != self.configuration.format {
             self.configuration.format = format;
-            self.presentation_renderer = GpuPresentationRenderer::new(&self.device, format, false);
+            self.presentation_renderer = GpuPresentationRenderer::new(
+                &self.device,
+                format,
+                false,
+                self.adapter.get_info().backend != wgpu::Backend::Gl,
+            );
             self.presentation_target = self.presentation_renderer.create_target(
                 &self.device,
                 self.configuration.width,
                 self.configuration.height,
                 self.linear_frame_format,
+                self.targets.depth_view(),
             );
         }
         self.reconfigure();
@@ -787,6 +820,7 @@ impl<'window> GpuSurfaceHost<'window> {
             request.width,
             request.height,
             self.linear_frame_format,
+            targets.depth_view(),
         );
         let output = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("himmelcad-capture-rgba8"),
@@ -823,9 +857,11 @@ impl<'window> GpuSurfaceHost<'window> {
             false,
         );
         self.capture_presentation_renderer.encode(
+            &self.queue,
             &mut encoder,
             &output_view,
             &presentation_target.bind_group,
+            frame.eye_dome_lighting,
             None,
         );
         encoder.copy_texture_to_buffer(
@@ -1028,6 +1064,16 @@ struct GpuPresentationTarget {
 struct GpuPresentationRenderer {
     bind_group_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
+    effect_uniform: Option<wgpu::Buffer>,
+}
+
+#[derive(Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
+struct PresentationEffectUniform {
+    edl_taps: u32,
+    radius_pixels: f32,
+    strength: f32,
+    _padding: u32,
 }
 
 impl GpuPresentationRenderer {
@@ -1035,28 +1081,67 @@ impl GpuPresentationRenderer {
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
         straight_alpha: bool,
+        supports_eye_dome_lighting: bool,
     ) -> Self {
+        let mut entries = vec![wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        }];
+        if supports_eye_dome_lighting {
+            entries.extend([
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ]);
+        }
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("himmelcad-presentation-bind-group-layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            }],
+            entries: &entries,
+        });
+        let effect_uniform = supports_eye_dome_lighting.then(|| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("himmelcad-presentation-effect-uniform"),
+                size: std::mem::size_of::<PresentationEffectUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("himmelcad-presentation-pipeline-layout"),
             bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
+        let shader_source = if supports_eye_dome_lighting {
+            include_str!("shaders/presentation_edl.wgsl")
+        } else {
+            include_str!("shaders/presentation.wgsl")
+        };
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("himmelcad-presentation-shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/presentation.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(shader_source.into()),
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("himmelcad-presentation-pipeline"),
@@ -1092,6 +1177,7 @@ impl GpuPresentationRenderer {
         Self {
             bind_group_layout,
             pipeline,
+            effect_uniform,
         }
     }
 
@@ -1101,6 +1187,7 @@ impl GpuPresentationRenderer {
         width: u32,
         height: u32,
         format: wgpu::TextureFormat,
+        depth_view: &wgpu::TextureView,
     ) -> GpuPresentationTarget {
         let linear_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("himmelcad-linear-frame"),
@@ -1117,13 +1204,26 @@ impl GpuPresentationRenderer {
             view_formats: &[],
         });
         let linear_view = linear_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut entries = vec![wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(&linear_view),
+        }];
+        if let Some(effect_uniform) = &self.effect_uniform {
+            entries.extend([
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(depth_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: effect_uniform.as_entire_binding(),
+                },
+            ]);
+        }
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("himmelcad-presentation-bind-group"),
             layout: &self.bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&linear_view),
-            }],
+            entries: &entries,
         });
         GpuPresentationTarget {
             _linear_texture: linear_texture,
@@ -1134,11 +1234,25 @@ impl GpuPresentationRenderer {
 
     fn encode(
         &self,
+        queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         surface_view: &wgpu::TextureView,
         bind_group: &wgpu::BindGroup,
+        eye_dome_lighting: EyeDomeLightingSettings,
         timestamp_end: Option<(&wgpu::QuerySet, u32)>,
     ) {
+        if let Some(effect_uniform) = &self.effect_uniform {
+            queue.write_buffer(
+                effect_uniform,
+                0,
+                bytemuck::bytes_of(&PresentationEffectUniform {
+                    edl_taps: eye_dome_lighting.tier.taps(),
+                    radius_pixels: eye_dome_lighting.radius_pixels.clamp(0.5, 4.0),
+                    strength: eye_dome_lighting.strength.clamp(0.0, 512.0),
+                    _padding: 0,
+                }),
+            );
+        }
         let attachments = [Some(wgpu::RenderPassColorAttachment {
             view: surface_view,
             depth_slice: None,
@@ -1165,6 +1279,10 @@ impl GpuPresentationRenderer {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, bind_group, &[]);
         pass.draw(0..3, 0..1);
+    }
+
+    fn supports_eye_dome_lighting(&self) -> bool {
+        self.effect_uniform.is_some()
     }
 }
 
@@ -1216,6 +1334,16 @@ mod tests {
         assert!(reliable_timestamp_queries(wgpu::DeviceType::IntegratedGpu));
         assert!(reliable_timestamp_queries(wgpu::DeviceType::VirtualGpu));
         assert!(reliable_timestamp_queries(wgpu::DeviceType::Other));
+    }
+
+    #[test]
+    fn webgl_presentation_shader_never_declares_depth_texture_loads() {
+        let portable = include_str!("shaders/presentation.wgsl");
+        let edl = include_str!("shaders/presentation_edl.wgsl");
+        assert!(!portable.contains("texture_depth_2d"));
+        assert!(!portable.contains("scene_depth"));
+        assert!(edl.contains("texture_depth_2d"));
+        assert!(edl.contains("textureLoad(scene_depth"));
     }
 
     #[test]

@@ -75,7 +75,7 @@ use himmelcad_core::{entity::EntityId, hash::ObjectHash};
 use himmelcad_render::{
     authoritative_section_product_matches, build_cad_curve_batch, build_elevation_raster_batch,
     build_gaussian_splat_batches, build_instanced_glb_geometries_with_queue, build_potree_batch,
-    build_section_region_batch, build_text_batch_with_texture,
+    build_renderer_overlay_batches, build_section_region_batch, build_text_batch_with_texture,
     build_three_d_tiles_batches_with_resources, compile_entity_geometry,
     compile_entity_geometry_with_associations, decode_artifact, glb_texture_source_keys,
     gpu_indexed_geometry_identity, gpu_uploaded_texture_identity, inspect_gltf_dependencies,
@@ -94,24 +94,25 @@ use himmelcad_render::{
     DecodedPrimitivePropertyAttribute, DecodedPrimitivePropertyTexture, DecodedStreamingPayload,
     DecodedStructuralMetadata, DecodedThreeDTilesContent, DecodedTriangleFeatureId,
     DeviceCalibration, ElevationRasterPickRefiner, EntityCompilationOptions,
-    EntityInteractionState, EvaluatedMeshRecipe, EvaluatedMeshRepresentation, FillMode,
-    FloatingOrigin, FrameTelemetrySample, FrameTelemetryWindow, GaussianSplatPickRefiner,
-    GeometryRepresentationRegistry, GlyphAtlas, GlyphMetrics, GpuAlphaMode, GpuCalibrationProgress,
-    GpuCalibrationSession, GpuCanonicalMaterial, GpuCanonicalTextureBinding, GpuDrawBatch,
-    GpuFramePrimitiveCounts, GpuHatchPattern, GpuHatchPatternData, GpuHatchResource,
-    GpuIndexedMeshGeometry, GpuLineTypePattern, GpuLineTypeResource, GpuModelResourceIdentity,
-    GpuPresentationStyle, GpuRecoveryReason, GpuSurfaceHost, GpuTextureAddressMode,
-    GpuTextureColorSpace, GpuTextureData, GpuTextureFilterMode, GpuTextureMipChainData,
-    GpuTextureResource, GpuTextureResourceCache, GpuTextureResourceIdentity,
-    GpuTextureResourceStage, GpuTextureSamplerIdentity, GpuTextureTransform,
-    HardwareDeploymentProfile, HardwareInventory, HardwarePolicyResolver, HierarchySource,
-    ImplicitThreeDTilesHierarchySource, InstancedTriangleMeshPickRefiner, MeshPickRefiner,
-    PickCandidate, PickCycle, PickRefinementRequest, PickToken, PotreeHierarchySource,
-    PotreePointLayout, PreparedAssetBundle, PreparedGpuTextureResources, PreparedHierarchySource,
-    PreparedRasterTileContract, PresentationTransform, QualityAdjustment, RasterAnalysisView,
-    RenderProxy, RenderProxyId, RenderProxyKind, RenderStyle, RenderWorld, ResidencyTicket,
-    ResolvedAssetEntry, ResolvedGeometryRepresentationAdmission, ResourceBudget, ResourceCost,
-    RuntimeQualityGovernor, RuntimeQualityState, SectionBatchOptions, SectionHatchStyle,
+    EntityInteractionState, EvaluatedMeshRecipe, EvaluatedMeshRepresentation,
+    EyeDomeLightingSettings, FillMode, FloatingOrigin, FrameTelemetrySample, FrameTelemetryWindow,
+    FrontierHardwareClass, GaussianSplatPickRefiner, GeometryRepresentationRegistry, GlyphAtlas,
+    GlyphMetrics, GpuAlphaMode, GpuCalibrationProgress, GpuCalibrationSession,
+    GpuCanonicalMaterial, GpuCanonicalTextureBinding, GpuDrawBatch, GpuFramePrimitiveCounts,
+    GpuHatchPattern, GpuHatchPatternData, GpuHatchResource, GpuIndexedMeshGeometry,
+    GpuLineTypePattern, GpuLineTypeResource, GpuModelResourceIdentity, GpuPresentationStyle,
+    GpuRecoveryReason, GpuSurfaceHost, GpuTextureAddressMode, GpuTextureColorSpace, GpuTextureData,
+    GpuTextureFilterMode, GpuTextureMipChainData, GpuTextureResource, GpuTextureResourceCache,
+    GpuTextureResourceIdentity, GpuTextureResourceStage, GpuTextureSamplerIdentity,
+    GpuTextureTransform, HardwareDeploymentProfile, HardwareInventory, HardwarePolicyResolver,
+    HierarchySource, ImplicitThreeDTilesHierarchySource, InstancedTriangleMeshPickRefiner,
+    MeshPickRefiner, PickCandidate, PickCycle, PickRefinementRequest, PickToken,
+    PotreeHierarchySource, PotreePointLayout, PreparedAssetBundle, PreparedGpuTextureResources,
+    PreparedHierarchySource, PreparedRasterTileContract, PresentationTransform, QualityAdjustment,
+    RasterAnalysisView, RenderProxy, RenderProxyId, RenderProxyKind, RenderStyle, RenderWorld,
+    RendererOverlayPayload, ResidencyTicket, ResolvedAssetEntry,
+    ResolvedGeometryRepresentationAdmission, ResourceBudget, ResourceCost, RuntimeQualityGovernor,
+    RuntimeQualityState, RuntimeQualityTier, SectionBatchOptions, SectionHatchStyle,
     SectionMaterialRegionBinding, SectionPlane, SectionProduct, SectionRegion, SectionTopologyPart,
     SectionTopologyPartitionData, SectionTopologySnapshotKey, SharedAssetBlobCache, SnapKind,
     StreamingCoordinator, StreamingRuntimeLimits, StrokeMode, SurfaceCaptureRequest, SurfaceFrame,
@@ -371,6 +372,7 @@ pub struct WasmViewer {
     floating_origin: WorldVec3,
     clear_color: wgpu::Color,
     point_size_scale: f32,
+    eye_dome_lighting: EyeDomeLightingSettings,
     render_world: RenderWorld,
     batches: BTreeMap<RenderProxyId, Vec<GpuDrawBatch>>,
     representation_registry: GeometryRepresentationRegistry,
@@ -430,6 +432,7 @@ pub struct WasmViewer {
     complete_streaming_frontiers: BTreeMap<String, BTreeSet<TileKey>>,
     registered_dataset_contracts: BTreeMap<String, WasmRegisteredDatasetContract>,
     entity_styles: BTreeMap<String, (RenderStyle, f64)>,
+    entity_point_size_multipliers: BTreeMap<String, f32>,
     entity_interactions: BTreeMap<String, EntityInteractionState>,
     glyph_atlases: BTreeMap<String, WasmGlyphAtlasResource>,
     annotation_styles: BTreeMap<String, WasmAnnotationStyle>,
@@ -453,6 +456,7 @@ pub struct WasmViewer {
     entity_undo_stack: Vec<WasmEntityPlacementHistory>,
     entity_redo_stack: Vec<WasmEntityPlacementHistory>,
     clip_preview_batches: Vec<GpuDrawBatch>,
+    renderer_overlay_batches: BTreeMap<String, Vec<GpuDrawBatch>>,
     clip_preview_material_slots: Vec<u32>,
     clip_preview_cost: ResourceCost,
     frame_origin_queue_write_count: u64,
@@ -891,6 +895,7 @@ struct WasmPotreeMetadata {
     tile_id: String,
     bounds: BoundingVolume,
     point_count: u64,
+    point_spacing: f32,
     #[serde(skip)]
     style: RenderStyle,
     #[serde(skip)]
@@ -1489,6 +1494,17 @@ struct WasmFrameTelemetryObservation {
     residency_pressure: bool,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
+#[cfg(target_arch = "wasm32")]
+struct WasmQualityEffectState {
+    hardware_class: FrontierHardwareClass,
+    quality_tier: RuntimeQualityTier,
+    interacting: bool,
+    point_content_visible: bool,
+}
+
 #[cfg(target_arch = "wasm32")]
 async fn create_wasm_viewer(
     canvas: HtmlCanvasElement,
@@ -1538,6 +1554,7 @@ async fn create_wasm_viewer(
             a: 1.0,
         },
         point_size_scale: 1.0,
+        eye_dome_lighting: EyeDomeLightingSettings::OFF,
         render_world: RenderWorld::new(),
         batches: BTreeMap::new(),
         representation_registry: GeometryRepresentationRegistry::new(),
@@ -1593,6 +1610,7 @@ async fn create_wasm_viewer(
         complete_streaming_frontiers: BTreeMap::new(),
         registered_dataset_contracts: BTreeMap::new(),
         entity_styles: BTreeMap::new(),
+        entity_point_size_multipliers: BTreeMap::new(),
         entity_interactions: BTreeMap::new(),
         glyph_atlases: BTreeMap::new(),
         annotation_styles: BTreeMap::new(),
@@ -1616,6 +1634,7 @@ async fn create_wasm_viewer(
         entity_undo_stack: Vec::new(),
         entity_redo_stack: Vec::new(),
         clip_preview_batches: Vec::new(),
+        renderer_overlay_batches: BTreeMap::new(),
         clip_preview_material_slots: Vec::new(),
         clip_preview_cost: ResourceCost::default(),
         frame_origin_queue_write_count: 0,
@@ -3494,7 +3513,7 @@ impl WasmViewer {
             _ => {
                 return Err(JsValue::from_str(
                     "raster measurement requires a raster or panorama entity",
-                ))
+                ));
             }
         };
         if column >= raster.width || row >= raster.height {
@@ -3580,7 +3599,7 @@ impl WasmViewer {
             _ => {
                 return Err(JsValue::from_str(
                     "raster analysis requires a raster or panorama entity",
-                ))
+                ));
             }
         };
         let camera =
@@ -4572,6 +4591,7 @@ impl WasmViewer {
             );
             self.entity_requests.remove(entity_id);
             self.entity_styles.remove(entity_id);
+            self.entity_point_size_multipliers.remove(entity_id);
             self.entity_interactions.remove(entity_id);
             self.render_world.clear_entity_visibility(entity_id);
             self.primary_slot_keys.remove(entity_id);
@@ -4724,6 +4744,36 @@ impl WasmViewer {
         self.rebuild_inline_clip_previews().map_err(js_error)?;
         self.rebuild_move_previews_for_entity(Some(entity_id), self.floating_origin)?;
         Ok(ids.len())
+    }
+
+    /// Updates one canonical cloud's adaptive point-size multiplier without
+    /// rebuilding its resident node buffers or affecting sibling clouds.
+    pub fn set_entity_point_size_multiplier(
+        &mut self,
+        entity_id: &str,
+        multiplier: f32,
+    ) -> Result<usize, JsValue> {
+        if entity_id.is_empty() || !multiplier.is_finite() || !(0.25..=8.0).contains(&multiplier) {
+            return Err(JsValue::from_str(
+                "entity point-size multiplier must be finite and between 0.25 and 8",
+            ));
+        }
+        let ids = self.render_world.proxy_ids_for_entity(entity_id);
+        let mut updated = 0_usize;
+        for id in &ids {
+            if let Some(batches) = self.batches.get_mut(id) {
+                for batch in batches {
+                    updated += usize::from(
+                        batch
+                            .update_point_size_multiplier(self.host.queue(), multiplier)
+                            .map_err(js_error)?,
+                    );
+                }
+            }
+        }
+        self.entity_point_size_multipliers
+            .insert(entity_id.to_owned(), multiplier);
+        Ok(updated)
     }
 
     /// Applies shared transient selection/hover presentation without changing
@@ -5368,6 +5418,61 @@ impl WasmViewer {
         }
         self.point_size_scale = point_size;
         Ok(())
+    }
+
+    /// Applies the V-03 class/tier state to presentation-only effects.
+    pub fn set_quality_effects_json(&mut self, state_json: &str) -> Result<String, JsValue> {
+        let state: WasmQualityEffectState = serde_json::from_str(state_json).map_err(js_error)?;
+        self.eye_dome_lighting =
+            if self.host.supports_eye_dome_lighting() && state.point_content_visible {
+                himmelcad_render::eye_dome_lighting_settings(
+                    state.hardware_class,
+                    state.quality_tier,
+                    state.interacting,
+                )
+            } else {
+                EyeDomeLightingSettings::OFF
+            };
+        serde_json::to_string(&self.eye_dome_lighting).map_err(js_error)
+    }
+
+    /// Atomically replaces protected lane-2/3 vector, square and text payloads.
+    pub fn set_renderer_overlay_payload_json(
+        &mut self,
+        layer_id: &str,
+        atlas_hash: &str,
+        payload_json: &str,
+    ) -> Result<usize, JsValue> {
+        if layer_id.is_empty() || layer_id.len() > 128 {
+            return Err(JsValue::from_str("renderer overlay layer id is invalid"));
+        }
+        let payload: RendererOverlayPayload =
+            serde_json::from_str(payload_json).map_err(js_error)?;
+        if payload.lines.is_empty() && payload.quads.is_empty() && payload.labels.is_empty() {
+            self.renderer_overlay_batches.remove(layer_id);
+            return Ok(0);
+        }
+        let atlas = self
+            .glyph_atlases
+            .get(atlas_hash)
+            .ok_or_else(|| JsValue::from_str("renderer overlay glyph atlas is not registered"))?;
+        let floating_origin =
+            FloatingOrigin::from_selected(1_024.0, self.floating_origin).map_err(js_error)?;
+        let next = build_renderer_overlay_batches(
+            self.host.device(),
+            self.host.queue(),
+            self.host.renderer(),
+            "himmelcad-protected-overlay",
+            floating_origin,
+            &atlas.atlas,
+            &atlas.texture,
+            &payload,
+        )
+        .map_err(js_error)?;
+        let count = next.len();
+        self.renderer_overlay_batches
+            .insert(layer_id.to_owned(), next);
+        Ok(count)
     }
 
     /// Presents one frame. Geometry registration is performed through the
@@ -6549,6 +6654,11 @@ impl WasmViewer {
                         next_feature_catalogs.extend(feature_catalogs);
                     }
                     WasmStagedContent::Potree(staged) => {
+                        let point_size_multiplier = self
+                            .entity_point_size_multipliers
+                            .get(&staged.request.metadata.entity_id)
+                            .copied()
+                            .unwrap_or(1.0);
                         compile_decoded_potree_content(
                             &self.host,
                             next_world,
@@ -6556,6 +6666,7 @@ impl WasmViewer {
                             &staged.request,
                             &staged.decoded,
                             self.floating_origin,
+                            point_size_multiplier,
                         )?;
                         total_cost = total_cost.saturating_add(potree_cost(&staged.request, false));
                     }
@@ -7447,6 +7558,14 @@ impl WasmViewer {
                 frame_origin_queue_writes = frame_origin_queue_writes.saturating_add(1);
             }
         }
+        for batch in self.renderer_overlay_batches.values_mut().flatten() {
+            if batch
+                .ensure_frame_origin(queue, self.floating_origin)
+                .map_err(|error| error.to_string())?
+            {
+                frame_origin_queue_writes = frame_origin_queue_writes.saturating_add(1);
+            }
+        }
         self.last_frame_origin_queue_writes = frame_origin_queue_writes;
         self.frame_origin_queue_write_count = self
             .frame_origin_queue_write_count
@@ -7474,6 +7593,7 @@ impl WasmViewer {
                     .map(|preview_batch| &preview_batch.batch)
             }));
             batches.extend(self.clip_preview_batches.iter());
+            batches.extend(self.renderer_overlay_batches.values().flatten());
         }
         let clip_volumes = self.raster_analysis_view.as_ref().map_or_else(
             || self.render_world.active_clip_volumes().collect::<Vec<_>>(),
@@ -7492,6 +7612,7 @@ impl WasmViewer {
                 clip_volumes: &clip_volumes,
                 batches: &batches,
                 point_size_scale: self.point_size_scale,
+                eye_dome_lighting: self.eye_dome_lighting,
                 clear_color: clear_color.unwrap_or(self.clear_color),
                 pick,
                 capture,
@@ -11006,6 +11127,7 @@ fn compile_decoded_potree_content(
     request: &WasmPotreeRequest,
     decoded: &himmelcad_render::DecodedPotreePoints,
     frame_origin: WorldVec3,
+    point_size_multiplier: f32,
 ) -> Result<(), String> {
     let metadata = &request.metadata;
     let id = RenderProxyId(metadata.proxy_id.clone());
@@ -11031,6 +11153,8 @@ fn compile_decoded_potree_content(
         slot,
         decoded,
         &style,
+        Some(metadata.point_spacing),
+        point_size_multiplier,
     )
     .map_err(|error| error.to_string())?;
     batch
