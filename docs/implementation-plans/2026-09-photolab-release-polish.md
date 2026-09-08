@@ -474,6 +474,42 @@ within the envelope + 16 GB-limited rerun) and the report rendering of the
 memory record (`processingReport.ts`, follow-up A7b) remain; dense/mesh/splat
 are instrumented but not bounded until measured.
 
+### WP-A7b — Envelope follow-ups before the 16 GB gate run (Size M)
+
+Windows host inventory (Builder WIN-00, 2026-09-08): AMD Ryzen 3 PRO 3200G,
+4 cores, 16 GB (14.3 GB available), integrated Vega 8, no CUDA, ~33 GB disk.
+Consequences: the full-envelope golden (accuracy, gate 2 first half) runs on
+the 32 GB laptop; the Windows PC is the natural host for the S23 second half
+(a native 16 GB run, slower not worse) and for the native Windows packaging
+smoke (replacing wine). Two A7 gaps must close first, otherwise the 16 GB run
+would degrade quality where S23 forbids it:
+
+1. Unit-of-work check against usable memory, not the stage share. Today the
+   matching share is 50 % of usable; on 14.3 GB available the share is ≈ 5 GB,
+   so one 24k × 24k LightGlue pass (7.2 GB) "does not fit" and the keypoint cap
+   fires — although the pass fits the machine when it is the only worker.
+   Rule: shares govern parallelism; a single unit may use all usable memory
+   (one worker, sequential). Same for extraction.
+2. Tiled neural extraction as the time-first path for one image that does not
+   fit: on 14.3 GB available one full-resolution ALIKED pass (15.7 GB) cannot
+   fit even alone, so today the edge is reduced (quality). S23 names tiling as
+   time-first: PhotoLab pre-tiles the image (overlap ≥ 2 × the descriptor
+   support), extracts per tile, merges keypoints (de-duplicate in the overlap
+   by score) and imports through the existing `feature_importer` path; edge
+   reduction stays the last resort below the tile floor. Memory then scales
+   with the tile, time with the tile count.
+3. Report rendering of the memory record (`processingReport.ts`) — left open
+   by A7.
+
+Sizing for the Windows host: a 135-image Quality Hybrid run on 4 cores with
+one extraction worker and one matching worker is estimated at 10–14 h (ALIKED
+≈ 3 min/image on 8 laptop threads; roughly ×1.5 on 4 Ryzen cores, plus
+matching and mapping single-worker); disk: dataset 1.5 GB + scratch ≈ 12 GB
+fits 33 GB. Plan: first a 40-image subset (≈ 3 h) as the measured 16 GB
+evidence, then the full 135 overnight. Brief goes to the Windows host via
+`.claude/codex/prompts/remote/` once the clone is unblocked and A7b (items 1–2)
+has landed; the accuracy comparison uses the laptop golden as the reference.
+
 ## Phase B — Resume, shutdown, and job-owner integrity
 
 ### WP-B1 — Wire the checkpoint sink; make `interruptedRecoverable` real (Size M)
