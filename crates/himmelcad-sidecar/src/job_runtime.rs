@@ -21,7 +21,7 @@ use himmelcad_core::{
         CancellationToken, CheckpointCommitState, CheckpointDescriptor, CheckpointId, JobError,
         JobProgress, NewPhotolabJob, PhotolabJob, PhotolabJobId, PhotolabJobKind,
         PhotolabJobMemory, PhotolabJobState, PhotolabMemoryDegradation, PhotolabMemoryObservation,
-        PhotolabStageMemory, CHECKPOINT_SCHEMA_VERSION,
+        PhotolabMemoryTimeFirstChoice, PhotolabStageMemory, CHECKPOINT_SCHEMA_VERSION,
     },
     photolab_products::ProductKind,
 };
@@ -59,6 +59,12 @@ const MATCHING_STAGE_SHARE_DENOMINATOR: u64 = 2;
 const MAX_NEURAL_EXTRACTION_WORKERS: u16 = u16::MAX;
 const EDGE_QUANTUM: u32 = 256;
 const KEYPOINT_QUANTUM: u32 = 500;
+// WP-A7b X6 tunable: 256 px is twice ALIKED's 128 px descriptor support, so a
+// feature whose support crosses a tile boundary is fully represented in an overlap.
+pub const EXTRACTION_TILE_OVERLAP_PX: u32 = 256;
+// WP-A7b X6 tunable: tiles smaller than 1,024 px discard too much scene context;
+// below this floor the explicit extraction-edge quality fallback applies instead.
+pub const MIN_EXTRACTION_TILE_EDGE_PX: u32 = 1_024;
 
 /// Inputs known before an alignment job becomes visible.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,7 +87,17 @@ pub struct AlignmentMemoryPlan {
     pub extraction_workers: u16,
     pub matching_workers: u16,
     pub sequential_pair_batches: bool,
+    pub extraction_tiling: Option<AlignmentExtractionTiling>,
     pub predicted_peak_bytes: u64,
+}
+
+/// Deterministic grid for the largest resized image in one alignment admission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlignmentExtractionTiling {
+    pub columns: u32,
+    pub rows: u32,
+    pub tiles: u32,
+    pub overlap_px: u32,
 }
 
 /// Neural extraction estimate for one image after long-edge resize.
@@ -116,22 +132,41 @@ pub fn plan_alignment_memory(request: &AlignmentMemoryRequest) -> AlignmentMemor
     let extraction_budget = request.usable_bytes;
     let mut extraction_edge = requested_edge;
     let mut degradations = Vec::new();
+    let mut time_first_choices = Vec::new();
+    let mut extraction_tiling = None;
     let mut extraction_unit =
         maximum_extraction_bytes(&request.image_dimensions, extraction_edge, bytes_per_pixel);
     if extraction_unit > extraction_budget {
-        extraction_edge = largest_extraction_edge_that_fits(
+        if let Some((tiling, tile_bytes)) = smallest_extraction_tiling_that_fits(
             &request.image_dimensions,
             requested_edge,
             extraction_budget,
             bytes_per_pixel,
-        );
-        degradations.push(PhotolabMemoryDegradation::ExtractionEdgeReduced {
-            from: requested_edge,
-            to: extraction_edge,
-            budget_bytes: extraction_budget,
-        });
-        extraction_unit =
-            maximum_extraction_bytes(&request.image_dimensions, extraction_edge, bytes_per_pixel);
+        ) {
+            extraction_unit = tile_bytes;
+            extraction_tiling = Some(tiling);
+            time_first_choices.push(PhotolabMemoryTimeFirstChoice::ExtractionTiled {
+                tiles: tiling.tiles,
+                overlap_px: tiling.overlap_px,
+            });
+        } else {
+            extraction_edge = largest_extraction_edge_that_fits(
+                &request.image_dimensions,
+                requested_edge,
+                extraction_budget,
+                bytes_per_pixel,
+            );
+            degradations.push(PhotolabMemoryDegradation::ExtractionEdgeReduced {
+                from: requested_edge,
+                to: extraction_edge,
+                budget_bytes: extraction_budget,
+            });
+            extraction_unit = maximum_extraction_bytes(
+                &request.image_dimensions,
+                extraction_edge,
+                bytes_per_pixel,
+            );
+        }
     }
     let logical = request.logical_cpus.max(1);
     let extraction_workers = if extraction_unit == 0 {
@@ -157,8 +192,10 @@ pub fn plan_alignment_memory(request: &AlignmentMemoryRequest) -> AlignmentMemor
         }
     };
     let mut matching_unit = matching_model(keypoints);
-    if request.neural_matching && matching_unit > matching_budget {
-        let capped = largest_keypoint_cap_that_fits(keypoints, matching_budget);
+    // Stage shares limit concurrency only. Quality changes only when one unit cannot
+    // fit in the complete usable envelope even as the sole worker (owner S23).
+    if request.neural_matching && matching_unit > request.usable_bytes {
+        let capped = largest_keypoint_cap_that_fits(keypoints, request.usable_bytes);
         degradations.push(PhotolabMemoryDegradation::MatchingKeypointsCapped {
             from: keypoints,
             to: capped,
@@ -178,12 +215,25 @@ pub fn plan_alignment_memory(request: &AlignmentMemoryRequest) -> AlignmentMemor
     let predicted_peak_bytes = extraction_unit
         .saturating_mul(u64::from(extraction_workers))
         .max(matching_unit.saturating_mul(u64::from(matching_workers)));
-    let actual_pixels = request
-        .image_dimensions
-        .iter()
-        .map(|&(width, height)| resized_pixel_count(width, height, extraction_edge))
-        .max()
-        .unwrap_or(0);
+    let actual_pixels = extraction_unit.checked_div(bytes_per_pixel).unwrap_or(0);
+    let extraction_parameters = if let Some(tiling) = extraction_tiling {
+        serde_json::json!({
+            "actualPixels": actual_pixels,
+            "bytesPerActualPixel": bytes_per_pixel,
+            "maxImageSize": extraction_edge,
+            "stageBudgetBytes": extraction_budget,
+            "tileColumns": tiling.columns,
+            "tileRows": tiling.rows,
+            "tileOverlapPx": tiling.overlap_px,
+        })
+    } else {
+        serde_json::json!({
+            "actualPixels": actual_pixels,
+            "bytesPerActualPixel": bytes_per_pixel,
+            "maxImageSize": extraction_edge,
+            "stageBudgetBytes": extraction_budget,
+        })
+    };
     let memory = PhotolabJobMemory {
         envelope_bytes: request.usable_bytes,
         stages: vec![
@@ -191,12 +241,7 @@ pub fn plan_alignment_memory(request: &AlignmentMemoryRequest) -> AlignmentMemor
                 stage: "Extract ALIKED".into(),
                 peak_rss_bytes: 0,
                 workers: extraction_workers,
-                parameters: serde_json::json!({
-                    "actualPixels": actual_pixels,
-                    "bytesPerActualPixel": bytes_per_pixel,
-                    "maxImageSize": extraction_edge,
-                    "stageBudgetBytes": extraction_budget,
-                }),
+                parameters: extraction_parameters,
             },
             PhotolabStageMemory {
                 stage: if request.neural_matching {
@@ -213,6 +258,7 @@ pub fn plan_alignment_memory(request: &AlignmentMemoryRequest) -> AlignmentMemor
                 }),
             },
         ],
+        time_first_choices,
         degradations,
         observations: Vec::new(),
     };
@@ -223,6 +269,7 @@ pub fn plan_alignment_memory(request: &AlignmentMemoryRequest) -> AlignmentMemor
         extraction_workers,
         matching_workers,
         sequential_pair_batches,
+        extraction_tiling,
         predicted_peak_bytes,
     }
 }
@@ -248,6 +295,105 @@ fn maximum_extraction_bytes(dimensions: &[(u32, u32)], edge: u32, bytes_per_pixe
         .map(|&(width, height)| extraction_bytes_for_image(width, height, edge, bytes_per_pixel))
         .max()
         .unwrap_or(0)
+}
+
+fn resized_dimensions(width: u32, height: u32, max_image_edge: u32) -> (u32, u32) {
+    let longest = width.max(height);
+    if longest == 0 || max_image_edge == 0 || longest <= max_image_edge {
+        return (width, height);
+    }
+    let resized_width =
+        u64::from(width).saturating_mul(u64::from(max_image_edge)) / u64::from(longest);
+    let resized_height =
+        u64::from(height).saturating_mul(u64::from(max_image_edge)) / u64::from(longest);
+    (
+        u32::try_from(resized_width).unwrap_or(u32::MAX),
+        u32::try_from(resized_height).unwrap_or(u32::MAX),
+    )
+}
+
+fn tile_extent(length: u32, count: u32, overlap: u32) -> u32 {
+    let covered = u64::from(length)
+        .saturating_add(u64::from(count.saturating_sub(1)).saturating_mul(u64::from(overlap)));
+    u32::try_from(covered.div_ceil(u64::from(count.max(1)))).unwrap_or(u32::MAX)
+}
+
+fn maximum_tile_axis_count(length: u32) -> u32 {
+    if length <= MIN_EXTRACTION_TILE_EDGE_PX {
+        return 1;
+    }
+    let usable_step = MIN_EXTRACTION_TILE_EDGE_PX - EXTRACTION_TILE_OVERLAP_PX;
+    (length - EXTRACTION_TILE_OVERLAP_PX)
+        .checked_div(usable_step)
+        .unwrap_or(1)
+        .max(1)
+}
+
+fn smallest_extraction_tiling_that_fits(
+    dimensions: &[(u32, u32)],
+    requested_edge: u32,
+    budget_bytes: u64,
+    bytes_per_pixel: u64,
+) -> Option<(AlignmentExtractionTiling, u64)> {
+    let &(source_width, source_height) = dimensions
+        .iter()
+        .max_by_key(|&&(width, height)| resized_pixel_count(width, height, requested_edge))?;
+    let (width, height) = resized_dimensions(source_width, source_height, requested_edge);
+    if width == 0 || height == 0 || bytes_per_pixel == 0 {
+        return None;
+    }
+    let minimum_width = width.min(MIN_EXTRACTION_TILE_EDGE_PX);
+    let minimum_height = height.min(MIN_EXTRACTION_TILE_EDGE_PX);
+    if u64::from(minimum_width)
+        .saturating_mul(u64::from(minimum_height))
+        .saturating_mul(bytes_per_pixel)
+        > budget_bytes
+    {
+        return None;
+    }
+
+    let max_columns = maximum_tile_axis_count(width);
+    let max_rows = maximum_tile_axis_count(height);
+    let max_tiles = max_columns.saturating_mul(max_rows);
+    for tiles in 2..=max_tiles {
+        let mut best: Option<(u64, u32, u32)> = None;
+        for columns in 1..=max_columns.min(tiles) {
+            if tiles % columns != 0 {
+                continue;
+            }
+            let rows = tiles / columns;
+            if rows > max_rows {
+                continue;
+            }
+            let tile_width = tile_extent(width, columns, EXTRACTION_TILE_OVERLAP_PX);
+            let tile_height = tile_extent(height, rows, EXTRACTION_TILE_OVERLAP_PX);
+            if tile_width < minimum_width || tile_height < minimum_height {
+                continue;
+            }
+            let tile_bytes = u64::from(tile_width)
+                .saturating_mul(u64::from(tile_height))
+                .saturating_mul(bytes_per_pixel);
+            if tile_bytes > budget_bytes {
+                continue;
+            }
+            let candidate = (tile_bytes, columns, rows);
+            if best.is_none_or(|current| candidate < current) {
+                best = Some(candidate);
+            }
+        }
+        if let Some((tile_bytes, columns, rows)) = best {
+            return Some((
+                AlignmentExtractionTiling {
+                    columns,
+                    rows,
+                    tiles,
+                    overlap_px: EXTRACTION_TILE_OVERLAP_PX,
+                },
+                tile_bytes,
+            ));
+        }
+    }
+    None
 }
 
 fn largest_extraction_edge_that_fits(
@@ -494,6 +640,7 @@ impl MemoryPreflight {
             memory: PhotolabJobMemory {
                 envelope_bytes: available_bytes,
                 stages: Vec::new(),
+                time_first_choices: Vec::new(),
                 degradations: Vec::new(),
                 observations: vec![PhotolabMemoryObservation::UnboundedStage {
                     stage,
@@ -3432,6 +3579,7 @@ mod tests {
         assert_eq!(plan_laptop.matching_workers, 2);
         assert_eq!(plan_laptop.extraction_edge, 8_192);
         assert_eq!(plan_laptop.keypoints, 24_000);
+        assert_eq!(plan_laptop.extraction_tiling, None);
         assert!(plan_laptop.memory.degradations.is_empty());
 
         // 32 GiB usable (≈ 36 GB machine): two extractions fit side by side; matching
@@ -3440,12 +3588,19 @@ mod tests {
         assert_eq!(plan_32.extraction_workers, 2);
         assert_eq!(plan_32.matching_workers, 2);
         assert!(!plan_32.sequential_pair_batches);
+        assert_eq!(plan_32.extraction_edge, 8_192);
+        assert_eq!(plan_32.keypoints, 24_000);
+        assert_eq!(plan_32.extraction_tiling, None);
         assert!(plan_32.memory.degradations.is_empty());
 
         // 64 GB class (56 GiB usable): three extraction workers, still no degradation —
         // more memory only buys time.
         let plan_64 = plan_alignment_memory(&alignment_memory_request(56));
         assert_eq!(plan_64.extraction_workers, 3);
+        assert_eq!(plan_64.matching_workers, 4);
+        assert_eq!(plan_64.extraction_edge, 8_192);
+        assert_eq!(plan_64.keypoints, 24_000);
+        assert_eq!(plan_64.extraction_tiling, None);
         assert!(plan_64.memory.degradations.is_empty());
 
         let plan_16 = plan_alignment_memory(&alignment_memory_request(16));
@@ -3454,28 +3609,47 @@ mod tests {
         assert!(plan_16.sequential_pair_batches);
         assert_eq!(plan_16.extraction_edge, 8_192);
         assert_eq!(plan_16.keypoints, 24_000);
+        assert_eq!(plan_16.extraction_tiling, None);
         assert!(plan_16.memory.degradations.is_empty());
+
+        // The 16 GB gate host reports 14.3 GB available. After the 4 GiB reserve,
+        // 10.3 GiB usable keeps the requested feature budget and splits the 21 MP
+        // image into the smallest fitting grid: two horizontal tiles.
+        let mut gate_request = alignment_memory_request(10);
+        gate_request.usable_bytes = 103 * GIB / 10;
+        gate_request.logical_cpus = 4;
+        let plan_gate = plan_alignment_memory(&gate_request);
+        assert_eq!(plan_gate.extraction_workers, 1);
+        assert_eq!(plan_gate.matching_workers, 1);
+        assert!(plan_gate.sequential_pair_batches);
+        assert_eq!(plan_gate.extraction_edge, 8_192);
+        assert_eq!(plan_gate.keypoints, 24_000);
+        assert_eq!(
+            plan_gate.extraction_tiling,
+            Some(AlignmentExtractionTiling {
+                columns: 2,
+                rows: 1,
+                tiles: 2,
+                overlap_px: EXTRACTION_TILE_OVERLAP_PX,
+            })
+        );
+        assert_eq!(
+            plan_gate.memory.time_first_choices,
+            vec![PhotolabMemoryTimeFirstChoice::ExtractionTiled {
+                tiles: 2,
+                overlap_px: EXTRACTION_TILE_OVERLAP_PX,
+            }]
+        );
+        assert!(plan_gate.memory.degradations.is_empty());
 
         let plan_8 = plan_alignment_memory(&alignment_memory_request(8));
         assert_eq!(plan_8.extraction_workers, 1);
         assert_eq!(plan_8.matching_workers, 1);
         assert!(plan_8.sequential_pair_batches);
-        assert_eq!(plan_8.extraction_edge, 3_840);
-        assert_eq!(plan_8.keypoints, 18_000);
-        assert_eq!(
-            plan_8.memory.degradations,
-            vec![
-                PhotolabMemoryDegradation::ExtractionEdgeReduced {
-                    from: 8_192,
-                    to: 3_840,
-                    budget_bytes: 8 * GIB,
-                },
-                PhotolabMemoryDegradation::MatchingKeypointsCapped {
-                    from: 24_000,
-                    to: 18_000,
-                },
-            ]
-        );
+        assert_eq!(plan_8.extraction_edge, 8_192);
+        assert_eq!(plan_8.keypoints, 24_000);
+        assert_eq!(plan_8.extraction_tiling.expect("tiled extraction").tiles, 2);
+        assert!(plan_8.memory.degradations.is_empty());
     }
 
     #[tokio::test]
@@ -3485,6 +3659,11 @@ mod tests {
             usable_bytes: 128 * MIB,
             ..alignment_memory_request(8)
         });
+        assert_eq!(tiny.extraction_tiling, None);
+        assert!(matches!(
+            tiny.memory.degradations.first(),
+            Some(PhotolabMemoryDegradation::ExtractionEdgeReduced { .. })
+        ));
         assert!(tiny.predicted_peak_bytes > 128 * MIB);
         let predicted_bytes = tiny.predicted_peak_bytes;
         let started = Arc::new(AtomicBool::new(false));

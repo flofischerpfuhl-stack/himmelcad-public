@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { calibrationHeatmapShadePercent, calibrationRadialBinPoints } from './processingReport.js';
+import type { PhotolabJob } from '@himmelcad/data';
+
+import {
+  buildProcessingReportHtml,
+  calibrationHeatmapShadePercent,
+  calibrationRadialBinPoints,
+} from './processingReport.js';
 
 test('heatmap shade grows with |correlation| and is bounded', () => {
   const zero = calibrationHeatmapShadePercent(0);
@@ -44,4 +50,66 @@ test('radial bin points survive a single bin, an empty list and a zero maximum',
     50,
   );
   assert.equal(single, '50.00,0.00');
+});
+
+test('processing report renders a tiled memory envelope without claiming degradation', () => {
+  const job: PhotolabJob = {
+    schemaVersion: 1,
+    id: 'alignment-memory-test',
+    kind: 'alignPhotos',
+    configHash: '0'.repeat(64) as PhotolabJob['configHash'],
+    inputHash: '1'.repeat(64) as PhotolabJob['inputHash'],
+    state: { kind: 'completed' },
+    progress: {
+      stage: { kind: 'finalizing', index: 3, stageCount: 4, label: 'Finalize alignment' },
+      metrics: { completedUnits: 1, totalUnits: 1, completedBytes: 0 },
+    },
+    createdAtUnixMs: 1_000,
+    startedAtUnixMs: 2_000,
+    finishedAtUnixMs: 3_000,
+    memory: {
+      envelopeBytes: Math.floor(10.3 * 1024 ** 3),
+      stages: [
+        {
+          stage: 'Extract ALIKED',
+          peakRssBytes: 8_212_656_000,
+          workers: 1,
+          parameters: { tileColumns: 2, tileRows: 1, tileOverlapPx: 256 },
+        },
+        {
+          stage: 'Match ALIKED with LightGlue',
+          peakRssBytes: 7_180_435_456,
+          workers: 1,
+          parameters: { keypoints: 24_000, sequentialPairBatches: true },
+        },
+      ],
+      timeFirstChoices: [{ kind: 'extractionTiled', tiles: 2, overlapPx: 256 }],
+      degradations: [],
+      observations: [],
+    },
+  };
+  const report = buildProcessingReportHtml({
+    project: { id: 'project-memory-test', name: 'Memory test', formatVersion: 1 },
+    jobs: [job],
+    products: [],
+    hardware: null,
+    accuracy: null,
+    processingSets: [],
+    captureGroups: [],
+    calibrationGroups: [],
+    alignmentMerges: [],
+    alignmentRuns: [],
+    gcpOptimizations: [],
+    surveyData: null,
+    generatedAt: new Date('2026-09-08T12:00:00.000Z'),
+    generatedAtSource: 'Test fixture',
+  });
+
+  assert.match(report, /<h2>Memory envelope<\/h2>/);
+  assert.match(report, /Envelope<\/dt><dd>10\.30 GiB/);
+  assert.match(report, /Extraction tiled: 2 tiles · 256 px overlap/);
+  assert.match(report, /No quality degradations recorded/);
+  assert.match(report, /Extract ALIKED/);
+  assert.match(report, /7\.65 GiB/);
+  assert.match(report, /Match ALIKED with LightGlue/);
 });

@@ -46,10 +46,16 @@ export function jobSurfaceItems(jobs: readonly PhotolabJob[]): JobSurfaceItem[] 
 export function memoryStatusText(job: PhotolabJob): string | null {
   const memory = job.memory;
   if (!memory) return null;
-  const parts = memory.degradations.map((degradation) =>
-    degradation.kind === 'extractionEdgeReduced'
-      ? `extraction edge reduced ${degradation.from} px to ${degradation.to} px`
-      : `keypoints capped ${degradation.from.toLocaleString('en-US')} to ${degradation.to.toLocaleString('en-US')}`,
+  const parts = (memory.timeFirstChoices ?? []).map(
+    (choice) =>
+      `extraction tiled into ${choice.tiles.toLocaleString('en-US')} tiles with ${choice.overlapPx.toLocaleString('en-US')} px overlap`,
+  );
+  parts.push(
+    ...memory.degradations.map((degradation) =>
+      degradation.kind === 'extractionEdgeReduced'
+        ? `extraction edge reduced ${degradation.from} px to ${degradation.to} px`
+        : `keypoints capped ${degradation.from.toLocaleString('en-US')} to ${degradation.to.toLocaleString('en-US')}`,
+    ),
   );
   const extraction = memory.stages.find((stage) => stage.stage === 'Extract ALIKED');
   const matching = memory.stages.find(

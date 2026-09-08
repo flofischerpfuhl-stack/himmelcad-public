@@ -19,6 +19,120 @@ use crate::{
 const COLMAP_DESCRIPTOR_COLUMNS: usize = 128;
 const MAX_IMPORTED_FEATURES: usize = 50_000_000;
 const COORDINATE_TOLERANCE_PIXELS: f32 = 0.25;
+// WP-A7b X6 tunable: two pixels suppresses duplicate detections in a 256 px
+// tile overlap without collapsing distinct nearby image structure.
+const TILED_FEATURE_DEDUPLICATION_RADIUS_PX: f32 = 2.0;
+
+/// One scored ALIKED feature recovered from a tile extraction result.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TiledAlikedFeature {
+    pub x: f32,
+    pub y: f32,
+    pub scale: f32,
+    pub orientation: f32,
+    pub score: f32,
+    pub descriptor: [u8; COLMAP_DESCRIPTOR_COLUMNS],
+}
+
+/// Stable tile identity and its offset in the resized source image.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TiledAlikedFeatureSet {
+    pub tile_index: u32,
+    pub origin_x: u32,
+    pub origin_y: u32,
+    pub features: Vec<TiledAlikedFeature>,
+}
+
+/// Merges tile-local features into deterministic source-image coordinates.
+///
+/// Higher-scored overlap detections win within the X6 radius. The resulting
+/// set is globally top-k bounded, so tiling never widens the requested per-image
+/// feature budget.
+pub fn merge_tiled_aliked_features(
+    tiles: &[TiledAlikedFeatureSet],
+    max_features: u32,
+) -> Result<Vec<TiledAlikedFeature>, DedodeColmapBridgeError> {
+    if max_features == 0 {
+        return Err(DedodeColmapBridgeError::InvalidInput(
+            "tiled ALIKED feature budget must be greater than zero".into(),
+        ));
+    }
+    let mut candidates = Vec::new();
+    for tile in tiles {
+        for feature in &tile.features {
+            if ![
+                feature.x,
+                feature.y,
+                feature.scale,
+                feature.orientation,
+                feature.score,
+            ]
+            .into_iter()
+            .all(f32::is_finite)
+                || feature.x < 0.0
+                || feature.y < 0.0
+            {
+                return Err(DedodeColmapBridgeError::InvalidInput(
+                    "tiled ALIKED features require finite non-negative coordinates and finite metadata"
+                        .into(),
+                ));
+            }
+            let mut shifted = feature.clone();
+            shifted.x += tile.origin_x as f32;
+            shifted.y += tile.origin_y as f32;
+            candidates.push((shifted, tile.tile_index));
+        }
+    }
+    candidates.sort_by(|(left, left_tile), (right, right_tile)| {
+        right
+            .score
+            .total_cmp(&left.score)
+            .then_with(|| left.x.total_cmp(&right.x))
+            .then_with(|| left.y.total_cmp(&right.y))
+            .then_with(|| left.descriptor.cmp(&right.descriptor))
+            .then_with(|| left.scale.total_cmp(&right.scale))
+            .then_with(|| left.orientation.total_cmp(&right.orientation))
+            .then_with(|| left_tile.cmp(right_tile))
+    });
+
+    let radius = TILED_FEATURE_DEDUPLICATION_RADIUS_PX;
+    let radius_squared = radius * radius;
+    let mut cells = BTreeMap::<(i64, i64), Vec<usize>>::new();
+    let mut merged = Vec::with_capacity(
+        candidates
+            .len()
+            .min(usize::try_from(max_features).unwrap_or(usize::MAX)),
+    );
+    for (feature, _) in candidates {
+        let cell = (
+            (feature.x / radius).floor() as i64,
+            (feature.y / radius).floor() as i64,
+        );
+        let duplicate = (-1..=1).any(|offset_x| {
+            (-1..=1).any(|offset_y| {
+                cells
+                    .get(&(cell.0 + offset_x, cell.1 + offset_y))
+                    .into_iter()
+                    .flatten()
+                    .any(|&index| {
+                        let existing: &TiledAlikedFeature = &merged[index];
+                        let delta_x = existing.x - feature.x;
+                        let delta_y = existing.y - feature.y;
+                        delta_x * delta_x + delta_y * delta_y <= radius_squared
+                    })
+            })
+        });
+        if duplicate {
+            continue;
+        }
+        cells.entry(cell).or_default().push(merged.len());
+        merged.push(feature);
+        if merged.len() == usize::try_from(max_features).unwrap_or(usize::MAX) {
+            break;
+        }
+    }
+    Ok(merged)
+}
 
 /// Files consumed by COLMAP's `feature_importer` and `matches_importer`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -432,6 +546,100 @@ mod tests {
             },
             matches,
         }
+    }
+
+    fn tiled_feature(x: f32, y: f32, score: f32, descriptor: u8) -> TiledAlikedFeature {
+        TiledAlikedFeature {
+            x,
+            y,
+            scale: 1.0,
+            orientation: 0.0,
+            score,
+            descriptor: [descriptor; COLMAP_DESCRIPTOR_COLUMNS],
+        }
+    }
+
+    fn synthetic_two_by_two_tiles() -> Vec<TiledAlikedFeatureSet> {
+        vec![
+            TiledAlikedFeatureSet {
+                tile_index: 0,
+                origin_x: 0,
+                origin_y: 0,
+                features: vec![
+                    tiled_feature(100.0, 50.0, 0.4, 1),
+                    tiled_feature(10.0, 10.0, 0.7, 2),
+                ],
+            },
+            TiledAlikedFeatureSet {
+                tile_index: 1,
+                origin_x: 100,
+                origin_y: 0,
+                features: vec![
+                    tiled_feature(0.0, 50.0, 0.9, 3),
+                    tiled_feature(20.0, 20.0, 0.6, 4),
+                ],
+            },
+            TiledAlikedFeatureSet {
+                tile_index: 2,
+                origin_x: 0,
+                origin_y: 100,
+                features: vec![tiled_feature(20.0, 20.0, 0.5, 5)],
+            },
+            TiledAlikedFeatureSet {
+                tile_index: 3,
+                origin_x: 100,
+                origin_y: 100,
+                features: vec![tiled_feature(5.0, 7.0, 0.8, 6)],
+            },
+        ]
+    }
+
+    #[test]
+    fn tiled_feature_merge_shifts_coordinates_and_keeps_higher_overlap_score() {
+        let merged = merge_tiled_aliked_features(&synthetic_two_by_two_tiles(), 20)
+            .expect("merge tiled features");
+
+        assert!(merged
+            .iter()
+            .any(|feature| feature.x == 105.0 && feature.y == 107.0));
+        let overlap = merged
+            .iter()
+            .filter(|feature| feature.x == 100.0 && feature.y == 50.0)
+            .collect::<Vec<_>>();
+        assert_eq!(overlap.len(), 1);
+        assert_eq!(overlap[0].score, 0.9);
+        assert_eq!(overlap[0].descriptor[0], 3);
+    }
+
+    #[test]
+    fn tiled_feature_merge_applies_global_top_k_after_deduplication() {
+        let merged = merge_tiled_aliked_features(&synthetic_two_by_two_tiles(), 3)
+            .expect("merge tiled features");
+
+        assert_eq!(merged.len(), 3);
+        assert_eq!(
+            merged
+                .iter()
+                .map(|feature| feature.score)
+                .collect::<Vec<_>>(),
+            vec![0.9, 0.8, 0.7]
+        );
+    }
+
+    #[test]
+    fn tiled_feature_merge_is_deterministic_across_input_order() {
+        let tiles = synthetic_two_by_two_tiles();
+        let expected = merge_tiled_aliked_features(&tiles, 20).expect("first merge");
+        let mut reversed = tiles;
+        reversed.reverse();
+        for tile in &mut reversed {
+            tile.features.reverse();
+        }
+
+        assert_eq!(
+            merge_tiled_aliked_features(&reversed, 20).expect("reordered merge"),
+            expected
+        );
     }
 
     #[test]

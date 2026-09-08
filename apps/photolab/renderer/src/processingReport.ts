@@ -173,6 +173,7 @@ ${mergeEvidenceSection(input.alignmentMerges)}
 ${hardwareSection(input.hardware)}
 ${processingScopeSection(input.processingSets)}
 ${alignmentLineageSection(input.captureGroups, input.calibrationGroups, input.alignmentRuns, input.gcpOptimizations, input.alignmentMerges)}
+${memoryEnvelopeSection(input.jobs)}
 ${jobSection(input.jobs)}
 ${productSection(input.products)}
 ${accuracySection(input.accuracy, input.gcpOptimizations, input.processingSets, input.alignmentRuns)}
@@ -539,6 +540,58 @@ function jobSection(jobs: readonly PhotolabJob[]): string {
   return section(
     'Processing runs',
     `<table><thead><tr><th>Operation</th><th>State</th><th>Started</th><th>Finished</th><th>Runtime</th><th>Last recorded stage</th><th>Configuration SHA-256</th><th>Input SHA-256</th><th>Cancellation / recovery</th><th>Error</th></tr></thead><tbody>${rows}</tbody></table>`,
+  );
+}
+
+function memoryEnvelopeSection(jobs: readonly PhotolabJob[]): string {
+  const rows = jobs
+    .filter((job) => job.memory != null)
+    .map((job) => {
+      const memory = job.memory!;
+      const stages = memory.stages
+        .map(
+          (stage) =>
+            `<tr><td>${escapeHtml(stage.stage)}</td><td>${stage.workers.toLocaleString('en-US')}</td><td>${stage.peakRssBytes > 0 ? formatBytes(stage.peakRssBytes) : 'Not recorded'}</td><td><code>${escapeHtml(stableJson(stage.parameters))}</code></td></tr>`,
+        )
+        .join('');
+      const timeFirstChoices = (memory.timeFirstChoices ?? []).map((choice) => {
+        switch (choice.kind) {
+          case 'extractionTiled':
+            return `Extraction tiled: ${choice.tiles.toLocaleString('en-US')} tiles · ${choice.overlapPx.toLocaleString('en-US')} px overlap`;
+        }
+      });
+      const degradations = memory.degradations.map((degradation) => {
+        switch (degradation.kind) {
+          case 'extractionEdgeReduced':
+            return `Extraction edge reduced: ${degradation.from.toLocaleString('en-US')} px → ${degradation.to.toLocaleString('en-US')} px · ${formatBytes(degradation.budgetBytes)} budget`;
+          case 'matchingKeypointsCapped':
+            return `Matching keypoints capped: ${degradation.from.toLocaleString('en-US')} → ${degradation.to.toLocaleString('en-US')}`;
+        }
+      });
+      return `<article><h3>${escapeHtml(jobLabel(job))}<small>${escapeHtml(job.id)}</small></h3>${definitionList(
+        [
+          ['Envelope', formatBytes(memory.envelopeBytes)],
+          [
+            'Time-first choices',
+            timeFirstChoices.length > 0
+              ? timeFirstChoices.join(' · ')
+              : 'No time-first choices recorded',
+          ],
+          [
+            'Quality degradations',
+            degradations.length > 0 ? degradations.join(' · ') : 'No quality degradations recorded',
+          ],
+        ],
+      )}${
+        stages
+          ? `<table><thead><tr><th>Stage</th><th>Workers</th><th>Peak RSS</th><th>Parameters</th></tr></thead><tbody>${stages}</tbody></table>`
+          : '<p class="empty">No per-stage memory evidence was recorded.</p>'
+      }</article>`;
+    })
+    .join('');
+  return section(
+    'Memory envelope',
+    rows || '<p class="empty">No memory-envelope records were captured.</p>',
   );
 }
 

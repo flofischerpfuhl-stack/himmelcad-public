@@ -4,7 +4,7 @@ import test from 'node:test';
 import type { PhotolabJob, PhotolabJobState } from '@himmelcad/data';
 import type { JobSurfaceItem } from '@himmelcad/ui';
 
-import { jobSurfaceItems } from './jobSurfaceItems.js';
+import { jobSurfaceItems, memoryStatusText } from './jobSurfaceItems.js';
 
 function job(
   state: PhotolabJobState,
@@ -104,5 +104,29 @@ test('keeps sentence-case labels for all five side-operation kinds', () => {
       kinds.map((kind) => job({ kind: 'running' }, { kind, origin: 'sideOperation' })),
     ).map((item) => item.label),
     ['Save archive', 'Inspect images', 'Commit images', 'Apply image masks', 'GCP operation'],
+  );
+});
+
+test('describes tiled extraction as time-first rather than a degradation', () => {
+  const value = job({ kind: 'running' });
+  value.memory = {
+    envelopeBytes: 10 * 1024 ** 3,
+    stages: [
+      { stage: 'Extract ALIKED', peakRssBytes: 0, workers: 1, parameters: {} },
+      {
+        stage: 'Match ALIKED with LightGlue',
+        peakRssBytes: 0,
+        workers: 1,
+        parameters: { sequentialPairBatches: true },
+      },
+    ],
+    timeFirstChoices: [{ kind: 'extractionTiled', tiles: 2, overlapPx: 256 }],
+    degradations: [],
+    observations: [],
+  };
+
+  assert.equal(
+    memoryStatusText(value),
+    'Memory envelope: extraction tiled into 2 tiles with 256 px overlap · 1 extraction worker · 1 matching worker · sequential pair batches',
   );
 });

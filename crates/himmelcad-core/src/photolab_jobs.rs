@@ -353,6 +353,17 @@ pub enum PhotolabMemoryDegradation {
     },
 }
 
+/// Throughput-only memory choices frozen at admission without changing requested quality.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum PhotolabMemoryTimeFirstChoice {
+    ExtractionTiled { tiles: u32, overlap_px: u32 },
+}
+
 /// Warning-level memory evidence for a stage whose model is not calibrated yet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
@@ -382,6 +393,8 @@ pub struct PhotolabJobMemory {
     pub envelope_bytes: u64,
     #[serde(default)]
     pub stages: Vec<PhotolabStageMemory>,
+    #[serde(default)]
+    pub time_first_choices: Vec<PhotolabMemoryTimeFirstChoice>,
     #[serde(default)]
     pub degradations: Vec<PhotolabMemoryDegradation>,
     #[serde(default)]
@@ -971,6 +984,10 @@ mod tests {
                 peak_rss_bytes: 7_900_000_000,
                 workers: 1,
                 parameters: serde_json::json!({ "maxImageSize": 3840 }),
+            }],
+            time_first_choices: vec![PhotolabMemoryTimeFirstChoice::ExtractionTiled {
+                tiles: 4,
+                overlap_px: 256,
             }],
             degradations: vec![PhotolabMemoryDegradation::ExtractionEdgeReduced {
                 from: 8_192,
