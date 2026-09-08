@@ -184,3 +184,21 @@ both Q1 branches).
   neben v2 erhalten. Deine Anweisung vom Morgen (jede UI selbst anschauen) ist als
   G17 festgehalten; die Komponentengalerie für die Sichtprüfung wird gerade gebaut.
 - Segmentierung ist jetzt Teil von 0.5 (Slice 0.5-02a, S21).
+
+## 2026-09-08 Abend — Speicherhülle PhotoLab (S22/G18)
+
+- Befund des PhotoLab-Threads, gemessen: Quality Hybrid braucht heute ~30 GB beim
+  Merkmalsabgleich, weil die Anzahl Schlüsselpunkte unbegrenzt ist (bis 24 000 je
+  Bild, Aufmerksamkeitsmatrix 2,3 GB je Schicht) und die Speicherkonstante je
+  Worker um Faktor 4,7 falsch war (750 statt 160 Byte je Pixel). Das Fast-Profil
+  liegt bei 1,9 GB. Die Lösung ist ein gemessenes Speichermodell mit typisierten
+  Obergrenzen, nicht mehr RAM.
+- Entscheidung ohne Veto übernommen: Referenzklasse 32 GB (dieser Laptop), Budget
+  je Stufe aus Agisofts Angaben (Extraktion ≤ 12, Abgleich ≤ 16, Bündelausgleich ≤ 12,
+  dicht ≤ 16, Mesh ≤ 12, Splat ≤ 16 GB; halbiert für 16-GB-Klasse; alles tunbar),
+  Worker aus dem gemessenen Modell, Schlüsselpunkt-Kappung mit sichtbarer
+  Degradation, Speicher-Vorprüfung bei der Job-Zulassung (degradieren oder mit Zahl
+  ablehnen, nie starten und sterben), Genauigkeitswächter gegen die Golden-Metriken.
+- Gate 2 geändert: Der 135-Bilder-Lauf muss auf dieser 32-GB-Maschine innerhalb der
+  Hülle durchlaufen; der Windows-PC liefert zusätzliche Evidenz, erfüllt das Gate
+  aber nie allein. Paket WP-A7 kommt vor dem Golden-Lauf.
