@@ -140,3 +140,5 @@ Verification:
 ## Architect acceptance of S-02e (G17, 2026-09-08)
 
 `gallery/shots/light/status-text.png`: Information/Success/Warning/Error legible on panel, island and island-hi surfaces in the light theme (≥ 4.5:1 asserted by 24 pixel checks); `--hc-info-fg` exists in both themes; the theme's `lint:tokens` now fails any plain status token used as text colour — it already flags the in-flight sampling/segment panels, which their lanes must fix before landing. S-02e accepted.
+
+PhotoLab confirmation (2026-09-09 00:25): light a11y audit on 3afc1d4 + 01f02e5 — 90 captures, 0 axe findings, no GPU-device errors (`.build/visual-regression/a11y-report.json`, capture `.build/photolab-ui/f17-light/bottom-jobs.png`); dark was clean in audit 24. F17 closed on both sides.
