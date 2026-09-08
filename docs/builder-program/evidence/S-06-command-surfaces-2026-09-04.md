@@ -318,3 +318,7 @@ its filtered vocabulary retains `photolab.images.remove` and
 - `pnpm --filter @himmelcad/theme lint:tokens`: blocked only by the excluded,
   concurrently edited sampling/segmentation panels, which use `--hc-error` as
   text color. S-06f did not edit either file.
+
+## Architect acceptance of S-06f (G17, 2026-09-08)
+
+Console vocabulary test now per product (2/2); "Extract ground" renders as the primary accent-filled Button (verified in the dark gallery crop); the P-01 recovery Toast spans the fixture with its close button visible. S-06f accepted and committed in 4d35d76.
