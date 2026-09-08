@@ -19,8 +19,9 @@ use himmelcad_core::{
     hash::ObjectHash,
     photolab_jobs::{
         CancellationToken, CheckpointCommitState, CheckpointDescriptor, CheckpointId, JobError,
-        JobProgress, NewPhotolabJob, PhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState,
-        CHECKPOINT_SCHEMA_VERSION,
+        JobProgress, NewPhotolabJob, PhotolabJob, PhotolabJobId, PhotolabJobKind,
+        PhotolabJobMemory, PhotolabJobState, PhotolabMemoryDegradation, PhotolabMemoryObservation,
+        PhotolabStageMemory, CHECKPOINT_SCHEMA_VERSION,
     },
     photolab_products::ProductKind,
 };
@@ -37,6 +38,241 @@ const HISTORY_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 
 const GIB: u64 = 1024 * 1024 * 1024;
 const MIB: u64 = 1024 * 1024;
+
+// WP-A7 X6 calibration: the measured 21 MP ALIKED_N32 extraction used 15.7 GB,
+// which is approximately 750 bytes per actual resized pixel. A later measured
+// job may supply its observed calibration instead of this initial value.
+pub const BYTES_PER_ACTUAL_PIXEL: u64 = 750;
+// WP-A7 X6 calibration: three fp32 attention-sized activation layers plus a
+// 256 MiB fixed matcher base reproduce the measured ~7 GB at 24k keypoints.
+pub const NEURAL_MATCHING_ATTENTION_LAYERS: u64 = 3;
+pub const NEURAL_MATCHING_FIXED_BASE_BYTES: u64 = 256 * MIB;
+pub const SIFT_MATCHING_BYTES_PER_WORKER: u64 = 256 * MIB;
+// WP-A7 X6 policy: matching receives half the usable envelope so the sidecar,
+// database cache, and publication path retain bounded headroom.
+const MATCHING_STAGE_SHARE_NUMERATOR: u64 = 1;
+const MATCHING_STAGE_SHARE_DENOMINATOR: u64 = 2;
+/// Owner S23 (2026-09-08): PhotoLab uses all the memory the machine has, so neural
+/// extraction workers are bounded only by the memory model (750 B per actual pixel per
+/// worker, measured) and the logical CPU count — no fixed cap. On the 32 GB reference
+/// laptop the model yields one worker; a 64 GB machine gets three.
+const MAX_NEURAL_EXTRACTION_WORKERS: u16 = u16::MAX;
+const EDGE_QUANTUM: u32 = 256;
+const KEYPOINT_QUANTUM: u32 = 500;
+
+/// Inputs known before an alignment job becomes visible.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlignmentMemoryRequest {
+    pub usable_bytes: u64,
+    pub logical_cpus: u16,
+    pub image_dimensions: Vec<(u32, u32)>,
+    pub max_image_edge: u32,
+    pub keypoints: u32,
+    pub neural_matching: bool,
+    pub measured_extraction_bytes_per_pixel: Option<u64>,
+}
+
+/// Frozen time-first and quality-last choices applied to an alignment request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlignmentMemoryPlan {
+    pub memory: PhotolabJobMemory,
+    pub extraction_edge: u32,
+    pub keypoints: u32,
+    pub extraction_workers: u16,
+    pub matching_workers: u16,
+    pub sequential_pair_batches: bool,
+    pub predicted_peak_bytes: u64,
+}
+
+/// Neural extraction estimate for one image after long-edge resize.
+#[must_use]
+pub fn extraction_bytes_for_image(
+    width: u32,
+    height: u32,
+    max_image_edge: u32,
+    bytes_per_actual_pixel: u64,
+) -> u64 {
+    resized_pixel_count(width, height, max_image_edge).saturating_mul(bytes_per_actual_pixel)
+}
+
+/// LightGlue estimate for one worker at the requested keypoint cap.
+#[must_use]
+pub fn neural_matching_bytes_per_worker(keypoints: u32) -> u64 {
+    u64::from(keypoints)
+        .saturating_mul(u64::from(keypoints))
+        .saturating_mul(4)
+        .saturating_mul(NEURAL_MATCHING_ATTENTION_LAYERS)
+        .saturating_add(NEURAL_MATCHING_FIXED_BASE_BYTES)
+}
+
+/// Computes the immutable per-machine alignment memory choices.
+#[must_use]
+pub fn plan_alignment_memory(request: &AlignmentMemoryRequest) -> AlignmentMemoryPlan {
+    let bytes_per_pixel = request
+        .measured_extraction_bytes_per_pixel
+        .filter(|value| *value > 0)
+        .unwrap_or(BYTES_PER_ACTUAL_PIXEL);
+    let requested_edge = request.max_image_edge.max(EDGE_QUANTUM);
+    let extraction_budget = request.usable_bytes;
+    let mut extraction_edge = requested_edge;
+    let mut degradations = Vec::new();
+    let mut extraction_unit =
+        maximum_extraction_bytes(&request.image_dimensions, extraction_edge, bytes_per_pixel);
+    if extraction_unit > extraction_budget {
+        extraction_edge = largest_extraction_edge_that_fits(
+            &request.image_dimensions,
+            requested_edge,
+            extraction_budget,
+            bytes_per_pixel,
+        );
+        degradations.push(PhotolabMemoryDegradation::ExtractionEdgeReduced {
+            from: requested_edge,
+            to: extraction_edge,
+            budget_bytes: extraction_budget,
+        });
+        extraction_unit =
+            maximum_extraction_bytes(&request.image_dimensions, extraction_edge, bytes_per_pixel);
+    }
+    let logical = request.logical_cpus.max(1);
+    let extraction_workers = if extraction_unit == 0 {
+        1
+    } else {
+        u16::try_from((extraction_budget / extraction_unit).max(1))
+            .unwrap_or(u16::MAX)
+            .min(logical)
+            .min(MAX_NEURAL_EXTRACTION_WORKERS)
+            .max(1)
+    };
+
+    let matching_budget = request
+        .usable_bytes
+        .saturating_mul(MATCHING_STAGE_SHARE_NUMERATOR)
+        / MATCHING_STAGE_SHARE_DENOMINATOR;
+    let mut keypoints = request.keypoints.max(KEYPOINT_QUANTUM);
+    let matching_model = |value| {
+        if request.neural_matching {
+            neural_matching_bytes_per_worker(value)
+        } else {
+            SIFT_MATCHING_BYTES_PER_WORKER
+        }
+    };
+    let mut matching_unit = matching_model(keypoints);
+    if request.neural_matching && matching_unit > matching_budget {
+        let capped = largest_keypoint_cap_that_fits(keypoints, matching_budget);
+        degradations.push(PhotolabMemoryDegradation::MatchingKeypointsCapped {
+            from: keypoints,
+            to: capped,
+        });
+        keypoints = capped;
+        matching_unit = matching_model(keypoints);
+    }
+    let matching_workers = if matching_unit == 0 {
+        1
+    } else {
+        u16::try_from((matching_budget / matching_unit).max(1))
+            .unwrap_or(u16::MAX)
+            .min(logical)
+            .max(1)
+    };
+    let sequential_pair_batches = matching_workers == 1;
+    let predicted_peak_bytes = extraction_unit
+        .saturating_mul(u64::from(extraction_workers))
+        .max(matching_unit.saturating_mul(u64::from(matching_workers)));
+    let actual_pixels = request
+        .image_dimensions
+        .iter()
+        .map(|&(width, height)| resized_pixel_count(width, height, extraction_edge))
+        .max()
+        .unwrap_or(0);
+    let memory = PhotolabJobMemory {
+        envelope_bytes: request.usable_bytes,
+        stages: vec![
+            PhotolabStageMemory {
+                stage: "Extract ALIKED".into(),
+                peak_rss_bytes: 0,
+                workers: extraction_workers,
+                parameters: serde_json::json!({
+                    "actualPixels": actual_pixels,
+                    "bytesPerActualPixel": bytes_per_pixel,
+                    "maxImageSize": extraction_edge,
+                    "stageBudgetBytes": extraction_budget,
+                }),
+            },
+            PhotolabStageMemory {
+                stage: if request.neural_matching {
+                    "Match ALIKED with LightGlue".into()
+                } else {
+                    "Match SIFT features".into()
+                },
+                peak_rss_bytes: 0,
+                workers: matching_workers,
+                parameters: serde_json::json!({
+                    "keypoints": keypoints,
+                    "stageBudgetBytes": matching_budget,
+                    "sequentialPairBatches": sequential_pair_batches,
+                }),
+            },
+        ],
+        degradations,
+        observations: Vec::new(),
+    };
+    AlignmentMemoryPlan {
+        memory,
+        extraction_edge,
+        keypoints,
+        extraction_workers,
+        matching_workers,
+        sequential_pair_batches,
+        predicted_peak_bytes,
+    }
+}
+
+fn resized_pixel_count(width: u32, height: u32, max_image_edge: u32) -> u64 {
+    let longest = width.max(height);
+    if longest == 0 || max_image_edge == 0 {
+        return 0;
+    }
+    if longest <= max_image_edge {
+        return u64::from(width).saturating_mul(u64::from(height));
+    }
+    let resized_width =
+        u64::from(width).saturating_mul(u64::from(max_image_edge)) / u64::from(longest);
+    let resized_height =
+        u64::from(height).saturating_mul(u64::from(max_image_edge)) / u64::from(longest);
+    resized_width.saturating_mul(resized_height)
+}
+
+fn maximum_extraction_bytes(dimensions: &[(u32, u32)], edge: u32, bytes_per_pixel: u64) -> u64 {
+    dimensions
+        .iter()
+        .map(|&(width, height)| extraction_bytes_for_image(width, height, edge, bytes_per_pixel))
+        .max()
+        .unwrap_or(0)
+}
+
+fn largest_extraction_edge_that_fits(
+    dimensions: &[(u32, u32)],
+    requested: u32,
+    budget_bytes: u64,
+    bytes_per_pixel: u64,
+) -> u32 {
+    let mut edge = requested / EDGE_QUANTUM * EDGE_QUANTUM;
+    while edge > EDGE_QUANTUM
+        && maximum_extraction_bytes(dimensions, edge, bytes_per_pixel) > budget_bytes
+    {
+        edge = edge.saturating_sub(EDGE_QUANTUM);
+    }
+    edge.max(EDGE_QUANTUM)
+}
+
+fn largest_keypoint_cap_that_fits(requested: u32, budget_bytes: u64) -> u32 {
+    let mut keypoints = requested / KEYPOINT_QUANTUM * KEYPOINT_QUANTUM;
+    while keypoints > KEYPOINT_QUANTUM && neural_matching_bytes_per_worker(keypoints) > budget_bytes
+    {
+        keypoints = keypoints.saturating_sub(KEYPOINT_QUANTUM);
+    }
+    keypoints.max(KEYPOINT_QUANTUM)
+}
 
 #[derive(Debug, Clone, Copy)]
 struct DiskEstimateTuning {
@@ -236,6 +472,38 @@ pub struct DiskPreflight {
     pub path: PathBuf,
 }
 
+/// Memory estimate and frozen per-machine choices checked before visibility.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MemoryPreflight {
+    pub predicted_bytes: u64,
+    pub available_bytes: u64,
+    /// Usable machine memory before subtracting running-job reservations.
+    pub machine_usable_bytes: u64,
+    pub memory: PhotolabJobMemory,
+}
+
+impl MemoryPreflight {
+    /// Freezes an envelope while explicitly warning that this stage has no bound yet.
+    #[must_use]
+    pub fn unbounded(available_bytes: u64, stage: impl Into<String>) -> Self {
+        let stage = stage.into();
+        Self {
+            predicted_bytes: 0,
+            available_bytes,
+            machine_usable_bytes: available_bytes,
+            memory: PhotolabJobMemory {
+                envelope_bytes: available_bytes,
+                stages: Vec::new(),
+                degradations: Vec::new(),
+                observations: vec![PhotolabMemoryObservation::UnboundedStage {
+                    stage,
+                    budget_bytes: available_bytes,
+                }],
+            },
+        }
+    }
+}
+
 impl DiskPreflight {
     #[must_use]
     pub fn for_job(kind: PhotolabJobKind, scale: DiskEstimateScale, path: PathBuf) -> Self {
@@ -251,6 +519,15 @@ impl DiskPreflight {
 pub struct JobAdmission {
     pub publication_targets: Vec<PublicationTarget>,
     pub disk_preflight: Option<DiskPreflight>,
+    pub memory_preflight: Option<MemoryPreflight>,
+}
+
+/// OS/UI reserve deducted before per-stage budgets are assigned.
+#[must_use]
+pub fn memory_os_ui_reserve_bytes(physical_memory_bytes: u64) -> u64 {
+    // WP-A7 X6 tunable: reserve the larger of 4 GiB or 12.5% so small machines
+    // retain a usable desktop while larger machines scale their system headroom.
+    (4 * GIB).max(physical_memory_bytes / 8)
 }
 
 #[must_use]
@@ -693,6 +970,47 @@ pub struct JobDiagnosticSink {
     job_id: PhotolabJobId,
 }
 
+/// Cheap memory-evidence callback scoped to one job.
+#[derive(Debug, Clone)]
+pub struct JobMemorySink {
+    manager: JobManager,
+    job_id: PhotolabJobId,
+}
+
+impl JobMemorySink {
+    /// Persists a sampled subprocess-group peak from blocking worker code.
+    pub fn record_stage_peak_blocking(
+        &self,
+        stage: impl Into<String>,
+        peak_rss_bytes: u64,
+        workers: u16,
+        parameters: serde_json::Value,
+    ) -> Result<(), JobManagerError> {
+        self.manager
+            .runtime
+            .block_on(self.manager.record_stage_memory(
+                &self.job_id,
+                PhotolabStageMemory {
+                    stage: stage.into(),
+                    peak_rss_bytes,
+                    workers,
+                    parameters,
+                },
+            ))
+    }
+
+    /// Records an uncalibrated stage as warning-level typed evidence.
+    pub fn record_unbounded_stage_blocking(
+        &self,
+        stage: impl Into<String>,
+    ) -> Result<(), JobManagerError> {
+        self.manager.runtime.block_on(
+            self.manager
+                .record_unbounded_memory_stage(&self.job_id, stage.into()),
+        )
+    }
+}
+
 impl JobDiagnosticSink {
     /// Persists a non-fatal diagnostic from blocking worker code.
     pub fn record_blocking(&self, diagnostic: impl Into<String>) -> Result<(), JobManagerError> {
@@ -710,6 +1028,7 @@ pub struct JobWorkerContext {
     pub progress: ProgressSink,
     pub checkpoints: CheckpointSink,
     pub diagnostics: JobDiagnosticSink,
+    pub memory: JobMemorySink,
 }
 
 impl JobWorkerContext {
@@ -743,6 +1062,7 @@ struct ManagedJob {
     frozen_request: Option<FrozenJobRequest>,
     history_dirty: bool,
     last_history_persisted_at: Instant,
+    memory_reservation_bytes: u64,
 }
 
 struct JobManagerInner {
@@ -956,7 +1276,18 @@ impl JobManager {
                 });
             }
         }
-        let job = PhotolabJob::new(request)?;
+        if let Some(preflight) = admission.memory_preflight.as_ref() {
+            if preflight.predicted_bytes > preflight.available_bytes {
+                return Err(JobManagerError::InsufficientMemory {
+                    predicted_bytes: preflight.predicted_bytes,
+                    available_bytes: preflight.available_bytes,
+                });
+            }
+        }
+        let mut job = PhotolabJob::new(request)?;
+        if let Some(preflight) = admission.memory_preflight.as_ref() {
+            job.set_memory_plan(preflight.memory.clone());
+        }
         let key = job.id.0.clone();
         let cancellation = CancellationToken::new();
         let history_scope = self.current_history_scope()?;
@@ -972,6 +1303,21 @@ impl JobManager {
             }
             if jobs.contains_key(&key) {
                 return Err(JobManagerError::DuplicateJobId(job.id));
+            }
+            if let Some(preflight) = admission.memory_preflight.as_ref() {
+                let running_holds = jobs
+                    .values()
+                    .filter(|managed| managed.job.state == PhotolabJobState::Running)
+                    .map(|managed| managed.memory_reservation_bytes)
+                    .fold(0_u64, u64::saturating_add);
+                let available_bytes = preflight.machine_usable_bytes.saturating_sub(running_holds);
+                if preflight.predicted_bytes > available_bytes {
+                    return Err(JobManagerError::InsufficientMemory {
+                        predicted_bytes: preflight.predicted_bytes,
+                        available_bytes,
+                    });
+                }
+                job.memory.envelope_bytes = available_bytes;
             }
             for managed in jobs
                 .values()
@@ -1018,6 +1364,10 @@ impl JobManager {
                     frozen_request: frozen_request.clone(),
                     history_dirty: false,
                     last_history_persisted_at: Instant::now(),
+                    memory_reservation_bytes: admission
+                        .memory_preflight
+                        .as_ref()
+                        .map_or(0, |preflight| preflight.predicted_bytes),
                 },
             );
             if let (Some(history), Some(scope)) = (&self.inner.history, &history_scope) {
@@ -1119,6 +1469,37 @@ impl JobManager {
             }
         }
         Err(JobManagerError::JobNotFound(job_id.clone()))
+    }
+
+    /// Returns the per-machine envelope after the OS/UI reserve and running-job holds.
+    pub async fn usable_memory_bytes(&self, physical_memory_bytes: u64) -> u64 {
+        let jobs = self.inner.jobs.lock().await;
+        let running_holds = jobs
+            .values()
+            .filter(|managed| managed.job.state == PhotolabJobState::Running)
+            .map(|managed| managed.memory_reservation_bytes)
+            .fold(0_u64, u64::saturating_add);
+        physical_memory_bytes
+            .saturating_sub(memory_os_ui_reserve_bytes(physical_memory_bytes))
+            .saturating_sub(running_holds)
+    }
+
+    /// Latest measured ALIKED extraction calibration available in current project history.
+    pub async fn measured_extraction_bytes_per_pixel(&self) -> Option<u64> {
+        self.list(ListJobsParams {
+            include_terminal: true,
+        })
+        .await
+        .ok()?
+        .into_iter()
+        .flat_map(|job| job.memory.stages)
+        .filter(|stage| stage.stage == "Extract ALIKED" && stage.peak_rss_bytes > 0)
+        .filter_map(|stage| {
+            let pixels = stage.parameters.get("actualPixels")?.as_u64()?;
+            (pixels > 0).then(|| stage.peak_rss_bytes / pixels)
+        })
+        .filter(|value| *value > 0)
+        .last()
     }
 
     /// Makes cancellation visible before returning to the caller.
@@ -1336,6 +1717,10 @@ impl JobManager {
                 manager: self.clone(),
                 job_id: job_id.clone(),
             },
+            memory: JobMemorySink {
+                manager: self.clone(),
+                job_id: job_id.clone(),
+            },
         };
         let outcome = tokio::task::spawn_blocking(move || work(context)).await;
         self.finish_worker(&job_id, outcome, permit).await;
@@ -1466,6 +1851,40 @@ impl JobManager {
             .ok_or_else(|| JobManagerError::JobNotFound(job_id.clone()))?;
         managed.job.record_terminal_diagnostic(diagnostic);
         self.publish_durable(managed);
+        Ok(())
+    }
+
+    async fn record_stage_memory(
+        &self,
+        job_id: &PhotolabJobId,
+        stage: PhotolabStageMemory,
+    ) -> Result<(), JobManagerError> {
+        let mut jobs = self.inner.jobs.lock().await;
+        let managed = jobs
+            .get_mut(&job_id.0)
+            .ok_or_else(|| JobManagerError::JobNotFound(job_id.clone()))?;
+        managed.job.record_stage_memory(stage);
+        self.publish_durable(managed);
+        Ok(())
+    }
+
+    async fn record_unbounded_memory_stage(
+        &self,
+        job_id: &PhotolabJobId,
+        stage: String,
+    ) -> Result<(), JobManagerError> {
+        let mut jobs = self.inner.jobs.lock().await;
+        let managed = jobs
+            .get_mut(&job_id.0)
+            .ok_or_else(|| JobManagerError::JobNotFound(job_id.clone()))?;
+        let observation = PhotolabMemoryObservation::UnboundedStage {
+            stage,
+            budget_bytes: managed.job.memory.envelope_bytes,
+        };
+        if !managed.job.memory.observations.contains(&observation) {
+            managed.job.memory.observations.push(observation);
+            self.publish_durable(managed);
+        }
         Ok(())
     }
 
@@ -1714,6 +2133,10 @@ pub enum JobManagerError {
         available_bytes: u64,
         path: PathBuf,
     },
+    InsufficientMemory {
+        predicted_bytes: u64,
+        available_bytes: u64,
+    },
     DiskPreflight(String),
     JobNotFound(PhotolabJobId),
     UpdateChannelClosed(PhotolabJobId),
@@ -1778,6 +2201,15 @@ impl std::fmt::Display for JobManagerError {
                 format_bytes(*required_bytes),
                 format_bytes(*available_bytes)
             ),
+            Self::InsufficientMemory {
+                predicted_bytes,
+                available_bytes,
+            } => write!(
+                formatter,
+                "Not enough memory: about {} needed for the smallest safe unit, {} available.",
+                format_bytes(*predicted_bytes),
+                format_bytes(*available_bytes)
+            ),
             Self::DiskPreflight(message) => write!(formatter, "disk preflight failed: {message}"),
             Self::JobNotFound(id) => write!(formatter, "job {id:?} was not found"),
             Self::UpdateChannelClosed(id) => {
@@ -1825,7 +2257,7 @@ impl std::error::Error for JobManagerError {
 mod tests {
     use std::io::Write;
     use std::sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc, Mutex as StdMutex,
     };
 
@@ -2229,6 +2661,7 @@ mod tests {
         JobAdmission {
             publication_targets: targets,
             disk_preflight: None,
+            memory_preflight: None,
         }
     }
 
@@ -2436,6 +2869,7 @@ mod tests {
                         DiskEstimateScale::Fixed,
                         path.clone(),
                     )),
+                    memory_preflight: None,
                 },
                 |_| Ok(()),
             )
@@ -2962,5 +3396,131 @@ mod tests {
         let cancelled = manager.cancel(&queued).await.expect("cancel queued");
         assert_eq!(cancelled.job.state, PhotolabJobState::Cancelled);
         release_tx.send(()).expect("release");
+    }
+
+    fn alignment_memory_request(usable_gib: u64) -> AlignmentMemoryRequest {
+        AlignmentMemoryRequest {
+            usable_bytes: usable_gib * GIB,
+            logical_cpus: 8,
+            image_dimensions: vec![(5_280, 3_956)],
+            max_image_edge: 8_192,
+            keypoints: 24_000,
+            neural_matching: true,
+            measured_extraction_bytes_per_pixel: None,
+        }
+    }
+
+    #[test]
+    fn measured_alignment_memory_models_match_calibration_points() {
+        let extraction = extraction_bytes_for_image(5_280, 3_956, 8_192, 750);
+        assert_eq!(extraction, 15_665_760_000);
+        assert!((extraction as f64 / 1_000_000_000.0 - 15.7).abs() < 0.1);
+
+        let matching = neural_matching_bytes_per_worker(24_000);
+        assert_eq!(matching, 7_180_435_456);
+        assert!((matching as f64 / 1_000_000_000.0 - 7.0).abs() < 0.25);
+    }
+
+    #[test]
+    fn alignment_memory_plan_applies_time_before_quality() {
+        // The 32 GB reference laptop: 31 GiB physical minus the 4 GiB reserve ≈ 27 GiB
+        // usable — one full-resolution extraction (15.7 GB) fits once, so one worker,
+        // slower, with no quality degradation (owner S23).
+        let plan_laptop = plan_alignment_memory(&alignment_memory_request(27));
+        assert_eq!(plan_laptop.extraction_workers, 1);
+        // 50 % of 27 GiB = 14.5 GB holds two ≈ 7.2 GB LightGlue workers.
+        assert_eq!(plan_laptop.matching_workers, 2);
+        assert_eq!(plan_laptop.extraction_edge, 8_192);
+        assert_eq!(plan_laptop.keypoints, 24_000);
+        assert!(plan_laptop.memory.degradations.is_empty());
+
+        // 32 GiB usable (≈ 36 GB machine): two extractions fit side by side; matching
+        // gets two workers of ≈ 7 GB each. No fixed worker cap (owner S23).
+        let plan_32 = plan_alignment_memory(&alignment_memory_request(32));
+        assert_eq!(plan_32.extraction_workers, 2);
+        assert_eq!(plan_32.matching_workers, 2);
+        assert!(!plan_32.sequential_pair_batches);
+        assert!(plan_32.memory.degradations.is_empty());
+
+        // 64 GB class (56 GiB usable): three extraction workers, still no degradation —
+        // more memory only buys time.
+        let plan_64 = plan_alignment_memory(&alignment_memory_request(56));
+        assert_eq!(plan_64.extraction_workers, 3);
+        assert!(plan_64.memory.degradations.is_empty());
+
+        let plan_16 = plan_alignment_memory(&alignment_memory_request(16));
+        assert_eq!(plan_16.extraction_workers, 1);
+        assert_eq!(plan_16.matching_workers, 1);
+        assert!(plan_16.sequential_pair_batches);
+        assert_eq!(plan_16.extraction_edge, 8_192);
+        assert_eq!(plan_16.keypoints, 24_000);
+        assert!(plan_16.memory.degradations.is_empty());
+
+        let plan_8 = plan_alignment_memory(&alignment_memory_request(8));
+        assert_eq!(plan_8.extraction_workers, 1);
+        assert_eq!(plan_8.matching_workers, 1);
+        assert!(plan_8.sequential_pair_batches);
+        assert_eq!(plan_8.extraction_edge, 3_840);
+        assert_eq!(plan_8.keypoints, 18_000);
+        assert_eq!(
+            plan_8.memory.degradations,
+            vec![
+                PhotolabMemoryDegradation::ExtractionEdgeReduced {
+                    from: 8_192,
+                    to: 3_840,
+                    budget_bytes: 8 * GIB,
+                },
+                PhotolabMemoryDegradation::MatchingKeypointsCapped {
+                    from: 24_000,
+                    to: 18_000,
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_preflight_refuses_only_when_smallest_unit_cannot_fit() {
+        let manager = manager(1, 0);
+        let tiny = plan_alignment_memory(&AlignmentMemoryRequest {
+            usable_bytes: 128 * MIB,
+            ..alignment_memory_request(8)
+        });
+        assert!(tiny.predicted_peak_bytes > 128 * MIB);
+        let predicted_bytes = tiny.predicted_peak_bytes;
+        let started = Arc::new(AtomicBool::new(false));
+        let started_in_worker = started.clone();
+        let error = manager
+            .start_with_admission(
+                request("memory-rejected"),
+                JobAdmission {
+                    publication_targets: Vec::new(),
+                    disk_preflight: None,
+                    memory_preflight: Some(MemoryPreflight {
+                        predicted_bytes,
+                        available_bytes: 128 * MIB,
+                        machine_usable_bytes: 128 * MIB,
+                        memory: tiny.memory,
+                    }),
+                },
+                move |_| {
+                    started_in_worker.store(true, Ordering::Release);
+                    Ok(())
+                },
+            )
+            .await
+            .expect_err("an impossible unit must be refused");
+        assert_eq!(
+            error,
+            JobManagerError::InsufficientMemory {
+                predicted_bytes,
+                available_bytes: 128 * MIB,
+            }
+        );
+        assert!(!started.load(Ordering::Acquire));
+
+        for usable_gib in [32, 16, 8] {
+            let plan = plan_alignment_memory(&alignment_memory_request(usable_gib));
+            assert!(plan.predicted_peak_bytes <= usable_gib * GIB);
+        }
     }
 }

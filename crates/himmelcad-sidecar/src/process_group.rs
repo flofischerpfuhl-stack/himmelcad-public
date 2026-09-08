@@ -98,17 +98,45 @@ pub fn terminate_all_registered() {
 #[derive(Debug)]
 pub struct ProcessGroupChild {
     child: Child,
+    peak_rss_bytes: u64,
 }
 
 impl ProcessGroupChild {
     fn new(child: Child) -> Self {
         register(Some(child.id()));
-        Self { child }
+        Self {
+            child,
+            peak_rss_bytes: 0,
+        }
+    }
+
+    /// Samples the contained group before querying child completion.
+    pub fn try_wait(&mut self) -> io::Result<Option<std::process::ExitStatus>> {
+        self.sample_peak_rss();
+        self.child.try_wait()
+    }
+
+    /// Highest sampled group RSS observed while supervising this child.
+    #[must_use]
+    pub const fn peak_rss_bytes(&self) -> u64 {
+        self.peak_rss_bytes
+    }
+
+    /// Returns and resets the sampled peak at a caller-defined stage boundary.
+    pub fn take_peak_rss_bytes(&mut self) -> u64 {
+        self.sample_peak_rss();
+        std::mem::take(&mut self.peak_rss_bytes)
+    }
+
+    fn sample_peak_rss(&mut self) {
+        self.peak_rss_bytes = self
+            .peak_rss_bytes
+            .max(sample_process_group_rss(self.child.id()));
     }
 
     /// Kills the process group where supported, then reaps the direct child.
     pub fn terminate_and_wait(&mut self) -> io::Result<()> {
-        if self.child.try_wait()?.is_some() {
+        if self.try_wait()?.is_some() {
             return Ok(());
         }
         if !kill_group(Some(self.child.id())).unwrap_or(false) {
@@ -116,6 +144,67 @@ impl ProcessGroupChild {
         }
         self.child.wait().map(|_| ())
     }
+}
+
+#[cfg(target_os = "linux")]
+fn sample_process_group_rss(group_id: u32) -> u64 {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return 0;
+    };
+    let mut group_sum = 0_u64;
+    let mut largest_child = 0_u64;
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|value| value.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
+            continue;
+        };
+        let Some(fields) = stat.rsplit_once(')').map(|(_, fields)| fields.trim()) else {
+            continue;
+        };
+        let mut fields = fields.split_whitespace();
+        let _state = fields.next();
+        let parent_id = fields.next().and_then(|value| value.parse::<u32>().ok());
+        let process_group = fields.next().and_then(|value| value.parse::<u32>().ok());
+        if process_group != Some(group_id) {
+            continue;
+        }
+        let rss = linux_process_rss_bytes(pid);
+        group_sum = group_sum.saturating_add(rss);
+        if parent_id == Some(group_id) {
+            largest_child = largest_child.max(rss);
+        }
+    }
+    // WP-A7 requires the complete process-group sum plus the largest direct child
+    // so a launcher that briefly retains a copied activation buffer is not hidden.
+    group_sum.saturating_add(largest_child)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_process_rss_bytes(pid: u32) -> u64 {
+    std::fs::read_to_string(format!("/proc/{pid}/status"))
+        .ok()
+        .and_then(|status| {
+            status.lines().find_map(|line| {
+                line.strip_prefix("VmRSS:")?
+                    .split_whitespace()
+                    .next()?
+                    .parse::<u64>()
+                    .ok()
+            })
+        })
+        .unwrap_or(0)
+        .saturating_mul(1024)
+}
+
+#[cfg(not(target_os = "linux"))]
+const fn sample_process_group_rss(_group_id: u32) -> u64 {
+    0
 }
 
 impl Deref for ProcessGroupChild {
@@ -135,7 +224,7 @@ impl DerefMut for ProcessGroupChild {
 impl Drop for ProcessGroupChild {
     fn drop(&mut self) {
         let process_id = Some(self.child.id());
-        if self.child.try_wait().is_ok_and(|status| status.is_none()) {
+        if self.try_wait().is_ok_and(|status| status.is_none()) {
             let _ = self.terminate_and_wait();
         } else {
             // A worker that exited first may still have live descendants in its group.
@@ -215,5 +304,34 @@ mod tests {
             );
             thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn samples_peak_rss_for_a_known_child_buffer() {
+        use std::{process::Stdio, thread, time::Duration};
+
+        const BUFFER_BYTES: u64 = 16 * 1024 * 1024;
+        let mut command = Command::new("python3");
+        command
+            .args([
+                "-c",
+                "import time; value=bytearray(16*1024*1024); value[0]=1; time.sleep(0.4)",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = spawn(&mut command).expect("spawn allocation fixture");
+        loop {
+            if child.try_wait().expect("sample fixture").is_some() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            child.peak_rss_bytes() >= BUFFER_BYTES,
+            "sampled {} bytes for a {BUFFER_BYTES}-byte allocation",
+            child.peak_rss_bytes()
+        );
     }
 }

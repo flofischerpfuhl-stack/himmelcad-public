@@ -28,7 +28,8 @@ use himmelcad_core::{
     hash::ObjectHash,
     photolab_images::{DjiBrownConradyCalibration, ExifOrientation, ImageDimensions, PhotoFormat},
     photolab_jobs::{
-        CancellationToken, JobProgress, PhotolabStage, PhotolabStageKind, ProgressMetrics,
+        CancellationToken, JobProgress, PhotolabMemoryDegradation, PhotolabStage,
+        PhotolabStageKind, ProgressMetrics,
     },
     photolab_masks::ImageMaskComputeScope,
 };
@@ -332,6 +333,9 @@ pub struct ColmapRunRequest {
     pub aliked_matching_worker_threads: u16,
     /// Hardware-adaptive LightGlue worker count. This changes throughput and memory only.
     pub matching_worker_threads: u16,
+    /// Quality-last memory fallbacks frozen before COLMAP is invoked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub degradations: Vec<PhotolabMemoryDegradation>,
     pub products: ColmapProductRequest,
     /// Profile-explicit mapper behavior for reliable embedded calibration.
     #[serde(default)]
@@ -843,6 +847,8 @@ pub struct ColmapOutputSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dedode_tool: Option<DedodeToolIdentity>,
     pub mapping_candidates: Vec<MappingCandidateSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub degradations: Vec<PhotolabMemoryDegradation>,
     pub commands: Vec<ColmapCommandReport>,
     pub artifacts: Vec<ColmapArtifactSummary>,
 }
@@ -980,7 +986,7 @@ pub fn run_colmap_mesher(
         state.report_stage(context, spec.stage_label, ProgressMetrics::empty())?;
         let mut child = spawn_colmap_child(&executable, &spec, &state.scratch)?;
         let mut progress_error = None;
-        let outcome = supervise_child(&mut child, &context.cancellation, |completed, total| {
+        let supervised = supervise_child(&mut child, &context.cancellation, |completed, total| {
             if progress_error.is_none() {
                 progress_error = state
                     .report_stage(
@@ -995,7 +1001,22 @@ pub fn run_colmap_mesher(
                     )
                     .err();
             }
-        })?;
+        });
+        let peak_rss_bytes = child.peak_rss_bytes();
+        context
+            .memory
+            .record_stage_peak_blocking(
+                spec.stage_label,
+                peak_rss_bytes,
+                command_worker_count(&spec),
+                command_memory_parameters(&spec),
+            )
+            .map_err(|error| ColmapRuntimeError::Progress(error.to_string()))?;
+        context
+            .memory
+            .record_unbounded_stage_blocking(spec.stage_label)
+            .map_err(|error| ColmapRuntimeError::Progress(error.to_string()))?;
+        let outcome = supervised?;
         if let Some(error) = progress_error {
             return Err(error);
         }
@@ -1021,6 +1042,39 @@ pub fn run_colmap_mesher(
         return Err(ColmapRuntimeError::MissingOutput(output));
     }
     Ok(report)
+}
+
+fn command_worker_count(spec: &CommandSpec) -> u16 {
+    command_option(spec, "--FeatureExtraction.num_threads")
+        .or_else(|| command_option(spec, "--FeatureMatching.num_threads"))
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(1)
+}
+
+fn command_memory_parameters(spec: &CommandSpec) -> serde_json::Value {
+    let mut parameters = serde_json::Map::new();
+    parameters.insert(
+        "command".into(),
+        serde_json::Value::String(spec.kind.as_str().into()),
+    );
+    for (argument, name) in [
+        ("--FeatureExtraction.max_image_size", "maxImageSize"),
+        ("--AlikedExtraction.max_num_features", "keypoints"),
+        ("--SiftExtraction.max_num_features", "siftLocations"),
+    ] {
+        if let Some(value) = command_option(spec, argument) {
+            parameters.insert(name.into(), serde_json::Value::String(value.into()));
+        }
+    }
+    serde_json::Value::Object(parameters)
+}
+
+fn command_option<'a>(spec: &'a CommandSpec, name: &str) -> Option<&'a str> {
+    spec.args.windows(2).find_map(|pair| {
+        (pair[0] == std::ffi::OsStr::new(name))
+            .then(|| pair[1].to_str())
+            .flatten()
+    })
 }
 
 impl ColmapRuntime {
@@ -1441,6 +1495,7 @@ impl ColmapRuntime {
             selected_feature_store,
             dedode_tool: dedode.map(|dedode| dedode.tool.clone()),
             mapping_candidates,
+            degradations: request.degradations.clone(),
             commands: state.command_reports,
             artifacts,
         };
@@ -2880,7 +2935,7 @@ impl ColmapRuntime {
         let started = Instant::now();
         let mut child = self.spawn_child(spec, &state.scratch)?;
         let mut progress_error = None;
-        let outcome = supervise_child(&mut child, &context.cancellation, |completed, total| {
+        let supervised = supervise_child(&mut child, &context.cancellation, |completed, total| {
             if progress_error.is_none() {
                 let (completed_units, total_units) = expected_unit_range.map_or(
                     (completed, Some(total)),
@@ -2909,7 +2964,18 @@ impl ColmapRuntime {
                     )
                     .err();
             }
-        })?;
+        });
+        let peak_rss_bytes = child.peak_rss_bytes();
+        context
+            .memory
+            .record_stage_peak_blocking(
+                spec.stage_label,
+                peak_rss_bytes,
+                command_worker_count(spec),
+                command_memory_parameters(spec),
+            )
+            .map_err(|error| ColmapRuntimeError::Progress(error.to_string()))?;
+        let outcome = supervised?;
         if let Some(error) = progress_error {
             return Err(error);
         }
@@ -5340,6 +5406,7 @@ mod tests {
                 feature_worker_threads: 1,
                 aliked_matching_worker_threads: 1,
                 matching_worker_threads: 1,
+                degradations: Vec::new(),
                 products: ColmapProductRequest::default(),
                 intrinsics_refinement: ColmapIntrinsicsRefinement::Refine,
                 pinned_calibration_group_ids: Vec::new(),

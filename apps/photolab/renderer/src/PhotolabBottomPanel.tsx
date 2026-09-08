@@ -15,7 +15,7 @@ import { AlertTriangle, Ban, CheckCircle2, FileDown, RotateCcw } from 'lucide-re
 import { useEffect, useRef, useState } from 'react';
 
 import { GcpAccuracyPanel, type GcpAccuracyReport } from './GcpAccuracyPanel.js';
-import { jobDisplayLabel } from './jobSurfaceItems.js';
+import { jobDisplayLabel, memoryStatusText } from './jobSurfaceItems.js';
 import styles from './PhotolabBottomPanel.module.css';
 import {
   buildProcessingReportHtml,
@@ -239,6 +239,11 @@ function JobsView({
                 {' · '}
                 <span>{compactProgress(job, telemetry, now)}</span>
               </div>
+              {memoryStatusText(job) && (
+                <div className={styles.jobMemory} role="status">
+                  {memoryStatusText(job)}
+                </div>
+              )}
               <div className={styles.progressTrack} title="Overall job progress">
                 <span className={styles.progressFill} style={{ width: `${fraction * 100}%` }} />
               </div>
@@ -374,6 +379,17 @@ function JobDetails({
         <span>Throughput</span>
         <strong>{throughputLabel(job, telemetry)}</strong>
       </div>
+      {job.memory && (
+        <div>
+          <span>Memory envelope</span>
+          <strong>
+            {formatBytes(job.memory.envelopeBytes)}
+            {job.memory.stages.length > 0
+              ? ` · peak ${formatBytes(Math.max(...job.memory.stages.map((stage) => stage.peakRssBytes)))}`
+              : ''}
+          </strong>
+        </div>
+      )}
       <div className={styles.jobActivity}>
         <span>Activity</span>
         <ol>
@@ -711,6 +727,7 @@ function ReportView({
               {job.lastCheckpointSequence != null
                 ? ` · checkpoint ${job.lastCheckpointSequence}`
                 : ''}
+              {memoryStatusText(job) ? ` · ${memoryStatusText(job)}` : ''}
             </span>
           </div>
           <span className={styles.percent}>{Math.round(overallFraction(job) * 100)}%</span>

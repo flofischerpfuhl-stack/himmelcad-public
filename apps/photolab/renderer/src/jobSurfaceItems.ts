@@ -31,7 +31,7 @@ export function jobSurfaceItems(jobs: readonly PhotolabJob[]): JobSurfaceItem[] 
         ? 'Paused'
         : job.state.kind === 'pauseRequested'
           ? 'Pausing…'
-          : job.progress.stage.label,
+          : [job.progress.stage.label, memoryStatusText(job)].filter(Boolean).join(' · '),
     fraction: overallFraction(job),
     registeredAtUnixMs: job.createdAtUnixMs,
     finishedAtUnixMs: job.finishedAtUnixMs ?? null,
@@ -41,6 +41,28 @@ export function jobSurfaceItems(jobs: readonly PhotolabJob[]): JobSurfaceItem[] 
       atNextSafeBoundary: job.origin === 'sideOperation',
     },
   }));
+}
+
+export function memoryStatusText(job: PhotolabJob): string | null {
+  const memory = job.memory;
+  if (!memory) return null;
+  const parts = memory.degradations.map((degradation) =>
+    degradation.kind === 'extractionEdgeReduced'
+      ? `extraction edge reduced ${degradation.from} px to ${degradation.to} px`
+      : `keypoints capped ${degradation.from.toLocaleString('en-US')} to ${degradation.to.toLocaleString('en-US')}`,
+  );
+  const extraction = memory.stages.find((stage) => stage.stage === 'Extract ALIKED');
+  const matching = memory.stages.find(
+    (stage) =>
+      stage.stage === 'Match ALIKED with LightGlue' || stage.stage === 'Match SIFT features',
+  );
+  if (extraction && matching) {
+    const parameters = matching.parameters as { sequentialPairBatches?: unknown } | null;
+    parts.push(
+      `${extraction.workers} extraction worker${extraction.workers === 1 ? '' : 's'} · ${matching.workers} matching worker${matching.workers === 1 ? '' : 's'}${parameters?.sequentialPairBatches ? ' · sequential pair batches' : ''}`,
+    );
+  }
+  return parts.length > 0 ? `Memory envelope: ${parts.join(' · ')}` : null;
 }
 
 export function jobDisplayLabel(job: PhotolabJob): string {

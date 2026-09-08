@@ -134,8 +134,10 @@ use himmelcad_sidecar::image_quality_runtime::{
 };
 use himmelcad_sidecar::import_registration_runtime::ImportRegistrationRuntime;
 use himmelcad_sidecar::job_runtime::{
+    memory_os_ui_reserve_bytes, plan_alignment_memory, AlignmentMemoryPlan, AlignmentMemoryRequest,
     DrainReport, FrozenJobRequest, JobIdParams, JobManager, JobManagerConfig, JobWorkerContext,
-    JobWorkerError, ListJobsParams, StartJobResult,
+    JobWorkerError, ListJobsParams, MemoryPreflight, StartJobResult,
+    SIFT_MATCHING_BYTES_PER_WORKER,
 };
 use himmelcad_sidecar::mesh_tiler::{build_tiled_dem_mesh, MeshTilerError};
 use himmelcad_sidecar::mvs_runtime::{
@@ -3908,6 +3910,23 @@ async fn handle_job_rpc(
                     }),
                 )
             }
+            Err(
+                error @ himmelcad_sidecar::job_runtime::JobManagerError::InsufficientMemory {
+                    ..
+                },
+            ) => {
+                let message = error.to_string();
+                rpc_err_with_data(
+                    id,
+                    -32043,
+                    &message,
+                    serde_json::json!({
+                        "code": "insufficientMemory",
+                        "message": message,
+                        "retryable": true,
+                    }),
+                )
+            }
             Err(error) => rpc_err(id, -32000, &error.to_string()),
         }
     };
@@ -4040,6 +4059,7 @@ async fn handle_job_rpc(
                                         path: admission_context.working_path,
                                     },
                                 ),
+                                memory_preflight: None,
                             };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
@@ -4088,6 +4108,7 @@ async fn handle_job_rpc(
                                 ),
                             ],
                             disk_preflight: None,
+                            memory_preflight: None,
                         };
                         let publisher = Arc::clone(&projects);
                         let result = jobs
@@ -4229,34 +4250,54 @@ async fn handle_job_rpc(
         }
         "photolab.jobs.startAlignment" => {
             match serde_json::from_value::<StartAlignmentJobParams>(req.params) {
-                Ok(params) => match prepare_alignment_job(params, &projects) {
-                    Ok((job, request, runtime, dedode, processing_set_id)) => {
-                        let combined_stage_count = job.progress.stage.stage_count;
-                        let colmap_stage_base = if dedode.is_some() { 3 } else { 0 };
-                        let admission_context = match projects.compute_context() {
-                            Ok(context) => context,
-                            Err(error) => return rpc_err(req.id, -32000, &error.to_string()),
-                        };
-                        let admission = himmelcad_sidecar::job_runtime::JobAdmission {
-                            publication_targets: vec![
-                                himmelcad_sidecar::job_runtime::PublicationTarget::alignment(
-                                    EntityId(admission_context.manifest.project_id),
-                                    processing_set_id.clone(),
-                                ),
-                            ],
-                            disk_preflight: Some(
-                                himmelcad_sidecar::job_runtime::DiskPreflight::for_job(
-                                    PhotolabJobKind::AlignPhotos,
-                                    himmelcad_sidecar::job_runtime::DiskEstimateScale::Images(
-                                        u64::try_from(request.camera_images.len())
-                                            .unwrap_or(u64::MAX),
+                Ok(params) => {
+                    const GIB: u64 = 1024 * 1024 * 1024;
+                    let physical_memory_bytes =
+                        probe_hardware().map_or(8 * GIB, |hardware| hardware.ram_bytes);
+                    let machine_usable_bytes = physical_memory_bytes
+                        .saturating_sub(memory_os_ui_reserve_bytes(physical_memory_bytes));
+                    let usable_memory_bytes = jobs.usable_memory_bytes(physical_memory_bytes).await;
+                    let measured_extraction_bytes_per_pixel =
+                        jobs.measured_extraction_bytes_per_pixel().await;
+                    match prepare_alignment_job(
+                        params,
+                        &projects,
+                        usable_memory_bytes,
+                        measured_extraction_bytes_per_pixel,
+                    ) {
+                        Ok((job, request, runtime, dedode, processing_set_id, memory_plan)) => {
+                            let combined_stage_count = job.progress.stage.stage_count;
+                            let colmap_stage_base = if dedode.is_some() { 3 } else { 0 };
+                            let admission_context = match projects.compute_context() {
+                                Ok(context) => context,
+                                Err(error) => return rpc_err(req.id, -32000, &error.to_string()),
+                            };
+                            let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                                publication_targets: vec![
+                                    himmelcad_sidecar::job_runtime::PublicationTarget::alignment(
+                                        EntityId(admission_context.manifest.project_id),
+                                        processing_set_id.clone(),
                                     ),
-                                    request.project_root.clone(),
+                                ],
+                                disk_preflight: Some(
+                                    himmelcad_sidecar::job_runtime::DiskPreflight::for_job(
+                                        PhotolabJobKind::AlignPhotos,
+                                        himmelcad_sidecar::job_runtime::DiskEstimateScale::Images(
+                                            u64::try_from(request.camera_images.len())
+                                                .unwrap_or(u64::MAX),
+                                        ),
+                                        request.project_root.clone(),
+                                    ),
                                 ),
-                            ),
-                        };
-                        let publisher = Arc::clone(&projects);
-                        let result = jobs
+                                memory_preflight: Some(MemoryPreflight {
+                                    predicted_bytes: memory_plan.predicted_peak_bytes,
+                                    available_bytes: usable_memory_bytes,
+                                    machine_usable_bytes,
+                                    memory: memory_plan.memory,
+                                }),
+                            };
+                            let publisher = Arc::clone(&projects);
+                            let result = jobs
                             .start_with_admission(job, admission, move |context| {
                                 let mut outcome = match dedode {
                                     Some((dedode_runtime, dedode_request)) => {
@@ -4300,52 +4341,74 @@ async fn handle_job_rpc(
                                 Ok(())
                             })
                             .await;
-                        job_start_response(req.id, result)
+                            job_start_response(req.id, result)
+                        }
+                        Err(error) => rpc_err(req.id, -32000, &error.to_string()),
                     }
-                    Err(error) => rpc_err(req.id, -32000, &error.to_string()),
-                },
+                }
                 Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
             }
         }
         "photolab.jobs.startAlignmentMerge" => {
             match serde_json::from_value::<StartAlignmentMergeJobParams>(req.params) {
-                Ok(params) => match prepare_alignment_merge_job(params, &projects) {
-                    Ok((
-                        job,
-                        request,
-                        runtime,
-                        dedode,
-                        merge_entity_id,
-                        resumed,
-                        resumed_shared,
-                        shared_control_only,
-                    )) => {
-                        let combined_stage_count = job.progress.stage.stage_count;
-                        let colmap_stage_base = if dedode.is_some() { 3 } else { 0 };
-                        let admission = himmelcad_sidecar::job_runtime::JobAdmission {
-                            publication_targets: vec![
-                                himmelcad_sidecar::job_runtime::PublicationTarget::alignment(
-                                    merge_entity_id.clone(),
-                                    None,
-                                ),
-                            ],
-                            disk_preflight: Some(
-                                himmelcad_sidecar::job_runtime::DiskPreflight::for_job(
-                                    PhotolabJobKind::MergeAlignments,
-                                    himmelcad_sidecar::job_runtime::DiskEstimateScale::Images(
-                                        u64::try_from(request.camera_images.len())
-                                            .unwrap_or(u64::MAX),
+                Ok(params) => {
+                    const GIB: u64 = 1024 * 1024 * 1024;
+                    let physical_memory_bytes =
+                        probe_hardware().map_or(8 * GIB, |hardware| hardware.ram_bytes);
+                    let machine_usable_bytes = physical_memory_bytes
+                        .saturating_sub(memory_os_ui_reserve_bytes(physical_memory_bytes));
+                    let usable_memory_bytes = jobs.usable_memory_bytes(physical_memory_bytes).await;
+                    let measured_extraction_bytes_per_pixel =
+                        jobs.measured_extraction_bytes_per_pixel().await;
+                    match prepare_alignment_merge_job(
+                        params,
+                        &projects,
+                        usable_memory_bytes,
+                        measured_extraction_bytes_per_pixel,
+                    ) {
+                        Ok((
+                            job,
+                            request,
+                            runtime,
+                            dedode,
+                            merge_entity_id,
+                            resumed,
+                            resumed_shared,
+                            shared_control_only,
+                            memory_plan,
+                        )) => {
+                            let combined_stage_count = job.progress.stage.stage_count;
+                            let colmap_stage_base = if dedode.is_some() { 3 } else { 0 };
+                            let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                                publication_targets: vec![
+                                    himmelcad_sidecar::job_runtime::PublicationTarget::alignment(
+                                        merge_entity_id.clone(),
+                                        None,
                                     ),
-                                    request.project_root.clone(),
+                                ],
+                                disk_preflight: Some(
+                                    himmelcad_sidecar::job_runtime::DiskPreflight::for_job(
+                                        PhotolabJobKind::MergeAlignments,
+                                        himmelcad_sidecar::job_runtime::DiskEstimateScale::Images(
+                                            u64::try_from(request.camera_images.len())
+                                                .unwrap_or(u64::MAX),
+                                        ),
+                                        request.project_root.clone(),
+                                    ),
                                 ),
-                            ),
-                        };
-                        let checkpoint_project_root = request.project_root.clone();
-                        let checkpoint_operation_id = request.job_id.clone();
-                        let checkpoint_input_hash = job.input_hash.clone();
-                        let checkpoint_config_hash = job.config_hash.clone();
-                        let publisher = Arc::clone(&projects);
-                        let result = jobs
+                                memory_preflight: Some(MemoryPreflight {
+                                    predicted_bytes: memory_plan.predicted_peak_bytes,
+                                    available_bytes: memory_plan.memory.envelope_bytes,
+                                    machine_usable_bytes,
+                                    memory: memory_plan.memory,
+                                }),
+                            };
+                            let checkpoint_project_root = request.project_root.clone();
+                            let checkpoint_operation_id = request.job_id.clone();
+                            let checkpoint_input_hash = job.input_hash.clone();
+                            let checkpoint_config_hash = job.config_hash.clone();
+                            let publisher = Arc::clone(&projects);
+                            let result = jobs
                             .start_with_admission(job, admission, move |context| {
                                 if shared_control_only {
                                     context.progress.report_blocking(JobProgress {
@@ -4523,10 +4586,11 @@ async fn handle_job_rpc(
                                 Ok(())
                             })
                             .await;
-                        job_start_response(req.id, result)
+                            job_start_response(req.id, result)
+                        }
+                        Err(error) => rpc_err(req.id, -32000, &error.to_string()),
                     }
-                    Err(error) => rpc_err(req.id, -32000, &error.to_string()),
-                },
+                }
                 Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
             }
         }
@@ -4565,6 +4629,10 @@ async fn handle_job_rpc(
                                         project_root,
                                     ),
                                 ),
+                                memory_preflight: Some(MemoryPreflight::unbounded(
+                                    fallback_alignment_usable_memory_bytes(),
+                                    "Splat optimization",
+                                )),
                             };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
@@ -4655,6 +4723,14 @@ async fn handle_job_rpc(
                                         prepared.project_root.clone(),
                                     ),
                                 ),
+                                memory_preflight: Some(MemoryPreflight::unbounded(
+                                    fallback_alignment_usable_memory_bytes(),
+                                    if job_kind == PhotolabJobKind::BuildDepthMaps {
+                                        "Depth estimation"
+                                    } else {
+                                        "Dense fusion"
+                                    },
+                                )),
                             };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
@@ -4816,6 +4892,7 @@ async fn handle_job_rpc(
                                         prepared.project_root.clone(),
                                     ),
                                 ),
+                                memory_preflight: None,
                             };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
@@ -4862,6 +4939,10 @@ async fn handle_job_rpc(
                                         prepared.project_root.clone(),
                                     ),
                                 ),
+                                memory_preflight: Some(MemoryPreflight::unbounded(
+                                    fallback_alignment_usable_memory_bytes(),
+                                    "Meshing",
+                                )),
                             };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
@@ -5797,7 +5878,7 @@ fn run_batch_pipeline(
                         ));
                     }
                 };
-                let (_, request, runtime, dedode, processing_set_id) = prepare_alignment_job(
+                let (_, request, runtime, dedode, processing_set_id, _) = prepare_alignment_job(
                     StartAlignmentJobParams {
                         operation_id: format!("{}-{:02}-alignment", params.operation_id, index),
                         profile,
@@ -5806,6 +5887,8 @@ fn run_batch_pipeline(
                         overrides,
                     },
                     projects,
+                    fallback_alignment_usable_memory_bytes(),
+                    None,
                 )
                 .map_err(|error| worker_error("batchPrepare", &error.to_string()))?;
                 let mut outcome = if let Some((dedode_runtime, dedode_request)) = dedode {
@@ -6423,12 +6506,15 @@ fn map_gcp_optimization_error(
 fn prepare_alignment_job(
     params: StartAlignmentJobParams,
     projects: &ProjectRuntime,
+    usable_memory_bytes: u64,
+    measured_extraction_bytes_per_pixel: Option<u64>,
 ) -> anyhow::Result<(
     NewPhotolabJob,
     ColmapRunRequest,
     ColmapRuntime,
     Option<(DedodeRuntime, DedodeRunRequest)>,
     Option<EntityId>,
+    AlignmentMemoryPlan,
 )> {
     let context = projects.compute_context()?;
     let processing_set_id = params.processing_set_id.clone();
@@ -6470,12 +6556,42 @@ fn prepare_alignment_job(
         max_image_edge_override: params.overrides.max_image_edge,
         keypoints_per_megapixel_override: params.overrides.keypoints_per_megapixel,
     })?;
-    let feature_worker_threads = colmap_feature_worker_threads(resolved.max_image_edge);
     let feature_budget = params
         .overrides
         .feature_budget
         .map(|budget| budget.clamp(1_024, 64_000))
         .unwrap_or_else(|| alignment_feature_budget(params.profile, &resolved));
+    let image_dimensions = camera_images
+        .iter()
+        .map(|camera| {
+            camera
+                .metadata
+                .inspected_photo
+                .metadata
+                .exif
+                .dimensions
+                .map(|dimensions| (dimensions.width_pixels, dimensions.height_pixels))
+                .with_context(|| {
+                    format!(
+                        "image {} has no measured pixel dimensions for memory admission",
+                        camera.entity_id.0
+                    )
+                })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let logical_cpus =
+        u16::try_from(std::thread::available_parallelism().map_or(1, std::num::NonZero::get))
+            .unwrap_or(u16::MAX)
+            .max(1);
+    let memory_plan = plan_alignment_memory(&AlignmentMemoryRequest {
+        usable_bytes: usable_memory_bytes,
+        logical_cpus,
+        image_dimensions,
+        max_image_edge: resolved.max_image_edge,
+        keypoints: feature_budget,
+        neural_matching: true,
+        measured_extraction_bytes_per_pixel,
+    });
     let mut request = ColmapRunRequest {
         job_id: params.operation_id.clone(),
         project_root: context.working_path.clone(),
@@ -6502,13 +6618,14 @@ fn prepare_alignment_job(
                 policy: DedodeV2GPolicy::AllPairs,
             },
         },
-        aliked_max_features: feature_budget,
-        sift_max_features: feature_budget,
+        aliked_max_features: memory_plan.keypoints,
+        sift_max_features: memory_plan.keypoints,
         sift_rescue_only: params.profile == AlignmentQualityProfile::Fast,
-        max_image_size: resolved.max_image_edge,
-        feature_worker_threads,
-        aliked_matching_worker_threads: colmap_aliked_matching_worker_threads(),
-        matching_worker_threads: colmap_matching_worker_threads(),
+        max_image_size: memory_plan.extraction_edge,
+        feature_worker_threads: colmap_feature_worker_threads(&memory_plan),
+        aliked_matching_worker_threads: colmap_aliked_matching_worker_threads(&memory_plan),
+        matching_worker_threads: colmap_matching_worker_threads(usable_memory_bytes, logical_cpus),
+        degradations: memory_plan.memory.degradations.clone(),
         products: ColmapProductRequest::default(),
         intrinsics_refinement: ColmapIntrinsicsRefinement::Refine,
         pinned_calibration_group_ids: Vec::new(),
@@ -6608,7 +6725,14 @@ fn prepare_alignment_job(
             metrics: ProgressMetrics::empty(),
         };
     }
-    Ok((job, request, runtime, dedode, processing_set_id))
+    Ok((
+        job,
+        request,
+        runtime,
+        dedode,
+        processing_set_id,
+        memory_plan,
+    ))
 }
 
 /// Per-group intrinsics policy, keyed by the immutable calibration-group id.
@@ -6765,6 +6889,8 @@ fn reseed_merge_calibration_groups(
 fn prepare_alignment_merge_job(
     params: StartAlignmentMergeJobParams,
     projects: &ProjectRuntime,
+    usable_memory_bytes: u64,
+    measured_extraction_bytes_per_pixel: Option<u64>,
 ) -> anyhow::Result<(
     NewPhotolabJob,
     ColmapRunRequest,
@@ -6774,6 +6900,7 @@ fn prepare_alignment_merge_job(
     Option<ColmapRunOutcome>,
     Option<himmelcad_sidecar::alignment_merge_runtime::SharedControlMergeOutcome>,
     bool,
+    AlignmentMemoryPlan,
 )> {
     let merge = projects.alignment_merge_compute_context(&params.merge_entity_id)?;
     let merge_profile = merge.record.merge_profile.clone().unwrap_or_else(|| {
@@ -6801,7 +6928,7 @@ fn prepare_alignment_merge_job(
         .iter()
         .map(|id| id.0.clone())
         .collect::<Vec<_>>();
-    let (mut job, mut request, runtime, dedode, _) = prepare_alignment_job(
+    let (mut job, mut request, runtime, dedode, _, memory_plan) = prepare_alignment_job(
         StartAlignmentJobParams {
             operation_id: params.operation_id,
             profile: if shared_control_only {
@@ -6823,6 +6950,8 @@ fn prepare_alignment_merge_job(
             },
         },
         projects,
+        usable_memory_bytes,
+        measured_extraction_bytes_per_pixel,
     )?;
     // A sequential graph ordered by import time can entirely miss a flight boundary. Merge
     // evidence must therefore be discovered by an exhaustive cross-run candidate graph.
@@ -6905,6 +7034,7 @@ fn prepare_alignment_merge_job(
         resumed,
         resumed_shared,
         shared_control_only,
+        memory_plan,
     ))
 }
 
@@ -9279,16 +9409,22 @@ const fn platform_directory() -> &'static str {
 fn default_job_manager_config() -> JobManagerConfig {
     let logical_cpus = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
     let max_concurrency = probe_hardware().map_or(1, |hardware| {
-        adaptive_job_concurrency(
-            logical_cpus,
-            usize::from(hardware.cpu.physical_cores),
-            hardware.ram_bytes,
-        )
+        usize::from(hardware.cpu.physical_cores)
+            .max(1)
+            .min(logical_cpus.max(1))
+            .div_ceil(2)
+            .clamp(1, 8)
     });
     JobManagerConfig {
         max_concurrency,
         max_queued: 64,
     }
+}
+
+fn fallback_alignment_usable_memory_bytes() -> u64 {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    let physical = probe_hardware().map_or(8 * GIB, |hardware| hardware.ram_bytes);
+    physical.saturating_sub(memory_os_ui_reserve_bytes(physical))
 }
 
 fn adaptive_job_concurrency(logical_cpus: usize, physical_cpus: usize, ram_bytes: u64) -> usize {
@@ -9306,56 +9442,21 @@ fn adaptive_job_concurrency(logical_cpus: usize, physical_cpus: usize, ram_bytes
         .clamp(1, 8)
 }
 
-fn colmap_feature_worker_threads(max_image_edge: u32) -> u16 {
-    const GIB: u64 = 1024 * 1024 * 1024;
-    const BYTES_PER_NEURAL_PIXEL: u64 = 160;
-    let logical = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
-    let ram_bytes = probe_hardware().map_or(8 * GIB, |hardware| hardware.ram_bytes);
-    let pixels = u64::from(max_image_edge).saturating_mul(u64::from(max_image_edge));
-    let bytes_per_worker = pixels.saturating_mul(BYTES_PER_NEURAL_PIXEL).max(GIB / 2);
-    let memory_workers = (ram_bytes / 2)
-        .checked_div(bytes_per_worker)
-        .unwrap_or(0)
-        .max(1);
-    u16::try_from(logical.min(usize::try_from(memory_workers).unwrap_or(usize::MAX)))
+const fn colmap_feature_worker_threads(plan: &AlignmentMemoryPlan) -> u16 {
+    plan.extraction_workers
+}
+
+fn colmap_matching_worker_threads(usable_memory_bytes: u64, logical_cpus: u16) -> u16 {
+    // WP-A7 assigns matching half the usable envelope; the 256 MiB per-worker
+    // model is the measured SIFT peak recorded in the tunables register.
+    let workers = (usable_memory_bytes / 2 / SIFT_MATCHING_BYTES_PER_WORKER).max(1);
+    u16::try_from(workers)
         .unwrap_or(u16::MAX)
-        .max(1)
+        .min(logical_cpus.max(1))
 }
 
-fn colmap_matching_worker_threads() -> u16 {
-    const GIB: u64 = 1024 * 1024 * 1024;
-    // Native SIFT brute-force matching keeps compact descriptor blocks per worker.  Treating
-    // every worker like a neural matcher previously reserved 8 GiB and forced this 31 GiB,
-    // four-core workstation down to one thread.  The measured resident set for the real
-    // Sulzberg workload is below 256 MiB for one worker; a conservative 2 GiB allowance keeps
-    // enough headroom for COLMAP, the renderer and the OS while using all physical cores.
-    const RESERVED_PER_SIFT_WORKER: u64 = 2 * GIB;
-    probe_hardware()
-        .map(|hardware| {
-            let memory_workers = (hardware.ram_bytes / 2 / RESERVED_PER_SIFT_WORKER).max(1);
-            u16::try_from(
-                usize::from(hardware.cpu.physical_cores)
-                    .min(usize::try_from(memory_workers).unwrap_or(usize::MAX)),
-            )
-            .unwrap_or(u16::MAX)
-            .max(1)
-        })
-        .unwrap_or(1)
-}
-
-fn colmap_aliked_matching_worker_threads() -> u16 {
-    const GIB: u64 = 1024 * 1024 * 1024;
-    probe_hardware()
-        .map(|hardware| {
-            let memory_workers = (hardware.ram_bytes / 2 / (3 * GIB)).max(1);
-            u16::try_from(
-                usize::from(hardware.cpu.physical_cores)
-                    .min(usize::try_from(memory_workers).unwrap_or(usize::MAX)),
-            )
-            .unwrap_or(u16::MAX)
-            .max(1)
-        })
-        .unwrap_or(1)
+const fn colmap_aliked_matching_worker_threads(plan: &AlignmentMemoryPlan) -> u16 {
+    plan.matching_workers
 }
 
 fn default_crs_service() -> anyhow::Result<CrsService> {

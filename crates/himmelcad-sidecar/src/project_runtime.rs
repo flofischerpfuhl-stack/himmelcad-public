@@ -37,7 +37,7 @@ use himmelcad_core::photolab_gcp_optimization::{
 use himmelcad_core::photolab_images::{DjiBrownConradyCalibration, ImageDimensions};
 use himmelcad_core::photolab_jobs::{
     CancellationToken, JobProgress, PhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState,
-    PhotolabStage, PhotolabStageKind, ProgressMetrics,
+    PhotolabMemoryDegradation, PhotolabStage, PhotolabStageKind, ProgressMetrics,
 };
 use himmelcad_core::photolab_masks::{
     ComputeImageMask, ImageMaskCatalog, ImageMaskCatalogEntry, ImageMaskComputeScope,
@@ -544,6 +544,8 @@ pub struct AlignmentMergeCandidateRecord {
     pub calibration_group_ids: Vec<EntityId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub calibration_groups: Vec<ColmapCalibrationGroup>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub degradations: Vec<PhotolabMemoryDegradation>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -772,6 +774,9 @@ pub struct ComputeArtifactRecord {
     /// Evidence from the mixed-policy pose-only re-adjustment, when one ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pinned_readjustment: Option<PinnedIntrinsicsReadjustment>,
+    /// Quality-last memory choices copied from the immutable COLMAP summary.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub degradations: Vec<PhotolabMemoryDegradation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub processing_set_id: Option<EntityId>,
     #[serde(default)]
@@ -3309,6 +3314,7 @@ impl ActiveSideOperation {
             finished_at_unix_ms: None,
             last_checkpoint_sequence: None,
             terminal_diagnostic: None,
+            memory: Default::default(),
         }
     }
 }
@@ -5447,6 +5453,7 @@ impl ProjectRuntime {
                 }),
                 calibration_group_ids,
                 calibration_groups: frozen_calibration_groups,
+                degradations: record.degradations,
             });
         }
         candidates.sort_by(|left, right| left.entity_id.0.cmp(&right.entity_id.0));
@@ -7853,6 +7860,7 @@ impl ProjectRuntime {
                 intrinsics_strategy: outcome.summary.intrinsics_strategy,
                 calibration_group_intrinsics: outcome.summary.calibration_group_intrinsics.clone(),
                 pinned_readjustment: outcome.summary.pinned_readjustment,
+                degradations: outcome.summary.degradations.clone(),
                 processing_set_id: processing_set_id.clone(),
                 publication_sequence: session.manifest.command_sequence.saturating_add(1),
                 selected_mapper: outcome.summary.selected_mapper,
@@ -9768,6 +9776,7 @@ fn cleanup_published_job_scratch(
         finished_at_unix_ms: Some(0),
         last_checkpoint_sequence: None,
         terminal_diagnostic: None,
+        memory: Default::default(),
     };
     if let Err(error) = cleanup_terminal_job_scratch(project_root, manifest, &job) {
         tracing::warn!(
@@ -15195,6 +15204,7 @@ mod tests {
             intrinsics_strategy: ColmapIntrinsicsStrategy::Mixed,
             calibration_group_intrinsics: deltas.clone(),
             pinned_readjustment: Some(readjustment),
+            degradations: Vec::new(),
             processing_set_id: None,
             publication_sequence: 1,
             selected_mapper: SelectedMapper::Global,
@@ -15840,6 +15850,7 @@ mod tests {
             intrinsics_strategy: ColmapIntrinsicsStrategy::AllRefine,
             calibration_group_intrinsics: Vec::new(),
             pinned_readjustment: None,
+            degradations: Vec::new(),
             processing_set_id: None,
             publication_sequence,
             selected_mapper: SelectedMapper::Global,
@@ -17449,6 +17460,7 @@ mod tests {
             selected_feature_store: SelectedFeatureStore::Aliked,
             dedode_tool: None,
             mapping_candidates: Vec::new(),
+            degradations: Vec::new(),
             commands: Vec::new(),
             artifacts: vec![
                 ColmapArtifactSummary {
@@ -17689,6 +17701,7 @@ mod tests {
             selected_feature_store: SelectedFeatureStore::Aliked,
             dedode_tool: None,
             mapping_candidates: Vec::new(),
+            degradations: Vec::new(),
             commands: Vec::new(),
             artifacts: vec![
                 ColmapArtifactSummary {
@@ -18279,6 +18292,7 @@ mod tests {
                     intrinsics_strategy: ColmapIntrinsicsStrategy::AllRefine,
                     calibration_group_intrinsics: Vec::new(),
                     pinned_readjustment: None,
+                    degradations: Vec::new(),
                     processing_set_id: None,
                     publication_sequence: 1,
                     selected_mapper: SelectedMapper::Global,

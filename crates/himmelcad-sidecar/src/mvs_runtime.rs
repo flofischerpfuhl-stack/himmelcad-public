@@ -2041,6 +2041,9 @@ fn supervise_worker(
                             "worker progress is not monotone".into(),
                         ));
                     }
+                    if stage_index > last_stage {
+                        record_mvs_memory_stage(child, context, last_stage, fusion)?;
+                    }
                     last_stage = stage_index;
                     last_completed = completed_units;
                     last_total = Some(total_units);
@@ -2130,6 +2133,7 @@ fn supervise_worker(
             if cancellation.is_cancel_requested() {
                 return Err(MvsRuntimeError::Cancelled);
             }
+            record_mvs_memory_stage(child, context, last_stage, fusion)?;
             return Ok(ProcessOutcome {
                 status,
                 log_tail: log_tail.into_iter().collect(),
@@ -2137,6 +2141,36 @@ fn supervise_worker(
         }
         thread::sleep(CANCEL_POLL_INTERVAL);
     }
+}
+
+fn record_mvs_memory_stage(
+    child: &mut Child,
+    context: &JobWorkerContext,
+    stage_index: u32,
+    fusion: bool,
+) -> Result<(), MvsRuntimeError> {
+    let stage = match stage_index {
+        2 => "Depth estimation",
+        3 => "Geometric consistency",
+        4 => "Dense fusion",
+        _ => "Portable MVS",
+    };
+    context
+        .memory
+        .record_stage_peak_blocking(
+            stage,
+            child.take_peak_rss_bytes(),
+            1,
+            serde_json::json!({
+                "fusion": fusion,
+                "streamingTiles": true,
+            }),
+        )
+        .map_err(|error| MvsRuntimeError::Progress(error.to_string()))?;
+    context
+        .memory
+        .record_unbounded_stage_blocking(stage)
+        .map_err(|error| MvsRuntimeError::Progress(error.to_string()))
 }
 
 fn report_mvs_checkpoint(

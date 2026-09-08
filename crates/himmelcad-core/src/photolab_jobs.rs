@@ -334,6 +334,60 @@ pub struct NewPhotolabJob {
     pub progress: JobProgress,
 }
 
+/// A quality-affecting memory fallback frozen at admission.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum PhotolabMemoryDegradation {
+    ExtractionEdgeReduced {
+        from: u32,
+        to: u32,
+        budget_bytes: u64,
+    },
+    MatchingKeypointsCapped {
+        from: u32,
+        to: u32,
+    },
+}
+
+/// Warning-level memory evidence for a stage whose model is not calibrated yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum PhotolabMemoryObservation {
+    UnboundedStage { stage: String, budget_bytes: u64 },
+}
+
+/// Measured or planned memory evidence for one stage.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhotolabStageMemory {
+    pub stage: String,
+    pub peak_rss_bytes: u64,
+    pub workers: u16,
+    #[serde(default)]
+    pub parameters: serde_json::Value,
+}
+
+/// Per-machine envelope and the choices made to stay inside it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhotolabJobMemory {
+    pub envelope_bytes: u64,
+    #[serde(default)]
+    pub stages: Vec<PhotolabStageMemory>,
+    #[serde(default)]
+    pub degradations: Vec<PhotolabMemoryDegradation>,
+    #[serde(default)]
+    pub observations: Vec<PhotolabMemoryObservation>,
+}
+
 /// Authoritative, persistable job record. Runtime cancellation handles are separate.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -356,6 +410,9 @@ pub struct PhotolabJob {
     /// Non-fatal terminal-path detail that must survive in durable job history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_diagnostic: Option<String>,
+    /// Per-machine memory contract frozen before work starts and enriched with measured peaks.
+    #[serde(default)]
+    pub memory: PhotolabJobMemory,
 }
 
 impl Serialize for PhotolabJob {
@@ -365,7 +422,7 @@ impl Serialize for PhotolabJob {
     {
         use serde::ser::SerializeStruct;
 
-        let mut record = serializer.serialize_struct("PhotolabJob", 14)?;
+        let mut record = serializer.serialize_struct("PhotolabJob", 15)?;
         record.serialize_field("schemaVersion", &self.schema_version)?;
         record.serialize_field("id", &self.id)?;
         record.serialize_field("kind", &self.kind)?;
@@ -399,6 +456,7 @@ impl Serialize for PhotolabJob {
         if let Some(value) = &self.terminal_diagnostic {
             record.serialize_field("terminalDiagnostic", value)?;
         }
+        record.serialize_field("memory", &self.memory)?;
         record.end()
     }
 }
@@ -422,7 +480,36 @@ impl PhotolabJob {
             finished_at_unix_ms: None,
             last_checkpoint_sequence: None,
             terminal_diagnostic: None,
+            memory: PhotolabJobMemory::default(),
         })
+    }
+
+    /// Freezes the envelope and planned choices before the record becomes visible.
+    pub fn set_memory_plan(&mut self, memory: PhotolabJobMemory) {
+        self.memory = memory;
+    }
+
+    /// Merges a sampled peak into the durable stage record.
+    pub fn record_stage_memory(&mut self, mut stage: PhotolabStageMemory) {
+        if let Some(existing) = self
+            .memory
+            .stages
+            .iter_mut()
+            .find(|existing| existing.stage == stage.stage)
+        {
+            existing.peak_rss_bytes = existing.peak_rss_bytes.max(stage.peak_rss_bytes);
+            existing.workers = existing.workers.max(stage.workers);
+            if let (Some(existing), Some(sampled)) = (
+                existing.parameters.as_object_mut(),
+                stage.parameters.as_object_mut(),
+            ) {
+                existing.extend(std::mem::take(sampled));
+            } else if !stage.parameters.is_null() {
+                existing.parameters = std::mem::take(&mut stage.parameters);
+            }
+        } else {
+            self.memory.stages.push(stage);
+        }
     }
 
     /// Retains a non-empty diagnostic without changing lifecycle state semantics.
@@ -862,6 +949,40 @@ mod tests {
         let decoded: PhotolabJob = serde_json::from_str(&encoded).expect("deserialize");
         assert_eq!(decoded, job);
         assert!(encoded.contains("cancelRequested"));
+    }
+
+    #[test]
+    fn old_job_records_default_the_additive_memory_contract() {
+        let encoded = serde_json::to_value(job()).expect("serialize job");
+        let mut object = encoded.as_object().expect("job object").clone();
+        object.remove("memory");
+        let decoded: PhotolabJob =
+            serde_json::from_value(serde_json::Value::Object(object)).expect("old job record");
+        assert_eq!(decoded.memory, PhotolabJobMemory::default());
+    }
+
+    #[test]
+    fn memory_plan_and_degradations_round_trip() {
+        let mut value = job();
+        value.memory = PhotolabJobMemory {
+            envelope_bytes: 8 * 1024 * 1024 * 1024,
+            stages: vec![PhotolabStageMemory {
+                stage: "Extract ALIKED".into(),
+                peak_rss_bytes: 7_900_000_000,
+                workers: 1,
+                parameters: serde_json::json!({ "maxImageSize": 3840 }),
+            }],
+            degradations: vec![PhotolabMemoryDegradation::ExtractionEdgeReduced {
+                from: 8_192,
+                to: 3_840,
+                budget_bytes: 8 * 1024 * 1024 * 1024,
+            }],
+            observations: Vec::new(),
+        };
+        let encoded = serde_json::to_vec(&value).expect("serialize memory plan");
+        let decoded: PhotolabJob =
+            serde_json::from_slice(&encoded).expect("deserialize memory plan");
+        assert_eq!(decoded, value);
     }
 
     #[test]

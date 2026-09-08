@@ -166,6 +166,14 @@
   color: var(--hc-warning);
 }
 
+.jobMemory {
+  margin-top: 3px;
+  color: var(--hc-fg-muted);
+  font-size: 10px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .jobStage {
   margin-top: 3px;
   overflow: hidden;
