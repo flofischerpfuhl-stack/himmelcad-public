@@ -1355,6 +1355,9 @@ Landed 2026-09-02 (171791b): per-group intrinsic covariance (sigma_0^2 N^-1, log
 
 ### WP-E2 — Observation QC: show the solver's work (Size L, depends E1)
 
+Status 2026-09-08: the deferred tie-point gradual-selection editor is superseded
+by WP-R4 (owner D10); the observation-QC part of this package is unchanged.
+
 Problem. No gradual selection, no way to see or act on bad observations; the
 robust solver downweights silently.
 
@@ -1856,6 +1859,517 @@ Footer
 - Evidence: `765c7fc` re-scope only; open — not executed: command-row document, G-1 coverage, generated console consumption, and Python smoke
 - Status: in flight
 ```
+
+## Phase R — Fehlerbehebung: repair workflows (owner directive 2026-09-08)
+
+Owner decision D10 (2026-09-08, verbatim intent): "zu einem echten Agisoft-
+Konkurrenten gehört dazu, dass man Fehler gut und intuitiv beheben kann — z. B.
+einen Teil der Fotos neu ausrichten; hier gerne innovativer als Agisoft." This
+extends D9 (production-ready, no scope growth) by one bounded phase: repair of
+a bad alignment without starting over. Sequenced after R1 gate 8 (G1c) and
+before A5/golden on the other machine. Revision 2 (2026-09-08 evening) after
+the demanding-user review: marker-assisted re-alignment added as the primary
+Metashape recipe, R2 rewritten as a capability delta over what the COLMAP
+runtime really has, reason taxonomy corrected against the fixture, reference
+overrides added (R3b), D1 budgets in every footer, evidence at repair scale.
+
+What exists today (audit 2026-09-08): alignment always runs over an immutable
+processing set (`photolab.jobs.startAlignment`, camera selection frozen at
+admission); alignment merge (overlap / shared controls, WP-D1/D3, ADR 0014);
+GCP optimization with a control-RMS outlier warning (`main.rs:7679`); per-image
+marker placement (`GcpImageMarkerOverlay.tsx`, `GcpImagesPanel.tsx`); image
+masks; image-quality job; duplicate detection at import
+(`photolab_image_import.rs:192`); EXIF GPS parsed (`ExifGpsPosition`) but the
+GPS pair preselection has no production caller (WP-A5). Runtime facts that
+bound the designs: `ColmapCommandKind` (`colmap_runtime.rs:748-767`) has no
+`image_registrator`, `point_triangulator` or `spatial_matcher`; there is no
+vocabulary-tree resource; the primary feature store is ALIKED + LightGlue via
+`feature_importer`/`matches_importer`; `feature_cache_key`
+(`colmap_runtime.rs:2065-2124`) hashes the whole camera list, so any exclusion
+misses the cache; largest-model selection (`colmap_runtime.rs:4674`) drops
+smaller connected components silently; `model_aligner --alignment_max_error 10`
+(`:2506-2510`) rejects GPS priors silently. Metashape reference rows: Align
+photos, Optimize cameras, Chunks/merge, Repair alignment
+(`docs/photolab-metashape-reference-2026-09.md:22-26`).
+
+Design principles for the phase (bind every package): a repair never mutates a
+published AlignmentRun — it publishes a child run with lineage
+`parent_alignment_entity_id` plus the exact repair action (typed, hashed) so
+products and reports stay attributable (IF-D19/IF-D26); every action is a P11
+command row usable from the tree, the panel, the console and automation; the
+preview of a repair states its blast radius (cameras touched, products that
+become stale) before anything runs (X1, P5); the user is never asked to guess a
+reason — PhotoLab names it with evidence; every long-running package carries a
+D1 budget (time to first progress, cancel bound, wall-time bound, disk) and child
+runs store deltas (poses, new points) that reference the parent's immutable
+database by hash — never a copy per repair (orphan GC per B5).
+
+### WP-R0 — Fixtures, GPS preselection mechanism, budgets (Size M)
+
+Two deterministic fixtures built by `scripts/photolab-e2e.mjs --repair-fixture
+<tier>` from the Sulzberg images with a checked-in expected-outcome JSON (camera
+→ expected reason → expected repair): tier 1 (24 frames: 6 motion-blurred /
+underexposed copies, 4 frames from a disjoint strip that form their own
+component, 2 frames in a wrong capture group, 2 exact duplicates) and tier 2
+(135 frames with 20 degraded the same way) run once per landing as the
+repair-scale evidence with the X6 budget "repair of k cameras ≤ 20 % of the
+full alignment wall time". Expected counts, tier 1: after excluding the 6
+blurred and the 2 duplicates, 14/14 of the remaining main-strip frames register;
+the 4 disjoint frames register only after `attachComponent` (R2) or merge
+(ADR 0014); the 2 wrong-group frames re-register after the group fix. The GPS
+pair preselection (EXIF GPS neighbours with sequential-neighbour fallback,
+today ~1,200 lines without a caller under WP-A5) is wired here as a shared
+mechanism because R2 and R3 depend on it; the accuracy investigation stays in
+A5.
+
+### WP-R1 — Registration diagnosis: why did a camera fail? (Size M)
+
+Problem. After alignment the user sees only an aligned ratio; unregistered
+cameras are indistinguishable from registered ones in the tree, the Image
+status view and the report, and there is no reason attached. Failures the
+runtime hides today: smaller connected components are dropped, GPS-prior
+rejections vanish, duplicates are known at import but never shown.
+
+Design. The alignment summary records per camera `registration: Registered |
+Unregistered { reason, evidence }` with the closed reason set
+`too_few_features | no_candidate_pairs | no_verified_pairs | low_inlier_ratio |
+separate_component { id, size } | gps_prior_rejected | masked_out |
+group_isolated | duplicate_of { camera } | excluded_by_user`, each with the
+numbers behind it (keypoints, candidate pairs, verified pairs, inlier ratio,
+mask coverage, quality score, component size, prior residual) and the repair
+rows it enables (R2/R3/R3b). Rolling shutter is not a per-camera reason: it
+becomes a capture-group warning (PhotoLab defers RS compensation, reference
+row 21). Two additions the review asked for: a "Preflight" list at import time
+with the reasons already knowable from metadata (`duplicate_of`, low quality
+score, missing GPS) so a 40-minute alignment is not needed to learn them; and a
+"gap map" layer — site regions with fewer than three registered views, reusing
+the footprint math of the parked WP-E4 — so the pilot knows what to re-fly.
+Surfaces: tree badges and an "Unregistered · N" group under the alignment run
+with "Select all N"; Image status gains a Registration column; report section
+"Registration". Command row `photolab.alignment.diagnose`.
+
+```text
+Footer
+- A1 outcome: The user sees which cameras failed, why, with evidence, and the fix PhotoLab proposes — before and after alignment.
+- A2 reference: Metashape shows unaligned cameras (NA) without reasons; connected components are documented but not surfaced per camera; docs/photolab-metashape-reference-2026-09.md rows "Align photos", "Repair alignment"
+- A3 siblings: tree badges, Image status, processing report, alignment summary lineage, WP-E4 footprints
+- B1 reachability: ribbon Alignment › Diagnose; tree context row on an alignment run / camera; console + automation row `photolab.alignment.diagnose`; shortcut none
+- B2 open/close: read-only view; Escape per UIP-D14 function rung
+- B3 surface: right panel function view + tree badges + viewport gap layer; no modal
+- C1 numeric parity / C2 selection / C3 freezability / C4 persistence+undo: evidence numbers are exact copies from the run; "Select all N" feeds R2/R3; stored in the alignment record (immutable)
+- D1 performance class: bounded (reads the run; gap layer ≤ 200 ms for 1,200 footprints); D2 degradation: older runs without per-camera data show "no diagnosis recorded"
+- E1 visual reference: none — open (pixel brief before dispatch, G17)
+- E2 conflicts/failure/crash: none (read-only)
+- E3 verification: tier-1 fixture yields the expected reason per camera incl. `separate_component` for the disjoint strip and `duplicate_of` at preflight; renderer test for the panel; report section snapshot
+- Decision record: cited unchanged: IF-D19, UIP-D14, P11; reference row 21 (RS deferred)
+- Evidence: open — not executed
+- Status: planned (revision 2)
+```
+
+### WP-R2 — Align selected cameras against the existing model (Size XL)
+
+Problem. Fixing 12 bad frames means re-running the whole alignment today. The
+Metashape recipe every surveyor knows is: reset the cameras, place ≥ 4 markers
+on the unaligned photos (each with ≥ 2 projections on aligned images), Align
+Selected Cameras; automatic re-registration alone fails the same way the first
+alignment did when features are the problem (blur, snow, water, blank facades).
+
+Design. Capability delta first: add `ImageRegistrator`, `PointTriangulator`
+and `SpatialMatcher` to `ColmapCommandKind`, the capability probe and the
+release inventory (vendored COLMAP hash); neighbours come from EXIF GPS (R0
+mechanism) with sequential-neighbour fallback — no retrieval, no vocabulary
+tree. New job `photolab.jobs.startAlignmentRepair { parentAlignment, cameras,
+mode, refine: fixed | joint }` with four modes: `register` (unregistered
+cameras: match against their GPS/sequence neighbours in the parent's feature
+store, `image_registrator`, `point_triangulator`); `reregister` (wrongly
+registered cameras: drop their observations, then as `register`, showing the
+before/after reprojection error per camera); `markerAssisted` (the Metashape
+recipe: ≥ 4 marker observations per camera from GCP coordinates or "tie
+markers" triangulated from the parent model, PnP, then local BA — PhotoLab's
+innovation seat: it projects the parent's tie points into the unregistered
+image using its GPS prior and proposes where to click, with "accept suggested
+marker" rows); `attachComponent` (a `separate_component` from R1 is attached
+through the ADR 0014 overlap merge with the new pairs, as one action). `refine:
+fixed` keeps untouched poses; `joint` runs a bounded bundle adjustment under
+the parent's pinned-intrinsics policy. Publishes a child AlignmentRun with
+lineage `{ parent, repair: { action, camera_ids, refine, markers? } }` storing
+pose/point deltas that reference the parent's database by hash; the parent
+stays; products keep their run. Preview before start: cameras, candidate pairs
+found, products that become stale, and the budget. Selection semantics: the
+panel captures the camera set at open as an editable chip list and re-previews
+on edit (debounced, X6 300 ms). Cancellation, resume and same-target admission
+per B4/H2.
+
+```text
+Footer
+- A1 outcome: The user repairs a subset of cameras in minutes — automatically, by attaching a component, or by placing markers — while the rest of the alignment and all products stay valid and attributable.
+- A2 reference: Metashape Align Selected Cameras / Reset Camera Alignment / marker-assisted alignment (manual ch. 3; reference row "Repair alignment" extended with the marker recipe)
+- A3 siblings: alignment job family, processing sets, alignment merge (ADR 0014, WP-D1/D3), GCP images/marker overlay, R1 diagnosis
+- B1 reachability: ribbon Alignment › Repair; tree row on unregistered cameras / the R1 group; console + automation row `photolab.alignment.repair`; shortcut none
+- B2 open/close: function panel with preview; job under the Jobs registry; Escape ladder UIP-D14
+- B3 surface: right panel function view; marker placement in the existing image view; no modal except B4 conflicts
+- C1 numeric parity / C2 selection / C3 freezability / C4 persistence+undo: typed parameters; chip list of exact camera ids captured at open; frozen at admission; child run immutable (undo = keep using the parent)
+- D1 performance class: long-running job; budget for k cameras: first progress ≤ 5 s, cancel ≤ 2 s, wall ≤ max(60 s, 2 s·k + BA), disk = deltas only; D2 degradation: no candidate pairs → the preview says so and proposes markerAssisted; markerAssisted with < 4 usable markers is not admitted and says which camera lacks them
+- E1 visual reference: none — open (pixel brief before dispatch, G17)
+- E2 conflicts/failure/crash: admission per B4; crash = discard the child, parent untouched (ready-last publication); restart from parent
+- E3 verification: tier-1 fixture — blurred frames stay unregistered with reason (automatic) and register with 4 tie markers (markerAssisted); disjoint strip attaches via attachComponent; wrong-group frames re-register after the group fix; determinism (two runs, identical child hash); tier-2 fixture within the X6 budget; 24-image smoke unchanged
+- Decision record: cited unchanged: IF-D19/IF-D26, ADR 0014, B4, H2, UIP-D14; capability delta recorded in the runtime inventory
+- Evidence: open — not executed
+- Status: planned (revision 2)
+```
+
+### WP-R3 — Exclude / restore cameras and re-run on the remaining set (Size M)
+
+Problem. There is no non-destructive way to take frames out of an alignment
+(Metashape: disable cameras) without removing them from the project, and any
+re-run re-extracts every feature because the cache key covers the whole list.
+
+Design. Camera exclusion is project state (`excluded: { reason, since }`,
+journaled, undoable via W4/R3's own undo) shown as a tree badge and in Image
+status; excluded cameras are dropped from new processing sets by default and
+listed in the report. Prerequisite delivered here: a per-image feature-store
+identity (image hash + extraction parameters + mask hash) replacing the
+list-wide `feature_cache_key`, so unchanged cameras are never re-extracted.
+"Re-run on remaining" publishes a child AlignmentRun with lineage `{ parent,
+repair: { action: "exclude", camera_ids, reasons }, processing_set }` (a child,
+not a sibling — R6 keys staleness on the parent chain). No confirmation modal
+at any count: one journaled command with an inline "Excluded 40 · Undo"
+notice (X5, B3). Exclusion reasons come pre-filled from R1 and are searchable.
+
+```text
+Footer
+- A1 outcome: The user takes bad frames out with a reason, keeps them in the project, and re-runs with matching + mapping only.
+- A2 reference: Metashape Disable/Enable cameras; docs/photolab-metashape-reference-2026-09.md row "Repair alignment"
+- A3 siblings: image list/status, processing sets, alignment job, report, R6 staleness
+- B1 reachability: tree context rows `photolab.images.exclude` / `photolab.images.restore`; Images ribbon; console + automation rows; shortcut none
+- B2 open/close: immediate, undoable command (no panel)
+- B3 surface: tree + Image status + inline undo notice; no modal
+- C1 numeric parity / C2 selection / C3 freezability / C4 persistence+undo: exact camera ids; journaled with undo; frozen into the processing set at admission
+- D1 performance class: bounded (state, ≤ 100 ms for 1,200 cameras) + long-running re-run (no extraction stage for unchanged cameras; budget = matching + mapping of the parent run); D2 degradation: a feature-store miss re-extracts that camera and says so
+- E1 visual reference: none — open (G17 brief)
+- E2 conflicts/failure/crash: journal write-ahead (B5); no partial state
+- E3 verification: tier-1 fixture: excluding the 6 blurred + 2 duplicates and re-running registers 14/14 main-strip frames with no extraction stage; undo restores the badge; child lineage carries the exclusion
+- Decision record: cited unchanged: B5 journal, P11 rows, UIP-D14, X5
+- Evidence: open — not executed
+- Status: planned (revision 2)
+```
+
+### WP-R3b — Reference overrides, camera import, reset vocabulary (Size M)
+
+Problem. A bad RTK fix on ten frames or a wrong EXIF altitude datum has no
+repair path: `model_aligner` rejects or absorbs the priors silently, and
+"Reset Camera Alignment" does not exist by name.
+
+Design. Journaled `photolab.images.reference.set { cameraIds, position?,
+accuracy?, enabled }` consumed by pair preselection (R0) and the georeference
+stage (per-camera accuracy weights; disabled priors are ignored, never
+guessed); `photolab.cameras.import` (COLMAP text, CSV) as priors for R2
+`reregister`; the alias row `photolab.alignment.reset` = R3 exclude + R2
+reregister so the Metashape vocabulary resolves to the immutable-run model
+(IF-D19 forbids a mutating reset). Reference rows 23 and 30 gain the
+disposition.
+
+```text
+Footer
+- A1 outcome: The user corrects or disables wrong reference data per camera and re-aligns those cameras against the corrected priors.
+- A2 reference: Metashape Reference pane (per-camera accuracy, enable/disable), Import Cameras; reference rows 23, 30
+- A3 siblings: reference frame, GCP optimization, R2, report
+- B1 reachability: Reference ribbon; tree rows on cameras; console + automation rows; shortcut none
+- B2 open/close: inline edits in the Image status/Reference table; undoable (W4)
+- B3 surface: table edits + R2 panel; no modal
+- C1–C4: typed values with units and accuracies; exact camera ids; frozen at admission; journaled with undo
+- D1 performance class: bounded edits; D2 degradation: import files with unknown columns fail honest with the offending line
+- E1 visual reference: none — open (G17 brief)
+- E2 conflicts/failure/crash: journal write-ahead (B5)
+- E3 verification: fixture frames with a shifted GPS prior are rejected with `gps_prior_rejected` (R1), re-register after `reference.set { enabled: false }` + R2; import round-trip test
+- Decision record: cited unchanged: IF-D19 (no mutating reset), B5, P11
+- Evidence: open — not executed
+- Status: planned (new in revision 2)
+```
+
+### WP-R4 — Tie-point filtering before optimization (Size M)
+
+Problem. Metashape's gradual selection is the standard error-reduction step;
+PhotoLab optimizes without it. Of Metashape's criteria only reprojection error
+is computable from a COLMAP sparse model today; reconstruction uncertainty and
+projection accuracy need per-point covariance the runtime does not emit.
+
+Design. `photolab.alignment.filterTiePoints { criterion, threshold }` with
+criteria computable from `points3D`: mean reprojection error, max reprojection
+error, track length, image count per point; live preview (points affected,
+histogram, per-camera share) and a child AlignmentRun on apply (lineage
+`{ parent, filter: { criterion, threshold, removed } }`); GCP optimization can
+take the filtered run. A recommended threshold per criterion from the run's
+own distribution (95th percentile) with the expected control-RMS change shown
+before apply. WP-E2's deferred "gradual-selection editor" is superseded by this
+package under D10 (status note added to E2).
+
+```text
+Footer
+- A1 outcome: The user cleans tie points with a previewed, reversible filter and sees the effect on accuracy before optimizing.
+- A2 reference: Metashape Gradual Selection (manual ch. 3, Optimize cameras); reference row "Optimize cameras"; uncertainty/accuracy criteria deferred until covariance exists
+- A3 siblings: GCP optimization, calibration report (E1), accuracy tab, E2
+- B1 reachability: ribbon Alignment › Filter tie points; console + automation row; shortcut none
+- B2 open/close: function panel with preview; apply publishes a child run; UIP-D14
+- B3 surface: right panel + histogram in the Accuracy tab
+- C1 numeric parity / C2 selection / C3 freezability / C4 persistence+undo: typed thresholds; exact counts; child run immutable; undo = parent
+- D1 performance class: bounded preview (≤ 500 ms for 2 M points) + long-running apply (budget = triangulation + BA of the parent); D2 degradation: runs without per-point statistics show "not available for this run"
+- E1 visual reference: none — open (G17 brief)
+- E2 conflicts/failure/crash: as R2
+- E3 verification: tier-1 fixture — filtering by reprojection error lowers control RMS after optimization; determinism; preview counts equal applied counts
+- Decision record: cited unchanged: IF-D19/IF-D26, UIP-D14; E2 status amended
+- Evidence: open — not executed
+- Status: planned (revision 2)
+```
+
+### WP-R5 — Guided repair session (Size M, after R1–R3b)
+
+Design. One function "Repair alignment" that chains diagnosis → plan → preview
+→ apply as an explicit, journaled session. The planner is a pure, hashed
+function `plan(diagnosis, tunables) → steps` with a fixed rule table, in this
+order: exclude duplicates and blurred frames (quality score below X6
+`repair.quality_min`) → fix group / reference overrides → `register`, else
+`markerAssisted` when candidate pairs are below X6 `repair.min_pairs` →
+`attachComponent` for separate components → filter tie points → optimize. The
+plan is shown as batch-configurator step rows (WP-C6) — an expert edits or
+removes steps there; no new editor. The session runs as one batch under the
+Jobs registry with per-step cancel; a failed step stops the batch with the
+state visible; the session record is a lineage object referenced by the
+resulting run. Innovation over Metashape: the tools exist there, the guided
+path and the record of what was repaired and why do not.
+
+```text
+Footer
+- A1 outcome: A non-expert repairs a bad alignment by accepting an explained plan; an expert edits the step rows before running it.
+- A2 reference: none in Metashape (innovation); reference row "Repair alignment" marks the guided session PhotoLab-only
+- A3 siblings: R1–R4, batch configurator (UIP-D10/D11, WP-C6), Jobs registry
+- B1 reachability: ribbon Alignment › Repair alignment; tree row on an alignment run; console + automation rows `photolab.alignment.repairPlan` / `repairApply`
+- B2 open/close: function panel; batch job; UIP-D14
+- B3 surface: right panel plan rows + Jobs tab
+- C1–C4: plan typed and hashed; frozen at admission; session record immutable; thresholds in the tunables register
+- D1 performance class: planning bounded (≤ 200 ms); execution = sum of step budgets; D2 degradation: steps that cannot run explain why and are skipped explicitly
+- E1 visual reference: none — open (G17 brief)
+- E2 conflicts/failure/crash: per-step admission; failed step stops the batch
+- E3 verification: planner unit-tested against both fixtures' expected-outcome JSON; tier-1 repaired end to end from the plan; report shows the session; session hash determinism
+- Decision record: cited unchanged: UIP-D10/D11, P11, IF-D19; X6 entries `repair.quality_min`, `repair.min_pairs`
+- Evidence: open — not executed
+- Status: planned (revision 2)
+```
+
+### WP-R6 — Stale-product map after a repair (Size S)
+
+After any child run, products whose lineage points into the parent chain are
+marked "stale — recompute from run X" in the Products tree and the product
+list (`provenanceStatus` untouched; a separate `staleness` field keyed on the
+parent chain, so R3's exclude + re-run triggers it too), with a batch
+"Recompute stale products" row. No automatic recompute (P5).
+
+Sequencing (revision 2): R0 (fixtures, GPS preselection mechanism) → R1 → R3
+→ R3b → R2 → R4 → R6 → R5. Estimated Codex effort: R0/R6 medium, R1/R3/R3b/R4
+medium, R2/R5 high (design-heavy sidecar; R2 in two dispatches: capability
+delta + register/reregister, then markerAssisted + attachComponent). Dispatch
+only after gate 8 closes (G1c) unless the owner reprioritises. Review record:
+demanding-user review 2026-09-08 (12 findings) — findings 1–12 applied above;
+decisions derived without owner escalation: marker-assisted mode adopted (X4),
+`reset` as an alias over exclude + reregister (IF-D19), no exclusion
+confirmation (X5/B3), GPS-preselection wiring moved from A5 to R0 (X2).
+
+## Phase W/T — two lenses: intuitive workflow and a complete toolbox (owner directive 2026-09-08)
+
+Owner decision D11 (2026-09-08, verbatim intent): "denk von PhotoLab sowohl
+aus der Perspektive intuitiver Workflow als auch aus der Perspektive
+Photogrammetrie-Werkzeuge, die dem User alle Möglichkeiten bieten, seine Ziele
+zu erreichen." Every future package is judged through both lenses, and this
+section keeps the two running audits: the workflow spine and the toolbox
+matrix. Both are updated at every landing; the demanding-user review runs
+against both before a brief goes to Codex. D9 still bounds R1; D10/D11
+packages are sequenced after gate 8 unless the owner reprioritises.
+Revision 2 (2026-09-08 evening) after the owner's boundary rule and the
+demanding-user review: matrix cells re-audited with file:line, reconstruction
+region and undo pulled to the front, measurement/mesh/DEM editing handed to the
+Builder registry, W1+W2 merged into one collapsible strip.
+
+Boundary rule (owner 2026-09-08): what happens inside the product pipeline
+before publication is PhotoLab (parameters, calibration, region, texturing,
+packaging); what happens on a published product afterwards — measurement and
+volumes, mesh repair/decimation, breaklines, seamline editing, contours — is
+Builder work and goes to the Builder registry as a cited proposal, never as a
+PhotoLab package. A mask editor beyond the existing brush is overkill.
+
+### Lens 1 — the workflow spine
+
+Spine (matches the ribbon order, `ribbon.ts:151-229`): Photos → Groups /
+calibration → CRS + GCPs (Reference before Align) → Align → Optimize → Depth /
+Dense → Products (DEM / Ortho / Mesh / Splat, scoped by the reconstruction
+region T9) → Report / Export → hand-off to Builder / WeltView, with the repair
+loop (Phase R) attached at Align / Optimize. Intuitive means: at every point
+the user sees where they are, what is ready, what is blocked and why, what the
+sensible next step is, and how to undo a decision. What exists: stage-ordered
+ribbon; batch configurator (C6); self-explaining presets (C1); Jobs registry /
+chip (H2); diagnostics panel; report (A2/E1); no undo of any kind
+(`grep -i undo` finds only "This cannot be undone", `App.tsx:4747`).
+
+#### WP-W4 — Undo/redo substrate for decisions (Size L, first)
+
+X5: shipping "do" without "undo" is a defect, so the substrate comes before
+any package that adds decision state (Phase R, T2a, T9). Journaled, undoable
+state edits everywhere a user decides without a job: capture-group
+assignment, camera exclusion (R3), GCP roles and edits, reference overrides
+(R3b), masks, reference-frame choice, region (T9). Mechanism: an inverse-entry
+table per mutating command (B5 manifest-first commit writes the inverse with
+the entry), per-domain stacks per P8, one shared `Undo` / `Redo` row (P11),
+Escape ladder unchanged (UIP-D14). Rule: runs are never undone — undoing a
+decision a published run already consumed marks the dependants stale (R6
+staleness on the parent chain) and never touches the run. Each later package
+adds its inverse; the C4 affected-state set is part of every command's record.
+
+#### WP-W1 — Stage strip with next-step guidance (Size M; merges the former W1 + W2)
+
+One collapsible strip above the viewport (preference persisted; one line when
+collapsed) with a chip per spine stage: `done | ready | blocked(reason) |
+stale(reason)` computed from the project state machine, the counts that
+matter (images imported / registered, GCPs control / check, products
+published / stale), reason on hover and click, click opens the function tab,
+and the one-click start row (respecting admission). No right-panel card (a
+power user hides it on day two). Automation twin `photolab.project.nextSteps`
+returns the same table. Nothing runs automatically (P5). Evidence: fresh
+project → import → each stage, the strip always names the correct next step;
+renderer test over a table of states; pixel brief before dispatch (G17).
+
+#### WP-W3 — Result review after every stage (Size L)
+
+Each finished job posts a review card in the Jobs / Report area and the same
+block in the report, both reading one immutable per-run metrics record
+written at publish (hashed, part of lineage). The numbers a surveyor checks,
+per stage: alignment — registered / total, reprojection RMS and max (px), tie
+points; reference — control RMSE XY and Z, check RMSE XY and Z, max residual
+with the worst point's name; dense — coverage over the region (needs a new
+metric at publish; today only the DEM validity bitset exists, G1a-3); DEM /
+ortho — GSD, valid-cell share; mesh — triangles, degenerate faces dropped
+(A3), holes (new metric at publish). Warnings with reasons (R1 / E2) and the
+next-step rows. Metrics that a run does not carry read "not recorded for this
+run" — never estimated from current state.
+
+#### WP-W5 — Parameter registry with plain-language rationale (Size M)
+
+A code-resident parameter registry (`id, label, unit, default, rationale,
+range`) generates both the panel help and the tunables table below (the
+markdown table is output, not source). Help renders as a collapsed `?`
+affordance per field, not an always-on paragraph (the A4 review showed the
+paragraph eating panel height). Exposes the four SMRF parameters A4 froze as
+"not exposed" as typed fields with defaults (contract C1). No other new
+parameters.
+
+### Lens 2 — the toolbox matrix (status 2026-09-08, revision 2)
+
+Legend: ✓ in code (file:line) · ◐ partial or planned (WP) · ✗ gap (package
+below) · B = Builder work on a published product (registry proposal cited from
+here). Sources: `docs/photolab-metashape-reference-2026-09.md`, the 2026-09-01
+audit, this plan, greps of 2026-09-08.
+
+| Tool family           | Metashape                                                                | PhotoLab today                                                                                                                                                                                                                                                                           | Disposition                                                         |
+| --------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Photo import          | many formats, video, rigs, masks                                         | ✓ JPEG/TIFF/DNG, ✓ video frames (C5), ✓ brush mask editor ("Paint excluded area", `ImageWorkspace.tsx:893`, `image_mask_runtime.rs:21`); ✗ mask import / background-colour mask; multispectral deferred (reference row 20)                                                               | T3 (import only)                                                    |
+| Camera calibration    | Brown model, types, rolling shutter, 12 exchange formats                 | ✓ per-group intrinsics policy (D2), ✓ inspector (E1), ✓ OPENCV_FISHEYE parsed (`colmap_runtime.rs:3520`); ✗ calibration file import/export, ✗ fisheye as a policy option; rolling shutter deferred (no BA support)                                                                       | T1                                                                  |
+| Reconstruction region | region box before dense                                                  | ✗ no `region`/`extent` in `productConfiguration.ts`, `ProductPanel.tsx`, `mvs_runtime.rs`, `raster_runtime.rs`                                                                                                                                                                           | T9                                                                  |
+| Align photos          | presets, preselection, guided matching                                   | ✓ presets (C1), ✓ hybrid ensemble; ◐ GPS preselection (R0 mechanism, A5 accuracy)                                                                                                                                                                                                        | R0 / A5                                                             |
+| Reference             | GPS/IMU accuracies, control vs check GCPs, scale bars, coded targets     | ✓ GCP import/optimize, ✓ check points (`GcpOptimizationPanel.tsx:319`, `GcpAccuracyPanel.tsx:219`, report `processingReport.ts:374`), ✓ per-point accuracy (E3); ✗ per-camera GPS/IMU accuracy weights (`position_prior: None`, `colmap_runtime.rs:5201`), ✗ scale bars, ✗ coded targets | T2a / T2b                                                           |
+| Optimize / QC         | gradual selection, residual plots, correlation                           | ✓ report (E1); ◐ observation QC (E2); tie-point filtering → R4                                                                                                                                                                                                                           | R4                                                                  |
+| Chunks / merge        | duplicate, merge, align chunks                                           | ✓ processing sets + overlap/shared-control merge (D1/D3)                                                                                                                                                                                                                                 | —                                                                   |
+| Repair                | reset, align selected, disable                                           | ✗                                                                                                                                                                                                                                                                                        | Phase R                                                             |
+| Depth / dense         | quality, filtering, confidence, classification                           | ✓ MVS depth + dense, ✓ SMRF ground (A4); ✗ confidence / outlier filtering parameters                                                                                                                                                                                                     | T4                                                                  |
+| Mesh / texture        | from depth/dense/tie points, holes, decimate, refine, texture modes      | ✓ DEM drape textured (`productConfiguration.ts:77`), ✓ dense Poisson mesh (A3) but untextured (A3 stage-1 limit); ✗ true-3D mesh texturing; editing (holes, decimate, refine) = B                                                                                                        | T4 / B                                                              |
+| DEM / ortho           | class-based DSM/DTM, breaklines, seamlines, colour calibration, contours | ✓ DSM/DTM + ortho (GDAL/COG pipeline); ✗ colour calibration; seamlines not claimed (ADR 0011); breaklines, seamline editing, contours = B                                                                                                                                                | T5b (last) / B                                                      |
+| Measurement & shapes  | distance/area/volume, profiles, shapes SHP/DXF/GeoJSON                   | ✗ in PhotoLab (only GCP marker placement); Builder V-01 viewer measurement exists                                                                                                                                                                                                        | B (proposal: DEM volumes, profiles, shape I/O on PhotoLab products) |
+| Report                | PDF survey stats, calibration, RMSE, residuals                           | ✓ (A2/E1); W3 metrics record extends it                                                                                                                                                                                                                                                  | W3                                                                  |
+| Exports               | LAS/LAZ/COPC/E57/PLY, OBJ/FBX/GLB/STL, 20 camera formats, shapes         | ✓ PLY/LAS/LAZ (`global.d.ts:220`), ✓ camera COLMAP (A1), ✓ product packages (G1a); ✗ E57/COPC, ✗ OBJ/GLB/STL, ✗ other camera formats, ✗ ortho block tiling / world file / KML                                                                                                            | T6                                                                  |
+| Gaussian splats       | not native                                                               | ✓ native training + export (ahead)                                                                                                                                                                                                                                                       | —                                                                   |
+| Automation            | Python/Java API, network processing                                      | ◐ command table rows (G2, in flight — not landed) + console; ✗ recipe files and CLI batch over projects; network processing out of scope (ADR 0006/0013)                                                                                                                                 | G2 / T7                                                             |
+
+#### WP-T9 — Reconstruction region (Size M, before any dense/product tool)
+
+A named canonical entity per processing set (typed extents + rotation, C1;
+default = registered-camera footprint with margin) that scopes depth, dense,
+DEM, ortho, mesh, splat and export; part of the compute-scope hash and the
+product lineage; drawn and edited in the viewport, undoable (W4). Without it
+every product covers the neighbour's parcel and burns hours (X2).
+
+#### WP-T1 — Calibration exchange (Size M)
+
+Import/export of camera calibration (Brown parameters per calibration group)
+in Metashape XML, OpenCV YAML and PhotoLab JSON; "fixed calibration from file"
+as an intrinsics-policy source; fisheye (OPENCV_FISHEYE) delivered as a policy
+option; rolling shutter deferred with the stated reason (no BA support in the
+runtime), recorded in the reference row 21.
+
+#### WP-T2a — Per-camera accuracy and scale bars (Size M)
+
+Per-camera GPS/IMU accuracy columns (from EXIF/RTK metadata or R3b overrides)
+as weights in the georeference step — mechanism: weighted similarity fit with
+per-camera covariance after BA (COLMAP's `model_aligner` cannot weight, so
+PhotoLab fits it; named, not assumed) — and scale bars as two-marker distance
+constraints in the same constrained similarity post-fit. Evidence: the
+Sulzberg RTK run with degraded priors on 10 frames. Check points are not part
+of this package (they exist).
+
+#### WP-T2b — Coded-target detection (Size L)
+
+Ring / bit decoding for the common circular 12/14-bit targets, sub-pixel
+centroid, ID → GCP matching, overlay in the image view, manual fallback rows;
+report section.
+
+#### WP-T3 — Mask import (Size S; owner: no further editor)
+
+Mask import from alpha/PNG per image and "mask by background colour" with a
+preview count, next to the existing brush editor. Masks already feed the
+compute-scope hash.
+
+#### WP-T4 — Dense parameters and true-3D mesh texturing (Size M)
+
+Pipeline-internal only: dense-cloud confidence threshold and statistical
+outlier removal as typed product parameters with lineage, and texturing of the
+dense Poisson mesh (today only the DEM drape is textured) so T6 can export a
+textured mesh. Mesh editing (close holes, decimate, refine) is a Builder
+registry proposal cited from here.
+
+#### WP-T5b — Colour calibration before ortho blending (Size XL, investigation-bounded, last)
+
+Colour calibration across cameras before orthomosaic blending and the per-tile
+seam/source map published in the ortho package. Seamline editing stays
+unclaimed until an ADR 0011 revision (a custom mosaicking engine is A3-class
+investigation work); breaklines, seamline editing and contours are Builder
+proposals. Sequenced last.
+
+#### WP-T6 — Export completeness (Size M)
+
+Per format the writer and spec are named before dispatch: E57 (own writer per
+ASTM E2807, or the `e57` crate), COPC (LAZ 1.4 + COPC VLRs via `las`/`laz`
+crates), OBJ + MTL and GLB (`gltf` crate) with texture (depends on T4
+texturing), STL; camera export in Bundler, Pix4D and RealityCapture text
+formats (documented), Agisoft XML deferred until the schema is researched;
+FBX deferred (no usable open writer; OBJ/GLB cover the hand-off); ortho export
+gains block tiling, world file and KML alongside COG. All through the existing
+verified-copy export path (cancellable, atomic).
+
+#### WP-T7 — Recipes as files and CLI batch over projects (Size M)
+
+Batch recipes (`batchRecipe.ts`, schema v2) become user data (P7): export /
+import as a file, apply to another project, and `photolab.batch.start`
+accepting a recipe file and project path from the CLI / shared SDK, plus the
+documented spine script. "Callable from Python" is the Builder lane's P11
+generator plus one smoke here. Network processing stays out of scope (ADR
+0006/0013).
+
+Sequencing (revision 2, owner to confirm): after gate 8 — W4 (undo substrate)
+→ W1 (strip) → Phase R → T9 (region) → W3 → T2a, T6 → T1 → T4 → T3 → W5 →
+T2b → T7 → T5b. Builder registry proposals (cited, not PhotoLab packages):
+measurement / DEM volumes / profiles / shape I/O on PhotoLab products, mesh
+repair and simplification, breaklines / seamline editing / contours. Review
+record: demanding-user review 2026-09-08 (12 findings) applied; derived
+decisions without owner escalation: seamlines stay unclaimed pending ADR 0011
+revision, multispectral stays deferred (reference row 20), network processing
+out (ADR 0006/0013); owner decisions applied: mesh/DEM/ortho editing and
+measurement are Builder work, mask editor overkill.
 
 ## Tunables register (doctrine X6)
 
