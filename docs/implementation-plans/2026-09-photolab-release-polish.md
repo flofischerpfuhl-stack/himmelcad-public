@@ -510,6 +510,43 @@ evidence, then the full 135 overnight. Brief goes to the Windows host via
 `.claude/codex/prompts/remote/` once the clone is unblocked and A7b (items 1–2)
 has landed; the accuracy comparison uses the laptop golden as the reference.
 
+Landed 2026-09-08 (A7b, Codex high, 224 k tokens; reviewed; the seven lane files
+went to main inside the Builder's 3d83202 because both sessions share one git
+index — content identical to the reviewed staged set; it also repairs 1d7a906,
+which did not compile alone without `extraction_tiling`):
+items 1 and 3 implemented — stage shares govern worker counts only, a unit of
+work is checked against the whole usable envelope (fixtures: 8 GiB → 1/1
+workers, 2 × 1 tiles, no cap; 10.3 GiB → 1/1, 2 × 1 tiles, no cap; 16 GiB →
+1/1, no tiles, no cap; 27 GiB → 1/2; 32 GiB → 2/2; 56 GiB → 3/4; quality
+degradation nowhere in the table), the deterministic tile-merge kernel exists
+(shift, 2 px de-duplication by score, global top-k; X6: overlap 256 px = 2 ×
+the 128 px descriptor support, tile floor 1,024 px), the processing report
+gains the "Memory envelope" section. Item 2 (real tiled extraction) is blocked
+by a worker-contract gap: the curated COLMAP worker writes ALIKED keypoints,
+scores and descriptors only into its SQLite database
+(`features/aliked/database.db`) and the sidecar has no SQLite reader, so
+per-tile features cannot be read back for the merge. Interim behaviour
+(landed with A7b): admission refuses, typed and honest, when one
+full-resolution extraction does not fit the usable envelope and tiling would
+be required — i.e. Quality Hybrid alignment on a 16 GB machine is refused, not
+degraded, until WP-A7c. Lane note: the Builder's 1d7a906 carried A7b's
+`main.rs` refusal hunk and the `extractionTiled` TypeScript type (additive,
+crossed commits; accepted).
+
+### WP-A7c — Tiled extraction end to end (Size M, before the 16 GB gate run)
+
+Add a bundled SQLite reader (`rusqlite`, bundled feature; shared `Cargo.lock`
+change announced to the Builder lane) for the COLMAP database schema
+(`keypoints`, `descriptors` blobs per image), run the ALIKED extractor per
+tile set into a scratch database, read keypoints/scores/descriptors back,
+merge with the A7b kernel, and import the merged features per image through
+`feature_importer` (the DeDoDe bridge's text/binary path) into the alignment
+database; record `extractionTiled { tiles, overlapPx }` in the alignment
+summary (`ColmapOutputSummary`, initializers at project_runtime.rs test
+fixtures updated). Evidence: the 24-image fast smoke with forced tiling
+(env override) produces an alignment within the golden tolerance of the
+untiled run; then the 16 GB gate run on the Windows host.
+
 ## Phase B — Resume, shutdown, and job-owner integrity
 
 ### WP-B1 — Wire the checkpoint sink; make `interruptedRecoverable` real (Size M)
