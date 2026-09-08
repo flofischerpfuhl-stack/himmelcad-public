@@ -2693,7 +2693,8 @@ filmstrip badge (opaque `--hc-bg-panel`). Shared side = Builder S-02e
 (`--hc-info-fg` token, console levels, sweep, gallery contrast checks, token
 lint for shared CSS). Rule: every audit runs both themes; PhotoLab CSS is
 grepped for plain status tokens as text before landing UI. Dark audit after the
-fix: 90 captures, a11y clean; light rerun pending at the time of writing.
+fix: 90 captures, a11y clean; light audit 2026-09-09 00:26 (after the Builder's
+V-05 WebGL2 fix and S-02e): 90 captures, a11y clean — closed on both sides.
 
 ### WP-H1 (Size S, gates 1/3)
 
