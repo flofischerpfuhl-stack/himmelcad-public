@@ -110,7 +110,11 @@ S-06b gates:
 
 - `pnpm --filter @himmelcad/ui test`: 32 passed, 0 failed.
 - `pnpm --filter @himmelcad/ui typecheck`: exit 0.
-- `pnpm --filter @himmelcad/builder typecheck`: exit 0.
+- `pnpm --filter @himmelcad/builder typecheck`: passed before concurrent
+  viewing-box edits landed; the final current-worktree rerun is red only in
+  the prohibited concurrent lane at `BuilderKernelViewport.tsx:360–362`
+  (unused viewing-box parameters) and `:1426/:1435` (nullable source Z is not
+  assignable to `KernelWorldPoint`). S-06d does not edit that file.
 
 ## Architect acceptance (G17, 2026-09-05)
 
@@ -189,3 +193,112 @@ the existing confirmation and GCP filtering handlers remain authoritative.
 ## Architect acceptance of S-06c (G17, 2026-09-06)
 
 `gallery/shots/dark/command-surfaces.png` row "PhotoLab image node menu": "Remove from project…" sits in the entity group under Rename, Builder's polyline menu is unchanged, submenu anchoring intact. S-06c accepted; PhotoLab wires the two ids in its lane.
+
+## S-06d — explicit product predicates (2026-09-08)
+
+F15b/F15c are closed in the shared S-06 substrate. Every generated command row
+now declares `products`; the former optional-owner inference is gone. The
+shared `commandsForSurface` evaluates that product admission together with the
+row's kind, cardinality, and enablement predicates. `entity.export` no longer
+calls a UI predicate that excludes clouds. Its table-declared product
+predicates require an exportable selection for both products and additionally
+bound PhotoLab to `PointCloud`, `GaussianSplatCloud`,
+`DigitalElevationModel`, `Mesh`, and `TexturedMesh`.
+
+This is consistent with UIP-D15: clouds are excluded from viewport click-select
+and hover restyle, not from commands acting on a deliberate selection. A cloud
+selected through the tree, viewport RMB, console, or automation may therefore
+be exported in Builder. PhotoLab's tree/RMB product node is likewise a
+deliberate selection and remains its visible product-export entry.
+
+PhotoLab should verify this row → product disposition:
+
+| Generated row(s) | `products` | PhotoLab expectation |
+| --- | --- | --- |
+| `entity.zoom_to`, `entity.hide`, `entity.show`, `entity.properties` | `builder`, `photolab` | retained shared entity operations |
+| `entity.export` | `builder`, `photolab` | visible for an exportable cloud, DEM, or mesh product node |
+| `photolab.images.remove`, `photolab.gcp.images` | `photolab` | retained only on their exact PhotoLab kinds/cardinalities |
+| `view.bookmark.restore`, `entity.isolate`, `pointcloud.display.set` | `builder` | absent from PhotoLab surfaces |
+| `view.box.place`, `view.box.update`, `view.box.set_operation`, `view.box.lock`, `view.box.unlock`, `view.box.rename`, `view.box.activate`, `view.box.remove`, `view.box.list` | `builder` | absent from PhotoLab surfaces |
+| all other generated platform rows | `builder`, `photolab` | shared as before |
+
+The generator lint rejects a missing/invalid `products` declaration and rejects
+any Builder-only row admitted to the PhotoLab fixture. App tests cover the
+table/product predicate, including deliberate Builder cloud export. UI snapshots
+cover the exact PhotoLab point-cloud product menu (`Zoom to`, `Hide`,
+`Properties`, `Export…`) and the unchanged Builder polyline menu (`Rename`,
+`Zoom to`, `Hide`, `Isolate`, `Properties`, `Export…`). The gallery Command
+surfaces section now uses the PhotoLab product-node fixture.
+
+S-06d gates:
+
+- `node scripts/generate-command-table.mjs --check`: exit 0 after one serial
+  regeneration.
+- `pnpm --filter @himmelcad/app test`: 56 passed, 0 failed.
+- `pnpm --filter @himmelcad/ui test`: 45 passed, 0 failed, including both
+  S-06d menu snapshots.
+- `pnpm --filter @himmelcad/builder typecheck`: exit 0.
+- `pnpm --filter @himmelcad/photolab typecheck`: exit 0; `PhotoLab English UI
+  check passed.`
+- `pnpm --filter @himmelcad/automation-host test`: 46 passed, 0 failed, 1
+  skipped (the existing real-Codex version pin expected 0.144.5 and found
+  0.153.4).
+- `git diff --check` on the S-06d change surface: exit 0.
+
+The supplied PhotoLab baseline
+`apps/photolab/test/visual-baselines/1440x900/context-menu-product.png` and
+PhotoLab's `automationCommandRows` were read only. No viewing-box,
+FunctionPanel, snapshot, import, or `apps/photolab` source file was edited by
+S-06d.
+
+## Architect S-06d review (G17, 2026-09-08)
+
+PhotoLab product-node menu now carries Export… and no Builder-only rows; Builder polyline menu unchanged — accepted. New finding → S-06e: the void quick surface lost Front/Right to the S-08b bookmark rows under the 7-entry cap and changed group order; UIP-D13 content and order are restored by S-06e and asserted by a table lint.
+
+## S-06e — UIP-D13 quick-surface order closure (2026-09-08)
+
+The generated table now carries the authoritative quick-surface order and the
+runtime applies the tunable seven-entry cap only after that order:
+`view.frame`, `view.preset.top`, `view.preset.front`,
+`view.preset.right`, `view.preset.isometric`, `select.clear`, then
+`edit.clipboard.paste_in_place`. The last two rows retain their predicates, so
+Clear selection is present only with a selection and Paste in place only for
+an admissible clipboard token. The generator rejects a missing or unexpected
+quick-surface row; later table insertion can therefore no longer displace a
+view preset silently.
+
+`view.bookmark.create` and `view.bookmark.restore` no longer declare the quick
+surface. Both retain ribbon, console, and automation access; restore also
+declares the single-entity `ViewBookmark` context-menu path. Non-UIP-D13
+viewing-box workflow rows no longer use the quick-surface flag as a generic
+visibility marker; their ribbon, entity-menu, panel, console, and automation
+workflows remain separate.
+
+The gallery fixture explicitly represents a void hit while retaining the
+existing selection and admissible clipboard state. The regenerated dark and
+light `command-surfaces.png` snapshots show exactly: Frame all, Top, Front,
+Right, Perspective; separator; Clear selection; separator; Paste in place.
+Capture view and Restore bookmark are absent. The dark snapshot was inspected
+after the final serial capture.
+
+S-06e gates:
+
+- `node scripts/generate-command-table.mjs --check`: exit 0 after one serial
+  table regeneration.
+- `pnpm --filter @himmelcad/app test`: 61 passed, 0 failed, including the exact
+  ordered UIP-D13 table assertion.
+- `pnpm --filter @himmelcad/ui test`: 46 passed, 0 failed, including the exact
+  seven-label S-06e snapshot assertion.
+- `pnpm --filter @himmelcad/ui gallery:shots`: `Captured 80 screenshots for 39
+  sections`; the final run was serial and exited 0.
+- `pnpm --filter @himmelcad/builder typecheck`: failed only in concurrent,
+  out-of-scope lanes: unfinished measurement imports/references in `App.tsx`
+  and missing viewing-box solver symbols in `BuilderKernelViewport.tsx`.
+- `pnpm --filter @himmelcad/photolab typecheck`: exit 0; `PhotoLab English UI
+  check passed.`
+
+S-06e did not edit the concurrent measurement implementation or its tests.
+
+## Architect acceptance of S-06e (G17, 2026-09-08)
+
+`gallery/shots/dark/command-surfaces.png` void quick surface: Frame all, Top, Front, Right, Perspective · Clear selection · Paste in place — UIP-D13 order restored, bookmarks and viewing-box rows excluded, cap after ordering, asserted by table lint. S-06e accepted. Commit of S-02d/S-06d/S-06e waits for the Builder typecheck (0.5-01 and 0.5-08 mid-edit).

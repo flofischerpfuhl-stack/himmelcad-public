@@ -409,13 +409,13 @@ run against the prepared 103,713,735-point fixture. The actual adapter was the
 hardware-backed Intel HD Graphics 630 through WebGL2 (Class I), not the
 installed Quadro M2200; software-adapter rejection remained active.
 
-| Scenario | Presented p50 | p95 | p99 | Exact points p95 | Reason-code summary |
-| --- | ---: | ---: | ---: | ---: | --- |
-| orbit | 17.50 ms | 179.20 ms | 311.90 ms | 206,008 | recovery 130; within 26; present 15; CPU 5 |
-| pan | 17.50 ms | 227.10 ms | 394.90 ms | 206,008 | recovery 129; within 22; present 20; CPU 5 |
-| zoom | 19.40 ms | 274.10 ms | 476.10 ms | 206,008 | recovery 110; within 32; present 23; CPU 11; lane-point/lane-6 26 each |
-| fly-through | 21.40 ms | 375.60 ms | 582.30 ms | 206,008 | recovery 88; within 54; present 21; CPU 13; lane-point/lane-6 126 each |
-| 3D→2D→3D | 25.60 ms | 72.90 ms | 72.90 ms | 206,008 | within 3; recovery 1; present 1 |
+| Scenario    | Presented p50 |       p95 |       p99 | Exact points p95 | Reason-code summary                                                    |
+| ----------- | ------------: | --------: | --------: | ---------------: | ---------------------------------------------------------------------- |
+| orbit       |      17.50 ms | 179.20 ms | 311.90 ms |          206,008 | recovery 130; within 26; present 15; CPU 5                             |
+| pan         |      17.50 ms | 227.10 ms | 394.90 ms |          206,008 | recovery 129; within 22; present 20; CPU 5                             |
+| zoom        |      19.40 ms | 274.10 ms | 476.10 ms |          206,008 | recovery 110; within 32; present 23; CPU 11; lane-point/lane-6 26 each |
+| fly-through |      21.40 ms | 375.60 ms | 582.30 ms |          206,008 | recovery 88; within 54; present 21; CPU 13; lane-point/lane-6 126 each |
+| 3D→2D→3D    |      25.60 ms |  72.90 ms |  72.90 ms |          206,008 | within 3; recovery 1; present 1                                        |
 
 The runtime settled at the coarse tier, selected at most 206,008 points and 21
 draws against an effective 2,000,000-point frontier, and recorded no frontier
@@ -427,6 +427,38 @@ is `raf-render-complete`, not OS display timing. Full root-cause, adapter,
 reason-code, screenshot, and validation evidence is in
 `docs/builder-program/evidence/V-01b-harness-2026-09-06.md`; machine-readable
 data is in `.build/perf/viewer-baseline-2026-09-06.json`.
+
+### V-01c NVIDIA selection — 2026-09-08
+
+Electron's default still selected Intel, and direct NVIDIA PRIME variables
+still failed ANGLE with `Invalid visual ID requested` / `EGL_NOT_INITIALIZED`.
+The working path is `--use-angle=vulkan`, `DefaultANGLEVulkan`, unsafe WebGPU
+probing and X11, without the Chromium `Vulkan` compositor feature. It makes the
+Quadro M2200 (`10de:1436`, driver 580.173.02) the active ANGLE adapter and the
+kernel selects hardware WebGL2. Enabling the full Vulkan compositor reached a
+non-fallback Quadro WebGPU adapter, but real canvas presentation failed in
+ANGLE/Dawn external-memory import; it was therefore rejected.
+
+One complete 103,713,735-point capture followed. The machine could not be made
+quiet without interfering with other lanes: at capture start, load averages
+were `16.83, 12.08, 8.56`, with an unrelated PhotoLab MVS worker at about 342%
+CPU, an unrelated `rustc` at about 77%, and 24 GiB memory available. The table
+is adapter/harness evidence, not Class-W latency qualification.
+
+| Scenario    | Adapter / kernel backend             | Present source        | Start load           | Presented p50 |       p95 |       p99 | Exact points p95 |
+| ----------- | ------------------------------------ | --------------------- | -------------------- | ------------: | --------: | --------: | ---------------: |
+| orbit       | Quadro M2200 / WebGL2 (ANGLE Vulkan) | `raf-render-complete` | 16.83 / 12.08 / 8.56 |      87.30 ms | 678.50 ms | 825.30 ms |           82,029 |
+| pan         | Quadro M2200 / WebGL2 (ANGLE Vulkan) | `raf-render-complete` | 16.83 / 12.08 / 8.56 |      60.70 ms | 404.20 ms | 544.10 ms |           82,029 |
+| zoom        | Quadro M2200 / WebGL2 (ANGLE Vulkan) | `raf-render-complete` | 16.83 / 12.08 / 8.56 |      53.80 ms | 369.90 ms | 466.50 ms |           82,029 |
+| fly-through | Quadro M2200 / WebGL2 (ANGLE Vulkan) | `raf-render-complete` | 16.83 / 12.08 / 8.56 |      53.80 ms | 360.60 ms | 428.00 ms |           82,029 |
+| 3D→2D→3D    | Quadro M2200 / WebGL2 (ANGLE Vulkan) | `raf-render-complete` | 16.83 / 12.08 / 8.56 |      43.20 ms |  43.20 ms |  43.20 ms |           82,029 |
+
+The runtime policy remained Class I/minimum, all sampled frontiers stayed
+within budget, and WebGL2 exposed no GPU timestamp-query timing. Full switch
+matrix, WebGPU present failure, launch-race accounting, hardware-policy
+explanation and verification are in
+`docs/builder-program/evidence/V-01c-nvidia-2026-09-08.md`; machine-readable
+data is `.build/perf/viewer-baseline-2026-09-08.json`.
 
 ## 6. Implications for the program
 

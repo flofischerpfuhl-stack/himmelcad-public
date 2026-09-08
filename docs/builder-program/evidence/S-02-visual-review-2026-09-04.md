@@ -49,3 +49,19 @@ rendered Cancel buttons were enabled and resolved the correct secondary tokens.
 Gallery capture is now mutually exclusive (a concurrent run is rejected) and
 rejects text-to-fill contrast below 4.5:1 for Cancel in every Dialog row in
 both themes.
+
+S-02d — The shared closeable FunctionPanel tablist now keeps Properties and the
+active function visible, shrinks tabs to the 96 px floor with ellipsized labels,
+and moves rightmost excess tabs into the ARIA-separated “⋯” Menu. The gallery
+adds the 320 px three-tab, five-tab overflow, and open-menu rows; its serial
+capture rejects tab-label geometry or header pixels outside the panel bounds
+and verifies ArrowRight/Enter access to the overflow button.
+
+Regenerated evidence:
+
+- `packages/@himmelcad/ui/gallery/shots/light/function-panel.png`
+- `packages/@himmelcad/ui/gallery/shots/dark/function-panel.png`
+
+## Architect acceptance of S-02d (G17, 2026-09-08)
+
+`gallery/shots/dark/function-panel.png`: three tabs shrink with ellipsis at 320 px, five tabs collapse into the ⋯ overflow menu with per-tab close actions, Properties stays first and the active tab stays visible, roving focus reaches the overflow button. S-02d accepted; F16 closed on the shared side.

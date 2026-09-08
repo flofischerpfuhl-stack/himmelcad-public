@@ -30,7 +30,7 @@ path resolves to the same canonical command or query (B1).
 | `file.recent`      | Open split-button dropdown; no-project start screen; automation                                                                                                 | menu list                                                                                                                | bounded                                              | `project.recent_list` (query)                                                     | specified                                                                                                                                                                                                                |
 | `file.save`        | ribbon File · Save (split button: dropdown "Save snapshot…", "Save As…"); Ctrl+S; console; automation                                                           | inline control + status-bar state/toast                                                                                  | bounded by pending group-commit flush                | `project.flush`                                                                   | specified                                                                                                                                                                                                                |
 | `file.save-as`     | ribbon File · Save As; console; automation                                                                                                                      | OS save dialog + progress island                                                                                         | long-running                                         | `project.save_as`                                                                 | specified                                                                                                                                                                                                                |
-| `file.snapshots`   | ribbon File · Snapshots (toggle); Save dropdown · Save snapshot…; automatic "Session start" marker on open; console; automation                                 | floating island (list + create + restore)                                                                                | bounded; restore bounded → long-running              | `snapshot.create / list / rename / restore / delete`                              | specified                                                                                                                                                                                                                |
+| `file.snapshots`   | ribbon File · Snapshots split-menu beside Save; automatic "Session start" marker after a changed session; console; automation                                   | 28 px menu rows (name + time/generation + inline Restore) and confirmation dialog                                        | bounded                                              | `snapshot.create / list / restore`                                                | S-07b implemented list/restore; rename/delete remain specified                                                                                                                                                           |
 | `file.export`      | ribbon File · Export; entity context menu "Export…"; console; automation                                                                                        | floating island, two steps (setup → plan review)                                                                         | long-running                                         | `io.export.plan / execute / formats`, `io.export.preset.save / list / delete`     | specified                                                                                                                                                                                                                |
 | `file.attach`      | ribbon File · Attach project; console; automation                                                                                                               | OS open dialog → canonical entity; placement gizmo + numeric twins; overrides via properties panel + entity context menu | long-running (bake)                                  | `project_reference.attach / detach / resync / set_display / set_placement / list` | specified                                                                                                                                                                                                                |
 | `document.history` | persistent Document history menu plus Undo/Redo in the quick-access strip beside every tab; File · History; Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y; console; automation | inline + strip menu                                                                                                      | bounded; undo of bulk restore bounded → long-running | `document.history.get`, `document.undo` / `document.redo`                         | owner: ui-platform; FP-D11 access path; specified; one act shared with UIP-D19/UIP-D23                                                                                                                                   |
@@ -160,23 +160,21 @@ injected-failure test in §5).
 
 ### 1.4 Snapshots — restorable points in the journal
 
-Before trying a risky segmentation pass, the user presses **Snapshots**
-on the File tab. The island lists existing snapshots (name, creation
-time, author — UI, agent, SDK, or system — and "N commands since" with the
-last command's name, read from the journal) and has one **New snapshot**
-field: type "Before segmentation cleanup", Enter, done — bounded, no
-dialog. A snapshot is a canonical named entity (P1: state the user
-deliberately creates and wants back) marking the current journal
-generation; it travels inside `.hcadx` archives and is visible to
-automation from the moment it exists.
+Before trying a risky segmentation pass, the user opens **Snapshots ▾**
+beside Save on the File tab. Its 28 px rows show the snapshot name and muted
+monospaced creation time plus journal generation; hover/focus reveals an inline
+**Restore** secondary button. Snapshot markers are canonical project
+bookkeeping, not scene entities, and therefore never appear in the entity tree.
+They travel inside `.hcadx` archives and remain visible through
+`snapshot.list` from the moment they exist.
 
-Every successful project open also creates an automatic snapshot marker
-named **"Session start"** after recovery and lock acquisition and before
-user or automation commands are accepted. It marks the exact open-time
-generation, so "discard everything since I opened" is one restore away
-(D1, P5, FP-D19). It is an automatic marker in the existing snapshot
-entity/list and retention class, not a store copy or a separate recovery
-mechanism.
+After a session containing a journal change, the next successful project open
+creates an automatic snapshot marker named **"Session start"** after recovery
+and lock acquisition and before user or automation commands are accepted. A
+session with no journal change creates none. The marker records the exact
+open-time generation, so "discard everything since I opened" is one restore
+away (D1, P5, FP-D19). It is an automatic marker in the existing snapshot
+list and retention class, not a store copy or a separate recovery mechanism.
 
 **Restore** on a list entry rolls the project back to that snapshot's
 state. Its affected-state set is defined exactly (contract C4
@@ -194,9 +192,10 @@ those are deliverables, outside the journal's authority (C4).
 
 Mechanically restore is a single compensating transaction — the journal
 never rewinds (`docs/PROJECT-FORMAT.md` "Canonical journal"); it moves
-forward to a state equal to the snapshot's. Because restore is itself a
-journaled command, **Ctrl+Z undoes a restore** — no confirmation dialog
-is needed, exactly like viewing-box removal (viewing-box spec §1.7).
+forward to a state equal to the snapshot's. The action first uses the S-02
+destructive confirmation dialog: **"Restore snapshot '<name>'? Later changes
+stay in the journal and can be redone."** Because restore is itself a
+journaled command, **Ctrl+Z undoes a restore**.
 Before executing a restore, Builder automatically creates a safety
 snapshot named "Before restoring '<name>'" — which, by the exemption
 above, survives the restore it guards. Restoring a large delta registers
@@ -207,14 +206,14 @@ the same progress treatment (§2 D1). Rename and delete are journaled
 commands on the snapshot entity; deleting a snapshot never deletes
 project data, only the marker.
 
-Retention: manual snapshots are never auto-deleted. Automatic safety and
-"Session start" snapshots older than a tunable retention window (start: 30
-days or the 20 newest, whichever keeps more) are garbage-collected as an
-explicit maintenance operation, never implicitly in an unrelated command
-(`docs/PROJECT-FORMAT.md` "Immutable object store"). Auto-snapshot
-cadence beyond safety and session-start markers is tunable and starts
-**off** (D1 marks retention/cadence tunable; the journal already makes
-work loss-free, so cadence snapshots add naming convenience, not safety).
+Retention: manual/user-named snapshots are unlimited and never auto-deleted.
+At most the five newest "Session start" markers are retained per project
+(tunable with `HCAD_SESSION_START_SNAPSHOT_RETENTION`); the sixth evicts the
+oldest in the same journaled bookkeeping command. Existing projects above the
+limit are compacted on next open in one journaled command and the count is
+reported in the console. Pre-restore safety markers retain their separate
+automatic class. Auto-snapshot cadence beyond safety and session-start markers
+remains **off**.
 
 ### 1.5 Save As — the archive copy
 

@@ -249,6 +249,26 @@ corrections. Reports and passing tests never substitute for the look.
 Derivation: S19/G15 (marketing) extended to product UI by S21; DESIGN-SYSTEM
 "Verification" (visual inspection required).
 
+## S22 — PhotoLab must run on the hardware the reference runs on (owner, 2026-09-08)
+
+"Warum 64 GB RAM? Heißt das PhotoLab funktioniert nicht mit weniger? Wenn
+Agisoft auch auf schlechterer Hardware läuft, dann ist das für PhotoLab
+nicht akzeptabel." — A pipeline stage that needs 29–64 GB for a 135-image
+project is a product defect, not a machine requirement; the golden run's
+host is chosen for evidence, but the product's memory envelope must match the
+reference (Metashape runs comparable projects in 16–32 GB).
+
+Generalized as **G18 — Resource envelopes are product contracts, measured per
+stage.** Every long-running pipeline (PhotoLab alignment/matching/dense/mesh,
+Builder import/bake/extract) declares a per-stage memory and disk budget in its
+spec (X6 tunable, derived from the reference product's documented requirements),
+enforces it by bounding workers, tiling or streaming, degrades explicitly with a
+typed reason rather than exceeding it, and reports measured peak RSS per stage in
+its evidence. A release gate fails when a stage exceeds the envelope on the
+reference hardware class. Derivation: X1/X2, FUNCTION-CONTRACT D1 (extreme
+budgets, restart/checkpoint), owner standing question 1 ("performance on all
+hardware"), X4 (reference requirements).
+
 ## Generators extracted (architect, 2026-09-02)
 
 - **G1 Tri-modal input** (S1, S4, S9): every geometric input accepts pick,
@@ -318,3 +338,4 @@ Derivation: S19/G15 (marketing) extended to product UI by S21; DESIGN-SYSTEM
   never receive open-ended creative tasks. → process rule (D8 addendum).
 - **G16 Free tier first, complete roadmap, no vendor names** (S20): public marketing surfaces lead with the free tier, show the whole roadmap from the next release onward with honest status, name no competitor, and state the price once in the pricing block only.
 - **G17 UI briefed to the pixel, reviewed by eye** (S21): every UI slice gets an architect visual brief before launch and lands only after the architect reviewed rendered light/dark screenshots.
+- **G18 Resource envelopes are product contracts** (S22): per-stage memory/disk budgets from the reference product, enforced by bounded workers/tiling/streaming, measured peak RSS in evidence, release gate on the reference hardware class.
