@@ -158,8 +158,8 @@ use himmelcad_sidecar::pointcloud_ground::{
 };
 use himmelcad_sidecar::pointcloud_sampling::{
     prepare_height_grid, prepare_sampled_cloud, PreparedHeightGrid, PreparedSampleResult,
-    RasterizeParameters, RasterizePhase, RasterizePrepareRequest, RasterizeProgress,
-    SamplePrepareRequest, SamplingParameters, SamplingPhase, SamplingProgress,
+    RasterAggregation, RasterizeParameters, RasterizePhase, RasterizePrepareRequest,
+    RasterizeProgress, SamplePrepareRequest, SamplingParameters, SamplingPhase, SamplingProgress,
     RASTERIZE_ALGORITHM_ID, SAMPLE_ALGORITHM_ID,
 };
 use himmelcad_sidecar::pointcloud_segment::{
