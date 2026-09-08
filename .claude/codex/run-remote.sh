@@ -4,7 +4,7 @@
 # the brief is piped to `codex exec -` on the remote; logs land in .claude/codex/out/remote-<name>.*
 set -u
 NAME="$1"; BRIEF="$2"
-REMOTE="${REMOTE:-flofischer@100.100.224.9}"; MODEL="${MODEL:-gpt-5.6-sol}"; EFFORT="${EFFORT:-high}"
+REMOTE="${REMOTE:-win-himmelcad}"; MODEL="${MODEL:-gpt-5.6-sol}"; EFFORT="${EFFORT:-high}"
 RWORKDIR="${RWORKDIR:-C:\\himmelcad}"
 OUT="$(git rev-parse --show-toplevel)/.claude/codex/out"; mkdir -p "$OUT"
 : > "$OUT/remote-$NAME.log"; rm -f "$OUT/remote-$NAME.exit"
