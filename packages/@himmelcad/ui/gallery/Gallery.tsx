@@ -50,6 +50,7 @@ import {
 import { SpinnerVisual } from '../src/Spinner.js';
 import { accessibilityFixtures } from '../test/a11yFixtures.js';
 import { useEffect, useRef, type ReactNode } from 'react';
+import { Eraser, Scissors } from 'lucide-react';
 
 type State =
   | 'default'
@@ -385,6 +386,22 @@ const specs: readonly ComponentSpec[] = [
         <span>Editable</span>
         <span>Inert</span>
         <span>Mixed</span>
+      </div>
+    ),
+  },
+  {
+    name: 'Status text',
+    states: [
+      row('panel', 'panel', 'default', 'panel'),
+      row('island', 'island', 'default', 'island'),
+      row('island-hi', 'island-hi', 'default', 'island-hi'),
+    ],
+    render: (_state, galleryRow) => (
+      <div className="statusTextFixture" data-status-surface={galleryRow?.value}>
+        <span data-status-tone="info">Information</span>
+        <span data-status-tone="success">Success</span>
+        <span data-status-tone="warning">Warning</span>
+        <span data-status-tone="error">Error</span>
       </div>
     ),
   },
@@ -985,6 +1002,197 @@ const specs: readonly ComponentSpec[] = [
         </FunctionPanel>
       </div>
     ),
+  },
+  {
+    name: 'Segment panel',
+    states: [
+      row('drawing', 'drawing', 'idle', 'drawing'),
+      row('closed', 'closed fence', 'default', 'closed'),
+      row('baking', 'baking', 'baking', 'baking'),
+    ],
+    render: (_state, galleryRow) => {
+      const value = galleryRow?.value ?? 'drawing';
+      const closed = value !== 'drawing';
+      const baking = value === 'baking';
+      return (
+        <div className="galleryPanel galleryGroundPanel">
+          <FunctionPanel
+            activeFunctionId="pointcloud.fence.begin"
+            title="Segment"
+            activeTab="function"
+            onActiveTabChange={noop}
+            onCloseFunction={noop}
+            properties={<span>Point-cloud properties</span>}
+          >
+            <div className="galleryGroundBody" aria-busy={baking}>
+              <div className="gallerySegmentKinds">
+                <Button variant="primary" disabled={baking}>
+                  Polygon
+                </Button>
+                <Button variant="secondary" disabled={baking}>
+                  Rectangle
+                </Button>
+              </div>
+              <span className="galleryGroundStatus">
+                {closed
+                  ? 'Applies to: 2 clouds'
+                  : 'Click vertices, then click the first vertex or press Enter to close.'}
+              </span>
+              <div className="gallerySegmentMetrics">
+                <span>
+                  Vertices <strong>{closed ? 5 : 3}</strong>
+                </span>
+                <span>
+                  Area <strong>{closed ? '418.275 m²' : '—'}</strong>
+                </span>
+              </div>
+              {baking ? (
+                <>
+                  <span className="galleryGroundStatus">Baking reduced dataset</span>
+                  <ProgressBar value={0.57} ariaLabel="Point-cloud segmentation progress" />
+                  <Button variant="secondary">Cancel</Button>
+                </>
+              ) : null}
+              <div className="gallerySegmentActions">
+                <Button variant="primary" disabled={!closed || baking}>
+                  <Scissors size={16} aria-hidden /> Keep inside
+                </Button>
+                <Button variant="secondary" disabled={!closed || baking}>
+                  <Eraser size={16} aria-hidden /> Remove inside
+                </Button>
+              </div>
+              <Button variant="quiet" disabled={baking}>
+                Clear fence
+              </Button>
+            </div>
+          </FunctionPanel>
+        </div>
+      );
+    },
+  },
+  {
+    name: 'Sample and rasterize panels',
+    states: [
+      row('sample-idle', 'Sample · idle', 'idle', 'sample-idle'),
+      row('sample-running', 'Sample · running', 'loading', 'sample-running'),
+      row('sample-done', 'Sample · done', 'completed', 'sample-done'),
+      row('rasterize-idle', 'Rasterize · idle', 'idle', 'rasterize-idle'),
+      row('rasterize-running', 'Rasterize · running', 'loading', 'rasterize-running'),
+      row('rasterize-done', 'Rasterize · done', 'completed', 'rasterize-done'),
+    ],
+    render: (_state, galleryRow) => {
+      const value = galleryRow?.value ?? 'sample-idle';
+      const rasterize = value.startsWith('rasterize');
+      const running = value.endsWith('running');
+      const done = value.endsWith('done');
+      return (
+        <div className="galleryPanel gallerySamplingPanel">
+          <FunctionPanel
+            activeFunctionId={rasterize ? 'pointcloud.rasterize' : 'pointcloud.sample'}
+            title={rasterize ? 'Rasterize mean height' : 'Sample'}
+            activeTab="function"
+            onActiveTabChange={noop}
+            onCloseFunction={noop}
+            properties={<span>Point-cloud properties</span>}
+          >
+            <div className="galleryGroundBody" aria-busy={running}>
+              <div className="galleryGroundSource">PW_GHT_251215_Orscholz_Deponie-1-1</div>
+              <label>
+                <span>Method</span>
+                <Select
+                  value={rasterize ? 'height_grid' : 'distance'}
+                  disabled={running}
+                  options={[
+                    {
+                      value: rasterize ? 'height_grid' : 'distance',
+                      label: rasterize ? 'Height grid' : 'Distance',
+                    },
+                  ]}
+                />
+              </label>
+              <label>
+                <span>{rasterize ? 'Cell size' : 'Spacing'}</span>
+                <NumberInput
+                  aria-label={rasterize ? 'Cell size' : 'Spacing'}
+                  value={rasterize ? 1 : 0.25}
+                  unit="m"
+                  disabled={running}
+                />
+              </label>
+              {rasterize ? (
+                <>
+                  <label>
+                    <span>Grid origin X</span>
+                    <NumberInput
+                      aria-label="Grid origin X"
+                      value={0}
+                      placeholder="Auto"
+                      unit="m"
+                      disabled={running}
+                    />
+                  </label>
+                  <label>
+                    <span>Grid origin Y</span>
+                    <NumberInput
+                      aria-label="Grid origin Y"
+                      value={0}
+                      placeholder="Auto"
+                      unit="m"
+                      disabled={running}
+                    />
+                  </label>
+                  <label>
+                    <span>Aggregation</span>
+                    <Select
+                      value="mean"
+                      disabled={running}
+                      options={[{ value: 'mean', label: 'Mean height' }]}
+                    />
+                  </label>
+                  <label>
+                    <span>Empty cells</span>
+                    <Select
+                      value="no_data"
+                      disabled={running}
+                      options={[{ value: 'no_data', label: 'NoData' }]}
+                    />
+                  </label>
+                </>
+              ) : null}
+              {running ? (
+                <>
+                  <span className="galleryGroundStatus">
+                    {rasterize ? 'Aggregating grid cells' : 'Selecting deterministic samples'}
+                  </span>
+                  <ProgressBar
+                    value={rasterize ? 0.48 : 0.62}
+                    ariaLabel="Point-cloud processing progress"
+                  />
+                  <Button variant="secondary">Cancel</Button>
+                </>
+              ) : done ? (
+                <div className="galleryGroundResult">
+                  <strong>{rasterize ? 'Height grid created' : 'Sampled cloud created'}</strong>
+                  <span>
+                    {rasterize
+                      ? 'Grid 2 048 × 1 536 · 1 m · 4 % empty'
+                      : 'Sampled 3.1 M of 103.7 M points · spacing 0.25 m'}
+                  </span>
+                  <span>
+                    {rasterize ? 'Mesh source role · grid_source' : 'SHA-256 51a95f08d242'}
+                  </span>
+                </div>
+              ) : (
+                <div className="galleryGroundActions">
+                  <Button variant="quiet">Preview</Button>
+                  <Button variant="primary">{rasterize ? 'Rasterize' : 'Sample'}</Button>
+                </div>
+              )}
+            </div>
+          </FunctionPanel>
+        </div>
+      );
+    },
   },
   {
     name: 'EntityTree',

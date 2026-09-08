@@ -33,8 +33,8 @@
   width: 4ch;
 }
 .number[data-tone='warning'] {
-  color: var(--hc-warning);
+  color: var(--hc-warning-fg);
 }
 .number[data-tone='error'] {
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
 }

@@ -70,6 +70,7 @@ try {
     await verifyDialogCancelContrast(theme);
     await verifyJobsRespondContrast(theme);
     await verifyViewportChromeContrast(theme);
+    await verifyStatusTextContrast(theme);
     await verifyFunctionPanelTabPixelsStayInsidePanel(theme);
   }
   process.stdout.write(
@@ -244,6 +245,37 @@ async function verifyViewportChromeContrast(theme) {
       4.5,
       `Viewport axis chip in ${theme}`,
     );
+  } finally {
+    await browser.close();
+  }
+}
+
+async function verifyStatusTextContrast(theme) {
+  const browser = await chromium.launch({
+    executablePath: chrome,
+    headless: true,
+    args: ['--no-sandbox', '--disable-gpu', '--force-device-scale-factor=1'],
+  });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await page.goto(`${baseUrl}/?theme=${theme}&section=status-text`);
+    await page.evaluate(() => document.fonts.ready);
+    const surfaces = page.locator('[data-status-surface]');
+    for (let surfaceIndex = 0; surfaceIndex < (await surfaces.count()); surfaceIndex += 1) {
+      const surface = surfaces.nth(surfaceIndex);
+      const surfaceName = await surface.getAttribute('data-status-surface');
+      const texts = surface.locator('[data-status-tone]');
+      for (let textIndex = 0; textIndex < (await texts.count()); textIndex += 1) {
+        const statusText = texts.nth(textIndex);
+        const tone = await statusText.getAttribute('data-status-tone');
+        await verifyElementTextContrast(
+          surface,
+          statusText,
+          4.5,
+          `Status text ${tone} on ${surfaceName} in ${theme}`,
+        );
+      }
+    }
   } finally {
     await browser.close();
   }

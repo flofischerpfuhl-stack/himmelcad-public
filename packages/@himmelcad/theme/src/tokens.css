@@ -7,6 +7,7 @@
  *   - Accent selection = solid 1px accent border only (no soft fill, no gradient)
  *   - Accent filled = solid accent bg + on-accent text (buttons, primary actions)
  *   - Status colors only for success / warning / error (filled or border variants)
+ *   - Status text = the matching *-fg token (info text uses --hc-info-fg)
  */
 
 :root,
@@ -85,6 +86,7 @@
   --hc-error: #f75464;
   --hc-error-fg: #ffc0c6;
   --hc-info: var(--hc-accent-base);
+  --hc-info-fg: #1597f2;
   --hc-debug: #7a7e85;
 
   /* Typography */
@@ -203,6 +205,7 @@
   --hc-error: #d63b4a;
   --hc-error-fg: #5c1018;
   --hc-info: var(--hc-accent-base);
+  --hc-info-fg: #0b5fa8;
   --hc-debug: #6b7280;
 
   --hc-axis-x: #a91f2e;

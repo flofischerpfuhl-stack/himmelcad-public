@@ -14,6 +14,8 @@
     "./icons/*": "./src/icons/*"
   },
   "scripts": {
+    "lint:tokens": "node scripts/check-status-text-tokens.mjs",
+    "test": "pnpm lint:tokens",
     "typecheck": "tsc -b"
   },
   "devDependencies": {

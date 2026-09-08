@@ -65,3 +65,78 @@ Regenerated evidence:
 ## Architect acceptance of S-02d (G17, 2026-09-08)
 
 `gallery/shots/dark/function-panel.png`: three tabs shrink with ellipsis at 320 px, five tabs collapse into the ⋯ overflow menu with per-tab close actions, Properties stays first and the active tab stays visible, roving focus reaches the overflow button. S-02d accepted; F16 closed on the shared side.
+
+## S-02e — F17 light-theme status text contrast (2026-09-08)
+
+Added the missing foreground role `--hc-info-fg`: dark remains `#1597f2`;
+light is `#0b5fa8`. The light value measures 5.72:1 on the panel surface
+`#eef0f3`, 6.14:1 on island-hi `#f7f8fa`, and 6.53:1 on island
+`#ffffff`. Dark measures 5.48:1 on island `#1a1c20`, 5.13:1 on
+island-hi `#1f2226`, and 5.76:1 on the panel surface `#15171a`.
+`tokens.css` now documents that status text uses the matching `*-fg` role;
+plain status tokens remain for fills, borders, and bars.
+
+The complete scoped plain-token text scan changed these declarations (27
+declarations; `packages/@himmelcad/app` had none):
+
+- `packages/@himmelcad/console/src/Console.module.css`: `.info .level` info →
+  info-fg; `.warn .level` warning → warning-fg; `.error .level` error →
+  error-fg; `.warn .msg` warning → warning-fg; `.error .msg` error → error-fg.
+- `packages/@himmelcad/ui/src/FunctionPanel.module.css`: `.tabClose:hover` and
+  `.overflowMenuClose:hover, .overflowMenuClose:focus-visible` error → error-fg.
+- `packages/@himmelcad/ui/src/JobsSurfaces.module.css`:
+  `.row[data-state='needs-input'] .glyph` warning → warning-fg and
+  `.row[data-state='completed'] .glyph` success → success-fg.
+- `packages/@himmelcad/ui/src/ViewportHud.module.css`:
+  `.number[data-tone='warning']` warning → warning-fg and
+  `.number[data-tone='error']` error → error-fg.
+- `packages/@himmelcad/ui/src/ImportRegistrationWizard.module.css`: `.warning`
+  warning → warning-fg and `.error` error → error-fg.
+- `packages/@himmelcad/ui/src/ImportChat.module.css`: `.bubbleOk strong` success
+  → success-fg; `.bubbleWarn strong` warning → warning-fg; `.bubbleError strong`
+  error → error-fg; `.metricWarn strong` warning → warning-fg; `.listRow em`
+  success → success-fg; `.warningText` warning → warning-fg;
+  `.errorInline > svg` error → error-fg; `.warnInline > svg` warning →
+  warning-fg; `.successInline > svg` success → success-fg.
+- `apps/builder/renderer/src/PlanIsland.module.css`: `.refresh_clean` success →
+  success-fg; `.refresh_stale` warning → warning-fg; `.refresh_error` error →
+  error-fg.
+- `apps/builder/renderer/src/GroundExtractionPanel.module.css`: `.error` error →
+  error-fg.
+- `apps/builder/renderer/src/SpecsIsland.module.css`: `.error` error → error-fg.
+
+The theme package now exposes `lint:tokens`, also wired as its `test` script.
+It recursively rejects a `color:` declaration containing a plain info,
+success, warning, or error token in the shared UI, Console, app, or Builder CSS
+modules while permitting non-text roles such as `background` and
+`border-color`.
+
+The gallery adds “Status text”, rendering all four foreground roles on panel,
+island, and island-hi surfaces. Its serial capture checks the rendered text and
+surface pixels for at least 4.5:1 in both themes (24 combinations). Regenerated
+ignored visual evidence:
+
+- `packages/@himmelcad/ui/gallery/shots/light/status-text.png`
+- `packages/@himmelcad/ui/gallery/shots/dark/status-text.png`
+- `packages/@himmelcad/ui/gallery/shots/light.png`
+- `packages/@himmelcad/ui/gallery/shots/dark.png`
+
+Verification:
+
+- PASS — `pnpm --filter @himmelcad/theme test`.
+- PASS — `pnpm --filter @himmelcad/builder typecheck`.
+- PASS — `pnpm --filter @himmelcad/photolab typecheck`.
+- PASS — serial `pnpm --filter @himmelcad/ui gallery:shots` (86 screenshots,
+  42 sections, including the 24 status-text pixel checks).
+- PARTIAL — `pnpm --filter @himmelcad/ui test`: 45/46 tests passed and the
+  shared axe fixture passed with zero findings; the unrelated in-flight
+  point-size multiplier implementation does not yet match its old pixel-size
+  assertion.
+- BLOCKED BY PARALLEL LANE — `pnpm --filter @himmelcad/console test`: compile
+  passed and 1/2 tests passed; the generated vocabulary currently includes
+  `photolab.images.remove` and `photolab.gcp.images`, which the in-flight active
+  command registry does not yet expose.
+
+## Architect acceptance of S-02e (G17, 2026-09-08)
+
+`gallery/shots/light/status-text.png`: Information/Success/Warning/Error legible on panel, island and island-hi surfaces in the light theme (≥ 4.5:1 asserted by 24 pixel checks); `--hc-info-fg` exists in both themes; the theme's `lint:tokens` now fails any plain status token used as text colour — it already flags the in-flight sampling/segment panels, which their lanes must fix before landing. S-02e accepted.

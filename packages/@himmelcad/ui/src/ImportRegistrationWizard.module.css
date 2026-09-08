@@ -16,12 +16,12 @@
 }
 
 .warning {
-  color: var(--hc-warning);
+  color: var(--hc-warning-fg);
 }
 
 .error {
   margin: 8px 0 0;
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
   font-size: 11px;
 }
 

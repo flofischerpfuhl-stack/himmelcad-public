@@ -103,7 +103,7 @@
 .legend i[data-class='unknown'] { background: var(--hc-fg-subtle); }
 
 .error {
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
   font-size: 12px;
 }
 

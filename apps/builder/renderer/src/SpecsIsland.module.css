@@ -173,7 +173,7 @@
 }
 
 .error {
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
   font-size: 11px;
 }
 

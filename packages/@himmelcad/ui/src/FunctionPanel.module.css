@@ -135,7 +135,7 @@
 }
 
 .tabClose:hover {
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
   background: var(--hc-hover-bg);
 }
 
@@ -202,7 +202,7 @@
 
 .overflowMenuClose:hover,
 .overflowMenuClose:focus-visible {
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
 }
 
 .islandBody {

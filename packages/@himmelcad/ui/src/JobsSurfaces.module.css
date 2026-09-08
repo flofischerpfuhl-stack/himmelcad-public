@@ -95,10 +95,10 @@
   color: var(--hc-error-fg);
 }
 .row[data-state='needs-input'] .glyph {
-  color: var(--hc-warning);
+  color: var(--hc-warning-fg);
 }
 .row[data-state='completed'] .glyph {
-  color: var(--hc-success);
+  color: var(--hc-success-fg);
 }
 .glyph {
   display: grid;

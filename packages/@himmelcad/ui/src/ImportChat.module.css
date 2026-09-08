@@ -272,7 +272,7 @@
 }
 
 .bubbleOk strong {
-  color: var(--hc-success);
+  color: var(--hc-success-fg);
 }
 
 .bubbleWarn {
@@ -284,7 +284,7 @@
 }
 
 .bubbleWarn strong {
-  color: var(--hc-warning);
+  color: var(--hc-warning-fg);
 }
 
 .bubbleError {
@@ -296,7 +296,7 @@
 }
 
 .bubbleError strong {
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
 }
 
 .choices {
@@ -552,7 +552,7 @@
 }
 
 .metricWarn strong {
-  color: var(--hc-warning);
+  color: var(--hc-warning-fg);
 }
 
 .scrollList {
@@ -586,7 +586,7 @@
 }
 
 .listRow em {
-  color: var(--hc-success);
+  color: var(--hc-success-fg);
   font: 10px var(--hc-font-mono);
   font-style: normal;
 }
@@ -898,7 +898,7 @@
 }
 
 .warningText {
-  color: var(--hc-warning);
+  color: var(--hc-warning-fg);
 }
 
 /* Status notices: full border, no thick left accent bar (design system). */
@@ -918,7 +918,7 @@
 
 .errorInline > svg {
   flex: 0 0 auto;
-  color: var(--hc-error);
+  color: var(--hc-error-fg);
   margin-top: 1px;
 }
 
@@ -938,7 +938,7 @@
 
 .warnInline > svg {
   flex: 0 0 auto;
-  color: var(--hc-warning);
+  color: var(--hc-warning-fg);
   margin-top: 1px;
 }
 
@@ -956,7 +956,7 @@
 }
 
 .successInline > svg {
-  color: var(--hc-success);
+  color: var(--hc-success-fg);
 }
 
 @media (max-width: 760px) {
