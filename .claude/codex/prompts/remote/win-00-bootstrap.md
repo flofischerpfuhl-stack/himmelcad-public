@@ -7,3 +7,6 @@ Task 2 — clone and verify: `git clone git@gitlab.com:florian-fischer-group/him
 Task 3 — write the evidence: `docs\builder-program\evidence\WIN-00-bootstrap-<date>.md` in the clone (inventory, installed tools, wall times, findings), commit it on a branch `win-bootstrap` and push (if push rights exist; otherwise leave it committed locally and say so).
 
 Constraints: no product-code changes; no GUI-dependent steps in this task (the screen may be locked); budget: one pass; if a step needs owner action (SSH key, VS Build Tools license prompt), say precisely what.
+
+
+Also: your earlier report to the owner mentioned a "Codex configuration conflict" on this machine that remained unchanged — state exactly what it is and whether it affects non-interactive `codex exec` runs like this one. And note the Tailscale peer: the Linux laptop is thinkpad-flo (100.120.43.49); direct connection was not established at first contact (relayed) — report `tailscale ping thinkpad-flo` from your side.
