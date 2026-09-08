@@ -2451,6 +2451,15 @@ WP-B5) and for every review by the coordinating session.
 
 Owner decision 2026-09-05 (gate 2 sequencing): the full 135-image Quality Hybrid golden run is deferred to the end of the release work and executed on another machine (this workstation has no GPU; the run needs ~10 h of CPU and died once when its lane binary was relinked). The gate definition itself is unchanged (135 images, Quality Hybrid, 0.8299 px reference). Until then gate 2 carries the 24-image smokes plus a 40-image Quality Hybrid diagnostic over every product (not gate evidence; it de-risks the product stages under the golden profile). Runner scripts: `.build/photolab-runtime/run-golden.sh` and `run-qh-diagnostic.sh` on the dedicated `golden-bin` copy.
 
+Owner decision 2026-09-08 (golden host): the Windows PC DESKTOP-BNB2PBA is the
+build/test/measurement host for Windows and for the PhotoLab golden; runs there
+are produced through Codex briefs dispatched by the Builder session
+(`.claude/codex/run-remote.sh`), never by direct commands from this laptop. The
+Windows-specific tooling on the laptop (wine prefixes, Windows COLMAP build,
+win32 runtime, Windows geo toolchain, 13 GB) is deleted after the owner's direct
+confirmation. WP-F4 (Windows delivery) and WP-A5's golden evidence move to that
+host; the laptop keeps the 24-image fast smokes.
+
 ## Adoption-audit disposition — 2026-09-02
 
 Source: `docs/builder-program/PHOTOLAB-ADOPTION-AUDIT-2026-09-02.md` (12
