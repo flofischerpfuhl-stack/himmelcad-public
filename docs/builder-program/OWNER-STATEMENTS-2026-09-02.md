@@ -269,6 +269,25 @@ reference hardware class. Derivation: X1/X2, FUNCTION-CONTRACT D1 (extreme
 budgets, restart/checkpoint), owner standing question 1 ("performance on all
 hardware"), X4 (reference requirements).
 
+## S23 — Use all available memory; on less memory get slower, not worse (owner, 2026-09-08)
+
+"PhotoLab sollte den verfügbaren RAM maximal ausnutzen, aber wenn es auf einem
+16-GB-Laptop läuft, warum dann nicht einfach langsamer? Unser Ziel war immer,
+das Beste aus der vorhandenen Hardware rauszuholen." — No fixed hardware class
+is a requirement. The budget is what the machine has at job start; less memory
+costs time first, quality last.
+
+Amends **G18**: the per-stage envelope is derived at job start from the
+available memory (physical minus an OS/UI reserve minus what other jobs hold),
+not from a fixed class table; class tables only exist as documented reference
+points for evidence. Degradation order is fixed: (1) time — fewer workers,
+sequential batches, tiling, streaming or spilling intermediates to disk; (2)
+only when a single unit of work cannot fit even sequentially, quality — typed,
+visible, listed in the report, checked against the accuracy tolerance.
+Derivation: X1 (correctness first), X2 (spend time, keep results), owner
+standing question 1; X4 (the reference degrades speed before quality on small
+machines).
+
 ## Generators extracted (architect, 2026-09-02)
 
 - **G1 Tri-modal input** (S1, S4, S9): every geometric input accepts pick,
@@ -338,4 +357,4 @@ hardware"), X4 (reference requirements).
   never receive open-ended creative tasks. → process rule (D8 addendum).
 - **G16 Free tier first, complete roadmap, no vendor names** (S20): public marketing surfaces lead with the free tier, show the whole roadmap from the next release onward with honest status, name no competitor, and state the price once in the pricing block only.
 - **G17 UI briefed to the pixel, reviewed by eye** (S21): every UI slice gets an architect visual brief before launch and lands only after the architect reviewed rendered light/dark screenshots.
-- **G18 Resource envelopes are product contracts** (S22): per-stage memory/disk budgets from the reference product, enforced by bounded workers/tiling/streaming, measured peak RSS in evidence, release gate on the reference hardware class.
+- **G18 Resource envelopes are product contracts** (S22, amended by S23 — budget = available memory at job start; degrade time first, quality last and typed): per-stage memory/disk budgets from the reference product, enforced by bounded workers/tiling/streaming, measured peak RSS in evidence, release gate on the reference hardware class.
