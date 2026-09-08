@@ -2456,8 +2456,11 @@ build/test/measurement host for Windows and for the PhotoLab golden; runs there
 are produced through Codex briefs dispatched by the Builder session
 (`.claude/codex/run-remote.sh`), never by direct commands from this laptop. The
 Windows-specific tooling on the laptop (wine prefixes, Windows COLMAP build,
-win32 runtime, Windows geo toolchain, 13 GB) is deleted after the owner's direct
-confirmation. WP-F4 (Windows delivery) and WP-A5's golden evidence move to that
+win32 runtime, Windows geo toolchain) was pruned on 2026-09-08 after the
+owner's direct confirmation: cross-build, wine and the geo source deleted (11 GB;
+the Windows COLMAP exe stays vendored, the cross-build has a script, vcpkg
+rebuilds GDAL natively); the staged win32 runtime (3 GB) and the Windows DeDoDe
+env are kept until the PC has staged its own. WP-F4 (Windows delivery) and WP-A5's golden evidence move to that
 host; the laptop keeps the 24-image fast smokes.
 
 ## Adoption-audit disposition — 2026-09-02
