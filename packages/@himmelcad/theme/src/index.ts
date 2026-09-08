@@ -71,4 +71,14 @@ export const themeTokens = {
     hoverOutline: 'var(--hc-axis-hover-outline)',
     activeOutline: 'var(--hc-axis-active-outline)',
   },
+  geometry: {
+    selection: 'var(--hc-geometry-selection)',
+    selectionHalo: 'var(--hc-geometry-selection-halo)',
+    support: 'var(--hc-geometry-support)',
+    supportHalo: 'var(--hc-geometry-support-halo)',
+    hover: 'var(--hc-geometry-hover)',
+    activePreview: 'var(--hc-geometry-active-preview)',
+    reticle: 'var(--hc-geometry-reticle)',
+    prohibited: 'var(--hc-geometry-prohibited)',
+  },
 } as const;

@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   resizeViewingBox,
+  resizeViewingBoxCorner,
   resizeViewingBoxFace,
   rotateViewingBox,
   viewingBoxAxes,
@@ -79,6 +80,34 @@ void test('uniform viewing box uses a calibrated fraction of the smaller visible
   });
   assert.deepEqual(state.halfExtents, { x: 1, y: 1, z: 1 });
   assert.equal(state.mode, 'resize');
+});
+
+void test('corner resize anchors all three opposite faces in one state transition', () => {
+  const initial = viewingBoxFromViewport({
+    center: { x: 10, y: 20, z: 30 },
+    visibleWidth: 20,
+    visibleHeight: 20,
+  });
+  const fixed = {
+    x: initial.center.x - initial.halfExtents.x,
+    y: initial.center.y + initial.halfExtents.y,
+    z: initial.center.z - initial.halfExtents.z,
+  };
+  const resized = resizeViewingBoxCorner(initial, [1, -1, 1], { x: 4, y: -2, z: 6 });
+  assert.equal(resized.center.x - resized.halfExtents.x, fixed.x);
+  assert.equal(resized.center.y + resized.halfExtents.y, fixed.y);
+  assert.equal(resized.center.z - resized.halfExtents.z, fixed.z);
+});
+
+void test('remove-inside operation reaches the canonical six-plane clip volume', () => {
+  const initial = viewingBoxFromViewport({
+    center: { x: 0, y: 0, z: 0 },
+    visibleWidth: 10,
+    visibleHeight: 10,
+  });
+  const volume = viewingBoxClipVolume({ ...initial, operation: 'removeInside' });
+  assert.equal(volume.operation, 'removeInside');
+  assert.equal(volume.planes.length, 6);
 });
 
 function signedDistance(

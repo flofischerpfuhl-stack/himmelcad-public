@@ -67,6 +67,16 @@
   --hc-selection-accent-border: var(--hc-accent-base);
   --hc-focus-ring: var(--hc-accent-base);
 
+  /* Viewport semantic geometry — always paired with shape/direction cues. */
+  --hc-geometry-selection: #ff9f1c;
+  --hc-geometry-selection-halo: #101114;
+  --hc-geometry-support: #43b9ff;
+  --hc-geometry-support-halo: #101114;
+  --hc-geometry-hover: #f0f1f3;
+  --hc-geometry-active-preview: #ffd166;
+  --hc-geometry-reticle: #f0f1f3;
+  --hc-geometry-prohibited: #f75464;
+
   /* Status — solid only, no gradients */
   --hc-success: #73b00a;
   --hc-success-fg: #d6f08a;
@@ -176,6 +186,15 @@
   --hc-selection-border: var(--hc-border-strong);
   --hc-selection-accent-border: var(--hc-accent-base);
   --hc-focus-ring: var(--hc-accent-base);
+
+  --hc-geometry-selection: #c65d00;
+  --hc-geometry-selection-halo: #ffffff;
+  --hc-geometry-support: #006fae;
+  --hc-geometry-support-halo: #ffffff;
+  --hc-geometry-hover: #2f333a;
+  --hc-geometry-active-preview: #7a5200;
+  --hc-geometry-reticle: #0f1115;
+  --hc-geometry-prohibited: #d63b4a;
 
   --hc-success: #3d8b0a;
   --hc-success-fg: #1f4a05;

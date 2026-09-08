@@ -49,6 +49,8 @@ resolve to the same canonical command or query (B1).
 | `view.preset.perspective` (Perspective preset) | R C A | inline | bounded | `view.preset.perspective` | S-08 partial implementation; VD-D9; release gates remain open |
 | `view.camera.undo` (Undo camera) | R C A | inline | bounded | `view.camera.undo` | S-08 partial implementation; VD-D14; release gates remain open |
 | `view.camera.redo` (Redo camera) | R C A | inline | bounded | `view.camera.redo` | S-08 partial implementation; VD-D14; release gates remain open |
+| `view.display.undo` (Undo display) | R C A | inline | bounded | `view.display.undo` | S-08b implementation; independent persisted P8 stream |
+| `view.display.redo` (Redo display) | R C A | inline | bounded | `view.display.redo` | S-08b implementation; independent persisted P8 stream |
 | `view.hud.toggle` (Viewport HUD) | R C A | inline | bounded | `view.hud.toggle` | S-08 partial implementation; VD-D10; release gates remain open |
 | `view.viewing-box`                         | see sibling spec                            | right panel               | continuous                           | `viewing_box.*`                   | **specified** — `viewing-box.md`                                                                                      |
 | `view.section` (plane clip family)         | R X Q C A                                   | right panel               | continuous                           | `section.*`                       | console-only today (`App.tsx:560–679`) — **workflow**, §2.1                                                           |

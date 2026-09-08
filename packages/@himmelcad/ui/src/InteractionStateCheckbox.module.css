@@ -1,0 +1,33 @@
+.root {
+  position: relative;
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+}
+
+.root > span:first-child {
+  min-height: 20px;
+}
+
+.code {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  display: grid;
+  width: 9px;
+  height: 9px;
+  place-items: center;
+  border: 1px solid var(--hc-border-strong);
+  border-radius: 2px;
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-island);
+  font: 7px/1 var(--hc-font-mono);
+  pointer-events: none;
+}
+
+.root[data-interaction-state='inert'] {
+  opacity: 0.72;
+}

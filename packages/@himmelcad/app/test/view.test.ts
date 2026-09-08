@@ -4,9 +4,9 @@ import test from 'node:test';
 import {
   ContractValidationError,
   parseScreenshotResult,
-  parseViewState,
+  parseViewStateV1,
   parseViewStateV2,
-  serializeViewState,
+  serializeViewStateV1,
   validateScreenshotRequest,
   type ScreenshotRequestV1,
   type ViewStateV1,
@@ -53,16 +53,16 @@ const viewState: ViewStateV1 = {
 };
 
 void test('ViewState@1 has an exact JSON roundtrip including world coordinates and scoped clips', () => {
-  const serialized = serializeViewState(viewState);
-  const parsed = parseViewState(serialized);
+  const serialized = serializeViewStateV1(viewState);
+  const parsed = parseViewStateV1(serialized);
 
   assert.deepEqual(parsed, viewState);
-  assert.equal(serializeViewState(parsed), serialized);
+  assert.equal(serializeViewStateV1(parsed), serialized);
 });
 
 void test('ViewState rejects unknown schema versions', () => {
   assert.throws(
-    () => parseViewState({ ...viewState, version: 2 }),
+    () => parseViewStateV1({ ...viewState, version: 2 }),
     (error: unknown) =>
       error instanceof ContractValidationError && error.path === 'viewState.version',
   );

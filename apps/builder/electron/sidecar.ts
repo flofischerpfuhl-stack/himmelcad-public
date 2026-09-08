@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHmac, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, sep } from 'node:path';
 
 import { app } from 'electron';
 
@@ -55,7 +55,15 @@ function sidecarPath(): string {
     );
   }
   // Compiled path: apps/builder/dist/electron/sidecar.js → up 4 to repo root.
-  return resolve(__dirname, '..', '..', '..', '..', 'target', 'debug', 'himmelcad-sidecar');
+  // Respect the repository's per-lane Cargo target directory without allowing
+  // an arbitrary executable path to be injected into the desktop process.
+  const repositoryRoot = resolve(__dirname, '..', '..', '..', '..');
+  const targetRoot = resolve(repositoryRoot, 'target');
+  const configuredTarget = resolve(repositoryRoot, process.env.CARGO_TARGET_DIR ?? 'target');
+  const cargoTarget = configuredTarget.startsWith(`${targetRoot}${sep}`)
+    ? configuredTarget
+    : targetRoot;
+  return resolve(cargoTarget, 'debug', 'himmelcad-sidecar');
 }
 
 export function startSidecar(): Promise<void> {

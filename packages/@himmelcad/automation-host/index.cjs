@@ -91,6 +91,11 @@ const ALLOWED_METHODS = new Set([
   'view.state.set',
   'view.diagnostics.get',
   'view.diagnostics.sample',
+  'view.quality.get',
+  'view.bookmark.list',
+  'view.presentation.set',
+  'view.point_size.set',
+  'viewing_box.list',
   'view.screenshot',
   'select.get',
   'select.list',
@@ -106,6 +111,14 @@ const ALLOWED_METHODS = new Set([
   'selection.history.undo',
   'selection.history.redo',
   'selection.history.clear',
+  'display.history.get',
+  'display.history.undo',
+  'display.history.redo',
+  'display.history.clear',
+  'camera.history.get',
+  'camera.history.undo',
+  'camera.history.redo',
+  'camera.history.clear',
 ]);
 for (const row of GENERATED_COMMAND_TABLE) {
   if (row.surfaces.automation) ALLOWED_METHODS.add(row.id);
@@ -123,6 +136,11 @@ const VIEW_METHODS = new Set([
   'view.state.set',
   'view.diagnostics.get',
   'view.diagnostics.sample',
+  'view.quality.get',
+  'view.bookmark.list',
+  'view.presentation.set',
+  'view.point_size.set',
+  'viewing_box.list',
   'view.screenshot',
   'select.get',
   'select.list',
@@ -138,6 +156,14 @@ const VIEW_METHODS = new Set([
   'selection.history.undo',
   'selection.history.redo',
   'selection.history.clear',
+  'display.history.get',
+  'display.history.undo',
+  'display.history.redo',
+  'display.history.clear',
+  'camera.history.get',
+  'camera.history.undo',
+  'camera.history.redo',
+  'camera.history.clear',
 ]);
 for (const row of GENERATED_COMMAND_TABLE) {
   if (row.surfaces.automation && row.host === 'renderer') VIEW_METHODS.add(row.id);

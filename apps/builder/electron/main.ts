@@ -861,6 +861,55 @@ function registerIpc(): void {
     if (typeof sessionId !== 'string') return false;
     return revokeStagedSession(sessionId);
   });
+  ipcMain.handle('viewing-box-bake:publish', async (_event, input: unknown) => {
+    const value = input as {
+      readonly cacheKey?: unknown;
+      readonly metadata?: unknown;
+      readonly hierarchy?: unknown;
+      readonly octree?: unknown;
+    };
+    if (typeof value.cacheKey !== 'string' || value.cacheKey.length === 0) {
+      throw new Error('viewing-box bake cache key is required');
+    }
+    const metadata = asBytes(value.metadata, 'metadata');
+    const hierarchy = asBytes(value.hierarchy, 'hierarchy');
+    const octree = asBytes(value.octree, 'octree');
+    const digest = createHash('sha256')
+      .update(value.cacheKey)
+      .update(metadata)
+      .update(hierarchy)
+      .update(octree)
+      .digest('hex');
+    const datasetId = `viewing-box-${digest}`;
+    const root = resolve(CACHE_DIR, datasetId);
+    const staging = resolve(CACHE_DIR, `.viewing-box-${digest}-${process.pid}`);
+    if (!(await pathExists(root))) {
+      await fs.rm(staging, { recursive: true, force: true });
+      await fs.mkdir(staging, { recursive: false });
+      try {
+        await Promise.all([
+          fs.writeFile(resolve(staging, 'metadata.json'), metadata),
+          fs.writeFile(resolve(staging, 'hierarchy.bin'), hierarchy),
+          fs.writeFile(resolve(staging, 'octree.bin'), octree),
+        ]);
+        await fs.rename(staging, root);
+      } catch (error) {
+        await fs.rm(staging, { recursive: true, force: true });
+        if (!(await pathExists(root))) throw error;
+      }
+    }
+    return {
+      datasetId,
+      metadataUrl: `hcad-cache://local/${datasetId}/metadata.json`,
+    };
+  });
+  ipcMain.handle('viewing-box-bake:revoke', async (_event, datasetId: unknown) => {
+    if (typeof datasetId !== 'string' || !/^viewing-box-[a-f0-9]{64}$/.test(datasetId)) {
+      return false;
+    }
+    await fs.rm(resolve(CACHE_DIR, datasetId), { recursive: true, force: true });
+    return true;
+  });
   ipcMain.handle('dev:initial-point-cloud-paths', () =>
     isDev && DEV_POINT_CLOUD.length > 0 ? [resolve(DEV_POINT_CLOUD)] : [],
   );
@@ -1349,6 +1398,14 @@ async function pathExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function asBytes(value: unknown, label: string): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  throw new TypeError(`viewing-box bake ${label} bytes are required`);
 }
 
 async function pathAvailability(path: string, timeoutMs: number): Promise<boolean | null> {

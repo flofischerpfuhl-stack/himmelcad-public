@@ -1,0 +1,44 @@
+.root {
+  display: block;
+  width: 100%;
+  min-width: 320px;
+  height: auto;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-md);
+  background: var(--hc-bg-void);
+}
+
+.contextLine {
+  fill: none;
+  stroke: var(--hc-fg-subtle);
+  stroke-width: 2;
+}
+
+.selectedLine,
+.direction {
+  fill: none;
+  stroke: var(--hc-geometry-selection);
+  stroke-width: 3;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+
+.selectedPoint,
+.anchor {
+  fill: var(--hc-geometry-selection);
+  stroke: var(--hc-geometry-selection-halo);
+  stroke-width: 1;
+}
+
+.symbol {
+  fill: none;
+  stroke: var(--hc-fg-default);
+  stroke-width: 1.5;
+}
+
+.support {
+  fill: var(--hc-bg-void);
+  stroke: var(--hc-geometry-support);
+  stroke-width: 2;
+  stroke-dasharray: 5 3;
+}

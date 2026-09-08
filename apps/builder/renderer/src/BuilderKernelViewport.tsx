@@ -28,17 +28,22 @@ import {
   type KernelDiagnosticsSampleRequest,
   type KernelDiagnosticsSampleResult,
   type KernelDiagnosticsSnapshot,
+  type KernelDeadlineReasonCode,
+  type KernelQualitySnapshot,
   type KernelRgbaCaptureRequest,
   type KernelRgbaCaptureResult,
   type KernelRenderStyle,
   type KernelViewingBoxAxis,
   type KernelViewingBoxFace,
   type KernelViewingBoxState,
+  type KernelViewerEntityHandle,
   type KernelViewMode,
   type KernelWorldCamera,
   type KernelWorldPoint,
   type Representation,
+  SHARED_3D_TARGET_DEVIATIONS,
   resizeViewingBoxFace,
+  resizeViewingBoxCorner,
   rotateViewingBox,
   setViewingBoxMode,
   viewingBoxAxes,
@@ -48,6 +53,7 @@ import {
 import { KernelViewport, type KernelViewportHandle } from '@himmelcad/viewer/kernel/react';
 
 import styles from './BuilderKernelViewport.module.css';
+import { bakePotreeViewingBox, viewingBoxBakeCacheKey } from './viewingBoxBake.js';
 
 // Development raster fixtures have not entered canonical I/O yet. Keep their
 // viewer-only identities visibly isolated; they never enter the project tree.
@@ -172,7 +178,7 @@ export interface BuilderKernelViewportHandle {
     depthUrl: string,
     options: BuilderRasterImageOptions,
   ): Promise<void>;
-  cameraHistory(action: 'undo' | 'redo'): Promise<void>;
+  cameraHistory(action: 'get' | 'undo' | 'redo' | 'clear'): Promise<unknown>;
   frameAll(): void;
   setPreset(preset: 'top' | 'front' | 'right' | 'isometric' | 'perspective'): void;
   setPointSize(pointSize: number): void;
@@ -181,6 +187,7 @@ export interface BuilderKernelViewportHandle {
   adoptWorldCamera(camera: KernelWorldCamera): KernelWorldCamera;
   waitForNextPresentedFrame(): Promise<void>;
   diagnosticsSnapshot(lastFrames?: number): KernelDiagnosticsSnapshot;
+  qualitySnapshot(): KernelQualitySnapshot;
   sampleDiagnostics(
     request: KernelDiagnosticsSampleRequest,
   ): Promise<KernelDiagnosticsSampleResult>;
@@ -192,10 +199,22 @@ export interface BuilderKernelViewportHandle {
   ): void;
   setPointCloudDisplay(entityIds: readonly EntityId[], display: PointCloudDisplayStyle): void;
   setEntityVisibility(entityIds: readonly EntityId[], visible: boolean): void;
+  cycleCandidate(direction: 1 | -1): void;
   setClipVolumes(volumes: readonly KernelClipVolume[]): void;
   setAutomationClipVolumes(volumes: readonly KernelClipVolume[]): void;
-  createViewingBoxAt(center?: SourcePosition3): KernelViewingBoxState | null;
+  createViewingBoxAt(center?: SourcePosition3, id?: string): KernelViewingBoxState | null;
+  createViewingBoxFromSelection(
+    entityIds: readonly EntityId[],
+    id: string,
+  ): KernelViewingBoxState | null;
   setViewingBox(state: KernelViewingBoxState | null): void;
+  lockViewingBox(
+    state: KernelViewingBoxState,
+    signal: AbortSignal,
+    onProgress: (fraction: number, phase: string) => void | Promise<void>,
+  ): Promise<KernelViewingBoxState>;
+  unlockViewingBox(state: KernelViewingBoxState): KernelViewingBoxState;
+  cancelViewingBoxDrag(): boolean;
 }
 
 interface BuilderKernelViewportProps {
@@ -206,6 +225,7 @@ interface BuilderKernelViewportProps {
   readonly onDropFiles: (paths: string[]) => void | Promise<void>;
   readonly onLog: (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void;
   readonly viewingBox?: KernelViewingBoxState | null;
+  readonly viewingBoxEditing?: boolean;
   readonly placingViewingBoxCenter?: boolean;
   readonly onViewportPoint?: (position: SourcePosition3) => void;
   readonly onViewingBoxChange?: (state: KernelViewingBoxState | null) => void;
@@ -213,7 +233,12 @@ interface BuilderKernelViewportProps {
   readonly onSelectEntity?: (id: EntityId, mode: 'replace' | 'toggle') => void;
   readonly onClearSelection?: () => void;
   readonly isEntityClickPickable?: (id: EntityId) => boolean;
+  readonly isEntitySnappable?: (id: EntityId) => boolean;
   readonly isEntitySelectionHighlightable?: (id: EntityId) => boolean;
+  readonly constructionToolId?: string | null;
+  readonly onConstructionTab?: (direction: 1 | -1) => void;
+  readonly onConstructionTyping?: (key: string) => void;
+  readonly onConstructionCancel?: () => void;
   readonly onCandidateSet?: (candidates: readonly KernelPickCandidate[], index: number) => void;
   readonly onCandidateSetClear?: () => void;
   readonly onContextSurface?: (
@@ -235,6 +260,7 @@ interface ViewingBoxFaceHandle {
   readonly point: ScreenPoint;
   readonly screenAxis: ScreenPoint;
   readonly pixelsPerWorldUnit: number;
+  readonly polygon: readonly ScreenPoint[];
 }
 
 interface ViewingBoxRingHandle {
@@ -244,7 +270,27 @@ interface ViewingBoxRingHandle {
   readonly points: readonly ScreenPoint[];
 }
 
-type ViewingBoxHandle = ViewingBoxFaceHandle | ViewingBoxRingHandle;
+interface ViewingBoxCornerHandle {
+  readonly kind: 'corner';
+  readonly faces: readonly [KernelViewingBoxFace, KernelViewingBoxFace, KernelViewingBoxFace];
+  readonly point: ScreenPoint;
+  readonly screenAxes: readonly [ScreenPoint, ScreenPoint, ScreenPoint];
+  readonly pixelsPerWorldUnit: readonly [number, number, number];
+}
+
+type ViewingBoxHandle = ViewingBoxFaceHandle | ViewingBoxCornerHandle | ViewingBoxRingHandle;
+
+interface ViewingBoxBakeCacheEntry {
+  readonly key: string;
+  readonly proxies: readonly {
+    readonly sourceEntityId: EntityId;
+    readonly proxyEntityId: EntityId;
+    readonly datasetId: string;
+    readonly handle: KernelViewerEntityHandle;
+  }[];
+  readonly pointCount: number;
+  readonly originalVisibility: Map<EntityId, boolean>;
+}
 
 type ViewingBoxPointerInteraction =
   | {
@@ -254,6 +300,17 @@ type ViewingBoxPointerInteraction =
       readonly startClientY: number;
       readonly startState: KernelViewingBoxState;
       readonly handle: ViewingBoxFaceHandle;
+      pointerMoved: boolean;
+      moved: boolean;
+    }
+  | {
+      readonly kind: 'corner';
+      readonly pointerId: number;
+      readonly startClientX: number;
+      readonly startClientY: number;
+      readonly startState: KernelViewingBoxState;
+      readonly handle: ViewingBoxCornerHandle;
+      pointerMoved: boolean;
       moved: boolean;
     }
   | {
@@ -264,6 +321,7 @@ type ViewingBoxPointerInteraction =
       readonly startState: KernelViewingBoxState;
       readonly handle: ViewingBoxRingHandle;
       readonly startAngle: number;
+      pointerMoved: boolean;
       moved: boolean;
     };
 
@@ -279,6 +337,7 @@ export const BuilderKernelViewport = forwardRef<
     onDropFiles,
     onLog,
     viewingBox = null,
+    viewingBoxEditing = false,
     placingViewingBoxCenter = false,
     onViewportPoint,
     onViewingBoxChange,
@@ -286,7 +345,12 @@ export const BuilderKernelViewport = forwardRef<
     onSelectEntity,
     onClearSelection,
     isEntityClickPickable,
+    isEntitySnappable,
     isEntitySelectionHighlightable,
+    constructionToolId = null,
+    onConstructionTab,
+    onConstructionTyping,
+    onConstructionCancel,
     onCandidateSet,
     onCandidateSetClear,
     onContextSurface,
@@ -296,6 +360,8 @@ export const BuilderKernelViewport = forwardRef<
 ): JSX.Element {
   const kernelRef = useRef<KernelViewportHandle | null>(null);
   const cameraHistoryRef = useRef<ViewLocalHistory<CameraHistoryState> | null>(null);
+  const cameraHistoryErrorRef = useRef<string | null>(null);
+  const cameraProjectIdRef = useRef<string | undefined>(projectId);
   const restoringCameraRef = useRef(false);
   const recordCamera = useCallback(() => {
     const kernel = kernelRef.current;
@@ -308,8 +374,40 @@ export const BuilderKernelViewport = forwardRef<
   useEffect(() => {
     let cancelled = false;
     cameraHistoryRef.current = null;
+    cameraHistoryErrorRef.current = null;
+    cameraProjectIdRef.current = projectId;
     if (!projectId) return;
-    void readyRef.current.promise
+    const waitForLiveKernel = async (): Promise<KernelViewportHandle> => {
+      for (let attempt = 0; attempt < 1_800 && !cancelled; attempt += 1) {
+        const kernel = kernelRef.current;
+        if (kernel) {
+          try {
+            kernel.session.diagnostics();
+            return kernel;
+          } catch {
+            // React development strict-effects retire the first session.
+          }
+        }
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
+      }
+      throw new Error('live viewer session was not ready for camera history');
+    };
+    const restoreModeWhenReady = async (
+      kernel: KernelViewportHandle,
+      mode: KernelViewMode,
+    ): Promise<void> => {
+      for (let attempt = 0; attempt < 1_800 && !cancelled; attempt += 1) {
+        try {
+          await kernel.session.setViewMode(mode, 0);
+          return;
+        } catch (error) {
+          if (!String(error).includes('suspended')) throw error;
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
+        }
+      }
+      throw new Error('navigation remained suspended while restoring camera history');
+    };
+    void waitForLiveKernel()
       .then(async (kernel) => {
         if (cancelled) return;
         const history = new ViewLocalHistory(
@@ -320,16 +418,14 @@ export const BuilderKernelViewport = forwardRef<
           new LocalStorageViewHistoryPersistence(window.localStorage, 'camera'),
           (message) => callbacksRef.current.onLog('warn', message),
         );
-        kernel.navigation.setEnabled(false);
         await history.open();
         if (cancelled) {
-          kernel.navigation.setEnabled(true);
           return;
         }
         restoringCameraRef.current = true;
         try {
           const state = history.current;
-          await kernel.session.setViewMode(state.mode, 0);
+          await restoreModeWhenReady(kernel, state.mode);
           if (cancelled) return;
           kernel.session.adoptWorldCamera(state.camera);
           viewModeRef.current = state.mode;
@@ -337,10 +433,12 @@ export const BuilderKernelViewport = forwardRef<
           cameraHistoryRef.current = history;
         } finally {
           restoringCameraRef.current = false;
-          kernel.navigation.setEnabled(true);
         }
       })
-      .catch((error: unknown) => callbacksRef.current.onLog('error', String(error)));
+      .catch((error: unknown) => {
+        cameraHistoryErrorRef.current = String(error);
+        callbacksRef.current.onLog('error', String(error));
+      });
     return () => {
       cancelled = true;
       cameraHistoryRef.current = null;
@@ -350,6 +448,15 @@ export const BuilderKernelViewport = forwardRef<
   const viewingBoxOverlayRef = useRef<HTMLCanvasElement | null>(null);
   const readyRef = useRef(createDeferred<KernelViewportHandle>());
   const loadedBoundsRef = useRef<Bounds | null>(null);
+  const entityBoundsRef = useRef(new Map<EntityId, Bounds>());
+  const entityVisibilityRef = useRef(new Map<EntityId, boolean>());
+  const potreeSourcesRef = useRef(
+    new Map<EntityId, BuilderPointCloudOptions & { metadataUrl: string }>(),
+  );
+  const viewingBoxBakeCacheRef = useRef(new Map<string, ViewingBoxBakeCacheEntry>());
+  const activeViewingBoxBakeKeyRef = useRef<string | null>(null);
+  const viewingBoxScopeRef = useRef<string | null>(null);
+  const bakeProxySourcesRef = useRef(new Map<EntityId, EntityId>());
   const entityStylesRef = useRef(new Map<EntityId, KernelRenderStyle>());
   const entityExaggerationDatumsRef = useRef(new Map<EntityId, number>());
   const callbacksRef = useRef({
@@ -362,7 +469,11 @@ export const BuilderKernelViewport = forwardRef<
     onSelectEntity,
     onClearSelection,
     isEntityClickPickable,
+    isEntitySnappable,
     isEntitySelectionHighlightable,
+    onConstructionTab,
+    onConstructionTyping,
+    onConstructionCancel,
     onCandidateSet,
     onCandidateSetClear,
     onContextSurface,
@@ -388,24 +499,69 @@ export const BuilderKernelViewport = forwardRef<
     onSelectEntity,
     onClearSelection,
     isEntityClickPickable,
+    isEntitySnappable,
     isEntitySelectionHighlightable,
+    onConstructionTab,
+    onConstructionTyping,
+    onConstructionCancel,
     onCandidateSet,
     onCandidateSetClear,
     onContextSurface,
     onRegistryShortcut,
   };
-  viewingBoxRef.current = viewingBox;
+  // A grip gesture owns its local preview until pointer-up/cancel. React state
+  // updates (cursor/hover/job chrome) must not replace it with the last
+  // committed prop mid-gesture.
+  if (!viewingBoxInteractionRef.current) viewingBoxRef.current = viewingBox;
   const [cursor, setCursor] = useState<SourcePosition3 | null>(null);
   const [viewMode, setViewModeState] = useState<KernelViewMode>('3d');
   const [dragging, setDragging] = useState(false);
   const [viewingBoxCursor, setViewingBoxCursor] = useState<'default' | 'grab' | 'grabbing'>(
     'default',
   );
+  const [hoveredViewingBoxHandle, setHoveredViewingBoxHandle] = useState<ViewingBoxHandle | null>(
+    null,
+  );
 
   useEffect(() => {
     pointSizeRef.current = pointSize;
     kernelRef.current?.session.setPointSize(pointSize);
   }, [pointSize]);
+
+  useEffect(() => {
+    if (!constructionToolId) return;
+    let cancelled = false;
+    let release: (() => void) | undefined;
+    void readyRef.current.promise
+      .then((kernel) => {
+        if (cancelled) return;
+        release = kernel.navigation.gestures.registerGestureClaims(constructionToolId, [
+          {
+            row: 'tab',
+            handle: ({ direction }) => {
+              if (direction !== undefined) callbacksRef.current.onConstructionTab?.(direction);
+            },
+          },
+          {
+            row: 'typing',
+            entryFocus: 'numeric',
+            handle: ({ originalEvent }) =>
+              callbacksRef.current.onConstructionTyping?.((originalEvent as KeyboardEvent).key),
+          },
+          {
+            row: 'candidateCycle',
+            handle: ({ direction }) => kernel.navigation.cycleCandidate(direction),
+          },
+          { row: 'lmbClick', handle: () => undefined },
+          { row: 'escape', handle: () => callbacksRef.current.onConstructionCancel?.() },
+        ]);
+      })
+      .catch((error: unknown) => callbacksRef.current.onLog('error', String(error)));
+    return () => {
+      cancelled = true;
+      release?.();
+    };
+  }, [constructionToolId]);
 
   useEffect(() => {
     const kernel = kernelRef.current;
@@ -433,8 +589,29 @@ export const BuilderKernelViewport = forwardRef<
       hostRef.current,
       kernelRef.current,
       viewingBox,
+      hoveredViewingBoxHandle,
     );
-  }, [viewingBox]);
+  }, [hoveredViewingBoxHandle, viewingBox]);
+
+  useEffect(() => {
+    if (!viewingBoxEditing) return;
+    let cancelled = false;
+    let release: (() => void) | undefined;
+    void readyRef.current.promise.then((kernel) => {
+      if (cancelled) return;
+      release = kernel.navigation.gestures.registerGestureClaims('view.viewing-box.grips', [
+        {
+          row: 'lmbDrag',
+          deviationReason: SHARED_3D_TARGET_DEVIATIONS.lmbDrag,
+          handle: () => undefined,
+        },
+      ]);
+    });
+    return () => {
+      cancelled = true;
+      release?.();
+    };
+  }, [viewingBoxEditing]);
 
   useEffect(
     () => () => {
@@ -491,6 +668,9 @@ export const BuilderKernelViewport = forwardRef<
           },
           { operationId: `builder/load/${entityId}` },
         );
+        potreeSourcesRef.current.set(entityId, { ...options, metadataUrl });
+        entityBoundsRef.current.set(entityId, options.bounds);
+        entityVisibilityRef.current.set(entityId, true);
         entityStylesRef.current.set(entityId, pointCloudStyle);
         if (options.display) kernel.session.setPointSize(options.display.pointSizePixels);
         entityExaggerationDatumsRef.current.set(entityId, options.bounds.min[2]);
@@ -511,6 +691,7 @@ export const BuilderKernelViewport = forwardRef<
         for (const id of loaded) {
           entityStylesRef.current.set(id, IFC_STYLE);
           entityExaggerationDatumsRef.current.set(id, 0);
+          entityVisibilityRef.current.set(id, true);
         }
         kernel.requestFrame();
         return [...loaded];
@@ -584,7 +765,17 @@ export const BuilderKernelViewport = forwardRef<
         const history = cameraHistoryRef.current,
           kernel = kernelRef.current;
         if (!history || !kernel || restoringCameraRef.current)
-          throw new Error('Camera history is not ready');
+          throw new Error(
+            `Camera history is not ready (history=${Boolean(history)}, viewer=${Boolean(kernel)}, restoring=${restoringCameraRef.current}, project=${cameraProjectIdRef.current ?? 'none'}, error=${cameraHistoryErrorRef.current ?? 'none'})`,
+          );
+        if (action === 'get') {
+          await history.flushPersistence();
+          return history.snapshot;
+        }
+        if (action === 'clear') {
+          history.clear();
+          return history.snapshot;
+        }
         restoringCameraRef.current = true;
         try {
           const snapshot = history.snapshot;
@@ -594,7 +785,6 @@ export const BuilderKernelViewport = forwardRef<
               : action === 'redo' && history.canRedo
                 ? parseCameraHistory(snapshot.entries[snapshot.cursor]!.after)
                 : history.current;
-          kernel.navigation.setEnabled(false);
           await kernel.session.setViewMode(state.mode, 0);
           kernel.session.adoptWorldCamera(state.camera);
           viewModeRef.current = state.mode;
@@ -603,8 +793,8 @@ export const BuilderKernelViewport = forwardRef<
           else history.redo();
         } finally {
           restoringCameraRef.current = false;
-          kernel.navigation.setEnabled(true);
         }
+        return history.snapshot;
       },
       frameAll,
       setPreset(preset) {
@@ -641,6 +831,11 @@ export const BuilderKernelViewport = forwardRef<
         const kernel = kernelRef.current;
         if (!kernel) throw new Error('viewer is not ready');
         return kernel.session.diagnosticsSnapshot(lastFrames);
+      },
+      qualitySnapshot() {
+        const kernel = kernelRef.current;
+        if (!kernel) throw new Error('viewer is not ready');
+        return kernel.session.qualitySnapshot();
       },
       sampleDiagnostics(request) {
         const kernel = kernelRef.current;
@@ -708,8 +903,24 @@ export const BuilderKernelViewport = forwardRef<
         const kernel = kernelRef.current;
         if (!kernel) return;
         kernel.navigation.gestures.clearCandidateIndicator();
-        for (const entityId of entityIds) kernel.scene.setEntityVisibility(entityId, visible);
+        for (const entityId of entityIds) {
+          entityVisibilityRef.current.set(entityId, visible);
+          const active = activeViewingBoxBakeKeyRef.current
+            ? viewingBoxBakeCacheRef.current.get(activeViewingBoxBakeKeyRef.current)
+            : null;
+          const proxy = active?.proxies.find((candidate) => candidate.sourceEntityId === entityId);
+          if (proxy) {
+            active!.originalVisibility.set(entityId, visible);
+            kernel.scene.setEntityVisibility(entityId, false);
+            proxy.handle.setVisible(visible);
+          } else {
+            kernel.scene.setEntityVisibility(entityId, visible);
+          }
+        }
         kernel.requestFrame();
+      },
+      cycleCandidate(direction) {
+        kernelRef.current?.navigation.cycleCandidate(direction);
       },
       setClipVolumes(volumes) {
         kernelRef.current?.navigation.gestures.clearCandidateIndicator();
@@ -728,7 +939,7 @@ export const BuilderKernelViewport = forwardRef<
         }
         automationClipIdsRef.current = next;
       },
-      createViewingBoxAt(center) {
+      createViewingBoxAt(center, id) {
         const kernel = kernelRef.current;
         if (!kernel) return null;
         const camera = kernel.camera.worldCamera();
@@ -770,15 +981,298 @@ export const BuilderKernelViewport = forwardRef<
           visibleWidth: visibleHeight * camera.projection.aspect,
           visibleHeight,
           visibleDepth: visibleHeight,
-          viewFraction: 0.25,
+          viewFraction: 0.6,
           uniform: true,
+          ...(id ? { id } : {}),
         });
       },
+      createViewingBoxFromSelection(entityIds, id) {
+        let bounds: Bounds | null = null;
+        for (const entityId of entityIds) {
+          const entityBounds = entityBoundsRef.current.get(entityId);
+          if (entityBounds) bounds = unionBounds(bounds, entityBounds);
+        }
+        if (!bounds) return null;
+        return {
+          id,
+          center: {
+            x: (bounds.min[0] + bounds.max[0]) * 0.5,
+            y: (bounds.min[1] + bounds.max[1]) * 0.5,
+            z: (bounds.min[2] + bounds.max[2]) * 0.5,
+          },
+          halfExtents: {
+            x: Math.max(1e-6, (bounds.max[0] - bounds.min[0]) * 0.5),
+            y: Math.max(1e-6, (bounds.max[1] - bounds.min[1]) * 0.5),
+            z: Math.max(1e-6, (bounds.max[2] - bounds.min[2]) * 0.5),
+          },
+          rotation: [0, 0, 0, 1],
+          mode: 'resize',
+          enabled: true,
+          operation: 'keepInside',
+          lockMode: 'unlocked',
+          bakeKey: null,
+        };
+      },
       setViewingBox(state) {
-        kernelRef.current?.session.setScopedClipVolume(
-          'builder:viewing-box',
-          state ? viewingBoxClipVolume(state) : null,
+        const kernel = kernelRef.current;
+        if (!kernel) return;
+        if (viewingBoxScopeRef.current && viewingBoxScopeRef.current !== state?.id) {
+          kernel.session.setScopedClipVolume(
+            `builder:viewing-box:${viewingBoxScopeRef.current}`,
+            null,
+          );
+        }
+        viewingBoxScopeRef.current = state?.id ?? null;
+        if (state) {
+          kernel.session.setScopedClipVolume(
+            `builder:viewing-box:${state.id}`,
+            viewingBoxClipVolume(state),
+          );
+        }
+      },
+      async lockViewingBox(state, signal, onProgress) {
+        const kernel = kernelRef.current;
+        const api = window.himmelcad;
+        if (!kernel || !api) throw new Error('Viewer bake bridge is not ready.');
+        const sources = [...potreeSourcesRef.current.entries()].map(([entityId, source]) => ({
+          entityId,
+          source,
+        }));
+        if (sources.length === 0) return { ...state, lockMode: 'editFreeze', bakeKey: null };
+        if (
+          state.lockMode === 'baked' &&
+          state.bakeKey &&
+          state.bakedSources &&
+          state.bakedSources.length > 0
+        ) {
+          const proxies: ViewingBoxBakeCacheEntry['proxies'][number][] = [];
+          const originalVisibility = new Map<EntityId, boolean>();
+          try {
+            for (const bakedSource of state.bakedSources) {
+              throwIfViewingBoxBakeAborted(signal);
+              const sourceEntityId = bakedSource.sourceEntityId as EntityId;
+              const source = potreeSourcesRef.current.get(sourceEntityId);
+              if (!source) throw new Error(`Baked source ${sourceEntityId} is no longer resident.`);
+              const response = await fetch(bakedSource.metadataUrl, { signal });
+              if (!response.ok)
+                throw new Error(`Baked dataset ${bakedSource.datasetId} is missing.`);
+              const metadata = new Uint8Array(await response.arrayBuffer());
+              const proxyEntityId = `${sourceEntityId}:viewing-box:${state.id}` as EntityId;
+              const admission = await bakedPointCloudAdmission(
+                kernel,
+                source.admission,
+                proxyEntityId,
+                metadata,
+                bakedSource.pointCount,
+              );
+              const handle = await kernel.session.loadPotree(
+                {
+                  datasetId: bakedSource.datasetId,
+                  metadataUri: bakedSource.metadataUrl,
+                  admission,
+                  style: renderPointCloudStyle(source.display, source.bounds),
+                },
+                { signal, operationId: `builder/viewing-box-restore/${state.id}` },
+              );
+              const visible = entityVisibilityRef.current.get(sourceEntityId) ?? true;
+              handle.setVisible(visible);
+              originalVisibility.set(sourceEntityId, visible);
+              kernel.scene.setEntityVisibility(sourceEntityId, false);
+              bakeProxySourcesRef.current.set(proxyEntityId, sourceEntityId);
+              proxies.push({
+                sourceEntityId,
+                proxyEntityId,
+                datasetId: bakedSource.datasetId,
+                handle,
+              });
+            }
+            viewingBoxBakeCacheRef.current.set(state.bakeKey, {
+              key: state.bakeKey,
+              proxies,
+              pointCount: state.bakedSources.reduce((sum, source) => sum + source.pointCount, 0),
+              originalVisibility,
+            });
+            activeViewingBoxBakeKeyRef.current = state.bakeKey;
+            await onProgress(1, 'Restored prepared viewing-box data');
+            return state;
+          } catch (error) {
+            for (const proxy of proxies) {
+              bakeProxySourcesRef.current.delete(proxy.proxyEntityId);
+              if (proxy.handle.loaded) proxy.handle.unload();
+            }
+            for (const [entityId, visible] of originalVisibility) {
+              kernel.scene.setEntityVisibility(entityId, visible);
+            }
+            throw error;
+          }
+        }
+        const rawKey = viewingBoxBakeCacheKey(
+          state,
+          sources.map(({ entityId, source }) => ({
+            entityId,
+            entityRevision: source.admission.entity.revision,
+            placement: source.admission.entity.placement,
+            datasetId: source.datasetId,
+          })),
         );
+        const bakeKey = await sha256Hex(new TextEncoder().encode(rawKey));
+        const cached = viewingBoxBakeCacheRef.current.get(bakeKey);
+        if (cached) {
+          for (const proxy of cached.proxies) {
+            proxy.handle.setVisible(cached.originalVisibility.get(proxy.sourceEntityId) ?? true);
+          }
+          for (const [sourceEntityId] of cached.originalVisibility) {
+            kernel.scene.setEntityVisibility(sourceEntityId, false);
+          }
+          activeViewingBoxBakeKeyRef.current = bakeKey;
+          await onProgress(1, `Restored ${cached.pointCount.toLocaleString()} baked points`);
+          return { ...state, lockMode: 'baked', bakeKey };
+        }
+
+        const baked: {
+          sourceEntityId: EntityId;
+          source: BuilderPointCloudOptions & { metadataUrl: string };
+          result: Awaited<ReturnType<typeof bakePotreeViewingBox>>;
+        }[] = [];
+        for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex += 1) {
+          const item = sources[sourceIndex]!;
+          throwIfViewingBoxBakeAborted(signal);
+          const result = await bakePotreeViewingBox({
+            metadataUrl: item.source.metadataUrl,
+            box: state,
+            placement: item.source.admission.entity.placement,
+            signal,
+            onProgress: (fraction, phase) =>
+              onProgress((sourceIndex + fraction) / sources.length, phase),
+          });
+          baked.push({ sourceEntityId: item.entityId, source: item.source, result });
+        }
+        const sourcePointCount = baked.reduce((sum, item) => sum + item.result.sourcePointCount, 0);
+        const pointCount = baked.reduce((sum, item) => sum + item.result.pointCount, 0);
+        if (
+          (state.operation ?? 'keepInside') === 'removeInside' &&
+          pointCount > sourcePointCount * 0.5
+        ) {
+          await onProgress(1, 'Copy scope retained for a majority outside result');
+          return { ...state, lockMode: 'editFreeze', bakeKey: null };
+        }
+
+        const published: string[] = [];
+        const bakedSources: NonNullable<KernelViewingBoxState['bakedSources']>[number][] = [];
+        const proxies: ViewingBoxBakeCacheEntry['proxies'][number][] = [];
+        try {
+          for (const item of baked) {
+            throwIfViewingBoxBakeAborted(signal);
+            const publication = await api.viewingBoxBake.publish({
+              cacheKey: `${rawKey}:${item.sourceEntityId}`,
+              metadata: item.result.metadata,
+              hierarchy: item.result.hierarchy,
+              octree: item.result.octree,
+            });
+            published.push(publication.datasetId);
+            bakedSources.push({
+              sourceEntityId: item.sourceEntityId,
+              datasetId: publication.datasetId,
+              metadataUrl: publication.metadataUrl,
+              pointCount: item.result.pointCount,
+            });
+            const proxyEntityId = `${item.sourceEntityId}:viewing-box:${state.id}` as EntityId;
+            const admission = await bakedPointCloudAdmission(
+              kernel,
+              item.source.admission,
+              proxyEntityId,
+              item.result.metadata,
+              item.result.pointCount,
+            );
+            const handle = await kernel.session.loadPotree(
+              {
+                datasetId: publication.datasetId,
+                metadataUri: publication.metadataUrl,
+                admission,
+                style: renderPointCloudStyle(item.source.display, item.source.bounds),
+              },
+              { signal, operationId: `builder/viewing-box-bake/${state.id}` },
+            );
+            handle.setVisible(entityVisibilityRef.current.get(item.sourceEntityId) ?? true);
+            bakeProxySourcesRef.current.set(proxyEntityId, item.sourceEntityId);
+            proxies.push({
+              sourceEntityId: item.sourceEntityId,
+              proxyEntityId,
+              datasetId: publication.datasetId,
+              handle,
+            });
+          }
+          const originalVisibility = new Map<EntityId, boolean>();
+          for (const { entityId } of sources) {
+            originalVisibility.set(entityId, entityVisibilityRef.current.get(entityId) ?? true);
+            kernel.scene.setEntityVisibility(entityId, false);
+          }
+          viewingBoxBakeCacheRef.current.set(bakeKey, {
+            key: bakeKey,
+            proxies,
+            pointCount,
+            originalVisibility,
+          });
+          activeViewingBoxBakeKeyRef.current = bakeKey;
+          await onProgress(1, `Locked ${pointCount.toLocaleString()} prepared points`);
+          return { ...state, lockMode: 'baked', bakeKey, bakedSources };
+        } catch (error) {
+          for (const proxy of proxies) {
+            bakeProxySourcesRef.current.delete(proxy.proxyEntityId);
+            if (proxy.handle.loaded) proxy.handle.unload();
+          }
+          await Promise.all(published.map((datasetId) => api.viewingBoxBake.revoke(datasetId)));
+          for (const { entityId } of sources) {
+            kernel.scene.setEntityVisibility(
+              entityId,
+              entityVisibilityRef.current.get(entityId) ?? true,
+            );
+          }
+          throw error;
+        }
+      },
+      unlockViewingBox(state) {
+        const kernel = kernelRef.current;
+        const bakeKey = state.bakeKey ?? activeViewingBoxBakeKeyRef.current;
+        const cached = bakeKey ? viewingBoxBakeCacheRef.current.get(bakeKey) : null;
+        if (kernel && cached) {
+          for (const proxy of cached.proxies) proxy.handle.setVisible(false);
+          for (const [entityId, visible] of cached.originalVisibility) {
+            kernel.scene.setEntityVisibility(entityId, visible);
+          }
+          kernel.requestFrame();
+        }
+        activeViewingBoxBakeKeyRef.current = null;
+        return { ...state, lockMode: 'unlocked', bakeKey: null, bakedSources: [] };
+      },
+      cancelViewingBoxDrag() {
+        const interaction = viewingBoxInteractionRef.current;
+        if (!interaction) return false;
+        viewingBoxInteractionRef.current = null;
+        pendingViewingBoxPreviewRef.current = null;
+        if (viewingBoxPreviewFrameRef.current !== null) {
+          cancelAnimationFrame(viewingBoxPreviewFrameRef.current);
+          viewingBoxPreviewFrameRef.current = null;
+        }
+        viewingBoxRef.current = interaction.startState;
+        const kernel = kernelRef.current;
+        if (kernel) {
+          kernel.session.setScopedClipVolume(
+            `builder:viewing-box:${interaction.startState.id}`,
+            viewingBoxClipVolume(interaction.startState),
+          );
+          drawViewingBoxOverlay(
+            viewingBoxOverlayRef.current,
+            hostRef.current,
+            kernel,
+            interaction.startState,
+            null,
+          );
+          kernel.setInteracting(false);
+          kernel.requestFrame();
+        }
+        setViewingBoxCursor('grab');
+        return true;
       },
     }),
     [changeViewMode, frameAll, viewMode],
@@ -809,8 +1303,12 @@ export const BuilderKernelViewport = forwardRef<
   }, []);
 
   const handlePick = useCallback((candidate: KernelPickCandidate | null) => {
-    activeSourcePositionRef.current = candidate?.worldPosition ?? null;
-    callbacksRef.current.onCursorSnap(candidate ? snapFromCandidate(candidate) : null);
+    const resolved = remapViewingBoxCandidate(candidate, bakeProxySourcesRef.current);
+    const snappable = resolved
+      ? (callbacksRef.current.isEntitySnappable?.(resolved.address.entityId as EntityId) ?? true)
+      : false;
+    activeSourcePositionRef.current = snappable ? resolved!.worldPosition : null;
+    callbacksRef.current.onCursorSnap(snappable ? snapFromCandidate(resolved!) : null);
   }, []);
 
   const handleCursor = useCallback((coordinate: KernelPickCandidate['worldPosition']) => {
@@ -843,13 +1341,19 @@ export const BuilderKernelViewport = forwardRef<
       const kernel = kernelRef.current;
       if (!kernel) return;
       kernel.session.setScopedClipVolume(
-        'builder:viewing-box',
+        `builder:viewing-box:${state.id}`,
         viewingBoxClipVolume(state, previewCap),
       );
-      drawViewingBoxOverlay(viewingBoxOverlayRef.current, hostRef.current, kernel, state);
+      drawViewingBoxOverlay(
+        viewingBoxOverlayRef.current,
+        hostRef.current,
+        kernel,
+        state,
+        hoveredViewingBoxHandle,
+      );
       kernel.requestFrame();
     },
-    [],
+    [hoveredViewingBoxHandle],
   );
 
   const previewViewingBox = useCallback(
@@ -891,7 +1395,9 @@ export const BuilderKernelViewport = forwardRef<
       },
       remove(): void {
         viewingBoxRef.current = null;
-        kernelRef.current?.session.setScopedClipVolume('builder:viewing-box', null);
+        const scope = viewingBoxScopeRef.current;
+        if (scope)
+          kernelRef.current?.session.setScopedClipVolume(`builder:viewing-box:${scope}`, null);
         kernelRef.current?.requestFrame();
         callbacksRef.current.onViewingBoxChange?.(null);
       },
@@ -907,6 +1413,7 @@ export const BuilderKernelViewport = forwardRef<
               host: { left: rect.left, top: rect.top },
               state,
               faces: geometry.faces,
+              corners: geometry.cornerHandles,
               rings: geometry.rings,
             }
           : null;
@@ -920,7 +1427,7 @@ export const BuilderKernelViewport = forwardRef<
 
   const handleViewingBoxPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (placingViewingBoxCenter || event.button !== 0) return;
+      if (!viewingBoxEditing || placingViewingBoxCenter || event.button !== 0) return;
       const state = viewingBoxRef.current;
       const host = hostRef.current;
       const kernel = kernelRef.current;
@@ -941,40 +1448,53 @@ export const BuilderKernelViewport = forwardRef<
               startClientY: event.clientY,
               startState: state,
               handle,
+              pointerMoved: false,
               moved: false,
             }
-          : {
-              kind: 'ring',
-              pointerId: event.pointerId,
-              startClientX: event.clientX,
-              startClientY: event.clientY,
-              startState: state,
-              handle,
-              startAngle: Math.atan2(point.y - handle.center.y, point.x - handle.center.x),
-              moved: false,
-            };
+          : handle.kind === 'corner'
+            ? {
+                kind: 'corner',
+                pointerId: event.pointerId,
+                startClientX: event.clientX,
+                startClientY: event.clientY,
+                startState: state,
+                handle,
+                pointerMoved: false,
+                moved: false,
+              }
+            : {
+                kind: 'ring',
+                pointerId: event.pointerId,
+                startClientX: event.clientX,
+                startClientY: event.clientY,
+                startState: state,
+                handle,
+                startAngle: Math.atan2(point.y - handle.center.y, point.x - handle.center.x),
+                pointerMoved: false,
+                moved: false,
+              };
       setViewingBoxCursor('grabbing');
     },
-    [placingViewingBoxCenter],
+    [placingViewingBoxCenter, viewingBoxEditing],
   );
 
   const handleViewingBoxPointerMove = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       const interaction = viewingBoxInteractionRef.current;
       if (!interaction) {
-        if (placingViewingBoxCenter) return;
+        if (placingViewingBoxCenter || !viewingBoxEditing) return;
         const state = viewingBoxRef.current;
         const host = hostRef.current;
         const kernel = kernelRef.current;
-        const nextCursor =
+        const nextHandle =
           state && host && kernel
             ? hitTestViewingBoxHandle(
                 viewingBoxOverlayGeometry(host, kernel, state),
                 eventPoint(event, host),
               )
-              ? 'grab'
-              : 'default'
-            : 'default';
+            : null;
+        setHoveredViewingBoxHandle(nextHandle);
+        const nextCursor = nextHandle ? 'grab' : 'default';
         setViewingBoxCursor((current) => (current === nextCursor ? current : nextCursor));
         return;
       }
@@ -983,7 +1503,9 @@ export const BuilderKernelViewport = forwardRef<
       event.stopPropagation();
       const deltaX = event.clientX - interaction.startClientX;
       const deltaY = event.clientY - interaction.startClientY;
-      if (Math.hypot(deltaX, deltaY) >= 4) interaction.moved = true;
+      const distance = Math.hypot(deltaX, deltaY);
+      if (distance >= 0.5) interaction.pointerMoved = true;
+      if (distance >= 4) interaction.moved = true;
       if (interaction.kind === 'face') {
         const signedDelta =
           (deltaX * interaction.handle.screenAxis.x + deltaY * interaction.handle.screenAxis.y) /
@@ -996,6 +1518,26 @@ export const BuilderKernelViewport = forwardRef<
             signedDelta,
             true,
           ),
+        );
+        return;
+      }
+      if (interaction.kind === 'corner') {
+        const signedDeltas = {
+          x:
+            (deltaX * interaction.handle.screenAxes[0].x +
+              deltaY * interaction.handle.screenAxes[0].y) /
+            interaction.handle.pixelsPerWorldUnit[0],
+          y:
+            (deltaX * interaction.handle.screenAxes[1].x +
+              deltaY * interaction.handle.screenAxes[1].y) /
+            interaction.handle.pixelsPerWorldUnit[1],
+          z:
+            (deltaX * interaction.handle.screenAxes[2].x +
+              deltaY * interaction.handle.screenAxes[2].y) /
+            interaction.handle.pixelsPerWorldUnit[2],
+        };
+        previewViewingBox(
+          resizeViewingBoxCorner(interaction.startState, interaction.handle.faces, signedDeltas),
         );
         return;
       }
@@ -1014,7 +1556,7 @@ export const BuilderKernelViewport = forwardRef<
         ),
       );
     },
-    [placingViewingBoxCenter, previewViewingBox],
+    [placingViewingBoxCenter, previewViewingBox, viewingBoxEditing],
   );
 
   const finishViewingBoxInteraction = useCallback(
@@ -1028,11 +1570,17 @@ export const BuilderKernelViewport = forwardRef<
       }
       viewingBoxInteractionRef.current = null;
       kernelRef.current?.setInteracting(false);
-      if (!interaction.moved && event.type !== 'pointercancel') {
+      if (event.type === 'pointercancel') {
+        pendingViewingBoxPreviewRef.current = null;
+        flushViewingBoxPreview(interaction.startState);
+      } else if (!interaction.moved && interaction.pointerMoved) {
+        // A sub-threshold drag is not a click and owns no journal transaction.
+        flushViewingBoxPreview(interaction.startState);
+      } else if (!interaction.moved) {
         commitViewingBox(
           setViewingBoxMode(
             viewingBoxRef.current ?? interaction.startState,
-            interaction.kind === 'face' ? 'rotate' : 'resize',
+            interaction.kind === 'ring' ? 'resize' : 'rotate',
           ),
         );
       } else {
@@ -1043,6 +1591,21 @@ export const BuilderKernelViewport = forwardRef<
       setViewingBoxCursor('grab');
     },
     [commitViewingBox, flushViewingBoxPreview],
+  );
+
+  useEffect(
+    () =>
+      registerEscapeRung('drag', () => {
+        const interaction = viewingBoxInteractionRef.current;
+        if (!interaction) return false;
+        viewingBoxInteractionRef.current = null;
+        pendingViewingBoxPreviewRef.current = null;
+        flushViewingBoxPreview(interaction.startState);
+        kernelRef.current?.setInteracting(false);
+        setViewingBoxCursor('grab');
+        return true;
+      }),
+    [flushViewingBoxPreview],
   );
 
   return (
@@ -1090,25 +1653,44 @@ export const BuilderKernelViewport = forwardRef<
         onCursorCoordinate={handleCursor}
         registerEscapeRung={registerEscapeRung}
         gestures={{
-          isPickable: (candidate) =>
-            callbacksRef.current.isEntityClickPickable?.(candidate.address.entityId as EntityId) ??
-            true,
-          isSelected: (candidate) =>
-            callbacksRef.current.selectedEntityIds.has(candidate.address.entityId as EntityId),
+          isPickable: (candidate) => {
+            const resolved = remapViewingBoxCandidate(candidate, bakeProxySourcesRef.current);
+            return (
+              callbacksRef.current.isEntityClickPickable?.(resolved.address.entityId as EntityId) ??
+              true
+            );
+          },
+          isSelected: (candidate) => {
+            const resolved = remapViewingBoxCandidate(candidate, bakeProxySourcesRef.current);
+            return callbacksRef.current.selectedEntityIds.has(
+              resolved.address.entityId as EntityId,
+            );
+          },
           hasSelection: () => callbacksRef.current.selectedEntityIds.size > 0,
-          select: (candidate) =>
-            callbacksRef.current.onSelectEntity?.(
-              candidate.address.entityId as EntityId,
-              'replace',
-            ),
-          toggleSelection: (candidate) =>
-            callbacksRef.current.onSelectEntity?.(candidate.address.entityId as EntityId, 'toggle'),
+          select: (candidate) => {
+            const resolved = remapViewingBoxCandidate(candidate, bakeProxySourcesRef.current);
+            callbacksRef.current.onSelectEntity?.(resolved.address.entityId as EntityId, 'replace');
+          },
+          toggleSelection: (candidate) => {
+            const resolved = remapViewingBoxCandidate(candidate, bakeProxySourcesRef.current);
+            callbacksRef.current.onSelectEntity?.(resolved.address.entityId as EntityId, 'toggle');
+          },
           clearSelection: () => callbacksRef.current.onClearSelection?.(),
           candidateSetChanged: (candidates, index) =>
-            callbacksRef.current.onCandidateSet?.(candidates, index),
+            callbacksRef.current.onCandidateSet?.(
+              candidates.map((candidate) =>
+                remapViewingBoxCandidate(candidate, bakeProxySourcesRef.current),
+              ),
+              index,
+            ),
           candidateSetCleared: () => callbacksRef.current.onCandidateSetClear?.(),
           openContextSurface: (candidate) =>
-            callbacksRef.current.onContextSurface?.(candidate, pointerPositionRef.current),
+            callbacksRef.current.onContextSurface?.(
+              candidate
+                ? remapViewingBoxCandidate(candidate, bakeProxySourcesRef.current)
+                : candidate,
+              pointerPositionRef.current,
+            ),
           routeRegistryShortcut: (event) => callbacksRef.current.onRegistryShortcut?.(event),
         }}
         onFrame={() =>
@@ -1117,6 +1699,7 @@ export const BuilderKernelViewport = forwardRef<
             hostRef.current,
             kernelRef.current,
             viewingBoxRef.current,
+            hoveredViewingBoxHandle,
           )
         }
         onError={handleError}
@@ -1161,6 +1744,7 @@ function drawViewingBoxOverlay(
   host: HTMLDivElement | null,
   kernel: KernelViewportHandle | null,
   state: KernelViewingBoxState | null,
+  hovered: ViewingBoxHandle | null = null,
 ): void {
   if (!canvas || !host) return;
   const rect = host.getBoundingClientRect();
@@ -1194,12 +1778,14 @@ function drawViewingBoxOverlay(
   ] as const;
   const computed = getComputedStyle(host);
   const accent = computed.getPropertyValue('--hc-accent-base').trim() || computed.color;
+  const support = computed.getPropertyValue('--hc-geometry-support').trim() || accent;
+  const active = computed.getPropertyValue('--hc-warning').trim() || '#e8a33e';
   const foreground = computed.getPropertyValue('--hc-fg-strong').trim() || computed.color;
   context.save();
   context.lineWidth = 1.25;
   context.globalAlpha = state.enabled ? 0.92 : 0.58;
   context.strokeStyle = state.enabled ? accent : foreground;
-  context.setLineDash(state.enabled ? [5, 3] : [2, 4]);
+  context.setLineDash(state.operation === 'removeInside' ? [6, 4] : state.enabled ? [] : [2, 4]);
   context.beginPath();
   for (const [fromIndex, toIndex] of edges) {
     const from = geometry.corners[fromIndex];
@@ -1211,18 +1797,38 @@ function drawViewingBoxOverlay(
   context.stroke();
   context.setLineDash([]);
   context.globalAlpha = 1;
-  context.strokeStyle = accent;
-  context.fillStyle = foreground;
-  if (state.mode === 'rotate') {
+  context.strokeStyle = support;
+  context.fillStyle = support;
+  const editable = (state.lockMode ?? 'unlocked') === 'unlocked';
+  const hoveredFace = hovered?.kind === 'face' ? hovered : null;
+  if (hoveredFace) {
+    context.save();
+    context.globalAlpha = 0.06;
+    context.fillStyle = accent;
+    drawPolygon(context, hoveredFace.polygon);
+    context.restore();
+  }
+  if (editable && state.mode === 'rotate') {
     for (const [index, ring] of geometry.rings.entries()) {
       context.lineWidth = index === 0 ? 2.25 : 1.8;
       context.setLineDash(index === 0 ? [] : index === 1 ? [7, 3] : [2, 3]);
       drawPolyline(context, ring.points, true);
     }
     context.setLineDash([]);
-  } else {
+  } else if (editable) {
     for (const handle of geometry.faces) {
-      drawInwardFaceArrow(context, handle.point, geometry.center);
+      drawSquareGrip(
+        context,
+        handle.point,
+        sameViewingBoxHandle(handle, hovered) ? active : support,
+      );
+    }
+    for (const handle of geometry.cornerHandles) {
+      drawSquareGrip(
+        context,
+        handle.point,
+        sameViewingBoxHandle(handle, hovered) ? active : support,
+      );
     }
   }
   context.restore();
@@ -1232,6 +1838,7 @@ interface ViewingBoxOverlayGeometry {
   readonly corners: readonly (ScreenPoint | null)[];
   readonly center: ScreenPoint;
   readonly faces: readonly ViewingBoxFaceHandle[];
+  readonly cornerHandles: readonly ViewingBoxCornerHandle[];
   readonly rings: readonly ViewingBoxRingHandle[];
 }
 
@@ -1277,6 +1884,8 @@ function viewingBoxOverlayGeometry(
         const screenY = positiveAxisPoint.y - point.y;
         const pixelsPerWorldUnit = Math.hypot(screenX, screenY);
         if (pixelsPerWorldUnit < 1e-5) continue;
+        const polygon = viewingBoxFacePolygon(corners, axisIndex, face);
+        if (!polygon) continue;
         faces.push({
           kind: 'face',
           axis: axisName,
@@ -1287,7 +1896,48 @@ function viewingBoxOverlayGeometry(
             y: screenY / pixelsPerWorldUnit,
           },
           pixelsPerWorldUnit,
+          polygon,
         });
+      }
+    }
+  }
+  const cornerHandles: ViewingBoxCornerHandle[] = [];
+  if (state.mode !== 'rotate') {
+    let cornerIndex = 0;
+    for (const x of [-1, 1] as const) {
+      for (const y of [-1, 1] as const) {
+        for (const z of [-1, 1] as const) {
+          const point = corners[cornerIndex++];
+          if (!point) continue;
+          const projected = axes.map((axis) =>
+            projectViewingBoxPoint(
+              addScaledPoint(localViewingBoxPoint(state.center, axes, extents, [x, y, z]), axis, 1),
+              camera,
+              rect,
+            ),
+          );
+          if (projected.some((value) => value === null)) continue;
+          const screenAxes = projected.map((value) => ({
+            x: value!.x - point.x,
+            y: value!.y - point.y,
+          })) as [ScreenPoint, ScreenPoint, ScreenPoint];
+          const pixels = screenAxes.map((value) => Math.hypot(value.x, value.y)) as [
+            number,
+            number,
+            number,
+          ];
+          if (pixels.some((value) => value < 1e-5)) continue;
+          cornerHandles.push({
+            kind: 'corner',
+            faces: [x, y, z],
+            point,
+            screenAxes: screenAxes.map((value, index) => ({
+              x: value.x / pixels[index]!,
+              y: value.y / pixels[index]!,
+            })) as [ScreenPoint, ScreenPoint, ScreenPoint],
+            pixelsPerWorldUnit: pixels,
+          });
+        }
       }
     }
   }
@@ -1313,7 +1963,7 @@ function viewingBoxOverlayGeometry(
       }
     }
   }
-  return { corners, center, faces, rings };
+  return { corners, center, faces, cornerHandles, rings };
 }
 
 function projectViewingBoxPoint(
@@ -1356,30 +2006,57 @@ function projectViewingBoxPoint(
   };
 }
 
-function drawInwardFaceArrow(
+function drawSquareGrip(
   context: CanvasRenderingContext2D,
   point: ScreenPoint,
-  center: ScreenPoint,
+  color: string,
 ): void {
-  const towardCenter = normalizeScreenPoint({ x: center.x - point.x, y: center.y - point.y });
-  const perpendicular = { x: -towardCenter.y, y: towardCenter.x };
-  const tail = { x: point.x - towardCenter.x * 13, y: point.y - towardCenter.y * 13 };
-  const tip = { x: point.x + towardCenter.x * 6, y: point.y + towardCenter.y * 6 };
-  context.lineWidth = 2;
+  context.save();
+  context.fillStyle = color;
+  context.fillRect(point.x - 4, point.y - 4, 8, 8);
+  context.restore();
+}
+
+function drawPolygon(context: CanvasRenderingContext2D, points: readonly ScreenPoint[]): void {
+  const first = points[0];
+  if (!first) return;
   context.beginPath();
-  context.moveTo(tail.x, tail.y);
-  context.lineTo(tip.x, tip.y);
-  context.moveTo(tip.x, tip.y);
-  context.lineTo(
-    tip.x - towardCenter.x * 7 + perpendicular.x * 4,
-    tip.y - towardCenter.y * 7 + perpendicular.y * 4,
-  );
-  context.moveTo(tip.x, tip.y);
-  context.lineTo(
-    tip.x - towardCenter.x * 7 - perpendicular.x * 4,
-    tip.y - towardCenter.y * 7 - perpendicular.y * 4,
-  );
-  context.stroke();
+  context.moveTo(first.x, first.y);
+  for (const point of points.slice(1)) context.lineTo(point.x, point.y);
+  context.closePath();
+  context.fill();
+}
+
+function sameViewingBoxHandle(left: ViewingBoxHandle, right: ViewingBoxHandle | null): boolean {
+  if (!right || left.kind !== right.kind) return false;
+  if (left.kind === 'face' && right.kind === 'face') {
+    return left.axis === right.axis && left.face === right.face;
+  }
+  if (left.kind === 'corner' && right.kind === 'corner') {
+    return left.faces.every((face, index) => face === right.faces[index]);
+  }
+  return left.kind === 'ring' && right.kind === 'ring' && left.axis === right.axis;
+}
+
+function viewingBoxFacePolygon(
+  corners: readonly (ScreenPoint | null)[],
+  axis: number,
+  face: KernelViewingBoxFace,
+): readonly ScreenPoint[] | null {
+  const indices =
+    axis === 0
+      ? face === -1
+        ? [0, 1, 3, 2]
+        : [4, 5, 7, 6]
+      : axis === 1
+        ? face === -1
+          ? [0, 1, 5, 4]
+          : [2, 3, 7, 6]
+        : face === -1
+          ? [0, 2, 6, 4]
+          : [1, 3, 7, 5];
+  const polygon = indices.map((index) => corners[index] ?? null);
+  return polygon.some((point) => point === null) ? null : (polygon as ScreenPoint[]);
 }
 
 function drawPolyline(
@@ -1408,6 +2085,10 @@ function hitTestViewingBoxHandle(
   for (const handle of geometry.faces) {
     const distance = Math.hypot(point.x - handle.point.x, point.y - handle.point.y);
     if (distance <= 15 && (!closest || distance < closest.distance)) closest = { handle, distance };
+  }
+  for (const handle of geometry.cornerHandles) {
+    const distance = Math.hypot(point.x - handle.point.x, point.y - handle.point.y);
+    if (distance <= 10 && (!closest || distance < closest.distance)) closest = { handle, distance };
   }
   for (const handle of geometry.rings) {
     const distance = distanceToPolyline(point, handle.points);
@@ -1446,11 +2127,6 @@ function eventPoint(event: ReactPointerEvent<HTMLDivElement>, host: HTMLDivEleme
 
 function normalizeAngle(angle: number): number {
   return Math.atan2(Math.sin(angle), Math.cos(angle));
-}
-
-function normalizeScreenPoint(point: ScreenPoint): ScreenPoint {
-  const length = Math.hypot(point.x, point.y);
-  return length > 1e-6 ? { x: point.x / length, y: point.y / length } : { x: 1, y: 0 };
 }
 
 function addScaledPoint(
@@ -1595,6 +2271,75 @@ function snapFromCandidate(candidate: KernelPickCandidate): SnapResult {
     stable: true,
     candidateId: `${candidate.address.renderProxyId}:${candidate.address.tileId ?? ''}:${String(candidate.address.primitiveId ?? '')}`,
   };
+}
+
+function remapViewingBoxCandidate(
+  candidate: KernelPickCandidate,
+  proxySources: ReadonlyMap<EntityId, EntityId>,
+): KernelPickCandidate;
+function remapViewingBoxCandidate(
+  candidate: KernelPickCandidate | null,
+  proxySources: ReadonlyMap<EntityId, EntityId>,
+): KernelPickCandidate | null;
+function remapViewingBoxCandidate(
+  candidate: KernelPickCandidate | null,
+  proxySources: ReadonlyMap<EntityId, EntityId>,
+): KernelPickCandidate | null {
+  if (!candidate) return null;
+  const source = proxySources.get(candidate.address.entityId as EntityId);
+  return source ? { ...candidate, address: { ...candidate.address, entityId: source } } : candidate;
+}
+
+async function bakedPointCloudAdmission(
+  kernel: KernelViewportHandle,
+  source: CanonicalRepresentationAdmission,
+  entityId: EntityId,
+  metadata: Uint8Array,
+  pointCount: number,
+): Promise<CanonicalRepresentationAdmission> {
+  const geometry: GeometryObject = {
+    kind: 'pointCloud',
+    dataset: {
+      formatId: 'potree@2',
+      metadata: {
+        objectHash: await sha256Hex(metadata),
+        mediaType: 'application/json',
+        byteLength: metadata.byteLength,
+      },
+      elementCount: pointCount,
+    },
+  };
+  const selected: Representation = {
+    ...source.selected,
+    geometryRef: kernel.session.geometryObjectContentHash(geometry),
+  };
+  const entityWithoutHash = {
+    ...source.entity,
+    id: entityId,
+    revision: 0,
+    name: `${source.entity.name} — locked viewing box`,
+    representations: source.entity.representations.map((representation) =>
+      representation.role === source.selected.role &&
+      representation.geometryRef === source.selected.geometryRef
+        ? selected
+        : representation,
+    ),
+  };
+  const hashInput: CanonicalEntity = { ...entityWithoutHash, versionHash: '00'.repeat(32) };
+  return {
+    entity: {
+      ...entityWithoutHash,
+      versionHash: kernel.session.canonicalEntityVersionHash(hashInput),
+    },
+    selected,
+    representationSlot: `viewing-box:${source.representationSlot}`,
+    expectedGeneration: null,
+    resolvedGeometry: geometry,
+  };
+}
+
+function throwIfViewingBoxBakeAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw new DOMException('Viewing-box bake cancelled.', 'AbortError');
 }
 
 function snapKind(kind: KernelPickCandidate['snapKind']): SnapKind {
@@ -1826,18 +2571,51 @@ function BuilderHud({
 }: {
   readonly kernelRef: { readonly current: KernelViewportHandle | null };
 }): JSX.Element {
-  const [snapshot, setSnapshot] = useState<KernelDiagnosticsSnapshot | null>(null);
+  const outputRef = useRef<HTMLOutputElement | null>(null);
   useEffect(() => {
     const update = (): void => {
-      if (kernelRef.current) setSnapshot(kernelRef.current.session.diagnosticsWindow());
+      const output = outputRef.current;
+      const kernel = kernelRef.current;
+      if (!output || !kernel) return;
+      const snapshot = kernel.session.hudDiagnosticsWindow();
+      const frame = snapshot.lastFrame;
+      const quality = kernel.session.qualitySnapshot();
+      const reasons =
+        frame?.deadlineReasonCodes.filter((reason) => reason !== 'within_target') ?? [];
+      const budget = reasons[0] ? (budgetLabels[reasons[0]] ?? reasons[0]) : frame ? 'within' : '—';
+      const p95 = snapshot.presentedFrameIntervalMs?.p95 ?? null;
+      const setText = (selector: string, value: string): void => {
+        const element = output.querySelector<HTMLElement>(selector);
+        if (element) element.textContent = value;
+      };
+      const idle = output.querySelector<HTMLElement>('[data-hud-idle]');
+      const metrics = output.querySelector<HTMLElement>('[data-hud-metrics]');
+      if (idle) idle.hidden = p95 !== null;
+      if (metrics) metrics.hidden = p95 === null;
+      setText('[data-hud-p95]', p95?.toFixed(1) ?? '—');
+      setText('[data-hud-p50]', snapshot.presentedFrameIntervalMs?.p50.toFixed(1) ?? '—');
+      setText('[data-hud-points]', frame ? (frame.primitives.points / 1_000_000).toFixed(1) : '—');
+      setText('[data-hud-quality]', `${quality.class}-${quality.tier}`);
+      setText('[data-hud-budget]', budget);
+      setText(
+        '[data-hud-backlog]',
+        frame ? String(frame.requestBacklog + frame.decodeBacklog + frame.uploadBacklog) : '—',
+      );
+      const p95Element = output.querySelector<HTMLElement>('[data-hud-p95]');
+      if (p95Element) {
+        p95Element.dataset.tone =
+          p95 !== null && p95 > 2 * quality.targets.motionFrameMs
+            ? 'error'
+            : p95 !== null && p95 > quality.targets.motionFrameMs
+              ? 'warning'
+              : 'normal';
+      }
     };
     update();
     const timer = window.setInterval(update, 250);
     return () => window.clearInterval(timer);
   }, [kernelRef]);
-  const frame = snapshot?.lastFrames.at(-1);
-  const reasons = frame?.deadlineReasonCodes.filter((reason) => reason !== 'within_target') ?? [];
-  const budgetLabels = {
+  const budgetLabels: Partial<Record<KernelDeadlineReasonCode, string>> = {
     gpu_deadline: 'gpu',
     cpu_deadline: 'cpu',
     recovery_headroom: 'recovery',
@@ -1851,16 +2629,16 @@ function BuilderHud({
     'decode:backlog': 'decode',
     'upload:backlog': 'upload',
   };
-  const budget = reasons[0] ? budgetLabels[reasons[0]] : frame ? 'within' : '—';
   return (
     <ViewportHud
-      p95={snapshot?.presentedFrameIntervalMs?.p95 ?? null}
-      p50={snapshot?.presentedFrameIntervalMs?.p50 ?? null}
-      points={frame?.primitives.points ?? null}
-      targetMs={kernelRef.current?.session.hardwarePolicy.frame.targetFrameMs ?? Infinity}
+      outputRef={outputRef}
+      p95={null}
+      p50={null}
+      points={null}
+      targetMs={Infinity}
       quality={null}
-      budget={budget}
-      backlog={frame ? frame.requestBacklog + frame.decodeBacklog + frame.uploadBacklog : null}
+      budget="—"
+      backlog={null}
     />
   );
 }

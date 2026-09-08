@@ -52,6 +52,29 @@ export function projectSnapshotFromJournalMirror(mirror: JournalMirror): Project
     };
   }
 
+  const viewingBoxIds = canonicalEntities
+    .filter((entity) => entity.typeId === 'hcad.viewing-box@1')
+    .map((entity) => entity.id as EntityId);
+  if (viewingBoxIds.length > 0) {
+    const groupId = 'builder:viewing-boxes' as EntityId;
+    const rootSnapshot = entities[root.id]!;
+    rootSnapshot.children = [
+      ...rootSnapshot.children.filter((id) => !viewingBoxIds.includes(id)),
+      groupId,
+    ];
+    for (const id of viewingBoxIds) entities[id]!.parent = groupId;
+    entities[groupId] = {
+      id: groupId,
+      kind: 'Group',
+      name: 'Viewing boxes',
+      parent: root.id as EntityId,
+      children: viewingBoxIds,
+      visibility: { visible: true, locked: false },
+      versionHash: rootSnapshot.versionHash,
+      bounds: null,
+    };
+  }
+
   return {
     formatVersion: 1,
     projectId: root.id,

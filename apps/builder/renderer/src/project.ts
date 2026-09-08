@@ -49,6 +49,20 @@ export interface BuilderSnapshotSummary {
   };
 }
 
+export interface BuilderViewBookmarkSummary {
+  readonly entityId: string;
+  readonly revision: number;
+  readonly name: string;
+  readonly state: unknown;
+}
+
+export interface BuilderViewingBoxSummary {
+  readonly entityId: string;
+  readonly revision: number;
+  readonly name: string;
+  readonly state: unknown;
+}
+
 /** Typed renderer adapter over the single Electron/sidecar RPC boundary. */
 export class BuilderSidecarTransport implements RpcTransport<AppFacadeMethods> {
   constructor(private readonly call: SidecarCall) {}
@@ -125,6 +139,76 @@ export class BuilderCanonicalProjectSession {
 
   listSnapshots(): Promise<readonly BuilderSnapshotSummary[]> {
     return this.call('snapshot.list', {});
+  }
+
+  async createViewBookmark(name: string, state: unknown): Promise<BuilderViewBookmarkSummary> {
+    const result = await this.call<{
+      readonly bookmark: BuilderViewBookmarkSummary;
+      readonly journalEntry: CanonicalJournalEntry;
+    }>('view.bookmark.create', {
+      commandId: `builder/view-bookmark/${crypto.randomUUID()}`,
+      entityId: `view-bookmark-${crypto.randomUUID()}`,
+      name,
+      state,
+    });
+    await this.acceptCommittedEntry(result.journalEntry);
+    return result.bookmark;
+  }
+
+  listViewBookmarks(): Promise<readonly BuilderViewBookmarkSummary[]> {
+    return this.call('view.bookmark.list', {});
+  }
+
+  async restoreViewBookmark(
+    entityId: string,
+    expectedRevision: number,
+  ): Promise<BuilderViewBookmarkSummary> {
+    const result = await this.call<{
+      readonly bookmark: BuilderViewBookmarkSummary;
+      readonly journalEntry: CanonicalJournalEntry;
+    }>('view.bookmark.restore', {
+      commandId: `builder/view-bookmark-restore/${crypto.randomUUID()}`,
+      entityId,
+      expectedRevision,
+    });
+    await this.acceptCommittedEntry(result.journalEntry);
+    return result.bookmark;
+  }
+
+  async putViewingBox(
+    entityId: string,
+    expectedRevision: number | null,
+    name: string,
+    state: unknown,
+  ): Promise<BuilderViewingBoxSummary> {
+    const result = await this.call<{
+      readonly viewingBox: BuilderViewingBoxSummary;
+      readonly journalEntry: CanonicalJournalEntry;
+    }>('canonical.viewing_box.put', {
+      commandId: `builder/viewing-box/${crypto.randomUUID()}`,
+      entityId,
+      name,
+      expectedRevision,
+      state,
+    });
+    await this.acceptCommittedEntry(result.journalEntry);
+    return result.viewingBox;
+  }
+
+  listViewingBoxes(): Promise<readonly BuilderViewingBoxSummary[]> {
+    return this.call('canonical.viewing_box.list', {});
+  }
+
+  async deleteViewingBox(entityId: string, expectedRevision: number): Promise<void> {
+    const result = await this.call<{ readonly journalEntry: CanonicalJournalEntry }>(
+      'canonical.viewing_box.delete',
+      {
+        commandId: `builder/viewing-box-delete/${crypto.randomUUID()}`,
+        entityId,
+        expectedRevision,
+      },
+    );
+    await this.acceptCommittedEntry(result.journalEntry);
   }
 
   async close(): Promise<boolean> {

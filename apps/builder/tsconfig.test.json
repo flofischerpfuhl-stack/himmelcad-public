@@ -13,6 +13,7 @@
     "renderer/src/importDialogPolicy.ts",
     "renderer/src/projectProjection.ts",
     "renderer/src/sidecarProgress.ts",
+    "renderer/src/viewingBoxBake.ts",
     "test"
   ]
 }

@@ -401,6 +401,33 @@ measured present source otherwise. See
 `docs/builder-program/evidence/V-01-measure-2026-09-04.md` for the validation
 record and the precise remaining gate item.
 
+### V-01b executable baseline — 2026-09-06
+
+V-01b repaired the Builder startup and renderer-mount failures, made harness
+startup/attachment/cleanup bounded and diagnosable, and completed one numeric
+run against the prepared 103,713,735-point fixture. The actual adapter was the
+hardware-backed Intel HD Graphics 630 through WebGL2 (Class I), not the
+installed Quadro M2200; software-adapter rejection remained active.
+
+| Scenario | Presented p50 | p95 | p99 | Exact points p95 | Reason-code summary |
+| --- | ---: | ---: | ---: | ---: | --- |
+| orbit | 17.50 ms | 179.20 ms | 311.90 ms | 206,008 | recovery 130; within 26; present 15; CPU 5 |
+| pan | 17.50 ms | 227.10 ms | 394.90 ms | 206,008 | recovery 129; within 22; present 20; CPU 5 |
+| zoom | 19.40 ms | 274.10 ms | 476.10 ms | 206,008 | recovery 110; within 32; present 23; CPU 11; lane-point/lane-6 26 each |
+| fly-through | 21.40 ms | 375.60 ms | 582.30 ms | 206,008 | recovery 88; within 54; present 21; CPU 13; lane-point/lane-6 126 each |
+| 3D→2D→3D | 25.60 ms | 72.90 ms | 72.90 ms | 206,008 | within 3; recovery 1; present 1 |
+
+The runtime settled at the coarse tier, selected at most 206,008 points and 21
+draws against an effective 2,000,000-point frontier, and recorded no frontier
+overruns or decode backlog. This is valid harness evidence but not a quiet
+performance qualification: at 04:30:40 CEST `uptime` reported load averages
+`11.84, 15.60, 15.67`, with a separate PhotoLab DeDoDe diagnostic near 190%
+CPU/20.3% memory and another headless Chrome workload active. The present source
+is `raf-render-complete`, not OS display timing. Full root-cause, adapter,
+reason-code, screenshot, and validation evidence is in
+`docs/builder-program/evidence/V-01b-harness-2026-09-06.md`; machine-readable
+data is in `.build/perf/viewer-baseline-2026-09-06.json`.
+
 ## 6. Implications for the program
 
 - V-01 begins with measurement authority and a buildable browser-gpu gate; no

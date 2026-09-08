@@ -2,8 +2,8 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, open, readFile, stat, writeFile } from 'node:fs/promises';
-import { availableParallelism, cpus } from 'node:os';
+import { mkdir, mkdtemp, open, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { availableParallelism, cpus, tmpdir } from 'node:os';
 import { basename, extname, resolve } from 'node:path';
 import process from 'node:process';
 
@@ -58,12 +58,12 @@ try {
         `Builder CDP endpoint ${cdpUrl} is not available; start \`pnpm --filter @himmelcad/builder dev\` or omit --no-launch`,
       );
     }
-    developmentProcess = launchBuilder();
+    developmentProcess = await launchBuilder();
     await waitForCdp(cdpUrl, developmentProcess);
   }
 
   browser = await chromium.connectOverCDP(cdpUrl);
-  const page = await waitForBuilderPage(browser);
+  const page = await waitForBuilderPage(browser, developmentProcess);
   await page.setViewportSize({ width: args.width, height: args.height }).catch(() => {});
   await page.waitForFunction(() => globalThis.__hcadBuilderKernel?.session !== undefined, null, {
     timeout: 120_000,
@@ -95,9 +95,12 @@ try {
   process.exitCode = 1;
 } finally {
   await writeOutputs(report, outputStem);
-  if (browser !== null) await browser.close().catch(() => {});
-  if (developmentProcess !== null && developmentProcess.exitCode === null) {
-    developmentProcess.kill('SIGTERM');
+  if (developmentProcess !== null) await stopBuilder(developmentProcess);
+  if (browser !== null) {
+    await Promise.race([
+      browser.close().catch(() => {}),
+      new Promise((resolvePromise) => setTimeout(resolvePromise, 5_000)),
+    ]);
   }
 }
 
@@ -261,13 +264,21 @@ async function lasIdentity(path) {
   };
 }
 
-function launchBuilder() {
+async function launchBuilder() {
+  const userDataDirectory = await mkdtemp(resolve(tmpdir(), 'hcad-viewer-baseline-'));
   const child = spawn('pnpm', ['--filter', '@himmelcad/builder', 'dev'], {
     cwd: REPO,
-    env: { ...process.env, HIMMELCAD_REMOTE_DEBUGGING_PORT: '9223' },
-    detached: false,
+    env: {
+      ...process.env,
+      HIMMELCAD_REMOTE_DEBUGGING_PORT: '9223',
+      HIMMELCAD_ELECTRON_USER_DATA_DIR: userDataDirectory,
+    },
+    // Give the dev server, Electron launcher, and Electron children one process
+    // group so a failed attachment cannot strand a headless CDP endpoint.
+    detached: process.platform !== 'win32',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  child.userDataDirectory = userDataDirectory;
   child.outputTail = '';
   const remember = (chunk) => {
     child.outputTail = `${child.outputTail}${String(chunk)}`.slice(-12_000);
@@ -287,22 +298,30 @@ async function cdpAvailable(url) {
 }
 
 async function waitForCdp(url, child) {
-  const deadline = Date.now() + 240_000;
+  // Dev startup includes the serialized Rust/WASM staging build. On a shared
+  // workstation it can legitimately wait behind another target/builder Cargo
+  // owner for several minutes; renderer attachment has its own 120 s bound.
+  const deadline = Date.now() + 900_000;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) {
+    if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error(
-        `Builder exited before CDP became ready (${child.exitCode}): ${child.outputTail}`,
+        `Builder exited before CDP became ready (code ${child.exitCode}, signal ${child.signalCode}): ${child.outputTail}`,
       );
     }
     if (await cdpAvailable(url)) return;
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
   }
-  throw new Error(`Builder did not expose ${url} within 240 seconds: ${child.outputTail}`);
+  throw new Error(`Builder did not expose ${url} within 900 seconds: ${child.outputTail}`);
 }
 
-async function waitForBuilderPage(connectedBrowser) {
+async function waitForBuilderPage(connectedBrowser, child) {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
+    if (child !== null && (child.exitCode !== null || child.signalCode !== null)) {
+      throw new Error(
+        `Builder exited before its renderer page was attached (code ${child.exitCode}, signal ${child.signalCode}): ${child.outputTail}`,
+      );
+    }
     const page = connectedBrowser
       .contexts()
       .flatMap((context) => context.pages())
@@ -310,7 +329,46 @@ async function waitForBuilderPage(connectedBrowser) {
     if (page) return page;
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
   }
-  throw new Error('Builder renderer page was not attached to the CDP browser within 120 seconds');
+  const urls = connectedBrowser
+    .contexts()
+    .flatMap((context) => context.pages())
+    .map((candidate) => candidate.url());
+  const output = child?.outputTail ? ` Builder output: ${child.outputTail}` : '';
+  throw new Error(
+    `Builder renderer page was not attached to the CDP browser within 120 seconds (pages: ${JSON.stringify(urls)}).${output}`,
+  );
+}
+
+async function stopBuilder(child) {
+  try {
+    if (process.platform === 'win32') {
+      if (child.exitCode === null) child.kill('SIGTERM');
+    } else if (child.pid !== undefined) {
+      process.kill(-child.pid, 'SIGTERM');
+    }
+  } catch (error) {
+    if (error?.code !== 'ESRCH') throw error;
+  }
+
+  if (child.exitCode === null) {
+    await Promise.race([
+      new Promise((resolvePromise) => child.once('exit', resolvePromise)),
+      new Promise((resolvePromise) => setTimeout(resolvePromise, 5_000)),
+    ]);
+  }
+
+  if (process.platform !== 'win32' && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, 0);
+      process.kill(-child.pid, 'SIGKILL');
+    } catch (error) {
+      if (error?.code !== 'ESRCH') throw error;
+    }
+  }
+
+  if (child.userDataDirectory) {
+    await rm(child.userDataDirectory, { recursive: true, force: true });
+  }
 }
 
 async function loadDataset(page, metadataUrl, prepared) {

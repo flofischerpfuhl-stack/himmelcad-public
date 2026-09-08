@@ -29,13 +29,18 @@
     background var(--hc-motion-fast);
 }
 
-.box[data-checked='true'],
-.box[data-indeterminate='true'] {
+.box[data-checked='true'] {
   border-color: var(--hc-accent-base);
   background: var(--hc-accent-base);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, white 18%, transparent),
     0 0 0 1px color-mix(in srgb, var(--hc-accent-base) 14%, transparent);
+}
+
+.box[data-indeterminate='true'] {
+  border-color: var(--hc-border-strong);
+  background: var(--hc-press-bg);
+  box-shadow: none;
 }
 
 .box svg {
@@ -75,6 +80,10 @@
 
 .box[data-indeterminate='true'] .mixed {
   display: block;
+}
+
+.box[data-indeterminate='true'] svg {
+  stroke: var(--hc-fg-muted);
 }
 
 .root:hover:not(:has(input:disabled)) .box {

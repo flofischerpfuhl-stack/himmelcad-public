@@ -107,6 +107,15 @@ export interface HimmelCADApi {
     materialize: (sessionId: string) => Promise<StagedResidencyMaterialization>;
     revoke: (sessionId: string) => Promise<boolean>;
   };
+  readonly viewingBoxBake: {
+    publish: (input: {
+      readonly cacheKey: string;
+      readonly metadata: Uint8Array;
+      readonly hierarchy: Uint8Array;
+      readonly octree: Uint8Array;
+    }) => Promise<{ readonly datasetId: string; readonly metadataUrl: string }>;
+    revoke: (datasetId: string) => Promise<boolean>;
+  };
   readonly dev: {
     initialPointCloudPaths: () => Promise<string[]>;
     initialPreparedPointCloud: () => Promise<{
@@ -285,6 +294,10 @@ const api: HimmelCADApi = {
   stagedRegistration: {
     materialize: (sessionId) => ipcRenderer.invoke('registration-staged:materialize', sessionId),
     revoke: (sessionId) => ipcRenderer.invoke('registration-staged:revoke', sessionId),
+  },
+  viewingBoxBake: {
+    publish: (input) => ipcRenderer.invoke('viewing-box-bake:publish', input),
+    revoke: (datasetId) => ipcRenderer.invoke('viewing-box-bake:revoke', datasetId),
   },
   dev: {
     initialPointCloudPaths: () => ipcRenderer.invoke('dev:initial-point-cloud-paths'),

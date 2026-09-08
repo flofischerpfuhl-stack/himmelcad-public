@@ -25,6 +25,8 @@ export { ExpandChevron } from './ExpandChevron.js';
 export type { ExpandChevronProps } from './ExpandChevron.js';
 export { Checkbox } from './Checkbox.js';
 export type { CheckboxProps } from './Checkbox.js';
+export { InteractionStateCheckbox } from './InteractionStateCheckbox.js';
+export type { InteractionStateCheckboxProps } from './InteractionStateCheckbox.js';
 export { PointCloudDisplayProperties } from './PointCloudDisplayProperties.js';
 export type { PointCloudDisplayPropertiesProps } from './PointCloudDisplayProperties.js';
 export { Radio } from './Radio.js';
@@ -103,3 +105,11 @@ export {
 } from './escapeLadder.js';
 export type { EscapeRungHandler, EscapeRungKind } from './escapeLadder.js';
 export { ViewportHud, type ViewportHudProps } from './ViewportHud.js';
+export {
+  ConstructionBar,
+  ViewportBottomBar,
+  ViewportInteractionChrome,
+} from './InteractionBars.js';
+export type { ConstructionBarProps, ViewportBottomBarProps } from './InteractionBars.js';
+export { SelectionVisuals } from './SelectionVisuals.js';
+export type { SelectionVisualsProps } from './SelectionVisuals.js';

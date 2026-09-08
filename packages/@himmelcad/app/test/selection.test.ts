@@ -82,6 +82,74 @@ void test('SE-D18 reuses the canonical stable curve-subentity locator as set ide
   assert.equal(selection.getSnapshot().members.length, 0);
 });
 
+void test('G-B2-SEGMENTS segment pick resolves a stable locator, remaps after edit, and prunes deletion with a typed reason', async () => {
+  const selection = await store(['curve']);
+  const firstHash = '1'.repeat(64);
+  const secondHash = '2'.repeat(64);
+  selection.selectCurveSegment(
+    {
+      parentId: 'curve',
+      parentRevision: 7,
+      entries: [
+        {
+          primitiveId: 3,
+          topologyKind: 'polylineSegment',
+          stableMemberId: 'edge-a',
+          directedParameterInterval: [0, 1],
+          semanticHash: firstHash,
+        },
+      ],
+    },
+    3,
+  );
+  const selected = selection.getSnapshot().members[0];
+  assert.equal(selected?.kind, 'curveSubentity');
+  if (selected?.kind !== 'curveSubentity') return;
+  assert.equal(selected.ref.stableMemberId, 'edge-a');
+  assert.equal(selected.ref.parentRevision, 7);
+
+  assert.deepEqual(
+    selection.reconcileCurveSubentities({
+      parentId: 'curve',
+      parentRevision: 8,
+      entries: [
+        {
+          primitiveId: 4,
+          topologyKind: 'polylineSegment',
+          stableMemberId: 'edge-a',
+          directedParameterInterval: [0, 1],
+          semanticHash: secondHash,
+          previousSemanticHashes: [firstHash],
+        },
+      ],
+    }),
+    [
+      {
+        kind: 'remapped',
+        parentId: 'curve',
+        stableMemberId: 'edge-a',
+        fromRevision: 7,
+        toRevision: 8,
+      },
+    ],
+  );
+  const remapped = selection.getSnapshot().members[0];
+  assert.equal(remapped?.kind === 'curveSubentity' ? remapped.ref.parentRevision : -1, 8);
+
+  assert.deepEqual(
+    selection.reconcileCurveSubentities({ parentId: 'curve', parentRevision: 9, entries: [] }),
+    [
+      {
+        kind: 'pruned',
+        parentId: 'curve',
+        stableMemberId: 'edge-a',
+        reason: 'Segment no longer exists',
+      },
+    ],
+  );
+  assert.equal(selection.getSnapshot().members.length, 0);
+});
+
 void test('G-SE-CORE/G-SE-P4 hide survives, journal deletion prunes, and undo never resurrects', async () => {
   const selection = await store();
   selection.replace(['a', 'b']);
@@ -142,6 +210,25 @@ void test('UIP-D16 candidate copy, cycling, and every invalidation event', async
     selection.invalidateCandidates(reason);
     assert.equal(selection.getSnapshot().candidates, null, reason);
   }
+});
+
+void test('G-B2-SEGMENTS granularity and selectable kinds live in selection history and persistence', async () => {
+  const persistence = new MemorySelectionPersistence();
+  const selection = new SelectionStore({ persistence });
+  await selection.openProject('modes', live('a'), kind);
+  selection.setGranularity('segments');
+  selection.setSelectableKind('lines', false);
+  assert.equal(selection.getSnapshot().granularity, 'segments');
+  assert.equal(selection.pointerSelect('a', { modality: 'mouse' }), false);
+  selection.undo();
+  assert.equal(selection.getSnapshot().selectableKinds.lines, true);
+  assert.equal(selection.getSnapshot().granularity, 'segments');
+  await selection.closeProject();
+
+  const restored = new SelectionStore({ persistence });
+  await restored.openProject('modes', live('a'), kind);
+  assert.equal(restored.getSnapshot().granularity, 'segments');
+  assert.equal(restored.getSnapshot().selectableKinds.lines, true);
 });
 
 void test('UIP-D17 sharedPropertySet intersects fields and marks mixed values', () => {
@@ -253,6 +340,18 @@ void test('automation parity: every canonical select row round-trips through one
   call('select.set', { entityIds: ['a'] });
   call('select.toggle', { entityId: 'b' });
   assert.deepEqual((call('select.get').payload as { entityIds: string[] }).entityIds, ['a', 'b']);
+  call('selection.granularity.set', { value: 'segments' });
+  assert.equal(
+    (call('selection.granularity.get').payload as { granularity: string }).granularity,
+    'segments',
+  );
+  call('selection.kind_filter.set', { kind: 'lines', selectable: false });
+  assert.equal(
+    (call('selection.kind_filter.get').payload as {
+      selectableKinds: Record<string, boolean>;
+    }).selectableKinds.lines,
+    false,
+  );
   selection.setCandidates([
     { entityId: 'a', name: 'A', kind: 'Polyline3D' },
     { entityId: 'b', name: 'B', kind: 'Polyline3D' },

@@ -1,5 +1,7 @@
 import type { EntityId, ObjectHash, ProjectSnapshot } from '@himmelcad/data';
+import { DEFAULT_VIEWPORT_BOTTOM_BAR_STATE } from '@himmelcad/app';
 import {
+  ConstructionBar,
   ViewportHud,
   Button,
   Checkbox,
@@ -9,6 +11,7 @@ import {
   EdgeStrip,
   EmptyState,
   EntityTree,
+  InteractionStateCheckbox,
   EntityCommandMenu,
   FunctionPanel,
   IslandTabs,
@@ -32,6 +35,7 @@ import {
   Select,
   SelectionCandidateIndicator,
   SelectionPropertiesSummary,
+  SelectionVisuals,
   Slider,
   Splitter,
   StatusBar,
@@ -39,6 +43,7 @@ import {
   Toast,
   ToastRegion,
   Tooltip,
+  ViewportBottomBar,
 } from '../src/index.js';
 import { SpinnerVisual } from '../src/Spinner.js';
 import { accessibilityFixtures } from '../test/a11yFixtures.js';
@@ -58,7 +63,10 @@ type State =
   | 'failed'
   | 'completed'
   | 'unknown-units'
-  | 'island';
+  | 'island'
+  | 'idle'
+  | 'baking'
+  | 'locked';
 
 interface ComponentSpec {
   name: string;
@@ -296,6 +304,142 @@ const specs: readonly ComponentSpec[] = [
             Offset
             <NumberInput aria-label="Offset" defaultValue={12.5} unit="m" />
           </label>
+        </div>
+      </div>
+    ),
+  },
+  {
+    name: 'Bottom bar',
+    states: ['default'],
+    render: () => (
+      <div className="interactionBarFixture">
+        <ViewportBottomBar
+          state={{
+            ...DEFAULT_VIEWPORT_BOTTOM_BAR_STATE,
+            granularity: 'segments',
+            selectableKinds: {
+              ...DEFAULT_VIEWPORT_BOTTOM_BAR_STATE.selectableKinds,
+              points: false,
+            },
+          }}
+          onSupportGeometryChange={noop}
+          onExplodePolylinesChange={noop}
+          onViewModeChange={noop}
+          onSelectableKindChange={noop}
+          onLabelsChange={noop}
+        />
+      </div>
+    ),
+  },
+  {
+    name: 'Construction bar',
+    states: [
+      row('cartesian', 'X / Y / Z', 'default', 'cartesian'),
+      row('polar', 'Dir / Dist / Δz', 'focus-visible', 'polar'),
+    ],
+    render: (_state, galleryRow) => (
+      <div className="interactionBarFixture">
+        <ConstructionBar
+          prompt={
+            galleryRow?.value === 'polar'
+              ? 'Line — constrain endpoint'
+              : 'Point — pick or type position'
+          }
+          fields={
+            galleryRow?.value === 'polar'
+              ? [
+                  { id: 'direction', label: 'Dir °', unit: '°', value: 32.5 },
+                  { id: 'distance', label: 'Dist m', unit: 'm', value: 14.25 },
+                  { id: 'deltaZ', label: 'Δz m', unit: 'm', value: 1.2 },
+                ]
+              : [
+                  { id: 'x', label: 'X', unit: 'm', value: 691234.125 },
+                  { id: 'y', label: 'Y', unit: 'm', value: 5338123.5 },
+                  { id: 'z', label: 'Z', unit: 'm', value: 482.75 },
+                ]
+          }
+          activeField={galleryRow?.value === 'polar' ? 'distance' : 'x'}
+          candidateIndex={0}
+          candidateCount={3}
+        />
+      </div>
+    ),
+  },
+  {
+    name: 'Tree states',
+    states: ['default'],
+    render: () => (
+      <div className="treeStatesFixture">
+        <InteractionStateCheckbox label="Hidden" state="hidden" onStateChange={noop} />
+        <InteractionStateCheckbox label="Reference" state="reference" onStateChange={noop} />
+        <InteractionStateCheckbox label="Editable" state="editable" onStateChange={noop} />
+        <InteractionStateCheckbox label="Inert" state="inert" onStateChange={noop} />
+        <InteractionStateCheckbox label="Mixed" state="mixed" onStateChange={noop} />
+        <span>Hidden</span>
+        <span>Reference</span>
+        <span>Editable</span>
+        <span>Inert</span>
+        <span>Mixed</span>
+      </div>
+    ),
+  },
+  {
+    name: 'Selection visuals',
+    states: ['default'],
+    render: () => <SelectionVisuals supportVisible directionArrowSize={10} />,
+  },
+  {
+    name: 'Viewing box panel',
+    states: ['idle', 'baking', 'locked'],
+    render: (state) => (
+      <div className="viewingBoxFixture">
+        <div className="viewingBoxFixtureViewport" data-state={state}>
+          <span className="viewingBoxFixtureFace" />
+          {state !== 'locked'
+            ? [
+                ['corner', 14, 23],
+                ['corner', 38, 17],
+                ['corner', 79, 17],
+                ['corner', 86, 23],
+                ['corner', 14, 77],
+                ['corner', 21, 83],
+                ['corner', 62, 83],
+                ['corner', 86, 77],
+                ['face', 50, 20],
+                ['face', 50, 80],
+                ['face', 14, 50],
+                ['face', 86, 50],
+                ['face', 26, 50],
+                ['face', 74, 50],
+              ].map(([kind, left, top], index) => (
+                <span
+                  key={`${kind}-${left}-${top}`}
+                  className="viewingBoxFixtureGrip"
+                  data-kind={kind}
+                  data-active={index === 11 || undefined}
+                  style={{ left: `${left}%`, top: `${top}%` }}
+                />
+              ))
+            : null}
+          {state === 'locked' ? <span className="viewingBoxFixtureLock">🔒 Locked</span> : null}
+        </div>
+        <div className="viewingBoxFixturePanel">
+          <strong>Viewing Box 1</strong>
+          <span>Keep inside · 6 faces · 8 corners</span>
+          {state === 'baking' ? (
+            <>
+              <ProgressBar value={0.58} ariaLabel="Viewing box bake progress" />
+              <Button size="small" variant="secondary">
+                Cancel bake
+              </Button>
+            </>
+          ) : state === 'locked' ? (
+            <div className="viewingBoxFixtureBanner">🔒 Locked · prepared data</div>
+          ) : (
+            <Button size="small" variant="primary">
+              Lock and bake
+            </Button>
+          )}
         </div>
       </div>
     ),
@@ -569,6 +713,7 @@ const specs: readonly ComponentSpec[] = [
   },
   {
     name: 'View presets',
+    states: ['default'],
     render: () => (
       <Ribbon
         tabs={[

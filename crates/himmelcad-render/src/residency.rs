@@ -7,8 +7,8 @@ use std::fmt::{Display, Formatter};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AdmissionCandidate, ContentKind, ResourceBudget, ResourceCost, SelectedTile, TileKey,
-    TileResidency, GPU_POINT_VERTEX_STRIDE_BYTES,
+    AdmissionCandidate, ContentKind, FrameLane, ResourceBudget, ResourceCost, SelectedTile,
+    TileKey, TileResidency, GPU_POINT_VERTEX_STRIDE_BYTES,
 };
 
 /// Fine-grained asynchronous stage for one tile's complete visual content set.
@@ -681,12 +681,38 @@ pub fn admission_candidate_with_residency(
     };
     Some(AdmissionCandidate {
         key: tile.key.clone(),
+        lane: streaming_lane(tile),
         benefit: tile.visibility_priority.max(0.0),
         cost,
         decode_ms,
         upload_bytes,
         starts_request,
     })
+}
+
+pub(crate) fn streaming_lane(tile: &SelectedTile) -> FrameLane {
+    if !tile.descriptor.contents.is_empty()
+        && tile
+            .descriptor
+            .contents
+            .iter()
+            .all(|content| content.kind == ContentKind::CadProxy)
+    {
+        return FrameLane::Lane3Canonical;
+    }
+    if tile.descriptor.parent.is_some() {
+        return FrameLane::Lane6Refinement;
+    }
+    if tile.descriptor.contents.iter().any(|content| {
+        matches!(
+            content.kind,
+            ContentKind::Gltf | ContentKind::ThreeDTilesContainer | ContentKind::Raster
+        )
+    }) {
+        FrameLane::Lane4MeshRasterFallback
+    } else {
+        FrameLane::Lane5CloudSplatFallback
+    }
 }
 
 /// Estimates resource dimensions conservatively from hierarchy metadata.

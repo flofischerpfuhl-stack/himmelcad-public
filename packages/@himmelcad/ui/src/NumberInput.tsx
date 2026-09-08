@@ -64,12 +64,13 @@ export function NumberInput({
       const input = inputRef.current;
       if (!input || document.activeElement !== input) return false;
       const restored = formatNumber(committed, precision);
+      if (!invalid && draft === restored) return false;
       revertEscapeField(input, restored);
       setDraft(restored);
       setInvalid(false);
       return true;
     });
-  }, [committed, focused, precision]);
+  }, [committed, draft, focused, invalid, precision]);
 
   const commit = (): boolean => {
     const parsed = parseDraft(draft, min, max);

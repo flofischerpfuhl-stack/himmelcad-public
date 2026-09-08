@@ -6,6 +6,8 @@ const MINIMUM_VIEW_SPAN = 1e-5;
 export type KernelViewingBoxMode = 'resize' | 'move' | 'rotate';
 export type KernelViewingBoxAxis = 'x' | 'y' | 'z';
 export type KernelViewingBoxFace = -1 | 1;
+export type KernelViewingBoxOperation = 'keepInside' | 'removeInside';
+export type KernelViewingBoxLockMode = 'unlocked' | 'baked' | 'editFreeze';
 
 /**
  * View-local, non-canonical clipping tool state. Rotation is expressed as a
@@ -19,6 +21,19 @@ export interface KernelViewingBoxState {
   readonly rotation: readonly [number, number, number, number];
   readonly mode: KernelViewingBoxMode;
   readonly enabled: boolean;
+  /** Canonical clip operation. Missing remains the v0 keep-inside default. */
+  readonly operation?: KernelViewingBoxOperation;
+  /** Canonical lock outcome. Missing remains the v0 unlocked default. */
+  readonly lockMode?: KernelViewingBoxLockMode;
+  /** Cache identity of an atomically published prepared subset. */
+  readonly bakeKey?: string | null;
+  /** Durable prepared frontier inputs used to restore a baked lock after restart. */
+  readonly bakedSources?: readonly {
+    readonly sourceEntityId: string;
+    readonly datasetId: string;
+    readonly metadataUrl: string;
+    readonly pointCount: number;
+  }[];
 }
 
 export interface KernelViewingBoxViewportSeed {
@@ -62,6 +77,10 @@ export function viewingBoxFromViewport(seed: KernelViewingBoxViewportSeed): Kern
     rotation: [0, 0, 0, 1],
     mode: 'resize',
     enabled: true,
+    operation: 'keepInside',
+    lockMode: 'unlocked',
+    bakeKey: null,
+    bakedSources: [],
   };
 }
 
@@ -135,6 +154,21 @@ export function resizeViewingBoxFace(
   };
 }
 
+/** Resizes three incident faces while their opposite corner remains anchored. */
+export function resizeViewingBoxCorner(
+  state: KernelViewingBoxState,
+  faces: readonly [KernelViewingBoxFace, KernelViewingBoxFace, KernelViewingBoxFace],
+  signedDeltas: KernelWorldPoint,
+): KernelViewingBoxState {
+  assertViewingBox(state);
+  assertPoint(signedDeltas, 'viewing box corner resize delta');
+  let next = state;
+  for (const [index, axis] of (['x', 'y', 'z'] as const).entries()) {
+    next = resizeViewingBoxFace(next, axis, faces[index]!, signedDeltas[axis], true);
+  }
+  return next;
+}
+
 export function rotateViewingBox(
   state: KernelViewingBoxState,
   axis: KernelViewingBoxAxis,
@@ -175,7 +209,7 @@ export function viewingBoxClipVolume(
   return {
     id: state.id,
     planes,
-    operation: 'keepInside',
+    operation: state.operation ?? 'keepInside',
     previewCap,
     enabled: state.enabled,
   };
@@ -213,6 +247,28 @@ export function assertViewingBox(state: KernelViewingBoxState): void {
   normalizeQuaternion(state.rotation);
   if (!['resize', 'move', 'rotate'].includes(state.mode)) {
     throw new RangeError('viewing box mode is invalid');
+  }
+  if (state.operation !== undefined && !['keepInside', 'removeInside'].includes(state.operation)) {
+    throw new RangeError('viewing box operation is invalid');
+  }
+  if (
+    state.lockMode !== undefined &&
+    !['unlocked', 'baked', 'editFreeze'].includes(state.lockMode)
+  ) {
+    throw new RangeError('viewing box lock mode is invalid');
+  }
+  if (
+    state.bakedSources !== undefined &&
+    state.bakedSources.some(
+      (source) =>
+        !source.sourceEntityId.trim() ||
+        !source.datasetId.trim() ||
+        !source.metadataUrl.trim() ||
+        !Number.isSafeInteger(source.pointCount) ||
+        source.pointCount < 0,
+    )
+  ) {
+    throw new RangeError('viewing box baked sources are invalid');
   }
 }
 

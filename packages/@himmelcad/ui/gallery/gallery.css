@@ -195,6 +195,32 @@ textarea {
   font-size: 11px;
 }
 
+.interactionBarFixture {
+  width: 100%;
+  min-width: 500px;
+  overflow: visible;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-md);
+  background: var(--hc-bg-void);
+}
+
+.treeStatesFixture {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(48px, auto));
+  align-items: center;
+  justify-items: center;
+  gap: 7px 10px;
+  padding: 12px;
+  color: var(--hc-fg-muted);
+  font-size: 10px;
+}
+
+.gallerySection[data-gallery-section='bottom-bar'],
+.gallerySection[data-gallery-section='construction-bar'],
+.gallerySection[data-gallery-section='selection-visuals'] {
+  grid-column: 1 / -1;
+}
+
 .importSurfacesFixture {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(260px, 0.85fr);
@@ -276,6 +302,85 @@ textarea {
 
 /* CSS-module selectors cannot be named from the gallery. These scoped hooks
    make deterministic hover/focus rows while preserving the product tokens. */
+.viewingBoxFixture {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.4fr) minmax(170px, 1fr);
+  gap: 10px;
+  width: min(100%, 520px);
+}
+
+.viewingBoxFixtureViewport {
+  position: relative;
+  min-height: 132px;
+  overflow: hidden;
+  background: var(--hc-bg-canvas);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+}
+
+.viewingBoxFixtureFace {
+  position: absolute;
+  inset: 30px 38px;
+  border: 1px solid var(--hc-geometry-support);
+  transform: skewY(-8deg);
+}
+
+.viewingBoxFixtureViewport[data-state='baking'] .viewingBoxFixtureFace,
+.viewingBoxFixtureViewport[data-state='locked'] .viewingBoxFixtureFace {
+  border-color: var(--hc-accent-base);
+}
+
+.viewingBoxFixtureGrip {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: var(--hc-geometry-support);
+  border: 1px solid var(--hc-bg-canvas);
+  transform: translate(-50%, -50%);
+}
+
+.viewingBoxFixtureGrip[data-active='true'] {
+  background: var(--hc-warning);
+}
+
+.viewingBoxFixtureLock {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  min-height: 24px;
+  padding: 4px 7px;
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-chip);
+  border: 1px solid var(--hc-selection-border);
+  border-radius: var(--hc-radius-chip);
+  font-size: 11px;
+}
+
+.viewingBoxFixturePanel {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 10px;
+  color: var(--hc-fg-muted);
+  background: var(--hc-bg-island-lo);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  font-size: 11px;
+}
+
+.viewingBoxFixturePanel strong {
+  color: var(--hc-fg-strong);
+}
+
+.viewingBoxFixtureBanner {
+  min-height: 24px;
+  padding: 5px 7px;
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-island-hi);
+  border: 1px solid var(--hc-selection-border);
+  border-radius: var(--hc-radius-sm);
+}
+
 .data-force-hover [data-gallery-active],
 .gallerySection:not(
     :is(

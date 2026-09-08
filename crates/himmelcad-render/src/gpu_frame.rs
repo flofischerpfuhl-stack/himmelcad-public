@@ -1828,6 +1828,15 @@ impl GpuFramePrimitiveCounts {
             draw_calls: self.draw_calls.saturating_add(other.draw_calls),
         }
     }
+
+    /// Protected vector/text primitives that can be identified without
+    /// guessing whether a point/triangle batch is canonical or streamed.
+    /// Selection, grips and pick identifiers remain protected draw work even
+    /// though their exact counts are tracked by their owning overlay buffers.
+    #[must_use]
+    pub fn identifiable_protected_primitives(self) -> u64 {
+        self.lines.saturating_add(self.text_quads)
+    }
 }
 
 /// Resident vertex batch submitted through the shared color and pick passes.

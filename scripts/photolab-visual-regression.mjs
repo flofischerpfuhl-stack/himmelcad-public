@@ -555,22 +555,24 @@ async function auditViewport(browserInstance, viewport) {
   await capture('context-menu-product');
   const exportItem = page.getByRole('menuitem', { name: 'Export…', exact: true });
   if ((await exportItem.count()) === 0) {
+    // F15b: the shared command table decides what the menu offers; record
+    // what it showed instead of the audited export flow and move on.
     const offered = await page
       .getByRole('menu', { name: 'Entity commands' })
       .getByRole('menuitem')
       .allInnerTexts();
     issues.push(`product context menu offers no Export… (has: ${offered.join(' | ')})`);
     await page.keyboard.press('Escape');
-    return;
+  } else {
+    await exportItem.click();
+    const exportDialog = page.getByRole('dialog', { name: 'Replace “Sparse Point Cloud”?' });
+    await exportDialog.waitFor();
+    await page.keyboard.press('Tab');
+    if (!(await exportDialog.evaluate((dialog) => dialog.contains(document.activeElement))))
+      issues.push('product export confirmation allowed focus to escape the modal');
+    await capture('confirmation-replace-product');
+    await exportDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   }
-  await exportItem.click();
-  const exportDialog = page.getByRole('dialog', { name: 'Replace “Sparse Point Cloud”?' });
-  await exportDialog.waitFor();
-  await page.keyboard.press('Tab');
-  if (!(await exportDialog.evaluate((dialog) => dialog.contains(document.activeElement))))
-    issues.push('product export confirmation allowed focus to escape the modal');
-  await capture('confirmation-replace-product');
-  await exportDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
 
   await page.getByRole('tab', { name: 'Images', exact: true }).last().click();
   await capture('workspace-images');

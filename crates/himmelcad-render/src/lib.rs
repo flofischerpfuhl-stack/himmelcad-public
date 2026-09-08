@@ -118,9 +118,10 @@ pub use gpu_texture_cache::{
 pub use hardware_policy::{
     CalibrationObservation, DeviceCalibration, DeviceCalibrationAccumulator, FrameTelemetrySample,
     FrameTelemetrySnapshot, FrameTelemetryWindow, FrameTimeDistribution, FrameWorkloadBudget,
-    HardwareDeploymentProfile, HardwareInventory, HardwarePolicyResolver,
-    InteractionStreamingPolicy, QualityAdjustment, ResolvedHardwarePolicy, RuntimeQualityGovernor,
-    RuntimeQualityReason, RuntimeQualityState, TimingSample, TransparencyStrategy,
+    GovernorPressure, GovernorTunables, HardwareDeploymentProfile, HardwareInventory,
+    HardwarePolicyResolver, InteractionStreamingPolicy, MotionPolicyTunables, QualityAdjustment,
+    ResolvedHardwarePolicy, RuntimeQualityGovernor, RuntimeQualityReason, RuntimeQualityState,
+    RuntimeQualityTier, TimingSample, TransparencyStrategy,
 };
 pub use mesh_picking::{
     InstancedTriangleMeshPickRefiner, MeshPickRefiner, TriangleMeshNearbyHit,
@@ -197,8 +198,8 @@ pub use resource_builder::{
     PreparedGpuTextureResources, PreparedGpuTextureUpload, ResourceBuildError,
 };
 pub use scheduler::{
-    AdmissionCandidate, AdmissionPlan, AdmissionPlanner, RejectedCandidate, RejectionReason,
-    TileKey,
+    AdmissionCandidate, AdmissionPlan, AdmissionPlanner, BackgroundLaneBudgets, FrameLane,
+    LaneWorkBudget, LaneWorkUsage, RejectedCandidate, RejectionReason, TileKey,
 };
 pub use section::{
     authoritative_section_product_matches, build_section_region_batch,

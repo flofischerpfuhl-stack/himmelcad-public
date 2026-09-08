@@ -197,7 +197,7 @@ export interface AppViewMethods extends AppProtocolMethods {
     readonly response: unknown;
   };
   readonly 'view.state.set': {
-    readonly request: ViewStateV1;
+    readonly request: ViewStateV2;
     readonly response: unknown;
   };
   readonly 'view.screenshot': {
@@ -207,8 +207,8 @@ export interface AppViewMethods extends AppProtocolMethods {
 }
 
 export interface ViewController {
-  getState(options?: RpcRequestOptions): Promise<ViewStateV1>;
-  setState(state: ViewStateV1, options?: RpcRequestOptions): Promise<ViewStateV1>;
+  getState(options?: RpcRequestOptions): Promise<ViewStateV2>;
+  setState(state: ViewStateV2, options?: RpcRequestOptions): Promise<ViewStateV2>;
   requestScreenshot(
     request: ScreenshotRequestV1,
     options?: RpcRequestOptions,
@@ -225,12 +225,12 @@ export class RpcViewController implements ViewController {
     private readonly session: NegotiatedSession,
   ) {}
 
-  async getState(options?: RpcRequestOptions): Promise<ViewStateV1> {
+  async getState(options?: RpcRequestOptions): Promise<ViewStateV2> {
     requireCapability(this.session, 'view.read');
     return parseViewState(await this.transport.request('view.state.get', {}, options));
   }
 
-  async setState(state: ViewStateV1, options?: RpcRequestOptions): Promise<ViewStateV1> {
+  async setState(state: ViewStateV2, options?: RpcRequestOptions): Promise<ViewStateV2> {
     requireCapability(this.session, 'view.write');
     const validated = parseViewState(state);
     return parseViewState(await this.transport.request('view.state.set', validated, options));
@@ -259,11 +259,16 @@ export class RpcViewController implements ViewController {
   }
 }
 
-export function serializeViewState(state: ViewStateV1): string {
+export function serializeViewState(state: ViewStateV2): string {
   return JSON.stringify(parseViewState(state));
 }
 
-export function parseViewState(input: unknown): ViewStateV1 {
+export function serializeViewStateV1(state: ViewStateV1): string {
+  return JSON.stringify(parseViewStateV1(state));
+}
+
+/** Compatibility parser for persisted pre-0.5 state. It is never the live Builder contract. */
+export function parseViewStateV1(input: unknown): ViewStateV1 {
   const value: unknown = typeof input === 'string' ? parseJson(input, 'viewState') : input;
   const root = record(value, 'viewState');
   literal(root.schema, 'himmelcad.view-state', 'viewState.schema');
@@ -322,6 +327,9 @@ export function parseViewStateV2(input: unknown): ViewStateV2 {
   }
   return value as ViewStateV2;
 }
+
+/** The canonical live ViewState parser. */
+export const parseViewState = parseViewStateV2;
 
 export function validateScreenshotRequest(request: ScreenshotRequestV1): void {
   const root = record(request, 'request');

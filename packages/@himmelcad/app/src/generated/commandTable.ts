@@ -269,7 +269,7 @@ export const GENERATED_COMMAND_TABLE = [
     "surfaces": {
       "ribbon": true,
       "contextMenu": false,
-      "quickSurface": false,
+      "quickSurface": true,
       "console": true,
       "automation": true
     },
@@ -292,6 +292,74 @@ export const GENERATED_COMMAND_TABLE = [
     },
     "group": "view",
     "ownerSpec": "View VD-D10",
+    "host": "renderer"
+  },
+  {
+    "id": "view.display.undo",
+    "label": "Undo display",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "View VD-D14",
+    "host": "renderer"
+  },
+  {
+    "id": "view.display.redo",
+    "label": "Redo display",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "View VD-D14",
+    "host": "renderer"
+  },
+  {
+    "id": "view.bookmark.create",
+    "label": "Capture view",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": true,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "View VD-D3",
+    "host": "renderer"
+  },
+  {
+    "id": "view.bookmark.restore",
+    "label": "Restore bookmark",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": true,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "View VD-D4",
     "host": "renderer"
   },
   {
@@ -429,6 +497,180 @@ export const GENERATED_COMMAND_TABLE = [
     "group": "view",
     "ownerSpec": "UI Platform UIP-D5",
     "host": "renderer"
+  },
+  {
+    "id": "view.box.place",
+    "label": "Create viewing box",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": true,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "Viewing Box VB-D1/VB-D3",
+    "host": "renderer",
+    "owner": "builder"
+  },
+  {
+    "id": "view.box.update",
+    "label": "Update viewing box",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": true,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "Viewing Box VB-D2/VB-D5",
+    "host": "renderer",
+    "owner": "builder"
+  },
+  {
+    "id": "view.box.set_operation",
+    "label": "Set viewing box operation",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": true,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "Viewing Box VB-D5",
+    "host": "renderer",
+    "owner": "builder"
+  },
+  {
+    "id": "view.box.lock",
+    "label": "Lock viewing box",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": true,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "Viewing Box VB-D6–VB-D8",
+    "host": "renderer",
+    "owner": "builder"
+  },
+  {
+    "id": "view.box.unlock",
+    "label": "Unlock viewing box",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": true,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "Viewing Box VB-D6",
+    "host": "renderer",
+    "owner": "builder"
+  },
+  {
+    "id": "view.box.rename",
+    "label": "Rename viewing box",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "Viewing Box VB-D4",
+    "host": "renderer",
+    "owner": "builder",
+    "entityKinds": [
+      "Object"
+    ],
+    "allowMultiSelect": false
+  },
+  {
+    "id": "view.box.activate",
+    "label": "Activate viewing box",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "Viewing Box VB-D4",
+    "host": "renderer",
+    "owner": "builder",
+    "entityKinds": [
+      "Object"
+    ],
+    "allowMultiSelect": false
+  },
+  {
+    "id": "view.box.remove",
+    "label": "Remove viewing box",
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "Viewing Box VB-D4",
+    "host": "renderer",
+    "owner": "builder",
+    "entityKinds": [
+      "Object"
+    ],
+    "allowMultiSelect": false
+  },
+  {
+    "id": "view.box.list",
+    "label": "List viewing boxes",
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": true,
+      "console": true,
+      "automation": true
+    },
+    "group": "view",
+    "ownerSpec": "Viewing Box VB-D4",
+    "host": "renderer",
+    "owner": "builder"
   },
   {
     "id": "entity.properties",

@@ -1,4 +1,5 @@
 import type { EntityId, EntityKind, EntitySnapshot, ProjectSnapshot } from '@himmelcad/data';
+import type { InteractionState, InteractionTreePresentation } from '@himmelcad/app';
 import {
   Box,
   CircleDot,
@@ -29,6 +30,7 @@ import {
 } from './escapeLadder.js';
 import { ExpandChevron } from './ExpandChevron.js';
 import { IslandTabs } from './IslandTabs.js';
+import { InteractionStateCheckbox } from './InteractionStateCheckbox.js';
 import { useLayoutStore } from './useLayoutStore.js';
 
 export type LeftNavTabId = 'tree' | 'layers' | 'imported';
@@ -52,6 +54,13 @@ export interface EntityTreeProps {
   sortChildren?: (left: EntitySnapshot, right: EntitySnapshot) => number;
   /** Compact metadata rendered at the trailing edge of each tree row. */
   secondaryLabel?: (entity: EntitySnapshot) => ReactNode;
+  /** P9 presentation is supplied by the one interaction-state resolver. */
+  interactionState?: (entity: EntitySnapshot) => InteractionTreePresentation;
+  onInteractionStateChange?: (
+    ids: readonly EntityId[],
+    state: InteractionState,
+    scope: 'node' | 'subtree' | 'all',
+  ) => void;
 }
 
 export type EntityTreeContextAction = (commandId: string, entityIds: readonly EntityId[]) => void;
@@ -76,6 +85,8 @@ export function EntityTree({
   onLeftNavTabChange,
   sortChildren,
   secondaryLabel,
+  interactionState,
+  onInteractionStateChange,
 }: EntityTreeProps): JSX.Element {
   const collapseLeft = useLayoutStore((s) => s.toggleLeftPanel);
   const [context, setContext] = useState<{ id: EntityId; x: number; y: number } | null>(null);
@@ -145,25 +156,19 @@ export function EntityTree({
     );
   }
 
-  if (navTab !== 'tree') {
+  if (navTab === 'imported') {
     return (
       <div className={styles.root}>
         {nav}
         <div className={styles.islandBody}>
           <div className={styles.header}>
-            <span className={styles.headerLabel}>
-              {navTab === 'layers' ? 'Layers' : 'Imported from'}
-            </span>
+            <span className={styles.headerLabel}>Imported from</span>
             <span className={styles.headerName}>{project.name}</span>
           </div>
           <div className={styles.placeholderPane}>
-            <div className={styles.emptyTitle}>
-              {navTab === 'layers' ? 'Layers view' : 'Import provenance'}
-            </div>
+            <div className={styles.emptyTitle}>Import provenance</div>
             <div className={styles.emptyHint}>
-              {navTab === 'layers'
-                ? 'Layer-ordered navigation will live here. Tree remains the hierarchical project model.'
-                : 'Group entities by source import, capture, or external file. Coming next.'}
+              Group entities by source import, capture, or external file. Coming next.
             </div>
           </div>
         </div>
@@ -171,12 +176,19 @@ export function EntityTree({
     );
   }
 
+  const roots =
+    navTab === 'layers'
+      ? Object.values(project.entities)
+          .filter((entity) => entity.kind === 'Layer')
+          .map((entity) => entity.id)
+      : [project.rootEntity];
+
   return (
     <div className={styles.root}>
       {nav}
       <div className={styles.islandBody}>
         <div className={styles.header}>
-          <span className={styles.headerLabel}>Project</span>
+          <span className={styles.headerLabel}>{navTab === 'layers' ? 'Layers' : 'Project'}</span>
           <span className={styles.headerName}>{project.name}</span>
           <button
             type="button"
@@ -203,56 +215,70 @@ export function EntityTree({
             else ids.forEach((id) => onSelect(id, 'add'));
           }}
         >
-          <TreeNode
-            id={project.rootEntity}
-            entities={project.entities}
-            depth={0}
-            selectedIds={selectedIds}
-            onSelect={(id, event) => {
-              const node = project.entities[id];
-              const parentId = node?.parent ?? null;
-              const siblings = parentId
-                ? orderedChildren(
-                    project.entities[parentId]?.children ?? [],
-                    project.entities,
-                    sortChildren,
-                  )
-                : [id];
-              if (event.shiftKey && selectionAnchor && parentId === activeParentId) {
-                const anchorIndex = siblings.indexOf(selectionAnchor);
-                const currentIndex = siblings.indexOf(id);
-                if (anchorIndex >= 0 && currentIndex >= 0) {
-                  const range = siblings.slice(
-                    Math.min(anchorIndex, currentIndex),
-                    Math.max(anchorIndex, currentIndex) + 1,
-                  );
-                  if (onSelectMany) onSelectMany(range);
-                  else range.forEach((rangeId) => onSelect(rangeId, 'add'));
-                  return;
+          {roots.map((rootId) => (
+            <TreeNode
+              key={rootId}
+              id={rootId}
+              entities={project.entities}
+              depth={0}
+              selectedIds={selectedIds}
+              onSelect={(id, event) => {
+                const node = project.entities[id];
+                const parentId = node?.parent ?? null;
+                const siblings = parentId
+                  ? orderedChildren(
+                      project.entities[parentId]?.children ?? [],
+                      project.entities,
+                      sortChildren,
+                    )
+                  : [id];
+                if (event.shiftKey && selectionAnchor && parentId === activeParentId) {
+                  const anchorIndex = siblings.indexOf(selectionAnchor);
+                  const currentIndex = siblings.indexOf(id);
+                  if (anchorIndex >= 0 && currentIndex >= 0) {
+                    const range = siblings.slice(
+                      Math.min(anchorIndex, currentIndex),
+                      Math.max(anchorIndex, currentIndex) + 1,
+                    );
+                    if (onSelectMany) onSelectMany(range);
+                    else range.forEach((rangeId) => onSelect(rangeId, 'add'));
+                    return;
+                  }
                 }
+                onSelect(id, event.metaKey || event.ctrlKey ? 'toggle' : 'replace');
+                setSelectionAnchor(id);
+                setActiveParentId(parentId);
+              }}
+              editingId={editingId}
+              onEditingChange={setEditingId}
+              onRename={onRename}
+              onMove={onMove}
+              onVisibilityChange={onVisibilityChange}
+              onContextMenu={(id, x, y) => {
+                if (!selectedIds.has(id)) onSelect(id, 'replace');
+                setSelectionAnchor(id);
+                setActiveParentId(project.entities[id]?.parent ?? null);
+                setContext({
+                  id,
+                  x: Math.max(4, Math.min(x, window.innerWidth - 226)),
+                  y: Math.max(4, Math.min(y, window.innerHeight - 170)),
+                });
+              }}
+              sortChildren={sortChildren}
+              secondaryLabel={secondaryLabel}
+              interactionState={interactionState}
+              onInteractionStateChange={(ids, state, scope) =>
+                onInteractionStateChange?.(
+                  scope === 'all' ? (Object.keys(project.entities) as EntityId[]) : ids,
+                  state,
+                  scope,
+                )
               }
-              onSelect(id, event.metaKey || event.ctrlKey ? 'toggle' : 'replace');
-              setSelectionAnchor(id);
-              setActiveParentId(parentId);
-            }}
-            editingId={editingId}
-            onEditingChange={setEditingId}
-            onRename={onRename}
-            onMove={onMove}
-            onVisibilityChange={onVisibilityChange}
-            onContextMenu={(id, x, y) => {
-              if (!selectedIds.has(id)) onSelect(id, 'replace');
-              setSelectionAnchor(id);
-              setActiveParentId(project.entities[id]?.parent ?? null);
-              setContext({
-                id,
-                x: Math.max(4, Math.min(x, window.innerWidth - 226)),
-                y: Math.max(4, Math.min(y, window.innerHeight - 170)),
-              });
-            }}
-            sortChildren={sortChildren}
-            secondaryLabel={secondaryLabel}
-          />
+            />
+          ))}
+          {navTab === 'layers' && roots.length === 0 ? (
+            <div className={styles.placeholderPane}>No layers in this project.</div>
+          ) : null}
         </div>
       </div>
       {context && contextEntity ? (
@@ -386,6 +412,12 @@ interface NodeProps {
   onContextMenu: (id: EntityId, x: number, y: number) => void;
   sortChildren?: EntityTreeProps['sortChildren'];
   secondaryLabel?: EntityTreeProps['secondaryLabel'];
+  interactionState?: EntityTreeProps['interactionState'];
+  onInteractionStateChange?: (
+    ids: readonly EntityId[],
+    state: InteractionState,
+    scope: 'node' | 'subtree' | 'all',
+  ) => void;
 }
 
 function TreeNode({
@@ -402,6 +434,8 @@ function TreeNode({
   onContextMenu,
   sortChildren,
   secondaryLabel,
+  interactionState,
+  onInteractionStateChange,
 }: NodeProps): ReactNode {
   const node: EntitySnapshot | undefined = entities[id];
   const [open, setOpen] = useState(true);
@@ -471,6 +505,13 @@ function TreeNode({
             <span className={styles.twistyEmpty} />
           )}
         </button>
+        {interactionState && onInteractionStateChange ? (
+          <InteractionStateCheckbox
+            label={node.name || node.id}
+            state={interactionState(node)}
+            onStateChange={(state, scope) => onInteractionStateChange([node.id], state, scope)}
+          />
+        ) : null}
         <span className={styles.kind} title={node.kind}>
           {kindIcon(node.kind)}
         </span>
@@ -500,18 +541,20 @@ function TreeNode({
         {editingId !== node.id && secondaryLabel ? (
           <span className={styles.secondaryLabel}>{secondaryLabel(node)}</span>
         ) : null}
-        <button
-          type="button"
-          className={`${styles.eye} ${node.visibility.visible ? '' : styles.eyeHidden}`}
-          aria-label={node.visibility.visible ? 'Visible' : 'Hidden'}
-          title={node.visibility.visible ? 'Visible' : 'Hidden'}
-          onClick={(event) => {
-            event.stopPropagation();
-            onVisibilityChange?.(node.id, !node.visibility.visible);
-          }}
-        >
-          {node.visibility.visible ? <Eye size={11} /> : <EyeOff size={11} />}
-        </button>
+        {!interactionState ? (
+          <button
+            type="button"
+            className={`${styles.eye} ${node.visibility.visible ? '' : styles.eyeHidden}`}
+            aria-label={node.visibility.visible ? 'Visible' : 'Hidden'}
+            title={node.visibility.visible ? 'Visible' : 'Hidden'}
+            onClick={(event) => {
+              event.stopPropagation();
+              onVisibilityChange?.(node.id, !node.visibility.visible);
+            }}
+          >
+            {node.visibility.visible ? <Eye size={11} /> : <EyeOff size={11} />}
+          </button>
+        ) : null}
       </div>
       {open && hasChildren ? (
         <div role="group">
@@ -531,6 +574,8 @@ function TreeNode({
               onContextMenu={onContextMenu}
               sortChildren={sortChildren}
               secondaryLabel={secondaryLabel}
+              {...(interactionState ? { interactionState } : {})}
+              {...(onInteractionStateChange ? { onInteractionStateChange } : {})}
             />
           ))}
         </div>

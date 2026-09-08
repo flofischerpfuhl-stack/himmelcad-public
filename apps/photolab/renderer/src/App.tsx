@@ -1,7 +1,7 @@
 import { ManagedAgentChat, ManagedAutomationApproval } from '@himmelcad/agent';
 import {
   encodeRgbaScreenshot,
-  parseViewState,
+  parseViewStateV1,
   validateScreenshotRequest,
   type Quaternion,
   type ScopedClip,
@@ -507,7 +507,7 @@ export function App(): JSX.Element {
       }
       if (method === 'view.state.get') return currentPhotolabViewState();
       if (method !== 'view.state.set') throw new Error(`Unsupported view host method: ${method}`);
-      const state = parseViewState(params);
+      const state = parseViewStateV1(params);
       assertSupportedPhotolabPresentation(state);
       await viewport.setViewMode(state.navigationMode);
       setSceneNavigationMode(state.navigationMode);

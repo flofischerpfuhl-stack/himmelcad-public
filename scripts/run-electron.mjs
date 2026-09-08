@@ -6,10 +6,14 @@ const electronCli = resolve(process.cwd(), 'node_modules/electron/cli.js');
 const environment = { ...process.env };
 delete environment.ELECTRON_RUN_AS_NODE;
 const remoteDebuggingPort = process.env.HIMMELCAD_REMOTE_DEBUGGING_PORT?.trim() || '9223';
+const userDataDirectory = process.env.HIMMELCAD_ELECTRON_USER_DATA_DIR?.trim();
+const electronArguments = [electronCli, `--remote-debugging-port=${remoteDebuggingPort}`];
+if (userDataDirectory) electronArguments.push(`--user-data-dir=${userDataDirectory}`);
+electronArguments.push(...process.argv.slice(2));
 
 const child = spawn(
   process.execPath,
-  [electronCli, `--remote-debugging-port=${remoteDebuggingPort}`, ...process.argv.slice(2)],
+  electronArguments,
   {
     env: environment,
     stdio: 'inherit',

@@ -1,4 +1,5 @@
 import type { CurveSubentityRefV1, LocalHistoryV1 } from '@himmelcad/data/canonical';
+import { LocalStorageLocalHistoryPersistence } from './localHistoryPersistence.js';
 
 export const SELECTION_STATE_SCHEMA_ID = 'hcad.selection-state@1' as const;
 export const LOCAL_HISTORY_SCHEMA_ID = 'hcad.local-history@1' as const;
@@ -9,6 +10,15 @@ export type SelectionMember =
   | { readonly kind: 'curveSubentity'; readonly ref: CurveSubentityRefV1 };
 
 export type SelectionEntityKind = string;
+export type SelectionGranularity = 'whole' | 'segments';
+
+export const DEFAULT_SELECTABLE_KINDS: Readonly<Record<string, boolean>> = Object.freeze({
+  points: true,
+  lines: true,
+  surfaces: true,
+  solids: true,
+  clouds: false,
+});
 
 export interface SelectionCandidate {
   readonly entityId: string;
@@ -53,15 +63,54 @@ export interface SelectionSnapshot {
   readonly selectedEntityIds: ReadonlySet<string>;
   readonly boundingBoxHaloEntityIds: ReadonlySet<string>;
   readonly candidates: SelectionCandidateState | null;
+  readonly granularity: SelectionGranularity;
+  readonly selectableKinds: Readonly<Record<string, boolean>>;
+  readonly segmentReconciliation: readonly SegmentReconciliation[];
   readonly canUndo: boolean;
   readonly canRedo: boolean;
   readonly revision: number;
 }
 
+export interface CurveSegmentIndexEntry {
+  /** Renderer primitive slot resolved by the canonical curve adapter. */
+  readonly primitiveId: number;
+  readonly topologyKind: string;
+  readonly stableMemberId: string;
+  readonly directedParameterInterval: readonly [number, number];
+  readonly loopId?: string | null;
+  readonly useId?: string | null;
+  readonly semanticHash: string;
+  /** Explicit source-edit mapping. Absence never permits nearest-member remap. */
+  readonly previousSemanticHashes?: readonly string[];
+}
+
+export interface CurveSegmentIndex {
+  readonly parentId: string;
+  readonly parentRevision: number;
+  readonly entries: readonly CurveSegmentIndexEntry[];
+}
+
+export type SegmentReconciliation =
+  | {
+      readonly kind: 'remapped';
+      readonly parentId: string;
+      readonly stableMemberId: string;
+      readonly fromRevision: number;
+      readonly toRevision: number;
+    }
+  | {
+      readonly kind: 'pruned';
+      readonly parentId: string;
+      readonly stableMemberId: string;
+      readonly reason: 'Segment no longer exists';
+    };
+
 export interface SelectionPersistenceRecordV1 {
   readonly schemaId: typeof SELECTION_STATE_SCHEMA_ID;
   readonly schemaVersion: 1;
   readonly state: readonly SelectionMember[];
+  readonly granularity?: SelectionGranularity;
+  readonly selectableKinds?: Readonly<Record<string, boolean>>;
   readonly history: LocalHistoryV1;
 }
 
@@ -80,6 +129,8 @@ interface SelectionStateV1 {
   readonly schemaId: typeof SELECTION_STATE_SCHEMA_ID;
   readonly schemaVersion: 1;
   readonly members: readonly SelectionMember[];
+  readonly granularity: SelectionGranularity;
+  readonly selectableKinds: Readonly<Record<string, boolean>>;
 }
 
 interface MutableHistory {
@@ -122,6 +173,9 @@ export class SelectionStore {
   private history: MutableHistory = emptyHistory('unloaded');
   private historyState: SelectionStateV1 = selectionState([]);
   private candidates: SelectionCandidateState | null = null;
+  private granularity: SelectionGranularity = 'whole';
+  private selectableKinds: Readonly<Record<string, boolean>> = DEFAULT_SELECTABLE_KINDS;
+  private segmentReconciliation: readonly SegmentReconciliation[] = [];
   private readonly listeners = new Set<() => void>();
   private revision = 0;
   private cachedSnapshot: SelectionSnapshot | null = null;
@@ -147,6 +201,9 @@ export class SelectionStore {
       selectedEntityIds: this.entityIds,
       boundingBoxHaloEntityIds: this.haloIds,
       candidates: this.candidates,
+      granularity: this.granularity,
+      selectableKinds: this.selectableKinds,
+      segmentReconciliation: this.segmentReconciliation,
       canUndo: this.history.cursor > 0,
       canRedo: this.history.cursor < this.history.head,
       revision: this.revision,
@@ -172,14 +229,22 @@ export class SelectionStore {
     this.entityKind = entityKind;
     this.hiddenEntityIds = new Set(hiddenEntityIds);
     this.history = emptyHistory(projectId);
+    this.granularity = 'whole';
+    this.selectableKinds = DEFAULT_SELECTABLE_KINDS;
     this.installMembers([]);
     this.candidates = null;
+    this.segmentReconciliation = [];
     let persisted: unknown = null;
     try {
       persisted = await this.persistence?.load(projectId);
       if (persisted !== null && persisted !== undefined) {
         const record = await parsePersistenceRecord(persisted, projectId);
         this.history = record.history as MutableHistory;
+        this.granularity = record.granularity ?? 'whole';
+        this.selectableKinds = Object.freeze({
+          ...DEFAULT_SELECTABLE_KINDS,
+          ...(record.selectableKinds ?? {}),
+        });
         this.installMembers(filterValidMembers(record.state, liveEntityIds));
       }
     } catch (error) {
@@ -201,8 +266,11 @@ export class SelectionStore {
     this.entityKind = () => undefined;
     this.hiddenEntityIds = new Set();
     this.history = emptyHistory('unloaded');
+    this.granularity = 'whole';
+    this.selectableKinds = DEFAULT_SELECTABLE_KINDS;
     this.installMembers([]);
     this.candidates = null;
+    this.segmentReconciliation = [];
     this.changed(false);
   }
 
@@ -279,7 +347,11 @@ export class SelectionStore {
       else haloIds.add(entityId);
       this.haloIds = haloIds;
     }
-    const after = selectionState([...this.members.values()]);
+    const after = selectionState(
+      [...this.members.values()],
+      this.granularity,
+      this.selectableKinds,
+    );
     this.recordHistory(this.historyState, after, gestureSession, null);
     this.historyState = after;
     this.changed();
@@ -303,6 +375,60 @@ export class SelectionStore {
     return this.commit(next, null, 'journal-delete-prune');
   }
 
+  /** SE-D19 click bridge: primitive slots become canonical stable locators, never index-only ids. */
+  selectCurveSegment(index: CurveSegmentIndex, primitiveId: number): boolean {
+    if (!Number.isSafeInteger(primitiveId) || primitiveId < 0) {
+      throw new RangeError('segment primitiveId must be a non-negative safe integer');
+    }
+    validateSegmentIndex(index);
+    const entry = index.entries.find((candidate) => candidate.primitiveId === primitiveId);
+    if (!entry)
+      throw new RangeError(`curve primitive ${primitiveId} has no stable segment locator`);
+    const ref = segmentRef(index, entry);
+    return this.replaceMembers([{ kind: 'curveSubentity', ref }]);
+  }
+
+  /**
+   * Source-edit hook. Only the same stable member with an explicit old-hash
+   * admission may remap; deletion or ambiguity prunes with the typed reason.
+   */
+  reconcileCurveSubentities(index: CurveSegmentIndex): readonly SegmentReconciliation[] {
+    validateSegmentIndex(index);
+    const byStableId = new Map(index.entries.map((entry) => [entry.stableMemberId, entry]));
+    const disclosures: SegmentReconciliation[] = [];
+    const next = [...this.members.values()].flatMap((member): SelectionMember[] => {
+      if (member.kind !== 'curveSubentity' || String(member.ref.parentId) !== index.parentId) {
+        return [member];
+      }
+      const entry = byStableId.get(member.ref.stableMemberId);
+      if (
+        !entry ||
+        (entry.semanticHash !== String(member.ref.semanticHash) &&
+          !entry.previousSemanticHashes?.includes(String(member.ref.semanticHash)))
+      ) {
+        disclosures.push({
+          kind: 'pruned',
+          parentId: index.parentId,
+          stableMemberId: member.ref.stableMemberId,
+          reason: 'Segment no longer exists',
+        });
+        return [];
+      }
+      disclosures.push({
+        kind: 'remapped',
+        parentId: index.parentId,
+        stableMemberId: entry.stableMemberId,
+        fromRevision: member.ref.parentRevision,
+        toRevision: index.parentRevision,
+      });
+      return [{ kind: 'curveSubentity', ref: segmentRef(index, entry) }];
+    });
+    this.segmentReconciliation = Object.freeze(disclosures);
+    const membershipChanged = this.commit(next, null, `segment-source-edit:${index.parentId}`);
+    if (disclosures.length > 0 && !membershipChanged) this.changed(false);
+    return this.segmentReconciliation;
+  }
+
   /** Hide is deliberately a no-op for membership (UIP-D18/G-SE-P4). */
   entitiesHidden(entityIds: Iterable<string>, hidden = true): void {
     for (const id of entityIds) {
@@ -311,11 +437,50 @@ export class SelectionStore {
     }
   }
 
+  setGranularity(value: SelectionGranularity): boolean {
+    if (value !== 'whole' && value !== 'segments')
+      throw new TypeError('invalid selection granularity');
+    if (this.granularity === value) return false;
+    const before = this.historyState;
+    this.granularity = value;
+    const after = selectionState(
+      [...this.members.values()],
+      this.granularity,
+      this.selectableKinds,
+    );
+    this.recordHistory(before, after, null, 'selection-granularity');
+    this.historyState = after;
+    this.candidates = null;
+    this.changed();
+    return true;
+  }
+
+  setSelectableKind(kind: string, value: boolean): boolean {
+    if (!kind.trim()) throw new TypeError('selectable kind is required');
+    if (this.selectableKinds[kind] === value) return false;
+    const before = this.historyState;
+    this.selectableKinds = Object.freeze({ ...this.selectableKinds, [kind]: value });
+    const after = selectionState(
+      [...this.members.values()],
+      this.granularity,
+      this.selectableKinds,
+    );
+    this.recordHistory(before, after, null, `selection-kind:${kind}`);
+    this.historyState = after;
+    this.candidates = null;
+    this.changed();
+    return true;
+  }
+
+  isKindSelectable(kind: string): boolean {
+    return this.selectableKinds[selectionKindGroup(kind)] ?? true;
+  }
+
   undo(): boolean {
     if (this.history.cursor === 0) return false;
     const entry = this.history.entries[this.history.cursor - 1]!;
     this.history.cursor -= 1;
-    this.installMembers(this.validatedState(entry.before).members);
+    this.installState(this.validatedState(entry.before));
     this.changed();
     return true;
   }
@@ -324,7 +489,7 @@ export class SelectionStore {
     if (this.history.cursor >= this.history.head) return false;
     const entry = this.history.entries[this.history.cursor]!;
     this.history.cursor += 1;
-    this.installMembers(this.validatedState(entry.after).members);
+    this.installState(this.validatedState(entry.after));
     this.changed();
     return true;
   }
@@ -380,7 +545,8 @@ export class SelectionStore {
   private clickSelectable(entityId: string): boolean {
     if (this.liveEntityIds && !this.liveEntityIds.has(entityId)) return false;
     if (this.hiddenEntityIds.has(entityId)) return false;
-    return !CLOUD_KINDS.has(this.entityKind(entityId) ?? '');
+    const kind = this.entityKind(entityId) ?? '';
+    return !CLOUD_KINDS.has(kind) && this.isKindSelectable(kind);
   }
 
   private commit(
@@ -402,7 +568,7 @@ export class SelectionStore {
     if (!this.projectId) throw new Error('selection store has no open project');
     if (!knownDifferent && sameKeys(this.members, next)) return false;
     const before = this.historyState;
-    const after = selectionState([...next.values()]);
+    const after = selectionState([...next.values()], this.granularity, this.selectableKinds);
     this.recordHistory(before, after, gestureSession, coalescingKey);
     this.installMap(next);
     this.historyState = after;
@@ -430,13 +596,27 @@ export class SelectionStore {
   }
 
   private validatedState(state: SelectionStateV1): SelectionStateV1 {
-    return selectionState(filterValidMembers(state.members, this.liveEntityIds));
+    return selectionState(
+      filterValidMembers(state.members, this.liveEntityIds),
+      state.granularity,
+      state.selectableKinds,
+    );
   }
 
   private installMembers(members: Iterable<SelectionMember>): void {
     const normalized = normalizeMembers(members, this.liveEntityIds);
     this.installMap(normalized);
-    this.historyState = selectionState([...normalized.values()]);
+    this.historyState = selectionState(
+      [...normalized.values()],
+      this.granularity,
+      this.selectableKinds,
+    );
+  }
+
+  private installState(state: SelectionStateV1): void {
+    this.granularity = state.granularity;
+    this.selectableKinds = Object.freeze({ ...state.selectableKinds });
+    this.installMembers(state.members);
   }
 
   private installMap(members: Map<string, SelectionMember>): void {
@@ -465,6 +645,8 @@ export class SelectionStore {
     if (!this.persistence || !this.projectId) return;
     const projectId = this.projectId;
     const state = [...this.members.values()];
+    const granularity = this.granularity;
+    const selectableKinds = this.selectableKinds;
     const history = cloneHistory(this.history);
     this.persistTail = this.persistTail
       .then(async () => {
@@ -473,6 +655,8 @@ export class SelectionStore {
           schemaId: SELECTION_STATE_SCHEMA_ID,
           schemaVersion: 1,
           state,
+          granularity,
+          selectableKinds,
           history: sealed,
         });
       })
@@ -494,17 +678,12 @@ export class MemorySelectionPersistence implements SelectionPersistence {
   }
 }
 
-export class LocalStorageSelectionPersistence implements SelectionPersistence {
-  constructor(
-    private readonly storage: Pick<Storage, 'getItem' | 'setItem'>,
-    private readonly prefix = 'hcad.selection.v1:',
-  ) {}
-  async load(projectId: string): Promise<unknown | null> {
-    const encoded = this.storage.getItem(this.prefix + projectId);
-    return encoded === null ? null : JSON.parse(encoded);
-  }
-  async store(projectId: string, record: SelectionPersistenceRecordV1): Promise<void> {
-    this.storage.setItem(this.prefix + projectId, JSON.stringify(record));
+export class LocalStorageSelectionPersistence
+  extends LocalStorageLocalHistoryPersistence<SelectionPersistenceRecordV1>
+  implements SelectionPersistence
+{
+  constructor(storage: Pick<Storage, 'getItem' | 'setItem'>, prefix = 'hcad.selection.v1:') {
+    super(storage, prefix);
   }
 }
 
@@ -576,6 +755,10 @@ export const SELECTION_COMMAND_TABLE = Object.freeze({
   'selection.history.undo': { capability: 'view.write', mutates: true, aliasFor: 'select.undo' },
   'selection.history.redo': { capability: 'view.write', mutates: true, aliasFor: 'select.redo' },
   'selection.history.clear': { capability: 'view.write', mutates: true },
+  'selection.granularity.get': { capability: 'view.read', mutates: false },
+  'selection.granularity.set': { capability: 'view.write', mutates: true },
+  'selection.kind_filter.get': { capability: 'view.read', mutates: false },
+  'selection.kind_filter.set': { capability: 'view.write', mutates: true },
 } as const);
 
 export type SelectionCommandId = keyof typeof SELECTION_COMMAND_TABLE;
@@ -590,6 +773,8 @@ export function executeSelectionCommand(
     case 'select.get':
     case 'select.list':
     case 'selection.history.get':
+    case 'selection.granularity.get':
+    case 'selection.kind_filter.get':
       break;
     case 'select.set':
       store.replaceExisting(requiredIds(payload));
@@ -619,6 +804,14 @@ export function executeSelectionCommand(
     case 'selection.history.clear':
       store.clearHistory();
       break;
+    case 'selection.granularity.set':
+      store.setGranularity(requiredGranularity(payload));
+      break;
+    case 'selection.kind_filter.set': {
+      const { kind, selectable } = requiredKindFilter(payload);
+      store.setSelectableKind(kind, selectable);
+      break;
+    }
     case 'select.candidates':
       break;
   }
@@ -628,13 +821,36 @@ export function executeSelectionCommand(
     payload:
       commandId === 'select.candidates'
         ? snapshot.candidates
-        : {
-            projectId: snapshot.projectId,
-            entityIds: [...snapshot.selectedEntityIds],
-            canUndo: snapshot.canUndo,
-            canRedo: snapshot.canRedo,
-          },
+        : commandId === 'selection.granularity.get'
+          ? { granularity: snapshot.granularity }
+          : commandId === 'selection.kind_filter.get'
+            ? { selectableKinds: snapshot.selectableKinds }
+            : {
+                projectId: snapshot.projectId,
+                entityIds: [...snapshot.selectedEntityIds],
+                canUndo: snapshot.canUndo,
+                canRedo: snapshot.canRedo,
+              },
   };
+}
+
+function requiredGranularity(payload: unknown): SelectionGranularity {
+  if (!isRecord(payload) || (payload.value !== 'whole' && payload.value !== 'segments')) {
+    throw new TypeError('selection.granularity.set requires whole or segments');
+  }
+  return payload.value;
+}
+
+function requiredKindFilter(payload: unknown): { kind: string; selectable: boolean } {
+  if (
+    !isRecord(payload) ||
+    typeof payload.kind !== 'string' ||
+    !payload.kind.trim() ||
+    typeof payload.selectable !== 'boolean'
+  ) {
+    throw new TypeError('selection.kind_filter.set requires kind and selectable');
+  }
+  return { kind: payload.kind, selectable: payload.selectable };
 }
 
 function operationPayload(request: unknown): unknown {
@@ -680,8 +896,18 @@ function emptyHistory(projectId: string): MutableHistory {
   };
 }
 
-function selectionState(members: readonly SelectionMember[]): SelectionStateV1 {
-  return { schemaId: SELECTION_STATE_SCHEMA_ID, schemaVersion: 1, members };
+function selectionState(
+  members: readonly SelectionMember[],
+  granularity: SelectionGranularity = 'whole',
+  selectableKinds: Readonly<Record<string, boolean>> = DEFAULT_SELECTABLE_KINDS,
+): SelectionStateV1 {
+  return {
+    schemaId: SELECTION_STATE_SCHEMA_ID,
+    schemaVersion: 1,
+    members,
+    granularity,
+    selectableKinds: Object.freeze({ ...selectableKinds }),
+  };
 }
 
 function entityMembers(ids: Iterable<string>): SelectionMember[] {
@@ -749,6 +975,49 @@ function memberKey(member: SelectionMember): string {
     : `s:${member.ref.parentId}:${member.ref.parentRevision}:${member.ref.topologyKind}:${member.ref.stableMemberId}:${member.ref.directedParameterInterval.join(',')}:${member.ref.loopId ?? ''}:${member.ref.useId ?? ''}:${member.ref.semanticHash}`;
 }
 
+function segmentRef(index: CurveSegmentIndex, entry: CurveSegmentIndexEntry): CurveSubentityRefV1 {
+  return {
+    schemaId: 'hcad.curve-subentity-ref@1',
+    schemaVersion: 1,
+    parentId: index.parentId,
+    parentRevision: index.parentRevision,
+    topologyKind: entry.topologyKind,
+    stableMemberId: entry.stableMemberId,
+    directedParameterInterval: [...entry.directedParameterInterval],
+    loopId: entry.loopId ?? null,
+    useId: entry.useId ?? null,
+    semanticHash: entry.semanticHash,
+  } as CurveSubentityRefV1;
+}
+
+function validateSegmentIndex(index: CurveSegmentIndex): void {
+  assertEntityId(index.parentId);
+  if (!Number.isSafeInteger(index.parentRevision) || index.parentRevision < 0) {
+    throw new TypeError('curve segment index requires a non-negative parent revision');
+  }
+  const primitives = new Set<number>();
+  const stableIds = new Set<string>();
+  for (const entry of index.entries) {
+    if (
+      !Number.isSafeInteger(entry.primitiveId) ||
+      entry.primitiveId < 0 ||
+      !entry.topologyKind.trim() ||
+      !entry.stableMemberId.trim() ||
+      entry.directedParameterInterval.length !== 2 ||
+      entry.directedParameterInterval.some((value) => !Number.isFinite(value)) ||
+      !/^[0-9a-f]{64}$/u.test(entry.semanticHash) ||
+      entry.previousSemanticHashes?.some((hash) => !/^[0-9a-f]{64}$/u.test(hash))
+    ) {
+      throw new TypeError('invalid curve segment index entry');
+    }
+    if (primitives.has(entry.primitiveId) || stableIds.has(entry.stableMemberId)) {
+      throw new RangeError('curve segment index contains an ambiguous locator');
+    }
+    primitives.add(entry.primitiveId);
+    stableIds.add(entry.stableMemberId);
+  }
+}
+
 function sameKeys(
   left: ReadonlyMap<string, unknown>,
   right: ReadonlyMap<string, unknown>,
@@ -777,6 +1046,10 @@ async function parsePersistenceRecord(
     input.schemaId !== SELECTION_STATE_SCHEMA_ID ||
     input.schemaVersion !== 1 ||
     !Array.isArray(input.state) ||
+    (input.granularity !== undefined &&
+      input.granularity !== 'whole' &&
+      input.granularity !== 'segments') ||
+    (input.selectableKinds !== undefined && !isBooleanRecord(input.selectableKinds)) ||
     !isRecord(input.history)
   ) {
     throw new TypeError('invalid persisted selection envelope');
@@ -817,8 +1090,32 @@ function isSelectionState(value: unknown): value is SelectionStateV1 {
     isRecord(value) &&
     value.schemaId === SELECTION_STATE_SCHEMA_ID &&
     value.schemaVersion === 1 &&
-    Array.isArray(value.members)
+    Array.isArray(value.members) &&
+    (value.granularity === undefined ||
+      value.granularity === 'whole' ||
+      value.granularity === 'segments') &&
+    (value.selectableKinds === undefined || isBooleanRecord(value.selectableKinds))
   );
+}
+
+function selectionKindGroup(kind: string): string {
+  if (kind === 'SinglePoint' || kind === 'GroundControlPoint' || kind === 'PointCloudSegment')
+    return 'points';
+  if (kind === 'Polyline3D' || kind === 'Axis' || kind === 'AlignmentElement') return 'lines';
+  if (
+    kind === 'Surface' ||
+    kind === 'Mesh' ||
+    kind === 'TexturedMesh' ||
+    kind === 'DigitalElevationModel'
+  )
+    return 'surfaces';
+  if (kind === 'Solid') return 'solids';
+  if (CLOUD_KINDS.has(kind)) return 'clouds';
+  return kind;
+}
+
+function isBooleanRecord(value: unknown): value is Readonly<Record<string, boolean>> {
+  return isRecord(value) && Object.values(value).every((item) => typeof item === 'boolean');
 }
 
 function recoverPersistedState(input: unknown, live: ReadonlySet<string>): SelectionMember[] {

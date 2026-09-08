@@ -63,6 +63,7 @@ import {
   type KernelRasterDepthDistanceMeasurement,
   type KernelRasterDepthMeasurement,
   type KernelRasterDepthPick,
+  type KernelResourceCost,
   type KernelRgbaCaptureRequest,
   type KernelRgbaCaptureResult,
   type KernelRenderStyle,
@@ -169,6 +170,30 @@ export interface KernelViewerSessionDiagnostics {
   readonly deviceGeneration: number;
 }
 
+export type KernelQualityTier = 'full' | 'balanced' | 'coarse' | 'minimum';
+
+/** Immutable implementation of the `view.quality.get` query/HUD seam. */
+export interface KernelQualitySnapshot {
+  readonly schemaId: 'hcad.view-quality@1';
+  readonly class: 'I' | 'W' | 'D';
+  readonly tier: KernelQualityTier;
+  readonly targets: {
+    readonly motionFrameMs: number;
+    readonly restFrameMs: number;
+    readonly restAfterMs: number;
+    readonly refineWithinMs: number;
+    readonly maximumReprojectedPresents: number;
+    readonly maximumReprojectedMs: number;
+    readonly enterLowerAfterFrames: number;
+    readonly leaveLowerAfterFrames: number;
+    readonly recoveryRatio: number;
+    readonly adjustmentIntervalMs: number;
+  };
+  readonly effectiveBudgets: KernelFrontierBudget;
+  readonly currentReasons: readonly KernelDeadlineReasonCode[];
+  readonly lastAdjustment: KernelRuntimeQualityAdjustment;
+}
+
 export type KernelPresentedFrameOutcome = Extract<
   KernelFrameOutcome,
   { readonly status: 'presented' }
@@ -263,6 +288,9 @@ export class KernelViewerSession {
   private readonly presentedFrameWaiters = new Set<KernelPresentedFrameWaiter>();
   private readonly frameDiagnosticsState = new KernelFrameDiagnostics();
   private previousPresentedTimestampMs: number | null = null;
+  private lastCameraInputTimestampMs = Number.NEGATIVE_INFINITY;
+  private restRefinementTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastQualityAdjustment: KernelRuntimeQualityAdjustment = 'unchanged';
 
   private constructor(
     private readonly options: KernelViewerSessionOptions,
@@ -295,7 +323,9 @@ export class KernelViewerSession {
   /** Marks one input for correlation with the next successfully presented frame. */
   recordInput(inputId?: string, timestampMs?: number): string {
     this.assertAlive();
-    return this.frameDiagnosticsState.recordInput(inputId, timestampMs);
+    const observedAt = timestampMs ?? performance.now();
+    this.noteCameraInput(observedAt);
+    return this.frameDiagnosticsState.recordInput(inputId, observedAt);
   }
 
   /** Immutable typed seam consumed by the diagnostics HUD. */
@@ -310,10 +340,49 @@ export class KernelViewerSession {
     return this.frameDiagnosticsState.snapshotWindow(Math.max(0, now - durationMs), now);
   }
 
+  /** Lightweight projection used by the passive 4 Hz viewport HUD. */
+  hudDiagnosticsWindow(durationMs = 2_000) {
+    this.assertAlive();
+    const now = performance.now();
+    return this.frameDiagnosticsState.hudWindow(Math.max(0, now - durationMs), now);
+  }
+
   /** Private-window implementation of the `view.diagnostics.sample` query. */
-  sampleDiagnostics(request: KernelDiagnosticsSampleRequest): Promise<KernelDiagnosticsSampleResult> {
+  sampleDiagnostics(
+    request: KernelDiagnosticsSampleRequest,
+  ): Promise<KernelDiagnosticsSampleResult> {
     this.assertAlive();
     return this.frameDiagnosticsState.sample(request);
+  }
+
+  /** Read-only quality query used verbatim by automation and the HUD quality field. */
+  qualitySnapshot(): KernelQualitySnapshot {
+    this.assertAlive();
+    const policy = extendedPolicy(this.policyState);
+    const quality = extendedQuality(this.qualityState);
+    const lastFrame = this.frameDiagnosticsState.snapshot(1).lastFrames.at(-1);
+    return Object.freeze({
+      schemaId: 'hcad.view-quality@1',
+      class: this.policyState.frontier.hardwareClass,
+      tier: quality.tier,
+      targets: Object.freeze({
+        motionFrameMs: this.policyState.interaction.frame.targetFrameMs,
+        restFrameMs: this.policyState.frame.targetFrameMs,
+        restAfterMs: policy.motion.restAfterMs,
+        refineWithinMs: policy.motion.refineWithinMs,
+        maximumReprojectedPresents: policy.motion.maximumReprojectedPresents,
+        maximumReprojectedMs: policy.motion.maximumReprojectedMs,
+        enterLowerAfterFrames: policy.governor.enterLowerAfterFrames,
+        leaveLowerAfterFrames: policy.governor.leaveLowerAfterFrames,
+        recoveryRatio: policy.governor.recoveryRatio,
+        adjustmentIntervalMs: policy.governor.adjustmentIntervalMs,
+      }),
+      effectiveBudgets: Object.freeze(
+        effectiveFrontierBudget(this.policyState.frontier, quality.budgetScale, false),
+      ),
+      currentReasons: Object.freeze([...(lastFrame?.deadlineReasonCodes ?? ['within_target'])]),
+      lastAdjustment: this.lastQualityAdjustment,
+    });
   }
 
   subscribe(listener: (event: KernelViewerSessionEvent) => void): () => void {
@@ -347,7 +416,9 @@ export class KernelViewerSession {
       this.camera,
       {
         ...(callbacks.onActivePick ? { onActivePick: callbacks.onActivePick } : {}),
-        ...(callbacks.onCameraGestureEnd ? { onCameraGestureEnd: callbacks.onCameraGestureEnd } : {}),
+        ...(callbacks.onCameraGestureEnd
+          ? { onCameraGestureEnd: callbacks.onCameraGestureEnd }
+          : {}),
         ...(callbacks.onCameraChanged ? { onCameraChanged: callbacks.onCameraChanged } : {}),
         ...(callbacks.onViewModeChanged ? { onViewModeChanged: callbacks.onViewModeChanged } : {}),
         ...(callbacks.onCursorCoordinate
@@ -359,6 +430,7 @@ export class KernelViewerSession {
           : {}),
         onInteractionChanged: (interacting) => {
           this.navigationInteracting = interacting;
+          this.noteCameraInput(performance.now());
           callbacks.onInteractionChanged?.(interacting);
           requestFrame();
         },
@@ -793,9 +865,14 @@ export class KernelViewerSession {
     try {
       this.advanceCalibration();
       const protectedStarted = performance.now();
-      const interactionActive = interacting || this.navigationInteracting;
-      const work = kernelStreamingWorkPolicy(this.policyState, interactionActive);
-      const prefetchCamera = interactionActive
+      const directInteraction = interacting || this.navigationInteracting;
+      if (directInteraction) this.noteCameraInput(started);
+      const motionActive =
+        directInteraction ||
+        started - this.lastCameraInputTimestampMs <
+          extendedPolicy(this.policyState).motion.restAfterMs;
+      const work = kernelStreamingWorkPolicy(this.policyState, motionActive);
+      const prefetchCamera = motionActive
         ? predictedPrefetchCamera(this.previousStreamingCamera, this.currentStreamingCamera)
         : null;
       this.previousStreamingCamera = this.currentStreamingCamera;
@@ -804,11 +881,15 @@ export class KernelViewerSession {
       const plan = this.viewerState.planStreamingFrame({
         resourceBudget: this.policyState.resources,
         frameBudget: work.frame,
-        frontierBudget: this.policyState.frontier,
-        // Camera motion may reduce *new* I/O/decode/upload work, but it must
-        // never select a coarser render frontier. Otherwise resident ADD tiles
-        // disappear on pointer-down and reappear on settle as visible flicker.
-        detailScale: this.policyState.maximumDetailScale,
+        motion: motionActive,
+        frontierBudget: effectiveFrontierBudget(
+          this.policyState.frontier,
+          extendedQuality(this.qualityState).budgetScale,
+          motionActive,
+        ),
+        // Motion constrains new work through traversal and lane admission. It
+        // must not lower selector detail and drop already-resident ADD tiles.
+        detailScale: this.qualityState.detailScale,
         // Two physical pixels is the neutral mesh/raster baseline. Potree uses
         // its own point-diameter coverage target inside the kernel, so point
         // quality no longer forces every other provider to over-refine.
@@ -831,10 +912,28 @@ export class KernelViewerSession {
         this.startDeviceRecovery();
         return outcome;
       }
+      const presentTimestampMs = outcome.status === 'presented' ? performance.now() : null;
+      const presentIntervalMs =
+        presentTimestampMs === null || this.previousPresentedTimestampMs === null
+          ? null
+          : Math.max(0, presentTimestampMs - this.previousPresentedTimestampMs);
+      const transport = this.streamingState.diagnostics();
+      const streaming = this.viewerState.streamingRuntime();
+      const decodeBacklog = transport.queuedDecodes + transport.activeDecodes;
+      const uploadBacklog =
+        streaming.residencyStageCounts.queuedUpload + streaming.residencyStageCounts.uploading;
+      const plannedUploadBytes = numericRecordField(plan.admission, 'uploadBytes');
       const observation = this.viewerState.observeFrameTelemetry({
         cpuMs: performance.now() - started,
-        interacting: interactionActive,
+        interacting: motionActive,
         uploadedBytes,
+        ...(presentIntervalMs === null ? {} : { presentedMs: presentIntervalMs }),
+        uploadDebtBytes: Math.max(0, plannedUploadBytes - uploadedBytes),
+        decodeBacklog,
+        residencyPressure: exceedsResourceBudget(
+          streaming.residencyCost,
+          this.policyState.resources,
+        ),
       });
       if (observation.gpuSample) {
         this.frameDiagnosticsState.attachGpuSample(
@@ -844,24 +943,19 @@ export class KernelViewerSession {
       }
       this.qualityState = observation.quality;
       if (outcome.status === 'presented') {
-        const presentTimestampMs = performance.now();
-        const transport = this.streamingState.diagnostics();
-        const streaming = this.viewerState.streamingRuntime();
+        const completedAtMs = presentTimestampMs ?? performance.now();
         const reasonCodes = frameReasonCodes(
           plan,
           observation.reasonCode,
           protectedLanes1To3Ms,
-          this.policyState.frame.targetFrameMs,
-          transport.queuedDecodes + transport.activeDecodes,
-          streaming.residencyStageCounts.queuedUpload + streaming.residencyStageCounts.uploading,
+          work.frame.targetFrameMs,
+          decodeBacklog,
+          uploadBacklog,
         );
         this.frameDiagnosticsState.recordFrame({
-          rafTimestampMs: animationFrameTimestampMs ?? presentTimestampMs,
-          presentTimestampMs,
-          presentIntervalMs:
-            this.previousPresentedTimestampMs === null
-              ? null
-              : Math.max(0, presentTimestampMs - this.previousPresentedTimestampMs),
+          rafTimestampMs: animationFrameTimestampMs ?? completedAtMs,
+          presentTimestampMs: completedAtMs,
+          presentIntervalMs,
           presentSource: 'raf-render-complete',
           cpuMs: performance.now() - started,
           gpuMs: null,
@@ -882,7 +976,8 @@ export class KernelViewerSession {
           uploadedBytes,
           requestBacklog: transport.activeRequests + transport.queuedRequests,
           decodeBacklog: transport.queuedDecodes + transport.activeDecodes,
-          uploadBacklog: streaming.residencyStageCounts.queuedUpload + streaming.residencyStageCounts.uploading,
+          uploadBacklog:
+            streaming.residencyStageCounts.queuedUpload + streaming.residencyStageCounts.uploading,
           residencyBytes:
             streaming.residencyCost.gpuBufferBytes + streaming.residencyCost.gpuTextureBytes,
           frontier: {
@@ -898,10 +993,15 @@ export class KernelViewerSession {
             budgetSatisfied: plan.frontier.budgetSatisfied,
           },
           freshness: 'fresh',
+          qualityClass: plan.frontier.budget.hardwareClass,
+          qualityTier: extendedQuality(observation.quality).tier,
+          qualityAdjustment: observation.adjustment,
+          protectedPrimitivesDropped: extendedFrontier(plan.frontier).protectedPrimitivesDropped,
         });
-        this.previousPresentedTimestampMs = presentTimestampMs;
+        this.previousPresentedTimestampMs = completedAtMs;
       }
       if (observation.adjustment !== 'unchanged') {
+        this.lastQualityAdjustment = observation.adjustment;
         this.emit({
           type: 'runtimeQuality',
           quality: observation.quality,
@@ -913,7 +1013,7 @@ export class KernelViewerSession {
         plan.actions.some(
           (action) => action.kind !== 'fetchTile' && action.kind !== 'fetchHierarchyPage',
         ) ||
-        (!interactionActive &&
+        (!motionActive &&
           observation.adjustment !== 'reduced' &&
           (this.qualityState.renderScale + 1e-4 < this.policyState.maximumRenderScale ||
             this.qualityState.detailScale + 1e-4 < this.policyState.maximumDetailScale)) ||
@@ -958,6 +1058,8 @@ export class KernelViewerSession {
     this.navigationState = null;
     this.navigationInteracting = false;
     this.disposed = true;
+    if (this.restRefinementTimer !== null) clearTimeout(this.restRefinementTimer);
+    this.restRefinementTimer = null;
     this.recoveryAbort?.abort();
     this.viewerState.detachClipCapCoordinator();
     this.streamingState.dispose();
@@ -1169,6 +1271,17 @@ export class KernelViewerSession {
     this.currentStreamingCamera = replayWorldCamera(camera);
   }
 
+  private noteCameraInput(timestampMs: number): void {
+    if (!Number.isFinite(timestampMs) || timestampMs < 0) return;
+    this.lastCameraInputTimestampMs = Math.max(this.lastCameraInputTimestampMs, timestampMs);
+    if (this.restRefinementTimer !== null) clearTimeout(this.restRefinementTimer);
+    const restAfterMs = extendedPolicy(this.policyState).motion.restAfterMs;
+    this.restRefinementTimer = setTimeout(() => {
+      this.restRefinementTimer = null;
+      if (!this.disposed) this.options.requestFrame?.();
+    }, restAfterMs);
+  }
+
   private assertReady(): void {
     this.assertAlive();
     if (this.recoveryReason !== null || this.recovery !== null) {
@@ -1178,6 +1291,121 @@ export class KernelViewerSession {
       );
     }
   }
+}
+
+interface ExtendedLaneWorkBudget {
+  readonly points: number;
+  readonly bytes: number;
+  readonly drawCalls: number;
+  readonly uploadBytes: number;
+  readonly decodeMs: number;
+}
+
+interface ExtendedBackgroundLaneBudgets {
+  readonly lane4: ExtendedLaneWorkBudget;
+  readonly lane5: ExtendedLaneWorkBudget;
+  readonly lane6: ExtendedLaneWorkBudget;
+}
+
+type ExtendedFrontierBudget = KernelFrontierBudget & {
+  readonly backgroundLanes?: ExtendedBackgroundLaneBudgets;
+  readonly motionBackgroundLanes?: ExtendedBackgroundLaneBudgets;
+};
+
+interface ExtendedPolicyFields {
+  readonly governor: {
+    readonly enterLowerAfterFrames: number;
+    readonly leaveLowerAfterFrames: number;
+    readonly recoveryRatio: number;
+    readonly adjustmentIntervalMs: number;
+  };
+  readonly motion: {
+    readonly restAfterMs: number;
+    readonly refineWithinMs: number;
+    readonly maximumReprojectedPresents: number;
+    readonly maximumReprojectedMs: number;
+  };
+}
+
+interface ExtendedQualityFields {
+  readonly tier: KernelQualityTier;
+  readonly budgetScale: number;
+}
+
+function extendedPolicy(policy: KernelResolvedHardwarePolicy): ExtendedPolicyFields {
+  const value = policy as KernelResolvedHardwarePolicy & Partial<ExtendedPolicyFields>;
+  return {
+    governor: value.governor ?? {
+      enterLowerAfterFrames: 8,
+      leaveLowerAfterFrames: 90,
+      recoveryRatio: 0.75,
+      adjustmentIntervalMs: 250,
+    },
+    motion: value.motion ?? {
+      restAfterMs: 250,
+      refineWithinMs: 100,
+      maximumReprojectedPresents: 2,
+      maximumReprojectedMs: 50,
+    },
+  };
+}
+
+function extendedQuality(quality: KernelRuntimeQualityState): ExtendedQualityFields {
+  const value = quality as KernelRuntimeQualityState & Partial<ExtendedQualityFields>;
+  return {
+    tier:
+      value.tier === 'balanced' || value.tier === 'coarse' || value.tier === 'minimum'
+        ? value.tier
+        : 'full',
+    budgetScale:
+      typeof value.budgetScale === 'number' && Number.isFinite(value.budgetScale)
+        ? Math.max(0, Math.min(1, value.budgetScale))
+        : 1,
+  };
+}
+
+function effectiveFrontierBudget(
+  budget: KernelFrontierBudget,
+  scale: number,
+  _motion: boolean,
+): KernelFrontierBudget {
+  const extended = budget as ExtendedFrontierBudget;
+  const lanes = extended.backgroundLanes;
+  const motionLanes = extended.motionBackgroundLanes;
+  if (lanes === undefined || motionLanes === undefined) return budget;
+  const scaleInteger = (value: number): number => Math.floor(value * scale);
+  const scaleLane = (lane: ExtendedLaneWorkBudget): ExtendedLaneWorkBudget => ({
+    points: scaleInteger(lane.points),
+    bytes: scaleInteger(lane.bytes),
+    drawCalls: scaleInteger(lane.drawCalls),
+    uploadBytes: scaleInteger(lane.uploadBytes),
+    decodeMs: lane.decodeMs * scale,
+  });
+  const scaleLanes = (value: ExtendedBackgroundLaneBudgets): ExtendedBackgroundLaneBudgets => ({
+    lane4: scaleLane(value.lane4),
+    lane5: scaleLane(value.lane5),
+    lane6: scaleLane(value.lane6),
+  });
+  return {
+    ...extended,
+    points: scaleInteger(budget.points),
+    bytes: scaleInteger(budget.bytes),
+    drawCalls: scaleInteger(budget.drawCalls),
+    backgroundLanes: scaleLanes(lanes),
+    motionBackgroundLanes: scaleLanes(motionLanes),
+  } as KernelFrontierBudget;
+}
+
+function extendedFrontier(frontier: unknown): { readonly protectedPrimitivesDropped: number } {
+  if (
+    typeof frontier === 'object' &&
+    frontier !== null &&
+    'protectedPrimitivesDropped' in frontier &&
+    typeof frontier.protectedPrimitivesDropped === 'number'
+  ) {
+    return { protectedPrimitivesDropped: frontier.protectedPrimitivesDropped };
+  }
+  return { protectedPrimitivesDropped: 0 };
 }
 
 function frameReasonCodes(
@@ -1199,14 +1427,41 @@ function frameReasonCodes(
     if (reason === 'invalidBenefit') reasons.add('invalid_benefit');
     if (reason === 'pointBudget') reasons.add('budget:points');
     if (reason === 'byteBudget') reasons.add('budget:bytes');
+    if (reason === 'drawBudget') reasons.add('budget:draws');
+    if (reason === 'lanePointBudget') reasons.add('budget:lane-points');
+    if (reason === 'laneByteBudget') reasons.add('budget:lane-bytes');
+    if (reason === 'laneDrawBudget') reasons.add('budget:lane-draws');
+    if (reason === 'laneUploadBudget') reasons.add('budget:lane-upload');
+    if (reason === 'laneDecodeBudget') reasons.add('budget:lane-decode');
+    const lane = (item as { readonly lane?: unknown }).lane;
+    if (typeof reason === 'string' && reason.startsWith('lane') && typeof lane === 'string') {
+      if (lane.startsWith('lane4')) reasons.add('budget:lane4');
+      if (lane.startsWith('lane5')) reasons.add('budget:lane5');
+      if (lane.startsWith('lane6')) reasons.add('budget:lane6');
+    }
   }
-  for (const reason of plan.frontier.reasonCodes) {
+  for (const reasonValue of plan.frontier.reasonCodes) {
+    const reason = String(reasonValue);
     if (reason === 'budget:points' || reason === 'budget:bytes') reasons.add(reason);
+    if (reason === 'budget:draws') reasons.add(reason);
+    if (reason === 'budget:lane4') reasons.add(reason);
+    if (reason === 'budget:lane5') reasons.add(reason);
+    if (reason === 'budget:lane6') reasons.add(reason);
+    if (reason === 'protected_work_over_budget') reasons.add(reason);
   }
   if (decodeBacklog > 0) reasons.add('decode:backlog');
   if (uploadBacklog > 0) reasons.add('upload:backlog');
   if (protectedMs > targetMs) reasons.add('protected_work_over_budget');
   return Object.freeze([...reasons]);
+}
+
+function numericRecordField(record: Readonly<Record<string, unknown>>, field: string): number {
+  const value = record[field];
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function exceedsResourceBudget(cost: KernelResourceCost, budget: KernelResourceCost): boolean {
+  return (Object.keys(cost) as (keyof KernelResourceCost)[]).some((key) => cost[key] > budget[key]);
 }
 
 function createDecodeExecutor(

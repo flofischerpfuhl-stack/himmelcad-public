@@ -6,6 +6,10 @@ export type KernelDeadlineReasonCode =
   | 'within_target'
   | 'cpu_deadline'
   | 'gpu_deadline'
+  | 'present_deadline'
+  | 'upload_debt'
+  | 'decode_backlog'
+  | 'residency_pressure'
   | 'recovery_headroom'
   | 'invalid_timing'
   | 'resource_budget'
@@ -14,6 +18,15 @@ export type KernelDeadlineReasonCode =
   | 'protected_work_over_budget'
   | 'budget:points'
   | 'budget:bytes'
+  | 'budget:draws'
+  | 'budget:lane4'
+  | 'budget:lane5'
+  | 'budget:lane6'
+  | 'budget:lane-points'
+  | 'budget:lane-bytes'
+  | 'budget:lane-draws'
+  | 'budget:lane-upload'
+  | 'budget:lane-decode'
   | 'decode:backlog'
   | 'upload:backlog';
 
@@ -75,6 +88,53 @@ export interface KernelPresentedFrameSample {
     readonly budgetSatisfied: boolean;
   };
   readonly freshness: 'fresh' | 'reprojected';
+  /** Class/tier that authored the effective frame caps. */
+  readonly qualityClass?: 'I' | 'W' | 'D';
+  readonly qualityTier?: 'full' | 'balanced' | 'coarse' | 'minimum';
+  readonly qualityAdjustment?: 'unchanged' | 'reduced' | 'increased';
+  /** Always zero: overload is reported, never resolved by hiding protected truth. */
+  readonly protectedPrimitivesDropped?: number;
+}
+
+/** Bounded cloud/raster background reuse policy. Protected overlays and picks
+ * are never represented here because they must always use the fresh frame. */
+export class KernelCloudFrameFreshness {
+  private firstReprojectedAtMs: number | null = null;
+  private reprojectedPresents = 0;
+
+  constructor(
+    private readonly maximumPresents = 2,
+    private readonly maximumMs = 50,
+  ) {
+    if (!Number.isSafeInteger(maximumPresents) || maximumPresents < 0 || maximumPresents > 2) {
+      throw new RangeError('maximum reprojected presents must be from 0 through 2');
+    }
+    if (!finiteDuration(maximumMs) || maximumMs > 50) {
+      throw new RangeError('maximum reprojected age must be from 0 through 50 ms');
+    }
+  }
+
+  /** Labels one actual background present. False means a fresh background is required. */
+  record(reused: boolean, presentTimestampMs: number): 'fresh' | 'reprojected' {
+    if (!finiteDuration(presentTimestampMs)) throw new RangeError('present timestamp is invalid');
+    if (!reused) {
+      this.firstReprojectedAtMs = null;
+      this.reprojectedPresents = 0;
+      return 'fresh';
+    }
+    const first = this.firstReprojectedAtMs ?? presentTimestampMs;
+    if (
+      this.reprojectedPresents >= this.maximumPresents ||
+      presentTimestampMs - first > this.maximumMs
+    ) {
+      this.firstReprojectedAtMs = null;
+      this.reprojectedPresents = 0;
+      return 'fresh';
+    }
+    this.firstReprojectedAtMs = first;
+    this.reprojectedPresents += 1;
+    return 'reprojected';
+  }
 }
 
 export interface KernelDistribution {
@@ -94,7 +154,9 @@ export interface KernelDiagnosticsSnapshot {
   readonly inputToPresentMs: KernelDistribution | null;
   readonly cpuMs: KernelDistribution | null;
   readonly gpuMs: KernelDistribution | null;
-  readonly primitives: Readonly<Record<keyof KernelFramePrimitiveCounts, KernelDistribution | null>>;
+  readonly primitives: Readonly<
+    Record<keyof KernelFramePrimitiveCounts, KernelDistribution | null>
+  >;
   readonly phases: Readonly<Record<keyof KernelFramePhaseTimers, KernelDistribution | null>>;
   readonly lastFrames: readonly KernelPresentedFrameSample[];
 }
@@ -159,9 +221,7 @@ export class KernelFrameDiagnostics {
       deadlineReasonCodes: Object.freeze([...sample.deadlineReasonCodes]),
       primitives: Object.freeze({ ...sample.primitives }),
       phases: Object.freeze({ ...sample.phases }),
-      ...(sample.frontier === undefined
-        ? {}
-        : { frontier: Object.freeze({ ...sample.frontier }) }),
+      ...(sample.frontier === undefined ? {} : { frontier: Object.freeze({ ...sample.frontier }) }),
     });
     if (this.values.length < KERNEL_FRAME_DIAGNOSTICS_CAPACITY) this.values.push(value);
     else {
@@ -185,13 +245,47 @@ export class KernelFrameDiagnostics {
   }
 
   /** Same aggregation as sample(), restricted by actual presentation time. */
-  snapshotWindow(startedAtMs: number, endedAtMs: number, lastFrames = 1): KernelDiagnosticsSnapshot {
+  snapshotWindow(
+    startedAtMs: number,
+    endedAtMs: number,
+    lastFrames = 1,
+  ): KernelDiagnosticsSnapshot {
     if (!finiteDuration(startedAtMs) || !finiteDuration(endedAtMs) || endedAtMs < startedAtMs) {
       throw new RangeError('diagnostics window requires ordered finite timestamps');
     }
-    return snapshotOf(this.ordered().filter((frame) =>
-      frame.presentTimestampMs >= startedAtMs && frame.presentTimestampMs <= endedAtMs,
-    ), lastFrames);
+    return snapshotOf(
+      this.ordered().filter(
+        (frame) => frame.presentTimestampMs >= startedAtMs && frame.presentTimestampMs <= endedAtMs,
+      ),
+      lastFrames,
+    );
+  }
+
+  /** Minimal passive-observer projection for the 4 Hz HUD. */
+  hudWindow(startedAtMs: number, endedAtMs: number): {
+    readonly presentedFrameIntervalMs: KernelDistribution | null;
+    readonly lastFrame: KernelPresentedFrameSample | null;
+  } {
+    if (!finiteDuration(startedAtMs) || !finiteDuration(endedAtMs) || endedAtMs < startedAtMs) {
+      throw new RangeError('diagnostics window requires ordered finite timestamps');
+    }
+    const intervals: number[] = [];
+    let lastFrame: KernelPresentedFrameSample | null = null;
+    for (let offset = 0; offset < this.values.length; offset += 1) {
+      const index =
+        this.values.length < KERNEL_FRAME_DIAGNOSTICS_CAPACITY
+          ? offset
+          : (this.first + offset) % this.values.length;
+      const frame = this.values[index]!;
+      if (frame.presentTimestampMs < startedAtMs || frame.presentTimestampMs > endedAtMs) continue;
+      if (frame.presentIntervalMs !== null) intervals.push(frame.presentIntervalMs);
+      lastFrame = frame;
+    }
+    return Object.freeze({
+      presentedFrameIntervalMs: distribution(intervals),
+      // Frame records and every nested collection are frozen at admission.
+      lastFrame,
+    });
   }
 
   async sample(request: KernelDiagnosticsSampleRequest): Promise<KernelDiagnosticsSampleResult> {
@@ -242,7 +336,9 @@ function snapshotOf(
     frames: frames.length,
     presentSource: 'raf-render-complete',
     presentedFrameIntervalMs: distribution(
-      frames.flatMap((frame) => (frame.presentIntervalMs === null ? [] : [frame.presentIntervalMs])),
+      frames.flatMap((frame) =>
+        frame.presentIntervalMs === null ? [] : [frame.presentIntervalMs],
+      ),
     ),
     inputToPresentMs: distribution(
       frames.flatMap((frame) => (frame.inputToPresentMs === null ? [] : [frame.inputToPresentMs])),

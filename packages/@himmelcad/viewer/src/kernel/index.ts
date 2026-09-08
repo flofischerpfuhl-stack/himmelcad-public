@@ -28,6 +28,7 @@ export {
   moveViewingBox,
   placeViewingBoxCenter,
   resizeViewingBox,
+  resizeViewingBoxCorner,
   resizeViewingBoxFace,
   rotateViewingBox,
   setViewingBoxMode,
@@ -39,6 +40,8 @@ export type {
   KernelViewingBoxAxis,
   KernelViewingBoxFace,
   KernelViewingBoxMode,
+  KernelViewingBoxOperation,
+  KernelViewingBoxLockMode,
   KernelViewingBoxState,
   KernelViewingBoxViewportSeed,
 } from './KernelViewingBox.js';
@@ -103,6 +106,7 @@ export type {
 export { KernelViewerSession, KernelViewerSessionError } from './KernelViewerSession.js';
 export {
   KERNEL_FRAME_DIAGNOSTICS_CAPACITY,
+  KernelCloudFrameFreshness,
   KernelFrameDiagnostics,
 } from './KernelFrameDiagnostics.js';
 export type {
@@ -119,6 +123,8 @@ export type {
 export type {
   KernelPresentedFrameOptions,
   KernelPresentedFrameOutcome,
+  KernelQualitySnapshot,
+  KernelQualityTier,
   KernelViewerLoadOptions,
   KernelViewerSessionDiagnostics,
   KernelViewerSessionErrorCode,
@@ -148,6 +154,9 @@ export type {
   KernelEntityInteractionState,
   KernelFrameOutcome,
   KernelFrameTelemetrySnapshot,
+  KernelFrontierBudget,
+  KernelBackgroundLaneBudgets,
+  KernelLaneWorkBudget,
   KernelGpuFrameTimingDiagnostics,
   KernelGpuModelCacheStats,
   KernelGpuTextureCacheStats,
@@ -181,3 +190,4 @@ export type {
   KernelWorldPoint,
 } from './WgpuKernelViewer.js';
 export type * from './generated/index.js';
+export * from './KernelSelectionVisualPolicy.js';

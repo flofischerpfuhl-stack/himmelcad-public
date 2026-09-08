@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   KERNEL_FRAME_DIAGNOSTICS_CAPACITY,
+  KernelCloudFrameFreshness,
   KernelFrameDiagnostics,
   type KernelPresentedFrameSample,
 } from '../src/kernel/KernelFrameDiagnostics.js';
@@ -53,7 +54,9 @@ function frame(
 void test('G-VC-MEASURE retains 2048 exact frames and exposes tail percentiles', () => {
   const diagnostics = new KernelFrameDiagnostics();
   for (let index = 0; index < KERNEL_FRAME_DIAGNOSTICS_CAPACITY + 2; index += 1) {
-    diagnostics.recordFrame(frame(index * 10, index === 0 ? null : index === 2_049 ? 80 : 10, index));
+    diagnostics.recordFrame(
+      frame(index * 10, index === 0 ? null : index === 2_049 ? 80 : 10, index),
+    );
   }
   const snapshot = diagnostics.snapshot(3);
   assert.equal(snapshot.frames, KERNEL_FRAME_DIAGNOSTICS_CAPACITY);
@@ -121,9 +124,89 @@ void test('HUD two-second window equals sample for identical fixture frames and 
   diagnostics.recordFrame(frame(timestamp + 0.01, 24.1, 41_200_000));
   const sample = await pending;
   const hud = diagnostics.snapshotWindow(sample.window.startedAtMs, sample.window.endedAtMs, 1);
+  const passiveHud = diagnostics.hudWindow(sample.window.startedAtMs, sample.window.endedAtMs);
   assert.deepEqual(hud.presentedFrameIntervalMs, sample.presentedFrameIntervalMs);
   assert.deepEqual(hud.lastFrames, sample.lastFrames);
+  assert.deepEqual(passiveHud.presentedFrameIntervalMs, sample.presentedFrameIntervalMs);
+  assert.deepEqual(passiveHud.lastFrame, sample.lastFrames[0]);
   assert.equal(hud.lastFrames[0]?.primitives.points, 41_200_000);
   assert.equal(diagnostics.snapshotWindow(timestamp + 2001, timestamp + 4001).frames, 0);
   assert.throws(() => diagnostics.snapshotWindow(2, 1), RangeError);
+});
+
+void test('S-08 V-01 fixture HUD observer changes presented-frame p95 by at most 0.5 ms', () => {
+  const diagnostics = new KernelFrameDiagnostics();
+  for (let index = 0; index < 600; index += 1) {
+    diagnostics.recordFrame(frame(index * 16.4, index === 0 ? null : 16.4, 41_200_000));
+  }
+  for (let warm = 0; warm < 20; warm += 1) diagnostics.hudWindow(0, 10_000);
+  const off = Array.from({ length: 600 }, () => 16.4);
+  const on = off.map((interval, index) => {
+    if (index % 15 !== 0) return interval;
+    const started = performance.now();
+    diagnostics.hudWindow(0, 10_000);
+    return interval + (performance.now() - started);
+  });
+  const p95 = (values: readonly number[]) =>
+    [...values].sort((left, right) => left - right)[Math.ceil(values.length * 0.95) - 1]!;
+  const delta = p95(on) - p95(off);
+  assert(delta <= 0.5, `HUD observer presented-p95 delta ${delta.toFixed(3)} ms`);
+  console.log(`S-08 HUD observer presented-p95 delta=${delta.toFixed(3)} ms`);
+});
+
+void test('G-VC-MIXED keeps protected primitives in every saturated Class I frame', () => {
+  const diagnostics = new KernelFrameDiagnostics();
+  for (let index = 0; index < 60; index += 1) {
+    diagnostics.recordFrame({
+      ...frame(index * 25, index === 0 ? null : 25, 4_000_000),
+      primitives: {
+        points: 4_000_000,
+        triangles: 120_000,
+        splats: 250_000,
+        lines: 5_000,
+        textQuads: 500,
+        drawCalls: 940,
+      },
+      deadlineReasonCodes: ['budget:points', 'budget:lane5'],
+      qualityClass: 'I',
+      qualityTier: 'full',
+      qualityAdjustment: 'unchanged',
+      protectedPrimitivesDropped: 0,
+      frontier: {
+        hardwareClass: 'I',
+        budgetPoints: 4_000_000,
+        budgetBytes: 96 * 1_048_576,
+        budgetDrawCalls: 1_000,
+        selectedPoints: 4_000_000,
+        selectedBytes: 80 * 1_048_576,
+        selectedDrawCalls: 940,
+        coarsenedTiles: 12,
+        budgetSatisfied: true,
+      },
+    });
+  }
+  const snapshot = diagnostics.snapshot(60);
+  assert.equal(snapshot.frames, 60);
+  assert.equal(snapshot.primitives.lines?.p50, 5_000);
+  assert.equal(snapshot.primitives.textQuads?.p50, 500);
+  assert.equal(
+    snapshot.lastFrames.every((item) => item.protectedPrimitivesDropped === 0),
+    true,
+  );
+  assert.equal(
+    snapshot.lastFrames.every((item) => item.deadlineReasonCodes.includes('budget:lane5')),
+    true,
+  );
+});
+
+void test('VC-D4 background reuse is bounded by two presents and 50 ms', () => {
+  const presents = new KernelCloudFrameFreshness();
+  assert.equal(presents.record(true, 0), 'reprojected');
+  assert.equal(presents.record(true, 20), 'reprojected');
+  assert.equal(presents.record(true, 40), 'fresh');
+
+  const age = new KernelCloudFrameFreshness();
+  assert.equal(age.record(true, 0), 'reprojected');
+  assert.equal(age.record(true, 51), 'fresh');
+  assert.equal(age.record(false, 60), 'fresh');
 });

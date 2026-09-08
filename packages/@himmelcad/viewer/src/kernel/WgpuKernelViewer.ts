@@ -797,6 +797,8 @@ export interface KernelFrameBudget {
 export interface KernelStreamingFrameOptions {
   readonly resourceBudget: KernelResourceBudget;
   readonly frameBudget: KernelFrameBudget;
+  /** Applies motion admission caps without discarding resident detail. */
+  readonly motion?: boolean;
   readonly frontierBudget?: KernelFrontierBudget;
   readonly maximumScreenSpaceError?: number;
   readonly detailScale?: number;
@@ -812,6 +814,23 @@ export interface KernelFrontierBudget {
   readonly points: number;
   readonly bytes: number;
   readonly drawCalls: number;
+  /** Present on V-03 kernels; omitted only by legacy fixtures/bindings. */
+  readonly backgroundLanes?: KernelBackgroundLaneBudgets;
+  readonly motionBackgroundLanes?: KernelBackgroundLaneBudgets;
+}
+
+export interface KernelLaneWorkBudget {
+  readonly points: number;
+  readonly bytes: number;
+  readonly drawCalls: number;
+  readonly uploadBytes: number;
+  readonly decodeMs: number;
+}
+
+export interface KernelBackgroundLaneBudgets {
+  readonly lane4: KernelLaneWorkBudget;
+  readonly lane5: KernelLaneWorkBudget;
+  readonly lane6: KernelLaneWorkBudget;
 }
 
 export interface KernelHardwareInventory {
@@ -860,6 +879,18 @@ export interface KernelResolvedHardwarePolicy {
   readonly decoderWorkers: number;
   readonly contentRequests: number;
   readonly transparency: 'weightedBlended' | 'sortedAlpha';
+  readonly governor?: {
+    readonly enterLowerAfterFrames: number;
+    readonly leaveLowerAfterFrames: number;
+    readonly recoveryRatio: number;
+    readonly adjustmentIntervalMs: number;
+  };
+  readonly motion?: {
+    readonly restAfterMs: number;
+    readonly refineWithinMs: number;
+    readonly maximumReprojectedPresents: number;
+    readonly maximumReprojectedMs: number;
+  };
 }
 
 export interface KernelStreamingWorkPolicy {
@@ -906,6 +937,9 @@ export interface KernelStreamingRuntimeState {
 export interface KernelRuntimeQualityState {
   readonly renderScale: number;
   readonly detailScale: number;
+  /** Present on V-03 kernels; omitted only by legacy fixtures/bindings. */
+  readonly tier?: 'full' | 'balanced' | 'coarse' | 'minimum';
+  readonly budgetScale?: number;
 }
 
 export type KernelRuntimeQualityAdjustment = 'unchanged' | 'reduced' | 'increased';
@@ -914,6 +948,10 @@ export interface KernelFrameTelemetryObservation {
   readonly cpuMs: number;
   readonly interacting: boolean;
   readonly uploadedBytes: number;
+  readonly presentedMs?: number;
+  readonly uploadDebtBytes?: number;
+  readonly decodeBacklog?: number;
+  readonly residencyPressure?: boolean;
 }
 
 export interface KernelRuntimeQualityObservation {
@@ -923,6 +961,10 @@ export interface KernelRuntimeQualityObservation {
     | 'within_target'
     | 'cpu_deadline'
     | 'gpu_deadline'
+    | 'present_deadline'
+    | 'upload_debt'
+    | 'decode_backlog'
+    | 'residency_pressure'
     | 'recovery_headroom'
     | 'invalid_timing';
   readonly gpuSample: { readonly sequence: number; readonly gpuMs: number } | null;
@@ -1098,8 +1140,17 @@ export interface KernelStreamingFramePlan {
     readonly budget: KernelFrontierBudget;
     readonly selected: KernelResourceCost;
     readonly coarsenedTiles: number;
-    readonly reasonCodes: readonly ('budget:points' | 'budget:bytes' | 'budget:draws')[];
+    readonly reasonCodes: readonly (
+      | 'budget:points'
+      | 'budget:bytes'
+      | 'budget:draws'
+      | 'protected_work_over_budget'
+      | 'budget:lane4'
+      | 'budget:lane5'
+      | 'budget:lane6'
+    )[];
     readonly budgetSatisfied: boolean;
+    readonly protectedPrimitivesDropped?: number;
   };
 }
 
@@ -2623,8 +2674,7 @@ export class WgpuKernelViewer {
     const budget = options.frontierBudget ?? {
       hardwareClass: 'W' as const,
       points: options.resourceBudget.points,
-      bytes:
-        options.resourceBudget.gpuBufferBytes + options.resourceBudget.gpuTextureBytes,
+      bytes: options.resourceBudget.gpuBufferBytes + options.resourceBudget.gpuTextureBytes,
       drawCalls: options.resourceBudget.drawCalls,
     };
     return {
@@ -3331,7 +3381,14 @@ export class WgpuKernelViewer {
     if (
       !validDuration(observation.cpuMs) ||
       !Number.isSafeInteger(observation.uploadedBytes) ||
-      observation.uploadedBytes < 0
+      observation.uploadedBytes < 0 ||
+      (observation.presentedMs !== undefined && !validDuration(observation.presentedMs)) ||
+      (observation.uploadDebtBytes !== undefined &&
+        (!Number.isSafeInteger(observation.uploadDebtBytes) || observation.uploadDebtBytes < 0)) ||
+      (observation.decodeBacklog !== undefined &&
+        (!Number.isSafeInteger(observation.decodeBacklog) || observation.decodeBacklog < 0)) ||
+      (observation.residencyPressure !== undefined &&
+        typeof observation.residencyPressure !== 'boolean')
     ) {
       throw new RangeError('frame telemetry requires valid timings and uploaded bytes');
     }
@@ -3348,10 +3405,15 @@ export class WgpuKernelViewer {
           'within_target',
           'cpu_deadline',
           'gpu_deadline',
+          'present_deadline',
+          'upload_debt',
+          'decode_backlog',
+          'residency_pressure',
           'recovery_headroom',
           'invalid_timing',
         ].includes(String(value.reasonCode))) ||
-      (value.gpuSample !== undefined && value.gpuSample !== null &&
+      (value.gpuSample !== undefined &&
+        value.gpuSample !== null &&
         (!isRecord(value.gpuSample) ||
           !Number.isSafeInteger(value.gpuSample.sequence) ||
           Number(value.gpuSample.sequence) < 1 ||
@@ -3641,7 +3703,8 @@ function parseFrameOutcome(json: string): KernelFrameOutcome {
   if (
     value.status === 'presented' &&
     typeof value.reconfigured === 'boolean' &&
-    (value.gpuTimingSequence === undefined || value.gpuTimingSequence === null ||
+    (value.gpuTimingSequence === undefined ||
+      value.gpuTimingSequence === null ||
       (Number.isSafeInteger(value.gpuTimingSequence) && Number(value.gpuTimingSequence) > 0))
   ) {
     return value.gpuTimingSequence === undefined

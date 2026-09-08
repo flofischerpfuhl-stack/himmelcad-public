@@ -78,6 +78,56 @@ pub struct CanonicalSnapshotSummary {
     pub marker: SnapshotMarkerV1,
 }
 
+const VIEW_BOOKMARK_SCHEMA_ID: &str = "hcad.view-bookmark@1";
+const VIEWING_BOX_SCHEMA_ID: &str = "hcad.viewing-box@1";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalViewBookmarkRecord {
+    pub schema_id: String,
+    pub schema_version: u32,
+    pub state: serde_json::Value,
+    pub restore_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalViewBookmarkSummary {
+    pub entity_id: String,
+    pub revision: u64,
+    pub name: String,
+    pub state: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalViewBookmarkCommit {
+    pub bookmark: CanonicalViewBookmarkSummary,
+    pub journal_entry: CanonicalJournalEntry,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalViewingBoxSummary {
+    pub entity_id: String,
+    pub revision: u64,
+    pub name: String,
+    pub state: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalViewingBoxCommit {
+    pub viewing_box: CanonicalViewingBoxSummary,
+    pub journal_entry: CanonicalJournalEntry,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonicalViewingBoxDelete {
+    pub journal_entry: CanonicalJournalEntry,
+}
+
 /// Versioned, path-free description of every live representation that can be
 /// reconstructed from the canonical store after process restart.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -255,6 +305,319 @@ impl CanonicalAppRuntime {
                 .cmp(&(right.marker.marked_generation, &right.entity_id))
         });
         Ok(result)
+    }
+
+    pub fn create_view_bookmark(
+        &mut self,
+        command_id: String,
+        entity_id: String,
+        name: String,
+        state: serde_json::Value,
+    ) -> Result<CanonicalViewBookmarkCommit, CanonicalAppRuntimeError> {
+        if command_id.trim().is_empty() || entity_id.trim().is_empty() || name.trim().is_empty() {
+            return Err(CanonicalAppRuntimeError::InvalidResidency(
+                "bookmark command, entity id and name are required".to_owned(),
+            ));
+        }
+        validate_view_bookmark_state(&state)?;
+        let record = CanonicalViewBookmarkRecord {
+            schema_id: VIEW_BOOKMARK_SCHEMA_ID.to_owned(),
+            schema_version: 1,
+            state,
+            restore_count: 0,
+        };
+        let components = bookmark_object(&record)?;
+        let attributes = empty_json_object(
+            "application/vnd.himmelcad.attributes+json",
+            serde_json::json!({}),
+        )?;
+        let relations = empty_json_object(
+            "application/vnd.himmelcad.relations+json",
+            serde_json::json!([]),
+        )?;
+        let store = self.store_mut()?;
+        store.put_json_object(&components)?;
+        store.put_json_object(&attributes)?;
+        store.put_json_object(&relations)?;
+        let owner = store
+            .document()
+            .entities()
+            .find(|entity| entity.owner.is_none() && entity.type_id.0 == built_in_type::GROUP)
+            .map(|entity| entity.id.clone());
+        let mut entity = CanonicalEntity {
+            id: EntityId(entity_id),
+            revision: 0,
+            type_id: EntityTypeId(VIEW_BOOKMARK_SCHEMA_ID.to_owned()),
+            name: name.trim().to_owned(),
+            owner,
+            layer_ids: Vec::new(),
+            placement: None,
+            representations: Vec::new(),
+            components_ref: components.object_hash,
+            attributes_ref: attributes.object_hash,
+            relations_ref: relations.object_hash,
+            style_ref: None,
+            schema_version: 1,
+            version_hash: ObjectHash::of_bytes(b"pending view bookmark"),
+        };
+        entity.version_hash = canonical_entity_version_hash(&entity)
+            .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?;
+        let journal_entry = store.queue_transaction(CanonicalCommandTransaction {
+            command_id,
+            mutations: vec![CanonicalEntityMutation::Create { entity }],
+        })?;
+        let bookmark = read_view_bookmark(
+            store,
+            journal_entry.effects[0].after.as_ref().ok_or_else(|| {
+                CanonicalAppRuntimeError::InvalidResidency(
+                    "bookmark create produced no live entity".to_owned(),
+                )
+            })?,
+        )?;
+        Ok(CanonicalViewBookmarkCommit {
+            bookmark,
+            journal_entry,
+        })
+    }
+
+    pub fn list_view_bookmarks(
+        &self,
+    ) -> Result<Vec<CanonicalViewBookmarkSummary>, CanonicalAppRuntimeError> {
+        let store = self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?;
+        let mut result = store
+            .document()
+            .entities()
+            .filter(|entity| entity.type_id.0 == VIEW_BOOKMARK_SCHEMA_ID)
+            .map(|entity| read_view_bookmark(store, entity))
+            .collect::<Result<Vec<_>, _>>()?;
+        result.sort_by(|left, right| {
+            (&left.name, &left.entity_id).cmp(&(&right.name, &right.entity_id))
+        });
+        Ok(result)
+    }
+
+    pub fn restore_view_bookmark(
+        &mut self,
+        command_id: String,
+        entity_id: String,
+        expected_revision: u64,
+    ) -> Result<CanonicalViewBookmarkCommit, CanonicalAppRuntimeError> {
+        let store = self.store_mut()?;
+        let entity = store
+            .document()
+            .entity(&EntityId(entity_id.clone()))
+            .cloned()
+            .ok_or_else(|| {
+                CanonicalAppRuntimeError::InvalidResidency(format!(
+                    "bookmark {entity_id:?} no longer exists"
+                ))
+            })?;
+        if entity.type_id.0 != VIEW_BOOKMARK_SCHEMA_ID || entity.revision != expected_revision {
+            return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+                "bookmark {entity_id:?} is stale or has the wrong type"
+            )));
+        }
+        let mut record: CanonicalViewBookmarkRecord =
+            serde_json::from_slice(&store.read_object(&entity.components_ref)?)?;
+        record.restore_count = record.restore_count.saturating_add(1);
+        let components = bookmark_object(&record)?;
+        store.put_json_object(&components)?;
+        let journal_entry = store.queue_transaction(CanonicalCommandTransaction {
+            command_id,
+            mutations: vec![CanonicalEntityMutation::Update {
+                expected: EntityVersionRef {
+                    id: entity.id,
+                    revision: entity.revision,
+                    version_hash: entity.version_hash,
+                },
+                edits: vec![CanonicalEntityEdit::SetComponentsRef {
+                    components_ref: components.object_hash,
+                }],
+            }],
+        })?;
+        let bookmark = read_view_bookmark(
+            store,
+            journal_entry.effects[0].after.as_ref().ok_or_else(|| {
+                CanonicalAppRuntimeError::InvalidResidency(
+                    "bookmark restore produced no live entity".to_owned(),
+                )
+            })?,
+        )?;
+        Ok(CanonicalViewBookmarkCommit {
+            bookmark,
+            journal_entry,
+        })
+    }
+
+    pub fn put_viewing_box(
+        &mut self,
+        command_id: String,
+        entity_id: String,
+        name: String,
+        expected_revision: Option<u64>,
+        state: serde_json::Value,
+    ) -> Result<CanonicalViewingBoxCommit, CanonicalAppRuntimeError> {
+        if command_id.trim().is_empty()
+            || entity_id.trim().is_empty()
+            || name.trim().is_empty()
+            || !state.is_object()
+        {
+            return Err(CanonicalAppRuntimeError::InvalidResidency(
+                "viewing-box command, id, name and object state are required".to_owned(),
+            ));
+        }
+        let component_value = serde_json::json!({
+            "schemaId": VIEWING_BOX_SCHEMA_ID,
+            "schemaVersion": 1,
+            "state": state,
+        });
+        let components = empty_json_object(
+            "application/vnd.himmelcad.viewing-box+json",
+            component_value,
+        )?;
+        let store = self.store_mut()?;
+        store.put_json_object(&components)?;
+        let existing = store
+            .document()
+            .entity(&EntityId(entity_id.clone()))
+            .cloned();
+        let mutation = if let Some(entity) = existing {
+            if entity.type_id.0 != VIEWING_BOX_SCHEMA_ID
+                || expected_revision != Some(entity.revision)
+            {
+                return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+                    "viewing box {entity_id:?} is stale or has the wrong type"
+                )));
+            }
+            CanonicalEntityMutation::Update {
+                expected: EntityVersionRef {
+                    id: entity.id,
+                    revision: entity.revision,
+                    version_hash: entity.version_hash,
+                },
+                edits: vec![
+                    CanonicalEntityEdit::SetName {
+                        name: name.trim().to_owned(),
+                    },
+                    CanonicalEntityEdit::SetComponentsRef {
+                        components_ref: components.object_hash,
+                    },
+                ],
+            }
+        } else {
+            if expected_revision.is_some() {
+                return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+                    "viewing box {entity_id:?} no longer exists"
+                )));
+            }
+            let attributes = empty_json_object(
+                "application/vnd.himmelcad.attributes+json",
+                serde_json::json!({}),
+            )?;
+            let relations = empty_json_object(
+                "application/vnd.himmelcad.relations+json",
+                serde_json::json!([]),
+            )?;
+            store.put_json_object(&attributes)?;
+            store.put_json_object(&relations)?;
+            let owner = store
+                .document()
+                .entities()
+                .find(|entity| entity.owner.is_none() && entity.type_id.0 == built_in_type::GROUP)
+                .map(|entity| entity.id.clone());
+            let mut entity = CanonicalEntity {
+                id: EntityId(entity_id),
+                revision: 0,
+                type_id: EntityTypeId(VIEWING_BOX_SCHEMA_ID.to_owned()),
+                name: name.trim().to_owned(),
+                owner,
+                layer_ids: Vec::new(),
+                placement: None,
+                representations: Vec::new(),
+                components_ref: components.object_hash,
+                attributes_ref: attributes.object_hash,
+                relations_ref: relations.object_hash,
+                style_ref: None,
+                schema_version: 1,
+                version_hash: ObjectHash::of_bytes(b"pending viewing box"),
+            };
+            entity.version_hash = canonical_entity_version_hash(&entity)
+                .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?;
+            CanonicalEntityMutation::Create { entity }
+        };
+        let journal_entry = store.queue_transaction(CanonicalCommandTransaction {
+            command_id,
+            mutations: vec![mutation],
+        })?;
+        let viewing_box = read_viewing_box(
+            store,
+            journal_entry.effects[0].after.as_ref().ok_or_else(|| {
+                CanonicalAppRuntimeError::InvalidResidency(
+                    "viewing-box commit produced no live entity".to_owned(),
+                )
+            })?,
+        )?;
+        Ok(CanonicalViewingBoxCommit {
+            viewing_box,
+            journal_entry,
+        })
+    }
+
+    pub fn list_viewing_boxes(
+        &self,
+    ) -> Result<Vec<CanonicalViewingBoxSummary>, CanonicalAppRuntimeError> {
+        let store = self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?;
+        store
+            .document()
+            .entities()
+            .filter(|entity| entity.type_id.0 == VIEWING_BOX_SCHEMA_ID)
+            .map(|entity| read_viewing_box(store, entity))
+            .collect()
+    }
+
+    pub fn delete_viewing_box(
+        &mut self,
+        command_id: String,
+        entity_id: String,
+        expected_revision: u64,
+    ) -> Result<CanonicalViewingBoxDelete, CanonicalAppRuntimeError> {
+        if command_id.trim().is_empty() || entity_id.trim().is_empty() {
+            return Err(CanonicalAppRuntimeError::InvalidResidency(
+                "viewing-box delete command and id are required".to_owned(),
+            ));
+        }
+        let store = self.store_mut()?;
+        let entity = store
+            .document()
+            .entity(&EntityId(entity_id.clone()))
+            .cloned()
+            .ok_or_else(|| {
+                CanonicalAppRuntimeError::InvalidResidency(format!(
+                    "viewing box {entity_id:?} no longer exists"
+                ))
+            })?;
+        if entity.type_id.0 != VIEWING_BOX_SCHEMA_ID || entity.revision != expected_revision {
+            return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+                "viewing box {entity_id:?} is stale or has the wrong type"
+            )));
+        }
+        let journal_entry = store.queue_transaction(CanonicalCommandTransaction {
+            command_id,
+            mutations: vec![CanonicalEntityMutation::Delete {
+                expected: EntityVersionRef {
+                    id: entity.id,
+                    revision: entity.revision,
+                    version_hash: entity.version_hash,
+                },
+            }],
+        })?;
+        Ok(CanonicalViewingBoxDelete { journal_entry })
     }
 
     /// Returns whether a canonical project currently owns this runtime.
@@ -1362,6 +1725,103 @@ fn validate_transaction_object_refs(
     Ok(())
 }
 
+fn validate_view_bookmark_state(state: &serde_json::Value) -> Result<(), CanonicalAppRuntimeError> {
+    let object = state.as_object().ok_or_else(|| {
+        CanonicalAppRuntimeError::InvalidResidency("bookmark state must be an object".to_owned())
+    })?;
+    if object.get("schemaId").and_then(serde_json::Value::as_str)
+        != Some("hcad.bookmark-view-state@1")
+        || !object
+            .get("camera")
+            .is_some_and(serde_json::Value::is_object)
+        || !object
+            .get("presentation")
+            .is_some_and(serde_json::Value::is_object)
+        || !object
+            .get("clipRefs")
+            .is_some_and(serde_json::Value::is_array)
+    {
+        return Err(CanonicalAppRuntimeError::InvalidResidency(
+            "bookmark state does not match hcad.bookmark-view-state@1".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn bookmark_object(
+    record: &CanonicalViewBookmarkRecord,
+) -> Result<CanonicalJsonObject, CanonicalAppRuntimeError> {
+    empty_json_object(
+        "application/vnd.himmelcad.view-bookmark+json",
+        serde_json::to_value(record)?,
+    )
+}
+
+fn empty_json_object(
+    media_type: &str,
+    value: serde_json::Value,
+) -> Result<CanonicalJsonObject, CanonicalAppRuntimeError> {
+    let bytes = serde_json::to_vec(&value)?;
+    Ok(CanonicalJsonObject {
+        object_hash: ObjectHash::of_bytes(&bytes),
+        media_type: media_type.to_owned(),
+        value,
+    })
+}
+
+fn read_view_bookmark(
+    store: &CanonicalProjectStore,
+    entity: &CanonicalEntity,
+) -> Result<CanonicalViewBookmarkSummary, CanonicalAppRuntimeError> {
+    let record: CanonicalViewBookmarkRecord =
+        serde_json::from_slice(&store.read_object(&entity.components_ref)?)?;
+    if record.schema_id != VIEW_BOOKMARK_SCHEMA_ID || record.schema_version != 1 {
+        return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+            "bookmark {:?} has an unsupported component",
+            entity.id.0
+        )));
+    }
+    validate_view_bookmark_state(&record.state)?;
+    Ok(CanonicalViewBookmarkSummary {
+        entity_id: entity.id.0.clone(),
+        revision: entity.revision,
+        name: entity.name.clone(),
+        state: record.state,
+    })
+}
+
+fn read_viewing_box(
+    store: &CanonicalProjectStore,
+    entity: &CanonicalEntity,
+) -> Result<CanonicalViewingBoxSummary, CanonicalAppRuntimeError> {
+    let value: serde_json::Value =
+        serde_json::from_slice(&store.read_object(&entity.components_ref)?)?;
+    let state = value.get("state").cloned().ok_or_else(|| {
+        CanonicalAppRuntimeError::InvalidResidency(format!(
+            "viewing box {:?} has no state component",
+            entity.id.0
+        ))
+    })?;
+    if value.get("schemaId").and_then(serde_json::Value::as_str) != Some(VIEWING_BOX_SCHEMA_ID)
+        || value
+            .get("schemaVersion")
+            .and_then(serde_json::Value::as_u64)
+            != Some(1)
+        || !state.is_object()
+    {
+        return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
+            "viewing box {:?} has an unsupported component",
+            entity.id.0
+        )));
+    }
+    Ok(CanonicalViewingBoxSummary {
+        entity_id: entity.id.0.clone(),
+        revision: entity.revision,
+        name: entity.name.clone(),
+        state,
+    })
+}
+
 fn collect_entity_object_refs<'a>(
     entity: &'a CanonicalEntity,
     references: &mut Vec<&'a ObjectHash>,
@@ -1477,6 +1937,48 @@ mod tests {
                 && snapshot.marker.marker_kind == SnapshotMarkerKindV1::Manual
                 && snapshot.marker.origin == SnapshotOriginV1::Ui
         }));
+        runtime.close();
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn view_bookmarks_round_trip_through_the_journal_and_reopen() {
+        let root = temp_project("view-bookmark-round-trip");
+        let mut runtime = CanonicalAppRuntime::default();
+        runtime.open(&root).expect("open project");
+        let state = json!({
+            "schemaId": "hcad.bookmark-view-state@1",
+            "camera": { "target": [0, 0, 0] },
+            "presentation": { "background": "theme" },
+            "clipRefs": [],
+        });
+
+        let created = runtime
+            .create_view_bookmark(
+                "bookmark-create".to_owned(),
+                "bookmark-a".to_owned(),
+                "Overview".to_owned(),
+                state.clone(),
+            )
+            .expect("create bookmark");
+        assert_eq!(created.bookmark.revision, 0);
+        assert_eq!(created.bookmark.state, state);
+        let restored = runtime
+            .restore_view_bookmark(
+                "bookmark-restore".to_owned(),
+                created.bookmark.entity_id.clone(),
+                created.bookmark.revision,
+            )
+            .expect("restore bookmark");
+        assert_eq!(restored.bookmark.revision, 1);
+        assert!(restored.journal_entry.sequence > created.journal_entry.sequence);
+        runtime.flush().expect("bookmark durability");
+        assert!(runtime.close());
+
+        runtime.open(&root).expect("reopen project");
+        let bookmarks = runtime.list_view_bookmarks().expect("list bookmarks");
+        assert_eq!(bookmarks.len(), 1);
+        assert_eq!(bookmarks[0], restored.bookmark);
         runtime.close();
         fs::remove_dir_all(root).expect("cleanup");
     }

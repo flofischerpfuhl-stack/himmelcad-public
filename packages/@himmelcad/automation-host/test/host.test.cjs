@@ -348,6 +348,33 @@ test('S-04 automation parity routes every canonical selection row through the re
   assert.deepEqual(calls.map((call) => call.method), rows);
 });
 
+test('S-08 view state, history, presentation, quality and bookmarks share the renderer owner', async () => {
+  const calls = [];
+  const router = new AutomationRpcRouter({
+    sidecarCall: async (method) => {
+      if (method === 'app.negotiate') return negotiationResult([]);
+      assert.fail(`view method reached sidecar: ${method}`);
+    },
+    viewCall: async (method, params) => {
+      calls.push({ method, params });
+      return { method };
+    },
+  });
+  await negotiate(router);
+  const methods = [
+    'view.state.get', 'view.state.set', 'view.quality.get',
+    'view.bookmark.create', 'view.bookmark.list', 'view.bookmark.restore',
+    'view.presentation.set', 'view.point_size.set', 'viewing_box.list',
+    'display.history.get', 'display.history.clear',
+    'camera.history.get', 'camera.history.clear',
+  ];
+  for (const [index, method] of methods.entries()) {
+    const response = await router.handle({ id: index + 1, method, params: {} });
+    assert.equal(response.result.method, method);
+  }
+  assert.deepEqual(calls.map((call) => call.method), methods);
+});
+
 test('negotiation and grants are bound to one live RPC connection', async () => {
   const router = new AutomationRpcRouter({
     sidecarCall: async () => negotiationResult(['automation.entities.page']),

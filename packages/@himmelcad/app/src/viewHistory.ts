@@ -1,4 +1,5 @@
 import type { LocalHistoryV1 } from '@himmelcad/data/canonical';
+import { LocalStorageLocalHistoryPersistence } from './localHistoryPersistence.js';
 
 export interface ViewHistoryPersistence {
   load(projectId: string): Promise<unknown | null>;
@@ -6,17 +7,12 @@ export interface ViewHistoryPersistence {
 }
 
 /** The S-04 storage strategy: one atomic localStorage publication per project/stream. */
-export class LocalStorageViewHistoryPersistence implements ViewHistoryPersistence {
-  constructor(
-    private readonly storage: Pick<Storage, 'getItem' | 'setItem'>,
-    private readonly stream: 'camera' | 'display',
-  ) {}
-  async load(projectId: string): Promise<unknown | null> {
-    const value = this.storage.getItem(`hcad.${this.stream}.v1:${projectId}`);
-    return value === null ? null : JSON.parse(value);
-  }
-  async store(projectId: string, record: unknown): Promise<void> {
-    this.storage.setItem(`hcad.${this.stream}.v1:${projectId}`, JSON.stringify(record));
+export class LocalStorageViewHistoryPersistence
+  extends LocalStorageLocalHistoryPersistence
+  implements ViewHistoryPersistence
+{
+  constructor(storage: Pick<Storage, 'getItem' | 'setItem'>, stream: 'camera' | 'display') {
+    super(storage, `hcad.${stream}.v1:`);
   }
 }
 

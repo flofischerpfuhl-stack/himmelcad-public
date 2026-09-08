@@ -1419,6 +1419,8 @@ async fn handle(
         || req.method.starts_with("canonical.project.")
         || req.method.starts_with("canonical.residency.")
         || req.method.starts_with("pointcloud.")
+        || req.method.starts_with("view.bookmark.")
+        || req.method.starts_with("canonical.viewing_box.")
     {
         return handle_canonical_app_rpc(req, canonical_app, automation).await;
     }
@@ -1811,6 +1813,10 @@ async fn handle_canonical_app_rpc(
 ) -> RpcResponse {
     let queue_flush = req.method == "snapshot.create"
         || req.method == "pointcloud.display.set"
+        || req.method == "view.bookmark.create"
+        || req.method == "view.bookmark.restore"
+        || req.method == "canonical.viewing_box.put"
+        || req.method == "canonical.viewing_box.delete"
         || (req.method == "app.protocol"
             && serde_json::from_value::<AppProtocolRequestEnvelope>(req.params.clone()).is_ok_and(
                 |envelope| {
@@ -1882,6 +1888,108 @@ async fn handle_canonical_app_rpc(
             req.id,
             runtime.list_snapshots().map_err(anyhow::Error::from),
         ),
+        "view.bookmark.create" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Params {
+                command_id: String,
+                entity_id: String,
+                name: String,
+                state: serde_json::Value,
+            }
+            match serde_json::from_value::<Params>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    runtime
+                        .create_view_bookmark(
+                            params.command_id,
+                            params.entity_id,
+                            params.name,
+                            params.state,
+                        )
+                        .map_err(anyhow::Error::from),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        "view.bookmark.list" => rpc_result(
+            req.id,
+            runtime.list_view_bookmarks().map_err(anyhow::Error::from),
+        ),
+        "view.bookmark.restore" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Params {
+                command_id: String,
+                entity_id: String,
+                expected_revision: u64,
+            }
+            match serde_json::from_value::<Params>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    runtime
+                        .restore_view_bookmark(
+                            params.command_id,
+                            params.entity_id,
+                            params.expected_revision,
+                        )
+                        .map_err(anyhow::Error::from),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        "canonical.viewing_box.put" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Params {
+                command_id: String,
+                entity_id: String,
+                name: String,
+                expected_revision: Option<u64>,
+                state: serde_json::Value,
+            }
+            match serde_json::from_value::<Params>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    runtime
+                        .put_viewing_box(
+                            params.command_id,
+                            params.entity_id,
+                            params.name,
+                            params.expected_revision,
+                            params.state,
+                        )
+                        .map_err(anyhow::Error::from),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
+        "canonical.viewing_box.list" => rpc_result(
+            req.id,
+            runtime.list_viewing_boxes().map_err(anyhow::Error::from),
+        ),
+        "canonical.viewing_box.delete" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Params {
+                command_id: String,
+                entity_id: String,
+                expected_revision: u64,
+            }
+            match serde_json::from_value::<Params>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    runtime
+                        .delete_viewing_box(
+                            params.command_id,
+                            params.entity_id,
+                            params.expected_revision,
+                        )
+                        .map_err(anyhow::Error::from),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
+        }
         "canonical.residency.bootstrap" => rpc_result(
             req.id,
             runtime.residency_bootstrap().map_err(anyhow::Error::from),

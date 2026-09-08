@@ -127,9 +127,9 @@ export function commandsForSurface(
   );
   if (surface !== 'quickSurface') return entries;
   const quickOrder: Readonly<Record<CommandGroup, number>> = {
-    view: 0,
-    selection: 1,
-    edit: 2,
+    view: context.selectedEntityIds.length === 0 ? 0 : 2,
+    selection: context.selectedEntityIds.length === 0 ? 1 : 0,
+    edit: context.selectedEntityIds.length === 0 ? 2 : 1,
     'entity-specific': 3,
   };
   return entries

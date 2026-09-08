@@ -175,3 +175,127 @@ only the optional shared viewer callback and shared UI/model additions.
 ## Architect review (G17, 2026-09-05)
 
 HUD (`gallery/shots/dark/viewport-hud.png`): two mono lines, fixed columns, p95 in warning/error tone above target — matches the brief, accepted. View presets ribbon group accepted (fixture shows all four buttons focused at once — fixture simulation, not a component defect; fix the fixture in S-08b). The eight items under "Required remaining work" are the S-08b brief; S-08 counts as landed-partial.
+
+## S-08b completion — 2026-09-06
+
+Status: **COMPLETE IMPLEMENTATION — ready for Release 0.5 acceptance.**
+
+S-08b closes all eight items above and the architect-review fixture correction:
+
+- Builder's live host/client state is `hcad.view-state@2`. Camera, projection,
+  navigation, revisioned viewing-box references, canonical/session-hidden IDs,
+  display state, presentation state and active clips remain separate through
+  get/set and automation. PhotoLab explicitly retains its v1 parser until its
+  own migration instead of receiving an accidental shared-boundary change.
+- Viewing boxes and bookmarks are canonical sidecar entities. Their CAS writes
+  use the project transaction journal and therefore participate in normal
+  snapshot/archive recovery. Bookmark create/list/restore is wired through
+  `view.bookmark.create/list/restore`; restore records a canonical journal
+  transaction. Bookmark capture excludes selection, session-only hiding and the
+  point-size multiplier. Every referenced viewing-box entity and revision is
+  validated before any live or display state mutates, so stale or missing
+  references reject the whole operation.
+- P9 global display defaults, per-node overrides, permissions/support metadata,
+  presentation settings and active clips now drive Builder's visible-set and
+  entity-tree consumers. Display undo/redo has its own persisted P8 stream.
+  The global-toggle regression test uses a canonical-document spy and proves
+  that no entity write or document-history entry occurs.
+- Selection, camera and display streams now share the same local persistence
+  adapter. Get/clear/undo/redo aliases are complete, persistence is per project,
+  queued writes are cancellable at lifecycle boundaries, and project
+  replacement/reload recovery is covered by unit tests and the running Builder
+  harness.
+- The HUD reads the exact V-02/V-03 governor snapshot (`class`, `tier`, targets)
+  and never derives a tier. If that seam supplies no snapshot the UI renders
+  `quality —`. Backlog is only the sum of the exposed request, decode and upload
+  queues. The HUD projection and diagnostics sample use the same timestamped
+  frame window; fixed fields are updated without a React render loop.
+- Non-Top presets are disabled in 2D with a native explanation, Perspective is
+  in the quick surface, and bookmark actions are available in the View ribbon,
+  console and automation. Registry, generated command tables, schema and Python
+  SDK are in parity.
+- The `View presets` gallery fixture now captures only the default state; it no
+  longer depicts four simultaneous focus states. Gallery capture remained
+  serial.
+
+### Gate results
+
+| Gate | Result |
+| --- | --- |
+| G-VD-STATE | **PASS.** v2 parser/serializer and P8 journal round trips pass; canonical viewing-box/bookmark entities use sidecar project transactions. Preflight tests prove stale revisions fail atomically without changing view or display state. |
+| P8 stream tests | **PASS.** Independent selection/display/camera state, undo/redo/clear, branch truncation, persistence corruption handling, project isolation and reload recovery pass. One display change produces one entry. |
+| HUD = diagnostics sample | **PASS.** The lightweight HUD window and full diagnostic sample have identical interval distribution and latest-frame values for the same timestamp window. |
+| HUD observer cost | **PASS.** V-01's deterministic presented-frame fixture measured **+0.122 ms p95**, below the required **+0.5 ms p95** ceiling. |
+| Canonical bookmarks | **PASS.** `view.bookmark.create/list/restore` crosses renderer automation and the sidecar journal; capture exclusions and stale/missing-reference disclosure are tested. |
+| Global display isolation | **PASS.** Global display changes produce no canonical entity or document-history writes. |
+| Running Builder persistence | **PASS.** Existing Electron CDP e2e harness with the real sidecar exercised project switch and renderer reload for display/presentation/overrides and camera recovery. |
+| G17 visuals | **PASS.** HUD and preset fixtures regenerated in light/dark themes and visually inspected; the simultaneous-focus fixture defect is removed. |
+
+The live Electron development-host diagnostic (software GPU, not the controlled
+acceptance fixture) reported `off=210.0 ms`, `on=193.40000000037253 ms`, delta
+`-16.59999999962747 ms` p95 with 157/142 samples. It also observed exact quality
+`I-coarse` with target `33.4 ms`. This confirms the running HUD reads the governor
+seam; the controlled V-01 result above is the acceptance measurement because the
+development host is recovery- and compositor-noisy.
+
+### Final validation
+
+```text
+pnpm --filter @himmelcad/app test
+# tests 55; pass 55; fail 0
+
+pnpm --filter @himmelcad/viewer test
+# tests 140; pass 140; fail 0
+S-08 HUD observer presented-p95 delta=0.122 ms
+
+pnpm --filter @himmelcad/builder typecheck
+> tsc -b tsconfig.json tsconfig.typecheck-electron.json
+(exit 0)
+
+pnpm --filter @himmelcad/photolab typecheck
+> tsc -b tsconfig.json && node ../../scripts/check-photolab-english-ui.mjs
+PhotoLab English UI check passed.
+(exit 0)
+
+pnpm --filter @himmelcad/ui test
+# tests 41; pass 41; fail 0
+
+pnpm --filter @himmelcad/automation-host test
+# tests 47; pass 46; fail 0; skipped 1
+
+CARGO_TARGET_DIR=target/builder node scripts/run-cargo.mjs check -p himmelcad-sidecar
+(exit 0; one pre-existing unrelated dead-code warning)
+
+CARGO_TARGET_DIR=target/builder node scripts/run-cargo.mjs test -p himmelcad-sidecar view_bookmarks_round_trip_through_the_journal_and_reopen
+test canonical_app_runtime::tests::view_bookmarks_round_trip_through_the_journal_and_reopen ... ok
+# 1 passed; 0 failed
+
+node scripts/registry-lint.mjs
+PASS duplicate-function-ids (0)
+PASS function-ids-in-spec-absent-from-registry (0)
+PASS function-ids-in-registry-absent-from-spec (0)
+PASS consumer-rows-point-to-owner (0)
+PASS dangling-decision-ids (0)
+PASS spec-status-mismatch (0)
+PASS shortcut-key-collisions (0)
+
+node scripts/generate-command-table.mjs --check
+(exit 0)
+python3 scripts/generate-automation-sdk.py --check
+generated Python SDK is current
+
+node --check scripts/s08-builder-electron-e2e.mjs
+(exit 0)
+
+pnpm --filter @himmelcad/ui gallery:shots
+Captured 76 screenshots for 37 sections
+```
+
+The running application gate used the repository's existing Playwright-over-CDP
+Electron e2e style, implemented for this package as
+`scripts/s08-builder-electron-e2e.mjs`, with a real Builder sidecar rather than a
+mock browser store. The run reported `projectSwitchPersistence=true`,
+`rendererReloadPersistence=true` and `cameraReloadPersistence=true`.
+
+No S-08b change was made to `BuilderImportRegistrationIsland.tsx` or D-02's
+Builder import-path/import-island implementation.

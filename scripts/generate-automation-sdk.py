@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import keyword
 import re
 import tempfile
 from pathlib import Path
@@ -24,7 +25,8 @@ def sha256(data: bytes) -> str:
 
 def snake(name: str) -> str:
     value = re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
-    return {"filter": "entity_filter", "schema": "schema"}.get(value, value)
+    value = {"filter": "entity_filter", "schema": "schema"}.get(value, value)
+    return f"{value}_" if keyword.iskeyword(value) else value
 
 
 def descriptor(node: dict[str, Any]) -> Any:

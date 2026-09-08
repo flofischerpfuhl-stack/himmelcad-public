@@ -11,6 +11,7 @@ export interface RibbonAction {
   id: string;
   label: string;
   title?: string;
+  disabled?: boolean;
   shortcut?: string;
   icon?: ReactNode;
   onActivate?: () => void;
@@ -252,6 +253,7 @@ export function Ribbon({ tabs }: RibbonProps): JSX.Element {
                         activeFunctionId === action.id ? styles.dropdownItemActive : ''
                       }`}
                       title={action.title ?? action.label}
+                      disabled={action.disabled}
                       onClick={() => {
                         if (action.onActivate) action.onActivate();
                         else activate(action.id);
@@ -296,9 +298,11 @@ function RibbonActionButton({
         title={
           action.title ?? (action.shortcut ? `${action.label} (${action.shortcut})` : action.label)
         }
+        disabled={action.disabled}
         aria-haspopup={action.menuItems ? 'menu' : undefined}
         aria-expanded={action.menuItems && !action.onActivate ? menuOpen : undefined}
         onClick={() => {
+          if (action.disabled) return;
           if (action.menuItems && !action.onActivate) setMenuOpen((open) => !open);
           else onSelect();
         }}

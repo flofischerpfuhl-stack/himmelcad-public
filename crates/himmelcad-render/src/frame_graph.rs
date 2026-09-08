@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{RenderProxyKind, RenderWorld};
+use crate::{FrameLane, RenderProxyKind, RenderWorld};
 
 /// Ordered logical pass executed by all graphics backends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +28,7 @@ pub enum RenderPassKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrameGraph {
     passes: Vec<RenderPassKind>,
+    scheduling_lanes: Vec<FrameLane>,
 }
 
 impl FrameGraph {
@@ -38,7 +39,24 @@ impl FrameGraph {
         let mut has_points = false;
         let mut has_transparent = false;
         let mut has_overlay = false;
+        let mut has_mesh_raster_fallback = false;
+        let mut has_cloud_splat_fallback = false;
+        let mut has_streamed = false;
         for (proxy, _) in world.visible_proxies() {
+            if proxy.dataset_id.is_some() {
+                has_streamed = true;
+                match proxy.kind {
+                    RenderProxyKind::Triangles | RenderProxyKind::Raster => {
+                        has_mesh_raster_fallback = true;
+                    }
+                    RenderProxyKind::Points | RenderProxyKind::GaussianSplats => {
+                        has_cloud_splat_fallback = true;
+                    }
+                    RenderProxyKind::CadStroke
+                    | RenderProxyKind::CadFill
+                    | RenderProxyKind::Text => {}
+                }
+            }
             if proxy.style.opacity < 1.0 || proxy.kind == RenderProxyKind::GaussianSplats {
                 has_transparent = true;
             } else {
@@ -74,7 +92,24 @@ impl FrameGraph {
         if has_overlay {
             passes.push(RenderPassKind::Overlay);
         }
-        Self { passes }
+        let mut scheduling_lanes = vec![
+            FrameLane::Lane1CameraClip,
+            FrameLane::Lane2Interaction,
+            FrameLane::Lane3Canonical,
+        ];
+        if has_mesh_raster_fallback {
+            scheduling_lanes.push(FrameLane::Lane4MeshRasterFallback);
+        }
+        if has_cloud_splat_fallback {
+            scheduling_lanes.push(FrameLane::Lane5CloudSplatFallback);
+        }
+        if has_streamed {
+            scheduling_lanes.push(FrameLane::Lane6Refinement);
+        }
+        Self {
+            passes,
+            scheduling_lanes,
+        }
     }
 
     /// Ordered logical passes for backend encoding.
@@ -82,14 +117,21 @@ impl FrameGraph {
     pub fn passes(&self) -> &[RenderPassKind] {
         &self.passes
     }
+
+    /// CPU/admission order. Graphics passes may retain depth-correct ordering,
+    /// but their work can only be prepared after lanes 1–3 are complete.
+    #[must_use]
+    pub fn scheduling_lanes(&self) -> &[FrameLane] {
+        &self.scheduling_lanes
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{FrameGraph, RenderPassKind};
     use crate::{
-        BoundingVolume, RenderProxy, RenderProxyId, RenderProxyKind, RenderStyle, RenderWorld,
-        ResourceCost, WorldAabb, WorldVec3,
+        BoundingVolume, DatasetId, FrameLane, RenderProxy, RenderProxyId, RenderProxyKind,
+        RenderStyle, RenderWorld, ResourceCost, WorldAabb, WorldVec3,
     };
 
     #[test]
@@ -114,6 +156,17 @@ mod tests {
                 RenderPassKind::Overlay,
             ]
         );
+        assert_eq!(
+            graph.scheduling_lanes(),
+            [
+                FrameLane::Lane1CameraClip,
+                FrameLane::Lane2Interaction,
+                FrameLane::Lane3Canonical,
+                FrameLane::Lane4MeshRasterFallback,
+                FrameLane::Lane5CloudSplatFallback,
+                FrameLane::Lane6Refinement,
+            ]
+        );
     }
 
     fn proxy(id: &str, kind: RenderProxyKind) -> RenderProxy {
@@ -135,7 +188,8 @@ mod tests {
                     },
                 },
             },
-            dataset_id: None,
+            dataset_id: matches!(kind, RenderProxyKind::Triangles | RenderProxyKind::Points)
+                .then(|| DatasetId(id.to_owned())),
             tile_id: None,
             style: RenderStyle::default(),
             cost: ResourceCost::default(),

@@ -215,6 +215,35 @@ pub struct ResolvedHardwarePolicy {
     pub content_requests: u16,
     /// Transparency implementation.
     pub transparency: TransparencyStrategy,
+    /// Hysteresis thresholds used by the runtime governor.
+    pub governor: GovernorTunables,
+    /// Motion/rest and bounded cloud-background freshness thresholds.
+    pub motion: MotionPolicyTunables,
+}
+
+/// Tunable VC-D4 motion/rest policy carried to every viewer host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MotionPolicyTunables {
+    /// Delay after the last camera input before rest refinement.
+    pub rest_after_ms: u16,
+    /// Maximum delay from rest entry to the first refinement attempt.
+    pub refine_within_ms: u16,
+    /// Maximum consecutive presents using a reprojected cloud/raster background.
+    pub maximum_reprojected_presents: u8,
+    /// Maximum wall-clock age of a reprojected cloud/raster background.
+    pub maximum_reprojected_ms: u16,
+}
+
+impl Default for MotionPolicyTunables {
+    fn default() -> Self {
+        Self {
+            rest_after_ms: 250,
+            refine_within_ms: 100,
+            maximum_reprojected_presents: 2,
+            maximum_reprojected_ms: 50,
+        }
+    }
 }
 
 /// Streaming work ceiling used while orbit, pan, zoom or an edit drag is active.
@@ -275,13 +304,8 @@ impl HardwarePolicyResolver {
         );
         let points_from_memory = gpu_buffers / GPU_POINT_VERTEX_STRIDE_BYTES;
         let triangles_from_memory = gpu_buffers / 36;
-        let target_frame_ms = if capabilities.device_kind == DeviceKind::Cpu
-            && calibration.is_none_or(|_| detail_class < 0.9)
-        {
-            33.3
-        } else {
-            16.7
-        };
+        let frontier_class = measured_hardware_class(usable_gpu, system_memory, calibration);
+        let target_frame_ms = rest_target_ms(frontier_class);
         let upload_bytes = calibration.map_or(16 * MEBIBYTE, |measurement| {
             let bytes_per_frame = f64::from(measurement.upload_gib_per_second.max(0.05))
                 * GIBIBYTE_F64
@@ -298,16 +322,6 @@ impl HardwarePolicyResolver {
             |measurement| calibrated_workload(measurement, target_frame_ms),
         );
         let transparency = TransparencyStrategy::for_capabilities(capabilities);
-        let frontier_class = if capabilities.device_kind == DeviceKind::DiscreteGpu
-            && gpu_memory >= 8 * GIBIBYTE
-            && calibration.is_some_and(|value| value.point_millions_per_second >= 1_000.0)
-        {
-            crate::FrontierHardwareClass::D
-        } else if capabilities.device_kind == DeviceKind::DiscreteGpu {
-            crate::FrontierHardwareClass::W
-        } else {
-            crate::FrontierHardwareClass::I
-        };
         let mut frontier = crate::FrontierBudget::for_hardware_class(frontier_class);
         frontier.points = frontier.points.min(workload.points).min(points_from_memory);
         frontier.bytes = frontier.bytes.min(gpu_buffers.saturating_add(gpu_textures));
@@ -321,6 +335,7 @@ impl HardwarePolicyResolver {
             upload_bytes,
             new_requests: content_requests.min(24),
         };
+        frontier = frontier.with_frame_budget(frame);
         let maximum_traversed_nodes =
             finite_u32(100_000.0 * f64::from(detail_class)).clamp(25_000, 1_000_000);
         // Fetch transport is asynchronous and already residency-bounded. Keep
@@ -348,7 +363,7 @@ impl HardwarePolicyResolver {
             maximum_traversed_nodes,
             interaction: InteractionStreamingPolicy {
                 frame: FrameBudget {
-                    target_frame_ms,
+                    target_frame_ms: motion_target_ms(frontier_class),
                     traversal_ms: frame.traversal_ms * 0.5,
                     decode_ms: frame.decode_ms * 0.5,
                     upload_bytes: (frame.upload_bytes / 2).max(MEBIBYTE),
@@ -364,6 +379,8 @@ impl HardwarePolicyResolver {
             decoder_workers,
             content_requests,
             transparency,
+            governor: GovernorTunables::default(),
+            motion: MotionPolicyTunables::default(),
         };
         match deployment_profile {
             HardwareDeploymentProfile::Desktop => policy,
@@ -616,6 +633,61 @@ pub struct RuntimeQualityState {
     pub render_scale: f32,
     /// Detail relative to the baseline screen-space-error target.
     pub detail_scale: f32,
+    /// Discrete hysteretic tier used to scale hard background budgets.
+    pub tier: RuntimeQualityTier,
+    /// Core-authored multiplier for point/byte/draw/upload/decode background caps.
+    pub budget_scale: f32,
+}
+
+/// Ordered governor tier. Canonical coordinates and protected lanes are never
+/// tiered; only background density, effects and presentation scale change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RuntimeQualityTier {
+    /// Class-full V-02 frontier.
+    Full,
+    /// First bounded reduction.
+    Balanced,
+    /// Motion/coarse-biased background quality.
+    Coarse,
+    /// Minimum safe background quality.
+    Minimum,
+}
+
+/// Tunable hysteresis thresholds from VC-D11.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GovernorTunables {
+    /// Consecutive over-target fresh frames before lowering one tier.
+    pub enter_lower_after_frames: u16,
+    /// Consecutive debt-free headroom frames before recovering one tier.
+    pub leave_lower_after_frames: u16,
+    /// Fraction of the target defining recovery headroom.
+    pub recovery_ratio: f32,
+    /// Minimum measured time between tier changes.
+    pub adjustment_interval_ms: f32,
+}
+
+impl Default for GovernorTunables {
+    fn default() -> Self {
+        Self {
+            enter_lower_after_frames: 8,
+            leave_lower_after_frames: 90,
+            recovery_ratio: 0.75,
+            adjustment_interval_ms: 250.0,
+        }
+    }
+}
+
+/// Non-timing pressure observed at the same frame boundary.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GovernorPressure {
+    /// Bytes waiting beyond the current upload allowance.
+    pub upload_debt_bytes: u64,
+    /// Tiles waiting for a decoder worker.
+    pub decode_backlog: usize,
+    /// Whether protected or pinned residency prevents satisfying policy.
+    pub residency_pressure: bool,
 }
 
 /// Result of observing a frame.
@@ -639,6 +711,14 @@ pub enum RuntimeQualityReason {
     CpuDeadline,
     /// A completed GPU timestamp was the dominant deadline pressure.
     GpuDeadline,
+    /// Presented cadence missed target after measured CPU/GPU work completed.
+    PresentDeadline,
+    /// Upload debt sustained deadline pressure.
+    UploadDebt,
+    /// Decode backlog sustained deadline pressure.
+    DecodeBacklog,
+    /// Pinned/protected residency exceeded the current resource target.
+    ResidencyPressure,
     /// Sustained headroom is recovering presentation quality.
     RecoveryHeadroom,
     /// The observation was invalid and was ignored.
@@ -651,34 +731,52 @@ pub struct RuntimeQualityGovernor {
     ceiling: RuntimeQualityState,
     state: RuntimeQualityState,
     target_ms: f32,
-    smoothed_ms: f32,
+    recent_effective_ms: VecDeque<f32>,
     overloaded_frames: u16,
     headroom_frames: u16,
     last_reason: RuntimeQualityReason,
+    tunables: GovernorTunables,
+    since_adjustment_ms: f32,
+    pinned_tier: Option<RuntimeQualityTier>,
 }
 
 impl RuntimeQualityGovernor {
-    /// Starts at a conservative fraction of the device-specific ceiling.
+    /// Starts at the class-full tier resolved from measured calibration.
     #[must_use]
     pub fn new(policy: ResolvedHardwarePolicy) -> Self {
         let ceiling = RuntimeQualityState {
             render_scale: policy.maximum_render_scale,
             detail_scale: policy.maximum_detail_scale,
+            tier: RuntimeQualityTier::Full,
+            budget_scale: 1.0,
         };
+        let state = tier_state(ceiling, RuntimeQualityTier::Full);
         Self {
             ceiling,
-            state: RuntimeQualityState {
-                render_scale: ceiling.render_scale.min(1.0),
-                detail_scale: (ceiling.detail_scale * 0.75)
-                    .max(0.5)
-                    .min(ceiling.detail_scale),
-            },
+            state,
             target_ms: policy.frame.target_frame_ms,
-            smoothed_ms: policy.frame.target_frame_ms,
+            recent_effective_ms: VecDeque::with_capacity(8),
             overloaded_frames: 0,
             headroom_frames: 0,
             last_reason: RuntimeQualityReason::WithinTarget,
+            tunables: policy.governor,
+            since_adjustment_ms: policy.governor.adjustment_interval_ms,
+            pinned_tier: None,
         }
+    }
+
+    /// Creates a governor with explicit gate tunables.
+    #[must_use]
+    pub fn with_tunables(policy: ResolvedHardwarePolicy, tunables: GovernorTunables) -> Self {
+        let mut governor = Self::new(policy);
+        governor.tunables = GovernorTunables {
+            enter_lower_after_frames: tunables.enter_lower_after_frames.max(1),
+            leave_lower_after_frames: tunables.leave_lower_after_frames.max(1),
+            recovery_ratio: tunables.recovery_ratio.clamp(0.1, 0.95),
+            adjustment_interval_ms: tunables.adjustment_interval_ms.max(0.0),
+        };
+        governor.since_adjustment_ms = governor.tunables.adjustment_interval_ms;
+        governor
     }
 
     /// Current presentation quality.
@@ -693,6 +791,23 @@ impl RuntimeQualityGovernor {
         self.last_reason
     }
 
+    /// Effective hysteresis thresholds.
+    #[must_use]
+    pub fn tunables(&self) -> GovernorTunables {
+        self.tunables
+    }
+
+    /// Pins deterministic output to one tier for identity and capture tests.
+    /// Passing `None` resumes measured adaptation from the current tier.
+    pub fn pin_tier(&mut self, tier: Option<RuntimeQualityTier>) {
+        self.pinned_tier = tier;
+        if let Some(tier) = tier {
+            self.state = tier_state(self.ceiling, tier);
+        }
+        self.overloaded_frames = 0;
+        self.headroom_frames = 0;
+    }
+
     /// Applies a newly calibrated device policy without an upward quality jump.
     ///
     /// Lower ceilings take effect immediately. Higher ceilings only become
@@ -702,11 +817,18 @@ impl RuntimeQualityGovernor {
         self.ceiling = RuntimeQualityState {
             render_scale: policy.maximum_render_scale,
             detail_scale: policy.maximum_detail_scale,
+            tier: RuntimeQualityTier::Full,
+            budget_scale: 1.0,
         };
         self.target_ms = policy.frame.target_frame_ms;
-        self.state.render_scale = self.state.render_scale.min(self.ceiling.render_scale);
-        self.state.detail_scale = self.state.detail_scale.min(self.ceiling.detail_scale);
-        self.smoothed_ms = self.target_ms;
+        let resolved = tier_state(self.ceiling, self.state.tier);
+        self.state = RuntimeQualityState {
+            render_scale: resolved.render_scale.min(previous.render_scale),
+            detail_scale: resolved.detail_scale.min(previous.detail_scale),
+            tier: resolved.tier,
+            budget_scale: resolved.budget_scale,
+        };
+        self.recent_effective_ms.clear();
         self.overloaded_frames = 0;
         self.headroom_frames = 0;
         self.last_reason = RuntimeQualityReason::WithinTarget;
@@ -721,25 +843,71 @@ impl RuntimeQualityGovernor {
 
     /// Observes a frame and adjusts only after sustained overload or headroom.
     pub fn observe(&mut self, sample: TimingSample) -> QualityAdjustment {
-        let frame_ms = sample
+        self.observe_with_pressure(sample, GovernorPressure::default())
+    }
+
+    /// Observes measured CPU/GPU work plus upload, decode and residency pressure.
+    pub fn observe_with_pressure(
+        &mut self,
+        sample: TimingSample,
+        pressure: GovernorPressure,
+    ) -> QualityAdjustment {
+        self.observe_presented_with_pressure(sample, pressure, None)
+    }
+
+    /// Observes one presentation interval when available, retaining CPU/GPU
+    /// split for attribution. Non-presented fixtures fall back to effective work.
+    pub fn observe_presented_with_pressure(
+        &mut self,
+        sample: TimingSample,
+        pressure: GovernorPressure,
+        presented_ms: Option<f32>,
+    ) -> QualityAdjustment {
+        let work_ms = sample
             .gpu_ms
             .filter(|value| value.is_finite() && *value >= 0.0)
             .map_or(sample.cpu_ms, |gpu| gpu.max(sample.cpu_ms));
-        if !frame_ms.is_finite() || frame_ms < 0.0 {
+        let frame_ms = presented_ms.unwrap_or(work_ms);
+        if !work_ms.is_finite() || work_ms < 0.0 || !frame_ms.is_finite() || frame_ms < 0.0 {
             self.last_reason = RuntimeQualityReason::InvalidTiming;
             return QualityAdjustment::Unchanged;
         }
-        self.smoothed_ms = self.smoothed_ms.mul_add(0.9, frame_ms * 0.1);
-        let overload_threshold = if sample.interacting { 1.05 } else { 1.15 };
-        if self.smoothed_ms > self.target_ms * overload_threshold {
-            self.last_reason = if sample.gpu_ms.is_some_and(|gpu| gpu >= sample.cpu_ms) {
+        self.since_adjustment_ms += frame_ms;
+        if self.recent_effective_ms.len() == 8 {
+            self.recent_effective_ms.pop_front();
+        }
+        self.recent_effective_ms.push_back(frame_ms);
+        let effective_p95_ms = percentile95(self.recent_effective_ms.iter().copied());
+        if self.pinned_tier.is_some() {
+            self.last_reason = RuntimeQualityReason::WithinTarget;
+            return QualityAdjustment::Unchanged;
+        }
+        let target_ms = if sample.interacting {
+            self.target_ms * 1.15
+        } else {
+            self.target_ms
+        };
+        if (frame_ms > target_ms && effective_p95_ms > target_ms)
+            || pressure.upload_debt_bytes > 0
+            || pressure.decode_backlog > 0
+            || pressure.residency_pressure
+        {
+            self.last_reason = if pressure.residency_pressure {
+                RuntimeQualityReason::ResidencyPressure
+            } else if pressure.upload_debt_bytes > 0 {
+                RuntimeQualityReason::UploadDebt
+            } else if pressure.decode_backlog > 0 {
+                RuntimeQualityReason::DecodeBacklog
+            } else if frame_ms > target_ms && work_ms <= target_ms {
+                RuntimeQualityReason::PresentDeadline
+            } else if sample.gpu_ms.is_some_and(|gpu| gpu >= sample.cpu_ms) {
                 RuntimeQualityReason::GpuDeadline
             } else {
                 RuntimeQualityReason::CpuDeadline
             };
             self.overloaded_frames = self.overloaded_frames.saturating_add(1);
             self.headroom_frames = 0;
-        } else if self.smoothed_ms < self.target_ms * 0.72 {
+        } else if frame_ms < target_ms * self.tunables.recovery_ratio {
             self.last_reason = RuntimeQualityReason::RecoveryHeadroom;
             self.headroom_frames = self.headroom_frames.saturating_add(1);
             self.overloaded_frames = 0;
@@ -748,24 +916,79 @@ impl RuntimeQualityGovernor {
             self.overloaded_frames = 0;
             self.headroom_frames = 0;
         }
-        if self.overloaded_frames >= 8 {
+        if self.overloaded_frames >= self.tunables.enter_lower_after_frames
+            && self.since_adjustment_ms >= self.tunables.adjustment_interval_ms
+        {
             self.overloaded_frames = 0;
-            let minimum_render_scale = self.ceiling.render_scale.min(0.5);
-            let minimum_detail_scale = self.ceiling.detail_scale.min(0.35);
-            self.state.render_scale = (self.state.render_scale * 0.9).max(minimum_render_scale);
-            self.state.detail_scale = (self.state.detail_scale * 0.85).max(minimum_detail_scale);
-            return QualityAdjustment::Reduced(self.state);
+            if let Some(tier) = lower_tier(self.state.tier) {
+                self.state = tier_state(self.ceiling, tier);
+                self.since_adjustment_ms = 0.0;
+                return QualityAdjustment::Reduced(self.state);
+            }
         }
-        let headroom_threshold = if sample.interacting { 45 } else { 12 };
-        if self.headroom_frames >= headroom_threshold {
+        if self.headroom_frames >= self.tunables.leave_lower_after_frames
+            && self.since_adjustment_ms >= self.tunables.adjustment_interval_ms
+        {
             self.headroom_frames = 0;
-            self.state.render_scale =
-                (self.state.render_scale * 1.05).min(self.ceiling.render_scale);
-            self.state.detail_scale =
-                (self.state.detail_scale * 1.08).min(self.ceiling.detail_scale);
-            return QualityAdjustment::Increased(self.state);
+            if let Some(tier) = higher_tier(self.state.tier) {
+                self.state = tier_state(self.ceiling, tier);
+                self.since_adjustment_ms = 0.0;
+                return QualityAdjustment::Increased(self.state);
+            }
+            let class_full = tier_state(self.ceiling, self.state.tier);
+            if class_full.render_scale > self.state.render_scale
+                || class_full.detail_scale > self.state.detail_scale
+            {
+                self.state = class_full;
+                self.since_adjustment_ms = 0.0;
+                return QualityAdjustment::Increased(self.state);
+            }
         }
         QualityAdjustment::Unchanged
+    }
+}
+
+fn percentile95(values: impl IntoIterator<Item = f32>) -> f32 {
+    let mut values = values.into_iter().collect::<Vec<_>>();
+    values.sort_by(f32::total_cmp);
+    let index = values
+        .len()
+        .saturating_mul(95)
+        .div_ceil(100)
+        .saturating_sub(1);
+    values[index.min(values.len().saturating_sub(1))]
+}
+
+fn tier_state(ceiling: RuntimeQualityState, tier: RuntimeQualityTier) -> RuntimeQualityState {
+    let (render, detail, budget_scale) = match tier {
+        RuntimeQualityTier::Full => (1.0, 1.0, 1.0),
+        RuntimeQualityTier::Balanced => (0.85, 0.75, 0.75),
+        RuntimeQualityTier::Coarse => (0.7, 0.5, 0.5),
+        RuntimeQualityTier::Minimum => (0.5, 0.35, 0.35),
+    };
+    RuntimeQualityState {
+        render_scale: (ceiling.render_scale * render).clamp(0.5, ceiling.render_scale),
+        detail_scale: (ceiling.detail_scale * detail).clamp(0.35, ceiling.detail_scale),
+        tier,
+        budget_scale,
+    }
+}
+
+const fn lower_tier(tier: RuntimeQualityTier) -> Option<RuntimeQualityTier> {
+    match tier {
+        RuntimeQualityTier::Full => Some(RuntimeQualityTier::Balanced),
+        RuntimeQualityTier::Balanced => Some(RuntimeQualityTier::Coarse),
+        RuntimeQualityTier::Coarse => Some(RuntimeQualityTier::Minimum),
+        RuntimeQualityTier::Minimum => None,
+    }
+}
+
+const fn higher_tier(tier: RuntimeQualityTier) -> Option<RuntimeQualityTier> {
+    match tier {
+        RuntimeQualityTier::Full => None,
+        RuntimeQualityTier::Balanced => Some(RuntimeQualityTier::Full),
+        RuntimeQualityTier::Coarse => Some(RuntimeQualityTier::Balanced),
+        RuntimeQualityTier::Minimum => Some(RuntimeQualityTier::Coarse),
     }
 }
 
@@ -786,6 +1009,57 @@ fn device_detail_class(kind: DeviceKind) -> f32 {
         DeviceKind::VirtualGpu => 0.8,
         DeviceKind::Cpu => 0.5,
         DeviceKind::Other => 0.75,
+    }
+}
+
+fn measured_hardware_class(
+    usable_gpu_bytes: u64,
+    system_memory_bytes: u64,
+    calibration: Option<DeviceCalibration>,
+) -> crate::FrontierHardwareClass {
+    let Some(measured) = calibration else {
+        return crate::FrontierHardwareClass::I;
+    };
+    // Checked-in M2200-equivalent V-01 micro-workload floors. D is exactly
+    // two times this primitive throughput, plus the 8 GiB usable-memory floor.
+    const W_UPLOAD_GIB_PER_SECOND: f32 = 2.0;
+    const W_POINT_MILLIONS_PER_SECOND: f32 = 500.0;
+    const W_TRIANGLE_MILLIONS_PER_SECOND: f32 = 250.0;
+    const W_SPLAT_MILLIONS_PER_SECOND: f32 = 150.0;
+    let desktop = usable_gpu_bytes >= 8 * GIBIBYTE
+        && measured.upload_gib_per_second >= W_UPLOAD_GIB_PER_SECOND * 2.0
+        && measured.point_millions_per_second >= W_POINT_MILLIONS_PER_SECOND * 2.0
+        && measured.triangle_millions_per_second >= W_TRIANGLE_MILLIONS_PER_SECOND * 2.0
+        && measured.splat_millions_per_second >= W_SPLAT_MILLIONS_PER_SECOND * 2.0;
+    if desktop {
+        return crate::FrontierHardwareClass::D;
+    }
+    let workstation = usable_gpu_bytes >= 3 * GIBIBYTE / 2
+        && system_memory_bytes >= 16 * GIBIBYTE
+        && measured.upload_gib_per_second >= W_UPLOAD_GIB_PER_SECOND
+        && measured.point_millions_per_second >= W_POINT_MILLIONS_PER_SECOND
+        && measured.triangle_millions_per_second >= W_TRIANGLE_MILLIONS_PER_SECOND
+        && measured.splat_millions_per_second >= W_SPLAT_MILLIONS_PER_SECOND;
+    if workstation {
+        crate::FrontierHardwareClass::W
+    } else {
+        crate::FrontierHardwareClass::I
+    }
+}
+
+const fn rest_target_ms(class: crate::FrontierHardwareClass) -> f32 {
+    match class {
+        crate::FrontierHardwareClass::I => 25.0,
+        crate::FrontierHardwareClass::W => 20.0,
+        crate::FrontierHardwareClass::D => 17.2,
+    }
+}
+
+const fn motion_target_ms(class: crate::FrontierHardwareClass) -> f32 {
+    match class {
+        crate::FrontierHardwareClass::I => 33.4,
+        crate::FrontierHardwareClass::W => 25.0,
+        crate::FrontierHardwareClass::D => 17.2,
     }
 }
 
@@ -918,9 +1192,10 @@ fn finite_u32(value: f64) -> u32 {
 mod tests {
     use super::{
         CalibrationObservation, DeviceCalibration, DeviceCalibrationAccumulator,
-        FrameTelemetrySample, FrameTelemetryWindow, HardwareDeploymentProfile, HardwareInventory,
-        HardwarePolicyResolver, QualityAdjustment, RuntimeQualityGovernor, RuntimeQualityState,
-        TimingSample, TransparencyStrategy,
+        FrameTelemetrySample, FrameTelemetryWindow, GovernorPressure, HardwareDeploymentProfile,
+        HardwareInventory, HardwarePolicyResolver, QualityAdjustment, RuntimeQualityGovernor,
+        RuntimeQualityReason, RuntimeQualityState, RuntimeQualityTier, TimingSample,
+        TransparencyStrategy,
     };
     use crate::GPU_POINT_VERTEX_STRIDE_BYTES;
     use crate::{BackendKind, DeviceCapabilities, DeviceFeature, DeviceKind};
@@ -1085,7 +1360,7 @@ mod tests {
         let policy = HardwarePolicyResolver::resolve(
             &capabilities(DeviceKind::Cpu),
             HardwareInventory {
-                gpu_memory_bytes: None,
+                gpu_memory_bytes: Some(24 * super::GIBIBYTE),
                 system_memory_bytes: Some(16 * super::GIBIBYTE),
                 logical_cores: 12,
             },
@@ -1097,9 +1372,46 @@ mod tests {
             }),
         );
 
-        assert_eq!(policy.frame.target_frame_ms, 16.7);
+        assert_eq!(
+            policy.frontier.hardware_class,
+            crate::FrontierHardwareClass::D
+        );
+        assert_eq!(policy.frame.target_frame_ms, 17.2);
         assert!(policy.maximum_detail_scale > 1.0);
         assert!(policy.maximum_render_scale > 1.0);
+    }
+
+    #[test]
+    fn hardware_class_uses_usable_memory_and_measured_m2200_relative_floors() {
+        let resolve = |gpu_gib, calibration| {
+            HardwarePolicyResolver::resolve(
+                &capabilities(DeviceKind::DiscreteGpu),
+                inventory(gpu_gib),
+                Some(calibration),
+            )
+            .frontier
+            .hardware_class
+        };
+        let workstation = DeviceCalibration {
+            upload_gib_per_second: 2.0,
+            point_millions_per_second: 500.0,
+            triangle_millions_per_second: 250.0,
+            splat_millions_per_second: 150.0,
+        };
+        let desktop = DeviceCalibration {
+            upload_gib_per_second: 4.0,
+            point_millions_per_second: 1_000.0,
+            triangle_millions_per_second: 500.0,
+            splat_millions_per_second: 300.0,
+        };
+        let below = DeviceCalibration {
+            point_millions_per_second: 499.0,
+            ..workstation
+        };
+
+        assert_eq!(resolve(24, below), crate::FrontierHardwareClass::I);
+        assert_eq!(resolve(4, workstation), crate::FrontierHardwareClass::W);
+        assert_eq!(resolve(14, desktop), crate::FrontierHardwareClass::D);
     }
 
     #[test]
@@ -1171,27 +1483,36 @@ mod tests {
         let mut governor = RuntimeQualityGovernor::new(policy);
         let initial = governor.state();
         let mut reduction = QualityAdjustment::Unchanged;
-        for _ in 0..20 {
+        for frame in 1..=policy.governor.enter_lower_after_frames {
             reduction = governor.observe(TimingSample {
                 cpu_ms: 30.0,
                 gpu_ms: Some(35.0),
                 interacting: true,
             });
-            if matches!(reduction, QualityAdjustment::Reduced(_)) {
-                break;
-            }
+            assert_eq!(
+                matches!(reduction, QualityAdjustment::Reduced(_)),
+                frame == policy.governor.enter_lower_after_frames
+            );
         }
         assert!(matches!(reduction, QualityAdjustment::Reduced(_)));
         assert!(governor.state().detail_scale < initial.detail_scale);
 
         let reduced = governor.state();
-        for _ in 0..80 {
-            governor.observe(TimingSample {
+        for frame in 1..=policy.governor.leave_lower_after_frames {
+            let recovery = governor.observe(TimingSample {
                 cpu_ms: 4.0,
                 gpu_ms: Some(5.0),
                 interacting: false,
             });
+            assert_eq!(
+                matches!(recovery, QualityAdjustment::Increased(_)),
+                frame == policy.governor.leave_lower_after_frames
+            );
         }
+        assert_eq!(
+            governor.last_reason(),
+            RuntimeQualityReason::RecoveryHeadroom
+        );
         assert!(governor.state().detail_scale > reduced.detail_scale);
         assert!(governor.state().detail_scale <= policy.maximum_detail_scale);
     }
@@ -1219,6 +1540,8 @@ mod tests {
             RuntimeQualityState {
                 render_scale: 0.75,
                 detail_scale: 0.5,
+                tier: RuntimeQualityTier::Full,
+                budget_scale: 1.0,
             }
         );
 
@@ -1228,10 +1551,118 @@ mod tests {
             RuntimeQualityState {
                 render_scale: 0.75,
                 detail_scale: 0.5,
+                tier: RuntimeQualityTier::Full,
+                budget_scale: 1.0,
             }
         );
         assert!(initial.render_scale >= governor.state().render_scale);
         assert!(initial.detail_scale >= governor.state().detail_scale);
+    }
+
+    #[test]
+    fn g_vc_governor_alternating_load_does_not_oscillate_for_600_frames() {
+        let policy = HardwarePolicyResolver::resolve(
+            &capabilities(DeviceKind::DiscreteGpu),
+            inventory(12),
+            Some(DeviceCalibration {
+                upload_gib_per_second: 2.0,
+                point_millions_per_second: 500.0,
+                triangle_millions_per_second: 250.0,
+                splat_millions_per_second: 150.0,
+            }),
+        );
+        let mut governor = RuntimeQualityGovernor::new(policy);
+        let initial = governor.state();
+        let mut changes = 0;
+        for frame in 0..600 {
+            let overloaded = frame % 2 == 0;
+            let adjustment = governor.observe(TimingSample {
+                cpu_ms: if overloaded { 30.0 } else { 5.0 },
+                gpu_ms: Some(if overloaded { 35.0 } else { 6.0 }),
+                interacting: false,
+            });
+            changes += usize::from(!matches!(adjustment, QualityAdjustment::Unchanged));
+        }
+        assert_eq!(changes, 0);
+        assert_eq!(governor.state(), initial);
+    }
+
+    #[test]
+    fn governor_uses_presented_p95_trend_and_attributes_compositor_delay() {
+        let policy = HardwarePolicyResolver::resolve(
+            &capabilities(DeviceKind::DiscreteGpu),
+            inventory(12),
+            Some(DeviceCalibration {
+                upload_gib_per_second: 2.0,
+                point_millions_per_second: 500.0,
+                triangle_millions_per_second: 250.0,
+                splat_millions_per_second: 150.0,
+            }),
+        );
+        let mut governor = RuntimeQualityGovernor::new(policy);
+        for frame in 1..=policy.governor.enter_lower_after_frames {
+            let adjustment = governor.observe_presented_with_pressure(
+                TimingSample {
+                    cpu_ms: 5.0,
+                    gpu_ms: Some(6.0),
+                    interacting: false,
+                },
+                GovernorPressure::default(),
+                Some(32.0),
+            );
+            assert_eq!(
+                matches!(adjustment, QualityAdjustment::Reduced(_)),
+                frame == policy.governor.enter_lower_after_frames
+            );
+        }
+        assert_eq!(
+            governor.last_reason(),
+            RuntimeQualityReason::PresentDeadline
+        );
+    }
+
+    #[test]
+    fn governor_uses_debt_pressure_and_pinned_tier_is_stable() {
+        let policy = HardwarePolicyResolver::resolve(
+            &capabilities(DeviceKind::DiscreteGpu),
+            inventory(12),
+            Some(DeviceCalibration {
+                upload_gib_per_second: 2.0,
+                point_millions_per_second: 500.0,
+                triangle_millions_per_second: 250.0,
+                splat_millions_per_second: 150.0,
+            }),
+        );
+        let mut governor = RuntimeQualityGovernor::new(policy);
+        for _ in 0..policy.governor.enter_lower_after_frames {
+            governor.observe_with_pressure(
+                TimingSample {
+                    cpu_ms: 5.0,
+                    gpu_ms: Some(6.0),
+                    interacting: false,
+                },
+                GovernorPressure {
+                    upload_debt_bytes: 1,
+                    ..GovernorPressure::default()
+                },
+            );
+        }
+        assert_eq!(governor.state().tier, RuntimeQualityTier::Balanced);
+        assert_eq!(governor.last_reason(), RuntimeQualityReason::UploadDebt);
+
+        governor.pin_tier(Some(RuntimeQualityTier::Coarse));
+        let pinned = governor.state();
+        for _ in 0..200 {
+            assert_eq!(
+                governor.observe(TimingSample {
+                    cpu_ms: 100.0,
+                    gpu_ms: Some(120.0),
+                    interacting: false,
+                }),
+                QualityAdjustment::Unchanged
+            );
+        }
+        assert_eq!(governor.state(), pinned);
     }
 
     fn inventory(gpu_gib: u64) -> HardwareInventory {

@@ -45,6 +45,23 @@ void test('canonical projection rejects an empty live document instead of fabric
   );
 });
 
+void test('canonical viewing-box entities are visibly grouped without changing their identity', () => {
+  const root = entity('project-root', 'hcad.group@1', null, 'root-version');
+  const first = entity('box-1', 'hcad.viewing-box@1', root.id, 'box-one-version');
+  const second = entity('box-2', 'hcad.viewing-box@1', root.id, 'box-two-version');
+  const project = projectSnapshotFromJournalMirror({
+    status: 'ready',
+    generation: 2,
+    appliedThroughSequence: 2,
+    entities: { [root.id]: root, [first.id]: first, [second.id]: second },
+    tombstones: {},
+  });
+  assert.deepEqual(project.entities['builder:viewing-boxes']?.children, [first.id, second.id]);
+  assert.equal(project.entities[first.id]?.parent, 'builder:viewing-boxes');
+  assert.equal(project.entities[first.id]?.versionHash, first.versionHash);
+  assert.ok(project.entities[root.id]?.children.some((id) => id === 'builder:viewing-boxes'));
+});
+
 function entity(
   id: string,
   typeId: string,

@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { KernelCameraController } from '../src/kernel/KernelCameraController.js';
+import { KernelFrameDiagnostics } from '../src/kernel/KernelFrameDiagnostics.js';
 import type { KernelViewMode } from '../src/kernel/KernelNavigationController.js';
 import {
   KernelViewerSession,
   type KernelPresentedFrameOptions,
   type KernelPresentedFrameOutcome,
+  type KernelQualitySnapshot,
 } from '../src/kernel/KernelViewerSession.js';
 import type { KernelWorldCamera } from '../src/kernel/WgpuKernelViewer.js';
 import type {
@@ -159,6 +161,63 @@ void test('session capture delegates to renderer readback and requests a mapping
   assert.equal(requestedFrames, 1);
 });
 
+void test('view.quality.get seam reports the exact class, tier, tunables and effective lane caps', () => {
+  const lane = { points: 100, bytes: 200, drawCalls: 3, uploadBytes: 40, decodeMs: 0.5 };
+  const session = sessionHarness({
+    frameDiagnosticsState: new KernelFrameDiagnostics(),
+    lastQualityAdjustment: 'reduced',
+    qualityState: { renderScale: 0.85, detailScale: 0.75, tier: 'balanced', budgetScale: 0.75 },
+    policyState: {
+      frame: { targetFrameMs: 20, traversalMs: 2, decodeMs: 3, uploadBytes: 1_000, newRequests: 4 },
+      interaction: {
+        frame: {
+          targetFrameMs: 25,
+          traversalMs: 1,
+          decodeMs: 1.5,
+          uploadBytes: 500,
+          newRequests: 2,
+        },
+      },
+      frontier: {
+        hardwareClass: 'W',
+        points: 8_000_000,
+        bytes: 192 * 1_048_576,
+        drawCalls: 2_000,
+        backgroundLanes: { lane4: lane, lane5: lane, lane6: lane },
+        motionBackgroundLanes: {
+          lane4: lane,
+          lane5: lane,
+          lane6: { points: 0, bytes: 0, drawCalls: 0, uploadBytes: 0, decodeMs: 0 },
+        },
+      },
+      governor: {
+        enterLowerAfterFrames: 8,
+        leaveLowerAfterFrames: 90,
+        recoveryRatio: 0.75,
+        adjustmentIntervalMs: 250,
+      },
+      motion: {
+        restAfterMs: 250,
+        refineWithinMs: 100,
+        maximumReprojectedPresents: 2,
+        maximumReprojectedMs: 50,
+      },
+    },
+  });
+
+  const quality = session.qualitySnapshot();
+  assert.equal(quality.class, 'W');
+  assert.equal(quality.tier, 'balanced');
+  assert.equal(quality.targets.enterLowerAfterFrames, 8);
+  assert.equal(quality.targets.leaveLowerAfterFrames, 90);
+  assert.equal(quality.effectiveBudgets.points, 6_000_000);
+  assert.equal(quality.effectiveBudgets.backgroundLanes?.lane5.uploadBytes, 30);
+  assert.equal(quality.effectiveBudgets.motionBackgroundLanes?.lane6.points, 0);
+  assert.deepEqual(quality.currentReasons, ['within_target']);
+  assert.equal(quality.lastAdjustment, 'reduced');
+  assert.equal(Object.isFrozen(quality), true);
+});
+
 interface SessionHarness {
   readonly camera: KernelCameraController;
   readonly presentedFrameWaiters: Set<unknown>;
@@ -168,6 +227,7 @@ interface SessionHarness {
     options?: KernelPresentedFrameOptions,
   ): Promise<KernelPresentedFrameOutcome>;
   captureRgba(request: KernelRgbaCaptureRequest): Promise<KernelRgbaCaptureResult>;
+  qualitySnapshot(): KernelQualitySnapshot;
   resolvePresentedFrameWaiters(outcome: KernelPresentedFrameOutcome): void;
 }
 

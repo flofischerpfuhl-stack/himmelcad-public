@@ -237,6 +237,40 @@
   gap: 6px;
 }
 
+.toolSelect,
+.toolTextInput {
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 8px;
+  color: var(--hc-fg-strong);
+  font: 500 11px/1.2 var(--hc-font-ui);
+  background: var(--hc-bg-input, var(--hc-bg-island-lo));
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  outline: none;
+}
+
+.toolSelect:focus,
+.toolTextInput:focus {
+  border-color: var(--hc-selection-border);
+  box-shadow: 0 0 0 1px var(--hc-selection-border);
+}
+
+.viewingBoxLockBanner {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 24px;
+  gap: 6px;
+  padding: 4px 6px;
+  color: var(--hc-fg-strong);
+  font-size: 11px;
+  background: var(--hc-bg-island-hi);
+  border: 1px solid var(--hc-selection-border);
+  border-radius: var(--hc-radius-sm);
+}
+
 .vectorEditor {
   display: grid;
   gap: 6px;

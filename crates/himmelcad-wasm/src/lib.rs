@@ -1412,6 +1412,8 @@ struct WasmStreamingFrameOptions {
     resource_budget: ResourceBudget,
     frame_budget: himmelcad_render::FrameBudget,
     #[serde(default)]
+    motion: bool,
+    #[serde(default)]
     frontier_budget: Option<himmelcad_render::FrontierBudget>,
     #[serde(default = "default_maximum_sse")]
     maximum_screen_space_error: f64,
@@ -1477,6 +1479,14 @@ struct WasmFrameTelemetryObservation {
     cpu_ms: f32,
     interacting: bool,
     uploaded_bytes: u64,
+    #[serde(default)]
+    presented_ms: Option<f32>,
+    #[serde(default)]
+    upload_debt_bytes: u64,
+    #[serde(default)]
+    decode_backlog: usize,
+    #[serde(default)]
+    residency_pressure: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -4274,7 +4284,7 @@ impl WasmViewer {
             .map_err(js_error)?;
         let plan = self
             .streaming
-            .plan_frame_with_auxiliary_and_frontier(
+            .plan_frame_with_auxiliary_and_frontier_policy(
                 &selections,
                 &auxiliary,
                 options.resource_budget,
@@ -4282,6 +4292,7 @@ impl WasmViewer {
                 options.frontier_budget.unwrap_or_else(|| {
                     himmelcad_render::FrontierBudget::from_resource_budget(options.resource_budget)
                 }),
+                options.motion,
             )
             .map_err(js_error)?;
         self.apply_streaming_visibility(&plan.render)
@@ -5610,9 +5621,10 @@ impl WasmViewer {
 
     /// Observes one completed frame and applies bounded Rust-owned hysteresis.
     ///
-    /// The host supplies CPU timing, interaction state and uploaded bytes. GPU
-    /// timing comes exclusively from completed `GpuSurfaceHost` timestamp maps;
-    /// visible work and complete residency come from authoritative kernel state.
+    /// The host supplies presented/CPU timing, interaction state, debt and
+    /// uploaded bytes. GPU timing comes exclusively from completed
+    /// `GpuSurfaceHost` timestamp maps; visible work and complete residency
+    /// come from authoritative kernel state.
     pub fn observe_frame_telemetry_json(
         &mut self,
         observation_json: &str,
@@ -5717,7 +5729,15 @@ impl WasmViewer {
             .runtime_quality
             .as_mut()
             .expect("runtime quality presence checked before telemetry mutation");
-        let adjustment = governor.observe(timing);
+        let adjustment = governor.observe_presented_with_pressure(
+            timing,
+            himmelcad_render::GovernorPressure {
+                upload_debt_bytes: observation.upload_debt_bytes,
+                decode_backlog: observation.decode_backlog,
+                residency_pressure: observation.residency_pressure,
+            },
+            observation.presented_ms,
+        );
         Ok(runtime_quality_observation_json(
             adjustment,
             governor.state(),

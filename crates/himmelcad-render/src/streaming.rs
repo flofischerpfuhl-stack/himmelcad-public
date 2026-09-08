@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     admission_candidate_with_residency, estimate_tile_load, AdmissionPlan, AdmissionPlanner,
-    EvictionPlan, FrameBudget, HierarchyPageRequest, ResidencyError, ResidencyManager,
-    ResidencyStage, ResidencyTicket, ResourceBudget, ResourceCost, SelectedTile, TileKey,
-    TileLoadEstimate, TileResidency, TileSelection,
+    BackgroundLaneBudgets, EvictionPlan, FrameBudget, FrameLane, HierarchyPageRequest,
+    LaneWorkBudget, LaneWorkUsage, ResidencyError, ResidencyManager, ResidencyStage,
+    ResidencyTicket, ResourceBudget, ResourceCost, SelectedTile, TileKey, TileLoadEstimate,
+    TileResidency, TileSelection,
 };
 
 const MEBIBYTE: u64 = 1_048_576;
@@ -25,7 +26,7 @@ pub enum FrontierHardwareClass {
 }
 
 /// Tunable hard limits for the visible prepared frontier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FrontierBudget {
     /// Hardware class whose checked-in policy selected these values.
@@ -36,6 +37,12 @@ pub struct FrontierBudget {
     pub bytes: u64,
     /// Maximum selected draw calls in one frame.
     pub draw_calls: u32,
+    /// Hard per-frame remainder caps for lanes 4–6 at rest.
+    #[serde(default = "unlimited_background_lanes")]
+    pub background_lanes: BackgroundLaneBudgets,
+    /// Motion policy: coarse fallback lanes stay live while refinement is paused.
+    #[serde(default = "unlimited_background_lanes")]
+    pub motion_background_lanes: BackgroundLaneBudgets,
 }
 
 impl FrontierBudget {
@@ -49,18 +56,24 @@ impl FrontierBudget {
                 points: 4_000_000,
                 bytes: 96 * MEBIBYTE,
                 draw_calls: 1_000,
+                background_lanes: class_lane_budgets(1),
+                motion_background_lanes: motion_lane_budgets(class_lane_budgets(1)),
             },
             FrontierHardwareClass::W => Self {
                 hardware_class,
                 points: 8_000_000,
                 bytes: 192 * MEBIBYTE,
                 draw_calls: 2_000,
+                background_lanes: class_lane_budgets(2),
+                motion_background_lanes: motion_lane_budgets(class_lane_budgets(2)),
             },
             FrontierHardwareClass::D => Self {
                 hardware_class,
                 points: 16_000_000,
                 bytes: 384 * MEBIBYTE,
                 draw_calls: 4_000,
+                background_lanes: class_lane_budgets(4),
+                motion_background_lanes: motion_lane_budgets(class_lane_budgets(4)),
             },
         }
     }
@@ -76,8 +89,82 @@ impl FrontierBudget {
                 .gpu_buffer_bytes
                 .saturating_add(budget.gpu_texture_bytes),
             draw_calls: budget.draw_calls,
+            background_lanes: BackgroundLaneBudgets::UNLIMITED,
+            motion_background_lanes: BackgroundLaneBudgets::UNLIMITED,
         }
     }
+
+    /// Resolves lane upload/decode remainder from the measured frame policy.
+    #[must_use]
+    pub fn with_frame_budget(mut self, frame: FrameBudget) -> Self {
+        let upload = split_u64(frame.upload_bytes);
+        let decode = split_f32(frame.decode_ms);
+        self.background_lanes.lane4.upload_bytes = upload[0];
+        self.background_lanes.lane5.upload_bytes = upload[1];
+        self.background_lanes.lane6.upload_bytes = upload[2];
+        self.background_lanes.lane4.decode_ms = decode[0];
+        self.background_lanes.lane5.decode_ms = decode[1];
+        self.background_lanes.lane6.decode_ms = decode[2];
+        self.motion_background_lanes = motion_lane_budgets(self.background_lanes);
+        self
+    }
+}
+
+const fn class_lane_budgets(multiplier: u64) -> BackgroundLaneBudgets {
+    let multiplier_u32 = multiplier as u32;
+    BackgroundLaneBudgets {
+        lane4: LaneWorkBudget {
+            points: 500_000 * multiplier,
+            bytes: 28 * MEBIBYTE * multiplier,
+            draw_calls: 300 * multiplier_u32,
+            upload_bytes: 4 * MEBIBYTE * multiplier,
+            decode_ms: 0.5 * multiplier as f32,
+        },
+        lane5: LaneWorkBudget {
+            points: 2_000_000 * multiplier,
+            bytes: 34 * MEBIBYTE * multiplier,
+            draw_calls: 350 * multiplier_u32,
+            upload_bytes: 6 * MEBIBYTE * multiplier,
+            decode_ms: 0.6 * multiplier as f32,
+        },
+        lane6: LaneWorkBudget {
+            points: 1_500_000 * multiplier,
+            bytes: 34 * MEBIBYTE * multiplier,
+            draw_calls: 350 * multiplier_u32,
+            upload_bytes: 6 * MEBIBYTE * multiplier,
+            decode_ms: 0.4 * multiplier as f32,
+        },
+    }
+}
+
+const fn motion_lane_budgets(mut lanes: BackgroundLaneBudgets) -> BackgroundLaneBudgets {
+    lanes.lane6 = LaneWorkBudget {
+        points: 0,
+        bytes: 0,
+        draw_calls: 0,
+        upload_bytes: 0,
+        decode_ms: 0.0,
+    };
+    lanes
+}
+
+const fn unlimited_background_lanes() -> BackgroundLaneBudgets {
+    BackgroundLaneBudgets::UNLIMITED
+}
+
+fn split_u64(total: u64) -> [u64; 3] {
+    let lane4 = total.saturating_mul(30) / 100;
+    let lane5 = total.saturating_mul(35) / 100;
+    [
+        lane4,
+        lane5,
+        total.saturating_sub(lane4).saturating_sub(lane5),
+    ]
+}
+
+fn split_f32(total: f32) -> [f32; 3] {
+    let bounded = total.max(0.0);
+    [bounded * 0.3, bounded * 0.35, bounded * 0.35]
 }
 
 /// Exact reason why the visible frontier could not retain more detail.
@@ -92,10 +179,22 @@ pub enum FrontierLimitReason {
     /// Draw-call ceiling was reached.
     #[serde(rename = "budget:draws")]
     Draws,
+    /// Protected lane 1–3 work alone exceeded the class frontier target.
+    #[serde(rename = "protected_work_over_budget")]
+    ProtectedWorkOverBudget,
+    /// Lane 4 exceeded one of its hard frontier caps.
+    #[serde(rename = "budget:lane4")]
+    Lane4,
+    /// Lane 5 exceeded one of its hard frontier caps.
+    #[serde(rename = "budget:lane5")]
+    Lane5,
+    /// Lane 6 exceeded one of its hard frontier caps.
+    #[serde(rename = "budget:lane6")]
+    Lane6,
 }
 
 /// Selected-frontier accounting returned with every streaming plan.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FrontierStatistics {
     /// Effective class policy.
@@ -108,6 +207,11 @@ pub struct FrontierStatistics {
     pub reason_codes: Vec<FrontierLimitReason>,
     /// False only when the sole resident coarse fallback itself exceeds policy.
     pub budget_satisfied: bool,
+    /// Exact selected work by lane; decode/upload remain zero for resident draws.
+    pub lane_usage: [LaneWorkUsage; 6],
+    /// Protected primitives omitted by the scheduler. This is invariantly zero;
+    /// overload is reported instead of deleting truthful content.
+    pub protected_primitives_dropped: u64,
 }
 
 /// Per-dataset admission frontier kept beyond the current frame's request
@@ -221,6 +325,7 @@ pub struct StreamingCoordinator {
     admission: AdmissionPlanner,
     tickets: BTreeMap<TileKey, ResidencyTicket>,
     estimates: BTreeMap<TileKey, TileLoadEstimate>,
+    lanes: BTreeMap<TileKey, FrameLane>,
     fetching: BTreeSet<TileKey>,
     queued_decodes: BTreeSet<TileKey>,
     decoding: BTreeSet<TileKey>,
@@ -248,6 +353,7 @@ impl StreamingCoordinator {
             admission: AdmissionPlanner::new(),
             tickets: BTreeMap::new(),
             estimates: BTreeMap::new(),
+            lanes: BTreeMap::new(),
             fetching: BTreeSet::new(),
             queued_decodes: BTreeSet::new(),
             decoding: BTreeSet::new(),
@@ -359,6 +465,32 @@ impl StreamingCoordinator {
         frame_budget: FrameBudget,
         frontier_budget: FrontierBudget,
     ) -> Result<StreamingFramePlan, ResidencyError> {
+        self.plan_frame_with_auxiliary_and_frontier_policy(
+            primary,
+            auxiliary,
+            resource_budget,
+            frame_budget,
+            frontier_budget,
+            false,
+        )
+    }
+
+    /// Plans with motion-specific admission ceilings while retaining the best
+    /// resident frontier. Motion reduces new work before resident ADD detail.
+    pub fn plan_frame_with_auxiliary_and_frontier_policy(
+        &mut self,
+        primary: &[TileSelection],
+        auxiliary: &[TileSelection],
+        resource_budget: ResourceBudget,
+        frame_budget: FrameBudget,
+        frontier_budget: FrontierBudget,
+        motion: bool,
+    ) -> Result<StreamingFramePlan, ResidencyError> {
+        let admission_lane_budgets = if motion {
+            frontier_budget.motion_background_lanes
+        } else {
+            frontier_budget.background_lanes
+        };
         let requested_render = primary
             .iter()
             .flat_map(|selection| selection.render.iter().cloned())
@@ -441,7 +573,8 @@ impl StreamingCoordinator {
         let hierarchy_requests_started = u16::try_from(hierarchy_actions.len())
             .expect("hierarchy claims are bounded by the u16 frame request limit");
         actions.extend(hierarchy_actions);
-        let (decode_actions, claimed_decode_ms) = self.claim_decodes(frame_budget.decode_ms)?;
+        let (decode_actions, claimed_decode_ms, decode_lane_usage) =
+            self.claim_decodes(frame_budget.decode_ms, admission_lane_budgets)?;
         actions.extend(decode_actions);
         let remaining_frame_budget = FrameBudget {
             decode_ms: (frame_budget.decode_ms - claimed_decode_ms).max(0.0),
@@ -450,8 +583,13 @@ impl StreamingCoordinator {
                 .saturating_sub(hierarchy_requests_started),
             ..frame_budget
         };
-        let (admission, admission_actions) =
-            self.admit(&wanted, resource_budget, remaining_frame_budget)?;
+        let (admission, admission_actions) = self.admit(
+            &wanted,
+            resource_budget,
+            remaining_frame_budget,
+            admission_lane_budgets,
+            decode_lane_usage,
+        )?;
         actions.extend(admission_actions);
 
         Ok(StreamingFramePlan {
@@ -478,14 +616,31 @@ impl StreamingCoordinator {
         let requested_set = requested.into_iter().collect::<BTreeSet<_>>();
         let requested_cost = self.frontier_cost(&requested_set, &tiles);
         let mut reasons = frontier_limit_reasons(requested_cost, budget);
+        let requested_lane_usage = self.frontier_lane_usage(&requested_set, &tiles);
+        reasons.extend(lane_frontier_reasons(
+            requested_lane_usage,
+            budget.background_lanes,
+        ));
+        let protected_cost =
+            self.frontier_cost_for_lanes(&requested_set, &tiles, |lane| !lane.is_background());
+        if !frontier_fits(protected_cost, budget) {
+            reasons.push(FrontierLimitReason::ProtectedWorkOverBudget);
+        }
         let mut render = requested_set;
         let mut coarsened = 0_u32;
 
-        while !frontier_fits(self.frontier_cost(&render, &tiles), budget) {
+        while !frontier_policy_fits(
+            self.frontier_cost(&render, &tiles),
+            self.frontier_lane_usage(&render, &tiles),
+            budget,
+        ) {
             let removable = render
                 .iter()
                 .filter_map(|key| {
                     let tile = tiles.get(key)?;
+                    if !crate::residency::streaming_lane(tile).is_background() {
+                        return None;
+                    }
                     let parent_id = tile.descriptor.parent.as_ref()?;
                     let parent_key = TileKey {
                         dataset_id: key.dataset_id.clone(),
@@ -516,6 +671,9 @@ impl StreamingCoordinator {
                         && tile.descriptor.refinement == crate::RefinementMode::Replace
                 })
                 .filter_map(|(parent_key, parent)| {
+                    if !crate::residency::streaming_lane(parent).is_background() {
+                        return None;
+                    }
                     let descendants = render
                         .iter()
                         .filter(|key| is_descendant_of(key, parent_key, &tiles))
@@ -548,11 +706,9 @@ impl StreamingCoordinator {
         }
 
         let selected = self.frontier_cost(&render, &tiles);
-        reasons.sort_unstable_by_key(|reason| match reason {
-            FrontierLimitReason::Points => 0,
-            FrontierLimitReason::Bytes => 1,
-            FrontierLimitReason::Draws => 2,
-        });
+        let lane_usage = self.frontier_lane_usage(&render, &tiles);
+        reasons.sort_unstable_by_key(frontier_reason_order);
+        reasons.dedup();
         (
             render.into_iter().collect(),
             FrontierStatistics {
@@ -560,7 +716,9 @@ impl StreamingCoordinator {
                 selected,
                 coarsened_tiles: coarsened,
                 reason_codes: reasons,
-                budget_satisfied: frontier_fits(selected, budget),
+                budget_satisfied: frontier_policy_fits(selected, lane_usage, budget),
+                lane_usage,
+                protected_primitives_dropped: 0,
             },
         )
     }
@@ -588,6 +746,48 @@ impl StreamingCoordinator {
             },
             |snapshot| snapshot.cost,
         )
+    }
+
+    fn frontier_lane_usage(
+        &self,
+        keys: &BTreeSet<TileKey>,
+        tiles: &BTreeMap<TileKey, &SelectedTile>,
+    ) -> [LaneWorkUsage; 6] {
+        let mut usage = [LaneWorkUsage::default(); 6];
+        for key in keys {
+            let Some(tile) = tiles.get(key) else {
+                continue;
+            };
+            let cost = self.frontier_tile_cost(key, tiles);
+            let item = &mut usage[frame_lane_index(crate::residency::streaming_lane(tile))];
+            item.points = item
+                .points
+                .saturating_add(cost.points)
+                .saturating_add(cost.splats);
+            item.bytes = item
+                .bytes
+                .saturating_add(cost.gpu_buffer_bytes.saturating_add(cost.gpu_texture_bytes));
+            item.draw_calls = item.draw_calls.saturating_add(cost.draw_calls);
+        }
+        usage
+    }
+
+    fn frontier_cost_for_lanes(
+        &self,
+        keys: &BTreeSet<TileKey>,
+        tiles: &BTreeMap<TileKey, &SelectedTile>,
+        include: impl Fn(FrameLane) -> bool,
+    ) -> ResourceCost {
+        keys.iter().fold(ResourceCost::default(), |cost, key| {
+            let Some(tile) = tiles.get(key) else {
+                return cost;
+            };
+            if include(crate::residency::streaming_lane(tile)) {
+                cost.saturating_add(self.frontier_tile_cost(key, tiles))
+            } else {
+                cost
+            }
+        })
     }
 
     fn evict_to_budget(
@@ -683,7 +883,8 @@ impl StreamingCoordinator {
     fn claim_decodes(
         &mut self,
         decode_budget_ms: f32,
-    ) -> Result<(Vec<StreamingAction>, f32), ResidencyError> {
+        lane_budgets: BackgroundLaneBudgets,
+    ) -> Result<(Vec<StreamingAction>, f32, [LaneWorkUsage; 6]), ResidencyError> {
         let available_workers = self
             .runtime_limits
             .decoder_workers
@@ -707,7 +908,18 @@ impl StreamingCoordinator {
                     .then(|| self.priorities.get(key).copied())
                     .flatten()
                     .unwrap_or(f64::NEG_INFINITY);
-                Some((key.clone(), ticket.clone(), estimate.decode_ms, priority))
+                let lane = self
+                    .lanes
+                    .get(key)
+                    .copied()
+                    .unwrap_or(FrameLane::Lane6Refinement);
+                Some((
+                    key.clone(),
+                    ticket.clone(),
+                    estimate.decode_ms,
+                    priority,
+                    lane,
+                ))
             })
             .collect::<Vec<_>>();
         let mut queued = queued;
@@ -721,13 +933,19 @@ impl StreamingCoordinator {
         let mut claimed_ms = 0.0_f32;
         let mut actions = Vec::new();
         let mut deferred = None;
-        for (key, ticket, decode_ms, _) in queued {
+        let mut lane_usage = [LaneWorkUsage::default(); 6];
+        for (key, ticket, decode_ms, _, lane) in queued {
             if actions.len() >= available_workers {
                 break;
             }
-            if claimed_ms + decode_ms > decode_budget_ms {
+            let index = frame_lane_index(lane);
+            let lane_decode = lane_usage[index].decode_ms + decode_ms;
+            let lane_exceeded = lane_budgets
+                .for_lane(lane)
+                .is_some_and(|budget| lane_decode > budget.decode_ms);
+            if claimed_ms + decode_ms > decode_budget_ms || lane_exceeded {
                 if deferred.is_none() {
-                    deferred = Some((key, ticket, decode_ms));
+                    deferred = Some((key, ticket, decode_ms, lane));
                 }
                 continue;
             }
@@ -735,18 +953,26 @@ impl StreamingCoordinator {
             self.queued_decodes.remove(&key);
             self.decoding.insert(key);
             claimed_ms += decode_ms;
+            lane_usage[index].decode_ms = lane_decode;
             actions.push(StreamingAction::DecodeTile { ticket });
         }
         if actions.is_empty() && available_workers > 0 && decode_budget_ms > 0.0 {
-            if let Some((key, ticket, decode_ms)) = deferred {
+            if let Some((key, ticket, decode_ms, lane)) = deferred {
+                if lane_budgets
+                    .for_lane(lane)
+                    .is_some_and(|budget| decode_ms > budget.decode_ms)
+                {
+                    return Ok((actions, claimed_ms, lane_usage));
+                }
                 self.residency.begin_decode(&ticket)?;
                 self.queued_decodes.remove(&key);
                 self.decoding.insert(key);
                 claimed_ms = decode_ms;
+                lane_usage[frame_lane_index(lane)].decode_ms = decode_ms;
                 actions.push(StreamingAction::DecodeTile { ticket });
             }
         }
-        Ok((actions, claimed_ms))
+        Ok((actions, claimed_ms, lane_usage))
     }
 
     fn admit(
@@ -754,6 +980,8 @@ impl StreamingCoordinator {
         wanted: &[&SelectedTile],
         resource_budget: ResourceBudget,
         frame_budget: FrameBudget,
+        lane_budgets: BackgroundLaneBudgets,
+        claimed_lane_usage: [LaneWorkUsage; 6],
     ) -> Result<(AdmissionPlan, Vec<StreamingAction>), ResidencyError> {
         let available_content_requests = self
             .runtime_limits
@@ -766,10 +994,11 @@ impl StreamingCoordinator {
             ..frame_budget
         };
         let candidates = self.bounded_admission_candidates(wanted, frame_budget.new_requests);
-        let admission = self.admission.plan(
+        let admission = self.admission.plan_with_lane_budgets(
             self.residency.total_cost(),
             resource_budget,
             frame_budget,
+            remaining_lane_budgets(lane_budgets, claimed_lane_usage),
             candidates,
         );
         let mut actions = Vec::new();
@@ -787,6 +1016,8 @@ impl StreamingCoordinator {
                 ResidencyStage::Unloaded | ResidencyStage::Failed => {
                     let ticket = self.residency.start_request(key.clone())?;
                     self.estimates.insert(key.clone(), estimate_tile_load(tile));
+                    self.lanes
+                        .insert(key.clone(), crate::residency::streaming_lane(tile));
                     self.tickets.insert(key.clone(), ticket.clone());
                     self.fetching.insert(key.clone());
                     actions.push(StreamingAction::FetchTile {
@@ -935,6 +1166,7 @@ impl StreamingCoordinator {
         self.tickets.retain(|key, _| &key.dataset_id != dataset_id);
         self.estimates
             .retain(|key, _| &key.dataset_id != dataset_id);
+        self.lanes.retain(|key, _| &key.dataset_id != dataset_id);
         self.fetching.retain(|key| &key.dataset_id != dataset_id);
         self.queued_decodes
             .retain(|key| &key.dataset_id != dataset_id);
@@ -958,6 +1190,7 @@ impl StreamingCoordinator {
     fn forget_tile(&mut self, key: &TileKey) {
         self.tickets.remove(key);
         self.estimates.remove(key);
+        self.lanes.remove(key);
         self.fetching.remove(key);
         self.queued_decodes.remove(key);
         self.decoding.remove(key);
@@ -982,6 +1215,32 @@ impl StreamingCoordinator {
             TileResidency::Requested | TileResidency::Resident | TileResidency::Failed => None,
         }
     }
+}
+
+fn frame_lane_index(lane: FrameLane) -> usize {
+    match lane {
+        FrameLane::Lane1CameraClip => 0,
+        FrameLane::Lane2Interaction => 1,
+        FrameLane::Lane3Canonical => 2,
+        FrameLane::Lane4MeshRasterFallback => 3,
+        FrameLane::Lane5CloudSplatFallback => 4,
+        FrameLane::Lane6Refinement => 5,
+    }
+}
+
+fn remaining_lane_budgets(
+    mut budgets: BackgroundLaneBudgets,
+    usage: [LaneWorkUsage; 6],
+) -> BackgroundLaneBudgets {
+    for (budget, consumed) in [
+        (&mut budgets.lane4, usage[3]),
+        (&mut budgets.lane5, usage[4]),
+        (&mut budgets.lane6, usage[5]),
+    ] {
+        budget.decode_ms = (budget.decode_ms - consumed.decode_ms).max(0.0);
+        budget.upload_bytes = budget.upload_bytes.saturating_sub(consumed.upload_bytes);
+    }
+    budgets
 }
 
 fn coalesce_wanted<'a>(
@@ -1025,6 +1284,45 @@ fn frontier_limit_reasons(cost: ResourceCost, budget: FrontierBudget) -> Vec<Fro
 
 fn frontier_fits(cost: ResourceCost, budget: FrontierBudget) -> bool {
     frontier_limit_reasons(cost, budget).is_empty()
+}
+
+fn frontier_policy_fits(
+    cost: ResourceCost,
+    usage: [LaneWorkUsage; 6],
+    budget: FrontierBudget,
+) -> bool {
+    frontier_fits(cost, budget) && lane_frontier_reasons(usage, budget.background_lanes).is_empty()
+}
+
+fn lane_frontier_reasons(
+    usage: [LaneWorkUsage; 6],
+    budgets: BackgroundLaneBudgets,
+) -> Vec<FrontierLimitReason> {
+    [
+        (usage[3], budgets.lane4, FrontierLimitReason::Lane4),
+        (usage[4], budgets.lane5, FrontierLimitReason::Lane5),
+        (usage[5], budgets.lane6, FrontierLimitReason::Lane6),
+    ]
+    .into_iter()
+    .filter_map(|(used, budget, reason)| {
+        (used.points > budget.points
+            || used.bytes > budget.bytes
+            || used.draw_calls > budget.draw_calls)
+            .then_some(reason)
+    })
+    .collect()
+}
+
+fn frontier_reason_order(reason: &FrontierLimitReason) -> u8 {
+    match reason {
+        FrontierLimitReason::ProtectedWorkOverBudget => 0,
+        FrontierLimitReason::Points => 1,
+        FrontierLimitReason::Bytes => 2,
+        FrontierLimitReason::Draws => 3,
+        FrontierLimitReason::Lane4 => 4,
+        FrontierLimitReason::Lane5 => 5,
+        FrontierLimitReason::Lane6 => 6,
+    }
 }
 
 fn frontier_scalar_cost(cost: ResourceCost) -> u128 {
@@ -1119,6 +1417,8 @@ mod tests {
                     points: u64::MAX,
                     bytes: 100,
                     draw_calls: u32::MAX,
+                    background_lanes: BackgroundLaneBudgets::UNLIMITED,
+                    motion_background_lanes: BackgroundLaneBudgets::UNLIMITED,
                 },
             )
             .expect("budgeted visible frontier");
@@ -1128,6 +1428,63 @@ mod tests {
         assert_eq!(plan.frontier.coarsened_tiles, 1);
         assert_eq!(plan.frontier.reason_codes, vec![FrontierLimitReason::Bytes]);
         assert!(plan.frontier.budget_satisfied);
+    }
+
+    #[test]
+    fn motion_pauses_new_refinement_without_dropping_resident_add_detail() {
+        let mut root = selected_tile("motion", "root", ContentKind::PotreePoints);
+        let mut child = selected_tile("motion", "child", ContentKind::PotreePoints);
+        std::sync::Arc::make_mut(&mut root.descriptor).children = vec![TileId("child".to_owned())];
+        std::sync::Arc::make_mut(&mut root.descriptor).refinement = RefinementMode::Add;
+        std::sync::Arc::make_mut(&mut child.descriptor).parent = Some(TileId("root".to_owned()));
+        let root_only = TileSelection {
+            wanted: vec![root.clone()],
+            render: Vec::new(),
+            hierarchy_pages: Vec::new(),
+            traversed_nodes: 1,
+            culled_nodes: 0,
+            work_limit_reached: false,
+        };
+        let child_only = TileSelection {
+            wanted: vec![child.clone()],
+            render: Vec::new(),
+            hierarchy_pages: Vec::new(),
+            traversed_nodes: 1,
+            culled_nodes: 0,
+            work_limit_reached: false,
+        };
+        let mut coordinator = StreamingCoordinator::default();
+        make_resident(&mut coordinator, &root_only, 100);
+        make_resident(&mut coordinator, &child_only, 100);
+        let visible = TileSelection {
+            wanted: vec![root.clone(), child.clone()],
+            render: vec![root.key.clone(), child.key.clone()],
+            hierarchy_pages: Vec::new(),
+            traversed_nodes: 2,
+            culled_nodes: 0,
+            work_limit_reached: false,
+        };
+        let budget = FrontierBudget::for_hardware_class(FrontierHardwareClass::I);
+
+        let plan = coordinator
+            .plan_frame_with_auxiliary_and_frontier_policy(
+                &[visible],
+                &[],
+                unlimited_budget(),
+                frame_budget(),
+                budget,
+                true,
+            )
+            .expect("motion frame");
+
+        let rendered = plan
+            .render
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(rendered, [root.key, child.key].into_iter().collect());
+        assert_eq!(plan.frontier.coarsened_tiles, 0);
+        assert!(plan.actions.is_empty());
+        assert_eq!(budget.motion_background_lanes.lane6.points, 0);
     }
 
     #[test]
@@ -1251,8 +1608,8 @@ mod tests {
         );
     }
     use crate::{
-        BoundingVolume, ContentKind, ContentReference, DatasetId, FrameBudget,
-        HierarchyPageReference, HierarchyPageRequest, RefinementMode, ResidencyStage,
+        BackgroundLaneBudgets, BoundingVolume, ContentKind, ContentReference, DatasetId,
+        FrameBudget, HierarchyPageReference, HierarchyPageRequest, RefinementMode, ResidencyStage,
         ResourceBudget, ResourceCost, SelectedTile, TileDescriptor, TileId, TileKey, TileResidency,
         TileSelection, WorldAabb, WorldTransform, WorldVec3,
     };

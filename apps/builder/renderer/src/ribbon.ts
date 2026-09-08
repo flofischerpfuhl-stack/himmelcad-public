@@ -43,6 +43,7 @@ interface FileRibbonHandlers {
   readonly onSave: () => void;
   readonly onSaveAs: () => void;
   readonly onClose: () => void;
+  readonly navigationMode?: '3d' | '2.5d' | '2d';
 }
 
 const i = (Comp: typeof Box, size = 18): ReactElement =>
@@ -152,13 +153,23 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
               id: `view.preset.${preset}`,
               label: preset[0]!.toUpperCase() + preset.slice(1),
               icon: i(Camera),
+              ...(handlers.navigationMode === '2d' && preset !== 'top'
+                ? {
+                    disabled: true,
+                    title: 'Available in 3D or 2.5D navigation.',
+                  }
+                : {}),
             })),
             { id: 'view.3d', label: '3D', icon: i(Camera) },
             { id: 'view.2.5d', label: '2.5D', icon: i(Grid3x3) },
             { id: 'view.2d', label: '2D', icon: i(Grid3x3) },
             { id: 'view.camera.undo', label: 'Undo Camera', icon: i(Undo2) },
             { id: 'view.camera.redo', label: 'Redo Camera', icon: i(Redo2) },
+            { id: 'view.display.undo', label: 'Undo Display', icon: i(Undo2) },
+            { id: 'view.display.redo', label: 'Redo Display', icon: i(Redo2) },
             { id: 'view.viewing-box', label: 'Viewing Box', icon: i(Box) },
+            { id: 'view.bookmark.create', label: 'Capture View', icon: i(Camera) },
+            { id: 'view.bookmark.restore', label: 'Restore Bookmark', icon: i(Camera) },
           ],
         },
         {

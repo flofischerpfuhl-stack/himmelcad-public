@@ -119,10 +119,10 @@ void test('kernel public API surface is exact and runtime internals stay private
       return `${symbol.name}:${marker}`;
     })
     .sort();
-  assert.equal(surface.length, 289);
+  assert.equal(surface.length, 303);
   assert.equal(
     createHash('sha256').update(surface.join('\n')).digest('hex'),
-    'f6ced6f81d6a83571ef66604050e39cd28c882e0b5f05458903c4956f36c3280',
+    'ff7feaf87a2b43d6f393f27bcebabd7294ea00a31a1d5c376cf57bdac56f699d',
     `kernel API changed; review the stable contract before updating this gate:\n${surface.join('\n')}`,
   );
 
@@ -132,6 +132,7 @@ void test('kernel public API surface is exact and runtime internals stay private
     'KERNEL_FRAME_DIAGNOSTICS_CAPACITY',
     'KernelCameraController',
     'KernelCanonicalDocument',
+    'KernelCloudFrameFreshness',
     'KernelDecodeWorkerError',
     'KernelFrameDiagnostics',
     'KernelNavigationController',
@@ -145,12 +146,14 @@ void test('kernel public API surface is exact and runtime internals stay private
     'assertValidKernelLocalOrthographicViewFrame',
     'assertViewingBox',
     'isPlanViewMode',
+    'kernelSelectionVisualPolicy',
     'localSectionClipVolume',
     'moveViewingBox',
     'placeViewingBoxCenter',
     'projectPickCandidateForViewMode',
     'projectTargetPlaneCoordinate',
     'resizeViewingBox',
+    'resizeViewingBoxCorner',
     'resizeViewingBoxFace',
     'rotateViewingBox',
     'setViewingBoxMode',
