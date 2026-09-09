@@ -782,7 +782,13 @@ fn validate_prepared_root(
             .ok_or_else(|| ProductImportPackageRefusal::invalid("DEM facts are absent"))?;
         validate_dem_geometry(facts, root_artifact, geometry)?;
         for content in contents {
-            validate_dem_decoder(facts, content.decoder_parameters.as_ref())?;
+            validate_dem_decoder(
+                manifest,
+                dataset,
+                facts,
+                &content.uri,
+                content.decoder_parameters.as_ref(),
+            )?;
         }
     }
     Ok(())
@@ -860,7 +866,10 @@ fn validate_dem_geometry(
 }
 
 fn validate_dem_decoder(
+    manifest: &ProductImportPackageManifestV1,
+    dataset: &himmelcad_core::product_import_package::ProductImportPackageDatasetV1,
     facts: &PhotoLabDemFactsV1,
+    content_uri: &str,
     parameters: Option<&Value>,
 ) -> Result<(), ProviderContractError> {
     let parameters = parameters.and_then(Value::as_object).ok_or_else(|| {
@@ -892,10 +901,28 @@ fn validate_dem_decoder(
         ))
         .into());
     }
-    let validity_agrees = validity.get("contentHash").and_then(Value::as_str)
-        == Some(facts.validity.resource.sha256.as_str())
+    let validity_uri = validity.get("uri").and_then(Value::as_str).ok_or_else(|| {
+        ProductImportPackageRefusal::invalid("DEM validityReference.uri is absent")
+    })?;
+    let content_path = resolve_posix_reference(&dataset.root_path, content_uri)?;
+    let validity_path = resolve_posix_reference(&content_path, validity_uri)?;
+    let validity_artifact = manifest
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.path == validity_path)
+        .ok_or_else(|| {
+            ProductImportPackageRefusal::invalid(format!(
+                "DEM tile validity artifact is absent: {validity_path}"
+            ))
+        })?;
+    let validity_agrees = dataset
+        .artifact_paths
+        .iter()
+        .any(|path| path == &validity_path)
+        && validity.get("contentHash").and_then(Value::as_str)
+            == Some(validity_artifact.sha256.as_str())
         && validity.get("byteLength").and_then(Value::as_u64)
-            == Some(facts.validity.resource.byte_length)
+            == Some(validity_artifact.byte_length)
         && validity.get("byteOffset").is_some_and(Value::is_null)
         && facts.validity.encoding == "bitsetLsb0";
     let interpolation_agrees = parameters.get("interpolation").and_then(Value::as_str)
@@ -963,6 +990,52 @@ fn validate_dem_decoder(
         .into());
     }
     Ok(())
+}
+
+fn resolve_posix_reference(
+    base_file: &str,
+    reference: &str,
+) -> Result<String, ProductImportPackageRefusal> {
+    if reference.is_empty()
+        || reference.starts_with('/')
+        || reference.contains(['\\', '?', '#'])
+        || reference
+            .split('/')
+            .next()
+            .is_some_and(|segment| segment.contains(':'))
+    {
+        return Err(ProductImportPackageRefusal::invalid(
+            "prepared hierarchy contains a non-local artifact reference",
+        ));
+    }
+    let mut parts = base_file
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    if parts.pop().is_none() {
+        return Err(ProductImportPackageRefusal::invalid(
+            "prepared hierarchy reference base is invalid",
+        ));
+    }
+    for segment in reference.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                if parts.pop().is_none() {
+                    return Err(ProductImportPackageRefusal::invalid(
+                        "prepared hierarchy artifact reference escapes the package",
+                    ));
+                }
+            }
+            value => parts.push(value),
+        }
+    }
+    if parts.is_empty() {
+        return Err(ProductImportPackageRefusal::invalid(
+            "prepared hierarchy artifact reference is empty",
+        ));
+    }
+    Ok(parts.join("/"))
 }
 
 fn diagonal_name(value: RasterCellDiagonal) -> &'static str {
@@ -1068,6 +1141,19 @@ mod tests {
             Path::new(env!("CARGO_MANIFEST_DIR")).join(
                 "../../.build/photolab-e2e/g1a3-dtm-smoke/photolab-e2e.hcad/.photolab/\
                  product-import-packages/product-60af8cb22bc3aee54fedf578e7f2adff38050db5be4b3dbdde9cf8a3e2ae3680",
+            ),
+        ]
+    }
+
+    fn landed_tile_local_dem_package_roots() -> [PathBuf; 2] {
+        [
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(
+                "../../.build/photolab-e2e/g1a3-dsm-smoke/photolab-e2e.hcad/.photolab/\
+                 product-import-packages/product-2868864c0c0e658f3571764507a20b82d25fcbb095f893254e25b7ee53ea7261",
+            ),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(
+                "../../.build/photolab-e2e/g1a3-dtm-smoke/photolab-e2e.hcad/.photolab/\
+                 product-import-packages/product-3d43364ef8b8740667cd94d8a26f4120994357c8e1a4569250605f36e6198fee",
             ),
         ]
     }
@@ -1248,6 +1334,39 @@ mod tests {
             assert!(message.contains("validityReference.byteLength=524288"));
             assert!(message.contains("width=512, height=512"));
             assert!(message.contains("expected byteLength=32768"));
+        }
+    }
+
+    #[test]
+    fn landed_dsm_and_dtm_accept_tile_local_validity_bands() {
+        let provider = PhotoLabProductPackageProvider::new();
+        for root in landed_tile_local_dem_package_roots() {
+            if !root.join("ready.json").is_file() {
+                continue;
+            }
+            let selection = provider
+                .probe(ImportProbeRequest {
+                    path: &root,
+                    prefix: &[],
+                    media_type: None,
+                })
+                .expect("probe DEM package")
+                .expect("DEM package selection");
+            let package = provider
+                .import(
+                    CanonicalImportRequest {
+                        source: &root,
+                        format_id: &selection.format_id,
+                        options: &serde_json::json!({}),
+                    },
+                    &mut Context,
+                )
+                .expect("tile-local validity DEM package");
+            assert_eq!(package.datasets.len(), 1);
+            assert_eq!(
+                package.datasets[0].format_id,
+                "himmelcad-prepared-hierarchy@1"
+            );
         }
     }
 

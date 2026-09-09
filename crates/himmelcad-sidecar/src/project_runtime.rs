@@ -2825,6 +2825,28 @@ fn canonical_dem_product_contract(
 
     let mut frozen_parameters: Option<(String, String, Option<f64>)> = None;
     for tile in tiles {
+        let tile_id = tile
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .context("prepared DEM tile has no id")?;
+        let mut tile_id_parts = tile_id.split('/');
+        let level = tile_id_parts
+            .next()
+            .and_then(|value| value.strip_prefix('L'))
+            .and_then(|value| value.parse::<u16>().ok())
+            .context("prepared DEM tile id has no level")?;
+        let column = tile_id_parts
+            .next()
+            .and_then(|value| value.parse::<u32>().ok())
+            .context("prepared DEM tile id has no column")?;
+        let row = tile_id_parts
+            .next()
+            .and_then(|value| value.parse::<u32>().ok())
+            .context("prepared DEM tile id has no row")?;
+        anyhow::ensure!(
+            tile_id_parts.next().is_none(),
+            "prepared DEM tile id has unexpected components"
+        );
         let contents = tile
             .get("contents")
             .and_then(serde_json::Value::as_array)
@@ -2880,21 +2902,40 @@ fn canonical_dem_product_contract(
                 .get("validityReference")
                 .and_then(serde_json::Value::as_object)
                 .context("prepared DEM Raster content has no validityReference")?;
+            let expected_uri = format!("../../../validity/L{level:02}/{column}/{row}.bin");
+            let expected_path =
+                dataset_root.join(format!("view/validity/L{level:02}/{column}/{row}.bin"));
+            let (tile_validity_sha256, tile_validity_byte_length) =
+                hash_regular_file(&expected_path)?;
+            let width = parameters
+                .get("width")
+                .and_then(serde_json::Value::as_u64)
+                .context("prepared DEM Raster content has no width")?;
+            let height = parameters
+                .get("height")
+                .and_then(serde_json::Value::as_u64)
+                .context("prepared DEM Raster content has no height")?;
+            let expected_byte_length = width
+                .checked_mul(height)
+                .and_then(|bits| bits.checked_add(7))
+                .map(|bits| bits / 8)
+                .context("prepared DEM tile validity size overflow")?;
             anyhow::ensure!(
                 reference.get("uri").and_then(serde_json::Value::as_str)
-                    == Some("../../../../validity.bin")
+                    == Some(expected_uri.as_str())
                     && reference
                         .get("byteOffset")
                         .is_some_and(serde_json::Value::is_null)
                     && reference
                         .get("byteLength")
                         .and_then(serde_json::Value::as_u64)
-                        == Some(validity.byte_length)
+                        == Some(expected_byte_length)
+                    && tile_validity_byte_length == expected_byte_length
                     && reference
                         .get("contentHash")
                         .and_then(serde_json::Value::as_str)
-                        == Some(validity.sha256.as_str()),
-                "prepared DEM validityReference disagrees with the immutable resource"
+                        == Some(tile_validity_sha256.as_str()),
+                "prepared DEM tile validityReference disagrees with its immutable resource"
             );
         }
     }
