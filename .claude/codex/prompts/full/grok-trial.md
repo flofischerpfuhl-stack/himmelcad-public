@@ -1,0 +1,1 @@
+Trial task: run `git -C /home/oem/Dokumente/003_Projekte/10_himmelcad log --oneline -1` and `pnpm --filter @himmelcad/ui test 2>&1 | grep -E "^# (pass|fail)"` in that repository, then report both outputs verbatim in one short message. Do not modify any file.
