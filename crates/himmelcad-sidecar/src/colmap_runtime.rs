@@ -3775,6 +3775,8 @@ fn worker_command_for_plan(
                 .arg(format!("MemoryMax={}", plan.enforced_limit_bytes))
                 .arg("-p")
                 .arg("MemorySwapMax=0")
+                .arg("-p")
+                .arg("LimitCORE=0")
                 .arg("--collect")
                 .arg("--")
                 .arg(executable);
@@ -3838,6 +3840,8 @@ fn systemd_user_scope_probe_command(executable: &Path) -> Command {
         .arg("MemoryMax=64M")
         .arg("-p")
         .arg("MemorySwapMax=0")
+        .arg("-p")
+        .arg("LimitCORE=0")
         .arg("--collect")
         .arg("--")
         .arg("/bin/true");
@@ -7730,6 +7734,8 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
                 "MemoryMax=4294967296",
                 "-p",
                 "MemorySwapMax=0",
+                "-p",
+                "LimitCORE=0",
                 "--collect",
                 "--",
                 "/opt/himmelcad/colmap",
@@ -7753,6 +7759,8 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
                 "MemoryMax=64M",
                 "-p",
                 "MemorySwapMax=0",
+                "-p",
+                "LimitCORE=0",
                 "--collect",
                 "--",
                 "/bin/true",
