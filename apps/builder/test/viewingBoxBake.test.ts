@@ -88,6 +88,59 @@ void test('bake cancelled after filtering still returns no publishable result', 
   }
 });
 
+void test('large node filtering yields so cancellation remains bounded', async () => {
+  const fixture = potreeFixture(Array.from({ length: 70_000 }, () => 0));
+  const previousFetch = globalThis.fetch;
+  const controller = new AbortController();
+  globalThis.fetch = fixture.fetch;
+  try {
+    const started = Date.now();
+    await assert.rejects(
+      bakePotreeViewingBox({
+        metadataUrl: fixture.metadataUrl,
+        box: viewingBox('box-a', 6),
+        signal: controller.signal,
+        onProgress: (_fraction, phase) => {
+          if (phase === 'Filtering prepared points') {
+            globalThis.setTimeout(() => controller.abort(), 0);
+          }
+        },
+      }),
+      (error: unknown) => error instanceof DOMException && error.name === 'AbortError',
+    );
+    assert.ok(Date.now() - started < 2_000);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+void test('small keep-inside bake skips non-intersecting hierarchy pages and reports phases', async () => {
+  const fixture = pagedPotreeFixture();
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = fixture.fetch;
+  const phases: string[] = [];
+  try {
+    const result = await bakePotreeViewingBox({
+      metadataUrl: fixture.metadataUrl,
+      box: {
+        ...viewingBox('small-box', 2),
+        center: { x: -12, y: -12, z: -12 },
+      },
+      onProgress: (_fraction, phase) => {
+        phases.push(phase);
+      },
+    });
+    assert.equal(result.pointCount, 1);
+    assert.deepEqual(fixture.hierarchyRanges, ['bytes=0-1048575']);
+    assert.deepEqual(fixture.octreeRanges, ['bytes=0-11', 'bytes=12-23']);
+    assert.equal(phases[0], 'Reading point-cloud metadata');
+    assert.ok(phases.includes('Reading intersecting hierarchy'));
+    assert.ok(phases.includes('Filtering prepared points'));
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 function potreeFixture(xCoordinates: readonly number[]): {
   readonly metadataUrl: string;
   readonly fetch: typeof fetch;
@@ -134,6 +187,72 @@ function potreeFixture(xCoordinates: readonly number[]): {
     });
   };
   return { metadataUrl, fetch: fixtureFetch };
+}
+
+function pagedPotreeFixture(): {
+  readonly metadataUrl: string;
+  readonly hierarchyRanges: string[];
+  readonly octreeRanges: string[];
+  readonly fetch: typeof fetch;
+} {
+  const metadataUrl = 'https://fixture.invalid/paged/metadata.json';
+  const hierarchy = new Uint8Array(110);
+  const hierarchyView = new DataView(hierarchy.buffer);
+  const writeNode = (
+    at: number,
+    type: number,
+    childMask: number,
+    points: number,
+    offset: bigint,
+    length: bigint,
+  ): void => {
+    hierarchyView.setUint8(at, type);
+    hierarchyView.setUint8(at + 1, childMask);
+    hierarchyView.setUint32(at + 2, points, true);
+    hierarchyView.setBigUint64(at + 6, offset, true);
+    hierarchyView.setBigUint64(at + 14, length, true);
+  };
+  writeNode(0, 0, (1 << 0) | (1 << 7), 1, 0n, 12n);
+  writeNode(22, 2, 0, 0, 66n, 22n);
+  writeNode(44, 2, 0, 0, 88n, 22n);
+  writeNode(66, 0, 0, 1, 12n, 12n);
+  writeNode(88, 0, 0, 1, 24n, 12n);
+  const octree = new Uint8Array(36);
+  const octreeView = new DataView(octree.buffer);
+  for (const [index, coordinate] of [0, -12, 12].entries()) {
+    octreeView.setInt32(index * 12, coordinate, true);
+    octreeView.setInt32(index * 12 + 4, coordinate, true);
+    octreeView.setInt32(index * 12 + 8, coordinate, true);
+  }
+  const metadata = new TextEncoder().encode(
+    JSON.stringify({
+      version: '2.0',
+      name: 'paged fixture',
+      points: 3,
+      hierarchy: { firstChunkSize: 66, stepSize: 1, depth: 1 },
+      offset: [0, 0, 0],
+      scale: [1, 1, 1],
+      spacing: 1,
+      boundingBox: { min: [-16, -16, -16], max: [16, 16, 16] },
+      encoding: 'DEFAULT',
+      attributes: [{ name: 'position', size: 12, numElements: 3, elementSize: 4, type: 'int32' }],
+    }),
+  );
+  const hierarchyRanges: string[] = [];
+  const octreeRanges: string[] = [];
+  const fixtureFetch: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith('metadata.json'))
+      return new Response(metadata.slice().buffer, { status: 200 });
+    const range = new Headers(init?.headers).get('range')!;
+    const match = /^bytes=(\d+)-(\d+)$/.exec(range)!;
+    const start = Number(match[1]);
+    const end = Number(match[2]);
+    const bytes = url.endsWith('hierarchy.bin') ? hierarchy : octree;
+    (url.endsWith('hierarchy.bin') ? hierarchyRanges : octreeRanges).push(range);
+    return new Response(bytes.slice(start, end + 1).buffer, { status: 206 });
+  };
+  return { metadataUrl, hierarchyRanges, octreeRanges, fetch: fixtureFetch };
 }
 
 function viewingBox(id: string, halfExtent: number) {

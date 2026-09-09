@@ -1,6 +1,9 @@
 import type { KernelViewingBoxState, KernelWorldPoint } from '@himmelcad/viewer/kernel';
 
 const POTREE_NODE_BYTES = 22;
+const HIERARCHY_WINDOW_BYTES = 1024 * 1024;
+const MAX_HIERARCHY_WINDOWS = 4;
+const FILTER_YIELD_RECORDS = 65_536;
 
 interface PotreeAttribute {
   readonly name: string;
@@ -77,6 +80,8 @@ export async function bakePotreeViewingBox(
   request: ViewingBoxPotreeBakeRequest,
 ): Promise<ViewingBoxPotreeBake> {
   throwIfAborted(request.signal);
+  await request.onProgress?.(0.01, 'Reading point-cloud metadata');
+  throwIfAborted(request.signal);
   const metadataBytes = await fetchBytes(request.metadataUrl, request.signal);
   const metadata = parseMetadata(metadataBytes);
   if (!['DEFAULT', 'UNCOMPRESSED'].includes(metadata.encoding.toUpperCase())) {
@@ -87,47 +92,68 @@ export async function bakePotreeViewingBox(
   const baseUrl = request.metadataUrl.slice(0, request.metadataUrl.lastIndexOf('/') + 1);
   const hierarchyUrl = `${baseUrl}hierarchy.bin`;
   const octreeUrl = `${baseUrl}octree.bin`;
-  const firstPage = await fetchRange(
+  const readHierarchy = rangeWindowReader(
     hierarchyUrl,
-    0,
-    metadata.hierarchy.firstChunkSize,
+    HIERARCHY_WINDOW_BYTES,
+    MAX_HIERARCHY_WINDOWS,
     request.signal,
   );
+  await request.onProgress?.(0.03, 'Reading intersecting hierarchy');
+  throwIfAborted(request.signal);
+  const firstPage = await readHierarchy(0, metadata.hierarchy.firstChunkSize);
   const nodes = new Map<string, SourceNode>();
   parseHierarchyPage(nodes, 'r', metadata.boundingBox, false, firstPage);
-  const pageQueue = [...nodes.values()].filter((node) => node.childPage !== null);
+  const keepInside = (request.box.operation ?? 'keepInside') === 'keepInside';
+  const boxBounds = keepInside ? viewingBoxWorldBounds(request.box) : null;
+  const mayContribute = (node: SourceNode): boolean =>
+    !boxBounds || worldBoundsIntersect(node.bounds, request.placement, boxBounds);
+  const pageQueue = [...nodes.values()].filter(
+    (node) => node.childPage !== null && mayContribute(node),
+  );
   const loadedPages = new Set<string>();
+  let publishedHierarchyProgress = 0.03;
   while (pageQueue.length > 0) {
     throwIfAborted(request.signal);
     const proxy = pageQueue.shift()!;
     if (!proxy.childPage || loadedPages.has(proxy.id)) continue;
     loadedPages.add(proxy.id);
     const before = new Set(nodes.keys());
-    const page = await fetchRange(
-      hierarchyUrl,
-      proxy.childPage.byteOffset,
-      proxy.childPage.byteLength,
-      request.signal,
-    );
+    const page = await readHierarchy(proxy.childPage.byteOffset, proxy.childPage.byteLength);
     parseHierarchyPage(nodes, proxy.id, proxy.bounds, true, page);
     for (const node of nodes.values()) {
-      if (!before.has(node.id) && node.childPage) pageQueue.push(node);
+      if (!before.has(node.id) && node.childPage && mayContribute(node)) pageQueue.push(node);
+    }
+    const remaining = pageQueue.length;
+    const progress =
+      0.03 + Math.min(0.07, (loadedPages.size / (loadedPages.size + remaining)) * 0.07);
+    if (remaining === 0 || progress - publishedHierarchyProgress >= 0.01) {
+      await request.onProgress?.(progress, 'Reading intersecting hierarchy');
+      publishedHierarchyProgress = progress;
     }
   }
 
-  const ordered = breadthFirst(nodes);
+  const ordered = breadthFirst(nodes).filter((node) => node.id === 'r' || mayContribute(node));
+  const includedIds = new Set(ordered.map((node) => node.id));
+  const candidatePoints = ordered.reduce(
+    (sum, node) => sum + (mayContribute(node) ? node.pointCount : 0),
+    0,
+  );
+  await request.onProgress?.(0.1, 'Filtering prepared points');
+  throwIfAborted(request.signal);
   const baked: BakedNode[] = [];
   let visitedPoints = 0;
   let keptPoints = 0;
+  let publishedFilterProgress = 0.1;
   for (const node of ordered) {
     throwIfAborted(request.signal);
     let kept: Uint8Array = new Uint8Array(0);
-    if (node.pointCount > 0 && node.byteLength > 0) {
+    const scanNode = mayContribute(node);
+    if (scanNode && node.pointCount > 0 && node.byteLength > 0) {
       const source = await fetchRange(octreeUrl, node.byteOffset, node.byteLength, request.signal);
       if (source.byteLength !== node.pointCount * stride) {
         throw new Error(`Potree node ${node.id} byte count does not match its point layout.`);
       }
-      kept = filterNode(
+      kept = await filterNode(
         source,
         stride,
         positionOffset,
@@ -135,15 +161,23 @@ export async function bakePotreeViewingBox(
         metadata.offset,
         request.box,
         request.placement,
+        request.signal,
       );
       keptPoints += kept.byteLength / stride;
     }
-    visitedPoints += node.pointCount;
-    baked.push({ ...node, pointCount: kept.byteLength / stride, bytes: kept });
-    await request.onProgress?.(
-      metadata.points > 0 ? Math.min(0.9, (visitedPoints / metadata.points) * 0.9) : 0.9,
-      'Filtering prepared points',
-    );
+    if (scanNode) visitedPoints += node.pointCount;
+    baked.push({
+      ...node,
+      children: node.children.filter((child) => includedIds.has(child)),
+      pointCount: kept.byteLength / stride,
+      bytes: kept,
+    });
+    const progress =
+      candidatePoints > 0 ? 0.1 + Math.min(0.8, (visitedPoints / candidatePoints) * 0.8) : 0.9;
+    if (visitedPoints >= candidatePoints || progress - publishedFilterProgress >= 0.1) {
+      await request.onProgress?.(progress, 'Filtering prepared points');
+      publishedFilterProgress = progress;
+    }
   }
 
   throwIfAborted(request.signal);
@@ -292,7 +326,7 @@ function breadthFirst(nodes: ReadonlyMap<string, SourceNode>): SourceNode[] {
   return result;
 }
 
-function filterNode(
+async function filterNode(
   source: Uint8Array,
   stride: number,
   positionOffset: number,
@@ -300,12 +334,18 @@ function filterNode(
   offset: readonly [number, number, number],
   box: KernelViewingBoxState,
   placement: readonly number[] | null | undefined,
-): Uint8Array {
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
   const axes = viewingBoxAxes(box);
   const kept = new Uint8Array(source.byteLength);
   const sourceView = new DataView(source.buffer, source.byteOffset, source.byteLength);
   let write = 0;
-  for (let record = 0; record < source.byteLength; record += stride) {
+  let recordIndex = 0;
+  for (let record = 0; record < source.byteLength; record += stride, recordIndex += 1) {
+    if (recordIndex > 0 && recordIndex % FILTER_YIELD_RECORDS === 0) {
+      await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+      throwIfAborted(signal);
+    }
     const local = {
       x: sourceView.getInt32(record + positionOffset, true) * scale[0] + offset[0],
       y: sourceView.getInt32(record + positionOffset + 4, true) * scale[1] + offset[1],
@@ -359,6 +399,60 @@ function viewingBoxAxes(
       z: 1 - 2 * (x * x + y * y),
     },
   ];
+}
+
+function viewingBoxWorldBounds(box: KernelViewingBoxState): PotreeBounds {
+  const axes = viewingBoxAxes(box);
+  const half = [box.halfExtents.x, box.halfExtents.y, box.halfExtents.z] as const;
+  const extent = [0, 1, 2].map((worldAxis) =>
+    axes.reduce(
+      (sum, axis, boxAxis) => sum + Math.abs([axis.x, axis.y, axis.z][worldAxis]!) * half[boxAxis]!,
+      0,
+    ),
+  );
+  return {
+    min: [box.center.x - extent[0]!, box.center.y - extent[1]!, box.center.z - extent[2]!],
+    max: [box.center.x + extent[0]!, box.center.y + extent[1]!, box.center.z + extent[2]!],
+  };
+}
+
+function worldBoundsIntersect(
+  source: PotreeBounds,
+  placement: readonly number[] | null | undefined,
+  target: PotreeBounds,
+): boolean {
+  const transformed = transformedBounds(source, placement);
+  return [0, 1, 2].every(
+    (axis) =>
+      transformed.max[axis]! >= target.min[axis]! && transformed.min[axis]! <= target.max[axis]!,
+  );
+}
+
+function transformedBounds(
+  bounds: PotreeBounds,
+  placement: readonly number[] | null | undefined,
+): PotreeBounds {
+  if (!placement || placement.length !== 16) return bounds;
+  const points: KernelWorldPoint[] = [];
+  for (const x of [bounds.min[0], bounds.max[0]]) {
+    for (const y of [bounds.min[1], bounds.max[1]]) {
+      for (const z of [bounds.min[2], bounds.max[2]]) {
+        points.push(transformPoint({ x, y, z }, placement));
+      }
+    }
+  }
+  return {
+    min: [
+      Math.min(...points.map((point) => point.x)),
+      Math.min(...points.map((point) => point.y)),
+      Math.min(...points.map((point) => point.z)),
+    ],
+    max: [
+      Math.max(...points.map((point) => point.x)),
+      Math.max(...points.map((point) => point.y)),
+      Math.max(...points.map((point) => point.z)),
+    ],
+  };
 }
 
 function encodeHierarchy(
@@ -417,6 +511,59 @@ async function fetchRange(
     return bytes.slice(offset, offset + length);
   }
   throw new Error(`Viewing-box bake received a short range from ${url}.`);
+}
+
+function rangeWindowReader(
+  url: string,
+  windowBytes: number,
+  maxWindows: number,
+  signal?: AbortSignal,
+): (offset: number, length: number) => Promise<Uint8Array> {
+  const windows = new Map<number, Uint8Array>();
+  return async (offset, length) => {
+    if (length === 0) return new Uint8Array(0);
+    const windowStart = Math.floor(offset / windowBytes) * windowBytes;
+    if (length > windowBytes || offset + length > windowStart + windowBytes) {
+      return await fetchRange(url, offset, length, signal);
+    }
+    let window = windows.get(windowStart);
+    if (!window) {
+      window = await fetchRangeAtMost(url, windowStart, windowBytes, signal);
+      if (windows.size >= maxWindows) windows.delete(windows.keys().next().value!);
+      windows.set(windowStart, window);
+    } else {
+      // Refresh insertion order for the small bounded LRU.
+      windows.delete(windowStart);
+      windows.set(windowStart, window);
+    }
+    const relative = offset - windowStart;
+    if (relative + length > window.byteLength) {
+      throw new Error(`Viewing-box bake received a short range from ${url}.`);
+    }
+    return window.slice(relative, relative + length);
+  };
+}
+
+async function fetchRangeAtMost(
+  url: string,
+  offset: number,
+  length: number,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
+  const response = await fetch(url, {
+    ...(signal ? { signal } : {}),
+    headers: { Range: `bytes=${offset}-${offset + length - 1}` },
+  });
+  if (!response.ok) throw new Error(`Viewing-box bake could not read ${url}: ${response.status}.`);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (response.status === 200) {
+    if (bytes.byteLength <= offset) return new Uint8Array(0);
+    return bytes.slice(offset, Math.min(bytes.byteLength, offset + length));
+  }
+  if (bytes.byteLength === 0 || bytes.byteLength > length) {
+    throw new Error(`Viewing-box bake received an invalid range from ${url}.`);
+  }
+  return bytes;
 }
 
 function safeUint64(view: DataView, offset: number): number {

@@ -94,6 +94,9 @@ test('NumberInput exposes spinbutton state and commit/revert keyboard contracts'
   assert.match(source, /registerEscapeRung\('fieldRevert'/);
   assert.match(source, /event\.key === 'Enter'/);
   assert.match(source, /consumeEscapeBlurCommitSuppression/);
+  assert.match(source, /commitOnBlur = true/);
+  assert.match(source, /if \(commitOnBlur && !suppressCommit\) commit\(\)/);
+  assert.match(source, /next !== committed \|\| !commitOnBlur/);
 });
 
 test('Toast region is polite while errors are assertive and dismiss is a button', () => {

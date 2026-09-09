@@ -14,7 +14,8 @@
   "scripts": {
     "prepare:viewer": "node ../../scripts/stage-builder-viewer-wasm.mjs",
     "prepare:viewer:dev": "node ../../scripts/stage-builder-viewer-wasm.mjs --profile dev",
-    "dev": "pnpm prepare:viewer:dev && concurrently -k -n vite,electron -c blue,green \"pnpm dev:vite\" \"pnpm dev:electron\"",
+    "prepare:sidecar:dev": "node ../../scripts/run-cargo.mjs build -j 4 --bin himmelcad-sidecar --manifest-path ../../Cargo.toml",
+    "dev": "export CARGO_TARGET_DIR=\"${CARGO_TARGET_DIR:-$(cd ../.. && pwd)/target/builder}\" && pnpm prepare:sidecar:dev && pnpm prepare:viewer:dev && concurrently -k -n vite,electron -c blue,green \"pnpm dev:vite\" \"pnpm dev:electron\"",
     "dev:vite": "vite",
     "build:electron": "tsc -b tsconfig.electron.json && node ../../scripts/build-builder-electron.mjs",
     "dev:electron": "pnpm build:electron && wait-on http://localhost:5173 && node ../../scripts/run-electron.mjs .",

@@ -67,6 +67,7 @@ void test('G-B2-INPUT construction bar declares fields, polar values and live ca
   assert.match(html, /Dir 30\.000° · Dist 12\.500 m · Δz 2\.250 m/);
   assert.match(html, />1 of 3</);
   assert.match(html, /data-active="true"/);
+  assert.equal((html.match(/data-construction-field-commit="enter"/g) ?? []).length, 3);
 });
 
 void test('G-B2-SELECTION-VISUAL fixture carries direction, square, anchor-only, and toggle-bound support cues', () => {
@@ -104,10 +105,7 @@ void test('G-MI-VISUAL measurement overlay exposes V-05 DOM geometry and live re
           },
         ]}
       />
-      <MeasurementLiveReadout
-        prompt="Pick or type next point"
-        value="Δz 0.412 m"
-      />
+      <MeasurementLiveReadout prompt="Pick or type next point" value="Δz 0.412 m" />
     </>,
   );
   assert.match(html, /data-render-dependency="V-05"/);

@@ -87,6 +87,7 @@ if (process.platform === 'linux') app.setDesktopName('himmelcad-builder.desktop'
 let mainWindow: BrowserWindow | null = null;
 let automationHost: ReturnType<typeof registerElectronAutomationHost> | null = null;
 let projectLifecycle: BuilderProjectLifecycleStore | null = null;
+let activeCanonicalProjectRoot: string | null = null;
 let allowWindowClose = false;
 const jobRegistry = new JobRegistry();
 jobRegistry.subscribe((event) => mainWindow?.webContents.send('jobs:event', event));
@@ -233,10 +234,15 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
-interface CanonicalResidencyArtifactBinding {
+interface ArtifactResourceBinding {
   readonly objectHash: string;
   readonly mediaType: string;
   readonly byteLength: number;
+}
+
+interface CanonicalResidencyArtifactBinding extends ArtifactResourceBinding {
+  /** Main-process-only capability root; never returned to the renderer. */
+  readonly projectRoot: string;
 }
 
 interface SidecarResidencyResource {
@@ -268,7 +274,7 @@ interface SidecarResidencyBootstrap {
   }[];
 }
 
-interface StagedArtifactBinding extends CanonicalResidencyArtifactBinding {
+interface StagedArtifactBinding extends ArtifactResourceBinding {
   readonly sessionId: string;
   readonly capability: string;
   readonly resourceId: string;
@@ -546,8 +552,7 @@ void app.whenReady().then(async () => {
     if (url.host !== 'canonical') return new Response('forbidden', { status: 403 });
     const binding = canonicalResidencyArtifacts.get(url.pathname);
     if (!binding) return new Response('unknown canonical artifact', { status: 404 });
-    const projectRoot = defaultCanonicalProjectRoot();
-    const objectPath = canonicalObjectPath(projectRoot, binding.objectHash);
+    const objectPath = canonicalObjectPath(binding.projectRoot, binding.objectHash);
     try {
       const stat = await fs.stat(objectPath);
       if (!stat.isFile() || stat.size !== binding.byteLength) {
@@ -885,6 +890,7 @@ function registerIpc(): void {
   });
   ipcMain.handle('canonical-project:opened', async (_event, projectRoot: unknown) => {
     const root = assertProjectRoot(projectRoot);
+    activeCanonicalProjectRoot = root;
     return requireProjectLifecycle().opened(root);
   });
   ipcMain.handle('canonical-project:new', async () => {
@@ -1133,7 +1139,16 @@ function registerIpc(): void {
   });
   ipcMain.handle('sidecar:call', async (_e, method: string, params: unknown) => {
     try {
-      return await callSidecar({ method, params });
+      const result = await callSidecar({ method, params });
+      if (method === 'canonical.project.open') {
+        const requested = (params as { projectRoot?: unknown } | null)?.projectRoot;
+        if (typeof requested !== 'string') throw new Error('canonical project root is absent');
+        activeCanonicalProjectRoot = assertProjectRoot(resolve(requested));
+      } else if (method === 'canonical.project.close') {
+        activeCanonicalProjectRoot = null;
+        canonicalResidencyArtifacts.clear();
+      }
+      return result;
     } catch (error) {
       throw rendererSafeSidecarError(error);
     }
@@ -1269,6 +1284,10 @@ function materializeCanonicalResidency(bootstrap: SidecarResidencyBootstrap): un
     throw new Error('sidecar returned an invalid canonical residency bootstrap');
   }
   const nextArtifacts = new Map<string, CanonicalResidencyArtifactBinding>();
+  const projectRoot = activeCanonicalProjectRoot;
+  if (!projectRoot) {
+    throw new Error('canonical residency bootstrap requires an open project');
+  }
   const entries = bootstrap.entries.map((entry) => {
     if (
       typeof entry.providerId !== 'string' ||
@@ -1307,6 +1326,7 @@ function materializeCanonicalResidency(bootstrap: SidecarResidencyBootstrap): un
         objectHash: resource.objectHash,
         mediaType: resource.mediaType,
         byteLength: resource.byteLength!,
+        projectRoot,
       };
       const existing = nextArtifacts.get(pathname);
       if (existing && JSON.stringify(existing) !== JSON.stringify(binding)) {

@@ -216,6 +216,8 @@ export function ConstructionBar({
               value={field.value}
               {...(field.unit ? { unit: field.unit } : {})}
               precision={field.id === 'direction' ? 4 : 3}
+              commitOnBlur={false}
+              data-construction-field-commit="enter"
               onFocus={() => onFieldFocus?.(field.id)}
               onValueChange={(value) => {
                 if (value !== null) onFieldChange?.(field.id, value);

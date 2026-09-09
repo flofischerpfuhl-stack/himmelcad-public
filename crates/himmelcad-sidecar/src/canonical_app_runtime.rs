@@ -5307,6 +5307,100 @@ mod tests {
     }
 
     #[test]
+    fn legacy_persisted_project_tombstoned_default_layer_is_repaired_once_on_open() {
+        let root = temp_project("legacy-default-layer-repair");
+        let default_layer_id = EntityId("default-layer".to_owned());
+        let mut runtime = CanonicalAppRuntime::default();
+        runtime.open(&root).expect("create legacy fixture");
+        let layer = runtime
+            .store()
+            .expect("store")
+            .document()
+            .entity(&default_layer_id)
+            .expect("default layer")
+            .clone();
+        runtime
+            .store_mut()
+            .expect("store")
+            .commit_transaction(CanonicalCommandTransaction {
+                command_id: "legacy.delete-default-layer".to_owned(),
+                mutations: vec![CanonicalEntityMutation::Delete {
+                    expected: EntityVersionRef::from_entity(&layer),
+                }],
+            })
+            .expect("persist legacy tombstone");
+        runtime.flush().expect("durable legacy fixture");
+        assert!(runtime.close());
+
+        runtime.open(&root).expect("repair legacy fixture");
+        let store = runtime.store().expect("repaired store");
+        assert!(store.document().entity(&default_layer_id).is_some());
+        assert!(store.document().tombstone(&default_layer_id).is_none());
+        assert_eq!(
+            store
+                .document()
+                .journal()
+                .iter()
+                .filter(|entry| entry.command_id == "system.ensure-default-layer@1")
+                .count(),
+            1
+        );
+        assert!(runtime.close());
+
+        runtime.open(&root).expect("idempotent reopen");
+        let store = runtime.store().expect("reopened store");
+        assert_eq!(
+            store
+                .document()
+                .entities()
+                .filter(|entity| entity.id == default_layer_id)
+                .count(),
+            1
+        );
+        assert_eq!(
+            store
+                .document()
+                .journal()
+                .iter()
+                .filter(|entry| entry.command_id == "system.ensure-default-layer@1")
+                .count(),
+            1
+        );
+        use himmelcad_core::release_05_admissions::{
+            MeasurementAnchorV1, MeasurementKindV1, MeasurementVerificationV1,
+        };
+        let measured = runtime
+            .create_measurement(
+                "measurement-after-repair".to_owned(),
+                "measurement-after-repair".to_owned(),
+                "Point 1".to_owned(),
+                MeasurementV1 {
+                    schema_id: MEASUREMENT_SCHEMA_ID.to_owned(),
+                    schema_version: 1,
+                    measurement_kind: MeasurementKindV1::Point,
+                    metric: None,
+                    anchors: vec![MeasurementAnchorV1::Fixed {
+                        position: Position {
+                            x: 1.0,
+                            y: 2.0,
+                            z: Some(3.0),
+                        },
+                    }],
+                    layer_id: default_layer_id.clone(),
+                    visible: true,
+                    creation_view_id: None,
+                    provenance: "ui".to_owned(),
+                    verification: MeasurementVerificationV1::Verified,
+                    result_cache: None,
+                },
+            )
+            .expect("measurement after legacy repair");
+        assert_eq!(measured.journal_entry.effects.len(), 1);
+        runtime.close();
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn project_draw_boundary_cancel_reopen_and_second_drawing_keep_default_layer() {
         fn position(x: f64, y: f64, z: f64) -> Position {
             Position { x, y, z: Some(z) }
@@ -5548,8 +5642,8 @@ mod tests {
         );
         assert_eq!(
             created.journal_entry.effects.len(),
-            2,
-            "the default layer and measurement share one transaction"
+            1,
+            "measurement references the already-live default layer instead of creating it"
         );
         runtime.flush().expect("measurement durability");
         runtime.close();

@@ -26,6 +26,7 @@ import {
   overlayDirectionArrow,
   type CanonicalEntity,
   type CanonicalRepresentationAdmission,
+  type GeometryRepresentationBindingRef,
   type GeometryObject,
   type HimmelcadViewerWasmLoader,
   type KernelPickCandidate,
@@ -184,6 +185,8 @@ export interface BuilderRasterImageOptions {
 
 export interface BuilderKernelViewportHandle {
   isAlive(): boolean;
+  /** Retire all project-owned residency while keeping the renderer/device alive. */
+  resetProjectScene(): void;
   loadPotreePointCloud(metadataUrl: string, options: BuilderPointCloudOptions): Promise<void>;
   loadPreparedHierarchy(
     manifestUrl: string,
@@ -582,6 +585,9 @@ export const BuilderKernelViewport = forwardRef<
   const viewModeRef = useRef<KernelViewMode>('3d');
   const automationClipIdsRef = useRef(new Set<string>());
   const highlightedSelectionRef = useRef(new Set<EntityId>());
+  const retiredCanonicalBindingsRef = useRef(
+    new Map<EntityId, readonly GeometryRepresentationBindingRef[]>(),
+  );
   const drawSnapLatencyRef = useRef(new DrawSnapLatencyRing());
   callbacksRef.current = {
     onCursorSnap,
@@ -868,16 +874,19 @@ export const BuilderKernelViewport = forwardRef<
         (id) => callbacksRef.current.isEntitySelectionHighlightable?.(id) ?? true,
       ),
     );
+    const loaded = new Set(
+      [...next].filter((id) => kernel.session.canonicalEntityBindingsIfLoaded(id) !== null),
+    );
     for (const id of highlightedSelectionRef.current) {
-      if (!next.has(id))
+      if (!next.has(id) && kernel.session.canonicalEntityBindingsIfLoaded(id))
         kernel.session.setEntityInteractionState(id, { selected: false, hovered: false });
     }
-    for (const id of next) {
+    for (const id of loaded) {
       if (!highlightedSelectionRef.current.has(id)) {
         kernel.session.setEntityInteractionState(id, { selected: true, hovered: false });
       }
     }
-    highlightedSelectionRef.current = next;
+    highlightedSelectionRef.current = loaded;
     selectionOverlayKeyRef.current = '';
   }, [selectedEntityIds]);
 
@@ -978,9 +987,63 @@ export const BuilderKernelViewport = forwardRef<
           return false;
         }
       },
+      resetProjectScene() {
+        const kernel = kernelRef.current;
+        if (!kernel) return;
+        kernel.navigation.gestures.clearCandidateIndicator();
+        // Selection-store close and React effects may settle after this
+        // synchronous retirement. Clear the local highlight ledger first so
+        // no queued effect tries to deselect an entity already detached from
+        // the canonical viewer.
+        highlightedSelectionRef.current = new Set();
+        selectionOverlayKeyRef.current = '';
+        for (const entry of viewingBoxBakeCacheRef.current.values()) {
+          for (const proxy of entry.proxies) {
+            bakeProxySourcesRef.current.delete(proxy.proxyEntityId);
+            if (proxy.handle.loaded) proxy.handle.unload();
+          }
+        }
+        for (const entityId of entityVisibilityRef.current.keys()) {
+          if (kernel.session.canonicalEntityBindingsIfLoaded(entityId)) {
+            const mutation = kernel.scene.unloadEntity(entityId);
+            const byEntity = new Map<EntityId, GeometryRepresentationBindingRef[]>();
+            for (const tombstone of mutation.tombstones) {
+              const id = tombstone.key.slot.entityId as EntityId;
+              const bindings = byEntity.get(id) ?? [];
+              bindings.push(tombstone);
+              byEntity.set(id, bindings);
+            }
+            for (const [id, bindings] of byEntity) {
+              retiredCanonicalBindingsRef.current.set(id, bindings);
+            }
+          }
+        }
+        for (const id of automationClipIdsRef.current) {
+          kernel.session.setScopedClipVolume(`automation:${id}`, null);
+        }
+        automationClipIdsRef.current.clear();
+        kernel.session.setClipVolumes([]);
+        potreeSourcesRef.current.clear();
+        entityBoundsRef.current.clear();
+        entityVisibilityRef.current.clear();
+        entityStylesRef.current.clear();
+        entityOverlayGeometryRef.current.clear();
+        entityExaggerationDatumsRef.current.clear();
+        viewingBoxBakeCacheRef.current.clear();
+        bakeProxySourcesRef.current.clear();
+        activeViewingBoxBakeKeyRef.current = null;
+        loadedBoundsRef.current = null;
+        viewingBoxRef.current = null;
+        kernel.requestFrame();
+      },
       async loadPotreePointCloud(metadataUrl, options) {
         const kernel = await readyRef.current.promise;
         const entityId = options.admission.entity.id as EntityId;
+        const admission = withCurrentCanonicalGenerations([options.admission], (id) =>
+          kernel.session.canonicalEntityBindingsIfLoaded(id) ??
+          retiredCanonicalBindingsRef.current.get(id as EntityId) ??
+          null,
+        )[0]!;
         if (options.admission.resolvedGeometry.kind !== 'pointCloud') {
           throw new Error('committed LAS admission does not resolve to point-cloud geometry');
         }
@@ -989,15 +1052,24 @@ export const BuilderKernelViewport = forwardRef<
           {
             datasetId: options.datasetId,
             metadataUri: metadataUrl,
-            admission: options.admission,
+            admission,
             style: pointCloudStyle,
           },
           { operationId: `builder/load/${entityId}` },
         );
-        potreeSourcesRef.current.set(entityId, { ...options, metadataUrl });
+        potreeSourcesRef.current.set(entityId, { ...options, admission, metadataUrl });
         entityBoundsRef.current.set(entityId, options.bounds);
-        entityVisibilityRef.current.set(entityId, true);
+        const visible = entityVisibilityRef.current.get(entityId) ?? true;
+        entityVisibilityRef.current.set(entityId, visible);
         entityStylesRef.current.set(entityId, pointCloudStyle);
+        if (!visible) kernel.scene.setEntityVisibility(entityId, false);
+        if (
+          callbacksRef.current.selectedEntityIds.has(entityId) &&
+          (callbacksRef.current.isEntitySelectionHighlightable?.(entityId) ?? true)
+        ) {
+          kernel.session.setEntityInteractionState(entityId, { selected: true, hovered: false });
+          highlightedSelectionRef.current.add(entityId);
+        }
         if (options.display) {
           kernel.session.setEntityPointSizeMultiplier(entityId, options.display.pointSizePixels);
         }
@@ -1014,6 +1086,11 @@ export const BuilderKernelViewport = forwardRef<
         const manifestBytes = new Uint8Array(await response.arrayBuffer());
         const bounds = preparedHierarchyBounds(manifestBytes);
         const entityId = options.admission.entity.id as EntityId;
+        const admission = withCurrentCanonicalGenerations([options.admission], (id) =>
+          kernel.session.canonicalEntityBindingsIfLoaded(id) ??
+          retiredCanonicalBindingsRef.current.get(id as EntityId) ??
+          null,
+        )[0]!;
         kernel.session.loadPreparedHierarchy({
           datasetId: options.datasetId,
           formatId: options.formatId,
@@ -1021,9 +1098,9 @@ export const BuilderKernelViewport = forwardRef<
           manifestBytes,
           admissions: [
             {
-              admission: options.admission,
+              admission,
               style:
-                options.admission.resolvedGeometry.kind === 'elevationSurface'
+                admission.resolvedGeometry.kind === 'elevationSurface'
                   ? RASTER_STYLE
                   : IFC_STYLE,
               exaggerationDatum: bounds.min[2],
@@ -1034,7 +1111,7 @@ export const BuilderKernelViewport = forwardRef<
         entityVisibilityRef.current.set(entityId, true);
         entityStylesRef.current.set(
           entityId,
-          options.admission.resolvedGeometry.kind === 'elevationSurface' ? RASTER_STYLE : IFC_STYLE,
+          admission.resolvedGeometry.kind === 'elevationSurface' ? RASTER_STYLE : IFC_STYLE,
         );
         entityExaggerationDatumsRef.current.set(entityId, bounds.min[2]);
         loadedBoundsRef.current = unionBounds(loadedBoundsRef.current, bounds);
@@ -1044,7 +1121,10 @@ export const BuilderKernelViewport = forwardRef<
         const kernel = await readyRef.current.promise;
         const versionedAdmissions = withCurrentCanonicalGenerations(
           package_.admissions,
-          (entityId) => kernel.session.canonicalEntityBindingsIfLoaded(entityId),
+          (entityId) =>
+            kernel.session.canonicalEntityBindingsIfLoaded(entityId) ??
+            retiredCanonicalBindingsRef.current.get(entityId as EntityId) ??
+            null,
         );
         const admissions: KernelCanonicalRenderAdmission[] = versionedAdmissions.map(
           (admission) => ({
@@ -1304,6 +1384,11 @@ export const BuilderKernelViewport = forwardRef<
         kernel.navigation.gestures.clearCandidateIndicator();
         for (const entityId of entityIds) {
           entityVisibilityRef.current.set(entityId, visible);
+          // Project replacement deliberately clears canonical residency before
+          // React has settled the new project/display state. Preserve the
+          // requested visibility for the subsequent load, but never send a
+          // stale entity id across the kernel boundary.
+          if (!kernel.session.canonicalEntityBindingsIfLoaded(entityId)) continue;
           const active = activeViewingBoxBakeKeyRef.current
             ? viewingBoxBakeCacheRef.current.get(activeViewingBoxBakeKeyRef.current)
             : null;
@@ -1447,7 +1532,8 @@ export const BuilderKernelViewport = forwardRef<
               if (!response.ok)
                 throw new Error(`Baked dataset ${bakedSource.datasetId} is missing.`);
               const metadata = new Uint8Array(await response.arrayBuffer());
-              const proxyEntityId = `${sourceEntityId}:viewing-box:${state.id}` as EntityId;
+              const proxyEntityId =
+                `${sourceEntityId}:viewing-box:${state.id}:${bakedSource.datasetId}` as EntityId;
               const admission = await bakedPointCloudAdmission(
                 kernel,
                 source.admission,
@@ -1557,7 +1643,8 @@ export const BuilderKernelViewport = forwardRef<
               metadataUrl: publication.metadataUrl,
               pointCount: item.result.pointCount,
             });
-            const proxyEntityId = `${item.sourceEntityId}:viewing-box:${state.id}` as EntityId;
+            const proxyEntityId =
+              `${item.sourceEntityId}:viewing-box:${state.id}:${publication.datasetId}` as EntityId;
             const admission = await bakedPointCloudAdmission(
               kernel,
               item.source.admission,
@@ -1692,7 +1779,9 @@ export const BuilderKernelViewport = forwardRef<
       handle.session.setPointSize(pointSizeRef.current);
       const selected = new Set(
         [...callbacksRef.current.selectedEntityIds].filter(
-          (id) => callbacksRef.current.isEntitySelectionHighlightable?.(id) ?? true,
+          (id) =>
+            (callbacksRef.current.isEntitySelectionHighlightable?.(id) ?? true) &&
+            handle.session.canonicalEntityBindingsIfLoaded(id) !== null,
         ),
       );
       for (const id of selected) {

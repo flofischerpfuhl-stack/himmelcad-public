@@ -105,6 +105,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react';
+import { flushSync } from 'react-dom';
 
 import builderLogoUrl from '../../build/mark.png';
 
@@ -418,7 +419,6 @@ export function App(): JSX.Element {
     readonly { readonly path: string; readonly name: string; readonly openedAtUnixMs: number }[]
   >([]);
   const [currentProjectPath, setCurrentProjectPath] = useState<string | null>(null);
-  const [viewportEpoch, setViewportEpoch] = useState(0);
   const [closeMode, setCloseMode] = useState<'project' | 'window' | null>(null);
   const [registrationItems, setRegistrationItems] = useState<
     readonly { readonly jobId: string; readonly sourcePath: string }[]
@@ -1142,7 +1142,7 @@ export function App(): JSX.Element {
           currentProjectPathRef.current = null;
           setDurability(null);
           entityGroupsRef.current = { cloud: [], ifc: [], orthophoto: [], mesh: [] };
-          setViewportEpoch((epoch) => epoch + 1);
+          viewportRef.current?.resetProjectScene();
         }
         if (mode === 'window') await api.window.closeReady();
         return true;
@@ -1188,8 +1188,7 @@ export function App(): JSX.Element {
           canonicalReadyRef.current = null;
           canonicalSessionRef.current = null;
           entityGroupsRef.current = { cloud: [], ifc: [], orthophoto: [], mesh: [] };
-          setViewportEpoch((epoch) => epoch + 1);
-          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+          viewportRef.current?.resetProjectScene();
         },
         openPrepared: () => ensureCanonicalProjectRef.current().then(() => undefined),
         discardFailed: async () => {
@@ -1359,6 +1358,10 @@ export function App(): JSX.Element {
     if (!session || !viewport || !api) return;
     const refreshed = await session.refresh();
     pruneRemovedSelection(selectionStore, projectRef.current, refreshed);
+    selectionStore.updateEntityCatalog(
+      new Set(Object.keys(refreshed.entities)),
+      (entityId) => refreshed.entities[entityId]?.kind,
+    );
     setProject(refreshed);
     const restored = await restoreCanonicalResidency(
       viewport,
@@ -1371,6 +1374,14 @@ export function App(): JSX.Element {
   }, [selectionStore]);
   const reloadCanonicalResidencyRef = useRef(reloadCanonicalResidency);
   reloadCanonicalResidencyRef.current = reloadCanonicalResidency;
+
+  useEffect(() => {
+    if (!project || selectionStore.getSnapshot().projectId === null) return;
+    selectionStore.updateEntityCatalog(
+      new Set(Object.keys(project.entities)),
+      (entityId) => project.entities[entityId]?.kind,
+    );
+  }, [project, selectionStore]);
 
   useEffect(() => {
     logEvent('info', 'renderer', 'Builder renderer mounted');
@@ -1989,9 +2000,15 @@ export function App(): JSX.Element {
       const api = window.himmelcad;
       if (!state || !viewport || !api) return;
       if (!locked && viewingBoxBakeAbortRef.current) {
+        const controller = viewingBoxBakeAbortRef.current;
         const jobId = viewingBoxBakeJobIdRef.current;
-        viewingBoxBakeAbortRef.current.abort();
-        if (jobId) await api.jobs.cancel(jobId);
+        // Cancellation is an interactive boundary: acknowledge it immediately
+        // before AbortSignal's synchronous listeners begin renderer cleanup.
+        // The live abort ref remains set until the bake's `finally`, so
+        // another lock cannot overlap that serialized cleanup.
+        flushSync(() => setViewingBoxBakeProgress(null));
+        controller.abort();
+        if (jobId) void api.jobs.cancel(jobId);
         return;
       }
       if (viewingBoxBakeAbortRef.current) return;
@@ -2083,6 +2100,7 @@ export function App(): JSX.Element {
     const revision = viewingBoxRevisionByIdRef.current.get(state.id);
     if (revision === undefined) return;
     await session.deleteViewingBox(state.id, revision);
+    selectionStore.pruneDeleted([state.id]);
     viewingBoxRevisionByIdRef.current.delete(state.id);
     const remaining = viewingBoxes.filter((box) => box.entityId !== state.id);
     setViewingBoxes(remaining);
@@ -2099,7 +2117,7 @@ export function App(): JSX.Element {
       displayStore.setActiveClipEntityIds([]);
     }
     setProject(session.projectSnapshot());
-  }, [displayStore, viewingBoxes]);
+  }, [displayStore, selectionStore, viewingBoxes]);
 
   useEffect(() => {
     const current = projectRef.current;
@@ -4801,7 +4819,6 @@ export function App(): JSX.Element {
           >
             <div style={{ position: 'relative', width: '100%', height: '100%' }}>
               <BuilderKernelViewport
-                key={viewportEpoch}
                 ref={viewportRef}
                 pointSize={pointSize}
                 onViewModeSettled={settleNavigationMode}

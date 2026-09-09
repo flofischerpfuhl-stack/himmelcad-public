@@ -180,6 +180,17 @@ void test('G-SE-CORE project switch stores then unloads and rehydrates each proj
   assert.deepEqual([...selection.getSnapshot().selectedEntityIds], ['a1']);
 });
 
+void test('UIP-D2 imported entities become tree-selectable without reopening selection history', async () => {
+  const selection = await store(['existing']);
+  selection.replace(['existing']);
+  selection.updateEntityCatalog(live('existing', 'cloud-imported'), kind);
+  assert.equal(selection.replace(['cloud-imported']), true);
+  assert.deepEqual([...selection.getSnapshot().selectedEntityIds], ['cloud-imported']);
+  assert.deepEqual([...selection.getSnapshot().boundingBoxHaloEntityIds], ['cloud-imported']);
+  assert.equal(selection.undo(), true);
+  assert.deepEqual([...selection.getSnapshot().selectedEntityIds], ['existing']);
+});
+
 void test('UIP-D16 candidate copy, cycling, and every invalidation event', async () => {
   const reasons: CandidateInvalidationReason[] = [
     'cameraMove',
@@ -347,9 +358,11 @@ void test('automation parity: every canonical select row round-trips through one
   );
   call('selection.kind_filter.set', { kind: 'lines', selectable: false });
   assert.equal(
-    (call('selection.kind_filter.get').payload as {
-      selectableKinds: Record<string, boolean>;
-    }).selectableKinds.lines,
+    (
+      call('selection.kind_filter.get').payload as {
+        selectableKinds: Record<string, boolean>;
+      }
+    ).selectableKinds.lines,
     false,
   );
   selection.setCandidates([

@@ -57,13 +57,21 @@ function sidecarPath(): string {
   // Compiled path: apps/builder/dist/electron/sidecar.js → up 4 to repo root.
   // Respect the repository's per-lane Cargo target directory without allowing
   // an arbitrary executable path to be injected into the desktop process.
+  // Builder owns `target/builder`; a bare `target/` binary is the PhotoLab lane
+  // and would silently drop Builder sidecar repairs (R-01b default-layer).
   const repositoryRoot = resolve(__dirname, '..', '..', '..', '..');
   const targetRoot = resolve(repositoryRoot, 'target');
-  const configuredTarget = resolve(repositoryRoot, process.env.CARGO_TARGET_DIR ?? 'target');
-  const cargoTarget = configuredTarget.startsWith(`${targetRoot}${sep}`)
-    ? configuredTarget
-    : targetRoot;
-  return resolve(cargoTarget, 'debug', 'himmelcad-sidecar');
+  const candidates: string[] = [];
+  if (process.env.CARGO_TARGET_DIR) {
+    const configuredTarget = resolve(repositoryRoot, process.env.CARGO_TARGET_DIR);
+    if (configuredTarget.startsWith(`${targetRoot}${sep}`)) candidates.push(configuredTarget);
+  }
+  candidates.push(resolve(targetRoot, 'builder'), targetRoot);
+  for (const cargoTarget of candidates) {
+    const binary = resolve(cargoTarget, 'debug', 'himmelcad-sidecar');
+    if (existsSync(binary)) return binary;
+  }
+  return resolve(targetRoot, 'builder', 'debug', 'himmelcad-sidecar');
 }
 
 export function startSidecar(): Promise<void> {

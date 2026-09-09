@@ -105,6 +105,24 @@ void test('G-B2-INPUT click, constrain and typed absolute coordinates agree to 1
   }
 });
 
+void test('G-B2-INPUT typed XYZ stays a draft until an explicit commit', () => {
+  const input = new ConstructionInputController();
+  input.arm({
+    toolId: 'draw.boundary',
+    prompt: 'Boundary — type or pick vertex',
+    fields: ['x', 'y', 'z'],
+  });
+  input.setField('x', 2_538_126);
+  assert.deepEqual(input.snapshot().preview, { x: 2_538_126, y: 0, z: 0 });
+  assert.equal(input.snapshot().committedValues.x, 0);
+  input.setField('y', 5_486_632.661);
+  input.setField('z', 489.158);
+  assert.equal(input.snapshot().committedValues.x, 0, 'Tab/field edits must not accept the vertex');
+  const point = input.commit();
+  assert.deepEqual(point, { x: 2_538_126, y: 5_486_632.661, z: 489.158 });
+  assert.equal(input.snapshot().committedValues.x, 2_538_126);
+});
+
 void test('G-B2-INPUT first Escape reverts a field and leaves the armed tool for the second Escape rung', () => {
   const input = new ConstructionInputController();
   input.arm({ toolId: 'draw.point', prompt: 'Point', fields: ['x', 'y', 'z'] });

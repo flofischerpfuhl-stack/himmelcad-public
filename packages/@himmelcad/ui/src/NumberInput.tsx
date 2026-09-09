@@ -25,6 +25,8 @@ export interface NumberInputProps extends Omit<
   unit?: string;
   precision?: number;
   invalidMessage?: string;
+  /** Retain the draft on focus traversal; Enter remains the commit gesture. */
+  commitOnBlur?: boolean;
 }
 
 export function NumberInput({
@@ -38,6 +40,7 @@ export function NumberInput({
   min,
   max,
   invalidMessage = 'Enter a valid number.',
+  commitOnBlur = true,
   className,
   onFocus,
   onBlur,
@@ -89,7 +92,10 @@ export function NumberInput({
     else setCommitted(value);
     setDraft(formatNumber(next, precision));
     onValueChange?.(next);
-    if (next !== committed) onCommit?.(next);
+    // Enter on an atomic construction field is an action even when focus
+    // traversal already echoed the draft through the controlled value. Blur-
+    // committing fields retain the ordinary changed-value notification.
+    if (next !== committed || !commitOnBlur) onCommit?.(next);
     return true;
   };
 
@@ -138,7 +144,8 @@ export function NumberInput({
           }}
           onBlur={(event: FocusEvent<HTMLInputElement>) => {
             setFocused(false);
-            if (!consumeEscapeBlurCommitSuppression(event.currentTarget)) commit();
+            const suppressCommit = consumeEscapeBlurCommitSuppression(event.currentTarget);
+            if (commitOnBlur && !suppressCommit) commit();
             onBlur?.(event);
           }}
           onKeyDown={(event) => {

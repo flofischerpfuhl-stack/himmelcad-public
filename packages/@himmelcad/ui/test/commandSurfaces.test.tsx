@@ -121,6 +121,7 @@ void test('S-06d snapshots the PhotoLab product and Builder polyline menus', () 
       'Measure height difference',
       'Properties',
       'Export…',
+      'Create surface…',
     ],
     'Builder polyline node menu snapshot',
   );

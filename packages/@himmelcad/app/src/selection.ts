@@ -284,6 +284,25 @@ export class SelectionStore {
     await this.openProject(projectId, liveEntityIds, entityKind, hiddenEntityIds);
   }
 
+  /**
+   * Replaces the live entity catalogue without reopening the project or
+   * discarding selection history. Import and journal refresh paths must call
+   * this before a newly published entity can be selected from the tree.
+   * Deletion remains an explicit `pruneDeleted` operation so it keeps its
+   * non-resurrecting history semantics.
+   */
+  updateEntityCatalog(
+    liveEntityIds: ReadonlySet<string>,
+    entityKind: (entityId: string) => SelectionEntityKind | undefined,
+    hiddenEntityIds: Iterable<string> = this.hiddenEntityIds,
+  ): void {
+    if (!this.projectId) throw new Error('selection store has no open project');
+    this.liveEntityIds = liveEntityIds;
+    this.entityKind = entityKind;
+    this.hiddenEntityIds = new Set(hiddenEntityIds);
+    this.changed(false);
+  }
+
   replace(entityIds: Iterable<string>, gestureSession: string | null = null): boolean {
     return this.commit(entityMembers(entityIds), gestureSession);
   }
