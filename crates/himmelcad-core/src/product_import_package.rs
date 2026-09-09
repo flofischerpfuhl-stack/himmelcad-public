@@ -298,10 +298,6 @@ pub struct ProductLineageDemGroundClassificationV1 {
     pub parameters_sha256: ObjectHash,
 }
 
-fn default_dem_surface() -> String {
-    "dsm".to_owned()
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct PhotoLabDemFactsV1 {
@@ -310,10 +306,18 @@ pub struct PhotoLabDemFactsV1 {
     pub connectivity: ProductLineageDemConnectivityV1,
     pub source_no_data: ProductLineageDemSourceNoDataV1,
     pub validity: ProductLineageDemValidityV1,
-    #[serde(default = "default_dem_surface")]
-    pub surface: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ground_classification: Option<ProductLineageDemGroundClassificationV1>,
+}
+
+impl PhotoLabDemFactsV1 {
+    /// Records written before surface lineage was introduced are DSMs.
+    #[must_use]
+    pub fn surface_kind(&self) -> &str {
+        self.surface.as_deref().unwrap_or("dsm")
+    }
 }
 
 /// Exact IF-D26 frozen publication lineage.
@@ -832,7 +836,7 @@ fn validate_dem_facts(facts: &PhotoLabDemFactsV1) -> Result<(), ProductImportPac
             "DEM facts contain invalid sampling or encoding values".to_owned(),
         ));
     }
-    match (facts.surface.as_str(), &facts.ground_classification) {
+    match (facts.surface_kind(), &facts.ground_classification) {
         ("dsm", None) => {}
         ("dtm", Some(classification)) => {
             let valid_hash = |hash: &ObjectHash| {
@@ -1078,6 +1082,38 @@ mod tests {
 
     use super::*;
 
+    const PRE_G1A3C_LINEAGE_PAYLOAD: &str = r#"{"algorithms":[{"id":"hcad.photolab-build-dem@1","sha256":"57665a5a7993a860559ee1dc6848d440580e552d36c1d1a50ec6fd85837bf6be"}],"camera_selection_sha256":"702d882c40a1c0b358fd181538aec175fcc6f11c173a15e873401c5933b53f2d","configurations":[{"id":"hcad.photolab-dem@1","sha256":"7d2f36735e7ce8fb7d4f736489b281cdd4418f704cfc7fc316d85ad15357b4ec"}],"dataset_label":"DEM","dem_facts":{"connectivity":{"diagonal":"topLeftToBottomRight","kind":"continuous"},"interpolation":"bilinear","semantics":"elevationZ","source_no_data":{"kind":"numeric","value":"-340282346638528860000000000000000000000"},"validity":{"encoding":"bitsetLsb0","resource":{"byte_length":524288,"media_type":"application/octet-stream","resource_id":"dbff5b8beae260697004f86addbe98c427f4bad2e988841e4453cab9414c7eae","sha256":"dbff5b8beae260697004f86addbe98c427f4bad2e988841e4453cab9414c7eae"}}},"gcp_choice":{"kind":"none"},"image_mask_scope":{"kind":"none"},"normalized_format_id":"himmelcad-prepared-hierarchy@1","processing_set_choice":{"kind":"all_imported_cameras"},"product_content_hash":"83e4e795ee2562732fdd61950ec684f7f6775473e88cdd81c955fda8909b7d86","product_entity_id":"project-30c1e9dbe83373c2ca4fb34998891cb09c22bce7b3a487410ad8a61f68622f1f:raster:e2e-dem-1788935732876","product_entity_version_hash":"db5d2e53829d5812cb5a4149d00da948f9566983583d24bbff476f94ab8f8c78","product_kind":"dem","product_label":"DEM · e2e-dem-1788935732876","publication_generation":6,"reference_frame":{"kind":"frozen","project_reference_frame":{"establishedByTransformationSha256":"e7128664c5e6906eefadc645dcfc03342153ff10a3887ceea3db52dfd9d274b7","target":{"horizontal":{"crs":{"kind":"authority","value":"EPSG:31468+7837"}},"vertical":{"kind":"normalHeight","verticalCrs":{"kind":"epsg","value":7837}}}}},"source_alignment_content_hash":"d2859f7b7af96f9447d1828041d6ba83cacbe0edac260a460e5eb239ed7f5672","source_alignment_entity_id":"project-30c1e9dbe83373c2ca4fb34998891cb09c22bce7b3a487410ad8a61f68622f1f:compute:e2e-align-1788920054041:1","source_alignment_entity_version_hash":"790ebada0dfec48392beeacbfcda82ff5f11006b53ec6d902132dea92b302cb8","source_alignment_kind":"single","source_format":"rasterPyramid","source_project_fingerprint":"3b81aeb8c3ff2ad91dc19a77a3eb292439b471674a9852d9381ddfd00209dd92","source_project_id":"project-30c1e9dbe83373c2ca4fb34998891cb09c22bce7b3a487410ad8a61f68622f1f","spatialReference":{"kind":"crsBacked"},"tools":[{"id":"colmap@4.1.0","sha256":"6499acc1f8482ff48be35a2133130efd1d623adda3d02b601b79f873a73f822b"},{"id":"gdal_grid@3.8.4","sha256":"41c7c551db30c100b12d42cafa188f92a5dc353f38032a04f4c35a70c441ac74"},{"id":"gdal_rasterize@3.8.4","sha256":"dff6f03709be931bdd4b8d2e26936b35b1fb840f29c1b859a7065eda9a2a5bb0"},{"id":"gdal_translate@3.8.4","sha256":"f78fc11f6139dda9d9771b6c57194e443735134d387b0bd481c8919790abd8af"},{"id":"gdalbuildvrt@3.8.4","sha256":"ba191c4e7d8fee121211b79526aa614b329ea29e9d285666f328425c01069430"},{"id":"gdalinfo@3.8.4","sha256":"db6d4ac0966ecd19a8175bfa901add7ea1f9e2d3c330f8c5fea3d2480b5b9994"},{"id":"gdalwarp@3.8.4","sha256":"94e1945f6c35b917b515f364d121e5501c71d9b2afa1a29546ad2fc96d87e1ee"},{"id":"ogrinfo@3.8.4","sha256":"9eef6e32f131ab954eae653c215d2201b47861b577ef0761c6948239e93bf656"}]}"#;
+
+    const G1A3C_LINEAGE_PAYLOAD: &str = r#"{"algorithms":[],"camera_selection_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","configurations":[],"dataset_label":"DTM","dem_facts":{"connectivity":{"kind":"pixelSteps"},"ground_classification":{"algorithm_id":"smrf@1","parameters_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},"interpolation":"nearest","semantics":"elevationZ","source_no_data":{"kind":"nan"},"surface":"dtm","validity":{"encoding":"bitsetLsb0","resource":{"byte_length":0,"media_type":"application/octet-stream","resource_id":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}},"gcp_choice":{"kind":"none"},"image_mask_scope":{"kind":"none"},"processing_set_choice":{"kind":"none"},"product_content_hash":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","product_entity_id":"entity-dtm","product_entity_version_hash":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","product_kind":"dem","product_label":"DTM","publication_generation":1,"reference_frame":{"kind":"local_frame"},"source_alignment_content_hash":"1111111111111111111111111111111111111111111111111111111111111111","source_alignment_entity_id":"alignment-a","source_alignment_entity_version_hash":"2222222222222222222222222222222222222222222222222222222222222222","source_alignment_kind":"single","source_format":"rasterPyramid","source_project_fingerprint":"3333333333333333333333333333333333333333333333333333333333333333","source_project_id":"project-a","spatialReference":{"kind":"crsBacked"},"tools":[]}"#;
+
+    #[test]
+    fn pre_g1a3c_lineage_payload_round_trip_preserves_canonical_bytes() {
+        let payload: ProductLineageV1 =
+            serde_json::from_str(PRE_G1A3C_LINEAGE_PAYLOAD).expect("real pre-G1a-3c lineage");
+
+        assert_eq!(
+            canonical_json::to_vec(&payload).expect("canonical lineage"),
+            PRE_G1A3C_LINEAGE_PAYLOAD.as_bytes()
+        );
+        let facts = payload.dem_facts.expect("DEM facts");
+        assert!(facts.surface.is_none());
+        assert_eq!(facts.surface_kind(), "dsm");
+    }
+
+    #[test]
+    fn g1a3c_lineage_payload_round_trip_preserves_canonical_bytes() {
+        let payload: ProductLineageV1 =
+            serde_json::from_str(G1A3C_LINEAGE_PAYLOAD).expect("G1a-3c lineage");
+
+        assert_eq!(
+            canonical_json::to_vec(&payload).expect("canonical lineage"),
+            G1A3C_LINEAGE_PAYLOAD.as_bytes()
+        );
+        let facts = payload.dem_facts.expect("DEM facts");
+        assert_eq!(facts.surface.as_deref(), Some("dtm"));
+        assert!(facts.ground_classification.is_some());
+    }
+
     fn fixture() -> ProductImportPackageManifestV1 {
         let lineage = ProductLineageV1 {
             source_project_id: "project-a".into(),
@@ -1193,7 +1229,7 @@ mod tests {
                 resource: validity.clone(),
                 encoding: "bitsetLsb0".into(),
             },
-            surface: "dsm".into(),
+            surface: Some("dsm".into()),
             ground_classification: None,
         });
         manifest.artifacts.push(ProductImportPackageArtifactV1 {
@@ -1503,7 +1539,7 @@ mod tests {
     fn dtm_ground_classification_round_trips_and_admits() {
         let mut manifest = dem_fixture();
         let facts = manifest.lineage.payload.dem_facts.as_mut().unwrap();
-        facts.surface = "dtm".into();
+        facts.surface = Some("dtm".into());
         facts.ground_classification = Some(ground_classification_fixture());
         let manifest = finalize_manifest(manifest);
         let bytes = canonical_json::to_vec(&manifest).unwrap();
@@ -1518,7 +1554,7 @@ mod tests {
     #[test]
     fn dtm_without_ground_classification_is_refused() {
         let mut manifest = dem_fixture();
-        manifest.lineage.payload.dem_facts.as_mut().unwrap().surface = "dtm".into();
+        manifest.lineage.payload.dem_facts.as_mut().unwrap().surface = Some("dtm".into());
         let manifest = finalize_manifest(manifest);
         let bytes = canonical_json::to_vec(&manifest).unwrap();
 
@@ -1554,6 +1590,20 @@ mod tests {
     }
 
     #[test]
+    fn unknown_dem_surface_is_refused() {
+        let mut manifest = dem_fixture();
+        manifest.lineage.payload.dem_facts.as_mut().unwrap().surface = Some("terrain".into());
+        let manifest = finalize_manifest(manifest);
+        let bytes = canonical_json::to_vec(&manifest).unwrap();
+
+        assert_eq!(
+            read_product_import_package_manifest(&bytes, &BTreeSet::new(), &BTreeSet::new())
+                .unwrap_err(),
+            ProductImportPackageError::InvalidManifest("DEM surface must be dsm or dtm".to_owned())
+        );
+    }
+
+    #[test]
     fn pre_change_dem_manifest_without_surface_admits_as_dsm() {
         let manifest = finalize_manifest(dem_fixture());
         let mut value = serde_json::to_value(manifest).unwrap();
@@ -1573,7 +1623,8 @@ mod tests {
             read_product_import_package_manifest(&bytes, &BTreeSet::new(), &BTreeSet::new())
                 .expect("pre-change DEM package must remain readable");
         let facts = retained.manifest.lineage.payload.dem_facts.unwrap();
-        assert_eq!(facts.surface, "dsm");
+        assert_eq!(facts.surface_kind(), "dsm");
+        assert!(facts.surface.is_none());
         assert!(facts.ground_classification.is_none());
     }
 
@@ -1618,7 +1669,7 @@ mod tests {
                 resource,
                 encoding: "bitsetLsb0".into(),
             },
-            surface: "dtm".into(),
+            surface: Some("dtm".into()),
             ground_classification: Some(ground_classification_fixture()),
         })
         .unwrap();

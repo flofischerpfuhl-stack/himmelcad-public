@@ -3066,7 +3066,7 @@ fn canonical_dem_product_contract(
             resource: validity_identity,
             encoding: "bitsetLsb0".to_owned(),
         },
-        surface,
+        surface: Some(surface),
         ground_classification,
     };
     let geometry = GeometryObject::ElevationSurface {
@@ -18016,6 +18016,39 @@ mod tests {
     }
 
     #[test]
+    fn pre_g1a3c_publication_lineage_without_surface_passes_resident_hash_check() {
+        const PUBLICATION: &str = r#"{"schema_id":"hcad.photolab-product-publication@1","publication_id":"product-60af8cb22bc3aee54fedf578e7f2adff38050db5be4b3dbdde9cf8a3e2ae3680","product_id":"project-30c1e9dbe83373c2ca4fb34998891cb09c22bce7b3a487410ad8a61f68622f1f:raster:e2e-dem-1788935732876","product_version_hash":"db5d2e53829d5812cb5a4149d00da948f9566983583d24bbff476f94ab8f8c78","product_content_hash":"83e4e795ee2562732fdd61950ec684f7f6775473e88cdd81c955fda8909b7d86","publication_generation":6,"lineage":{"schema_id":"hcad.photolab-product-lineage@1","lineage_object_sha256":"d623eb8a885ddbfcf716a632c7098a70e1ea6ce013d692519950227c3540047a","payload":{"source_project_id":"project-30c1e9dbe83373c2ca4fb34998891cb09c22bce7b3a487410ad8a61f68622f1f","source_project_fingerprint":"3b81aeb8c3ff2ad91dc19a77a3eb292439b471674a9852d9381ddfd00209dd92","product_entity_id":"project-30c1e9dbe83373c2ca4fb34998891cb09c22bce7b3a487410ad8a61f68622f1f:raster:e2e-dem-1788935732876","product_entity_version_hash":"db5d2e53829d5812cb5a4149d00da948f9566983583d24bbff476f94ab8f8c78","product_content_hash":"83e4e795ee2562732fdd61950ec684f7f6775473e88cdd81c955fda8909b7d86","publication_generation":6,"product_kind":"dem","product_label":"DEM · e2e-dem-1788935732876","dataset_label":"DEM","source_format":"rasterPyramid","normalized_format_id":"himmelcad-prepared-hierarchy@1","source_alignment_kind":"single","source_alignment_entity_id":"project-30c1e9dbe83373c2ca4fb34998891cb09c22bce7b3a487410ad8a61f68622f1f:compute:e2e-align-1788920054041:1","source_alignment_entity_version_hash":"790ebada0dfec48392beeacbfcda82ff5f11006b53ec6d902132dea92b302cb8","source_alignment_content_hash":"d2859f7b7af96f9447d1828041d6ba83cacbe0edac260a460e5eb239ed7f5672","processing_set_choice":{"kind":"all_imported_cameras"},"camera_selection_sha256":"702d882c40a1c0b358fd181538aec175fcc6f11c173a15e873401c5933b53f2d","image_mask_scope":{"kind":"none"},"gcp_choice":{"kind":"none"},"spatialReference":{"kind":"crsBacked"},"reference_frame":{"kind":"frozen","project_reference_frame":{"target":{"horizontal":{"crs":{"kind":"authority","value":"EPSG:31468+7837"}},"vertical":{"kind":"normalHeight","verticalCrs":{"kind":"epsg","value":7837}}},"establishedByTransformationSha256":"e7128664c5e6906eefadc645dcfc03342153ff10a3887ceea3db52dfd9d274b7"}},"algorithms":[{"id":"hcad.photolab-build-dem@1","sha256":"57665a5a7993a860559ee1dc6848d440580e552d36c1d1a50ec6fd85837bf6be"}],"configurations":[{"id":"hcad.photolab-dem@1","sha256":"7d2f36735e7ce8fb7d4f736489b281cdd4418f704cfc7fc316d85ad15357b4ec"}],"tools":[{"id":"colmap@4.1.0","sha256":"6499acc1f8482ff48be35a2133130efd1d623adda3d02b601b79f873a73f822b"},{"id":"gdal_grid@3.8.4","sha256":"41c7c551db30c100b12d42cafa188f92a5dc353f38032a04f4c35a70c441ac74"},{"id":"gdal_rasterize@3.8.4","sha256":"dff6f03709be931bdd4b8d2e26936b35b1fb840f29c1b859a7065eda9a2a5bb0"},{"id":"gdal_translate@3.8.4","sha256":"f78fc11f6139dda9d9771b6c57194e443735134d387b0bd481c8919790abd8af"},{"id":"gdalbuildvrt@3.8.4","sha256":"ba191c4e7d8fee121211b79526aa614b329ea29e9d285666f328425c01069430"},{"id":"gdalinfo@3.8.4","sha256":"db6d4ac0966ecd19a8175bfa901add7ea1f9e2d3c330f8c5fea3d2480b5b9994"},{"id":"gdalwarp@3.8.4","sha256":"94e1945f6c35b917b515f364d121e5501c71d9b2afa1a29546ad2fc96d87e1ee"},{"id":"ogrinfo@3.8.4","sha256":"9eef6e32f131ab954eae653c215d2201b47861b577ef0761c6948239e93bf656"}],"dem_facts":{"semantics":"elevationZ","interpolation":"bilinear","connectivity":{"kind":"continuous","diagonal":"topLeftToBottomRight"},"source_no_data":{"kind":"numeric","value":"-340282346638528860000000000000000000000"},"validity":{"resource":{"resource_id":"dbff5b8beae260697004f86addbe98c427f4bad2e988841e4453cab9414c7eae","sha256":"dbff5b8beae260697004f86addbe98c427f4bad2e988841e4453cab9414c7eae","byte_length":524288,"media_type":"application/octet-stream"},"encoding":"bitsetLsb0"}}}},"provenance_status":"complete","missing_field_ids":[],"disposition":"needs_preparation","reason_code":"no_package","package":null}"#;
+        let root = temp_test_dir("pre-g1a3c-publication-lineage");
+        let project_root = root.join("project.hcad");
+        let runtime = ProjectRuntime::default();
+        runtime
+            .create(CreateProjectParams {
+                path: path_string(&project_root),
+                name: "Pre-G1a-3c publication".into(),
+            })
+            .expect("project");
+        let entity_id = EntityId("project-30c1e9dbe83373c2ca4fb34998891cb09c22bce7b3a487410ad8a61f68622f1f:raster:e2e-dem-1788935732876".into());
+        let publication_path = product_import_publication_path(&project_root, &entity_id);
+        fs::create_dir_all(publication_path.parent().expect("publication directory"))
+            .expect("publication directory");
+        fs::write(&publication_path, PUBLICATION).expect("pre-G1a-3c publication record");
+
+        let contract = {
+            let guard = runtime.session.lock().expect("session");
+            published_product_contract(guard.as_ref().expect("open project"), &entity_id)
+                .expect("pre-G1a-3c publication must pass resident lineage verification")
+                .expect("publication contract")
+        };
+        assert_eq!(
+            contract.reason_code,
+            ProductPublicationReasonCodeV1::NoPackage
+        );
+
+        runtime.close().expect("close");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn dem_publications_freeze_facts_and_publish_complete_packages() {
         let root = temp_test_dir("dem-product-package");
         let project_root = root.join("project.hcad");
@@ -18084,7 +18117,8 @@ mod tests {
             assert_eq!(facts.semantics, "elevationZ");
             assert_eq!(facts.interpolation, "bilinear");
             assert_eq!(facts.validity.encoding, "bitsetLsb0");
-            assert_eq!(facts.surface, "dsm");
+            assert_eq!(facts.surface_kind(), "dsm");
+            assert_eq!(facts.surface.as_deref(), Some("dsm"));
             assert!(facts.ground_classification.is_none());
             assert!(matches!(
                 &facts.connectivity,
@@ -18209,7 +18243,8 @@ mod tests {
             .ground_classification
             .as_ref()
             .expect("DTM ground-classification lineage");
-        assert_eq!(facts.surface, "dtm");
+        assert_eq!(facts.surface_kind(), "dtm");
+        assert_eq!(facts.surface.as_deref(), Some("dtm"));
         assert_eq!(classification.sha256, artifact_ground_sha256);
         assert_eq!(classification.algorithm_id, "smrf@1");
         let expected_parameters_sha256 = ObjectHash::of_bytes(
