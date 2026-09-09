@@ -19,7 +19,7 @@ UNIT="hc-lane-$NAME-$(date +%s)"
 # Transient user SERVICE unit (not a scope): forked by systemd, so it survives T3 Code / Claude restarts; hard memory cap;
 # the unit itself writes the exit file so a dead waiting shell cannot leave a lane without a terminal marker.
 systemd-run --user --unit="$UNIT" --collect --quiet --wait --pipe \
-  -p MemoryMax="${LANE_MEM:-16G}" -p MemorySwapMax=0 --working-directory="$REPO" \
+  -p MemoryMax="${LANE_MEM:-16G}" -p MemorySwapMax=0 -p LimitCORE=0 --working-directory="$REPO" \
   --setenv=PATH="$PATH" --setenv=HOME="$HOME" --setenv=CARGO_TARGET_DIR="$CARGO_TARGET_DIR" --setenv=DISPLAY="${DISPLAY:-:0}" \
   -- bash -c 'codex exec '"$IMGARGS"' -C "'"$REPO"'" -m "'"$MODEL"'" -c model_reasoning_effort="'"$EFFORT"'" -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --color never -o "'"$OUT/$NAME.last.md"'" - < "'"$PROMPT"'" >> "'"$OUT/$NAME.log"'" 2>&1; echo $? > "'"$OUT/$NAME.exit"'"'
 [ -f "$OUT/$NAME.exit" ] || echo 1 > "$OUT/$NAME.exit"
