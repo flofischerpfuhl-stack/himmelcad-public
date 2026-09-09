@@ -699,6 +699,89 @@ const specs: readonly ComponentSpec[] = [
     ),
   },
   {
+    name: 'PhotoLab product import',
+    states: [
+      row('chooser', 'chooser · refusal', 'default', 'chooser'),
+      row('importing', 'importing', 'default', 'importing'),
+      row('lineage', 'lineage properties', 'default', 'lineage'),
+    ],
+    render: (_state, galleryRow) => {
+      if (galleryRow?.value === 'lineage') {
+        return (
+          <section className="productImportLineageFixture" aria-label="Lineage">
+            <strong>Lineage</strong>
+            <small>PhotoLab</small>
+            <dl>
+              <dt>Project</dt>
+              <dd>project-22d29c05…</dd>
+              <dt>Processing set</dt>
+              <dd>All imported cameras</dd>
+              <dt>Mask scope</dt>
+              <dd>None</dd>
+              <dt>Tool ids</dt>
+              <dd>colmap@4.1.0 · gdal_grid@3.8.4</dd>
+            </dl>
+          </section>
+        );
+      }
+      const importing = galleryRow?.value === 'importing';
+      return (
+        <section className="productImportChooserFixture" aria-label="PhotoLab product import">
+          <header>
+            <strong>PhotoLab product dataset</strong>
+            <span>Import an immutable published product</span>
+          </header>
+          <div className="productImportPathFixture">
+            <span>/survey/photolab-e2e.hcad</span>
+            <Button size="small" variant="secondary">
+              Choose…
+            </Button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Kind · product</th>
+                <th>Producer</th>
+                <th>Counts</th>
+                <th>Size</th>
+                <th>Readiness</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>✦ Dense cloud</td>
+                <td>PhotoLab</td>
+                <td>6 obj · 10 files</td>
+                <td>1.24 GB</td>
+                <td>
+                  <b>Ready</b>
+                </td>
+              </tr>
+              <tr aria-disabled="true">
+                <td>▧ Depth map</td>
+                <td>PhotoLab</td>
+                <td>—</td>
+                <td>—</td>
+                <td>
+                  <em>Not ready</em>
+                  <small> Prepare this product in PhotoLab.</small>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p>Import copies verified package bytes into this project’s content-addressed store.</p>
+          {importing ? (
+            <ProgressBar value={0.42} ariaLabel="PhotoLab product import progress" />
+          ) : null}
+          <footer>
+            <Button variant="secondary">Cancel</Button>
+            <Button variant="primary">{importing ? 'Importing…' : 'Import'}</Button>
+          </footer>
+        </section>
+      );
+    },
+  },
+  {
     name: 'Export island',
     states: [
       row('formats', 'formats', 'default', 'formats'),

@@ -1130,6 +1130,52 @@
         "host": "renderer"
       }
     },
+    "io.import.product_dataset.list": {
+      "capability": "document.read",
+      "request": "ProductDatasetListRequestV1",
+      "response": "ProductDatasetListResultV1",
+      "command": {
+        "label": "List PhotoLab product datasets",
+        "products": ["builder"],
+        "kind": "query",
+        "shortcut": null,
+        "enablement": "hasProject",
+        "surfaces": {
+          "ribbon": false,
+          "contextMenu": false,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
+        "group": "edit",
+        "owner": "import-formats",
+        "ownerSpec": "Import Formats IF-D20",
+        "host": "renderer"
+      }
+    },
+    "io.import.product_dataset.register": {
+      "capability": "document.write",
+      "request": "ProductDatasetRegisterRequestV1",
+      "response": "ProductDatasetRegisterResultV1",
+      "command": {
+        "label": "PhotoLab product dataset",
+        "products": ["builder"],
+        "kind": "command",
+        "shortcut": null,
+        "enablement": "hasProject",
+        "surfaces": {
+          "ribbon": true,
+          "contextMenu": false,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
+        "group": "edit",
+        "owner": "import-formats",
+        "ownerSpec": "Import Formats IF-D20",
+        "host": "renderer"
+      }
+    },
     "pointcloud.display.set": {
       "capability": "document.write",
       "request": "PointCloudDisplaySetRequest",
@@ -1604,7 +1650,13 @@
         "kind": "command",
         "shortcut": null,
         "enablement": "hasSelection",
-        "surfaces": { "ribbon": false, "contextMenu": false, "quickSurface": false, "console": true, "automation": true },
+        "surfaces": {
+          "ribbon": false,
+          "contextMenu": false,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
         "group": "entity-specific",
         "ownerSpec": "Mesh/Terrain MT-D1–MT-D12; S-01; owner: mesh-terrain",
         "host": "renderer",
@@ -1626,7 +1678,13 @@
         "kind": "command",
         "shortcut": null,
         "enablement": "hasProject",
-        "surfaces": { "ribbon": false, "contextMenu": false, "quickSurface": false, "console": true, "automation": true },
+        "surfaces": {
+          "ribbon": false,
+          "contextMenu": false,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
         "group": "entity-specific",
         "ownerSpec": "Mesh/Terrain MT-D7–MT-D9; S-01; owner: mesh-terrain",
         "host": "renderer"
@@ -1672,7 +1730,13 @@
         "kind": "query",
         "shortcut": null,
         "enablement": "hasProject",
-        "surfaces": { "ribbon": false, "contextMenu": false, "quickSurface": false, "console": true, "automation": true },
+        "surfaces": {
+          "ribbon": false,
+          "contextMenu": false,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
         "group": "entity-specific",
         "ownerSpec": "Mesh/Terrain MT-D7–MT-D9; S-01; owner: mesh-terrain",
         "host": "renderer"
@@ -1688,11 +1752,23 @@
         "kind": "command",
         "shortcut": null,
         "enablement": "hasSelection",
-        "surfaces": { "ribbon": true, "contextMenu": true, "quickSurface": false, "console": true, "automation": true },
+        "surfaces": {
+          "ribbon": true,
+          "contextMenu": true,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
         "group": "entity-specific",
         "ownerSpec": "Mesh/Terrain MT-D1–MT-D12, MT-D17, MT-D25–MT-D26; MASTER-PLAN row 20; S-01; owner: mesh-terrain",
         "host": "renderer",
-        "entityKinds": ["PointCloud", "SinglePoint", "Polyline3D", "Surface", "DigitalElevationModel"],
+        "entityKinds": [
+          "PointCloud",
+          "SinglePoint",
+          "Polyline3D",
+          "Surface",
+          "DigitalElevationModel"
+        ],
         "allowMultiSelect": true
       }
     },
@@ -1731,7 +1807,13 @@
         "kind": "query",
         "shortcut": null,
         "enablement": "singleEditableNonCloud",
-        "surfaces": { "ribbon": false, "contextMenu": false, "quickSurface": false, "console": true, "automation": true },
+        "surfaces": {
+          "ribbon": false,
+          "contextMenu": false,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
         "group": "entity-specific",
         "ownerSpec": "Mesh/Terrain MT-D15, MT-D33; MASTER-PLAN row 21; S-01; owner: mesh-terrain",
         "host": "renderer"
@@ -1747,7 +1829,13 @@
         "kind": "command",
         "shortcut": null,
         "enablement": "singleEditableNonCloud",
-        "surfaces": { "ribbon": true, "contextMenu": true, "quickSurface": false, "console": true, "automation": true },
+        "surfaces": {
+          "ribbon": true,
+          "contextMenu": true,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
         "group": "entity-specific",
         "ownerSpec": "Mesh/Terrain MT-D33; G-RW-DGM-SMOOTH; MASTER-PLAN row 21; S-01; owner: mesh-terrain",
         "host": "renderer",
@@ -1764,7 +1852,13 @@
         "kind": "command",
         "shortcut": null,
         "enablement": "singleEditableNonCloud",
-        "surfaces": { "ribbon": false, "contextMenu": true, "quickSurface": false, "console": true, "automation": true },
+        "surfaces": {
+          "ribbon": false,
+          "contextMenu": true,
+          "quickSurface": false,
+          "console": true,
+          "automation": true
+        },
         "group": "entity-specific",
         "ownerSpec": "Mesh/Terrain MT-D23, MT-D34; G-RW-DGM-DOWNSAMPLE; MASTER-PLAN row 21; S-01; owner: mesh-terrain",
         "host": "renderer",
@@ -3836,6 +3930,221 @@
       "properties": {
         "leaseId": { "type": "string" },
         "accessToken": { "type": "string" }
+      }
+    },
+    "ProductDatasetListRequestV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "source_grant_id"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "source_grant_id": { "type": "string", "minLength": 1 },
+        "cursor": { "type": "string", "minLength": 1 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 }
+      }
+    },
+    "ProductDatasetListResultV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_snapshot", "products"],
+      "properties": {
+        "source_snapshot": { "$ref": "#/$defs/ProductDatasetSourceSnapshotV1" },
+        "products": {
+          "type": "array",
+          "maxItems": 200,
+          "items": { "$ref": "#/$defs/ProductDatasetListRowV1" }
+        },
+        "next_cursor": { "type": "string", "minLength": 1 }
+      }
+    },
+    "ProductDatasetSourceSnapshotV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_kind", "source_fingerprint", "source_generation"],
+      "properties": {
+        "source_kind": { "type": "string", "enum": ["hcad", "hcadx"] },
+        "source_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "source_generation": { "type": "integer", "minimum": 0, "format": "uint64" }
+      }
+    },
+    "ProductDatasetListRowV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "product_id",
+        "product_version_hash",
+        "product_content_hash",
+        "publication_generation",
+        "kind",
+        "label",
+        "dataset_label",
+        "provenance_status",
+        "missing_field_ids",
+        "disposition",
+        "reason_code"
+      ],
+      "properties": {
+        "product_id": { "type": "string", "minLength": 1 },
+        "product_version_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "product_content_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "publication_generation": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "kind": {
+          "type": "string",
+          "enum": ["sparse", "dense", "dem", "orthomosaic", "mesh", "gaussianSplat"]
+        },
+        "label": { "type": "string", "minLength": 1 },
+        "dataset_label": { "type": "string", "minLength": 1 },
+        "package_schema_id": { "type": "string", "minLength": 1 },
+        "package_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "artifact_count": { "type": "integer", "minimum": 0 },
+        "total_bytes": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "normalized_format_id": {
+          "type": "string",
+          "enum": ["potree@2", "himmelcad-prepared-hierarchy@1"]
+        },
+        "provenance_status": { "type": "string", "enum": ["complete", "partial", "unknown"] },
+        "missing_field_ids": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "disposition": {
+          "type": "string",
+          "enum": ["available", "needs_preparation", "needs_republish_recompute", "unsupported"]
+        },
+        "reason_code": { "type": "string", "minLength": 1 }
+      }
+    },
+    "ProductDatasetRegisterRequestV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "command_id",
+        "source_grant_id",
+        "source_snapshot",
+        "product",
+        "destination",
+        "admission_choice",
+        "placement"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "command_id": { "type": "string", "minLength": 1 },
+        "source_grant_id": { "type": "string", "minLength": 1 },
+        "source_snapshot": { "$ref": "#/$defs/ProductDatasetSourceSnapshotIdentityV1" },
+        "product": { "$ref": "#/$defs/ProductDatasetRegisterProductV1" },
+        "destination": { "$ref": "#/$defs/ProductDatasetDestinationV1" },
+        "admission_choice": { "$ref": "#/$defs/ProductDatasetAdmissionChoiceV1" },
+        "placement": { "$ref": "#/$defs/ProductDatasetPlacementV1" },
+        "update_target": { "$ref": "#/$defs/ProductDatasetUpdateTargetV1" },
+        "confirmation_grant_id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "ProductDatasetSourceSnapshotIdentityV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_fingerprint", "source_generation"],
+      "properties": {
+        "source_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "source_generation": { "type": "integer", "minimum": 0, "format": "uint64" }
+      }
+    },
+    "ProductDatasetRegisterProductV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "product_id",
+        "product_version_hash",
+        "product_content_hash",
+        "publication_generation",
+        "package_sha256"
+      ],
+      "properties": {
+        "product_id": { "type": "string", "minLength": 1 },
+        "product_version_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "product_content_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "publication_generation": { "type": "integer", "minimum": 0, "format": "uint64" },
+        "package_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "ProductDatasetDestinationV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "expected_generation"],
+      "properties": {
+        "project_id": { "type": "string", "minLength": 1 },
+        "expected_generation": { "type": "integer", "minimum": 0, "format": "uint64" }
+      }
+    },
+    "ProductDatasetAdmissionChoiceV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type_id", "normalized_format_id", "representation_slot"],
+      "properties": {
+        "type_id": { "type": "string", "minLength": 1 },
+        "normalized_format_id": {
+          "type": "string",
+          "enum": ["potree@2", "himmelcad-prepared-hierarchy@1"]
+        },
+        "representation_slot": { "type": "string", "minLength": 1 },
+        "raster_interpretation": { "type": "object" }
+      }
+    },
+    "ProductDatasetPlacementV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["identity", "registered"] },
+        "transform": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 16,
+          "maxItems": 16
+        },
+        "registration_audit_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "ProductDatasetUpdateTargetV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["update_plan_id", "update_plan_sha256", "entity_id", "expected_version_hash"],
+      "properties": {
+        "update_plan_id": { "type": "string", "minLength": 1 },
+        "update_plan_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "entity_id": { "type": "string", "minLength": 1 },
+        "expected_version_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "ProductDatasetRegisterResultV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["disposition", "destination_entity_ids", "destination_version_hashes"],
+      "properties": {
+        "disposition": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "already_registered",
+            "needs_preparation",
+            "needs_republish_recompute",
+            "unsupported",
+            "stale_source",
+            "busy_source",
+            "cancelled_before_commit",
+            "failed_no_commit"
+          ]
+        },
+        "operation_id": { "type": "string", "minLength": 1 },
+        "destination_entity_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "destination_version_hashes": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        },
+        "provenance_component_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "package_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "reason_code": { "type": "string", "minLength": 1 },
+        "error_id": { "type": "string", "minLength": 1 }
       }
     },
     "BulkReleaseResult": {

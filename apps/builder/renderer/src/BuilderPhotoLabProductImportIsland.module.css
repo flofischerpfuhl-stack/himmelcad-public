@@ -1,0 +1,235 @@
+.island {
+  width: 640px;
+  max-width: calc(100vw - 32px);
+  overflow: hidden;
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-lg);
+  box-shadow: var(--hc-shadow-popover);
+}
+
+.header,
+.footer,
+.pathRow,
+.progressRow > div {
+  display: flex;
+  align-items: center;
+}
+
+.header {
+  justify-content: space-between;
+  min-height: 54px;
+  padding: 9px 12px 9px 16px;
+  background: var(--hc-bg-island-hi);
+  border-bottom: 1px solid var(--hc-border-default);
+}
+
+.header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.header strong {
+  font-size: 13px;
+}
+
+.header span,
+.reason,
+.explanation,
+.progressRow small {
+  color: var(--hc-fg-muted);
+  font-size: 10px;
+}
+
+.header button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  color: var(--hc-fg-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--hc-radius-sm);
+}
+
+.header button:hover:not(:disabled) {
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island-hi);
+}
+
+.body {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.pathRow {
+  gap: 8px;
+}
+
+.pathRow input {
+  min-width: 0;
+  height: 32px;
+  flex: 1;
+  padding: 0 9px;
+  overflow: hidden;
+  color: var(--hc-fg-muted);
+  font-family: var(--hc-font-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--hc-bg-input);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+}
+
+.tableFrame {
+  max-height: 310px;
+  overflow: auto;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-md);
+}
+
+.tableFrame table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.tableFrame th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  padding: 7px 8px;
+  color: var(--hc-fg-muted);
+  font-weight: 600;
+  text-align: left;
+  background: var(--hc-bg-island-hi);
+  border-bottom: 1px solid var(--hc-border-default);
+}
+
+.tableFrame td {
+  max-width: 130px;
+  padding: 8px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--hc-border-subtle);
+}
+
+.tableFrame tr:last-child td {
+  border-bottom: 0;
+}
+
+.tableFrame tr[data-selected] td {
+  background: color-mix(in srgb, var(--hc-accent-base) 9%, transparent);
+}
+
+.tableFrame tr[data-disabled] td:not(:last-child) {
+  color: var(--hc-fg-muted);
+}
+
+.tableFrame td:first-child {
+  min-width: 175px;
+  padding: 0;
+}
+
+.tableFrame td:first-child button {
+  display: flex;
+  width: 100%;
+  gap: 8px;
+  padding: 8px;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+
+.tableFrame td:first-child button:focus-visible {
+  outline: 2px solid var(--hc-accent-base);
+  outline-offset: -2px;
+}
+
+.tableFrame td:first-child button > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.tableFrame td:first-child strong,
+.tableFrame td:first-child small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.glyph {
+  width: 16px;
+  color: var(--hc-accent-base);
+  font-size: 15px;
+  text-align: center;
+}
+
+.ready,
+.notReady {
+  display: inline-flex;
+  padding: 2px 6px;
+  font-weight: 650;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+}
+
+.ready {
+  color: var(--hc-success-fg);
+}
+
+.notReady {
+  color: var(--hc-warning-fg);
+}
+
+.reason {
+  display: block;
+  margin-top: 5px;
+  line-height: 1.35;
+}
+
+.empty {
+  height: 90px;
+  color: var(--hc-fg-muted);
+  text-align: center;
+}
+
+.explanation,
+.error,
+.result {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.progressRow {
+  display: grid;
+  gap: 6px;
+}
+
+.progressRow > div {
+  justify-content: space-between;
+  font-size: 11px;
+}
+
+.error {
+  color: var(--hc-error-fg);
+  font-size: 11px;
+}
+
+.result {
+  color: var(--hc-success-fg);
+  font-size: 11px;
+}
+
+.footer {
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--hc-bg-island-hi);
+  border-top: 1px solid var(--hc-border-default);
+}

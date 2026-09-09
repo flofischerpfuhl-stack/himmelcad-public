@@ -43,6 +43,7 @@ import {
   withProjectExtension,
   type RecentProjectEntry,
 } from './projectLifecycle';
+import { listProductImportCatalog } from './productImportCatalog';
 
 const isDev = !app.isPackaged;
 const CACHE_DIR = resolve(tmpdir(), 'himmelcad-cache');
@@ -967,6 +968,21 @@ function registerIpc(): void {
       productKind: product.kind,
       packageSha256: ready.package_sha256,
     };
+  });
+  ipcMain.handle('product-import:choose', async () => {
+    const selected = await dialog.showOpenDialog(requireMainWindow(), {
+      title: 'Choose PhotoLab project or product package',
+      buttonLabel: 'Choose',
+      defaultPath: resolve(app.getPath('documents')),
+      properties: ['openDirectory'],
+    });
+    return selected.canceled ? null : (selected.filePaths[0] ?? null);
+  });
+  ipcMain.handle('product-import:list', async (_event, sourcePath: unknown) => {
+    if (typeof sourcePath !== 'string' || !sourcePath.trim()) {
+      throw new Error('PhotoLab source path is required.');
+    }
+    return listProductImportCatalog(sourcePath);
   });
   ipcMain.handle('viewing-box-bake:publish', async (_event, input: unknown) => {
     const value = input as {

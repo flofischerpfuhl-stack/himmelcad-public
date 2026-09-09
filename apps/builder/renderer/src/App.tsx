@@ -110,6 +110,7 @@ import builderLogoUrl from '../../build/mark.png';
 
 import styles from './BuilderApp.module.css';
 import { BuilderImportRegistrationIsland } from './BuilderImportRegistrationIsland.js';
+import { BuilderPhotoLabProductImportIsland } from './BuilderPhotoLabProductImportIsland.js';
 import { BuilderExportIsland } from './BuilderExportIsland.js';
 import {
   BuilderKernelViewport,
@@ -303,6 +304,7 @@ export function App(): JSX.Element {
   const [exportDetached, setExportDetached] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
   const [jobsOpen, setJobsOpen] = useState(false);
+  const [photoLabProductImportOpen, setPhotoLabProductImportOpen] = useState(false);
   const [jobToasts, setJobToasts] = useState<readonly AppJob[]>([]);
   const [jobClock, setJobClock] = useState(() => Date.now());
   const [groundPreview, setGroundPreview] = useState<GroundPreviewResult | null>(null);
@@ -3490,6 +3492,17 @@ export function App(): JSX.Element {
           }
           return;
         }
+        case 'io.import.product_dataset.list':
+        case 'io.import.product_dataset.register':
+          setPhotoLabProductImportOpen(true);
+          logEvent(
+            'info',
+            'renderer',
+            invocation.id === 'io.import.product_dataset.list'
+              ? 'PhotoLab product dataset chooser opened'
+              : 'PhotoLab product dataset registration opened',
+          );
+          return;
         case 'project.save':
           await flushProject();
           return;
@@ -3886,6 +3899,7 @@ export function App(): JSX.Element {
         },
         onClose: () => void closeCurrentProject('project'),
         onExport: openExport,
+        onPhotoLabProductImport: () => setPhotoLabProductImportOpen(true),
         navigationMode,
         groundExtractionAvailable: selectedGroundCloud !== null,
         segmentationAvailable: segmentablePointClouds.length > 0,
@@ -4969,6 +4983,19 @@ export function App(): JSX.Element {
           />
         </FloatingTaskIsland>
       ) : null}
+      {photoLabProductImportOpen && canonicalSessionRef.current ? (
+        <FloatingTaskIsland modal onRequestClose={() => setPhotoLabProductImportOpen(false)}>
+          <BuilderPhotoLabProductImportIsland
+            session={canonicalSessionRef.current}
+            onCommitted={async () => {
+              await reloadCanonicalResidency();
+              await viewportRef.current?.waitForNextPresentedFrame();
+              logEvent('info', 'renderer', 'PhotoLab product import committed and rendered');
+            }}
+            onClose={() => setPhotoLabProductImportOpen(false)}
+          />
+        </FloatingTaskIsland>
+      ) : null}
       <Dialog
         open={snapshotToRestore !== null}
         onClose={() => {
@@ -5427,28 +5454,117 @@ function BuilderPropertiesPanel({
           onChange={onPointCloudDisplayChange}
         />
       ) : null}
-      {productProvenance.map(({ entityId, componentSha256, provenance }) => (
-        <section className={styles.provenanceGroup} key={entityId} aria-label="Provenance">
-          <div className={styles.propertyHeading}>
-            <span>Provenance</span>
-            <small>PhotoLab</small>
-          </div>
-          <dl>
-            <dt>Product</dt>
-            <dd>{provenance.product}</dd>
-            <dt>PhotoLab project</dt>
-            <dd>{provenance.sourceProjectId}</dd>
-            <dt>Publication</dt>
-            <dd>Generation {provenance.publicationGeneration}</dd>
-            <dt>Package</dt>
-            <dd title={provenance.packageSha256}>{provenance.packageSha256}</dd>
-            <dt>Component</dt>
-            <dd title={componentSha256}>{componentSha256}</dd>
-          </dl>
-        </section>
-      ))}
+      {productProvenance.map(({ entityId, componentSha256, provenance }) => {
+        const lineage = readProductLineage(provenance.lineagePayloadUtf8);
+        return (
+          <section className={styles.provenanceGroup} key={entityId} aria-label="Lineage">
+            <div className={styles.propertyHeading}>
+              <span>Lineage</span>
+              <small>PhotoLab</small>
+            </div>
+            <dl>
+              <dt>Product</dt>
+              <dd>{provenance.product}</dd>
+              <dt>Project</dt>
+              <dd>{lineage.sourceProjectId ?? provenance.sourceProjectId}</dd>
+              <dt>Processing set</dt>
+              <dd>{lineage.processingSet}</dd>
+              <dt>Mask scope</dt>
+              <dd>{lineage.maskScope}</dd>
+              <dt>Tool ids</dt>
+              <dd>{lineage.toolIds.length > 0 ? lineage.toolIds.join(' · ') : 'None recorded'}</dd>
+              {lineage.demFacts ? (
+                <>
+                  <dt>Cell size</dt>
+                  <dd>{lineage.demFacts.cellSize}</dd>
+                  <dt>Validity</dt>
+                  <dd>{lineage.demFacts.validity}</dd>
+                  <dt>NoData</dt>
+                  <dd>{lineage.demFacts.noData}</dd>
+                </>
+              ) : null}
+              <dt>Package</dt>
+              <dd title={provenance.packageSha256}>{provenance.packageSha256}</dd>
+              <dt>Component</dt>
+              <dd title={componentSha256}>{componentSha256}</dd>
+            </dl>
+          </section>
+        );
+      })}
     </div>
   );
+}
+
+function readProductLineage(payload: string): {
+  readonly sourceProjectId: string | null;
+  readonly processingSet: string;
+  readonly maskScope: string;
+  readonly toolIds: readonly string[];
+  readonly demFacts: {
+    readonly cellSize: string;
+    readonly validity: string;
+    readonly noData: string;
+  } | null;
+} {
+  try {
+    const value = JSON.parse(payload) as unknown;
+    if (!isRecord(value)) throw new Error('invalid lineage');
+    const processing = isRecord(value.processing_set_choice) ? value.processing_set_choice : null;
+    const mask = isRecord(value.image_mask_scope) ? value.image_mask_scope : null;
+    const tools = Array.isArray(value.tools)
+      ? value.tools
+          .filter(isRecord)
+          .map((tool) => tool.id)
+          .filter((id): id is string => typeof id === 'string')
+      : [];
+    const dem = isRecord(value.dem_facts) ? value.dem_facts : null;
+    const validity =
+      dem && isRecord(dem.validity) && isRecord(dem.validity.resource)
+        ? `${dem.validity.encoding === 'bitsetLsb0' ? 'bitsetLsb0' : 'recorded'} · ${formatRatioFromBitset(dem.validity.resource.byte_length, value)}`
+        : 'Not recorded';
+    const noData =
+      dem && isRecord(dem.source_no_data)
+        ? dem.source_no_data.kind === 'numeric'
+          ? `numeric ${String(dem.source_no_data.value)}`
+          : String(dem.source_no_data.kind)
+        : 'Not recorded';
+    return {
+      sourceProjectId: typeof value.source_project_id === 'string' ? value.source_project_id : null,
+      processingSet:
+        processing?.kind === 'all_imported_cameras'
+          ? 'All imported cameras'
+          : processing?.kind === 'selected' && typeof processing.processing_set_id === 'string'
+            ? processing.processing_set_id
+            : processing?.kind === 'none'
+              ? 'None'
+              : 'Not recorded',
+      maskScope:
+        mask?.kind === 'selected' && typeof mask.scope_sha256 === 'string'
+          ? mask.scope_sha256
+          : mask?.kind === 'none'
+            ? 'None'
+            : 'Not recorded',
+      toolIds: tools,
+      demFacts: dem ? { cellSize: 'Published hierarchy', validity, noData } : null,
+    };
+  } catch {
+    return {
+      sourceProjectId: null,
+      processingSet: 'Unreadable lineage payload',
+      maskScope: 'Unreadable lineage payload',
+      toolIds: [],
+      demFacts: null,
+    };
+  }
+}
+
+function formatRatioFromBitset(byteLength: unknown, lineage: Record<string, unknown>): string {
+  const validCount = typeof lineage.valid_cell_count === 'number' ? lineage.valid_cell_count : null;
+  const totalCount = typeof lineage.cell_count === 'number' ? lineage.cell_count : null;
+  if (validCount !== null && totalCount !== null && totalCount > 0) {
+    return `${((validCount / totalCount) * 100).toFixed(1)}% valid`;
+  }
+  return typeof byteLength === 'number' ? `${byteLength.toLocaleString()} bytes` : 'validity mask';
 }
 
 interface PropertyRowEditorProps {
@@ -6352,6 +6468,12 @@ async function restoreCanonicalResidency(
         const entityId = admission.entity.id as EntityId;
         clouds.add(entityId);
         if (entry.pointCloud) pointCloudMetadata.set(entityId, entry.pointCloud);
+      } else if (entry.dataset?.formatId === 'himmelcad-prepared-hierarchy@1') {
+        await viewport.loadPreparedHierarchy(entry.dataset.metadataUrl, {
+          datasetId: entry.dataset.datasetId,
+          formatId: entry.dataset.formatId,
+          admission,
+        });
       } else if (entry.dataset === null) {
         inlineAdmissions.push(admission);
       } else {

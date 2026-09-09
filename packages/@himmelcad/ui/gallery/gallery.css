@@ -875,3 +875,74 @@ textarea {
   padding: var(--hc-space-2) var(--hc-space-3);
   border-top: 1px solid var(--hc-border-subtle);
 }
+.productImportChooserFixture {
+  display: grid;
+  width: min(640px, 100%);
+  gap: 10px;
+  padding: 12px;
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-md);
+}
+
+.productImportChooserFixture header,
+.productImportChooserFixture footer,
+.productImportPathFixture {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.productImportChooserFixture header span,
+.productImportChooserFixture p,
+.productImportChooserFixture small {
+  color: var(--hc-fg-muted);
+  font-size: 11px;
+}
+
+.productImportChooserFixture table {
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.productImportChooserFixture th,
+.productImportChooserFixture td {
+  padding: 6px;
+  text-align: left;
+  border-bottom: 1px solid var(--hc-border-subtle);
+}
+
+.productImportChooserFixture b {
+  color: var(--hc-success);
+}
+.productImportChooserFixture em {
+  color: var(--hc-warning);
+  font-style: normal;
+}
+
+.productImportLineageFixture {
+  display: grid;
+  width: 360px;
+  gap: 6px;
+  padding: 10px;
+  background: var(--hc-bg-island-lo);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+}
+
+.productImportLineageFixture small {
+  color: var(--hc-fg-muted);
+}
+.productImportLineageFixture dl {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 4px 8px;
+  margin: 0;
+  font: 500 11px/1.4 var(--hc-font-mono);
+}
+.productImportLineageFixture dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

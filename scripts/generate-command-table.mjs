@@ -62,6 +62,8 @@ const builderOnlyRows = new Set([
   'view.box.deactivate',
   'view.box.remove',
   'view.box.list',
+  'io.import.product_dataset.list',
+  'io.import.product_dataset.register',
 ]);
 const rows = Object.entries(schema.methods)
   .filter(([, method]) => method.command)

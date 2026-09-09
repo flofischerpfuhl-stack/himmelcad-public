@@ -42,6 +42,7 @@ export interface RuntimeCommandEntry {
   readonly surfaces: Readonly<Record<CommandSurface, boolean>>;
   readonly group: CommandGroup;
   readonly ownerSpec: string;
+  readonly owner: string | null;
   readonly products: readonly string[];
   readonly entityKinds: readonly string[] | null;
   readonly allowMultiSelect: boolean;
@@ -98,6 +99,7 @@ export const COMMAND_REGISTRY: readonly RuntimeCommandEntry[] = Object.freeze(
       surfaces: row.surfaces,
       group: row.group,
       ownerSpec: row.ownerSpec,
+      owner: 'owner' in row ? row.owner : null,
       products: row.products,
       entityKinds: 'entityKinds' in row ? row.entityKinds : null,
       allowMultiSelect: 'allowMultiSelect' in row ? row.allowMultiSelect : true,
@@ -268,6 +270,7 @@ export async function executeAutomationCommand(
 ): Promise<void> {
   const entry = commandById(id);
   if (!entry?.surfaces.automation) throw new Error(`Automation command is not registered: ${id}`);
-  if (!commandIsEnabled(entry, context)) throw new Error(`Automation command is not available: ${id}`);
+  if (!commandIsEnabled(entry, context))
+    throw new Error(`Automation command is not available: ${id}`);
   await execute({ id: entry.id, args: [], source: 'automation', payload });
 }

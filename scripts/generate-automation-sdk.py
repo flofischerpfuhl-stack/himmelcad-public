@@ -557,6 +557,8 @@ from .models import (
     CanonicalEntityEdit, CanonicalEntityMutation,
     CasDescription, CommandCancelResult, CommandStatus, CommandValidationPlan, EntityPage,
     EntityVersionRef, JournalPage, PropertyId, PropertyQueryResult, ProtocolNegotiationResponse, ScreenshotResultV1,
+    ProductDatasetListRequestV1, ProductDatasetListResultV1,
+    ProductDatasetRegisterRequestV1, ProductDatasetRegisterResultV1,
     ViewModeTransitionRequest, ViewStateV2, WireModel, to_wire,
 )
 
@@ -735,6 +737,12 @@ class HimmelcadClient:
     def set_view_mode(self, request: ViewModeTransitionRequest) -> ViewStateV2:
         return ViewStateV2.from_dict(self._call("view.mode.set", to_wire(request)))
 
+    def list_product_datasets(self, request: ProductDatasetListRequestV1) -> ProductDatasetListResultV1:
+        return ProductDatasetListResultV1.from_dict(self._call("io.import.product_dataset.list", to_wire(request)))
+
+    def register_product_dataset(self, request: ProductDatasetRegisterRequestV1) -> ProductDatasetRegisterResultV1:
+        return ProductDatasetRegisterResultV1.from_dict(self._call("io.import.product_dataset.register", to_wire(request)))
+
     def screenshot(self, request: WireModel | Mapping[str, Any]) -> bytes | BulkLease:
         request_wire = _params(request)
         result = ScreenshotResultV1.from_dict(self._call("view.screenshot", request_wire))
@@ -882,6 +890,12 @@ class AsyncHimmelcadClient:
 
     async def set_view_mode(self, request: ViewModeTransitionRequest) -> ViewStateV2:
         return ViewStateV2.from_dict(await self._call("view.mode.set", to_wire(request)))
+
+    async def list_product_datasets(self, request: ProductDatasetListRequestV1) -> ProductDatasetListResultV1:
+        return ProductDatasetListResultV1.from_dict(await self._call("io.import.product_dataset.list", to_wire(request)))
+
+    async def register_product_dataset(self, request: ProductDatasetRegisterRequestV1) -> ProductDatasetRegisterResultV1:
+        return ProductDatasetRegisterResultV1.from_dict(await self._call("io.import.product_dataset.register", to_wire(request)))
 
     async def screenshot(self, request: WireModel | Mapping[str, Any]) -> bytes | AsyncBulkLease:
         request_wire = _params(request)

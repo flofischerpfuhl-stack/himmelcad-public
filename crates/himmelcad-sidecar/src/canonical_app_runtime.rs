@@ -6458,7 +6458,7 @@ mod tests {
     }
 
     #[test]
-    fn photolab_product_import_is_idempotent_and_keeps_package_payload_external() {
+    fn photolab_product_import_is_idempotent_and_copies_package_payload_to_cas() {
         #[derive(Default)]
         struct Context;
 
@@ -6472,12 +6472,11 @@ mod tests {
 
         let package_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
             "../../.build/photolab-e2e/g1a3-dsm-smoke/photolab-e2e.hcad/.photolab/\
-             product-import-packages/product-e5cb1a6337969eeddf390cff7877137131d3c96b30874551aede4921756dd4ea",
+             product-import-packages/product-9ad8b3224d97b1430358a6d3962cd7c0d55cb1f2c85cb89536b53f81a87c5be9",
         );
         if !package_root.join("ready.json").is_file() {
             return;
         }
-        let canonical_package_root = package_root.canonicalize().expect("canonical package root");
         let provider = PhotoLabProductPackageProvider::new();
         let package = provider
             .import(
@@ -6509,29 +6508,35 @@ mod tests {
             runtime.store().expect("store").document().generation(),
             generation_after_first
         );
-        assert!(!first.inventory.external_objects.is_empty());
-        let external = &first.inventory.external_objects[0];
-        assert!(external.source_path.starts_with(&canonical_package_root));
-        let (prefix, remainder) = external.object_hash.as_str().split_at(2);
-        assert!(!project_root
+        assert!(first.inventory.external_objects.is_empty());
+        let stored = first
+            .inventory
+            .datasets
+            .iter()
+            .flat_map(|dataset| &dataset.artifacts)
+            .map(|artifact| &artifact.resource)
+            .find(|resource| resource.media_type == "application/octet-stream")
+            .expect("copied package payload");
+        let (prefix, remainder) = stored.object_hash.as_str().split_at(2);
+        let cas_path = project_root
             .join("objects")
             .join(prefix)
-            .join(remainder)
-            .exists());
+            .join(remainder);
+        assert!(cas_path.exists());
         assert_eq!(
             runtime
                 .store()
                 .expect("store")
-                .object_byte_length(&external.object_hash)
-                .expect("external package object"),
-            external.byte_length
+                .object_byte_length(&stored.object_hash)
+                .expect("copied package object"),
+            stored.byte_length.expect("stored byte length")
         );
-        let expected_prefix = fs::read(&external.source_path).expect("package object");
+        let expected_prefix = fs::read(&cas_path).expect("package object");
         let range_length = u64::try_from(expected_prefix.len().min(32)).expect("range length");
         let (metadata, prefix) = runtime
-            .read_residency_resource_range(&external.object_hash, 0, range_length)
-            .expect("bounded external range");
-        assert_eq!(metadata.object_hash, external.object_hash);
+            .read_residency_resource_range(&stored.object_hash, 0, range_length)
+            .expect("bounded CAS range");
+        assert_eq!(metadata.object_hash, stored.object_hash);
         assert_eq!(prefix, expected_prefix[..prefix.len()]);
         assert_eq!(
             runtime

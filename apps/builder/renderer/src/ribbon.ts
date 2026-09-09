@@ -56,6 +56,7 @@ interface FileRibbonHandlers {
   readonly onRestoreSnapshot: (entityId: string) => void;
   readonly onClose: () => void;
   readonly onExport: () => void;
+  readonly onPhotoLabProductImport: () => void;
   readonly navigationMode?: '3d' | '2.5d' | '2d';
   readonly groundExtractionAvailable?: boolean;
   readonly segmentationAvailable?: boolean;
@@ -163,7 +164,19 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
           id: 'file.import',
           label: 'Import',
           actions: [
-            { id: 'file.import', label: 'Import…', icon: i(CloudUpload) },
+            {
+              id: 'file.import',
+              label: 'Import…',
+              icon: i(CloudUpload),
+              menuItems: [
+                {
+                  id: 'photolab-product-dataset',
+                  label: 'PhotoLab product dataset',
+                  description: 'Choose a PhotoLab project or published package',
+                  onSelect: handlers.onPhotoLabProductImport,
+                },
+              ],
+            },
             {
               id: 'entity.export',
               label: 'Export…',

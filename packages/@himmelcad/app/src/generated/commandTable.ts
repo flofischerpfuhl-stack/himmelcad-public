@@ -140,6 +140,48 @@ export const GENERATED_COMMAND_TABLE = [
     "host": "renderer"
   },
   {
+    "id": "io.import.product_dataset.list",
+    "label": "List PhotoLab product datasets",
+    "products": [
+      "builder"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "owner": "import-formats",
+    "ownerSpec": "Import Formats IF-D20",
+    "host": "renderer"
+  },
+  {
+    "id": "io.import.product_dataset.register",
+    "label": "PhotoLab product dataset",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "owner": "import-formats",
+    "ownerSpec": "Import Formats IF-D20",
+    "host": "renderer"
+  },
+  {
     "id": "project.new",
     "label": "New",
     "products": [

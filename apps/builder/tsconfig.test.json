@@ -10,6 +10,7 @@
     "types": ["node"]
   },
   "include": [
+    "electron/productImportCatalog.ts",
     "renderer/src/importDialogPolicy.ts",
     "renderer/src/projectProjection.ts",
     "renderer/src/sidecarProgress.ts",

@@ -113,6 +113,27 @@ export interface HimmelCADApi {
       readonly productKind: string;
       readonly packageSha256: string;
     } | null>;
+    choose: () => Promise<string | null>;
+    list: (sourcePath: string) => Promise<{
+      readonly sourcePath: string;
+      readonly rows: readonly {
+        readonly packagePath: string | null;
+        readonly productId: string;
+        readonly productVersionHash: string;
+        readonly publicationGeneration: number;
+        readonly productKind: string;
+        readonly product: string;
+        readonly datasetLabel: string;
+        readonly producer: string;
+        readonly objectCount: number | null;
+        readonly artifactCount: number | null;
+        readonly totalBytes: number | null;
+        readonly packageSha256: string | null;
+        readonly readiness: 'ready' | 'notReady';
+        readonly reasonCode: string;
+        readonly reason: string;
+      }[];
+    }>;
   };
   readonly viewingBoxBake: {
     publish: (input: {
@@ -312,6 +333,8 @@ const api: HimmelCADApi = {
   },
   productImport: {
     inspect: (sourcePath) => ipcRenderer.invoke('product-import:inspect', sourcePath),
+    choose: () => ipcRenderer.invoke('product-import:choose'),
+    list: (sourcePath) => ipcRenderer.invoke('product-import:list', sourcePath),
   },
   viewingBoxBake: {
     publish: (input) => ipcRenderer.invoke('viewing-box-bake:publish', input),

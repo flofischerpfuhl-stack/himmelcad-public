@@ -78,9 +78,8 @@ pub struct CanonicalImportInventory {
     pub provider_version: String,
     /// Small JSON and resolved geometry objects.
     pub objects: Vec<CanonicalStoredObject>,
-    /// Hash-verified immutable payloads whose authoritative bytes remain in a
-    /// PhotoLab product package. The locator is sidecar-only; renderer and
-    /// automation consumers continue to address the bytes solely by hash.
+    /// Legacy hash-verified external payloads retained for backward-compatible
+    /// reads. New imports publish every declared byte into the project CAS.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub external_objects: Vec<CanonicalExternalObjectReference>,
     /// Representation slots required to reconstruct provider admissions later.
@@ -118,30 +117,6 @@ fn presentation_resources_are_empty(resources: &CanonicalPresentationResourceSet
         && resources.hatch_patterns.is_empty()
         && resources.line_types.is_empty()
         && resources.annotation_styles.is_empty()
-}
-
-fn insert_external_object(
-    references: &mut BTreeMap<String, CanonicalExternalObjectReference>,
-    source: &Path,
-    resource: &himmelcad_core::entity_model::GeometryResource,
-) -> Result<(), CanonicalProjectStoreError> {
-    let byte_length = resource
-        .byte_length
-        .ok_or(CanonicalProjectStoreError::MissingResourceLength)?;
-    let reference = CanonicalExternalObjectReference {
-        object_hash: resource.object_hash.clone(),
-        media_type: resource.media_type.clone(),
-        byte_length,
-        source_path: source.to_path_buf(),
-        authority: "hcad.product-import-package-manifest@1".to_owned(),
-    };
-    if references
-        .insert(resource.object_hash.0.clone(), reference.clone())
-        .is_some_and(|existing| existing != reference)
-    {
-        return Err(CanonicalProjectStoreError::ObjectMetadataConflict);
-    }
-    Ok(())
 }
 
 /// Host-owned roots containing every provider-prepared package payload.
@@ -1135,10 +1110,8 @@ impl CanonicalProjectStore {
         fs::create_dir_all(&staged_objects)?;
 
         let mut stored_objects = BTreeMap::<String, CanonicalStoredObject>::new();
-        let mut external_objects = BTreeMap::<String, CanonicalExternalObjectReference>::new();
+        let external_objects = BTreeMap::<String, CanonicalExternalObjectReference>::new();
         let mut object_hashes = BTreeSet::<String>::new();
-        let references_product_package =
-            package.provider_id == himmelcad_io::PRODUCT_IMPORT_PACKAGE_PROVIDER_ID;
         let staging_total = import_artifact_bytes(package, source_roots)?;
         let mut staging_completed = 0_u64;
         progress(CanonicalImportProgress {
@@ -1210,23 +1183,13 @@ impl CanonicalProjectStore {
                     });
                     !is_cancelled()
                 };
-                if references_product_package {
-                    verify_file_with_progress(
-                        &source,
-                        &artifact.resource.object_hash,
-                        artifact.resource.byte_length,
-                        &mut observe,
-                    )?;
-                    insert_external_object(&mut external_objects, &source, &artifact.resource)?;
-                } else {
-                    self.stage_file_with_progress(
-                        &staged_objects,
-                        &source,
-                        &artifact.resource,
-                        &mut object_hashes,
-                        &mut observe,
-                    )?;
-                }
+                self.stage_file_with_progress(
+                    &staged_objects,
+                    &source,
+                    &artifact.resource,
+                    &mut object_hashes,
+                    &mut observe,
+                )?;
                 let byte_length = artifact
                     .resource
                     .byte_length
@@ -1262,23 +1225,13 @@ impl CanonicalProjectStore {
                     });
                     !is_cancelled()
                 };
-                if references_product_package {
-                    verify_file_with_progress(
-                        &source,
-                        &artifact.resource.object_hash,
-                        artifact.resource.byte_length,
-                        &mut observe,
-                    )?;
-                    insert_external_object(&mut external_objects, &source, &artifact.resource)?;
-                } else {
-                    self.stage_file_with_progress(
-                        &staged_objects,
-                        &source,
-                        &artifact.resource,
-                        &mut object_hashes,
-                        &mut observe,
-                    )?;
-                }
+                self.stage_file_with_progress(
+                    &staged_objects,
+                    &source,
+                    &artifact.resource,
+                    &mut object_hashes,
+                    &mut observe,
+                )?;
                 let byte_length = artifact
                     .resource
                     .byte_length

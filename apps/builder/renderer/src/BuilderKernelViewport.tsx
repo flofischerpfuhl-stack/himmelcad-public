@@ -182,6 +182,14 @@ export interface BuilderRasterImageOptions {
 
 export interface BuilderKernelViewportHandle {
   loadPotreePointCloud(metadataUrl: string, options: BuilderPointCloudOptions): Promise<void>;
+  loadPreparedHierarchy(
+    manifestUrl: string,
+    options: {
+      readonly datasetId: string;
+      readonly formatId: string;
+      readonly admission: CanonicalRepresentationAdmission;
+    },
+  ): Promise<void>;
   loadCanonicalPackage(package_: BuilderCanonicalImportPackage): Promise<readonly EntityId[]>;
   loadRasterImage(imageUrl: string, options: BuilderRasterImageOptions): Promise<void>;
   loadDrapedRaster(
@@ -985,6 +993,41 @@ export const BuilderKernelViewport = forwardRef<
         loadedBoundsRef.current = unionBounds(loadedBoundsRef.current, options.bounds);
         frameAll();
       },
+      async loadPreparedHierarchy(manifestUrl, options) {
+        const kernel = await readyRef.current.promise;
+        const response = await fetch(manifestUrl);
+        if (!response.ok) {
+          throw new Error(`Prepared hierarchy manifest failed with HTTP ${response.status}`);
+        }
+        const manifestBytes = new Uint8Array(await response.arrayBuffer());
+        const bounds = preparedHierarchyBounds(manifestBytes);
+        const entityId = options.admission.entity.id as EntityId;
+        kernel.session.loadPreparedHierarchy({
+          datasetId: options.datasetId,
+          formatId: options.formatId,
+          manifestUri: manifestUrl,
+          manifestBytes,
+          admissions: [
+            {
+              admission: options.admission,
+              style:
+                options.admission.resolvedGeometry.kind === 'elevationSurface'
+                  ? RASTER_STYLE
+                  : IFC_STYLE,
+              exaggerationDatum: bounds.min[2],
+            },
+          ],
+        });
+        entityBoundsRef.current.set(entityId, bounds);
+        entityVisibilityRef.current.set(entityId, true);
+        entityStylesRef.current.set(
+          entityId,
+          options.admission.resolvedGeometry.kind === 'elevationSurface' ? RASTER_STYLE : IFC_STYLE,
+        );
+        entityExaggerationDatumsRef.current.set(entityId, bounds.min[2]);
+        loadedBoundsRef.current = unionBounds(loadedBoundsRef.current, bounds);
+        frameAll();
+      },
       async loadCanonicalPackage(package_) {
         const kernel = await readyRef.current.promise;
         const admissions: KernelCanonicalRenderAdmission[] = package_.admissions.map(
@@ -1601,46 +1644,53 @@ export const BuilderKernelViewport = forwardRef<
     [changeViewMode, frameAll, recordCamera],
   );
 
-  const handleReady = useCallback((handle: KernelViewportHandle) => {
-    kernelRef.current = handle;
-    if (import.meta.env.DEV || import.meta.env.VITE_HCAD_PERF_DEBUG === '1') {
-      const performanceHandle = Object.assign(handle, {
-        setViewMode: changeViewMode,
-        cameraHistory: async (action: 'get' | 'clear'): Promise<unknown> => {
-          const history = cameraHistoryRef.current;
-          if (!history) throw new Error('Camera history is not ready.');
-          if (action === 'clear') history.clear();
-          else await history.flushPersistence();
-          return history.snapshot;
-        },
+  const handleReady = useCallback(
+    (handle: KernelViewportHandle) => {
+      kernelRef.current = handle;
+      if (import.meta.env.DEV || import.meta.env.VITE_HCAD_PERF_DEBUG === '1') {
+        const performanceHandle = Object.assign(handle, {
+          setViewMode: changeViewMode,
+          cameraHistory: async (action: 'get' | 'clear'): Promise<unknown> => {
+            const history = cameraHistoryRef.current;
+            if (!history) throw new Error('Camera history is not ready.');
+            if (action === 'clear') history.clear();
+            else await history.flushPersistence();
+            return history.snapshot;
+          },
+        });
+        Object.assign(window, {
+          __hcadBuilderKernel: performanceHandle,
+          __hcadDrawSnapLatency: () => drawSnapLatencyRef.current.snapshot(),
+        });
+      }
+      handle.session.setClearColor([0.008, 0.011, 0.016, 1]);
+      const overlayAtlas = createKernelOverlayGlyphAtlas(document);
+      handle.session.registerGlyphAtlas(
+        overlayAtlas.hash,
+        overlayAtlas.metadata,
+        overlayAtlas.rgba8,
+      );
+      handle.session.setPointSize(pointSizeRef.current);
+      const selected = new Set(
+        [...callbacksRef.current.selectedEntityIds].filter(
+          (id) => callbacksRef.current.isEntitySelectionHighlightable?.(id) ?? true,
+        ),
+      );
+      for (const id of selected) {
+        handle.session.setEntityInteractionState(id, { selected: true, hovered: false });
+      }
+      highlightedSelectionRef.current = selected;
+      void handle.session.setViewMode(viewModeRef.current, 0).catch((error: unknown) => {
+        callbacksRef.current.onLog('error', `Initial view mode failed: ${String(error)}`);
       });
-      Object.assign(window, {
-        __hcadBuilderKernel: performanceHandle,
-        __hcadDrawSnapLatency: () => drawSnapLatencyRef.current.snapshot(),
-      });
-    }
-    handle.session.setClearColor([0.008, 0.011, 0.016, 1]);
-    const overlayAtlas = createKernelOverlayGlyphAtlas(document);
-    handle.session.registerGlyphAtlas(overlayAtlas.hash, overlayAtlas.metadata, overlayAtlas.rgba8);
-    handle.session.setPointSize(pointSizeRef.current);
-    const selected = new Set(
-      [...callbacksRef.current.selectedEntityIds].filter(
-        (id) => callbacksRef.current.isEntitySelectionHighlightable?.(id) ?? true,
-      ),
-    );
-    for (const id of selected) {
-      handle.session.setEntityInteractionState(id, { selected: true, hovered: false });
-    }
-    highlightedSelectionRef.current = selected;
-    void handle.session.setViewMode(viewModeRef.current, 0).catch((error: unknown) => {
-      callbacksRef.current.onLog('error', `Initial view mode failed: ${String(error)}`);
-    });
-    readyRef.current.resolve(handle);
-    callbacksRef.current.onLog(
-      'info',
-      `Shared viewer ready (${handle.hardwarePolicy.deploymentProfile}, ${handle.session.diagnostics().capabilities.backend})`,
-    );
-  }, [changeViewMode]);
+      readyRef.current.resolve(handle);
+      callbacksRef.current.onLog(
+        'info',
+        `Shared viewer ready (${handle.hardwarePolicy.deploymentProfile}, ${handle.session.diagnostics().capabilities.backend})`,
+      );
+    },
+    [changeViewMode],
+  );
 
   const handlePick = useCallback((candidate: KernelPickCandidate | null) => {
     const startedAt = performance.now();
@@ -3288,6 +3338,33 @@ function unionBounds(current: Bounds | null, next: Bounds): Bounds {
       Math.max(current.max[2], next.max[2]),
     ],
   };
+}
+
+function preparedHierarchyBounds(manifestBytes: Uint8Array): Bounds {
+  const parsed = JSON.parse(new TextDecoder().decode(manifestBytes)) as unknown;
+  if (!isRecord(parsed) || !Array.isArray(parsed.tiles)) {
+    throw new Error('Prepared hierarchy manifest has no tile table');
+  }
+  let result: Bounds | null = null;
+  for (const tile of parsed.tiles) {
+    if (!isRecord(tile) || !isRecord(tile.bounds) || tile.bounds.kind !== 'axisAlignedBox') {
+      continue;
+    }
+    const box = tile.bounds.bounds;
+    if (!isRecord(box) || !isRecord(box.min) || !isRecord(box.max)) continue;
+    const values = [box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z];
+    if (!values.every((value) => typeof value === 'number' && Number.isFinite(value))) continue;
+    result = unionBounds(result, {
+      min: [values[0] as number, values[1] as number, values[2] as number],
+      max: [values[3] as number, values[4] as number, values[5] as number],
+    });
+  }
+  if (!result) throw new Error('Prepared hierarchy manifest has no finite axis-aligned bounds');
+  return result;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function tuplePoint(value: readonly [number, number, number]): Vec3 {
