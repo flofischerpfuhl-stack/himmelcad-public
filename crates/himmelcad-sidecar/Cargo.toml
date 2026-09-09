@@ -10,6 +10,10 @@ description = "Long-running HimmelCAD sidecar process. Speaks JSON-RPC 2.0 over 
 name = "himmelcad-sidecar"
 path = "src/main.rs"
 
+[[bench]]
+name = "mesh_terrain"
+harness = false
+
 [dependencies]
 himmelcad-core = { path = "../himmelcad-core" }
 himmelcad-io = { path = "../himmelcad-io" }

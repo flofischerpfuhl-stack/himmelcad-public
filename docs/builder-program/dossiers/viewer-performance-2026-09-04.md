@@ -460,6 +460,20 @@ explanation and verification are in
 `docs/builder-program/evidence/V-01c-nvidia-2026-09-08.md`; machine-readable
 data is `.build/perf/viewer-baseline-2026-09-08.json`.
 
+### Q-01 idle Class-I baseline — 2026-09-09
+
+The one permitted complete baseline used the prepared 103,713,735-point fixture. Start state for every row: 09:20:31 CEST uptime load `0.56 / 1.13 / 3.09`, 21 GiB free / 28 GiB available; Quadro M2200 `580.173.02`, 0% GPU before launch; hardware WebGL2 through ANGLE/Vulkan; 1440×900, DPR approximately 1; present source `raf-render-complete`. The Class-I motion p95 target is 33.4 ms.
+
+| Scenario | Presented p50 | p95 | p99 | Motion gate |
+| --- | ---: | ---: | ---: | --- |
+| orbit | 26.6 ms | 161.0 ms | 181.3 ms | **FAIL** |
+| pan | 28.4 ms | 156.5 ms | 175.7 ms | **FAIL** |
+| zoom | 27.7 ms | 154.2 ms | 181.4 ms | **FAIL** |
+| fly-through | 27.7 ms | 163.4 ms | 177.8 ms | **FAIL** |
+| 3D→2D→3D | 156.0 ms | 206.0 ms | 206.0 ms | **FAIL** |
+
+The harness did not sample a distinct converged at-rest window, so the 25.0 ms Class-I rest gate is **NOT RUN**. It also records one repetition per path rather than §1.1/§3's five-run median; the table therefore reports captured-run failures, not a protocol-complete qualification pass. Exact frontier accounting remained within budget with 206,008 selected points maximum, zero budget-overrun frames and zero decode backlog. Raw output: `.build/perf/viewer-baseline-2026-09-09-q01.{json,md}`.
+
 ## 6. Implications for the program
 
 - V-01 begins with measurement authority and a buildable browser-gpu gate; no

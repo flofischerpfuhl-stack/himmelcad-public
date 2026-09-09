@@ -36,10 +36,26 @@ try {
     const target = globalThis;
     return typeof target.__hcadBuilderViewingBoxDebug?.placeAtCameraTarget === 'function';
   });
+  await page.waitForFunction(
+    () => {
+      try {
+        return globalThis.__hcadBuilderKernel?.session.diagnostics().capabilities !== undefined;
+      } catch {
+        // React StrictMode can briefly publish the debug bridge before the
+        // replacement viewer session has completed mounting.
+        return false;
+      }
+    },
+    null,
+    { timeout: 120_000 },
+  );
   let dataset = null;
   if (metadataPath) {
     const metadata = JSON.parse(await readFile(metadataPath, 'utf8'));
-    const metadataUrl = `${datasetServer.origin}/metadata.json`;
+    // Keep the prepared hierarchy on the Builder renderer's origin. Chromium
+    // can reject a loopback cross-origin helper server before the fixture is
+    // sampled, while Vite's /@fs route preserves relative hierarchy fetches.
+    const metadataUrl = `/@fs/${metadataPath}`;
     const position = metadata.attributes?.find(
       (attribute) => String(attribute.name).toLowerCase() === 'position',
     );
@@ -661,7 +677,7 @@ async function measureOrbit(page, durationMs, clipActive) {
         globalThis.__hcadBuilderViewingBoxDebug.setClipActive(clipActive);
       }
       const handle = globalThis.__hcadBuilderKernel;
-      const sample = handle.session.sampleDiagnostics(durationMs);
+      const sample = handle.session.sampleDiagnostics({ durationMs });
       const initial = handle.camera.worldCamera();
       const dx = initial.eye.x - initial.target.x;
       const dy = initial.eye.y - initial.target.y;

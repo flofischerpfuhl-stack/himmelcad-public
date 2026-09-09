@@ -197,3 +197,7 @@ Builder registers the bounded mono atlas from `KernelRendererOverlay.ts`.
 ## Architect acceptance (2026-09-09 00:10)
 
 WebGL2 backend gate passed on the landed tree: PhotoLab visual harness (Chrome headless, WebGL2) dark run 90 captures and light run (`PHOTOLAB_VISUAL_THEME=light`) 90 captures, no GPU-device errors, non-blank viewports — the EDL depth read is split into a WebGL-safe path. Architect re-run: render 353/353, viewer 155/155, app 69/69, builder 22/22, root typecheck exit 0; before/after overlay screenshots inspected (renderer-native selection/support/anchor/text-chip payloads on the CPU-WebGPU harness scene). Accepted as landed; open for architect qualification on real datasets: LOD continuity on the 104 M-point fixture, EDL cost, class I/W/D timing.
+
+## Q-01 qualification — 2026-09-09
+
+**LOD continuity: NOT RUN. EDL cost delta: NOT RUN.** The landed baseline provides frame cadence and effect reason codes but no same-camera image-difference pair for the `<= 2 px` / `<= 12%` continuity gate and no controlled EDL-off/on at-rest differential. The real-data Viewing Box run consumed the bounded idle window without a report, so Q-01 did not add an ad-hoc measurement path or infer either value from generic frame timings. Intended lane: Quadro M2200 `580.173.02`, `raf-render-complete`; no LOD or EDL number exists.
