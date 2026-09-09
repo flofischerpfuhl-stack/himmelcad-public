@@ -5,7 +5,6 @@ use std::{
     fs::{self, File, OpenOptions},
     io,
     path::{Path, PathBuf},
-    process::Command,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -2362,84 +2361,40 @@ fn set_failed(managed: &mut ManagedJob, code: &str, message: String) {
     }
 }
 
-#[cfg(unix)]
 fn system_available_bytes(path: &Path) -> Result<u64, String> {
-    let output = Command::new("df")
-        .args(["-k", "--output=avail", "--"])
-        .arg(path)
-        .output()
-        .map_err(|error| {
-            format!(
-                "failed to inspect free space for {}: {error}",
-                path.display()
-            )
-        })?;
-    if !output.status.success() {
-        return Err(format!(
-            "free-space probe failed for {}: {}",
-            path.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
+    let mut probe = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("failed to resolve {}: {error}", path.display()))?
+            .join(path)
+    };
+    loop {
+        match probe.try_exists() {
+            Ok(true) => break,
+            Ok(false) => {
+                if !probe.pop() {
+                    return Err(format!(
+                        "no existing ancestor found for free-space probe at {}",
+                        path.display()
+                    ));
+                }
+            }
+            Err(error) => {
+                return Err(format!(
+                    "failed to resolve an existing ancestor for {}: {error}",
+                    path.display()
+                ));
+            }
+        }
     }
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|_| "free-space probe returned non-UTF-8 output".to_owned())?;
-    let kilobytes = stdout
-        .lines()
-        .rev()
-        .find_map(|line| line.trim().parse::<u64>().ok())
-        .ok_or_else(|| {
-            format!(
-                "free-space probe returned no available-byte value for {}",
-                path.display()
-            )
-        })?;
-    kilobytes
-        .checked_mul(1024)
-        .ok_or_else(|| "free-space probe value overflowed bytes".to_owned())
-}
-
-#[cfg(windows)]
-fn system_available_bytes(path: &Path) -> Result<u64, String> {
-    let output = Command::new("fsutil")
-        .args(["volume", "diskfree"])
-        .arg(path)
-        .output()
-        .map_err(|error| {
-            format!(
-                "failed to inspect free space for {}: {error}",
-                path.display()
-            )
-        })?;
-    if !output.status.success() {
-        return Err(format!(
-            "free-space probe failed for {}: {}",
+    fs2::available_space(&probe).map_err(|error| {
+        format!(
+            "failed to inspect free space for {} via {}: {error}",
             path.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
-        .lines()
-        .find_map(|line| {
-            line.split(|character: char| !character.is_ascii_digit())
-                .filter(|token| !token.is_empty())
-                .filter_map(|token| token.parse::<u64>().ok())
-                .max()
-        })
-        .ok_or_else(|| {
-            format!(
-                "free-space probe returned no available-byte value for {}",
-                path.display()
-            )
-        })
-}
-
-#[cfg(not(any(unix, windows)))]
-fn system_available_bytes(path: &Path) -> Result<u64, String> {
-    Err(format!(
-        "free-space probing is unsupported for {} on this platform",
-        path.display()
-    ))
+            probe.display()
+        )
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3000,6 +2955,40 @@ mod tests {
             disk_preflight: None,
             memory_preflight: None,
         }
+    }
+
+    #[test]
+    fn system_available_bytes_matches_fs2_for_existing_temp_directory() {
+        let directory = std::env::temp_dir().join(format!(
+            "himmelcad-system-available-existing-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("create free-space test directory");
+
+        let measured = system_available_bytes(&directory).expect("measure available space");
+        let expected = fs2::available_space(&directory).expect("fs2 available space");
+        assert!(measured > 0);
+        assert_eq!(measured, expected);
+
+        fs::remove_dir_all(directory).expect("remove free-space test directory");
+    }
+
+    #[test]
+    fn system_available_bytes_uses_parent_for_nonexistent_child() {
+        let directory = std::env::temp_dir().join(format!(
+            "himmelcad-system-available-parent-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("create free-space parent directory");
+        let missing = directory.join("not-created").join("target");
+
+        let measured = system_available_bytes(&missing).expect("measure parent available space");
+        let expected = fs2::available_space(&directory).expect("fs2 parent available space");
+        assert_eq!(measured, expected);
+
+        fs::remove_dir_all(directory).expect("remove free-space parent directory");
     }
 
     fn dem_target(alignment: &str, lineage: Option<&str>) -> PublicationTarget {
