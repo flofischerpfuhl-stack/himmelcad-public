@@ -8079,12 +8079,44 @@ fn prepare_alignment_job(
         neural_matching: true,
         measured_extraction_bytes_per_pixel,
     });
-    if let Some(tiling) = memory_plan.extraction_tiling {
-        anyhow::bail!(
-            "alignment needs tiled ALIKED extraction ({}×{} tiles with {} px overlap), but the curated COLMAP worker does not expose the scored descriptors required for deterministic merge and feature_importer; refusing instead of reducing quality or risking an out-of-envelope full-image extraction",
-            tiling.columns,
-            tiling.rows,
-            tiling.overlap_px,
+    // Test-only operational override used by the PhotoLab 24-image smoke to exercise the
+    // tiled path on machines whose normal memory envelope admits full-image extraction.
+    let force_extraction_tiling =
+        std::env::var_os("HIMMELCAD_PHOTOLAB_FORCE_EXTRACTION_TILES").is_some();
+    if force_extraction_tiling {
+        anyhow::ensure!(
+            std::env::var("HIMMELCAD_PHOTOLAB_FORCE_EXTRACTION_TILES").as_deref() == Ok("2x1"),
+            "HIMMELCAD_PHOTOLAB_FORCE_EXTRACTION_TILES currently accepts only 2x1"
+        );
+        anyhow::ensure!(
+            !memory_plan
+                .memory
+                .degradations
+                .iter()
+                .any(|degradation| matches!(
+                    degradation,
+                    himmelcad_core::photolab_jobs::PhotolabMemoryDegradation::ExtractionEdgeReduced { .. }
+                )),
+            "forced extraction tiling cannot override the minimum-tile memory safety fallback"
+        );
+        let tiling = himmelcad_sidecar::job_runtime::AlignmentExtractionTiling {
+            columns: 2,
+            rows: 1,
+            tiles: 2,
+            overlap_px: himmelcad_sidecar::job_runtime::EXTRACTION_TILE_OVERLAP_PX,
+        };
+        memory_plan.extraction_tiling = Some(tiling);
+        memory_plan.memory.time_first_choices.retain(|choice| {
+            !matches!(
+                choice,
+                himmelcad_core::photolab_jobs::PhotolabMemoryTimeFirstChoice::ExtractionTiled { .. }
+            )
+        });
+        memory_plan.memory.time_first_choices.push(
+            himmelcad_core::photolab_jobs::PhotolabMemoryTimeFirstChoice::ExtractionTiled {
+                tiles: tiling.tiles,
+                overlap_px: tiling.overlap_px,
+            },
         );
     }
     let mut request = ColmapRunRequest {
@@ -8098,7 +8130,14 @@ fn prepare_alignment_job(
             params.profile,
             params.overrides.sequential_overlap,
         ),
-        mapping_store: alignment_primary_store(params.profile),
+        // A forced Fast smoke makes ALIKED the primary mapping store so the resulting
+        // reconstruction actually consumes the tiled feature database. SIFT remains its
+        // ordinary rescue if tiled ALIKED cannot reconstruct the image set.
+        mapping_store: if force_extraction_tiling {
+            MappingFeatureStore::Aliked
+        } else {
+            alignment_primary_store(params.profile)
+        },
         aliked_variant: if params.profile == AlignmentQualityProfile::Fast {
             AlikedModelVariant::N16Rot
         } else {
@@ -8117,6 +8156,7 @@ fn prepare_alignment_job(
         sift_max_features: memory_plan.keypoints,
         sift_rescue_only: params.profile == AlignmentQualityProfile::Fast,
         max_image_size: memory_plan.extraction_edge,
+        extraction_tiling: memory_plan.extraction_tiling,
         feature_worker_threads: colmap_feature_worker_threads(&memory_plan),
         aliked_matching_worker_threads: colmap_aliked_matching_worker_threads(&memory_plan),
         matching_worker_threads: colmap_matching_worker_threads(usable_memory_bytes, logical_cpus),

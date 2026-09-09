@@ -34,6 +34,7 @@ zip.workspace = true
 fs2 = "0.4.3"
 image = { version = "0.25.8", default-features = false, features = ["jpeg", "png", "tiff"] }
 las.workspace = true
+rusqlite = { version = "0.37.0", features = ["bundled"] }
 
 [dev-dependencies]
 gltf.workspace = true

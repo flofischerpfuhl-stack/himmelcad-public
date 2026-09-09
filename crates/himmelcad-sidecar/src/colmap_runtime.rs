@@ -41,9 +41,18 @@ use crate::mesh_tiler::PreparedMeshProduct;
 
 use crate::image_commit::{CameraImageMetadataRecord, ProjectCameraImageRecord};
 use crate::image_mask_runtime::materialize_colmap_masks;
-use crate::job_runtime::{JobWorkerContext, JobWorkerError, JobWorkerResult};
+use crate::job_runtime::{
+    AlignmentExtractionTiling, JobWorkerContext, JobWorkerError, JobWorkerResult,
+};
 use crate::{
-    dedode_colmap_bridge::{prepare_dedode_colmap_import, DedodeColmapBridgeError},
+    colmap_feature_db::{
+        read_image_features, write_image_features, ColmapDescriptorMatrix, ColmapFeatureDbError,
+        ColmapKeypointMatrix,
+    },
+    dedode_colmap_bridge::{
+        merge_tiled_aliked_features, prepare_dedode_colmap_import, DedodeColmapBridgeError,
+        TiledAlikedFeature, TiledAlikedFeatureSet,
+    },
     dedode_runtime::{DedodeRunOutcome, DedodeToolIdentity},
     dense_raster_prep::PreparedPotreeCloud,
 };
@@ -327,6 +336,9 @@ pub struct ColmapRunRequest {
     /// store as a rescue. Fast selects classical SIFT first and ALIKED as the neural rescue.
     pub sift_rescue_only: bool,
     pub max_image_size: u32,
+    /// Deterministic time-first ALIKED grid. SIFT extraction ignores this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraction_tiling: Option<AlignmentExtractionTiling>,
     /// Hardware-adaptive worker count. This changes throughput and memory only.
     pub feature_worker_threads: u16,
     /// Hardware-adaptive ALIKED/LightGlue worker count.
@@ -488,6 +500,19 @@ impl ColmapRunRequest {
             return Err(ColmapRuntimeError::InvalidRequest(
                 "maximum image sizes must be greater than zero".into(),
             ));
+        }
+        if let Some(tiling) = self.extraction_tiling {
+            if tiling.columns == 0
+                || tiling.rows == 0
+                || tiling.tiles != tiling.columns.saturating_mul(tiling.rows)
+                || tiling.tiles < 2
+                || tiling.overlap_px == 0
+            {
+                return Err(ColmapRuntimeError::InvalidRequest(
+                    "ALIKED extraction tiling must be a non-empty multi-tile grid with overlap"
+                        .into(),
+                ));
+            }
         }
         if self.feature_worker_threads == 0
             || self.aliked_matching_worker_threads == 0
@@ -843,6 +868,9 @@ pub struct ColmapOutputSummary {
     pub calibration_group_intrinsics: Vec<CalibrationGroupIntrinsicsDelta>,
     pub selected_mapper: SelectedMapper,
     pub selected_feature_store: SelectedFeatureStore,
+    /// Time-first ALIKED extraction choice frozen into alignment lineage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraction_tiled: Option<ColmapExtractionTiled>,
     /// Identity of the DeDoDe toolchain when the selected feature store came from it (IF-D26).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dedode_tool: Option<DedodeToolIdentity>,
@@ -851,6 +879,13 @@ pub struct ColmapOutputSummary {
     pub degradations: Vec<PhotolabMemoryDegradation>,
     pub commands: Vec<ColmapCommandReport>,
     pub artifacts: Vec<ColmapArtifactSummary>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColmapExtractionTiled {
+    pub tiles: u32,
+    pub overlap_px: u32,
 }
 
 /// Durable summary file and isolated scratch location returned to the publisher.
@@ -1493,6 +1528,14 @@ impl ColmapRuntime {
             calibration_group_intrinsics,
             selected_mapper,
             selected_feature_store,
+            extraction_tiled: (!request.sift_rescue_only
+                || selected_feature_store == SelectedFeatureStore::Aliked)
+                .then_some(request.extraction_tiling)
+                .flatten()
+                .map(|tiling| ColmapExtractionTiled {
+                    tiles: tiling.tiles,
+                    overlap_px: tiling.overlap_px,
+                }),
             dedode_tool: dedode.map(|dedode| dedode.tool.clone()),
             mapping_candidates,
             degradations: request.degradations.clone(),
@@ -1700,6 +1743,8 @@ pub enum ColmapRuntimeError {
     DedicatedLargeMatcherRequired(DedodeV2GPolicy),
     #[error("DeDoDe bridge failed: {0}")]
     DedodeBridge(#[from] DedodeColmapBridgeError),
+    #[error("COLMAP feature database failed: {0}")]
+    FeatureDatabase(#[from] ColmapFeatureDbError),
     #[error("COLMAP command {command:?} failed with exit code {exit_code:?}: {message}")]
     CommandFailed {
         command: ColmapCommandKind,
@@ -1731,7 +1776,9 @@ impl ColmapRuntimeError {
             | Self::MissingResource(_)
             | Self::DedicatedLargeMatcherRequired(_) => "toolCapability",
             Self::CommandFailed { .. } => "colmapCommand",
-            Self::MissingOutput(_) | Self::InvalidWorkerOutput(_) => "invalidWorkerOutput",
+            Self::MissingOutput(_) | Self::InvalidWorkerOutput(_) | Self::FeatureDatabase(_) => {
+                "invalidWorkerOutput"
+            }
             Self::Progress(_) => "progressSink",
             Self::Io(_) => "io",
             Self::Json(_) => "json",
@@ -1740,7 +1787,7 @@ impl ColmapRuntimeError {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FeatureStoreKind {
     Aliked,
     Sift,
@@ -1950,103 +1997,116 @@ impl ColmapRuntime {
         let groups = camera_extraction_groups(request, materialized_images)?;
         if !restored_extraction {
             context.check_cancelled().map_err(map_worker_error)?;
-            let common_extraction = vec![
-                os("--database_path"),
-                database.as_os_str().to_owned(),
-                os("--image_path"),
-                image_directory.as_os_str().to_owned(),
-                os("--FeatureExtraction.max_image_size"),
-                os(request.max_image_size.to_string()),
-                os("--FeatureExtraction.num_threads"),
-                os(request.feature_worker_threads.to_string()),
-                os("--FeatureExtraction.use_gpu"),
-                os(request.device.use_gpu()),
-                os("--FeatureExtraction.gpu_index"),
-                os(request.device.gpu_indices()),
-            ];
-            let mut common_extraction = common_extraction;
-            if request
-                .image_mask_scope
-                .as_ref()
-                .is_some_and(|scope| !scope.masks.is_empty())
-            {
-                common_extraction.extend([
-                    os("--ImageReader.mask_path"),
-                    state.scratch.join("masks").as_os_str().to_owned(),
-                ]);
-            }
-            let extractor_options = match store {
-                FeatureStoreKind::Aliked => {
-                    let (extractor_type, model_option, resource) = match request.aliked_variant {
-                        AlikedModelVariant::N16Rot => (
-                            "ALIKED_N16ROT",
-                            "--AlikedExtraction.n16rot_model_path",
-                            ColmapResourceKind::AlikedN16RotModel,
-                        ),
-                        AlikedModelVariant::N32 => (
-                            "ALIKED_N32",
-                            "--AlikedExtraction.n32_model_path",
-                            ColmapResourceKind::AlikedN32Model,
-                        ),
-                    };
-                    vec![
-                        os("--FeatureExtraction.type"),
-                        os(extractor_type),
-                        os("--AlikedExtraction.max_num_features"),
-                        os(request.aliked_max_features.to_string()),
-                        os(model_option),
-                        self.resource(resource).as_os_str().to_owned(),
-                    ]
-                }
-                FeatureStoreKind::Sift => vec![
-                    os("--FeatureExtraction.type"),
-                    os("SIFT"),
-                    os("--SiftExtraction.max_num_features"),
-                    // COLMAP may emit two orientations per detected SIFT location.
-                    // Interpret the PhotoLab budget as stored features, not raw locations.
-                    os(request.sift_max_features.div_ceil(2).to_string()),
-                ],
-            };
-            let total_units = u64::try_from(materialized_images.len()).unwrap_or(u64::MAX);
-            let mut completed_units = 0_u64;
-            for (group_index, group) in groups.iter().enumerate() {
-                context.check_cancelled().map_err(map_worker_error)?;
-                let image_list = state.scratch.join(format!(
-                    "image-list-{}-{group_index:06}.txt",
-                    store.database_name()
-                ));
-                write_image_list_path(&image_list, &group.image_names)?;
-                let mut extraction = common_extraction.clone();
-                extraction.extend([
-                    os("--image_list_path"),
-                    image_list.as_os_str().to_owned(),
-                    os("--ImageReader.single_camera"),
-                    os("1"),
-                ]);
-                if let Some(calibration) = &group.calibration {
-                    let (model, parameters) = colmap_camera_model_and_params(calibration);
-                    extraction.extend([
-                        os("--ImageReader.camera_model"),
-                        os(model),
-                        os("--ImageReader.camera_params"),
-                        os(parameters),
+            if store == FeatureStoreKind::Aliked && request.extraction_tiling.is_some() {
+                self.run_tiled_aliked_extraction(
+                    request,
+                    context,
+                    image_directory,
+                    materialized_images,
+                    &groups,
+                    &database,
+                    state,
+                )?;
+            } else {
+                let common_extraction = vec![
+                    os("--database_path"),
+                    database.as_os_str().to_owned(),
+                    os("--image_path"),
+                    image_directory.as_os_str().to_owned(),
+                    os("--FeatureExtraction.max_image_size"),
+                    os(request.max_image_size.to_string()),
+                    os("--FeatureExtraction.num_threads"),
+                    os(request.feature_worker_threads.to_string()),
+                    os("--FeatureExtraction.use_gpu"),
+                    os(request.device.use_gpu()),
+                    os("--FeatureExtraction.gpu_index"),
+                    os(request.device.gpu_indices()),
+                ];
+                let mut common_extraction = common_extraction;
+                if request
+                    .image_mask_scope
+                    .as_ref()
+                    .is_some_and(|scope| !scope.masks.is_empty())
+                {
+                    common_extraction.extend([
+                        os("--ImageReader.mask_path"),
+                        state.scratch.join("masks").as_os_str().to_owned(),
                     ]);
                 }
-                extraction.extend(extractor_options.clone());
-                let group_units = u64::try_from(group.image_names.len()).unwrap_or(u64::MAX);
-                self.execute_required_with_unit_range(
-                    &CommandSpec {
-                        kind: ColmapCommandKind::FeatureExtractor,
-                        stage_label: store.extraction_label(),
-                        args: extraction,
-                    },
-                    context,
-                    state,
-                    completed_units,
-                    group_units,
-                    total_units,
-                )?;
-                completed_units = completed_units.saturating_add(group_units);
+                let extractor_options = match store {
+                    FeatureStoreKind::Aliked => {
+                        let (extractor_type, model_option, resource) = match request.aliked_variant
+                        {
+                            AlikedModelVariant::N16Rot => (
+                                "ALIKED_N16ROT",
+                                "--AlikedExtraction.n16rot_model_path",
+                                ColmapResourceKind::AlikedN16RotModel,
+                            ),
+                            AlikedModelVariant::N32 => (
+                                "ALIKED_N32",
+                                "--AlikedExtraction.n32_model_path",
+                                ColmapResourceKind::AlikedN32Model,
+                            ),
+                        };
+                        vec![
+                            os("--FeatureExtraction.type"),
+                            os(extractor_type),
+                            os("--AlikedExtraction.max_num_features"),
+                            os(request.aliked_max_features.to_string()),
+                            os(model_option),
+                            self.resource(resource).as_os_str().to_owned(),
+                        ]
+                    }
+                    FeatureStoreKind::Sift => vec![
+                        os("--FeatureExtraction.type"),
+                        os("SIFT"),
+                        os("--SiftExtraction.max_num_features"),
+                        // COLMAP may emit two orientations per detected SIFT location.
+                        // Interpret the PhotoLab budget as stored features, not raw locations.
+                        os(request.sift_max_features.div_ceil(2).to_string()),
+                    ],
+                };
+                let total_units = u64::try_from(materialized_images.len()).unwrap_or(u64::MAX);
+                let mut completed_units = 0_u64;
+                for (group_index, group) in groups.iter().enumerate() {
+                    context.check_cancelled().map_err(map_worker_error)?;
+                    let image_list = state.scratch.join(format!(
+                        "image-list-{}-{group_index:06}.txt",
+                        store.database_name()
+                    ));
+                    write_image_list_path(&image_list, &group.image_names)?;
+                    let mut extraction = common_extraction.clone();
+                    extraction.extend([
+                        os("--image_list_path"),
+                        image_list.as_os_str().to_owned(),
+                        os("--ImageReader.single_camera"),
+                        os("1"),
+                    ]);
+                    if let Some(calibration) = &group.calibration {
+                        let (model, parameters) = colmap_camera_model_and_params(calibration);
+                        extraction.extend([
+                            os("--ImageReader.camera_model"),
+                            os(model),
+                            os("--ImageReader.camera_params"),
+                            os(parameters),
+                        ]);
+                    }
+                    extraction.extend(extractor_options.clone());
+                    let group_units = u64::try_from(group.image_names.len()).unwrap_or(u64::MAX);
+                    self.execute_required_with_unit_range(
+                        &CommandSpec {
+                            kind: ColmapCommandKind::FeatureExtractor,
+                            stage_label: store.extraction_label(),
+                            args: extraction,
+                        },
+                        context,
+                        state,
+                        completed_units,
+                        group_units,
+                        total_units,
+                    )?;
+                    completed_units = completed_units.saturating_add(group_units);
+                }
             }
         }
         if restored_extraction {
@@ -2117,6 +2177,264 @@ impl ColmapRuntime {
         publish_feature_cache(&cache_root, &verified_key, &database, &context.cancellation)
     }
 
+    fn run_tiled_aliked_extraction(
+        &self,
+        request: &ColmapRunRequest,
+        context: &JobWorkerContext,
+        image_directory: &Path,
+        materialized_images: &[PathBuf],
+        groups: &[CameraExtractionGroup],
+        database: &Path,
+        state: &mut RunState,
+    ) -> Result<(), ColmapRuntimeError> {
+        let tiling = request
+            .extraction_tiling
+            .expect("tiled extraction is called only with a frozen grid");
+        let total_units = u64::try_from(materialized_images.len())
+            .unwrap_or(u64::MAX)
+            .saturating_mul(u64::from(tiling.tiles));
+        self.bootstrap_tiled_aliked_database(
+            context,
+            image_directory,
+            materialized_images,
+            groups,
+            database,
+            total_units,
+            state,
+        )?;
+
+        let (extractor_type, model_option, resource) = match request.aliked_variant {
+            AlikedModelVariant::N16Rot => (
+                "ALIKED_N16ROT",
+                "--AlikedExtraction.n16rot_model_path",
+                ColmapResourceKind::AlikedN16RotModel,
+            ),
+            AlikedModelVariant::N32 => (
+                "ALIKED_N32",
+                "--AlikedExtraction.n32_model_path",
+                ColmapResourceKind::AlikedN32Model,
+            ),
+        };
+        let has_masks = request
+            .image_mask_scope
+            .as_ref()
+            .is_some_and(|scope| !scope.masks.is_empty());
+        let mut completed_units = 0_u64;
+        for (image_index, (camera, image_name)) in request
+            .camera_images
+            .iter()
+            .zip(materialized_images)
+            .enumerate()
+        {
+            context.check_cancelled().map_err(map_worker_error)?;
+            let source = load_resized_tiled_source(
+                &image_directory.join(image_name),
+                request.max_image_size,
+                camera.metadata.inspected_photo.metadata.exif.orientation,
+            )?;
+            let mask = if has_masks {
+                Some(load_resized_tiled_mask(
+                    &state.scratch.join("masks"),
+                    image_name,
+                    source.image.width(),
+                    source.image.height(),
+                )?)
+            } else {
+                None
+            };
+            let bounds = tiled_image_bounds(source.image.width(), source.image.height(), tiling)?;
+            let mut tile_features = Vec::with_capacity(bounds.len());
+            for (tile_index, bounds) in bounds.into_iter().enumerate() {
+                // Cancellation is checked at the durable boundary between every tile; an active
+                // extractor remains supervised and is force-killed by the process-group runtime.
+                context.check_cancelled().map_err(map_worker_error)?;
+                let tile_root = state
+                    .scratch
+                    .join("features/aliked/tiles")
+                    .join(format!("image-{image_index:08}-tile-{tile_index:06}"));
+                fs::create_dir_all(&tile_root)?;
+                let tile_name = PathBuf::from("tile.png");
+                source
+                    .image
+                    .crop_imm(bounds.x, bounds.y, bounds.width, bounds.height)
+                    .save_with_format(tile_root.join(&tile_name), image::ImageFormat::Png)
+                    .map_err(map_tiled_image_error)?;
+                let mut extraction = vec![
+                    os("--database_path"),
+                    tile_root.join("database.db").as_os_str().to_owned(),
+                    os("--image_path"),
+                    tile_root.as_os_str().to_owned(),
+                    os("--FeatureExtraction.max_image_size"),
+                    os(bounds.width.max(bounds.height).to_string()),
+                    os("--FeatureExtraction.num_threads"),
+                    os("1"),
+                    os("--FeatureExtraction.use_gpu"),
+                    os(request.device.use_gpu()),
+                    os("--FeatureExtraction.gpu_index"),
+                    os(request.device.gpu_indices()),
+                    os("--image_list_path"),
+                    tile_root.join("image-list.txt").as_os_str().to_owned(),
+                    os("--ImageReader.single_camera"),
+                    os("1"),
+                    os("--FeatureExtraction.type"),
+                    os(extractor_type),
+                    os("--AlikedExtraction.max_num_features"),
+                    // Each tile receives the complete per-image cap; only the deterministic
+                    // post-merge top-k applies the requested image budget.
+                    os(request.aliked_max_features.to_string()),
+                    os(model_option),
+                    self.resource(resource).as_os_str().to_owned(),
+                ];
+                write_image_list_path(&tile_root.join("image-list.txt"), &[tile_name.clone()])?;
+                if let Some(mask) = &mask {
+                    let mask_root = tile_root.join("masks");
+                    fs::create_dir_all(&mask_root)?;
+                    let tile_mask_name = PathBuf::from("tile.png.png");
+                    mask.crop_imm(bounds.x, bounds.y, bounds.width, bounds.height)
+                        .save_with_format(mask_root.join(tile_mask_name), image::ImageFormat::Png)
+                        .map_err(map_tiled_image_error)?;
+                    extraction.extend([
+                        os("--ImageReader.mask_path"),
+                        mask_root.as_os_str().to_owned(),
+                    ]);
+                }
+                self.execute_required_with_unit_range(
+                    &CommandSpec {
+                        kind: ColmapCommandKind::FeatureExtractor,
+                        stage_label: FeatureStoreKind::Aliked.extraction_label(),
+                        args: extraction,
+                    },
+                    context,
+                    state,
+                    completed_units,
+                    1,
+                    total_units,
+                )?;
+                let extracted = read_image_features(&tile_root.join("database.db"), "tile.png")?;
+                let feature_set = tiled_feature_set_from_database(
+                    u32::try_from(tile_index).map_err(|_| {
+                        ColmapRuntimeError::InvalidRequest("tile index exceeds u32".into())
+                    })?,
+                    bounds,
+                    request.aliked_variant,
+                    extracted,
+                )?;
+                fs::remove_dir_all(&tile_root)?;
+                tile_features.push(feature_set);
+                completed_units = completed_units.saturating_add(1);
+            }
+            let mut merged =
+                merge_tiled_aliked_features(&tile_features, request.aliked_max_features)
+                    .map_err(map_dedode_bridge_error)?;
+            for feature in &mut merged {
+                feature.x = rescale_pixel_center(feature.x, source.scale_x);
+                feature.y = rescale_pixel_center(feature.y, source.scale_y);
+                feature.a11 *= source.scale_x;
+                feature.a12 *= source.scale_x;
+                feature.a21 *= source.scale_y;
+                feature.a22 *= source.scale_y;
+            }
+            let keypoints = ColmapKeypointMatrix::Affine(
+                merged
+                    .iter()
+                    .map(|feature| {
+                        [
+                            feature.x,
+                            feature.y,
+                            feature.a11,
+                            feature.a12,
+                            feature.a21,
+                            feature.a22,
+                        ]
+                    })
+                    .collect(),
+            );
+            let descriptor_rows = merged
+                .into_iter()
+                .map(|feature| feature.descriptor)
+                .collect();
+            let descriptors = match request.aliked_variant {
+                AlikedModelVariant::N16Rot => {
+                    ColmapDescriptorMatrix::AlikedN16RotF32(descriptor_rows)
+                }
+                AlikedModelVariant::N32 => ColmapDescriptorMatrix::AlikedN32F32(descriptor_rows),
+            };
+            let image_name = path_text_for_colmap(image_name)?;
+            let target = read_image_features(database, image_name)?;
+            write_image_features(database, target.image_id, &keypoints, &descriptors)?;
+        }
+        state.report_complete(context, FeatureStoreKind::Aliked.extraction_label())
+    }
+
+    fn bootstrap_tiled_aliked_database(
+        &self,
+        context: &JobWorkerContext,
+        image_directory: &Path,
+        materialized_images: &[PathBuf],
+        groups: &[CameraExtractionGroup],
+        database: &Path,
+        total_units: u64,
+        state: &mut RunState,
+    ) -> Result<(), ColmapRuntimeError> {
+        let import_root = state.scratch.join("features/aliked/bootstrap-import");
+        for image_name in materialized_images {
+            context.check_cancelled().map_err(map_worker_error)?;
+            let path = append_feature_text_extension(&import_root, image_name)?;
+            let mut bytes = Vec::with_capacity(600);
+            writeln!(&mut bytes, "1 128")?;
+            write!(&mut bytes, "0.500000 0.500000 1.000000 0.000000")?;
+            for _ in 0..128 {
+                write!(&mut bytes, " 0")?;
+            }
+            bytes.push(b'\n');
+            atomic_write(&path, &bytes)?;
+        }
+        for (group_index, group) in groups.iter().enumerate() {
+            context.check_cancelled().map_err(map_worker_error)?;
+            let image_list = state
+                .scratch
+                .join(format!("image-list-aliked-import-{group_index:06}.txt"));
+            write_image_list_path(&image_list, &group.image_names)?;
+            let mut args = vec![
+                os("--database_path"),
+                database.as_os_str().to_owned(),
+                os("--image_path"),
+                image_directory.as_os_str().to_owned(),
+                os("--import_path"),
+                import_root.as_os_str().to_owned(),
+                os("--image_list_path"),
+                image_list.as_os_str().to_owned(),
+                os("--ImageReader.single_camera"),
+                os("1"),
+            ];
+            if let Some(calibration) = &group.calibration {
+                let (model, parameters) = colmap_camera_model_and_params(calibration);
+                args.extend([
+                    os("--ImageReader.camera_model"),
+                    os(model),
+                    os("--ImageReader.camera_params"),
+                    os(parameters),
+                ]);
+            }
+            // Import establishes authoritative camera/image rows but contributes no tile work.
+            // Keep this command on the extraction stage's immutable tile-unit scale.
+            self.execute_required_with_unit_range(
+                &CommandSpec {
+                    kind: ColmapCommandKind::FeatureImporter,
+                    stage_label: FeatureStoreKind::Aliked.extraction_label(),
+                    args,
+                },
+                context,
+                state,
+                0,
+                0,
+                total_units,
+            )?;
+        }
+        fs::remove_dir_all(import_root)?;
+        Ok(())
+    }
+
     fn feature_cache_key(
         &self,
         request: &ColmapRunRequest,
@@ -2157,9 +2475,9 @@ impl ColmapRuntime {
             })
             .collect::<Vec<_>>();
         let bytes = serde_json::to_vec(&(
-            // v5 also keys the exact scoped image-mask revision selection.
-            // group and includes typed FULL_OPENCV seeds in the key.
-            5_u32,
+            // v6 adds the exact tiled-extraction geometry; v5 added the scoped mask
+            // revision, explicit calibration groups and typed FULL_OPENCV seeds.
+            6_u32,
             &self.toolchain.executable_sha256,
             store.database_name(),
             model_hashes,
@@ -2173,6 +2491,7 @@ impl ColmapRuntime {
             request.aliked_max_features,
             request.sift_max_features,
             request.max_image_size,
+            (store == FeatureStoreKind::Aliked).then_some(request.extraction_tiling),
             verified.then_some(request.pair_selection),
         ))?;
         Ok(ObjectHash::of_bytes(&bytes))
@@ -3026,6 +3345,242 @@ fn spawn_colmap_child(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     process_group::spawn(&mut command).map_err(ColmapRuntimeError::Io)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TileBounds {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
+struct ResizedTiledSource {
+    image: image::DynamicImage,
+    scale_x: f32,
+    scale_y: f32,
+}
+
+fn tiled_image_bounds(
+    width: u32,
+    height: u32,
+    tiling: AlignmentExtractionTiling,
+) -> Result<Vec<TileBounds>, ColmapRuntimeError> {
+    let x_bounds = tiled_axis_bounds(width, tiling.columns, tiling.overlap_px)?;
+    let y_bounds = tiled_axis_bounds(height, tiling.rows, tiling.overlap_px)?;
+    let mut bounds = Vec::with_capacity(
+        usize::try_from(tiling.tiles)
+            .map_err(|_| ColmapRuntimeError::InvalidRequest("tile count exceeds usize".into()))?,
+    );
+    for &(y, tile_height) in &y_bounds {
+        for &(x, tile_width) in &x_bounds {
+            bounds.push(TileBounds {
+                x,
+                y,
+                width: tile_width,
+                height: tile_height,
+            });
+        }
+    }
+    if bounds.len() != usize::try_from(tiling.tiles).unwrap_or(usize::MAX) {
+        return Err(ColmapRuntimeError::InvalidRequest(
+            "tile grid shape differs from its frozen tile count".into(),
+        ));
+    }
+    Ok(bounds)
+}
+
+fn tiled_axis_bounds(
+    length: u32,
+    count: u32,
+    overlap: u32,
+) -> Result<Vec<(u32, u32)>, ColmapRuntimeError> {
+    if length == 0 || count == 0 || (count > 1 && overlap >= length) {
+        return Err(ColmapRuntimeError::InvalidRequest(
+            "tile grid does not fit the resized image dimensions".into(),
+        ));
+    }
+    if count == 1 {
+        return Ok(vec![(0, length)]);
+    }
+    let covered =
+        u64::from(length).saturating_add(u64::from(count - 1).saturating_mul(u64::from(overlap)));
+    let extent = u32::try_from(covered.div_ceil(u64::from(count)))
+        .map_err(|_| ColmapRuntimeError::InvalidRequest("tile extent exceeds u32".into()))?;
+    if extent <= overlap || extent > length {
+        return Err(ColmapRuntimeError::InvalidRequest(
+            "tile overlap leaves no positive interior step".into(),
+        ));
+    }
+    let step = extent - overlap;
+    Ok((0..count)
+        .map(|index| {
+            let nominal = index.saturating_mul(step);
+            let origin = nominal.min(length - extent);
+            (origin, extent.min(length - origin))
+        })
+        .collect())
+}
+
+fn load_resized_tiled_source(
+    path: &Path,
+    max_image_size: u32,
+    orientation: Option<ExifOrientation>,
+) -> Result<ResizedTiledSource, ColmapRuntimeError> {
+    let source = image::open(path).map_err(map_tiled_image_error)?;
+    let source = match orientation.unwrap_or(ExifOrientation::Normal) {
+        ExifOrientation::Normal => source,
+        ExifOrientation::Rotate90Clockwise => source.rotate90(),
+        ExifOrientation::Rotate180 => source.rotate180(),
+        ExifOrientation::Rotate270Clockwise => source.rotate270(),
+        ExifOrientation::MirrorHorizontal => source.fliph(),
+        ExifOrientation::MirrorVertical => source.flipv(),
+        ExifOrientation::MirrorHorizontalRotate270Clockwise => source.fliph().rotate270(),
+        ExifOrientation::MirrorHorizontalRotate90Clockwise => source.fliph().rotate90(),
+    };
+    let source_width = source.width();
+    let source_height = source.height();
+    let image = resize_for_aliked(source, max_image_size)?;
+    Ok(ResizedTiledSource {
+        scale_x: source_width as f32 / image.width() as f32,
+        scale_y: source_height as f32 / image.height() as f32,
+        image,
+    })
+}
+
+fn rescale_pixel_center(coordinate: f32, scale: f32) -> f32 {
+    (coordinate - 0.5).mul_add(scale, 0.5)
+}
+
+fn resize_for_aliked(
+    source: image::DynamicImage,
+    max_image_size: u32,
+) -> Result<image::DynamicImage, ColmapRuntimeError> {
+    let width = source.width();
+    let height = source.height();
+    let longest = width.max(height);
+    if width == 0 || height == 0 || max_image_size == 0 {
+        return Err(ColmapRuntimeError::InvalidWorkerOutput(
+            "tiled ALIKED source has zero dimensions".into(),
+        ));
+    }
+    if longest <= max_image_size {
+        return Ok(source);
+    }
+    let resized_width = u32::try_from(
+        u64::from(width).saturating_mul(u64::from(max_image_size)) / u64::from(longest),
+    )
+    .unwrap_or(u32::MAX)
+    .max(1);
+    let resized_height = u32::try_from(
+        u64::from(height).saturating_mul(u64::from(max_image_size)) / u64::from(longest),
+    )
+    .unwrap_or(u32::MAX)
+    .max(1);
+    Ok(source.resize_exact(
+        resized_width,
+        resized_height,
+        image::imageops::FilterType::Lanczos3,
+    ))
+}
+
+fn load_resized_tiled_mask(
+    mask_root: &Path,
+    image_name: &Path,
+    width: u32,
+    height: u32,
+) -> Result<image::DynamicImage, ColmapRuntimeError> {
+    let text = path_text_for_colmap(image_name)?;
+    let path = mask_root.join(format!("{text}.png"));
+    let mask = image::open(&path).map_err(|error| {
+        ColmapRuntimeError::InvalidWorkerOutput(format!(
+            "failed to read tiled ALIKED mask {}: {error}",
+            path.display()
+        ))
+    })?;
+    Ok(mask.resize_exact(width, height, image::imageops::FilterType::Nearest))
+}
+
+fn tiled_feature_set_from_database(
+    tile_index: u32,
+    bounds: TileBounds,
+    variant: AlikedModelVariant,
+    extracted: crate::colmap_feature_db::ColmapImageFeatures,
+) -> Result<TiledAlikedFeatureSet, ColmapRuntimeError> {
+    let affine = match extracted.keypoints {
+        ColmapKeypointMatrix::Affine(rows) => rows,
+        ColmapKeypointMatrix::Similarity(rows) => rows
+            .into_iter()
+            .map(|[x, y, scale, orientation]| {
+                let cosine = orientation.cos() * scale;
+                let sine = orientation.sin() * scale;
+                [x, y, cosine, -sine, sine, cosine]
+            })
+            .collect(),
+        ColmapKeypointMatrix::Coordinates(rows) => rows
+            .into_iter()
+            .map(|[x, y]| [x, y, 1.0, 0.0, 0.0, 1.0])
+            .collect(),
+    };
+    let descriptors = match (variant, extracted.descriptors) {
+        (AlikedModelVariant::N16Rot, ColmapDescriptorMatrix::AlikedN16RotF32(rows))
+        | (AlikedModelVariant::N32, ColmapDescriptorMatrix::AlikedN32F32(rows)) => rows,
+        (_, ColmapDescriptorMatrix::SiftU8(_)) => {
+            return Err(ColmapRuntimeError::InvalidWorkerOutput(
+                "tiled ALIKED extractor wrote uint8 descriptors".into(),
+            ));
+        }
+        _ => {
+            return Err(ColmapRuntimeError::InvalidWorkerOutput(
+                "tiled ALIKED extractor wrote the wrong feature type".into(),
+            ));
+        }
+    };
+    let feature_count = affine.len();
+    let features = affine
+        .into_iter()
+        .zip(descriptors)
+        .enumerate()
+        .map(|(index, (keypoint, descriptor))| TiledAlikedFeature {
+            x: keypoint[0],
+            y: keypoint[1],
+            a11: keypoint[2],
+            a12: keypoint[3],
+            a21: keypoint[4],
+            a22: keypoint[5],
+            // COLMAP filters by the ALIKED score but persists no score column. For a frozen
+            // model and input its CPU extractor deterministically writes rows in descending
+            // detector-score order, so normalized reverse row rank is the only stable score
+            // proxy that remains comparable across tiles of different feature counts.
+            score: feature_count.saturating_sub(index) as f32 / feature_count.max(1) as f32,
+            descriptor,
+        })
+        .collect();
+    Ok(TiledAlikedFeatureSet {
+        tile_index,
+        origin_x: bounds.x,
+        origin_y: bounds.y,
+        features,
+    })
+}
+
+fn append_feature_text_extension(
+    root: &Path,
+    image_name: &Path,
+) -> Result<PathBuf, ColmapRuntimeError> {
+    Ok(root.join(format!("{}.txt", path_text_for_colmap(image_name)?)))
+}
+
+fn path_text_for_colmap(path: &Path) -> Result<&str, ColmapRuntimeError> {
+    path.to_str()
+        .ok_or_else(|| ColmapRuntimeError::InvalidPath {
+            path: path.to_path_buf(),
+            reason: "COLMAP image name is not UTF-8".into(),
+        })
+}
+
+fn map_tiled_image_error(error: image::ImageError) -> ColmapRuntimeError {
+    ColmapRuntimeError::InvalidWorkerOutput(format!("tiled ALIKED image operation failed: {error}"))
 }
 
 fn camera_dji_calibration(
@@ -5236,6 +5791,65 @@ mod tests {
         tool_root: PathBuf,
     }
 
+    fn write_fake_feature_database_schema(connection: &rusqlite::Connection) {
+        connection
+            .execute_batch(
+                "CREATE TABLE images (image_id INTEGER PRIMARY KEY NOT NULL, name TEXT NOT NULL UNIQUE, camera_id INTEGER NOT NULL);\
+                 CREATE TABLE keypoints (image_id INTEGER PRIMARY KEY NOT NULL, rows INTEGER NOT NULL, cols INTEGER NOT NULL, data BLOB);\
+                 CREATE TABLE descriptors (image_id INTEGER PRIMARY KEY NOT NULL, type INTEGER NOT NULL, rows INTEGER NOT NULL, cols INTEGER NOT NULL, data BLOB);",
+            )
+            .expect("create fake feature database schema");
+    }
+
+    fn write_fake_feature_databases(tool_root: &Path) {
+        let tile = tool_root.join("fake-tile.db");
+        let connection = rusqlite::Connection::open(&tile).expect("create fake tile database");
+        write_fake_feature_database_schema(&connection);
+        connection
+            .execute(
+                "INSERT INTO images(image_id, name, camera_id) VALUES (1, 'tile.png', 1)",
+                [],
+            )
+            .expect("insert fake tile image");
+        drop(connection);
+        write_image_features(
+            &tile,
+            1,
+            &ColmapKeypointMatrix::Affine(vec![
+                [104.0, 50.0, 1.0, 0.0, 0.0, 1.0],
+                [1_000.0, 50.0, 1.0, 0.0, 0.0, 1.0],
+            ]),
+            &ColmapDescriptorMatrix::AlikedN16RotF32(vec![[0.1; 128], [0.2; 128]]),
+        )
+        .expect("write fake tile features");
+
+        let bootstrap = tool_root.join("fake-bootstrap.db");
+        let connection =
+            rusqlite::Connection::open(&bootstrap).expect("create fake bootstrap database");
+        write_fake_feature_database_schema(&connection);
+        for (image_id, name) in [
+            (1_i64, "calibration-000000/image-00000000.jpg"),
+            (2_i64, "calibration-000000/image-00000001.jpg"),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO images(image_id, name, camera_id) VALUES (?1, ?2, ?1)",
+                    rusqlite::params![image_id, name],
+                )
+                .expect("insert fake bootstrap image");
+        }
+        drop(connection);
+        for image_id in [1_i64, 2_i64] {
+            write_image_features(
+                &bootstrap,
+                image_id,
+                &ColmapKeypointMatrix::Similarity(vec![[0.5, 0.5, 1.0, 0.0]]),
+                &ColmapDescriptorMatrix::SiftU8(vec![[0; 128]]),
+            )
+            .expect("write fake bootstrap features");
+        }
+    }
+
     impl TestRig {
         fn new(label: &str, fail_global: bool, slow_patch_match: bool) -> Self {
             let directory = TestDirectory::new(label);
@@ -5243,6 +5857,7 @@ mod tests {
             let project = directory.0.join("inputs/project");
             let scratch = directory.0.join("scratch");
             fs::create_dir_all(tool_root.join("models")).expect("create model directory");
+            write_fake_feature_databases(&tool_root);
             fs::create_dir_all(project.join("objects")).expect("create project objects");
             fs::create_dir_all(&scratch).expect("create scratch directory");
             let camera_images = [
@@ -5403,6 +6018,7 @@ mod tests {
                 sift_max_features: 8_192,
                 sift_rescue_only: false,
                 max_image_size: 3_200,
+                extraction_tiling: None,
                 feature_worker_threads: 1,
                 aliked_matching_worker_threads: 1,
                 matching_worker_threads: 1,
@@ -5410,6 +6026,34 @@ mod tests {
                 products: ColmapProductRequest::default(),
                 intrinsics_refinement: ColmapIntrinsicsRefinement::Refine,
                 pinned_calibration_group_ids: Vec::new(),
+            }
+        }
+
+        fn replace_sources_with_tiling_images(&mut self) {
+            for (index, camera) in self.camera_images.iter_mut().enumerate() {
+                let pixels = image::RgbImage::from_fn(2_048, 1_024, |x, y| {
+                    image::Rgb([
+                        u8::try_from((x + index as u32) % 251).expect("red channel"),
+                        u8::try_from(y % 241).expect("green channel"),
+                        u8::try_from((x + y) % 239).expect("blue channel"),
+                    ])
+                });
+                let mut bytes = Vec::new();
+                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 90)
+                    .encode_image(&image::DynamicImage::ImageRgb8(pixels))
+                    .expect("encode tiling test JPEG");
+                let source_object_hash = write_project_object(&self.project, &bytes);
+                let inspected = &mut camera.metadata.inspected_photo;
+                inspected.byte_size = u64::try_from(bytes.len()).expect("JPEG size fits u64");
+                inspected.sha256 = source_object_hash.clone();
+                inspected.metadata.exif.dimensions = Some(ImageDimensions {
+                    width_pixels: 2_048,
+                    height_pixels: 1_024,
+                });
+                camera.metadata.source_object_hash = source_object_hash;
+                let metadata_bytes =
+                    serde_json::to_vec(&camera.metadata).expect("serialize tiling camera metadata");
+                camera.metadata_object_hash = write_project_object(&self.project, &metadata_bytes);
             }
         }
     }
@@ -5628,11 +6272,15 @@ printf 'HIMMELCAD_PROGRESS 1/2\n'
 case "$cmd" in
   feature_extractor)
     db="$(value_for --database_path "$@")"
-    : > "$db"
+    case "$db" in
+      *cancel-between-tiles-job*tile-000001*) while :; do :; done ;;
+      *features/aliked/tiles/*) /bin/cp "$(dirname "$0")/fake-tile.db" "$db" ;;
+      *) : > "$db" ;;
+    esac
     ;;
   feature_importer)
     db="$(value_for --database_path "$@")"
-    : > "$db"
+    if [ ! -s "$db" ]; then /bin/cp "$(dirname "$0")/fake-bootstrap.db" "$db"; fi
     ;;
   matches_importer)
     ;;
@@ -6370,6 +7018,177 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
             .expect("read invocation log");
         assert!(invocations.contains("--FeatureMatching.type|SIFT_BRUTEFORCE"));
         assert!(invocations.contains("features/sift/database.db"));
+    }
+
+    #[tokio::test]
+    async fn tiled_aliked_extraction_merges_into_original_images_deterministically() {
+        let mut rig = TestRig::new("tiled-aliked", false, false);
+        rig.replace_sources_with_tiling_images();
+        let runtime = rig.runtime();
+        let mut request = rig.request("tiled-aliked-first");
+        request.sift_rescue_only = true;
+        request.max_image_size = 2_048;
+        request.extraction_tiling = Some(AlignmentExtractionTiling {
+            columns: 2,
+            rows: 1,
+            tiles: 2,
+            overlap_px: 256,
+        });
+        let first = run_successfully(runtime.clone(), request.clone()).await;
+        assert_eq!(
+            first.summary.extraction_tiled,
+            Some(ColmapExtractionTiled {
+                tiles: 2,
+                overlap_px: 256,
+            })
+        );
+        let database = first.scratch_path.join("features/aliked/database.db");
+        for image_name in [
+            "calibration-000000/image-00000000.jpg",
+            "calibration-000000/image-00000001.jpg",
+        ] {
+            let features = read_image_features(&database, image_name).expect("merged features");
+            let ColmapKeypointMatrix::Affine(keypoints) = features.keypoints else {
+                panic!("tiled ALIKED must write affine keypoints");
+            };
+            assert_eq!(keypoints.len(), 3);
+            assert_eq!(
+                keypoints
+                    .iter()
+                    .map(|keypoint| (keypoint[0], keypoint[1]))
+                    .collect::<Vec<_>>(),
+                [(104.0, 50.0), (1_000.0, 50.0), (1_896.0, 50.0)]
+            );
+            assert!(matches!(
+                features.descriptors,
+                ColmapDescriptorMatrix::AlikedN16RotF32(ref rows) if rows.len() == 3
+            ));
+        }
+        let first_database_sha256 = hash_file(&database, None).expect("hash first database");
+        let invocations = fs::read_to_string(first.scratch_path.join("invocations.log"))
+            .expect("read tiled invocations");
+        assert_eq!(invocations.matches("CMD|feature_extractor").count(), 4);
+        assert_eq!(invocations.matches("CMD|feature_importer").count(), 1);
+
+        fs::remove_dir_all(rig.project.join(".photolab/cache"))
+            .expect("clear test-only feature cache");
+        request.job_id = "tiled-aliked-second".into();
+        let second = run_successfully(runtime, request).await;
+        assert_eq!(
+            hash_file(
+                &second.scratch_path.join("features/aliked/database.db"),
+                None
+            )
+            .expect("hash second database"),
+            first_database_sha256
+        );
+    }
+
+    #[tokio::test]
+    async fn sift_only_success_does_not_claim_unused_extraction_tiling() {
+        let rig = TestRig::new("sift-does-not-tile", false, false);
+        let mut request = rig.request("sift-does-not-tile-job");
+        request.mapping_store = MappingFeatureStore::Sift;
+        request.sift_rescue_only = true;
+        request.extraction_tiling = Some(AlignmentExtractionTiling {
+            columns: 2,
+            rows: 1,
+            tiles: 2,
+            overlap_px: 256,
+        });
+        let outcome = run_successfully(rig.runtime(), request).await;
+        assert_eq!(
+            outcome.summary.selected_feature_store,
+            SelectedFeatureStore::Sift
+        );
+        assert_eq!(outcome.summary.extraction_tiled, None);
+        let invocations = fs::read_to_string(outcome.scratch_path.join("invocations.log"))
+            .expect("read invocation log");
+        assert_eq!(invocations.matches("CMD|feature_extractor").count(), 1);
+        assert!(!invocations.contains("features/aliked/tiles"));
+    }
+
+    #[test]
+    fn feature_cache_identity_includes_extraction_tiling() {
+        let rig = TestRig::new("tiled-cache-key", false, false);
+        let runtime = rig.runtime();
+        let untiled = rig.request("cache-key");
+        let mut tiled = untiled.clone();
+        tiled.extraction_tiling = Some(AlignmentExtractionTiling {
+            columns: 2,
+            rows: 1,
+            tiles: 2,
+            overlap_px: 256,
+        });
+        assert_ne!(
+            runtime
+                .feature_cache_key(&untiled, FeatureStoreKind::Aliked, false)
+                .expect("untiled key"),
+            runtime
+                .feature_cache_key(&tiled, FeatureStoreKind::Aliked, false)
+                .expect("tiled key")
+        );
+        assert_eq!(
+            runtime
+                .feature_cache_key(&untiled, FeatureStoreKind::Sift, false)
+                .expect("untiled SIFT key"),
+            runtime
+                .feature_cache_key(&tiled, FeatureStoreKind::Sift, false)
+                .expect("SIFT ignores ALIKED tiling")
+        );
+    }
+
+    #[tokio::test]
+    async fn tiled_aliked_cancellation_stops_before_later_tiles() {
+        let _timing_guard = crate::CANCELLATION_TIMING_TEST_LOCK
+            .lock()
+            .expect("cancellation timing test lock");
+        let mut rig = TestRig::new("cancel-between-tiles", false, false);
+        rig.replace_sources_with_tiling_images();
+        let runtime = rig.runtime();
+        let mut request = rig.request("cancel-between-tiles-job");
+        request.sift_rescue_only = true;
+        request.max_image_size = 2_048;
+        request.extraction_tiling = Some(AlignmentExtractionTiling {
+            columns: 2,
+            rows: 1,
+            tiles: 2,
+            overlap_px: 256,
+        });
+        let scratch_root = rig.config.scratch_root.clone();
+        let manager = JobManager::new(JobManagerConfig {
+            max_concurrency: 1,
+            max_queued: 0,
+        })
+        .expect("create tiled cancellation manager");
+        let job_id = PhotolabJobId(request.job_id.clone());
+        manager
+            .start(
+                NewPhotolabJob {
+                    id: job_id.clone(),
+                    kind: PhotolabJobKind::AlignPhotos,
+                    config_hash: ObjectHash::of_bytes(b"tiled-config"),
+                    input_hash: ObjectHash::of_bytes(b"tiled-input"),
+                    progress: request.progress_plan().initial_progress(),
+                },
+                move |context| runtime.run_as_job(&request, &context),
+            )
+            .await
+            .expect("start tiled cancellation job");
+        let scratch = wait_for_invocation(&scratch_root, "tile-000001").await;
+        manager
+            .cancel(&job_id)
+            .await
+            .expect("cancel tiled extraction");
+        let terminal = manager
+            .wait_for_terminal(&job_id)
+            .await
+            .expect("wait for tiled cancellation");
+        assert_eq!(terminal.state, PhotolabJobState::Cancelled);
+        let invocations = fs::read_to_string(scratch.join("invocations.log"))
+            .expect("read cancelled tiled invocations");
+        assert_eq!(invocations.matches("CMD|feature_extractor").count(), 2);
+        assert!(!scratch.join("output-summary.json").exists());
     }
 
     #[tokio::test]

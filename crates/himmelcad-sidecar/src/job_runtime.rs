@@ -92,7 +92,8 @@ pub struct AlignmentMemoryPlan {
 }
 
 /// Deterministic grid for the largest resized image in one alignment admission.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AlignmentExtractionTiling {
     pub columns: u32,
     pub rows: u32,

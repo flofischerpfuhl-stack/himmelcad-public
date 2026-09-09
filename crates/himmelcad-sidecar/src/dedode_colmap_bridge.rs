@@ -28,10 +28,12 @@ const TILED_FEATURE_DEDUPLICATION_RADIUS_PX: f32 = 2.0;
 pub struct TiledAlikedFeature {
     pub x: f32,
     pub y: f32,
-    pub scale: f32,
-    pub orientation: f32,
+    pub a11: f32,
+    pub a12: f32,
+    pub a21: f32,
+    pub a22: f32,
     pub score: f32,
-    pub descriptor: [u8; COLMAP_DESCRIPTOR_COLUMNS],
+    pub descriptor: [f32; COLMAP_DESCRIPTOR_COLUMNS],
 }
 
 /// Stable tile identity and its offset in the resized source image.
@@ -63,12 +65,15 @@ pub fn merge_tiled_aliked_features(
             if ![
                 feature.x,
                 feature.y,
-                feature.scale,
-                feature.orientation,
+                feature.a11,
+                feature.a12,
+                feature.a21,
+                feature.a22,
                 feature.score,
             ]
             .into_iter()
             .all(f32::is_finite)
+                || !feature.descriptor.iter().all(|value| value.is_finite())
                 || feature.x < 0.0
                 || feature.y < 0.0
             {
@@ -89,9 +94,11 @@ pub fn merge_tiled_aliked_features(
             .total_cmp(&left.score)
             .then_with(|| left.x.total_cmp(&right.x))
             .then_with(|| left.y.total_cmp(&right.y))
-            .then_with(|| left.descriptor.cmp(&right.descriptor))
-            .then_with(|| left.scale.total_cmp(&right.scale))
-            .then_with(|| left.orientation.total_cmp(&right.orientation))
+            .then_with(|| compare_float_descriptors(&left.descriptor, &right.descriptor))
+            .then_with(|| left.a11.total_cmp(&right.a11))
+            .then_with(|| left.a12.total_cmp(&right.a12))
+            .then_with(|| left.a21.total_cmp(&right.a21))
+            .then_with(|| left.a22.total_cmp(&right.a22))
             .then_with(|| left_tile.cmp(right_tile))
     });
 
@@ -132,6 +139,17 @@ pub fn merge_tiled_aliked_features(
         }
     }
     Ok(merged)
+}
+
+fn compare_float_descriptors(
+    left: &[f32; COLMAP_DESCRIPTOR_COLUMNS],
+    right: &[f32; COLMAP_DESCRIPTOR_COLUMNS],
+) -> std::cmp::Ordering {
+    left.iter()
+        .zip(right)
+        .map(|(left, right)| left.total_cmp(right))
+        .find(|ordering| !ordering.is_eq())
+        .unwrap_or(std::cmp::Ordering::Equal)
 }
 
 /// Files consumed by COLMAP's `feature_importer` and `matches_importer`.
@@ -552,10 +570,12 @@ mod tests {
         TiledAlikedFeature {
             x,
             y,
-            scale: 1.0,
-            orientation: 0.0,
+            a11: 1.0,
+            a12: 0.0,
+            a21: 0.0,
+            a22: 1.0,
             score,
-            descriptor: [descriptor; COLMAP_DESCRIPTOR_COLUMNS],
+            descriptor: [f32::from(descriptor); COLMAP_DESCRIPTOR_COLUMNS],
         }
     }
 
@@ -608,7 +628,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(overlap.len(), 1);
         assert_eq!(overlap[0].score, 0.9);
-        assert_eq!(overlap[0].descriptor[0], 3);
+        assert_eq!(overlap[0].descriptor[0], 3.0);
     }
 
     #[test]

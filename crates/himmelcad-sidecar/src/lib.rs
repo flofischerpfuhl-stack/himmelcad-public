@@ -12,6 +12,7 @@ pub mod camera_export;
 pub mod canonical_app_runtime;
 pub mod canonical_project_store;
 pub mod capture_runtime;
+pub mod colmap_feature_db;
 pub mod colmap_runtime;
 pub mod crs_runtime;
 pub mod crs_service;
