@@ -87,27 +87,52 @@ export class BuilderProjectLifecycleStore {
     const write = this.persistTail.then(async () => {
       await fs.mkdir(dirname(this.path), { recursive: true });
       const candidate = `${this.path}.tmp-${process.pid}`;
-      await fs.writeFile(candidate, `${JSON.stringify(snapshot, null, 2)}\n`, { flag: 'w' });
-      const file = await fs.open(candidate, 'r');
+      const file = await fs.open(candidate, 'w');
       try {
+        await file.writeFile(`${JSON.stringify(snapshot, null, 2)}\n`, 'utf8');
         await file.sync();
       } finally {
         await file.close();
       }
       await fs.rename(candidate, this.path);
-      try {
-        const directory = await fs.open(dirname(this.path), 'r');
-        try {
-          await directory.sync();
-        } finally {
-          await directory.close();
-        }
-      } catch (error) {
-        if (process.platform !== 'win32') throw error;
-      }
+      await syncDirectoryBestEffort(fs, dirname(this.path));
     });
     this.persistTail = write.catch(() => undefined);
     await write;
+  }
+}
+
+interface DirectorySyncFilesystem {
+  open(path: string, flags: 'r'): Promise<{ sync(): Promise<void>; close(): Promise<void> }>;
+}
+
+const BEST_EFFORT_DIRECTORY_SYNC_ERRORS = new Set([
+  'EACCES',
+  'EINVAL',
+  'EISDIR',
+  'ENOTSUP',
+  'EPERM',
+]);
+
+export async function syncDirectoryBestEffort(
+  filesystem: DirectorySyncFilesystem,
+  directory: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<boolean> {
+  if (platform === 'win32') return false;
+
+  let handle: Awaited<ReturnType<DirectorySyncFilesystem['open']>> | undefined;
+  try {
+    handle = await filesystem.open(directory, 'r');
+    await handle.sync();
+    return true;
+  } catch (error) {
+    if (!BEST_EFFORT_DIRECTORY_SYNC_ERRORS.has((error as NodeJS.ErrnoException).code ?? '')) {
+      throw error;
+    }
+    return false;
+  } finally {
+    await handle?.close().catch(() => undefined);
   }
 }
 

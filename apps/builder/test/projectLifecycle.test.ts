@@ -7,6 +7,7 @@ import test from 'node:test';
 import {
   BuilderProjectLifecycleStore,
   recentProjectLimitFromEnvironment,
+  syncDirectoryBestEffort,
   withArchiveExtension,
   withProjectExtension,
 } from '../electron/projectLifecycle.js';
@@ -19,12 +20,18 @@ test('G-FP-3 recent project list is durable, de-duplicated and bounded', async (
   await store.opened(resolve(root, 'two.hcad'));
   await store.opened(resolve(root, 'three.hcad'));
   await store.opened(resolve(root, 'one.hcad'));
-  assert.deepEqual(store.recent().map((entry) => entry.name), ['one', 'three', 'two']);
+  assert.deepEqual(
+    store.recent().map((entry) => entry.name),
+    ['one', 'three', 'two'],
+  );
 
   const relaunched = new BuilderProjectLifecycleStore(preferences, 3);
   await relaunched.load();
   assert.equal(relaunched.lastProjectPath(), resolve(root, 'one.hcad'));
-  assert.deepEqual(relaunched.recent().map((entry) => entry.name), ['one', 'three', 'two']);
+  assert.deepEqual(
+    relaunched.recent().map((entry) => entry.name),
+    ['one', 'three', 'two'],
+  );
   assert.equal(JSON.parse(await readFile(preferences, 'utf8')).schemaVersion, 1);
 });
 
@@ -34,4 +41,28 @@ test('project and archive extensions are explicit and the MRU tunable fails safe
   assert.equal(withArchiveExtension('/tmp/site'), '/tmp/site.hcadx');
   assert.equal(recentProjectLimitFromEnvironment('17'), 17);
   assert.equal(recentProjectLimitFromEnvironment('0'), 10);
+});
+
+test('directory durability runs on POSIX and skips the unsupported Windows operation', async () => {
+  const calls: string[] = [];
+  const filesystem = {
+    open: async (_path: string, _flags: 'r') => {
+      calls.push('open');
+      return {
+        sync: async () => {
+          calls.push('sync');
+        },
+        close: async () => {
+          calls.push('close');
+        },
+      };
+    },
+  };
+
+  assert.equal(await syncDirectoryBestEffort(filesystem, '/project', 'linux'), true);
+  assert.deepEqual(calls, ['open', 'sync', 'close']);
+
+  calls.length = 0;
+  assert.equal(await syncDirectoryBestEffort(filesystem, 'C:\\project', 'win32'), false);
+  assert.deepEqual(calls, []);
 });

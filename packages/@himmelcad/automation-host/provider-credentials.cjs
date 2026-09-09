@@ -1,5 +1,7 @@
 'use strict';
 
+const { syncDirectory } = require('./durability.cjs');
+
 const { randomUUID } = require('node:crypto');
 const nodeFilesystem = require('node:fs/promises');
 const { dirname, isAbsolute } = require('node:path');
@@ -690,18 +692,6 @@ function hasExactKeys(value, keys) {
 
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-async function syncDirectory(filesystem, directory) {
-  let handle = null;
-  try {
-    handle = await filesystem.open(directory, 'r');
-    await handle.sync();
-  } catch (error) {
-    if (!['EACCES', 'EINVAL', 'EISDIR', 'ENOTSUP', 'EPERM'].includes(error?.code)) throw error;
-  } finally {
-    await handle?.close().catch(() => undefined);
-  }
 }
 
 module.exports = {

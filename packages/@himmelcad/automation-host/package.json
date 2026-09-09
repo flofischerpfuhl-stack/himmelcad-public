@@ -20,6 +20,11 @@
       "types": "./provider-credentials.d.ts",
       "require": "./provider-credentials.cjs",
       "default": "./provider-credentials.cjs"
+    },
+    "./durability": {
+      "types": "./durability.d.ts",
+      "require": "./durability.cjs",
+      "default": "./durability.cjs"
     }
   },
   "scripts": {
