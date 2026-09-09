@@ -22,7 +22,7 @@
     {
       "path": "bin/colmap.exe",
       "bytes": 68183552,
-      "sha256": "f4710b8c5be3ca21e81fbc21e7831c3385a76469afae6b1eef2ee4e3612a1ee6"
+      "sha256": "1bfb4b9a2ee37c560666bf1744e2adfb46e0f97b849810c469ee69d7ccc6e441"
     },
     {
       "path": "bin/libc++.dll",
@@ -2971,8 +2971,8 @@
     },
     {
       "path": "share/faiss/faiss-config-version.cmake",
-      "bytes": 1862,
-      "sha256": "bb49ea586f797f99772aa3cd29dcc541ece3174c2f9e4829461a8d03a3745966"
+      "bytes": 1861,
+      "sha256": "6652ce625b32105b81111beb93f162f182f90891fbd6d89fcb6376086c14f3d9"
     },
     {
       "path": "share/faiss/faiss-config.cmake",

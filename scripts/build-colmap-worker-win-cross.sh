@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUILD_ROOT="${HIMMELCAD_COLMAP_BUILD_ROOT:-$ROOT/.build/colmap-worker}"
+BUILD_ROOT="$(realpath -m "${HIMMELCAD_COLMAP_BUILD_ROOT:-$ROOT/.build/colmap-worker}")"
 VCPKG_ROOT="${HIMMELCAD_VCPKG_ROOT:-$BUILD_ROOT/vcpkg}"
 LLVM_ROOT="${HIMMELCAD_LLVM_MINGW_ROOT:-$ROOT/.build/llvm-mingw/llvm-mingw-20260407-ucrt-ubuntu-22.04-x86_64}"
 SOURCE="$BUILD_ROOT/colmap"
@@ -11,6 +11,8 @@ INSTALL="$ROOT/vendor/colmap/win32-x64"
 TRIPLET="x64-mingw-static-himmelcad"
 TRIPLET_ROOT="$BUILD_ROOT/triplets"
 OVERLAY_PORTS="$BUILD_ROOT/overlay-ports"
+VCPKG_BINARY_CACHE="$BUILD_ROOT/vcpkg-binary-cache"
+VCPKG_XDG_CACHE="$BUILD_ROOT/xdg-cache"
 CLAPACK_MODULE="$BUILD/vcpkg_installed/$TRIPLET/share/clapack"
 PATCH="$ROOT/patches/colmap-4.1.0-no-copyleft.patch"
 VCPKG_COMMIT="03e366fb91e38b9432ebd5f8cc79f7c8f55e96ab"
@@ -18,7 +20,9 @@ LLVM_ARCHIVE="$ROOT/.build/llvm-mingw/toolchain.tar.xz"
 LLVM_URL="https://github.com/mstorsjo/llvm-mingw/releases/download/20260407/llvm-mingw-20260407-ucrt-ubuntu-22.04-x86_64.tar.xz"
 LLVM_SHA256="c39aeb4823bbc89ce2a40820964a114614a524c2cb7be1e3dafd16f780fa39b1"
 
-mkdir -p "$BUILD_ROOT" "$(dirname "$LLVM_ARCHIVE")"
+mkdir -p "$BUILD_ROOT" "$(dirname "$LLVM_ARCHIVE")" "$VCPKG_BINARY_CACHE" "$VCPKG_XDG_CACHE"
+export VCPKG_DEFAULT_BINARY_CACHE="$VCPKG_BINARY_CACHE"
+export XDG_CACHE_HOME="$VCPKG_XDG_CACHE"
 if [[ ! -d "$VCPKG_ROOT/.git" ]]; then
   git clone --filter=blob:none --no-checkout https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
 fi
@@ -82,7 +86,10 @@ set(VCPKG_CXX_FLAGS "-D_WIN32_WINNT=0x0602")
 EOF
 export PATH="$LLVM_ROOT/bin:$PATH"
 export VCPKG_MAX_CONCURRENCY="${HIMMELCAD_BUILD_JOBS:-$(nproc)}"
-NINJA="$(find "$VCPKG_ROOT/downloads/tools" -type f -name ninja -perm -u+x 2>/dev/null | head -n 1)"
+NINJA="$(find "$VCPKG_ROOT/downloads/tools" -type f -name ninja -perm -u+x 2>/dev/null | head -n 1 || true)"
+if [[ -z "$NINJA" ]]; then
+  NINJA="$("$VCPKG_ROOT/vcpkg" fetch ninja | tail -n 1)"
+fi
 [[ -n "$NINJA" ]] || { echo "vcpkg Ninja is missing below $VCPKG_ROOT/downloads/tools" >&2; exit 1; }
 cmake -S "$SOURCE" -B "$BUILD" \
   -G Ninja \
