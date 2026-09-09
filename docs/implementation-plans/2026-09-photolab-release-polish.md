@@ -585,6 +585,26 @@ the measured peak. Ready for the A7d smoke rerun with unit `MemoryMax=18G`;
 expected matcher evidence is `matchingReplanned.matchingWorkers = 4` plus the
 limit mode and model bytes.
 
+### WP-A7f — Make matching self-bounding (Size S)
+
+Implemented 2026-09-10 (working tree, no commit; smoke pending): the cached
+systemd user-scope probe now runs `/bin/true` with a viable 64 MB resident
+limit and no swap, and reports its once-per-process result at info level.
+Every matching attempt receives the full 50% matching-stage share as its
+resident cgroup limit rather than a model-derived limit. A diagnosed limit
+death halves the thread count with ceiling division, durably records the
+observed peak and degradation, deletes only the partial rows in COLMAP's
+`matches` table, and retries through one thread with cancellation checks at
+every boundary. A one-thread limit death returns the existing typed matching
+memory refusal. Successful stage evidence includes every attempt and the
+observed bytes per thread beside the model bytes per thread; it does not alter
+the model automatically. The three incident calibration points are 26.4 GB
+and 28.8 GB anon RSS at eight threads, and at least 18.77 GB anon RSS at four
+threads for 8,122 keypoints per image. READY FOR SMOKE with unit
+`MemoryMax=18G`; expected evidence is `cgroupScope`, a 14.55 GB matching limit,
+and either success at a bounded thread count or the typed matching-memory
+refusal, never a unit-level kill.
+
 ## Phase B — Resume, shutdown, and job-owner integrity
 
 ### WP-B1 — Wire the checkpoint sink; make `interruptedRecoverable` real (Size M)
@@ -2007,6 +2027,20 @@ denied before its synthetic DTM assertion can execute. No dataset, alignment,
 DEM, or smoke job was run on this host. bindings:generate completed; product
 lineage interfaces are not in that generated registry, so there is no retained
 binding delta.
+
+**WP-G1a-3d - Canonical lineage byte compatibility. Ready for Linux smoke
+2026-09-10.** `dem_facts.surface` is now an omission-preserving optional lineage
+field: readers interpret an absent value as DSM, while every new DEM publisher
+writes the explicit DSM or DTM value. Validation keeps the closed contract:
+DTM requires ground-classification identity, implicit or explicit DSM forbids
+it, and unknown surface values fail closed. The real pre-G1a-3c lineage payload
+(`d623eb8a885ddbfcf716a632c7098a70e1ea6ce013d692519950227c3540047a`)
+and a payload containing both new DTM fields now prove deserialize-to-canonical
+byte identity; a sidecar publication regression proves the unchanged resident
+lineage hash gate accepts the legacy payload. The requested reuse smoke was not
+started because the latest host preflight failed both launch gates (load
+average 10.60 and only 4 GB free; required load below 4 and at least 15 GB
+free).
 
 Diagnostic finding 2026-09-06 (40-image Quality Hybrid, golden-bin): COLMAP is
 CPU-only here and ALIKED_N32 at 8192 px runs with one extraction thread (15.7 GB

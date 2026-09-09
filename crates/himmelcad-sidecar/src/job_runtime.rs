@@ -142,6 +142,16 @@ pub fn neural_matching_bytes_per_worker(keypoints: u32) -> u64 {
         .saturating_add(NEURAL_MATCHING_FIXED_BASE_BYTES)
 }
 
+/// Resident-memory limit for one matcher attempt.
+///
+/// WP-A7f X6 policy: matching owns half of the usable envelope. The limit deliberately does not
+/// depend on the calibration model because the Sulzberg incidents showed that matcher RSS is not
+/// linear in thread count; the retry ladder discovers a safe count inside this fixed stage share.
+#[must_use]
+pub const fn matching_stage_memory_limit_bytes(usable_bytes: u64) -> u64 {
+    usable_bytes.saturating_mul(MATCHING_STAGE_SHARE_NUMERATOR) / MATCHING_STAGE_SHARE_DENOMINATOR
+}
+
 /// Replans LightGlue from the maximum stored row count immediately before matching.
 ///
 /// The admission cap remains authoritative even if a worker or an old extracted-feature cache
@@ -183,8 +193,7 @@ pub fn replan_alignment_matching(
             to: keypoint_cap,
         });
     }
-    let matching_budget = usable_bytes.saturating_mul(MATCHING_STAGE_SHARE_NUMERATOR)
-        / MATCHING_STAGE_SHARE_DENOMINATOR;
+    let matching_budget = matching_stage_memory_limit_bytes(usable_bytes);
     let matching_workers = u16::try_from((matching_budget / matching_unit_bytes).max(1))
         .unwrap_or(u16::MAX)
         .min(logical_cpus.max(1));
@@ -257,10 +266,7 @@ pub fn plan_alignment_memory(request: &AlignmentMemoryRequest) -> AlignmentMemor
             .max(1)
     };
 
-    let matching_budget = request
-        .usable_bytes
-        .saturating_mul(MATCHING_STAGE_SHARE_NUMERATOR)
-        / MATCHING_STAGE_SHARE_DENOMINATOR;
+    let matching_budget = matching_stage_memory_limit_bytes(request.usable_bytes);
     let mut keypoints = request.keypoints.max(KEYPOINT_QUANTUM);
     let matching_model = |value| {
         if request.neural_matching {
@@ -1274,6 +1280,37 @@ impl JobMemorySink {
                 limit_bytes,
             ))
     }
+
+    /// Persists one matcher thread-count fallback before the next attempt starts.
+    pub fn record_matching_threads_halved_blocking(
+        &self,
+        from: u16,
+        to: u16,
+        observed_peak_bytes: u64,
+    ) -> Result<(), JobManagerError> {
+        self.manager
+            .runtime
+            .block_on(self.manager.record_matching_threads_halved(
+                &self.job_id,
+                from,
+                to,
+                observed_peak_bytes,
+            ))
+    }
+
+    /// Records the thread count used by the successful matcher attempt.
+    pub fn record_matching_threads_blocking(
+        &self,
+        stage: impl Into<String>,
+        threads: u16,
+    ) -> Result<(), JobManagerError> {
+        self.manager
+            .runtime
+            .block_on(
+                self.manager
+                    .record_matching_threads(&self.job_id, stage.into(), threads),
+            )
+    }
 }
 
 impl JobDiagnosticSink {
@@ -2200,6 +2237,67 @@ impl JobManager {
         let degradation = PhotolabMemoryDegradation::WorkerMemoryLimitHit { stage, limit_bytes };
         if !managed.job.memory.degradations.contains(&degradation) {
             managed.job.memory.degradations.push(degradation);
+            self.publish_durable(managed);
+        }
+        Ok(())
+    }
+
+    async fn record_matching_threads_halved(
+        &self,
+        job_id: &PhotolabJobId,
+        from: u16,
+        to: u16,
+        observed_peak_bytes: u64,
+    ) -> Result<(), JobManagerError> {
+        let mut jobs = self.inner.jobs.lock().await;
+        let managed = jobs
+            .get_mut(&job_id.0)
+            .ok_or_else(|| JobManagerError::JobNotFound(job_id.clone()))?;
+        let degradation = PhotolabMemoryDegradation::MatchingThreadsHalved {
+            from,
+            to,
+            observed_peak_bytes,
+        };
+        if !managed.job.memory.degradations.contains(&degradation) {
+            managed.job.memory.degradations.push(degradation);
+        }
+        if let Some(stage) = managed
+            .job
+            .memory
+            .stages
+            .iter_mut()
+            .find(|stage| stage.stage == "Match ALIKED with LightGlue")
+        {
+            stage.workers = to;
+            if let Some(parameters) = stage.parameters.as_object_mut() {
+                parameters.insert("sequentialPairBatches".into(), (to == 1).into());
+            }
+        }
+        self.publish_durable(managed);
+        Ok(())
+    }
+
+    async fn record_matching_threads(
+        &self,
+        job_id: &PhotolabJobId,
+        stage_name: String,
+        threads: u16,
+    ) -> Result<(), JobManagerError> {
+        let mut jobs = self.inner.jobs.lock().await;
+        let managed = jobs
+            .get_mut(&job_id.0)
+            .ok_or_else(|| JobManagerError::JobNotFound(job_id.clone()))?;
+        if let Some(stage) = managed
+            .job
+            .memory
+            .stages
+            .iter_mut()
+            .find(|stage| stage.stage == stage_name)
+        {
+            stage.workers = threads;
+            if let Some(parameters) = stage.parameters.as_object_mut() {
+                parameters.insert("sequentialPairBatches".into(), (threads == 1).into());
+            }
             self.publish_durable(managed);
         }
         Ok(())
@@ -3898,6 +3996,32 @@ mod tests {
                 to: 18_000,
             }
         ));
+    }
+
+    #[test]
+    fn matching_stage_limit_is_half_the_reference_envelope_regardless_of_model() {
+        let usable_bytes = 29_100_000_000;
+        let expected_limit = 14_550_000_000;
+        assert_eq!(
+            matching_stage_memory_limit_bytes(usable_bytes),
+            expected_limit
+        );
+        for keypoints in [8_192, 24_000] {
+            let mut request = alignment_memory_request(29);
+            request.usable_bytes = usable_bytes;
+            request.keypoints = keypoints;
+            let plan = plan_alignment_memory(&request);
+            let matching = plan
+                .memory
+                .stages
+                .iter()
+                .find(|stage| stage.stage == "Match ALIKED with LightGlue")
+                .expect("matching stage memory");
+            assert_eq!(
+                matching.parameters.get("stageBudgetBytes"),
+                Some(&serde_json::json!(expected_limit))
+            );
+        }
     }
 
     #[test]

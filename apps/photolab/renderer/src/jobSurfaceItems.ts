@@ -58,6 +58,9 @@ export function memoryStatusText(job: PhotolabJob): string | null {
       if (degradation.kind === 'workerMemoryLimitHit') {
         return `worker memory limit hit in ${degradation.stage} (${(degradation.limitBytes / 1_073_741_824).toFixed(1)} GB)`;
       }
+      if (degradation.kind === 'matchingThreadsHalved') {
+        return `matching threads reduced ${degradation.from} to ${degradation.to} after a ${(degradation.observedPeakBytes / 1_073_741_824).toFixed(1)} GB peak`;
+      }
       return `keypoints capped ${degradation.from.toLocaleString('en-US')} to ${degradation.to.toLocaleString('en-US')}`;
     }),
   );

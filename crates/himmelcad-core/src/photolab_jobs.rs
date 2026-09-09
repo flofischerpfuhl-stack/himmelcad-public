@@ -351,6 +351,11 @@ pub enum PhotolabMemoryDegradation {
         from: u32,
         to: u32,
     },
+    MatchingThreadsHalved {
+        from: u16,
+        to: u16,
+        observed_peak_bytes: u64,
+    },
     WorkerMemoryLimitHit {
         stage: String,
         limit_bytes: u64,

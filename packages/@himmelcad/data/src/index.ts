@@ -499,6 +499,12 @@ export type PhotolabMemoryDegradation =
       to: number;
     }
   | {
+      kind: 'matchingThreadsHalved';
+      from: number;
+      to: number;
+      observedPeakBytes: number;
+    }
+  | {
       kind: 'workerMemoryLimitHit';
       stage: string;
       limitBytes: number;

@@ -42,8 +42,8 @@ use crate::mesh_tiler::PreparedMeshProduct;
 use crate::image_commit::{CameraImageMetadataRecord, ProjectCameraImageRecord};
 use crate::image_mask_runtime::materialize_colmap_masks;
 use crate::job_runtime::{
-    replan_alignment_matching, AlignmentExtractionTiling, JobWorkerContext, JobWorkerError,
-    JobWorkerResult, SIFT_MATCHING_BYTES_PER_WORKER,
+    matching_stage_memory_limit_bytes, replan_alignment_matching, AlignmentExtractionTiling,
+    JobWorkerContext, JobWorkerError, JobWorkerResult, SIFT_MATCHING_BYTES_PER_WORKER,
 };
 use crate::{
     colmap_feature_db::{
@@ -1139,6 +1139,37 @@ fn command_option<'a>(spec: &'a CommandSpec, name: &str) -> Option<&'a str> {
     })
 }
 
+fn set_command_option(args: &mut [OsString], name: &str, value: String) {
+    let Some(index) = args
+        .iter()
+        .position(|argument| argument == OsStr::new(name))
+    else {
+        return;
+    };
+    if let Some(argument) = args.get_mut(index.saturating_add(1)) {
+        *argument = OsString::from(value);
+    }
+}
+
+/// Removes only the pairwise matches produced by an interrupted matcher attempt. Images,
+/// keypoints, descriptors, and geometric-verification results are outside the retry's output
+/// scope and remain untouched.
+fn clear_partial_matching_output(database: &Path) -> Result<(), ColmapRuntimeError> {
+    let mut connection = rusqlite::Connection::open_with_flags(
+        database,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(ColmapFeatureDbError::from)?;
+    let transaction = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(ColmapFeatureDbError::from)?;
+    transaction
+        .execute("DELETE FROM matches", [])
+        .map_err(ColmapFeatureDbError::from)?;
+    transaction.commit().map_err(ColmapFeatureDbError::from)?;
+    Ok(())
+}
+
 impl ColmapRuntime {
     fn run_dedode_store(
         &self,
@@ -1780,6 +1811,7 @@ pub enum ColmapRuntimeError {
         stage: String,
         limit_bytes: u64,
         limit_gb: u64,
+        observed_peak_bytes: u64,
     },
     #[error("COLMAP command {command:?} failed with exit code {exit_code:?}: {message}")]
     CommandFailed {
@@ -1916,7 +1948,8 @@ struct RunState {
     extraction_memory_limit_bytes: Option<u64>,
     matching_memory_limit_bytes: Option<u64>,
     extraction_model_bytes: Option<u64>,
-    matching_model_bytes: Option<u64>,
+    matching_model_bytes_per_thread: Option<u64>,
+    matching_attempts: BTreeMap<String, Vec<serde_json::Value>>,
 }
 
 impl RunState {
@@ -1929,7 +1962,8 @@ impl RunState {
             extraction_memory_limit_bytes: None,
             matching_memory_limit_bytes: None,
             extraction_model_bytes: None,
-            matching_model_bytes: None,
+            matching_model_bytes_per_thread: None,
+            matching_attempts: BTreeMap::new(),
         }
     }
 
@@ -1957,16 +1991,34 @@ impl RunState {
         }
     }
 
-    fn model_bytes_for(&self, kind: ColmapCommandKind) -> Option<u64> {
-        match kind {
+    fn model_bytes_for(&self, spec: &CommandSpec) -> Option<u64> {
+        match spec.kind {
             ColmapCommandKind::FeatureExtractor | ColmapCommandKind::FeatureImporter => {
                 self.extraction_model_bytes
             }
             ColmapCommandKind::ExhaustiveMatcher
             | ColmapCommandKind::SequentialMatcher
-            | ColmapCommandKind::GeometricVerifier => self.matching_model_bytes,
+            | ColmapCommandKind::GeometricVerifier => self
+                .matching_model_bytes_per_thread
+                .map(|unit| unit.saturating_mul(u64::from(command_worker_count(spec)))),
             _ => None,
         }
+    }
+
+    fn record_matching_attempt(
+        &mut self,
+        stage: &str,
+        threads: u16,
+        peak_rss_bytes: u64,
+        outcome: &'static str,
+    ) -> serde_json::Value {
+        let attempts = self.matching_attempts.entry(stage.into()).or_default();
+        attempts.push(serde_json::json!({
+            "threads": threads,
+            "peakRssBytes": peak_rss_bytes,
+            "outcome": outcome,
+        }));
+        serde_json::Value::Array(attempts.clone())
     }
 
     fn report_stage(
@@ -2219,27 +2271,17 @@ impl ColmapRuntime {
                         replan.degradation.clone(),
                     )
                     .map_err(|error| ColmapRuntimeError::Progress(error.to_string()))?;
-                state.matching_memory_limit_bytes = Some(worker_memory_limit_bytes(
-                    replan.record.matching_unit_bytes,
-                    replan.record.matching_workers,
+                state.matching_memory_limit_bytes = Some(matching_stage_memory_limit_bytes(
+                    request.memory_envelope_bytes,
                 ));
-                state.matching_model_bytes = Some(
-                    replan
-                        .record
-                        .matching_unit_bytes
-                        .saturating_mul(u64::from(replan.record.matching_workers)),
-                );
+                state.matching_model_bytes_per_thread = Some(replan.record.matching_unit_bytes);
                 replan.record.matching_workers
             }
             FeatureStoreKind::Sift => {
-                state.matching_memory_limit_bytes = Some(worker_memory_limit_bytes(
-                    SIFT_MATCHING_BYTES_PER_WORKER,
-                    request.matching_worker_threads,
+                state.matching_memory_limit_bytes = Some(matching_stage_memory_limit_bytes(
+                    request.memory_envelope_bytes,
                 ));
-                state.matching_model_bytes = Some(
-                    SIFT_MATCHING_BYTES_PER_WORKER
-                        .saturating_mul(u64::from(request.matching_worker_threads.max(1))),
-                );
+                state.matching_model_bytes_per_thread = Some(SIFT_MATCHING_BYTES_PER_WORKER);
                 request.matching_worker_threads
             }
         };
@@ -2282,15 +2324,55 @@ impl ColmapRuntime {
                 os("1"),
             ]),
         }
-        self.execute_required(
-            &CommandSpec {
-                kind: matcher_kind,
-                stage_label: store.matching_label(),
-                args: matching,
-            },
-            context,
-            state,
-        )?;
+        let mut matching_threads = matching_threads.max(1);
+        loop {
+            set_command_option(
+                &mut matching,
+                "--FeatureMatching.num_threads",
+                matching_threads.to_string(),
+            );
+            let result = self.execute_required(
+                &CommandSpec {
+                    kind: matcher_kind,
+                    stage_label: store.matching_label(),
+                    args: matching.clone(),
+                },
+                context,
+                state,
+            );
+            match result {
+                Ok(()) => {
+                    context
+                        .memory
+                        .record_matching_threads_blocking(store.matching_label(), matching_threads)
+                        .map_err(|error| ColmapRuntimeError::Progress(error.to_string()))?;
+                    break;
+                }
+                Err(ColmapRuntimeError::WorkerMemoryLimitHit {
+                    observed_peak_bytes,
+                    ..
+                }) if matching_threads > 1 => {
+                    context.check_cancelled().map_err(map_worker_error)?;
+                    let next_threads = matching_threads.div_ceil(2);
+                    context
+                        .memory
+                        .record_matching_threads_halved_blocking(
+                            matching_threads,
+                            next_threads,
+                            observed_peak_bytes,
+                        )
+                        .map_err(|error| ColmapRuntimeError::Progress(error.to_string()))?;
+                    context.check_cancelled().map_err(map_worker_error)?;
+                    clear_partial_matching_output(&database)?;
+                    context.check_cancelled().map_err(map_worker_error)?;
+                    matching_threads = next_threads;
+                }
+                Err(ColmapRuntimeError::WorkerMemoryLimitHit { .. }) => {
+                    return Err(ColmapRuntimeError::InsufficientMatchingMemory);
+                }
+                Err(error) => return Err(error),
+            }
+        }
         self.execute_required(
             &CommandSpec {
                 kind: ColmapCommandKind::GeometricVerifier,
@@ -3441,9 +3523,29 @@ impl ColmapRuntime {
             }
         });
         let peak_rss_bytes = child.peak_rss_bytes();
+        let matching_attempt_outcome =
+            is_feature_matching_command(spec.kind).then(|| match supervised.as_ref() {
+                Ok(outcome)
+                    if worker_limit_plan.is_some_and(|plan| {
+                        worker_memory_limit_error(
+                            spec.stage_label,
+                            plan.enforced_limit_bytes,
+                            peak_rss_bytes,
+                            outcome,
+                        )
+                        .is_some()
+                    }) =>
+                {
+                    "workerMemoryLimit"
+                }
+                Ok(outcome) if outcome.status.success() => "completed",
+                Ok(_) => "failed",
+                Err(ColmapRuntimeError::Cancelled) => "cancelled",
+                Err(_) => "failed",
+            });
         let mut memory_parameters = command_memory_parameters(spec);
         if let Some(parameters) = memory_parameters.as_object_mut() {
-            if let Some(model_bytes) = state.model_bytes_for(spec.kind) {
+            if let Some(model_bytes) = state.model_bytes_for(spec) {
                 parameters.insert("modelBytes".into(), model_bytes.into());
             }
             if let Some(plan) = worker_limit_plan {
@@ -3455,6 +3557,31 @@ impl ColmapRuntime {
                     "workerMemoryLimitMode".into(),
                     serde_json::Value::String(plan.mode.as_str().into()),
                 );
+            }
+            if let Some(outcome) = matching_attempt_outcome {
+                let threads = command_worker_count(spec).max(1);
+                parameters.insert(
+                    "attempts".into(),
+                    state.record_matching_attempt(
+                        spec.stage_label,
+                        threads,
+                        peak_rss_bytes,
+                        outcome,
+                    ),
+                );
+                if outcome == "completed" {
+                    parameters.insert(
+                        "observedBytesPerThread".into(),
+                        peak_rss_bytes
+                            .checked_div(u64::from(threads))
+                            .unwrap_or(0)
+                            .into(),
+                    );
+                    if let Some(model_bytes_per_thread) = state.matching_model_bytes_per_thread {
+                        parameters
+                            .insert("modelBytesPerThread".into(), model_bytes_per_thread.into());
+                    }
+                }
             }
         }
         context
@@ -3471,9 +3598,12 @@ impl ColmapRuntime {
             return Err(error);
         }
         if let Some(plan) = worker_limit_plan {
-            if let Some(error) =
-                worker_memory_limit_error(spec.stage_label, plan.enforced_limit_bytes, &outcome)
-            {
+            if let Some(error) = worker_memory_limit_error(
+                spec.stage_label,
+                plan.enforced_limit_bytes,
+                peak_rss_bytes,
+                &outcome,
+            ) {
                 context
                     .memory
                     .record_worker_memory_limit_hit_blocking(
@@ -3667,22 +3797,51 @@ fn worker_command_for_plan(
 fn systemd_user_scope() -> Option<&'static Path> {
     SYSTEMD_USER_SCOPE
         .get_or_init(|| {
-            let executable = find_in_path("systemd-run")?;
-            let status = Command::new(&executable)
-                .arg("--user")
-                .arg("--scope")
-                .arg("-p")
-                .arg("MemoryMax=1")
-                .arg("--")
-                .arg("/bin/true")
+            let Some(executable) = find_in_path("systemd-run") else {
+                tracing::info!(
+                    available = false,
+                    "PhotoLab systemd user-scope probe completed"
+                );
+                return None;
+            };
+            let status = systemd_user_scope_probe_command(&executable)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .status()
-                .ok()?;
-            status.success().then_some(executable)
+                .status();
+            let available = status.as_ref().is_ok_and(ExitStatus::success);
+            match status {
+                Ok(status) => tracing::info!(
+                    available,
+                    %status,
+                    "PhotoLab systemd user-scope probe completed"
+                ),
+                Err(ref error) => tracing::info!(
+                    available,
+                    %error,
+                    "PhotoLab systemd user-scope probe completed"
+                ),
+            }
+            available.then_some(executable)
         })
         .as_deref()
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_user_scope_probe_command(executable: &Path) -> Command {
+    let mut command = Command::new(executable);
+    command
+        .arg("--user")
+        .arg("--scope")
+        .arg("--quiet")
+        .arg("-p")
+        .arg("MemoryMax=64M")
+        .arg("-p")
+        .arg("MemorySwapMax=0")
+        .arg("--collect")
+        .arg("--")
+        .arg("/bin/true");
+    command
 }
 
 #[cfg(target_os = "linux")]
@@ -3710,7 +3869,7 @@ fn outcome_indicates_memory_limit(outcome: &ProcessOutcome) -> bool {
     }
     outcome.log_tail.iter().any(|line| {
         let lower = line.to_ascii_lowercase();
-        if lower.trim() == "killed" {
+        if lower.trim() == "killed" || lower.trim_end().ends_with(": killed") {
             return true;
         }
         [
@@ -3730,6 +3889,7 @@ fn outcome_indicates_memory_limit(outcome: &ProcessOutcome) -> bool {
 fn worker_memory_limit_error(
     stage: &str,
     limit_bytes: u64,
+    observed_peak_bytes: u64,
     outcome: &ProcessOutcome,
 ) -> Option<ColmapRuntimeError> {
     (!outcome.status.success() && outcome_indicates_memory_limit(outcome)).then(|| {
@@ -3737,8 +3897,16 @@ fn worker_memory_limit_error(
             stage: stage.into(),
             limit_bytes,
             limit_gb: limit_bytes.div_ceil(GIB),
+            observed_peak_bytes,
         }
     })
+}
+
+fn is_feature_matching_command(kind: ColmapCommandKind) -> bool {
+    matches!(
+        kind,
+        ColmapCommandKind::ExhaustiveMatcher | ColmapCommandKind::SequentialMatcher
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6103,7 +6271,9 @@ mod tests {
         photolab_images::{
             DiscoveredPhoto, ImageDimensions, PhotoFormat, PhotoMetadata, ProjectedPhotoReference,
         },
-        photolab_jobs::{NewPhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState},
+        photolab_jobs::{
+            NewPhotolabJob, PhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState,
+        },
     };
 
     use super::*;
@@ -6190,7 +6360,9 @@ mod tests {
             .execute_batch(
                 "CREATE TABLE images (image_id INTEGER PRIMARY KEY NOT NULL, name TEXT NOT NULL UNIQUE, camera_id INTEGER NOT NULL);\
                  CREATE TABLE keypoints (image_id INTEGER PRIMARY KEY NOT NULL, rows INTEGER NOT NULL, cols INTEGER NOT NULL, data BLOB);\
-                 CREATE TABLE descriptors (image_id INTEGER PRIMARY KEY NOT NULL, type INTEGER NOT NULL, rows INTEGER NOT NULL, cols INTEGER NOT NULL, data BLOB);",
+                 CREATE TABLE descriptors (image_id INTEGER PRIMARY KEY NOT NULL, type INTEGER NOT NULL, rows INTEGER NOT NULL, cols INTEGER NOT NULL, data BLOB);\
+                 CREATE TABLE matches (pair_id INTEGER PRIMARY KEY NOT NULL, rows INTEGER NOT NULL, cols INTEGER NOT NULL, data BLOB);\
+                 CREATE TABLE two_view_geometries (pair_id INTEGER PRIMARY KEY NOT NULL, rows INTEGER NOT NULL, cols INTEGER NOT NULL, data BLOB);",
             )
             .expect("create fake feature database schema");
     }
@@ -6680,6 +6852,28 @@ case "$cmd" in
     db="$(value_for --database_path "$@")"
     if [ ! -s "$db" ]; then /bin/cp "$(dirname "$0")/fake-bootstrap.db" "$db"; fi
     ;;
+  exhaustive_matcher|sequential_matcher)
+    threads="$(value_for --FeatureMatching.num_threads "$@")"
+    case "$PWD" in
+      *matcher-retry-ladder-job*)
+        if [ "$threads" = "8" ] || [ "$threads" = "4" ]; then
+          printf 'Killed\n' >&2
+          exit 137
+        fi
+        ;;
+      *matcher-refusal-job*)
+        printf 'Killed\n' >&2
+        exit 137
+        ;;
+      *matcher-cancel-retry-job*)
+        if [ "$threads" = "8" ]; then
+          printf 'Killed\n' >&2
+          exit 137
+        fi
+        while :; do :; done
+        ;;
+    esac
+    ;;
   matches_importer)
     ;;
   global_mapper)
@@ -6824,6 +7018,32 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
             .expect("wait for fake COLMAP job");
         assert_eq!(terminal.state, PhotolabJobState::Completed);
         receiver.recv().expect("receive successful outcome")
+    }
+
+    async fn run_to_terminal(runtime: ColmapRuntime, request: ColmapRunRequest) -> PhotolabJob {
+        let manager = JobManager::new(JobManagerConfig {
+            max_concurrency: 1,
+            max_queued: 0,
+        })
+        .expect("create job manager");
+        let job_id = PhotolabJobId(request.job_id.clone());
+        manager
+            .start(
+                NewPhotolabJob {
+                    id: job_id.clone(),
+                    kind: PhotolabJobKind::AlignPhotos,
+                    config_hash: ObjectHash::of_bytes(b"config"),
+                    input_hash: ObjectHash::of_bytes(b"input"),
+                    progress: request.progress_plan().initial_progress(),
+                },
+                move |context| runtime.run_as_job(&request, &context),
+            )
+            .await
+            .expect("start fake COLMAP job");
+        manager
+            .wait_for_terminal(&job_id)
+            .await
+            .expect("wait for fake COLMAP job")
     }
 
     #[test]
@@ -7519,6 +7739,176 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
+    fn systemd_user_scope_probe_uses_a_viable_limit_and_disables_swap() {
+        let command = systemd_user_scope_probe_command(Path::new("/usr/bin/systemd-run"));
+        assert_eq!(command.get_program(), OsStr::new("/usr/bin/systemd-run"));
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                "--user",
+                "--scope",
+                "--quiet",
+                "-p",
+                "MemoryMax=64M",
+                "-p",
+                "MemorySwapMax=0",
+                "--collect",
+                "--",
+                "/bin/true",
+            ]
+            .map(OsStr::new)
+        );
+    }
+
+    #[test]
+    fn matching_retry_cleanup_removes_only_pairwise_matches() {
+        let directory = TestDirectory::new("matching-retry-cleanup");
+        write_fake_feature_databases(&directory.0);
+        let database = directory.0.join("fake-bootstrap.db");
+        let before = read_image_features(&database, "calibration-000000/image-00000000.jpg")
+            .expect("read features before cleanup");
+        let connection = rusqlite::Connection::open(&database).expect("open fake database");
+        connection
+            .execute(
+                "INSERT INTO matches(pair_id, rows, cols, data) VALUES (1, 1, 2, X'00000000')",
+                [],
+            )
+            .expect("insert partial match");
+        connection
+            .execute(
+                "INSERT INTO two_view_geometries(pair_id, rows, cols, data) VALUES (1, 1, 2, X'00000000')",
+                [],
+            )
+            .expect("insert verified geometry sentinel");
+        drop(connection);
+
+        clear_partial_matching_output(&database).expect("clear partial matcher output");
+
+        let connection = rusqlite::Connection::open(&database).expect("reopen fake database");
+        let match_count = connection
+            .query_row("SELECT COUNT(*) FROM matches", [], |row| {
+                row.get::<_, u64>(0)
+            })
+            .expect("count matches");
+        let geometry_count = connection
+            .query_row("SELECT COUNT(*) FROM two_view_geometries", [], |row| {
+                row.get::<_, u64>(0)
+            })
+            .expect("count geometries");
+        assert_eq!(match_count, 0);
+        assert_eq!(geometry_count, 1);
+        assert_eq!(
+            read_image_features(&database, "calibration-000000/image-00000000.jpg")
+                .expect("read features after cleanup"),
+            before
+        );
+    }
+
+    #[tokio::test]
+    async fn matching_memory_kills_halve_threads_until_the_attempt_succeeds() {
+        let rig = TestRig::new("matcher-retry-ladder", false, false);
+        let terminal =
+            run_to_terminal(rig.runtime(), rig.request("matcher-retry-ladder-job")).await;
+        assert_eq!(terminal.state, PhotolabJobState::Completed);
+        let halvings = terminal
+            .memory
+            .degradations
+            .iter()
+            .filter_map(|degradation| match degradation {
+                PhotolabMemoryDegradation::MatchingThreadsHalved { from, to, .. } => {
+                    Some((*from, *to))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(halvings, [(8, 4), (4, 2)]);
+        let stage = terminal
+            .memory
+            .stages
+            .iter()
+            .find(|stage| stage.stage == "Match ALIKED with LightGlue")
+            .expect("matching stage memory");
+        assert_eq!(stage.workers, 2);
+        let attempts = stage.parameters["attempts"]
+            .as_array()
+            .expect("matching attempts");
+        assert_eq!(attempts.len(), 3);
+        assert_eq!(attempts[0]["threads"], 8);
+        assert_eq!(attempts[0]["outcome"], "workerMemoryLimit");
+        assert_eq!(attempts[1]["threads"], 4);
+        assert_eq!(attempts[1]["outcome"], "workerMemoryLimit");
+        assert_eq!(attempts[2]["threads"], 2);
+        assert_eq!(attempts[2]["outcome"], "completed");
+        assert!(stage.parameters.get("observedBytesPerThread").is_some());
+        assert!(stage.parameters.get("modelBytesPerThread").is_some());
+    }
+
+    #[tokio::test]
+    async fn matching_memory_kill_at_one_thread_returns_the_typed_refusal() {
+        let rig = TestRig::new("matcher-refusal", false, false);
+        let terminal = run_to_terminal(rig.runtime(), rig.request("matcher-refusal-job")).await;
+        assert!(matches!(
+            terminal.state,
+            PhotolabJobState::Failed { ref code, ref message }
+                if code == "insufficientMemory"
+                    && message == "alignment needs more memory than this machine has for matching"
+        ));
+        let stage = terminal
+            .memory
+            .stages
+            .iter()
+            .find(|stage| stage.stage == "Match ALIKED with LightGlue")
+            .expect("matching stage memory");
+        assert_eq!(
+            stage.parameters["attempts"]
+                .as_array()
+                .expect("matching attempts")
+                .len(),
+            4
+        );
+    }
+
+    #[tokio::test]
+    async fn cancellation_interrupts_an_active_matching_retry_within_one_poll_interval() {
+        let _timing_guard = crate::CANCELLATION_TIMING_TEST_LOCK
+            .lock()
+            .expect("cancellation timing test lock");
+        let rig = TestRig::new("matcher-cancel-retry", false, false);
+        let runtime = rig.runtime();
+        let request = rig.request("matcher-cancel-retry-job");
+        let scratch_root = rig.config.scratch_root.clone();
+        let manager = JobManager::new(JobManagerConfig {
+            max_concurrency: 1,
+            max_queued: 0,
+        })
+        .expect("create job manager");
+        let job_id = PhotolabJobId(request.job_id.clone());
+        manager
+            .start(
+                NewPhotolabJob {
+                    id: job_id.clone(),
+                    kind: PhotolabJobKind::AlignPhotos,
+                    config_hash: ObjectHash::of_bytes(b"config"),
+                    input_hash: ObjectHash::of_bytes(b"input"),
+                    progress: request.progress_plan().initial_progress(),
+                },
+                move |context| runtime.run_as_job(&request, &context),
+            )
+            .await
+            .expect("start cancellable matcher job");
+        wait_for_invocation(&scratch_root, "--FeatureMatching.num_threads|4").await;
+        let started = Instant::now();
+        manager.cancel(&job_id).await.expect("request cancellation");
+        let terminal = manager
+            .wait_for_terminal(&job_id)
+            .await
+            .expect("wait for cancellation");
+        assert_eq!(terminal.state, PhotolabJobState::Cancelled);
+        assert!(started.elapsed() <= CANCEL_POLL_INTERVAL.saturating_mul(4));
+    }
+
+    #[test]
     #[cfg(unix)]
     fn cgroup_killed_diagnostic_maps_to_the_typed_memory_error() {
         use std::os::unix::process::ExitStatusExt;
@@ -7528,11 +7918,12 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
             log_tail: vec!["Killed".into()],
         };
         assert!(matches!(
-            worker_memory_limit_error("Match ALIKED with LightGlue", 4 * GIB, &outcome),
+            worker_memory_limit_error("Match ALIKED with LightGlue", 4 * GIB, 123, &outcome),
             Some(ColmapRuntimeError::WorkerMemoryLimitHit {
                 ref stage,
                 limit_bytes,
                 limit_gb: 4,
+                observed_peak_bytes: 123,
             }) if stage == "Match ALIKED with LightGlue" && limit_bytes == 4 * GIB
         ));
     }
@@ -7600,7 +7991,7 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
         let outcome = supervise_child(&mut child, &CancellationToken::new(), |_, _| {})
             .expect("supervise memory-limited fake COLMAP");
         let error =
-            worker_memory_limit_error(spec.stage_label, plan.enforced_limit_bytes, &outcome)
+            worker_memory_limit_error(spec.stage_label, plan.enforced_limit_bytes, 321, &outcome)
                 .expect("typed worker memory error");
         assert!(matches!(
             error,
@@ -7608,6 +7999,7 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
                 ref stage,
                 limit_bytes: 2_097_152,
                 limit_gb: 1,
+                observed_peak_bytes: 321,
             } if stage == "Extract ALIKED"
         ));
         assert_eq!(
