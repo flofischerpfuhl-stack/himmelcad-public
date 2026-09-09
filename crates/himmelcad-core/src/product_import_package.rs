@@ -292,12 +292,28 @@ pub struct ProductLineageDemValidityV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub struct ProductLineageDemGroundClassificationV1 {
+    pub sha256: ObjectHash,
+    pub algorithm_id: String,
+    pub parameters_sha256: ObjectHash,
+}
+
+fn default_dem_surface() -> String {
+    "dsm".to_owned()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct PhotoLabDemFactsV1 {
     pub semantics: String,
     pub interpolation: String,
     pub connectivity: ProductLineageDemConnectivityV1,
     pub source_no_data: ProductLineageDemSourceNoDataV1,
     pub validity: ProductLineageDemValidityV1,
+    #[serde(default = "default_dem_surface")]
+    pub surface: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ground_classification: Option<ProductLineageDemGroundClassificationV1>,
 }
 
 /// Exact IF-D26 frozen publication lineage.
@@ -543,6 +559,17 @@ pub fn read_product_import_package_manifest(
             "package_sha256 does not match the canonical manifest payload".to_owned(),
         ));
     }
+    let original_lineage_bytes = canonical_json::to_vec(
+        value
+            .get("lineage")
+            .and_then(|lineage| lineage.get("payload"))
+            .ok_or_else(|| {
+                ProductImportPackageError::InvalidManifest(
+                    "lineage payload is missing from the manifest".to_owned(),
+                )
+            })?,
+    )
+    .map_err(|error| ProductImportPackageError::InvalidManifest(error.to_string()))?;
     let manifest: ProductImportPackageManifestV1 = serde_json::from_value(value)
         .map_err(|error| ProductImportPackageError::InvalidManifest(error.to_string()))?;
     if manifest
@@ -560,9 +587,7 @@ pub fn read_product_import_package_manifest(
     {
         return Err(ProductImportPackageError::UnsupportedPackageSchema);
     }
-    let lineage_bytes = canonical_json::to_vec(&manifest.lineage.payload)
-        .map_err(|error| ProductImportPackageError::InvalidManifest(error.to_string()))?;
-    if manifest.lineage.lineage_object_sha256 != ObjectHash::of_bytes(&lineage_bytes)
+    if manifest.lineage.lineage_object_sha256 != ObjectHash::of_bytes(&original_lineage_bytes)
         || manifest.source.project_id != manifest.lineage.payload.source_project_id
         || manifest.source.project_fingerprint
             != manifest.lineage.payload.source_project_fingerprint
@@ -806,6 +831,41 @@ fn validate_dem_facts(facts: &PhotoLabDemFactsV1) -> Result<(), ProductImportPac
         return Err(ProductImportPackageError::InvalidManifest(
             "DEM facts contain invalid sampling or encoding values".to_owned(),
         ));
+    }
+    match (facts.surface.as_str(), &facts.ground_classification) {
+        ("dsm", None) => {}
+        ("dtm", Some(classification)) => {
+            let valid_hash = |hash: &ObjectHash| {
+                hash.as_str().len() == 64
+                    && hash
+                        .as_str()
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            };
+            if classification.algorithm_id != "smrf@1"
+                || !valid_hash(&classification.sha256)
+                || !valid_hash(&classification.parameters_sha256)
+            {
+                return Err(ProductImportPackageError::InvalidManifest(
+                    "DEM ground classification identity is invalid".to_owned(),
+                ));
+            }
+        }
+        ("dtm", None) => {
+            return Err(ProductImportPackageError::InvalidManifest(
+                "DTM DEM facts require ground_classification".to_owned(),
+            ));
+        }
+        ("dsm", Some(_)) => {
+            return Err(ProductImportPackageError::InvalidManifest(
+                "DSM DEM facts forbid ground_classification".to_owned(),
+            ));
+        }
+        _ => {
+            return Err(ProductImportPackageError::InvalidManifest(
+                "DEM surface must be dsm or dtm".to_owned(),
+            ));
+        }
     }
     Ok(())
 }
@@ -1098,6 +1158,15 @@ mod tests {
         manifest
     }
 
+    fn finalize_manifest(
+        mut manifest: ProductImportPackageManifestV1,
+    ) -> ProductImportPackageManifestV1 {
+        let lineage_bytes = canonical_json::to_vec(&manifest.lineage.payload).unwrap();
+        manifest.lineage.lineage_object_sha256 = ObjectHash::of_bytes(&lineage_bytes);
+        manifest.package_sha256 = manifest.computed_package_sha256().unwrap();
+        manifest
+    }
+
     fn dem_fixture() -> ProductImportPackageManifestV1 {
         let mut manifest = fixture();
         let validity = ProductLineageResourceIdentityV1 {
@@ -1124,6 +1193,8 @@ mod tests {
                 resource: validity.clone(),
                 encoding: "bitsetLsb0".into(),
             },
+            surface: "dsm".into(),
+            ground_classification: None,
         });
         manifest.artifacts.push(ProductImportPackageArtifactV1 {
             path: "dataset/view/validity.bin".into(),
@@ -1145,6 +1216,14 @@ mod tests {
         manifest.counts.artifact_count = 2;
         manifest.counts.total_bytes = 3;
         manifest
+    }
+
+    fn ground_classification_fixture() -> ProductLineageDemGroundClassificationV1 {
+        ProductLineageDemGroundClassificationV1 {
+            sha256: ObjectHash::of_bytes(b"ground-classification"),
+            algorithm_id: "smrf@1".into(),
+            parameters_sha256: ObjectHash::of_bytes(b"smrf-parameters"),
+        }
     }
 
     #[test]
@@ -1421,6 +1500,84 @@ mod tests {
     }
 
     #[test]
+    fn dtm_ground_classification_round_trips_and_admits() {
+        let mut manifest = dem_fixture();
+        let facts = manifest.lineage.payload.dem_facts.as_mut().unwrap();
+        facts.surface = "dtm".into();
+        facts.ground_classification = Some(ground_classification_fixture());
+        let manifest = finalize_manifest(manifest);
+        let bytes = canonical_json::to_vec(&manifest).unwrap();
+
+        let retained =
+            read_product_import_package_manifest(&bytes, &BTreeSet::new(), &BTreeSet::new())
+                .expect("DTM package with ground lineage must admit");
+        assert_eq!(retained.manifest, manifest);
+        assert_eq!(retained.original_manifest_bytes, bytes);
+    }
+
+    #[test]
+    fn dtm_without_ground_classification_is_refused() {
+        let mut manifest = dem_fixture();
+        manifest.lineage.payload.dem_facts.as_mut().unwrap().surface = "dtm".into();
+        let manifest = finalize_manifest(manifest);
+        let bytes = canonical_json::to_vec(&manifest).unwrap();
+
+        assert_eq!(
+            read_product_import_package_manifest(&bytes, &BTreeSet::new(), &BTreeSet::new())
+                .unwrap_err(),
+            ProductImportPackageError::InvalidManifest(
+                "DTM DEM facts require ground_classification".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn dsm_with_ground_classification_is_refused() {
+        let mut manifest = dem_fixture();
+        manifest
+            .lineage
+            .payload
+            .dem_facts
+            .as_mut()
+            .unwrap()
+            .ground_classification = Some(ground_classification_fixture());
+        let manifest = finalize_manifest(manifest);
+        let bytes = canonical_json::to_vec(&manifest).unwrap();
+
+        assert_eq!(
+            read_product_import_package_manifest(&bytes, &BTreeSet::new(), &BTreeSet::new())
+                .unwrap_err(),
+            ProductImportPackageError::InvalidManifest(
+                "DSM DEM facts forbid ground_classification".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn pre_change_dem_manifest_without_surface_admits_as_dsm() {
+        let manifest = finalize_manifest(dem_fixture());
+        let mut value = serde_json::to_value(manifest).unwrap();
+        value["lineage"]["payload"]["dem_facts"]
+            .as_object_mut()
+            .unwrap()
+            .remove("surface");
+        let lineage_sha256 =
+            ObjectHash::of_bytes(&canonical_json::to_vec(&value["lineage"]["payload"]).unwrap());
+        value["lineage"]["lineage_object_sha256"] = json!(lineage_sha256);
+        let package_sha256 =
+            canonical_json::sha256_omitting_member(&value, "package_sha256").unwrap();
+        value["package_sha256"] = json!(package_sha256);
+        let bytes = canonical_json::to_vec(&value).unwrap();
+
+        let retained =
+            read_product_import_package_manifest(&bytes, &BTreeSet::new(), &BTreeSet::new())
+                .expect("pre-change DEM package must remain readable");
+        let facts = retained.manifest.lineage.payload.dem_facts.unwrap();
+        assert_eq!(facts.surface, "dsm");
+        assert!(facts.ground_classification.is_none());
+    }
+
+    #[test]
     fn dem_resource_binding_mismatch_is_rejected() {
         let mut manifest = dem_fixture();
         manifest
@@ -1461,6 +1618,8 @@ mod tests {
                 resource,
                 encoding: "bitsetLsb0".into(),
             },
+            surface: "dtm".into(),
+            ground_classification: Some(ground_classification_fixture()),
         })
         .unwrap();
         assert_eq!(value["connectivity"]["kind"], "continuous");
@@ -1468,5 +1627,7 @@ mod tests {
         assert!(value["connectivity"].get("maximum_height_jump").is_none());
         assert!(value["validity"]["resource"].get("resource_id").is_some());
         assert!(value["validity"]["resource"].get("resourceId").is_none());
+        assert_eq!(value["surface"], "dtm");
+        assert_eq!(value["ground_classification"]["algorithm_id"], "smrf@1");
     }
 }

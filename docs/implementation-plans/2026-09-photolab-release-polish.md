@@ -1990,6 +1990,24 @@ classification and reproduced the content-addressed
 verifies an existing hash) — 0.5-02 accepted on the PhotoLab side; log
 `.build/logs/smrf-prerefactor.log`.
 
+**WP-G1a-3c - DTM lineage identity. Ready for Linux smoke 2026-09-09
+(photolab/g1a3c).** DEM package lineage now freezes surface (dsm or dtm).
+DTM facts additionally carry the immutable dense-classification content hash,
+algorithm_id smrf@1, and the canonical SMRF-parameter hash; the same parameter
+hash is appended as the smrf@1 tool identity. DSM facts forbid classification
+identity, DTM facts require it, and old manifests without surface still admit
+as DSM because hashes are verified against the original wire payload before
+serde defaults are applied. Windows evidence: core 244/244 plus the 1/1
+automation-schema test and renderer 86/86 pass. The sidecar library run
+completed 201 passed, 59 failed, 8 ignored; failures are existing Windows
+permission, global compute-lease contention, and invalid temporary-name cases
+outside this package. The binary DEM publication regression builds, but the
+existing Windows File::open(...).sync_all() package flush fails with access
+denied before its synthetic DTM assertion can execute. No dataset, alignment,
+DEM, or smoke job was run on this host. bindings:generate completed; product
+lineage interfaces are not in that generated registry, so there is no retained
+binding delta.
+
 Diagnostic finding 2026-09-06 (40-image Quality Hybrid, golden-bin): COLMAP is
 CPU-only here and ALIKED_N32 at 8192 px runs with one extraction thread (15.7 GB
 RSS measured for one worker; the memory model in `colmap_feature_worker_threads`

@@ -43,7 +43,7 @@ use himmelcad_core::photolab_masks::{
     ComputeImageMask, ImageMaskCatalog, ImageMaskCatalogEntry, ImageMaskComputeScope,
     ImageMaskEdit, ImageMaskRaster, ImageMaskRevisionRecord,
 };
-use himmelcad_core::photolab_products::ImageProductTag;
+use himmelcad_core::photolab_products::{ImageProductTag, SmrfGroundParameters};
 use himmelcad_core::photolab_project::{
     initial_photolab_manifest, JournalCommandState, OpenPhotolabProjectResult,
     PhotolabJournalEntry, PhotolabProjectManifest, ProjectSessionSummary,
@@ -57,12 +57,13 @@ use himmelcad_core::product_import_package::{
     ProductImportPackageProducerV1, ProductImportPackageProductV1,
     ProductImportPackageReadyRecordV1, ProductImportPackageRepresentationSlotV1,
     ProductImportPackageResourceV1, ProductImportPackageSourceV1, ProductLineageAlignmentKindV1,
-    ProductLineageDemConnectivityV1, ProductLineageDemSourceNoDataV1, ProductLineageDemValidityV1,
-    ProductLineageGcpChoiceV1, ProductLineageIdentityV1, ProductLineageMaskScopeV1,
-    ProductLineageProcessingSetChoiceV1, ProductLineageProjectReferenceFrameV1,
-    ProductLineageReferenceFrameV1, ProductLineageResourceIdentityV1, ProductLineageV1,
-    ProductPublicationReasonCodeV1, ProvenanceStatus, PRODUCT_IMPORT_PACKAGE_READY_SCHEMA_ID,
-    PRODUCT_IMPORT_PACKAGE_SCHEMA_ID, PRODUCT_LINEAGE_SCHEMA_ID, PRODUCT_PUBLICATION_SCHEMA_ID,
+    ProductLineageDemConnectivityV1, ProductLineageDemGroundClassificationV1,
+    ProductLineageDemSourceNoDataV1, ProductLineageDemValidityV1, ProductLineageGcpChoiceV1,
+    ProductLineageIdentityV1, ProductLineageMaskScopeV1, ProductLineageProcessingSetChoiceV1,
+    ProductLineageProjectReferenceFrameV1, ProductLineageReferenceFrameV1,
+    ProductLineageResourceIdentityV1, ProductLineageV1, ProductPublicationReasonCodeV1,
+    ProvenanceStatus, PRODUCT_IMPORT_PACKAGE_READY_SCHEMA_ID, PRODUCT_IMPORT_PACKAGE_SCHEMA_ID,
+    PRODUCT_LINEAGE_SCHEMA_ID, PRODUCT_PUBLICATION_SCHEMA_ID,
 };
 use himmelcad_core::typed_artifact::{TypedArtifactManifest, TYPED_ARTIFACT_MANIFEST_NAME};
 use serde::{Deserialize, Serialize};
@@ -1663,6 +1664,86 @@ fn product_job_identities(
     ))
 }
 
+fn dem_ground_lineage_identity(
+    session: &ProjectSession,
+    job_id: &str,
+    raster: &RasterArtifactRecord,
+) -> Result<(
+    String,
+    Option<ProductLineageDemGroundClassificationV1>,
+    Option<ProductLineageIdentityV1>,
+)> {
+    const SMRF_ALGORITHM_ID: &str = "smrf@1";
+
+    let surface = if raster.ground_classification_sha256.is_some() {
+        "dtm"
+    } else {
+        "dsm"
+    };
+    let frozen_path = job_history_record_path(&session.working_path, job_id);
+    let frozen_configuration = if frozen_path.is_file() {
+        let record: ProjectJobHistoryRecord = serde_json::from_slice(&fs::read(&frozen_path)?)?;
+        anyhow::ensure!(
+            record.project_id == session.manifest.project_id && record.job.id.0 == job_id,
+            "frozen DEM configuration belongs to another project or job"
+        );
+        record
+            .frozen_request
+            .map(|request| {
+                request.validate().map_err(anyhow::Error::msg)?;
+                request
+                    .params
+                    .get("configuration")
+                    .cloned()
+                    .context("frozen DEM request has no configuration")
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    if let Some(configuration) = &frozen_configuration {
+        anyhow::ensure!(
+            configuration
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                == Some("dem"),
+            "frozen raster configuration is not a DEM configuration"
+        );
+        let frozen_surface = configuration
+            .get("surface")
+            .and_then(serde_json::Value::as_str)
+            .context("frozen DEM configuration has no surface")?;
+        anyhow::ensure!(
+            frozen_surface.eq_ignore_ascii_case(surface),
+            "raster ground-classification identity disagrees with the frozen DEM surface"
+        );
+    }
+
+    let Some(classification_sha256) = raster.ground_classification_sha256.clone() else {
+        return Ok((surface.to_owned(), None, None));
+    };
+    let configuration =
+        frozen_configuration.context("DTM publication requires the frozen DEM configuration")?;
+    let parameters: SmrfGroundParameters = serde_json::from_value(configuration)?;
+    let canonical_parameters = serde_json::json!({
+        "cellSizeM": canonical_json::Decimal64::from_f64(parameters.cell_size_m)?,
+        "slope": canonical_json::Decimal64::from_f64(parameters.slope)?,
+        "maxWindowM": canonical_json::Decimal64::from_f64(parameters.max_window_m)?,
+        "initialDistanceM": canonical_json::Decimal64::from_f64(parameters.initial_distance_m)?,
+    });
+    let parameters_sha256 = ObjectHash::of_bytes(&canonical_json::to_vec(&canonical_parameters)?);
+    let ground_classification = ProductLineageDemGroundClassificationV1 {
+        sha256: classification_sha256,
+        algorithm_id: SMRF_ALGORITHM_ID.to_owned(),
+        parameters_sha256: parameters_sha256.clone(),
+    };
+    let tool = ProductLineageIdentityV1 {
+        id: SMRF_ALGORITHM_ID.to_owned(),
+        sha256: parameters_sha256,
+    };
+    Ok((surface.to_owned(), Some(ground_classification), Some(tool)))
+}
+
 struct FrozenProductLineage {
     envelope: ProductImportPackageLineageV1,
     provenance_status: ProvenanceStatus,
@@ -2800,6 +2881,8 @@ fn canonical_dem_product_contract(
     dataset_root: &Path,
     summary: &RasterBuildSummary,
     validity: &RasterValidityResource,
+    surface: String,
+    ground_classification: Option<ProductLineageDemGroundClassificationV1>,
 ) -> Result<(ProductPackageCanonicalContract, PhotoLabDemFactsV1)> {
     let validity_path = dataset_root.join(&validity.path);
     let (validity_sha256, validity_byte_length) = hash_regular_file(&validity_path)?;
@@ -2983,6 +3066,8 @@ fn canonical_dem_product_contract(
             resource: validity_identity,
             encoding: "bitsetLsb0".to_owned(),
         },
+        surface,
+        ground_classification,
     };
     let geometry = GeometryObject::ElevationSurface {
         surface: Box::new(ElevationSurfaceGeometry::Grid {
@@ -8747,7 +8832,7 @@ impl ProjectRuntime {
             .get(&entity_id.0)
             .context("raster product disappeared before lineage publication")?;
         let camera_scope = frozen_product_camera_scope(session, lineage)?;
-        let gdal_tools = record
+        let mut product_tools: Vec<ProductLineageIdentityV1> = record
             .summary
             .audit
             .executable_sha256
@@ -8763,8 +8848,19 @@ impl ProjectRuntime {
                 .validity_resource
                 .as_ref()
                 .context("prepared DEM has no validity resource")?;
-            let (canonical, dem_facts) =
-                canonical_dem_product_contract(snapshot, &output, &record.summary, validity)?;
+            let (surface, ground_classification, smrf_tool) =
+                dem_ground_lineage_identity(session, job_id, &record)?;
+            if let Some(smrf_tool) = smrf_tool {
+                product_tools.push(smrf_tool);
+            }
+            let (canonical, dem_facts) = canonical_dem_product_contract(
+                snapshot,
+                &output,
+                &record.summary,
+                validity,
+                surface,
+                ground_classification,
+            )?;
             write_product_import_package(
                 session,
                 &candidate,
@@ -8780,7 +8876,7 @@ impl ProjectRuntime {
                 &camera_scope,
                 job_id,
                 PhotolabJobKind::BuildDem,
-                gdal_tools,
+                product_tools,
                 Some(dem_facts),
                 canonical,
                 &CancellationToken::new(),
@@ -8798,7 +8894,7 @@ impl ProjectRuntime {
                 PhotolabJobKind::BuildOrthomosaic,
                 lineage,
                 &camera_scope,
-                gdal_tools,
+                product_tools,
                 Vec::new(),
                 ProductPublicationReasonCodeV1::UnsupportedFormat,
             )?;
@@ -17988,6 +18084,8 @@ mod tests {
             assert_eq!(facts.semantics, "elevationZ");
             assert_eq!(facts.interpolation, "bilinear");
             assert_eq!(facts.validity.encoding, "bitsetLsb0");
+            assert_eq!(facts.surface, "dsm");
+            assert!(facts.ground_classification.is_none());
             assert!(matches!(
                 &facts.connectivity,
                 ProductLineageDemConnectivityV1::Continuous {
@@ -18027,6 +18125,106 @@ mod tests {
                     && resource.media_type == "application/octet-stream"
             }));
         }
+
+        let dtm_job_id = "dem-dtm";
+        let dtm_job = test_job_with_kind(dtm_job_id, PhotolabJobKind::BuildDem);
+        let frozen_request = FrozenJobRequest::new(
+            "photolab.jobs.startProduct",
+            serde_json::json!({
+                "operationId": dtm_job_id,
+                "configuration": {
+                    "kind": "dem",
+                    "surface": "dtm",
+                    "resolutionMetersPerPixel": 0.25,
+                    "interpolateNodata": true,
+                    "tileSizePixels": 512,
+                    "cellSizeM": 1.0,
+                    "slope": 0.15,
+                    "maxWindowM": 18.0,
+                    "initialDistanceM": 0.5,
+                }
+            }),
+            &NewPhotolabJob {
+                id: dtm_job.id.clone(),
+                kind: dtm_job.kind,
+                config_hash: dtm_job.config_hash.clone(),
+                input_hash: dtm_job.input_hash.clone(),
+                progress: dtm_job.progress.clone(),
+            },
+        )
+        .expect("frozen DTM request");
+        {
+            let mut guard = runtime.session.lock().expect("session");
+            let session = guard.as_mut().expect("open project");
+            write_project_job_history_record(
+                &session.working_path,
+                &session.manifest.project_id,
+                &dtm_job,
+                Some(&frozen_request),
+            )
+            .expect("persist frozen DTM request");
+            session.job_history.insert(dtm_job_id.into(), dtm_job);
+        }
+        let dtm_root = project_root.join("datasets/raster/dtm");
+        let ground_classification_sha256 = ObjectHash::of_bytes(b"ground-classification");
+        let published = runtime
+            .publish_raster_summary(
+                dtm_job_id,
+                PublishedRasterKind::Dem,
+                prepared_dem_summary(&dtm_root, RasterNoDataValue::Numeric(-9999.0)),
+                &lineage,
+                Some(ground_classification_sha256.clone()),
+            )
+            .expect("publish DTM");
+        let entity_id = published.entity_ids.first().expect("DTM entity");
+        let (_, artifact_record) = runtime
+            .raster_dataset_by_entity_id(entity_id, PublishedRasterKind::Dem, Some(&lineage))
+            .expect("DTM artifact record");
+        let artifact_ground_sha256 = artifact_record
+            .ground_classification_sha256
+            .expect("DTM artifact ground classification");
+        assert_eq!(artifact_ground_sha256, ground_classification_sha256);
+        let publication: PhotoLabProductPublicationRecordV1 = serde_json::from_slice(
+            &fs::read(product_import_publication_path(&project_root, entity_id))
+                .expect("DTM publication record"),
+        )
+        .expect("valid DTM publication record");
+        let package = publication.package.as_ref().expect("DTM package");
+        let manifest: ProductImportPackageManifestV1 = serde_json::from_slice(
+            &fs::read(
+                project_root
+                    .join(&package.package_relative_path)
+                    .join("manifest.json"),
+            )
+            .expect("DTM manifest"),
+        )
+        .expect("valid DTM manifest");
+        let facts = manifest
+            .lineage
+            .payload
+            .dem_facts
+            .as_ref()
+            .expect("DTM facts");
+        let classification = facts
+            .ground_classification
+            .as_ref()
+            .expect("DTM ground-classification lineage");
+        assert_eq!(facts.surface, "dtm");
+        assert_eq!(classification.sha256, artifact_ground_sha256);
+        assert_eq!(classification.algorithm_id, "smrf@1");
+        let expected_parameters_sha256 = ObjectHash::of_bytes(
+            &canonical_json::to_vec(&serde_json::json!({
+                "cellSizeM": canonical_json::Decimal64::parse("1").unwrap(),
+                "slope": canonical_json::Decimal64::parse("0.15").unwrap(),
+                "maxWindowM": canonical_json::Decimal64::parse("18").unwrap(),
+                "initialDistanceM": canonical_json::Decimal64::parse("0.5").unwrap(),
+            }))
+            .unwrap(),
+        );
+        assert_eq!(classification.parameters_sha256, expected_parameters_sha256);
+        assert!(manifest.lineage.payload.tools.iter().any(|tool| {
+            tool.id == "smrf@1" && tool.sha256 == classification.parameters_sha256
+        }));
         runtime.close().expect("close");
         fs::remove_dir_all(root).expect("cleanup");
     }
