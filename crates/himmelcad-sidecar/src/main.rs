@@ -5352,71 +5352,71 @@ fn drain_timeout_response(
     )
 }
 
+fn job_start_response(
+    id: serde_json::Value,
+    result: std::result::Result<StartJobResult, himmelcad_sidecar::job_runtime::JobManagerError>,
+) -> RpcResponse {
+    match result {
+        Ok(value) => rpc_result(id, Ok::<_, anyhow::Error>(value)),
+        Err(error @ himmelcad_sidecar::job_runtime::JobManagerError::ConflictingTarget { .. }) => {
+            let message = error.to_string();
+            rpc_err_with_data(
+                id,
+                -32041,
+                &message,
+                serde_json::json!({
+                    "code": "conflictingTarget",
+                    "message": message,
+                    "retryable": true,
+                }),
+            )
+        }
+        Err(error @ himmelcad_sidecar::job_runtime::JobManagerError::InsufficientDisk { .. }) => {
+            let (required_bytes, available_bytes) = match &error {
+                himmelcad_sidecar::job_runtime::JobManagerError::InsufficientDisk {
+                    required_bytes,
+                    available_bytes,
+                    ..
+                } => (*required_bytes, *available_bytes),
+                _ => unreachable!("matched insufficient-disk error"),
+            };
+            let message = error.to_string();
+            rpc_err_with_data(
+                id,
+                -32042,
+                &message,
+                serde_json::json!({
+                    "code": "insufficientDisk",
+                    "message": message,
+                    "retryable": true,
+                    "available_bytes": available_bytes,
+                    "required_bytes": required_bytes,
+                }),
+            )
+        }
+        Err(error @ himmelcad_sidecar::job_runtime::JobManagerError::InsufficientMemory { .. }) => {
+            let message = error.to_string();
+            rpc_err_with_data(
+                id,
+                -32043,
+                &message,
+                serde_json::json!({
+                    "code": "insufficientMemory",
+                    "message": message,
+                    "retryable": true,
+                }),
+            )
+        }
+        Err(error) => rpc_err(id, -32000, &error.to_string()),
+    }
+}
+
 async fn handle_job_rpc(
     req: RpcRequest,
     jobs: &JobManager,
     projects: Arc<ProjectRuntime>,
     crs: &CrsService,
 ) -> RpcResponse {
-    let job_start_response = |id,
-                              result: std::result::Result<
-        StartJobResult,
-        himmelcad_sidecar::job_runtime::JobManagerError,
-    >| {
-        match result {
-            Ok(value) => rpc_result(id, Ok::<_, anyhow::Error>(value)),
-            Err(
-                error @ himmelcad_sidecar::job_runtime::JobManagerError::ConflictingTarget {
-                    ..
-                },
-            ) => {
-                let message = error.to_string();
-                rpc_err_with_data(
-                    id,
-                    -32041,
-                    &message,
-                    serde_json::json!({
-                        "code": "conflictingTarget",
-                        "message": message,
-                        "retryable": true,
-                    }),
-                )
-            }
-            Err(
-                error @ himmelcad_sidecar::job_runtime::JobManagerError::InsufficientDisk { .. },
-            ) => {
-                let message = error.to_string();
-                rpc_err_with_data(
-                    id,
-                    -32042,
-                    &message,
-                    serde_json::json!({
-                        "code": "insufficientDisk",
-                        "message": message,
-                        "retryable": true,
-                    }),
-                )
-            }
-            Err(
-                error @ himmelcad_sidecar::job_runtime::JobManagerError::InsufficientMemory {
-                    ..
-                },
-            ) => {
-                let message = error.to_string();
-                rpc_err_with_data(
-                    id,
-                    -32043,
-                    &message,
-                    serde_json::json!({
-                        "code": "insufficientMemory",
-                        "message": message,
-                        "retryable": true,
-                    }),
-                )
-            }
-            Err(error) => rpc_err(id, -32000, &error.to_string()),
-        }
-    };
     match req.method.as_str() {
         "photolab.jobs.startProductExport" => {
             match serde_json::from_value::<StartProductExportJobParams>(req.params) {
@@ -11575,6 +11575,27 @@ mod tests {
             },
         })
         .expect("resume test job")
+    }
+
+    #[test]
+    fn insufficient_disk_response_records_available_and_required_bytes() {
+        const TEST_GIB: u64 = 1024 * 1024 * 1024;
+        let response = job_start_response(
+            serde_json::json!(17),
+            Err(
+                himmelcad_sidecar::job_runtime::JobManagerError::InsufficientDisk {
+                    required_bytes: 2 * TEST_GIB,
+                    available_bytes: TEST_GIB,
+                    path: PathBuf::from("working-copy"),
+                },
+            ),
+        );
+        let error = response.error.expect("insufficient-disk RPC error");
+        let data = error.data.expect("insufficient-disk error data");
+        assert_eq!(error.code, -32042);
+        assert_eq!(data["code"], "insufficientDisk");
+        assert_eq!(data["available_bytes"], TEST_GIB);
+        assert_eq!(data["required_bytes"], 2 * TEST_GIB);
     }
 
     #[test]
