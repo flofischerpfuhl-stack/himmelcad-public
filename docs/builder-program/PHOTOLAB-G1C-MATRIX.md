@@ -1,7 +1,9 @@
 # PhotoLab → Builder product matrix (G1c)
 
 R1 gate 8 ("products open in Builder/WeltView") closes when every **Available**
-row below passes all four checks on the landed G1b import path. Rows that are
+row below passes all four checks on the landed G1b import path (Builder 437789f,
+2026-09-09: V-02 native point clouds, DEM elevation surface with the validity
+bitset as NoData holes, typed refusals, idempotent re-import by sha256). Rows that are
 explicitly unavailable must stay unavailable with the typed reason and never
 reach a consumer (DECISION-DOCTRINE D2 for this surface).
 
@@ -12,12 +14,12 @@ orthomosaic, mesh, gaussianSplat — formats `potree@2` and
 
 ## Checks
 
-| Check        | Pass criterion                                                                                                                                                                                                                                                                                                                           |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **identity** | `ready.json` package hash equals the recomputed hash of the package directory; lineage group carries the frozen PhotoLab source (`normalized_format_id`, alignment/tool identity, `dem_facts` where present); re-import of the same package is idempotent (no second entity, same ids); Import vs Attach both register the same lineage. |
-| **render**   | The product opens in the Builder viewport through the chooser without a manual step; potree@2 via V-02 with LOD continuity; DEM prepared hierarchy renders with the validity bitset applied as NoData (holes, not zero); colours/scale match PhotoLab's own view of the product.                                                         |
-| **pick**     | A point pick returns coordinates in the project CRS that agree with PhotoLab's pick on the same feature within the product's resolution (points: nearest-point distance; DEM: elevation query at a picked XY equals the DEM cell value).                                                                                                 |
-| **snap**     | Builder snapping (0.5-04 line tool) snaps to the imported product's geometry (points: nearest point; DEM: surface elevation) with the snap latency gate of Q-01 still met.                                                                                                                                                               |
+| Check        | Pass criterion                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **identity** | `ready.json` package hash equals the recomputed hash of the package directory; lineage group carries the frozen PhotoLab source (`normalized_format_id`, alignment/tool identity, `dem_facts` where present); re-import of the same package is idempotent (no second entity, same ids); the profile is snapshot Import only (IF-D23 / ADR 0030: no continuing source dependency, no staleness lifecycle) — a re-run in PhotoLab publishes a new package that Builder imports as a new snapshot; there is no Attach. |
+| **render**   | The product opens in the Builder viewport through the chooser without a manual step; potree@2 via V-02 with LOD continuity; DEM prepared hierarchy renders with the validity bitset applied as NoData (holes, not zero); colours/scale match PhotoLab's own view of the product.                                                                                                                                                                                                                                    |
+| **pick**     | A point pick returns coordinates in the project CRS that agree with PhotoLab's pick on the same feature within the product's resolution (points: nearest-point distance; DEM: elevation query at a picked XY equals the DEM cell value).                                                                                                                                                                                                                                                                            |
+| **snap**     | Builder snapping (0.5-04 line tool) snaps to the imported product's geometry (points: nearest point; DEM: surface elevation) with the snap latency gate of Q-01 still met.                                                                                                                                                                                                                                                                                                                                          |
 
 ## Rows
 
