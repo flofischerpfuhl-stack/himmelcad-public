@@ -15,6 +15,11 @@ export CARGO_TARGET_DIR="$REPO/target/builder"
 : > "$OUT/$NAME.log"; rm -f "$OUT/$NAME.exit" "$OUT/$NAME.last.md"
 EFFORT="${EFFORT:-medium}"; MODEL="${MODEL:-gpt-5.6-sol}"
 IMGARGS=""; for i in ${IMAGES:-}; do IMGARGS="$IMGARGS -i $i"; done
-systemd-run --user --scope --quiet -p MemoryMax="${LANE_MEM:-16G}" -p MemorySwapMax=0 -- codex exec $IMGARGS -C "$REPO" -m "$MODEL" -c model_reasoning_effort="$EFFORT" -c shell_environment_policy.inherit=all \
-  --color never -o "$OUT/$NAME.last.md" - < "$PROMPT" >> "$OUT/$NAME.log" 2>&1
-echo $? > "$OUT/$NAME.exit"
+UNIT="hc-lane-$NAME-$(date +%s)"
+# Transient user SERVICE unit (not a scope): forked by systemd, so it survives T3 Code / Claude restarts; hard memory cap;
+# the unit itself writes the exit file so a dead waiting shell cannot leave a lane without a terminal marker.
+systemd-run --user --unit="$UNIT" --collect --quiet --wait --pipe \
+  -p MemoryMax="${LANE_MEM:-16G}" -p MemorySwapMax=0 --working-directory="$REPO" \
+  --setenv=PATH="$PATH" --setenv=HOME="$HOME" --setenv=CARGO_TARGET_DIR="$CARGO_TARGET_DIR" --setenv=DISPLAY="${DISPLAY:-:0}" \
+  -- bash -c 'codex exec '"$IMGARGS"' -C "'"$REPO"'" -m "'"$MODEL"'" -c model_reasoning_effort="'"$EFFORT"'" -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --color never -o "'"$OUT/$NAME.last.md"'" - < "'"$PROMPT"'" >> "'"$OUT/$NAME.log"'" 2>&1; echo $? > "'"$OUT/$NAME.exit"'"'
+[ -f "$OUT/$NAME.exit" ] || echo 1 > "$OUT/$NAME.exit"
