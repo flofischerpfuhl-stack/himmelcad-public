@@ -4,3 +4,6 @@ Do, through the literal Builder UI (V-01b CDP route on DISPLAY=:0) in a fresh pr
 
 
 Addendum (PhotoLab answer, 23:55): the DTM/DSM rasters are 2048×2048 at 0.05 m (102 × 102 m, origin 4375475.2/5281305.6) with STATISTICS_VALID_PERCENT 25.92 — the extent is the bounding box of a diagonal image strip, so the centre and the four interior corners are GENUINE holes. Expected: those oracle rows render as holes (no elevation, transparent); the 7 dense-point rows give the listed elevations ± 0.01 m.
+
+
+Addendum (01:45, arrived after the run started — for the follow-up pass): DTM identity row — the DTM was republished as `product-00e33bcd…` (same dir as the DTM smoke) with `dem_facts.surface = "dtm"`, `dem_facts.ground_classification = { sha256 a4ecae15…, algorithm_id "smrf@1", parameters_sha256 234535f0… }` and a `tools` entry `{ id "smrf@1", sha256 234535f0… }`; Builder must show these in the Lineage group and the identity cell compares them; older DTM packages stay admissible without the fields.
