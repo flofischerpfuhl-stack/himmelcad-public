@@ -1928,9 +1928,17 @@ test covers both byte orders; fmt clean. As implemented: facts are read back
 from the prepared raster root (diagonal, `maximumHeightJump`, `interpolation`)
 so Grid and root bind identical values; the validity resource is listed under
 role `dem_validity`; DEM packages copy only the declared prepared-hierarchy
-artifacts. Open evidence: the DSM + DTM smokes (`--dem-surface`) must list the
-DEM product as `complete` — queued behind the 40-image diagnostic's compute
-lease.
+artifacts. Evidence 2026-09-09 04:13: DSM smoke (24 images, fast profile, clean HEAD
+binary 3d83202, `.build/photolab-evidence/g1a3/dsm-smoke-result.json`) lists
+sparse and dense as `complete/available` (potree@2) and the DEM as
+`complete/available` (`himmelcad-prepared-hierarchy@1`, package 889e2ae6…) — the
+G1a-2 + G1a-3 publication path works end to end on real GDAL output; depth
+maps `complete/unsupported_format` by design. Runtime note: 320 min total, of
+which portable-MVS depth 285 min under the shared machine load (A4's smoke
+took 30 min for the same stage on an idle machine). A7 memory records were
+written per stage (alignment envelope 29.1 GB; SIFT extraction peak 10.6 GB
+with 8 workers ≈ 1.3 GB/worker — a calibration point for the SIFT extraction
+model; SIFT matching 1.6 GB). DTM smoke follows.
 
 Diagnostic finding 2026-09-06 (40-image Quality Hybrid, golden-bin): COLMAP is
 CPU-only here and ALIKED_N32 at 8192 px runs with one extraction thread (15.7 GB
