@@ -5,6 +5,8 @@ import { resolve } from 'node:path';
 
 import { app } from 'electron';
 
+import { resolveDevelopmentSidecarPath } from './sidecarPath';
+
 export interface SidecarRequest {
   method: string;
   params?: unknown;
@@ -41,7 +43,10 @@ function sidecarPath(): string {
       process.platform === 'win32' ? 'himmelcad-sidecar.exe' : 'himmelcad-sidecar',
     );
   }
-  return resolve(__dirname, '..', '..', '..', '..', 'target', 'debug', 'himmelcad-sidecar');
+  const repositoryRoot = resolve(__dirname, '..', '..', '..', '..');
+  // Development only: HIMMELCAD_SIDECAR_BIN may explicitly select another
+  // binary (for example target/win/release/himmelcad-sidecar.exe).
+  return resolveDevelopmentSidecarPath(repositoryRoot, process.platform, process.env);
 }
 
 function sidecarEnvironment(): NodeJS.ProcessEnv {
