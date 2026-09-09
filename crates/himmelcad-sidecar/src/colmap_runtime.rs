@@ -66,11 +66,15 @@ const LOG_TAIL_LINES: usize = 200;
 const MAX_LOG_LINE_BYTES: usize = 16 * 1024;
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(15);
 const GIB: u64 = 1024 * 1024 * 1024;
-// WP-A7d X6 tunable: 25% covers calibrated model error and child runtime overhead while RLIMIT_AS
-// remains a hard backstop. Two GiB is the minimum viable address space for the worker and models.
-const WORKER_RLIMIT_HEADROOM_NUMERATOR: u64 = 5;
-const WORKER_RLIMIT_HEADROOM_DENOMINATOR: u64 = 4;
-const MINIMUM_WORKER_RLIMIT_BYTES: u64 = 2 * GIB;
+// WP-A7d X6 tunable: 25% covers calibrated model error and child runtime overhead. Two GiB is the
+// minimum viable resident envelope for the worker and models.
+const WORKER_MEMORY_HEADROOM_NUMERATOR: u64 = 5;
+const WORKER_MEMORY_HEADROOM_DENOMINATOR: u64 = 4;
+const MINIMUM_WORKER_MEMORY_LIMIT_BYTES: u64 = 2 * GIB;
+// WP-A7e X6 calibration: RLIMIT_AS measures virtual address space while the model predicts RSS.
+// The A7d smoke reached 6.31 GB RSS at a 10.6 GB address-space limit, so the fallback doubles the
+// resident limit to cover thread arenas and mapped weights without pretending the units match.
+const WORKER_RLIMIT_AS_MULTIPLIER: u64 = 2;
 // X6 tunable: depth 11 retains facade-scale detail without the extreme memory growth of
 // deeper Poisson octrees on typical workstation dense clouds.
 const POISSON_MESHING_DEPTH: u32 = 11;
@@ -86,6 +90,8 @@ const MIN_PINNED_READJUSTMENT_IMAGE_RETENTION: f64 = 1.0;
 const MIN_PINNED_READJUSTMENT_POINT_RETENTION: f64 = 0.9;
 
 static NEXT_SCRATCH_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+#[cfg(target_os = "linux")]
+static SYSTEMD_USER_SCOPE: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
 
 /// Exact capabilities asserted by an audited platform worker manifest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1040,7 +1046,7 @@ pub fn run_colmap_mesher(
     let report = {
         let started = Instant::now();
         state.report_stage(context, spec.stage_label, ProgressMetrics::empty())?;
-        let mut child = spawn_colmap_child(&executable, &spec, &state.scratch, None)?;
+        let (mut child, _) = spawn_colmap_child(&executable, &spec, &state.scratch, None)?;
         let mut progress_error = None;
         let supervised = supervise_child(&mut child, &context.cancellation, |completed, total| {
             if progress_error.is_none() {
@@ -1909,6 +1915,8 @@ struct RunState {
     reported_progress: BTreeMap<usize, ProgressMetrics>,
     extraction_memory_limit_bytes: Option<u64>,
     matching_memory_limit_bytes: Option<u64>,
+    extraction_model_bytes: Option<u64>,
+    matching_model_bytes: Option<u64>,
 }
 
 impl RunState {
@@ -1920,10 +1928,17 @@ impl RunState {
             reported_progress: BTreeMap::new(),
             extraction_memory_limit_bytes: None,
             matching_memory_limit_bytes: None,
+            extraction_model_bytes: None,
+            matching_model_bytes: None,
         }
     }
 
     fn configure_alignment_memory(&mut self, request: &ColmapRunRequest) {
+        self.extraction_model_bytes = Some(
+            request
+                .extraction_memory_unit_bytes
+                .saturating_mul(u64::from(request.feature_worker_threads.max(1))),
+        );
         self.extraction_memory_limit_bytes = Some(worker_memory_limit_bytes(
             request.extraction_memory_unit_bytes,
             request.feature_worker_threads,
@@ -1938,6 +1953,18 @@ impl RunState {
             ColmapCommandKind::ExhaustiveMatcher
             | ColmapCommandKind::SequentialMatcher
             | ColmapCommandKind::GeometricVerifier => self.matching_memory_limit_bytes,
+            _ => None,
+        }
+    }
+
+    fn model_bytes_for(&self, kind: ColmapCommandKind) -> Option<u64> {
+        match kind {
+            ColmapCommandKind::FeatureExtractor | ColmapCommandKind::FeatureImporter => {
+                self.extraction_model_bytes
+            }
+            ColmapCommandKind::ExhaustiveMatcher
+            | ColmapCommandKind::SequentialMatcher
+            | ColmapCommandKind::GeometricVerifier => self.matching_model_bytes,
             _ => None,
         }
     }
@@ -2196,6 +2223,12 @@ impl ColmapRuntime {
                     replan.record.matching_unit_bytes,
                     replan.record.matching_workers,
                 ));
+                state.matching_model_bytes = Some(
+                    replan
+                        .record
+                        .matching_unit_bytes
+                        .saturating_mul(u64::from(replan.record.matching_workers)),
+                );
                 replan.record.matching_workers
             }
             FeatureStoreKind::Sift => {
@@ -2203,6 +2236,10 @@ impl ColmapRuntime {
                     SIFT_MATCHING_BYTES_PER_WORKER,
                     request.matching_worker_threads,
                 ));
+                state.matching_model_bytes = Some(
+                    SIFT_MATCHING_BYTES_PER_WORKER
+                        .saturating_mul(u64::from(request.matching_worker_threads.max(1))),
+                );
                 request.matching_worker_threads
             }
         };
@@ -3370,7 +3407,8 @@ impl ColmapRuntime {
             .collect::<Vec<_>>();
         let started = Instant::now();
         let memory_limit_bytes = state.memory_limit_for(spec.kind);
-        let mut child = self.spawn_child(spec, &state.scratch, memory_limit_bytes)?;
+        let (mut child, worker_limit_plan) =
+            self.spawn_child(spec, &state.scratch, memory_limit_bytes)?;
         let mut progress_error = None;
         let supervised = supervise_child(&mut child, &context.cancellation, |completed, total| {
             if progress_error.is_none() {
@@ -3404,10 +3442,20 @@ impl ColmapRuntime {
         });
         let peak_rss_bytes = child.peak_rss_bytes();
         let mut memory_parameters = command_memory_parameters(spec);
-        if let (Some(limit_bytes), Some(parameters)) =
-            (memory_limit_bytes, memory_parameters.as_object_mut())
-        {
-            parameters.insert("workerMemoryLimitBytes".into(), limit_bytes.into());
+        if let Some(parameters) = memory_parameters.as_object_mut() {
+            if let Some(model_bytes) = state.model_bytes_for(spec.kind) {
+                parameters.insert("modelBytes".into(), model_bytes.into());
+            }
+            if let Some(plan) = worker_limit_plan {
+                parameters.insert(
+                    "workerMemoryLimitBytes".into(),
+                    plan.enforced_limit_bytes.into(),
+                );
+                parameters.insert(
+                    "workerMemoryLimitMode".into(),
+                    serde_json::Value::String(plan.mode.as_str().into()),
+                );
+            }
         }
         context
             .memory
@@ -3422,12 +3470,16 @@ impl ColmapRuntime {
         if let Some(error) = progress_error {
             return Err(error);
         }
-        if let Some(limit_bytes) = memory_limit_bytes {
-            if let Some(error) = worker_memory_limit_error(spec.stage_label, limit_bytes, &outcome)
+        if let Some(plan) = worker_limit_plan {
+            if let Some(error) =
+                worker_memory_limit_error(spec.stage_label, plan.enforced_limit_bytes, &outcome)
             {
                 context
                     .memory
-                    .record_worker_memory_limit_hit_blocking(spec.stage_label, limit_bytes)
+                    .record_worker_memory_limit_hit_blocking(
+                        spec.stage_label,
+                        plan.enforced_limit_bytes,
+                    )
                     .map_err(|error| ColmapRuntimeError::Progress(error.to_string()))?;
                 return Err(error);
             }
@@ -3448,7 +3500,7 @@ impl ColmapRuntime {
         spec: &CommandSpec,
         scratch: &Path,
         memory_limit_bytes: Option<u64>,
-    ) -> Result<Child, ColmapRuntimeError> {
+    ) -> Result<(Child, Option<WorkerMemoryLimitPlan>), ColmapRuntimeError> {
         spawn_colmap_child(
             &self.toolchain.executable,
             spec,
@@ -3463,14 +3515,23 @@ fn spawn_colmap_child(
     spec: &CommandSpec,
     scratch: &Path,
     memory_limit_bytes: Option<u64>,
-) -> Result<Child, ColmapRuntimeError> {
+) -> Result<(Child, Option<WorkerMemoryLimitPlan>), ColmapRuntimeError> {
+    let (command, worker_limit_plan) = worker_command(executable, memory_limit_bytes);
+    spawn_prepared_colmap_child(command, spec, scratch, worker_limit_plan)
+}
+
+fn spawn_prepared_colmap_child(
+    mut command: Command,
+    spec: &CommandSpec,
+    scratch: &Path,
+    worker_limit_plan: Option<WorkerMemoryLimitPlan>,
+) -> Result<(Child, Option<WorkerMemoryLimitPlan>), ColmapRuntimeError> {
     let home = scratch.join("home");
     let temp = scratch.join("tmp");
     let cache = scratch.join("cache");
     fs::create_dir_all(&home)?;
     fs::create_dir_all(&temp)?;
     fs::create_dir_all(&cache)?;
-    let mut command = worker_command(executable, memory_limit_bytes);
     command
         .arg(spec.kind.as_str())
         .args(&spec.args)
@@ -3489,35 +3550,154 @@ fn spawn_colmap_child(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    process_group::spawn(&mut command).map_err(ColmapRuntimeError::Io)
+    if matches!(
+        worker_limit_plan,
+        Some(WorkerMemoryLimitPlan {
+            mode: WorkerMemoryLimitMode::CgroupScope,
+            ..
+        })
+    ) {
+        for name in ["DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"] {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
+        }
+    }
+    let child = process_group::spawn(&mut command).map_err(ColmapRuntimeError::Io)?;
+    Ok((child, worker_limit_plan))
 }
 
 fn worker_memory_limit_bytes(unit_bytes: u64, workers: u16) -> u64 {
     unit_bytes
         .saturating_mul(u64::from(workers.max(1)))
-        .saturating_mul(WORKER_RLIMIT_HEADROOM_NUMERATOR)
-        .checked_div(WORKER_RLIMIT_HEADROOM_DENOMINATOR)
+        .saturating_mul(WORKER_MEMORY_HEADROOM_NUMERATOR)
+        .checked_div(WORKER_MEMORY_HEADROOM_DENOMINATOR)
         .unwrap_or(u64::MAX)
-        .max(MINIMUM_WORKER_RLIMIT_BYTES)
+        .max(MINIMUM_WORKER_MEMORY_LIMIT_BYTES)
 }
 
-fn worker_command(executable: &Path, memory_limit_bytes: Option<u64>) -> Command {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkerMemoryLimitMode {
+    CgroupScope,
+    RlimitAs,
+}
+
+impl WorkerMemoryLimitMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::CgroupScope => "cgroupScope",
+            Self::RlimitAs => "rlimitAs",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WorkerMemoryLimitPlan {
+    mode: WorkerMemoryLimitMode,
+    enforced_limit_bytes: u64,
+}
+
+fn worker_command(
+    executable: &Path,
+    memory_limit_bytes: Option<u64>,
+) -> (Command, Option<WorkerMemoryLimitPlan>) {
     #[cfg(target_os = "linux")]
     if let Some(memory_limit_bytes) = memory_limit_bytes
         .filter(|_| std::env::var("HIMMELCAD_PHOTOLAB_WORKER_RLIMIT_DISABLE").as_deref() != Ok("1"))
     {
-        // The crate forbids unsafe code, while std's pre-exec hook is unsafe. `prlimit` performs
-        // the same child-only RLIMIT_AS operation immediately before `exec` without weakening
-        // that crate-wide safety policy; the resulting limit is inherited by every descendant.
-        let mut command = Command::new("/usr/bin/prlimit");
-        command
-            .arg(format!("--as={memory_limit_bytes}"))
-            .arg("--")
-            .arg(executable);
-        return command;
+        if let Some(systemd_run) = systemd_user_scope() {
+            let plan = WorkerMemoryLimitPlan {
+                mode: WorkerMemoryLimitMode::CgroupScope,
+                enforced_limit_bytes: memory_limit_bytes,
+            };
+            return (
+                worker_command_for_plan(systemd_run, executable, plan),
+                Some(plan),
+            );
+        }
+        let plan = WorkerMemoryLimitPlan {
+            mode: WorkerMemoryLimitMode::RlimitAs,
+            enforced_limit_bytes: memory_limit_bytes.saturating_mul(WORKER_RLIMIT_AS_MULTIPLIER),
+        };
+        return (
+            worker_command_for_plan(Path::new("/usr/bin/prlimit"), executable, plan),
+            Some(plan),
+        );
     }
     let _ = memory_limit_bytes;
-    Command::new(executable)
+    (Command::new(executable), None)
+}
+
+#[cfg(target_os = "linux")]
+fn worker_command_for_plan(
+    launcher: &Path,
+    executable: &Path,
+    plan: WorkerMemoryLimitPlan,
+) -> Command {
+    match plan.mode {
+        WorkerMemoryLimitMode::CgroupScope => {
+            let mut command = Command::new(launcher);
+            command
+                .arg("--user")
+                .arg("--scope")
+                .arg("--quiet")
+                .arg("-p")
+                .arg(format!("MemoryMax={}", plan.enforced_limit_bytes))
+                .arg("-p")
+                .arg("MemorySwapMax=0")
+                .arg("--collect")
+                .arg("--")
+                .arg(executable);
+            command
+        }
+        WorkerMemoryLimitMode::RlimitAs => {
+            // The crate forbids unsafe code, while std's pre-exec hook is unsafe. `prlimit`
+            // applies the child-only fallback immediately before `exec`; descendants inherit it.
+            let mut command = Command::new(launcher);
+            command
+                .arg(format!("--as={}", plan.enforced_limit_bytes))
+                .arg("--")
+                .arg(executable);
+            command
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_user_scope() -> Option<&'static Path> {
+    SYSTEMD_USER_SCOPE
+        .get_or_init(|| {
+            let executable = find_in_path("systemd-run")?;
+            let status = Command::new(&executable)
+                .arg("--user")
+                .arg("--scope")
+                .arg("-p")
+                .arg("MemoryMax=1")
+                .arg("--")
+                .arg("/bin/true")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .ok()?;
+            status.success().then_some(executable)
+        })
+        .as_deref()
+}
+
+#[cfg(target_os = "linux")]
+fn find_in_path(executable: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .map(|directory| directory.join(executable))
+        .find(|candidate| candidate.is_file())
+        .or_else(|| {
+            ["/usr/bin", "/bin"]
+                .into_iter()
+                .map(|directory| Path::new(directory).join(executable))
+                .find(|candidate| candidate.is_file())
+        })
 }
 
 fn outcome_indicates_memory_limit(outcome: &ProcessOutcome) -> bool {
@@ -3530,12 +3710,17 @@ fn outcome_indicates_memory_limit(outcome: &ProcessOutcome) -> bool {
     }
     outcome.log_tail.iter().any(|line| {
         let lower = line.to_ascii_lowercase();
+        if lower.trim() == "killed" {
+            return true;
+        }
         [
             "cannot allocate memory",
             "failed to map segment",
             "memory allocation",
             "std::bad_alloc",
             "out of memory",
+            "oom-kill",
+            "code=killed",
         ]
         .iter()
         .any(|needle| lower.contains(needle))
@@ -7304,38 +7489,130 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
 
     #[test]
     #[cfg(target_os = "linux")]
-    fn worker_address_space_limit_returns_the_typed_stage_error() {
-        let rig = TestRig::new("worker-rlimit", false, false);
-        let scratch = rig.config.scratch_root.join("worker-rlimit-direct");
-        fs::create_dir_all(&scratch).expect("create RLIMIT scratch");
+    fn cgroup_worker_command_uses_the_resident_limit_and_disables_swap() {
+        let plan = WorkerMemoryLimitPlan {
+            mode: WorkerMemoryLimitMode::CgroupScope,
+            enforced_limit_bytes: 4_294_967_296,
+        };
+        let command = worker_command_for_plan(
+            Path::new("/usr/bin/systemd-run"),
+            Path::new("/opt/himmelcad/colmap"),
+            plan,
+        );
+        assert_eq!(command.get_program(), OsStr::new("/usr/bin/systemd-run"));
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                "--user",
+                "--scope",
+                "--quiet",
+                "-p",
+                "MemoryMax=4294967296",
+                "-p",
+                "MemorySwapMax=0",
+                "--collect",
+                "--",
+                "/opt/himmelcad/colmap",
+            ]
+            .map(OsStr::new)
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn cgroup_killed_diagnostic_maps_to_the_typed_memory_error() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let outcome = ProcessOutcome {
+            status: ExitStatus::from_raw(1 << 8),
+            log_tail: vec!["Killed".into()],
+        };
+        assert!(matches!(
+            worker_memory_limit_error("Match ALIKED with LightGlue", 4 * GIB, &outcome),
+            Some(ColmapRuntimeError::WorkerMemoryLimitHit {
+                ref stage,
+                limit_bytes,
+                limit_gb: 4,
+            }) if stage == "Match ALIKED with LightGlue" && limit_bytes == 4 * GIB
+        ));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn fake_colmap_runs_in_a_cgroup_scope_when_the_probe_passes() {
+        let Some(_) = systemd_user_scope() else {
+            eprintln!(
+                "skipped: systemd-run --user scope is unavailable; cgroup worker mode cannot be exercised"
+            );
+            return;
+        };
+        let rig = TestRig::new("worker-cgroup", false, false);
+        let scratch = rig.config.scratch_root.join("worker-cgroup-direct");
         let spec = CommandSpec {
-            kind: ColmapCommandKind::FeatureExtractor,
-            stage_label: "Extract ALIKED",
+            kind: ColmapCommandKind::MatchesImporter,
+            stage_label: "Import matches",
             args: Vec::new(),
         };
-        let limit_bytes = 1024 * 1024;
-        let mut child = spawn_colmap_child(
+        let limit_bytes = worker_memory_limit_bytes(512 * 1024 * 1024, 1);
+        let (mut child, plan) = spawn_colmap_child(
             &rig.tool_root.join("colmap"),
             &spec,
             &scratch,
             Some(limit_bytes),
         )
-        .expect("spawn memory-limited fake COLMAP");
+        .expect("spawn cgroup-scoped fake COLMAP");
+        assert_eq!(
+            plan,
+            Some(WorkerMemoryLimitPlan {
+                mode: WorkerMemoryLimitMode::CgroupScope,
+                enforced_limit_bytes: limit_bytes,
+            })
+        );
+        let outcome = supervise_child(&mut child, &CancellationToken::new(), |_, _| {})
+            .expect("supervise cgroup-scoped fake COLMAP");
+        assert!(outcome.status.success(), "{:?}", outcome.log_tail);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn worker_address_space_fallback_returns_the_typed_stage_error() {
+        let rig = TestRig::new("worker-rlimit", false, false);
+        let scratch = rig.config.scratch_root.join("worker-rlimit-direct");
+        let spec = CommandSpec {
+            kind: ColmapCommandKind::FeatureExtractor,
+            stage_label: "Extract ALIKED",
+            args: Vec::new(),
+        };
+        let resident_limit_bytes = 1024 * 1024;
+        let plan = WorkerMemoryLimitPlan {
+            mode: WorkerMemoryLimitMode::RlimitAs,
+            enforced_limit_bytes: resident_limit_bytes * WORKER_RLIMIT_AS_MULTIPLIER,
+        };
+        let command = worker_command_for_plan(
+            Path::new("/usr/bin/prlimit"),
+            &rig.tool_root.join("colmap"),
+            plan,
+        );
+        let (mut child, actual_plan) =
+            spawn_prepared_colmap_child(command, &spec, &scratch, Some(plan))
+                .expect("spawn memory-limited fake COLMAP");
+        assert_eq!(actual_plan, Some(plan));
         let outcome = supervise_child(&mut child, &CancellationToken::new(), |_, _| {})
             .expect("supervise memory-limited fake COLMAP");
-        let error = worker_memory_limit_error(spec.stage_label, limit_bytes, &outcome)
-            .expect("typed worker memory error");
+        let error =
+            worker_memory_limit_error(spec.stage_label, plan.enforced_limit_bytes, &outcome)
+                .expect("typed worker memory error");
         assert!(matches!(
             error,
             ColmapRuntimeError::WorkerMemoryLimitHit {
                 ref stage,
-                limit_bytes: 1_048_576,
+                limit_bytes: 2_097_152,
                 limit_gb: 1,
             } if stage == "Extract ALIKED"
         ));
         assert_eq!(
             worker_memory_limit_bytes(512 * 1024 * 1024, 1),
-            MINIMUM_WORKER_RLIMIT_BYTES
+            MINIMUM_WORKER_MEMORY_LIMIT_BYTES
         );
     }
 
