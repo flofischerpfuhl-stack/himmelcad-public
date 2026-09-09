@@ -44,3 +44,35 @@ orthomosaic, mesh, gaussianSplat — formats `potree@2` and
   content → PhotoLab (G1a), import/registration/render → Builder (G1b/V-02).
 - Rows move from "pending" to "Available" only through a smoke on a clean
   HEAD binary whose `result.json` lists the product `complete/available`.
+
+## Oracle
+
+Generate the PhotoLab-side numeric reference without opening PhotoLab or
+starting the sidecar:
+
+```sh
+pnpm photolab:g1c:oracle -- --project <path/to/project.hcad> --out <output-directory>
+```
+
+The command reads only packages whose directory has `ready.json`. It writes
+`oracle.md` first and atomically publishes `oracle.json` last, using schema
+`hcad.photolab-g1c-oracle@1`. Unsupported kind/format combinations remain in
+the output with an explicit skip reason. Repeating the command against an
+unchanged project produces byte-identical JSON except for `generated_at`.
+
+For sparse and dense point clouds, Builder compares the imported entity's
+pick/snap world XYZ with the seven source-PLY points at indices `0`, `⌊n/8⌋`,
+`⌊n/4⌋`, `⌊n/2⌋`, `⌊3n/4⌋`, `⌊7n/8⌋`, and `n − 1`. The allowed distance is
+the source cloud's mean nearest-neighbour spacing, estimated from at most
+10,000 points selected by an endpoint-inclusive deterministic stride. Dense
+rows also compare RGB and the current classification byte; the oracle records
+the hash-named classification snapshot that is byte-identical to
+`dense.classification.bin`.
+
+For DEMs, Builder queries the imported surface at the seven dense-cloud XY
+positions and at the source raster's four corner-interior cell centres plus
+its geometric centre. Elevation and NoData must match `oracle.json`; NoData is
+decided by the manifest's `bitsetLsb0` validity authority when present. The
+allowed elevation difference is the larger of half the raster data type's
+vertical quantum and `0.01 m`. The Markdown file contains one paste-ready
+comparison table per package.
