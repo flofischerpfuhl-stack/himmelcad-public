@@ -1,0 +1,24 @@
+import type { GeometryRepresentationSlotKey } from "./GeometryRepresentationSlotKey";
+import type { ObjectHash } from "./ObjectHash";
+/**
+ * Immutable identity of one canonical representation revision.
+ */
+export type GeometryRepresentationKey = {
+    /**
+     * Stable slot whose immutable revision this key identifies.
+     */
+    slot: GeometryRepresentationSlotKey;
+    /**
+     * Monotone canonical entity revision.
+     */
+    entityRevision: number;
+    /**
+     * Hash of the complete canonical entity envelope.
+     */
+    entityVersionHash: ObjectHash;
+    /**
+     * Content address of the exact resolved geometry.
+     */
+    geometryRef: ObjectHash;
+};
+//# sourceMappingURL=GeometryRepresentationKey.d.ts.map

@@ -1,0 +1,35 @@
+import type { CrossfallBand } from "./CrossfallBand";
+import type { CurveGeometry } from "./CurveGeometry";
+import type { SlopeRule } from "./SlopeRule";
+import type { VerticalAlignmentSegment } from "./VerticalAlignmentSegment";
+import type { WidthBand } from "./WidthBand";
+/**
+ * Civil alignment combining horizontal, vertical and corridor rules.
+ */
+export type AlignmentGeometry = {
+    /**
+     * Horizontal analytic alignment.
+     */
+    horizontal: CurveGeometry;
+    /**
+     * Optional vertical alignment/gradient.
+     */
+    vertical: Array<VerticalAlignmentSegment>;
+    /**
+     * User-facing station offset added to geometric chainage.
+     */
+    stationOrigin: number;
+    /**
+     * Width bands.
+     */
+    widthBands: Array<WidthBand>;
+    /**
+     * Ramp/crossfall bands.
+     */
+    crossfallBands: Array<CrossfallBand>;
+    /**
+     * Slope derivation rules.
+     */
+    slopeRules: Array<SlopeRule>;
+};
+//# sourceMappingURL=AlignmentGeometry.d.ts.map

@@ -1,0 +1,35 @@
+import type { GeometryResource } from "./GeometryResource";
+import type { RasterCellDiagonal } from "./RasterCellDiagonal";
+import type { RasterTriangleMaskEncoding } from "./RasterTriangleMaskEncoding";
+/**
+ * Whether neighboring samples claim a continuous surface.
+ */
+export type RasterConnectivity = {
+    "kind": "continuous";
+    /**
+     * Maximum connected height jump; absent means no numeric jump limit.
+     */
+    maximumHeightJump: number | null;
+    /**
+     * Stable triangulation used by display and exact picking.
+     */
+    diagonal: RasterCellDiagonal;
+} | {
+    "kind": "pixelSteps";
+} | {
+    "kind": "mask";
+    /**
+     * Exactly two triangle-admission bits per row-major raster cell,
+     * including the horizontal seam cells of an equirectangular image.
+     */
+    resource: GeometryResource;
+    /**
+     * Binary layout of the connectivity resource.
+     */
+    encoding: RasterTriangleMaskEncoding;
+    /**
+     * Stable triangulation addressed by the two mask bits.
+     */
+    diagonal: RasterCellDiagonal;
+};
+//# sourceMappingURL=RasterConnectivity.d.ts.map

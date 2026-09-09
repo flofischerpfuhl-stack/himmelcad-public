@@ -1,0 +1,29 @@
+import type { BlockMember } from "./BlockMember";
+import type { BlockPlacementComposition } from "./BlockPlacementComposition";
+import type { ObjectHash } from "./ObjectHash";
+/**
+ * Immutable reusable block definition.
+ */
+export type BlockDefinition = {
+    /**
+     * Exact versioned schema identifier.
+     */
+    schemaId: string;
+    /**
+     * Stable definition identity used by block instances.
+     */
+    definitionId: string;
+    /**
+     * Hash of every serialized field except `contentHash`.
+     */
+    contentHash: ObjectHash;
+    /**
+     * Serialized placement-composition convention.
+     */
+    placementComposition: BlockPlacementComposition;
+    /**
+     * Ordered reusable members.
+     */
+    members: Array<BlockMember>;
+};
+//# sourceMappingURL=BlockDefinition.d.ts.map

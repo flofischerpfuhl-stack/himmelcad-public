@@ -1,0 +1,28 @@
+import type { LineTypePattern } from "./LineTypePattern";
+import type { ObjectHash } from "./ObjectHash";
+/**
+ * Immutable continuous or repeating line-type resource.
+ */
+export type LineTypeResource = {
+    /**
+     * Exact versioned schema identifier.
+     */
+    schemaId: string;
+    /**
+     * Stable line-type identity.
+     */
+    resourceId: string;
+    /**
+     * Hash of every serialized field except `contentHash`.
+     */
+    contentHash: ObjectHash;
+    /**
+     * Optional user-facing name.
+     */
+    name: string | null;
+    /**
+     * Continuous or repeating construction.
+     */
+    pattern: LineTypePattern;
+};
+//# sourceMappingURL=LineTypeResource.d.ts.map

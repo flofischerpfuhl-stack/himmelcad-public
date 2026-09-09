@@ -1,0 +1,25 @@
+import type { BlockInstanceOverrides } from "./BlockInstanceOverrides";
+import type { ObjectHash } from "./ObjectHash";
+import type { Transform3d } from "./Transform3d";
+/**
+ * Reusable block instance; its definition remains a project record.
+ */
+export type BlockInstanceGeometry = {
+    /**
+     * Stable reusable definition identity.
+     */
+    definitionId: string;
+    /**
+     * Definition version expected by this entity revision.
+     */
+    definitionHash: ObjectHash;
+    /**
+     * Instance placement.
+     */
+    placement: Transform3d;
+    /**
+     * Typed style and attribute inheritance committed with this revision.
+     */
+    overrides: BlockInstanceOverrides | null;
+};
+//# sourceMappingURL=BlockInstanceGeometry.d.ts.map

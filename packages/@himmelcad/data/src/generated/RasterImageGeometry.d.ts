@@ -1,0 +1,30 @@
+import type { DepthField } from "./DepthField";
+import type { GeometryResource } from "./GeometryResource";
+import type { RasterMapping } from "./RasterMapping";
+/**
+ * Raster image and all information needed to place and measure it.
+ */
+export type RasterImageGeometry = {
+    /**
+     * Color or scalar pixel resource.
+     */
+    pixels: GeometryResource;
+    /**
+     * Pixel width.
+     */
+    width: number;
+    /**
+     * Pixel height.
+     */
+    height: number;
+    /**
+     * Pixel-to-entity-local mapping or imaging model. Entity placement is
+     * applied exactly once after this mapping.
+     */
+    mapping: RasterMapping;
+    /**
+     * Optional attached depth/elevation field.
+     */
+    depth: DepthField | null;
+};
+//# sourceMappingURL=RasterImageGeometry.d.ts.map

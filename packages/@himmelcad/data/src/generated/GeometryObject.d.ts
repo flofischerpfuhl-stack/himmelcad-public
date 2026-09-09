@@ -1,0 +1,77 @@
+import type { AlignmentGeometry } from "./AlignmentGeometry";
+import type { AreaGeometry } from "./AreaGeometry";
+import type { BlockInstanceGeometry } from "./BlockInstanceGeometry";
+import type { CurveGeometry } from "./CurveGeometry";
+import type { DimensionGeometry } from "./DimensionGeometry";
+import type { ElevationSurfaceGeometry } from "./ElevationSurfaceGeometry";
+import type { LabelGeometry } from "./LabelGeometry";
+import type { MeasurementV1 } from "./MeasurementV1";
+import type { ObjectHash } from "./ObjectHash";
+import type { PanoramaGeometry } from "./PanoramaGeometry";
+import type { PlaneDefinition } from "./PlaneDefinition";
+import type { Position } from "./Position";
+import type { RasterImageGeometry } from "./RasterImageGeometry";
+import type { SolidGeometry } from "./SolidGeometry";
+import type { StreamedGeometry } from "./StreamedGeometry";
+import type { TextGeometry } from "./TextGeometry";
+import type { TriangleMeshGeometry } from "./TriangleMeshGeometry";
+/**
+ * Canonical immutable geometry object addressed by a representation hash.
+ */
+export type GeometryObject = {
+    "kind": "point";
+    position: Position;
+} | {
+    "kind": "curve";
+    curve: CurveGeometry;
+} | {
+    "kind": "area";
+    area: AreaGeometry;
+} | {
+    "kind": "plane";
+    plane: PlaneDefinition;
+} | {
+    "kind": "elevationSurface";
+    surface: ElevationSurfaceGeometry;
+} | {
+    "kind": "surface3d";
+    mesh: TriangleMeshGeometry;
+} | {
+    "kind": "rasterImage";
+    raster: RasterImageGeometry;
+} | {
+    "kind": "pointCloud";
+    dataset: StreamedGeometry;
+} | {
+    "kind": "gaussianSplatCloud";
+    dataset: StreamedGeometry;
+} | {
+    "kind": "panorama";
+    panorama: PanoramaGeometry;
+} | {
+    "kind": "solid";
+    solid: SolidGeometry;
+} | {
+    "kind": "alignment";
+    alignment: AlignmentGeometry;
+} | {
+    "kind": "block";
+    instance: BlockInstanceGeometry;
+} | {
+    "kind": "text";
+    text: TextGeometry;
+} | {
+    "kind": "label";
+    label: LabelGeometry;
+} | {
+    "kind": "dimension";
+    dimension: DimensionGeometry;
+} | {
+    "kind": "measurement";
+    measurement: MeasurementV1;
+} | {
+    "kind": "extension";
+    typeId: string;
+    payload: ObjectHash;
+};
+//# sourceMappingURL=GeometryObject.d.ts.map

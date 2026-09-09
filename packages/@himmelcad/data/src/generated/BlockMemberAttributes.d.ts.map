@@ -1,0 +1,1 @@
+{"version":3,"file":"BlockMemberAttributes.d.ts","sourceRoot":"","sources":["BlockMemberAttributes.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,EAAE,UAAU,EAAE,MAAM,cAAc,CAAC;AAE/C;;GAEG;AACH,MAAM,MAAM,qBAAqB,GAAG;IAAE,MAAM,EAAE,SAAS,CAAA;CAAE,GAAG;IAAE,MAAM,EAAE,OAAO,CAAA;CAAE,GAAG;IAAE,MAAM,EAAE,SAAS,CAAC;IAAC,aAAa,EAAE,UAAU,CAAC;CAAE,CAAC"}

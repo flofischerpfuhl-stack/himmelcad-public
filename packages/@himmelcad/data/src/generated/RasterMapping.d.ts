@@ -1,0 +1,33 @@
+import type { CameraModel } from "./CameraModel";
+import type { OrthoGridMapping } from "./OrthoGridMapping";
+import type { PlaneFrame } from "./PlaneFrame";
+import type { Transform3d } from "./Transform3d";
+/**
+ * Raster image mapping model.
+ */
+export type RasterMapping = {
+    "kind": "orthoGrid";
+} & OrthoGridMapping | {
+    "kind": "planar";
+    /**
+     * Column-major 3x3 homography from integer pixel-center coordinates
+     * into the frame's `(u, v)` coordinates.
+     */
+    homography: [number, number, number, number, number, number, number, number, number];
+    /**
+     * Explicit oriented plane receiving the image.
+     */
+    frame: PlaneFrame;
+} | {
+    "kind": "camera";
+    /**
+     * Intrinsic imaging model.
+     */
+    model: CameraModel;
+    /**
+     * Rigid camera-to-entity-local pose. Camera axes are +X image-right,
+     * +Y image-down and +Z forward. Pixel centers have integer coordinates.
+     */
+    pose: Transform3d;
+};
+//# sourceMappingURL=RasterMapping.d.ts.map
