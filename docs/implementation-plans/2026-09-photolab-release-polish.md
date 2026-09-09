@@ -1944,7 +1944,13 @@ dense and the DTM DEM (package 60af8cb2…, classification
 (resolved 08:50: not a regression — the wave1-4 smoke ran with the e2e `--smoke`
 flag, i.e. depth `imageDownscale` 8, while the G1a-3 runs omitted it and ran
 the production default of 2, sixteen times the pixels; the job records differ
-only in that field), dense 11 min, DEM 12 min.
+only in that field), dense 11 min, DEM 12 min. SMRF identity across the Builder refactor 0.5-02 (1d7a906), 2026-09-09 21:26: the DTM job
+rerun on the same dense cloud with the HEAD binary and with a sidecar built at
+3ceacf3 (pre-0.5-02, different binary SHA) both recomputed the ground
+classification and reproduced the content-addressed
+`dense.classification.a4ecae15da7c26dc.bin` byte-for-byte (`persist_dense_classification`
+verifies an existing hash) — 0.5-02 accepted on the PhotoLab side; log
+`.build/logs/smrf-prerefactor.log`.
 
 Diagnostic finding 2026-09-06 (40-image Quality Hybrid, golden-bin): COLMAP is
 CPU-only here and ALIKED_N32 at 8192 px runs with one extraction thread (15.7 GB
