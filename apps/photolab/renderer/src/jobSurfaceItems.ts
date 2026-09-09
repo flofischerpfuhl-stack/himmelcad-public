@@ -51,12 +51,21 @@ export function memoryStatusText(job: PhotolabJob): string | null {
       `extraction tiled into ${choice.tiles.toLocaleString('en-US')} tiles with ${choice.overlapPx.toLocaleString('en-US')} px overlap`,
   );
   parts.push(
-    ...memory.degradations.map((degradation) =>
-      degradation.kind === 'extractionEdgeReduced'
-        ? `extraction edge reduced ${degradation.from} px to ${degradation.to} px`
-        : `keypoints capped ${degradation.from.toLocaleString('en-US')} to ${degradation.to.toLocaleString('en-US')}`,
-    ),
+    ...memory.degradations.map((degradation) => {
+      if (degradation.kind === 'extractionEdgeReduced') {
+        return `extraction edge reduced ${degradation.from} px to ${degradation.to} px`;
+      }
+      if (degradation.kind === 'workerMemoryLimitHit') {
+        return `worker memory limit hit in ${degradation.stage} (${(degradation.limitBytes / 1_073_741_824).toFixed(1)} GB)`;
+      }
+      return `keypoints capped ${degradation.from.toLocaleString('en-US')} to ${degradation.to.toLocaleString('en-US')}`;
+    }),
   );
+  if (memory.matchingReplanned) {
+    parts.push(
+      `matching replanned for ${memory.matchingReplanned.actualMaxKeypoints.toLocaleString('en-US')} keypoints per image with ${memory.matchingReplanned.matchingWorkers} worker${memory.matchingReplanned.matchingWorkers === 1 ? '' : 's'}`,
+    );
+  }
   const extraction = memory.stages.find((stage) => stage.stage === 'Extract ALIKED');
   const matching = memory.stages.find(
     (stage) =>

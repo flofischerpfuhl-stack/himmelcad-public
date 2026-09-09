@@ -20,8 +20,9 @@ use himmelcad_core::{
     photolab_jobs::{
         CancellationToken, CheckpointCommitState, CheckpointDescriptor, CheckpointId, JobError,
         JobProgress, NewPhotolabJob, PhotolabJob, PhotolabJobId, PhotolabJobKind,
-        PhotolabJobMemory, PhotolabJobState, PhotolabMemoryDegradation, PhotolabMemoryObservation,
-        PhotolabMemoryTimeFirstChoice, PhotolabStageMemory, CHECKPOINT_SCHEMA_VERSION,
+        PhotolabJobMemory, PhotolabJobState, PhotolabMatchingMemoryReplan,
+        PhotolabMemoryDegradation, PhotolabMemoryObservation, PhotolabMemoryTimeFirstChoice,
+        PhotolabStageMemory, CHECKPOINT_SCHEMA_VERSION,
     },
     photolab_products::ProductKind,
 };
@@ -86,6 +87,9 @@ pub struct AlignmentMemoryPlan {
     pub keypoints: u32,
     pub extraction_workers: u16,
     pub matching_workers: u16,
+    pub matching_unit_bytes: u64,
+    pub extraction_unit_bytes: u64,
+    pub matching_replanned: Option<PhotolabMatchingMemoryReplan>,
     pub sequential_pair_batches: bool,
     pub extraction_tiling: Option<AlignmentExtractionTiling>,
     pub predicted_peak_bytes: u64,
@@ -99,6 +103,20 @@ pub struct AlignmentExtractionTiling {
     pub rows: u32,
     pub tiles: u32,
     pub overlap_px: u32,
+}
+
+/// Matcher settings recomputed from the database that will actually be consumed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlignmentMatchingReplan {
+    pub record: PhotolabMatchingMemoryReplan,
+    pub keypoint_cap: u32,
+    pub degradation: Option<PhotolabMemoryDegradation>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlignmentMatchingMemoryRefusal {
+    pub predicted_bytes: u64,
+    pub available_bytes: u64,
 }
 
 /// Neural extraction estimate for one image after long-edge resize.
@@ -120,6 +138,63 @@ pub fn neural_matching_bytes_per_worker(keypoints: u32) -> u64 {
         .saturating_mul(4)
         .saturating_mul(NEURAL_MATCHING_ATTENTION_LAYERS)
         .saturating_add(NEURAL_MATCHING_FIXED_BASE_BYTES)
+}
+
+/// Replans LightGlue from the maximum stored row count immediately before matching.
+///
+/// The admission cap remains authoritative even if a worker or an old extracted-feature cache
+/// contains more rows. Stage share limits concurrency; only a single unit exceeding the complete
+/// usable envelope permits an additional quality cap (owner D12/S23).
+pub fn replan_alignment_matching(
+    usable_bytes: u64,
+    logical_cpus: u16,
+    planned_keypoint_cap: u32,
+    actual_max_keypoints: u32,
+) -> Result<AlignmentMatchingReplan, AlignmentMatchingMemoryRefusal> {
+    let mut keypoint_cap = actual_max_keypoints.min(planned_keypoint_cap);
+    let mut degradation = (actual_max_keypoints > keypoint_cap).then(|| {
+        PhotolabMemoryDegradation::MatchingKeypointsCapped {
+            from: actual_max_keypoints,
+            to: keypoint_cap,
+        }
+    });
+    let mut matching_unit_bytes = neural_matching_bytes_per_worker(keypoint_cap);
+    if matching_unit_bytes > usable_bytes {
+        if keypoint_cap < KEYPOINT_QUANTUM {
+            return Err(AlignmentMatchingMemoryRefusal {
+                predicted_bytes: matching_unit_bytes,
+                available_bytes: usable_bytes,
+            });
+        }
+        let capped = largest_keypoint_cap_that_fits(keypoint_cap, usable_bytes);
+        let capped_unit = neural_matching_bytes_per_worker(capped);
+        if capped >= keypoint_cap || capped_unit > usable_bytes {
+            return Err(AlignmentMatchingMemoryRefusal {
+                predicted_bytes: matching_unit_bytes,
+                available_bytes: usable_bytes,
+            });
+        }
+        keypoint_cap = capped;
+        matching_unit_bytes = capped_unit;
+        degradation = Some(PhotolabMemoryDegradation::MatchingKeypointsCapped {
+            from: actual_max_keypoints,
+            to: keypoint_cap,
+        });
+    }
+    let matching_budget = usable_bytes.saturating_mul(MATCHING_STAGE_SHARE_NUMERATOR)
+        / MATCHING_STAGE_SHARE_DENOMINATOR;
+    let matching_workers = u16::try_from((matching_budget / matching_unit_bytes).max(1))
+        .unwrap_or(u16::MAX)
+        .min(logical_cpus.max(1));
+    Ok(AlignmentMatchingReplan {
+        record: PhotolabMatchingMemoryReplan {
+            actual_max_keypoints,
+            matching_workers,
+            matching_unit_bytes,
+        },
+        keypoint_cap,
+        degradation,
+    })
 }
 
 /// Computes the immutable per-machine alignment memory choices.
@@ -262,6 +337,7 @@ pub fn plan_alignment_memory(request: &AlignmentMemoryRequest) -> AlignmentMemor
         time_first_choices,
         degradations,
         observations: Vec::new(),
+        matching_replanned: None,
     };
     AlignmentMemoryPlan {
         memory,
@@ -269,6 +345,9 @@ pub fn plan_alignment_memory(request: &AlignmentMemoryRequest) -> AlignmentMemor
         keypoints,
         extraction_workers,
         matching_workers,
+        matching_unit_bytes: matching_unit,
+        extraction_unit_bytes: extraction_unit,
+        matching_replanned: None,
         sequential_pair_batches,
         extraction_tiling,
         predicted_peak_bytes,
@@ -412,7 +491,7 @@ fn largest_extraction_edge_that_fits(
     edge.max(EDGE_QUANTUM)
 }
 
-fn largest_keypoint_cap_that_fits(requested: u32, budget_bytes: u64) -> u32 {
+pub fn largest_keypoint_cap_that_fits(requested: u32, budget_bytes: u64) -> u32 {
     let mut keypoints = requested / KEYPOINT_QUANTUM * KEYPOINT_QUANTUM;
     while keypoints > KEYPOINT_QUANTUM && neural_matching_bytes_per_worker(keypoints) > budget_bytes
     {
@@ -647,6 +726,7 @@ impl MemoryPreflight {
                     stage,
                     budget_bytes: available_bytes,
                 }],
+                matching_replanned: None,
             },
         }
     }
@@ -1156,6 +1236,38 @@ impl JobMemorySink {
             self.manager
                 .record_unbounded_memory_stage(&self.job_id, stage.into()),
         )
+    }
+
+    /// Persists the database-derived matcher plan before the matcher can start.
+    pub fn record_matching_replan_blocking(
+        &self,
+        replan: PhotolabMatchingMemoryReplan,
+        keypoint_cap: u32,
+        degradation: Option<PhotolabMemoryDegradation>,
+    ) -> Result<(), JobManagerError> {
+        self.manager
+            .runtime
+            .block_on(self.manager.record_matching_replan(
+                &self.job_id,
+                replan,
+                keypoint_cap,
+                degradation,
+            ))
+    }
+
+    /// Persists a child-process envelope breach before returning the typed worker error.
+    pub fn record_worker_memory_limit_hit_blocking(
+        &self,
+        stage: impl Into<String>,
+        limit_bytes: u64,
+    ) -> Result<(), JobManagerError> {
+        self.manager
+            .runtime
+            .block_on(self.manager.record_worker_memory_limit_hit(
+                &self.job_id,
+                stage.into(),
+                limit_bytes,
+            ))
     }
 }
 
@@ -2013,6 +2125,71 @@ impl JobManager {
             .ok_or_else(|| JobManagerError::JobNotFound(job_id.clone()))?;
         managed.job.record_stage_memory(stage);
         self.publish_durable(managed);
+        Ok(())
+    }
+
+    async fn record_matching_replan(
+        &self,
+        job_id: &PhotolabJobId,
+        replan: PhotolabMatchingMemoryReplan,
+        keypoint_cap: u32,
+        degradation: Option<PhotolabMemoryDegradation>,
+    ) -> Result<(), JobManagerError> {
+        let mut jobs = self.inner.jobs.lock().await;
+        let managed = jobs
+            .get_mut(&job_id.0)
+            .ok_or_else(|| JobManagerError::JobNotFound(job_id.clone()))?;
+        if let Some(degradation) = degradation {
+            if !managed.job.memory.degradations.contains(&degradation) {
+                managed.job.memory.degradations.push(degradation);
+            }
+        }
+        if let Some(stage) = managed
+            .job
+            .memory
+            .stages
+            .iter_mut()
+            .find(|stage| stage.stage == "Match ALIKED with LightGlue")
+        {
+            stage.workers = replan.matching_workers;
+            let parameters = stage
+                .parameters
+                .as_object_mut()
+                .expect("alignment matcher parameters are an object");
+            parameters.insert(
+                "actualMaxKeypoints".into(),
+                replan.actual_max_keypoints.into(),
+            );
+            parameters.insert("keypoints".into(), keypoint_cap.into());
+            parameters.insert(
+                "matchingUnitBytes".into(),
+                replan.matching_unit_bytes.into(),
+            );
+            parameters.insert(
+                "sequentialPairBatches".into(),
+                (replan.matching_workers == 1).into(),
+            );
+        }
+        managed.job.memory.matching_replanned = Some(replan);
+        self.publish_durable(managed);
+        Ok(())
+    }
+
+    async fn record_worker_memory_limit_hit(
+        &self,
+        job_id: &PhotolabJobId,
+        stage: String,
+        limit_bytes: u64,
+    ) -> Result<(), JobManagerError> {
+        let mut jobs = self.inner.jobs.lock().await;
+        let managed = jobs
+            .get_mut(&job_id.0)
+            .ok_or_else(|| JobManagerError::JobNotFound(job_id.clone()))?;
+        let degradation = PhotolabMemoryDegradation::WorkerMemoryLimitHit { stage, limit_bytes };
+        if !managed.job.memory.degradations.contains(&degradation) {
+            managed.job.memory.degradations.push(degradation);
+            self.publish_durable(managed);
+        }
         Ok(())
     }
 
@@ -3567,6 +3744,106 @@ mod tests {
         let matching = neural_matching_bytes_per_worker(24_000);
         assert_eq!(matching, 7_180_435_456);
         assert!((matching as f64 / 1_000_000_000.0 - 7.0).abs() < 0.25);
+        let incident_matching = neural_matching_bytes_per_worker(48_000);
+        assert_eq!(incident_matching, 27_916_435_456);
+        assert!((incident_matching as f64 / 1_000_000_000.0 - 27.9).abs() < 0.1);
+    }
+
+    #[test]
+    fn matching_replan_caps_an_oversized_database_before_launch() {
+        let replan = replan_alignment_matching(29 * GIB, 8, 24_000, 48_000)
+            .expect("the planned 24k matcher unit fits");
+        assert_eq!(replan.keypoint_cap, 24_000);
+        assert_eq!(replan.record.actual_max_keypoints, 48_000);
+        assert_eq!(replan.record.matching_workers, 2);
+        assert_eq!(replan.record.matching_unit_bytes, 7_180_435_456);
+        assert_eq!(
+            replan.degradation,
+            Some(PhotolabMemoryDegradation::MatchingKeypointsCapped {
+                from: 48_000,
+                to: 24_000,
+            })
+        );
+    }
+
+    #[test]
+    fn sixteen_gib_runs_the_planned_24k_unit_sequentially() {
+        let replan = replan_alignment_matching(16 * GIB, 8, 24_000, 48_000)
+            .expect("one planned 24k matcher unit fits 16 GiB");
+        assert_eq!(replan.keypoint_cap, 24_000);
+        assert_eq!(replan.record.matching_workers, 1);
+        assert!(matches!(
+            replan.degradation,
+            Some(PhotolabMemoryDegradation::MatchingKeypointsCapped {
+                from: 48_000,
+                to: 24_000,
+            })
+        ));
+    }
+
+    #[test]
+    fn matching_replan_refuses_when_even_the_minimum_unit_cannot_fit() {
+        let available = NEURAL_MATCHING_FIXED_BASE_BYTES;
+        let refusal = replan_alignment_matching(available, 8, 24_000, 48_000)
+            .expect_err("the minimum 500-keypoint unit exceeds this envelope");
+        assert!(refusal.predicted_bytes > refusal.available_bytes);
+        assert_eq!(refusal.available_bytes, available);
+    }
+
+    #[tokio::test]
+    async fn matching_replan_and_worker_limit_hit_are_persisted_before_failure() {
+        let manager = manager(1, 0);
+        let id = PhotolabJobId("memory-limit-record".into());
+        manager
+            .start(request(&id.0), |context| {
+                context
+                    .memory
+                    .record_matching_replan_blocking(
+                        PhotolabMatchingMemoryReplan {
+                            actual_max_keypoints: 24_000,
+                            matching_workers: 1,
+                            matching_unit_bytes: 7_180_435_456,
+                        },
+                        24_000,
+                        None,
+                    )
+                    .map_err(|error| JobWorkerError::Failed {
+                        code: "memoryRecord".into(),
+                        message: error.to_string(),
+                    })?;
+                context
+                    .memory
+                    .record_worker_memory_limit_hit_blocking("Match ALIKED with LightGlue", 8 * GIB)
+                    .map_err(|error| JobWorkerError::Failed {
+                        code: "memoryRecord".into(),
+                        message: error.to_string(),
+                    })?;
+                Err(JobWorkerError::Failed {
+                    code: "workerMemoryLimit".into(),
+                    message: "bounded test failure".into(),
+                })
+            })
+            .await
+            .expect("admit memory-record test");
+        let terminal = manager.wait_for_terminal(&id).await.expect("terminal");
+        assert!(matches!(
+            terminal.state,
+            PhotolabJobState::Failed { ref code, .. } if code == "workerMemoryLimit"
+        ));
+        assert_eq!(
+            terminal.memory.matching_replanned,
+            Some(PhotolabMatchingMemoryReplan {
+                actual_max_keypoints: 24_000,
+                matching_workers: 1,
+                matching_unit_bytes: 7_180_435_456,
+            })
+        );
+        assert!(terminal.memory.degradations.contains(
+            &PhotolabMemoryDegradation::WorkerMemoryLimitHit {
+                stage: "Match ALIKED with LightGlue".into(),
+                limit_bytes: 8 * GIB,
+            }
+        ));
     }
 
     #[test]

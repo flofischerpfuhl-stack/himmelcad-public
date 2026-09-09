@@ -351,6 +351,10 @@ pub enum PhotolabMemoryDegradation {
         from: u32,
         to: u32,
     },
+    WorkerMemoryLimitHit {
+        stage: String,
+        limit_bytes: u64,
+    },
 }
 
 /// Throughput-only memory choices frozen at admission without changing requested quality.
@@ -386,6 +390,15 @@ pub struct PhotolabStageMemory {
     pub parameters: serde_json::Value,
 }
 
+/// Matching choices recomputed from the feature database immediately before launch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhotolabMatchingMemoryReplan {
+    pub actual_max_keypoints: u32,
+    pub matching_workers: u16,
+    pub matching_unit_bytes: u64,
+}
+
 /// Per-machine envelope and the choices made to stay inside it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -399,6 +412,8 @@ pub struct PhotolabJobMemory {
     pub degradations: Vec<PhotolabMemoryDegradation>,
     #[serde(default)]
     pub observations: Vec<PhotolabMemoryObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matching_replanned: Option<PhotolabMatchingMemoryReplan>,
 }
 
 /// Authoritative, persistable job record. Runtime cancellation handles are separate.
@@ -995,6 +1010,11 @@ mod tests {
                 budget_bytes: 8 * 1024 * 1024 * 1024,
             }],
             observations: Vec::new(),
+            matching_replanned: Some(PhotolabMatchingMemoryReplan {
+                actual_max_keypoints: 24_000,
+                matching_workers: 1,
+                matching_unit_bytes: 7_180_435_456,
+            }),
         };
         let encoded = serde_json::to_vec(&value).expect("serialize memory plan");
         let decoded: PhotolabJob =

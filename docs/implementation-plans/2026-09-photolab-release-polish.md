@@ -547,6 +547,28 @@ fixtures updated). Evidence: the 24-image fast smoke with forced tiling
 (env override) produces an alignment within the golden tolerance of the
 untiled run; then the 16 GB gate run on the Windows host.
 
+### WP-A7d — Bound matching from the extracted feature set (Size M)
+
+Implemented 2026-09-09 (working tree, no commit): tiled ALIKED now records the
+largest merged row count before and after its deterministic per-image cap;
+before LightGlue starts, the sidecar reads the actual database maximum, trims
+any over-cap database deterministically, replans worker count from that capped
+maximum, and persists `matchingReplanned`. Extraction and matching children on
+Linux inherit an `RLIMIT_AS` equal to modelled unit bytes × workers + 25%, with
+a 2 GiB floor; a diagnosed limit death persists `workerMemoryLimitHit` before
+the typed job failure. The crate forbids unsafe code, so the child-only limit is
+applied by `/usr/bin/prlimit` immediately before `exec`, not Rust `pre_exec`;
+`HIMMELCAD_PHOTOLAB_WORKER_RLIMIT_DISABLE=1` is the diagnostics-only bypass.
+The incident is the second matching calibration point:
+48,000² × 4 B × 3 attention layers + 256 MiB = 27,916,435,456 B (27.9 GB),
+within the observed 26.4–28.8 GB RSS, so
+`NEURAL_MATCHING_ATTENTION_LAYERS = 3` remains unchanged. Contract correction:
+the brief's requested 16 GB/48,000-keypoint refusal contradicts WP-A7b and the
+model because recapping to the planned 24,000 rows produces a 7,180,435,456 B
+unit that fits; the implementation runs that unit sequentially and reserves
+the typed refusal for an envelope in which even the minimum modelled unit
+cannot fit.
+
 ## Phase B — Resume, shutdown, and job-owner integrity
 
 ### WP-B1 — Wire the checkpoint sink; make `interruptedRecoverable` real (Size M)

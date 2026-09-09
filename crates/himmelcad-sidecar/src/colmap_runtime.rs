@@ -42,12 +42,13 @@ use crate::mesh_tiler::PreparedMeshProduct;
 use crate::image_commit::{CameraImageMetadataRecord, ProjectCameraImageRecord};
 use crate::image_mask_runtime::materialize_colmap_masks;
 use crate::job_runtime::{
-    AlignmentExtractionTiling, JobWorkerContext, JobWorkerError, JobWorkerResult,
+    replan_alignment_matching, AlignmentExtractionTiling, JobWorkerContext, JobWorkerError,
+    JobWorkerResult, SIFT_MATCHING_BYTES_PER_WORKER,
 };
 use crate::{
     colmap_feature_db::{
-        read_image_features, write_image_features, ColmapDescriptorMatrix, ColmapFeatureDbError,
-        ColmapKeypointMatrix,
+        cap_database_features, maximum_keypoint_count, read_image_features, write_image_features,
+        ColmapDescriptorMatrix, ColmapFeatureDbError, ColmapKeypointMatrix,
     },
     dedode_colmap_bridge::{
         merge_tiled_aliked_features, prepare_dedode_colmap_import, DedodeColmapBridgeError,
@@ -64,6 +65,12 @@ const MAX_SIGNATURE_BYTES: u64 = 64 * 1024;
 const LOG_TAIL_LINES: usize = 200;
 const MAX_LOG_LINE_BYTES: usize = 16 * 1024;
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(15);
+const GIB: u64 = 1024 * 1024 * 1024;
+// WP-A7d X6 tunable: 25% covers calibrated model error and child runtime overhead while RLIMIT_AS
+// remains a hard backstop. Two GiB is the minimum viable address space for the worker and models.
+const WORKER_RLIMIT_HEADROOM_NUMERATOR: u64 = 5;
+const WORKER_RLIMIT_HEADROOM_DENOMINATOR: u64 = 4;
+const MINIMUM_WORKER_RLIMIT_BYTES: u64 = 2 * GIB;
 // X6 tunable: depth 11 retains facade-scale detail without the extreme memory growth of
 // deeper Poisson octrees on typical workstation dense clouds.
 const POISSON_MESHING_DEPTH: u32 = 11;
@@ -339,6 +346,11 @@ pub struct ColmapRunRequest {
     /// Deterministic time-first ALIKED grid. SIFT extraction ignores this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extraction_tiling: Option<AlignmentExtractionTiling>,
+    /// Complete job envelope used for post-extraction matching replanning.
+    pub memory_envelope_bytes: u64,
+    /// Calibrated extraction unit from the immutable admission plan.
+    pub extraction_memory_unit_bytes: u64,
+    pub logical_cpus: u16,
     /// Hardware-adaptive worker count. This changes throughput and memory only.
     pub feature_worker_threads: u16,
     /// Hardware-adaptive ALIKED/LightGlue worker count.
@@ -520,6 +532,15 @@ impl ColmapRunRequest {
         {
             return Err(ColmapRuntimeError::InvalidRequest(
                 "feature and matching worker threads must be greater than zero".into(),
+            ));
+        }
+        if self.memory_envelope_bytes == 0
+            || self.extraction_memory_unit_bytes == 0
+            || self.logical_cpus == 0
+        {
+            return Err(ColmapRuntimeError::InvalidRequest(
+                "alignment memory envelope, extraction unit and logical CPUs must be greater than zero"
+                    .into(),
             ));
         }
         if let ColmapPairSelection::Sequential { overlap } = self.pair_selection {
@@ -1019,7 +1040,7 @@ pub fn run_colmap_mesher(
     let report = {
         let started = Instant::now();
         state.report_stage(context, spec.stage_label, ProgressMetrics::empty())?;
-        let mut child = spawn_colmap_child(&executable, &spec, &state.scratch)?;
+        let mut child = spawn_colmap_child(&executable, &spec, &state.scratch, None)?;
         let mut progress_error = None;
         let supervised = supervise_child(&mut child, &context.cancellation, |completed, total| {
             if progress_error.is_none() {
@@ -1350,6 +1371,7 @@ impl ColmapRuntime {
         let scratch = create_scratch(&self.scratch_root, &request.job_id)?;
         let plan = request.progress_plan();
         let mut state = RunState::new(scratch, plan);
+        state.configure_alignment_memory(request);
         create_workspace_directories(&state.scratch)?;
         let materialized_images = materialize_project_images(
             &project_root,
@@ -1745,6 +1767,14 @@ pub enum ColmapRuntimeError {
     DedodeBridge(#[from] DedodeColmapBridgeError),
     #[error("COLMAP feature database failed: {0}")]
     FeatureDatabase(#[from] ColmapFeatureDbError),
+    #[error("alignment needs more memory than this machine has for matching")]
+    InsufficientMatchingMemory,
+    #[error("{stage}: worker exceeded its memory envelope (limit {limit_gb} GB)")]
+    WorkerMemoryLimitHit {
+        stage: String,
+        limit_bytes: u64,
+        limit_gb: u64,
+    },
     #[error("COLMAP command {command:?} failed with exit code {exit_code:?}: {message}")]
     CommandFailed {
         command: ColmapCommandKind,
@@ -1775,6 +1805,8 @@ impl ColmapRuntimeError {
             Self::MissingCapability(_)
             | Self::MissingResource(_)
             | Self::DedicatedLargeMatcherRequired(_) => "toolCapability",
+            Self::InsufficientMatchingMemory => "insufficientMemory",
+            Self::WorkerMemoryLimitHit { .. } => "workerMemoryLimit",
             Self::CommandFailed { .. } => "colmapCommand",
             Self::MissingOutput(_) | Self::InvalidWorkerOutput(_) | Self::FeatureDatabase(_) => {
                 "invalidWorkerOutput"
@@ -1875,6 +1907,8 @@ struct RunState {
     plan: ColmapProgressPlan,
     command_reports: Vec<ColmapCommandReport>,
     reported_progress: BTreeMap<usize, ProgressMetrics>,
+    extraction_memory_limit_bytes: Option<u64>,
+    matching_memory_limit_bytes: Option<u64>,
 }
 
 impl RunState {
@@ -1884,6 +1918,27 @@ impl RunState {
             plan,
             command_reports: Vec::new(),
             reported_progress: BTreeMap::new(),
+            extraction_memory_limit_bytes: None,
+            matching_memory_limit_bytes: None,
+        }
+    }
+
+    fn configure_alignment_memory(&mut self, request: &ColmapRunRequest) {
+        self.extraction_memory_limit_bytes = Some(worker_memory_limit_bytes(
+            request.extraction_memory_unit_bytes,
+            request.feature_worker_threads,
+        ));
+    }
+
+    fn memory_limit_for(&self, kind: ColmapCommandKind) -> Option<u64> {
+        match kind {
+            ColmapCommandKind::FeatureExtractor | ColmapCommandKind::FeatureImporter => {
+                self.extraction_memory_limit_bytes
+            }
+            ColmapCommandKind::ExhaustiveMatcher
+            | ColmapCommandKind::SequentialMatcher
+            | ColmapCommandKind::GeometricVerifier => self.matching_memory_limit_bytes,
+            _ => None,
         }
     }
 
@@ -2109,9 +2164,52 @@ impl ColmapRuntime {
                 }
             }
         }
+        let matching_threads = match store {
+            FeatureStoreKind::Aliked => {
+                let actual_max_keypoints = maximum_keypoint_count(&database)?;
+                let replan = replan_alignment_matching(
+                    request.memory_envelope_bytes,
+                    request.logical_cpus,
+                    request.aliked_max_features,
+                    actual_max_keypoints,
+                )
+                .map_err(|_| ColmapRuntimeError::InsufficientMatchingMemory)?;
+                if replan.keypoint_cap < actual_max_keypoints {
+                    let capped = cap_database_features(&database, replan.keypoint_cap)?;
+                    if capped.maximum_before_cap != actual_max_keypoints
+                        || capped.maximum_after_cap > replan.keypoint_cap
+                    {
+                        return Err(ColmapRuntimeError::InvalidWorkerOutput(
+                            "feature database cap did not produce the planned matcher input".into(),
+                        ));
+                    }
+                }
+                context
+                    .memory
+                    .record_matching_replan_blocking(
+                        replan.record.clone(),
+                        replan.keypoint_cap,
+                        replan.degradation.clone(),
+                    )
+                    .map_err(|error| ColmapRuntimeError::Progress(error.to_string()))?;
+                state.matching_memory_limit_bytes = Some(worker_memory_limit_bytes(
+                    replan.record.matching_unit_bytes,
+                    replan.record.matching_workers,
+                ));
+                replan.record.matching_workers
+            }
+            FeatureStoreKind::Sift => {
+                state.matching_memory_limit_bytes = Some(worker_memory_limit_bytes(
+                    SIFT_MATCHING_BYTES_PER_WORKER,
+                    request.matching_worker_threads,
+                ));
+                request.matching_worker_threads
+            }
+        };
         if restored_extraction {
             state.report_complete(context, store.extraction_label())?;
         } else {
+            // Publish only the capped database; a cache entry must never widen a later matcher.
             publish_feature_cache(
                 &cache_root,
                 &extracted_key,
@@ -2121,10 +2219,6 @@ impl ColmapRuntime {
         }
 
         let (matcher_kind, mut matching) = matching_command(request.pair_selection, &database);
-        let matching_threads = match store {
-            FeatureStoreKind::Aliked => request.aliked_matching_worker_threads,
-            FeatureStoreKind::Sift => request.matching_worker_threads,
-        };
         matching.extend([
             os("--FeatureMatching.num_threads"),
             os(matching_threads.to_string()),
@@ -2220,6 +2314,8 @@ impl ColmapRuntime {
             .as_ref()
             .is_some_and(|scope| !scope.masks.is_empty());
         let mut completed_units = 0_u64;
+        let mut merged_keypoints_before_cap = 0_u32;
+        let mut merged_keypoints_after_cap = 0_u32;
         for (image_index, (camera, image_name)) in request
             .camera_images
             .iter()
@@ -2323,9 +2419,17 @@ impl ColmapRuntime {
                 tile_features.push(feature_set);
                 completed_units = completed_units.saturating_add(1);
             }
-            let mut merged =
-                merge_tiled_aliked_features(&tile_features, request.aliked_max_features)
-                    .map_err(map_dedode_bridge_error)?;
+            let mut merged = merge_tiled_aliked_features(&tile_features, u32::MAX)
+                .map_err(map_dedode_bridge_error)?;
+            merged_keypoints_before_cap =
+                merged_keypoints_before_cap.max(u32::try_from(merged.len()).map_err(|_| {
+                    ColmapRuntimeError::InvalidWorkerOutput(
+                        "merged ALIKED feature count exceeds u32".into(),
+                    )
+                })?);
+            merged.truncate(usize::try_from(request.aliked_max_features).unwrap_or(usize::MAX));
+            merged_keypoints_after_cap = merged_keypoints_after_cap
+                .max(u32::try_from(merged.len()).expect("post-cap ALIKED feature count fits u32"));
             for feature in &mut merged {
                 feature.x = rescale_pixel_center(feature.x, source.scale_x);
                 feature.y = rescale_pixel_center(feature.y, source.scale_y);
@@ -2363,6 +2467,19 @@ impl ColmapRuntime {
             let target = read_image_features(database, image_name)?;
             write_image_features(database, target.image_id, &keypoints, &descriptors)?;
         }
+        context
+            .memory
+            .record_stage_peak_blocking(
+                FeatureStoreKind::Aliked.extraction_label(),
+                0,
+                request.feature_worker_threads,
+                serde_json::json!({
+                    "mergedKeypointsBeforeCap": merged_keypoints_before_cap,
+                    "mergedKeypointsAfterCap": merged_keypoints_after_cap,
+                    "keypointCap": request.aliked_max_features,
+                }),
+            )
+            .map_err(|error| ColmapRuntimeError::Progress(error.to_string()))?;
         state.report_complete(context, FeatureStoreKind::Aliked.extraction_label())
     }
 
@@ -3252,7 +3369,8 @@ impl ColmapRuntime {
             .map(|value| value.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         let started = Instant::now();
-        let mut child = self.spawn_child(spec, &state.scratch)?;
+        let memory_limit_bytes = state.memory_limit_for(spec.kind);
+        let mut child = self.spawn_child(spec, &state.scratch, memory_limit_bytes)?;
         let mut progress_error = None;
         let supervised = supervise_child(&mut child, &context.cancellation, |completed, total| {
             if progress_error.is_none() {
@@ -3285,18 +3403,34 @@ impl ColmapRuntime {
             }
         });
         let peak_rss_bytes = child.peak_rss_bytes();
+        let mut memory_parameters = command_memory_parameters(spec);
+        if let (Some(limit_bytes), Some(parameters)) =
+            (memory_limit_bytes, memory_parameters.as_object_mut())
+        {
+            parameters.insert("workerMemoryLimitBytes".into(), limit_bytes.into());
+        }
         context
             .memory
             .record_stage_peak_blocking(
                 spec.stage_label,
                 peak_rss_bytes,
                 command_worker_count(spec),
-                command_memory_parameters(spec),
+                memory_parameters,
             )
             .map_err(|error| ColmapRuntimeError::Progress(error.to_string()))?;
         let outcome = supervised?;
         if let Some(error) = progress_error {
             return Err(error);
+        }
+        if let Some(limit_bytes) = memory_limit_bytes {
+            if let Some(error) = worker_memory_limit_error(spec.stage_label, limit_bytes, &outcome)
+            {
+                context
+                    .memory
+                    .record_worker_memory_limit_hit_blocking(spec.stage_label, limit_bytes)
+                    .map_err(|error| ColmapRuntimeError::Progress(error.to_string()))?;
+                return Err(error);
+            }
         }
         Ok(ColmapCommandReport {
             command: spec.kind,
@@ -3309,8 +3443,18 @@ impl ColmapRuntime {
         })
     }
 
-    fn spawn_child(&self, spec: &CommandSpec, scratch: &Path) -> Result<Child, ColmapRuntimeError> {
-        spawn_colmap_child(&self.toolchain.executable, spec, scratch)
+    fn spawn_child(
+        &self,
+        spec: &CommandSpec,
+        scratch: &Path,
+        memory_limit_bytes: Option<u64>,
+    ) -> Result<Child, ColmapRuntimeError> {
+        spawn_colmap_child(
+            &self.toolchain.executable,
+            spec,
+            scratch,
+            memory_limit_bytes,
+        )
     }
 }
 
@@ -3318,6 +3462,7 @@ fn spawn_colmap_child(
     executable: &Path,
     spec: &CommandSpec,
     scratch: &Path,
+    memory_limit_bytes: Option<u64>,
 ) -> Result<Child, ColmapRuntimeError> {
     let home = scratch.join("home");
     let temp = scratch.join("tmp");
@@ -3325,7 +3470,7 @@ fn spawn_colmap_child(
     fs::create_dir_all(&home)?;
     fs::create_dir_all(&temp)?;
     fs::create_dir_all(&cache)?;
-    let mut command = Command::new(executable);
+    let mut command = worker_command(executable, memory_limit_bytes);
     command
         .arg(spec.kind.as_str())
         .args(&spec.args)
@@ -3345,6 +3490,70 @@ fn spawn_colmap_child(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     process_group::spawn(&mut command).map_err(ColmapRuntimeError::Io)
+}
+
+fn worker_memory_limit_bytes(unit_bytes: u64, workers: u16) -> u64 {
+    unit_bytes
+        .saturating_mul(u64::from(workers.max(1)))
+        .saturating_mul(WORKER_RLIMIT_HEADROOM_NUMERATOR)
+        .checked_div(WORKER_RLIMIT_HEADROOM_DENOMINATOR)
+        .unwrap_or(u64::MAX)
+        .max(MINIMUM_WORKER_RLIMIT_BYTES)
+}
+
+fn worker_command(executable: &Path, memory_limit_bytes: Option<u64>) -> Command {
+    #[cfg(target_os = "linux")]
+    if let Some(memory_limit_bytes) = memory_limit_bytes
+        .filter(|_| std::env::var("HIMMELCAD_PHOTOLAB_WORKER_RLIMIT_DISABLE").as_deref() != Ok("1"))
+    {
+        // The crate forbids unsafe code, while std's pre-exec hook is unsafe. `prlimit` performs
+        // the same child-only RLIMIT_AS operation immediately before `exec` without weakening
+        // that crate-wide safety policy; the resulting limit is inherited by every descendant.
+        let mut command = Command::new("/usr/bin/prlimit");
+        command
+            .arg(format!("--as={memory_limit_bytes}"))
+            .arg("--")
+            .arg(executable);
+        return command;
+    }
+    let _ = memory_limit_bytes;
+    Command::new(executable)
+}
+
+fn outcome_indicates_memory_limit(outcome: &ProcessOutcome) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if matches!(outcome.status.signal(), Some(6 | 9 | 11)) {
+            return true;
+        }
+    }
+    outcome.log_tail.iter().any(|line| {
+        let lower = line.to_ascii_lowercase();
+        [
+            "cannot allocate memory",
+            "failed to map segment",
+            "memory allocation",
+            "std::bad_alloc",
+            "out of memory",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle))
+    })
+}
+
+fn worker_memory_limit_error(
+    stage: &str,
+    limit_bytes: u64,
+    outcome: &ProcessOutcome,
+) -> Option<ColmapRuntimeError> {
+    (!outcome.status.success() && outcome_indicates_memory_limit(outcome)).then(|| {
+        ColmapRuntimeError::WorkerMemoryLimitHit {
+            stage: stage.into(),
+            limit_bytes,
+            limit_gb: limit_bytes.div_ceil(GIB),
+        }
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6019,6 +6228,9 @@ mod tests {
                 sift_rescue_only: false,
                 max_image_size: 3_200,
                 extraction_tiling: None,
+                memory_envelope_bytes: 16 * GIB,
+                extraction_memory_unit_bytes: 4 * GIB,
+                logical_cpus: 8,
                 feature_worker_threads: 1,
                 aliked_matching_worker_threads: 1,
                 matching_worker_threads: 1,
@@ -6275,6 +6487,7 @@ case "$cmd" in
     case "$db" in
       *cancel-between-tiles-job*tile-000001*) while :; do :; done ;;
       *features/aliked/tiles/*) /bin/cp "$(dirname "$0")/fake-tile.db" "$db" ;;
+      *features/aliked/database.db*) /bin/cp "$(dirname "$0")/fake-bootstrap.db" "$db" ;;
       *) : > "$db" ;;
     esac
     ;;
@@ -7028,6 +7241,8 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
         let mut request = rig.request("tiled-aliked-first");
         request.sift_rescue_only = true;
         request.max_image_size = 2_048;
+        let cap = 2;
+        request.aliked_max_features = cap;
         request.extraction_tiling = Some(AlignmentExtractionTiling {
             columns: 2,
             rows: 1,
@@ -7051,17 +7266,20 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
             let ColmapKeypointMatrix::Affine(keypoints) = features.keypoints else {
                 panic!("tiled ALIKED must write affine keypoints");
             };
-            assert_eq!(keypoints.len(), 3);
+            assert_eq!(
+                keypoints.len(),
+                usize::try_from(cap).expect("cap fits usize")
+            );
             assert_eq!(
                 keypoints
                     .iter()
                     .map(|keypoint| (keypoint[0], keypoint[1]))
                     .collect::<Vec<_>>(),
-                [(104.0, 50.0), (1_000.0, 50.0), (1_896.0, 50.0)]
+                [(104.0, 50.0), (1_000.0, 50.0)]
             );
             assert!(matches!(
                 features.descriptors,
-                ColmapDescriptorMatrix::AlikedN16RotF32(ref rows) if rows.len() == 3
+                ColmapDescriptorMatrix::AlikedN16RotF32(ref rows) if rows.len() == usize::try_from(cap).expect("cap fits usize")
             ));
         }
         let first_database_sha256 = hash_file(&database, None).expect("hash first database");
@@ -7081,6 +7299,43 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
             )
             .expect("hash second database"),
             first_database_sha256
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn worker_address_space_limit_returns_the_typed_stage_error() {
+        let rig = TestRig::new("worker-rlimit", false, false);
+        let scratch = rig.config.scratch_root.join("worker-rlimit-direct");
+        fs::create_dir_all(&scratch).expect("create RLIMIT scratch");
+        let spec = CommandSpec {
+            kind: ColmapCommandKind::FeatureExtractor,
+            stage_label: "Extract ALIKED",
+            args: Vec::new(),
+        };
+        let limit_bytes = 1024 * 1024;
+        let mut child = spawn_colmap_child(
+            &rig.tool_root.join("colmap"),
+            &spec,
+            &scratch,
+            Some(limit_bytes),
+        )
+        .expect("spawn memory-limited fake COLMAP");
+        let outcome = supervise_child(&mut child, &CancellationToken::new(), |_, _| {})
+            .expect("supervise memory-limited fake COLMAP");
+        let error = worker_memory_limit_error(spec.stage_label, limit_bytes, &outcome)
+            .expect("typed worker memory error");
+        assert!(matches!(
+            error,
+            ColmapRuntimeError::WorkerMemoryLimitHit {
+                ref stage,
+                limit_bytes: 1_048_576,
+                limit_gb: 1,
+            } if stage == "Extract ALIKED"
+        ));
+        assert_eq!(
+            worker_memory_limit_bytes(512 * 1024 * 1024, 1),
+            MINIMUM_WORKER_RLIMIT_BYTES
         );
     }
 

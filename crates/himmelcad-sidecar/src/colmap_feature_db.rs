@@ -45,6 +45,14 @@ impl ColmapKeypointMatrix {
             Self::Affine(rows) => append_float_rows(rows, output),
         }
     }
+
+    fn truncate(&mut self, rows: usize) {
+        match self {
+            Self::Coordinates(values) => values.truncate(rows),
+            Self::Similarity(values) => values.truncate(rows),
+            Self::Affine(values) => values.truncate(rows),
+        }
+    }
 }
 
 /// Descriptor storage supported by COLMAP 4.0's SIFT and ALIKED extractors.
@@ -91,6 +99,13 @@ impl ColmapDescriptorMatrix {
             Self::AlikedN32F32(_) => 2,
         }
     }
+
+    fn truncate(&mut self, rows: usize) {
+        match self {
+            Self::SiftU8(values) => values.truncate(rows),
+            Self::AlikedN16RotF32(values) | Self::AlikedN32F32(values) => values.truncate(rows),
+        }
+    }
 }
 
 /// Features for one image. COLMAP does not persist ALIKED detector scores, so
@@ -100,6 +115,12 @@ pub struct ColmapImageFeatures {
     pub image_id: i64,
     pub keypoints: ColmapKeypointMatrix,
     pub descriptors: ColmapDescriptorMatrix,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ColmapFeatureCapSummary {
+    pub maximum_before_cap: u32,
+    pub maximum_after_cap: u32,
 }
 
 #[derive(Debug, Error)]
@@ -248,6 +269,78 @@ pub fn write_image_features(
     )?;
     transaction.commit()?;
     Ok(())
+}
+
+/// Returns the largest stored keypoint row count without loading descriptor blobs.
+pub fn maximum_keypoint_count(database_path: &Path) -> Result<u32, ColmapFeatureDbError> {
+    let connection = Connection::open_with_flags(
+        database_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    let rows = connection.query_row("SELECT COALESCE(MAX(rows), 0) FROM keypoints", [], |row| {
+        row.get::<_, i64>(0)
+    })?;
+    if rows < 0 {
+        return Err(ColmapFeatureDbError::InvalidData(
+            "keypoints contains a negative matrix shape".into(),
+        ));
+    }
+    u32::try_from(rows).map_err(|_| {
+        ColmapFeatureDbError::InvalidData("keypoint row count exceeds u32 range".into())
+    })
+}
+
+/// Deterministically trims every image to the stable extractor row-order proxy.
+///
+/// COLMAP does not persist ALIKED scores. Its curated CPU extractor writes descending detector
+/// score order; tiled merges additionally order equal score proxies by `(x, y)`. Keeping the
+/// prefix therefore preserves that deterministic ranking without inventing scores.
+pub fn cap_database_features(
+    database_path: &Path,
+    cap: u32,
+) -> Result<ColmapFeatureCapSummary, ColmapFeatureDbError> {
+    if cap == 0 {
+        return Err(ColmapFeatureDbError::InvalidData(
+            "feature cap must be greater than zero".into(),
+        ));
+    }
+    let connection = Connection::open_with_flags(
+        database_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    let image_names = {
+        let mut statement = connection.prepare("SELECT name FROM images ORDER BY image_id")?;
+        let names = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        names
+    };
+    drop(connection);
+
+    let cap = usize::try_from(cap).unwrap_or(usize::MAX);
+    let mut maximum_before_cap = 0_usize;
+    let mut maximum_after_cap = 0_usize;
+    for image_name in image_names {
+        let mut features = read_image_features(database_path, &image_name)?;
+        maximum_before_cap = maximum_before_cap.max(features.keypoints.rows());
+        features.keypoints.truncate(cap);
+        features.descriptors.truncate(cap);
+        maximum_after_cap = maximum_after_cap.max(features.keypoints.rows());
+        write_image_features(
+            database_path,
+            features.image_id,
+            &features.keypoints,
+            &features.descriptors,
+        )?;
+    }
+    Ok(ColmapFeatureCapSummary {
+        maximum_before_cap: u32::try_from(maximum_before_cap).map_err(|_| {
+            ColmapFeatureDbError::InvalidData("keypoint row count exceeds u32 range".into())
+        })?,
+        maximum_after_cap: u32::try_from(maximum_after_cap).map_err(|_| {
+            ColmapFeatureDbError::InvalidData("keypoint row count exceeds u32 range".into())
+        })?,
+    })
 }
 
 fn read_matrix_row(
@@ -424,6 +517,7 @@ fn validate_finite_descriptors(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
     use std::{
         fs,
         time::{SystemTime, UNIX_EPOCH},
@@ -538,5 +632,70 @@ mod tests {
         );
         drop(connection);
         fs::remove_file(path).expect("remove fixture");
+    }
+
+    fn write_cap_fixture(path: &Path) {
+        let connection = Connection::open(path).expect("create cap fixture database");
+        connection
+            .execute_batch(
+                "CREATE TABLE images (image_id INTEGER PRIMARY KEY NOT NULL, name TEXT NOT NULL UNIQUE, camera_id INTEGER NOT NULL);\
+                 CREATE TABLE keypoints (image_id INTEGER PRIMARY KEY NOT NULL, rows INTEGER NOT NULL, cols INTEGER NOT NULL, data BLOB);\
+                 CREATE TABLE descriptors (image_id INTEGER PRIMARY KEY NOT NULL, rows INTEGER NOT NULL, cols INTEGER NOT NULL, data BLOB, type INTEGER NOT NULL);\
+                 INSERT INTO images(image_id, name, camera_id) VALUES (1, 'image.jpg', 1);",
+            )
+            .expect("create cap fixture schema");
+        drop(connection);
+        write_image_features(
+            path,
+            1,
+            &ColmapKeypointMatrix::Affine(vec![
+                [30.0, 4.0, 1.0, 0.0, 0.0, 1.0],
+                [10.0, 2.0, 1.0, 0.0, 0.0, 1.0],
+                [20.0, 3.0, 1.0, 0.0, 0.0, 1.0],
+                [40.0, 5.0, 1.0, 0.0, 0.0, 1.0],
+                [50.0, 6.0, 1.0, 0.0, 0.0, 1.0],
+                [60.0, 7.0, 1.0, 0.0, 0.0, 1.0],
+            ]),
+            &ColmapDescriptorMatrix::AlikedN32F32(
+                (0..6).map(|index| [index as f32; 128]).collect(),
+            ),
+        )
+        .expect("write cap fixture features");
+    }
+
+    fn feature_set_hash(path: &Path) -> [u8; 32] {
+        let features = read_image_features(path, "image.jpg").expect("read capped fixture");
+        let mut bytes = Vec::new();
+        features.keypoints.append_le_bytes(&mut bytes);
+        bytes.extend(features.descriptors.to_blob());
+        Sha256::digest(bytes).into()
+    }
+
+    #[test]
+    fn database_cap_keeps_exactly_the_stable_row_order_prefix() {
+        let first = fixture_path();
+        let second = fixture_path().with_extension("second.db");
+        write_cap_fixture(&first);
+        write_cap_fixture(&second);
+        for path in [&first, &second] {
+            assert_eq!(maximum_keypoint_count(path).expect("maximum before"), 6);
+            assert_eq!(
+                cap_database_features(path, 3).expect("cap fixture"),
+                ColmapFeatureCapSummary {
+                    maximum_before_cap: 6,
+                    maximum_after_cap: 3,
+                }
+            );
+            assert_eq!(maximum_keypoint_count(path).expect("maximum after"), 3);
+        }
+        assert_eq!(feature_set_hash(&first), feature_set_hash(&second));
+        let capped = read_image_features(&first, "image.jpg").expect("read capped rows");
+        assert!(matches!(
+            capped.keypoints,
+            ColmapKeypointMatrix::Affine(ref rows)
+                if rows.iter().map(|row| row[0]).collect::<Vec<_>>() == [30.0, 10.0, 20.0]
+        ));
+        fs::remove_file(first).expect("remove first cap fixture");
+        fs::remove_file(second).expect("remove second cap fixture");
     }
 }

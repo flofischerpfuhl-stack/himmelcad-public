@@ -497,7 +497,18 @@ export type PhotolabMemoryDegradation =
       kind: 'matchingKeypointsCapped';
       from: number;
       to: number;
+    }
+  | {
+      kind: 'workerMemoryLimitHit';
+      stage: string;
+      limitBytes: number;
     };
+
+export interface PhotolabMatchingMemoryReplan {
+  actualMaxKeypoints: number;
+  matchingWorkers: number;
+  matchingUnitBytes: number;
+}
 
 export interface PhotolabStageMemory {
   stage: string;
@@ -522,6 +533,7 @@ export interface PhotolabJobMemory {
     stage: string;
     budgetBytes: number;
   }>;
+  matchingReplanned?: PhotolabMatchingMemoryReplan;
 }
 
 export interface PhotolabJob {
