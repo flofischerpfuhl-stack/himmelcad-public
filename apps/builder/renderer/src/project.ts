@@ -459,6 +459,20 @@ export class BuilderCanonicalProjectSession {
     return this.call('project.flush', {});
   }
 
+  async undoDocument(): Promise<ProjectSnapshot> {
+    const entry = await this.call<CanonicalJournalEntry>('project.undo', {
+      commandId: `builder/document-undo/${crypto.randomUUID()}`,
+    });
+    return this.acceptCommittedEntry(entry);
+  }
+
+  async redoDocument(): Promise<ProjectSnapshot> {
+    const entry = await this.call<CanonicalJournalEntry>('project.redo', {
+      commandId: `builder/document-redo/${crypto.randomUUID()}`,
+    });
+    return this.acceptCommittedEntry(entry);
+  }
+
   createSnapshot(name: string): Promise<BuilderSnapshotSummary> {
     return this.call('snapshot.create', { name });
   }

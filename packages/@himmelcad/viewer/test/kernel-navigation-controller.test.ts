@@ -22,6 +22,47 @@ void test('nearest cursor hit becomes the active candidate regardless of provide
   assert.equal(nearestCandidateIndex([]), -1);
 });
 
+void test('sparse-cloud hover acquisition uses the bounded eight-pixel geometry lane', async () => {
+  const canvas = new NavigationCanvas();
+  const camera = new KernelCameraController(1_280, 720);
+  const radii: number[] = [];
+  const acquired: KernelPickCandidate['worldPosition'][] = [];
+  let frame: FrameRequestCallback | null = null;
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (callback: FrameRequestCallback): number => {
+    frame = callback;
+    return 1;
+  };
+  try {
+    const sparsePoint = candidate('sparse-cloud', { x: 10, y: 20, z: 30 }, 7, 0.2);
+    const target = navigationTarget();
+    target.pick = async (_x, _y, radius = 0) => {
+      radii.push(radius);
+      return {
+        candidates: radius >= 7 ? [sparsePoint] : [],
+        stale: false,
+        generation: 1,
+      };
+    };
+    const controller = new KernelNavigationController(
+      canvas as unknown as HTMLCanvasElement,
+      target,
+      camera,
+      { onCursorCoordinate: (point) => acquired.push(point) },
+    );
+    canvas.dispatchEvent(pointerInput('pointermove', 0, 100, 100, 1));
+    assert.ok(frame);
+    (frame as FrameRequestCallback)(performance.now());
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(radii, [8]);
+    assert.deepEqual(acquired, [{ x: 10, y: 20, z: 30 }]);
+    controller.dispose();
+  } finally {
+    globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+  }
+});
+
 void test('2D and 2.5D preserve one winner and differ only in acquired height', () => {
   const source = candidate('survey-point', { x: 500_001, y: 5_400_002, z: 137.25 }, 2, 0.3);
 
@@ -189,7 +230,10 @@ void test('G-VC-TRANSITION Escape rung returns to the start pose without committ
     const pending = controller.setViewMode('2d', 250);
     queued.shift()?.(performance.now() + 100);
     assert(escape);
-    assert.equal((escape as (event: KeyboardEvent) => boolean)(new Event('keydown') as KeyboardEvent), true);
+    assert.equal(
+      (escape as (event: KeyboardEvent) => boolean)(new Event('keydown') as KeyboardEvent),
+      true,
+    );
     assert.equal(await pending, '3d');
     while (queued.length > 0) queued.shift()?.(performance.now() + 1_000);
 
@@ -611,6 +655,8 @@ function candidate(
 
 class NavigationCanvas extends EventTarget {
   tabIndex = -1;
+  width = 1_280;
+  height = 720;
   private readonly captured = new Set<number>();
 
   focus(): void {}

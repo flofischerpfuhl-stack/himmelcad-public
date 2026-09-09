@@ -56,10 +56,7 @@ export interface KernelNavigationCallbacks {
   readonly onCameraGestureEnd?: (cancelled: boolean) => void;
   readonly onInteractionChanged?: (interactive: boolean) => void;
   /** Warms the target camera through ordinary budgeted streaming frames before a mode blend. */
-  readonly prewarmViewTarget?: (
-    camera: KernelWorldCamera,
-    signal: AbortSignal,
-  ) => Promise<void>;
+  readonly prewarmViewTarget?: (camera: KernelWorldCamera, signal: AbortSignal) => Promise<void>;
   readonly onCursorCoordinate?: (
     coordinate: KernelPickCandidate['worldPosition'],
     source: 'geometry' | 'targetPlane',
@@ -95,6 +92,10 @@ const LOCAL_SECTION_CLIP_ID = 'kernel-local-section-depth';
 export const DEFAULT_CAMERA_CONTINUUM_DURATION_MS = 250;
 const ESCAPE_CAMERA_CONTINUUM_DURATION_MS = 100;
 const TRANSITION_COMMIT_BLOCK_REASON = 'Finish or cancel view transition';
+// Sparse published clouds may have no point inside the former four-pixel lane
+// even when a rendered point is visibly under the cursor. The renderer's
+// bounded pick implementation supports eight physical pixels.
+const GEOMETRY_ACQUISITION_RADIUS_PHYSICAL_PIXELS = 8;
 
 interface TransitionCompletion {
   readonly promise: Promise<boolean>;
@@ -598,13 +599,12 @@ export class KernelNavigationController {
     requestedNdc?: readonly [number, number],
   ): ActiveCameraTransition['anchor'] {
     const world = requestedWorld ?? this.cursorPresentationPosition ?? this.camera.targetPoint();
-    const ndc = requestedNdc ??
+    const ndc =
+      requestedNdc ??
       (this.latestPickPosition
         ? this.physicalPointerNdc(this.latestPickPosition[0], this.latestPickPosition[1])
         : ([0, 0] as const));
-    if (
-      ![world.x, world.y, world.z, ndc[0], ndc[1]].every(Number.isFinite)
-    ) {
+    if (![world.x, world.y, world.z, ndc[0], ndc[1]].every(Number.isFinite)) {
       return null;
     }
     return { world, ndc: [clamp(ndc[0], -1, 1), clamp(ndc[1], -1, 1)] };
@@ -652,9 +652,7 @@ export class KernelNavigationController {
       { from, to: this.camera.worldCamera() },
       DEFAULT_CAMERA_CONTINUUM_DURATION_MS,
       this.resolveTransitionAnchor(),
-      active.mode
-        ? { ...active.mode, toMode: '3d', publishSettlement: true }
-        : null,
+      active.mode ? { ...active.mode, toMode: '3d', publishSettlement: true } : null,
       active.completion,
       true,
     );
@@ -753,11 +751,7 @@ export class KernelNavigationController {
     const activeTransition = this.activeTransition;
     let transitionRetargeted = false;
     if (this.dragMode === 'orbit' && activeTransition) {
-      this.orbitRetargetDuringTransition(
-        activeTransition,
-        -deltaX * 0.005,
-        deltaY * 0.005,
-      );
+      this.orbitRetargetDuringTransition(activeTransition, -deltaX * 0.005, deltaY * 0.005);
       transitionRetargeted = true;
     } else if (this.dragMode === 'orbit') {
       if (this.dragPivot) this.camera.orbitAround(-deltaX * 0.005, deltaY * 0.005, this.dragPivot);
@@ -770,10 +764,7 @@ export class KernelNavigationController {
     } else {
       this.camera.panPixels(deltaX, deltaY);
     }
-    if (
-      !transitionRetargeted &&
-      !this.retargetTransitionAfterEndpointMutation(activeTransition)
-    ) {
+    if (!transitionRetargeted && !this.retargetTransitionAfterEndpointMutation(activeTransition)) {
       this.uploadCamera();
     }
   };
@@ -801,7 +792,8 @@ export class KernelNavigationController {
     if (wasCameraGesture && !this.wheelInteracting) {
       // The owning mode/preset transition publishes the single settled camera
       // history event. A retargeting gesture must not add a second entry.
-      if (!this.activeTransition) this.callbacks.onCameraGestureEnd?.(event.type === 'pointercancel');
+      if (!this.activeTransition)
+        this.callbacks.onCameraGestureEnd?.(event.type === 'pointercancel');
     }
     if (wasClick) {
       void this.executeClickGesture(event, Math.max(0, event.timeStamp - this.pressTimeStamp));
@@ -883,7 +875,11 @@ export class KernelNavigationController {
     const position = this.physicalPointer(event.clientX, event.clientY);
     let result: KernelPickResult;
     try {
-      result = await this.viewer.pick(position[0], position[1], 4);
+      result = await this.viewer.pick(
+        position[0],
+        position[1],
+        GEOMETRY_ACQUISITION_RADIUS_PHYSICAL_PIXELS,
+      );
     } catch {
       return;
     }
@@ -913,7 +909,11 @@ export class KernelNavigationController {
     this.pickAgain = false;
     try {
       if (!this.disposed && this.navigationEnabled() && position) {
-        const result = await this.viewer.pick(position[0], position[1], 4);
+        const result = await this.viewer.pick(
+          position[0],
+          position[1],
+          GEOMETRY_ACQUISITION_RADIUS_PHYSICAL_PIXELS,
+        );
         if (
           !this.disposed &&
           this.navigationEnabled() &&
@@ -1101,9 +1101,7 @@ export function interpolateKernelWorldCamera(
   progress: number,
 ): KernelWorldCamera {
   const amount = smoothstep(clamp(progress, 0, 1));
-  const up = normalizeCameraVector(
-    lerpPoint(transition.from.up, transition.to.up, amount),
-  );
+  const up = normalizeCameraVector(lerpPoint(transition.from.up, transition.to.up, amount));
   return {
     eye: lerpPoint(transition.from.eye, transition.to.eye, amount),
     target: lerpPoint(transition.from.target, transition.to.target, amount),
@@ -1122,11 +1120,7 @@ function createTransitionCompletion(): TransitionCompletion {
   return { promise, resolve, reject };
 }
 
-function lerpPoint(
-  from: KernelWorldPoint,
-  to: KernelWorldPoint,
-  amount: number,
-): KernelWorldPoint {
+function lerpPoint(from: KernelWorldPoint, to: KernelWorldPoint, amount: number): KernelWorldPoint {
   return {
     x: from.x * (1 - amount) + to.x * amount,
     y: from.y * (1 - amount) + to.y * amount,

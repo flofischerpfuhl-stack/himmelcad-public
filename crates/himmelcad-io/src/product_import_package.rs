@@ -602,6 +602,13 @@ fn canonical_package(
     entity.version_hash = canonical_entity_version_hash(&entity)
         .map_err(|error| ProviderContractError::Canonical(error.to_string()))?;
 
+    // Product-package artifact media types describe the bytes on disk. The
+    // canonical dataset root instead carries the semantic provider format used
+    // by geometry_dataset_contract. Point clouds model those as separate
+    // fields; resource-backed prepared geometry uses the root resource's media
+    // type for the format ID. Preserve transport MIME for every other artifact,
+    // but normalize the prepared root to its canonical semantic type.
+    let root_metadata_media_type = canonical_root_media_type(manifest, dataset_record)?;
     let dataset_artifacts = dataset_record
         .artifact_paths
         .iter()
@@ -619,7 +626,11 @@ fn canonical_package(
                 relative_path: PathBuf::from(path),
                 resource: himmelcad_core::entity_model::GeometryResource {
                     object_hash: artifact.sha256.clone(),
-                    media_type: artifact.media_type.clone(),
+                    media_type: if path == &dataset_record.root_path {
+                        root_metadata_media_type.clone()
+                    } else {
+                        artifact.media_type.clone()
+                    },
                     byte_length: Some(artifact.byte_length),
                 },
             })
@@ -639,7 +650,7 @@ fn canonical_package(
         representation_slot: dataset_record.slot.clone(),
         root_metadata: himmelcad_core::entity_model::GeometryResource {
             object_hash: root_artifact.sha256.clone(),
-            media_type: root_artifact.media_type.clone(),
+            media_type: root_metadata_media_type,
             byte_length: Some(root_artifact.byte_length),
         },
         artifacts: dataset_artifacts,
@@ -696,6 +707,29 @@ fn canonical_package(
     };
     package.validate()?;
     Ok(package)
+}
+
+fn root_artifact_media_type(
+    manifest: &ProductImportPackageManifestV1,
+    dataset: &himmelcad_core::product_import_package::ProductImportPackageDatasetV1,
+) -> Result<String, ProductImportPackageRefusal> {
+    manifest
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.path == dataset.root_path)
+        .map(|artifact| artifact.media_type.clone())
+        .ok_or_else(|| ProductImportPackageRefusal::invalid("dataset root artifact is absent"))
+}
+
+fn canonical_root_media_type(
+    manifest: &ProductImportPackageManifestV1,
+    dataset: &himmelcad_core::product_import_package::ProductImportPackageDatasetV1,
+) -> Result<String, ProductImportPackageRefusal> {
+    if dataset.format_id == "himmelcad-prepared-hierarchy@1" {
+        Ok(dataset.format_id.clone())
+    } else {
+        root_artifact_media_type(manifest, dataset)
+    }
 }
 
 fn validate_prepared_root(
@@ -836,6 +870,28 @@ fn validate_dem_decoder(
         .get("validityReference")
         .and_then(Value::as_object)
         .ok_or_else(|| ProductImportPackageRefusal::invalid("DEM validityReference is absent"))?;
+    let width = parameters
+        .get("width")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ProductImportPackageRefusal::invalid("DEM tile decoder width is absent"))?;
+    let height = parameters
+        .get("height")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ProductImportPackageRefusal::invalid("DEM tile decoder height is absent"))?;
+    let expected_validity_bytes = width
+        .checked_mul(height)
+        .and_then(|bits| bits.checked_add(7))
+        .map(|bits| bits / 8)
+        .ok_or_else(|| ProductImportPackageRefusal::invalid("DEM tile validity size overflows"))?;
+    let observed_validity_bytes = validity.get("byteLength").and_then(Value::as_u64);
+    if observed_validity_bytes != Some(expected_validity_bytes) {
+        return Err(ProductImportPackageRefusal::invalid(format!(
+            "DEM tile validityReference.byteLength={} disagrees with decoder width={width}, height={height}; expected byteLength={expected_validity_bytes} for one bitsetLsb0 bit per tile pixel",
+            observed_validity_bytes
+                .map_or_else(|| "absent".to_owned(), |value| value.to_string())
+        ))
+        .into());
+    }
     let validity_agrees = validity.get("contentHash").and_then(Value::as_str)
         == Some(facts.validity.resource.sha256.as_str())
         && validity.get("byteLength").and_then(Value::as_u64)
@@ -1003,6 +1059,19 @@ mod tests {
         )
     }
 
+    fn landed_dem_package_roots() -> [PathBuf; 2] {
+        [
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(
+                "../../.build/photolab-e2e/g1a3-dsm-smoke/photolab-e2e.hcad/.photolab/\
+                 product-import-packages/product-e288ad8f249419e4d6cf1fab415cc0ba61c2d0c5fe5691e9524ea9bba60ca95f",
+            ),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(
+                "../../.build/photolab-e2e/g1a3-dtm-smoke/photolab-e2e.hcad/.photolab/\
+                 product-import-packages/product-60af8cb22bc3aee54fedf578e7f2adff38050db5be4b3dbdde9cf8a3e2ae3680",
+            ),
+        ]
+    }
+
     fn refusal(error: ProviderContractError) -> &'static str {
         match error {
             ProviderContractError::ProductImportRefused { reason_code, .. } => reason_code,
@@ -1141,5 +1210,66 @@ mod tests {
             }));
         }
         assert!(root.join("ready.json").is_file());
+    }
+
+    #[test]
+    fn landed_dsm_and_dtm_refuse_global_validity_as_a_tile_decoder_band() {
+        let provider = PhotoLabProductPackageProvider::new();
+        for root in landed_dem_package_roots() {
+            if !root.join("ready.json").is_file() {
+                continue;
+            }
+            let selection = provider
+                .probe(ImportProbeRequest {
+                    path: &root,
+                    prefix: &[],
+                    media_type: None,
+                })
+                .expect("probe DEM package")
+                .expect("DEM package selection");
+            let error = provider
+                .import(
+                    CanonicalImportRequest {
+                        source: &root,
+                        format_id: &selection.format_id,
+                        options: &serde_json::json!({}),
+                    },
+                    &mut Context,
+                )
+                .expect_err("global base-grid validity cannot decode as one tile band");
+            let ProviderContractError::ProductImportRefused {
+                reason_code,
+                message,
+            } = error
+            else {
+                panic!("typed product refusal expected, got {error}");
+            };
+            assert_eq!(reason_code, "invalid_package");
+            assert!(message.contains("validityReference.byteLength=524288"));
+            assert!(message.contains("width=512, height=512"));
+            assert!(message.contains("expected byteLength=32768"));
+        }
+    }
+
+    #[test]
+    fn prepared_hierarchy_root_uses_semantic_format_not_transport_mime() {
+        for root in landed_dem_package_roots() {
+            if !root.join("manifest.json").is_file() {
+                continue;
+            }
+            let manifest: ProductImportPackageManifestV1 = serde_json::from_slice(
+                &fs::read(root.join("manifest.json")).expect("manifest fixture"),
+            )
+            .expect("valid manifest JSON");
+            let dataset = &manifest.datasets[0];
+            assert_eq!(
+                canonical_root_media_type(&manifest, dataset).expect("canonical root media type"),
+                "himmelcad-prepared-hierarchy@1"
+            );
+            assert_eq!(
+                root_artifact_media_type(&manifest, dataset).expect("transport media type"),
+                "application/json"
+            );
+        }
     }
 }

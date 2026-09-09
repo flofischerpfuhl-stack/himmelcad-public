@@ -49,6 +49,8 @@ void test('P-01 exposes one generated row for every Builder project lifecycle ac
     'project.new',
     'project.open',
     'project.recent',
+    'project.undo',
+    'project.redo',
     'project.save',
     'project.save_as',
     'project.close',
@@ -255,10 +257,7 @@ void test('G-RW-DGM edit P11 rows share the generated UI and automation table', 
     assert.match(row.ownerSpec, /owner: mesh-terrain/u, id);
   }
   assert.equal(rows.get('mesh.edit.smooth')!.surfaces.ribbon, true);
-  assert.deepEqual(rows.get('mesh.edit.smooth')!.entityKinds, [
-    'Surface',
-    'DigitalElevationModel',
-  ]);
+  assert.deepEqual(rows.get('mesh.edit.smooth')!.entityKinds, ['Surface', 'DigitalElevationModel']);
   assert.deepEqual(rows.get('mesh.edit.downsample')!.entityKinds, [
     'Surface',
     'DigitalElevationModel',

@@ -224,6 +224,7 @@ export interface BuilderKernelViewportHandle {
   ): void;
   setPointCloudDisplay(entityIds: readonly EntityId[], display: PointCloudDisplayStyle): void;
   setEntityVisibility(entityIds: readonly EntityId[], visible: boolean): void;
+  residentEntityIds(): readonly EntityId[];
   cycleCandidate(direction: 1 | -1): void;
   setClipVolumes(volumes: readonly KernelClipVolume[]): void;
   setAutomationClipVolumes(volumes: readonly KernelClipVolume[]): void;
@@ -1301,6 +1302,9 @@ export const BuilderKernelViewport = forwardRef<
           }
         }
         kernel.requestFrame();
+      },
+      residentEntityIds() {
+        return [...entityVisibilityRef.current.keys()];
       },
       cycleCandidate(direction) {
         kernelRef.current?.navigation.cycleCandidate(direction);

@@ -1306,6 +1306,7 @@ export function App(): JSX.Element {
     const restored = await restoreCanonicalResidency(
       viewport,
       await api.canonicalProject.residencyBootstrap(),
+      new Set(viewport.residentEntityIds()),
     );
     entityGroupsRef.current.cloud = restored.clouds;
     entityGroupsRef.current.ifc = restored.inlineMeshes;
@@ -2911,6 +2912,49 @@ export function App(): JSX.Element {
     };
   }, [project, selected, selection.candidates]);
 
+  const changeDocumentHistory = useCallback(
+    async (direction: 'undo' | 'redo'): Promise<void> => {
+      try {
+        const session = await ensureCanonicalProject();
+        const before = projectRef.current;
+        const next =
+          direction === 'undo' ? await session.undoDocument() : await session.redoDocument();
+        const removedEntityIds = before
+          ? (Object.keys(before.entities).filter(
+              (entityId) => !next.entities[entityId],
+            ) as EntityId[])
+          : [];
+        const restoredEntityIds = before
+          ? (Object.keys(next.entities).filter(
+              (entityId) => !before.entities[entityId],
+            ) as EntityId[])
+          : [];
+        if (removedEntityIds.length > 0) {
+          viewportRef.current?.setEntityVisibility(removedEntityIds, false);
+        }
+        pruneRemovedSelection(selectionStore, before, next);
+        setProject(next);
+        await reloadCanonicalResidency();
+        for (const entityId of restoredEntityIds) {
+          viewportRef.current?.setEntityVisibility(
+            [entityId],
+            next.entities[entityId]?.visibility.visible ?? true,
+          );
+        }
+        setSnapshots(await session.listSnapshots());
+        setPropertyRefresh((revision) => revision + 1);
+        logEvent('info', 'renderer', `${direction === 'undo' ? 'Undo' : 'Redo'} committed`);
+      } catch (error) {
+        logEvent(
+          'warn',
+          'renderer',
+          `${direction === 'undo' ? 'Undo' : 'Redo'} unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    },
+    [ensureCanonicalProject, reloadCanonicalResidency, selectionStore],
+  );
+
   const executeRegistryCommand = useCallback(
     async (invocation: CommandInvocation): Promise<void> => {
       const ids = selectedRef.current;
@@ -3582,6 +3626,12 @@ export function App(): JSX.Element {
         case 'project.save':
           await flushProject();
           return;
+        case 'project.undo':
+          await changeDocumentHistory('undo');
+          return;
+        case 'project.redo':
+          await changeDocumentHistory('redo');
+          return;
         case 'project.new':
           await projectActionsRef.current.create();
           return;
@@ -3613,6 +3663,7 @@ export function App(): JSX.Element {
       activeGroundJob,
       activeFunctionId,
       captureSegmentTargets,
+      changeDocumentHistory,
       closeFunction,
       closeSegmentFence,
       commitCanonicalViewingBox,
@@ -3969,6 +4020,8 @@ export function App(): JSX.Element {
         },
         onSave: () => void flushProject(),
         onSaveAs: () => void saveProjectAs(),
+        onUndo: () => void changeDocumentHistory('undo'),
+        onRedo: () => void changeDocumentHistory('redo'),
         onRestoreSnapshot: (entityId) => {
           const target = snapshots.find((snapshot) => snapshot.entityId === entityId);
           if (target) setSnapshotToRestore(target);
@@ -3982,6 +4035,7 @@ export function App(): JSX.Element {
       }),
     [
       closeCurrentProject,
+      changeDocumentHistory,
       createProject,
       flushProject,
       openProject,
@@ -5555,8 +5609,12 @@ function BuilderPropertiesPanel({
               <dd>{lineage.toolIds.length > 0 ? lineage.toolIds.join(' · ') : 'None recorded'}</dd>
               {lineage.demFacts ? (
                 <>
-                  <dt>Cell size</dt>
-                  <dd>{lineage.demFacts.cellSize}</dd>
+                  <dt>DEM semantics</dt>
+                  <dd>{lineage.demFacts.semantics}</dd>
+                  <dt>Interpolation</dt>
+                  <dd>{lineage.demFacts.interpolation}</dd>
+                  <dt>Connectivity</dt>
+                  <dd>{lineage.demFacts.connectivity}</dd>
                   <dt>Validity</dt>
                   <dd>{lineage.demFacts.validity}</dd>
                   <dt>NoData</dt>
@@ -5581,7 +5639,9 @@ function readProductLineage(payload: string): {
   readonly maskScope: string;
   readonly toolIds: readonly string[];
   readonly demFacts: {
-    readonly cellSize: string;
+    readonly semantics: string;
+    readonly interpolation: string;
+    readonly connectivity: string;
     readonly validity: string;
     readonly noData: string;
   } | null;
@@ -5608,6 +5668,7 @@ function readProductLineage(payload: string): {
           ? `numeric ${String(dem.source_no_data.value)}`
           : String(dem.source_no_data.kind)
         : 'Not recorded';
+    const connectivity = dem && isRecord(dem.connectivity) ? dem.connectivity : null;
     return {
       sourceProjectId: typeof value.source_project_id === 'string' ? value.source_project_id : null,
       processingSet:
@@ -5625,7 +5686,19 @@ function readProductLineage(payload: string): {
             ? 'None'
             : 'Not recorded',
       toolIds: tools,
-      demFacts: dem ? { cellSize: 'Published hierarchy', validity, noData } : null,
+      demFacts: dem
+        ? {
+            semantics: typeof dem.semantics === 'string' ? dem.semantics : 'Not recorded',
+            interpolation:
+              typeof dem.interpolation === 'string' ? dem.interpolation : 'Not recorded',
+            connectivity:
+              connectivity && typeof connectivity.kind === 'string'
+                ? `${connectivity.kind}${typeof connectivity.diagonal === 'string' ? ` · ${connectivity.diagonal}` : ''}`
+                : 'Not recorded',
+            validity,
+            noData,
+          }
+        : null,
     };
   } catch {
     return {
@@ -6520,6 +6593,7 @@ async function registerImportJobs(
 async function restoreCanonicalResidency(
   viewport: BuilderKernelViewportHandle,
   bootstrap: BuilderResidencyBootstrap,
+  residentEntityIds: ReadonlySet<string> = new Set(),
 ): Promise<{
   readonly clouds: EntityId[];
   readonly inlineMeshes: EntityId[];
@@ -6531,9 +6605,20 @@ async function restoreCanonicalResidency(
   const clouds = new Set<EntityId>();
   const pointCloudMetadata = new Map<EntityId, CanonicalPointCloudMetadata>();
   const inlineAdmissions: CanonicalRepresentationAdmission[] = [];
+  const inlineMeshes = new Set<EntityId>();
   for (const entry of bootstrap.entries) {
     try {
       const admission = parseCanonicalAdmission(entry.admission);
+      const entityId = admission.entity.id as EntityId;
+      if (residentEntityIds.has(entityId)) {
+        if (entry.dataset?.formatId === 'potree@2') {
+          clouds.add(entityId);
+          if (entry.pointCloud) pointCloudMetadata.set(entityId, entry.pointCloud);
+        } else if (entry.dataset === null) {
+          inlineMeshes.add(entityId);
+        }
+        continue;
+      }
       if (entry.dataset?.formatId === 'potree@2') {
         if (admission.resolvedGeometry.kind !== 'pointCloud') {
           throw new Error('Potree residency does not contain point-cloud geometry');
@@ -6545,7 +6630,6 @@ async function restoreCanonicalResidency(
           bounds,
           ...(entry.pointCloud ? { display: entry.pointCloud.display } : {}),
         });
-        const entityId = admission.entity.id as EntityId;
         clouds.add(entityId);
         if (entry.pointCloud) pointCloudMetadata.set(entityId, entry.pointCloud);
       } else if (entry.dataset?.formatId === 'himmelcad-prepared-hierarchy@1') {
@@ -6567,14 +6651,14 @@ async function restoreCanonicalResidency(
       logEvent('error', 'renderer', `Canonical residency entry skipped: ${String(error)}`);
     }
   }
-  let inlineMeshes: readonly EntityId[] = [];
   if (inlineAdmissions.length > 0) {
     try {
-      inlineMeshes = await viewport.loadCanonicalPackage({
+      const loaded = await viewport.loadCanonicalPackage({
         providerId: 'hcad.canonical-residency@1',
         providerVersion: '1',
         admissions: inlineAdmissions,
       });
+      for (const entityId of loaded) inlineMeshes.add(entityId);
     } catch (error) {
       logEvent('error', 'renderer', `Canonical inline residency skipped: ${String(error)}`);
     }

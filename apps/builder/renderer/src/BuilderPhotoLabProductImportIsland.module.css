@@ -217,8 +217,14 @@
 }
 
 .error {
+  display: grid;
+  gap: 2px;
   color: var(--hc-error-fg);
   font-size: 11px;
+}
+
+.error span {
+  color: var(--hc-fg-default);
 }
 
 .result {

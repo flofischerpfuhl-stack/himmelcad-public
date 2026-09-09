@@ -16,7 +16,7 @@ use himmelcad_core::app_protocol::{
 };
 use himmelcad_core::canonical_document::{
     CanonicalCommandTransaction, CanonicalDocumentError, CanonicalEntityEdit,
-    CanonicalEntityMutation, CanonicalJournalEntry, EntityVersionRef,
+    CanonicalEntityMutation, CanonicalJournalEntry, CanonicalJournalEntryKind, EntityVersionRef,
 };
 use himmelcad_core::canonical_resource_catalog::CanonicalPresentationResourceSet;
 use himmelcad_core::canonical_resources::PointCloudDisplayStyle;
@@ -382,6 +382,8 @@ pub enum CanonicalAppRuntimeError {
     SnapshotGenerationUnavailable(u64),
     #[error("snapshot restore cannot change the schema identity of entity {0}")]
     SnapshotSchemaConflict(String),
+    #[error("there is no document change to {0}")]
+    DocumentHistoryUnavailable(&'static str),
 }
 
 impl CanonicalAppRuntime {
@@ -1344,6 +1346,37 @@ impl CanonicalAppRuntime {
         Ok(self
             .store_mut()?
             .commit_redo(command_id, &target_command_id)?)
+    }
+
+    /// Undoes the newest active user-document command. Bookkeeping snapshot
+    /// markers are deliberately outside the P8 document history surface.
+    pub fn undo_document(
+        &mut self,
+        command_id: String,
+    ) -> Result<CanonicalJournalEntry, CanonicalAppRuntimeError> {
+        let store = self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?;
+        let target = latest_document_undo_target(store)
+            .ok_or(CanonicalAppRuntimeError::DocumentHistoryUnavailable("undo"))?;
+        Ok(self.store_mut()?.commit_undo(command_id, &target)?)
+    }
+
+    /// Redoes the newest still-undone user-document command. Because the
+    /// target is reconstructed from the durable journal, this works after a
+    /// close/reopen without renderer-owned history state.
+    pub fn redo_document(
+        &mut self,
+        command_id: String,
+    ) -> Result<CanonicalJournalEntry, CanonicalAppRuntimeError> {
+        let store = self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?;
+        let target = latest_document_redo_target(store)
+            .ok_or(CanonicalAppRuntimeError::DocumentHistoryUnavailable("redo"))?;
+        Ok(self.store_mut()?.commit_redo(command_id, &target)?)
     }
 
     /// Returns whether a canonical project currently owns this runtime.
@@ -3946,6 +3979,78 @@ fn create_snapshot_marker(
     Ok(summary)
 }
 
+fn latest_document_undo_target(store: &CanonicalProjectStore) -> Option<String> {
+    let mut active = BTreeMap::<&str, bool>::new();
+    for entry in store.document().journal() {
+        match entry.kind {
+            CanonicalJournalEntryKind::Command => {
+                active.insert(entry.command_id.as_str(), true);
+            }
+            CanonicalJournalEntryKind::Undo | CanonicalJournalEntryKind::Redo => {
+                if let Some(target) = entry.related_command_id.as_deref() {
+                    active.insert(target, entry.kind == CanonicalJournalEntryKind::Redo);
+                }
+            }
+        }
+    }
+    store
+        .document()
+        .journal()
+        .iter()
+        .rev()
+        .find(|entry| {
+            entry.kind == CanonicalJournalEntryKind::Command
+                && active
+                    .get(entry.command_id.as_str())
+                    .copied()
+                    .unwrap_or(false)
+                && journal_entry_changes_document(entry)
+        })
+        .map(|entry| entry.command_id.clone())
+}
+
+fn latest_document_redo_target(store: &CanonicalProjectStore) -> Option<String> {
+    let mut active = BTreeMap::<&str, bool>::new();
+    for entry in store.document().journal() {
+        match entry.kind {
+            CanonicalJournalEntryKind::Command => {
+                active.insert(entry.command_id.as_str(), true);
+            }
+            CanonicalJournalEntryKind::Undo | CanonicalJournalEntryKind::Redo => {
+                if let Some(target) = entry.related_command_id.as_deref() {
+                    active.insert(target, entry.kind == CanonicalJournalEntryKind::Redo);
+                }
+            }
+        }
+    }
+    for entry in store.document().journal().iter().rev() {
+        if !journal_entry_changes_document(entry) {
+            continue;
+        }
+        match entry.kind {
+            CanonicalJournalEntryKind::Command => return None,
+            CanonicalJournalEntryKind::Undo => {
+                let target = entry.related_command_id.as_deref()?;
+                if !active.get(target).copied().unwrap_or(true) {
+                    return Some(target.to_owned());
+                }
+            }
+            CanonicalJournalEntryKind::Redo => {}
+        }
+    }
+    None
+}
+
+fn journal_entry_changes_document(entry: &CanonicalJournalEntry) -> bool {
+    entry.effects.iter().any(|effect| {
+        effect
+            .after
+            .as_ref()
+            .or(effect.before.as_ref())
+            .is_some_and(|entity| entity.type_id.0 != SNAPSHOT_MARKER_SCHEMA_ID)
+    })
+}
+
 fn build_snapshot_marker_entity(
     store: &CanonicalProjectStore,
     name: &str,
@@ -6518,10 +6623,7 @@ mod tests {
             .find(|resource| resource.media_type == "application/octet-stream")
             .expect("copied package payload");
         let (prefix, remainder) = stored.object_hash.as_str().split_at(2);
-        let cas_path = project_root
-            .join("objects")
-            .join(prefix)
-            .join(remainder);
+        let cas_path = project_root.join("objects").join(prefix).join(remainder);
         assert!(cas_path.exists());
         assert_eq!(
             runtime
@@ -6546,6 +6648,64 @@ mod tests {
             1
         );
 
+        let imported_entity_id = EntityId(first.inventory.admissions[0].entity_id.clone());
+        let undo = runtime
+            .undo_document("photolab-import-undo".to_owned())
+            .expect("undo imported product");
+        assert_eq!(undo.kind, CanonicalJournalEntryKind::Undo);
+        assert_eq!(
+            undo.related_command_id.as_deref(),
+            Some("photolab-import-first")
+        );
+        assert!(runtime
+            .store()
+            .expect("store after import undo")
+            .document()
+            .entity(&imported_entity_id)
+            .is_none());
+        assert!(runtime
+            .residency_bootstrap()
+            .expect("residency after import undo")
+            .entries
+            .is_empty());
+        assert!(
+            cas_path.exists(),
+            "undo must retain the immutable CAS object"
+        );
+
+        runtime.close();
+        runtime
+            .open(&project_root)
+            .expect("reopen project after undo");
+        assert!(runtime
+            .store()
+            .expect("reopened store")
+            .document()
+            .entity(&imported_entity_id)
+            .is_none());
+        let redo = runtime
+            .redo_document("photolab-import-redo".to_owned())
+            .expect("redo imported product after reopen");
+        assert_eq!(redo.kind, CanonicalJournalEntryKind::Redo);
+        assert_eq!(
+            redo.related_command_id.as_deref(),
+            Some("photolab-import-first")
+        );
+        assert!(runtime
+            .store()
+            .expect("store after import redo")
+            .document()
+            .entity(&imported_entity_id)
+            .is_some());
+        assert_eq!(
+            runtime
+                .residency_bootstrap()
+                .expect("residency after import redo")
+                .entries
+                .len(),
+            1
+        );
+        assert!(cas_path.exists(), "redo must reuse the retained CAS object");
         runtime.close();
         fs::remove_dir_all(project_root).expect("cleanup");
     }

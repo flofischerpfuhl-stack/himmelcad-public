@@ -1702,19 +1702,7 @@ async fn handle(
     if req.method.starts_with("mesh.surface.") || req.method.starts_with("mesh.edit.") {
         return handle_mesh_surface_rpc(req, ground_operations, canonical_app).await;
     }
-    if req.method == "app.negotiate"
-        || req.method == "app.protocol"
-        || req.method == "project.flush"
-        || req.method.starts_with("snapshot.")
-        || req.method.starts_with("canonical.project.")
-        || req.method.starts_with("canonical.residency.")
-        || req.method.starts_with("product.import.")
-        || req.method.starts_with("pointcloud.")
-        || req.method.starts_with("view.bookmark.")
-        || req.method.starts_with("canonical.viewing_box.")
-        || req.method.starts_with("measurement.")
-        || req.method.starts_with("draw.curve.")
-    {
+    if routes_to_canonical_app(&req.method) {
         return handle_canonical_app_rpc(req, canonical_app, automation).await;
     }
 
@@ -1798,6 +1786,21 @@ async fn handle(
         }
         other => rpc_err(req.id, -32601, &format!("method not found: {other}")),
     }
+}
+
+fn routes_to_canonical_app(method: &str) -> bool {
+    method == "app.negotiate"
+        || method == "app.protocol"
+        || matches!(method, "project.flush" | "project.undo" | "project.redo")
+        || method.starts_with("snapshot.")
+        || method.starts_with("canonical.project.")
+        || method.starts_with("canonical.residency.")
+        || method.starts_with("product.import.")
+        || method.starts_with("pointcloud.")
+        || method.starts_with("view.bookmark.")
+        || method.starts_with("canonical.viewing_box.")
+        || method.starts_with("measurement.")
+        || method.starts_with("draw.curve.")
 }
 
 async fn handle_pointcloud_segment_rpc(
@@ -3017,6 +3020,8 @@ async fn handle_canonical_app_rpc(
 ) -> RpcResponse {
     let queue_flush = req.method == "snapshot.create"
         || req.method == "snapshot.restore"
+        || req.method == "project.undo"
+        || req.method == "project.redo"
         || req.method == "pointcloud.display.set"
         || req.method == "view.bookmark.create"
         || req.method == "view.bookmark.restore"
@@ -3127,6 +3132,25 @@ async fn handle_canonical_app_rpc(
                 .and_then(|_| runtime.flush())
                 .map_err(anyhow::Error::from);
             rpc_result(req.id, result)
+        }
+        "project.undo" | "project.redo" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Params {
+                command_id: String,
+            }
+            match serde_json::from_value::<Params>(req.params) {
+                Ok(params) => rpc_result(
+                    req.id,
+                    if req.method == "project.undo" {
+                        runtime.undo_document(params.command_id)
+                    } else {
+                        runtime.redo_document(params.command_id)
+                    }
+                    .map_err(anyhow::Error::from),
+                ),
+                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
+            }
         }
         "snapshot.create" => {
             #[derive(Deserialize)]
@@ -11645,6 +11669,14 @@ mod tests {
                 "retryable": false,
             }))
         );
+    }
+
+    #[test]
+    fn document_history_methods_route_to_the_canonical_runtime() {
+        assert!(routes_to_canonical_app("project.undo"));
+        assert!(routes_to_canonical_app("project.redo"));
+        assert!(routes_to_canonical_app("project.flush"));
+        assert!(!routes_to_canonical_app("project.unknown"));
     }
 
     #[test]

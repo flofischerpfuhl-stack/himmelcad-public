@@ -4,6 +4,11 @@ import { FolderOpen, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import type { BuilderCanonicalProjectSession } from './project.js';
+import {
+  cancelledProductImportFailure,
+  productImportFailure,
+  type ProductImportFailure,
+} from './productImportFailure.js';
 import styles from './BuilderPhotoLabProductImportIsland.module.css';
 
 type ProductImportRow = Awaited<
@@ -31,7 +36,7 @@ export function BuilderPhotoLabProductImportIsland({
   const [rows, setRows] = useState<readonly ProductImportRow[]>([]);
   const [selectedPackage, setSelectedPackage] = useState<string | null>(null);
   const [catalogBusy, setCatalogBusy] = useState(false);
-  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [catalogError, setCatalogError] = useState<ProductImportFailure | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [phaseIndex, setPhaseIndex] = useState<number | null>(null);
   const [result, setResult] = useState<string | null>(null);
@@ -142,11 +147,12 @@ export function BuilderPhotoLabProductImportIsland({
       await api.jobs.complete(nextJobId, `Imported ${selected.product}`);
       setResult(`Imported ${selected.product}`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
       const job = await api.jobs.get(nextJobId);
+      const failure =
+        job.state === 'cancelling' ? cancelledProductImportFailure() : productImportFailure(error);
       if (job.state === 'cancelling') await api.jobs.cancelled(nextJobId);
-      else await api.jobs.fail(nextJobId, message);
-      setCatalogError(message);
+      else await api.jobs.fail(nextJobId, failure.message);
+      setCatalogError(failure);
     } finally {
       setJobId(null);
       setPhaseIndex(null);
@@ -276,8 +282,9 @@ export function BuilderPhotoLabProductImportIsland({
           </div>
         ) : null}
         {catalogError ? (
-          <p className={styles.error} role="alert">
-            {catalogError}
+          <p className={styles.error} role="alert" data-reason-code={catalogError.reasonCode}>
+            <strong>Import failed · {failureLabel(catalogError.reasonCode)}</strong>
+            <span>{catalogError.message}</span>
           </p>
         ) : null}
         {result ? (
@@ -312,7 +319,7 @@ async function loadCatalog(
   setSourcePath: (value: string) => void,
   setRows: (value: readonly ProductImportRow[]) => void,
   setSelected: (value: string | null) => void,
-  setError: (value: string | null) => void,
+  setError: (value: ProductImportFailure | null) => void,
   setBusy: (value: boolean) => void,
 ): Promise<void> {
   setBusy(true);
@@ -324,7 +331,7 @@ async function loadCatalog(
     setRows(catalog.rows);
     setSelected(catalog.rows.find((row) => row.readiness === 'ready')?.packagePath ?? null);
   } catch (error) {
-    if (active) setError(error instanceof Error ? error.message : String(error));
+    if (active) setError(productImportFailure(error));
   } finally {
     if (active) setBusy(false);
   }
@@ -336,6 +343,23 @@ function productGlyph(kind: string): string {
   if (kind === 'gaussianSplat') return '✣';
   if (kind === 'orthomosaic') return '▧';
   return '✦';
+}
+
+function failureLabel(reasonCode: ProductImportFailure['reasonCode']): string {
+  switch (reasonCode) {
+    case 'invalid_package':
+      return 'Invalid package';
+    case 'unsupported_package_schema':
+      return 'Unsupported package version';
+    case 'needs_preparation':
+      return 'Preparation required';
+    case 'needs_republish_recompute':
+      return 'Republish required';
+    case 'cancelled_before_commit':
+      return 'Cancelled';
+    case 'failed_no_commit':
+      return 'No project change';
+  }
 }
 
 function formatCounts(row: ProductImportRow): string {

@@ -13,6 +13,7 @@
     "electron/productImportCatalog.ts",
     "renderer/src/importDialogPolicy.ts",
     "renderer/src/projectProjection.ts",
+    "renderer/src/productImportFailure.ts",
     "renderer/src/sidecarProgress.ts",
     "renderer/src/snapshotCommands.ts",
     "renderer/src/viewingBoxBake.ts",

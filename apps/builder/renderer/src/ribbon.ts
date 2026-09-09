@@ -53,6 +53,8 @@ interface FileRibbonHandlers {
   readonly onOpenRecent: (path: string) => void;
   readonly onSave: () => void;
   readonly onSaveAs: () => void;
+  readonly onUndo: () => void;
+  readonly onRedo: () => void;
   readonly onRestoreSnapshot: (entityId: string) => void;
   readonly onClose: () => void;
   readonly onExport: () => void;
@@ -186,12 +188,30 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
             { id: 'automation.agent', label: 'Agent', icon: i(Bot) },
           ],
         },
+      ],
+    },
+    {
+      id: 'edit',
+      label: 'Edit',
+      groups: [
         {
           id: 'project.history',
           label: 'History',
           actions: [
-            { id: 'project.undo', label: 'Undo', shortcut: 'Ctrl+Z', icon: i(Undo2) },
-            { id: 'project.redo', label: 'Redo', shortcut: 'Ctrl+Shift+Z', icon: i(Redo2) },
+            {
+              id: 'project.undo',
+              label: 'Undo',
+              shortcut: 'Ctrl+Z',
+              icon: i(Undo2),
+              onActivate: handlers.onUndo,
+            },
+            {
+              id: 'project.redo',
+              label: 'Redo',
+              shortcut: 'Ctrl+Shift+Z',
+              icon: i(Redo2),
+              onActivate: handlers.onRedo,
+            },
           ],
         },
       ],

@@ -34,6 +34,7 @@ import {
   onSidecarStderr,
   startSidecar,
   stopSidecar,
+  SidecarRpcError,
 } from './sidecar';
 import { startDesktopUpdater } from './updater';
 import {
@@ -62,6 +63,13 @@ const CODEX_PROVIDER_EGRESS = {
   redirects: 'deny',
   websockets: 'deny',
 } as const;
+const PRODUCT_IMPORT_ERROR_MARKER = 'HCAD_PRODUCT_IMPORT_ERROR:';
+const PRODUCT_IMPORT_REASON_CODES = new Set([
+  'invalid_package',
+  'unsupported_package_schema',
+  'needs_preparation',
+  'needs_republish_recompute',
+]);
 const RENDERER_URL = isDev
   ? 'http://localhost:5173/'
   : pathToFileURL(resolve(__dirname, '../renderer/index.html')).href;
@@ -78,6 +86,24 @@ let projectLifecycle: BuilderProjectLifecycleStore | null = null;
 let allowWindowClose = false;
 const jobRegistry = new JobRegistry();
 jobRegistry.subscribe((event) => mainWindow?.webContents.send('jobs:event', event));
+
+function rendererSafeSidecarError(error: unknown): Error {
+  if (error instanceof SidecarRpcError && error.data && typeof error.data === 'object') {
+    const data = error.data as Record<string, unknown>;
+    if (
+      typeof data.reasonCode === 'string' &&
+      PRODUCT_IMPORT_REASON_CODES.has(data.reasonCode) &&
+      typeof data.message === 'string' &&
+      data.message.trim().length > 0
+    ) {
+      const envelope = encodeURIComponent(
+        JSON.stringify({ reasonCode: data.reasonCode, message: data.message }),
+      );
+      return new Error(`${PRODUCT_IMPORT_ERROR_MARKER}${envelope}`);
+    }
+  }
+  return error instanceof Error ? error : new Error('Sidecar request failed.');
+}
 
 interface DevelopmentRasterTile {
   readonly x: number;
@@ -1102,7 +1128,11 @@ function registerIpc(): void {
     return { ifcPath, orthophoto, demUrl };
   });
   ipcMain.handle('sidecar:call', async (_e, method: string, params: unknown) => {
-    return callSidecar({ method, params });
+    try {
+      return await callSidecar({ method, params });
+    } catch (error) {
+      throw rendererSafeSidecarError(error);
+    }
   });
 
   ipcMain.handle('dialog:openImport', async (_event, requestedExtensions: unknown) => {

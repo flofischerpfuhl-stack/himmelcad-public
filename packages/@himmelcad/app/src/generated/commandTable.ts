@@ -245,6 +245,46 @@ export const GENERATED_COMMAND_TABLE = [
     "host": "renderer"
   },
   {
+    "id": "project.undo",
+    "label": "Undo",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": "Ctrl+Z",
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "Decision Doctrine P8; S-07 journal",
+    "host": "renderer"
+  },
+  {
+    "id": "project.redo",
+    "label": "Redo",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": "Ctrl+Shift+Z",
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "Decision Doctrine P8; S-07 journal",
+    "host": "renderer"
+  },
+  {
     "id": "project.save",
     "label": "Save",
     "products": [
