@@ -1938,7 +1938,11 @@ which portable-MVS depth 285 min under the shared machine load (A4's smoke
 took 30 min for the same stage on an idle machine). A7 memory records were
 written per stage (alignment envelope 29.1 GB; SIFT extraction peak 10.6 GB
 with 8 workers ≈ 1.3 GB/worker — a calibration point for the SIFT extraction
-model; SIFT matching 1.6 GB). DTM smoke follows.
+model; SIFT matching 1.6 GB). DTM smoke 2026-09-09 08:47 (`dtm-smoke-result.json`): same picture — sparse,
+dense and the DTM DEM (package 60af8cb2…, classification
+`a4ecae15da7c26dc`) all `complete/available`; alignment 12 min, depth 238 min
+(again the dominant stage even on a quieter machine — flagged for the runtime
+review in A8), dense 11 min, DEM 12 min.
 
 Diagnostic finding 2026-09-06 (40-image Quality Hybrid, golden-bin): COLMAP is
 CPU-only here and ALIKED_N32 at 8192 px runs with one extraction thread (15.7 GB
