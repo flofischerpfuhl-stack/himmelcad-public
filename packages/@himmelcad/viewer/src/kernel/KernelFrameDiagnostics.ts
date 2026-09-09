@@ -53,6 +53,27 @@ export interface KernelFramePhaseTimers {
   readonly cpuEncodeMs: number;
 }
 
+export interface KernelFrameStreamingActivity {
+  readonly workerDecodeMs: number;
+  readonly mainThreadDecodeIngestMs: number;
+  readonly decodedArtifactBytes: number;
+  readonly decodedTiles: number;
+  readonly hierarchyApplyMs: number;
+  readonly hierarchyPages: number;
+  readonly hierarchyBytes: number;
+  readonly uploadMs: number;
+  readonly uploadedBytes: number;
+  readonly uploadedTiles: number;
+  readonly lodSwapCount: number;
+  readonly touchedProxies: number;
+}
+
+export interface KernelFrameMemorySample {
+  readonly jsHeapBytes: number | null;
+  readonly wasmLinearBytes: number | null;
+  readonly wasmGrowthBytes: number;
+}
+
 export interface KernelPresentedFrameSample {
   readonly frameId: number;
   readonly rafTimestampMs: number;
@@ -65,11 +86,15 @@ export interface KernelPresentedFrameSample {
   readonly coalescedInputCount: number;
   readonly droppedInputCount: number;
   readonly cpuMs: number;
+  /** Present interval not explained by synchronous frame CPU work; GPU/browser wait when timestamps are unavailable. */
+  readonly unattributedPresentWaitMs: number;
   readonly gpuMs: number | null;
   readonly gpuTimingSequence: number | null;
   readonly gpuTimestampSupported: boolean;
   readonly primitives: KernelFramePrimitiveCounts;
   readonly phases: KernelFramePhaseTimers;
+  readonly streamingActivity: KernelFrameStreamingActivity;
+  readonly memory: KernelFrameMemorySample;
   readonly deadlineReasonCodes: readonly KernelDeadlineReasonCode[];
   readonly renderScale: number;
   readonly detailScale: number;
@@ -223,6 +248,8 @@ export class KernelFrameDiagnostics {
       deadlineReasonCodes: Object.freeze([...sample.deadlineReasonCodes]),
       primitives: Object.freeze({ ...sample.primitives }),
       phases: Object.freeze({ ...sample.phases }),
+      streamingActivity: Object.freeze({ ...sample.streamingActivity }),
+      memory: Object.freeze({ ...sample.memory }),
       ...(sample.frontier === undefined ? {} : { frontier: Object.freeze({ ...sample.frontier }) }),
     });
     if (this.values.length < KERNEL_FRAME_DIAGNOSTICS_CAPACITY) this.values.push(value);

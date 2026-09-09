@@ -474,6 +474,38 @@ The one permitted complete baseline used the prepared 103,713,735-point fixture.
 
 The harness did not sample a distinct converged at-rest window, so the 25.0 ms Class-I rest gate is **NOT RUN**. It also records one repetition per path rather than §1.1/§3's five-run median; the table therefore reports captured-run failures, not a protocol-complete qualification pass. Exact frontier accounting remained within budget with 206,008 selected points maximum, zero budget-overrun frames and zero decode backlog. Raw output: `.build/perf/viewer-baseline-2026-09-09-q01.{json,md}`.
 
+### V-07 protocol-complete Class-I tail run — 2026-09-09
+
+V-07 changed the harness to run five repetitions per path and report the median
+of their p95s while retaining every run. The before and after captures used the
+same 103,713,735-point fixture, NVIDIA Quadro M2200 hardware WebGL2 adapter,
+1440×900 surface and `raf-render-complete` source. Both began with five-minute
+load below 2 and a 0% GPU. No target, point budget or quality tier was pinned or
+lowered by the benchmark.
+
+| Scenario | Before run p95s (ms) | Before median | Final run p95s (ms) | Final median | 33.4 ms motion gate |
+| --- | --- | ---: | --- | ---: | --- |
+| orbit | 153.1, 148.1, 138.0, 138.1, 142.8 | 142.8 | 19.1, 19.8, 18.3, 19.2, 18.0 | **19.1** | PASS |
+| pan | 152.1, 151.3, 145.2, 141.4, 142.1 | 145.2 | 18.8, 18.4, 19.4, 19.6, 18.3 | **18.8** | PASS |
+| zoom | 153.8, 152.2, 145.2, 149.2, 153.3 | 152.2 | 19.6, 19.8, 18.2, 17.8, 20.1 | **19.6** | PASS |
+| fly-through | 162.6, 161.5, 151.0, 152.6, 146.0 | 152.6 | 19.9, 21.0, 19.4, 23.2, 20.5 | **20.5** | PASS |
+| 3D→2D→3D | 183.5, 171.3, 131.2, 164.7, 158.6 | 164.7 | 26.7, 40.8, 35.2, 34.1, 43.3 | **35.2** | **FAIL (+1.8 ms)** |
+
+The instrumented before orbit disproved streaming as the tail source on the
+settled fixture: worst frames had zero decode, hierarchy and upload work, zero
+WASM growth and normally zero LOD changes, while 104–155 ms lay outside the
+synchronous 13–27 ms frame. A CDP trace instead found periodic complete React
+App work driven by an unchanged 25 ms durability publication and a jobs clock.
+Deduplicating durability state, isolating live clocks and navigation-mode UI,
+applying the governor's render scale to the physical window-mask backbuffer,
+and prewarming the transition target through budgeted auxiliary streaming
+removed the continuous-path tail. The remaining transition median-run
+breakdown is CPU p95 5.0 ms, zero streaming work, and a 50 ms browser long task;
+it is recorded as a Class-I machine/transition finding rather than hidden by a
+target or quality change. Full histograms, 20-frame tables and verification are
+in `evidence/V-07-frame-tail-2026-09-09.md`; raw final output is
+`.build/perf/viewer-baseline-2026-09-09-v07-final2.{json,md}`.
+
 ## 6. Implications for the program
 
 - V-01 begins with measurement authority and a buildable browser-gpu gate; no

@@ -226,6 +226,7 @@ export interface WasmViewerBinding {
   step_hardware_calibration(): string;
   width(): number;
   height(): number;
+  wasm_linear_memory_bytes?(): bigint;
   free(): void;
 }
 
@@ -1153,6 +1154,11 @@ export interface KernelStreamingFramePlan {
   readonly admission: Readonly<Record<string, unknown>>;
   readonly eviction: Readonly<Record<string, unknown>>;
   readonly claimedDecodeMs: number;
+  readonly visibilityDelta?: {
+    readonly shownTiles: number;
+    readonly hiddenTiles: number;
+    readonly touchedProxies: number;
+  };
   readonly frontier: {
     readonly budget: KernelFrontierBudget;
     readonly selected: KernelResourceCost;
@@ -2790,7 +2796,12 @@ export class WgpuKernelViewer {
     ) {
       throw new TypeError('kernel streaming frame plan is malformed');
     }
-    if (isRecord(value.frontier)) return value as unknown as KernelStreamingFramePlan;
+    const visibilityDelta = isRecord(value.visibilityDelta)
+      ? (value.visibilityDelta as unknown as NonNullable<KernelStreamingFramePlan['visibilityDelta']>)
+      : { shownTiles: 0, hiddenTiles: 0, touchedProxies: 0 };
+    if (isRecord(value.frontier)) {
+      return { ...value, visibilityDelta } as unknown as KernelStreamingFramePlan;
+    }
     const budget = options.frontierBudget ?? {
       hardwareClass: 'W' as const,
       points: options.resourceBudget.points,
@@ -2798,7 +2809,8 @@ export class WgpuKernelViewer {
       drawCalls: options.resourceBudget.drawCalls,
     };
     return {
-      ...(value as Omit<KernelStreamingFramePlan, 'frontier'>),
+      ...(value as Omit<KernelStreamingFramePlan, 'frontier' | 'visibilityDelta'>),
+      visibilityDelta,
       frontier: {
         budget,
         selected: {
@@ -3439,6 +3451,15 @@ export class WgpuKernelViewer {
   extent(): readonly [number, number] {
     this.assertAlive();
     return [this.binding.width(), this.binding.height()];
+  }
+
+  /** Allocated WASM linear memory, when exported by the staged kernel. */
+  wasmLinearMemoryBytes(): number | null {
+    this.assertAlive();
+    const measure = this.binding.wasm_linear_memory_bytes;
+    if (measure === undefined) return null;
+    const bytes = Number(measure.call(this.binding));
+    return Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : null;
   }
 
   /** Resolves budgets from real adapter limits without reducing high-end devices to a low tier. */

@@ -109,6 +109,33 @@ export interface KernelStreamingDriverDiagnostics {
   readonly recentFailures: readonly KernelStreamingFailure[];
 }
 
+/** Work completed on the presenting thread since the preceding frame drain. */
+export interface KernelStreamingFrameActivity {
+  readonly workerDecodeMs: number;
+  readonly mainThreadDecodeIngestMs: number;
+  readonly decodedArtifactBytes: number;
+  readonly decodedTiles: number;
+  readonly hierarchyApplyMs: number;
+  readonly hierarchyPages: number;
+  readonly hierarchyBytes: number;
+  readonly uploadMs: number;
+  readonly uploadedBytes: number;
+  readonly uploadedTiles: number;
+}
+
+interface MutableKernelStreamingFrameActivity {
+  workerDecodeMs: number;
+  mainThreadDecodeIngestMs: number;
+  decodedArtifactBytes: number;
+  decodedTiles: number;
+  hierarchyApplyMs: number;
+  hierarchyPages: number;
+  hierarchyBytes: number;
+  uploadMs: number;
+  uploadedBytes: number;
+  uploadedTiles: number;
+}
+
 type KernelStreamingContentClass = 'point' | 'mesh' | 'other';
 
 interface KernelStreamingLifecycleTelemetry {
@@ -407,6 +434,7 @@ export class KernelStreamingDriver {
   private maximumMainThreadDecodeIngestMs = 0;
   private failedOperations = 0;
   private readonly recentFailures: KernelStreamingFailure[] = [];
+  private frameActivity = zeroFrameActivity();
   private disposed = false;
 
   constructor(
@@ -496,6 +524,14 @@ export class KernelStreamingDriver {
       failedOperations: this.failedOperations,
       recentFailures: this.recentFailures.map((failure) => ({ ...failure })),
     };
+  }
+
+  /** Drains causal activity that ran after the preceding present and before this one. */
+  takeFrameActivity(): KernelStreamingFrameActivity {
+    this.assertAlive();
+    const activity = Object.freeze({ ...this.frameActivity });
+    this.frameActivity = zeroFrameActivity();
+    return activity;
   }
 
   /** Fetches immutable dataset bootstrap metadata through the same live request ceiling as tiles. */
@@ -906,6 +942,9 @@ export class KernelStreamingDriver {
             this.maximumMainThreadDecodeIngestMs,
             ingestMs,
           );
+          this.frameActivity.mainThreadDecodeIngestMs += ingestMs;
+          this.frameActivity.decodedArtifactBytes += payload.artifact.byteLength;
+          this.frameActivity.decodedTiles += 1;
           addCost(decodedCost, cost, false);
           staged.push({
             streamId: payload.streamId,
@@ -1048,6 +1087,10 @@ export class KernelStreamingDriver {
             this.maximumMainThreadDecodeIngestMs,
             ingestMs,
           );
+          this.frameActivity.workerDecodeMs += result.workerDurationMs;
+          this.frameActivity.mainThreadDecodeIngestMs += ingestMs;
+          this.frameActivity.decodedArtifactBytes += result.artifact.byteLength;
+          this.frameActivity.decodedTiles += 1;
           addCost(decodedCost, cost, false);
           staged.push({
             streamId: payload.streamId,
@@ -1331,6 +1374,9 @@ export class KernelStreamingDriver {
         result.uploadedBytes,
         uploadMs,
       );
+      this.frameActivity.uploadMs += uploadMs;
+      this.frameActivity.uploadedBytes += result.uploadedBytes;
+      this.frameActivity.uploadedTiles += 1;
       if (this.tileHistory.get(key) === 'evicted') {
         for (const contentClass of fetched.contentClasses) {
           this.lifecycleTelemetry[contentClass].revisitsMadeResident += 1;
@@ -1364,7 +1410,11 @@ export class KernelStreamingDriver {
     try {
       const bytes = await this.fetchVerifiedBytes(reference, controller.signal, 'hierarchy page');
       if (this.isCurrent(key, controller)) {
+        const applyStarted = this.now();
         this.kernel.applyHierarchyPage(owner, reference.uri, bytes);
+        this.frameActivity.hierarchyApplyMs += elapsedMs(applyStarted, this.now());
+        this.frameActivity.hierarchyPages += 1;
+        this.frameActivity.hierarchyBytes += bytes.byteLength;
         this.onStateChange();
       }
     } catch (error) {
@@ -1575,6 +1625,21 @@ export class KernelStreamingDriver {
   private assertAlive(): void {
     if (this.disposed) throw new Error('KernelStreamingDriver has been disposed');
   }
+}
+
+function zeroFrameActivity(): MutableKernelStreamingFrameActivity {
+  return {
+    workerDecodeMs: 0,
+    mainThreadDecodeIngestMs: 0,
+    decodedArtifactBytes: 0,
+    decodedTiles: 0,
+    hierarchyApplyMs: 0,
+    hierarchyPages: 0,
+    hierarchyBytes: 0,
+    uploadMs: 0,
+    uploadedBytes: 0,
+    uploadedTiles: 0,
+  };
 }
 
 function preparedPointSpacing(descriptor: KernelTileDescriptor): number {

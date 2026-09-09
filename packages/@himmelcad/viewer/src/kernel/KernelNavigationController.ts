@@ -55,6 +55,11 @@ export interface KernelNavigationCallbacks {
   readonly onViewModeChanged?: (mode: KernelViewMode) => void;
   readonly onCameraGestureEnd?: (cancelled: boolean) => void;
   readonly onInteractionChanged?: (interactive: boolean) => void;
+  /** Warms the target camera through ordinary budgeted streaming frames before a mode blend. */
+  readonly prewarmViewTarget?: (
+    camera: KernelWorldCamera,
+    signal: AbortSignal,
+  ) => Promise<void>;
   readonly onCursorCoordinate?: (
     coordinate: KernelPickCandidate['worldPosition'],
     source: 'geometry' | 'targetPlane',
@@ -139,6 +144,7 @@ export class KernelNavigationController {
   private cursorPresentationPosition: KernelWorldPoint | null = null;
   private viewMode: KernelViewMode = '3d';
   private transitionGeneration = 0;
+  private transitionPrewarmAbort: AbortController | null = null;
   private activeTransition: ActiveCameraTransition | null = null;
   private readonly removeTransitionEscapeRung: (() => void) | null;
   private enabled = true;
@@ -315,6 +321,19 @@ export class KernelNavigationController {
     if (anchor) {
       this.camera.panAnchorToPointer(anchor.world, anchor.ndc[0], anchor.ndc[1]);
       transition = { ...transition, to: this.camera.worldCamera() };
+    }
+    if (durationMilliseconds > 0 && this.callbacks.prewarmViewTarget) {
+      const generation = this.transitionGeneration;
+      const abort = new AbortController();
+      this.transitionPrewarmAbort = abort;
+      try {
+        await this.callbacks.prewarmViewTarget(transition.to, abort.signal);
+      } catch (error) {
+        if (!abort.signal.aborted) throw error;
+      } finally {
+        if (this.transitionPrewarmAbort === abort) this.transitionPrewarmAbort = null;
+      }
+      if (this.disposed || generation !== this.transitionGeneration) return this.viewMode;
     }
     const settled = await this.applyCameraTransition(transition, durationMilliseconds, anchor, {
       rootFromMode,
@@ -545,6 +564,8 @@ export class KernelNavigationController {
 
   private cancelCameraTransition(): void {
     this.transitionGeneration += 1;
+    this.transitionPrewarmAbort?.abort();
+    this.transitionPrewarmAbort = null;
     const pending = this.activeTransition;
     this.activeTransition = null;
     this.gestures?.setClaimsBlocked(null);

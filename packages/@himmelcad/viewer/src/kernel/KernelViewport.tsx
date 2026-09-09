@@ -237,10 +237,12 @@ export function KernelViewport({
           if (!alive || session === null) return;
           if (windowMasked) {
             syncWindowMask();
-            // CAD presentation stays at native physical resolution. Geometry
-            // detail remains adaptive, but interaction never reallocates a
-            // blurry fractional-resolution backbuffer.
-            const pixelRatio = Math.min(globalThis.devicePixelRatio || 1, 2);
+            // The compositor mask remains native CSS size while the shared
+            // governor owns the physical backbuffer scale. Ignoring this scale
+            // here made Builder's adaptive tier observable but ineffective.
+            const pixelRatio =
+              Math.min(globalThis.devicePixelRatio || 1, 2) *
+              session.runtimeQuality.renderScale;
             session.resize(globalThis.innerWidth, globalThis.innerHeight, pixelRatio);
             return;
           }

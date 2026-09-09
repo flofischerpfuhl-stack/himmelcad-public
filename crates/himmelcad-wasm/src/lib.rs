@@ -110,7 +110,7 @@ use himmelcad_render::{
     PotreeHierarchySource, PotreePointLayout, PreparedAssetBundle, PreparedGpuTextureResources,
     PreparedHierarchySource, PreparedRasterTileContract, PresentationTransform, QualityAdjustment,
     RasterAnalysisView, RenderProxy, RenderProxyId, RenderProxyKind, RenderStyle, RenderWorld,
-    RendererOverlayPayload, ResidencyTicket, ResolvedAssetEntry,
+    RenderWorldVisibilityDelta, RendererOverlayPayload, ResidencyTicket, ResolvedAssetEntry,
     ResolvedGeometryRepresentationAdmission, ResourceBudget, ResourceCost, RuntimeQualityGovernor,
     RuntimeQualityState, RuntimeQualityTier, SectionBatchOptions, SectionHatchStyle,
     SectionMaterialRegionBinding, SectionPlane, SectionProduct, SectionRegion, SectionTopologyPart,
@@ -1445,6 +1445,27 @@ struct WasmStreamingFramePlanResponse<'a> {
     eviction: &'a himmelcad_render::EvictionPlan,
     claimed_decode_ms: f32,
     frontier: &'a himmelcad_render::FrontierStatistics,
+    visibility_delta: WasmVisibilityDelta,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WasmVisibilityDelta {
+    shown_tiles: usize,
+    hidden_tiles: usize,
+    touched_proxies: usize,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl From<RenderWorldVisibilityDelta> for WasmVisibilityDelta {
+    fn from(value: RenderWorldVisibilityDelta) -> Self {
+        Self {
+            shown_tiles: value.shown_tiles,
+            hidden_tiles: value.hidden_tiles,
+            touched_proxies: value.touched_proxies,
+        }
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -4328,7 +4349,8 @@ impl WasmViewer {
                 options.motion,
             )
             .map_err(js_error)?;
-        self.apply_streaming_visibility(&plan.render)
+        let visibility_delta = self
+            .apply_streaming_visibility(&plan.render)
             .map_err(js_error)?;
         let render = if options.include_render_keys {
             plan.render.as_slice()
@@ -4343,6 +4365,7 @@ impl WasmViewer {
             eviction: &plan.eviction,
             claimed_decode_ms: plan.claimed_decode_ms,
             frontier: &plan.frontier,
+            visibility_delta: visibility_delta.into(),
         })
         .map_err(js_error)
     }
@@ -5907,6 +5930,13 @@ impl WasmViewer {
     /// Active presentation extent in physical pixels.
     pub fn height(&self) -> u32 {
         self.host.extent()[1]
+    }
+
+    /// Current linear-memory allocation for causal frame diagnostics.
+    pub fn wasm_linear_memory_bytes(&self) -> u64 {
+        u64::try_from(core::arch::wasm32::memory_size::<0>())
+            .unwrap_or(u64::MAX)
+            .saturating_mul(65_536)
     }
 }
 
@@ -7501,10 +7531,12 @@ impl WasmViewer {
             .collect()
     }
 
-    fn apply_streaming_visibility(&mut self, render: &[TileKey]) -> Result<(), String> {
+    fn apply_streaming_visibility(
+        &mut self,
+        render: &[TileKey],
+    ) -> Result<RenderWorldVisibilityDelta, String> {
         self.render_world
             .replace_streaming_visibility(render.iter().cloned())
-            .map(|_| ())
             .map_err(|error| error.to_string())
     }
 

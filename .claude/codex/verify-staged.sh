@@ -6,7 +6,7 @@
 set -u
 REPO="$(git rev-parse --show-toplevel)"; cd "$REPO"
 OUT="$REPO/.build/verify-staged"; RS="$REPO/.build/verify-staged-rs"
-FREE_GB=$(df -BG --output=avail "$REPO" | tail -1 | tr -dc 0-9); [ "${FREE_GB:-0}" -lt 20 ] && { echo "REFUSED: only ${FREE_GB} GB free"; exit 2; }
+FREE_GB=$(df -BG --output=avail "$REPO" | tail -1 | tr -dc 0-9); [ "${FREE_GB:-0}" -lt 12 ] && { echo "REFUSED: only ${FREE_GB} GB free"; exit 2; }
 rm -rf "$OUT"; mkdir -p "$OUT"
 git ls-files -z -- apps packages crates scripts schemas sdk types vendor package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.json tsconfig.base.json Cargo.toml Cargo.lock eslint.config.js .prettierrc .prettierrc.json .prettierignore 2>/dev/null | git checkout-index -z --stdin --prefix="$OUT/"
 # node_modules: link every dependency from the main tree, but point workspace packages (@himmelcad/*) INTO the export,

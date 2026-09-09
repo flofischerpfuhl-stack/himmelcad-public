@@ -285,6 +285,7 @@ export class KernelViewerSession {
   private navigationInteracting = false;
   private currentStreamingCamera: KernelWorldCamera | null = null;
   private previousStreamingCamera: KernelWorldCamera | null = null;
+  private transitionPrefetchCamera: KernelWorldCamera | null = null;
   private viewModeRequestGeneration = 0;
   private pendingPickMappings = 0;
   private readonly pickMappingWaiters = new Set<() => void>();
@@ -294,6 +295,7 @@ export class KernelViewerSession {
   private lastCameraInputTimestampMs = Number.NEGATIVE_INFINITY;
   private restRefinementTimer: ReturnType<typeof setTimeout> | null = null;
   private lastQualityAdjustment: KernelRuntimeQualityAdjustment = 'unchanged';
+  private previousWasmMemoryBytes: number | null = null;
 
   private constructor(
     private readonly options: KernelViewerSessionOptions,
@@ -306,6 +308,7 @@ export class KernelViewerSession {
     this.streamingState = streaming;
     this.policyState = policy;
     this.qualityState = viewer.runtimeQuality();
+    this.previousWasmMemoryBytes = viewer.wasmLinearMemoryBytes();
     this.camera = new KernelCameraController(
       Math.max(1, options.initialWidth ?? options.canvas.clientWidth),
       Math.max(1, options.initialHeight ?? options.canvas.clientHeight),
@@ -437,6 +440,7 @@ export class KernelViewerSession {
           callbacks.onInteractionChanged?.(interacting);
           requestFrame();
         },
+        prewarmViewTarget: (camera, signal) => this.prewarmViewTarget(camera, signal),
         requestFrame,
       },
     );
@@ -913,9 +917,11 @@ export class KernelViewerSession {
         started - this.lastCameraInputTimestampMs <
           extendedPolicy(this.policyState).motion.restAfterMs;
       const work = kernelStreamingWorkPolicy(this.policyState, motionActive);
-      const prefetchCamera = motionActive
-        ? predictedPrefetchCamera(this.previousStreamingCamera, this.currentStreamingCamera)
-        : null;
+      const prefetchCamera =
+        this.transitionPrefetchCamera ??
+        (motionActive
+          ? predictedPrefetchCamera(this.previousStreamingCamera, this.currentStreamingCamera)
+          : null);
       this.previousStreamingCamera = this.currentStreamingCamera;
       const protectedLanes1To3Ms = performance.now() - protectedStarted;
       const planStarted = performance.now();
@@ -941,6 +947,7 @@ export class KernelViewerSession {
       const cpuPlanMs = performance.now() - planStarted;
       const hostStarted = performance.now();
       const uploadedBytes = this.streamingState.execute(plan);
+      const streamingActivity = this.streamingState.takeFrameActivity();
       const cpuHostMs = performance.now() - hostStarted;
       const encodeStarted = performance.now();
       const qualityTier = extendedQuality(this.qualityState).tier;
@@ -1001,12 +1008,20 @@ export class KernelViewerSession {
           uploadBacklog,
           effects.tier !== 'off',
         );
+        const completedCpuMs = performance.now() - started;
+        const wasmLinearBytes = this.viewerState.wasmLinearMemoryBytes();
+        const wasmGrowthBytes =
+          wasmLinearBytes === null || this.previousWasmMemoryBytes === null
+            ? 0
+            : Math.max(0, wasmLinearBytes - this.previousWasmMemoryBytes);
         this.frameDiagnosticsState.recordFrame({
           rafTimestampMs: animationFrameTimestampMs ?? completedAtMs,
           presentTimestampMs: completedAtMs,
           presentIntervalMs,
           presentSource: 'raf-render-complete',
-          cpuMs: performance.now() - started,
+          cpuMs: completedCpuMs,
+          unattributedPresentWaitMs:
+            presentIntervalMs === null ? 0 : Math.max(0, presentIntervalMs - completedCpuMs),
           gpuMs: null,
           gpuTimingSequence: outcome.gpuTimingSequence ?? null,
           gpuTimestampSupported: this.viewerState.gpuFrameTiming().supported,
@@ -1018,6 +1033,17 @@ export class KernelViewerSession {
             cpuPlanMs,
             cpuHostMs,
             cpuEncodeMs,
+          },
+          streamingActivity: {
+            ...streamingActivity,
+            lodSwapCount:
+              (plan.visibilityDelta?.shownTiles ?? 0) + (plan.visibilityDelta?.hiddenTiles ?? 0),
+            touchedProxies: plan.visibilityDelta?.touchedProxies ?? 0,
+          },
+          memory: {
+            jsHeapBytes: browserJsHeapBytes(),
+            wasmLinearBytes,
+            wasmGrowthBytes,
           },
           deadlineReasonCodes: reasonCodes,
           renderScale: observation.quality.renderScale,
@@ -1047,6 +1073,7 @@ export class KernelViewerSession {
           qualityAdjustment: observation.adjustment,
           protectedPrimitivesDropped: extendedFrontier(plan.frontier).protectedPrimitivesDropped,
         });
+        this.previousWasmMemoryBytes = wasmLinearBytes;
         this.previousPresentedTimestampMs = completedAtMs;
       }
       if (observation.adjustment !== 'unchanged') {
@@ -1137,6 +1164,46 @@ export class KernelViewerSession {
     this.qualityState = this.viewerState.runtimeQuality();
     this.calibrationComplete = true;
     this.emit({ type: 'hardwarePolicy', policy: this.policyState });
+  }
+
+  /**
+   * Uses the ordinary V-03 frame lanes to make the transition endpoint warm.
+   * Awaiting happens in command orchestration; no presenting frame waits for
+   * fetch, decode, or upload work, and every admission retains its frame caps.
+   */
+  private async prewarmViewTarget(camera: KernelWorldCamera, signal: AbortSignal): Promise<void> {
+    if (this.viewerState.streamingRuntime().trackedEntries === 0) return;
+    const target = replayWorldCamera(camera);
+    this.transitionPrefetchCamera = target;
+    const warmLimitMs =
+      this.policyState.frontier.hardwareClass === 'I'
+        ? 1_500
+        : this.policyState.frontier.hardwareClass === 'W'
+          ? 1_000
+          : 600;
+    const deadline = performance.now() + warmLimitMs;
+    let quietFrames = 0;
+    try {
+      for (
+        let frame = 0;
+        frame < 90 && quietFrames < 2 && performance.now() < deadline;
+        frame += 1
+      ) {
+        await this.waitForNextPresentedFrame({ signal });
+        const transport = this.streamingState.diagnostics();
+        const streaming = this.viewerState.streamingRuntime();
+        const pending =
+          transport.activeRequests +
+          transport.queuedRequests +
+          transport.activeDecodes +
+          transport.queuedDecodes +
+          streaming.residencyStageCounts.queuedUpload +
+          streaming.residencyStageCounts.uploading;
+        quietFrames = pending === 0 ? quietFrames + 1 : 0;
+      }
+    } finally {
+      if (this.transitionPrefetchCamera === target) this.transitionPrefetchCamera = null;
+    }
   }
 
   private startDeviceRecovery(): void {
@@ -1510,6 +1577,14 @@ function frameReasonCodes(
 function numericRecordField(record: Readonly<Record<string, unknown>>, field: string): number {
   const value = record[field];
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function browserJsHeapBytes(): number | null {
+  const candidate = performance as Performance & {
+    readonly memory?: { readonly usedJSHeapSize?: number };
+  };
+  const bytes = candidate.memory?.usedJSHeapSize;
+  return typeof bytes === 'number' && Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : null;
 }
 
 function exceedsResourceBudget(cost: KernelResourceCost, budget: KernelResourceCost): boolean {

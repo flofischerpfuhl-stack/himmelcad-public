@@ -193,6 +193,85 @@ interface BuilderResidencyBootstrap {
   }[];
 }
 
+type BuilderNavigationMode = '3d' | '2d' | '2.5d';
+
+class NavigationModeStore {
+  private mode: BuilderNavigationMode = '3d';
+  private readonly listeners = new Set<() => void>();
+
+  readonly snapshot = (): BuilderNavigationMode => this.mode;
+  readonly subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  };
+
+  set(mode: BuilderNavigationMode): void {
+    if (mode === this.mode) return;
+    this.mode = mode;
+    for (const listener of this.listeners) listener();
+  }
+}
+
+function NavigationModeSubscriber({
+  store,
+  children,
+}: {
+  readonly store: NavigationModeStore;
+  readonly children: (mode: BuilderNavigationMode) => ReactNode;
+}): JSX.Element {
+  const mode = useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot);
+  return <>{children(mode)}</>;
+}
+
+function useLiveJobClock(enabled: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!enabled) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [enabled]);
+  return now;
+}
+
+function LiveJobsStatusChip({
+  jobs,
+  debounceMs,
+  onClick,
+}: {
+  readonly jobs: readonly AppJob[];
+  readonly debounceMs: number;
+  readonly onClick: () => void;
+}): JSX.Element | null {
+  const now = useLiveJobClock(jobs.length > 0);
+  return <JobsStatusChip jobs={jobs} now={now} debounceMs={debounceMs} onClick={onClick} />;
+}
+
+function LiveJobsIsland({
+  jobs,
+  completedRetentionMs,
+  onCancel,
+  onRespond,
+  onClearFinished,
+}: {
+  readonly jobs: readonly AppJob[];
+  readonly completedRetentionMs: number;
+  readonly onCancel: (id: string) => void;
+  readonly onRespond: (id: string) => void;
+  readonly onClearFinished: () => void;
+}): JSX.Element {
+  const now = useLiveJobClock(true);
+  return (
+    <JobsIsland
+      jobs={jobs}
+      now={now}
+      completedRetentionMs={completedRetentionMs}
+      onCancel={onCancel}
+      onRespond={onRespond}
+      onClearFinished={onClearFinished}
+    />
+  );
+}
+
 export function App(): JSX.Element {
   useEffect(() => installEscapeLadder(window), []);
   const [project, setProject] = useState<ProjectSnapshot | null>(null);
@@ -232,7 +311,9 @@ export function App(): JSX.Element {
     constructionInputStore.snapshot,
     constructionInputStore.snapshot,
   );
-  const [navigationMode, setNavigationMode] = useState<'3d' | '2d' | '2.5d'>('3d');
+  const navigationModeStoreRef = useRef<NavigationModeStore | null>(null);
+  if (!navigationModeStoreRef.current) navigationModeStoreRef.current = new NavigationModeStore();
+  const navigationModeStore = navigationModeStoreRef.current;
   const [snap, setSnap] = useState<SnapResult | null>(null);
   const [pointSize, setPointSize] = useState(DEFAULT_POINT_SIZE);
   const [pointCloudMetadata, setPointCloudMetadata] = useState<
@@ -306,7 +387,6 @@ export function App(): JSX.Element {
   const [jobsOpen, setJobsOpen] = useState(false);
   const [photoLabProductImportOpen, setPhotoLabProductImportOpen] = useState(false);
   const [jobToasts, setJobToasts] = useState<readonly AppJob[]>([]);
-  const [jobClock, setJobClock] = useState(() => Date.now());
   const [groundPreview, setGroundPreview] = useState<GroundPreviewResult | null>(null);
   const [groundResult, setGroundResult] = useState<GroundExtractionResult | null>(null);
   const [groundError, setGroundError] = useState<string | null>(null);
@@ -512,12 +592,14 @@ export function App(): JSX.Element {
   });
   const selectedRef = useRef(selected);
   const projectRef = useRef(project);
-  const navigationModeRef = useRef(navigationMode);
   const automationHiddenRef = useRef(new Set<EntityId>());
   selectedRef.current = selected;
   projectRef.current = project;
   currentProjectPathRef.current = currentProjectPath;
-  navigationModeRef.current = navigationMode;
+  const settleNavigationMode = useCallback(
+    (mode: BuilderNavigationMode): void => navigationModeStore.set(mode),
+    [navigationModeStore],
+  );
   const selectedEntityKey = useMemo(() => [...selected].sort().join('\u0000'), [selected]);
 
   useEffect(() => {
@@ -595,12 +677,6 @@ export function App(): JSX.Element {
       ...current,
       ...candidates.filter((candidate) => !current.some((item) => item.jobId === candidate.jobId)),
     ]);
-  }, [jobs]);
-
-  useEffect(() => {
-    if (jobs.length === 0) return;
-    const timer = window.setInterval(() => setJobClock(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
   }, [jobs]);
 
   useEffect(() => {
@@ -925,7 +1001,7 @@ export function App(): JSX.Element {
       if (!(await viewport.setViewMode(state.navigationMode))) {
         throw new Error('View mode transition was cancelled.');
       }
-      setNavigationMode(state.navigationMode);
+      settleNavigationMode(state.navigationMode);
       viewport.adoptWorldCamera(toKernelCamera(state));
 
       const nextHidden = new Set(state.sessionHiddenEntityIds as readonly EntityId[]);
@@ -978,7 +1054,7 @@ export function App(): JSX.Element {
         schema: 'himmelcad.view-state',
         version: 2,
         camera: fromKernelCamera(camera),
-        navigationMode: navigationModeRef.current,
+        navigationMode: navigationModeStore.snapshot(),
         hiddenEntityIds: hidden,
         sessionHiddenEntityIds: [...automationHiddenRef.current].sort(),
         selectedEntityIds: [...selectedRef.current].sort(),
@@ -3861,8 +3937,8 @@ export function App(): JSX.Element {
     },
   };
 
-  const fileRibbonTabs = useMemo(
-    () =>
+  const fileRibbonTabs = useCallback(
+    (navigationMode: BuilderNavigationMode) =>
       createRibbonTabs({
         recent: recentProjects,
         snapshots: snapshots.map((snapshot) => ({
@@ -3910,7 +3986,6 @@ export function App(): JSX.Element {
       flushProject,
       openProject,
       openExport,
-      navigationMode,
       segmentablePointClouds.length,
       recentProjects,
       replaceProject,
@@ -3990,9 +4065,8 @@ export function App(): JSX.Element {
       {
         id: 'jobs',
         content: (
-          <JobsStatusChip
+          <LiveJobsStatusChip
             jobs={jobs}
-            now={jobClock}
             debounceMs={JOB_CHIP_DEBOUNCE_MS}
             onClick={() => setJobsOpen((open) => !open)}
           />
@@ -4006,7 +4080,6 @@ export function App(): JSX.Element {
       flushProject,
       pointSize,
       project?.entities,
-      jobClock,
       jobs,
       selected.size,
       selection.candidates,
@@ -4286,7 +4359,11 @@ export function App(): JSX.Element {
             controls={windowControls}
           />
         }
-        ribbon={<Ribbon tabs={fileRibbonTabs} />}
+        ribbon={
+          <NavigationModeSubscriber store={navigationModeStore}>
+            {(mode) => <Ribbon tabs={fileRibbonTabs(mode)} />}
+          </NavigationModeSubscriber>
+        }
         leftPanel={
           project ? (
             <EntityTree
@@ -4584,26 +4661,30 @@ export function App(): JSX.Element {
               ) : undefined
             }
             bottomBar={
-              <ViewportBottomBar
-                state={{
-                  supportGeometry: display.state.supportOverlay,
-                  granularity: selection.granularity,
-                  viewMode: navigationMode,
-                  selectableKinds: selection.selectableKinds,
-                  labels: display.state.labels,
-                }}
-                onSupportGeometryChange={(value) => displayStore.setSupportOverlay(value)}
-                onExplodePolylinesChange={(value) =>
-                  selectionStore.setGranularity(value ? 'segments' : 'whole')
-                }
-                onViewModeChange={(mode) => {
-                  void viewportRef.current?.setViewMode(mode);
-                }}
-                onSelectableKindChange={(kind, value) =>
-                  selectionStore.setSelectableKind(kind, value)
-                }
-                onLabelsChange={(value) => displayStore.setLabels(value)}
-              />
+              <NavigationModeSubscriber store={navigationModeStore}>
+                {(mode) => (
+                  <ViewportBottomBar
+                    state={{
+                      supportGeometry: display.state.supportOverlay,
+                      granularity: selection.granularity,
+                      viewMode: mode,
+                      selectableKinds: selection.selectableKinds,
+                      labels: display.state.labels,
+                    }}
+                    onSupportGeometryChange={(value) => displayStore.setSupportOverlay(value)}
+                    onExplodePolylinesChange={(value) =>
+                      selectionStore.setGranularity(value ? 'segments' : 'whole')
+                    }
+                    onViewModeChange={(nextMode) => {
+                      void viewportRef.current?.setViewMode(nextMode);
+                    }}
+                    onSelectableKindChange={(kind, value) =>
+                      selectionStore.setSelectableKind(kind, value)
+                    }
+                    onLabelsChange={(value) => displayStore.setLabels(value)}
+                  />
+                )}
+              </NavigationModeSubscriber>
             }
           >
             <div style={{ position: 'relative', width: '100%', height: '100%' }}>
@@ -4611,7 +4692,7 @@ export function App(): JSX.Element {
                 key={viewportEpoch}
                 ref={viewportRef}
                 pointSize={pointSize}
-                onViewModeSettled={setNavigationMode}
+                onViewModeSettled={settleNavigationMode}
                 onCursorSnap={(nextSnap) => {
                   setSnap(nextSnap);
                   if (drawToolStore.snapshot().armed) {
@@ -4918,13 +4999,12 @@ export function App(): JSX.Element {
       ) : null}
       {jobsOpen && window.himmelcad ? (
         <FloatingTaskIsland onRequestClose={() => setJobsOpen(false)}>
-          <JobsIsland
+          <LiveJobsIsland
             jobs={jobs.map((job) =>
               typeof job.context?.productGlyph === 'string'
                 ? { ...job, label: `${job.context.productGlyph} ${job.label}` }
                 : job,
             )}
-            now={jobClock}
             completedRetentionMs={JOB_COMPLETED_RETENTION_MS}
             onCancel={(id) => void window.himmelcad?.jobs.cancel(id)}
             onRespond={(id) => {

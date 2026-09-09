@@ -24,7 +24,7 @@ const outputStem = resolve(
   `${args.frontierOnly ? 'viewer-frontier-orbit' : 'viewer-baseline'}-${date}`,
 );
 const report = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   mode: args.frontierOnly ? 'frontier-only' : 'timed-baseline',
   generatedAt: new Date().toISOString(),
   status: 'running',
@@ -44,6 +44,7 @@ const report = {
   frontierOrbit: null,
   aggregate: null,
   blocker: null,
+  tracePath: null,
 };
 
 await mkdir(OUTPUT_DIRECTORY, { recursive: true });
@@ -86,11 +87,36 @@ try {
   if (args.frontierOnly) {
     report.frontierOrbit = await page.evaluate(runFrontierOrbit, { frames: args.frames });
   } else {
+    const traceSession = args.trace ? await page.context().newCDPSession(page) : null;
+    if (traceSession !== null) {
+      await traceSession.send('Tracing.start', {
+        categories: 'devtools.timeline,v8,disabled-by-default-v8.gc,gpu,cc',
+        transferMode: 'ReturnAsStream',
+      });
+    }
     report.paths = await page.evaluate(runCameraPaths, {
       width: args.width,
       height: args.height,
       frames: args.frames,
+      repetitions: args.repetitions,
     });
+    if (traceSession !== null) {
+      const completed = new Promise((resolvePromise) =>
+        traceSession.once('Tracing.tracingComplete', resolvePromise),
+      );
+      await traceSession.send('Tracing.end');
+      const { stream } = await completed;
+      let trace = '';
+      for (;;) {
+        const chunk = await traceSession.send('IO.read', { handle: stream });
+        trace += chunk.data;
+        if (chunk.eof) break;
+      }
+      await traceSession.send('IO.close', { handle: stream });
+      const tracePath = `${outputStem}.trace.json`;
+      await writeFile(tracePath, trace);
+      report.tracePath = tracePath;
+    }
     report.aggregate = aggregatePaths(report.paths);
   }
   report.status = 'complete';
@@ -126,12 +152,15 @@ function parseArguments(values) {
     width: 1_440,
     height: 900,
     frames: 180,
+    repetitions: 5,
     noLaunch: false,
     frontierOnly: false,
+    trace: false,
   };
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (value === '--no-launch') parsed.noLaunch = true;
+    else if (value === '--trace') parsed.trace = true;
     else if (value === '--frontier-only') parsed.frontierOnly = true;
     else if (value === '--cdp') parsed.cdp = requiredValue(values, ++index, value);
     else if (value === '--dataset') parsed.dataset = requiredValue(values, ++index, value);
@@ -141,6 +170,8 @@ function parseArguments(values) {
     else if (value === '--width') parsed.width = positiveInteger(values, ++index, value);
     else if (value === '--height') parsed.height = positiveInteger(values, ++index, value);
     else if (value === '--frames') parsed.frames = positiveInteger(values, ++index, value);
+    else if (value === '--repetitions')
+      parsed.repetitions = positiveInteger(values, ++index, value);
     else if (value === '--help') {
       console.log(`Usage: node scripts/perf/viewer-baseline.mjs [options]
 
@@ -150,8 +181,10 @@ function parseArguments(values) {
   --cdp <url>                                  Builder CDP endpoint (default: http://127.0.0.1:9223)
   --no-launch                                  Require an already running Builder
   --frontier-only                              Record one orbit's frontier counters, not timings
+  --trace                                      Capture Chromium timeline/V8/GPU trace
   --width <px> --height <px>                   Viewport (default: 1440x900)
   --frames <count>                             Samples per motion path (default: 180)
+  --repetitions <count>                        Recorded runs per path (default: 5)
   --date <YYYY-MM-DD>                          Output suffix (default: local date)`);
       process.exit(0);
     } else throw new Error(`Unknown argument: ${value}`);
@@ -528,12 +561,33 @@ async function loadDataset(page, metadataUrl, prepared) {
   );
 }
 
-async function runCameraPaths({ frames }) {
+async function runCameraPaths({ frames, repetitions }) {
   const handle = globalThis.__hcadBuilderKernel;
   const session = handle.session;
   const camera = handle.camera;
   const center = camera.targetPoint();
+  const repetitionStart = camera.worldCamera();
   const paths = [];
+  const longTasks = [];
+  const longTaskSupported = PerformanceObserver.supportedEntryTypes?.includes('longtask') ?? false;
+  const longTaskObserver = longTaskSupported
+    ? new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          longTasks.push({ startTime: entry.startTime, duration: entry.duration });
+        }
+      })
+    : null;
+  longTaskObserver?.observe({ type: 'longtask', buffered: true });
+  const measureMemory = async () => {
+    const measure = performance.measureUserAgentSpecificMemory;
+    if (typeof measure !== 'function') return { supported: false, bytes: null, breakdown: null };
+    try {
+      const result = await measure.call(performance);
+      return { supported: true, bytes: result.bytes, breakdown: result.breakdown?.length ?? 0 };
+    } catch (error) {
+      return { supported: true, bytes: null, error: String(error) };
+    }
+  };
   const summarizeValues = (values) => {
     if (values.length === 0) return null;
     const sorted = [...values].sort((left, right) => left - right);
@@ -546,6 +600,55 @@ async function runCameraPaths({ frames }) {
       p99: at(0.99),
       maximum: sorted.at(-1),
     };
+  };
+  const decorateFrames = (sampledFrames) =>
+    sampledFrames.map((frame) => {
+      const intervalStart =
+        frame.presentIntervalMs === null
+          ? frame.presentTimestampMs
+          : frame.presentTimestampMs - frame.presentIntervalMs;
+      const longTaskMs = longTasks.reduce((total, task) => {
+        const overlap =
+          Math.min(frame.presentTimestampMs, task.startTime + task.duration) -
+          Math.max(intervalStart, task.startTime);
+        return total + Math.max(0, overlap);
+      }, 0);
+      return { ...frame, longTaskMs };
+    });
+  const dominantCause = (frame) => {
+    const activity = frame.streamingActivity;
+    const candidates = [
+      ['main-thread hierarchy apply', activity?.hierarchyApplyMs ?? 0],
+      ['main-thread decode ingest', activity?.mainThreadDecodeIngestMs ?? 0],
+      ['buffer upload', activity?.uploadMs ?? 0],
+      ['JS long task / GC proxy', frame.longTaskMs ?? 0],
+      ['CPU submit', frame.phases.cpuEncodeMs],
+      ['GPU timestamp', frame.gpuMs ?? 0],
+      ['unattributed browser/GPU present wait', frame.unattributedPresentWaitMs ?? 0],
+    ];
+    return candidates.sort((left, right) => right[1] - left[1])[0][0];
+  };
+  const frameHistogram = (sampledFrames) => {
+    const buckets = [
+      ['0–16.7', 0, 16.7],
+      ['16.7–33.4', 16.7, 33.4],
+      ['33.4–50', 33.4, 50],
+      ['50–100', 50, 100],
+      ['100–150', 100, 150],
+      ['150–200', 150, 200],
+      ['>200', 200, Number.POSITIVE_INFINITY],
+    ];
+    return Object.fromEntries(
+      buckets.map(([label, lower, upper]) => [
+        label,
+        sampledFrames.filter(
+          (frame) =>
+            frame.presentIntervalMs !== null &&
+            frame.presentIntervalMs > lower &&
+            frame.presentIntervalMs <= upper,
+        ).length,
+      ]),
+    );
   };
   const summarizeFrames = (sampledFrames) => ({
     presentedFrameIntervalMs: summarizeValues(
@@ -562,6 +665,9 @@ async function runCameraPaths({ frames }) {
       sampledFrames.flatMap((frame) => (frame.gpuMs === null ? [] : [frame.gpuMs])),
     ),
     cpuMs: summarizeValues(sampledFrames.map((frame) => frame.cpuMs)),
+    unattributedPresentWaitMs: summarizeValues(
+      sampledFrames.map((frame) => frame.unattributedPresentWaitMs ?? 0),
+    ),
     exactPrimitivesPerFrame: {
       status: 'exact-submitted-batch-counts',
       points: summarizeValues(sampledFrames.map((frame) => frame.primitives.points)),
@@ -581,6 +687,71 @@ async function runCameraPaths({ frames }) {
       sharedEncode: summarizeValues(sampledFrames.map((frame) => frame.phases.sharedEncodeMs)),
     },
     decodeBacklog: summarizeValues(sampledFrames.map((frame) => frame.decodeBacklog)),
+    streamingActivity: {
+      workerDecodeMs: summarizeValues(
+        sampledFrames.map((frame) => frame.streamingActivity?.workerDecodeMs ?? 0),
+      ),
+      mainThreadDecodeIngestMs: summarizeValues(
+        sampledFrames.map((frame) => frame.streamingActivity?.mainThreadDecodeIngestMs ?? 0),
+      ),
+      hierarchyApplyMs: summarizeValues(
+        sampledFrames.map((frame) => frame.streamingActivity?.hierarchyApplyMs ?? 0),
+      ),
+      uploadMs: summarizeValues(
+        sampledFrames.map((frame) => frame.streamingActivity?.uploadMs ?? 0),
+      ),
+      maximumUploadedBytes: Math.max(
+        0,
+        ...sampledFrames.map((frame) => frame.streamingActivity?.uploadedBytes ?? 0),
+      ),
+      lodSwaps: sampledFrames.reduce(
+        (total, frame) => total + (frame.streamingActivity?.lodSwapCount ?? 0),
+        0,
+      ),
+      hierarchyPages: sampledFrames.reduce(
+        (total, frame) => total + (frame.streamingActivity?.hierarchyPages ?? 0),
+        0,
+      ),
+    },
+    memory: {
+      maximumWasmGrowthBytes: Math.max(
+        0,
+        ...sampledFrames.map((frame) => frame.memory?.wasmGrowthBytes ?? 0),
+      ),
+      jsHeapMinimumBytes: Math.min(
+        ...sampledFrames.flatMap((frame) =>
+          frame.memory?.jsHeapBytes === null || frame.memory?.jsHeapBytes === undefined
+            ? []
+            : [frame.memory.jsHeapBytes],
+        ),
+      ),
+      jsHeapMaximumBytes: Math.max(
+        0,
+        ...sampledFrames.map((frame) => frame.memory?.jsHeapBytes ?? 0),
+      ),
+    },
+    longTaskMs: summarizeValues(sampledFrames.map((frame) => frame.longTaskMs ?? 0)),
+    histogram: frameHistogram(sampledFrames),
+    worstFrames: [...sampledFrames]
+      .filter((frame) => frame.presentIntervalMs !== null)
+      .sort((left, right) => right.presentIntervalMs - left.presentIntervalMs)
+      .slice(0, 20)
+      .map((frame) => ({
+        frameId: frame.frameId,
+        presentedMs: frame.presentIntervalMs,
+        cpuSubmitMs: frame.phases.cpuEncodeMs,
+        cpuTotalMs: frame.cpuMs,
+        gpuMs: frame.gpuMs,
+        unattributedPresentWaitMs: frame.unattributedPresentWaitMs ?? null,
+        longTaskMs: frame.longTaskMs ?? 0,
+        streamingActivity: frame.streamingActivity ?? null,
+        wasmGrowthBytes: frame.memory?.wasmGrowthBytes ?? null,
+        jsHeapBytes: frame.memory?.jsHeapBytes ?? null,
+        qualityTier: frame.qualityTier ?? null,
+        qualityAdjustment: frame.qualityAdjustment ?? null,
+        governorReasons: frame.deadlineReasonCodes,
+        dominantCause: dominantCause(frame),
+      })),
     frontier: {
       hardwareClass: sampledFrames.find((frame) => frame.frontier)?.frontier?.hardwareClass ?? null,
       pointBudget: sampledFrames.find((frame) => frame.frontier)?.frontier?.budgetPoints ?? null,
@@ -619,8 +790,10 @@ async function runCameraPaths({ frames }) {
       .reduce((counts, reason) => ({ ...counts, [reason]: (counts[reason] ?? 0) + 1 }), {}),
   });
 
+  let activeRepetition = 0;
   const sample = async (name, update) => {
     const startFrameId = session.diagnosticsSnapshot(1).lastFrames.at(-1)?.frameId ?? 0;
+    const memoryBefore = await measureMemory();
     const qualityHits = { reduced: 0, increased: 0 };
     const unsubscribe = session.subscribe((event) => {
       if (event.type === 'runtimeQuality') qualityHits[event.adjustment] += 1;
@@ -636,10 +809,11 @@ async function runCameraPaths({ frames }) {
     await new Promise((resolvePromise) => requestAnimationFrame(resolvePromise));
     unsubscribe();
     const diagnostics = session.diagnostics();
-    const sampledFrames = session
+    const sampledFrames = decorateFrames(session
       .diagnosticsSnapshot(frames + 8)
       .lastFrames.filter((frame) => frame.frameId > startFrameId)
-      .slice(5);
+      .slice(5));
+    const memoryAfter = await measureMemory();
     const frontierViolations = sampledFrames.filter(
       (frame) => frame.frontier === undefined || frame.frontier.budgetSatisfied === false,
     );
@@ -653,6 +827,7 @@ async function runCameraPaths({ frames }) {
     }
     paths.push({
       name,
+      run: activeRepetition,
       presentSource: sampledFrames[0]?.presentSource ?? 'raf-render-complete',
       ...summarizeFrames(sampledFrames),
       budgetHits: {
@@ -662,24 +837,29 @@ async function runCameraPaths({ frames }) {
       },
       runtimeQuality: diagnostics.runtimeQuality,
       residency: diagnostics.streaming.residencyStageCounts,
+      memoryBoundary: { before: memoryBefore, after: memoryAfter },
+      longTaskObserverSupported: longTaskSupported,
     });
   };
 
-  await handle.setViewMode('3d', { durationMilliseconds: 0 });
-  await sample('orbit', (index, count) => {
+  for (activeRepetition = 1; activeRepetition <= repetitions; activeRepetition += 1) {
+    camera.adoptWorldCamera(repetitionStart);
+    session.setWorldCamera(camera.worldCamera(), camera.recommendedFloatingOrigin());
+    await handle.setViewMode('3d', { durationMilliseconds: 0 });
+    await sample('orbit', (index, count) => {
     camera.orbit((Math.PI * 2) / count, Math.sin((index / count) * Math.PI * 2) * 0.0015);
   });
-  await sample('pan', (index, count) => {
+    await sample('pan', (index, count) => {
     camera.panPixels(
       Math.sin((index / count) * Math.PI * 2) * 5,
       Math.cos((index / count) * Math.PI * 2) * 2,
     );
   });
-  await sample('zoom', (index, count) => {
+    await sample('zoom', (index, count) => {
     camera.zoom(index < count / 2 ? 0.992 : 1 / 0.992);
   });
-  const initial = camera.worldCamera();
-  await sample('fly-through', (index, count) => {
+    const initial = camera.worldCamera();
+    await sample('fly-through', (index, count) => {
     const phase = (index / Math.max(1, count - 1)) * Math.PI * 2;
     const radius = Math.hypot(
       initial.eye.x - initial.target.x,
@@ -700,42 +880,44 @@ async function runCameraPaths({ frames }) {
       },
       target,
     });
-  });
+    });
 
-  const transitionStartFrameId = session.diagnosticsSnapshot(1).lastFrames.at(-1)?.frameId ?? 0;
-  const transitionInputAt = performance.now();
-  const historyBefore = await handle.cameraHistory('clear');
-  session.recordInput('transition-3d-to-2d', transitionInputAt);
-  const to2d = handle.setViewMode('2d');
-  await new Promise((resolvePromise) => requestAnimationFrame(resolvePromise));
-  const firstMidBlend = {
+    const transitionStartFrameId = session.diagnosticsSnapshot(1).lastFrames.at(-1)?.frameId ?? 0;
+    const transitionInputAt = performance.now();
+    const transitionMemoryBefore = await measureMemory();
+    const historyBefore = await handle.cameraHistory('clear');
+    session.recordInput(`transition-3d-to-2d-${activeRepetition}`, transitionInputAt);
+    const to2d = handle.setViewMode('2d');
+    await new Promise((resolvePromise) => requestAnimationFrame(resolvePromise));
+    const firstMidBlend = {
     semanticMode: session.currentViewMode(),
     history: await handle.cameraHistory('get'),
   };
-  await to2d;
-  const after2d = {
+    await to2d;
+    const after2d = {
     semanticMode: session.currentViewMode(),
     history: await handle.cameraHistory('get'),
   };
-  session.recordInput('transition-2d-to-3d', performance.now());
-  const to3d = handle.setViewMode('3d');
-  await new Promise((resolvePromise) => requestAnimationFrame(resolvePromise));
-  const secondMidBlend = {
+    session.recordInput(`transition-2d-to-3d-${activeRepetition}`, performance.now());
+    const to3d = handle.setViewMode('3d');
+    await new Promise((resolvePromise) => requestAnimationFrame(resolvePromise));
+    const secondMidBlend = {
     semanticMode: session.currentViewMode(),
     history: await handle.cameraHistory('get'),
   };
-  await to3d;
-  const after3d = {
+    await to3d;
+    const after3d = {
     semanticMode: session.currentViewMode(),
     history: await handle.cameraHistory('get'),
   };
-  const transitionDiagnostics = session.diagnostics();
-  const transitionFrames = session
+    const transitionDiagnostics = session.diagnostics();
+    const transitionFrames = decorateFrames(session
     .diagnosticsSnapshot(120)
-    .lastFrames.filter((frame) => frame.frameId > transitionStartFrameId)
-    .slice(5);
-  paths.push({
-    name: '3d-to-2d-to-3d',
+    .lastFrames.filter((frame) => frame.frameId > transitionStartFrameId));
+    const transitionMemoryAfter = await measureMemory();
+    paths.push({
+      name: '3d-to-2d-to-3d',
+      run: activeRepetition,
     presentSource: transitionFrames[0]?.presentSource ?? 'raf-render-complete',
     ...summarizeFrames(transitionFrames),
     budgetHits: {
@@ -752,8 +934,12 @@ async function runCameraPaths({ frames }) {
       after3d,
     },
     runtimeQuality: transitionDiagnostics.runtimeQuality,
-    residency: transitionDiagnostics.streaming.residencyStageCounts,
-  });
+      residency: transitionDiagnostics.streaming.residencyStageCounts,
+      memoryBoundary: { before: transitionMemoryBefore, after: transitionMemoryAfter },
+      longTaskObserverSupported: longTaskSupported,
+    });
+  }
+  longTaskObserver?.disconnect();
   return paths;
 }
 
@@ -818,9 +1004,28 @@ async function runFrontierOrbit({ frames }) {
 
 function aggregatePaths(paths) {
   const complete = paths.filter((path) => path.presentedFrameIntervalMs !== null);
+  const grouped = Map.groupBy(complete, (path) => path.name);
+  const medianByPath = [...grouped].map(([name, runs]) => {
+    const ordered = [...runs].sort(
+      (left, right) => left.presentedFrameIntervalMs.p95 - right.presentedFrameIntervalMs.p95,
+    );
+    const medianRun = ordered[Math.floor(ordered.length / 2)];
+    return {
+      name,
+      repetitions: runs.length,
+      runP95Ms: runs.map((run) => ({ run: run.run, p95: run.presentedFrameIntervalMs.p95 })),
+      medianRun: medianRun.run,
+      medianP50Ms: medianRun.presentedFrameIntervalMs.p50,
+      medianP95Ms: medianRun.presentedFrameIntervalMs.p95,
+      medianP99Ms: medianRun.presentedFrameIntervalMs.p99,
+      medianMaximumMs: medianRun.presentedFrameIntervalMs.maximum,
+    };
+  });
   return {
     worstPresentedP95Ms: Math.max(...complete.map((path) => path.presentedFrameIntervalMs.p95)),
     worstPresentedP99Ms: Math.max(...complete.map((path) => path.presentedFrameIntervalMs.p99)),
+    worstMedianPresentedP95Ms: Math.max(...medianByPath.map((path) => path.medianP95Ms)),
+    medianByPath,
     maximumDecodeBacklog: Math.max(0, ...complete.map((path) => path.decodeBacklog?.maximum ?? 0)),
     qualityReductionBudgetHits: complete.reduce(
       (total, path) => total + (path.budgetHits.qualityReductions ?? 0),
@@ -871,21 +1076,21 @@ async function writeOutputs(value, stem) {
     );
   } else if (value.status === 'complete') {
     lines.push(
-      '| Path | Presented p50 | p95 | p99 | Exact points p95 | Input→present p95 | Decode backlog max |',
-      '| --- | ---: | ---: | ---: | ---: | ---: | ---: |',
+      '| Path | Run | Presented p50 | p95 | p99 | Exact points p95 | Input→present p95 | Decode backlog max |',
+      '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
       ...value.paths.map(
         (path) =>
-          `| ${path.name} | ${formatMs(path.presentedFrameIntervalMs?.p50)} | ${formatMs(path.presentedFrameIntervalMs?.p95)} | ${formatMs(path.presentedFrameIntervalMs?.p99)} | ${path.exactPrimitivesPerFrame.points?.p95 ?? 'n/a'} | ${formatMs(path.inputToPresentMs?.p95)} | ${path.decodeBacklog?.maximum ?? 'n/a'} |`,
+          `| ${path.name} | ${path.run} | ${formatMs(path.presentedFrameIntervalMs?.p50)} | ${formatMs(path.presentedFrameIntervalMs?.p95)} | ${formatMs(path.presentedFrameIntervalMs?.p99)} | ${path.exactPrimitivesPerFrame.points?.p95 ?? 'n/a'} | ${formatMs(path.inputToPresentMs?.p95)} | ${path.decodeBacklog?.maximum ?? 'n/a'} |`,
       ),
       '',
-      '| Path | Class | Point budget | Selected points max | Selected bytes max | Selected draws max | Frames over budget |',
-      '| --- | --- | ---: | ---: | ---: | ---: | ---: |',
-      ...value.paths.map(
+      '| Path | Median run | Median p50 | Median p95 | Median p99 | Max | Run p95 values |',
+      '| --- | ---: | ---: | ---: | ---: | ---: | --- |',
+      ...value.aggregate.medianByPath.map(
         (path) =>
-          `| ${path.name} | ${path.frontier.hardwareClass ?? 'n/a'} | ${path.frontier.pointBudget ?? 'n/a'} | ${path.frontier.maximumSelectedPoints} | ${path.frontier.maximumSelectedBytes} | ${path.frontier.maximumSelectedDrawCalls} | ${path.frontier.framesOverBudget} |`,
+          `| ${path.name} | ${path.medianRun} | ${formatMs(path.medianP50Ms)} | ${formatMs(path.medianP95Ms)} | ${formatMs(path.medianP99Ms)} | ${formatMs(path.medianMaximumMs)} | ${path.runP95Ms.map((run) => `${run.run}: ${formatMs(run.p95)}`).join('; ')} |`,
       ),
       '',
-      `Worst path p95: **${formatMs(value.aggregate.worstPresentedP95Ms)}**.`,
+      `Worst median-of-five path p95: **${formatMs(value.aggregate.worstMedianPresentedP95Ms)}**.`,
     );
   } else {
     lines.push(

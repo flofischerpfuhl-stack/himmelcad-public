@@ -47,3 +47,19 @@ test('G-FP-P5 durability acknowledgement reaches the indicator callback under 50
   console.log(`G-FP-P5 ack->indicator callback p95=${p95.toFixed(3)}ms`);
   assert.ok(p95 <= 50, `indicator callback p95 ${p95.toFixed(3)} ms exceeds 50 ms`);
 });
+
+test('unchanged durability samples do not invalidate the application repeatedly', async () => {
+  let publications = 0;
+  const stable = status('stored');
+  const stop = startDurabilityPolling(
+    async () => stable,
+    () => {
+      publications += 1;
+    },
+    (error) => assert.fail(String(error)),
+    5,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  stop();
+  assert.equal(publications, 1);
+});
