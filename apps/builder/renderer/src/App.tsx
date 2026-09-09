@@ -152,6 +152,11 @@ import {
   type SurfaceEditPreview,
 } from './project.js';
 import { createRibbonTabs } from './ribbon.js';
+import { registeredImportExtensions } from './importDialogPolicy.js';
+import {
+  replaceProjectWithRecovery,
+  type ProjectReplacementFailure,
+} from './projectReplacement.js';
 import { parseSidecarProgress } from './sidecarProgress.js';
 import { executeBuilderSnapshotCommand } from './snapshotCommands.js';
 import {
@@ -407,6 +412,8 @@ export function App(): JSX.Element {
     return interactionResolver(project, display.state);
   }, [display.state, project]);
   const [recoveryToast, setRecoveryToast] = useState<string | null>(null);
+  const [projectReplacementFailure, setProjectReplacementFailure] =
+    useState<ProjectReplacementFailure | null>(null);
   const [recentProjects, setRecentProjects] = useState<
     readonly { readonly path: string; readonly name: string; readonly openedAtUnixMs: number }[]
   >([]);
@@ -1078,7 +1085,7 @@ export function App(): JSX.Element {
   }, [displayStore, selectionStore]);
 
   const closeCurrentProject = useCallback(
-    async (mode: 'project' | 'window'): Promise<boolean> => {
+    async (mode: 'project' | 'window', preserveRenderer = false): Promise<boolean> => {
       const api = window.himmelcad;
       const session = canonicalSessionRef.current;
       if (!api || closeMode) return false;
@@ -1104,6 +1111,9 @@ export function App(): JSX.Element {
             await api.jobs.cancel(job.id).catch(() => undefined);
           }
         }
+        if (drawToolStore.snapshot().armed) await drawToolStore.cancelAll();
+        constructionInputStore.disarm();
+        if (activeFunctionId) closeFunction(activeFunctionId);
         await viewingBoxPersistTailRef.current;
         await selectionStore.closeProject();
         await displayStore.closeProject();
@@ -1117,18 +1127,23 @@ export function App(): JSX.Element {
         }
         canonicalSessionRef.current = null;
         canonicalReadyRef.current = null;
-        setProject(null);
-        setSnapshots([]);
-        setMeasurements([]);
-        setViewingBox(null);
-        setViewingBoxes([]);
-        viewingBoxRevisionByIdRef.current.clear();
-        viewingBoxRevisionRef.current = null;
-        setCurrentProjectPath(null);
-        currentProjectPathRef.current = null;
-        setDurability(null);
-        entityGroupsRef.current = { cloud: [], ifc: [], orthophoto: [], mesh: [] };
-        setViewportEpoch((epoch) => epoch + 1);
+        setRegistrationItems([]);
+        setForegroundRegistrationJobId(null);
+        setBackgroundedRegistrationJobId(null);
+        if (!preserveRenderer) {
+          setProject(null);
+          setSnapshots([]);
+          setMeasurements([]);
+          setViewingBox(null);
+          setViewingBoxes([]);
+          viewingBoxRevisionByIdRef.current.clear();
+          viewingBoxRevisionRef.current = null;
+          setCurrentProjectPath(null);
+          currentProjectPathRef.current = null;
+          setDurability(null);
+          entityGroupsRef.current = { cloud: [], ifc: [], orthophoto: [], mesh: [] };
+          setViewportEpoch((epoch) => epoch + 1);
+        }
         if (mode === 'window') await api.window.closeReady();
         return true;
       } catch (error) {
@@ -1145,21 +1160,63 @@ export function App(): JSX.Element {
         setCloseMode(null);
       }
     },
-    [closeMode, displayStore, jobs, selectionStore],
+    [
+      activeFunctionId,
+      closeFunction,
+      closeMode,
+      constructionInputStore,
+      displayStore,
+      drawToolStore,
+      jobs,
+      selectionStore,
+    ],
   );
 
   const replaceProject = useCallback(
     async (projectRoot: string): Promise<void> => {
-      if (projectRoot === currentProjectPathRef.current && canonicalSessionRef.current) return;
-      if (canonicalSessionRef.current && !(await closeCurrentProject('project'))) return;
-      durabilityRecoveryReportedRef.current = false;
-      setRecoveryToast(null);
-      currentProjectPathRef.current = projectRoot;
-      setCurrentProjectPath(projectRoot);
-      canonicalReadyRef.current = null;
-      canonicalSessionRef.current = null;
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      await ensureCanonicalProjectRef.current();
+      const previousRoot = currentProjectPathRef.current;
+      setProjectReplacementFailure(null);
+      const result = await replaceProjectWithRecovery(projectRoot, {
+        currentRoot: previousRoot,
+        closeCurrent: async () =>
+          canonicalSessionRef.current ? closeCurrentProject('project', true) : true,
+        prepare: async (root) => {
+          durabilityRecoveryReportedRef.current = false;
+          setRecoveryToast(null);
+          currentProjectPathRef.current = root;
+          setCurrentProjectPath(root);
+          canonicalReadyRef.current = null;
+          canonicalSessionRef.current = null;
+          entityGroupsRef.current = { cloud: [], ifc: [], orthophoto: [], mesh: [] };
+          setViewportEpoch((epoch) => epoch + 1);
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        },
+        openPrepared: () => ensureCanonicalProjectRef.current().then(() => undefined),
+        discardFailed: async () => {
+          const failed = canonicalSessionRef.current;
+          if (failed) await failed.close().catch(() => false);
+          canonicalSessionRef.current = null;
+          canonicalReadyRef.current = null;
+        },
+      });
+      if (result.failure) {
+        setProjectReplacementFailure(result.failure);
+        const recovery = result.failure.recoveredRoot
+          ? ' The previous project was restored.'
+          : result.failure.recoveryReason
+            ? ` Recovery also failed: ${result.failure.recoveryReason}`
+            : '';
+        logEvent(
+          'error',
+          'renderer',
+          `Project replacement failed: ${result.failure.reason}.${recovery}`,
+        );
+      }
+      if (!result.activeRoot) {
+        setProject(null);
+        setCurrentProjectPath(null);
+        currentProjectPathRef.current = null;
+      }
     },
     [closeCurrentProject],
   );
@@ -1575,9 +1632,7 @@ export function App(): JSX.Element {
           }
           const session = await ensureCanonicalProject();
           const formats = await session.listIoFormats();
-          const extensions = formats
-            .flatMap((format) => format.extensions)
-            .map((value) => value.replace(/^\./, ''));
+          const extensions = registeredImportExtensions(formats);
           const paths = await api.dialog.openImport(extensions);
           if (paths.length > 0) {
             const items = await registerImportJobs(api, paths);
@@ -3743,9 +3798,7 @@ export function App(): JSX.Element {
             }
             const session = await ensureCanonicalProject();
             const formats = await session.listIoFormats();
-            const extensions = formats
-              .flatMap((format) => format.extensions)
-              .map((value) => value.replace(/^\./, ''));
+            const extensions = registeredImportExtensions(formats);
             const paths = rest.length > 0 ? rest : await api.dialog.openImport(extensions);
             if (paths.length === 0) return;
             const items = await registerImportJobs(api, paths);
@@ -4028,6 +4081,7 @@ export function App(): JSX.Element {
         },
         onClose: () => void closeCurrentProject('project'),
         onExport: openExport,
+        onImport: () => activate('file.import'),
         onPhotoLabProductImport: () => setPhotoLabProductImportOpen(true),
         navigationMode,
         groundExtractionAvailable: selectedGroundCloud !== null,
@@ -4037,6 +4091,7 @@ export function App(): JSX.Element {
       closeCurrentProject,
       changeDocumentHistory,
       createProject,
+      activate,
       flushProject,
       openProject,
       openExport,
@@ -4122,7 +4177,10 @@ export function App(): JSX.Element {
           <LiveJobsStatusChip
             jobs={jobs}
             debounceMs={JOB_CHIP_DEBOUNCE_MS}
-            onClick={() => setJobsOpen((open) => !open)}
+            onClick={() => {
+              if (registrationItem) setBackgroundedRegistrationJobId(registrationItem.jobId);
+              setJobsOpen((open) => !open);
+            }}
           />
         ),
         align: 'right' as const,
@@ -5192,6 +5250,29 @@ export function App(): JSX.Element {
             onDismiss={() => setRecoveryToast(null)}
           >
             {recoveryToast}
+          </Toast>
+        ) : null}
+        {projectReplacementFailure ? (
+          <Toast
+            tone="error"
+            autoDismiss={false}
+            action={
+              <Button
+                size="small"
+                variant="quiet"
+                onClick={() => void replaceProject(projectReplacementFailure.targetRoot)}
+              >
+                Retry open
+              </Button>
+            }
+            onDismiss={() => setProjectReplacementFailure(null)}
+          >
+            Could not open project — {projectReplacementFailure.reason}.
+            {projectReplacementFailure.recoveredRoot
+              ? ' The previous project is still open.'
+              : projectReplacementFailure.recoveryReason
+                ? ` Recovery failed: ${projectReplacementFailure.recoveryReason}`
+                : ' Choose Retry open after correcting the problem.'}
           </Toast>
         ) : null}
         {durabilityFailureToast && durability?.state === 'failed' ? (
@@ -6559,10 +6640,7 @@ async function registerImportJobs(
   const items: { jobId: string; sourcePath: string }[] = [];
   for (const sourcePath of paths) {
     const jobId = `registration-${crypto.randomUUID()}`;
-    const product = await api.productImport.inspect(sourcePath).catch(() => null);
-    const label = product
-      ? `PhotoLab product · ${product.product}`
-      : `Import ${sourcePath.split(/[\\/]/).pop() ?? sourcePath}`;
+    const label = `Import ${sourcePath.split(/[\\/]/).pop() ?? sourcePath}`;
     await api.jobs.register({
       id: jobId,
       label,
@@ -6571,18 +6649,7 @@ async function registerImportJobs(
       needsInput: true,
       progressKey: jobId,
       cancellable: true,
-      context: {
-        sourcePath,
-        ...(product
-          ? {
-              productKind: product.productKind,
-              productGlyph: productGlyph(
-                product.productKind as BuilderPhotoLabProvenanceSummary['provenance']['productKind'],
-              ),
-              packageSha256: product.packageSha256,
-            }
-          : {}),
-      },
+      context: { sourcePath },
     });
     logEvent('info', 'renderer', `${label} started`);
     items.push({ jobId, sourcePath });

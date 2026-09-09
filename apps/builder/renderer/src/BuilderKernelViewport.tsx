@@ -63,6 +63,8 @@ import {
 import { KernelViewport, type KernelViewportHandle } from '@himmelcad/viewer/kernel/react';
 
 import styles from './BuilderKernelViewport.module.css';
+import { withCurrentCanonicalGenerations } from './canonicalAdmissionPolicy.js';
+import { droppedImportPaths } from './importDialogPolicy.js';
 import { bakePotreeViewingBox, viewingBoxBakeCacheKey } from './viewingBoxBake.js';
 import { viewingBoxFromViewportDrag } from './viewingBoxWorkflow.js';
 
@@ -181,6 +183,7 @@ export interface BuilderRasterImageOptions {
 }
 
 export interface BuilderKernelViewportHandle {
+  isAlive(): boolean;
   loadPotreePointCloud(metadataUrl: string, options: BuilderPointCloudOptions): Promise<void>;
   loadPreparedHierarchy(
     manifestUrl: string,
@@ -254,7 +257,7 @@ interface BuilderKernelViewportProps {
   readonly hudVisible?: boolean;
   readonly pointSize: number;
   readonly onCursorSnap: (snap: SnapResult | null) => void;
-  readonly onDropFiles: (paths: string[]) => void | Promise<void>;
+  readonly onDropFiles: (paths: readonly string[]) => void | Promise<void>;
   readonly onLog: (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void;
   readonly onViewModeSettled?: (mode: KernelViewMode) => void;
   readonly viewingBox?: KernelViewingBoxState | null;
@@ -967,6 +970,14 @@ export const BuilderKernelViewport = forwardRef<
   useImperativeHandle(
     ref,
     () => ({
+      isAlive(): boolean {
+        try {
+          kernelRef.current?.session.diagnostics();
+          return kernelRef.current !== null;
+        } catch {
+          return false;
+        }
+      },
       async loadPotreePointCloud(metadataUrl, options) {
         const kernel = await readyRef.current.promise;
         const entityId = options.admission.entity.id as EntityId;
@@ -1031,7 +1042,11 @@ export const BuilderKernelViewport = forwardRef<
       },
       async loadCanonicalPackage(package_) {
         const kernel = await readyRef.current.promise;
-        const admissions: KernelCanonicalRenderAdmission[] = package_.admissions.map(
+        const versionedAdmissions = withCurrentCanonicalGenerations(
+          package_.admissions,
+          (entityId) => kernel.session.canonicalEntityBindingsIfLoaded(entityId),
+        );
+        const admissions: KernelCanonicalRenderAdmission[] = versionedAdmissions.map(
           (admission) => ({
             admission,
             style: IFC_STYLE,
@@ -1729,9 +1744,11 @@ export const BuilderKernelViewport = forwardRef<
   const handleDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setDragging(false);
-    const paths = Array.from(event.dataTransfer.files)
-      .map((file) => (file as File & { readonly path?: string }).path ?? '')
-      .filter((path) => /\.(?:las|laz|e57)$/i.test(path));
+    const api = window.himmelcad;
+    if (!api) return;
+    const paths = droppedImportPaths(Array.from(event.dataTransfer.files), (file) =>
+      api.dialog.pathForDroppedFile(file),
+    );
     if (paths.length > 0) void callbacksRef.current.onDropFiles(paths);
   }, []);
 

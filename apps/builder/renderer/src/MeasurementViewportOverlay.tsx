@@ -61,7 +61,7 @@ export function MeasurementViewportOverlay({
     let cancelled = false;
     const sample = (): void => {
       if (cancelled) return;
-      const next = viewport?.worldCamera() ?? null;
+      const next = viewport?.isAlive() ? viewport.worldCamera() : null;
       const nextKey = JSON.stringify(next);
       if (cameraKeyRef.current !== nextKey) {
         cameraKeyRef.current = nextKey;
@@ -167,12 +167,14 @@ export function MeasurementViewportOverlay({
   }, [camera, measurements, selected, size.height, size.width, tool]);
 
   useEffect(() => {
-    viewport?.setRendererOverlayPayload('measurements', payload);
+    if (viewport?.isAlive()) viewport.setRendererOverlayPayload('measurements', payload);
   }, [payload, viewport]);
 
   useEffect(
     () => () => {
-      viewport?.setRendererOverlayPayload('measurements', EMPTY_RENDERER_OVERLAY);
+      if (viewport?.isAlive()) {
+        viewport.setRendererOverlayPayload('measurements', EMPTY_RENDERER_OVERLAY);
+      }
     },
     [viewport],
   );

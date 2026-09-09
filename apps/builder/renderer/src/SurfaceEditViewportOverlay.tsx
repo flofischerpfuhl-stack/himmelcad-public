@@ -32,7 +32,7 @@ export function SurfaceEditViewportOverlay({
       }
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       context.clearRect(0, 0, width, height);
-      const camera = viewport?.worldCamera();
+      const camera = viewport?.isAlive() ? viewport.worldCamera() : null;
       if (camera && width > 0 && height > 0) {
         const computed = getComputedStyle(canvas);
         const accent = computed.getPropertyValue('--hc-accent-base').trim() || '#5aa7ff';

@@ -1998,6 +1998,14 @@ export class WgpuKernelViewer {
     return bindings;
   }
 
+  /** Current bindings when present; absence is the valid first-publication state. */
+  canonicalEntityBindingsIfLoaded(
+    entityId: string,
+  ): readonly GeometryRepresentationBindingRef[] | null {
+    this.assertAlive();
+    return this.entityBindings.get(entityId) ?? null;
+  }
+
   /** Authoritative Rust hash of every canonical envelope field except `versionHash`. */
   canonicalEntityVersionHash(entity: CanonicalEntity): string {
     this.assertAlive();

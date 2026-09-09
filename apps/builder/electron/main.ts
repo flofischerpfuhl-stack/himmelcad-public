@@ -45,6 +45,10 @@ import {
   type RecentProjectEntry,
 } from './projectLifecycle';
 import { listProductImportCatalog } from './productImportCatalog';
+import {
+  registrationCancellationIsAlreadyComplete,
+  registrationCancellationOutcomeIsComplete,
+} from './registrationCancellation';
 
 const isDev = !app.isPackaged;
 const CACHE_DIR = resolve(tmpdir(), 'himmelcad-cache');
@@ -1151,7 +1155,7 @@ function registerIpc(): void {
         ...(extensions.length > 0 ? [{ name: 'Supported formats', extensions }] : []),
         { name: 'All files', extensions: ['*'] },
       ],
-      properties: ['openFile', 'openDirectory', 'multiSelections'],
+      properties: ['openFile', 'multiSelections'],
     });
     return result.canceled ? [] : result.filePaths;
   });
@@ -1469,14 +1473,21 @@ function assertJobUpdate(
 
 async function cancelSidecarRegistration(job: AppJob): Promise<void> {
   if (!job.progressKey) return;
-  const acknowledgement = await callSidecar<{
+  let acknowledgement: {
     readonly cancellationRequested?: boolean;
     readonly cancelledImmediately?: boolean;
-  }>({
-    method: 'registration.session.cancel',
-    params: { sessionId: job.progressKey },
-  });
-  if (acknowledgement.cancelledImmediately) {
+  };
+  try {
+    acknowledgement = await callSidecar({
+      method: 'registration.session.cancel',
+      params: { sessionId: job.progressKey },
+    });
+  } catch (error) {
+    if (!registrationCancellationIsAlreadyComplete(error)) throw error;
+    jobRegistry.cancelled(job.id);
+    return;
+  }
+  if (registrationCancellationOutcomeIsComplete(acknowledgement)) {
     jobRegistry.cancelled(job.id);
     return;
   }

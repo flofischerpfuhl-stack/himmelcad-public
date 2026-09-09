@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { AgentHarnessHostTransport } from '@himmelcad/agent/src/transport.js';
 import type { ProviderCredentialRendererTransport } from '@himmelcad/agent/src/providerCredentials.js';
 import type { AppJob, JobEvent, RegisterJobInput } from '@himmelcad/app';
@@ -176,6 +176,7 @@ export interface HimmelCADApi {
   };
   readonly dialog: {
     openImport: (extensions: readonly string[]) => Promise<string[]>;
+    pathForDroppedFile: (file: File) => string;
     openTransform: () => Promise<string | null>;
     saveTransform: (transform: {
       readonly tx: number;
@@ -347,6 +348,7 @@ const api: HimmelCADApi = {
   },
   dialog: {
     openImport: (extensions) => ipcRenderer.invoke('dialog:openImport', extensions),
+    pathForDroppedFile: (file) => webUtils.getPathForFile(file),
     openTransform: () => ipcRenderer.invoke('dialog:openTransform'),
     saveTransform: (transform) => ipcRenderer.invoke('dialog:saveTransform', transform),
     chooseExport: (request) => ipcRenderer.invoke('dialog:chooseExport', request),

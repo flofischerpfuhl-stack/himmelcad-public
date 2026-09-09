@@ -406,6 +406,7 @@ impl CanonicalAppRuntime {
         {
             seed_project_root(&mut store, project_root)?;
         }
+        ensure_default_layer(&mut store)?;
         let compacted =
             maintain_session_start_snapshots(&mut store, session_start_snapshot_retention())?;
         store.flush_group_commits()?;
@@ -948,7 +949,7 @@ impl CanonicalAppRuntime {
             .entities()
             .find(|entity| entity.owner.is_none() && entity.type_id.0 == built_in_type::GROUP)
             .map(|entity| entity.id.clone());
-        let mut mutations = Vec::with_capacity(2);
+        let mut mutations = Vec::with_capacity(1);
         match store.document().entity(&measurement.layer_id) {
             Some(layer) if layer.type_id.0 == built_in_type::LAYER => {}
             Some(_) => {
@@ -956,28 +957,6 @@ impl CanonicalAppRuntime {
                     "measurement layer {:?} has the wrong type",
                     measurement.layer_id.0
                 )));
-            }
-            None if measurement.layer_id.0 == "default-layer" => {
-                let mut layer = CanonicalEntity {
-                    id: measurement.layer_id.clone(),
-                    revision: 0,
-                    type_id: EntityTypeId(built_in_type::LAYER.to_owned()),
-                    name: "Default".to_owned(),
-                    owner: owner.clone(),
-                    layer_ids: Vec::new(),
-                    placement: None,
-                    representations: Vec::new(),
-                    components_ref: components.object_hash.clone(),
-                    attributes_ref: attributes.object_hash.clone(),
-                    relations_ref: relations.object_hash.clone(),
-                    style_ref: None,
-                    schema_version: 1,
-                    version_hash: ObjectHash::of_bytes(b"pending default layer"),
-                };
-                layer.version_hash = canonical_entity_version_hash(&layer).map_err(|error| {
-                    CanonicalAppRuntimeError::InvalidResidency(error.to_string())
-                })?;
-                mutations.push(CanonicalEntityMutation::Create { entity: layer });
             }
             None => {
                 return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
@@ -1175,16 +1154,11 @@ impl CanonicalAppRuntime {
             "application/vnd.himmelcad.relations+json",
             serde_json::json!({ "schemaId": "hcad.relations@1", "relations": [] }),
         )?;
-        let layer_components = empty_json_object(
-            "application/vnd.himmelcad.components+json",
-            serde_json::json!({ "schemaId": "hcad.components@1" }),
-        )?;
         let store = self.store_mut()?;
         let geometry_ref = store.put_geometry_object(&geometry)?;
         store.put_json_object(&components)?;
         store.put_json_object(&attributes)?;
         store.put_json_object(&relations)?;
-        store.put_json_object(&layer_components)?;
         let selected = Representation {
             role: RepresentationRole::Canonical,
             geometry_ref,
@@ -1195,7 +1169,7 @@ impl CanonicalAppRuntime {
             .document()
             .entity(&EntityId(input.entity_id.clone()))
             .cloned();
-        let mut mutations = Vec::with_capacity(2);
+        let mut mutations = Vec::with_capacity(1);
         let mutation = match (existing, input.expected_revision) {
             (None, None) => {
                 let owner = store
@@ -1227,33 +1201,6 @@ impl CanonicalAppRuntime {
                 validate_resolved_representation(&entity, &selected, &geometry).map_err(
                     |error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()),
                 )?;
-                if store
-                    .document()
-                    .entity(&EntityId("default-layer".to_owned()))
-                    .is_none()
-                {
-                    let mut layer = CanonicalEntity {
-                        id: EntityId("default-layer".to_owned()),
-                        revision: 0,
-                        type_id: EntityTypeId(built_in_type::LAYER.to_owned()),
-                        name: "Default".to_owned(),
-                        owner: entity.owner.clone(),
-                        layer_ids: Vec::new(),
-                        placement: None,
-                        representations: Vec::new(),
-                        components_ref: layer_components.object_hash.clone(),
-                        attributes_ref: attributes.object_hash.clone(),
-                        relations_ref: relations.object_hash.clone(),
-                        style_ref: None,
-                        schema_version: 1,
-                        version_hash: ObjectHash::of_bytes(b"pending default layer"),
-                    };
-                    layer.version_hash =
-                        canonical_entity_version_hash(&layer).map_err(|error| {
-                            CanonicalAppRuntimeError::InvalidResidency(error.to_string())
-                        })?;
-                    mutations.push(CanonicalEntityMutation::Create { entity: layer });
-                }
                 CanonicalEntityMutation::Create { entity }
             }
             (Some(entity), Some(expected_revision))
@@ -3949,20 +3896,106 @@ fn seed_project_root(
         layer_ids: Vec::new(),
         placement: None,
         representations: Vec::new(),
-        components_ref: components.object_hash,
-        attributes_ref: attributes.object_hash,
-        relations_ref: relations.object_hash,
+        components_ref: components.object_hash.clone(),
+        attributes_ref: attributes.object_hash.clone(),
+        relations_ref: relations.object_hash.clone(),
         style_ref: None,
         schema_version: 1,
         version_hash: ObjectHash::of_bytes(b"pending"),
     };
     root.version_hash = canonical_entity_version_hash(&root)
         .map_err(|_| CanonicalProjectStoreError::CommitInvariant)?;
+    let layer = default_layer_entity(
+        Some(root.id.clone()),
+        components.object_hash,
+        attributes.object_hash,
+        relations.object_hash,
+    )?;
     store.commit_transaction(CanonicalCommandTransaction {
         command_id: "system.create-project-root@1".to_owned(),
-        mutations: vec![CanonicalEntityMutation::Create { entity: root }],
+        mutations: vec![
+            CanonicalEntityMutation::Create { entity: root },
+            CanonicalEntityMutation::Create { entity: layer },
+        ],
     })?;
     Ok(())
+}
+
+fn ensure_default_layer(store: &mut CanonicalProjectStore) -> Result<(), CanonicalAppRuntimeError> {
+    let layer_id = EntityId("default-layer".to_owned());
+    if let Some(layer) = store.document().entity(&layer_id) {
+        if layer.type_id.0 != built_in_type::LAYER {
+            return Err(CanonicalAppRuntimeError::InvalidResidency(
+                "system default-layer exists with a non-layer type".to_owned(),
+            ));
+        }
+        return Ok(());
+    }
+    let components = CanonicalJsonObject::new(
+        "application/vnd.himmelcad.components+json",
+        serde_json::json!({ "schemaId": "hcad.components@1" }),
+    )?;
+    let attributes = CanonicalJsonObject::new(
+        "application/vnd.himmelcad.attributes+json",
+        serde_json::json!({ "schemaId": "hcad.attributes@1" }),
+    )?;
+    let relations = CanonicalJsonObject::new(
+        "application/vnd.himmelcad.relations+json",
+        serde_json::json!({ "schemaId": "hcad.relations@1", "relations": [] }),
+    )?;
+    store.put_json_object(&components)?;
+    store.put_json_object(&attributes)?;
+    store.put_json_object(&relations)?;
+    let owner = store
+        .document()
+        .entities()
+        .find(|entity| entity.owner.is_none() && entity.type_id.0 == built_in_type::GROUP)
+        .map(|entity| entity.id.clone());
+    let layer = default_layer_entity(
+        owner,
+        components.object_hash,
+        attributes.object_hash,
+        relations.object_hash,
+    )?;
+    let mutation = match store.document().tombstone(&layer_id).cloned() {
+        Some(tombstone) => CanonicalEntityMutation::Restore {
+            expected: EntityVersionRef::from_tombstone(&tombstone),
+            snapshot: layer,
+        },
+        None => CanonicalEntityMutation::Create { entity: layer },
+    };
+    store.commit_transaction(CanonicalCommandTransaction {
+        command_id: "system.ensure-default-layer@1".to_owned(),
+        mutations: vec![mutation],
+    })?;
+    Ok(())
+}
+
+fn default_layer_entity(
+    owner: Option<EntityId>,
+    components_ref: ObjectHash,
+    attributes_ref: ObjectHash,
+    relations_ref: ObjectHash,
+) -> Result<CanonicalEntity, CanonicalProjectStoreError> {
+    let mut layer = CanonicalEntity {
+        id: EntityId("default-layer".to_owned()),
+        revision: 0,
+        type_id: EntityTypeId(built_in_type::LAYER.to_owned()),
+        name: "Default".to_owned(),
+        owner,
+        layer_ids: Vec::new(),
+        placement: None,
+        representations: Vec::new(),
+        components_ref,
+        attributes_ref,
+        relations_ref,
+        style_ref: None,
+        schema_version: 1,
+        version_hash: ObjectHash::of_bytes(b"pending default layer"),
+    };
+    layer.version_hash = canonical_entity_version_hash(&layer)
+        .map_err(|_| CanonicalProjectStoreError::CommitInvariant)?;
+    Ok(layer)
 }
 
 fn create_snapshot_marker(
@@ -5274,7 +5307,7 @@ mod tests {
     }
 
     #[test]
-    fn draw_breakline_and_boundary_round_trip_with_vertex_undo_redo() {
+    fn project_draw_boundary_cancel_reopen_and_second_drawing_keep_default_layer() {
         fn position(x: f64, y: f64, z: f64) -> Position {
             Position { x, y, z: Some(z) }
         }
@@ -5318,6 +5351,41 @@ mod tests {
         let root = temp_project("draw-round-trip");
         let mut runtime = CanonicalAppRuntime::default();
         runtime.open(&root).expect("open project");
+        assert!(runtime
+            .store
+            .as_ref()
+            .unwrap()
+            .document()
+            .entity(&EntityId("default-layer".to_owned()))
+            .is_some());
+        runtime
+            .put_draw_curve(
+                "draw-cancelled-create".to_owned(),
+                input(
+                    "cancelled-boundary",
+                    None,
+                    DrawCurveTool::Boundary,
+                    DrawCurveRole::Boundary,
+                    false,
+                    vec![position(0.0, 0.0, 0.0), position(1.0, 0.0, 0.0)],
+                ),
+            )
+            .expect("create then cancel boundary");
+        runtime
+            .undo_draw_curve(
+                "draw-cancelled-undo".to_owned(),
+                "draw-cancelled-create".to_owned(),
+            )
+            .expect("cancel boundary transaction");
+        let store = runtime.store.as_ref().unwrap();
+        assert!(store
+            .document()
+            .entity(&EntityId("default-layer".to_owned()))
+            .is_some());
+        assert!(store
+            .document()
+            .tombstone(&EntityId("default-layer".to_owned()))
+            .is_none());
         let curb = vec![
             position(397_842.125, 5_486_213.75, 312.48),
             position(397_846.125, 5_486_213.75, 312.56),
@@ -5406,6 +5474,23 @@ mod tests {
             .expect("reopened boundary");
         assert!(reopened_boundary.closed);
         assert_eq!(reopened_boundary.vertices, boundary);
+        runtime
+            .put_draw_curve(
+                "draw-after-reopen".to_owned(),
+                input(
+                    "second-boundary",
+                    None,
+                    DrawCurveTool::Boundary,
+                    DrawCurveRole::Boundary,
+                    true,
+                    vec![
+                        position(0.0, 0.0, 1.0),
+                        position(2.0, 0.0, 1.0),
+                        position(2.0, 2.0, 1.0),
+                    ],
+                ),
+            )
+            .expect("draw a second boundary after reopen");
         runtime.close();
         fs::remove_dir_all(root).expect("cleanup");
     }

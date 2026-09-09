@@ -1407,6 +1407,53 @@ mod tests {
     }
 
     #[test]
+    fn restored_system_layer_can_be_referenced_atomically_after_a_tombstone() {
+        let layer = organizational_entity("default-layer", built_in_type::LAYER);
+        let mut document = CanonicalDocument::default();
+        document
+            .execute(create("bootstrap-layer", vec![layer.clone()]))
+            .expect("bootstrap layer");
+        let current = document.entity(&layer.id).expect("live layer").clone();
+        document
+            .execute(CanonicalCommandTransaction {
+                command_id: "legacy-delete-layer".to_owned(),
+                mutations: vec![CanonicalEntityMutation::Delete {
+                    expected: EntityVersionRef::from_entity(&current),
+                }],
+            })
+            .expect("legacy tombstone");
+        let tombstone = document
+            .tombstone(&layer.id)
+            .expect("layer tombstone")
+            .clone();
+        let mut curve = organizational_entity("new-drawing", built_in_type::GROUP);
+        curve.layer_ids = vec![layer.id.clone()];
+        curve.version_hash = canonical_entity_version_hash(&curve).expect("curve hash");
+
+        document
+            .execute(CanonicalCommandTransaction {
+                command_id: "repair-and-draw".to_owned(),
+                mutations: vec![
+                    CanonicalEntityMutation::Restore {
+                        expected: EntityVersionRef::from_tombstone(&tombstone),
+                        snapshot: layer,
+                    },
+                    CanonicalEntityMutation::Create {
+                        entity: curve.clone(),
+                    },
+                ],
+            })
+            .expect("restore layer and reference it in one transaction");
+
+        let default_layer_id = EntityId("default-layer".to_owned());
+        assert_eq!(document.entity(&default_layer_id).unwrap().revision, 2);
+        assert_eq!(
+            document.entity(&curve.id).unwrap().layer_ids,
+            vec![default_layer_id]
+        );
+    }
+
+    #[test]
     fn owner_and_layer_cycles_are_rejected_before_commit() {
         let mut owner_a = organizational_entity("owner-a", built_in_type::GROUP);
         let mut owner_b = organizational_entity("owner-b", built_in_type::GROUP);

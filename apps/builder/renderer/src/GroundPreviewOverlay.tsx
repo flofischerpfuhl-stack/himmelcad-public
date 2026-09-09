@@ -31,7 +31,7 @@ export function GroundPreviewOverlay({
       }
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       context.clearRect(0, 0, width, height);
-      const camera = viewport?.worldCamera();
+      const camera = viewport?.isAlive() ? viewport.worldCamera() : null;
       if (camera && width > 0 && height > 0) {
         context.fillStyle = getComputedStyle(canvas).getPropertyValue('--hc-success').trim();
         context.globalAlpha = 0.6;

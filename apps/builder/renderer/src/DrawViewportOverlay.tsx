@@ -64,10 +64,12 @@ export function DrawViewportOverlay({
   }, [constructionPreview, curves, supportVisible, tool.preview, tool.vertices]);
 
   useEffect(() => {
-    viewport?.setRendererOverlayPayload('draw', payload);
+    if (viewport?.isAlive()) viewport.setRendererOverlayPayload('draw', payload);
   }, [payload, viewport]);
   useEffect(
-    () => () => viewport?.setRendererOverlayPayload('draw', EMPTY_RENDERER_OVERLAY),
+    () => () => {
+      if (viewport?.isAlive()) viewport.setRendererOverlayPayload('draw', EMPTY_RENDERER_OVERLAY);
+    },
     [viewport],
   );
   return null;

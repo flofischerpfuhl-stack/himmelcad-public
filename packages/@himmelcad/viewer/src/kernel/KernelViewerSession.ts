@@ -527,6 +527,13 @@ export class KernelViewerSession {
     return this.viewerState.canonicalEntityVersionHash(entity);
   }
 
+  canonicalEntityBindingsIfLoaded(
+    entityId: string,
+  ): readonly GeometryRepresentationBindingRef[] | null {
+    this.assertReady();
+    return this.viewerState.canonicalEntityBindingsIfLoaded(entityId);
+  }
+
   loadPotree(
     input: KernelPotreeDatasetAdmission,
     options: KernelViewerLoadOptions = {},

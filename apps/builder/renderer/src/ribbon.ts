@@ -58,6 +58,7 @@ interface FileRibbonHandlers {
   readonly onRestoreSnapshot: (entityId: string) => void;
   readonly onClose: () => void;
   readonly onExport: () => void;
+  readonly onImport: () => void;
   readonly onPhotoLabProductImport: () => void;
   readonly navigationMode?: '3d' | '2.5d' | '2d';
   readonly groundExtractionAvailable?: boolean;
@@ -170,7 +171,14 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
               id: 'file.import',
               label: 'Import…',
               icon: i(CloudUpload),
+              onActivate: handlers.onImport,
               menuItems: [
+                {
+                  id: 'general-import',
+                  label: 'Import files…',
+                  description: 'Choose LAS, LAZ, E57, or another supported format',
+                  onSelect: handlers.onImport,
+                },
                 {
                   id: 'photolab-product-dataset',
                   label: 'PhotoLab product dataset',
