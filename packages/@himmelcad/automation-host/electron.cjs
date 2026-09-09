@@ -9,6 +9,7 @@ const {
   DesktopAgentHarnessHostTransport,
   ManagedPythonHost,
 } = require('./index.cjs');
+const { syncDirectory } = require('./durability.cjs');
 
 function registerElectronAutomationHost(options) {
   const { ipcMain } = options;
@@ -412,12 +413,7 @@ async function writeWorkspaceFile(canonicalRoot, name, contents) {
     await handle.close();
     handle = undefined;
     await rename(temporary, target);
-    const directory = await open(canonicalRoot, 'r');
-    try {
-      await directory.sync();
-    } finally {
-      await directory.close();
-    }
+    await syncDirectory({ open }, canonicalRoot);
   } finally {
     await handle?.close().catch(() => {});
     await rm(temporary, { force: true }).catch(() => {});
