@@ -1,0 +1,72 @@
+.panel {
+  display: grid;
+  gap: var(--hc-space-3);
+  padding: var(--hc-space-3);
+}
+
+.target,
+.hint,
+.error {
+  margin: 0;
+  color: var(--hc-fg-muted);
+  font-size: 12px;
+}
+
+.segmented,
+.actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--hc-space-2);
+}
+
+.segmented > *,
+.actions > * {
+  width: 100%;
+}
+
+.readout,
+.result {
+  display: block;
+  padding: var(--hc-space-2);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-elevated);
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-mono);
+  font-size: 12px;
+  white-space: normal;
+}
+
+.group {
+  display: grid;
+  gap: var(--hc-space-2);
+  padding-top: var(--hc-space-3);
+  border-top: 1px solid var(--hc-border-subtle);
+}
+
+.group h3 {
+  margin: 0;
+  color: var(--hc-fg-strong);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.group label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(118px, 1.25fr);
+  align-items: center;
+  gap: var(--hc-space-2);
+  color: var(--hc-fg-muted);
+  font-size: 12px;
+}
+
+.running {
+  display: grid;
+  gap: var(--hc-space-2);
+  color: var(--hc-fg-muted);
+  font-size: 12px;
+}
+
+.error {
+  color: var(--hc-error-fg);
+}

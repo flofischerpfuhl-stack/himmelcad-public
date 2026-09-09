@@ -24,11 +24,13 @@ export function FloatingTaskIsland({
   children,
   modal = false,
   hidden = false,
+  docked = false,
   onRequestClose,
 }: {
   children: ReactNode;
   modal?: boolean;
   hidden?: boolean;
+  docked?: false | 'right';
   onRequestClose?: () => void;
 }): JSX.Element {
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -98,6 +100,7 @@ export function FloatingTaskIsland({
   };
 
   const startDrag = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (docked) return;
     const target = event.target as HTMLElement;
     if (!target.closest('[data-task-drag-handle]') || target.closest('button,input,select')) return;
     drag.current = {
@@ -135,6 +138,7 @@ export function FloatingTaskIsland({
     <div
       hidden={hidden}
       className={`${styles.layer} ${modal ? styles.modalLayer : ''}`}
+      data-docked={docked || undefined}
       role="presentation"
       onKeyDown={keepModalFocus}
     >
@@ -144,8 +148,8 @@ export function FloatingTaskIsland({
         tabIndex={modal ? -1 : undefined}
         style={{
           position: 'relative',
-          left: Math.round(offset.x),
-          top: Math.round(offset.y),
+          left: docked ? 0 : Math.round(offset.x),
+          top: docked ? 0 : Math.round(offset.y),
         }}
         onPointerDown={startDrag}
         onPointerMove={moveDrag}

@@ -939,7 +939,7 @@ function validateMember(member: SelectionMember): void {
   if (member.kind === 'entity') return assertEntityId(member.entityId);
   if (member.kind !== 'curveSubentity' || !isRecord(member.ref))
     throw new TypeError('invalid selection member kind');
-  const ref = member.ref;
+  const ref = member.ref as CurveSubentityRefV1;
   if (ref.schemaId !== 'hcad.curve-subentity-ref@1' || ref.schemaVersion !== 1)
     throw new TypeError('invalid hcad.curve-subentity-ref@1 member');
   assertEntityId(String(ref.parentId));
@@ -949,7 +949,7 @@ function validateMember(member: SelectionMember): void {
     !ref.topologyKind.trim() ||
     !ref.stableMemberId.trim() ||
     ref.directedParameterInterval.length !== 2 ||
-    ref.directedParameterInterval.some((value) => !Number.isFinite(value)) ||
+    ref.directedParameterInterval.some((value: number) => !Number.isFinite(value)) ||
     (ref.loopId !== null && !ref.loopId.trim()) ||
     (ref.useId !== null && !ref.useId.trim()) ||
     !/^[0-9a-f]{64}$/u.test(String(ref.semanticHash))

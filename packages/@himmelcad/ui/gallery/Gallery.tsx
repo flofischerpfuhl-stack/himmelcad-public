@@ -10,6 +10,7 @@ import {
   DurabilityIndicator,
   EdgeStrip,
   EmptyState,
+  ExportIsland,
   EntityTree,
   InteractionStateCheckbox,
   EntityCommandMenu,
@@ -698,6 +699,80 @@ const specs: readonly ComponentSpec[] = [
     ),
   },
   {
+    name: 'Export island',
+    states: [
+      row('formats', 'formats', 'default', 'formats'),
+      row('plan', 'lossy plan', 'default', 'plan'),
+      row('running', 'running', 'default', 'running'),
+    ],
+    render: (_state, galleryRow) => (
+      <ExportIsland
+        formats={[
+          { id: 'dxf', label: 'DXF', enabled: true },
+          { id: 'landxml', label: 'LandXML', enabled: true },
+          {
+            id: 'ifc',
+            label: 'IFC',
+            enabled: false,
+            disabledReason: 'IFC export requires an unchanged IFC import scope.',
+          },
+          {
+            id: 'geotiff',
+            label: 'GeoTIFF',
+            enabled: false,
+            disabledReason: 'GeoTIFF export requires an unchanged raster import scope.',
+          },
+          {
+            id: 'splat',
+            label: 'splat',
+            enabled: false,
+            disabledReason: 'Splat export requires an unchanged Gaussian-splat import scope.',
+          },
+        ]}
+        formatId="dxf"
+        scope="selection"
+        selectionCount={3}
+        path="C:\\Projects\\Road\\handover.dxf"
+        planRows={
+          galleryRow?.value === 'formats'
+            ? null
+            : [
+                {
+                  entityKind: 'Surface',
+                  count: 1,
+                  writtenAs: '3DFACE + breaklines',
+                  lossNote: 'TIN is written as separate faces; recipe and provenance are dropped',
+                  lossCodes: [
+                    'hcad.loss.dxf.mesh-entity-partition@1',
+                    'hcad.loss.dxf.metadata-not-representable@1',
+                  ],
+                },
+                {
+                  entityKind: 'Point cloud',
+                  count: 1,
+                  writtenAs: 'not written',
+                  lossNote: 'Geometry is not representable and is omitted',
+                  lossCodes: ['hcad.loss.dxf.entity-omitted@1'],
+                },
+              ]
+        }
+        outputs={galleryRow?.value === 'formats' ? [] : ['handover.dxf']}
+        running={
+          galleryRow?.value === 'running' ? { phase: 'Writing staged DXF', fraction: 0.64 } : null
+        }
+        detached={false}
+        onDetachedChange={noop}
+        onFormatChange={noop}
+        onScopeChange={noop}
+        onChoosePath={noop}
+        onPlan={noop}
+        onExport={noop}
+        onCancel={noop}
+        onClose={noop}
+      />
+    ),
+  },
+  {
     name: 'Menu',
     states: [...baseStates, 'disabled'],
     render: (state) => (
@@ -1074,14 +1149,87 @@ const specs: readonly ComponentSpec[] = [
       const value = galleryRow?.value ?? 'sources';
       return (
         <div className="galleryDgmWindow" aria-label="DGM creation window">
-          <header><div><strong>Create surface</strong><small>DGM · checked TIN</small></div><Button variant="quiet">×</Button></header>
+          <header>
+            <div>
+              <strong>Create surface</strong>
+              <small>DGM · checked TIN</small>
+            </div>
+            <Button variant="quiet">×</Button>
+          </header>
           <div className="galleryDgmColumns">
-            <section><h3>Sources</h3>{[['●','Road ground','3.1 M','Points'],['／','Kerb line','142','Breakline'],['◇','Site boundary','18','Boundary']].map(([glyph,name,count,role]) => <div className="galleryDgmSource" key={name}><b>{glyph}</b><span>{name}<small>{count} items</small></span><Select value={role} options={[{value:role!,label:role!}]} /></div>)}</section>
-            <section><h3>Rules</h3><label><span>Maximum edge</span><NumberInput value={25} unit="m" disabled={value === 'creating'} /></label><label><span>Thin cloud</span><NumberInput value={0.25} unit="m" disabled={value === 'creating'} /></label><Checkbox label="Automatic boundary" checked readOnly /><Checkbox label="Exclude outside boundary" checked readOnly /><Checkbox label="Use 2D crop polyline" checked={false} readOnly /></section>
-            <section><h3>Check results</h3><code>{value === 'sources' ? '0 errors · 0 fixable' : '12 errors · 9 fixable'}</code>{value !== 'sources' ? <><div className="galleryDgmError"><b>!</b><span>Breaklines cross with conflicting heights</span><Button variant="quiet">Fix ▾</Button>{value === 'errors' ? <Menu className="galleryDgmFix" autoFocus={false} onClose={noop}><MenuItem>Split lines</MenuItem><MenuItem>Exclude source</MenuItem></Menu> : null}</div><div className="galleryDgmError"><b>!</b><span>Vertex lies outside the boundary</span><Button variant="quiet">Fix ▾</Button></div></> : <p>Run Check before publishing.</p>}</section>
+            <section>
+              <h3>Sources</h3>
+              {[
+                ['●', 'Road ground', '3.1 M', 'Points'],
+                ['／', 'Kerb line', '142', 'Breakline'],
+                ['◇', 'Site boundary', '18', 'Boundary'],
+              ].map(([glyph, name, count, role]) => (
+                <div className="galleryDgmSource" key={name}>
+                  <b>{glyph}</b>
+                  <span>
+                    {name}
+                    <small>{count} items</small>
+                  </span>
+                  <Select value={role} options={[{ value: role!, label: role! }]} />
+                </div>
+              ))}
+            </section>
+            <section>
+              <h3>Rules</h3>
+              <label>
+                <span>Maximum edge</span>
+                <NumberInput value={25} unit="m" disabled={value === 'creating'} />
+              </label>
+              <label>
+                <span>Thin cloud</span>
+                <NumberInput value={0.25} unit="m" disabled={value === 'creating'} />
+              </label>
+              <Checkbox label="Automatic boundary" checked readOnly />
+              <Checkbox label="Exclude outside boundary" checked readOnly />
+              <Checkbox label="Use 2D crop polyline" checked={false} readOnly />
+            </section>
+            <section>
+              <h3>Check results</h3>
+              <code>{value === 'sources' ? '0 errors · 0 fixable' : '12 errors · 9 fixable'}</code>
+              {value !== 'sources' ? (
+                <>
+                  <div className="galleryDgmError">
+                    <b>!</b>
+                    <span>Breaklines cross with conflicting heights</span>
+                    <Button variant="quiet">Fix ▾</Button>
+                    {value === 'errors' ? (
+                      <Menu className="galleryDgmFix" autoFocus={false} onClose={noop}>
+                        <MenuItem>Split lines</MenuItem>
+                        <MenuItem>Exclude source</MenuItem>
+                      </Menu>
+                    ) : null}
+                  </div>
+                  <div className="galleryDgmError">
+                    <b>!</b>
+                    <span>Vertex lies outside the boundary</span>
+                    <Button variant="quiet">Fix ▾</Button>
+                  </div>
+                </>
+              ) : (
+                <p>Run Check before publishing.</p>
+              )}
+            </section>
           </div>
-          {value === 'creating' ? <div className="galleryDgmProgress"><span>Triangulate · constrain · validate · bake</span><ProgressBar value={0.63} ariaLabel="Surface creation progress" /></div> : null}
-          <footer><Button variant="secondary" disabled={value === 'creating'}>Check</Button><Button variant="primary" disabled={value !== 'errors'}>Create surface</Button><Button variant="quiet">{value === 'creating' ? 'Cancel creation' : 'Cancel'}</Button></footer>
+          {value === 'creating' ? (
+            <div className="galleryDgmProgress">
+              <span>Triangulate · constrain · validate · bake</span>
+              <ProgressBar value={0.63} ariaLabel="Surface creation progress" />
+            </div>
+          ) : null}
+          <footer>
+            <Button variant="secondary" disabled={value === 'creating'}>
+              Check
+            </Button>
+            <Button variant="primary" disabled={value !== 'errors'}>
+              Create surface
+            </Button>
+            <Button variant="quiet">{value === 'creating' ? 'Cancel creation' : 'Cancel'}</Button>
+          </footer>
         </div>
       );
     },
@@ -1147,6 +1295,74 @@ const specs: readonly ComponentSpec[] = [
               <Button variant="quiet" disabled={baking}>
                 Clear fence
               </Button>
+            </div>
+          </FunctionPanel>
+        </div>
+      );
+    },
+  },
+  {
+    name: 'Edit surface panel',
+    states: [
+      row('selected', 'region selected', 'default', 'selected'),
+      row('preview', 'smooth preview', 'default', 'preview'),
+      row('downsampled', 'downsample result', 'completed', 'downsampled'),
+    ],
+    render: (_state, galleryRow) => {
+      const value = galleryRow?.value ?? 'selected';
+      return (
+        <div className="galleryPanel gallerySurfaceEditPanel">
+          <FunctionPanel
+            activeFunctionId="mesh.edit.smooth"
+            title="Edit surface"
+            activeTab="function"
+            onActiveTabChange={noop}
+            onCloseFunction={noop}
+            properties={<span>DGM properties</span>}
+          >
+            <div className="gallerySurfaceEdit">
+              <small>Road DGM</small>
+              <div className="gallerySurfaceEditSegments">
+                <Button variant="primary">Fence</Button>
+                <Button variant="secondary">Boundary polyline</Button>
+              </div>
+              <code>Region 1 248 m² · 6 412 vertices</code>
+              <section>
+                <h3>Smooth</h3>
+                <label>
+                  <span>Filter</span>
+                  <Select
+                    value="gaussian"
+                    options={[
+                      { value: 'gaussian', label: 'Gaussian' },
+                      { value: 'median', label: 'Median' },
+                    ]}
+                  />
+                </label>
+                <label>
+                  <span>Radius</span>
+                  <NumberInput value={1} unit="m" />
+                </label>
+                <div className="gallerySurfaceEditActions">
+                  <Button variant="quiet">Preview</Button>
+                  <Button variant="primary">Smooth</Button>
+                </div>
+              </section>
+              <section>
+                <h3>Downsample</h3>
+                <label>
+                  <span>Target error</span>
+                  <NumberInput value={0.02} unit="m" precision={3} />
+                </label>
+                <Button variant="primary">Downsample</Button>
+              </section>
+              {value !== 'selected' ? (
+                <code>
+                  {value === 'preview'
+                    ? 'Vertices 61 204 → 42 908 · max error 0.011 m · RMS 0.004 m'
+                    : 'Vertices 61 204 → 18 731 · max error 0.019 m · RMS 0.006 m'}
+                </code>
+              ) : null}
             </div>
           </FunctionPanel>
         </div>

@@ -13,6 +13,7 @@ import {
   protocol,
   safeStorage,
   session,
+  shell,
 } from 'electron';
 import {
   defaultAutomationPaths,
@@ -797,7 +798,17 @@ function registerIpc(): void {
     return jobRegistry.fail(assertJobId(id), error);
   });
   ipcMain.handle('jobs:cancelled', (_event, id: unknown) => jobRegistry.cancelled(assertJobId(id)));
-  ipcMain.handle('jobs:cancel', (_event, id: unknown) => jobRegistry.cancel(assertJobId(id)));
+  ipcMain.handle('jobs:cancel', async (_event, id: unknown) => {
+    const job = await jobRegistry.cancel(assertJobId(id));
+    if (job.owner === 'builder.export') {
+      try {
+        await callSidecar({ method: 'io.operation.cancel', params: { operationId: job.id } });
+      } catch (error) {
+        console.warn(`Could not forward export cancellation for ${job.id}: ${String(error)}`);
+      }
+    }
+    return job;
+  });
   ipcMain.handle('jobs:respond', (_event, id: unknown) => jobRegistry.respond(assertJobId(id)));
   ipcMain.handle('jobs:clear-finished', () => jobRegistry.clearFinished());
   ipcMain.handle('canonical-residency:bootstrap', async () => {
@@ -1125,6 +1136,37 @@ function registerIpc(): void {
       { encoding: 'utf8', flag: 'w' },
     );
     return result.filePath;
+  });
+  ipcMain.handle('dialog:chooseExport', async (_event, value: unknown) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new TypeError('export dialog request is required');
+    }
+    const request = value as Record<string, unknown>;
+    const extensions = Array.isArray(request.extensions)
+      ? request.extensions.filter(
+          (extension): extension is string =>
+            typeof extension === 'string' && /^[A-Za-z0-9]{1,12}$/.test(extension),
+        )
+      : [];
+    if (typeof request.formatId !== 'string' || extensions.length === 0) {
+      throw new TypeError('export dialog requires a format and file extensions');
+    }
+    const suggestedName =
+      typeof request.suggestedName === 'string' && request.suggestedName.trim()
+        ? request.suggestedName
+        : `export.${extensions[0]}`;
+    const result = await dialog.showSaveDialog(requireMainWindow(), {
+      title: 'Export',
+      buttonLabel: 'Choose',
+      defaultPath: resolve(app.getPath('documents'), suggestedName),
+      filters: [{ name: request.formatId, extensions }],
+      properties: ['createDirectory', 'showOverwriteConfirmation'],
+    });
+    return result.canceled || !result.filePath ? null : resolve(result.filePath);
+  });
+  ipcMain.handle('shell:showItemInFolder', (_event, value: unknown) => {
+    if (typeof value !== 'string' || !value.trim()) throw new TypeError('path is required');
+    shell.showItemInFolder(resolve(value));
   });
 }
 

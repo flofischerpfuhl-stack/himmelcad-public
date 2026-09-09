@@ -246,11 +246,15 @@ export interface IoExportPlanRequest {
 export interface IoExportPlanEnvelope {
   readonly schemaVersion: 1;
   readonly commandId: string;
+  readonly scope?: 'selection' | 'visible' | 'project';
+  readonly entityIds?: readonly string[];
   readonly providerId: string;
   readonly providerVersion: string;
   readonly targetPath: string;
   readonly formatId: string;
   readonly options: JsonValue;
+  /** Entity revisions frozen by the sidecar when this plan was computed. */
+  readonly entityVersions?: Readonly<Record<string, string>>;
   readonly plan: IoCanonicalExportPlan;
 }
 
@@ -903,7 +907,10 @@ function validateExportPlanEnvelope(envelope: IoExportPlanEnvelope): void {
     throw new ContractValidationError('unsupported schema version', 'acceptedPlan.schemaVersion');
   }
   validatePortableIdentity(envelope.commandId, 'acceptedPlan.commandId');
-  if (envelope.scope !== undefined && !['selection', 'visible', 'project'].includes(envelope.scope)) {
+  if (
+    envelope.scope !== undefined &&
+    !['selection', 'visible', 'project'].includes(envelope.scope)
+  ) {
     throw new ContractValidationError('unsupported export scope', 'acceptedPlan.scope');
   }
   if (
@@ -915,6 +922,21 @@ function validateExportPlanEnvelope(envelope: IoExportPlanEnvelope): void {
     throw new ContractValidationError(
       'must contain unique bounded canonical entity identities',
       'acceptedPlan.entityIds',
+    );
+  }
+  if (
+    envelope.entityVersions !== undefined &&
+    (typeof envelope.entityVersions !== 'object' ||
+      envelope.entityVersions === null ||
+      Array.isArray(envelope.entityVersions) ||
+      Object.entries(envelope.entityVersions).some(
+        ([entityId, version]) =>
+          entityId.trim() === '' || typeof version !== 'string' || version.trim() === '',
+      ))
+  ) {
+    throw new ContractValidationError(
+      'must map canonical entity identities to version hashes',
+      'acceptedPlan.entityVersions',
     );
   }
   validateRegistryId(envelope.providerId, 'acceptedPlan.providerId');

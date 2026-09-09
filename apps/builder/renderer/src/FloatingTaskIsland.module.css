@@ -12,6 +12,11 @@
   display: none;
 }
 
+.layer[data-docked='right'] {
+  place-items: center end;
+  padding-right: 12px;
+}
+
 .modalLayer {
   background: color-mix(in srgb, var(--hc-bg-app) 58%, transparent);
   backdrop-filter: blur(2px);

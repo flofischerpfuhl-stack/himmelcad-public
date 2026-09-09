@@ -240,6 +240,31 @@ void test('G-B2-MESH-DRAFT-RULES P11 draft, check, fix, and publish share one ta
   ]);
 });
 
+void test('G-RW-DGM edit P11 rows share the generated UI and automation table', () => {
+  const rows = new Map(COMMAND_REGISTRY.map((entry) => [entry.id, entry]));
+  for (const id of [
+    'mesh.edit.region.select',
+    'mesh.edit.smooth',
+    'mesh.edit.downsample',
+  ] as const) {
+    const row = rows.get(id);
+    assert.ok(row, id);
+    assert.deepEqual(row.products, ['builder'], id);
+    assert.equal(row.surfaces.console, true, id);
+    assert.equal(row.surfaces.automation, true, id);
+    assert.match(row.ownerSpec, /owner: mesh-terrain/u, id);
+  }
+  assert.equal(rows.get('mesh.edit.smooth')!.surfaces.ribbon, true);
+  assert.deepEqual(rows.get('mesh.edit.smooth')!.entityKinds, [
+    'Surface',
+    'DigitalElevationModel',
+  ]);
+  assert.deepEqual(rows.get('mesh.edit.downsample')!.entityKinds, [
+    'Surface',
+    'DigitalElevationModel',
+  ]);
+});
+
 void test('G-B2-PC-MEAN-SAMPLE automation preserves typed methods, origin and empty policy', async () => {
   const calls: CommandInvocation[] = [];
   const context = base({

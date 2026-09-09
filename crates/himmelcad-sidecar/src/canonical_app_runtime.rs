@@ -26,7 +26,7 @@ use himmelcad_core::entity_model::{
     ElevationSurfaceGeometry, EntityTypeId, GeometryObject, GeometryResource, OrthoGridMapping,
     Position, RasterConnectivity, RasterImageGeometry, RasterInterpolation, RasterMapping,
     Representation, RepresentationAuthority, RepresentationRole, StreamedGeometry,
-    TriangleMeshGeometry, TriangleMeshStorage, Vector3,
+    TriangleMeshStorage, Vector3,
 };
 use himmelcad_core::entity_validation::{
     canonical_entity_version_hash, geometry_object_content_hash, validate_resolved_representation,
@@ -50,8 +50,8 @@ use himmelcad_core::release_05_admissions::{
 };
 use himmelcad_core::typed_artifact::{TypedArtifactDescriptor, TypedArtifactManifest};
 use himmelcad_io::{
-    CanonicalImportPackage, CanonicalJsonObject, CanonicalPreparedDataset, CanonicalResourceSet,
-    CanonicalStagedImport, PreparedDatasetArtifact, CANONICAL_IO_SCHEMA_VERSION,
+    CanonicalImportPackage, CanonicalJsonObject, CanonicalPreparedDataset, CanonicalStagedImport,
+    PreparedDatasetArtifact, CANONICAL_IO_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -3004,6 +3004,86 @@ impl CanonicalAppRuntime {
             }
         }
         if !remaining.is_empty() {
+            let store = self
+                .store()
+                .map_err(|_| CanonicalAppRuntimeError::ProjectNotOpen)?;
+            let mut admissions = Vec::new();
+            let mut objects = Vec::new();
+            let mut object_hashes = BTreeSet::new();
+            let mut captured = BTreeSet::new();
+            for entity_id in &remaining {
+                let Some(entity) = store
+                    .document()
+                    .entity(&EntityId(entity_id.clone()))
+                    .cloned()
+                else {
+                    continue;
+                };
+                let Some(selected) = entity
+                    .representations
+                    .iter()
+                    .find(|representation| representation.role == RepresentationRole::Canonical)
+                    .or_else(|| entity.representations.first())
+                    .cloned()
+                else {
+                    continue;
+                };
+                let geometry: GeometryObject = serde_json::from_slice(
+                    &store.read_object(&selected.geometry_ref)?,
+                )
+                .map_err(|error| {
+                    CanonicalAppRuntimeError::InvalidImportInventory(format!(
+                        "entity {entity_id:?} geometry is invalid: {error}"
+                    ))
+                })?;
+                for object_hash in [
+                    &entity.components_ref,
+                    &entity.attributes_ref,
+                    &entity.relations_ref,
+                ] {
+                    if !object_hashes.insert(object_hash.0.clone()) {
+                        continue;
+                    }
+                    let bytes = store.read_object(object_hash)?;
+                    let value = serde_json::from_slice(&bytes).map_err(|error| {
+                        CanonicalAppRuntimeError::InvalidImportInventory(format!(
+                            "entity {entity_id:?} metadata is invalid: {error}"
+                        ))
+                    })?;
+                    let (metadata, _) = store.verified_object_source(object_hash)?;
+                    objects.push(CanonicalJsonObject {
+                        object_hash: object_hash.clone(),
+                        media_type: metadata.media_type,
+                        value,
+                    });
+                }
+                admissions.push(CanonicalRepresentationAdmission {
+                    entity,
+                    selected,
+                    representation_slot: "source".to_owned(),
+                    expected_generation: None,
+                    resolved_geometry: geometry,
+                });
+                captured.insert(entity_id.clone());
+            }
+            if !captured.is_empty() {
+                remaining.retain(|id| !captured.contains(id));
+                contributors.push((
+                    CanonicalImportPackage {
+                        schema_version: CANONICAL_IO_SCHEMA_VERSION,
+                        provider_id: "hcad.authored.scope@1".to_owned(),
+                        provider_version: env!("CARGO_PKG_VERSION").to_owned(),
+                        admissions,
+                        objects,
+                        datasets: Vec::new(),
+                        resource_sets: Vec::new(),
+                        presentation_resources: CanonicalPresentationResourceSet::default(),
+                    },
+                    captured,
+                ));
+            }
+        }
+        if !remaining.is_empty() {
             return Err(CanonicalAppRuntimeError::InvalidImportInventory(format!(
                 "export scope contains entities without a live canonical representation: {}",
                 remaining.into_iter().collect::<Vec<_>>().join(", ")
@@ -3013,6 +3093,9 @@ impl CanonicalAppRuntime {
             let (mut package, captured) = contributors.pop().expect("one contributor");
             if captured.len() == package.admissions.len() {
                 self.inline_resource_tins(&mut package)?;
+                package.validate().map_err(|error| {
+                    CanonicalAppRuntimeError::InvalidImportInventory(error.to_string())
+                })?;
                 return Ok(package);
             }
             contributors.push((package, captured));
@@ -3192,13 +3275,12 @@ impl CanonicalAppRuntime {
     /// Materializes only immutable artifacts retained by the captured export package.
     pub fn materialize_export_artifacts(
         &self,
-        entity_ids: &[String],
+        package: &CanonicalImportPackage,
         prepared_root: &Path,
     ) -> Result<(), CanonicalAppRuntimeError> {
         let store = self
             .store()
             .map_err(|_| CanonicalAppRuntimeError::ProjectNotOpen)?;
-        let package = self.reconstruct_export_package(entity_ids)?;
         let mut destinations = BTreeMap::<PathBuf, ObjectHash>::new();
         for dataset in &package.datasets {
             for artifact in &dataset.artifacts {
@@ -5801,9 +5883,14 @@ mod tests {
             reconstructed.presentation_resources,
             staged.package.presentation_resources
         );
+        let export_package = runtime
+            .reconstruct_export_package(&["cloud-a".to_owned()])
+            .expect("capture user-level export scope");
+        assert_eq!(export_package.admissions, reconstructed.admissions);
+        assert_eq!(export_package.datasets, reconstructed.datasets);
         let materialized = root.join("export-materialized");
         runtime
-            .materialize_import_artifacts("import-cloud", &materialized)
+            .materialize_export_artifacts(&export_package, &materialized)
             .expect("materialize exact artifact layout");
         assert_eq!(
             fs::read(materialized.join("dataset-a/metadata.json")).expect("metadata bytes"),

@@ -2856,9 +2856,23 @@ mod tests {
         assert!(plan
             .semantic_losses
             .contains(&LOSS_EXPORT_METADATA.to_owned()));
+        let mut unaccepted_context = TestContext::default();
+        let unaccepted =
+            CanonicalExportProvider::export(&provider, request, &plan, &mut unaccepted_context)
+                .expect_err("unreviewed LandXML losses must refuse execution");
+        assert!(unaccepted.to_string().contains("reviewed loss code"));
 
+        let accepted_options = serde_json::json!({
+            "acceptedLossCodes": plan.semantic_losses.clone(),
+        });
+        let accepted_request = CanonicalExportRequest {
+            target: &target,
+            format_id: LANDXML_FORMAT_ID,
+            package: &package,
+            options: &accepted_options,
+        };
         let mut context = TestContext::default();
-        CanonicalExportProvider::export(&provider, request, &plan, &mut context)
+        CanonicalExportProvider::export(&provider, accepted_request, &plan, &mut context)
             .expect("atomic export");
         assert!(target.is_file());
         assert_eq!(
@@ -2869,6 +2883,11 @@ mod tests {
         let roundtrip = import_fixture(&target);
         roundtrip.validate().expect("roundtrip package");
         assert_eq!(roundtrip.admissions.len(), package.admissions.len());
+        assert_eq!(
+            tin_geometry(&package),
+            tin_geometry(&roundtrip),
+            "synthetic LandXML import/export/re-import must preserve the TIN and breaklines",
+        );
         for expected_group in ["point", "plan-feature", "alignment", "surface"] {
             assert_eq!(
                 package
@@ -2895,6 +2914,27 @@ mod tests {
         assert!(roundtrip_alignment.width_bands.is_empty());
         assert!(roundtrip_alignment.crossfall_bands.is_empty());
         assert_eq!(roundtrip_alignment.station_origin, 1000.0);
+    }
+
+    fn tin_geometry(
+        package: &CanonicalImportPackage,
+    ) -> (Vec<Vector3>, Vec<u32>, Vec<CurveGeometry>) {
+        package
+            .admissions
+            .iter()
+            .find_map(|admission| match &admission.resolved_geometry {
+                GeometryObject::ElevationSurface { surface } => match surface.as_ref() {
+                    ElevationSurfaceGeometry::Tin { mesh, breaklines } => match &mesh.storage {
+                        TriangleMeshStorage::Inline {
+                            positions, indices, ..
+                        } => Some((positions.clone(), indices.clone(), breaklines.clone())),
+                        TriangleMeshStorage::Resource { .. } => None,
+                    },
+                    ElevationSurfaceGeometry::Grid { .. } => None,
+                },
+                _ => None,
+            })
+            .expect("TIN geometry")
     }
 
     #[test]
@@ -2955,13 +2995,22 @@ mod tests {
             },
         )
         .expect("plan export");
+        let accepted_options = serde_json::json!({
+            "acceptedLossCodes": plan.semantic_losses.clone(),
+        });
+        let accepted_request = CanonicalExportRequest {
+            target: &target,
+            format_id: LANDXML_FORMAT_ID,
+            package: &package,
+            options: &accepted_options,
+        };
         let mut context = CancelAfterContext {
             checks: Cell::new(0),
             threshold: 2,
             progress: Vec::new(),
         };
         assert_eq!(
-            CanonicalExportProvider::export(&provider, request, &plan, &mut context),
+            CanonicalExportProvider::export(&provider, accepted_request, &plan, &mut context),
             Err(ProviderContractError::Cancelled)
         );
         assert!(!target.exists());

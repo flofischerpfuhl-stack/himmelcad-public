@@ -915,7 +915,14 @@ pub fn surface_outside_region_identity_hash(
     for triangle in mesh.indices.chunks_exact(3) {
         let triple = [triangle[0], triangle[1], triangle[2]];
         let points = triple.map(|index| mesh.positions[index as usize]);
-        if !point_in_xy_ring(triangle_centroid(points), &region.polygon) {
+        // Capture the exact complement of EditPatch::capture: a face is
+        // editable only when all three vertices are inside the ring. This
+        // deliberately includes boundary-crossing faces in the identity hash;
+        // a centroid-only test could otherwise miss an outside mutation.
+        if !points
+            .iter()
+            .all(|point| point_in_xy_ring([point[0], point[1]], &region.polygon))
+        {
             triangles.push(triple);
             vertices.extend(triple);
         }

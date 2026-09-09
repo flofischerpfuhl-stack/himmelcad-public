@@ -1364,6 +1364,74 @@ export const GENERATED_COMMAND_TABLE = [
     "allowMultiSelect": true
   },
   {
+    "id": "mesh.edit.region.select",
+    "label": "Select DGM edit region",
+    "products": [
+      "builder"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "singleEditableNonCloud",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Mesh/Terrain MT-D15, MT-D33; MASTER-PLAN row 21; S-01; owner: mesh-terrain",
+    "host": "renderer"
+  },
+  {
+    "id": "mesh.edit.smooth",
+    "label": "Edit surface…",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "singleEditableNonCloud",
+    "surfaces": {
+      "ribbon": true,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Mesh/Terrain MT-D33; G-RW-DGM-SMOOTH; MASTER-PLAN row 21; S-01; owner: mesh-terrain",
+    "host": "renderer",
+    "entityKinds": [
+      "Surface",
+      "DigitalElevationModel"
+    ]
+  },
+  {
+    "id": "mesh.edit.downsample",
+    "label": "Downsample DGM region",
+    "products": [
+      "builder"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "singleEditableNonCloud",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": true,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "entity-specific",
+    "ownerSpec": "Mesh/Terrain MT-D23, MT-D34; G-RW-DGM-DOWNSAMPLE; MASTER-PLAN row 21; S-01; owner: mesh-terrain",
+    "host": "renderer",
+    "entityKinds": [
+      "Surface",
+      "DigitalElevationModel"
+    ]
+  },
+  {
     "id": "draw.line",
     "label": "Line",
     "products": [

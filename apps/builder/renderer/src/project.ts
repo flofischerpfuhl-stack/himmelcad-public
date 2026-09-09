@@ -326,6 +326,69 @@ export interface SurfacePublishResult {
   readonly journalEntry: CanonicalJournalEntry;
 }
 
+export type SurfaceEditRegionSource = 'fence' | 'boundary_polyline';
+export type SurfaceSmoothFilter = 'gaussian' | 'median';
+
+export interface SurfaceEditRegion {
+  readonly source: SurfaceEditRegionSource;
+  readonly polygon: readonly (readonly [number, number])[];
+}
+
+export interface SurfaceEditMetrics {
+  readonly verticesBefore: number;
+  readonly verticesAfter: number;
+  readonly trianglesBefore: number;
+  readonly trianglesAfter: number;
+  readonly affectedTriangles: number;
+  readonly regionArea: number;
+  readonly error: {
+    readonly metric: 'continuous_piecewise_linear_vertical_overlay';
+    readonly sampleCount: number;
+    readonly maximumVerticalError: number;
+    readonly rmsVerticalError: number;
+    readonly targetVerticalError: number | null;
+    readonly certified: boolean;
+  };
+  readonly outsideIdentityHash: string;
+  readonly resultHash: string;
+}
+
+export interface SurfaceEditRegionResult {
+  readonly schemaId: 'hcad.mesh.edit-region-result@1';
+  readonly editId: string;
+  readonly targetEntityId: string;
+  readonly targetRevision: number;
+  readonly summary: {
+    readonly vertices: number;
+    readonly triangles: number;
+    readonly protectedSegments: number;
+    readonly area: number;
+  };
+  readonly checkpoint: 'region_selected';
+}
+
+export interface SurfaceEditPreview {
+  readonly schemaId: 'hcad.mesh.surface-edit-preview@1';
+  readonly editId: string;
+  readonly algorithmId: 'hcad.mesh.smooth-region@1' | 'hcad.mesh.simplify-terrain@1';
+  readonly metrics: SurfaceEditMetrics;
+  readonly positions: readonly (readonly [number, number, number])[];
+  readonly indices: readonly number[];
+  readonly constrainedEdges: readonly (readonly [number, number])[];
+}
+
+export interface SurfaceEditBakeResult {
+  readonly schemaId: 'hcad.mesh.surface-edit-result@1';
+  readonly editId: string;
+  readonly algorithmId: 'hcad.mesh.smooth-region@1' | 'hcad.mesh.simplify-terrain@1';
+  readonly sourceEntityId: string;
+  readonly entityId: string;
+  readonly revision: number;
+  readonly datasetId: string;
+  readonly metrics: SurfaceEditMetrics;
+  readonly journalEntry: CanonicalJournalEntry;
+}
+
 /** Typed renderer adapter over the single Electron/sidecar RPC boundary. */
 export class BuilderSidecarTransport implements RpcTransport<AppFacadeMethods> {
   constructor(private readonly call: SidecarCall) {}
@@ -790,6 +853,74 @@ export class BuilderCanonicalProjectSession {
     return this.call('mesh.surface.cancel', { operationId });
   }
 
+  selectSurfaceEditRegion(
+    editId: string,
+    targetEntityId: string,
+    region: SurfaceEditRegion,
+  ): Promise<SurfaceEditRegionResult> {
+    return this.call('mesh.edit.region.select', {
+      editId,
+      target: this.exactEntityVersions([targetEntityId])[0],
+      region,
+    });
+  }
+
+  previewSurfaceSmooth(
+    operationId: string,
+    editId: string,
+    filter: SurfaceSmoothFilter,
+    radius: number,
+  ): Promise<SurfaceEditPreview> {
+    return this.call('mesh.edit.smooth.preview', {
+      operationId,
+      progressKey: operationId,
+      editId,
+      parameters: { filter, radius },
+    });
+  }
+
+  previewSurfaceDownsample(
+    operationId: string,
+    editId: string,
+    maximumVerticalError: number,
+  ): Promise<SurfaceEditPreview> {
+    return this.call('mesh.edit.downsample.preview', {
+      operationId,
+      progressKey: operationId,
+      editId,
+      parameters: { maximumVerticalError },
+    });
+  }
+
+  async bakeSurfaceEdit(input: {
+    readonly kind: 'smooth' | 'downsample';
+    readonly operationId: string;
+    readonly editId: string;
+    readonly outputEntityId: string;
+    readonly outputName: string;
+    readonly smooth?: { readonly filter: SurfaceSmoothFilter; readonly radius: number };
+    readonly downsample?: { readonly maximumVerticalError: number };
+  }): Promise<SurfaceEditBakeResult> {
+    const result = await this.call<SurfaceEditBakeResult>(`mesh.edit.${input.kind}`, {
+      operationId: input.operationId,
+      progressKey: input.operationId,
+      commandId: `builder/mesh-edit-${input.kind}/${crypto.randomUUID()}`,
+      editId: input.editId,
+      outputEntityId: input.outputEntityId,
+      outputName: input.outputName,
+      smooth: input.smooth,
+      downsample: input.downsample,
+    });
+    await this.acceptCommittedEntry(result.journalEntry);
+    return result;
+  }
+
+  cancelSurfaceEdit(
+    operationId: string,
+  ): Promise<{ readonly operationId: string; readonly cancellationRequested: boolean }> {
+    return this.call('mesh.edit.cancel', { operationId });
+  }
+
   async segmentPointClouds(input: {
     readonly operationId: string;
     readonly progressKey: string;
@@ -878,6 +1009,10 @@ export class BuilderCanonicalProjectSession {
 
   async planExport(request: Parameters<IoClient['planExport']>[0]) {
     return this.io.planExport(request);
+  }
+
+  async listFormats() {
+    return this.io.listAllFormats();
   }
 
   async executeExport(

@@ -29,7 +29,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
 use himmelcad_core::hash::ObjectHash;
-use himmelcad_core::mesh_surface::{SurfaceFixKind, SurfaceFixRequest};
+use himmelcad_core::mesh_surface::{
+    SurfaceDownsampleParameters, SurfaceFixKind, SurfaceFixRequest, SurfaceSmoothParameters,
+};
 use himmelcad_core::photolab::{
     resolve_alignment_profile, AlignmentQualityProfile, ResolveAlignmentProfileRequest,
     ResolvedAlignmentConfig,
@@ -142,8 +144,10 @@ use himmelcad_sidecar::job_runtime::{
     SIFT_MATCHING_BYTES_PER_WORKER,
 };
 use himmelcad_sidecar::mesh_surface_runtime::{
-    check_persisted_surface, create_surface_draft, fix_persisted_surface,
-    publish_persisted_surface, CreateSurfaceDraftRequest,
+    bake_surface_edit, check_persisted_surface, create_surface_draft, fix_persisted_surface,
+    preview_surface_downsample, preview_surface_smoothing, publish_persisted_surface,
+    select_surface_edit_region, CreateSurfaceDraftRequest, SurfaceEditBakeRequest,
+    SurfaceEditRegionRequest,
 };
 use himmelcad_sidecar::mesh_tiler::{build_tiled_dem_mesh, MeshTilerError};
 use himmelcad_sidecar::mvs_runtime::{
@@ -408,6 +412,8 @@ struct IoExportPlanEnvelope {
     schema_version: u32,
     #[serde(flatten)]
     request: IoExportRequestParams,
+    #[serde(default)]
+    entity_versions: BTreeMap<String, String>,
     plan: CanonicalExportPlan,
 }
 
@@ -664,6 +670,31 @@ struct SurfacePublishParams {
     draft_id: String,
     output_entity_id: String,
     command_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SurfaceEditRegionParams {
+    #[serde(flatten)]
+    request: SurfaceEditRegionRequest,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SurfaceSmoothPreviewParams {
+    operation_id: String,
+    progress_key: String,
+    edit_id: String,
+    parameters: SurfaceSmoothParameters,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SurfaceDownsamplePreviewParams {
+    operation_id: String,
+    progress_key: String,
+    edit_id: String,
+    parameters: SurfaceDownsampleParameters,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1668,7 +1699,7 @@ async fn handle(
     ) {
         return handle_pointcloud_sampling_rpc(req, ground_operations, canonical_app).await;
     }
-    if req.method.starts_with("mesh.surface.") {
+    if req.method.starts_with("mesh.surface.") || req.method.starts_with("mesh.edit.") {
         return handle_mesh_surface_rpc(req, ground_operations, canonical_app).await;
     }
     if req.method == "app.negotiate"
@@ -2129,7 +2160,7 @@ async fn handle_mesh_surface_rpc(
     runtime: Arc<Mutex<CanonicalAppRuntime>>,
 ) -> RpcResponse {
     match req.method.as_str() {
-        "mesh.surface.cancel" => {
+        "mesh.surface.cancel" | "mesh.edit.cancel" => {
             match serde_json::from_value::<CancelGroundOperationParams>(req.params) {
                 Ok(params) => rpc_result(
                     req.id,
@@ -2216,6 +2247,101 @@ async fn handle_mesh_surface_rpc(
                     params.output_entity_id,
                     params.command_id,
                     current_rfc3339(),
+                    &active.cancellation,
+                    |fraction, phase| emit_progress(Some(&params.progress_key), fraction, phase),
+                )
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(std::convert::identity);
+            rpc_result(id, result)
+        }
+        "mesh.edit.region.select" => {
+            let id = req.id;
+            rpc_blocking_with_params::<SurfaceEditRegionParams, _, _>(
+                id,
+                req.params,
+                move |params| {
+                    select_surface_edit_region(
+                        &runtime
+                            .lock()
+                            .expect("canonical app runtime mutex poisoned"),
+                        params.request,
+                    )
+                },
+            )
+            .await
+        }
+        "mesh.edit.smooth.preview" => {
+            let id = req.id;
+            let params = match serde_json::from_value::<SurfaceSmoothPreviewParams>(req.params) {
+                Ok(params) => params,
+                Err(error) => return rpc_err(id, -32602, &format!("invalid params: {error}")),
+            };
+            let active = match operations.begin(params.operation_id.clone()) {
+                Ok(active) => active,
+                Err(error) => return rpc_err(id, -32602, &error.to_string()),
+            };
+            let result = tokio::task::spawn_blocking(move || {
+                preview_surface_smoothing(
+                    &runtime
+                        .lock()
+                        .expect("canonical app runtime mutex poisoned"),
+                    &params.edit_id,
+                    &params.parameters,
+                    &active.cancellation,
+                    |fraction, phase| emit_progress(Some(&params.progress_key), fraction, phase),
+                )
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(std::convert::identity);
+            rpc_result(id, result)
+        }
+        "mesh.edit.downsample.preview" => {
+            let id = req.id;
+            let params = match serde_json::from_value::<SurfaceDownsamplePreviewParams>(req.params)
+            {
+                Ok(params) => params,
+                Err(error) => return rpc_err(id, -32602, &format!("invalid params: {error}")),
+            };
+            let active = match operations.begin(params.operation_id.clone()) {
+                Ok(active) => active,
+                Err(error) => return rpc_err(id, -32602, &error.to_string()),
+            };
+            let result = tokio::task::spawn_blocking(move || {
+                preview_surface_downsample(
+                    &runtime
+                        .lock()
+                        .expect("canonical app runtime mutex poisoned"),
+                    &params.edit_id,
+                    &params.parameters,
+                    &active.cancellation,
+                    |fraction, phase| emit_progress(Some(&params.progress_key), fraction, phase),
+                )
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(std::convert::identity);
+            rpc_result(id, result)
+        }
+        "mesh.edit.smooth" | "mesh.edit.downsample" => {
+            let id = req.id;
+            let params = match serde_json::from_value::<SurfaceEditBakeRequest>(req.params) {
+                Ok(params) => params,
+                Err(error) => return rpc_err(id, -32602, &format!("invalid params: {error}")),
+            };
+            let active = match operations.begin(params.operation_id.clone()) {
+                Ok(active) => active,
+                Err(error) => return rpc_err(id, -32602, &error.to_string()),
+            };
+            let result = tokio::task::spawn_blocking(move || {
+                bake_surface_edit(
+                    &mut runtime
+                        .lock()
+                        .expect("canonical app runtime mutex poisoned"),
+                    &params,
+                    &current_rfc3339(),
                     &active.cancellation,
                     |fraction, phase| emit_progress(Some(&params.progress_key), fraction, phase),
                 )
@@ -3929,6 +4055,7 @@ async fn handle_io_rpc(
                     Ok(IoExportPlanEnvelope {
                         schema_version: IO_RPC_SCHEMA_VERSION,
                         request: params,
+                        entity_versions: export_entity_versions(&package),
                         plan,
                     })
                 },
@@ -3958,7 +4085,13 @@ async fn handle_io_rpc(
                         let package = match &accepted.request.entity_ids {
                             Some(entity_ids) => {
                                 let package = runtime.reconstruct_export_package(entity_ids)?;
-                                runtime.materialize_export_artifacts(entity_ids, &scratch.root)?;
+                                anyhow::ensure!(
+                                    !accepted.entity_versions.is_empty()
+                                        && export_entity_versions(&package)
+                                            == accepted.entity_versions,
+                                    "export scope changed after planning; create a new export plan"
+                                );
+                                runtime.materialize_export_artifacts(&package, &scratch.root)?;
                                 package
                             }
                             None => {
@@ -4048,6 +4181,21 @@ fn validate_io_identity(value: &str, field: &str) -> anyhow::Result<()> {
         "{field} is not a bounded portable identity"
     );
     Ok(())
+}
+
+fn export_entity_versions(
+    package: &himmelcad_io::CanonicalImportPackage,
+) -> BTreeMap<String, String> {
+    package
+        .admissions
+        .iter()
+        .map(|admission| {
+            (
+                admission.entity.id.0.clone(),
+                admission.entity.version_hash.0.clone(),
+            )
+        })
+        .collect()
 }
 
 fn io_probe_registry_root() -> PathBuf {

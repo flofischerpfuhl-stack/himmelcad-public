@@ -28,10 +28,10 @@ use himmelcad_core::canonical_resources::{
 };
 use himmelcad_core::entity::EntityId;
 use himmelcad_core::entity_model::{
-    built_in_type, BlockInstanceGeometry, CanonicalEntity, CurveGeometry,
-    ElevationSurfaceGeometry, EntityTypeId, GeometryObject, GeometryResource, Position,
-    Representation, RepresentationAuthority, RepresentationRole, TextGeometry, TextSpace,
-    Transform3d, TriangleMeshGeometry, TriangleMeshStorage, Vector3,
+    built_in_type, BlockInstanceGeometry, CanonicalEntity, CurveGeometry, ElevationSurfaceGeometry,
+    EntityTypeId, GeometryObject, GeometryResource, Position, Representation,
+    RepresentationAuthority, RepresentationRole, TextGeometry, TextSpace, Transform3d,
+    TriangleMeshGeometry, TriangleMeshStorage, Vector3,
 };
 use himmelcad_core::entity_validation::{
     canonical_entity_version_hash, geometry_object_content_hash, validate_resolved_representation,
@@ -2401,6 +2401,198 @@ mod tests {
         );
         let _ = fs::remove_file(source);
         let _ = fs::remove_file(target);
+    }
+
+    #[test]
+    fn road_dgm_export_round_trip_through_dxf_within_tolerance() {
+        let source = temp_file("road-dgm-source");
+        fs::write(
+            &source,
+            br#"<?xml version="1.0"?><LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2"><Units><Metric linearUnit="meter"/></Units><Surfaces><Surface name="Road DGM"><Definition surfType="TIN"><Pnts><P id="1">5800000 500000 100</P><P id="2">5800000 500010 100.25</P><P id="3">5800010 500010 100.5</P><P id="4">5800010 500000 100.1</P></Pnts><Faces><F>1 2 3</F><F>1 3 4</F></Faces><Breaklines><Breakline name="crown"><PntRefList3D>1 3</PntRefList3D></Breakline></Breaklines></Definition></Surface></Surfaces></LandXML>"#,
+        )
+        .expect("write road DGM fixture");
+        let mut context = TestContext::default();
+        let package = CanonicalImportProvider::import(
+            &crate::landxml::LandXmlProvider::new(),
+            CanonicalImportRequest {
+                source: &source,
+                format_id: crate::landxml::LANDXML_FORMAT_ID,
+                options: &serde_json::json!({}),
+            },
+            &mut context,
+        )
+        .expect("import road DGM");
+        let target = temp_file("road-dgm-target");
+        let provider = DxfCanonicalProvider::new(env::temp_dir().join("hcad-dxf-test-resources"));
+        let initial_options = serde_json::json!({});
+        let plan = CanonicalExportProvider::plan_export(
+            &provider,
+            CanonicalExportRequest {
+                target: &target,
+                format_id: DXF_FORMAT_ID,
+                package: &package,
+                options: &initial_options,
+            },
+        )
+        .expect("plan road DGM export");
+        assert!(!plan
+            .semantic_losses
+            .contains(&LOSS_ENTITY_OMITTED.to_owned()));
+        let accepted_options = serde_json::json!({
+            "acceptedLossCodes": plan.semantic_losses.clone(),
+        });
+        CanonicalExportProvider::export(
+            &provider,
+            CanonicalExportRequest {
+                target: &target,
+                format_id: DXF_FORMAT_ID,
+                package: &package,
+                options: &accepted_options,
+            },
+            &plan,
+            &mut context,
+        )
+        .expect("export road DGM");
+        let imported = CanonicalImportProvider::import(
+            &provider,
+            CanonicalImportRequest {
+                source: &target,
+                format_id: DXF_FORMAT_ID,
+                options: &serde_json::json!({}),
+            },
+            &mut context,
+        )
+        .expect("re-import road DGM");
+        let (source_positions, source_indices, source_breaklines) = package
+            .admissions
+            .iter()
+            .find_map(|admission| match &admission.resolved_geometry {
+                GeometryObject::ElevationSurface { surface } => match surface.as_ref() {
+                    ElevationSurfaceGeometry::Tin { mesh, breaklines } => match &mesh.storage {
+                        TriangleMeshStorage::Inline {
+                            positions, indices, ..
+                        } => Some((positions, indices, breaklines)),
+                        TriangleMeshStorage::Resource { .. } => None,
+                    },
+                    ElevationSurfaceGeometry::Grid { .. } => None,
+                },
+                _ => None,
+            })
+            .expect("source road TIN");
+        let mut expected_triangles = source_indices
+            .chunks_exact(3)
+            .map(|triangle| {
+                let mut vertices = triangle
+                    .iter()
+                    .map(|index| {
+                        let value = source_positions[*index as usize];
+                        [value.x, value.y, value.z]
+                    })
+                    .collect::<Vec<_>>();
+                vertices.sort_by(compare_xyz);
+                vertices
+            })
+            .collect::<Vec<_>>();
+        let mut actual_triangles = imported
+            .admissions
+            .iter()
+            .filter_map(|admission| match &admission.resolved_geometry {
+                GeometryObject::Surface3d { mesh } => match &mesh.storage {
+                    TriangleMeshStorage::Inline {
+                        positions, indices, ..
+                    } => Some(
+                        indices
+                            .chunks_exact(3)
+                            .map(|triangle| {
+                                let mut vertices = triangle
+                                    .iter()
+                                    .map(|index| {
+                                        let value = positions[*index as usize];
+                                        [value.x, value.y, value.z]
+                                    })
+                                    .collect::<Vec<_>>();
+                                vertices.sort_by(compare_xyz);
+                                vertices
+                            })
+                            .collect::<Vec<_>>(),
+                    ),
+                    TriangleMeshStorage::Resource { .. } => None,
+                },
+                _ => None,
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        expected_triangles.sort_by(|left, right| compare_xyz_rows(left, right));
+        actual_triangles.sort_by(|left, right| compare_xyz_rows(left, right));
+        assert_xyz_rows_within(&actual_triangles, &expected_triangles, 1.0e-9);
+
+        let expected_breaklines = source_breaklines
+            .iter()
+            .filter_map(|curve| match curve {
+                CurveGeometry::Polyline { positions, .. } => Some(
+                    positions
+                        .iter()
+                        .map(|value| [value.x, value.y, value.z.expect("3D source breakline")])
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let actual_breaklines = imported
+            .admissions
+            .iter()
+            .filter_map(|admission| match &admission.resolved_geometry {
+                GeometryObject::Curve { curve } => match curve.as_ref() {
+                    CurveGeometry::Polyline { positions, .. } => Some(
+                        positions
+                            .iter()
+                            .map(|value| [value.x, value.y, value.z.expect("3D DXF breakline")])
+                            .collect::<Vec<_>>(),
+                    ),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_xyz_rows_within(&actual_breaklines, &expected_breaklines, 1.0e-9);
+        let _ = fs::remove_file(source);
+        let _ = fs::remove_file(target);
+    }
+
+    fn compare_xyz(left: &[f64; 3], right: &[f64; 3]) -> std::cmp::Ordering {
+        left[0]
+            .total_cmp(&right[0])
+            .then_with(|| left[1].total_cmp(&right[1]))
+            .then_with(|| left[2].total_cmp(&right[2]))
+    }
+
+    fn compare_xyz_rows(left: &[[f64; 3]], right: &[[f64; 3]]) -> std::cmp::Ordering {
+        left.iter()
+            .zip(right)
+            .map(|(left, right)| compare_xyz(left, right))
+            .find(|ordering| !ordering.is_eq())
+            .unwrap_or_else(|| left.len().cmp(&right.len()))
+    }
+
+    fn assert_xyz_rows_within(
+        actual: &[Vec<[f64; 3]>],
+        expected: &[Vec<[f64; 3]>],
+        tolerance: f64,
+    ) {
+        assert_eq!(actual.len(), expected.len());
+        for (actual_row, expected_row) in actual.iter().zip(expected) {
+            assert_eq!(actual_row.len(), expected_row.len());
+            for (actual, expected) in actual_row.iter().zip(expected_row) {
+                for axis in 0..3 {
+                    assert!(
+                        (actual[axis] - expected[axis]).abs() <= tolerance,
+                        "coordinate axis {axis} differs: {} vs {}",
+                        actual[axis],
+                        expected[axis]
+                    );
+                }
+            }
+        }
     }
 
     fn semantic_dxf_entities(package: &CanonicalImportPackage) -> Vec<String> {

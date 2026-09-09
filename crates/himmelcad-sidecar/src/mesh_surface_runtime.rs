@@ -488,6 +488,672 @@ pub fn publish_persisted_surface(
     })
 }
 
+pub fn select_surface_edit_region(
+    runtime: &CanonicalAppRuntime,
+    request: SurfaceEditRegionRequest,
+) -> Result<SurfaceEditRegionResult> {
+    validate_id(&request.edit_id, "editId")?;
+    let loaded = load_surface(runtime, &request.target)?;
+    let summary = inspect_surface_region(&loaded.mesh, &request.region)?;
+    let checkpoint = SurfaceEditCheckpoint {
+        schema_id: "hcad.mesh.surface-edit-checkpoint@1".into(),
+        edit_id: request.edit_id.clone(),
+        target: request.target.clone(),
+        region: request.region,
+        preview_algorithm_id: None,
+        preview_parameters: None,
+        preview_result_hash: None,
+        state: "region_selected".into(),
+    };
+    write_edit_checkpoint(&edit_root(runtime, &request.edit_id)?, &checkpoint)?;
+    Ok(SurfaceEditRegionResult {
+        schema_id: "hcad.mesh.edit-region-result@1".into(),
+        edit_id: request.edit_id,
+        target_entity_id: request.target.id.0,
+        target_revision: request.target.revision,
+        summary,
+        checkpoint: checkpoint.state,
+    })
+}
+
+pub fn preview_surface_smoothing(
+    runtime: &CanonicalAppRuntime,
+    edit_id: &str,
+    parameters: &SurfaceSmoothParameters,
+    cancellation: &CancellationToken,
+    mut progress: impl FnMut(f64, &str),
+) -> Result<SurfaceEditPreview> {
+    preview_surface_edit(
+        runtime,
+        edit_id,
+        SURFACE_SMOOTH_ALGORITHM_ID,
+        serde_json::to_value(parameters)?,
+        cancellation,
+        &mut progress,
+        |mesh, region, cancellation| {
+            smooth_surface_region_with_cancel(mesh, region, parameters, || {
+                cancellation.is_cancel_requested()
+            })
+        },
+    )
+}
+
+pub fn preview_surface_downsample(
+    runtime: &CanonicalAppRuntime,
+    edit_id: &str,
+    parameters: &SurfaceDownsampleParameters,
+    cancellation: &CancellationToken,
+    mut progress: impl FnMut(f64, &str),
+) -> Result<SurfaceEditPreview> {
+    preview_surface_edit(
+        runtime,
+        edit_id,
+        SURFACE_DOWNSAMPLE_ALGORITHM_ID,
+        serde_json::to_value(parameters)?,
+        cancellation,
+        &mut progress,
+        |mesh, region, cancellation| {
+            downsample_surface_region_with_cancel(mesh, region, parameters, || {
+                cancellation.is_cancel_requested()
+            })
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn preview_surface_edit(
+    runtime: &CanonicalAppRuntime,
+    edit_id: &str,
+    algorithm_id: &str,
+    parameters: serde_json::Value,
+    cancellation: &CancellationToken,
+    progress: &mut impl FnMut(f64, &str),
+    evaluate: impl FnOnce(
+        &SurfaceMesh,
+        &SurfaceEditRegion,
+        &CancellationToken,
+    )
+        -> Result<SurfaceEditResult, himmelcad_core::mesh_surface::SurfaceEditError>,
+) -> Result<SurfaceEditPreview> {
+    let root = edit_root(runtime, edit_id)?;
+    let mut checkpoint = read_edit_checkpoint(&root)?;
+    progress(0.05, "Verify source");
+    let loaded = load_surface(runtime, &checkpoint.target)?;
+    cancellation.check()?;
+    progress(0.2, "Cut region");
+    let result = evaluate(&loaded.mesh, &checkpoint.region, cancellation)?;
+    cancellation.check()?;
+    progress(0.85, "Certify result");
+    checkpoint.preview_algorithm_id = Some(algorithm_id.into());
+    checkpoint.preview_parameters = Some(parameters);
+    checkpoint.preview_result_hash = Some(result.metrics.result_hash.clone());
+    checkpoint.state = "preview_ready".into();
+    write_edit_checkpoint(&root, &checkpoint)?;
+    let (positions, indices, constrained_edges) = preview_partition(&result.mesh, 20_000);
+    progress(1.0, "Preview ready");
+    Ok(SurfaceEditPreview {
+        schema_id: "hcad.mesh.surface-edit-preview@1".into(),
+        edit_id: edit_id.into(),
+        algorithm_id: algorithm_id.into(),
+        metrics: result.metrics,
+        positions,
+        indices,
+        constrained_edges,
+    })
+}
+
+pub fn bake_surface_edit(
+    runtime: &mut CanonicalAppRuntime,
+    request: &SurfaceEditBakeRequest,
+    completed_at: &str,
+    cancellation: &CancellationToken,
+    mut progress: impl FnMut(f64, &str),
+) -> Result<SurfaceEditBakeResult> {
+    validate_id(&request.edit_id, "editId")?;
+    validate_id(&request.output_entity_id, "outputEntityId")?;
+    anyhow::ensure!(
+        !request.output_name.trim().is_empty(),
+        "output name is empty"
+    );
+    anyhow::ensure!(
+        request.smooth.is_some() ^ request.downsample.is_some(),
+        "bake requires exactly one edit parameter payload"
+    );
+    let root = edit_root(runtime, &request.edit_id)?;
+    let mut checkpoint = read_edit_checkpoint(&root)?;
+    checkpoint.state = "baking".into();
+    write_edit_checkpoint(&root, &checkpoint)?;
+    progress(0.03, "Verify source");
+    let loaded = load_surface(runtime, &checkpoint.target)?;
+    cancellation.check()?;
+    progress(0.12, "Cut region");
+    let (algorithm_id, parameter_type_id, parameters, result) =
+        if let Some(parameters) = &request.smooth {
+            (
+                SURFACE_SMOOTH_ALGORITHM_ID,
+                "hcad.mesh.smooth-region-parameters@1",
+                serde_json::to_value(parameters)?,
+                smooth_surface_region_with_cancel(
+                    &loaded.mesh,
+                    &checkpoint.region,
+                    parameters,
+                    || cancellation.is_cancel_requested(),
+                )?,
+            )
+        } else {
+            let parameters = request
+                .downsample
+                .as_ref()
+                .expect("exclusive payload checked");
+            (
+                SURFACE_DOWNSAMPLE_ALGORITHM_ID,
+                "hcad.mesh.simplify-terrain@1",
+                serde_json::to_value(parameters)?,
+                downsample_surface_region_with_cancel(
+                    &loaded.mesh,
+                    &checkpoint.region,
+                    parameters,
+                    || cancellation.is_cancel_requested(),
+                )?,
+            )
+        };
+    cancellation.check()?;
+    if checkpoint.preview_algorithm_id.as_deref() == Some(algorithm_id)
+        && checkpoint.preview_parameters.as_ref() == Some(&parameters)
+    {
+        anyhow::ensure!(
+            checkpoint.preview_result_hash.as_ref() == Some(&result.metrics.result_hash),
+            "deterministic bake differs from the verified preview"
+        );
+    }
+    progress(0.48, "Prepare triangles");
+    let prepared_root = root
+        .join("prepared")
+        .join(result.metrics.result_hash.as_str());
+    let triangles = result
+        .mesh
+        .indices
+        .chunks_exact(3)
+        .map(|indices| TriangleRecord {
+            positions: [
+                result.mesh.positions[indices[0] as usize],
+                result.mesh.positions[indices[1] as usize],
+                result.mesh.positions[indices[2] as usize],
+            ],
+            material_slot: None,
+            texture_coordinates: None,
+        });
+    let prepared = build_prepared_triangle_mesh(
+        triangles,
+        &prepared_root,
+        PreparedTriangleMeshOptions::default(),
+        cancellation,
+    )?;
+    progress(0.75, "Validate certificate");
+    anyhow::ensure!(
+        request.downsample.is_none() || result.metrics.error.certified,
+        "downsample certificate does not meet the requested target"
+    );
+    let entity_id = EntityId(request.output_entity_id.clone());
+    let staged = staged_edited_surface_package(
+        &loaded,
+        &checkpoint,
+        &result,
+        &prepared,
+        &prepared_root,
+        &entity_id,
+        &request.output_name,
+        algorithm_id,
+        parameter_type_id,
+        parameters,
+        completed_at,
+    )?;
+    cancellation.check()?;
+    progress(0.84, "Publish generation");
+    let commit = runtime.publish_staged_import_with_progress_and_cancel(
+        &staged,
+        &request.command_id,
+        &mut |_| {},
+        &|| cancellation.is_cancel_requested(),
+    )?;
+    let dataset = staged
+        .package
+        .datasets
+        .first()
+        .context("surface edit publish returned no dataset")?;
+    checkpoint.state = "completed".into();
+    write_edit_checkpoint(&root, &checkpoint)?;
+    progress(1.0, "Surface ready");
+    Ok(SurfaceEditBakeResult {
+        schema_id: "hcad.mesh.surface-edit-result@1".into(),
+        edit_id: request.edit_id.clone(),
+        algorithm_id: algorithm_id.into(),
+        source_entity_id: loaded.entity.id.0,
+        entity_id: request.output_entity_id.clone(),
+        revision: 0,
+        dataset_id: dataset.dataset_id.clone(),
+        metrics: result.metrics,
+        journal_entry: commit.journal_entry,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn staged_edited_surface_package(
+    source: &LoadedSurface,
+    checkpoint: &SurfaceEditCheckpoint,
+    result: &SurfaceEditResult,
+    prepared: &PreparedMeshProduct,
+    prepared_root: &Path,
+    entity_id: &EntityId,
+    output_name: &str,
+    algorithm_id: &str,
+    parameter_type_id: &str,
+    parameters: serde_json::Value,
+    completed_at: &str,
+) -> Result<CanonicalStagedImport> {
+    let render = prepared
+        .kernel_manifest_resource
+        .clone()
+        .context("prepared edited TIN has no render manifest")?;
+    let dataset = package_prepared_triangle_mesh(prepared_root, prepared, entity_id)?;
+    let geometry = GeometryObject::ElevationSurface {
+        surface: Box::new(ElevationSurfaceGeometry::Tin {
+            mesh: TriangleMeshGeometry {
+                storage: TriangleMeshStorage::Resource {
+                    resource: render.clone(),
+                },
+                closed_manifold: false,
+                triangle_material_slots: None,
+                materials: None,
+            },
+            breaklines: source.breaklines.clone(),
+        }),
+    };
+    let geometry_ref = geometry_object_content_hash(&geometry)?;
+    let source_fingerprint = ObjectHash::of_bytes(&serde_json::to_vec(&serde_json::json!({
+        "target": checkpoint.target,
+        "region": checkpoint.region,
+        "parameters": parameters,
+        "algorithmId": algorithm_id,
+    }))?);
+    let components = CanonicalJsonObject::new(
+        "application/vnd.himmelcad.components+json",
+        serde_json::json!({
+            "hcad.prepared-dataset@1": {
+                "formatId": dataset.format_id,
+                "manifestRef": dataset.root_metadata.object_hash,
+                "sectionTopologyRef": prepared.section_topology.as_ref().map(|value| &value.manifest_resource.object_hash),
+            },
+        }),
+    )?;
+    let recipe = serde_json::json!({
+        "schemaId": "hcad.derived-recipe@1",
+        "schemaVersion": 1,
+        "recipeId": format!("surface-edit-recipe:{}", checkpoint.edit_id),
+        "recipeKind": algorithm_id,
+        "generation": 1,
+        "state": "linked-current",
+        "outputGroupId": entity_id,
+        "outputs": [{
+            "slotId": "surface",
+            "role": "tin",
+            "outputId": entity_id,
+            "typeId": built_in_type::ELEVATION_SURFACE,
+            "locator": "source",
+            "currentRevision": 0,
+            "currentContentHash": geometry_ref,
+            "status": "present"
+        }],
+        "sources": [{
+            "entityId": checkpoint.target.id,
+            "revision": checkpoint.target.revision,
+            "contentHash": checkpoint.target.version_hash,
+            "placementRevision": checkpoint.target.revision,
+            "role": "source_surface"
+        }],
+        "parameterTypeId": parameter_type_id,
+        "parameters": { "region": checkpoint.region, "operation": parameters },
+        "algorithmId": algorithm_id,
+        "algorithmVersion": env!("CARGO_PKG_VERSION"),
+        "dependencyRecipeIds": [],
+        "staleCauses": [],
+        "lastSuccess": {
+            "generation": 1,
+            "sourceFingerprint": source_fingerprint,
+            "outputs": [{
+                "slotId": "surface",
+                "outputId": entity_id,
+                "revision": 0,
+                "contentHash": geometry_ref
+            }],
+            "completedAt": completed_at
+        },
+        "lastError": null,
+        "detach": null
+    });
+    let attributes = CanonicalJsonObject::new(
+        "application/vnd.himmelcad.attributes+json",
+        serde_json::json!({
+            "hcad.derived-recipe@1": recipe,
+            "hcad.mesh.surface-edit-result@1": result.metrics,
+        }),
+    )?;
+    let relations = CanonicalJsonObject::new(
+        "application/vnd.himmelcad.relations+json",
+        serde_json::json!({
+            "schemaId": "hcad.relations@1",
+            "relations": [{
+                "relationType": "hcad.derived-from@1",
+                "target": checkpoint.target.id,
+                "expectedVersion": checkpoint.target.version_hash,
+                "parameters": source_fingerprint
+            }]
+        }),
+    )?;
+    let selected = Representation {
+        role: RepresentationRole::Canonical,
+        geometry_ref: geometry_ref.clone(),
+        authority: RepresentationAuthority::Authoritative,
+        dependency_hash: Some(source_fingerprint),
+    };
+    let mut entity = CanonicalEntity {
+        id: entity_id.clone(),
+        revision: 0,
+        type_id: EntityTypeId(built_in_type::ELEVATION_SURFACE.into()),
+        name: output_name.into(),
+        owner: source.entity.owner.clone(),
+        layer_ids: source.entity.layer_ids.clone(),
+        placement: source.entity.placement,
+        representations: vec![selected.clone()],
+        components_ref: components.object_hash.clone(),
+        attributes_ref: attributes.object_hash.clone(),
+        relations_ref: relations.object_hash.clone(),
+        style_ref: source.entity.style_ref.clone(),
+        schema_version: 1,
+        version_hash: ObjectHash::of_bytes(b"pending edited surface entity"),
+    };
+    entity.version_hash = canonical_entity_version_hash(&entity)?;
+    let mut roots = StagedArtifactRoots::default();
+    roots
+        .dataset_roots
+        .insert(dataset.dataset_id.clone(), prepared_root.to_owned());
+    Ok(CanonicalStagedImport {
+        package: CanonicalImportPackage {
+            schema_version: CANONICAL_IO_SCHEMA_VERSION,
+            provider_id: algorithm_id.into(),
+            provider_version: env!("CARGO_PKG_VERSION").into(),
+            admissions: vec![CanonicalRepresentationAdmission {
+                entity,
+                selected,
+                representation_slot: source.representation_slot.clone(),
+                expected_generation: None,
+                resolved_geometry: geometry,
+            }],
+            objects: vec![components, attributes, relations],
+            datasets: vec![dataset],
+            resource_sets: Vec::new(),
+            presentation_resources: Default::default(),
+        },
+        roots,
+    })
+}
+
+fn load_surface(
+    runtime: &CanonicalAppRuntime,
+    expected: &EntityVersionRef,
+) -> Result<LoadedSurface> {
+    let bootstrap = runtime.residency_bootstrap()?;
+    let entry = bootstrap
+        .entries
+        .into_iter()
+        .find(|entry| EntityVersionRef::from_entity(&entry.admission.entity) == *expected)
+        .context("surface is stale, missing, or has no live representation")?;
+    let GeometryObject::ElevationSurface { surface } = &entry.admission.resolved_geometry else {
+        anyhow::bail!("selected entity is not an elevation surface");
+    };
+    let ElevationSurfaceGeometry::Tin { mesh, breaklines } = surface.as_ref() else {
+        anyhow::bail!("surface editing requires a TIN; convert the Grid first");
+    };
+    let (positions, indices) = match &mesh.storage {
+        TriangleMeshStorage::Inline {
+            positions, indices, ..
+        } => (
+            positions
+                .iter()
+                .map(|point| [point.x, point.y, point.z])
+                .collect(),
+            indices.clone(),
+        ),
+        TriangleMeshStorage::Resource { .. } => load_prepared_topology(
+            runtime,
+            entry.dataset.as_ref().context("TIN dataset is missing")?,
+        )?,
+    };
+    let mut coordinate_index = BTreeMap::<[u64; 3], u32>::new();
+    for (index, point) in positions.iter().enumerate() {
+        coordinate_index
+            .entry(point.map(f64::to_bits))
+            .or_insert(u32::try_from(index)?);
+    }
+    let mut constrained_edges = Vec::new();
+    for curve in breaklines {
+        let CurveGeometry::Polyline {
+            positions: line,
+            closed,
+        } = curve
+        else {
+            anyhow::bail!("TIN breakline is not a polyline");
+        };
+        let line_indices = line
+            .iter()
+            .map(|point| {
+                let z = point
+                    .z
+                    .context("TIN breakline has no authoritative height")?;
+                coordinate_index
+                    .get(&[point.x.to_bits(), point.y.to_bits(), z.to_bits()])
+                    .copied()
+                    .context("TIN breakline vertex is absent from authoritative topology")
+            })
+            .collect::<Result<Vec<_>>>()?;
+        constrained_edges.extend(line_indices.windows(2).map(|edge| [edge[0], edge[1]]));
+        if *closed && line_indices.len() > 2 {
+            constrained_edges.push([*line_indices.last().expect("closed line"), line_indices[0]]);
+        }
+    }
+    let mut area = 0.0;
+    let mut z_range = [f64::INFINITY, f64::NEG_INFINITY];
+    for point in &positions {
+        z_range[0] = z_range[0].min(point[2]);
+        z_range[1] = z_range[1].max(point[2]);
+    }
+    for triangle in indices.chunks_exact(3) {
+        let a = positions[triangle[0] as usize];
+        let b = positions[triangle[1] as usize];
+        let c = positions[triangle[2] as usize];
+        area += ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs() * 0.5;
+    }
+    Ok(LoadedSurface {
+        entity: entry.admission.entity,
+        representation_slot: entry.admission.representation_slot,
+        mesh: SurfaceMesh {
+            source_residual: himmelcad_core::mesh_surface::SurfaceResidual {
+                count: positions.len(),
+                mean_absolute: 0.0,
+                maximum_absolute: 0.0,
+            },
+            positions,
+            indices,
+            constrained_edges,
+            projected_area: area,
+            z_range,
+        },
+        breaklines: breaklines.clone(),
+    })
+}
+
+fn load_prepared_topology(
+    runtime: &CanonicalAppRuntime,
+    dataset: &himmelcad_io::CanonicalPreparedDataset,
+) -> Result<(Vec<[f64; 3]>, Vec<u32>)> {
+    let topology = dataset
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.resource.media_type == "hcad.section-topology-index@2")
+        .context("TIN has no authoritative section topology")?;
+    let index: SectionTopologyIndexOwned =
+        serde_json::from_slice(&read_object(runtime, &topology.resource.object_hash)?)?;
+    anyhow::ensure!(
+        index.schema_version == 2,
+        "unsupported section topology index"
+    );
+    let mut positions = Vec::<[f64; 3]>::new();
+    let mut indices = Vec::<u32>::new();
+    let mut coordinate_index = BTreeMap::<[u64; 3], u32>::new();
+    for part in index.parts {
+        let manifest_hash = ObjectHash(part.topology_hash);
+        let manifest: SectionTopologyPartitionManifest =
+            serde_json::from_slice(&read_object(runtime, &manifest_hash)?)?;
+        let position_bytes = read_object(runtime, &manifest.positions.object_hash)?;
+        let local_positions = decode_positions(&position_bytes, &manifest)?;
+        let index_bytes = read_object(runtime, &manifest.indices.object_hash)?;
+        let local_indices = decode_indices(&index_bytes, &manifest)?;
+        let mut remap = Vec::with_capacity(local_positions.len());
+        for point in local_positions {
+            let global = if let Some(index) = coordinate_index.get(&point.map(f64::to_bits)) {
+                *index
+            } else {
+                let index = u32::try_from(positions.len())?;
+                coordinate_index.insert(point.map(f64::to_bits), index);
+                positions.push(point);
+                index
+            };
+            remap.push(global);
+        }
+        indices.extend(local_indices.into_iter().map(|index| remap[index as usize]));
+    }
+    Ok((positions, indices))
+}
+
+fn decode_positions(
+    bytes: &[u8],
+    manifest: &SectionTopologyPartitionManifest,
+) -> Result<Vec<[f64; 3]>> {
+    let width = match manifest.position_component_type {
+        SectionPositionComponentType::Float32 => 4,
+        SectionPositionComponentType::Float64 => 8,
+    };
+    anyhow::ensure!(
+        bytes.len() == manifest.vertex_count as usize * 3 * width,
+        "section position byte length changed"
+    );
+    let mut positions = Vec::with_capacity(manifest.vertex_count as usize);
+    for vertex in 0..manifest.vertex_count as usize {
+        let mut point = [0.0; 3];
+        for axis in 0..3 {
+            let offset = (vertex * 3 + axis) * width;
+            point[axis] = match manifest.position_component_type {
+                SectionPositionComponentType::Float32 => {
+                    f32::from_le_bytes(bytes[offset..offset + 4].try_into()?) as f64
+                }
+                SectionPositionComponentType::Float64 => {
+                    f64::from_le_bytes(bytes[offset..offset + 8].try_into()?)
+                }
+            } + manifest.origin[axis];
+        }
+        positions.push(point);
+    }
+    Ok(positions)
+}
+
+fn decode_indices(bytes: &[u8], manifest: &SectionTopologyPartitionManifest) -> Result<Vec<u32>> {
+    let width = match manifest.index_component_type {
+        SectionIndexComponentType::Uint16 => 2,
+        SectionIndexComponentType::Uint32 => 4,
+    };
+    let count = usize::try_from(manifest.index_count)?;
+    anyhow::ensure!(
+        bytes.len() == count * width,
+        "section index byte length changed"
+    );
+    (0..count)
+        .map(|index| {
+            let offset = index * width;
+            Ok(match manifest.index_component_type {
+                SectionIndexComponentType::Uint16 => {
+                    u16::from_le_bytes(bytes[offset..offset + 2].try_into()?) as u32
+                }
+                SectionIndexComponentType::Uint32 => {
+                    u32::from_le_bytes(bytes[offset..offset + 4].try_into()?)
+                }
+            })
+        })
+        .collect()
+}
+
+fn read_object(runtime: &CanonicalAppRuntime, hash: &ObjectHash) -> Result<Vec<u8>> {
+    let mut source = runtime.automation_object_source(hash)?.source;
+    let mut bytes = Vec::new();
+    source.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+fn preview_partition(
+    mesh: &SurfaceMesh,
+    maximum_triangles: usize,
+) -> (Vec<[f64; 3]>, Vec<u32>, Vec<[u32; 2]>) {
+    let source_indices = mesh
+        .indices
+        .iter()
+        .take(maximum_triangles.saturating_mul(3));
+    let mut positions = Vec::new();
+    let mut remap = BTreeMap::<u32, u32>::new();
+    let mut indices = Vec::new();
+    for source in source_indices {
+        let output = if let Some(index) = remap.get(source) {
+            *index
+        } else {
+            let index = u32::try_from(positions.len()).unwrap_or(u32::MAX);
+            positions.push(mesh.positions[*source as usize]);
+            remap.insert(*source, index);
+            index
+        };
+        indices.push(output);
+    }
+    let constrained_edges = mesh
+        .constrained_edges
+        .iter()
+        .filter_map(|edge| Some([*remap.get(&edge[0])?, *remap.get(&edge[1])?]))
+        .collect();
+    (positions, indices, constrained_edges)
+}
+
+fn edit_root(runtime: &CanonicalAppRuntime, edit_id: &str) -> Result<PathBuf> {
+    validate_id(edit_id, "editId")?;
+    Ok(runtime
+        .project_root()?
+        .join(".staging/mesh-surface-edit")
+        .join(edit_id))
+}
+
+fn write_edit_checkpoint(root: &Path, checkpoint: &SurfaceEditCheckpoint) -> Result<()> {
+    fs::create_dir_all(root)?;
+    let pending = root.join("edit.json.pending");
+    fs::write(&pending, serde_json::to_vec(checkpoint)?)?;
+    fs::rename(pending, root.join("edit.json"))?;
+    Ok(())
+}
+
+fn read_edit_checkpoint(root: &Path) -> Result<SurfaceEditCheckpoint> {
+    let checkpoint: SurfaceEditCheckpoint =
+        serde_json::from_slice(&fs::read(root.join("edit.json"))?)?;
+    anyhow::ensure!(
+        checkpoint.schema_id == "hcad.mesh.surface-edit-checkpoint@1",
+        "unsupported surface edit checkpoint"
+    );
+    Ok(checkpoint)
+}
+
 fn staged_surface_package(
     checkpoint: &SurfaceDraftCheckpoint,
     mesh: &SurfaceMesh,
@@ -833,6 +1499,39 @@ mod tests {
         };
         write_checkpoint(&temp, &checkpoint).expect("checkpoint");
         assert_eq!(read_checkpoint(&temp).expect("restart"), checkpoint);
+        assert!(!temp.join("prepared").exists());
+        fs::remove_dir_all(&temp).expect("remove test checkpoint");
+    }
+
+    #[test]
+    fn mesh_surface_edit_checkpoint_restarts_without_partial_generation() {
+        let temp = std::env::temp_dir().join(format!(
+            "hcad-mesh-surface-edit-checkpoint-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let checkpoint = SurfaceEditCheckpoint {
+            schema_id: "hcad.mesh.surface-edit-checkpoint@1".into(),
+            edit_id: "edit-restart".into(),
+            target: EntityVersionRef {
+                id: EntityId("surface-a".into()),
+                revision: 4,
+                version_hash: ObjectHash::of_bytes(b"surface-a@4"),
+            },
+            region: SurfaceEditRegion {
+                source: himmelcad_core::mesh_surface::SurfaceRegionSource::Fence,
+                polygon: vec![[0.0, 0.0], [2.0, 0.0], [2.0, 2.0], [0.0, 2.0]],
+            },
+            preview_algorithm_id: Some(SURFACE_SMOOTH_ALGORITHM_ID.into()),
+            preview_parameters: Some(serde_json::json!({"filter":"gaussian","radius":1.0})),
+            preview_result_hash: Some(ObjectHash::of_bytes(b"preview")),
+            state: "baking".into(),
+        };
+        write_edit_checkpoint(&temp, &checkpoint).expect("checkpoint");
+        assert_eq!(read_edit_checkpoint(&temp).expect("restart"), checkpoint);
         assert!(!temp.join("prepared").exists());
         fs::remove_dir_all(&temp).expect("remove test checkpoint");
     }

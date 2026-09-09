@@ -40,6 +40,8 @@ export interface ExportIslandProps {
   readonly planning?: boolean;
   readonly running?: ExportRunningState | null;
   readonly error?: string | null;
+  readonly detached?: boolean;
+  readonly onDetachedChange?: (detached: boolean) => void;
   readonly onFormatChange: (formatId: string) => void;
   readonly onScopeChange: (scope: ExportScope) => void;
   readonly onChoosePath: () => void;
@@ -60,6 +62,8 @@ export function ExportIsland({
   planning = false,
   running = null,
   error = null,
+  detached = false,
+  onDetachedChange,
   onFormatChange,
   onScopeChange,
   onChoosePath,
@@ -70,6 +74,7 @@ export function ExportIsland({
 }: ExportIslandProps): JSX.Element {
   const enabledFormats = formats.filter((format) => format.enabled);
   const noRepresentableFormat = formats.length > 0 && enabledFormats.length === 0;
+  const currentFormatEnabled = formats.some((format) => format.id === formatId && format.enabled);
   const lossless = planRows !== null && planRows.every((row) => row.lossNote === null);
   return (
     <section className={styles.island} aria-label="Export">
@@ -79,6 +84,18 @@ export function ExportIsland({
           <p>Review scope, output, and semantic loss before writing.</p>
         </div>
         <GripHorizontal size={16} aria-hidden />
+        {onDetachedChange ? (
+          <button
+            type="button"
+            className={styles.close}
+            title={detached ? 'Dock export island' : 'Detach export island'}
+            aria-label={detached ? 'Dock export island' : 'Detach export island'}
+            aria-pressed={detached}
+            onClick={() => onDetachedChange(!detached)}
+          >
+            <span aria-hidden>{detached ? '↙' : '↗'}</span>
+          </button>
+        ) : null}
         <button type="button" className={styles.close} aria-label="Close Export" onClick={onClose}>
           <X size={16} />
         </button>
@@ -95,7 +112,7 @@ export function ExportIsland({
               value: format.id,
               label: format.label,
               disabled: !format.enabled,
-              description: format.disabledReason,
+              ...(format.disabledReason ? { description: format.disabledReason } : {}),
             }))}
             onChange={(event) => onFormatChange(event.currentTarget.value)}
           />
@@ -103,8 +120,7 @@ export function ExportIsland({
 
         {noRepresentableFormat ? (
           <p className={styles.empty}>
-            The selection contains only point-cloud data; no installed export format can represent
-            it.
+            The current scope has no entity kind supported by an installed exporter.
           </p>
         ) : null}
 
@@ -135,7 +151,12 @@ export function ExportIsland({
           <span>Target</span>
           <div className={styles.pathRow}>
             <output title={path}>{path || 'Choose an output file…'}</output>
-            <Button variant="secondary" size="small" disabled={running !== null} onClick={onChoosePath}>
+            <Button
+              variant="secondary"
+              size="small"
+              disabled={running !== null || !currentFormatEnabled}
+              onClick={onChoosePath}
+            >
               Choose…
             </Button>
           </div>
@@ -149,7 +170,9 @@ export function ExportIsland({
                 {lossless ? 'Lossless export' : 'Losses disclosed'}
               </span>
             </div>
-            {outputs.length > 0 ? <p className={styles.outputs}>Writes {outputs.join(', ')}</p> : null}
+            {outputs.length > 0 ? (
+              <p className={styles.outputs}>Writes {outputs.join(', ')}</p>
+            ) : null}
             <div className={styles.tableWrap}>
               <table>
                 <thead>
@@ -188,7 +211,9 @@ export function ExportIsland({
             <div>
               <strong>{running.cancelling ? 'Cancelling…' : running.phase}</strong>
               <span>
-                {running.fraction === null ? 'In progress' : `${Math.round(running.fraction * 100)}%`}
+                {running.fraction === null
+                  ? 'In progress'
+                  : `${Math.round(running.fraction * 100)}%`}
               </span>
             </div>
             <ProgressBar
@@ -205,7 +230,9 @@ export function ExportIsland({
       <footer className={styles.footer}>
         <Button
           variant="secondary"
-          disabled={planning || running !== null || !formatId || !path || noRepresentableFormat}
+          disabled={
+            planning || running !== null || !currentFormatEnabled || !path || noRepresentableFormat
+          }
           loading={planning}
           loadingLabel="Planning export"
           onClick={onPlan}

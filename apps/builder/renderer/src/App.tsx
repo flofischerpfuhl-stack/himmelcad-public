@@ -110,6 +110,7 @@ import builderLogoUrl from '../../build/mark.png';
 
 import styles from './BuilderApp.module.css';
 import { BuilderImportRegistrationIsland } from './BuilderImportRegistrationIsland.js';
+import { BuilderExportIsland } from './BuilderExportIsland.js';
 import {
   BuilderKernelViewport,
   type BuilderKernelViewportHandle,
@@ -124,6 +125,8 @@ import { GroundExtractionPanel } from './GroundExtractionPanel.js';
 import { GroundPreviewOverlay } from './GroundPreviewOverlay.js';
 import { PointcloudSamplingPanel } from './PointcloudSamplingPanel.js';
 import { PointcloudSegmentPanel } from './PointcloudSegmentPanel.js';
+import { SurfaceEditPanel, type SurfaceBoundaryCandidate } from './SurfaceEditPanel.js';
+import { SurfaceEditViewportOverlay } from './SurfaceEditViewportOverlay.js';
 import { PlanIsland } from './PlanIsland.js';
 import { SpecsIsland } from './SpecsIsland.js';
 import {
@@ -145,6 +148,7 @@ import {
   type PointcloudSampleParameters,
   type PointcloudSampleResult,
   type SurfaceRules,
+  type SurfaceEditPreview,
 } from './project.js';
 import { createRibbonTabs } from './ribbon.js';
 import { parseSidecarProgress } from './sidecarProgress.js';
@@ -285,6 +289,18 @@ export function App(): JSX.Element {
   const [specsOpen, setSpecsOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [dgmOpen, setDgmOpen] = useState(false);
+  const [surfaceEditTargetId, setSurfaceEditTargetId] = useState<string | null>(null);
+  const [surfaceEditRegionSource, setSurfaceEditRegionSource] = useState<
+    'fence' | 'boundary_polyline'
+  >('fence');
+  const [surfaceEditPreview, setSurfaceEditPreview] = useState<SurfaceEditPreview | null>(null);
+  const [surfaceEditBoundaryRegion, setSurfaceEditBoundaryRegion] = useState<
+    readonly (readonly [number, number, number])[] | null
+  >(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportMounted, setExportMounted] = useState(false);
+  const [exportInitialScope, setExportInitialScope] = useState<'selection' | 'visible'>('visible');
+  const [exportDetached, setExportDetached] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
   const [jobsOpen, setJobsOpen] = useState(false);
   const [jobToasts, setJobToasts] = useState<readonly AppJob[]>([]);
@@ -1533,6 +1549,20 @@ export function App(): JSX.Element {
     } else if (id === 'mesh.surface.create') {
       void ensureCanonicalProject().then(() => setDgmOpen(true));
       closeFunction(id);
+    } else if (id === 'mesh.edit.smooth') {
+      const surfaceIds = [...selected].filter((entityId) => {
+        const kind = projectRef.current?.entities[entityId]?.kind;
+        return kind === 'Surface' || kind === 'DigitalElevationModel';
+      });
+      if (surfaceIds.length === 1 && selected.size === 1) {
+        setSurfaceEditTargetId(surfaceIds[0]!);
+        setSurfaceEditPreview(null);
+        setRightPanelTab('function');
+        setSegmentFence((current) => ({ ...EMPTY_SEGMENT_FENCE, kind: current.kind }));
+      } else {
+        logEvent('warn', 'renderer', 'Edit surface requires one selected DGM.');
+        closeFunction(id);
+      }
     } else if (id === 'automation.agent') {
       setAgentOpen(true);
       closeFunction(id);
@@ -1547,6 +1577,7 @@ export function App(): JSX.Element {
     flushProject,
     drawToolStore,
     measurementToolStore,
+    selected,
     viewingBox,
   ]);
 
@@ -1555,13 +1586,17 @@ export function App(): JSX.Element {
   }, [activeFunctionId]);
 
   useEffect(() => {
-    if (activeFunctionId === 'pointcloud.fence.begin') return;
+    if (
+      activeFunctionId === 'pointcloud.fence.begin' ||
+      (activeFunctionId === 'mesh.edit.smooth' && surfaceEditRegionSource === 'fence')
+    )
+      return;
     setSegmentFence((current) =>
       current.vertices.length === 0 && !current.closed
         ? current
         : { ...EMPTY_SEGMENT_FENCE, kind: current.kind },
     );
-  }, [activeFunctionId]);
+  }, [activeFunctionId, surfaceEditRegionSource]);
 
   useEffect(() => {
     if (!measurementKindForFunction(activeFunctionId) && measurementToolStore.snapshot().armed) {
@@ -2121,6 +2156,25 @@ export function App(): JSX.Element {
     }
     return candidates;
   }, [drawCurves, pointCloudMetadata, project, selected]);
+  const surfaceBoundaryCandidates = useMemo<readonly SurfaceBoundaryCandidate[]>(
+    () =>
+      drawCurves
+        .filter((curve) => curve.closed && curve.role === 'boundary' && curve.vertices.length >= 3)
+        .map((curve) => ({
+          entityId: curve.entityId,
+          name: curve.name,
+          polygon: curve.vertices.map((point) => [point.x, point.y] as const),
+          worldPolygon: curve.vertices.every((point) => point.z !== null)
+            ? curve.vertices.map((point) => [point.x, point.y, point.z!] as const)
+            : null,
+        })),
+    [drawCurves],
+  );
+  const surfaceEditTarget = useMemo(() => {
+    if (!surfaceEditTargetId || !project) return null;
+    const entity = project.entities[surfaceEditTargetId as EntityId];
+    return entity ? { entityId: entity.id, name: entity.name } : null;
+  }, [project, surfaceEditTargetId]);
   const activeGroundJob =
     jobs.find(
       (job) =>
@@ -2700,6 +2754,18 @@ export function App(): JSX.Element {
     else if (mode === 'toggle') selectionStore.toggle(id);
     else selectionStore.replace([...selected, id]);
   };
+
+  const openExport = useCallback((): void => {
+    const hasExportableSelection =
+      project !== null &&
+      [...selectedRef.current].some((id) => {
+        const entity = project.entities[id];
+        return entity !== undefined && isExportScopeEntity(entity.kind);
+      });
+    setExportInitialScope(hasExportableSelection ? 'selection' : 'visible');
+    setExportMounted(true);
+    setExportOpen(true);
+  }, [project]);
 
   const onVisibilityChange = useCallback(
     (id: EntityId, visible: boolean) => {
@@ -3289,6 +3355,126 @@ export function App(): JSX.Element {
           );
           return;
         }
+        case 'mesh.edit.region.select': {
+          const payload = automationPayload(invocation.payload);
+          const targetEntityId =
+            typeof payload.targetEntityId === 'string' ? payload.targetEntityId : null;
+          const polygon = surfaceEditPolygonFromPayload(payload.polygon);
+          if (!targetEntityId || !polygon) {
+            throw new TypeError(
+              'mesh.edit.region.select requires targetEntityId and a typed project-XY polygon.',
+            );
+          }
+          const editId =
+            typeof payload.editId === 'string'
+              ? payload.editId
+              : `surface-edit-${crypto.randomUUID()}`;
+          const selectedRegion = await (
+            await ensureCanonicalProject()
+          ).selectSurfaceEditRegion(editId, targetEntityId, {
+            source: payload.source === 'boundary_polyline' ? 'boundary_polyline' : 'fence',
+            polygon,
+          });
+          logEvent(
+            'info',
+            'renderer',
+            `mesh.edit.region.select · ${selectedRegion.summary.area.toFixed(2)} m² · ${selectedRegion.summary.vertices.toLocaleString()} vertices`,
+          );
+          return;
+        }
+        case 'mesh.edit.smooth':
+        case 'mesh.edit.downsample': {
+          const payload = automationPayload(invocation.payload);
+          if (
+            (invocation.source === 'ribbon' || invocation.source === 'contextMenu') &&
+            payload.polygon === undefined
+          ) {
+            const targetEntityId =
+              typeof payload.targetEntityId === 'string'
+                ? payload.targetEntityId
+                : selectedRef.current.size === 1
+                  ? [...selectedRef.current][0]!
+                  : null;
+            const targetKind = targetEntityId
+              ? projectRef.current?.entities[targetEntityId]?.kind
+              : null;
+            if (
+              !targetEntityId ||
+              (targetKind !== 'Surface' && targetKind !== 'DigitalElevationModel')
+            ) {
+              throw new TypeError('Edit surface requires one selected DGM.');
+            }
+            selectionStore.replace([targetEntityId]);
+            setSurfaceEditTargetId(targetEntityId);
+            setSurfaceEditPreview(null);
+            setSurfaceEditBoundaryRegion(null);
+            activate('mesh.edit.smooth');
+            return;
+          }
+          const targetEntityId =
+            typeof payload.targetEntityId === 'string' ? payload.targetEntityId : null;
+          const polygon = surfaceEditPolygonFromPayload(payload.polygon);
+          if (!targetEntityId || !polygon) {
+            throw new TypeError(
+              `${invocation.id} requires targetEntityId and a typed project-XY polygon.`,
+            );
+          }
+          const session = await ensureCanonicalProject();
+          const editId =
+            typeof payload.editId === 'string'
+              ? payload.editId
+              : `surface-edit-${crypto.randomUUID()}`;
+          await session.selectSurfaceEditRegion(editId, targetEntityId, {
+            source: payload.source === 'boundary_polyline' ? 'boundary_polyline' : 'fence',
+            polygon,
+          });
+          const kind = invocation.id === 'mesh.edit.smooth' ? 'smooth' : 'downsample';
+          const parameters =
+            typeof payload.parameters === 'object' && payload.parameters
+              ? (payload.parameters as Record<string, unknown>)
+              : {};
+          const result = await session.bakeSurfaceEdit({
+            kind,
+            operationId:
+              typeof payload.operationId === 'string'
+                ? payload.operationId
+                : `mesh-edit-${crypto.randomUUID()}`,
+            editId,
+            outputEntityId:
+              typeof payload.outputEntityId === 'string'
+                ? payload.outputEntityId
+                : `surface-${crypto.randomUUID()}`,
+            outputName:
+              typeof payload.outputName === 'string'
+                ? payload.outputName
+                : kind === 'smooth'
+                  ? 'Smoothed DGM'
+                  : 'Downsampled DGM',
+            ...(kind === 'smooth'
+              ? {
+                  smooth: {
+                    filter: parameters.filter === 'median' ? 'median' : 'gaussian',
+                    radius: typeof parameters.radius === 'number' ? parameters.radius : 1,
+                  },
+                }
+              : {
+                  downsample: {
+                    maximumVerticalError:
+                      typeof parameters.maximumVerticalError === 'number'
+                        ? parameters.maximumVerticalError
+                        : 0.02,
+                  },
+                }),
+          });
+          setProject(session.projectSnapshot());
+          await reloadCanonicalResidency();
+          logEvent(
+            'info',
+            'renderer',
+            `${invocation.id} · vertices ${result.metrics.verticesBefore.toLocaleString()} → ${result.metrics.verticesAfter.toLocaleString()} · max error ${result.metrics.error.maximumVerticalError.toFixed(3)} m · RMS ${result.metrics.error.rmsVerticalError.toFixed(3)} m`,
+          );
+          return;
+        }
         case 'file.import': {
           const envelope = invocation.payload as
             | { readonly payload?: { readonly paths?: readonly string[] } }
@@ -3324,8 +3510,10 @@ export function App(): JSX.Element {
         case 'project.close':
           await projectActionsRef.current.close();
           return;
-        case 'entity.rename':
         case 'entity.export':
+          openExport();
+          return;
+        case 'entity.rename':
         case 'edit.clipboard.paste_in_place':
           activate(invocation.id);
           return;
@@ -3347,6 +3535,7 @@ export function App(): JSX.Element {
       ensureCanonicalProject,
       flushProject,
       onVisibilityChange,
+      openExport,
       recentProjects,
       renameViewingBox,
       runGroundOperation,
@@ -3696,6 +3885,7 @@ export function App(): JSX.Element {
           if (target) setSnapshotToRestore(target);
         },
         onClose: () => void closeCurrentProject('project'),
+        onExport: openExport,
         navigationMode,
         groundExtractionAvailable: selectedGroundCloud !== null,
         segmentationAvailable: segmentablePointClouds.length > 0,
@@ -3705,6 +3895,7 @@ export function App(): JSX.Element {
       createProject,
       flushProject,
       openProject,
+      openExport,
       navigationMode,
       segmentablePointClouds.length,
       recentProjects,
@@ -3975,7 +4166,10 @@ export function App(): JSX.Element {
       if (activeFunctionId) closeFunction(activeFunctionId);
       return;
     }
-    if (activeFunctionId === 'pointcloud.fence.begin') {
+    if (
+      activeFunctionId === 'pointcloud.fence.begin' ||
+      (activeFunctionId === 'mesh.edit.smooth' && surfaceEditRegionSource === 'fence')
+    ) {
       const fence = segmentFenceRef.current;
       if (fence.vertices.length > 0 || fence.closed) {
         setSegmentFence({ ...EMPTY_SEGMENT_FENCE, kind: fence.kind });
@@ -3988,20 +4182,38 @@ export function App(): JSX.Element {
     setPlacingViewingBoxCenter(false);
   }, [
     activeFunctionId,
+    surfaceEditRegionSource,
     closeFunction,
     constructionInputStore,
     drawToolStore,
     measurementToolStore,
   ]);
   useEffect(() => {
-    if (activeFunctionId !== 'pointcloud.fence.begin') return;
+    if (
+      activeFunctionId !== 'pointcloud.fence.begin' &&
+      !(activeFunctionId === 'mesh.edit.smooth' && surfaceEditRegionSource === 'fence')
+    )
+      return;
     const handle = (event: KeyboardEvent): void => {
       const target = event.target;
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
       if (event.key === 'Enter' && !segmentFenceRef.current.closed) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        closeSegmentFence();
+        if (activeFunctionId === 'pointcloud.fence.begin') closeSegmentFence();
+        else {
+          const current = segmentFenceRef.current;
+          const camera = viewportRef.current?.worldCamera();
+          if (!camera || current.vertices.length < 3) return;
+          const volume = fenceVolumeFromCamera(camera, current.vertices);
+          setSegmentFence({
+            ...current,
+            closed: true,
+            volume,
+            entityIds: surfaceEditTargetId ? [surfaceEditTargetId as EntityId] : [],
+            scopes: new Map(),
+          });
+        }
         return;
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
@@ -4021,7 +4233,7 @@ export function App(): JSX.Element {
     };
     window.addEventListener('keydown', handle, true);
     return () => window.removeEventListener('keydown', handle, true);
-  }, [activeFunctionId, closeSegmentFence]);
+  }, [activeFunctionId, closeSegmentFence, surfaceEditRegionSource, surfaceEditTargetId]);
   const selectMeasurement = useCallback(
     (entityId: string): void => {
       selectionStore.replace([entityId]);
@@ -4217,6 +4429,31 @@ export function App(): JSX.Element {
                 onClose={() => void finishDraw(true)}
                 onUndoVertex={() => void undoDrawVertex()}
                 onCancel={() => void cancelDrawAll()}
+              />
+            ) : activeFunctionId === 'mesh.edit.smooth' && canonicalSessionRef.current ? (
+              <SurfaceEditPanel
+                session={canonicalSessionRef.current}
+                target={surfaceEditTarget}
+                fencePolygon={
+                  surfaceEditRegionSource === 'fence' && segmentFence.closed
+                    ? segmentFence.vertices.map((point) => [point.x, point.y] as const)
+                    : null
+                }
+                boundaries={surfaceBoundaryCandidates}
+                onRegionSourceChange={(source) => {
+                  setSurfaceEditRegionSource(source);
+                  setSurfaceEditPreview(null);
+                  setSurfaceEditBoundaryRegion(null);
+                  setSegmentFence((current) => ({ ...EMPTY_SEGMENT_FENCE, kind: current.kind }));
+                }}
+                onRegionWorldPolygonChange={setSurfaceEditBoundaryRegion}
+                onPreview={setSurfaceEditPreview}
+                onPublished={(result) => {
+                  selectionStore.replace([result.entityId as EntityId]);
+                  setPropertyRefresh((revision) => revision + 1);
+                  void reloadCanonicalResidency();
+                }}
+                onLog={(message) => logEvent('info', 'renderer', message)}
               />
             ) : activeFunctionId === 'pointcloud.fence.begin' ? (
               <PointcloudSegmentPanel
@@ -4480,7 +4717,8 @@ export function App(): JSX.Element {
                 }
                 placingViewingBoxCenter={placingViewingBoxCenter}
                 constructionToolId={
-                  activeFunctionId === 'pointcloud.fence.begin'
+                  activeFunctionId === 'pointcloud.fence.begin' ||
+                  activeFunctionId === 'mesh.edit.smooth'
                     ? null
                     : (constructionInput.declaration?.toolId ?? null)
                 }
@@ -4495,7 +4733,8 @@ export function App(): JSX.Element {
                 onViewportBox={createViewingBoxFromViewportDrag}
                 onViewingBoxChange={commitCanonicalViewingBox}
                 fence={
-                  activeFunctionId === 'pointcloud.fence.begin'
+                  activeFunctionId === 'pointcloud.fence.begin' ||
+                  (activeFunctionId === 'mesh.edit.smooth' && surfaceEditRegionSource === 'fence')
                     ? {
                         kind: segmentFence.kind,
                         vertices: segmentFence.vertices,
@@ -4520,7 +4759,24 @@ export function App(): JSX.Element {
                   }));
                 }}
                 onFenceClose={(volume) => {
-                  closeSegmentFence(volume);
+                  if (activeFunctionId === 'mesh.edit.smooth') {
+                    const current = segmentFenceRef.current;
+                    setSegmentFence({
+                      ...current,
+                      vertices:
+                        current.vertices.length >= 3
+                          ? current.vertices
+                          : fenceVolumeVertices(volume),
+                      closed: true,
+                      volume,
+                      entityIds: surfaceEditTargetId ? [surfaceEditTargetId as EntityId] : [],
+                      scopes: new Map(),
+                    });
+                    constructionInputStore.disarm();
+                    logEvent('info', 'renderer', 'Surface edit region fence captured.');
+                  } else {
+                    closeSegmentFence(volume);
+                  }
                 }}
                 onFenceCancel={cancelConstructionTool}
                 onFenceKey={(key) => {
@@ -4557,6 +4813,15 @@ export function App(): JSX.Element {
                 constructionPreview={constructionInput.preview}
               />
               <GroundPreviewOverlay viewport={viewportRef.current} result={groundPreview} />
+              <SurfaceEditViewportOverlay
+                viewport={viewportRef.current}
+                preview={surfaceEditPreview}
+                region={
+                  surfaceEditRegionSource === 'fence' && segmentFence.closed
+                    ? segmentFence.vertices.map((point) => [point.x, point.y, point.z] as const)
+                    : surfaceEditBoundaryRegion
+                }
+              />
             </div>
           </ViewportInteractionChrome>
         }
@@ -4592,6 +4857,40 @@ export function App(): JSX.Element {
                 `mesh.surface.create · ${surface.triangles.toLocaleString()} triangles · ${surface.area.toFixed(2)} m² · Z ${surface.zRange[0].toFixed(2)}–${surface.zRange[1].toFixed(2)} m`,
               );
             }}
+          />
+        </FloatingTaskIsland>
+      ) : null}
+      {exportMounted && canonicalSessionRef.current && project ? (
+        <FloatingTaskIsland
+          hidden={!exportOpen}
+          docked={exportDetached ? false : 'right'}
+          onRequestClose={() => setExportOpen(false)}
+        >
+          <BuilderExportIsland
+            key={project.projectId}
+            session={canonicalSessionRef.current}
+            entities={Object.values(project.entities)
+              .filter((entity) => isExportScopeEntity(entity.kind))
+              .map((entity) => ({
+                id: entity.id,
+                kind: entity.kind,
+                ...(measurements.some((measurement) => measurement.entityId === entity.id)
+                  ? { label: 'Measurement' }
+                  : {}),
+              }))}
+            selectedIds={[...selected]}
+            visibleIds={Object.values(project.entities)
+              .filter(
+                (entity) =>
+                  isExportScopeEntity(entity.kind) &&
+                  displayStore.effective(entity.id) !== 'hidden',
+              )
+              .map((entity) => entity.id)}
+            initialScope={exportInitialScope}
+            detached={exportDetached}
+            onDetachedChange={setExportDetached}
+            onClose={() => setExportOpen(false)}
+            onConsole={(level, message) => logEvent(level, 'renderer', message)}
           />
         </FloatingTaskIsland>
       ) : null}
@@ -4759,11 +5058,21 @@ export function App(): JSX.Element {
                 size="small"
                 variant="quiet"
                 onClick={() => {
-                  if (job.state === 'completed') viewportRef.current?.frameAll();
+                  if (
+                    job.state === 'completed' &&
+                    job.owner === 'builder.export' &&
+                    typeof job.context?.targetPath === 'string'
+                  ) {
+                    void window.himmelcad?.shell.showItemInFolder(job.context.targetPath);
+                  } else if (job.state === 'completed') viewportRef.current?.frameAll();
                   else toggleBottom();
                 }}
               >
-                {job.state === 'completed' ? 'Frame' : 'Console'}
+                {job.state === 'completed' && job.owner === 'builder.export'
+                  ? 'Show in folder'
+                  : job.state === 'completed'
+                    ? 'Frame'
+                    : 'Console'}
               </Button>
             }
             onDismiss={() =>
@@ -4829,6 +5138,7 @@ function functionTitle(id: string | null): string | undefined {
   if (id === 'pointcloud.fence.begin') return 'Segment';
   if (id === 'pointcloud.sample') return 'Sample';
   if (id === 'pointcloud.rasterize') return 'Rasterize mean height';
+  if (id === 'mesh.edit.smooth') return 'Edit surface';
   return id.replace(/[._:-]/g, ' ');
 }
 
@@ -5603,6 +5913,36 @@ function stringArray(value: unknown): readonly string[] | undefined {
   return value;
 }
 
+function surfaceEditPolygonFromPayload(
+  value: unknown,
+): readonly (readonly [number, number])[] | null {
+  if (!Array.isArray(value) || value.length < 3) return null;
+  return value.map((entry) => {
+    if (
+      Array.isArray(entry) &&
+      entry.length >= 2 &&
+      typeof entry[0] === 'number' &&
+      Number.isFinite(entry[0]) &&
+      typeof entry[1] === 'number' &&
+      Number.isFinite(entry[1])
+    ) {
+      return [entry[0], entry[1]] as const;
+    }
+    if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+      const point = entry as Record<string, unknown>;
+      if (
+        typeof point.x === 'number' &&
+        Number.isFinite(point.x) &&
+        typeof point.y === 'number' &&
+        Number.isFinite(point.y)
+      ) {
+        return [point.x, point.y] as const;
+      }
+    }
+    throw new TypeError('surface edit polygon vertices need finite project X and Y.');
+  });
+}
+
 function optionalFenceVolumeFromPayload(
   payload: Record<string, unknown>,
 ): KernelFenceVolume | null {
@@ -6154,8 +6494,14 @@ function isCommandExportable(kind: EntityKind): boolean {
     kind === 'TexturedMesh' ||
     kind === 'DepthMap' ||
     kind === 'Orthomosaic' ||
-    kind === 'DigitalElevationModel'
+    kind === 'DigitalElevationModel' ||
+    kind === 'PointCloud' ||
+    kind === 'GaussianSplatCloud'
   );
+}
+
+function isExportScopeEntity(kind: EntityKind): boolean {
+  return kind !== 'ProjectRoot' && kind !== 'Group' && kind !== 'Layer';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

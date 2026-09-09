@@ -55,6 +55,7 @@ interface FileRibbonHandlers {
   readonly onSaveAs: () => void;
   readonly onRestoreSnapshot: (entityId: string) => void;
   readonly onClose: () => void;
+  readonly onExport: () => void;
   readonly navigationMode?: '3d' | '2.5d' | '2d';
   readonly groundExtractionAvailable?: boolean;
   readonly segmentationAvailable?: boolean;
@@ -163,7 +164,12 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
           label: 'Import',
           actions: [
             { id: 'file.import', label: 'Import…', icon: i(CloudUpload) },
-            { id: 'project.export', label: 'Export', icon: i(HardDriveDownload) },
+            {
+              id: 'entity.export',
+              label: 'Export…',
+              icon: i(HardDriveDownload),
+              onActivate: handlers.onExport,
+            },
             { id: 'automation.agent', label: 'Agent', icon: i(Bot) },
           ],
         },
@@ -320,7 +326,14 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
               id: 'mesh.surface.create',
               label: 'Create surface',
               icon: i(Mountain),
-              title: 'Create a checked TIN surface from selected points, clouds, grids, and linework.',
+              title:
+                'Create a checked TIN surface from selected points, clouds, grids, and linework.',
+            },
+            {
+              id: 'mesh.edit.smooth',
+              label: 'Edit surface',
+              icon: i(Mountain),
+              title: 'Smooth or downsample a selected DGM inside a protected region.',
             },
           ],
         },
