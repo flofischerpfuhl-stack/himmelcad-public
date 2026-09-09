@@ -1941,7 +1941,7 @@ with 8 workers ≈ 1.3 GB/worker — a calibration point for the SIFT extraction
 model; SIFT matching 1.6 GB). DTM smoke 2026-09-09 08:47 (`dtm-smoke-result.json`): same picture — sparse,
 dense and the DTM DEM (package 60af8cb2…, classification
 `a4ecae15da7c26dc`) all `complete/available`; alignment 12 min, depth 238 min
-(resolved 09:05: not a regression — the wave1-4 smoke ran with the e2e `--smoke`
+(resolved 08:50: not a regression — the wave1-4 smoke ran with the e2e `--smoke`
 flag, i.e. depth `imageDownscale` 8, while the G1a-3 runs omitted it and ran
 the production default of 2, sixteen times the pixels; the job records differ
 only in that field), dense 11 min, DEM 12 min.
