@@ -2010,7 +2010,11 @@ rerun on the same dense cloud with the HEAD binary and with a sidecar built at
 classification and reproduced the content-addressed
 `dense.classification.a4ecae15da7c26dc.bin` byte-for-byte (`persist_dense_classification`
 verifies an existing hash) — 0.5-02 accepted on the PhotoLab side; log
-`.build/logs/smrf-prerefactor.log`.
+`.build/logs/smrf-prerefactor.log`. DTM lineage identity (WP-G1a-3c/3d) republished
+2026-09-10 01:39 on the same project: package `product-00e33bcd…` carries
+`dem_facts.surface = dtm`, `ground_classification.sha256 = a4ecae15…` (equal to the
+classification artifact hash), `algorithm_id = smrf@1`, `parameters_sha256 = 234535f0…`
+and the matching `tools` entry — the G1c DTM identity cell has its PhotoLab side.
 
 **WP-G1a-3c - DTM lineage identity. Ready for Linux smoke 2026-09-09
 (photolab/g1a3c).** DEM package lineage now freezes surface (dsm or dtm).
