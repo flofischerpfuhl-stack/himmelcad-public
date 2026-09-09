@@ -8,9 +8,16 @@ REPO="$(git rev-parse --show-toplevel)"; cd "$REPO"
 OUT="$REPO/.build/verify-staged"; RS="$REPO/.build/verify-staged-rs"
 FREE_GB=$(df -BG --output=avail "$REPO" | tail -1 | tr -dc 0-9); [ "${FREE_GB:-0}" -lt 20 ] && { echo "REFUSED: only ${FREE_GB} GB free"; exit 2; }
 rm -rf "$OUT"; mkdir -p "$OUT"
-git ls-files -z -- apps packages crates scripts schemas sdk package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.json tsconfig.base.json Cargo.toml Cargo.lock eslint.config.js .prettierrc .prettierrc.json .prettierignore 2>/dev/null | git checkout-index -z --stdin --prefix="$OUT/"
-ln -s "$REPO/node_modules" "$OUT/node_modules"
-for d in $(cd "$REPO" && find apps packages -maxdepth 2 -name node_modules -type d 2>/dev/null); do mkdir -p "$OUT/$(dirname "$d")"; ln -s "$REPO/$d" "$OUT/$d"; done
+git ls-files -z -- apps packages crates scripts schemas sdk types vendor package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.json tsconfig.base.json Cargo.toml Cargo.lock eslint.config.js .prettierrc .prettierrc.json .prettierignore 2>/dev/null | git checkout-index -z --stdin --prefix="$OUT/"
+# node_modules: link every dependency from the main tree, but point workspace packages (@himmelcad/*) INTO the export,
+# otherwise tsc sees two copies of each workspace module and reports type-identity mismatches.
+link_nm() { # $1 = node_modules dir in the main tree (relative), $2 = destination in the export
+  mkdir -p "$2"
+  for e in "$REPO/$1"/* "$REPO/$1"/.[!.]*; do [ -e "$e" ] || continue; n=$(basename "$e"); [ "$n" = "@himmelcad" ] && continue; ln -s "$e" "$2/$n"; done
+  if [ -d "$REPO/$1/@himmelcad" ]; then mkdir -p "$2/@himmelcad"; for e in "$REPO/$1/@himmelcad"/*; do n=$(basename "$e"); if [ -d "$OUT/packages/@himmelcad/$n" ]; then ln -s "$OUT/packages/@himmelcad/$n" "$2/@himmelcad/$n"; else ln -s "$e" "$2/@himmelcad/$n"; fi; done; fi
+}
+link_nm node_modules "$OUT/node_modules"
+for d in $(cd "$REPO" && find apps packages -maxdepth 3 -name node_modules -type d -not -path "*/node_modules/*" 2>/dev/null); do link_nm "$d" "$OUT/$d"; done
 echo "== root typecheck on the staged index"; (cd "$OUT" && pnpm typecheck >"$OUT/typecheck.log" 2>&1); TS=$?; echo "typecheck exit=$TS"; [ $TS -ne 0 ] && grep -E "error|ERR" "$OUT/typecheck.log" | head -6
 if git diff --cached --name-only | grep -q "^crates/"; then
   TREE=$(git write-tree); C=$(git commit-tree "$TREE" -p HEAD -m "staged snapshot"); git worktree remove --force "$RS" 2>/dev/null; git worktree add --detach "$RS" "$C" >/dev/null 2>&1
