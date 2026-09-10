@@ -67,6 +67,9 @@ pub const EXTRACTION_TILE_OVERLAP_PX: u32 = 256;
 // WP-A7b X6 tunable: tiles smaller than 1,024 px discard too much scene context;
 // below this floor the explicit extraction-edge quality fallback applies instead.
 pub const MIN_EXTRACTION_TILE_EDGE_PX: u32 = 1_024;
+pub const ALIGNMENT_NEEDS_UNTILED_EXTRACTION_CODE: &str = "alignmentNeedsUntiledExtraction";
+pub const ALIGNMENT_NEEDS_UNTILED_EXTRACTION_MESSAGE: &str =
+    "Quality Hybrid needs untiled extraction on this machine — choose the Fast profile or reduce the image size";
 
 /// Inputs known before an alignment job becomes visible.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -716,6 +719,14 @@ pub struct MemoryPreflight {
     /// Usable machine memory before subtracting running-job reservations.
     pub machine_usable_bytes: u64,
     pub memory: PhotolabJobMemory,
+    pub refusal: Option<JobAdmissionRefusal>,
+}
+
+/// A fail-closed admission outcome that remains visible as a terminal job without starting work.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobAdmissionRefusal {
+    pub code: String,
+    pub message: String,
 }
 
 impl MemoryPreflight {
@@ -738,6 +749,7 @@ impl MemoryPreflight {
                 }],
                 matching_replanned: None,
             },
+            refusal: None,
         }
     }
 }
@@ -1561,33 +1573,47 @@ impl JobManager {
             }
         }
         admission.publication_targets = unique_targets;
-        if let Some(preflight) = admission.disk_preflight.as_ref() {
-            let path = preflight.path.clone();
-            let required_bytes = preflight.required_bytes;
-            let availability = Arc::clone(&self.inner.disk_availability);
-            let available_bytes = tokio::task::spawn_blocking(move || availability(&path))
-                .await
-                .map_err(|error| JobManagerError::DiskPreflight(error.to_string()))?
-                .map_err(JobManagerError::DiskPreflight)?;
-            if available_bytes < required_bytes {
-                return Err(JobManagerError::InsufficientDisk {
-                    required_bytes,
-                    available_bytes,
-                    path: preflight.path.clone(),
-                });
+        let refusal = admission
+            .memory_preflight
+            .as_ref()
+            .and_then(|preflight| preflight.refusal.clone());
+        if refusal.is_none() {
+            if let Some(preflight) = admission.disk_preflight.as_ref() {
+                let path = preflight.path.clone();
+                let required_bytes = preflight.required_bytes;
+                let availability = Arc::clone(&self.inner.disk_availability);
+                let available_bytes = tokio::task::spawn_blocking(move || availability(&path))
+                    .await
+                    .map_err(|error| JobManagerError::DiskPreflight(error.to_string()))?
+                    .map_err(JobManagerError::DiskPreflight)?;
+                if available_bytes < required_bytes {
+                    return Err(JobManagerError::InsufficientDisk {
+                        required_bytes,
+                        available_bytes,
+                        path: preflight.path.clone(),
+                    });
+                }
             }
         }
-        if let Some(preflight) = admission.memory_preflight.as_ref() {
-            if preflight.predicted_bytes > preflight.available_bytes {
-                return Err(JobManagerError::InsufficientMemory {
-                    predicted_bytes: preflight.predicted_bytes,
-                    available_bytes: preflight.available_bytes,
-                });
+        if refusal.is_none() {
+            if let Some(preflight) = admission.memory_preflight.as_ref() {
+                if preflight.predicted_bytes > preflight.available_bytes {
+                    return Err(JobManagerError::InsufficientMemory {
+                        predicted_bytes: preflight.predicted_bytes,
+                        available_bytes: preflight.available_bytes,
+                    });
+                }
             }
         }
         let mut job = PhotolabJob::new(request)?;
         if let Some(preflight) = admission.memory_preflight.as_ref() {
             job.set_memory_plan(preflight.memory.clone());
+        }
+        if let Some(refusal) = refusal.as_ref() {
+            job.transition_to(PhotolabJobState::Failed {
+                code: refusal.code.clone(),
+                message: refusal.message.clone(),
+            })?;
         }
         let key = job.id.0.clone();
         let cancellation = CancellationToken::new();
@@ -1605,53 +1631,59 @@ impl JobManager {
             if jobs.contains_key(&key) {
                 return Err(JobManagerError::DuplicateJobId(job.id));
             }
-            if let Some(preflight) = admission.memory_preflight.as_ref() {
-                let running_holds = jobs
+            if refusal.is_none() {
+                if let Some(preflight) = admission.memory_preflight.as_ref() {
+                    let running_holds = jobs
+                        .values()
+                        .filter(|managed| managed.job.state == PhotolabJobState::Running)
+                        .map(|managed| managed.memory_reservation_bytes)
+                        .fold(0_u64, u64::saturating_add);
+                    let available_bytes =
+                        preflight.machine_usable_bytes.saturating_sub(running_holds);
+                    if preflight.predicted_bytes > available_bytes {
+                        return Err(JobManagerError::InsufficientMemory {
+                            predicted_bytes: preflight.predicted_bytes,
+                            available_bytes,
+                        });
+                    }
+                    job.memory.envelope_bytes = available_bytes;
+                }
+            }
+            if refusal.is_none() {
+                for managed in jobs
                     .values()
-                    .filter(|managed| managed.job.state == PhotolabJobState::Running)
-                    .map(|managed| managed.memory_reservation_bytes)
-                    .fold(0_u64, u64::saturating_add);
-                let available_bytes = preflight.machine_usable_bytes.saturating_sub(running_holds);
-                if preflight.predicted_bytes > available_bytes {
-                    return Err(JobManagerError::InsufficientMemory {
-                        predicted_bytes: preflight.predicted_bytes,
-                        available_bytes,
-                    });
-                }
-                job.memory.envelope_bytes = available_bytes;
-            }
-            for managed in jobs
-                .values()
-                .filter(|managed| !is_terminal(&managed.job.state))
-            {
-                if let Some(target) = admission
-                    .publication_targets
-                    .iter()
-                    .find(|target| managed.publication_targets.contains(target))
+                    .filter(|managed| !is_terminal(&managed.job.state))
                 {
-                    return Err(JobManagerError::ConflictingTarget {
-                        running_job_id: managed.job.id.clone(),
-                        target: target.clone(),
-                        state: if matches!(managed.job.state, PhotolabJobState::Queued) {
-                            ConflictingJobState::Queued
-                        } else {
-                            ConflictingJobState::Running
-                        },
+                    if let Some(target) = admission
+                        .publication_targets
+                        .iter()
+                        .find(|target| managed.publication_targets.contains(target))
+                    {
+                        return Err(JobManagerError::ConflictingTarget {
+                            running_job_id: managed.job.id.clone(),
+                            target: target.clone(),
+                            state: if matches!(managed.job.state, PhotolabJobState::Queued) {
+                                ConflictingJobState::Queued
+                            } else {
+                                ConflictingJobState::Running
+                            },
+                        });
+                    }
+                }
+                let active = jobs
+                    .values()
+                    .filter(|managed| !is_terminal(&managed.job.state))
+                    .count();
+                if active >= self.inner.capacity {
+                    return Err(JobManagerError::QueueFull {
+                        max_concurrency: self.inner.config.max_concurrency,
+                        max_queued: self.inner.config.max_queued,
                     });
                 }
-            }
-            let active = jobs
-                .values()
-                .filter(|managed| !is_terminal(&managed.job.state))
-                .count();
-            if active >= self.inner.capacity {
-                return Err(JobManagerError::QueueFull {
-                    max_concurrency: self.inner.config.max_concurrency,
-                    max_queued: self.inner.config.max_queued,
-                });
             }
             let (updates, _) = watch::channel(job.clone());
-            let (worker_updates, _) = watch::channel(true);
+            let worker_active = refusal.is_none();
+            let (worker_updates, _) = watch::channel(worker_active);
             jobs.insert(
                 key.clone(),
                 ManagedJob {
@@ -1660,15 +1692,19 @@ impl JobManager {
                     cancellation: cancellation.clone(),
                     updates,
                     worker_updates,
-                    worker_active: true,
+                    worker_active,
                     history_scope: history_scope.clone(),
                     frozen_request: frozen_request.clone(),
                     history_dirty: false,
                     last_history_persisted_at: Instant::now(),
-                    memory_reservation_bytes: admission
-                        .memory_preflight
-                        .as_ref()
-                        .map_or(0, |preflight| preflight.predicted_bytes),
+                    memory_reservation_bytes: if worker_active {
+                        admission
+                            .memory_preflight
+                            .as_ref()
+                            .map_or(0, |preflight| preflight.predicted_bytes)
+                    } else {
+                        0
+                    },
                 },
             );
             if let (Some(history), Some(scope)) = (&self.inner.history, &history_scope) {
@@ -1677,6 +1713,10 @@ impl JobManager {
                     return Err(JobManagerError::HistoryPersistence(message));
                 }
             }
+        }
+
+        if refusal.is_some() {
+            return Ok(StartJobResult { job });
         }
 
         let manager = self.clone();
@@ -4139,6 +4179,7 @@ mod tests {
                         available_bytes: 128 * MIB,
                         machine_usable_bytes: 128 * MIB,
                         memory: tiny.memory,
+                        refusal: None,
                     }),
                 },
                 move |_| {
@@ -4161,5 +4202,118 @@ mod tests {
             let plan = plan_alignment_memory(&alignment_memory_request(usable_gib));
             assert!(plan.predicted_peak_bytes <= usable_gib * GIB);
         }
+    }
+
+    #[tokio::test]
+    async fn typed_admission_refusal_records_the_memory_plan_without_starting_a_worker() {
+        let manager = manager(1, 0);
+        let plan = plan_alignment_memory(&alignment_memory_request(8));
+        let tiling = plan.extraction_tiling.expect("tiled extraction plan");
+        let started = Arc::new(AtomicBool::new(false));
+        let started_in_worker = started.clone();
+        let result = manager
+            .start_with_admission(
+                request("quality-hybrid-refused"),
+                JobAdmission {
+                    publication_targets: Vec::new(),
+                    disk_preflight: None,
+                    memory_preflight: Some(MemoryPreflight {
+                        predicted_bytes: plan.predicted_peak_bytes,
+                        available_bytes: 8 * GIB,
+                        machine_usable_bytes: 8 * GIB,
+                        memory: plan.memory.clone(),
+                        refusal: Some(JobAdmissionRefusal {
+                            code: ALIGNMENT_NEEDS_UNTILED_EXTRACTION_CODE.into(),
+                            message: ALIGNMENT_NEEDS_UNTILED_EXTRACTION_MESSAGE.into(),
+                        }),
+                    }),
+                },
+                move |_| {
+                    started_in_worker.store(true, Ordering::Release);
+                    Ok(())
+                },
+            )
+            .await
+            .expect("typed refusal must be recorded");
+
+        assert_eq!(
+            result.job.state,
+            PhotolabJobState::Failed {
+                code: ALIGNMENT_NEEDS_UNTILED_EXTRACTION_CODE.into(),
+                message: ALIGNMENT_NEEDS_UNTILED_EXTRACTION_MESSAGE.into(),
+            }
+        );
+        assert!(!started.load(Ordering::Acquire));
+        assert_eq!(result.job.memory.envelope_bytes, 8 * GIB);
+        assert!(result.job.memory.time_first_choices.contains(
+            &PhotolabMemoryTimeFirstChoice::ExtractionTiled {
+                tiles: tiling.tiles,
+                overlap_px: tiling.overlap_px,
+            }
+        ));
+        assert_eq!(
+            result.job.memory.stages[0].parameters["maxImageSize"],
+            serde_json::json!(8_192)
+        );
+
+        let fast_proceeded = Arc::new(AtomicBool::new(false));
+        let fast_proceeded_in_worker = fast_proceeded.clone();
+        manager
+            .start_with_admission(
+                request("fast-tiled-proceeds"),
+                JobAdmission {
+                    publication_targets: Vec::new(),
+                    disk_preflight: None,
+                    memory_preflight: Some(MemoryPreflight {
+                        predicted_bytes: plan.predicted_peak_bytes,
+                        available_bytes: 8 * GIB,
+                        machine_usable_bytes: 8 * GIB,
+                        memory: plan.memory,
+                        refusal: None,
+                    }),
+                },
+                move |_| {
+                    fast_proceeded_in_worker.store(true, Ordering::Release);
+                    Ok(())
+                },
+            )
+            .await
+            .expect("Fast tiled extraction proceeds");
+        manager
+            .wait_for_terminal(&PhotolabJobId("fast-tiled-proceeds".into()))
+            .await
+            .expect("worker completes");
+        assert!(fast_proceeded.load(Ordering::Acquire));
+
+        let untiled_plan = plan_alignment_memory(&alignment_memory_request(16));
+        assert_eq!(untiled_plan.extraction_tiling, None);
+        let quality_proceeded = Arc::new(AtomicBool::new(false));
+        let quality_proceeded_in_worker = quality_proceeded.clone();
+        manager
+            .start_with_admission(
+                request("quality-hybrid-untiled-proceeds"),
+                JobAdmission {
+                    publication_targets: Vec::new(),
+                    disk_preflight: None,
+                    memory_preflight: Some(MemoryPreflight {
+                        predicted_bytes: untiled_plan.predicted_peak_bytes,
+                        available_bytes: 16 * GIB,
+                        machine_usable_bytes: 16 * GIB,
+                        memory: untiled_plan.memory,
+                        refusal: None,
+                    }),
+                },
+                move |_| {
+                    quality_proceeded_in_worker.store(true, Ordering::Release);
+                    Ok(())
+                },
+            )
+            .await
+            .expect("Quality Hybrid untiled extraction proceeds");
+        manager
+            .wait_for_terminal(&PhotolabJobId("quality-hybrid-untiled-proceeds".into()))
+            .await
+            .expect("worker completes");
+        assert!(quality_proceeded.load(Ordering::Acquire));
     }
 }

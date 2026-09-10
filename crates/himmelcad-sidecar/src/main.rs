@@ -138,9 +138,11 @@ use himmelcad_sidecar::image_quality_runtime::{
 };
 use himmelcad_sidecar::import_registration_runtime::ImportRegistrationRuntime;
 use himmelcad_sidecar::job_runtime::{
-    memory_os_ui_reserve_bytes, plan_alignment_memory, AlignmentMemoryPlan, AlignmentMemoryRequest,
-    DrainReport, FrozenJobRequest, JobIdParams, JobManager, JobManagerConfig, JobWorkerContext,
+    memory_os_ui_reserve_bytes, plan_alignment_memory, AlignmentExtractionTiling,
+    AlignmentMemoryPlan, AlignmentMemoryRequest, DrainReport, FrozenJobRequest,
+    JobAdmissionRefusal, JobIdParams, JobManager, JobManagerConfig, JobWorkerContext,
     JobWorkerError, ListJobsParams, MemoryPreflight, StartJobResult,
+    ALIGNMENT_NEEDS_UNTILED_EXTRACTION_CODE, ALIGNMENT_NEEDS_UNTILED_EXTRACTION_MESSAGE,
     SIFT_MATCHING_BYTES_PER_WORKER,
 };
 use himmelcad_sidecar::mesh_surface_runtime::{
@@ -5755,7 +5757,15 @@ async fn handle_job_rpc(
                         usable_memory_bytes,
                         measured_extraction_bytes_per_pixel,
                     ) {
-                        Ok((job, request, runtime, dedode, processing_set_id, memory_plan)) => {
+                        Ok((
+                            job,
+                            request,
+                            runtime,
+                            dedode,
+                            processing_set_id,
+                            memory_plan,
+                            refusal,
+                        )) => {
                             let combined_stage_count = job.progress.stage.stage_count;
                             let colmap_stage_base = if dedode.is_some() { 3 } else { 0 };
                             let admission_context = match projects.compute_context() {
@@ -5784,6 +5794,7 @@ async fn handle_job_rpc(
                                     available_bytes: usable_memory_bytes,
                                     machine_usable_bytes,
                                     memory: memory_plan.memory,
+                                    refusal,
                                 }),
                             };
                             let publisher = Arc::clone(&projects);
@@ -5866,6 +5877,7 @@ async fn handle_job_rpc(
                             resumed_shared,
                             shared_control_only,
                             memory_plan,
+                            refusal,
                         )) => {
                             let combined_stage_count = job.progress.stage.stage_count;
                             let colmap_stage_base = if dedode.is_some() { 3 } else { 0 };
@@ -5891,6 +5903,7 @@ async fn handle_job_rpc(
                                     available_bytes: memory_plan.memory.envelope_bytes,
                                     machine_usable_bytes,
                                     memory: memory_plan.memory,
+                                    refusal,
                                 }),
                             };
                             let checkpoint_project_root = request.project_root.clone();
@@ -7368,19 +7381,26 @@ fn run_batch_pipeline(
                         ));
                     }
                 };
-                let (_, request, runtime, dedode, processing_set_id, _) = prepare_alignment_job(
-                    StartAlignmentJobParams {
-                        operation_id: format!("{}-{:02}-alignment", params.operation_id, index),
-                        profile,
-                        camera_entity_ids: params.camera_entity_ids.clone(),
-                        processing_set_id: params.processing_set_id.clone(),
-                        overrides,
-                    },
-                    projects,
-                    fallback_alignment_usable_memory_bytes(),
-                    None,
-                )
-                .map_err(|error| worker_error("batchPrepare", &error.to_string()))?;
+                let (_, request, runtime, dedode, processing_set_id, _, refusal) =
+                    prepare_alignment_job(
+                        StartAlignmentJobParams {
+                            operation_id: format!("{}-{:02}-alignment", params.operation_id, index),
+                            profile,
+                            camera_entity_ids: params.camera_entity_ids.clone(),
+                            processing_set_id: params.processing_set_id.clone(),
+                            overrides,
+                        },
+                        projects,
+                        fallback_alignment_usable_memory_bytes(),
+                        None,
+                    )
+                    .map_err(|error| worker_error("batchPrepare", &error.to_string()))?;
+                if let Some(refusal) = refusal {
+                    return Err(JobWorkerError::Failed {
+                        code: refusal.code,
+                        message: refusal.message,
+                    });
+                }
                 let mut outcome = if let Some((dedode_runtime, dedode_request)) = dedode {
                     let dedode_context = context.with_progress_window(base, total);
                     let dedode_outcome = dedode_runtime
@@ -8005,6 +8025,7 @@ fn prepare_alignment_job(
     Option<(DedodeRuntime, DedodeRunRequest)>,
     Option<EntityId>,
     AlignmentMemoryPlan,
+    Option<JobAdmissionRefusal>,
 )> {
     let context = projects.compute_context()?;
     let processing_set_id = params.processing_set_id.clone();
@@ -8266,6 +8287,7 @@ fn prepare_alignment_job(
             metrics: ProgressMetrics::empty(),
         };
     }
+    let refusal = alignment_admission_refusal(params.profile, memory_plan.extraction_tiling);
     Ok((
         job,
         request,
@@ -8273,7 +8295,20 @@ fn prepare_alignment_job(
         dedode,
         processing_set_id,
         memory_plan,
+        refusal,
     ))
+}
+
+fn alignment_admission_refusal(
+    profile: AlignmentQualityProfile,
+    extraction_tiling: Option<AlignmentExtractionTiling>,
+) -> Option<JobAdmissionRefusal> {
+    (profile != AlignmentQualityProfile::Fast && extraction_tiling.is_some()).then(|| {
+        JobAdmissionRefusal {
+            code: ALIGNMENT_NEEDS_UNTILED_EXTRACTION_CODE.into(),
+            message: ALIGNMENT_NEEDS_UNTILED_EXTRACTION_MESSAGE.into(),
+        }
+    })
 }
 
 /// Per-group intrinsics policy, keyed by the immutable calibration-group id.
@@ -8442,6 +8477,7 @@ fn prepare_alignment_merge_job(
     Option<himmelcad_sidecar::alignment_merge_runtime::SharedControlMergeOutcome>,
     bool,
     AlignmentMemoryPlan,
+    Option<JobAdmissionRefusal>,
 )> {
     let merge = projects.alignment_merge_compute_context(&params.merge_entity_id)?;
     let merge_profile = merge.record.merge_profile.clone().unwrap_or_else(|| {
@@ -8469,7 +8505,7 @@ fn prepare_alignment_merge_job(
         .iter()
         .map(|id| id.0.clone())
         .collect::<Vec<_>>();
-    let (mut job, mut request, runtime, dedode, _, memory_plan) = prepare_alignment_job(
+    let (mut job, mut request, runtime, dedode, _, memory_plan, refusal) = prepare_alignment_job(
         StartAlignmentJobParams {
             operation_id: params.operation_id,
             profile: if shared_control_only {
@@ -8576,6 +8612,7 @@ fn prepare_alignment_merge_job(
         resumed_shared,
         shared_control_only,
         memory_plan,
+        refusal,
     ))
 }
 
@@ -12170,6 +12207,30 @@ mod tests {
         assert_eq!(poor.principal_x_pixels, 2640.0);
         assert_eq!(poor.width_pixels, 5280);
         std::fs::remove_dir_all(&directory).expect("clean up fake published alignment");
+    }
+
+    #[test]
+    fn dedode_profiles_refuse_tiled_extraction_while_untiled_and_fast_proceed() {
+        let tiling = AlignmentExtractionTiling {
+            columns: 2,
+            rows: 1,
+            tiles: 2,
+            overlap_px: 256,
+        };
+        let refusal =
+            alignment_admission_refusal(AlignmentQualityProfile::QualityHybrid, Some(tiling))
+                .expect("Quality Hybrid must fail closed when extraction is tiled");
+        assert_eq!(refusal.code, ALIGNMENT_NEEDS_UNTILED_EXTRACTION_CODE);
+        assert_eq!(refusal.message, ALIGNMENT_NEEDS_UNTILED_EXTRACTION_MESSAGE);
+        assert!(
+            alignment_admission_refusal(AlignmentQualityProfile::QualityHybrid, None).is_none()
+        );
+        assert!(alignment_admission_refusal(AlignmentQualityProfile::Fast, Some(tiling)).is_none());
+        assert!(alignment_admission_refusal(
+            AlignmentQualityProfile::MaximumRobustness,
+            Some(tiling),
+        )
+        .is_some());
     }
 
     fn sample_steps() -> Vec<BatchPipelineStep> {

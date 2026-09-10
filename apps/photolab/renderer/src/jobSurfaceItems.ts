@@ -27,11 +27,13 @@ export function jobSurfaceItems(jobs: readonly PhotolabJob[]): JobSurfaceItem[] 
     label: jobDisplayLabel(job),
     state: surfaceState(job.state.kind),
     phase:
-      job.state.kind === 'paused'
-        ? 'Paused'
-        : job.state.kind === 'pauseRequested'
-          ? 'Pausing…'
-          : [job.progress.stage.label, memoryStatusText(job)].filter(Boolean).join(' · '),
+      job.state.kind === 'failed' && job.state.code === 'alignmentNeedsUntiledExtraction'
+        ? [job.state.message, memoryStatusText(job)].filter(Boolean).join(' · ')
+        : job.state.kind === 'paused'
+          ? 'Paused'
+          : job.state.kind === 'pauseRequested'
+            ? 'Pausing…'
+            : [job.progress.stage.label, memoryStatusText(job)].filter(Boolean).join(' · '),
     fraction: overallFraction(job),
     registeredAtUnixMs: job.createdAtUnixMs,
     finishedAtUnixMs: job.finishedAtUnixMs ?? null,

@@ -47,8 +47,9 @@ use crate::job_runtime::{
 };
 use crate::{
     colmap_feature_db::{
-        cap_database_features, maximum_keypoint_count, read_image_features, write_image_features,
-        ColmapDescriptorMatrix, ColmapFeatureDbError, ColmapKeypointMatrix,
+        cap_database_features, maximum_keypoint_count, read_image_features,
+        write_image_features_with_scores, ColmapDescriptorMatrix, ColmapFeatureDbError,
+        ColmapKeypointMatrix, KeypointCapOrdering,
     },
     dedode_colmap_bridge::{
         merge_tiled_aliked_features, prepare_dedode_colmap_import, DedodeColmapBridgeError,
@@ -2440,6 +2441,7 @@ impl ColmapRuntime {
         let mut completed_units = 0_u64;
         let mut merged_keypoints_before_cap = 0_u32;
         let mut merged_keypoints_after_cap = 0_u32;
+        let mut keypoint_cap_ordering = KeypointCapOrdering::Score;
         for (image_index, (camera, image_name)) in request
             .camera_images
             .iter()
@@ -2543,18 +2545,26 @@ impl ColmapRuntime {
                 tile_features.push(feature_set);
                 completed_units = completed_units.saturating_add(1);
             }
-            let mut merged = merge_tiled_aliked_features(&tile_features, u32::MAX)
+            let merged = merge_tiled_aliked_features(&tile_features, u32::MAX)
                 .map_err(map_dedode_bridge_error)?;
-            merged_keypoints_before_cap =
-                merged_keypoints_before_cap.max(u32::try_from(merged.len()).map_err(|_| {
+            if merged.ordering == KeypointCapOrdering::Proxy {
+                keypoint_cap_ordering = KeypointCapOrdering::Proxy;
+            }
+            let mut merged_features = merged.features;
+            merged_keypoints_before_cap = merged_keypoints_before_cap.max(
+                u32::try_from(merged_features.len()).map_err(|_| {
                     ColmapRuntimeError::InvalidWorkerOutput(
                         "merged ALIKED feature count exceeds u32".into(),
                     )
-                })?);
-            merged.truncate(usize::try_from(request.aliked_max_features).unwrap_or(usize::MAX));
-            merged_keypoints_after_cap = merged_keypoints_after_cap
-                .max(u32::try_from(merged.len()).expect("post-cap ALIKED feature count fits u32"));
-            for feature in &mut merged {
+                })?,
+            );
+            merged_features
+                .truncate(usize::try_from(request.aliked_max_features).unwrap_or(usize::MAX));
+            merged_keypoints_after_cap = merged_keypoints_after_cap.max(
+                u32::try_from(merged_features.len())
+                    .expect("post-cap ALIKED feature count fits u32"),
+            );
+            for feature in &mut merged_features {
                 feature.x = rescale_pixel_center(feature.x, source.scale_x);
                 feature.y = rescale_pixel_center(feature.y, source.scale_y);
                 feature.a11 *= source.scale_x;
@@ -2563,7 +2573,7 @@ impl ColmapRuntime {
                 feature.a22 *= source.scale_y;
             }
             let keypoints = ColmapKeypointMatrix::Affine(
-                merged
+                merged_features
                     .iter()
                     .map(|feature| {
                         [
@@ -2577,7 +2587,13 @@ impl ColmapRuntime {
                     })
                     .collect(),
             );
-            let descriptor_rows = merged
+            let scores = (merged.ordering == KeypointCapOrdering::Score).then(|| {
+                merged_features
+                    .iter()
+                    .map(|feature| feature.score.expect("score ordering requires scores"))
+                    .collect::<Vec<_>>()
+            });
+            let descriptor_rows = merged_features
                 .into_iter()
                 .map(|feature| feature.descriptor)
                 .collect();
@@ -2589,7 +2605,13 @@ impl ColmapRuntime {
             };
             let image_name = path_text_for_colmap(image_name)?;
             let target = read_image_features(database, image_name)?;
-            write_image_features(database, target.image_id, &keypoints, &descriptors)?;
+            write_image_features_with_scores(
+                database,
+                target.image_id,
+                &keypoints,
+                &descriptors,
+                scores.as_deref(),
+            )?;
         }
         context
             .memory
@@ -2601,6 +2623,7 @@ impl ColmapRuntime {
                     "mergedKeypointsBeforeCap": merged_keypoints_before_cap,
                     "mergedKeypointsAfterCap": merged_keypoints_after_cap,
                     "keypointCap": request.aliked_max_features,
+                    "keypointCapOrdering": keypoint_cap_ordering.as_str(),
                 }),
             )
             .map_err(|error| ColmapRuntimeError::Progress(error.to_string()))?;
@@ -4151,6 +4174,7 @@ fn tiled_feature_set_from_database(
     variant: AlikedModelVariant,
     extracted: crate::colmap_feature_db::ColmapImageFeatures,
 ) -> Result<TiledAlikedFeatureSet, ColmapRuntimeError> {
+    let scores = extracted.scores;
     let affine = match extracted.keypoints {
         ColmapKeypointMatrix::Affine(rows) => rows,
         ColmapKeypointMatrix::Similarity(rows) => rows
@@ -4192,11 +4216,10 @@ fn tiled_feature_set_from_database(
             a12: keypoint[3],
             a21: keypoint[4],
             a22: keypoint[5],
-            // COLMAP filters by the ALIKED score but persists no score column. For a frozen
-            // model and input its CPU extractor deterministically writes rows in descending
-            // detector-score order, so normalized reverse row rank is the only stable score
-            // proxy that remains comparable across tiles of different feature counts.
-            score: feature_count.saturating_sub(index) as f32 / feature_count.max(1) as f32,
+            score: scores.as_ref().map(|scores| scores[index]),
+            // A7d fallback: normalized reverse row rank remains comparable across tiles of
+            // different sizes. The merge uses it only when any tile score is unavailable.
+            proxy_score: feature_count.saturating_sub(index) as f32 / feature_count.max(1) as f32,
             descriptor,
         })
         .collect();
@@ -6460,7 +6483,7 @@ mod tests {
             )
             .expect("insert fake tile image");
         drop(connection);
-        write_image_features(
+        write_image_features_with_scores(
             &tile,
             1,
             &ColmapKeypointMatrix::Affine(vec![
@@ -6468,6 +6491,7 @@ mod tests {
                 [1_000.0, 50.0, 1.0, 0.0, 0.0, 1.0],
             ]),
             &ColmapDescriptorMatrix::AlikedN16RotF32(vec![[0.1; 128], [0.2; 128]]),
+            Some(&[0.9, 0.8]),
         )
         .expect("write fake tile features");
 
@@ -6488,7 +6512,7 @@ mod tests {
         }
         drop(connection);
         for image_id in [1_i64, 2_i64] {
-            write_image_features(
+            crate::colmap_feature_db::write_image_features(
                 &bootstrap,
                 image_id,
                 &ColmapKeypointMatrix::Similarity(vec![[0.5, 0.5, 1.0, 0.0]]),
@@ -7768,6 +7792,7 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
                 features.descriptors,
                 ColmapDescriptorMatrix::AlikedN16RotF32(ref rows) if rows.len() == usize::try_from(cap).expect("cap fits usize")
             ));
+            assert_eq!(features.scores, Some(vec![0.9, 0.9]));
         }
         let first_database_sha256 = hash_file(&database, None).expect("hash first database");
         let invocations = fs::read_to_string(first.scratch_path.join("invocations.log"))

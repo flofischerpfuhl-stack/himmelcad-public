@@ -90,6 +90,22 @@ test('marks side-operation cancellation at the next safe boundary', () => {
   });
 });
 
+test('renders the untiled-extraction refusal message', () => {
+  const [item] = jobSurfaceItems([
+    job({
+      kind: 'failed',
+      code: 'alignmentNeedsUntiledExtraction',
+      message:
+        'Quality Hybrid needs untiled extraction on this machine — choose the Fast profile or reduce the image size',
+    }),
+  ]);
+
+  assert.equal(
+    item?.phase,
+    'Quality Hybrid needs untiled extraction on this machine — choose the Fast profile or reduce the image size',
+  );
+});
+
 test('keeps sentence-case labels for all five side-operation kinds', () => {
   const kinds: readonly PhotolabJob['kind'][] = [
     'archiveSave',

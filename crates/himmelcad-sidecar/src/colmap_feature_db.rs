@@ -53,6 +53,22 @@ impl ColmapKeypointMatrix {
             Self::Affine(values) => values.truncate(rows),
         }
     }
+
+    fn select_rows(&mut self, indices: &[usize]) {
+        match self {
+            Self::Coordinates(rows) => *rows = indices.iter().map(|&index| rows[index]).collect(),
+            Self::Similarity(rows) => *rows = indices.iter().map(|&index| rows[index]).collect(),
+            Self::Affine(rows) => *rows = indices.iter().map(|&index| rows[index]).collect(),
+        }
+    }
+
+    fn coordinates(&self, index: usize) -> (f32, f32) {
+        match self {
+            Self::Coordinates(rows) => (rows[index][0], rows[index][1]),
+            Self::Similarity(rows) => (rows[index][0], rows[index][1]),
+            Self::Affine(rows) => (rows[index][0], rows[index][1]),
+        }
+    }
 }
 
 /// Descriptor storage supported by COLMAP 4.0's SIFT and ALIKED extractors.
@@ -106,21 +122,48 @@ impl ColmapDescriptorMatrix {
             Self::AlikedN16RotF32(values) | Self::AlikedN32F32(values) => values.truncate(rows),
         }
     }
+
+    fn select_rows(&mut self, indices: &[usize]) {
+        match self {
+            Self::SiftU8(rows) => *rows = indices.iter().map(|&index| rows[index]).collect(),
+            Self::AlikedN16RotF32(rows) | Self::AlikedN32F32(rows) => {
+                *rows = indices.iter().map(|&index| rows[index]).collect();
+            }
+        }
+    }
 }
 
-/// Features for one image. COLMAP does not persist ALIKED detector scores, so
-/// callers that need ranking must use the stable extractor row order.
+/// Features for one image, including sidecar-owned ALIKED detector scores when
+/// the extractor supplied a complete row-aligned set.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColmapImageFeatures {
     pub image_id: i64,
     pub keypoints: ColmapKeypointMatrix,
     pub descriptors: ColmapDescriptorMatrix,
+    pub scores: Option<Vec<f32>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeypointCapOrdering {
+    Score,
+    Proxy,
+}
+
+impl KeypointCapOrdering {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Score => "score",
+            Self::Proxy => "proxy",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColmapFeatureCapSummary {
     pub maximum_before_cap: u32,
     pub maximum_after_cap: u32,
+    pub ordering: KeypointCapOrdering,
 }
 
 #[derive(Debug, Error)]
@@ -199,10 +242,12 @@ pub fn read_image_features(
         descriptor_type,
         &descriptor_blob,
     )?;
+    let scores = read_keypoint_scores(&connection, image_id, keypoints.rows())?;
     Ok(ColmapImageFeatures {
         image_id,
         keypoints,
         descriptors,
+        scores,
     })
 }
 
@@ -214,6 +259,18 @@ pub fn write_image_features(
     image_id: i64,
     keypoints: &ColmapKeypointMatrix,
     descriptors: &ColmapDescriptorMatrix,
+) -> Result<(), ColmapFeatureDbError> {
+    write_image_features_with_scores(database_path, image_id, keypoints, descriptors, None)
+}
+
+/// Replaces one image's keypoints, descriptors and optional row-aligned scores
+/// in one immediate transaction.
+pub fn write_image_features_with_scores(
+    database_path: &Path,
+    image_id: i64,
+    keypoints: &ColmapKeypointMatrix,
+    descriptors: &ColmapDescriptorMatrix,
+    scores: Option<&[f32]>,
 ) -> Result<(), ColmapFeatureDbError> {
     if image_id <= 0 {
         return Err(ColmapFeatureDbError::InvalidData(
@@ -229,6 +286,20 @@ pub fn write_image_features(
     }
     validate_finite_keypoints(keypoints)?;
     validate_finite_descriptors(descriptors)?;
+    if let Some(scores) = scores {
+        if scores.len() != keypoints.rows() {
+            return Err(ColmapFeatureDbError::InvalidData(format!(
+                "keypoint row count {} differs from score row count {}",
+                keypoints.rows(),
+                scores.len()
+            )));
+        }
+        if !scores.iter().all(|score| score.is_finite()) {
+            return Err(ColmapFeatureDbError::InvalidData(
+                "keypoint scores contain a non-finite float".into(),
+            ));
+        }
+    }
     let rows = i64::try_from(keypoints.rows()).map_err(|_| {
         ColmapFeatureDbError::InvalidData("feature row count exceeds SQLite range".into())
     })?;
@@ -253,6 +324,16 @@ pub fn write_image_features(
     if !image_exists {
         return Err(ColmapFeatureDbError::MissingImage(image_id.to_string()));
     }
+    transaction.execute_batch(
+        "CREATE TABLE IF NOT EXISTS himmelcad_keypoint_scores (\
+             image_id INTEGER NOT NULL,\
+             row_index INTEGER NOT NULL,\
+             score REAL NOT NULL,\
+             PRIMARY KEY(image_id, row_index),\
+             FOREIGN KEY(image_id) REFERENCES images(image_id) ON DELETE CASCADE\
+         );",
+    )?;
+    assert_score_table_schema(&transaction)?;
     transaction.execute(
         "INSERT OR REPLACE INTO keypoints(image_id, rows, cols, data) VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![image_id, rows, keypoint_columns, keypoint_blob],
@@ -267,6 +348,22 @@ pub fn write_image_features(
             descriptors.extractor_type()
         ],
     )?;
+    transaction.execute(
+        "DELETE FROM himmelcad_keypoint_scores WHERE image_id = ?1",
+        [image_id],
+    )?;
+    if let Some(scores) = scores {
+        let mut statement = transaction.prepare(
+            "INSERT INTO himmelcad_keypoint_scores(image_id, row_index, score) \
+             VALUES (?1, ?2, ?3)",
+        )?;
+        for (row_index, score) in scores.iter().copied().enumerate() {
+            let row_index = i64::try_from(row_index).map_err(|_| {
+                ColmapFeatureDbError::InvalidData("score row index exceeds SQLite range".into())
+            })?;
+            statement.execute(rusqlite::params![image_id, row_index, f64::from(score)])?;
+        }
+    }
     transaction.commit()?;
     Ok(())
 }
@@ -290,11 +387,8 @@ pub fn maximum_keypoint_count(database_path: &Path) -> Result<u32, ColmapFeature
     })
 }
 
-/// Deterministically trims every image to the stable extractor row-order proxy.
-///
-/// COLMAP does not persist ALIKED scores. Its curated CPU extractor writes descending detector
-/// score order; tiled merges additionally order equal score proxies by `(x, y)`. Keeping the
-/// prefix therefore preserves that deterministic ranking without inventing scores.
+/// Deterministically trims every image by true score when complete side-table
+/// rows exist, otherwise by the stable extractor row-order proxy.
 pub fn cap_database_features(
     database_path: &Path,
     cap: u32,
@@ -320,17 +414,37 @@ pub fn cap_database_features(
     let cap = usize::try_from(cap).unwrap_or(usize::MAX);
     let mut maximum_before_cap = 0_usize;
     let mut maximum_after_cap = 0_usize;
+    let mut ordering = KeypointCapOrdering::Score;
     for image_name in image_names {
         let mut features = read_image_features(database_path, &image_name)?;
         maximum_before_cap = maximum_before_cap.max(features.keypoints.rows());
-        features.keypoints.truncate(cap);
-        features.descriptors.truncate(cap);
+        if let Some(scores) = features.scores.take() {
+            let mut indices = (0..features.keypoints.rows()).collect::<Vec<_>>();
+            indices.sort_by(|&left, &right| {
+                let (left_x, left_y) = features.keypoints.coordinates(left);
+                let (right_x, right_y) = features.keypoints.coordinates(right);
+                scores[right]
+                    .total_cmp(&scores[left])
+                    .then_with(|| left_x.total_cmp(&right_x))
+                    .then_with(|| left_y.total_cmp(&right_y))
+                    .then_with(|| left.cmp(&right))
+            });
+            indices.truncate(cap);
+            features.keypoints.select_rows(&indices);
+            features.descriptors.select_rows(&indices);
+            features.scores = Some(indices.iter().map(|&index| scores[index]).collect());
+        } else {
+            ordering = KeypointCapOrdering::Proxy;
+            features.keypoints.truncate(cap);
+            features.descriptors.truncate(cap);
+        }
         maximum_after_cap = maximum_after_cap.max(features.keypoints.rows());
-        write_image_features(
+        write_image_features_with_scores(
             database_path,
             features.image_id,
             &features.keypoints,
             &features.descriptors,
+            features.scores.as_deref(),
         )?;
     }
     Ok(ColmapFeatureCapSummary {
@@ -340,7 +454,80 @@ pub fn cap_database_features(
         maximum_after_cap: u32::try_from(maximum_after_cap).map_err(|_| {
             ColmapFeatureDbError::InvalidData("keypoint row count exceeds u32 range".into())
         })?,
+        ordering,
     })
+}
+
+fn read_keypoint_scores(
+    connection: &Connection,
+    image_id: i64,
+    expected_rows: usize,
+) -> Result<Option<Vec<f32>>, ColmapFeatureDbError> {
+    let table_exists = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'himmelcad_keypoint_scores')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !table_exists {
+        return Ok(None);
+    }
+    assert_score_table_schema(connection)?;
+    let mut statement = connection.prepare(
+        "SELECT row_index, score FROM himmelcad_keypoint_scores \
+         WHERE image_id = ?1 ORDER BY row_index",
+    )?;
+    let rows = statement
+        .query_map([image_id], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    if rows.len() != expected_rows
+        || rows
+            .iter()
+            .enumerate()
+            .any(|(expected, (actual, _))| i64::try_from(expected).ok() != Some(*actual))
+    {
+        return Ok(None);
+    }
+    rows.into_iter()
+        .map(|(_, score)| {
+            let score = score as f32;
+            if score.is_finite() {
+                Ok(score)
+            } else {
+                Err(ColmapFeatureDbError::InvalidData(
+                    "keypoint scores contain a non-finite float".into(),
+                ))
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
+fn assert_score_table_schema(connection: &Connection) -> Result<(), ColmapFeatureDbError> {
+    let mut statement = connection.prepare("PRAGMA table_info(himmelcad_keypoint_scores)")?;
+    let columns = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let expected = [
+        ("image_id".to_owned(), "INTEGER".to_owned(), 1, 1),
+        ("row_index".to_owned(), "INTEGER".to_owned(), 1, 2),
+        ("score".to_owned(), "REAL".to_owned(), 1, 0),
+    ];
+    if columns == expected {
+        Ok(())
+    } else {
+        Err(ColmapFeatureDbError::InvalidSchema(format!(
+            "himmelcad_keypoint_scores columns differ from the sidecar schema: {columns:?}"
+        )))
+    }
 }
 
 fn read_matrix_row(
@@ -546,7 +733,7 @@ mod tests {
                  INSERT INTO images(image_id, name, camera_id) VALUES (7, 'tiles/tile.png', 3);",
             )
             .expect("create COLMAP schema fixture");
-        let columns = |table: &str| {
+        fn columns(connection: &Connection, table: &str) -> Vec<(String, String)> {
             let mut statement = connection
                 .prepare(&format!("PRAGMA table_info({table})"))
                 .expect("read fixture schema");
@@ -557,9 +744,9 @@ mod tests {
                 .expect("query fixture schema")
                 .collect::<Result<Vec<_>, _>>()
                 .expect("collect fixture schema")
-        };
+        }
         assert_eq!(
-            columns("keypoints"),
+            columns(&connection, "keypoints"),
             [
                 ("image_id", "INTEGER"),
                 ("rows", "INTEGER"),
@@ -569,7 +756,7 @@ mod tests {
             .map(|(name, kind)| (name.to_owned(), kind.to_owned()))
         );
         assert_eq!(
-            columns("descriptors"),
+            columns(&connection, "descriptors"),
             [
                 ("image_id", "INTEGER"),
                 ("type", "INTEGER"),
@@ -589,12 +776,15 @@ mod tests {
             [0.25; ALIKED_DESCRIPTOR_DIMENSIONS],
             [-0.5; ALIKED_DESCRIPTOR_DIMENSIONS],
         ]);
-        write_image_features(&path, 7, &keypoints, &descriptors).expect("write ALIKED features");
+        let scores = [0.125, 0.875];
+        write_image_features_with_scores(&path, 7, &keypoints, &descriptors, Some(&scores))
+            .expect("write ALIKED features");
         let round_trip =
             read_image_features(&path, "tiles/tile.png").expect("read ALIKED features");
         assert_eq!(round_trip.image_id, 7);
         assert_eq!(round_trip.keypoints, keypoints);
         assert_eq!(round_trip.descriptors, descriptors);
+        assert_eq!(round_trip.scores, Some(scores.to_vec()));
 
         let connection = Connection::open(&path).expect("reopen fixture");
         assert_eq!(
@@ -630,11 +820,39 @@ mod tests {
                 .expect("descriptor layout"),
             (2, 512, 1_024, 1)
         );
+        assert_eq!(
+            columns(&connection, "himmelcad_keypoint_scores"),
+            [
+                ("image_id", "INTEGER"),
+                ("row_index", "INTEGER"),
+                ("score", "REAL"),
+            ]
+            .map(|(name, kind)| (name.to_owned(), kind.to_owned()))
+        );
+        assert_eq!(
+            connection
+                .prepare(
+                    "SELECT image_id, row_index, score FROM himmelcad_keypoint_scores \
+                     ORDER BY row_index",
+                )
+                .expect("read score rows")
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, f64>(2)?,
+                    ))
+                })
+                .expect("query score rows")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("collect score rows"),
+            [(7, 0, 0.125), (7, 1, 0.875)]
+        );
         drop(connection);
         fs::remove_file(path).expect("remove fixture");
     }
 
-    fn write_cap_fixture(path: &Path) {
+    fn write_cap_fixture(path: &Path, scores: Option<&[f32]>) {
         let connection = Connection::open(path).expect("create cap fixture database");
         connection
             .execute_batch(
@@ -645,7 +863,7 @@ mod tests {
             )
             .expect("create cap fixture schema");
         drop(connection);
-        write_image_features(
+        write_image_features_with_scores(
             path,
             1,
             &ColmapKeypointMatrix::Affine(vec![
@@ -659,6 +877,7 @@ mod tests {
             &ColmapDescriptorMatrix::AlikedN32F32(
                 (0..6).map(|index| [index as f32; 128]).collect(),
             ),
+            scores,
         )
         .expect("write cap fixture features");
     }
@@ -668,6 +887,11 @@ mod tests {
         let mut bytes = Vec::new();
         features.keypoints.append_le_bytes(&mut bytes);
         bytes.extend(features.descriptors.to_blob());
+        if let Some(scores) = features.scores {
+            for score in scores {
+                bytes.extend_from_slice(&score.to_le_bytes());
+            }
+        }
         Sha256::digest(bytes).into()
     }
 
@@ -675,8 +899,8 @@ mod tests {
     fn database_cap_keeps_exactly_the_stable_row_order_prefix() {
         let first = fixture_path();
         let second = fixture_path().with_extension("second.db");
-        write_cap_fixture(&first);
-        write_cap_fixture(&second);
+        write_cap_fixture(&first, None);
+        write_cap_fixture(&second, None);
         for path in [&first, &second] {
             assert_eq!(maximum_keypoint_count(path).expect("maximum before"), 6);
             assert_eq!(
@@ -684,6 +908,7 @@ mod tests {
                 ColmapFeatureCapSummary {
                     maximum_before_cap: 6,
                     maximum_after_cap: 3,
+                    ordering: KeypointCapOrdering::Proxy,
                 }
             );
             assert_eq!(maximum_keypoint_count(path).expect("maximum after"), 3);
@@ -697,5 +922,34 @@ mod tests {
         ));
         fs::remove_file(first).expect("remove first cap fixture");
         fs::remove_file(second).expect("remove second cap fixture");
+    }
+
+    #[test]
+    fn database_cap_uses_scores_with_xy_ties_and_is_hash_deterministic() {
+        let first = fixture_path();
+        let second = fixture_path().with_extension("second.db");
+        let scores = [0.4, 0.9, 0.9, 0.3, 0.2, 0.1];
+        write_cap_fixture(&first, Some(&scores));
+        write_cap_fixture(&second, Some(&scores));
+        for path in [&first, &second] {
+            assert_eq!(
+                cap_database_features(path, 3).expect("cap scored fixture"),
+                ColmapFeatureCapSummary {
+                    maximum_before_cap: 6,
+                    maximum_after_cap: 3,
+                    ordering: KeypointCapOrdering::Score,
+                }
+            );
+        }
+        assert_eq!(feature_set_hash(&first), feature_set_hash(&second));
+        let capped = read_image_features(&first, "image.jpg").expect("read scored rows");
+        assert!(matches!(
+            capped.keypoints,
+            ColmapKeypointMatrix::Affine(ref rows)
+                if rows.iter().map(|row| row[0]).collect::<Vec<_>>() == [10.0, 20.0, 30.0]
+        ));
+        assert_eq!(capped.scores, Some(vec![0.9, 0.9, 0.4]));
+        fs::remove_file(first).expect("remove first scored fixture");
+        fs::remove_file(second).expect("remove second scored fixture");
     }
 }

@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::{
+    colmap_feature_db::KeypointCapOrdering,
     dedode_runtime::{DedodeMatch, DedodeRunOutcome},
     image_commit::ProjectCameraImageRecord,
 };
@@ -32,7 +33,8 @@ pub struct TiledAlikedFeature {
     pub a12: f32,
     pub a21: f32,
     pub a22: f32,
-    pub score: f32,
+    pub score: Option<f32>,
+    pub proxy_score: f32,
     pub descriptor: [f32; COLMAP_DESCRIPTOR_COLUMNS],
 }
 
@@ -45,6 +47,12 @@ pub struct TiledAlikedFeatureSet {
     pub features: Vec<TiledAlikedFeature>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct MergedTiledAlikedFeatures {
+    pub features: Vec<TiledAlikedFeature>,
+    pub ordering: KeypointCapOrdering,
+}
+
 /// Merges tile-local features into deterministic source-image coordinates.
 ///
 /// Higher-scored overlap detections win within the X6 radius. The resulting
@@ -53,7 +61,7 @@ pub struct TiledAlikedFeatureSet {
 pub fn merge_tiled_aliked_features(
     tiles: &[TiledAlikedFeatureSet],
     max_features: u32,
-) -> Result<Vec<TiledAlikedFeature>, DedodeColmapBridgeError> {
+) -> Result<MergedTiledAlikedFeatures, DedodeColmapBridgeError> {
     if max_features == 0 {
         return Err(DedodeColmapBridgeError::InvalidInput(
             "tiled ALIKED feature budget must be greater than zero".into(),
@@ -69,10 +77,11 @@ pub fn merge_tiled_aliked_features(
                 feature.a12,
                 feature.a21,
                 feature.a22,
-                feature.score,
+                feature.proxy_score,
             ]
             .into_iter()
             .all(f32::is_finite)
+                || feature.score.is_some_and(|score| !score.is_finite())
                 || !feature.descriptor.iter().all(|value| value.is_finite())
                 || feature.x < 0.0
                 || feature.y < 0.0
@@ -88,10 +97,25 @@ pub fn merge_tiled_aliked_features(
             candidates.push((shifted, tile.tile_index));
         }
     }
+    let ordering = if candidates
+        .iter()
+        .all(|(feature, _)| feature.score.is_some())
+    {
+        KeypointCapOrdering::Score
+    } else {
+        KeypointCapOrdering::Proxy
+    };
     candidates.sort_by(|(left, left_tile), (right, right_tile)| {
-        right
-            .score
-            .total_cmp(&left.score)
+        let left_rank = match ordering {
+            KeypointCapOrdering::Score => left.score.expect("score ordering requires scores"),
+            KeypointCapOrdering::Proxy => left.proxy_score,
+        };
+        let right_rank = match ordering {
+            KeypointCapOrdering::Score => right.score.expect("score ordering requires scores"),
+            KeypointCapOrdering::Proxy => right.proxy_score,
+        };
+        right_rank
+            .total_cmp(&left_rank)
             .then_with(|| left.x.total_cmp(&right.x))
             .then_with(|| left.y.total_cmp(&right.y))
             .then_with(|| compare_float_descriptors(&left.descriptor, &right.descriptor))
@@ -138,7 +162,10 @@ pub fn merge_tiled_aliked_features(
             break;
         }
     }
-    Ok(merged)
+    Ok(MergedTiledAlikedFeatures {
+        features: merged,
+        ordering,
+    })
 }
 
 fn compare_float_descriptors(
@@ -574,7 +601,8 @@ mod tests {
             a12: 0.0,
             a21: 0.0,
             a22: 1.0,
-            score,
+            score: Some(score),
+            proxy_score: score,
             descriptor: [f32::from(descriptor); COLMAP_DESCRIPTOR_COLUMNS],
         }
     }
@@ -619,15 +647,18 @@ mod tests {
         let merged = merge_tiled_aliked_features(&synthetic_two_by_two_tiles(), 20)
             .expect("merge tiled features");
 
+        assert_eq!(merged.ordering, KeypointCapOrdering::Score);
         assert!(merged
+            .features
             .iter()
             .any(|feature| feature.x == 105.0 && feature.y == 107.0));
         let overlap = merged
+            .features
             .iter()
             .filter(|feature| feature.x == 100.0 && feature.y == 50.0)
             .collect::<Vec<_>>();
         assert_eq!(overlap.len(), 1);
-        assert_eq!(overlap[0].score, 0.9);
+        assert_eq!(overlap[0].score, Some(0.9));
         assert_eq!(overlap[0].descriptor[0], 3.0);
     }
 
@@ -636,11 +667,12 @@ mod tests {
         let merged = merge_tiled_aliked_features(&synthetic_two_by_two_tiles(), 3)
             .expect("merge tiled features");
 
-        assert_eq!(merged.len(), 3);
+        assert_eq!(merged.features.len(), 3);
         assert_eq!(
             merged
+                .features
                 .iter()
-                .map(|feature| feature.score)
+                .map(|feature| feature.score.expect("scored fixture"))
                 .collect::<Vec<_>>(),
             vec![0.9, 0.8, 0.7]
         );
@@ -660,6 +692,105 @@ mod tests {
             merge_tiled_aliked_features(&reversed, 20).expect("reordered merge"),
             expected
         );
+    }
+
+    fn synthetic_two_by_one_tiles(scores: bool) -> Vec<TiledAlikedFeatureSet> {
+        let mut tiles = vec![
+            TiledAlikedFeatureSet {
+                tile_index: 0,
+                origin_x: 0,
+                origin_y: 0,
+                features: vec![
+                    tiled_feature(40.0, 10.0, 0.2, 1),
+                    tiled_feature(10.0, 10.0, 0.9, 2),
+                ],
+            },
+            TiledAlikedFeatureSet {
+                tile_index: 1,
+                origin_x: 100,
+                origin_y: 0,
+                features: vec![
+                    tiled_feature(20.0, 10.0, 0.8, 3),
+                    tiled_feature(5.0, 10.0, 0.7, 4),
+                ],
+            },
+        ];
+        for tile in &mut tiles {
+            let count = tile.features.len();
+            for (index, feature) in tile.features.iter_mut().enumerate() {
+                feature.proxy_score = count.saturating_sub(index) as f32 / count.max(1) as f32;
+                if !scores {
+                    feature.score = None;
+                }
+            }
+        }
+        tiles
+    }
+
+    #[test]
+    fn two_by_one_merge_caps_by_true_score_and_falls_back_to_proxy_order() {
+        let scored = merge_tiled_aliked_features(&synthetic_two_by_one_tiles(true), 2)
+            .expect("merge scored fixture");
+        assert_eq!(scored.ordering, KeypointCapOrdering::Score);
+        assert_eq!(
+            scored
+                .features
+                .iter()
+                .map(|feature| (feature.x, feature.y))
+                .collect::<Vec<_>>(),
+            [(10.0, 10.0), (120.0, 10.0)]
+        );
+
+        let proxy = merge_tiled_aliked_features(&synthetic_two_by_one_tiles(false), 2)
+            .expect("merge proxy fixture");
+        assert_eq!(proxy.ordering, KeypointCapOrdering::Proxy);
+        assert_eq!(
+            proxy
+                .features
+                .iter()
+                .map(|feature| (feature.x, feature.y))
+                .collect::<Vec<_>>(),
+            [(40.0, 10.0), (120.0, 10.0)]
+        );
+    }
+
+    #[test]
+    fn monotone_scores_select_the_same_rows_as_the_proxy() {
+        let scored = merge_tiled_aliked_features(&synthetic_two_by_one_tiles(true), 3)
+            .expect("merge scored fixture");
+        let mut proxy_tiles = synthetic_two_by_one_tiles(true);
+        for tile in &mut proxy_tiles {
+            for feature in &mut tile.features {
+                feature.score = Some(feature.proxy_score);
+            }
+        }
+        let score_rows = merge_tiled_aliked_features(&proxy_tiles, 3)
+            .expect("merge monotone scores")
+            .features
+            .into_iter()
+            .map(|feature| (feature.x, feature.y))
+            .collect::<Vec<_>>();
+        for tile in &mut proxy_tiles {
+            for feature in &mut tile.features {
+                feature.score = None;
+            }
+        }
+        let proxy_rows = merge_tiled_aliked_features(&proxy_tiles, 3)
+            .expect("merge proxy rows")
+            .features
+            .into_iter()
+            .map(|feature| (feature.x, feature.y))
+            .collect::<Vec<_>>();
+        assert_ne!(
+            scored
+                .features
+                .iter()
+                .map(|feature| (feature.x, feature.y))
+                .collect::<Vec<_>>(),
+            proxy_rows,
+            "non-monotone control must distinguish score and proxy paths"
+        );
+        assert_eq!(score_rows, proxy_rows);
     }
 
     #[test]

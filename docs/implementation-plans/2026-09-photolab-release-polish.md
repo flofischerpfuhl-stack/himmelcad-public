@@ -561,6 +561,26 @@ no silent downgrade to ALIKED-only) until WP-A7i adds the DeDoDe tiling path
 through the same merge kernel. Both are Size S and queued behind the A7c
 smoke evidence.
 
+WP-A7h status 2026-09-10 — the sidecar now owns the exact
+`himmelcad_keypoint_scores(image_id, row_index, score REAL)` table, writes a
+complete image's scores atomically with its keypoints and descriptors, and
+uses score-descending then `(x, y)` ordering for tiled merge and later database
+caps. Missing or incomplete image scores select the A7d proxy path, recorded as
+`keypointCapOrdering: "proxy"`; complete scores record `"score"`. Contract gap
+in WP-A7c architect decision (1), sentence “follow-up WP-A7h persists the
+extractor's true scores”: the named tile runner invokes COLMAP's
+`feature_extractor` directly, which exposes no score artifact or score-output
+argument, so current production output takes the honest proxy path until that
+producer contract is supplied.
+
+WP-A7i status 2026-09-10 — implemented the fail-closed admission from decision
+(2). Any DeDoDe profile whose memory plan selects tiled extraction is recorded
+as a failed job with `alignmentNeedsUntiledExtraction`; its memory plan remains
+visible, and no alignment worker starts. Fast continues through the tiled ALIKED
+path. DeDoDe tiling itself remains unimplemented: the sentence above that names
+WP-A7i as that implementation conflicts with the owning WP-A7i brief, which
+defines this fail-closed enforcement.
+
 Evidence 2026-09-10 13:30 — A7c smoke #5 (24 Sulzberg images, fast profile,
 forced 2×1 ALIKED tiling, HEAD with A7c–A7g, unit MemoryMax=18G):
 alignment completed 24/24 in 51.8 min, machine never at risk. Memory record:
