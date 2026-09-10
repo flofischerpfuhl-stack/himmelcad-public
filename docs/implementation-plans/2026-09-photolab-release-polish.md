@@ -642,6 +642,17 @@ peak 4.65 GB — the per-point constant is ~1.6× too low, recalibrate to
 0 — the scope/sampler wrapping did not take effect on that stage at runtime
 (WP-A7j-b).
 
+WP-A7j-b status 2026-09-10 — the ogr2ogr resident model is recalibrated to
+100 B/point plus the existing 256 MiB base: 4.85 GB at 45.8 M points, within
+5% of the requested ≈4.9 GB check and grounded by the observed 4.65 GB peak.
+The production `gdal_grid`/pyramid/COG wrapping remains a contract gap: those
+children are spawned by `raster_runtime.rs`, which is not in WP-A7j-b's
+permitted-file list. `RasterRuntime::execute` receives neither the frozen
+gdal_grid stage plan nor the job memory sink, so its stage record is still
+written without a worker limit mode or sampled peak. Add
+`crates/himmelcad-sidecar/src/raster_runtime.rs` to WP-A7j-b before claiming
+the runtime-path fake-tool gate or production scope/sampler coverage.
+
 ### WP-A7d — Bound matching from the extracted feature set (Size M)
 
 Implemented 2026-09-09 (working tree, no commit): tiled ALIKED now records the

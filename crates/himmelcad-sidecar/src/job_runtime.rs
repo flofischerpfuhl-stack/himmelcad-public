@@ -55,12 +55,13 @@ const DENSE_RASTER_GDAL_TEMP_BYTES_PER_POINT: u64 = 145;
 const DENSE_RASTER_HEADROOM_NUMERATOR: u64 = 11;
 const DENSE_RASTER_HEADROOM_DENOMINATOR: u64 = 10;
 
-// WP-A7j X6 calibration from the 2026-09-10 45.8 M-point Sulzberg run:
-// ogr2ogr peaked at 2.7 GB RSS (2.7 GB / 45.8 M ~= 59 B/point), while
-// gdal_grid peaked at 3.2 GB anon RSS (3.2 GB / 45.8 M ~= 70 B/point).
+// WP-A7j-b X6 calibration from the 2026-09-10 45.8 M-point Sulzberg DTM run:
+// ogr2ogr peaked at 4.65 GB RSS (4.65 GB / 45.8 M ~= 101.5 B/point), so the
+// measured rate is rounded to 100 B/point; gdal_grid's existing model remains
+// 70 B/point pending a sampled production run through its worker scope.
 // A 256 MiB fixed term covers process startup, GDAL metadata, and small jobs.
 pub const RASTER_PREPARATION_BASE_BYTES: u64 = 256 * MIB;
-pub const OGR2OGR_MEMORY_BYTES_PER_POINT: u64 = 59;
+pub const OGR2OGR_MEMORY_BYTES_PER_POINT: u64 = 100;
 pub const GDAL_GRID_MEMORY_BYTES_PER_POINT: u64 = 70;
 // The hard scope limit retains the existing A7 25% model headroom. File-backed
 // pages are charged to the worker cgroup too, so add 1.5x of the stage's measured
@@ -3559,12 +3560,12 @@ mod tests {
         let within_five_percent = |actual: u64, expected: u64| {
             actual.abs_diff(expected) <= expected.saturating_mul(5) / 100
         };
-        assert!(within_five_percent(plan.ogr2ogr.model_bytes, 3_000_000_000));
+        assert!(within_five_percent(plan.ogr2ogr.model_bytes, 4_900_000_000));
         assert!(within_five_percent(
             plan.gdal_grid.model_bytes,
             3_500_000_000
         ));
-        assert_eq!(plan.ogr2ogr.model_bytes, 2_970_635_456);
+        assert_eq!(plan.ogr2ogr.model_bytes, 4_848_435_456);
         assert_eq!(plan.gdal_grid.model_bytes, 3_474_435_456);
         assert!(plan.memory.observations.is_empty());
         assert!(plan.refusal.is_none());
