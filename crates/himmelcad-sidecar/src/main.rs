@@ -92,7 +92,7 @@ use himmelcad_sidecar::automation_runtime::{
 use himmelcad_sidecar::brush_runtime::{
     BrushRunRequest, BrushRuntime, BrushTrainingSettings, DevBrushRuntimeConfig,
 };
-use himmelcad_sidecar::canonical_app_runtime::CanonicalAppRuntime;
+use himmelcad_sidecar::canonical_app_runtime::{CanonicalAppRuntime, CanonicalGroundSource};
 use himmelcad_sidecar::canonical_project_store::{
     CanonicalImportProgress, CanonicalImportProgressPhase,
 };
@@ -1442,6 +1442,9 @@ async fn main() -> Result<()> {
         version = env!("CARGO_PKG_VERSION"),
         "himmelcad-sidecar starting"
     );
+    if std::env::var("HIMMELCAD_PHOTOLAB_PROBE_WORKER_SCOPE").as_deref() == Ok("1") {
+        let _ = himmelcad_sidecar::colmap_runtime::probe_worker_scope_for_diagnostics();
+    }
 
     let mut stdin_lines = spawn_stdin_reader();
     let projects = Arc::new(ProjectRuntime::default());
@@ -1856,16 +1859,18 @@ async fn handle_pointcloud_segment_rpc(
                     active.cancellation.check()?;
                     emit_progress(
                         Some(&params.progress_key),
-                        index as f64 / total_sources as f64 * 0.88,
+                        0.01 + index as f64 / total_sources as f64 * 0.86,
                         "Capturing visible point-cloud state",
                     );
-                    let source = runtime
-                        .lock()
-                        .expect("canonical app runtime mutex poisoned")
-                        .prepare_ground_source(
-                            source_params.source,
-                            scratch.root.join(format!("source-{index}")),
-                        )?;
+                    let source = capture_pointcloud_source(
+                        &runtime,
+                        source_params.source,
+                        scratch.root.join(format!("source-{index}")),
+                        &active.cancellation,
+                        &params.progress_key,
+                        0.01 + index as f64 / total_sources as f64 * 0.86,
+                        0.01 / total_sources as f64,
+                    )?;
                     let scope = ground_scope(&source, source_params.scope);
                     let scope_value = serde_json::to_value(&scope)?;
                     let prepared: PreparedSegmentResult = prepare_segment_dataset(
@@ -2009,11 +2014,20 @@ async fn handle_pointcloud_ground_rpc(
                     "sampleLimit must be between 1 and 50000"
                 );
                 let scratch = GroundScratch::new(&params.operation_id)?;
-                emit_progress(Some(&params.progress_key), 0.0, "Preparing ground preview");
-                let source = runtime
-                    .lock()
-                    .expect("canonical app runtime mutex poisoned")
-                    .prepare_ground_source(params.source, scratch.root.join("source"))?;
+                emit_progress(
+                    Some(&params.progress_key),
+                    0.01,
+                    "Capturing ground preview source",
+                );
+                let source = capture_pointcloud_source(
+                    &runtime,
+                    params.source,
+                    scratch.root.join("source"),
+                    &active.cancellation,
+                    &params.progress_key,
+                    0.01,
+                    0.19,
+                )?;
                 let scope = ground_scope(&source, params.scope);
                 let request = GroundPrepareRequest {
                     metadata_path: source.input_root.join("metadata.json"),
@@ -2024,11 +2038,12 @@ async fn handle_pointcloud_ground_rpc(
                     params: params.parameters.into(),
                     scope,
                 };
+                let mut ground_progress = GroundProgressThrottle::default();
                 let preview = preview_ground(
                     &request,
                     params.sample_limit,
                     &active.cancellation,
-                    |progress| emit_ground_progress(&params.progress_key, progress, 0.0, 0.98),
+                    |progress| ground_progress.emit(&params.progress_key, progress, 0.20, 0.78),
                 )?;
                 emit_progress(Some(&params.progress_key), 1.0, "Ground preview ready");
                 Ok::<_, anyhow::Error>(serde_json::json!({
@@ -2063,13 +2078,18 @@ async fn handle_pointcloud_ground_rpc(
                 let scratch = GroundScratch::new(&params.operation_id)?;
                 emit_progress(
                     Some(&params.progress_key),
-                    0.0,
+                    0.01,
                     "Capturing visible point-cloud state",
                 );
-                let source = runtime
-                    .lock()
-                    .expect("canonical app runtime mutex poisoned")
-                    .prepare_ground_source(params.source, scratch.root.join("source"))?;
+                let source = capture_pointcloud_source(
+                    &runtime,
+                    params.source,
+                    scratch.root.join("source"),
+                    &active.cancellation,
+                    &params.progress_key,
+                    0.01,
+                    0.09,
+                )?;
                 let scope = ground_scope(&source, params.scope);
                 let scope_value = serde_json::to_value(&scope)?;
                 let parameters_value = serde_json::to_value(params.parameters)?;
@@ -2082,9 +2102,10 @@ async fn handle_pointcloud_ground_rpc(
                     params: params.parameters.into(),
                     scope,
                 };
+                let mut ground_progress = GroundProgressThrottle::default();
                 let prepared: PreparedGroundResult =
                     prepare_ground_datasets(&request, &active.cancellation, |progress| {
-                        emit_ground_progress(&params.progress_key, progress, 0.02, 0.88)
+                        ground_progress.emit(&params.progress_key, progress, 0.10, 0.78)
                     })?;
                 active.cancellation.check()?;
                 emit_progress(
@@ -2092,6 +2113,8 @@ async fn handle_pointcloud_ground_rpc(
                     0.90,
                     "Publishing ground datasets",
                 );
+                let mut publication_phase = None;
+                let mut publication_local = -1.0_f64;
                 let commit = runtime
                     .lock()
                     .expect("canonical app runtime mutex poisoned")
@@ -2110,6 +2133,12 @@ async fn handle_pointcloud_ground_rpc(
                             } else {
                                 publication.completed_bytes as f64 / publication.total_bytes as f64
                             };
+                            let phase_changed = publication_phase != Some(publication.phase);
+                            if !phase_changed && local - publication_local < 0.01 {
+                                return;
+                            }
+                            publication_phase = Some(publication.phase);
+                            publication_local = local;
                             let (start, span, message) = match publication.phase {
                                 CanonicalImportProgressPhase::Staging => {
                                     (0.90, 0.07, "Storing prepared ground datasets")
@@ -2396,17 +2425,23 @@ async fn handle_pointcloud_sampling_rpc(
                 let scratch = GroundScratch::new_with_prefix("sample", &params.operation_id)?;
                 emit_progress(
                     Some(&params.progress_key),
-                    0.0,
+                    0.01,
                     "Capturing visible point-cloud state",
                 );
-                let source = runtime
-                    .lock()
-                    .expect("canonical app runtime mutex poisoned")
-                    .prepare_ground_source(params.source, scratch.root.join("source"))?;
+                let source = capture_pointcloud_source(
+                    &runtime,
+                    params.source,
+                    scratch.root.join("source"),
+                    &active.cancellation,
+                    &params.progress_key,
+                    0.01,
+                    0.09,
+                )?;
                 let source_result = serde_json::to_value(&source.expected)?;
                 let scope = ground_scope(&source, params.scope);
                 let scope_value = serde_json::to_value(&scope)?;
                 let parameters_value = serde_json::to_value(params.parameters)?;
+                let mut sampling_progress = IncrementalProgressThrottle::default();
                 let prepared: PreparedSampleResult = prepare_sampled_cloud(
                     &SamplePrepareRequest {
                         metadata_path: source.input_root.join("metadata.json"),
@@ -2418,10 +2453,19 @@ async fn handle_pointcloud_sampling_rpc(
                         scope,
                     },
                     &active.cancellation,
-                    |progress| emit_sampling_progress(&params.progress_key, progress, 0.02, 0.86),
+                    |progress| {
+                        emit_sampling_progress(
+                            &mut sampling_progress,
+                            &params.progress_key,
+                            progress,
+                            0.10,
+                            0.78,
+                        )
+                    },
                 )?;
                 active.cancellation.check()?;
                 emit_progress(Some(&params.progress_key), 0.88, "Publishing sampled cloud");
+                let mut publication_progress = IncrementalProgressThrottle::default();
                 let commit = runtime
                     .lock()
                     .expect("canonical app runtime mutex poisoned")
@@ -2436,6 +2480,7 @@ async fn handle_pointcloud_sampling_rpc(
                         current_rfc3339(),
                         &mut |publication| {
                             emit_derived_publication_progress(
+                                &mut publication_progress,
                                 &params.progress_key,
                                 publication,
                                 "sampled cloud",
@@ -2493,13 +2538,18 @@ async fn handle_pointcloud_sampling_rpc(
                 let scratch = GroundScratch::new_with_prefix("rasterize", &params.operation_id)?;
                 emit_progress(
                     Some(&params.progress_key),
-                    0.0,
+                    0.01,
                     "Capturing visible point-cloud state",
                 );
-                let source = runtime
-                    .lock()
-                    .expect("canonical app runtime mutex poisoned")
-                    .prepare_ground_source(params.source, scratch.root.join("source"))?;
+                let source = capture_pointcloud_source(
+                    &runtime,
+                    params.source,
+                    scratch.root.join("source"),
+                    &active.cancellation,
+                    &params.progress_key,
+                    0.01,
+                    0.09,
+                )?;
                 let source_result = serde_json::json!({
                     "entityId": source.expected.id,
                     "revision": source.expected.revision,
@@ -2508,6 +2558,7 @@ async fn handle_pointcloud_sampling_rpc(
                 let scope = ground_scope(&source, params.scope);
                 let scope_value = serde_json::to_value(&scope)?;
                 let parameters_value = serde_json::to_value(params.parameters)?;
+                let mut rasterize_progress = IncrementalProgressThrottle::default();
                 let prepared: PreparedHeightGrid = prepare_height_grid(
                     &RasterizePrepareRequest {
                         metadata_path: source.input_root.join("metadata.json"),
@@ -2518,7 +2569,15 @@ async fn handle_pointcloud_sampling_rpc(
                         scope,
                     },
                     &active.cancellation,
-                    |progress| emit_rasterize_progress(&params.progress_key, progress, 0.02, 0.86),
+                    |progress| {
+                        emit_rasterize_progress(
+                            &mut rasterize_progress,
+                            &params.progress_key,
+                            progress,
+                            0.10,
+                            0.78,
+                        )
+                    },
                 )?;
                 active.cancellation.check()?;
                 emit_progress(
@@ -2526,6 +2585,7 @@ async fn handle_pointcloud_sampling_rpc(
                     0.88,
                     &format!("Publishing {output_noun}"),
                 );
+                let mut publication_progress = IncrementalProgressThrottle::default();
                 let commit = runtime
                     .lock()
                     .expect("canonical app runtime mutex poisoned")
@@ -2540,6 +2600,7 @@ async fn handle_pointcloud_sampling_rpc(
                         current_rfc3339(),
                         &mut |publication| {
                             emit_derived_publication_progress(
+                                &mut publication_progress,
                                 &params.progress_key,
                                 publication,
                                 output_noun,
@@ -2573,8 +2634,17 @@ async fn handle_pointcloud_sampling_rpc(
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn emit_sampling_progress(progress_key: &str, progress: SamplingProgress, start: f64, span: f64) {
+fn emit_sampling_progress(
+    throttle: &mut IncrementalProgressThrottle,
+    progress_key: &str,
+    progress: SamplingProgress,
+    start: f64,
+    span: f64,
+) {
     let local = progress.completed as f64 / progress.total.max(1) as f64;
+    if !throttle.should_emit(progress.phase.label(), local) {
+        return;
+    }
     let phase_start = match progress.phase {
         SamplingPhase::Scan => 0.0,
         SamplingPhase::Select => 1.0 / 3.0,
@@ -2588,8 +2658,17 @@ fn emit_sampling_progress(progress_key: &str, progress: SamplingProgress, start:
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn emit_rasterize_progress(progress_key: &str, progress: RasterizeProgress, start: f64, span: f64) {
+fn emit_rasterize_progress(
+    throttle: &mut IncrementalProgressThrottle,
+    progress_key: &str,
+    progress: RasterizeProgress,
+    start: f64,
+    span: f64,
+) {
     let local = progress.completed as f64 / progress.total.max(1) as f64;
+    if !throttle.should_emit(progress.phase.label(), local) {
+        return;
+    }
     let phase_start = match progress.phase {
         RasterizePhase::Scan => 0.0,
         RasterizePhase::Aggregate => 1.0 / 3.0,
@@ -2604,6 +2683,7 @@ fn emit_rasterize_progress(progress_key: &str, progress: RasterizeProgress, star
 
 #[allow(clippy::cast_precision_loss)]
 fn emit_derived_publication_progress(
+    throttle: &mut IncrementalProgressThrottle,
     progress_key: &str,
     publication: himmelcad_sidecar::canonical_project_store::CanonicalImportProgress,
     noun: &str,
@@ -2617,11 +2697,32 @@ fn emit_derived_publication_progress(
         CanonicalImportProgressPhase::Staging => (0.88, 0.09, "Storing"),
         CanonicalImportProgressPhase::Publishing => (0.97, 0.03, "Committing"),
     };
+    if !throttle.should_emit(verb, local) {
+        return;
+    }
     emit_progress(
         Some(progress_key),
         start + span * local.clamp(0.0, 1.0),
         &format!("{verb} prepared {noun}"),
     );
+}
+
+#[derive(Default)]
+struct IncrementalProgressThrottle {
+    phase: Option<&'static str>,
+    local: f64,
+}
+
+impl IncrementalProgressThrottle {
+    fn should_emit(&mut self, phase: &'static str, local: f64) -> bool {
+        let local = local.clamp(0.0, 1.0);
+        if self.phase == Some(phase) && local - self.local < 0.01 {
+            return false;
+        }
+        self.phase = Some(phase);
+        self.local = local;
+        true
+    }
 }
 
 fn ground_scope(
@@ -2638,24 +2739,80 @@ fn ground_scope(
     }
 }
 
-#[allow(clippy::cast_precision_loss)]
-fn emit_ground_progress(progress_key: &str, progress: GroundProgress, start: f64, span: f64) {
-    let local = if progress.total == 0 {
-        0.0
-    } else {
-        progress.completed as f64 / progress.total as f64
-    };
-    let phase_start = match progress.phase {
-        GroundPhase::Grid => 0.0,
-        GroundPhase::Filter => 0.25,
-        GroundPhase::Classify => 0.50,
-        GroundPhase::Bake => 0.75,
-    };
-    emit_progress(
-        Some(progress_key),
-        start + span * (phase_start + local.clamp(0.0, 1.0) * 0.25),
-        progress.phase.label(),
-    );
+fn capture_pointcloud_source(
+    runtime: &Arc<Mutex<CanonicalAppRuntime>>,
+    expected: EntityVersionRef,
+    input_root: PathBuf,
+    cancellation: &CancellationToken,
+    progress_key: &str,
+    start: f64,
+    span: f64,
+) -> Result<CanonicalGroundSource> {
+    let capture = runtime
+        .lock()
+        .expect("canonical app runtime mutex poisoned")
+        .plan_ground_source_capture(expected, input_root)?;
+    let mut last_fraction = -1.0_f64;
+    let mut last_artifact = String::new();
+    let mut completed_bytes = 0_u64;
+    for artifact in &capture.artifacts {
+        let artifact_name = artifact.artifact.clone();
+        himmelcad_sidecar::canonical_project_store::pin_canonical_object_with_progress(
+            &artifact.source_path,
+            &artifact.destination_path,
+            &artifact.object_hash,
+            artifact.byte_length,
+            &mut |bytes| {
+                completed_bytes = completed_bytes.saturating_add(bytes);
+                let local = completed_bytes as f64 / capture.total_bytes.max(1) as f64;
+                if artifact_name != last_artifact || local >= 1.0 || local - last_fraction >= 0.01 {
+                    emit_progress(
+                        Some(progress_key),
+                        start + span * local.clamp(0.0, 1.0),
+                        &format!("Capturing resident {artifact_name}"),
+                    );
+                    last_fraction = local;
+                    last_artifact.clone_from(&artifact_name);
+                }
+                !cancellation.is_cancel_requested()
+            },
+        )?;
+    }
+    Ok(capture.source)
+}
+
+#[derive(Default)]
+struct GroundProgressThrottle {
+    phase: Option<GroundPhase>,
+    local: f64,
+}
+
+impl GroundProgressThrottle {
+    #[allow(clippy::cast_precision_loss)]
+    fn emit(&mut self, progress_key: &str, progress: GroundProgress, start: f64, span: f64) {
+        let local = if progress.total == 0 {
+            0.0
+        } else {
+            progress.completed as f64 / progress.total as f64
+        }
+        .clamp(0.0, 1.0);
+        if self.phase == Some(progress.phase) && local - self.local < 0.01 {
+            return;
+        }
+        self.phase = Some(progress.phase);
+        self.local = local;
+        let phase_start = match progress.phase {
+            GroundPhase::Grid => 0.0,
+            GroundPhase::Filter => 0.25,
+            GroundPhase::Classify => 0.50,
+            GroundPhase::Bake => 0.75,
+        };
+        emit_progress(
+            Some(progress_key),
+            start + span * (phase_start + local * 0.25),
+            progress.phase.label(),
+        );
+    }
 }
 
 struct GroundScratch {

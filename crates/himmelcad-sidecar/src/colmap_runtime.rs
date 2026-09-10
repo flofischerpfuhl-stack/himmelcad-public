@@ -75,6 +75,11 @@ const MINIMUM_WORKER_MEMORY_LIMIT_BYTES: u64 = 2 * GIB;
 // The A7d smoke reached 6.31 GB RSS at a 10.6 GB address-space limit, so the fallback doubles the
 // resident limit to cover thread arenas and mapped weights without pretending the units match.
 const WORKER_RLIMIT_AS_MULTIPLIER: u64 = 2;
+// WP-A7g X6 diagnostic bound: enough context to identify a systemd property or bus failure while
+// keeping the once-per-process line bounded when a launcher emits an unexpectedly large message.
+const SYSTEMD_SCOPE_PROBE_DIAGNOSTIC_MAX_CHARS: usize = 512;
+#[cfg(target_os = "linux")]
+const PRLIMIT_PATH: &str = "/usr/bin/prlimit";
 // X6 tunable: depth 11 retains facade-scale detail without the extreme memory growth of
 // deeper Poisson octrees on typical workstation dense clouds.
 const POISSON_MESHING_DEPTH: u32 = 11;
@@ -3687,11 +3692,7 @@ fn spawn_prepared_colmap_child(
             ..
         })
     ) {
-        for name in ["DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"] {
-            if let Some(value) = std::env::var_os(name) {
-                command.env(name, value);
-            }
-        }
+        configure_systemd_user_bus_environment(&mut command);
     }
     let child = process_group::spawn(&mut command).map_err(ColmapRuntimeError::Io)?;
     Ok((child, worker_limit_plan))
@@ -3750,7 +3751,7 @@ fn worker_command(
             enforced_limit_bytes: memory_limit_bytes.saturating_mul(WORKER_RLIMIT_AS_MULTIPLIER),
         };
         return (
-            worker_command_for_plan(Path::new("/usr/bin/prlimit"), executable, plan),
+            worker_command_for_plan(Path::new(PRLIMIT_PATH), executable, plan),
             Some(plan),
         );
     }
@@ -3775,9 +3776,13 @@ fn worker_command_for_plan(
                 .arg(format!("MemoryMax={}", plan.enforced_limit_bytes))
                 .arg("-p")
                 .arg("MemorySwapMax=0")
-                .arg("-p")
-                .arg("LimitCORE=0")
                 .arg("--collect")
+                .arg("--")
+                // A scope can enforce cgroup properties, but it cannot apply execution-context
+                // properties such as LimitCORE. Apply the child-only rlimit immediately before
+                // exec while the resulting process remains inside the transient scope.
+                .arg(PRLIMIT_PATH)
+                .arg("--core=0")
                 .arg("--")
                 .arg(executable);
             command
@@ -3802,25 +3807,24 @@ fn systemd_user_scope() -> Option<&'static Path> {
             let Some(executable) = find_in_path("systemd-run") else {
                 tracing::info!(
                     available = false,
+                    reason = "systemd-run was not found in PATH or the standard system paths",
                     "PhotoLab systemd user-scope probe completed"
                 );
                 return None;
             };
-            let status = systemd_user_scope_probe_command(&executable)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-            let available = status.as_ref().is_ok_and(ExitStatus::success);
-            match status {
-                Ok(status) => tracing::info!(
+            let outcome = run_systemd_user_scope_probe(&executable);
+            let available = outcome.as_ref().is_ok_and(|output| output.status.success());
+            match outcome {
+                Ok(output) => tracing::info!(
                     available,
-                    %status,
+                    status = %output.status,
+                    stdout = %systemd_probe_excerpt(&output.stdout),
+                    stderr = %systemd_probe_excerpt(&output.stderr),
                     "PhotoLab systemd user-scope probe completed"
                 ),
                 Err(ref error) => tracing::info!(
                     available,
-                    %error,
+                    reason = %error,
                     "PhotoLab systemd user-scope probe completed"
                 ),
             }
@@ -3840,12 +3844,86 @@ fn systemd_user_scope_probe_command(executable: &Path) -> Command {
         .arg("MemoryMax=64M")
         .arg("-p")
         .arg("MemorySwapMax=0")
-        .arg("-p")
-        .arg("LimitCORE=0")
         .arg("--collect")
         .arg("--")
+        .arg(PRLIMIT_PATH)
+        .arg("--core=0")
+        .arg("--")
         .arg("/bin/true");
+    configure_systemd_user_bus_environment(&mut command);
     command
+}
+
+#[cfg(target_os = "linux")]
+fn run_systemd_user_scope_probe(executable: &Path) -> io::Result<std::process::Output> {
+    systemd_user_scope_probe_command(executable)
+        .stdin(Stdio::null())
+        .output()
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_probe_excerpt(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .trim()
+        .chars()
+        .take(SYSTEMD_SCOPE_PROBE_DIAGNOSTIC_MAX_CHARS)
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn configure_systemd_user_bus_environment(command: &mut Command) {
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .or_else(systemd_user_runtime_dir);
+    // The worker command starts from `env_clear()`, so the bus variables must be set
+    // explicitly even when the sidecar itself inherited them (A7g follow-up: the
+    // scope failed with "Failed to connect to bus: No medium found" inside units).
+    if let Some(runtime_dir) = runtime_dir.as_ref() {
+        command.env("XDG_RUNTIME_DIR", runtime_dir);
+    }
+    if let Some(bus) = std::env::var_os("DBUS_SESSION_BUS_ADDRESS") {
+        command.env("DBUS_SESSION_BUS_ADDRESS", bus);
+    } else if let Some(bus) = runtime_dir
+        .as_ref()
+        .map(|runtime_dir| runtime_dir.join("bus"))
+        .filter(|bus| bus.exists())
+    {
+        command.env(
+            "DBUS_SESSION_BUS_ADDRESS",
+            format!("unix:path={}", bus.display()),
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_user_runtime_dir() -> Option<PathBuf> {
+    let status = fs::read_to_string("/proc/self/status").ok()?;
+    let uid = effective_uid_from_proc_status(&status)?;
+    let runtime_dir = Path::new("/run/user").join(uid.to_string());
+    runtime_dir.is_dir().then_some(runtime_dir)
+}
+
+#[cfg(target_os = "linux")]
+fn effective_uid_from_proc_status(status: &str) -> Option<u32> {
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("Uid:"))?
+        .split_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()
+}
+
+/// Runs the process-cached worker-scope probe so an integration harness can capture its one log
+/// line without starting COLMAP.
+#[cfg(target_os = "linux")]
+pub fn probe_worker_scope_for_diagnostics() -> bool {
+    systemd_user_scope().is_some()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub const fn probe_worker_scope_for_diagnostics() -> bool {
+    false
 }
 
 #[cfg(target_os = "linux")]
@@ -7734,9 +7812,10 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
                 "MemoryMax=4294967296",
                 "-p",
                 "MemorySwapMax=0",
-                "-p",
-                "LimitCORE=0",
                 "--collect",
+                "--",
+                "/usr/bin/prlimit",
+                "--core=0",
                 "--",
                 "/opt/himmelcad/colmap",
             ]
@@ -7759,13 +7838,128 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
                 "MemoryMax=64M",
                 "-p",
                 "MemorySwapMax=0",
-                "-p",
-                "LimitCORE=0",
                 "--collect",
+                "--",
+                "/usr/bin/prlimit",
+                "--core=0",
                 "--",
                 "/bin/true",
             ]
             .map(OsStr::new)
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn systemd_user_runtime_fallback_uses_the_effective_uid() {
+        assert_eq!(
+            effective_uid_from_proc_status("Name:\ttest\nUid:\t1000\t2000\t3000\t4000\n"),
+            Some(2000)
+        );
+    }
+
+    fn print_probe_outcome(label: &str, outcome: &io::Result<std::process::Output>) {
+        match outcome {
+            Ok(output) => {
+                println!("{label}_status={}", output.status);
+                println!(
+                    "{label}_stdout_begin\n{}{label}_stdout_end",
+                    String::from_utf8_lossy(&output.stdout)
+                );
+                println!(
+                    "{label}_stderr_begin\n{}{label}_stderr_end",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            Err(error) => println!("{label}_spawn_error={error}"),
+        }
+    }
+
+    #[test]
+    #[ignore = "operational diagnostic; requires a systemd user manager"]
+    #[cfg(target_os = "linux")]
+    fn systemd_user_scope_probe_diagnostic() {
+        let Some(executable) = find_in_path("systemd-run") else {
+            println!("probe_skipped=systemd-run was not found in PATH or standard system paths");
+            return;
+        };
+        let outcome = run_systemd_user_scope_probe(&executable);
+        print_probe_outcome("probe", &outcome);
+    }
+
+    #[test]
+    #[ignore = "operational regression; requires a systemd user manager"]
+    #[cfg(target_os = "linux")]
+    fn worker_scope_inside_unit() {
+        const CHILD_MARKER: &str = "HIMMELCAD_PHOTOLAB_WORKER_SCOPE_TEST_CHILD";
+
+        if std::env::var(CHILD_MARKER).as_deref() == Ok("1") {
+            let executable = find_in_path("systemd-run")
+                .expect("systemd-run disappeared after the parent started the transient unit");
+            let probe = run_systemd_user_scope_probe(&executable);
+            print_probe_outcome("inside_unit_probe", &probe);
+            assert!(
+                probe.as_ref().is_ok_and(|output| output.status.success()),
+                "the exact worker-scope probe failed inside the transient user unit"
+            );
+
+            let scratch = TestDirectory(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../.build/codex-scratch/a7g")
+                    .join(format!("worker-scope-inside-unit-{}", std::process::id())),
+            );
+            let spec = CommandSpec {
+                kind: ColmapCommandKind::MatchesImporter,
+                stage_label: "Import matches",
+                args: Vec::new(),
+            };
+            let limit_bytes = 2 * GIB;
+            let (mut child, plan) =
+                spawn_colmap_child(Path::new("/bin/true"), &spec, &scratch.0, Some(limit_bytes))
+                    .expect("spawn cgroup-scoped fake COLMAP inside user unit");
+            assert_eq!(
+                plan,
+                Some(WorkerMemoryLimitPlan {
+                    mode: WorkerMemoryLimitMode::CgroupScope,
+                    enforced_limit_bytes: limit_bytes,
+                })
+            );
+            let outcome = supervise_child(&mut child, &CancellationToken::new(), |_, _| {})
+                .expect("supervise cgroup-scoped fake COLMAP inside user unit");
+            assert!(outcome.status.success(), "{:?}", outcome.log_tail);
+            println!("inside_unit_worker_memory_limit_mode=cgroupScope");
+            return;
+        }
+
+        let Some(systemd_run) = find_in_path("systemd-run") else {
+            println!("skipped: systemd-run was not found in PATH or standard system paths");
+            return;
+        };
+        let current_exe = std::env::current_exe().expect("resolve current test executable");
+        let mut command = Command::new(systemd_run);
+        command
+            .arg("--user")
+            .arg("--wait")
+            .arg("--pipe")
+            .arg("--collect")
+            .arg("--quiet")
+            .arg("-p")
+            .arg("MemoryMax=2G")
+            .arg("-p")
+            .arg("MemorySwapMax=0")
+            .arg(format!("--setenv={CHILD_MARKER}=1"))
+            .arg("--")
+            .arg(current_exe)
+            .arg("--exact")
+            .arg("colmap_runtime::tests::worker_scope_inside_unit")
+            .arg("--ignored")
+            .arg("--nocapture");
+        configure_systemd_user_bus_environment(&mut command);
+        let outcome = command.output();
+        print_probe_outcome("outer_unit", &outcome);
+        assert!(
+            outcome.as_ref().is_ok_and(|output| output.status.success()),
+            "systemd-run exists but failed to execute the in-unit worker-scope regression"
         );
     }
 

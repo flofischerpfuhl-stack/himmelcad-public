@@ -605,6 +605,23 @@ threads for 8,122 keypoints per image. READY FOR SMOKE with unit
 and either success at a bounded thread count or the typed matching-memory
 refusal, never a unit-level kill.
 
+### WP-A7g — Engage the per-worker cgroup scope inside a user unit (Size S)
+
+Implemented 2026-09-10 (working tree, no commit; host-unit verification blocked
+by the Codex sandbox): the A7f probe failed because the later no-core-dump
+follow-up passed the execution-context property `LimitCORE=0` to a transient
+scope. Scope units manage externally created processes and cannot apply that
+rlimit. The scope now retains only `MemoryMax` and `MemorySwapMax`; it starts
+the worker through `/usr/bin/prlimit --core=0` so the child still cannot emit a
+core dump. Missing user-bus environment is reconstructed from
+`/run/user/<uid>/bus`, and the once-per-process probe line includes bounded
+stdout and stderr explaining any fallback. An ignored diagnostic prints the
+exact probe outcome, and `worker_scope_inside_unit` starts its test executable
+in a 2 GB transient user unit, runs the exact nested probe, then executes a
+fake COLMAP worker and requires `cgroupScope`. In this Codex session the host
+denied user-bus access with `Operation not permitted`, including for the outer
+unit itself, so the required in-unit regression and smoke #5 remain pending.
+
 ## Phase B — Resume, shutdown, and job-owner integrity
 
 ### WP-B1 — Wire the checkpoint sink; make `interruptedRecoverable` real (Size M)
