@@ -193,7 +193,7 @@ use himmelcad_sidecar::raster_runtime::{
     ElevationSurface, ElevationViewRange, GdalToolchainConfig, MosaicOrder,
     OrthomosaicElevationSupport, OrthomosaicRequest, RasterBounds, RasterBuildCommand, RasterCrs,
     RasterGrid, RasterNoDataValue, RasterPhase, RasterProductRequest, RasterProgress,
-    RasterResampling, RasterResumeCheckpointValidation, RasterRuntime,
+    RasterResampling, RasterResumeCheckpointValidation, RasterRuntime, RasterRuntimeMemory,
 };
 use himmelcad_sidecar::site_calibration_reader::inspect_site_calibration;
 use himmelcad_sidecar::splat_tiler::{tile_brush_ply, SplatTilerError};
@@ -10761,29 +10761,36 @@ fn run_raster_product(
     let stage_count = 7 + stage_offset;
     let handle = tokio::runtime::Handle::current();
     let summary = handle
-        .block_on(runtime.execute(
-            &command,
-            &context.cancellation,
-            Some(&context.checkpoints),
-            move |progress| {
-                let sink = progress_sink.clone();
-                tokio::spawn(async move {
-                    // Intermediate progress is best-effort; terminal state persistence is handled by JobManager.
-                    let _ = sink
-                        .report(raster_job_progress(progress, stage_offset, stage_count))
-                        .await;
-                });
-            },
-        ))
+        .block_on(
+            runtime.execute(
+                &command,
+                &context.cancellation,
+                Some(&context.checkpoints),
+                raster_memory_plan
+                    .as_ref()
+                    .map(|plan| RasterRuntimeMemory::new(plan.gdal_grid, context.memory.clone())),
+                move |progress| {
+                    let sink = progress_sink.clone();
+                    tokio::spawn(async move {
+                        // Intermediate progress is best-effort; terminal state persistence is handled by JobManager.
+                        let _ = sink
+                            .report(raster_job_progress(progress, stage_offset, stage_count))
+                            .await;
+                    });
+                },
+            ),
+        )
         .map_err(|error| {
-            if matches!(
-                error,
-                himmelcad_sidecar::raster_runtime::RasterRuntimeError::Cancelled
-            ) {
+            match error {
+            himmelcad_sidecar::raster_runtime::RasterRuntimeError::Cancelled => {
                 JobWorkerError::Cancelled
-            } else {
-                worker_error("rasterRuntime", &error.to_string())
             }
+            memory_error
+            @ himmelcad_sidecar::raster_runtime::RasterRuntimeError::WorkerMemoryLimit {
+                ..
+            } => worker_error("workerMemoryLimit", &memory_error.to_string()),
+            other => worker_error("rasterRuntime", &other.to_string()),
+        }
         })?;
     context.check_cancelled()?;
     let mut ground_classification_sha256 = None;

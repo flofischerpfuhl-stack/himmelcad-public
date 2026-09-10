@@ -1449,6 +1449,29 @@ struct GdalCommandMemory<'a> {
     sink: &'a JobMemorySink,
 }
 
+#[cfg(test)]
+pub(crate) fn run_fake_gdal_stage_with_memory(
+    executable: &Path,
+    arguments: &[String],
+    cancellation: &CancellationToken,
+    memory_plan: RasterPreparationStagePlan,
+    memory: &JobMemorySink,
+    worker_plan: WorkerMemoryLimitPlan,
+) -> Result<(), DenseRasterPrepError> {
+    run_gdal_command_inner(
+        executable,
+        arguments,
+        None,
+        None,
+        cancellation,
+        Some(GdalCommandMemory {
+            plan: memory_plan,
+            sink: memory,
+        }),
+        Some(worker_plan),
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_gdal_command_inner(
     executable: &Path,

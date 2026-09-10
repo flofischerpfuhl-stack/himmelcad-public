@@ -653,6 +653,29 @@ written without a worker limit mode or sampled peak. Add
 `crates/himmelcad-sidecar/src/raster_runtime.rs` to WP-A7j-b before claiming
 the runtime-path fake-tool gate or production scope/sampler coverage.
 
+WP-A7j-c status 2026-09-10 — fixed for the admitted DEM path. The bypass was
+`RasterRuntime::run_capture_in`: it spawned a Tokio child directly instead of
+using the shared worker-scope command and sampled process-group supervisor.
+`RasterRuntime::execute` now receives the frozen `gdal_grid` stage plan and
+job memory sink, and applies them to every child it starts: toolchain audit
+(`gdal_grid`, `gdal_rasterize`, `gdalwarp`, `gdalbuildvrt`, `gdal_translate`,
+`gdalinfo`, `ogrinfo`), vector validation (`ogrinfo`), source rasterization
+(`gdal_grid` or `gdal_rasterize`), mosaic construction (`gdalbuildvrt` and
+`gdal_translate`), fixed-tile pyramid construction (`gdalwarp`), view export
+(`gdal_translate`), COG publication (`gdal_translate`), and COG validation
+(`gdalinfo`). Bounded steps are serialized because the frozen plan describes
+one full-envelope worker. Each child updates the existing “Rasterize DEM with
+gdal_grid” stage only after supervision has sampled it; limit hits are durable
+before the typed failure returns. The runtime-path fake-tool gate retains 4 MiB
+for 200 ms, verifies all seven executables inherit the explicit worker limit,
+and requires a nonzero durable peak and worker-limit mode. Record wording gap:
+WP-A7j-c names `gdaladdo`, but this runtime has no `gdaladdo` tool or spawn;
+its pyramid tiles are built with `gdalwarp`, while COG-internal overviews are
+requested by `gdal_translate -of COG -co OVERVIEWS=AUTO`. The orthomosaic job
+still has no frozen raster memory plan; reusing the DEM-named `gdal_grid` stage
+would claim false work, so orthomosaic calibration/admission remains a separate
+contract decision rather than an invented WP-A7j-c model.
+
 ### WP-A7d — Bound matching from the extracted feature set (Size M)
 
 Implemented 2026-09-09 (working tree, no commit): tiled ALIKED now records the

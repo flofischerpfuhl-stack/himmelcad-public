@@ -3760,15 +3760,21 @@ pub(crate) fn worker_command(
     if let Some(memory_limit_bytes) = memory_limit_bytes
         .filter(|_| std::env::var("HIMMELCAD_PHOTOLAB_WORKER_RLIMIT_DISABLE").as_deref() != Ok("1"))
     {
-        if let Some(systemd_run) = systemd_user_scope() {
-            let plan = WorkerMemoryLimitPlan {
-                mode: WorkerMemoryLimitMode::CgroupScope,
-                enforced_limit_bytes: memory_limit_bytes,
-            };
-            return (
-                worker_command_for_plan(systemd_run, executable, plan),
-                Some(plan),
-            );
+        // Operational/test override for hosts where probing a systemd user manager is forbidden;
+        // the hard address-space fallback remains active instead of disabling the worker bound.
+        let force_rlimit =
+            std::env::var("HIMMELCAD_PHOTOLAB_WORKER_FORCE_RLIMIT_AS").as_deref() == Ok("1");
+        if !force_rlimit {
+            if let Some(systemd_run) = systemd_user_scope() {
+                let plan = WorkerMemoryLimitPlan {
+                    mode: WorkerMemoryLimitMode::CgroupScope,
+                    enforced_limit_bytes: memory_limit_bytes,
+                };
+                return (
+                    worker_command_for_plan(systemd_run, executable, plan),
+                    Some(plan),
+                );
+            }
         }
         let plan = WorkerMemoryLimitPlan {
             mode: WorkerMemoryLimitMode::RlimitAs,
@@ -3826,6 +3832,9 @@ pub(crate) fn worker_command_for_plan(
 
 #[cfg(target_os = "linux")]
 fn systemd_user_scope() -> Option<&'static Path> {
+    if std::env::var("HIMMELCAD_PHOTOLAB_WORKER_FORCE_RLIMIT_AS").as_deref() == Ok("1") {
+        return None;
+    }
     SYSTEMD_USER_SCOPE
         .get_or_init(|| {
             let Some(executable) = find_in_path("systemd-run") else {

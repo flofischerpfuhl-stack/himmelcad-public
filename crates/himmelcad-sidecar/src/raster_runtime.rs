@@ -6,6 +6,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::thread;
 use std::time::Duration;
 
 use fs2::FileExt;
@@ -17,13 +18,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
-use tokio::io::AsyncReadExt;
-use tokio::process::Command;
 
-use crate::process_group::{self, ProcessGroupDropGuard};
+use crate::colmap_runtime::{
+    configure_systemd_user_bus_environment, worker_command, WorkerMemoryLimitMode,
+    WorkerMemoryLimitPlan,
+};
+use crate::job_runtime::{CheckpointSink, JobMemorySink, RasterPreparationStagePlan};
+use crate::process_group;
 use tokio::task::JoinSet;
 
-use crate::job_runtime::CheckpointSink;
 use crate::viewer_raster_manifest::{
     publish_prepared_elevation_hierarchy, PreparedElevationHierarchyError,
     PreparedElevationHierarchyOptions,
@@ -373,6 +376,14 @@ pub enum RasterRuntimeError {
     UnsupportedVersion(String),
     #[error("GDAL process failed ({status}): {stderr}")]
     ProcessFailed { status: String, stderr: String },
+    #[error("{stage}: worker exceeded its memory envelope (limit {limit_bytes} bytes, sampled peak {peak_rss_bytes} bytes)")]
+    WorkerMemoryLimit {
+        stage: String,
+        limit_bytes: u64,
+        peak_rss_bytes: u64,
+    },
+    #[error("job memory record rejected an update: {0}")]
+    MemoryRecord(String),
     #[error("GDAL output exceeded the {CAPTURE_LIMIT}-byte capture limit")]
     OutputLimit,
     #[error("GDAL output is malformed: {0}")]
@@ -404,6 +415,31 @@ pub enum RasterRuntimeError {
 #[derive(Debug, Clone)]
 pub struct RasterRuntime {
     config: CanonicalToolchain,
+}
+
+/// Frozen GDAL worker bound and durable memory sink for one raster build.
+#[derive(Debug, Clone)]
+pub struct RasterRuntimeMemory {
+    plan: RasterPreparationStagePlan,
+    sink: JobMemorySink,
+    worker_plan_override: Option<WorkerMemoryLimitPlan>,
+}
+
+impl RasterRuntimeMemory {
+    #[must_use]
+    pub fn new(plan: RasterPreparationStagePlan, sink: JobMemorySink) -> Self {
+        Self {
+            plan,
+            sink,
+            worker_plan_override: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_worker_plan_override(mut self, plan: WorkerMemoryLimitPlan) -> Self {
+        self.worker_plan_override = Some(plan);
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -487,6 +523,20 @@ enum Tool {
     VectorInfo,
 }
 
+impl Tool {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Grid => "gdal_grid",
+            Self::Rasterize => "gdal_rasterize",
+            Self::Warp => "gdalwarp",
+            Self::BuildVrt => "gdalbuildvrt",
+            Self::Translate => "gdal_translate",
+            Self::Info => "gdalinfo",
+            Self::VectorInfo => "ogrinfo",
+        }
+    }
+}
+
 impl RasterRuntime {
     /// Canonicalizes every executable and allowed filesystem root.
     pub fn open(config: GdalToolchainConfig) -> Result<Self, RasterRuntimeError> {
@@ -528,6 +578,14 @@ impl RasterRuntime {
         &self,
         cancellation: &CancellationToken,
     ) -> Result<GdalAudit, RasterRuntimeError> {
+        self.audit_with_memory(cancellation, None).await
+    }
+
+    async fn audit_with_memory(
+        &self,
+        cancellation: &CancellationToken,
+        memory: Option<&RasterRuntimeMemory>,
+    ) -> Result<GdalAudit, RasterRuntimeError> {
         check_cancelled(cancellation)?;
         let mut version = None;
         let mut executable_sha256 = BTreeMap::new();
@@ -541,7 +599,12 @@ impl RasterRuntime {
             ("ogrinfo", Tool::VectorInfo),
         ] {
             let captured = self
-                .run_capture(tool, vec![OsString::from("--version")], cancellation)
+                .run_capture_with_memory(
+                    tool,
+                    vec![OsString::from("--version")],
+                    cancellation,
+                    memory,
+                )
                 .await?;
             let reported = parse_version(&captured).ok_or_else(|| {
                 RasterRuntimeError::UnsupportedVersion(format!("{name}: {captured}"))
@@ -559,17 +622,19 @@ impl RasterRuntime {
             executable_sha256.insert(name.into(), hash_file_async(self.tool_path(tool)).await?);
         }
         let raster_text = self
-            .run_capture(
+            .run_capture_with_memory(
                 Tool::Translate,
                 vec![OsString::from("--formats")],
                 cancellation,
+                memory,
             )
             .await?;
         let vector_text = self
-            .run_capture(
+            .run_capture_with_memory(
                 Tool::VectorInfo,
                 vec![OsString::from("--formats")],
                 cancellation,
+                memory,
             )
             .await?;
         let raster_drivers =
@@ -643,6 +708,7 @@ impl RasterRuntime {
         command: &RasterBuildCommand,
         cancellation: &CancellationToken,
         checkpoint_sink: Option<&CheckpointSink>,
+        memory: Option<RasterRuntimeMemory>,
         mut progress: P,
     ) -> Result<RasterBuildSummary, RasterRuntimeError>
     where
@@ -672,8 +738,11 @@ impl RasterRuntime {
             checkpoint_key.clone(),
         )
         .await?;
-        let audit = self.audit(cancellation).await?;
-        self.validate_inputs(command, cancellation).await?;
+        let audit = self
+            .audit_with_memory(cancellation, memory.as_ref())
+            .await?;
+        self.validate_inputs(command, cancellation, memory.as_ref())
+            .await?;
         let (job_directory, checkpoint_path) =
             raster_checkpoint_storage(&self.config.staging_root, command)?;
         create_job_directories(job_directory.clone(), checkpoint_path.clone()).await?;
@@ -694,6 +763,7 @@ impl RasterRuntime {
             &mut checkpoint,
             cancellation,
             checkpoint_sink,
+            memory.clone(),
             &mut progress,
         )
         .await?;
@@ -710,6 +780,7 @@ impl RasterRuntime {
                 &mut checkpoint,
                 cancellation,
                 checkpoint_sink,
+                memory.clone(),
                 &mut progress,
             )
             .await?;
@@ -723,6 +794,7 @@ impl RasterRuntime {
             &mut checkpoint,
             cancellation,
             checkpoint_sink,
+            memory.clone(),
             &mut progress,
         )
         .await?;
@@ -734,6 +806,7 @@ impl RasterRuntime {
             &mut checkpoint,
             cancellation,
             checkpoint_sink,
+            memory.clone(),
             &mut progress,
         )
         .await?;
@@ -746,6 +819,7 @@ impl RasterRuntime {
             &mut checkpoint,
             cancellation,
             checkpoint_sink,
+            memory.clone(),
             &mut progress,
         )
         .await?;
@@ -755,7 +829,8 @@ impl RasterRuntime {
             total_steps: 1,
             current_step: "Validate COG structure and georeferencing".into(),
         });
-        self.validate_cog(command, &cog_path, cancellation).await?;
+        self.validate_cog(command, &cog_path, cancellation, memory.as_ref())
+            .await?;
 
         let pyramid_manifest_path = job_directory.join("pyramid/manifest.json");
         write_json_atomic_async(
@@ -833,6 +908,7 @@ impl RasterRuntime {
         &self,
         command: &RasterBuildCommand,
         cancellation: &CancellationToken,
+        memory: Option<&RasterRuntimeMemory>,
     ) -> Result<(), RasterRuntimeError> {
         match &command.product {
             RasterProductRequest::Elevation(request) => {
@@ -845,7 +921,7 @@ impl RasterRuntime {
                     };
                     let canonical = self.canonical_input(path)?;
                     let output = self
-                        .run_capture(
+                        .run_capture_with_memory(
                             Tool::VectorInfo,
                             vec![
                                 OsString::from("-json"),
@@ -854,6 +930,7 @@ impl RasterRuntime {
                                 OsString::from(layer),
                             ],
                             cancellation,
+                            memory,
                         )
                         .await?;
                     validate_vector_driver(&output, path, &command.crs.canonical_wkt_sha256)?;
@@ -864,10 +941,11 @@ impl RasterRuntime {
                 for source in &request.sources {
                     let canonical = self.canonical_input(&source.warp_vrt_path)?;
                     let output = self
-                        .run_capture(
+                        .run_capture_with_memory(
                             Tool::Info,
                             vec![OsString::from("-json"), canonical.into_os_string()],
                             cancellation,
+                            memory,
                         )
                         .await?;
                     validate_raster_driver(
@@ -1354,6 +1432,7 @@ impl RasterRuntime {
         checkpoint: &mut RasterCheckpoint,
         cancellation: &CancellationToken,
         checkpoint_sink: Option<&CheckpointSink>,
+        memory: Option<RasterRuntimeMemory>,
         progress: &mut P,
     ) -> Result<(), RasterRuntimeError>
     where
@@ -1371,7 +1450,15 @@ impl RasterRuntime {
         let mut next = pending.into_iter();
         let mut running = JoinSet::new();
         loop {
-            while running.len() < self.config.max_parallel_processes {
+            // The frozen GDAL bound describes one worker. Running several full-envelope
+            // children together would make admission dishonest, so bounded raster work is
+            // serialized while the existing unbounded developer path retains its concurrency.
+            let process_limit = if memory.is_some() {
+                1
+            } else {
+                self.config.max_parallel_processes
+            };
+            while running.len() < process_limit {
                 let Some(step) = next.next() else {
                     break;
                 };
@@ -1379,9 +1466,10 @@ impl RasterRuntime {
                 let runtime = self.clone();
                 let token = cancellation.clone();
                 let isolated_job_directory = job_directory.to_path_buf();
+                let isolated_memory = memory.clone();
                 running.spawn(async move {
                     runtime
-                        .run_step(step, &token, &isolated_job_directory)
+                        .run_step(step, &token, &isolated_job_directory, isolated_memory)
                         .await
                 });
             }
@@ -1431,6 +1519,7 @@ impl RasterRuntime {
         step: PreparedStep,
         cancellation: &CancellationToken,
         job_directory: &Path,
+        memory: Option<RasterRuntimeMemory>,
     ) -> Result<(PreparedStep, OutputEvidence), RasterRuntimeError> {
         if let Some(parent) = step.output.parent() {
             fs::create_dir_all(parent)?;
@@ -1438,8 +1527,14 @@ impl RasterRuntime {
         remove_partial_step_outputs(&step.output)?;
         let temporary = job_directory.join("tmp");
         fs::create_dir_all(&temporary)?;
-        self.run_capture_in(step.tool, step.args.clone(), cancellation, &temporary)
-            .await?;
+        self.run_capture_in(
+            step.tool,
+            step.args.clone(),
+            cancellation,
+            &temporary,
+            memory.as_ref(),
+        )
+        .await?;
         let evidence = output_evidence(step.output.clone(), step.relative_output.clone()).await?;
         Ok((step, evidence))
     }
@@ -1449,24 +1544,38 @@ impl RasterRuntime {
         command: &RasterBuildCommand,
         cog_path: &Path,
         cancellation: &CancellationToken,
+        memory: Option<&RasterRuntimeMemory>,
     ) -> Result<(), RasterRuntimeError> {
         let text = self
-            .run_capture(
+            .run_capture_with_memory(
                 Tool::Info,
                 vec![OsString::from("-json"), cog_path.as_os_str().to_owned()],
                 cancellation,
+                memory,
             )
             .await?;
         validate_cog_json(&text, command)
     }
 
+    #[cfg(test)]
     async fn run_capture(
         &self,
         tool: Tool,
         args: Vec<OsString>,
         cancellation: &CancellationToken,
     ) -> Result<String, RasterRuntimeError> {
-        self.run_capture_in(tool, args, cancellation, &self.config.staging_root)
+        self.run_capture_with_memory(tool, args, cancellation, None)
+            .await
+    }
+
+    async fn run_capture_with_memory(
+        &self,
+        tool: Tool,
+        args: Vec<OsString>,
+        cancellation: &CancellationToken,
+        memory: Option<&RasterRuntimeMemory>,
+    ) -> Result<String, RasterRuntimeError> {
+        self.run_capture_in(tool, args, cancellation, &self.config.staging_root, memory)
             .await
     }
 
@@ -1476,15 +1585,69 @@ impl RasterRuntime {
         args: Vec<OsString>,
         cancellation: &CancellationToken,
         temporary_directory: &Path,
+        memory: Option<&RasterRuntimeMemory>,
     ) -> Result<String, RasterRuntimeError> {
         check_cancelled(cancellation)?;
-        let args = args
-            .into_iter()
-            .map(external_tool_argument)
-            .collect::<Vec<_>>();
-        let mut command = Command::new(self.tool_path(tool));
+        let runtime = self.clone();
+        let cancellation = cancellation.clone();
+        let temporary_directory = temporary_directory.to_path_buf();
+        let memory = memory.cloned();
+        tokio::task::spawn_blocking(move || {
+            runtime.run_capture_blocking(
+                tool,
+                args,
+                &cancellation,
+                &temporary_directory,
+                memory.as_ref(),
+            )
+        })
+        .await
+        .map_err(|error| RasterRuntimeError::BackgroundTask(error.to_string()))?
+    }
+
+    fn run_capture_blocking(
+        &self,
+        tool: Tool,
+        args: Vec<OsString>,
+        cancellation: &CancellationToken,
+        temporary_directory: &Path,
+        memory: Option<&RasterRuntimeMemory>,
+    ) -> Result<String, RasterRuntimeError> {
+        check_cancelled(cancellation)?;
+        let executable = self.tool_path(tool);
+        let (mut command, worker_limit_plan) =
+            if let Some(override_plan) = memory.and_then(|memory| memory.worker_plan_override) {
+                #[cfg(target_os = "linux")]
+                {
+                    let launcher = match override_plan.mode {
+                        WorkerMemoryLimitMode::CgroupScope => Path::new("/usr/bin/systemd-run"),
+                        WorkerMemoryLimitMode::RlimitAs => Path::new("/usr/bin/prlimit"),
+                    };
+                    (
+                        crate::colmap_runtime::worker_command_for_plan(
+                            launcher,
+                            &executable,
+                            override_plan,
+                        ),
+                        Some(override_plan),
+                    )
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    let _ = override_plan;
+                    worker_command(
+                        &executable,
+                        memory.map(|memory| memory.plan.resident_limit_bytes),
+                    )
+                }
+            } else {
+                worker_command(
+                    &executable,
+                    memory.map(|memory| memory.plan.resident_limit_bytes),
+                )
+            };
         command
-            .args(args)
+            .args(args.into_iter().map(external_tool_argument))
             .env_clear()
             .env(
                 "GDAL_DATA",
@@ -1505,42 +1668,81 @@ impl RasterRuntime {
             .env("LC_ALL", "C")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        process_group::configure(command.as_std_mut());
-        let mut child = command.spawn()?;
-        let _group_guard = ProcessGroupDropGuard::new(child.id());
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| RasterRuntimeError::MalformedOutput("stdout pipe missing".into()))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| RasterRuntimeError::MalformedOutput("stderr pipe missing".into()))?;
-        let stdout_task = tokio::spawn(read_limited(stdout));
-        let stderr_task = tokio::spawn(read_limited(stderr));
+            .stderr(Stdio::piped());
+        #[cfg(target_os = "linux")]
+        if matches!(
+            worker_limit_plan,
+            Some(WorkerMemoryLimitPlan {
+                mode: WorkerMemoryLimitMode::CgroupScope,
+                ..
+            })
+        ) {
+            configure_systemd_user_bus_environment(&mut command);
+        }
+        let mut child = process_group::spawn(&mut command)?;
+        let Some(stdout) = child.stdout.take() else {
+            let _ = child.terminate_and_wait();
+            record_raster_memory(memory, worker_limit_plan, child.peak_rss_bytes(), tool)?;
+            return Err(RasterRuntimeError::MalformedOutput(
+                "stdout pipe missing".into(),
+            ));
+        };
+        let Some(stderr) = child.stderr.take() else {
+            let _ = child.terminate_and_wait();
+            record_raster_memory(memory, worker_limit_plan, child.peak_rss_bytes(), tool)?;
+            return Err(RasterRuntimeError::MalformedOutput(
+                "stderr pipe missing".into(),
+            ));
+        };
+        let stdout_reader = thread::spawn(move || read_limited_blocking(stdout));
+        let stderr_reader = thread::spawn(move || read_limited_blocking(stderr));
         let status = loop {
-            tokio::select! {
-                status = child.wait() => break status?,
-                () = tokio::time::sleep(Duration::from_millis(20)) => {
-                    if cancellation.is_cancel_requested() {
-                        if !process_group::kill_group(child.id()).unwrap_or(false) {
-                            let _ = child.kill().await;
-                        }
-                        let _ = child.wait().await;
-                        return Err(RasterRuntimeError::Cancelled);
-                    }
+            if cancellation.is_cancel_requested() {
+                let _ = child.terminate_and_wait();
+                let stdout = join_limited_reader(stdout_reader);
+                let stderr = join_limited_reader(stderr_reader);
+                record_raster_memory(memory, worker_limit_plan, child.peak_rss_bytes(), tool)?;
+                stdout?;
+                stderr?;
+                return Err(RasterRuntimeError::Cancelled);
+            }
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => thread::sleep(Duration::from_millis(20)),
+                Err(error) => {
+                    let _ = child.terminate_and_wait();
+                    let stdout = join_limited_reader(stdout_reader);
+                    let stderr = join_limited_reader(stderr_reader);
+                    record_raster_memory(memory, worker_limit_plan, child.peak_rss_bytes(), tool)?;
+                    stdout?;
+                    stderr?;
+                    return Err(RasterRuntimeError::Io(error));
                 }
             }
         };
-        let stdout = stdout_task
-            .await
-            .map_err(|error| RasterRuntimeError::BackgroundTask(error.to_string()))??;
-        let stderr = stderr_task
-            .await
-            .map_err(|error| RasterRuntimeError::BackgroundTask(error.to_string()))??;
+        let stdout = join_limited_reader(stdout_reader);
+        let stderr = join_limited_reader(stderr_reader);
+        let peak_rss_bytes = child.peak_rss_bytes();
+        record_raster_memory(memory, worker_limit_plan, peak_rss_bytes, tool)?;
+        let stdout = stdout?;
+        let stderr = stderr?;
         if !status.success() {
+            if status_indicates_memory_limit(&status, &stderr) {
+                if let (Some(memory), Some(limit)) = (memory, worker_limit_plan) {
+                    memory
+                        .sink
+                        .record_worker_memory_limit_hit_blocking(
+                            memory.plan.stage,
+                            limit.enforced_limit_bytes,
+                        )
+                        .map_err(|error| RasterRuntimeError::MemoryRecord(error.to_string()))?;
+                    return Err(RasterRuntimeError::WorkerMemoryLimit {
+                        stage: memory.plan.stage.into(),
+                        limit_bytes: limit.enforced_limit_bytes,
+                        peak_rss_bytes,
+                    });
+                }
+            }
             return Err(RasterRuntimeError::ProcessFailed {
                 status: status.to_string(),
                 stderr: String::from_utf8_lossy(&stderr).trim().into(),
@@ -2617,18 +2819,72 @@ async fn remove_checkpoint(path: PathBuf) -> Result<(), RasterRuntimeError> {
     .map_err(|error| RasterRuntimeError::BackgroundTask(error.to_string()))?
 }
 
-async fn read_limited<R: tokio::io::AsyncRead + Unpin>(
-    reader: R,
-) -> Result<Vec<u8>, RasterRuntimeError> {
+fn read_limited_blocking<R: Read>(reader: R) -> Result<Vec<u8>, RasterRuntimeError> {
     let mut output = Vec::new();
     reader
         .take(u64::try_from(CAPTURE_LIMIT + 1).unwrap_or(u64::MAX))
-        .read_to_end(&mut output)
-        .await?;
+        .read_to_end(&mut output)?;
     if output.len() > CAPTURE_LIMIT {
         return Err(RasterRuntimeError::OutputLimit);
     }
     Ok(output)
+}
+
+fn join_limited_reader(
+    reader: thread::JoinHandle<Result<Vec<u8>, RasterRuntimeError>>,
+) -> Result<Vec<u8>, RasterRuntimeError> {
+    reader
+        .join()
+        .map_err(|_| RasterRuntimeError::BackgroundTask("GDAL output reader panicked".into()))?
+}
+
+fn record_raster_memory(
+    memory: Option<&RasterRuntimeMemory>,
+    worker_limit_plan: Option<WorkerMemoryLimitPlan>,
+    peak_rss_bytes: u64,
+    tool: Tool,
+) -> Result<(), RasterRuntimeError> {
+    let Some(memory) = memory else {
+        return Ok(());
+    };
+    let mut parameters = serde_json::json!({
+        "modelBytes": memory.plan.model_bytes,
+        "sampledTool": tool.name(),
+        "workerMemoryLimitBytes": memory.plan.resident_limit_bytes,
+    });
+    if let (Some(parameters), Some(limit)) = (parameters.as_object_mut(), worker_limit_plan) {
+        parameters.insert(
+            "workerMemoryLimitBytes".into(),
+            limit.enforced_limit_bytes.into(),
+        );
+        parameters.insert("workerMemoryLimitMode".into(), limit.mode.as_str().into());
+    }
+    memory
+        .sink
+        .record_stage_peak_blocking(memory.plan.stage, peak_rss_bytes, 1, parameters)
+        .map_err(|error| RasterRuntimeError::MemoryRecord(error.to_string()))
+}
+
+fn status_indicates_memory_limit(status: &std::process::ExitStatus, stderr: &[u8]) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if matches!(status.signal(), Some(6 | 9 | 11)) {
+            return true;
+        }
+    }
+    let lower = String::from_utf8_lossy(stderr).to_ascii_lowercase();
+    [
+        "cannot allocate memory",
+        "failed to map segment",
+        "memory allocation",
+        "std::bad_alloc",
+        "out of memory",
+        "oom-kill",
+        "killed",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 fn check_cancelled(cancellation: &CancellationToken) -> Result<(), RasterRuntimeError> {
@@ -2961,7 +3217,7 @@ mod tests {
             fs::create_dir_all(directory).expect("test directory");
         }
         let log = root.join("gdal.log");
-        let tool_paths = install_fake_tools(&tools, &log, false);
+        let tool_paths = install_fake_tools(&tools, &log, false, false);
         let points = input.join("points.fgb");
         fs::write(&points, b"fake FlatGeobuf").expect("fake input");
         let runtime = RasterRuntime::open(GdalToolchainConfig {
@@ -2985,7 +3241,7 @@ mod tests {
         let command = elevation_command(&points, &destination);
         let mut updates = Vec::new();
         let result = runtime
-            .execute(&command, &CancellationToken::new(), None, |update| {
+            .execute(&command, &CancellationToken::new(), None, None, |update| {
                 updates.push(update);
             })
             .await
@@ -3007,6 +3263,180 @@ mod tests {
         assert!(log.contains("gdalbuildvrt|OFF|disable|"));
         assert!(log.contains("gdal_translate|OFF|disable|"));
         assert!(log.contains("gdalwarp|OFF|disable|"));
+        fs::remove_dir_all(root).expect("test cleanup");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn fake_dem_runtime_scopes_and_samples_every_gdal_child() {
+        use crate::job_runtime::{
+            JobAdmission, JobManager, JobManagerConfig, JobWorkerError, MemoryPreflight,
+        };
+        use himmelcad_core::photolab_jobs::{
+            JobProgress, NewPhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState,
+            PhotolabStage, PhotolabStageKind, ProgressMetrics,
+        };
+
+        let sequence = TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.build/codex-scratch/a7jc")
+            .join(format!(
+                "fake-dem-runtime-{}-{sequence}",
+                std::process::id()
+            ));
+        let tools = root.join("tools");
+        let input = root.join("input");
+        let staging = root.join("staging");
+        let output_root = root.join("output");
+        let data = root.join("gdal-data");
+        let proj = root.join("proj-data");
+        for directory in [&tools, &input, &staging, &output_root, &data, &proj] {
+            fs::create_dir_all(directory).expect("test directory");
+        }
+        let log = root.join("gdal.log");
+        let tool_paths = install_fake_tools(&tools, &log, false, true);
+        let fake_ogr2ogr = tool_paths[7].clone();
+        let points = input.join("points.fgb");
+        fs::write(&points, b"fake FlatGeobuf").expect("fake input");
+        let runtime = RasterRuntime::open(GdalToolchainConfig {
+            gdal_grid_path: tool_paths[0].clone(),
+            gdal_rasterize_path: tool_paths[1].clone(),
+            gdalwarp_path: tool_paths[2].clone(),
+            gdalbuildvrt_path: tool_paths[3].clone(),
+            gdal_translate_path: tool_paths[4].clone(),
+            gdalinfo_path: tool_paths[5].clone(),
+            ogrinfo_path: tool_paths[6].clone(),
+            gdal_data_directory: data,
+            proj_data_directory: proj,
+            allowed_input_roots: vec![input],
+            staging_root: staging,
+            allowed_output_roots: vec![output_root.clone()],
+            max_parallel_processes: 4,
+            threads_per_process: 2,
+        })
+        .expect("fake runtime");
+        let destination = output_root.join("published");
+        let command = elevation_command(&points, &destination);
+        let plan = crate::job_runtime::plan_raster_preparation_memory(1, 1, 4 * 1024 * 1024 * 1024);
+        let ogr_plan = plan.ogr2ogr;
+        let gdal_plan = plan.gdal_grid;
+        let memory = plan.memory.clone();
+        let ogr_explicit_limit = ogr_plan.resident_limit_bytes.saturating_mul(2);
+        let gdal_explicit_limit = gdal_plan.resident_limit_bytes.saturating_mul(2);
+        let manager = JobManager::new(JobManagerConfig {
+            max_concurrency: 1,
+            max_queued: 0,
+        })
+        .expect("fake DEM manager");
+        let job_id = PhotolabJobId("fake-dem-runtime-memory".into());
+        let handle = tokio::runtime::Handle::current();
+        manager
+            .start_with_admission(
+                NewPhotolabJob {
+                    id: job_id.clone(),
+                    kind: PhotolabJobKind::BuildDem,
+                    config_hash: ObjectHash::of_bytes(b"fake-dem-runtime-config"),
+                    input_hash: ObjectHash::of_bytes(b"fake-dem-runtime-input"),
+                    progress: JobProgress {
+                        stage: PhotolabStage {
+                            kind: PhotolabStageKind::Preparing,
+                            index: 0,
+                            stage_count: 1,
+                            label: "Prepare DEM".into(),
+                        },
+                        metrics: ProgressMetrics::empty(),
+                    },
+                },
+                JobAdmission {
+                    memory_preflight: Some(MemoryPreflight {
+                        predicted_bytes: plan.predicted_peak_bytes,
+                        available_bytes: memory.envelope_bytes,
+                        machine_usable_bytes: memory.envelope_bytes,
+                        memory,
+                        refusal: None,
+                    }),
+                    ..Default::default()
+                },
+                move |context| {
+                    crate::dense_raster_prep::run_fake_gdal_stage_with_memory(
+                        &fake_ogr2ogr,
+                        &["--version".into()],
+                        &context.cancellation,
+                        ogr_plan,
+                        &context.memory,
+                        WorkerMemoryLimitPlan {
+                            mode: WorkerMemoryLimitMode::RlimitAs,
+                            enforced_limit_bytes: ogr_explicit_limit,
+                        },
+                    )
+                    .map_err(|error| JobWorkerError::Failed {
+                        code: "fakeDemOgr".into(),
+                        message: error.to_string(),
+                    })?;
+                    let runtime_memory =
+                        RasterRuntimeMemory::new(gdal_plan, context.memory.clone())
+                            .with_worker_plan_override(WorkerMemoryLimitPlan {
+                                mode: WorkerMemoryLimitMode::RlimitAs,
+                                enforced_limit_bytes: gdal_explicit_limit,
+                            });
+                    handle
+                        .block_on(runtime.execute(
+                            &command,
+                            &context.cancellation,
+                            None,
+                            Some(runtime_memory),
+                            |_| {},
+                        ))
+                        .map(|_| ())
+                        .map_err(|error| JobWorkerError::Failed {
+                            code: "fakeDemRuntime".into(),
+                            message: error.to_string(),
+                        })
+                },
+            )
+            .await
+            .expect("start fake DEM runtime");
+        let terminal = manager
+            .wait_for_terminal(&job_id)
+            .await
+            .expect("fake DEM runtime terminal record");
+        assert_eq!(terminal.state, PhotolabJobState::Completed);
+        for (stage_plan, expected_limit) in [
+            (ogr_plan, ogr_explicit_limit),
+            (gdal_plan, gdal_explicit_limit),
+        ] {
+            let stage = terminal
+                .memory
+                .stages
+                .iter()
+                .find(|stage| stage.stage == stage_plan.stage)
+                .expect("bounded GDAL memory stage");
+            assert_eq!(stage.parameters["workerMemoryLimitMode"], "rlimitAs");
+            assert_eq!(stage.parameters["workerMemoryLimitBytes"], expected_limit);
+            assert!(stage.peak_rss_bytes > 0, "fake tool must be sampled");
+        }
+
+        let log_text = fs::read_to_string(&log).expect("fake GDAL log");
+        let expected_virtual_kib = (gdal_explicit_limit / 1024).to_string();
+        for tool in [
+            "gdal_grid",
+            "gdal_rasterize",
+            "gdalwarp",
+            "gdalbuildvrt",
+            "gdal_translate",
+            "gdalinfo",
+            "ogrinfo",
+            "ogr2ogr",
+        ] {
+            assert!(
+                log_text.lines().any(|line| {
+                    let mut fields = line.split('|');
+                    fields.next() == Some(tool)
+                        && fields.next() == Some(expected_virtual_kib.as_str())
+                }),
+                "{tool} did not run under the frozen worker limit"
+            );
+        }
         fs::remove_dir_all(root).expect("test cleanup");
     }
 
@@ -3077,7 +3507,7 @@ mod tests {
         for directory in [&tools, &input, &staging, &output, &data, &proj] {
             fs::create_dir_all(directory).expect("test directory");
         }
-        let paths = install_fake_tools(&tools, &root.join("gdal.log"), true);
+        let paths = install_fake_tools(&tools, &root.join("gdal.log"), true, false);
         let runtime = RasterRuntime::open(GdalToolchainConfig {
             gdal_grid_path: paths[0].clone(),
             gdal_rasterize_path: paths[1].clone(),
@@ -3127,11 +3557,25 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn install_fake_tools(directory: &Path, log: &Path, slow: bool) -> Vec<PathBuf> {
+    fn install_fake_tools(
+        directory: &Path,
+        log: &Path,
+        slow: bool,
+        allocate_memory: bool,
+    ) -> Vec<PathBuf> {
         let delay = if slow { "exec /bin/sleep 5" } else { ":" };
+        let allocation = if allocate_memory {
+            // Four MiB retained for 200 ms is enough for the 20 ms process-group sampler
+            // without making this runtime-path gate expensive.
+            "memory=$(/usr/bin/head -c 4194304 /dev/zero | /usr/bin/tr '\\000' x)\n/bin/sleep 0.2\n: \"$memory\""
+        } else {
+            ":"
+        };
         let script = format!(
             r#"#!/bin/sh
 name=${{0##*/}}
+printf '%s|%s|%s\n' "$name" "$(ulimit -v)" "$PPID" >> '{log}'
+{allocation}
 if [ "$1" = "--version" ]; then
   printf '%s\n' 'GDAL 3.8.4, released 2024/02/08'
   exit 0
@@ -3166,6 +3610,7 @@ esac
 "#,
             log = log.display(),
             delay = delay,
+            allocation = allocation,
         );
         [
             "gdal_grid",
@@ -3175,6 +3620,7 @@ esac
             "gdal_translate",
             "gdalinfo",
             "ogrinfo",
+            "ogr2ogr",
         ]
         .into_iter()
         .map(|name| {
