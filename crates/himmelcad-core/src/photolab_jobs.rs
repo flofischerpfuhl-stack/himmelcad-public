@@ -421,6 +421,16 @@ pub struct PhotolabJobMemory {
     pub matching_replanned: Option<PhotolabMatchingMemoryReplan>,
 }
 
+/// One executable resolved and validated before a job becomes visible.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhotolabWorkerTool {
+    pub tool: String,
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
 /// Authoritative, persistable job record. Runtime cancellation handles are separate.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -446,6 +456,9 @@ pub struct PhotolabJob {
     /// Per-machine memory contract frozen before work starts and enriched with measured peaks.
     #[serde(default)]
     pub memory: PhotolabJobMemory,
+    /// Worker executables resolved at admission for reproducible evidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub toolchain: Vec<PhotolabWorkerTool>,
 }
 
 impl Serialize for PhotolabJob {
@@ -455,7 +468,7 @@ impl Serialize for PhotolabJob {
     {
         use serde::ser::SerializeStruct;
 
-        let mut record = serializer.serialize_struct("PhotolabJob", 15)?;
+        let mut record = serializer.serialize_struct("PhotolabJob", 16)?;
         record.serialize_field("schemaVersion", &self.schema_version)?;
         record.serialize_field("id", &self.id)?;
         record.serialize_field("kind", &self.kind)?;
@@ -490,6 +503,9 @@ impl Serialize for PhotolabJob {
             record.serialize_field("terminalDiagnostic", value)?;
         }
         record.serialize_field("memory", &self.memory)?;
+        if !self.toolchain.is_empty() {
+            record.serialize_field("toolchain", &self.toolchain)?;
+        }
         record.end()
     }
 }
@@ -514,12 +530,18 @@ impl PhotolabJob {
             last_checkpoint_sequence: None,
             terminal_diagnostic: None,
             memory: PhotolabJobMemory::default(),
+            toolchain: Vec::new(),
         })
     }
 
     /// Freezes the envelope and planned choices before the record becomes visible.
     pub fn set_memory_plan(&mut self, memory: PhotolabJobMemory) {
         self.memory = memory;
+    }
+
+    /// Freezes the resolved worker executable inventory before visibility.
+    pub fn set_toolchain(&mut self, toolchain: Vec<PhotolabWorkerTool>) {
+        self.toolchain = toolchain;
     }
 
     /// Merges a sampled peak into the durable stage record.
@@ -989,9 +1011,11 @@ mod tests {
         let encoded = serde_json::to_value(job()).expect("serialize job");
         let mut object = encoded.as_object().expect("job object").clone();
         object.remove("memory");
+        object.remove("toolchain");
         let decoded: PhotolabJob =
             serde_json::from_value(serde_json::Value::Object(object)).expect("old job record");
         assert_eq!(decoded.memory, PhotolabJobMemory::default());
+        assert!(decoded.toolchain.is_empty());
     }
 
     #[test]
@@ -1021,6 +1045,11 @@ mod tests {
                 matching_unit_bytes: 7_180_435_456,
             }),
         };
+        value.toolchain = vec![PhotolabWorkerTool {
+            tool: "PotreeConverter".into(),
+            path: "/runtime/workers/potree/PotreeConverter".into(),
+            version: Some("2.1.1".into()),
+        }];
         let encoded = serde_json::to_vec(&value).expect("serialize memory plan");
         let decoded: PhotolabJob =
             serde_json::from_slice(&encoded).expect("deserialize memory plan");

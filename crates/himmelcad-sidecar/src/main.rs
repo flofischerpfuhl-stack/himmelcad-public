@@ -196,6 +196,7 @@ use himmelcad_sidecar::raster_runtime::{
 };
 use himmelcad_sidecar::site_calibration_reader::inspect_site_calibration;
 use himmelcad_sidecar::splat_tiler::{tile_brush_ply, SplatTilerError};
+use himmelcad_sidecar::worker_toolchain::{worker_toolchain_preflight, WorkerProduct};
 use himmelcad_sidecar::{
     crs_runtime::{ProjRuntime, ProjToolchainConfig},
     crs_service::{
@@ -5552,6 +5553,13 @@ async fn handle_job_rpc(
                                     },
                                 ),
                                 memory_preflight: None,
+                                toolchain_preflight: Some(
+                                    worker_toolchain_preflight(
+                                        PhotolabJobKind::Batch,
+                                        &batch_worker_requirements(&params.steps),
+                                    )
+                                    .into_admission(),
+                                ),
                             };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
@@ -5601,6 +5609,13 @@ async fn handle_job_rpc(
                             ],
                             disk_preflight: None,
                             memory_preflight: None,
+                            toolchain_preflight: Some(
+                                worker_toolchain_preflight(
+                                    PhotolabJobKind::OptimizeAlignment,
+                                    &[WorkerProduct::Colmap],
+                                )
+                                .into_admission(),
+                            ),
                         };
                         let publisher = Arc::clone(&projects);
                         let result = jobs
@@ -5796,6 +5811,15 @@ async fn handle_job_rpc(
                                     memory: memory_plan.memory,
                                     refusal,
                                 }),
+                                toolchain_preflight: Some(
+                                    worker_toolchain_preflight(
+                                        PhotolabJobKind::AlignPhotos,
+                                        &[WorkerProduct::Alignment {
+                                            dedode: dedode.is_some(),
+                                        }],
+                                    )
+                                    .into_admission(),
+                                ),
                             };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
@@ -5881,6 +5905,13 @@ async fn handle_job_rpc(
                         )) => {
                             let combined_stage_count = job.progress.stage.stage_count;
                             let colmap_stage_base = if dedode.is_some() { 3 } else { 0 };
+                            let worker_products = if shared_control_only {
+                                Vec::new()
+                            } else {
+                                vec![WorkerProduct::Alignment {
+                                    dedode: dedode.is_some(),
+                                }]
+                            };
                             let admission = himmelcad_sidecar::job_runtime::JobAdmission {
                                 publication_targets: vec![
                                     himmelcad_sidecar::job_runtime::PublicationTarget::alignment(
@@ -5905,6 +5936,13 @@ async fn handle_job_rpc(
                                     memory: memory_plan.memory,
                                     refusal,
                                 }),
+                                toolchain_preflight: Some(
+                                    worker_toolchain_preflight(
+                                        PhotolabJobKind::MergeAlignments,
+                                        &worker_products,
+                                    )
+                                    .into_admission(),
+                                ),
                             };
                             let checkpoint_project_root = request.project_root.clone();
                             let checkpoint_operation_id = request.job_id.clone();
@@ -6136,6 +6174,13 @@ async fn handle_job_rpc(
                                     fallback_alignment_usable_memory_bytes(),
                                     "Splat optimization",
                                 )),
+                                toolchain_preflight: Some(
+                                    worker_toolchain_preflight(
+                                        PhotolabJobKind::BuildGaussianSplat,
+                                        &[WorkerProduct::GaussianSplat],
+                                    )
+                                    .into_admission(),
+                                ),
                             };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
@@ -6234,6 +6279,17 @@ async fn handle_job_rpc(
                                         "Dense fusion"
                                     },
                                 )),
+                                toolchain_preflight: Some(
+                                    worker_toolchain_preflight(
+                                        job_kind,
+                                        &[if job_kind == PhotolabJobKind::BuildDepthMaps {
+                                            WorkerProduct::DepthMaps
+                                        } else {
+                                            WorkerProduct::DensePointCloud
+                                        }],
+                                    )
+                                    .into_admission(),
+                                ),
                             };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
@@ -6396,6 +6452,13 @@ async fn handle_job_rpc(
                                     ),
                                 ),
                                 memory_preflight: None,
+                                toolchain_preflight: Some(
+                                    worker_toolchain_preflight(
+                                        prepared.job.kind,
+                                        &[product_worker_requirement(&prepared.configuration)],
+                                    )
+                                    .into_admission(),
+                                ),
                             };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
@@ -6446,6 +6509,16 @@ async fn handle_job_rpc(
                                     fallback_alignment_usable_memory_bytes(),
                                     "Meshing",
                                 )),
+                                toolchain_preflight: Some(
+                                    worker_toolchain_preflight(
+                                        PhotolabJobKind::BuildMesh,
+                                        &[WorkerProduct::Mesh {
+                                            requires_colmap: prepared.mesh_source
+                                                == himmelcad_core::photolab_products::MeshSource::Dense,
+                                        }],
+                                    )
+                                    .into_admission(),
+                                ),
                             };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
@@ -6512,6 +6585,40 @@ fn freeze_job_request<T: Serialize>(
         serde_json::to_value(params)?,
         job,
     )?)
+}
+
+fn product_worker_requirement(configuration: &ProductRunConfiguration) -> WorkerProduct {
+    match configuration {
+        ProductRunConfiguration::Depth { .. } => WorkerProduct::DepthMaps,
+        ProductRunConfiguration::Dense { .. } => WorkerProduct::DensePointCloud,
+        ProductRunConfiguration::Dem { .. } => WorkerProduct::Dem,
+        ProductRunConfiguration::Ortho { .. } => WorkerProduct::Orthomosaic,
+        ProductRunConfiguration::Mesh { mesh_source, .. } => WorkerProduct::Mesh {
+            requires_colmap: *mesh_source == himmelcad_core::photolab_products::MeshSource::Dense,
+        },
+        ProductRunConfiguration::Splat { .. } => WorkerProduct::GaussianSplat,
+    }
+}
+
+fn batch_worker_requirements(steps: &[BatchPipelineStep]) -> Vec<WorkerProduct> {
+    steps
+        .iter()
+        .map(|step| match step {
+            BatchPipelineStep::Alignment { preset, profile } => {
+                let profile = preset
+                    .as_ref()
+                    .map(|preset| preset.profile)
+                    .or(*profile)
+                    .unwrap_or(AlignmentQualityProfile::Fast);
+                WorkerProduct::Alignment {
+                    dedode: profile != AlignmentQualityProfile::Fast,
+                }
+            }
+            BatchPipelineStep::Product { configuration, .. } => {
+                product_worker_requirement(configuration)
+            }
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -6704,7 +6811,17 @@ async fn resume_batch_job(
         ));
     }
     let publisher = Arc::clone(projects);
-    jobs.start_with_frozen_request(job, frozen, move |context| {
+    let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+        toolchain_preflight: Some(
+            worker_toolchain_preflight(
+                PhotolabJobKind::Batch,
+                &batch_worker_requirements(&params.steps),
+            )
+            .into_admission(),
+        ),
+        ..Default::default()
+    };
+    jobs.start_with_frozen_request_and_admission(job, frozen, admission, move |context| {
         run_batch_pipeline(params, frozen_plan, &context, &publisher)
     })
     .await
@@ -6736,7 +6853,17 @@ async fn resume_product_job(
                 prepare_brush_product_job(params, projects, None, true)
                     .map_err(|error| checkpoint_missing(error.to_string()))?;
             let publisher = Arc::clone(projects);
-            jobs.start_with_frozen_request(job, frozen, move |context| {
+            let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                toolchain_preflight: Some(
+                    worker_toolchain_preflight(
+                        PhotolabJobKind::BuildGaussianSplat,
+                        &[WorkerProduct::GaussianSplat],
+                    )
+                    .into_admission(),
+                ),
+                ..Default::default()
+            };
+            jobs.start_with_frozen_request_and_admission(job, frozen, admission, move |context| {
                 let mut outcome = runtime
                     .run(&request, &context)
                     .map_err(JobWorkerError::from)?;
@@ -6793,55 +6920,72 @@ async fn resume_product_job(
                 ));
             }
             let publisher = Arc::clone(projects);
-            jobs.start_with_frozen_request(prepared.job.clone(), frozen, move |context| {
-                let scene = prepare_or_reuse_mvs_scene(&prepared, &context)?;
-                let resume = prepared
-                    .runtime
-                    .compatible_resume_checkpoint(&scene.manifest_sha256, &prepared.settings)?
-                    .ok_or_else(|| {
-                        worker_error(
-                            "resumeCheckpointMissing",
-                            "the validated MVS checkpoint is no longer available",
-                        )
-                    })?;
-                let request = MvsRunRequest {
-                    job_id: prepared.operation_id,
-                    scene_manifest_path: scene.manifest_path,
-                    scene_manifest_sha256: scene.manifest_sha256,
-                    device: MvsComputeDevice::Cpu {
-                        threads: portable_mvs_threads(),
-                    },
-                    settings: prepared.settings,
-                    fuse_dense_point_cloud: prepared.fuse_dense_point_cloud,
-                    resume: Some(resume),
-                };
-                let mut outcome = prepared
-                    .runtime
-                    .run(&request, &context)
-                    .map_err(JobWorkerError::from)?;
-                if let Some(dense) = outcome.output.dense_point_cloud.as_ref() {
-                    outcome.potree = Some(
-                        prepare_dense_potree(
-                            &outcome.output_path.join(&dense.relative_path),
-                            &outcome.scratch_path.join("potree"),
-                            &potree_converter_executable()?,
+            let worker_product = if prepared.job.kind == PhotolabJobKind::BuildDepthMaps {
+                WorkerProduct::DepthMaps
+            } else {
+                WorkerProduct::DensePointCloud
+            };
+            let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                toolchain_preflight: Some(
+                    worker_toolchain_preflight(prepared.job.kind, &[worker_product])
+                        .into_admission(),
+                ),
+                ..Default::default()
+            };
+            jobs.start_with_frozen_request_and_admission(
+                prepared.job.clone(),
+                frozen,
+                admission,
+                move |context| {
+                    let scene = prepare_or_reuse_mvs_scene(&prepared, &context)?;
+                    let resume = prepared
+                        .runtime
+                        .compatible_resume_checkpoint(&scene.manifest_sha256, &prepared.settings)?
+                        .ok_or_else(|| {
+                            worker_error(
+                                "resumeCheckpointMissing",
+                                "the validated MVS checkpoint is no longer available",
+                            )
+                        })?;
+                    let request = MvsRunRequest {
+                        job_id: prepared.operation_id,
+                        scene_manifest_path: scene.manifest_path,
+                        scene_manifest_sha256: scene.manifest_sha256,
+                        device: MvsComputeDevice::Cpu {
+                            threads: portable_mvs_threads(),
+                        },
+                        settings: prepared.settings,
+                        fuse_dense_point_cloud: prepared.fuse_dense_point_cloud,
+                        resume: Some(resume),
+                    };
+                    let mut outcome = prepared
+                        .runtime
+                        .run(&request, &context)
+                        .map_err(JobWorkerError::from)?;
+                    if let Some(dense) = outcome.output.dense_point_cloud.as_ref() {
+                        outcome.potree = Some(
+                            prepare_dense_potree(
+                                &outcome.output_path.join(&dense.relative_path),
+                                &outcome.scratch_path.join("potree"),
+                                &potree_converter_executable()?,
+                                &context.cancellation,
+                            )
+                            .map_err(map_dense_prep_error)?,
+                        );
+                    }
+                    context.check_cancelled()?;
+                    publisher
+                        .publish_mvs_outcome(
+                            outcome,
+                            &prepared.camera_entity_ids,
+                            &prepared.image_mask_scope.scope_sha256,
+                            &prepared.lineage,
                             &context.cancellation,
                         )
-                        .map_err(map_dense_prep_error)?,
-                    );
-                }
-                context.check_cancelled()?;
-                publisher
-                    .publish_mvs_outcome(
-                        outcome,
-                        &prepared.camera_entity_ids,
-                        &prepared.image_mask_scope.scope_sha256,
-                        &prepared.lineage,
-                        &context.cancellation,
-                    )
-                    .map_err(|error| map_project_publish_error(error, &context.cancellation))?;
-                Ok(())
-            })
+                        .map_err(|error| map_project_publish_error(error, &context.cancellation))?;
+                    Ok(())
+                },
+            )
             .await
             .map_err(|error| ResumeRpcFailure::rejected("resumeStartFailed", error.to_string()))
         }
@@ -6898,9 +7042,22 @@ async fn resume_product_job(
                 }
             }
             let publisher = Arc::clone(projects);
-            jobs.start_with_frozen_request(prepared.job.clone(), frozen, move |context| {
-                run_raster_product(prepared, &context, &publisher)
-            })
+            let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                toolchain_preflight: Some(
+                    worker_toolchain_preflight(
+                        prepared.job.kind,
+                        &[product_worker_requirement(&prepared.configuration)],
+                    )
+                    .into_admission(),
+                ),
+                ..Default::default()
+            };
+            jobs.start_with_frozen_request_and_admission(
+                prepared.job.clone(),
+                frozen,
+                admission,
+                move |context| run_raster_product(prepared, &context, &publisher),
+            )
             .await
             .map_err(|error| ResumeRpcFailure::rejected("resumeStartFailed", error.to_string()))
         }

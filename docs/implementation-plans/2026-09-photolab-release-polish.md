@@ -609,6 +609,19 @@ findings: (1) Windows staging must include the Potree converter (Builder WIN
 lane), (2) PhotoLab must refuse a missing worker executable at admission with a
 typed reason (WP-WIN-08-PL). Report: `.build/photolab-evidence/win07-report.md`.
 
+### WP-WIN-08-PL — Preflight the complete product worker toolchain (Size S)
+
+Implemented 2026-09-10 (working tree, no commit): each alignment, batch, product,
+product-recovery, and GCP-optimization admission now freezes the resolved external
+worker paths in the durable job `toolchain` record. Missing workers produce the
+typed `workerToolchainMissing` terminal refusal before a worker is scheduled; the
+message names the missing tool and expected path. Alignment includes its sparse
+PotreeConverter publication dependency, so a missing converter is rejected before
+COLMAP starts. Resolution mirrors the runtime-owned environment overrides and
+staged/default locations, while the cfg-independent Windows test requires `.exe`
+names. The preflight performs bounded metadata checks only; existing worker
+runtimes retain their version, trust, and model/resource validation.
+
 ### WP-A7d — Bound matching from the extracted feature set (Size M)
 
 Implemented 2026-09-09 (working tree, no commit): tiled ALIKED now records the

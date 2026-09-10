@@ -21,7 +21,7 @@ use himmelcad_core::{
         JobProgress, NewPhotolabJob, PhotolabJob, PhotolabJobId, PhotolabJobKind,
         PhotolabJobMemory, PhotolabJobState, PhotolabMatchingMemoryReplan,
         PhotolabMemoryDegradation, PhotolabMemoryObservation, PhotolabMemoryTimeFirstChoice,
-        PhotolabStageMemory, CHECKPOINT_SCHEMA_VERSION,
+        PhotolabStageMemory, PhotolabWorkerTool, CHECKPOINT_SCHEMA_VERSION,
     },
     photolab_products::ProductKind,
 };
@@ -729,6 +729,13 @@ pub struct JobAdmissionRefusal {
     pub message: String,
 }
 
+/// Resolved worker evidence and an optional fail-closed toolchain refusal.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkerToolchainAdmission {
+    pub tools: Vec<PhotolabWorkerTool>,
+    pub refusal: Option<JobAdmissionRefusal>,
+}
+
 impl MemoryPreflight {
     /// Freezes an envelope while explicitly warning that this stage has no bound yet.
     #[must_use]
@@ -770,6 +777,7 @@ pub struct JobAdmission {
     pub publication_targets: Vec<PublicationTarget>,
     pub disk_preflight: Option<DiskPreflight>,
     pub memory_preflight: Option<MemoryPreflight>,
+    pub toolchain_preflight: Option<WorkerToolchainAdmission>,
 }
 
 /// OS/UI reserve deducted before per-stage budgets are assigned.
@@ -1574,9 +1582,15 @@ impl JobManager {
         }
         admission.publication_targets = unique_targets;
         let refusal = admission
-            .memory_preflight
+            .toolchain_preflight
             .as_ref()
-            .and_then(|preflight| preflight.refusal.clone());
+            .and_then(|preflight| preflight.refusal.clone())
+            .or_else(|| {
+                admission
+                    .memory_preflight
+                    .as_ref()
+                    .and_then(|preflight| preflight.refusal.clone())
+            });
         if refusal.is_none() {
             if let Some(preflight) = admission.disk_preflight.as_ref() {
                 let path = preflight.path.clone();
@@ -1606,6 +1620,9 @@ impl JobManager {
             }
         }
         let mut job = PhotolabJob::new(request)?;
+        if let Some(preflight) = admission.toolchain_preflight.as_ref() {
+            job.set_toolchain(preflight.tools.clone());
+        }
         if let Some(preflight) = admission.memory_preflight.as_ref() {
             job.set_memory_plan(preflight.memory.clone());
         }
@@ -3092,6 +3109,7 @@ mod tests {
             publication_targets: targets,
             disk_preflight: None,
             memory_preflight: None,
+            toolchain_preflight: None,
         }
     }
 
@@ -3334,6 +3352,7 @@ mod tests {
                         path.clone(),
                     )),
                     memory_preflight: None,
+                    toolchain_preflight: None,
                 },
                 |_| Ok(()),
             )
@@ -4181,6 +4200,7 @@ mod tests {
                         memory: tiny.memory,
                         refusal: None,
                     }),
+                    toolchain_preflight: None,
                 },
                 move |_| {
                     started_in_worker.store(true, Ordering::Release);
@@ -4227,6 +4247,7 @@ mod tests {
                             message: ALIGNMENT_NEEDS_UNTILED_EXTRACTION_MESSAGE.into(),
                         }),
                     }),
+                    toolchain_preflight: None,
                 },
                 move |_| {
                     started_in_worker.store(true, Ordering::Release);
@@ -4271,6 +4292,7 @@ mod tests {
                         memory: plan.memory,
                         refusal: None,
                     }),
+                    toolchain_preflight: None,
                 },
                 move |_| {
                     fast_proceeded_in_worker.store(true, Ordering::Release);
@@ -4302,6 +4324,7 @@ mod tests {
                         memory: untiled_plan.memory,
                         refusal: None,
                     }),
+                    toolchain_preflight: None,
                 },
                 move |_| {
                     quality_proceeded_in_worker.store(true, Ordering::Release);

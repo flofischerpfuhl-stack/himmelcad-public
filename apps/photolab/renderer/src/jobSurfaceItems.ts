@@ -27,7 +27,8 @@ export function jobSurfaceItems(jobs: readonly PhotolabJob[]): JobSurfaceItem[] 
     label: jobDisplayLabel(job),
     state: surfaceState(job.state.kind),
     phase:
-      job.state.kind === 'failed' && job.state.code === 'alignmentNeedsUntiledExtraction'
+      job.state.kind === 'failed' &&
+      ['alignmentNeedsUntiledExtraction', 'workerToolchainMissing'].includes(job.state.code)
         ? [job.state.message, memoryStatusText(job)].filter(Boolean).join(' · ')
         : job.state.kind === 'paused'
           ? 'Paused'
