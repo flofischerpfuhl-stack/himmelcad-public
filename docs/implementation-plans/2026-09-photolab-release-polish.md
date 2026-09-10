@@ -595,6 +595,20 @@ underestimates (3.43 GB predicted vs 6.06 GB observed at 2 threads), which the
 retry ladder absorbs — a later calibration fits base + per-thread from the
 recorded `attempts`. Evidence files: `.build/photolab-evidence/a7/smoke5-*.json`.
 
+16 GB gate run (WIN-07-PL, Windows PC DESKTOP-BNB2PBA, 4 cores / 16 GB, 2026-09-10
+14:07–16:57, release sidecar with A7c–A7i, forced 2×1 tiling, 24 images): the
+memory envelope held — plan envelope 10.66 GB, extraction 3 workers, matching
+re-planned to 1 thread at 8,122 keypoints, COLMAP peak working set 6.0 GiB, no
+OOM, all 24 matching batches, geometry, reconstruction, georeferencing and
+sparse export completed in 120 min (`workerMemoryLimitMode` absent on Windows:
+no cgroup/RLIMIT there, correctly recorded). The gate as a whole FAILED at the
+last step: the sparse publication needs `PotreeConverter.exe`, which the
+Windows staging does not contain, and the failure surfaced as an untyped
+`denseRasterPreparation / os error 2` after two hours of compute — two
+findings: (1) Windows staging must include the Potree converter (Builder WIN
+lane), (2) PhotoLab must refuse a missing worker executable at admission with a
+typed reason (WP-WIN-08-PL). Report: `.build/photolab-evidence/win07-report.md`.
+
 ### WP-A7d — Bound matching from the extracted feature set (Size M)
 
 Implemented 2026-09-09 (working tree, no commit): tiled ALIKED now records the
