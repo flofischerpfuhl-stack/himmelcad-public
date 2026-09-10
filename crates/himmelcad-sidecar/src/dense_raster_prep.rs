@@ -15,10 +15,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::colmap_runtime::{
-    configure_systemd_user_bus_environment, worker_command, WorkerMemoryLimitMode,
-    WorkerMemoryLimitPlan,
-};
+#[cfg(target_os = "linux")]
+use crate::colmap_runtime::configure_systemd_user_bus_environment;
+use crate::colmap_runtime::{worker_command, WorkerMemoryLimitMode, WorkerMemoryLimitPlan};
 use crate::ground_classification::{Point3, PointClass};
 use crate::job_runtime::{JobMemorySink, RasterPreparationStagePlan};
 use crate::process_group;
